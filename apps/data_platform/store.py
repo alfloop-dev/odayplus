@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -23,6 +23,7 @@ from apps.data_platform.deletion import (
     DeleteScope,
     TenantResolution,
     TombstoneState,
+    canonical_lock_key,
     decide_delete,
     envelope_version,
     plan_purge,
@@ -327,26 +328,32 @@ class PsycopgCanonicalStore:
                         )
         return ProjectionBatchResult(tuple(valid), reason_counts)
 
+    def _lock_keys(self, connection: Any, keys: Iterable[int]) -> None:
+        """Acquire transaction-scoped advisory locks in sorted order to prevent deadlocks."""
+        for key in sorted(set(keys)):
+            connection.execute("SELECT pg_advisory_xact_lock(%s)", (key,))
+
     def _lock_delete_scope(
         self,
         connection: Any,
         tenant_id: UUID,
         source_kind: SourceKind,
         source_id: str,
+        canonical_targets: Sequence[tuple[str, UUID | str]] = (),
     ) -> None:
-        """Enter the database-level coordination for one delete scope.
+        """Enter the database-level coordination for one delete scope and its canonical targets.
 
-        Both the delete path and the projection guard take this lock before they
+        Both the delete path and the projection guard take these locks before they
         read, so neither can decide on a state the other commits away a moment
         later. It is transaction scoped, so it is held for the rest of the
         caller's transaction and released by its commit or rollback -- a caller
         cannot leak it, and cannot drop it while its own writes are still
         pending.
         """
-        connection.execute(
-            "SELECT pg_advisory_xact_lock(%s)",
-            (scope_lock_key(tenant_id, source_kind, source_id),),
-        )
+        keys = [scope_lock_key(tenant_id, source_kind, source_id)]
+        for table, target_id in canonical_targets:
+            keys.append(canonical_lock_key(tenant_id, table, target_id))
+        self._lock_keys(connection, keys)
 
     def _guard_deleted(
         self,
@@ -354,6 +361,7 @@ class PsycopgCanonicalStore:
         tenant_id: UUID,
         source_kind: SourceKind,
         envelope: SourceEnvelope,
+        canonical_targets: Sequence[tuple[str, UUID | str]] = (),
     ) -> None:
         """Refuse an upsert that would resurrect an already deleted entity for this tenant.
 
@@ -367,7 +375,13 @@ class PsycopgCanonicalStore:
         because the lock outlives this method, a delete that loses the race
         still sees this upsert's rows and its lineage version when it runs.
         """
-        self._lock_delete_scope(connection, tenant_id, source_kind, envelope.source_id)
+        self._lock_delete_scope(
+            connection,
+            tenant_id,
+            source_kind,
+            envelope.source_id,
+            canonical_targets=canonical_targets,
+        )
         row = connection.execute(
             f"""
             SELECT source_version
@@ -448,7 +462,8 @@ class PsycopgCanonicalStore:
         read again, so the owner, the purge targets and the currently applied
         version the caller decides on all come from inside the coordination.
         """
-        locked: set[UUID] = set()
+        locked_tenants: set[UUID] = set()
+        locked_targets: set[tuple[str, str]] = set()
         lineage: list[tuple[Any, ...]] = []
         resolution = TenantResolution(
             None,
@@ -456,22 +471,38 @@ class PsycopgCanonicalStore:
             "no tenant declared and nothing landed downstream for this identity",
         )
         for _ in range(_DELETE_SCOPE_LOCK_ATTEMPTS):
-            if scope.tenant_id is not None and scope.tenant_id not in locked:
-                self._lock_delete_scope(
-                    connection, scope.tenant_id, scope.source_kind, scope.source_id
-                )
-                locked.add(scope.tenant_id)
+            keys: list[int] = []
+            if scope.tenant_id is not None and scope.tenant_id not in locked_tenants:
+                keys.append(scope_lock_key(scope.tenant_id, scope.source_kind, scope.source_id))
+                locked_tenants.add(scope.tenant_id)
+            if keys:
+                self._lock_keys(connection, keys)
+
             lineage = self._read_lineage(connection, scope)
             tombstone_tenants = self._read_tombstone_tenants(connection, scope)
             all_owners = [UUID(str(row[0])) for row in lineage] + tombstone_tenants
             resolution = resolve_delete_tenant(scope.tenant_id, all_owners)
             candidate = resolution.tenant_id if resolution.resolved else None
-            if candidate is None or candidate in locked:
+
+            new_keys: list[int] = []
+            if candidate is not None and candidate not in locked_tenants:
+                new_keys.append(scope_lock_key(candidate, scope.source_kind, scope.source_id))
+                locked_tenants.add(candidate)
+
+            if candidate is not None:
+                for row in lineage:
+                    if UUID(str(row[0])) == candidate:
+                        canonical_table = str(row[1])
+                        canonical_id = str(row[2])
+                        pair = (canonical_table, canonical_id)
+                        if pair not in locked_targets:
+                            new_keys.append(canonical_lock_key(candidate, canonical_table, canonical_id))
+                            locked_targets.add(pair)
+
+            if not new_keys:
                 break
-            self._lock_delete_scope(
-                connection, candidate, scope.source_kind, scope.source_id
-            )
-            locked.add(candidate)
+            self._lock_keys(connection, new_keys)
+
         return lineage, resolution
 
     def _propagate_delete(
@@ -538,11 +569,60 @@ class PsycopgCanonicalStore:
                         tenant_id=tenant_id,
                         control_schema=self._schema,
                         source_kind=scope.source_kind,
+                        source_id=scope.source_id,
+                        source_version=event.source_version,
                     )
                     for statement, params in plan.statements:
                         cursor = connection.execute(statement, params)
                         purged += max(int(getattr(cursor, "rowcount", 0) or 0), 0)
-                    retained = plan.retained_targets
+
+                    retained_set = set(plan.retained_targets)
+                    for canonical_table, canonical_id in targets:
+                        if canonical_table not in retained_set:
+                            if canonical_table == "core.transactions":
+                                exists = connection.execute(
+                                    "SELECT 1 FROM core.transactions WHERE transaction_id = %s",
+                                    (canonical_id,),
+                                ).fetchone()
+                                if exists is not None:
+                                    retained_set.add(canonical_table)
+                            elif canonical_table == "core.machine_status_events":
+                                exists = connection.execute(
+                                    "SELECT 1 FROM core.machine_status_events WHERE status_event_id = %s",
+                                    (canonical_id,),
+                                ).fetchone()
+                                if exists is not None:
+                                    retained_set.add(canonical_table)
+                            elif canonical_table == f"{self._schema}.store_daily_facts":
+                                exists = connection.execute(
+                                    f"SELECT 1 FROM {self._schema}.store_daily_facts WHERE source_snapshot_id = %s",  # nosec B608 -- DataPlaneConfig validates the schema identifier.
+                                    (canonical_id,),
+                                ).fetchone()
+                                if exists is not None:
+                                    retained_set.add(canonical_table)
+                            elif canonical_table == f"{self._schema}.forecast_inputs":
+                                exists = connection.execute(
+                                    f"SELECT 1 FROM {self._schema}.forecast_inputs WHERE source_snapshot_id = %s",  # nosec B608 -- DataPlaneConfig validates the schema identifier.
+                                    (canonical_id,),
+                                ).fetchone()
+                                if exists is not None:
+                                    retained_set.add(canonical_table)
+                            elif canonical_table == f"{self._schema}.learning_import_lineage":
+                                exists = connection.execute(
+                                    f"SELECT 1 FROM {self._schema}.learning_import_lineage WHERE source_snapshot_id = %s",  # nosec B608 -- DataPlaneConfig validates the schema identifier.
+                                    (canonical_id,),
+                                ).fetchone()
+                                if exists is not None:
+                                    retained_set.add(canonical_table)
+                            elif canonical_table == f"{self._schema}.domain_inputs":
+                                exists = connection.execute(
+                                    f"SELECT 1 FROM {self._schema}.domain_inputs WHERE source_snapshot_id = %s",  # nosec B608 -- DataPlaneConfig validates the schema identifier.
+                                    (canonical_id,),
+                                ).fetchone()
+                                if exists is not None:
+                                    retained_set.add(canonical_table)
+                    retained = tuple(sorted(retained_set))
+
                     connection.execute(
                         f"""
                         DELETE FROM {self._schema}.canonical_lineage
@@ -716,7 +796,16 @@ class PsycopgCanonicalStore:
     ) -> None:
         if source_kind is SourceKind.MERCHANT:
             projection = project_merchant(envelope, self._status_contract)
-            self._guard_deleted(connection, projection.tenant_id, source_kind, envelope)
+            self._guard_deleted(
+                connection,
+                projection.tenant_id,
+                source_kind,
+                envelope,
+                canonical_targets=[
+                    ("core.tenants", projection.tenant_id),
+                    ("core.brands", projection.brand_id),
+                ],
+            )
             self._upsert_merchant(connection, projection)
             self._lineage(
                 connection,
@@ -734,7 +823,13 @@ class PsycopgCanonicalStore:
             )
         elif source_kind is SourceKind.PLACE:
             projection = project_place(envelope, lookup, self._status_contract)
-            self._guard_deleted(connection, projection.tenant_id, source_kind, envelope)
+            self._guard_deleted(
+                connection,
+                projection.tenant_id,
+                source_kind,
+                envelope,
+                canonical_targets=[("core.stores", projection.store_id)],
+            )
             self._upsert_place(connection, projection)
             self._upsert_place_geography(connection, envelope, projection)
             if projection.address_id is not None:
@@ -754,7 +849,13 @@ class PsycopgCanonicalStore:
             )
         elif source_kind is SourceKind.DEVICE:
             projection = project_device(envelope, lookup)
-            self._guard_deleted(connection, projection.tenant_id, source_kind, envelope)
+            self._guard_deleted(
+                connection,
+                projection.tenant_id,
+                source_kind,
+                envelope,
+                canonical_targets=[("core.machines", projection.machine_id)],
+            )
             self._upsert_device(connection, projection)
             self._lineage(
                 connection,
@@ -769,7 +870,13 @@ class PsycopgCanonicalStore:
             SourceKind.TRADE,
         }:
             projection = project_transaction(envelope, lookup, self._status_contract)
-            self._guard_deleted(connection, projection.tenant_id, source_kind, envelope)
+            self._guard_deleted(
+                connection,
+                projection.tenant_id,
+                source_kind,
+                envelope,
+                canonical_targets=[("core.transactions", projection.transaction_id)],
+            )
             self._upsert_transaction(connection, envelope, projection)
             self._lineage(
                 connection,
@@ -813,7 +920,13 @@ class PsycopgCanonicalStore:
             )
         elif source_kind is SourceKind.DEVICE_LOG:
             projection = project_machine_status_event(envelope, lookup, self._status_contract)
-            self._guard_deleted(connection, projection.tenant_id, source_kind, envelope)
+            self._guard_deleted(
+                connection,
+                projection.tenant_id,
+                source_kind,
+                envelope,
+                canonical_targets=[("core.machine_status_events", projection.status_event_id)],
+            )
             self._upsert_machine_status_event(connection, envelope, projection)
             self._lineage(
                 connection,

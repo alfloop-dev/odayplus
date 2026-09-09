@@ -138,6 +138,21 @@ def scope_lock_key(tenant_id: UUID, source_kind: SourceKind, source_id: str) -> 
     return int.from_bytes(digest, "big", signed=True)
 
 
+def canonical_lock_key(
+    tenant_id: UUID, canonical_table: str, canonical_id: UUID | str
+) -> int:
+    """Return the 64-bit advisory lock key for one shared canonical target.
+
+    Multiple sources with different source IDs or different source kinds (such
+    as ORDERS and TRANSACTION mapping to the same canonical transaction) target
+    the same row in a canonical table. Coordinating them requires taking a lock
+    keyed on the shared canonical target itself, not solely the source-scoped identity.
+    """
+    material = "\x1f".join((str(tenant_id), "canonical", canonical_table, str(canonical_id)))
+    digest = hashlib.blake2b(material.encode("utf-8"), digest_size=8).digest()
+    return int.from_bytes(digest, "big", signed=True)
+
+
 @dataclass(frozen=True)
 class DeleteScope:
     """The tenant / source-kind / source-id triple a delete may act on."""
@@ -416,24 +431,77 @@ def plan_purge(
     tenant_id: UUID,
     control_schema: str,
     source_kind: SourceKind | None = None,
+    source_id: str | None = None,
+    source_version: int | None = None,
 ) -> PurgePlan:
     """Build the tenant-scoped purge plan for one identity's lineage targets."""
     authority_rank = (
         TRANSACTION_AUTHORITY_RANKS.get(source_kind, 1) if source_kind is not None else 1
     )
-    templates = {
-        table.format(schema=control_schema): tuple(
-            statement.format(schema=control_schema, authority_rank=authority_rank)
-            for statement in statements
-        )
-        for table, statements in _LEAF_PURGE_TEMPLATES.items()
-    }
+    source_kind_val = source_kind.value if source_kind is not None else None
     statements: list[tuple[str, tuple[Any, ...]]] = []
     retained: set[str] = set()
     for canonical_table, canonical_id in targets:
-        bound = templates.get(canonical_table)
-        if bound is None:
+        if canonical_table == "core.transactions":
+            auth_stmt = (
+                f"DELETE FROM {control_schema}.transaction_authority AS auth "  # nosec B608
+                f"USING core.transactions AS target, core.stores AS scope "
+                f"WHERE auth.transaction_id = target.transaction_id "
+                f"AND target.transaction_id = %s AND target.store_id = scope.store_id "
+                f"AND scope.tenant_id = %s AND auth.authority_rank >= {authority_rank} "
+                f"AND auth.source_snapshot_id IN ("
+                f"SELECT source_snapshot_id FROM {control_schema}.canonical_lineage "
+                f"WHERE canonical_table = 'core.transactions' "
+                f"AND canonical_id = target.transaction_id "
+                f"AND tenant_id = scope.tenant_id "
+                f"AND (%s::text IS NULL OR source_kind = %s) "
+                f"AND (%s::text IS NULL OR source_id = %s) "
+                f"AND (%s::bigint IS NULL OR source_version IS NULL OR source_version <= %s::bigint))"
+            )
+            auth_params = (
+                canonical_id,
+                tenant_id,
+                source_kind_val,
+                source_kind_val,
+                source_id,
+                source_id,
+                source_version,
+                source_version,
+            )
+            target_stmt = (
+                f"DELETE FROM core.transactions AS target USING core.stores AS scope "  # nosec B608
+                f"WHERE target.transaction_id = %s AND target.store_id = scope.store_id "
+                f"AND scope.tenant_id = %s AND NOT EXISTS ("
+                f"SELECT 1 FROM {control_schema}.transaction_authority AS auth "
+                f"WHERE auth.transaction_id = target.transaction_id)"
+            )
+            target_params = (canonical_id, tenant_id)
+            statements.append((auth_stmt, auth_params))
+            statements.append((target_stmt, target_params))
+        elif canonical_table == "core.machine_status_events":
+            ev_stmt = (
+                f"DELETE FROM {control_schema}.machine_status_event_evidence "  # nosec B608
+                f"WHERE status_event_id = %s AND tenant_id = %s"
+            )
+            target_stmt = (
+                "DELETE FROM core.machine_status_events AS target USING core.stores AS scope "
+                "WHERE target.status_event_id = %s AND target.store_id = scope.store_id "
+                "AND scope.tenant_id = %s"
+            )
+            statements.append((ev_stmt, (canonical_id, tenant_id)))
+            statements.append((target_stmt, (canonical_id, tenant_id)))
+        elif canonical_table in {
+            f"{control_schema}.store_daily_facts",
+            f"{control_schema}.forecast_inputs",
+            f"{control_schema}.learning_import_lineage",
+            f"{control_schema}.domain_inputs",
+        }:
+            stmt = (
+                f"DELETE FROM {canonical_table} "  # nosec B608
+                f"WHERE source_snapshot_id = %s AND tenant_id = %s"
+            )
+            statements.append((stmt, (canonical_id, tenant_id)))
+        else:
             retained.add(canonical_table)
-            continue
-        statements.extend((statement, (canonical_id, tenant_id)) for statement in bound)
+
     return PurgePlan(tuple(statements), tuple(sorted(retained)))

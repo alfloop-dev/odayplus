@@ -167,22 +167,26 @@
 
 在 PR #1282 (`4a4aa4a6`) Codex2 獨立審查重現的兩項缺陷，在本輪交付中完成修復並納入回歸測試：
 
-### 9.1 保護共用 Canonical Transaction / Current Authority 免受 Stale TRANSACTION 刪除影響
+### 9.1 保護共用 Canonical Transaction / Current Authority 免受 Stale 或同 Rank 不同 Source ID 之刪除影響
 
-- **缺陷機制**：`core.transactions` 與 `data_plane.transaction_authority` 為 `ORDERS`（權威等級 1）、`TRANSACTION`（權威等級 2）與 `TRADE`（權威等級 3）共用之落地目標。原 `_LEAF_PURGE_TEMPLATES["core.transactions"]` 在刪除時無條件清除 `transaction_authority` 與 `core.transactions`，導致權威較低或過期之 `TRANSACTION` 刪除事件抵達時，誤刪已由權威較高之 `ORDERS` 落地的交易記錄。
+- **缺陷機制**：`core.transactions` 與 `data_plane.transaction_authority` 為 `ORDERS`（權威等級 1）、`TRANSACTION`（權威等級 2）與 `TRADE`（權威等級 3）共用之落地目標，不同來源事件（如 `gateway-transaction-1` 與 `gateway-transaction-2`）可能具有不同之 `source_id` 但對應同一 `orderId`（即同一 canonical `transaction_id`）。原實作僅依 `authority_rank` 比較，且 delete scope advisory lock 僅鎖定單一 `(tenant_id, source_kind, source_id)`，導致：
+  1. 同 rank 但不同 source ID 之較舊 TRANSACTION A 刪除事件抵達時，會誤刪較新 TRANSACTION B 的 `transaction_authority` 與 `core.transactions`，破壞 B 的當前權威並造成 B 的 lineage 懸空。
+  2. 不同 source ID 寫入與刪除同一 canonical target 時因 lock key 不同而缺乏原子協調。
 - **修復實作**：
-  1. 在 `apps/data_platform/deletion.py` 定義 `TRANSACTION_AUTHORITY_RANKS`（`ORDERS: 1`, `TRANSACTION: 2`, `TRADE: 3`），並將 `source_kind` 傳入 `plan_purge()`。
-  2. `_LEAF_PURGE_TEMPLATES["core.transactions"]` 調整為：
-     - `DELETE FROM {schema}.transaction_authority ... WHERE ... AND auth.authority_rank >= {authority_rank}`（僅在刪除事件之權威等級小於等於現有權威數值時才刪除 authority）。
-     - `DELETE FROM core.transactions ... WHERE ... AND NOT EXISTS (SELECT 1 FROM {schema}.transaction_authority AS auth WHERE auth.transaction_id = target.transaction_id)`（若權威記錄因等級較高而未被刪除，則 `core.transactions` 亦受到保護不予刪除，且避免外鍵衝突）。
-  3. 新增回歸測試 `test_stale_transaction_delete_does_not_purge_authoritative_orders` 驗證權威保護行為。
+  1. 在 `apps/data_platform/deletion.py` 新增 `canonical_lock_key(tenant_id, canonical_table, canonical_id)`，針對所有共用同一 canonical target 的 writers 與 deleters 提供資料庫級原子協調。
+  2. 在 `_enter_delete_scope` 與 `_guard_deleted` 取得 scope lock 之同時，亦取得所涉 canonical targets 之 `canonical_lock_key`，並以排序後的 key 集合執行 `pg_advisory_xact_lock` 防止死鎖。
+  3. `plan_purge()` 之 `_LEAF_PURGE_TEMPLATES["core.transactions"]` 調整為比對當前權威快照：
+     - `DELETE FROM {schema}.transaction_authority ... WHERE ... AND auth.authority_rank >= {authority_rank} AND auth.source_snapshot_id IN (SELECT source_snapshot_id FROM {schema}.canonical_lineage WHERE canonical_table = 'core.transactions' AND canonical_id = target.transaction_id AND tenant_id = scope.tenant_id AND (%s::text IS NULL OR source_kind = %s) AND (%s::text IS NULL OR source_id = %s) AND (%s::bigint IS NULL OR source_version IS NULL OR source_version <= %s::bigint))`
+     - 僅在刪除事件之權威等級不低於現有權威，且當前 authority snapshot 確實屬於該刪除事件之 source identity 與版本範圍時，才移除 authority。
+     - `DELETE FROM core.transactions ... WHERE ... AND NOT EXISTS (SELECT 1 FROM {schema}.transaction_authority ...)`：若權威記錄因等級較高、或屬於更新之同 rank source identity 而受保護保留，則 `core.transactions` 亦受到保護不予刪除。
+  4. 新增回歸測試 `test_shared_transaction_current_authority_and_audit`（覆蓋 `ORDERS` 與 `TRANSACTION`）與 `test_shared_transaction_same_rank_different_source_id_interleaving` 驗證不同 source ID 併發與當前權威保護。
 
-### 9.2 保留 core.brands / core.tenants 審計目標跨冪等重放與重啟 (Retained Targets Preservation)
+### 9.2 保留真實受保護目標審計 (Actual Protected Retained Targets Audit)
 
-- **缺陷機制**：`core.tenants`、`core.brands` 等層級主檔屬於 `RETAINED_CANONICAL_TABLES`，首次刪除時記錄於墓碑之 `retained_targets` 並清除 `canonical_lineage`。當該刪除事件於重啟後或於後續流程中進行冪等重放時，由於 `canonical_lineage` 已無記錄，`targets` 計算為空，原 `_upsert_tombstone` 之 `ON CONFLICT DO UPDATE SET retained_targets = EXCLUDED.retained_targets` 會將既有 `retained_targets` 覆寫為空陣列，破壞審計回讀一致性。
+- **缺陷機制**：當權威較低或較舊之刪除事件被權威防護阻止刪除 `core.transactions` 時，`purged_row_count` 正確為 0，但原實作僅自靜態 plan 取得 `retained_targets`（`core.transactions` 不在靜態 retained 清單中），導致結果與重啟後墓碑回讀之 `retained_targets` 回報為空，遺失實際受到保護目標之審計記錄。
 - **修復實作**：
-  1. `_enter_delete_scope` 在解析租戶時，將 `_read_lineage` 與既有 `_read_tombstone_tenants` 合併，確保即使 lineage 已清理仍能正確綁定並鎖定租戶範疇。
-  2. `_propagate_delete` 在計算 `retained` 時，若 `recorded.retained_targets` 已存在，則將現有與已記錄之 retained targets 做 union 合併。
-  3. `_upsert_tombstone` 的 `ON CONFLICT DO UPDATE` 加入 `CASE WHEN cardinality(EXCLUDED.retained_targets) > 0 THEN EXCLUDED.retained_targets ELSE {self._schema}.tombstones.retained_targets END` 防護，並透過 `RETURNING ..., retained_targets` 確保回傳與持久化一致。
-  4. 新增回歸測試 `test_retained_targets_preserved_across_replay_and_restart` 驗證首次刪除、冪等重放、跨 store 重啟與無明確租戶重放之 retained targets 完整性。
+  1. `_propagate_delete` 在執行 purge 後，動態檢核 targets 中未被 purge 之目標實體是否依然存續於資料庫中（例如 `SELECT 1 FROM core.transactions WHERE transaction_id = %s`）。
+  2. 若目標實體因權威防護而存續，將其真實加入 `retained_targets`，確保 `DeleteResult` 與寫入之 tombstone 均包含 `("core.transactions",)`。
+  3. 保留跨重放與重啟時 `retained_targets` 的合併與持久化防護。
+  4. 新增回歸測試 `test_retained_targets_preserved_across_replay_and_restart` 與 `test_shared_transaction_current_authority_and_audit` 斷言 readback 審計一致性。
 

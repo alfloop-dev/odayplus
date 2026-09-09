@@ -42,6 +42,7 @@ from apps.data_platform.deletion import (
     DeletePropagationMode,
     DeleteScope,
     RETAINED_CANONICAL_TABLES,
+    canonical_lock_key,
     decide_delete,
     envelope_version,
     plan_purge,
@@ -50,6 +51,11 @@ from apps.data_platform.deletion import (
     scope_lock_key,
     suppresses_upsert,
     version_from_timestamp,
+)
+from apps.data_platform.identifiers import (
+    brand_id_for_merchant,
+    store_id_for_place,
+    transaction_id_for_source,
 )
 from apps.data_platform.serialization import aggregate_checksum
 from apps.data_platform.source import envelope_for_document
@@ -156,6 +162,21 @@ def test_the_scope_lock_key_separates_tenants_kinds_and_identities() -> None:
     assert -(2**63) <= base < 2**63
 
 
+def test_canonical_lock_key_domain_separation_and_determinism() -> None:
+    target_id = UUID("00000000-0000-4000-8000-000000000101")
+    base = canonical_lock_key(TENANT_A, "core.transactions", target_id)
+
+    assert base == canonical_lock_key(TENANT_A, "core.transactions", target_id)
+    assert base != canonical_lock_key(TENANT_B, "core.transactions", target_id)
+    assert base != canonical_lock_key(TENANT_A, "core.machines", target_id)
+    assert base != canonical_lock_key(
+        TENANT_A, "core.transactions", UUID("00000000-0000-4000-8000-000000000102")
+    )
+    # Distinct domain from scope_lock_key
+    assert base != scope_lock_key(TENANT_A, SourceKind.TRANSACTION, str(target_id))
+    assert -(2**63) <= base < 2**63
+
+
 def test_an_unknown_or_older_version_can_never_resurrect_a_deleted_entity() -> None:
     deleted_at = _version(datetime(2026, 7, 20, tzinfo=UTC))
 
@@ -221,7 +242,7 @@ def test_every_purge_statement_carries_a_tenant_predicate() -> None:
     assert plan.statements
     for statement, params in plan.statements:
         assert statement.startswith("DELETE FROM ")
-        assert statement.count("%s") == 2
+        assert len(params) >= 2
         assert params[1] == TENANT_A
         assert "tenant_id = %s" in statement
 
@@ -1069,6 +1090,7 @@ def test_stale_transaction_delete_does_not_purge_authoritative_orders(live_store
     )
     assert not stale_result.rejected
     assert stale_result.purged_row_count == 0
+    assert "core.transactions" in stale_result.retained_targets
 
     # Ensure transaction and authority are intact and still point to orders (rank 1)
     with live_store.connect() as conn:
@@ -1181,3 +1203,209 @@ def test_retained_targets_preserved_across_replay_and_restart(live_store: Any) -
     )
     assert final_tombstone is not None
     assert set(final_tombstone.retained_targets) == {"core.brands", "core.tenants"}
+
+
+@pytest.mark.requires_live_env
+@pytest.mark.parametrize("newer_kind", [SourceKind.TRANSACTION, SourceKind.ORDERS])
+def test_shared_transaction_current_authority_and_audit(
+    live_store: Any, newer_kind: SourceKind
+) -> None:
+    """A delete of an older transaction must not remove a newer or higher-rank shared authority, and must record retained audit."""
+    tenant, _ = _seed_two_tenants(live_store)
+    store = live_store.store
+    place = store_id_for_place("place-a")
+    with live_store.connect() as conn:
+        conn.execute(
+            "INSERT INTO core.stores (store_id, tenant_id, brand_id, source_store_id) VALUES (%s, %s, %s, %s)",
+            (place, tenant, brand_id_for_merchant("merchant-a"), "place-a"),
+        )
+        conn.execute("""
+            ALTER TABLE core.transactions
+                ADD COLUMN IF NOT EXISTS source_transaction_id TEXT,
+                ADD COLUMN IF NOT EXISTS member_id UUID,
+                ADD COLUMN IF NOT EXISTS event_time TIMESTAMPTZ,
+                ADD COLUMN IF NOT EXISTS observation_time TIMESTAMPTZ,
+                ADD COLUMN IF NOT EXISTS payment_time TIMESTAMPTZ,
+                ADD COLUMN IF NOT EXISTS gross_amount NUMERIC,
+                ADD COLUMN IF NOT EXISTS discount_amount NUMERIC,
+                ADD COLUMN IF NOT EXISTS net_amount NUMERIC,
+                ADD COLUMN IF NOT EXISTS currency TEXT,
+                ADD COLUMN IF NOT EXISTS payment_method TEXT,
+                ADD COLUMN IF NOT EXISTS transaction_status TEXT,
+                ADD COLUMN IF NOT EXISTS refund_of_transaction_id UUID,
+                ADD COLUMN IF NOT EXISTS price_schedule_id UUID,
+                ADD COLUMN IF NOT EXISTS promotion_id UUID,
+                ADD COLUMN IF NOT EXISTS source_system TEXT,
+                ADD COLUMN IF NOT EXISTS ingested_at TIMESTAMPTZ
+        """)
+    base = {
+        "orderId": "shared-order-1", "merchant": "merchant-a", "place": "place-a",
+        "amount": 100, "currency": "TWD",
+    }
+    _, old, result = _land(store, SourceKind.TRANSACTION, {
+        **base, "_id": "mongo-transaction-row", "transactionId": "gateway-transaction-1", "amountPaid": 100,
+        "payGateway": "card", "status": "succeeded",
+        "createdAt": "2026-07-21T00:00:00Z", "updatedAt": "2026-07-21T00:00:00Z",
+    })
+    assert result.valid_loaded == 1, result.quarantine_reason_counts
+    _, newer, result = _land(store, newer_kind, {
+        **base, "_id": "mongo-newer-row", "state": "TRADE_SUCCESS",
+        "transactionId": "gateway-transaction-2", "amountPaid": 100,
+        "payGateway": "card", "status": "succeeded",
+        "payment": {"payGateway": "card"},
+        "createdAt": "2026-07-23T00:00:00Z", "updatedAt": "2026-07-23T00:00:00Z",
+    })
+    assert result.valid_loaded == 1, result.quarantine_reason_counts
+    canonical_id = transaction_id_for_source("shared-order-1")
+    with live_store.connect() as conn:
+        authority = conn.execute(
+            "SELECT source_kind, source_snapshot_id FROM data_plane.transaction_authority WHERE transaction_id = %s",
+            (canonical_id,),
+        ).fetchone()
+        assert authority == (newer_kind.value, UUID(newer.source_snapshot_id))
+        before = conn.execute("SELECT COUNT(*) FROM core.transactions WHERE transaction_id = %s", (canonical_id,)).fetchone()[0]
+        assert before == 1
+    moment = datetime(2026, 7, 22, tzinfo=UTC)
+    result = store.delete_record(DeleteEvent(
+        scope=DeleteScope(SourceKind.TRANSACTION, old.source_id, tenant),
+        source_version=version_from_timestamp(moment), purged_at=moment,
+        source_snapshot_id=str(uuid.uuid4()), tombstone_hash="d" * 64,
+        run_id=_begin_helper(store, SourceKind.TRANSACTION),
+    ))
+    with live_store.connect() as conn:
+        remaining = conn.execute("SELECT transaction_id FROM core.transactions WHERE transaction_id = %s", (canonical_id,)).fetchone()
+        remaining_authority = conn.execute("SELECT source_kind FROM data_plane.transaction_authority WHERE transaction_id = %s", (canonical_id,)).fetchone()
+        order_lineage = conn.execute("SELECT COUNT(*) FROM data_plane.canonical_lineage WHERE source_snapshot_id = %s", (newer.source_snapshot_id,)).fetchone()[0]
+    assert remaining is not None and remaining_authority == (newer_kind.value,), (
+        f"v22 delete of old TRANSACTION erased v23 {newer_kind.value}: outcome={result.outcome}, "
+        f"purged={result.purged_row_count}, row={remaining}, authority={remaining_authority}, "
+        f"dangling_order_lineage={order_lineage}"
+    )
+
+    tombstone = live_store.build().get_tombstone(tenant, SourceKind.TRANSACTION, old.source_id)
+    assert tombstone is not None
+    assert "core.transactions" in result.retained_targets and "core.transactions" in tombstone.retained_targets, (
+        f"protected transaction remains but audit omits it: result={result.as_dict()}, "
+        f"readback_retained={tombstone.retained_targets}"
+    )
+
+
+@pytest.mark.requires_live_env
+def test_shared_transaction_same_rank_different_source_id_interleaving(
+    live_store: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A delete of an older same-rank transaction must coordinate on canonical target and not erase a concurrent newer transaction."""
+    tenant, _ = _seed_two_tenants(live_store)
+    writer = live_store.store
+    deleter = live_store.build()
+    place = store_id_for_place("place-interleave")
+    with live_store.connect() as conn:
+        conn.execute(
+            "INSERT INTO core.stores (store_id, tenant_id, brand_id, source_store_id) VALUES (%s, %s, %s, %s)",
+            (place, tenant, brand_id_for_merchant("merchant-a"), "place-interleave"),
+        )
+        conn.execute("""
+            ALTER TABLE core.transactions
+                ADD COLUMN IF NOT EXISTS source_transaction_id TEXT,
+                ADD COLUMN IF NOT EXISTS member_id UUID,
+                ADD COLUMN IF NOT EXISTS event_time TIMESTAMPTZ,
+                ADD COLUMN IF NOT EXISTS observation_time TIMESTAMPTZ,
+                ADD COLUMN IF NOT EXISTS payment_time TIMESTAMPTZ,
+                ADD COLUMN IF NOT EXISTS gross_amount NUMERIC,
+                ADD COLUMN IF NOT EXISTS discount_amount NUMERIC,
+                ADD COLUMN IF NOT EXISTS net_amount NUMERIC,
+                ADD COLUMN IF NOT EXISTS currency TEXT,
+                ADD COLUMN IF NOT EXISTS payment_method TEXT,
+                ADD COLUMN IF NOT EXISTS transaction_status TEXT,
+                ADD COLUMN IF NOT EXISTS refund_of_transaction_id UUID,
+                ADD COLUMN IF NOT EXISTS price_schedule_id UUID,
+                ADD COLUMN IF NOT EXISTS promotion_id UUID,
+                ADD COLUMN IF NOT EXISTS source_system TEXT,
+                ADD COLUMN IF NOT EXISTS ingested_at TIMESTAMPTZ
+        """)
+    base = {
+        "orderId": "shared-order-interleave", "merchant": "merchant-a", "place": "place-interleave",
+        "amount": 100, "currency": "TWD",
+    }
+    _, old_txn, res1 = _land(writer, SourceKind.TRANSACTION, {
+        **base, "_id": "mongo-txn-1", "transactionId": "gateway-txn-1", "amountPaid": 100,
+        "payGateway": "card", "status": "succeeded",
+        "createdAt": "2026-07-21T00:00:00Z", "updatedAt": "2026-07-21T00:00:00Z",
+    })
+    assert res1.valid_loaded == 1
+
+    canonical_id = transaction_id_for_source("shared-order-interleave")
+    moment = datetime(2026, 7, 22, tzinfo=UTC)
+    del_run = _begin_helper(deleter, SourceKind.TRANSACTION)
+    delete_event = DeleteEvent(
+        scope=DeleteScope(SourceKind.TRANSACTION, old_txn.source_id, tenant),
+        source_version=version_from_timestamp(moment),
+        purged_at=moment,
+        source_snapshot_id=str(uuid.uuid4()),
+        tombstone_hash="d" * 64,
+        run_id=del_run,
+    )
+
+    guard_passed, release_writer, delete_connected = Event(), Event(), Event()
+    original_guard = writer._guard_deleted
+    original_connect = deleter._connect
+    delete_pid: list[int] = []
+
+    def held_guard(connection: Any, tenant_id: UUID, kind: SourceKind, envelope: Any, canonical_targets: Any = ()) -> None:
+        original_guard(connection, tenant_id, kind, envelope, canonical_targets=canonical_targets)
+        guard_passed.set()
+        assert release_writer.wait(10), "test cleanup failed to release writer"
+
+    def recorded_connect() -> Any:
+        connection = original_connect()
+        delete_pid.append(connection.info.backend_pid)
+        delete_connected.set()
+        return connection
+
+    monkeypatch.setattr(writer, "_guard_deleted", held_guard)
+    monkeypatch.setattr(deleter, "_connect", recorded_connect)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        upsert = executor.submit(
+            _land,
+            writer,
+            SourceKind.TRANSACTION,
+            {
+                **base, "_id": "mongo-txn-2", "transactionId": "gateway-txn-2", "amountPaid": 100,
+                "payGateway": "card", "status": "succeeded",
+                "createdAt": "2026-07-23T00:00:00Z", "updatedAt": "2026-07-23T00:00:00Z",
+            },
+        )
+        try:
+            assert guard_passed.wait(5), "writer never reached guard"
+            deletion = executor.submit(deleter.delete_record, delete_event)
+            assert delete_connected.wait(5), "deleter never opened connection"
+            observed = None
+            deadline = time.monotonic() + 5
+            with live_store.connect() as observer:
+                observer.autocommit = True
+                while time.monotonic() < deadline:
+                    if deletion.done():
+                        observed = "delete_finished"
+                        break
+                    waiting = observer.execute(
+                        "SELECT wait_event_type FROM pg_stat_activity WHERE pid = %s",
+                        (delete_pid[0],),
+                    ).fetchone()
+                    if waiting and waiting[0] == "Lock":
+                        observed = "delete_waiting_on_database_lock"
+                        break
+                    time.sleep(0.02)
+            assert observed, "deleter neither finished nor waited on database lock"
+        finally:
+            release_writer.set()
+        _, newer_txn, up_res = upsert.result(timeout=10)
+        del_res = deletion.result(timeout=10)
+
+    assert up_res.valid_loaded == 1
+    assert "core.transactions" in del_res.retained_targets
+    with live_store.connect() as conn:
+        row = conn.execute("SELECT transaction_id FROM core.transactions WHERE transaction_id = %s", (canonical_id,)).fetchone()
+        assert row is not None
+        auth = conn.execute("SELECT source_kind, source_snapshot_id FROM data_plane.transaction_authority WHERE transaction_id = %s", (canonical_id,)).fetchone()
+        assert auth == ("transaction", UUID(newer_txn.source_snapshot_id))
