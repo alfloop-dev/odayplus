@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "type": "task_history_recovery_disposition_corrections",
-  "recorded_at": "2026-09-09T01:15:00Z",
+  "recorded_at": "2026-09-09T01:25:22Z",
   "recorded_by": "Antigravity3",
   "reviewer": "Codex",
   "task_id": "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
@@ -9,14 +9,14 @@
     "applied_batch_sha256": "1833ca8656ae30efc34d6ade6437ba850c5a53f9fcda67bb1cd4f7c8c70b34fe",
     "applied_checkpoint_sha256": "cee66fee0de0fd9ed39d1d7ed8abc9a176b3cc96065f2004cc7efe02a2de8f40",
     "applied_hold_sha256": "e88435aecada1b7b84f4811c3144a54afdb9e428299430e6f6766d4b1ec60348",
-    "purpose": "依據 Codex 獨立審查意見（review_finding P1 與 P2），在保留已套用原始 batch/hold/checkpoint bytes 的前提下，追加逐筆更正記錄、撤銷/調整無缺口 done 完成聲明，並明確記錄真實處置與下游依賴影響。"
+    "purpose": "依據 Codex 獨立審查意見（review_finding P1 與 P2），在保留已套用原始 batch/hold/checkpoint bytes 的前提下，記錄逐筆審查意見確認、分析套用批次之分級缺陷，並明確記錄真實缺口與下游依賴影響。特別聲明：本文件僅為證據檔案，磁碟上 ai-task-archive/tasks/ 內之 canonical snapshot 仍為 done/completed，且 live task_archive.py:136-137 依舊判定依賴滿足；文件記錄不能直接撤回 canonical 依賴完成語意，需由前景協調者透過受控控制面修復路徑處置。"
   },
   "corrections": [
     {
       "task_id": "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
       "finding_code": "P1_HUMAN_OPS_DISPOSITION_GAP",
       "severity": "P1",
-      "status": "finding_acknowledged_and_corrected",
+      "status": "finding_acknowledged_canonical_blocker_open",
       "git_evidence": {
         "repository": "alfloop-dev/odayplus",
         "pr_number": 1169,
@@ -42,21 +42,30 @@
         "summary": "原任務驗收 A2（task_evidence_inventory.json:9526, 9701）明文規定找不到權威決策時 task 轉 blocked waiting Human/Ops。原收據 docs/evidence/ODP_MERGE_QUEUE_DISPOSITION_2026-09-03.md @ merge 830a8ebf919c:23-25, 95-99 明確判定查無權威裁決，任務狀態為 BLOCKED_BY_EVIDENCE 阻擋至 Human/Ops；法定欄位 decider/decision_date/risk_owner 均為待填。PR/CI/task-review-gate 雖為真實交付收據，但不能消除 Human-only 裁決缺口。",
         "violation": "將 BLOCKED_BY_EVIDENCE 任務重建為無缺口 done/completed 屬於過度推論，掩蓋了 Human/Ops 授權缺口。"
       },
-      "corrected_truth": {
-        "completion_claim_valid": false,
-        "completion_claim_revocation": "正式撤銷無缺口 done/completed 聲明。",
-        "true_status": "blocked",
-        "true_evidence_tier": "merge_verified",
-        "true_waiting_for": "Human/Ops",
-        "true_gaps": [
-          "human_authority_missing",
-          "acceptance_gap_blocked_by_evidence"
-        ],
-        "corrected_attestation_status": {
-          "acceptance": "withheld (blocked_by_evidence waiting Human/Ops)",
-          "approval": "verified (task-review-gate success by Antigravity4)",
-          "ci": "verified (7/7 success at head f2d1bd88ec2dc89148dd3d7346a01de0e921432b)",
-          "runtime": "withheld (human authority required)"
+      "disposition_truth_and_canonical_state": {
+        "completion_claim_validity": "invalid_overclaim",
+        "canonical_archive_state_on_disk": {
+          "status": "done",
+          "terminal_outcome": "completed",
+          "evidence_tier": "reconstructable_done",
+          "gaps": [],
+          "note": "磁碟 snapshot 尚未變更，仍維持 apply 寫入之 done/completed。"
+        },
+        "live_dependency_resolution_status": "satisfied_in_runtime_via_task_archive_py",
+        "documented_true_disposition_requirement": {
+          "required_status": "blocked",
+          "required_evidence_tier": "merge_verified",
+          "required_waiting_for": "Human/Ops",
+          "required_gaps": [
+            "human_authority_missing",
+            "acceptance_gap_blocked_by_evidence"
+          ],
+          "corrected_attestation_status": {
+            "acceptance": "withheld (blocked_by_evidence waiting Human/Ops)",
+            "approval": "verified (task-review-gate success by Antigravity4)",
+            "ci": "verified (7/7 success at head f2d1bd88ec2dc89148dd3d7346a01de0e921432b)",
+            "runtime": "withheld (human authority required)"
+          }
         }
       },
       "downstream_impact": {
@@ -65,14 +74,15 @@
         "dependent_phase": "ODP Remediation · Final Verification",
         "dependent_owner": "Claude",
         "dependent_reviewer": "Codex2",
-        "impact_description": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001 驗收明定 20 項逐一有 VERIFIED 或有效 formal nonimplementation disposition 且無 OPEN／BLOCKED_BY_EVIDENCE。ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001 維持 BLOCKED_BY_EVIDENCE 狀態，正當阻止 ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001 在無權威裁決下錯誤宣稱 structural remediation closeout。"
+        "dependency_invalidation_requirement": "需在 canonical 控制面使 ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001 之 done 依賴完成語意失效，防止下游 closeout 任務在缺乏 Human/Ops 權威裁決時誤判前置依賴已滿足。",
+        "impact_description": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001 驗收明定 20 項逐一有 VERIFIED 或有效 formal nonimplementation disposition 且無 OPEN／BLOCKED_BY_EVIDENCE。ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001 的 Human/Ops disposition 缺口必須實質保留，不能以歷史 merge 或下游測試回填。"
       }
     },
     {
       "task_id": "ODP-MODELREADY-QUALITY-NULLABLE-001",
       "finding_code": "P2_PRODUCTION_ENTRY_NEGATIVE_TEST_APPLICABILITY_GAP",
       "severity": "P2",
-      "status": "finding_acknowledged_and_corrected",
+      "status": "finding_acknowledged_canonical_blocker_open",
       "git_evidence": {
         "repository": "alfloop-dev/odayplus",
         "pr_number": 1168,
@@ -97,20 +107,29 @@
         "summary": "原驗收 A4（task_evidence_inventory.json:10150-10179）要求植入缺值 production-entry 測試與兩筆 exemption 移除在同一 commit。盤點引用 modules/learninghub/tests/test_learninghub_production_runtime.py，但實查 head a2a8d9c235e8 的該檔案，_rows 均提供正向 quality=.98/confidence=.95，無缺值負向案例；實作 commit 38a58161b4c7 未改該檔。新增負向測試實位於 tests/data/test_pit_snapshot.py:313-378（直接呼叫 domain builder），被引用的 HTTP/runtime 測試未植入缺值。",
         "violation": "A4 存在證據適用性缺口，不能以 green CI 取代 exact-head production-entry 適用性驗證，不能在無缺口下評定為 reconstructable_done。"
       },
-      "corrected_truth": {
-        "completion_claim_valid": false,
-        "completion_claim_revocation": "正式撤銷無缺口 done/completed 聲明，保留 acceptance 缺口。",
-        "true_status": "blocked",
-        "true_evidence_tier": "merge_verified",
-        "true_waiting_for": "Human/Ops",
-        "true_gaps": [
-          "acceptance_gap_production_entry_test_unverified"
-        ],
-        "corrected_attestation_status": {
-          "acceptance": "withheld (criterion A4 production-entry test applicability gap)",
-          "approval": "verified (task-review-gate success by Antigravity5)",
-          "ci": "verified (7/7 success at head a2a8d9c235e88820572b30700d5f5cc9b31bb0af)",
-          "runtime": "verified (merge commit verified on dev ref)"
+      "disposition_truth_and_canonical_state": {
+        "completion_claim_validity": "invalid_overclaim",
+        "canonical_archive_state_on_disk": {
+          "status": "done",
+          "terminal_outcome": "completed",
+          "evidence_tier": "reconstructable_done",
+          "gaps": [],
+          "note": "磁碟 snapshot 尚未變更，仍維持 apply 寫入之 done/completed。"
+        },
+        "live_dependency_resolution_status": "satisfied_in_runtime_via_task_archive_py",
+        "documented_true_disposition_requirement": {
+          "required_status": "blocked",
+          "required_evidence_tier": "merge_verified",
+          "required_waiting_for": "Human/Ops",
+          "required_gaps": [
+            "acceptance_gap_production_entry_test_unverified"
+          ],
+          "corrected_attestation_status": {
+            "acceptance": "withheld (criterion A4 production-entry test applicability gap)",
+            "approval": "verified (task-review-gate success by Antigravity5)",
+            "ci": "verified (7/7 success at head a2a8d9c235e88820572b30700d5f5cc9b31bb0af)",
+            "runtime": "verified (merge commit verified on dev ref)"
+          }
         }
       },
       "downstream_impact": {
@@ -119,7 +138,8 @@
         "dependent_phase": "ODP Remediation · W3 Atomic Cutover",
         "dependent_owner": "Claude",
         "dependent_reviewer": "Codex",
-        "impact_description": "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001 驗收明定六個 production-shaped 缺值測試證明 abstain／mark／reject 且六筆 exemptions 同 commit 歸零。此缺口正當要求下游 cutover 任務必須在 W3 切換時補齊 ModelReadyRecord production-shaped 缺值測試，不得遺漏。"
+        "dependency_invalidation_requirement": "需在 canonical 控制面使 ODP-MODELREADY-QUALITY-NULLABLE-001 之 done 依賴完成語意失效，確保下游 cutover 任務明確承接 ModelReadyRecord 缺值測試缺口。",
+        "impact_description": "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001 驗收明定六個 production-shaped 缺值測試證明 abstain／mark／reject 且六筆 exemptions 同 commit 歸零。歷史 acceptance 缺口不能以未來下游測試反向消除，下游 cutover 任務必須在 W3 切換時補齊 ModelReadyRecord production-shaped 缺值測試。"
       }
     }
   ]
