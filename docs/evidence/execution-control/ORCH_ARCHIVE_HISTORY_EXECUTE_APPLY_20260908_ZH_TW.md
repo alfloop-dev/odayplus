@@ -165,7 +165,7 @@ canonical checkpoint：`/home/lupin/odayplus/.orchestrator/recovery-receipts/his
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/RECOVERY_APPLY_CHECKPOINT_20260907.json` | `c7c003d9c2000c78a1515d352b4462972635be582e85d76043079e7012fc2ad9` | RECOVERY_APPLY_CHECKPOINT_20260907.json |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/after-apply.json` | `ad69bef2d23657d99117f836cf25f95d4a320462e39ce44708510a437f005350` | **維護窗口 Invalidation 後 TaskResolver 讀回** |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/after-readback-command.json` | `7321b3dca8b64a6b3720cb19e504ca3c2a394e5ea83b983acbc69c63748bcb8e` | **Invalidation 後讀回命令收據** |
-| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/apply_window.py` | `e79fab35c00b0a2a44c028b71cbfefeef29a379f4773d974dbb6e2e649da0e55` | **維護窗口 Invalidation 自動化執行腳本** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/apply_window.py` | `b50487b738272d62c8f80f0f30c5a8d0c18f30bf775e5ca5b5194928d842ee2f` | **維護窗口 Invalidation 自動化執行腳本** |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/archive_readback_20260908_post_apply.json` | `cc252dd693eec6f5a8a1e67e54756b7e00a1c880ac3f4e43e37c3491217fa4aa` | archive_readback_20260908_post_apply.json |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/archive_readback_20260909_post_findings.json` | `773a32b494434113cdaa42b3942b0e2cfb6e78b92f1014a62627cc9904ed7a4e` | archive_readback_20260909_post_findings.json |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/archive_snapshots_untouched_20260907_close.json` | `8389552aabbb0c4671aa718d53653d2b47dd6c772ef556c1a13dbf7100ba6b09` | archive_snapshots_untouched_20260907_close.json |
@@ -187,7 +187,7 @@ canonical checkpoint：`/home/lupin/odayplus/.orchestrator/recovery-receipts/his
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/dry-run-2.json` | `99a5c27f6fa55fe5aa880ba085f04f6f53fcac307c101acdb98342e54e67dee6` | **Invalidation Dry Run 2 收據** |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/history-closeout-metadata.json` | `d770514360743574e7f2993898384f974fbd1a48c191dfad523ca837f79f2fb2` | **歷史收尾指派 Metadata** |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/history-closeout-reopen.json` | `63b4688c8eef367ca78d1c1b6048d92293fa819c713a42ce56812223bb24beae` | **歷史收尾 Reopen 狀態收據** |
-| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/live-evidence-manifest.json` | `9cfa3829230a65412e7cf45dafbea5dff09a1fe3d7a4115283e4b52885ed8dc8` | **Live Invalidation 證據清單** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/live-evidence-manifest.json` | `1f8409f41862056030e244bd9a773977dd0620b54a7b7b979a7308b95228b3a1` | **Live Invalidation 證據清單** |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/maintenance-window.json` | `fe681d1b81dc704c626c5b6cbe1ed3a1d60f127e6f9f3aeb8b4144db2a848d14` | **2026-09-09 Invalidation 維護窗口記錄** |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/maintenance_hold_20260908_applied.json` | `e88435aecada1b7b84f4811c3144a54afdb9e428299430e6f6766d4b1ec60348` | 原始 Apply hold 副本（bytes 不動） |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/maintenance_hold_template_NOT_A_HOLD.json` | `459940b255b0e85ebaff4468010afee666a87eaa9462a1218363f1c896e83f0f` | maintenance_hold_template_NOT_A_HOLD.json |
@@ -199,7 +199,7 @@ canonical checkpoint：`/home/lupin/odayplus/.orchestrator/recovery-receipts/his
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/preadmission_check_20260907.json` | `dc48073589b0ad99d7b9a42498107a02ca53ff0d8d9f8f9117c3bfcdd449a05a` | preadmission_check_20260907.json |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/priority_two_local_recheck_20260907.txt` | `dd2de6c573553bfa05808b7bba0d43e8259b1a74eeafbf562275844e5ea10813` | priority_two_local_recheck_20260907.txt |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/priority_two_reverification_20260907.txt` | `8315265533fdfe855ee46d1c5b9d61393823a2459b864cd2065158e561ec9630` | priority_two_reverification_20260907.txt |
-| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/readback.py` | `99ed1d2c328d4867220ca4ab7bde9e83d9317e2ccb6ee26e4653eaccc7161041` | **維護窗口 TaskResolver 讀回探針指令碼** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/readback.py` | `e6a1aea78a3a544fd97ec1e689f8c063dd53e0c061bc2aaf456712e0ddf98507` | **維護窗口 TaskResolver 讀回探針指令碼** |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_apply_checkpoint_20260908T235531Z.json` | `cee66fee0de0fd9ed39d1d7ed8abc9a176b3cc96065f2004cc7efe02a2de8f40` | 原始 Apply checkpoint 副本（bytes 不動） |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_apply_receipt_20260908.json` | `1f50ed25765d18c4f6a4815335a5d6c1c29af646534124ecd185141b156755fd` | 2026-09-08 Apply 執行收據 |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_batch_20260907_scenarioA_as_documented.json` | `3c7f5928db956bb6fd49840a09ab9e27de85fa5f550b15773327ec1988ab71c5` | recovery_batch_20260907_scenarioA_as_documented.json |

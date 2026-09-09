@@ -7,7 +7,7 @@ import os
 import signal
 import subprocess
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path('/home/lupin/odayplus')
@@ -19,7 +19,7 @@ ENV = {**os.environ, 'AI_NAME': 'Codex', 'PANTHEON_STATUS_ROOT': str(ROOT),
 
 
 def now():
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def sha(path):
