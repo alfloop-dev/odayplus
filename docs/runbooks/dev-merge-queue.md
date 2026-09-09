@@ -68,7 +68,15 @@ contexts have to report against it:
 
 * `orchestrator`, `product`, `product-e2e-gate` — `.github/workflows/ci.yml`
   carries a `merge_group: [checks_requested]` trigger and none of these jobs
-  are gated on the event type.
+  are gated on the event type, so all three are eligible on a merge group.
+  `product` and `product-e2e-gate` are, however, skipped when `change-scope`
+  classifies the whole change as `development_tooling` (`ci.yml:145`,
+  `ci.yml:337`); GitHub counts a skipped required job as satisfied. That skip
+  predates the queue and is bounded by `config/change-review-scopes.json` —
+  note that `.github/workflows/` is itself a tooling prefix, so a
+  workflow-only change is covered by `orchestrator` but not by
+  `tests/contract`. `orchestrator` and `change-scope` carry no condition and
+  always run.
 * `task-review-gate` — normally stamped by the assigned reviewer onto the PR
   head. `.github/workflows/merge-queue-review-gate.yml` re-asserts it on the
   group SHA, and stamps *failure* when the admitted PR does not already carry a
