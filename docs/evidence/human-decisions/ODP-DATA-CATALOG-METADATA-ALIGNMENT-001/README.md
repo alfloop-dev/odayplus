@@ -2,7 +2,8 @@
 
 - **Task ID**: `ODP-DATA-CATALOG-METADATA-ALIGNMENT-001`
 - **Work Package**: WP-34 Follow-up ([ODP 人工決策落地規畫](../../../plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md) §6 WP-34; [ODP-CDC-SOURCE-CONTRACT-PREP-001 Implementation Handoff](../ODP-CDC-SOURCE-CONTRACT-PREP-001/implementation-handoff.md) §4 跟進項目 3)
-- **負責人 (Owner)**: Antigravity5
+- **實作交付 (Implementation by)**: Antigravity5（commit `adc8d96a`、`a038e308`）
+- **現任負責人 (Current Owner)**: Claude2 — 原 owner Antigravity5 於 2026-09-09T03:15:35Z 因 dispatch-paused 由 orchestrator 自動改派，Claude2 接手驗證與收尾送審，未重寫其實作
 - **審查人 (Reviewer)**: Codex2
 - **交付狀態**: `IMPLEMENTATION_COMPLETED`
 - **日期**: 2026-09-09
@@ -84,7 +85,7 @@
 | **4. 因會寫 source_contracts/index，等 store-opening schema 任務合併後接續** | 確認已以最新 `dev`（含 `ODP-SCHEMA-STORE-OPENING-AUTHORITY-001`）為基準，`store_opening_authority_snapshot` 完整保留並附帶 catalog 中繼資料。 |
 | **5. 沿最新 dev 乾淨 task worktree 與既有流程交付** | 使用 `task_start.sh`、`worker_commit.py`、`task_finalize.sh` 進行交付。 |
 | **6. 接續已定案決策的工程工作，不以重寫規畫或交接文件替代程式交付** | 完成實質 Python dataclass、JSON schema、index registry 與完整 pytest 測試套件。 |
-| **7. 使用既有 canonical writer 記錄 lifecycle，不手改 ai-status** | 嚴格透過 `AI_NAME=Antigravity5 "$PANTHEON_STATUS_ROOT/scripts/ai-status.sh"` 與 toolchain 操作。 |
+| **7. 使用既有 canonical writer 記錄 lifecycle，不手改 ai-status** | 嚴格透過 canonical writer `"$PANTHEON_STATUS_ROOT/scripts/ai-status.sh"` 與既有 toolchain 操作：實作階段以 `AI_NAME=Antigravity5`，改派後之驗證與送審以 `AI_NAME=Claude2`。未手改 `ai-status.json`／archive，未冒稱 Human/Ops 簽署。 |
 | **8. 測試使用合成或已在 repo 的 fixture 並明示範圍** | 測試純屬離線合約與單元驗證，不宣稱真實資料已提供或 live 能力已驗證。 |
 | **9. 不啟用外部來源、不讀取秘密、不連線 production、保存原始 exit code** | 所有驗證指令均本地執行，保存 exact head SHA 與真實 exit code。 |
 
@@ -97,7 +98,33 @@
 2. `uv run pytest tests/contract/test_source_contract_metadata.py tests/contract/test_ingestion_contracts.py -q`
 
 ### 執行收據：
-- `git diff --check`: Exit code 0 (乾淨無 whitespace/conflict 標記)
-- `uv run pytest tests/contract/test_source_contract_metadata.py tests/contract/test_ingestion_contracts.py -q`:
-  - 166 passed in ~0.6s
-  - Exit code 0
+
+量測 head SHA：`a038e30854dcc0b98c6744e8090856158b6de761`（本收據所綁定之 exact head）
+
+| 指令 | Exit code | 結果 |
+|---|---|---|
+| `git diff --check` | 0 | 乾淨，無 whitespace／conflict 標記 |
+| `uv run --frozen pytest tests/contract/test_source_contract_metadata.py tests/contract/test_ingestion_contracts.py -q` | 0 | 165 passed（165 collected，全數 `.`，無 F/E/s） |
+
+補充說明（量測方式與已修正的先前誤記）：
+- 先前版本收據記為「166 passed」，與實際不符。以 `pytest --collect-only` 量得本 selection 為 **165 tests collected**，執行輸出亦為 165 個 `.`，故正確數字為 **165 passed**。
+- `pyproject.toml` 已設定 `addopts = "-q"`，宣告指令再帶 `-q` 會疊加成 `-qq`，因而**不會**輸出 `N passed in Xs` 摘要行。本收據的通過判定依據為背景 job handle 回報之 **exit code 0**，測試數量另以 `--collect-only` 與輸出的 `.` 計數佐證，並非依賴摘要行。
+- 因無摘要行，先前記載之 `~0.6s` 執行時間無可靠來源，故不再宣稱具體耗時，記為 unknown。
+- 以 `uv run --frozen` 執行；直接使用裸 `python3 -m pytest` 在本環境無法重現。
+
+### 補充回歸檢查（非宣告指令，接手後自行加驗）
+
+宣告的兩個測試檔未涵蓋其他 `SourceContract` / `source_contracts` 消費端。為確認本次 loader 與 registry 變更未造成回歸，於同一 head `a038e308` 另跑一次相鄰消費端 selection：
+
+```
+uv run --frozen pytest tests/integration/test_int001_cdc_disposition.py \
+  tests/integration/test_external_provider_registry.py \
+  tests/architecture/test_external_data_boundary.py \
+  tests/contract/test_oday_data_contract_pin.py \
+  tests/contract/test_oday_data_product_contract_pin.py \
+  apps/data_platform/tests/test_mapping.py \
+  apps/data_platform/tests/test_pipeline.py
+```
+
+- Exit code 0，`234 passed in 77.69s`。
+- 範圍聲明：以上皆為離線契約／單元／架構測試，使用 repo 既有 fixture 與合成資料。**不代表**真實上游資料已提供、CDC 串流已建置，或任何 live 執行能力已驗證；`machine_status_event` 的 `runtime_capability` 仍如實記為 `batch_watermark_only`。
