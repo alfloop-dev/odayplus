@@ -1,0 +1,16 @@
+{
+  "type": "task_history_recovery_maintenance_hold",
+  "hold_id": "odp-history-recovery-20260908T235531Z",
+  "declared_by": "Codex",
+  "declared_at": "2026-09-08T23:55:31Z",
+  "expires_at": "2026-09-09T01:55:31Z",
+  "scope": "受控 task-history recovery batch 1833ca8656ae30efc34d6ade6437ba850c5a53f9fcda67bb1cd4f7c8c70b34fe；Supervisor 已停止、worker drained、其他 writer 已核對不存在",
+  "dispatch_paused": true,
+  "batch_sha256": "1833ca8656ae30efc34d6ade6437ba850c5a53f9fcda67bb1cd4f7c8c70b34fe",
+  "batch_approval": {
+    "reviewer": "Codex",
+    "approved_batch_sha256": "1833ca8656ae30efc34d6ade6437ba850c5a53f9fcda67bb1cd4f7c8c70b34fe",
+    "approved_at": "2026-09-08T23:55:31Z",
+    "source": "Codex readback 2026-09-08T23:55:31Z; user-authorized maintenance window; existing planner output and current baseline"
+  }
+}

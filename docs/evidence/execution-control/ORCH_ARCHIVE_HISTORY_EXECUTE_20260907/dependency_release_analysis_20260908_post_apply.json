@@ -1,0 +1,1343 @@
+{
+  "measured_at": "2026-09-09T00:14:59Z",
+  "purpose": "量出「這次 apply 對派工的實際解除效果」。BEFORE 與 AFTER 跑在同一份凍結的 board 快照上，唯一差異就是 apply 產出的兩件事：23 筆重建 archive snapshot 與 15 筆 blocked 佔位 board row。這是反事實 A/B，不是兩個時間點的比較——live board 在量測期間持續變動（實測 8 分鐘內 tasks 由 40 變 49），兩個時間點直接相減會把別的 worker 的進度算進來。",
+  "method": {
+    "code_checkout": "/home/lupin/oday-plus-supervisor-runtime-current",
+    "code_checkout_resolves_to": "/home/lupin/oday-plus-supervisor-runtime-ef76cf6d295c",
+    "probe_script": "docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/dependency_release_probe_20260908.py.txt",
+    "probe_script_sha256": "5d25f108655d196fa8350d24914448d9a38b7fef67962fe3e51edf3fe412e7de",
+    "frozen_board_sha256": "e1717107627da9e49fa11ea5944ab5d985514e965f1b1655a26edf04971c477c",
+    "frozen_board_revision": "3c88ece701c443078c199d94a90dbeae",
+    "dispatchable_predicate": "supervisor.canonical_dispatchable_task_ids()，即 Dispatcher 自己的 owner-execution 判定（dispatch_priority_for_task 回傳 2 或 3）；不是另寫一套資格規則。",
+    "dependencies_satisfied_predicate": "supervisor.dependencies_satisfied(task, task_map, {\"done\"})，僅列有宣告 depends_on 的任務。",
+    "BEFORE_construction": "PANTHEON_STATUS_ROOT/ORCH_STATUS_ROOT 指向 /tmp 下只含 38 筆既有 snapshot 的 archive 複本（23 筆重建記錄被移除），並從凍結 board 移除 15 筆佔位 row。",
+    "AFTER_construction": "PANTHEON_STATUS_ROOT/ORCH_STATUS_ROOT 指向 live /home/lupin/odayplus（61 筆 snapshot、43 筆 board rows）；只讀不寫。"
+  },
+  "scenarios": {
+    "BEFORE_recovery_absent": {
+      "inputs": {
+        "status_root": "/tmp/orch-exec-003-probe/before-root",
+        "archive_tasks_dir": "/tmp/orch-exec-003-probe/before-root/ai-task-archive/tasks",
+        "archive_snapshot_count": 38,
+        "reconstructed_snapshots_visible": [],
+        "board_path": "/tmp/orch-exec-003-probe/board_frozen.json",
+        "board_sha256": "e1717107627da9e49fa11ea5944ab5d985514e965f1b1655a26edf04971c477c",
+        "board_revision": "3c88ece701c443078c199d94a90dbeae",
+        "board_active_tasks": 28,
+        "recovery_placeholders_on_board": [],
+        "code_checkout": "/home/lupin/oday-plus-supervisor-runtime-current",
+        "dependency_done_statuses": [
+          "done"
+        ]
+      },
+      "dispatchable_ids": [
+        "ODP-DATA-PLANE-DELETE-PROPAGATION-001",
+        "ODP-HUMAN-DECISIONS-HANDBACK-INTEGRATION-001",
+        "ODP-JOB-DELIVERY-STATE-CLEAR-001",
+        "ODP-OSS-POLICY-NOTICE-IMPLEMENTATION-001",
+        "ODP-SCHEMA-STORE-OPENING-AUTHORITY-001",
+        "ORCH-ARCHIVE-HISTORY-EXECUTE-003"
+      ],
+      "dispatchable_count": 6,
+      "dependencies_satisfied_true": [
+        "ODP-DATA-PLANE-DELETE-PROPAGATION-001",
+        "ODP-HUMAN-DECISIONS-HANDBACK-INTEGRATION-001",
+        "ODP-JOB-DELIVERY-STATE-CLEAR-001",
+        "ODP-OSS-POLICY-NOTICE-IMPLEMENTATION-001",
+        "ODP-SCHEMA-STORE-OPENING-AUTHORITY-001",
+        "ORCH-ARCHIVE-HISTORY-EXECUTE-003"
+      ],
+      "blocked_auto_recovery_eligible_true": []
+    },
+    "AFTER_recovery_applied": {
+      "inputs": {
+        "status_root": "/home/lupin/odayplus",
+        "archive_tasks_dir": "/home/lupin/odayplus/ai-task-archive/tasks",
+        "archive_snapshot_count": 61,
+        "reconstructed_snapshots_visible": [
+          "ODP-AVM-DEPRECIATION-CONTRACT-001",
+          "ODP-CANONICAL-LEGACY-LINEAGE-001",
+          "ODP-DRIFT-DEP-REMOVE-002",
+          "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+          "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+          "ODP-INT-MANUAL-CORRECTION-AUDIT-001",
+          "ODP-LH-PREDICTION-DRIFT-001",
+          "ODP-LH003-BACKTEST-RELEASE-GATE-001",
+          "ODP-MEASUREMENT-CROSSLAYER-GATE-001",
+          "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+          "ODP-MODELREADY-QUALITY-NULLABLE-001",
+          "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+          "ODP-OPS002-DECISION-COMMENTS-001",
+          "ODP-PRICE006-BANDIT-GATED-001",
+          "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+          "ODP-RELEASE-GATE-FIXTURE-STAGING-002",
+          "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+          "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
+          "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+          "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+          "ODP-SITESCORE-QUALITY-NULLABLE-001",
+          "ODP-SPEC-SOURCE-PROVENANCE-001",
+          "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001"
+        ],
+        "board_path": "/tmp/orch-exec-003-probe/board_frozen.json",
+        "board_sha256": "e1717107627da9e49fa11ea5944ab5d985514e965f1b1655a26edf04971c477c",
+        "board_revision": "3c88ece701c443078c199d94a90dbeae",
+        "board_active_tasks": 43,
+        "recovery_placeholders_on_board": [
+          "DPF-EMGI-LIVE-ROLLOUT-001",
+          "ODP-DEV-ROLLOUT-001",
+          "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+          "ODP-EPHEMERAL-STAGING-IAC-001",
+          "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+          "ODP-INT001-CDC-DISPOSITION-001",
+          "ODP-JOB-PARTIAL-DISPOSITION-001",
+          "ODP-NET002-LEASE-DISPOSITION-001",
+          "ODP-ROLE-PROVIDER-CODEX-REVIEW-001",
+          "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+          "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+          "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+          "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
+          "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+          "XR-EXT-OSS-FINAL-AUDIT-001"
+        ],
+        "code_checkout": "/home/lupin/oday-plus-supervisor-runtime-current",
+        "dependency_done_statuses": [
+          "done"
+        ]
+      },
+      "dispatchable_ids": [
+        "ODP-DATA-PLANE-DELETE-PROPAGATION-001",
+        "ODP-HUMAN-DECISIONS-HANDBACK-INTEGRATION-001",
+        "ODP-JOB-DELIVERY-STATE-CLEAR-001",
+        "ODP-OSS-POLICY-NOTICE-IMPLEMENTATION-001",
+        "ODP-SCHEMA-STORE-OPENING-AUTHORITY-001",
+        "ORCH-ARCHIVE-HISTORY-EXECUTE-003"
+      ],
+      "dispatchable_count": 6,
+      "dependencies_satisfied_true": [
+        "ODP-AVM-QUALITY-NULLABLE-001",
+        "ODP-DATA-PLANE-DELETE-PROPAGATION-001",
+        "ODP-HUMAN-DECISIONS-HANDBACK-INTEGRATION-001",
+        "ODP-JOB-DELIVERY-STATE-CLEAR-001",
+        "ODP-OSS-POLICY-NOTICE-IMPLEMENTATION-001",
+        "ODP-SCHEMA-STORE-OPENING-AUTHORITY-001",
+        "ORCH-ARCHIVE-HISTORY-EXECUTE-003"
+      ],
+      "blocked_auto_recovery_eligible_true": []
+    }
+  },
+  "delta": {
+    "newly_dispatchable": [],
+    "newly_dispatchable_count": 0,
+    "lost_dispatchable": [],
+    "newly_dependencies_satisfied": [
+      "ODP-AVM-QUALITY-NULLABLE-001"
+    ],
+    "lost_dependencies_satisfied": [],
+    "newly_blocked_auto_recovery_eligible": []
+  },
+  "interpretation": {
+    "newly_dispatchable_is_zero": "本次 apply 沒有讓任何任務新變成可派送。原因不是回填無效，而是 2026-09-07 預測會被解除的那一筆（ODP-DRIFT-SECURITY-VERIFY-003）在 apply 之前就已用別的路徑處理完：2026-09-08T00:52:15Z Codex 以 dependency_update 把懸空的 ODP-DRIFT-DEP-REMOVE-002 邊移除（依當時 live 查核 PR #1222 已合併），該任務接著於 2026-09-08T04:55:07Z 以 PR #1241 收尾 done 並進 archive。",
+    "the_one_real_release": "ODP-AVM-QUALITY-NULLABLE-001 的依賴閘確實被解開：其唯一依賴 ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001 在 BEFORE 是 status=missing／satisfies=false，AFTER 由 archive 解析為 status=done／satisfies=true。但該任務仍是 blocked 且 waiting_for=Human/Ops（review_reopen_count=11），所以它沒有、也不應該變成可派送。",
+    "no_regression": "lost_dispatchable 與 lost_dependencies_satisfied 皆為空：15 筆 blocked 佔位沒有把任何原本可派送的任務關掉。",
+    "auto_recovery_untouched": "blocked_task_auto_recovery_eligible 在 BEFORE 與 AFTER 都是空集合。AVM 沒有被自動喚醒，因為 task_is_human_gate() 對 waiting_for=Human/Ops 直接回 False——歷史修復不會、也沒有把 Human-only 的 continuation 閘一併解除。"
+  },
+  "dependency_detail": {
+    "BEFORE": {
+      "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001": {
+        "status": "blocked",
+        "depends_on": [
+          "DPF-EMGI-LIVE-ROLLOUT-001",
+          "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001"
+        ],
+        "dependency_states": {
+          "DPF-EMGI-LIVE-ROLLOUT-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "HUMAN-OSS-LEGAL-APPROVAL-001": {
+        "status": "todo",
+        "depends_on": [
+          "XR-EXT-OSS-FINAL-AUDIT-001"
+        ],
+        "dependency_states": {
+          "XR-EXT-OSS-FINAL-AUDIT-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "ODP-AVM-DEPRECIATION-INTEGRATION-001": {
+        "status": "todo",
+        "depends_on": [
+          "ODP-AVM-QUALITY-NULLABLE-001",
+          "ODP-AVM-DEPRECIATION-CONTRACT-001"
+        ],
+        "dependency_states": {
+          "ODP-AVM-QUALITY-NULLABLE-001": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          },
+          "ODP-AVM-DEPRECIATION-CONTRACT-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "ODP-AVM-QUALITY-NULLABLE-001": {
+        "status": "blocked",
+        "depends_on": [
+          "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001"
+        ],
+        "dependency_states": {
+          "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001": {
+        "status": "todo",
+        "depends_on": [
+          "ODP-SPEC-SOURCE-PROVENANCE-001",
+          "ODP-MEASUREMENT-CROSSLAYER-GATE-001",
+          "ODP-CANONICAL-LEGACY-LINEAGE-001",
+          "ODP-AVM-DEPRECIATION-INTEGRATION-001",
+          "ODP-SITESCORE-QUALITY-NULLABLE-001",
+          "ODP-MODELREADY-QUALITY-NULLABLE-001",
+          "ODP-INT-MANUAL-CORRECTION-AUDIT-001"
+        ],
+        "dependency_states": {
+          "ODP-SPEC-SOURCE-PROVENANCE-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-MEASUREMENT-CROSSLAYER-GATE-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-CANONICAL-LEGACY-LINEAGE-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-AVM-DEPRECIATION-INTEGRATION-001": {
+            "status": "todo",
+            "source": "active",
+            "satisfies": false
+          },
+          "ODP-SITESCORE-QUALITY-NULLABLE-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-MODELREADY-QUALITY-NULLABLE-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-INT-MANUAL-CORRECTION-AUDIT-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "ODP-DATA-CATALOG-METADATA-ALIGNMENT-001": {
+        "status": "todo",
+        "depends_on": [
+          "ODP-CDC-SOURCE-CONTRACT-PREP-001",
+          "ODP-SCHEMA-STORE-OPENING-AUTHORITY-001"
+        ],
+        "dependency_states": {
+          "ODP-CDC-SOURCE-CONTRACT-PREP-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-SCHEMA-STORE-OPENING-AUTHORITY-001": {
+            "status": "todo",
+            "source": "active",
+            "satisfies": false
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "ODP-DATA-PLANE-DELETE-PROPAGATION-001": {
+        "status": "in_progress",
+        "depends_on": [
+          "ODP-CDC-SOURCE-CONTRACT-PREP-001"
+        ],
+        "dependency_states": {
+          "ODP-CDC-SOURCE-CONTRACT-PREP-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          }
+        },
+        "dependencies_satisfied": true
+      },
+      "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002": {
+        "status": "blocked",
+        "depends_on": [
+          "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+          "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
+          "ODP-RELEASE-GATE-FIXTURE-STAGING-002"
+        ],
+        "dependency_states": {
+          "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-RELEASE-GATE-FIXTURE-STAGING-002": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001": {
+        "status": "blocked",
+        "depends_on": [
+          "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+          "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+          "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+          "DPF-EMGI-LIVE-ROLLOUT-001",
+          "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+          "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+          "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+          "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+          "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+          "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
+        ],
+        "dependency_states": {
+          "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-RUNTIME-RELEASE-SINGLE-PATH-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "DPF-EMGI-LIVE-ROLLOUT-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-DEV-STAGED-GATE-RECONCILIATION-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          },
+          "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "ODP-EPHEMERAL-STAGING-ROLLOUT-001": {
+        "status": "blocked",
+        "depends_on": [
+          "ODP-EPHEMERAL-STAGING-IAC-001",
+          "ODP-DEV-ROLLOUT-001",
+          "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+          "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001"
+        ],
+        "dependency_states": {
+          "ODP-EPHEMERAL-STAGING-IAC-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-DEV-ROLLOUT-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          },
+          "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "ODP-HUMAN-DECISIONS-HANDBACK-INTEGRATION-001": {
+        "status": "todo",
+        "depends_on": [
+          "ODP-OSS-DECISION-PACK-001",
+          "ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001",
+          "ODP-BRAND-TRANSFER-CONTRACT-PREP-001",
+          "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001",
+          "ODP-NET002-LEASE-CONTRACT-PREP-001",
+          "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001",
+          "ODP-CDC-SOURCE-CONTRACT-PREP-001",
+          "ODP-MERGE-QUEUE-BATCH-DESIGN-001"
+        ],
+        "dependency_states": {
+          "ODP-OSS-DECISION-PACK-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-BRAND-TRANSFER-CONTRACT-PREP-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-NET002-LEASE-CONTRACT-PREP-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-CDC-SOURCE-CONTRACT-PREP-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-MERGE-QUEUE-BATCH-DESIGN-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          }
+        },
+        "dependencies_satisfied": true
+      },
+      "ODP-INTV006-ADJUST-WORKFLOW-001": {
+        "status": "todo",
+        "depends_on": [
+          "ODP-AVM-QUALITY-NULLABLE-001"
+        ],
+        "dependency_states": {
+          "ODP-AVM-QUALITY-NULLABLE-001": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "ODP-JOB-DELIVERY-STATE-CLEAR-001": {
+        "status": "todo",
+        "depends_on": [
+          "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001"
+        ],
+        "dependency_states": {
+          "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          }
+        },
+        "dependencies_satisfied": true
+      },
+      "ODP-NFR-RUNTIME-EVIDENCE-001": {
+        "status": "todo",
+        "depends_on": [
+          "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001"
+        ],
+        "dependency_states": {
+          "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "ODP-OSS-POLICY-NOTICE-IMPLEMENTATION-001": {
+        "status": "in_progress",
+        "depends_on": [
+          "ODP-OSS-DECISION-PACK-001"
+        ],
+        "dependency_states": {
+          "ODP-OSS-DECISION-PACK-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          }
+        },
+        "dependencies_satisfied": true
+      },
+      "ODP-POSTDEPLOY-WATCH-CLOSEOUT-001": {
+        "status": "todo",
+        "depends_on": [
+          "ODP-PROD-BLUEGREEN-ROLLOUT-001"
+        ],
+        "dependency_states": {
+          "ODP-PROD-BLUEGREEN-ROLLOUT-001": {
+            "status": "todo",
+            "source": "active",
+            "satisfies": false
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "ODP-PROD-BLUEGREEN-ROLLOUT-001": {
+        "status": "todo",
+        "depends_on": [
+          "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+          "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001"
+        ],
+        "dependency_states": {
+          "ODP-EPHEMERAL-STAGING-ROLLOUT-001": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          },
+          "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "ODP-ROLE-PROVIDER-CODEX-LIVE-ROLLOUT-001": {
+        "status": "in_progress",
+        "depends_on": [
+          "ODP-ROLE-PROVIDER-CODEX-REVIEW-001"
+        ],
+        "dependency_states": {
+          "ODP-ROLE-PROVIDER-CODEX-REVIEW-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "ODP-SCHEMA-STORE-OPENING-AUTHORITY-001": {
+        "status": "todo",
+        "depends_on": [
+          "ODP-CDC-SOURCE-CONTRACT-PREP-001"
+        ],
+        "dependency_states": {
+          "ODP-CDC-SOURCE-CONTRACT-PREP-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          }
+        },
+        "dependencies_satisfied": true
+      },
+      "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001": {
+        "status": "todo",
+        "depends_on": [
+          "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+          "ODP-SPEC-SOURCE-PROVENANCE-001",
+          "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+          "ODP-LH-PREDICTION-DRIFT-001",
+          "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001",
+          "ODP-JOB-PARTIAL-DISPOSITION-001",
+          "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+          "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+          "ODP-NET002-LEASE-DISPOSITION-001",
+          "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+          "ODP-PRICE006-BANDIT-GATED-001",
+          "ODP-INT001-CDC-DISPOSITION-001",
+          "ODP-INTV006-ADJUST-WORKFLOW-001",
+          "ODP-LH003-BACKTEST-RELEASE-GATE-001",
+          "ODP-OPS002-DECISION-COMMENTS-001",
+          "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+          "ODP-NFR-RUNTIME-EVIDENCE-001"
+        ],
+        "dependency_states": {
+          "ODP-REQ-DISPOSITION-GOVERNANCE-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-SPEC-SOURCE-PROVENANCE-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001": {
+            "status": "todo",
+            "source": "active",
+            "satisfies": false
+          },
+          "ODP-LH-PREDICTION-DRIFT-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-JOB-PARTIAL-DISPOSITION-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-NETPLAN-DISCLOSURE-UI-E2E-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-NET002-LEASE-DISPOSITION-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-PRICE006-BANDIT-GATED-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-INT001-CDC-DISPOSITION-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-INTV006-ADJUST-WORKFLOW-001": {
+            "status": "todo",
+            "source": "active",
+            "satisfies": false
+          },
+          "ODP-LH003-BACKTEST-RELEASE-GATE-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-OPS002-DECISION-COMMENTS-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001": {
+            "status": "missing",
+            "source": null,
+            "satisfies": false
+          },
+          "ODP-NFR-RUNTIME-EVIDENCE-001": {
+            "status": "todo",
+            "source": "active",
+            "satisfies": false
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "ORCH-ARCHIVE-HISTORY-EXECUTE-003": {
+        "status": "in_progress",
+        "depends_on": [
+          "ORCH-ARCHIVE-HISTORY-RESTORE-002"
+        ],
+        "dependency_states": {
+          "ORCH-ARCHIVE-HISTORY-RESTORE-002": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          }
+        },
+        "dependencies_satisfied": true
+      },
+      "XR-SOURCE-APPROVAL-ACTIVATION-001": {
+        "status": "todo",
+        "depends_on": [
+          "HUMAN-OSS-LEGAL-APPROVAL-001"
+        ],
+        "dependency_states": {
+          "HUMAN-OSS-LEGAL-APPROVAL-001": {
+            "status": "todo",
+            "source": "active",
+            "satisfies": false
+          }
+        },
+        "dependencies_satisfied": false
+      }
+    },
+    "AFTER": {
+      "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001": {
+        "status": "blocked",
+        "depends_on": [
+          "DPF-EMGI-LIVE-ROLLOUT-001",
+          "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001"
+        ],
+        "dependency_states": {
+          "DPF-EMGI-LIVE-ROLLOUT-001": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          },
+          "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "HUMAN-OSS-LEGAL-APPROVAL-001": {
+        "status": "todo",
+        "depends_on": [
+          "XR-EXT-OSS-FINAL-AUDIT-001"
+        ],
+        "dependency_states": {
+          "XR-EXT-OSS-FINAL-AUDIT-001": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "ODP-AVM-DEPRECIATION-INTEGRATION-001": {
+        "status": "todo",
+        "depends_on": [
+          "ODP-AVM-QUALITY-NULLABLE-001",
+          "ODP-AVM-DEPRECIATION-CONTRACT-001"
+        ],
+        "dependency_states": {
+          "ODP-AVM-QUALITY-NULLABLE-001": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          },
+          "ODP-AVM-DEPRECIATION-CONTRACT-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "ODP-AVM-QUALITY-NULLABLE-001": {
+        "status": "blocked",
+        "depends_on": [
+          "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001"
+        ],
+        "dependency_states": {
+          "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          }
+        },
+        "dependencies_satisfied": true
+      },
+      "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001": {
+        "status": "todo",
+        "depends_on": [
+          "ODP-SPEC-SOURCE-PROVENANCE-001",
+          "ODP-MEASUREMENT-CROSSLAYER-GATE-001",
+          "ODP-CANONICAL-LEGACY-LINEAGE-001",
+          "ODP-AVM-DEPRECIATION-INTEGRATION-001",
+          "ODP-SITESCORE-QUALITY-NULLABLE-001",
+          "ODP-MODELREADY-QUALITY-NULLABLE-001",
+          "ODP-INT-MANUAL-CORRECTION-AUDIT-001"
+        ],
+        "dependency_states": {
+          "ODP-SPEC-SOURCE-PROVENANCE-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-MEASUREMENT-CROSSLAYER-GATE-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-CANONICAL-LEGACY-LINEAGE-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-AVM-DEPRECIATION-INTEGRATION-001": {
+            "status": "todo",
+            "source": "active",
+            "satisfies": false
+          },
+          "ODP-SITESCORE-QUALITY-NULLABLE-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-MODELREADY-QUALITY-NULLABLE-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-INT-MANUAL-CORRECTION-AUDIT-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "ODP-DATA-CATALOG-METADATA-ALIGNMENT-001": {
+        "status": "todo",
+        "depends_on": [
+          "ODP-CDC-SOURCE-CONTRACT-PREP-001",
+          "ODP-SCHEMA-STORE-OPENING-AUTHORITY-001"
+        ],
+        "dependency_states": {
+          "ODP-CDC-SOURCE-CONTRACT-PREP-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-SCHEMA-STORE-OPENING-AUTHORITY-001": {
+            "status": "todo",
+            "source": "active",
+            "satisfies": false
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "ODP-DATA-PLANE-DELETE-PROPAGATION-001": {
+        "status": "in_progress",
+        "depends_on": [
+          "ODP-CDC-SOURCE-CONTRACT-PREP-001"
+        ],
+        "dependency_states": {
+          "ODP-CDC-SOURCE-CONTRACT-PREP-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          }
+        },
+        "dependencies_satisfied": true
+      },
+      "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002": {
+        "status": "blocked",
+        "depends_on": [
+          "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+          "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
+          "ODP-RELEASE-GATE-FIXTURE-STAGING-002"
+        ],
+        "dependency_states": {
+          "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          },
+          "ODP-RELEASE-GATE-FIXTURE-STAGING-002": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001": {
+        "status": "blocked",
+        "depends_on": [
+          "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+          "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+          "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+          "DPF-EMGI-LIVE-ROLLOUT-001",
+          "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+          "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+          "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+          "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+          "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+          "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
+        ],
+        "dependency_states": {
+          "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-RUNTIME-RELEASE-SINGLE-PATH-001": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          },
+          "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          },
+          "DPF-EMGI-LIVE-ROLLOUT-001": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          },
+          "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          },
+          "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-DEV-STAGED-GATE-RECONCILIATION-001": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          },
+          "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          },
+          "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "ODP-EPHEMERAL-STAGING-ROLLOUT-001": {
+        "status": "blocked",
+        "depends_on": [
+          "ODP-EPHEMERAL-STAGING-IAC-001",
+          "ODP-DEV-ROLLOUT-001",
+          "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+          "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001"
+        ],
+        "dependency_states": {
+          "ODP-EPHEMERAL-STAGING-IAC-001": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          },
+          "ODP-DEV-ROLLOUT-001": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          },
+          "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          },
+          "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          },
+          "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "ODP-HUMAN-DECISIONS-HANDBACK-INTEGRATION-001": {
+        "status": "todo",
+        "depends_on": [
+          "ODP-OSS-DECISION-PACK-001",
+          "ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001",
+          "ODP-BRAND-TRANSFER-CONTRACT-PREP-001",
+          "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001",
+          "ODP-NET002-LEASE-CONTRACT-PREP-001",
+          "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001",
+          "ODP-CDC-SOURCE-CONTRACT-PREP-001",
+          "ODP-MERGE-QUEUE-BATCH-DESIGN-001"
+        ],
+        "dependency_states": {
+          "ODP-OSS-DECISION-PACK-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-BRAND-TRANSFER-CONTRACT-PREP-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-NET002-LEASE-CONTRACT-PREP-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-CDC-SOURCE-CONTRACT-PREP-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-MERGE-QUEUE-BATCH-DESIGN-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          }
+        },
+        "dependencies_satisfied": true
+      },
+      "ODP-INTV006-ADJUST-WORKFLOW-001": {
+        "status": "todo",
+        "depends_on": [
+          "ODP-AVM-QUALITY-NULLABLE-001"
+        ],
+        "dependency_states": {
+          "ODP-AVM-QUALITY-NULLABLE-001": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "ODP-JOB-DELIVERY-STATE-CLEAR-001": {
+        "status": "todo",
+        "depends_on": [
+          "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001"
+        ],
+        "dependency_states": {
+          "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          }
+        },
+        "dependencies_satisfied": true
+      },
+      "ODP-NFR-RUNTIME-EVIDENCE-001": {
+        "status": "todo",
+        "depends_on": [
+          "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001"
+        ],
+        "dependency_states": {
+          "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "ODP-OSS-POLICY-NOTICE-IMPLEMENTATION-001": {
+        "status": "in_progress",
+        "depends_on": [
+          "ODP-OSS-DECISION-PACK-001"
+        ],
+        "dependency_states": {
+          "ODP-OSS-DECISION-PACK-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          }
+        },
+        "dependencies_satisfied": true
+      },
+      "ODP-POSTDEPLOY-WATCH-CLOSEOUT-001": {
+        "status": "todo",
+        "depends_on": [
+          "ODP-PROD-BLUEGREEN-ROLLOUT-001"
+        ],
+        "dependency_states": {
+          "ODP-PROD-BLUEGREEN-ROLLOUT-001": {
+            "status": "todo",
+            "source": "active",
+            "satisfies": false
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "ODP-PROD-BLUEGREEN-ROLLOUT-001": {
+        "status": "todo",
+        "depends_on": [
+          "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+          "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001"
+        ],
+        "dependency_states": {
+          "ODP-EPHEMERAL-STAGING-ROLLOUT-001": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          },
+          "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "ODP-ROLE-PROVIDER-CODEX-LIVE-ROLLOUT-001": {
+        "status": "in_progress",
+        "depends_on": [
+          "ODP-ROLE-PROVIDER-CODEX-REVIEW-001"
+        ],
+        "dependency_states": {
+          "ODP-ROLE-PROVIDER-CODEX-REVIEW-001": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "ODP-SCHEMA-STORE-OPENING-AUTHORITY-001": {
+        "status": "todo",
+        "depends_on": [
+          "ODP-CDC-SOURCE-CONTRACT-PREP-001"
+        ],
+        "dependency_states": {
+          "ODP-CDC-SOURCE-CONTRACT-PREP-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          }
+        },
+        "dependencies_satisfied": true
+      },
+      "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001": {
+        "status": "todo",
+        "depends_on": [
+          "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+          "ODP-SPEC-SOURCE-PROVENANCE-001",
+          "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+          "ODP-LH-PREDICTION-DRIFT-001",
+          "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001",
+          "ODP-JOB-PARTIAL-DISPOSITION-001",
+          "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+          "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+          "ODP-NET002-LEASE-DISPOSITION-001",
+          "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+          "ODP-PRICE006-BANDIT-GATED-001",
+          "ODP-INT001-CDC-DISPOSITION-001",
+          "ODP-INTV006-ADJUST-WORKFLOW-001",
+          "ODP-LH003-BACKTEST-RELEASE-GATE-001",
+          "ODP-OPS002-DECISION-COMMENTS-001",
+          "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+          "ODP-NFR-RUNTIME-EVIDENCE-001"
+        ],
+        "dependency_states": {
+          "ODP-REQ-DISPOSITION-GOVERNANCE-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-SPEC-SOURCE-PROVENANCE-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001": {
+            "status": "todo",
+            "source": "active",
+            "satisfies": false
+          },
+          "ODP-LH-PREDICTION-DRIFT-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-JOB-PARTIAL-DISPOSITION-001": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          },
+          "ODP-NETPLAN-DISCLOSURE-UI-E2E-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          },
+          "ODP-NET002-LEASE-DISPOSITION-001": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          },
+          "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-PRICE006-BANDIT-GATED-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-INT001-CDC-DISPOSITION-001": {
+            "status": "blocked",
+            "source": "active",
+            "satisfies": false
+          },
+          "ODP-INTV006-ADJUST-WORKFLOW-001": {
+            "status": "todo",
+            "source": "active",
+            "satisfies": false
+          },
+          "ODP-LH003-BACKTEST-RELEASE-GATE-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-OPS002-DECISION-COMMENTS-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          },
+          "ODP-NFR-RUNTIME-EVIDENCE-001": {
+            "status": "todo",
+            "source": "active",
+            "satisfies": false
+          }
+        },
+        "dependencies_satisfied": false
+      },
+      "ORCH-ARCHIVE-HISTORY-EXECUTE-003": {
+        "status": "in_progress",
+        "depends_on": [
+          "ORCH-ARCHIVE-HISTORY-RESTORE-002"
+        ],
+        "dependency_states": {
+          "ORCH-ARCHIVE-HISTORY-RESTORE-002": {
+            "status": "done",
+            "source": "archive",
+            "satisfies": true
+          }
+        },
+        "dependencies_satisfied": true
+      },
+      "XR-SOURCE-APPROVAL-ACTIVATION-001": {
+        "status": "todo",
+        "depends_on": [
+          "HUMAN-OSS-LEGAL-APPROVAL-001"
+        ],
+        "dependency_states": {
+          "HUMAN-OSS-LEGAL-APPROVAL-001": {
+            "status": "todo",
+            "source": "active",
+            "satisfies": false
+          }
+        },
+        "dependencies_satisfied": false
+      }
+    }
+  }
+}
