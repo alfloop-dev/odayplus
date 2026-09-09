@@ -26,7 +26,6 @@ from apps.worker.oday_worker.handlers import (
     batch_listing_intake_id,
     build_batch_listing_intake_service,
     build_default_registry,
-    handle_batch_listing_intake,
 )
 from apps.worker.oday_worker.main import ODayWorker
 from modules.opsboard.application.network_listings import InMemoryAssistedIntakeRepository
@@ -1371,6 +1370,7 @@ def test_review_finding_1_heartbeat_version_coordination(db_path: str) -> None:
     import time
     from types import SimpleNamespace
     from unittest.mock import patch
+
     from shared.jobs.queue import InMemoryJobQueue
 
     queue = InMemoryJobQueue()
@@ -1429,6 +1429,7 @@ def test_review_finding_1_heartbeat_version_coordination(db_path: str) -> None:
 def test_review_finding_2_forged_receipt_sanitization(db_path: str) -> None:
     """F2: API sanitizes forged client receipt and default worker executes real business writes."""
     from fastapi.testclient import TestClient
+
     from apps.api.oday_api.main import create_app
 
     bundle = _durable_bundle(db_path)
@@ -1564,6 +1565,7 @@ def test_review_finding_3_cancellation_races(db_path: str) -> None:
 def test_review_finding_4_duplicate_item_id_validation(db_path: str) -> None:
     """F4: API and handler reject duplicate item IDs in batch payload."""
     from fastapi.testclient import TestClient
+
     from apps.api.oday_api.main import create_app
 
     bundle = _durable_bundle(db_path)
