@@ -707,14 +707,14 @@ def test_an_older_upsert_after_a_delete_is_quarantined_not_resurrected(live_stor
         SourceKind.CAMPAIGN,
         _campaign_document("campaign-a", "merchant-a", datetime(2026, 7, 21, tzinfo=UTC)),
     )
+    assert stale.quarantine_reason_counts == {QuarantineReason.SOURCE_DELETED.value: 1}
+    assert _domain_input_rows(live_store.connect, "campaign-a") == []
+
     _, _, newer = _land(
         restarted,
         SourceKind.CAMPAIGN,
         _campaign_document("campaign-a", "merchant-a", datetime(2026, 7, 23, tzinfo=UTC)),
     )
-
-    assert stale.quarantine_reason_counts == {QuarantineReason.SOURCE_DELETED.value: 1}
-    assert _domain_input_rows(live_store.connect, "campaign-a") == []
     # A genuinely newer source version is a legitimate re-creation upstream and
     # is allowed through; only stale and unordered records are blocked.
     assert newer.valid_loaded == 1, newer.quarantine_reason_counts
