@@ -2,7 +2,7 @@
 
 - **Task ID**: `ODP-OSS-POLICY-NOTICE-IMPLEMENTATION-001`
 - **Owner / Reviewer**: Antigravity4 (接手自 Antigravity2 / Claude) / Codex
-- **Base**: `dev` @ `3958385788bac5cf873c52a3be631481b22e118d`（已合併最新 `origin/dev` base advance）
+- **Base**: `dev` @ `3958385788babde009b50704af2c22aafcf51b55`（已合併最新 `origin/dev` base advance）
 - **Depends on**: `ODP-OSS-DECISION-PACK-001`（Stage A 盤點與 case matrix）
 - **對應規畫**: `ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md` WP-11 階段一
 - **本文件的效力**: 這是工程落地的證據紀錄。**它不是核准，也不代表任何 OSS 政策已生效。**
