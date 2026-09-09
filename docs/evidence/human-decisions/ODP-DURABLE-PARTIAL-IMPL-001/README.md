@@ -88,8 +88,9 @@ handoff §3.0／§3.3 以 `GET /platform/jobs/{job_id}` 與 `POST /platform/jobs
 | `test_6_auth_and_tenant_isolation_guards` | §3.3／隔離要求 | 401（未認證）、403（角色與租戶不符）、404（跨租戶）、409（QUEUED/RUNNING 重試）、400（SUCCEEDED 與 0 可重試項） |
 | `test_7_same_submitted_intake_id_cannot_cross_tenants` | 本輪 review 反例 | 兩租戶各送同一 `intake_id`：留下兩筆記錄、各自租戶、各自資料，且皆非提交端給的那個 id |
 | `test_7_crash_between_business_write_and_receipt_leaves_one_record` | 本輪 review 反例 | 業務寫入成功後崩潰、重放後只有一筆業務記錄，且等於收據的 `result_ref` |
+| `test_7_row_completeness_decides_stage_without_zero_fill` | 本輪 review 反例 | 齊備的一列跑既有 matcher 落在 `READY` 並保留真實租金／坪數；只有地址的一列停在 `AWAITING_ASSISTED_ENTRY`，缺的欄位被列名而非填 0，兩列都不造 URL 或快照 |
 
-後兩項不使用任何 executor 替身或只跑一次；`test_7_same_submitted_intake_id_cannot_cross_tenants` 完全走 default registry，讀回的是業務實體而非收據。
+三項 `test_7_*` 皆完全走 default registry、不注入 executor 替身，讀回的是持久層中的業務實體而非收據。
 
 ---
 

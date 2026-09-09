@@ -1239,3 +1239,79 @@ def test_7_crash_between_business_write_and_receipt_leaves_one_record(db_path: s
         assert replayed[0]["tenantId"] == tenant_id
     finally:
         reopened.engine.close()
+
+
+def test_7_row_completeness_decides_stage_without_zero_fill(db_path: str) -> None:
+    """Stage comes from the row's own data; a gap is a gap, not a zero."""
+    bundle = _durable_bundle(db_path)
+    try:
+        tenant_id = "tenant-tw-01"
+        record, _ = bundle.job_queue.enqueue(
+            JobRequest(
+                job_type=BATCH_LISTING_INTAKE_JOB_TYPE,
+                payload={
+                    "tenant_id": tenant_id,
+                    "items": [
+                        {
+                            "item_id": "row-complete",
+                            "address_raw": "台北市大安區敦化南路一段8號",
+                            "rent_per_month": 88000,
+                            "area_ping": 42.5,
+                            "floor": "1F",
+                        },
+                        {
+                            # Address only: the operator still has to supply
+                            # rent and size before this row can be matched.
+                            "item_id": "row-incomplete",
+                            "address_raw": "台北市大安區敦化南路一段9號",
+                        },
+                    ],
+                },
+                idempotency_key="idemp-stage-derivation",
+            ),
+            correlation_id="corr-stage-derivation",
+        )
+        worker = ODayWorker(
+            persistence=bundle,
+            registry=build_default_registry(),
+            heartbeat_interval_seconds=60.0,
+        )
+        assert worker.run_once() is True
+
+        settled = bundle.job_queue.get(record.job_id)
+        assert settled.status == JobStatus.SUCCEEDED
+        receipt = DurableJobReceipt.from_dict(settled.payload["receipt"])
+        assert [it.item_status for it in receipt.items] == [
+            ItemStatus.SUCCEEDED.value,
+            ItemStatus.SUCCEEDED.value,
+        ]
+
+        by_id = {it["id"]: it for it in bundle.operator_intake_repository.list_intakes()}
+        complete = by_id[receipt.items[0].result_ref]
+        incomplete = by_id[receipt.items[1].result_ref]
+
+        # A complete row runs the existing matcher and lands ready for review.
+        assert complete["stage"] == "READY"
+        assert complete["matchResult"]["outcome"] == "NEW"
+        assert complete["contentFingerprint"]
+        assert complete["parsedFields"]["rent"]["normalizedValue"] == 88000
+        assert complete["parsedFields"]["areaPing"]["normalizedValue"] == 42.5
+        assert "missingRequiredFields" not in complete
+
+        # An incomplete row waits for assisted entry. The missing fields are
+        # absent and named, not defaulted to 0, which would have presented the
+        # row as a fully imported listing.
+        assert incomplete["stage"] == "AWAITING_ASSISTED_ENTRY"
+        assert incomplete["matchResult"] is None
+        assert sorted(incomplete["missingRequiredFields"]) == ["areaPing", "rent"]
+        assert set(incomplete["parsedFields"]) == {"address"}
+
+        # Neither row invents a source URL or a retrieval snapshot.
+        for intake in (complete, incomplete):
+            assert intake["originalUrl"] is None
+            assert intake["canonicalUrl"] is None
+            assert intake["rawSnapshot"] is None
+            assert intake["intakeMethod"] == "BATCH_ASSISTED_ENTRY"
+            assert intake["tenantId"] == tenant_id
+    finally:
+        bundle.engine.close()
