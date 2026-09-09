@@ -79,7 +79,6 @@ from multi_repo_registry import (
 )
 from runtime_state import enqueue_event, load_runtime_state
 from task_archive import (
-    ARCHIVE_CORRECTIONS_DIR,
     ARCHIVE_TASKS_DIR,
     TaskResolver,
     archive_correction_path,
@@ -8884,7 +8883,7 @@ def command_archive_recovery_invalidate(state: dict[str, Any], args: list[str]) 
         snapshot_bytes = snapshot_path.read_bytes()
         snapshot = json.loads(snapshot_bytes.decode("utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise SystemExit(f"Archived snapshot for task {target_id!r} is unreadable: {exc}")
+        raise SystemExit(f"Archived snapshot for task {target_id!r} is unreadable: {exc}") from exc
 
     actual_sha256 = hashlib.sha256(snapshot_bytes).hexdigest()
     if expected_sha256 and expected_sha256.lower() != actual_sha256.lower():
@@ -8918,7 +8917,7 @@ def command_archive_recovery_invalidate(state: dict[str, Any], args: list[str]) 
             raise SystemExit(
                 f"Task {target_id!r} already has an unreadable correction record at {correction_path} ({exc}); "
                 "refusing to overwrite."
-            )
+            ) from exc
         if not isinstance(existing_correction, dict):
             raise SystemExit(
                 f"Task {target_id!r} already has a non-object correction record at {correction_path}; "
