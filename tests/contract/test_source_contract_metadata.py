@@ -131,14 +131,38 @@ def test_unconfirmed_vs_confirmed_distinction() -> None:
 
 
 def test_validation_rejects_blank_fake_owner() -> None:
+    # An explicit empty string is a present-but-blank owner, not an absent one:
+    # it must not be swallowed into the unconfirmed default.
+    with pytest.raises(ContractError, match="fake blank owner"):
+        SourceContract.from_dict(_sample_raw_contract_dict(data_owner=""))
+
     with pytest.raises(ContractError, match="fake blank owner"):
         SourceContract.from_dict(_sample_raw_contract_dict(data_owner="   "))
+
+    with pytest.raises(ContractError, match="fake blank owner"):
+        SourceContract.from_dict(_sample_raw_contract_dict(data_owner="\t\n "))
 
     with pytest.raises(ContractError, match="must be a string"):
         SourceContract.from_dict(_sample_raw_contract_dict(data_owner=12345))
 
     with pytest.raises(ContractError, match="must be a string"):
         SourceContract.from_dict(_sample_raw_contract_dict(data_owner={"team": "ops"}))
+
+
+def test_omitted_or_null_owner_stays_unconfirmed() -> None:
+    """Only an absent field or an explicit null uses the unconfirmed default."""
+    omitted = SourceContract.from_dict(_sample_raw_contract_dict())
+    assert omitted.data_owner == UNCONFIRMED_METADATA
+    assert omitted.is_data_owner_confirmed is False
+
+    explicit_null = SourceContract.from_dict(_sample_raw_contract_dict(data_owner=None))
+    assert explicit_null.data_owner == UNCONFIRMED_METADATA
+    assert explicit_null.is_data_owner_confirmed is False
+
+    # The confirmed/unconfirmed distinction is preserved either way.
+    named = SourceContract.from_dict(_sample_raw_contract_dict(data_owner="Store Operations Team"))
+    assert named.data_owner == "Store Operations Team"
+    assert named.is_data_owner_confirmed is True
 
 
 # --- 5. Validation: rejects illegal latency values & accepts valid ones ------

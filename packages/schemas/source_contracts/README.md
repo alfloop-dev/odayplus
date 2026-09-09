@@ -24,7 +24,7 @@ Each contract is a JSON document with metadata:
 - Core identity: `contract_id`, `kind` (`internal|external|envelope`), `source_system`, `source_dataset`, `canonical_target`, `mapping_id`
 - Delivery & exchange: `integration_mode` (`batch_snapshot|incremental_batch|event_stream|backfill|api_lookup`), `envelope` (`batch|event`), optional `acquisition_method`
 - Data catalog & governance metadata:
-  - `data_owner`: named business/engineering team responsible for data quality; unconfirmed entries explicitly marked `"unconfirmed"` or `"unknown"`. Empty whitespace fake owners are rejected.
+  - `data_owner`: named business/engineering team responsible for data quality; unconfirmed entries explicitly marked `"unconfirmed"` or `"unknown"`. Only an omitted field or an explicit `null` falls back to the `"unconfirmed"` default; a present-but-blank value (`""` or whitespace) is a fake blank owner and is rejected.
   - `target_latency_sla`: target freshness/latency SLA (e.g. `"PT1H"`, `"24h"`, `"realtime"`, or `"unconfirmed"`).
   - `contact_channel` / `contact_ref`: contact channel or communication ref for alerts/queries (e.g. `"slack:#data-ops"`, `"unconfirmed"`).
   - `runtime_capability`: machine-readable execution capability status (e.g. `"unverified"`, `"batch_watermark_only"`, `"streaming_supported"`, `"manual_attestation"`, `"verified"`), explicitly decoupled from declared `integration_mode` to prevent false readiness.

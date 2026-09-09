@@ -98,13 +98,19 @@ _CAPABILITY_SUPPORTED_MODES: dict[str, set[str]] = {
 
 
 def _validate_data_owner(raw: Any) -> str:
-    if raw is None or raw == "":
+    # Only an omitted field or an explicit null falls back to the unconfirmed
+    # default. A present-but-blank value ("" or whitespace) is a fake blank
+    # owner and must be rejected rather than silently read as unconfirmed.
+    if raw is None:
         return UNCONFIRMED_METADATA
     if not isinstance(raw, str):
         raise ContractError(f"data_owner must be a string, got {type(raw).__name__}")
     stripped = raw.strip()
     if not stripped:
-        raise ContractError("data_owner cannot be empty whitespace (fake blank owner)")
+        raise ContractError(
+            "data_owner cannot be blank (fake blank owner); "
+            f"omit the field or use null for {UNCONFIRMED_METADATA}"
+        )
     return stripped
 
 
