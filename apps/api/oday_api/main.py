@@ -989,6 +989,44 @@ else:
                 )
             return active_tenant_id
 
+        def batch_intake_job_tenant(request: Request, *, action: str) -> str:
+            from apps.api.oday_api.security.dependencies import principal_from_headers
+            from shared.auth import Action, rbac_allows
+
+            principal = principal_from_headers(request.headers)
+            if not principal.authenticated:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail={
+                        "code": "AUTHENTICATION_REQUIRED",
+                        "message": "Batch intake jobs require an authenticated principal",
+                    },
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            required_action = (
+                Action.EXECUTE
+                if action == "execute"
+                else (Action.CREATE if action == "create" else Action.VIEW)
+            )
+            if not rbac_allows(principal, "listing", required_action):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "BATCH_INTAKE_FORBIDDEN",
+                        "message": "Principal cannot access batch intake jobs",
+                    },
+                )
+            active_tenant_id = str(principal.tenant_id or "").strip()
+            if not active_tenant_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "TENANT_SCOPE_REQUIRED",
+                        "message": "Batch intake jobs require an authenticated tenant scope",
+                    },
+                )
+            return active_tenant_id
+
         @platform_router.post("/jobs", status_code=status.HTTP_202_ACCEPTED, tags=["jobs"])
         def enqueue_job(
             body: JobCreatePayload,
@@ -1031,6 +1069,23 @@ else:
                 payload = {**payload, "tenant_id": active_tenant_id}
                 idempotency_tenant_id = active_tenant_id
                 idempotency_scope = "external-fetch:v1"
+            elif body.job_type == "batch-listing-intake":
+                active_tenant_id = batch_intake_job_tenant(request, action="create")
+                supplied_tenant_id = str(payload.get("tenant_id") or "").strip()
+                if supplied_tenant_id and supplied_tenant_id != active_tenant_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail={
+                            "code": "TENANT_SCOPE_MISMATCH",
+                            "message": (
+                                "Batch intake job tenant does not match the "
+                                "authenticated tenant scope"
+                            ),
+                        },
+                    )
+                payload = {**payload, "tenant_id": active_tenant_id}
+                idempotency_tenant_id = active_tenant_id
+                idempotency_scope = "batch-listing-intake:v1"
 
             effective_idempotency_key = body.idempotency_key or idempotency_key
             queue_idempotency_key = effective_idempotency_key
@@ -1069,13 +1124,16 @@ else:
             }
 
         def _get_job_response(job_id: str, request: Request) -> dict[str, Any]:
+            from apps.api.oday_api.security.dependencies import principal_from_headers
+
             job = job_queue.get(job_id)
             if job is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
+
+            job_tenant = str(job.payload.get("tenant_id") or "").strip()
             if job.job_type == "forecast":
                 active_tenant_id = forecast_job_tenant(request, action="view")
-                owner_tenant_id = str(job.payload.get("tenant_id") or "").strip()
-                if not owner_tenant_id:
+                if not job_tenant:
                     raise HTTPException(
                         status_code=status.HTTP_403_FORBIDDEN,
                         detail={
@@ -1083,14 +1141,31 @@ else:
                             "message": "Forecast job receipt has no tenant ownership scope",
                         },
                     )
-                if owner_tenant_id != active_tenant_id:
+                if job_tenant != active_tenant_id:
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="job not found",
                     )
-            elif job.payload.get("tenant_id"):
-                req_tenant = request.headers.get("x-tenant-id") or getattr(request.state, "tenant_id", None)
-                if req_tenant and str(job.payload["tenant_id"]) != req_tenant:
+            elif job.job_type in ("batch-listing-intake", "assisted-listing-intake"):
+                active_tenant_id = batch_intake_job_tenant(request, action="view")
+                if not job_tenant or job_tenant != active_tenant_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="job not found",
+                    )
+            elif job_tenant:
+                principal = principal_from_headers(request.headers)
+                if not principal.authenticated:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail={
+                            "code": "AUTHENTICATION_REQUIRED",
+                            "message": "Authentication required to read jobs",
+                        },
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+                active_tenant_id = str(principal.tenant_id or "").strip()
+                if not active_tenant_id or job_tenant != active_tenant_id:
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="job not found",
@@ -1110,16 +1185,49 @@ else:
             return _get_job_response(job_id, request)
 
         def _get_job_receipt_response(job_id: str, request: Request) -> dict[str, Any]:
+            from apps.api.oday_api.security.dependencies import principal_from_headers
+
             job = job_queue.get(job_id)
             if job is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job receipt not found")
-            if job.payload.get("tenant_id"):
-                req_tenant = request.headers.get("x-tenant-id") or getattr(request.state, "tenant_id", None)
-                if req_tenant and str(job.payload["tenant_id"]) != req_tenant:
+
+            job_tenant = str(job.payload.get("tenant_id") or "").strip()
+            if job.job_type in ("batch-listing-intake", "assisted-listing-intake"):
+                active_tenant_id = batch_intake_job_tenant(request, action="view")
+                if not job_tenant or job_tenant != active_tenant_id:
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="job receipt not found",
                     )
+            elif job_tenant:
+                principal = principal_from_headers(request.headers)
+                if not principal.authenticated:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail={
+                            "code": "AUTHENTICATION_REQUIRED",
+                            "message": "Authentication required to read job receipt",
+                        },
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+                active_tenant_id = str(principal.tenant_id or "").strip()
+                if not active_tenant_id or job_tenant != active_tenant_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="job receipt not found",
+                    )
+            else:
+                principal = principal_from_headers(request.headers)
+                if not principal.authenticated:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail={
+                            "code": "AUTHENTICATION_REQUIRED",
+                            "message": "Authentication required to read job receipt",
+                        },
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+
             receipt = job.payload.get("receipt")
             if receipt is None or not isinstance(receipt, dict):
                 raise HTTPException(
@@ -1127,10 +1235,6 @@ else:
                     detail="job receipt not found or not a multi-item batch job",
                 )
             return dict(receipt)
-
-        @platform_router.get("/jobs/{job_id}/receipt", tags=["jobs"])
-        def get_job_receipt(job_id: str, request: Request) -> dict[str, Any]:
-            return _get_job_receipt_response(job_id, request)
 
         @platform_router.get("/platform/jobs/{job_id}/receipt", tags=["jobs"], include_in_schema=False)
         def get_platform_job_receipt(job_id: str, request: Request) -> dict[str, Any]:
@@ -1141,16 +1245,82 @@ else:
             body: JobRetryPayload | None,
             request: Request,
         ) -> dict[str, Any]:
+            from apps.api.oday_api.security.dependencies import principal_from_headers
+            from shared.auth import Action, rbac_allows
+            from shared.infrastructure.persistence.job_queue import JobFenceRejectedError
+
             job = job_queue.get(job_id)
             if job is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
-            if job.payload.get("tenant_id"):
-                req_tenant = request.headers.get("x-tenant-id") or getattr(request.state, "tenant_id", None)
-                if req_tenant and str(job.payload["tenant_id"]) != req_tenant:
+
+            # 1. Auth & Tenant Isolation & RBAC
+            job_tenant = str(job.payload.get("tenant_id") or "").strip()
+            if job.job_type in ("batch-listing-intake", "assisted-listing-intake"):
+                principal = principal_from_headers(request.headers)
+                if not principal.authenticated:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail={
+                            "code": "AUTHENTICATION_REQUIRED",
+                            "message": "Authentication required to retry jobs",
+                        },
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+                if not rbac_allows(principal, "listing", Action.EXECUTE) and not rbac_allows(principal, "listing", Action.CREATE):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail={"code": "BATCH_INTAKE_RETRY_FORBIDDEN", "message": "Principal cannot retry listing jobs"},
+                    )
+                active_tenant_id = str(principal.tenant_id or "").strip()
+                if not active_tenant_id or not job_tenant or job_tenant != active_tenant_id:
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="job not found",
                     )
+            else:
+                principal = principal_from_headers(request.headers)
+                if not principal.authenticated:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail={
+                            "code": "AUTHENTICATION_REQUIRED",
+                            "message": "Authentication required to retry jobs",
+                        },
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "code": "JOB_TYPE_NOT_SUPPORTED",
+                        "message": f"Retry is not supported for job type {job.job_type!r}",
+                    },
+                )
+
+            # 2. State validation: reject RUNNING, QUEUED, SUCCEEDED
+            if job.status in (JobStatus.RUNNING, JobStatus.QUEUED):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "INVALID_JOB_STATE",
+                        "message": f"Cannot retry job in {job.status.value.upper()} state",
+                    },
+                )
+            if job.status == JobStatus.SUCCEEDED:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "code": "INVALID_JOB_STATE",
+                        "message": "Cannot retry a SUCCEEDED job",
+                    },
+                )
+            if job.status not in (JobStatus.PARTIAL, JobStatus.FAILED):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "code": "INVALID_JOB_STATE",
+                        "message": f"Cannot retry job in {job.status.value.upper()} state",
+                    },
+                )
 
             retry_scope = (body.retry_scope if body else "FAILED_ONLY") or "FAILED_ONLY"
             if retry_scope not in ("FAILED_ONLY", "FAILED_RETRYABLE_ONLY"):
@@ -1182,19 +1352,38 @@ else:
                 if status_val == "FAILED" and is_retryable:
                     retried_count += 1
 
+            if retried_count == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "code": "NO_RETRYABLE_ITEMS",
+                        "message": "Job has zero retryable failed items",
+                    },
+                )
+
             payload["_retry_scope"] = retry_scope
-            job_queue.update_status(
-                job.job_id,
-                JobStatus.QUEUED,
-                payload=payload,
-                delivery_state=None,
-            )
+            try:
+                job_queue.update_status(
+                    job.job_id,
+                    JobStatus.QUEUED,
+                    payload=payload,
+                    delivery_state=None,
+                    expected_version=job.version,
+                )
+            except (JobFenceRejectedError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "JOB_CONCURRENT_MUTATION",
+                        "message": "Job status was modified concurrently by another process",
+                    },
+                ) from exc
 
             correlation_id = getattr(getattr(request, "state", None), "correlation_id", None) or request.headers.get("x-correlation-id") or f"corr-retry-{uuid4().hex[:8]}"
             audit_log.record(
                 AuditEvent(
                     event_type="job.retry",
-                    actor="system",
+                    actor=principal.subject_id or "system",
                     action="retry",
                     resource=f"job/{job.job_type}",
                     outcome="accepted",
@@ -1210,14 +1399,6 @@ else:
                 "retry_scope": retry_scope,
                 "retried_items_count": retried_count,
             }
-
-        @platform_router.post("/jobs/{job_id}/retry", status_code=status.HTTP_202_ACCEPTED, tags=["jobs"])
-        def retry_job(
-            job_id: str,
-            request: Request,
-            body: JobRetryPayload | None = None,
-        ) -> dict[str, Any]:
-            return _retry_job_response(job_id, body, request)
 
         @platform_router.post("/platform/jobs/{job_id}/retry", status_code=status.HTTP_202_ACCEPTED, tags=["jobs"], include_in_schema=False)
         def retry_platform_job(

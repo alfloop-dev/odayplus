@@ -88,11 +88,29 @@ def _sample_10_items_payload(
     return items
 
 
+def _auth_headers(tenant_id: str, role: str = "expansion_user", subject: str = "exp-mgr") -> dict[str, str]:
+    return {
+        "x-subject-id": subject,
+        "x-roles": role,
+        "x-tenant-id": tenant_id,
+    }
+
+
 # ==============================================================================
 # TEST 1: State Transition & Itemized Receipt Assertion
 # ==============================================================================
 def test_1_state_transition_and_itemized_receipt(db_path: str) -> None:
     """Test 1: 10 items (8 success, 1 permanent failure, 1 transient failure) -> JobStatus.PARTIAL."""
+    from unittest.mock import patch
+
+    from apps.worker.oday_worker.handlers import (
+        _default_batch_listing_item_executor as orig_executor,
+    )
+    from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+    from shared.infrastructure.persistence.operator_network_listings import (
+        DurableAssistedIntakeRepository,
+    )
+
     bundle = _durable_bundle(db_path)
     try:
         tenant_id = "tenant-tw-01"
@@ -113,13 +131,27 @@ def test_1_state_transition_and_itemized_receipt(db_path: str) -> None:
         assert created is True
         assert record.status == JobStatus.QUEUED
 
-        # Run worker once
+        def test_1_executor(item, tenant, p):
+            if item.get("simulate_timeout") or item.get("item_id") == "row-010":
+                return None, ItemError(
+                    code="GEOCODING_UPSTREAM_TIMEOUT",
+                    message="Geocoding service timed out after 3500ms",
+                    retryable=True,
+                    details={"endpoint": "geocode.tgos.gov.tw", "timeout_ms": 3500},
+                )
+            return orig_executor(item, tenant, p)
+
+        # Run worker once with test double for upstream timeout on item 10
         worker = ODayWorker(
             persistence=bundle,
             registry=build_default_registry(),
             heartbeat_interval_seconds=60.0,
         )
-        executed = worker.run_once()
+        with patch(
+            "apps.worker.oday_worker.handlers._default_batch_listing_item_executor",
+            side_effect=test_1_executor,
+        ):
+            executed = worker.run_once()
         assert executed is True
 
         # Read back job record from durable persistence
@@ -176,8 +208,23 @@ def test_1_state_transition_and_itemized_receipt(db_path: str) -> None:
         assert trans_item.error.code == "GEOCODING_UPSTREAM_TIMEOUT"
         assert trans_item.error.retryable is True
 
+        # Assert real business path persistence in DurableAssistedIntakeRepository
+        repo = DurableAssistedIntakeRepository(SqliteDocumentStore(bundle.engine))
+        persisted_intakes = repo.list_intakes()
+        assert len(persisted_intakes) == 8
+        persisted_ids = {it["id"] for it in persisted_intakes}
+        expected_ids = {it.result_ref for it in items[:8]}
+        assert persisted_ids == expected_ids
     finally:
         bundle.engine.close()
+
+    # Reopened bundle check for full re-readability of business entities
+    reopened = _durable_bundle(db_path)
+    try:
+        repo2 = DurableAssistedIntakeRepository(SqliteDocumentStore(reopened.engine))
+        assert len(repo2.list_intakes()) == 8
+    finally:
+        reopened.engine.close()
 
 
 # ==============================================================================
@@ -245,14 +292,14 @@ def test_2_scoped_retry_and_zero_duplication(db_path: str) -> None:
             for i in range(1, 11):
                 assert invocation_counts[f"row-{i:03d}"] == 1
 
-            # Now trigger scoped retry via API endpoint
-            app = create_app(job_queue=bundle.job_queue, audit_log=bundle.audit_log)
+            # Now trigger scoped retry via API endpoint with proper auth headers
+            app = create_app(job_queue=bundle.job_queue, audit_log=bundle.audit_log, persistence=bundle)
             client = TestClient(app)
 
             retry_resp = client.post(
                 f"/platform/jobs/{record.job_id}/retry",
                 json={"retry_scope": "FAILED_ONLY"},
-                headers={"x-tenant-id": tenant_id},
+                headers=_auth_headers(tenant_id),
             )
             assert retry_resp.status_code == 202
             retry_body = retry_resp.json()
@@ -361,13 +408,13 @@ def test_2_full_convergence_subtest(db_path: str) -> None:
             assert job1.payload["receipt"]["summary"]["succeeded_count"] == 8
             assert job1.payload["receipt"]["summary"]["failed_count"] == 2
 
-            # Retry FAILED_ONLY
-            app = create_app(job_queue=bundle.job_queue, audit_log=bundle.audit_log)
+            # Retry FAILED_ONLY with proper auth headers
+            app = create_app(job_queue=bundle.job_queue, audit_log=bundle.audit_log, persistence=bundle)
             client = TestClient(app)
             retry_resp = client.post(
                 f"/platform/jobs/{record.job_id}/retry",
                 json={"retry_scope": "FAILED_ONLY"},
-                headers={"x-tenant-id": tenant_id},
+                headers=_auth_headers(tenant_id),
             )
             assert retry_resp.status_code == 202
             assert retry_resp.json()["retried_items_count"] == 2
@@ -469,11 +516,11 @@ def test_3_orthogonality_and_delivery_state_clear(db_path: str) -> None:
                 assert row["delivery_state"] is None
 
             # 4. Read from API GET /platform/jobs/{job_id}
-            app = create_app(job_queue=bundle.job_queue, audit_log=bundle.audit_log)
+            app = create_app(job_queue=bundle.job_queue, audit_log=bundle.audit_log, persistence=bundle)
             client = TestClient(app)
             api_resp = client.get(
                 f"/platform/jobs/{reg_job.job_id}",
-                headers={"x-tenant-id": "tenant-test"},
+                headers=_auth_headers("tenant-test"),
             )
             assert api_resp.status_code == 200
             api_job = api_resp.json()
@@ -504,10 +551,16 @@ def test_3_orthogonality_and_delivery_state_clear(db_path: str) -> None:
 
 
 # ==============================================================================
-# TEST 4: Restart Re-readability & Cancellation Assertion
+# TEST 4: Restart Re-readability, Mid-batch Interruption, and Cancellation Assertion
 # ==============================================================================
 def test_4_restart_re_readability_and_cancellation(db_path: str) -> None:
     """Test 4: Worker restart re-readability and mid/pre-execution cancellation."""
+    from unittest.mock import patch
+
+    from apps.worker.oday_worker.handlers import (
+        _default_batch_listing_item_executor as orig_executor,
+    )
+
     bundle = _durable_bundle(db_path)
     try:
         tenant_id = "tenant-tw-01"
@@ -522,12 +575,26 @@ def test_4_restart_re_readability_and_cancellation(db_path: str) -> None:
             idempotency_key="restart-test-idemp",
         )
         record, _ = bundle.job_queue.enqueue(job_req, correlation_id="corr-restart")
+
+        def test_4_executor(item, tenant, p):
+            if item.get("simulate_timeout") or item.get("item_id") == "row-010":
+                return None, ItemError(
+                    code="GEOCODING_UPSTREAM_TIMEOUT",
+                    message="Geocoding service timed out after 3500ms",
+                    retryable=True,
+                )
+            return orig_executor(item, tenant, p)
+
         worker = ODayWorker(
             persistence=bundle,
             registry=build_default_registry(),
             heartbeat_interval_seconds=60.0,
         )
-        assert worker.run_once() is True
+        with patch(
+            "apps.worker.oday_worker.handlers._default_batch_listing_item_executor",
+            side_effect=test_4_executor,
+        ):
+            assert worker.run_once() is True
     finally:
         bundle.engine.close()
 
@@ -557,12 +624,12 @@ def test_4_restart_re_readability_and_cancellation(db_path: str) -> None:
         assert receipt.items[8].error.code == "MISSING_MANDATORY_ADDRESS"
         assert receipt.items[9].error.code == "GEOCODING_UPSTREAM_TIMEOUT"
 
-        # Also query via API
-        app = create_app(job_queue=reopened_bundle.job_queue, audit_log=reopened_bundle.audit_log)
+        # Also query via API with auth headers
+        app = create_app(job_queue=reopened_bundle.job_queue, audit_log=reopened_bundle.audit_log, persistence=reopened_bundle)
         client = TestClient(app)
         api_receipt = client.get(
-            f"/api/v1/jobs/{record.job_id}/receipt",
-            headers={"x-tenant-id": tenant_id},
+            f"/platform/jobs/{record.job_id}/receipt",
+            headers=_auth_headers(tenant_id),
         )
         assert api_receipt.status_code == 200
         assert api_receipt.json()["status"] == "PARTIAL"
@@ -625,6 +692,143 @@ def test_4_restart_re_readability_and_cancellation(db_path: str) -> None:
         assert c_receipt.items[2].last_attempt_at is None
     finally:
         reopened_bundle.engine.close()
+
+
+def test_4_mid_batch_interruption_and_resumption(db_path: str) -> None:
+    """Mid-batch process crash checkpoints progress; restart does not redo completed items."""
+    from unittest.mock import patch
+
+    bundle = _durable_bundle(db_path)
+    tenant_id = "tenant-tw-01"
+    crash_job, _ = bundle.job_queue.enqueue(
+        JobRequest(
+            job_type=BATCH_LISTING_INTAKE_JOB_TYPE,
+            payload={
+                "tenant_id": tenant_id,
+                "items": [
+                    {"item_id": "row-a", "address_raw": "台北市大安區新生南路一段1號"},
+                    {"item_id": "row-b", "address_raw": "台北市大安區新生南路一段2號"},
+                ],
+            },
+            idempotency_key="idemp-crash-resume",
+        ),
+        correlation_id="corr-crash",
+    )
+
+    invocations: list[str] = []
+
+    def interrupting_executor(item, tenant, p):
+        invocations.append(item["item_id"])
+        if item["item_id"] == "row-b":
+            raise KeyboardInterrupt("Simulated process exit on second item")
+        return "intake-a-ok", None
+
+    worker = ODayWorker(persistence=bundle, registry=build_default_registry())
+    with patch(
+        "apps.worker.oday_worker.handlers._default_batch_listing_item_executor",
+        side_effect=interrupting_executor,
+    ):
+        try:
+            worker.run_once()
+        except KeyboardInterrupt:
+            pass
+
+    # Durable checkpoint check: row-a was completed and saved in job payload
+    persisted = bundle.job_queue.get(crash_job.job_id)
+    assert persisted is not None
+    saved_receipt = persisted.payload.get("receipt")
+    assert saved_receipt is not None
+    assert saved_receipt["items"][0]["item_id"] == "row-a"
+    assert saved_receipt["items"][0]["item_status"] == ItemStatus.SUCCEEDED.value
+    bundle.engine.close()
+
+    # Restart worker on fresh bundle
+    reopened = _durable_bundle(db_path)
+    try:
+        resume_invocations: list[str] = []
+
+        def resumed_executor(item, tenant, p):
+            resume_invocations.append(item["item_id"])
+            return "intake-b-ok", None
+
+        worker2 = ODayWorker(persistence=reopened, registry=build_default_registry())
+        with patch(
+            "apps.worker.oday_worker.handlers._default_batch_listing_item_executor",
+            side_effect=resumed_executor,
+        ):
+            # Lease expired or reclaimed
+            resumed_job = reopened.job_queue.get(crash_job.job_id)
+            reopened.job_queue.update_status(
+                resumed_job.job_id,
+                JobStatus.QUEUED,
+                payload=resumed_job.payload,
+                delivery_state=None,
+            )
+            assert worker2.run_once() is True
+
+        # Assert row-a was NOT re-invoked
+        assert resume_invocations == ["row-b"]
+        final_job = reopened.job_queue.get(crash_job.job_id)
+        assert final_job.status == JobStatus.SUCCEEDED
+        assert final_job.payload["receipt"]["summary"]["succeeded_count"] == 2
+    finally:
+        reopened.engine.close()
+
+
+def test_4_live_operator_cancellation_during_execution(db_path: str) -> None:
+    """When operator cancels job in DB, unstarted items are marked CANCELLED with attempt=0."""
+    from unittest.mock import patch
+
+    bundle = _durable_bundle(db_path)
+    try:
+        tenant_id = "tenant-tw-01"
+        cancel_job, _ = bundle.job_queue.enqueue(
+            JobRequest(
+                job_type=BATCH_LISTING_INTAKE_JOB_TYPE,
+                payload={
+                    "tenant_id": tenant_id,
+                    "items": [
+                        {"item_id": "row-1", "address_raw": "台北市大安區新生南路一段1號"},
+                        {"item_id": "row-2", "address_raw": "台北市大安區新生南路一段2號"},
+                        {"item_id": "row-3", "address_raw": "台北市大安區新生南路一段3號"},
+                    ],
+                },
+                idempotency_key="idemp-live-cancel",
+            ),
+            correlation_id="corr-live-cancel",
+        )
+
+        executed_items: list[str] = []
+
+        def cancelling_executor(item, tenant, p):
+            executed_items.append(item["item_id"])
+            if item["item_id"] == "row-1":
+                # Operator cancels job concurrently in queue
+                bundle.job_queue.update_status(
+                    cancel_job.job_id,
+                    JobStatus.CANCELLED,
+                )
+            return f"intake-{item['item_id']}", None
+
+        worker = ODayWorker(persistence=bundle, registry=build_default_registry())
+        with patch(
+            "apps.worker.oday_worker.handlers._default_batch_listing_item_executor",
+            side_effect=cancelling_executor,
+        ):
+            worker.run_once()
+
+        assert executed_items == ["row-1"]
+        persisted = bundle.job_queue.get(cancel_job.job_id)
+        assert persisted.status == JobStatus.CANCELLED
+        receipt = persisted.payload["receipt"]
+        assert receipt["items"][0]["item_status"] == ItemStatus.SUCCEEDED.value
+        assert receipt["items"][0]["attempt"] == 1
+        assert receipt["items"][1]["item_status"] == ItemStatus.CANCELLED.value
+        assert receipt["items"][1]["attempt"] == 0
+        assert receipt["items"][2]["item_status"] == ItemStatus.CANCELLED.value
+        assert receipt["items"][2]["attempt"] == 0
+    finally:
+        bundle.engine.close()
 
 
 # ==============================================================================
@@ -752,6 +956,108 @@ def test_5_duplicate_delivery_and_out_of_order(db_path: str) -> None:
         status_after, summary_after = derive_batch_status_and_summary(reversed_items)
         assert status_after == status_before
         assert summary_after == summary_before
+
+    finally:
+        bundle.engine.close()
+
+
+# ==============================================================================
+# TEST 6: Auth, Tenant Isolation, and Concurrency Guards
+# ==============================================================================
+def test_6_auth_and_tenant_isolation_guards(db_path: str) -> None:
+    """Negative tests for auth requirement, tenant isolation, role RBAC, and invalid retry states."""
+    bundle = _durable_bundle(db_path)
+    try:
+        tenant_a = "tenant-alpha"
+        tenant_b = "tenant-beta"
+        headers_a = _auth_headers(tenant_a, role="expansion_user", subject="user-a")
+        headers_b = _auth_headers(tenant_b, role="expansion_user", subject="user-b")
+        headers_unauth_role = _auth_headers(tenant_a, role="auditor", subject="user-auditor")
+
+        app = create_app(job_queue=bundle.job_queue, audit_log=bundle.audit_log, persistence=bundle)
+        client = TestClient(app)
+
+        # 1. Enqueue without auth -> 401
+        res = client.post(
+            "/jobs",
+            json={"job_type": BATCH_LISTING_INTAKE_JOB_TYPE, "payload": {"items": [{"item_id": "r1", "address_raw": "Addr 1"}]}},
+        )
+        assert res.status_code == 401
+
+        # 2. Enqueue with unauthorized role (auditor cannot create listings) -> 403
+        res = client.post(
+            "/jobs",
+            json={"job_type": BATCH_LISTING_INTAKE_JOB_TYPE, "payload": {"items": [{"item_id": "r1", "address_raw": "Addr 1"}]}},
+            headers=headers_unauth_role,
+        )
+        assert res.status_code == 403
+
+        # 3. Enqueue with tenant mismatch -> 403
+        res = client.post(
+            "/jobs",
+            json={"job_type": BATCH_LISTING_INTAKE_JOB_TYPE, "payload": {"tenant_id": tenant_b, "items": [{"item_id": "r1", "address_raw": "Addr 1"}]}},
+            headers=headers_a,
+        )
+        assert res.status_code == 403
+
+        # 4. Enqueue successfully as tenant_a
+        res = client.post(
+            "/jobs",
+            json={"job_type": BATCH_LISTING_INTAKE_JOB_TYPE, "payload": {"tenant_id": tenant_a, "items": [{"item_id": "r1", "address_raw": "Addr 1"}]}},
+            headers=headers_a,
+        )
+        assert res.status_code == 202
+        job_id = res.json()["job_id"]
+
+        # 5. Read job without auth -> 401
+        assert client.get(f"/jobs/{job_id}").status_code == 401
+        assert client.get(f"/platform/jobs/{job_id}").status_code == 401
+        assert client.get(f"/platform/jobs/{job_id}/receipt").status_code == 401
+        assert client.post(f"/platform/jobs/{job_id}/retry", json={"retry_scope": "FAILED_ONLY"}).status_code == 401
+
+        # 6. Read job from different tenant (tenant_b) -> 404 (isolated)
+        assert client.get(f"/jobs/{job_id}", headers=headers_b).status_code == 404
+        assert client.get(f"/platform/jobs/{job_id}", headers=headers_b).status_code == 404
+        assert client.get(f"/platform/jobs/{job_id}/receipt", headers=headers_b).status_code == 404
+        assert client.post(f"/platform/jobs/{job_id}/retry", json={"retry_scope": "FAILED_ONLY"}, headers=headers_b).status_code == 404
+
+        # 7. Retry while job is QUEUED or RUNNING -> 409 Conflict
+        res_retry_queued = client.post(f"/platform/jobs/{job_id}/retry", json={"retry_scope": "FAILED_ONLY"}, headers=headers_a)
+        assert res_retry_queued.status_code == 409
+
+        # Lease to RUNNING
+        leased = bundle.job_queue.lease(60)
+        assert leased is not None
+        assert leased.status == JobStatus.RUNNING
+        res_retry_running = client.post(f"/platform/jobs/{job_id}/retry", json={"retry_scope": "FAILED_ONLY"}, headers=headers_a)
+        assert res_retry_running.status_code == 409
+
+        # 8. Complete as SUCCEEDED -> Retry rejected with 400
+        bundle.job_queue.update_status(job_id, JobStatus.SUCCEEDED)
+        res_retry_succeeded = client.post(f"/platform/jobs/{job_id}/retry", json={"retry_scope": "FAILED_ONLY"}, headers=headers_a)
+        assert res_retry_succeeded.status_code == 400
+
+        # 9. Set to PARTIAL with 0 retryable items (e.g. permanent error only) -> Retry rejected with 400
+        bundle.job_queue.update_status(
+            job_id,
+            JobStatus.PARTIAL,
+            payload={
+                "tenant_id": tenant_a,
+                "receipt": {
+                    "items": [
+                        {
+                            "item_id": "r1",
+                            "item_status": "FAILED",
+                            "attempt": 1,
+                            "error": {"code": "PERMANENT_ERROR", "message": "cannot retry", "retryable": False},
+                        }
+                    ]
+                },
+            },
+        )
+        res_retry_zero = client.post(f"/platform/jobs/{job_id}/retry", json={"retry_scope": "FAILED_ONLY"}, headers=headers_a)
+        assert res_retry_zero.status_code == 400
+        assert "zero retryable" in res_retry_zero.json()["detail"]["message"].lower()
 
     finally:
         bundle.engine.close()

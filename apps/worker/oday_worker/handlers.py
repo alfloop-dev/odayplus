@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from shared.jobs.queue import JobRecord, NonRetryableJobError
+from shared.jobs.queue import JobRecord, JobStatus, NonRetryableJobError
 from shared.jobs.registry import JobRegistry
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -256,22 +256,7 @@ def _default_batch_listing_item_executor(
     """Execute business processing for one listing intake item."""
     from shared.jobs.receipts import ItemError
 
-    if item.get("simulate_timeout") or item.get("error_code") == "GEOCODING_UPSTREAM_TIMEOUT":
-        return None, ItemError(
-            code="GEOCODING_UPSTREAM_TIMEOUT",
-            message="Geocoding service timed out after 3500ms",
-            retryable=True,
-            details={"endpoint": "geocode.tgos.gov.tw", "timeout_ms": 3500},
-        )
-    if item.get("simulate_error"):
-        err_info = item["simulate_error"]
-        return None, ItemError(
-            code=err_info.get("code", "VALIDATION_FAILED"),
-            message=err_info.get("message", "Validation failed"),
-            retryable=bool(err_info.get("retryable", False)),
-            details=err_info.get("details"),
-        )
-    address_raw = item.get("address_raw")
+    address_raw = item.get("address_raw") or item.get("addressRaw")
     if not address_raw or not str(address_raw).strip():
         return None, ItemError(
             code="MISSING_MANDATORY_ADDRESS",
@@ -280,154 +265,313 @@ def _default_batch_listing_item_executor(
             details={"column": "address_raw", "value": None},
         )
 
-    intake_id = str(item.get("intake_id") or f"intake-{uuid4().hex[:8]}")
+    # Persistence into DurableAssistedIntakeRepository / operator intake repository
+    intake_repo = getattr(persistence, "operator_intake_repository", None)
+    if intake_repo is None:
+        if getattr(persistence, "is_durable", False) and getattr(persistence, "engine", None) is not None:
+            from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+            from shared.infrastructure.persistence.operator_network_listings import (
+                DurableAssistedIntakeRepository,
+            )
+            intake_repo = DurableAssistedIntakeRepository(SqliteDocumentStore(persistence.engine))
+        else:
+            from modules.opsboard.application.network_listings import (
+                InMemoryAssistedIntakeRepository,
+            )
+            intake_repo = InMemoryAssistedIntakeRepository()
+
+    intake_id = str(item.get("intake_id") or f"IN-BATCH-{uuid4().hex[:8]}")
+    now_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    intake_record: dict[str, Any] = {
+        "id": intake_id,
+        "tenantId": tenant_id,
+        "stage": "READY",
+        "intakeMethod": "BATCH",
+        "address_raw": str(address_raw).strip(),
+        "addressRaw": str(address_raw).strip(),
+        "originalUrl": str(item.get("url") or item.get("originalUrl") or f"https://listing.local/batch/{intake_id}"),
+        "createdAt": now_iso,
+        "item_id": item.get("item_id"),
+        "rentPerMonth": item.get("rent_per_month") or item.get("rent") or 0,
+        "areaPing": item.get("area_ping") or item.get("area") or 0.0,
+    }
+    if "heat_zone_id" in item:
+        intake_record["heatZoneId"] = item["heat_zone_id"]
+
+    intake_repo.save_intake(intake_record)
     return intake_id, None
 
 
 def handle_batch_listing_intake(job: JobRecord, persistence: PersistenceBundle) -> None:
-    """Process a batch listing intake job supporting durable PARTIAL outcomes and scoped retry."""
+    """Process a batch listing intake job supporting durable PARTIAL outcomes, checkpointing, and scoped retry."""
+    from shared.infrastructure.persistence.job_queue import JobFenceRejectedError
     from shared.jobs.receipts import (
         DurableJobReceipt,
         ItemError,
         ItemReceipt,
         ItemStatus,
+        apply_item_result,
         derive_batch_status_and_summary,
     )
 
     payload = dict(job.payload)
     items: list[dict[str, Any]] = payload.get("items") or payload.get("rows") or []
-    tenant_id = str(payload.get("tenant_id") or "tenant-default").strip()
+    tenant_id = str(payload.get("tenant_id") or "").strip()
+    if not tenant_id:
+        raise NonRetryableJobError("Batch listing intake job payload missing authenticated tenant scope")
+
+    started_at = payload.get("started_at") or datetime.now(UTC).isoformat()
+    payload["started_at"] = started_at
 
     existing_receipt = payload.get("receipt")
-    existing_items_map: dict[str, ItemReceipt] = {}
+    current_items: list[ItemReceipt] = []
     if isinstance(existing_receipt, dict) and "items" in existing_receipt:
         for it in existing_receipt["items"]:
             rec = it if isinstance(it, ItemReceipt) else ItemReceipt.from_dict(it)
-            existing_items_map[rec.item_id] = rec
-
-    item_receipts: list[ItemReceipt] = []
-    started_at = datetime.now(UTC).isoformat()
+            current_items.append(rec)
+    else:
+        for idx, raw_item in enumerate(items):
+            item_id = str(raw_item.get("item_id") or f"row-{idx+1:03d}")
+            current_items.append(
+                ItemReceipt(
+                    item_id=item_id,
+                    item_status=ItemStatus.PENDING.value,
+                    attempt=0,
+                    result_ref=None,
+                    error=None,
+                    idempotency_key=raw_item.get("idempotency_key"),
+                    last_attempt_at=None,
+                )
+            )
 
     for idx, raw_item in enumerate(items):
         item_id = str(raw_item.get("item_id") or f"row-{idx+1:03d}")
         idempotency_key = raw_item.get("idempotency_key")
-        existing = existing_items_map.get(item_id)
 
-        # Pre-execution cancellation check
+        # 1. Check live job status and cancellation from queue
+        latest_job = persistence.job_queue.get(job.job_id)
+        if latest_job is None:
+            raise JobFenceRejectedError(f"Job {job.job_id} not found in queue")
+
+        if latest_job.status in (JobStatus.CANCELLED, JobStatus.FAILED, JobStatus.SUCCEEDED):
+            if latest_job.status == JobStatus.CANCELLED:
+                final_items = []
+                for it in current_items:
+                    if it.item_status == ItemStatus.PENDING.value:
+                        final_items.append(
+                            ItemReceipt(
+                                item_id=it.item_id,
+                                item_status=ItemStatus.CANCELLED.value,
+                                attempt=0,
+                                result_ref=None,
+                                error=ItemError(
+                                    code="CANCELLED_BEFORE_EXECUTION",
+                                    message="Job cancelled before item execution started",
+                                    retryable=True,
+                                    details={"cancellation_reason": "OPERATOR_ABORT"},
+                                ),
+                                idempotency_key=it.idempotency_key,
+                                last_attempt_at=None,
+                            )
+                        )
+                    else:
+                        final_items.append(it)
+                current_items = final_items
+                agg_status, summary = derive_batch_status_and_summary(current_items)
+                receipt = DurableJobReceipt(
+                    job_id=job.job_id,
+                    job_type=job.job_type,
+                    tenant_id=tenant_id,
+                    status=agg_status.value.upper(),
+                    summary=summary,
+                    items=tuple(current_items),
+                    created_at=str(job.created_at.isoformat() if hasattr(job.created_at, "isoformat") else job.created_at),
+                    started_at=started_at,
+                    completed_at=datetime.now(UTC).isoformat(),
+                    correlation_id=job.correlation_id,
+                    idempotency_key=job.idempotency_key,
+                )
+                payload["receipt"] = receipt.to_dict()
+                payload["summary"] = summary.to_dict()
+                try:
+                    persistence.job_queue.update_status(
+                        job.job_id,
+                        JobStatus.CANCELLED,
+                        payload=payload,
+                        expected_version=latest_job.version,
+                        fence_token=job.fence_token,
+                    )
+                except Exception:
+                    pass
+            return
+
+        if latest_job.fence_token is not None and job.fence_token is not None:
+            if latest_job.fence_token != job.fence_token:
+                raise JobFenceRejectedError(
+                    f"Job fence token moved: expected {job.fence_token}, got {latest_job.fence_token}"
+                )
+
+        existing = next((it for it in current_items if it.item_id == item_id), None)
+
+        # Pre-execution item-level cancellation flag
         if raw_item.get("cancelled_before_execution") or (
             existing
             and existing.item_status == ItemStatus.CANCELLED.value
             and existing.attempt == 0
         ):
-            item_receipts.append(
-                ItemReceipt(
+            item_result = ItemReceipt(
+                item_id=item_id,
+                item_status=ItemStatus.CANCELLED.value,
+                attempt=0,
+                result_ref=None,
+                error=ItemError(
+                    code="CANCELLED_BEFORE_EXECUTION",
+                    message="Job cancelled before item execution started",
+                    retryable=True,
+                    details={"cancellation_reason": "OPERATOR_ABORT"},
+                ),
+                idempotency_key=idempotency_key,
+                last_attempt_at=None,
+            )
+            current_items = [
+                item_result if it.item_id == item_id else it for it in current_items
+            ]
+            continue
+
+        # Mid-execution item-level cancellation flag
+        if raw_item.get("cancelled_mid_execution"):
+            attempt_num = (existing.attempt if existing and existing.attempt > 0 else 0) + 1
+            item_result = ItemReceipt(
+                item_id=item_id,
+                item_status=ItemStatus.CANCELLED.value,
+                attempt=attempt_num,
+                result_ref=None,
+                error=ItemError(
+                    code="CANCELLED_MID_EXECUTION",
+                    message="Job cancelled by operator during item execution",
+                    retryable=True,
+                    details={"cancellation_reason": "OPERATOR_ABORT"},
+                ),
+                idempotency_key=idempotency_key,
+                last_attempt_at=datetime.now(UTC).isoformat(),
+            )
+            current_items = [
+                item_result if it.item_id == item_id else it for it in current_items
+            ]
+            continue
+
+        # Scoped retry skip gating: skip SUCCEEDED, permanent FAILED, or CANCELLED items
+        if existing is not None and existing.item_status != ItemStatus.PENDING.value:
+            if existing.item_status == ItemStatus.SUCCEEDED.value:
+                continue
+            if existing.item_status == ItemStatus.FAILED.value and existing.error and not existing.error.retryable:
+                continue
+            if existing.item_status == ItemStatus.CANCELLED.value:
+                continue
+
+        attempt_num = (existing.attempt if existing and existing.attempt > 0 else 0) + 1
+        now_iso = datetime.now(UTC).isoformat()
+
+        try:
+            result_ref, error = _default_batch_listing_item_executor(raw_item, tenant_id, persistence)
+            if error is not None:
+                item_result = ItemReceipt(
                     item_id=item_id,
+                    item_status=ItemStatus.FAILED.value,
+                    attempt=attempt_num,
+                    result_ref=None,
+                    error=error,
+                    idempotency_key=idempotency_key,
+                    last_attempt_at=now_iso,
+                )
+            else:
+                item_result = ItemReceipt(
+                    item_id=item_id,
+                    item_status=ItemStatus.SUCCEEDED.value,
+                    attempt=attempt_num,
+                    result_ref=result_ref,
+                    error=None,
+                    idempotency_key=idempotency_key,
+                    last_attempt_at=now_iso,
+                )
+        except Exception as exc:
+            is_retryable = not isinstance(exc, NonRetryableJobError)
+            item_result = ItemReceipt(
+                item_id=item_id,
+                item_status=ItemStatus.FAILED.value,
+                attempt=attempt_num,
+                result_ref=None,
+                error=ItemError(
+                    code="EXECUTION_ERROR",
+                    message=str(exc),
+                    retryable=is_retryable,
+                ),
+                idempotency_key=idempotency_key,
+                last_attempt_at=now_iso,
+            )
+
+        if existing and existing.item_status == ItemStatus.PENDING.value:
+            current_items = [
+                item_result if it.item_id == item_id else it for it in current_items
+            ]
+        else:
+            current_items, _ = apply_item_result(current_items, item_result)
+
+        # Checkpoint incrementally to durable persistence
+        _, checkpoint_summary = derive_batch_status_and_summary(current_items)
+        checkpoint_receipt = DurableJobReceipt(
+            job_id=job.job_id,
+            job_type=job.job_type,
+            tenant_id=tenant_id,
+            status=JobStatus.RUNNING.value.upper(),
+            summary=checkpoint_summary,
+            items=tuple(current_items),
+            created_at=str(job.created_at.isoformat() if hasattr(job.created_at, "isoformat") else job.created_at),
+            started_at=started_at,
+            completed_at=None,
+            correlation_id=job.correlation_id,
+            idempotency_key=job.idempotency_key,
+        )
+        payload["receipt"] = checkpoint_receipt.to_dict()
+        payload["summary"] = checkpoint_summary.to_dict()
+
+        latest_for_checkpoint = persistence.job_queue.get(job.job_id)
+        if latest_for_checkpoint is not None and latest_for_checkpoint.status == JobStatus.RUNNING:
+            try:
+                persistence.job_queue.update_status(
+                    job.job_id,
+                    JobStatus.RUNNING,
+                    payload=payload,
+                    expected_version=latest_for_checkpoint.version,
+                    fence_token=job.fence_token,
+                )
+            except Exception:
+                pass
+
+    # Terminal settlement
+    final_items = []
+    for it in current_items:
+        if it.item_status == ItemStatus.PENDING.value:
+            final_items.append(
+                ItemReceipt(
+                    item_id=it.item_id,
                     item_status=ItemStatus.CANCELLED.value,
                     attempt=0,
                     result_ref=None,
                     error=ItemError(
                         code="CANCELLED_BEFORE_EXECUTION",
-                        message="Job cancelled before item execution started",
+                        message="Job finished without executing item",
                         retryable=True,
-                        details={"cancellation_reason": "OPERATOR_ABORT"},
                     ),
-                    idempotency_key=idempotency_key,
+                    idempotency_key=it.idempotency_key,
                     last_attempt_at=None,
                 )
             )
-            continue
+        else:
+            final_items.append(it)
+    current_items = final_items
 
-        # Mid-execution cancellation check
-        if raw_item.get("cancelled_mid_execution"):
-            item_receipts.append(
-                ItemReceipt(
-                    item_id=item_id,
-                    item_status=ItemStatus.CANCELLED.value,
-                    attempt=1,
-                    result_ref=None,
-                    error=ItemError(
-                        code="CANCELLED_MID_EXECUTION",
-                        message="Job cancelled by operator during item execution",
-                        retryable=True,
-                        details={"cancellation_reason": "OPERATOR_ABORT"},
-                    ),
-                    idempotency_key=idempotency_key,
-                    last_attempt_at=datetime.now(UTC).isoformat(),
-                )
-            )
-            continue
-
-        # Scoped retry gating
-        if existing is not None:
-            # Succeeded items: skipped with zero invocations
-            if existing.item_status == ItemStatus.SUCCEEDED.value:
-                item_receipts.append(existing)
-                continue
-            # Permanent failures (retryable=False): skipped with zero invocations, attempt unchanged
-            if existing.item_status == ItemStatus.FAILED.value and (
-                existing.error and not existing.error.retryable
-            ):
-                item_receipts.append(existing)
-                continue
-            # Already cancelled items: skipped
-            if existing.item_status == ItemStatus.CANCELLED.value:
-                item_receipts.append(existing)
-                continue
-
-        # Execution path for new or retryable failed items
-        attempt_num = (existing.attempt if existing else 0) + 1
-        now_iso = datetime.now(UTC).isoformat()
-        executor = (
-            raw_item.get("_executor")
-            or payload.get("_item_executor")
-            or _default_batch_listing_item_executor
-        )
-
-        try:
-            result_ref, error = executor(raw_item, tenant_id, persistence)
-            if error is not None:
-                item_receipts.append(
-                    ItemReceipt(
-                        item_id=item_id,
-                        item_status=ItemStatus.FAILED.value,
-                        attempt=attempt_num,
-                        result_ref=None,
-                        error=error,
-                        idempotency_key=idempotency_key,
-                        last_attempt_at=now_iso,
-                    )
-                )
-            else:
-                item_receipts.append(
-                    ItemReceipt(
-                        item_id=item_id,
-                        item_status=ItemStatus.SUCCEEDED.value,
-                        attempt=attempt_num,
-                        result_ref=result_ref,
-                        error=None,
-                        idempotency_key=idempotency_key,
-                        last_attempt_at=now_iso,
-                    )
-                )
-        except Exception as exc:
-            is_retryable = not isinstance(exc, NonRetryableJobError)
-            item_receipts.append(
-                ItemReceipt(
-                    item_id=item_id,
-                    item_status=ItemStatus.FAILED.value,
-                    attempt=attempt_num,
-                    result_ref=None,
-                    error=ItemError(
-                        code="EXECUTION_ERROR",
-                        message=str(exc),
-                        retryable=is_retryable,
-                    ),
-                    idempotency_key=idempotency_key,
-                    last_attempt_at=now_iso,
-                )
-            )
-
-    aggregate_status, summary = derive_batch_status_and_summary(item_receipts)
+    aggregate_status, final_summary = derive_batch_status_and_summary(current_items)
     completed_at = datetime.now(UTC).isoformat()
     created_at_str = (
         job.created_at.isoformat()
@@ -435,7 +579,7 @@ def handle_batch_listing_intake(job: JobRecord, persistence: PersistenceBundle) 
         else str(job.created_at)
     )
 
-    receipt = DurableJobReceipt(
+    final_receipt = DurableJobReceipt(
         job_id=job.job_id,
         job_type=job.job_type,
         tenant_id=tenant_id,
@@ -443,21 +587,25 @@ def handle_batch_listing_intake(job: JobRecord, persistence: PersistenceBundle) 
         delivery_state=None,
         correlation_id=job.correlation_id,
         idempotency_key=job.idempotency_key,
-        summary=summary,
-        items=tuple(item_receipts),
+        summary=final_summary,
+        items=tuple(current_items),
         created_at=created_at_str,
         started_at=started_at,
         completed_at=completed_at,
     )
 
-    payload["receipt"] = receipt.to_dict()
-    payload["summary"] = summary.to_dict()
+    payload["receipt"] = final_receipt.to_dict()
+    payload["summary"] = final_summary.to_dict()
+
+    latest_final = persistence.job_queue.get(job.job_id)
+    final_version = latest_final.version if latest_final else None
 
     persistence.job_queue.update_status(
         job.job_id,
         aggregate_status,
         payload=payload,
         delivery_state=None,
+        expected_version=final_version,
         fence_token=job.fence_token,
     )
 
