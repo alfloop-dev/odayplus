@@ -20,13 +20,15 @@ external/<dataset>.json        external connector dataset contracts
 
 ## Contract shape
 
-Each contract is a JSON document with metadata
-(`contract_id`, `kind`, `source_system`, `source_dataset`, `canonical_target`,
-`mapping_id`, `integration_mode`, `envelope`, optional `acquisition_method`) and
-a `fields` array. Each field declares `name`, `type`
-(`string|number|integer|boolean|date|timestamp|json|array`), `required`, and
-optionally `enum`, `minimum`, and an `invalid_code` override. Contracts may also
-declare a small set of `invariants` (currently `time_order`).
+Each contract is a JSON document with metadata:
+- Core identity: `contract_id`, `kind` (`internal|external|envelope`), `source_system`, `source_dataset`, `canonical_target`, `mapping_id`
+- Delivery & exchange: `integration_mode` (`batch_snapshot|incremental_batch|event_stream|backfill|api_lookup`), `envelope` (`batch|event`), optional `acquisition_method`
+- Data catalog & governance metadata:
+  - `data_owner`: named business/engineering team responsible for data quality; unconfirmed entries explicitly marked `"unconfirmed"` or `"unknown"`. Empty whitespace fake owners are rejected.
+  - `target_latency_sla`: target freshness/latency SLA (e.g. `"PT1H"`, `"24h"`, `"realtime"`, or `"unconfirmed"`).
+  - `contact_channel` / `contact_ref`: contact channel or communication ref for alerts/queries (e.g. `"slack:#data-ops"`, `"unconfirmed"`).
+  - `runtime_capability`: machine-readable execution capability status (e.g. `"unverified"`, `"batch_watermark_only"`, `"streaming_supported"`, `"manual_attestation"`, `"verified"`), explicitly decoupled from declared `integration_mode` to prevent false readiness.
+- Fields & rules: `fields` array (`name`, `type`, `required`, optional `enum`, `minimum`, `invalid_code`, `description`) and optional `invariants` (`time_order`).
 
 ## Using them
 
