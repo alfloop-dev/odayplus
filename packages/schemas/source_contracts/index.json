@@ -57,6 +57,7 @@
     {"contract_id": "weather_daily_snapshot", "kind": "external", "file": "external/weather_daily_snapshot.json", "canonical_target": "weather_daily", "integration_mode": "batch_snapshot", "envelope": "batch", "acquisition_method": "api"},
     {"contract_id": "demographics_snapshot", "kind": "external", "file": "external/demographics_snapshot.json", "canonical_target": "demographics", "integration_mode": "batch_snapshot", "envelope": "batch", "acquisition_method": "file"},
     {"contract_id": "admin_boundary_snapshot", "kind": "external", "file": "external/admin_boundary_snapshot.json", "canonical_target": "geo_cell", "integration_mode": "batch_snapshot", "envelope": "batch", "acquisition_method": "public_dataset"},
-    {"contract_id": "geocode_result_snapshot", "kind": "external", "file": "external/geocode_result_snapshot.json", "canonical_target": "address_location", "integration_mode": "api_lookup", "envelope": "batch", "acquisition_method": "api"}
+    {"contract_id": "geocode_result_snapshot", "kind": "external", "file": "external/geocode_result_snapshot.json", "canonical_target": "address_location", "integration_mode": "api_lookup", "envelope": "batch", "acquisition_method": "api"},
+    {"contract_id": "store_opening_authority_snapshot", "kind": "external", "file": "external/store_opening_authority_snapshot.json", "canonical_target": "store", "integration_mode": "backfill", "envelope": "batch", "acquisition_method": "manual"}
   ]
 }
