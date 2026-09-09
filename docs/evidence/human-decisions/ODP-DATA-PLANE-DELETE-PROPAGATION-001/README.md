@@ -70,11 +70,11 @@
 
 | 檔案路徑 | 異動說明 |
 |---|---|
-| `apps/data_platform/deletion.py` | 實作刪除與墓碑傳播語意、版本運算、租戶解析、刪除決策、PurgePlan，並修正 `core.transactions` 外鍵依賴清理順序。 |
+| `apps/data_platform/deletion.py` | 實作刪除與墓碑傳播語意、版本運算、租戶解析、刪除決策、PurgePlan，修正 `core.transactions` 外鍵依賴清理順序，並提供 `scope_lock_key()` 推導 delete scope 的協調鍵。 |
 | `apps/data_platform/contracts.py` | 擴充 `QuarantineReason.SOURCE_DELETED`、`ReconciliationResult.sink_delete_drift` 與 `RunSummary` 序列化。 |
 | `apps/data_platform/sql/control_schema.sql` | 建立 `data_plane.tombstones` 稽核資料表，並在 `canonical_lineage` 擴充 `source_version` 欄位。 |
-| `apps/data_platform/store.py` | 實作 `delete_record()`、`tombstone_record()`、`get_tombstone()`、原子租戶墓碑防護、最新落地版本比對與版本感知 drift reconciliation。 |
-| `apps/data_platform/tests/test_delete_propagation.py` | 30 項完整單元、端到端與審查回歸測試套件，覆蓋外鍵依賴清理、重放保留新資料、租戶隔離、原子併發防護與對帳。 |
+| `apps/data_platform/store.py` | 實作 `delete_record()`、`tombstone_record()`、`get_tombstone()`、原子租戶墓碑防護、最新落地版本比對與版本感知 drift reconciliation，並以 `_lock_delete_scope()` / `_enter_delete_scope()` 建立 delete 與 upsert 的資料庫級協調（§8）。 |
+| `apps/data_platform/tests/test_delete_propagation.py` | 33 項完整單元、端到端與審查回歸測試套件，覆蓋外鍵依賴清理、重放保留新資料、租戶隔離、對帳，以及 §8 的 delete/upsert 交錯序列化回歸。 |
 | `docs/audits/code-boundary-inventory.csv` | 代碼邊界清單核實與更新。 |
 | `docs/evidence/human-decisions/ODP-DATA-PLANE-DELETE-PROPAGATION-001/README.md` | 本交付報告與架構規範說明。 |
 
@@ -97,14 +97,16 @@
 
 ## 7. 驗證命令與結果收據 (Verification Receipts)
 
-量測基準：本 README 所屬 commit 的工作樹（parent `cc7bdb0b`）。執行環境 Python 3.12.14；`apps.data_platform` 經確認解析至本 task worktree 而非主 checkout。所有指令均獨立執行並保留原始 exit code（未 pipe、未 `|| true`、未背景化即判定）。綁定 exact head 的正式收據由 `delivery_toolchain/git/task_verification.py run` 於交付 head 產生並存入 `.orchestrator/evidence`。
+量測基準：本 README 所屬 commit 的工作樹（parent `9b5ea841`）。執行環境 Python 3.12.14；`apps.data_platform` 經確認解析至本 task worktree 而非主 checkout。所有指令均獨立執行並保留原始 exit code（未 pipe、未 `|| true`、未以缺少摘要行推論成敗）。命令雖以背景 job 執行，完成判定一律取原始 exit code 與 JUnit XML，不以輸出樣態推論。綁定 exact head 的正式收據由 `delivery_toolchain/git/task_verification.py run` 於交付 head 產生並存入 `.orchestrator/evidence`。
 
 | # | 命令 | Exit Code | 時間 | 結果 |
 |---|---|---|---|---|
 | 1 | `git diff --check` | 0 | — | 通過 |
-| 2 | `uv run --frozen pytest apps/data_platform/tests/test_delete_propagation.py apps/data_platform/tests/test_pipeline.py -q` | 0 | 8s（pytest 自報 5.15s） | 30 passed, 9 warnings |
-| 3 | `uv run --frozen pytest tests/security/test_supply_chain_security_gate.py::test_sast_scan_passes -q` | 0 | 24s | 1 passed（修正前於 CI 為 FAILURE） |
+| 2 | `env -u INTAKE_TEST_DATABASE_URL uv run --frozen pytest apps/data_platform/tests/test_delete_propagation.py apps/data_platform/tests/test_pipeline.py -q` | 0 | JUnit 自報 17.412s | 33 passed / 0 failed / 0 skipped, 10 warnings |
+| 3 | `uv run --frozen pytest tests/security/test_supply_chain_security_gate.py::test_sast_scan_passes -q` | 0 | JUnit 自報 24.221s | 1 passed / 0 failed |
 | 4 | `uv run --frozen ruff check apps/data_platform/` | 0 | — | All checks passed |
+
+第 2、3 項的 tests / failures / skipped 計數取自各自的 `--junitxml`，非重跑統計。第 2 項的 `requires_live_env` 測試在本環境實際執行（每項 1–4 秒），未被跳過。
 
 ### 7.1 缺陷綁定負向對照 (Negative Control)
 
@@ -115,3 +117,46 @@
 - 修正版結果：**Exit Code 0，30 passed**
 
 對照後三個原始檔已還原，`git status` 僅保留本輪實際改動（`store.py`、`test_delete_propagation.py`）。此對照為離線合成 fixture 上的診斷程序，不屬於宣告的 verification 命令。
+
+---
+
+## 8. Delete 與 Upsert 的資料庫級原子協調 (Atomic Delete/Upsert Coordination)
+
+### 8.1 缺陷 (Defect)
+
+`cc7bdb0b` 之後仍留有一個真實併發缺陷，於 head `9b5ea841`（`store.py` sha256 `425955a4…`）以 threaded + `pg_stat_activity` 診斷實測為 **2 tests / 1 failure**：
+
+`_guard_deleted()` 只做一次 tombstone `SELECT`，而 delete 與 upsert 分別在**兩條連線的兩個交易**中執行，彼此不可見。當 connection A 的 guard 讀取通過、交易尚未 commit 時，connection B 的 delete v22 可以整段執行並 commit；A 隨後把較舊的 v21 落地，實體被復活。
+
+`_read_tombstone(..., FOR UPDATE)` 無法覆蓋此情境：需要協調的正是**墓碑列尚不存在**的第一次刪除，沒有列可以鎖。
+
+### 8.2 修復 (Repair)
+
+| 位置 | 內容 |
+|---|---|
+| `deletion.scope_lock_key()` | 由 `tenant_id` / `source_kind` / `source_id` 三元組推導 signed 64-bit 鍵。鍵是**推導**而非取自資料列，因此在墓碑尚不存在時同樣成立；`blake2b` 僅用於折疊到 PostgreSQL advisory lock 的鍵空間，不承載任何安全性宣稱。 |
+| `store._lock_delete_scope()` | 以 `SELECT pg_advisory_xact_lock(%s)` 取得**交易級**鎖：持有至呼叫端交易結束，呼叫端既無法洩漏它，也無法在自己的寫入尚未 commit 前提前釋放。 |
+| `store._guard_deleted()` | 在 tombstone `SELECT` **之前**取鎖。鎖的存續超出本方法，因此 guard 讀取與其後的 upsert 對 delete 而言是不可分割的一步。 |
+| `store._enter_delete_scope()` | delete 進入同一把鎖，並**在鎖內重讀 lineage**（owning tenant、purge targets、最新落地版本）。事件未宣告 tenant 時，第一次讀取只用來決定要鎖哪一把，不參與判定；取鎖後再讀一次，判定所依據的每一項事實都來自協調之內。 |
+
+判定結果因此對兩個方向都成立：較舊的 v21 upsert 落在較新的 v22 delete 之後 → delete 在鎖內讀到 v21 並清除；較新的 v23 upsert 落在較舊的 v22 delete 之前 → delete 讀到 v23 大於自身版本，判 `STALE_IGNORED` 而不退化 sink。
+
+### 8.3 為何不是「前移 test hook 或重查 SELECT」
+
+回歸測試 `test_a_delete_and_an_upsert_are_serialised_by_the_database` 不以「delete 恰好跑在後面」為通過條件，而是以資料庫自身的視角斷言：writer 在**真實的 `_guard_deleted` 已讀取並通過之後**被暫停於該處，deleter 必須被觀測到在 `pg_stat_activity.wait_event_type = 'Lock'` 上等待。只靠時序而沒有實際鎖的實作，觀測到的會是 `delete_finished_without_waiting`，測試即失敗。
+
+### 8.4 負向對照 (Negative Control)
+
+保留本輪測試檔，僅將 `store.py` 還原為缺陷版本 `9b5ea841`（還原後 sha256 `425955a4690affb47c593604e88f07f57f639446b55296a76dfd6ab6c641e6c1`，與原診斷收據所記一致），`deletion.py` 保留新增的未被使用之 `scope_lock_key`，跑同一組選擇：
+
+- 命令：`env -u INTAKE_TEST_DATABASE_URL uv run --frozen pytest apps/data_platform/tests/test_delete_propagation.py -q -k "serialised_by_the_database"`
+- 缺陷版結果：**Exit Code 1，2 failed, 25 deselected**，兩個參數化皆以 `delete_finished_without_waiting` 失敗
+- 修正版結果：**Exit Code 0**（含於 §7 第 2 項的 33 passed）
+
+原診斷在 `[23]` 方向是靠時序通過的；本回歸在缺陷版上**兩個方向都失敗**，因此嚴格強於原診斷。對照後 `store.py` 已還原，`git status` 僅保留本輪實際改動。此對照為離線合成 fixture 上的診斷程序，不屬於宣告的 verification 命令。
+
+### 8.5 邊界與非宣告 (Scope Boundary & Non-Claims)
+
+- 這把鎖序列化的是**同一 tenant / source-kind / source-id** 的 delete 與 upsert。不同 scope 不互相阻擋，這是刻意的：協調範圍與 delete 得以作用的範圍一致，不因此把租戶之間序列化。
+- `domain_inputs` 以 `source_snapshot_id` 為主鍵，同一 `source_id` 多次落地會保留多列快照。因此 v23 情境的斷言是「新落地的 snapshot 仍在」，v21 情境的斷言是「該身分的**每一個** snapshot 都已消失」，而非單純的列數比較。
+- 本節仍屬離線落地層語意：未開啟任何 change stream、未讀取任何憑證、未在生產環境刪除任何資料。與 Phase 34B / H07 的區隔同 §5，不因本修復升格為「完整 CDC 已 VERIFIED」。

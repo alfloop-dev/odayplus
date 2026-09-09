@@ -22,9 +22,12 @@ import os
 import re
 import shutil
 import tempfile
+import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
@@ -44,6 +47,7 @@ from apps.data_platform.deletion import (
     plan_purge,
     purgeable_tables,
     resolve_delete_tenant,
+    scope_lock_key,
     suppresses_upsert,
     version_from_timestamp,
 )
@@ -135,6 +139,21 @@ def test_a_delete_is_bound_to_exactly_one_owning_tenant() -> None:
     assert inferred.resolved and inferred.tenant_id == TENANT_A
     assert ambiguous.outcome is DeleteOutcome.REJECTED_AMBIGUOUS_TENANT
     assert orphan.outcome is DeleteOutcome.REJECTED_UNRESOLVED_TENANT
+
+
+def test_the_scope_lock_key_separates_tenants_kinds_and_identities() -> None:
+    base = scope_lock_key(TENANT_A, SourceKind.CAMPAIGN, "campaign-1")
+
+    assert base == scope_lock_key(TENANT_A, SourceKind.CAMPAIGN, "campaign-1")
+    # Each component of the delete scope has to move the key, or the
+    # coordination would either miss a real conflict or serialise a tenant
+    # against another tenant's unrelated identity.
+    assert base != scope_lock_key(TENANT_B, SourceKind.CAMPAIGN, "campaign-1")
+    assert base != scope_lock_key(TENANT_A, SourceKind.PRODUCT, "campaign-1")
+    assert base != scope_lock_key(TENANT_A, SourceKind.CAMPAIGN, "campaign-2")
+    # pg_advisory_xact_lock takes a signed 64-bit key; anything wider is
+    # rejected by the server rather than silently truncated.
+    assert -(2**63) <= base < 2**63
 
 
 def test_an_unknown_or_older_version_can_never_resurrect_a_deleted_entity() -> None:
@@ -601,6 +620,15 @@ def _domain_input_rows(connect, source_id: str) -> list[tuple[Any, ...]]:
         ).fetchall()
 
 
+def _domain_input_snapshots(connect, source_id: str) -> set[str]:
+    """Every landed snapshot of one identity: domain_inputs keeps one row each."""
+    with connect() as connection:
+        query = sql.SQL(
+            "SELECT source_snapshot_id FROM {schema}.domain_inputs WHERE source_id = %s"
+        ).format(schema=sql.Identifier(CONTROL_SCHEMA))
+        return {str(row[0]) for row in connection.execute(query, (source_id,)).fetchall()}
+
+
 def _seed_two_tenants(live_store) -> tuple[UUID, UUID]:
     store = live_store.store
     for merchant in ("merchant-a", "merchant-b"):
@@ -890,3 +918,105 @@ def test_transaction_delete_handles_existing_authority_reference(live_store: Any
     assert not result.rejected
     with live_store.connect() as conn:
         assert conn.execute("SELECT 1 FROM core.transactions WHERE transaction_id = %s", (txn_id,)).fetchone() is None
+
+
+@pytest.mark.requires_live_env
+@pytest.mark.parametrize("upsert_day, survives", [(21, False), (23, True)])
+def test_a_delete_and_an_upsert_are_serialised_by_the_database(
+    live_store: Any, monkeypatch: pytest.MonkeyPatch, upsert_day: int, survives: bool
+) -> None:
+    """A delete committing mid-upsert must still decide against what landed.
+
+    This is the interleaving a re-read cannot fix. The writer is held *after*
+    its real tombstone guard has already read and passed, which is exactly the
+    moment at which the guard's answer is about to go stale. If the two paths
+    are only ordered by luck, the delete commits into that window and the older
+    upsert lands behind it; the entity is resurrected.
+
+    The probe therefore asserts on the database's own view: the deleter must be
+    observed waiting on a lock in ``pg_stat_activity``, not merely observed
+    finishing late. A test that accepted "the delete happened to run second"
+    would pass on timing alone.
+
+    Both directions matter, and they are the same code path:
+
+    * an older upsert (v21) behind a newer delete (v22) must not survive, and
+    * a newer upsert (v23) ahead of an older delete (v22) must survive, because
+      a delete that removed it would be regressing the sink to an older state.
+    """
+    tenant, _ = _seed_two_tenants(live_store)
+    writer = live_store.store
+    deleter = live_store.build()
+    event = _event_for(
+        tenant, "campaign-a", datetime(2026, 7, 22, tzinfo=UTC), _begin_helper(writer)
+    )
+    guard_passed, release_writer, delete_connected = Event(), Event(), Event()
+    original_guard = writer._guard_deleted
+    original_connect = deleter._connect
+    delete_pid: list[int] = []
+
+    def held_guard(connection: Any, tenant_id: UUID, kind: SourceKind, envelope: Any) -> None:
+        # Hold the writer open with its guard already satisfied and its
+        # transaction still uncommitted.
+        original_guard(connection, tenant_id, kind, envelope)
+        guard_passed.set()
+        assert release_writer.wait(10), "test cleanup failed to release the writer"
+
+    def recorded_connect() -> Any:
+        connection = original_connect()
+        delete_pid.append(connection.info.backend_pid)
+        delete_connected.set()
+        return connection
+
+    monkeypatch.setattr(writer, "_guard_deleted", held_guard)
+    monkeypatch.setattr(deleter, "_connect", recorded_connect)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        upsert = executor.submit(
+            _land,
+            writer,
+            SourceKind.CAMPAIGN,
+            _campaign_document(
+                "campaign-a", "merchant-a", datetime(2026, 7, upsert_day, 1, tzinfo=UTC)
+            ),
+        )
+        try:
+            assert guard_passed.wait(5), "the writer never reached its tombstone guard"
+            deletion = executor.submit(deleter.delete_record, event)
+            assert delete_connected.wait(5), "the deleter never opened a connection"
+            observed = None
+            deadline = time.monotonic() + 5
+            with live_store.connect() as observer:
+                observer.autocommit = True
+                while time.monotonic() < deadline:
+                    if deletion.done():
+                        observed = "delete_finished_without_waiting"
+                        break
+                    waiting = observer.execute(
+                        "SELECT wait_event_type FROM pg_stat_activity WHERE pid = %s",
+                        (delete_pid[0],),
+                    ).fetchone()
+                    if waiting and waiting[0] == "Lock":
+                        observed = "delete_waiting_on_database_lock"
+                        break
+                    time.sleep(0.02)
+            assert observed == "delete_waiting_on_database_lock", (
+                f"the delete was not serialised against the open upsert: {observed}"
+            )
+        finally:
+            release_writer.set()
+        _, envelope, landed = upsert.result(timeout=10)
+        result = deletion.result(timeout=10)
+
+    assert landed.valid_loaded == 1, landed.quarantine_reason_counts
+    rows = _domain_input_rows(live_store.connect, "campaign-a")
+    landed_snapshots = _domain_input_snapshots(live_store.connect, "campaign-a")
+    if survives:
+        # The delete read the newer version back from lineage inside the
+        # coordination, so it refused rather than regressing the sink.
+        assert result.outcome is DeleteOutcome.STALE_IGNORED
+        assert envelope.source_snapshot_id in landed_snapshots
+    else:
+        assert result.outcome is DeleteOutcome.APPLIED
+        # domain_inputs keeps one row per landed snapshot, so "not resurrected"
+        # means every snapshot of this identity is gone, not just the last one.
+        assert rows == []

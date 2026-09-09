@@ -27,6 +27,7 @@ from apps.data_platform.deletion import (
     envelope_version,
     plan_purge,
     resolve_delete_tenant,
+    scope_lock_key,
     suppresses_upsert,
 )
 from apps.data_platform.identifiers import (
@@ -231,6 +232,13 @@ class _PostgresLookup(MappingLookup):
         return identity
 
 
+#: How many times a delete may re-key its scope lock while binding an owning
+#: tenant. One pass covers an event that declares its tenant; two cover one that
+#: has to learn the owner from lineage first. The bound exists so a pathological
+#: churn of owners cannot spin here, and the last read still decides.
+_DELETE_SCOPE_LOCK_ATTEMPTS = 3
+
+
 class PsycopgCanonicalStore:
     """Transactional canonical writer and lineage/checkpoint authority."""
 
@@ -319,6 +327,27 @@ class PsycopgCanonicalStore:
                         )
         return ProjectionBatchResult(tuple(valid), reason_counts)
 
+    def _lock_delete_scope(
+        self,
+        connection: Any,
+        tenant_id: UUID,
+        source_kind: SourceKind,
+        source_id: str,
+    ) -> None:
+        """Enter the database-level coordination for one delete scope.
+
+        Both the delete path and the projection guard take this lock before they
+        read, so neither can decide on a state the other commits away a moment
+        later. It is transaction scoped, so it is held for the rest of the
+        caller's transaction and released by its commit or rollback -- a caller
+        cannot leak it, and cannot drop it while its own writes are still
+        pending.
+        """
+        connection.execute(
+            "SELECT pg_advisory_xact_lock(%s)",
+            (scope_lock_key(tenant_id, source_kind, source_id),),
+        )
+
     def _guard_deleted(
         self,
         connection: Any,
@@ -330,7 +359,15 @@ class PsycopgCanonicalStore:
 
         An envelope with no ``source_updated_at`` has no orderable version, so
         it is treated as older than the tombstone rather than allowed through.
+
+        The tombstone read alone cannot decide this: a delete committing on
+        another connection just after the read would leave this upsert free to
+        resurrect the entity. Taking the scope lock first makes the read and the
+        upsert that follows it one indivisible step against that delete -- and
+        because the lock outlives this method, a delete that loses the race
+        still sees this upsert's rows and its lineage version when it runs.
         """
+        self._lock_delete_scope(connection, tenant_id, source_kind, envelope.source_id)
         row = connection.execute(
             f"""
             SELECT source_version
@@ -374,6 +411,57 @@ class PsycopgCanonicalStore:
                 DeleteScope(source_kind, source_id, tenant_id),
             )
 
+    def _read_lineage(self, connection: Any, scope: DeleteScope) -> list[tuple[Any, ...]]:
+        """Read every tenant, purge target and applied version for one identity."""
+        return connection.execute(
+            f"""
+            SELECT DISTINCT tenant_id, canonical_table, canonical_id, source_version
+            FROM {self._schema}.canonical_lineage
+            WHERE source_kind = %s AND source_id = %s
+            """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
+            (scope.source_kind.value, scope.source_id),
+        ).fetchall()
+
+    def _enter_delete_scope(
+        self,
+        connection: Any,
+        scope: DeleteScope,
+    ) -> tuple[list[tuple[Any, ...]], TenantResolution]:
+        """Bind the delete to one tenant and return its lineage read under the lock.
+
+        Which tenant owns a source identity is itself a lineage fact, so when the
+        event does not declare one the first read has to happen before the scope
+        lock can be keyed. That read only chooses the lock; it never feeds the
+        decision. Once a tenant is known its lock is taken and the lineage is
+        read again, so the owner, the purge targets and the currently applied
+        version the caller decides on all come from inside the coordination.
+        """
+        locked: set[UUID] = set()
+        lineage: list[tuple[Any, ...]] = []
+        resolution = TenantResolution(
+            None,
+            DeleteOutcome.REJECTED_UNRESOLVED_TENANT,
+            "no tenant declared and nothing landed downstream for this identity",
+        )
+        for _ in range(_DELETE_SCOPE_LOCK_ATTEMPTS):
+            if scope.tenant_id is not None and scope.tenant_id not in locked:
+                self._lock_delete_scope(
+                    connection, scope.tenant_id, scope.source_kind, scope.source_id
+                )
+                locked.add(scope.tenant_id)
+            lineage = self._read_lineage(connection, scope)
+            resolution = resolve_delete_tenant(
+                scope.tenant_id, [UUID(str(row[0])) for row in lineage]
+            )
+            candidate = resolution.tenant_id if resolution.resolved else None
+            if candidate is None or candidate in locked:
+                break
+            self._lock_delete_scope(
+                connection, candidate, scope.source_kind, scope.source_id
+            )
+            locked.add(candidate)
+        return lineage, resolution
+
     def _propagate_delete(
         self,
         event: DeleteEvent,
@@ -382,16 +470,7 @@ class PsycopgCanonicalStore:
         scope = event.scope
         with self._connect() as connection:
             with connection.transaction():
-                lineage = connection.execute(
-                    f"""
-                    SELECT DISTINCT tenant_id, canonical_table, canonical_id, source_version
-                    FROM {self._schema}.canonical_lineage
-                    WHERE source_kind = %s AND source_id = %s
-                    """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
-                    (scope.source_kind.value, scope.source_id),
-                ).fetchall()
-                owners = [UUID(str(row[0])) for row in lineage]
-                resolution = resolve_delete_tenant(scope.tenant_id, owners)
+                lineage, resolution = self._enter_delete_scope(connection, scope)
                 if resolution.resolved and not self._tenant_exists(
                     connection, resolution.tenant_id
                 ):

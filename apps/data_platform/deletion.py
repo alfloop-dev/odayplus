@@ -27,6 +27,7 @@ Two invariants drive every decision:
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -113,6 +114,28 @@ def suppresses_upsert(recorded_version: int | None, candidate_version: int | Non
     if candidate_version is None:
         return True
     return candidate_version <= recorded_version
+
+
+def scope_lock_key(tenant_id: UUID, source_kind: SourceKind, source_id: str) -> int:
+    """Return the 64-bit key that serialises one delete scope in the database.
+
+    A delete and a projection upsert for the same identity run in two different
+    transactions on two different connections, so ordering them needs a lock the
+    database holds, not a re-read. The key covers the whole tenant / source-kind
+    / source-id triple, so the coordination is exactly as wide as the scope a
+    delete may act on: another tenant's identity, and the same tenant's other
+    identities, stay independent.
+
+    The key is derived rather than taken from a row because the case that needs
+    coordination most is the one where no tombstone row exists yet, which a row
+    lock cannot cover. ``blake2b`` is used purely to fold the triple into the
+    signed 64-bit space PostgreSQL advisory locks take; it carries no security
+    claim, and a collision would only make two unrelated scopes share a lock,
+    which costs concurrency and never correctness.
+    """
+    material = "\x1f".join((str(tenant_id), source_kind.value, source_id))
+    digest = hashlib.blake2b(material.encode("utf-8"), digest_size=8).digest()
+    return int.from_bytes(digest, "big", signed=True)
 
 
 @dataclass(frozen=True)
