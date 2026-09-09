@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-c307293d67d88c7a5c7c070e2a49f737",
+  "serialNumber": "urn:uuid:sha256-8da015f6374fe8ddd036423cb1764d19",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-09-06T04:54:37.787919+00:00",
+    "timestamp": "2026-09-09T00:19:53.311599+00:00",
     "tools": [
       {
         "vendor": "ODay Plus",
@@ -16,21 +16,21 @@
       "name": "oday-plus",
       "version": "0.1.0",
       "type": "application",
-      "purl": "pkg:generic/alfloop-dev/odayplus@ad709b8a05d3cd2905fc5d2edb04335b27a14e89",
-      "bom-ref": "pkg:generic/alfloop-dev/odayplus@ad709b8a05d3cd2905fc5d2edb04335b27a14e89"
+      "purl": "pkg:generic/alfloop-dev/odayplus@ef76cf6d295ce7a8a470fe6e5f0eab20a0439169",
+      "bom-ref": "pkg:generic/alfloop-dev/odayplus@ef76cf6d295ce7a8a470fe6e5f0eab20a0439169"
     },
     "properties": [
       {
         "name": "git-sha",
-        "value": "ad709b8a05d3cd2905fc5d2edb04335b27a14e89"
+        "value": "ef76cf6d295ce7a8a470fe6e5f0eab20a0439169"
       },
       {
         "name": "sbom-hash",
-        "value": "c307293d67d88c7a5c7c070e2a49f7377e2ed28185f689b6dae58682cf3bd566"
+        "value": "8da015f6374fe8ddd036423cb1764d1996c7bfef097c3fa0595654383a24ead4"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:a4bac701a0e57a3d31e625a81a346bdaa9886db1f806e9b58e0dcd9132ce1eaf"
+        "value": "sha256:ea67f1a747821ad5ee347977d09cf00ebdf9fa567f5841da4fb4efdfc65d3c1e"
       },
       {
         "name": "container-base-images",
@@ -6559,21 +6559,6 @@
       }
     },
     {
-      "name": "design-tokens",
-      "version": "0.1.0",
-      "type": "library",
-      "purl": "pkg:npm/design-tokens@0.1.0",
-      "bom-ref": "pkg:npm/design-tokens@0.1.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "name": "UNKNOWN"
-          }
-        }
-      ]
-    },
-    {
       "name": "detect-libc",
       "version": "2.1.2",
       "type": "library",
@@ -6738,21 +6723,6 @@
         {
           "alg": "SHA-512",
           "content": "X7BJ2yElsnOJ30pZF4uIIDfBEVgF4XEBxL9Bxhy6dnrm5hkzqmsWHGTiHqRiITNhMyFLyAiWndIJP7Z1NTteDg=="
-        }
-      ]
-    },
-    {
-      "name": "domain-types",
-      "version": "0.1.0",
-      "type": "library",
-      "purl": "pkg:npm/domain-types@0.1.0",
-      "bom-ref": "pkg:npm/domain-types@0.1.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "name": "UNKNOWN"
-          }
         }
       ]
     },
@@ -12810,21 +12780,6 @@
       }
     },
     {
-      "name": "openapi-client",
-      "version": "0.1.0",
-      "type": "library",
-      "purl": "pkg:npm/openapi-client@0.1.0",
-      "bom-ref": "pkg:npm/openapi-client@0.1.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "name": "UNKNOWN"
-          }
-        }
-      ]
-    },
-    {
       "name": "openapi-schema-validator",
       "version": "0.9.0",
       "type": "library",
@@ -15824,21 +15779,6 @@
       ]
     },
     {
-      "name": "schemas",
-      "version": "0.1.0",
-      "type": "library",
-      "purl": "pkg:npm/schemas@0.1.0",
-      "bom-ref": "pkg:npm/schemas@0.1.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "name": "UNKNOWN"
-          }
-        }
-      ]
-    },
-    {
       "name": "scikit-learn",
       "version": "1.9.0",
       "type": "library",
@@ -17117,21 +17057,6 @@
       }
     },
     {
-      "name": "testkit",
-      "version": "0.1.0",
-      "type": "library",
-      "purl": "pkg:npm/testkit@0.1.0",
-      "bom-ref": "pkg:npm/testkit@0.1.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "name": "UNKNOWN"
-          }
-        }
-      ]
-    },
-    {
       "name": "text-table",
       "version": "0.2.0",
       "type": "library",
@@ -17804,36 +17729,6 @@
       }
     },
     {
-      "name": "ui",
-      "version": "0.1.0",
-      "type": "library",
-      "purl": "pkg:npm/ui@0.1.0",
-      "bom-ref": "pkg:npm/ui@0.1.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "name": "UNKNOWN"
-          }
-        }
-      ]
-    },
-    {
-      "name": "ui-domain",
-      "version": "0.1.0",
-      "type": "library",
-      "purl": "pkg:npm/ui-domain@0.1.0",
-      "bom-ref": "pkg:npm/ui-domain@0.1.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "name": "UNKNOWN"
-          }
-        }
-      ]
-    },
-    {
       "name": "unbox-primitive",
       "version": "1.1.0",
       "type": "library",
@@ -18240,21 +18135,6 @@
       "supplier": {
         "name": "Jeff Quast <contact@jeffquast.com>"
       }
-    },
-    {
-      "name": "web",
-      "version": "0.1.0",
-      "type": "library",
-      "purl": "pkg:npm/web@0.1.0",
-      "bom-ref": "pkg:npm/web@0.1.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "name": "UNKNOWN"
-          }
-        }
-      ]
     },
     {
       "name": "websockets",
@@ -18709,7 +18589,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/alfloop-dev/odayplus@ad709b8a05d3cd2905fc5d2edb04335b27a14e89",
+      "ref": "pkg:generic/alfloop-dev/odayplus@ef76cf6d295ce7a8a470fe6e5f0eab20a0439169",
       "dependsOn": [
         "pkg:pypi/argon2-cffi@25.1.0",
         "pkg:pypi/catboost@1.2.10",
@@ -18750,23 +18630,6 @@
         "pkg:pypi/statsforecast@2.1.1",
         "pkg:pypi/statsmodels@0.14.6",
         "pkg:pypi/uvicorn@0.50.2"
-      ]
-    },
-    {
-      "ref": "pkg:npm/web@0.1.0",
-      "dependsOn": [
-        "pkg:npm/@deck.gl/core@9.3.7",
-        "pkg:npm/@deck.gl/layers@9.3.7",
-        "pkg:npm/@deck.gl/react@9.3.7",
-        "pkg:npm/@deck.gl/widgets@9.3.7",
-        "pkg:npm/@types/pg@8.23.1",
-        "pkg:npm/argon2@0.45.1",
-        "pkg:npm/h3-js@4.5.0",
-        "pkg:npm/maplibre-gl@5.24.0",
-        "pkg:npm/next@15.5.21",
-        "pkg:npm/pg@8.23.0",
-        "pkg:npm/react-dom@18.3.1",
-        "pkg:npm/react@18.3.1"
       ]
     },
     {
