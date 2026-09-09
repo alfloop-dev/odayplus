@@ -3,10 +3,10 @@
 - **Task ID**: `ODP-DATA-PLANE-DELETE-PROPAGATION-001`
 - **Work Package**: WP-34 Follow-up ([ODP 人工決策落地規畫](../../../plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md) §6 WP-34 & [Phase 34A Implementation Handoff](../ODP-CDC-SOURCE-CONTRACT-PREP-001/implementation-handoff.md) §4 跟進項目 1)
 - **決策依據**: 決策編號 `D20`（A：實作／補齊 CDC 適用性與契約）
-- **查證基準 SHA**: `f1f06bd2` (aligned with `origin/dev` tip `c42b734c`)
-- **負責人 (Owner)**: Antigravity3
+- **查證基準 SHA**: `fe8168db` (aligned with `origin/dev` tip `fe8168db15d1`)
+- **負責人 (Owner)**: Antigravity4
 - **審查人 (Reviewer)**: Codex2
-- **交付狀態**: `IMPLEMENTATION_DELIVERED` (資料落地層刪除語意與墓碑防護實作完成)
+- **交付狀態**: `IMPLEMENTATION_DELIVERED` (資料落地層刪除語意與墓碑防護實作完成，SAST 掃描通過)
 
 ---
 
@@ -73,7 +73,7 @@
 | `apps/data_platform/contracts.py` | 擴充 `QuarantineReason.SOURCE_DELETED`、`ReconciliationResult.sink_delete_drift` 與 `RunSummary` 序列化。 |
 | `apps/data_platform/sql/control_schema.sql` | 建立 `data_plane.tombstones` 稽核資料表與實體索引。 |
 | `apps/data_platform/store.py` | 實作 `delete_record()`、`tombstone_record()`、`get_tombstone()`、`_guard_deleted()`、`_deleted_versions()` 與 drift reconciliation。 |
-| `apps/data_platform/tests/test_delete_propagation.py` | 25 項完整單元與端到端測試，覆蓋決策邏輯、SQL 語句、跨租戶、重放、亂序、重啟回讀與對帳。 |
+| `apps/data_platform/tests/test_delete_propagation.py` | 25 項完整單元與端到端測試，覆蓋決策邏輯、SQL 語句、跨租戶、重放、亂序、重啟回讀與對帳；SQL 查詢採用 `psycopg.sql.SQL` + `Identifier` 組合通過 SAST 掃描。 |
 | `docs/audits/code-boundary-inventory.csv` | 配合新增模組更新代碼邊界清單。 |
 | `docs/evidence/human-decisions/ODP-DATA-PLANE-DELETE-PROPAGATION-001/README.md` | 本交付報告與架構規範說明。 |
 
@@ -94,3 +94,5 @@
    - 狀態：通過（Exit Code: 0）
 2. **`uv run pytest apps/data_platform/tests/test_delete_propagation.py apps/data_platform/tests/test_pipeline.py -q`**
    - 狀態：通過（Exit Code: 0，25 passed）
+3. **`uv run python3 delivery_toolchain/security/sast_scan.py`**
+   - 狀態：通過（Exit Code: 0，Bandit SAST scan passed successfully）

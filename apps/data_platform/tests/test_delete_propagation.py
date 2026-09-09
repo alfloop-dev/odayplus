@@ -30,6 +30,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from psycopg import sql
 
 from apps.data_platform.contracts import QuarantineReason, SourceKind
 from apps.data_platform.deletion import (
@@ -584,9 +585,12 @@ def _land(store: PsycopgCanonicalStore, kind: SourceKind, document: dict[str, An
 
 def _domain_input_rows(connect, source_id: str) -> list[tuple[Any, ...]]:
     with connect() as connection:
+        query = sql.SQL(
+            "SELECT tenant_id, source_id FROM {schema}.domain_inputs "
+            "WHERE source_id = %s"
+        ).format(schema=sql.Identifier(CONTROL_SCHEMA))
         return connection.execute(
-            f"SELECT tenant_id, source_id FROM {CONTROL_SCHEMA}.domain_inputs "
-            "WHERE source_id = %s",
+            query,
             (source_id,),
         ).fetchall()
 
@@ -653,7 +657,9 @@ def test_sink_delete_removes_only_the_owning_tenants_rows(live_store) -> None:
     # The other tenant's identically-shaped record is untouched.
     assert len(_domain_input_rows(live_store.connect, "campaign-b")) == 1
     tombstones = live_store.connect().execute(
-        f"SELECT entity_id FROM {CONTROL_SCHEMA}.tombstones"
+        sql.SQL("SELECT entity_id FROM {schema}.tombstones").format(
+            schema=sql.Identifier(CONTROL_SCHEMA)
+        )
     ).fetchall()
     assert [row[0] for row in tombstones] == ["campaign-a"]
 
@@ -737,13 +743,16 @@ def test_reconcile_flags_a_reprojection_that_bypassed_the_delete_guard(live_stor
     # Simulate a writer that landed the entity again without consulting the
     # tombstone; the drift detector must not depend on that writer cooperating.
     with live_store.connect() as connection:
-        connection.execute(
-            f"""
-            INSERT INTO {CONTROL_SCHEMA}.canonical_lineage (
+        query = sql.SQL(
+            """
+            INSERT INTO {schema}.canonical_lineage (
                 source_snapshot_id, source_kind, source_id, content_sha256,
                 run_id, tenant_id, canonical_table, canonical_id, projected_at
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP + interval '1 hour')
-            """,
+            """
+        ).format(schema=sql.Identifier(CONTROL_SCHEMA))
+        connection.execute(
+            query,
             (
                 str(uuid.uuid4()),
                 SourceKind.CAMPAIGN.value,
