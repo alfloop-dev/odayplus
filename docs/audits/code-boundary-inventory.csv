@@ -885,6 +885,7 @@ tests/contract/test_heatzone_composition_schema.py,verification,verification_onl
 tests/contract/test_ingestion_contracts.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/contract/test_manual_correction_contract.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/contract/test_market_intelligence_api.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/contract/test_merge_queue_batch_policy.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/contract/test_netplan_disclosure_acknowledgement_schema.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/contract/test_netplan_disclosure_transport.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/contract/test_netplan_human_gate_ledger.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
