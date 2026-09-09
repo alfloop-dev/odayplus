@@ -1,0 +1,99 @@
+{
+  "$schema_comment": "Unsigned receipt template for ODP-OSS-DECISION-PACK-001. This template must be filled by a named, authorized Legal/Security/Risk owner through an authoritative external system. AI agents cannot sign, approve, or forge readback. Hash of this template is not proof of approval.",
+  "schema_version": "1.0.0",
+  "receipt_type": "oss_legal_policy_approval",
+  "task_id": "ODP-OSS-DECISION-PACK-001",
+  "related_task": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+  "policy_name": "ODP-OSS-License-Gate-Policy-v1",
+  "policy_version": "1.0.0",
+  "decision": "<approved | approved_with_conditions | rejected>",
+  "status": "<active | revoked | expired>",
+  "approved_by": {
+    "principal_id": "<authoritative-principal-id — from identity system, not repo username>",
+    "display_name": "<named-human — not a role, not an AI, not a placeholder>",
+    "role": "<authorized-legal-security-risk-role>",
+    "$invalid_values": [
+      "Human/Ops",
+      "Legal/Ops",
+      "Legal",
+      "AI",
+      "Claude",
+      "Antigravity2",
+      "Jane Doe",
+      "John Doe",
+      "<placeholder>"
+    ]
+  },
+  "approval_reference": "<authoritative-reference — external system ticket/decision ID>",
+  "source_system": "<authoritative-system — where receipt can be read back and verified>",
+  "issued_at": "<UTC timestamp — must not be in the future>",
+  "expires_at": "<UTC timestamp — no permanent approvals>",
+  "review_at": "<UTC timestamp — next mandatory review date>",
+  "scope": {
+    "environment": ["prod", "dev"],
+    "applicable_releases": ["<release-or-commit-range>"]
+  },
+  "decisions": {
+    "license_policy": {
+      "d01_lgpl_sharp_libvips": "<allow | allow_with_conditions | deny>",
+      "d02_lgpl_psycopg2_exception": "<accept_exception | deny>",
+      "d03_lgpl_psycopg3_conditions": "<allow_with_conditions | deny>",
+      "d04_lgpl_moocore_conditions": "<allow_with_conditions | deny>",
+      "d05_first_party_unlicensed": "<apply_marker | reject>",
+      "d06_dev_toolchain_risk": "<REMEDIATE | TEMPORARY_ACCEPT | REJECT>",
+      "d07_unknown_proprietary": "<case_by_case_review>",
+      "d08_permissive_allow": "<approved | revised>",
+      "d09_notice_auto_generate": "<approved | revised>",
+      "d10_exception_authority": "<named_principal_confirmed>",
+      "d11_exception_scope_limits": "<approved | revised>",
+      "d12_receipt_fail_closed": "<approved | revised>",
+      "d13_narrow_denylist": "<approved | revised>",
+      "d14_authoritative_receipt": "<system_identified>"
+    },
+    "per_source_data_approvals": {
+      "$comment": "Each source from source-decision-cards.json must be individually approved. Cannot batch-approve.",
+      "template_per_source": {
+        "source_id": "<source_id>",
+        "disposition": "<ALLOW | ALLOW_WITH_OBLIGATIONS | DENY>",
+        "conditions": "<specific conditions if ALLOW_WITH_OBLIGATIONS>",
+        "approved_datasets": ["<specific dataset/endpoint names>"],
+        "approved_usage": "<specific approved usage scope>"
+      }
+    }
+  },
+  "rationale": "<auditable rationale for the overall decision>",
+  "evidence": {
+    "policy_file_sha256": "<sha256 of approved license_policy.json version>",
+    "case_matrix_sha256": "<sha256 of reviewed case-matrix.json>",
+    "source_cards_sha256": "<sha256 of reviewed source-decision-cards.json>",
+    "sbom_sha256": "<sha256 of SBOM at approval time>",
+    "audit_report_sha256": "<sha256 of audit report at approval time>",
+    "third_party_notices_sha256": "<sha256 of NOTICE file at approval time>"
+  },
+  "conditions": [
+    "<any conditions attached to the approval>"
+  ],
+  "revocation": {
+    "method": "<how this receipt can be revoked>",
+    "reopen_triggers": [
+      "New LGPL dependency added",
+      "Version change in D01-D04 packages",
+      "New audit finding above accepted threshold",
+      "Receipt expiry",
+      "Scope or release mismatch"
+    ]
+  },
+  "integrity": {
+    "algorithm": "SHA-256",
+    "content_sha256": "<sha256 of this complete signed receipt>",
+    "signature_reference": "<optional-authoritative-signature-reference>"
+  },
+  "$validation_rules": {
+    "principal_id_must_be": "non-empty, from authoritative identity system",
+    "display_name_must_not_be": "role string, AI name, or placeholder",
+    "expires_at_must_be": "finite date in the future at signing time",
+    "issued_at_must_be": "UTC, not in the future at verification time",
+    "source_system_must_support": "readback and integrity verification",
+    "hash_alone_cannot_prove": "approval authority — only integrity"
+  }
+}

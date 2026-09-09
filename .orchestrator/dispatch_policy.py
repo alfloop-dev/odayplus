@@ -27,6 +27,14 @@ DISPATCH_REASON_PRIORITIES = {
     REASON_HELPER_CLAIM: 4,
 }
 
+#: The inverse of `DISPATCH_REASON_PRIORITIES`. A lane priority is what the
+#: eligibility predicate answers with, but role/provider policy is asked about a
+#: reason, so the two have to be convertible without a second table restating
+#: the mapping. Derived rather than written out for exactly that reason.
+DISPATCH_PRIORITY_REASONS = {
+    priority: reason for reason, priority in DISPATCH_REASON_PRIORITIES.items()
+}
+
 DISPATCH_STATUS_ACTIONS = {
     REASON_OWNED_READY: ("start", {"todo"}),
     REASON_OWNED_FINALIZE: ("note", {"review_approved"}),
@@ -570,6 +578,19 @@ def role_provider_block_reason(
 
 def dispatch_reason_priority(reason: str | None) -> int | None:
     return DISPATCH_REASON_PRIORITIES.get(str(reason or ""))
+
+
+def dispatch_priority_reason(priority: int | None) -> str | None:
+    """The dispatch reason a lane priority stands for, or `None` if unknown.
+
+    `dispatch_reason_priority` read backwards. Callers that hold a priority --
+    the number `dispatch_priority_for_task` returns -- and need the role that
+    lane puts an agent in go through here rather than mapping the number
+    themselves, so there stays one statement of which lane is which.
+    """
+    if priority is None or isinstance(priority, bool):
+        return None
+    return DISPATCH_PRIORITY_REASONS.get(priority)
 
 
 def is_execution_dispatch_reason(reason: str | None) -> bool:

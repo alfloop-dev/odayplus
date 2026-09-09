@@ -1,0 +1,79 @@
+{
+  "observed_at": "2026-09-08T15:07:48.727170+00:00",
+  "runtime": "/home/lupin/oday-plus-supervisor-runtime-9048161e058b",
+  "config_sha256": "54110ea0cef280a822484067185076b35600accf58dbb24d09adc6c64bbb6cd8",
+  "config_unchanged": true,
+  "supervisor": {
+    "pid": 945494,
+    "lifecycle": "running",
+    "loaded_code_sha": "9048161e058becff5a53593a773d3c42238213fb",
+    "loaded_config_digest": "54110ea0cef280a8",
+    "last_heartbeat_at": "2026-09-08T15:07:31Z"
+  },
+  "preserved_workers": [
+    {
+      "run_id": "antigravity-20260908T150400Z-c0f23cc0",
+      "pid": 941199,
+      "process_state": "State:\tS (sleeping)",
+      "record": "running"
+    }
+  ],
+  "pools": {
+    "claude_main": {
+      "state": "cooldown",
+      "effective_concurrency": 0,
+      "generation": 1,
+      "reason": "{\"type\":\"assistant\",\"message\":{\"diagnostics\":null,\"id\":\"04692caa-3d08-428b-a993-886de9b39bae\",\"container\":null,\"model\":\"<synthetic>\",\"role\":\"assistant\",\"stop_details\":null,\"stop_re",
+      "failure_kind": "quota_terminal",
+      "last_failure_at": "2026-09-08T15:00:05Z",
+      "next_probe_at": "2026-09-08T16:00:00Z",
+      "last_worker_run_id": "claude-20260908T145633Z-5701c833"
+    },
+    "antigravity_main": {
+      "state": "recovering",
+      "effective_concurrency": 1,
+      "generation": 1,
+      "reason": "Error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h49m11s.",
+      "failure_kind": "quota_terminal",
+      "last_failure_at": "2026-09-06T10:46:29Z",
+      "next_probe_at": "2026-09-06T11:01:29Z",
+      "last_worker_run_id": "antigravity-20260906T104257Z-9abd7a98",
+      "last_probe_at": "2026-09-06T11:01:30Z",
+      "probe_attempts": 1
+    },
+    "codex_bjoe": {
+      "state": "recovering",
+      "effective_concurrency": 1,
+      "generation": 13,
+      "reason": "Codex usage limit reached",
+      "failure_kind": "quota_terminal",
+      "last_failure_at": "2026-09-05T14:57:48Z",
+      "next_probe_at": "2026-09-05T15:57:48Z",
+      "last_worker_run_id": "codex-20260905T145528Z-0c8fe14e",
+      "last_probe_at": "2026-09-05T15:58:45Z",
+      "probe_attempts": 12,
+      "manual_release_at": "2026-08-22T05:43:27Z",
+      "manual_release_reason": "Operator requested immediate Codex quota cooldown release"
+    },
+    "codex_lupin": {
+      "state": "healthy",
+      "effective_concurrency": 2,
+      "generation": 2,
+      "reason": null,
+      "failure_kind": null,
+      "last_failure_at": "2026-08-27T07:29:08Z",
+      "next_probe_at": null,
+      "last_worker_run_id": "codex-20260827T064927Z-398a9b40",
+      "last_probe_at": "2026-08-21T17:34:27Z",
+      "probe_attempts": 1,
+      "manual_release_at": "2026-08-27T07:39:47Z",
+      "manual_release_reason": "False-positive quota text in task diff; operator verified no real provider quota"
+    },
+    "auto_assign": {
+      "state": "healthy",
+      "effective_concurrency": null,
+      "generation": 0
+    }
+  },
+  "safe_mode_until": "2026-09-08T15:09:07Z"
+}

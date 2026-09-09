@@ -5213,6 +5213,12 @@ class ActorCommandMutationGuardTests(unittest.TestCase):
         "approve": [TASK_ID, "approved"],
         "approve_continuation": [TASK_ID, "operator approved review-churn continuation", "2099-01-01T00:00:00Z", "nonce-test"],
         "archive_migrate": [],
+        "archive_recovery_apply": [
+            "--batch",
+            "/nonexistent/recovery-batch.json",
+            "--maintenance-hold",
+            "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
+        ],
         "wave open": ["open", "W-2026-07-29"],
         "wave close": ["close"],
     }

@@ -236,15 +236,14 @@ SUBJECT="$(git log --no-merges --format=%s "$BASE_REF..HEAD" 2>/dev/null | tail 
 BODY_FILE="$(mktemp "${TMPDIR:-/tmp}/task-finalize-${TASK_ID}-body.XXXXXX")"
 trap 'rm -f "$BODY_FILE"' EXIT
 {
-  echo "Task: \`$TASK_ID\`"
+  echo "任務：\`$TASK_ID\`"
   echo
-  echo "Branch \`$BRANCH\` -> \`$BASE_BRANCH\` ($AHEAD commit(s))."
+  echo "分支 \`$BRANCH\` -> \`$BASE_BRANCH\` ($AHEAD 個提交)。"
   echo
-  echo "Commits:"
+  echo "提交記錄："
   git log --no-merges --format='- %h %s' "$BASE_REF..HEAD"
   echo
-  echo "Opened by \`delivery_toolchain/git/task_finalize.sh\`. Merging still requires the"
-  echo "assigned reviewer's \`task-review-gate\` status plus required CI."
+  echo "由 \`delivery_toolchain/git/task_finalize.sh\` 開啟。合併仍需指派審查者的 \`task-review-gate\` 狀態與必要 CI 通過。"
 } > "$BODY_FILE"
 
 run() {
