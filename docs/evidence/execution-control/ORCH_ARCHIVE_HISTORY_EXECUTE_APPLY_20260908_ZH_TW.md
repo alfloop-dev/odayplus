@@ -1,34 +1,24 @@
-# ORCH-ARCHIVE-HISTORY-EXECUTE-003 收據：canonical apply 執行收據、審查更正記錄與控制面 blocker 交接
+# ORCH-ARCHIVE-HISTORY-EXECUTE-003 收據：canonical apply 執行收據、控制面 invalidation 實測與歷史回填收尾
 
-- 產出者：Claude2（owner・第 2 輪）／Antigravity3（owner・第 3–4 輪）／指定審查者：Codex（reviewer）
-- apply 執行時間：2026-09-08T23:56:44Z – 23:57:20Z（canonical checkpoint 所載）
+- 產出者：Claude2（owner・第 2 輪）／Antigravity3（owner・第 3–5 輪）／維護窗口與 invalidation 協調者：Codex／指定審查者：Codex（reviewer）
+- apply 執行時間：2026-09-08T23:56:44Z – 23:57:20Z（canonical checkpoint 所載，actor Claude2）
 - 第 2 輪量測時間：2026-09-09T00:14:59Z – 00:21:02Z
-- 第 3 輪更正與審查記錄時間：2026-09-09T01:12:43Z（commit 064f475f，送審 01:14:09Z，Codex 審查退回 01:21:54Z）
-- 第 4 輪量測、更正記錄補正與控制面 blocker 交接時間：2026-09-09T01:25:22Z
-- 交付分支：`task/ORCH-ARCHIVE-HISTORY-EXECUTE-003`，base `origin/dev` tip `c42b734c`
+- 第 3/4 輪更正與審查記錄時間：commit 064f475f（01:12:43Z），送審（01:14:09Z），Codex 審查退回（01:21:54Z）。原更正記錄文件中所載 01:15Z–01:25Z 為手動觀察整理時間，原命令終端量測時間不可恢復，明列 unknown。
+- 第 5 輪控制面修復、invalidation 實測與收尾時間：2026-09-09T16:22:55Z – 16:24:34Z（維護窗口 16:22:55Z–16:23:46Z，supervisor 重啟與健康回讀 16:24:04Z–16:24:23Z，reopen/assign 16:24:12Z–16:24:55Z）。
+- 交付分支：`task/ORCH-ARCHIVE-HISTORY-EXECUTE-003`，base `origin/dev` tip `50581b3b180aedaf76fbe4aaffb3bf7e2d120050`（PR #1287 merge commit）
 
-> **本輪沒有執行 `archive_recovery_apply`，也沒有重跑它。** apply 已在 2026-09-08 的維護窗口內由 owner 完成；已套用的批次、hold 與 checkpoint 原始 bytes **完整保留、未私自修改**。
-> 本輪針對 Codex 獨立審查提出的兩項 substantive findings（P1: `ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001` 與 P2: `ODP-MODELREADY-QUALITY-NULLABLE-001`）進行深度實質查證，產出機器可讀更正記錄（`recovery_disposition_corrections_20260909.json`）與控制面 blocker（`control_plane_remediation_blocker_20260909.json`）。
-> **明確未宣稱已在 canonical 磁碟完成修復**：四次 canonical show 均確認兩筆任務在 `ai-task-archive/tasks/` 內仍為 `status: done`, `terminal_outcome: completed`, `evidence_tier: reconstructable_done`, `gaps: []`；且 `task_archive.py:136-137` 依舊判定下游依賴滿足。文件更正記錄不能代替 canonical 狀態修改；因現有 CLI 拒絕 in-place reopen 且禁止手寫磁碟，本任務依規範執行 canonical blocker 交由前景協調者建立受控處置路徑。
-> 本輪未建立、未簽署、未延長任何 maintenance hold；未停止、恢復或送訊號給 Supervisor／watchdog；未手寫 `ai-status.json`、`ai-task-archive/` 或 `index.json`；未修改任何既有已合併證據檔或 `scripts/orchestrator/backfill_task_archive_snapshots.py`。
-
-驗收第 5 條與審查意見要求之各項證據，逐項對應：
-
-| 驗收要求 / 審查意見項 | 本文件 | 機器可讀證據 / 原始碼 |
-| --- | --- | --- |
-| apply receipt | §1 | `recovery_apply_receipt_20260908.json` |
-| 原 snapshots 未改證據 | §2 | `archive_snapshots_untouched_20260908_post_apply.json` |
-| 回填各 ID readback | §3 | `archive_readback_20260908_post_apply.json` 及 `archive_readback_20260909_post_findings.json` |
-| 依賴解析前後 | §4 | `dependency_release_analysis_20260908_post_apply.json` |
-| Supervisor 恢復派工結果 | §5 | `supervisor_dispatch_recovery_20260909.json` |
-| NLTK 最終驗證可派送與否明列 | §6 | `nltk_avm_disposition_20260909.json` |
-| AVM Human-only churn 獨立保留 | §7 | 同上 |
-| 審查意見 P1/P2 實質更正記錄 | §8 | `recovery_disposition_corrections_20260909.json` |
-| 控制面 blocker 與安全處置方案 | §9 | `control_plane_remediation_blocker_20260909.json` |
+> **核心事實與邊界聲明**：
+> 1. **原始回填產物 bytes 完整保留**：2026-09-08 維護窗口套用之批次（`recovery_batch_20260908_applied.json`）、hold（`maintenance_hold_20260908_applied.json`）與 checkpoint（`recovery_apply_checkpoint_20260908T235531Z.json`）原始 bytes **零更動**。磁碟上 88 筆既有 snapshot 原始 bytes **零更動**。
+> 2. **控制面 blocker 已實際解除**：PR #1287（exact reviewed head `88285f59`，merge commit `50581b3b180a`）已合併進 dev；新 runtime 部署於 `/home/lupin/oday-plus-supervisor-runtime-50581b3b180a`。前景協調者 Codex 於 2026-09-09T16:22:55Z – 16:23:46Z 新維護窗口內經唯一 canonical `scripts/ai-status.sh archive_recovery_invalidate` 完成兩筆爭議任務之失效處置。
+> 3. **清楚區分原始快照 done 與 resolver 有效 blocked**：`ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001` 與 `ODP-MODELREADY-QUALITY-NULLABLE-001` 磁碟 snapshot 保留歷史重建記錄（`done`/`completed`）；live `TaskResolver` 經 `ai-task-archive/corrections/` 正式讀回為 `effective_status: blocked`，`dependency_satisfied: false`。
+> 4. **有效狀態分佈**：23 筆重建 snapshot 現為 **21 done、2 blocked**；15 筆佔位維持 **15 blocked**（`non_dispatchable: true`, `waiting_for: Human/Ops`）。全 38 筆無全 done 冒充。
+> 5. **實質缺口與下游依賴**：Human/Ops 裁決缺口與 ModelReady production-entry A4 測試適用性缺口實質保留，未宣稱為產品完成。下游兩任務（`ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001` 與 `ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001`）整體 admission 在更正前後均為 false。
+> 6. **Supervisor 狀態**：重啟後運行 PID `1789757`，loaded code SHA `50581b3b180aedaf76fbe4aaffb3bf7e2d120050`，heartbeat 16:24:04Z，successful loop 17s。未釋放新產品派工。
+> 7. **時間更正**：舊手動觀察時間不可考者明列 unknown，本輪 invalidation 均由不可變原始 UTC 命令收據支持。本輪未重跑 apply/invalidation，不操作 Supervisor，嚴守治理邊界。
 
 ---
 
-## 1. Apply receipt
+## 1. Apply receipt（2026-09-08 維護窗口）
 
 canonical checkpoint：`/home/lupin/odayplus/.orchestrator/recovery-receipts/history-recovery-checkpoint-20260908T235531Z.json`
 （版控副本 `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_apply_checkpoint_20260908T235531Z.json`，sha256 `cee66fee0de0fd9ed39d1d7ed8abc9a176b3cc96065f2004cc7efe02a2de8f40`）。
@@ -46,197 +36,124 @@ canonical checkpoint：`/home/lupin/odayplus/.orchestrator/recovery-receipts/his
 | 結果 | 23 筆 reconstructed archive snapshot ＋ 15 筆 blocked 佔位 board row |
 
 批次與 hold 的版控副本經重算雜湊，**與 hold 所核准的 hash 位元組相同**：
-
-- `recovery_batch_20260908_applied.json` sha256 = `1833ca86…b34fe` = checkpoint 的 `batch_sha256` = hold 的 `batch_approval.approved_batch_sha256`。
-- `maintenance_hold_20260908_applied.json` sha256 = `e88435ae…60348` = checkpoint 的 `maintenance_hold.sha256`。
-
-hold 由 **Codex** 出具（`declared_by` / `approved_by` 皆為 Codex，`dispatch_paused: true`，`expires_at` 2026-09-09T01:55:31Z），核准對象是**上述 exact batch hash**；執行者是 Claude2，與批准者不同人。批次的 `authorization` 釘的是 `/home/lupin/odayplus-handoffs/odp-execution-wave-2026-09-07/USER_EXECUTION_SCOPE.md`（sha256 `d7a34fa1fbed837d9f15d2580709689b1178f11f2d1f019383082eebf11deea3`）。
-
-`ai-activity-log.jsonl` 有對應的 `archive_history_recovery_apply` 事件（agent `Claude2`，ts 2026-09-08T23:56:44Z），逐筆列出 38 個 task id、batch hash、hold 路徑與 checkpoint 路徑；訊息本身即載明「Reconstructed records are labelled and are not original archive bytes」。
-
-`counts` 內部一致性：`archive_snapshots_intended` 與 `applied_archive_snapshots` 逐項相同（23 = 23），`board_placeholders_intended` 與 `board_placeholders_on_disk` 相同（15 = 15），readback 列數亦為 23 / 15。
+- `recovery_batch_20260908_applied.json` sha256 = `1833ca86…b34fe`
+- `maintenance_hold_20260908_applied.json` sha256 = `e88435ae…60348`
 
 ---
 
-## 2. 既有 archive snapshot 未被改動
+## 2. 既有 88 筆 Archive Snapshot 零更動證據
 
-基準取自 apply 所用批次自帶的 pre-apply digest map（`baseline.archive_snapshot_digests`，由 `capture_recovery_baseline()` 於 2026-09-08T23:55:11Z 擷取），共 38 筆。把它與磁碟上的 61 筆（及後續完成之 62 筆）逐一比對：
+在 2026-09-09 維護窗口中，Codex 對磁碟上全部 88 筆既有 snapshot 進行了 SHA-256 重算（收錄於 `maintenance-window.json` 與 `after-apply.json`）：
 
 | 量測 | 結果 |
 | --- | --- |
 | `pre_existing_snapshots_changed` | **0 筆** |
 | `pre_existing_snapshots_removed` | **0 筆** |
-| `snapshots_added` (recovery) | 23 筆，且**與批次的 23 個 reconstructed id 完全相同** |
-| 既有 38 筆的最新 mtime | 2026-09-08T20:36:44Z，**早於** apply 開始的 23:56:44Z |
+| `original_archives_unchanged` | **88 / 88** |
+| `immutable_evidence_unchanged` | **true**（3 份原始 apply 產物雜湊全數相符） |
 
-第二條獨立證據：`ai_status.py` 的 apply 路徑內建 `survivors_tampered()`，只要任何既有 snapshot 的 digest 與 baseline 不符，就會寫 `partial` checkpoint 並 `SystemExit`，且不提交任何 board row。checkpoint 是 `applied`，代表該檢查當場通過。
-
-`ai-task-archive/index.json` 由 apply 成功後呼叫 `task_archive.rebuild_archive_index()` 重建，`counts.total` 由 38 變 61。`updated_at` 仍是 `2026-09-08T20:36:41Z`、23 筆重建記錄不在 `recent_terminal_ids` 內，因為 rebuild 依各 snapshot 的 `archived_at` 排序，而重建記錄帶的是 2026-09-05／09-06 的歷史時間，排不進最新 20 筆。checkpoint readback 的 `listed_in_archive_index: false` 即為此原因。
+88 筆原始快照檔案皆維持原始 bytes，未因 invalidation 而被修改或刪除。
 
 ---
 
-## 3. 回填各 ID readback
+## 3. 回填各 ID 讀回與狀態分佈
 
-本節直接由磁碟與 canonical reader 重讀。
+結合磁碟原始快照與 live TaskResolver 回讀結果：
 
-**23 筆 archive 記錄**（直接讀 `ai-task-archive/tasks/<ID>.json`）：
+### 3.1 23 筆 Reconstructed Snapshots（現為 21 done / 2 blocked）
+- **21 筆 effective done**（`status: done`, `dependency_satisfied: true`）：
+  - `ODP-AVM-DEPRECIATION-CONTRACT-001`, `ODP-CANONICAL-LEGACY-LINEAGE-001`, `ODP-DRIFT-DEP-REMOVE-002`, `ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001`, `ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001`, `ODP-INT-MANUAL-CORRECTION-AUDIT-001`, `ODP-LH-PREDICTION-DRIFT-001`, `ODP-LH003-BACKTEST-RELEASE-GATE-001`, `ODP-MEASUREMENT-CROSSLAYER-GATE-001`, `ODP-NETPLAN-DISCLOSURE-UI-E2E-001`, `ODP-OPS002-DECISION-COMMENTS-001`, `ODP-PRICE006-BANDIT-GATED-001`, `ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001`, `ODP-RELEASE-GATE-FIXTURE-STAGING-002`, `ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001`, `ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001`, `ODP-REQ-DISPOSITION-GOVERNANCE-001`, `ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001`, `ODP-SITESCORE-QUALITY-NULLABLE-001`, `ODP-SPEC-SOURCE-PROVENANCE-001`, `ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001`
+- **2 筆 effective blocked**（`status: blocked`, `dependency_satisfied: false`）：
+  - `ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001`（invalidation: 缺少 Human/Ops 權威裁決，撤回完成）
+  - `ODP-MODELREADY-QUALITY-NULLABLE-001`（invalidation: A4 缺值 production-entry 測試適用性缺口，撤回完成）
+- 23 筆之歷史 actor 一律保留 `UNKNOWN-HISTORICAL`。
 
-- 23/23 檔案存在，`terminal_status` 全為 `done`、`terminal_outcome` 全為 `completed`；
-- 23/23 帶 `history_recovery.reconstructed = true`、`record_kind = reconstructed_done`、`evidence_tier = reconstructable_done`，且都帶「重建記錄……不是原始 archive bytes，也不代表原始驗收、CI、部署或核准已完成」的自述 note；
-- 23/23 的 `historical_actors` 一律是 `owner/reviewer/human_go = UNKNOWN-HISTORICAL` —— **歷史 actor 維持 unknown，沒有被補寫成任何具名人員**；
-- `recovery_actors` 記的是本次復原的 owner `Claude2` / reviewer `Codex`，與歷史 actor 分開存放；
-- **實質缺口記錄（詳見 §8）**：其中 2 筆（`ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001` 與 `ODP-MODELREADY-QUALITY-NULLABLE-001`）經 Codex 獨立審查指出實質缺口，本收據確認其原分級有誤，並在 §8 記錄真實缺口與下游依賴影響；磁碟 snapshot 尚未透過控制面工具變更。
+### 3.2 15 筆 Board 佔位（全數維持 blocked）
+- 15/15 `status = blocked`、`non_dispatchable = true`、`waiting_for = Human/Ops`、`record_kind = recovery_placeholder`。
+- 13 筆 `merge_verified`，2 筆 `merge_claimed`（`DPF-EMGI-LIVE-ROLLOUT-001`, `XR-EXT-OSS-FINAL-AUDIT-001`）。
 
-**15 筆 board 佔位**（`AI_NAME=Antigravity3 $PANTHEON_STATUS_ROOT/scripts/ai-status.sh show <ID>`，15 次全部 exit 0，`source` 全為 `active`）：
-
-- 15/15 `status = blocked`、`non_dispatchable = true`、`waiting_for = Human/Ops`、`record_kind = recovery_placeholder`；
-- 15/15 都帶明確的證據缺口：13 筆 `merge_verified`（缺 acceptance 或 runtime），2 筆 `merge_claimed`（`DPF-EMGI-LIVE-ROLLOUT-001`、`XR-EXT-OSS-FINAL-AUDIT-001`，另帶 `merge_not_verifiable_on_ref`）。
-
-即：**23 done ＋ 15 blocked，沒有把 38 筆全標 done**，與驗收第 2 條一致。
+**總結分佈：21 done、2 blocked（重建）、15 blocked（佔位）＝ 21 done、17 blocked。**
 
 ---
 
-## 4. 依賴解析前後
+## 4. 依賴解析與反事實分析
 
-### 4.1 量測方法
-
-live board 在量測期間持續變動，兩個時間點直接相減會把別的 worker 的進度算進來。因此本節用**同一份凍結 board 快照上的反事實 A/B**：
-
-- 凍結快照 sha256 `e1717107627da9e49fa11ea5944ab5d985514e965f1b1655a26edf04971c477c`，`_status_write_revision` `3c88ece701c443078c199d94a90dbeae`；
-- **AFTER** = live `PANTHEON_STATUS_ROOT`（61 筆 snapshot、43 筆 board rows），唯讀；
-- **BEFORE** = status root 指向 `/tmp` 下只含 38 筆既有 snapshot 的 archive 複本，並從凍結 board 移除 15 筆佔位 row——即「這次 apply 從沒發生」的世界；
-- 判定用 live runtime `oday-plus-supervisor-runtime-current` 的 `supervisor.canonical_dispatchable_task_ids()`。
-- 探針原始碼：`dependency_release_probe_20260908.py.txt`（sha256 `5d25f108…`）。
-
-### 4.2 結果
-
-| 指標 | BEFORE | AFTER | 差 |
+| 指標 | 2026-09-08 Apply 前 | 2026-09-08 Apply 後 | 2026-09-09 Invalidation 後 |
 | --- | --- | --- | --- |
-| canonical dispatchable 任務數 | 6 | 6 | **0** |
-| `dependencies_satisfied` 為真的任務數 | 6 | 7 | +1 |
-| `blocked_task_auto_recovery_eligible` | 0 | 0 | 0 |
-| 懸空依賴邊（`missing`） | 43 | **0** | −43 |
-| 帶懸空邊的任務數 | 11 | **0** | −11 |
+| 懸空依賴邊（`missing`） | 43 | 0 | 0 |
+| `ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001` dependency_satisfied | missing (false) | **true**（過度推論） | **false**（更正） |
+| `ODP-MODELREADY-QUALITY-NULLABLE-001` dependency_satisfied | missing (false) | **true**（過度推論） | **false**（更正） |
+| `ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001` admission | false | false | **false** |
+| `ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001` admission | false | false | **false** |
+| 新變成可派送任務數 | — | 0 | **0** |
 
-- **新變成可派送的任務：0 筆。** 沒有任何任務因為這次回填而變得可以派送。
-- **新滿足依賴閘的任務：1 筆**，`ODP-AVM-QUALITY-NULLABLE-001`（詳見 §7）。
-- **沒有退步**：`lost_dispatchable` 與 `lost_dependencies_satisfied` 皆為空集合，15 筆 blocked 佔位沒有把任何原本可派送的任務關掉。
-
-### 4.3 為什麼「新變成可派送 = 0」不等於回填無效
-
-在 live runtime 上量到情境 B 會解除 1 筆，即 `ODP-DRIFT-SECURITY-VERIFY-003`。那一筆在 apply 之前就已由 Codex 手動 retarget 移除懸空邊並以 PR #1241（merge 進 dev `961934d7`）收尾 done 並進 archive。唯一一筆可被回填解除的派工已在 apply 前被人工消化掉，回填的實際增量效果因此落在依賴圖的正確性上，而不是新派工。
+- **下游任務未曾整體可派送**：`ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001` 與 `ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001` 在更正前均有其他前置依賴為 false，整體 admission 始終為 false；invalidation 確保其直接前置依賴亦正確回讀為 false，正當阻擋下游推進。
 
 ---
 
-## 5. Supervisor 恢復派工結果
+## 5. 控制面修復與 Invalidation 執行實測
 
-窗口時序：
+### 5.1 工具交付與部署
+- 工具 PR #1287 由 `task/ORCH-ARCHIVE-RECOVERY-INVALIDATION-001` 交付，審查 exact head `88285f59`，經 merge queue 合併為 `50581b3b180aedaf76fbe4aaffb3bf7e2d120050`。
+- 部署於 live runtime `/home/lupin/oday-plus-supervisor-runtime-50581b3b180a`。
 
-| 時間 (UTC) | 事件 |
-| --- | --- |
-| 2026-09-08T23:54:57Z | `supervisor_terminated`：Supervisor PID 1257037 收到 SIGTERM 並關閉 |
-| 23:55:11Z | 窗口內重新規劃批次（`generated_at`） |
-| 23:55:31Z | Codex 宣告 hold 並對 exact batch hash 簽署批准 |
-| 23:56:44Z – 23:57:20Z | `archive_recovery_apply`（actor Claude2），checkpoint `applied` |
-| 23:58:07Z | `supervisor_restart_attempted`：**watchdog** 決策 `restart_supervisor`（`reason=missing_pid`），新 PID 1325203 |
-| 23:58:13Z | `watchdog_safe_mode_dispatch_suppressed`，抑制新派工至 00:00:06Z |
-| 2026-09-09T00:03:10Z | 窗口後第一個 `worker_started`（ODP-CODEX-CLI-ASTRA-COMPAT-UPGRADE-001） |
-
-停止與恢復皆非本 worker 執行：SIGTERM 由前景協調者開窗時發出，重啟由 watchdog 自主決策完成。activity log 中無任何 worker 發出的 Supervisor 停止／恢復動作。
-
-**恢復結果：** Supervisor 進程存活（PID 1325203）；自重啟後正常進行派工管理，現有 worker 正常運作。
-
----
-
-## 6. NLTK 最終驗證：可派送與否
-
-**結論：不可派送，原因是「已經完成」，不是「被擋住」。**
-
-`ODP-DRIFT-SECURITY-VERIFY-003`（「驗證原生監控與 NLTK 移除的最終安全證據」）已於 2026-09-08T04:55:07Z 以 `done` / `completed` 進入 archive（PR #1241、approved head `15bb7a6bd527`、merge 進 dev `961934d7`）。它不在 active board 上，結構上不可能被派送。
-
-### 6.1 驗收點名的兩筆重建記錄：獨立重驗
-
-驗收要求「特別核實 NLTK REMOVE-002 與 HZ006」。對 GitHub 重新量測並與記錄比對：
-
-| 檢查 | ODP-DRIFT-DEP-REMOVE-002 (PR #1222) | ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001 (PR #1170) |
-| --- | --- | --- |
-| PR state = MERGED | ✅ | ✅ |
-| head OID 與記錄相符 | ✅ `6d438486…` | ✅ `0585dd49…` |
-| merge commit 與記錄相符 | ✅ `66244b30…` | ✅ `eed8d51b…` |
-| exact head CI 與記錄相符 | ✅ 7/7 success | ✅ 7/7 success |
-| `task-review-gate` state 與記錄相符 | ✅ success | ✅ success |
-| gate 具名審查者與記錄相符 | ✅ Antigravity4 | ✅ Claude |
-| 審查者 ≠ 記錄中的 owner | ✅ | ✅ |
-
-兩筆的 `historical_actors` 仍是 `UNKNOWN-HISTORICAL`。
+### 5.2 維護窗口與命令收據（2026-09-09 UTC）
+- **維護窗口記錄**（`maintenance-window.json`）：
+  - 窗口時間：`2026-09-09T16:22:55.891767Z` – `16:23:46.504109Z`
+  - 執行者：Codex
+  - status：`applied_and_verified`
+  - restart_command_succeeded：`true`
+- **Invalidation 命令 1**（`confirm-1.json`）：
+  - `started_at` 16:22:58Z，`finished_at` 16:23:20Z，exit 0
+  - 目標：`ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001`，寫入 `ai-task-archive/corrections/ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001.json`
+- **Invalidation 命令 2**（`confirm-2.json`）：
+  - `started_at` 16:23:20Z，`finished_at` 16:23:43Z，exit 0
+  - 目標：`ODP-MODELREADY-QUALITY-NULLABLE-001`，寫入 `ai-task-archive/corrections/ODP-MODELREADY-QUALITY-NULLABLE-001.json`
+- **回讀驗證**（`canonical-show-1.json`、`canonical-show-2.json`、`after-apply.json`）：
+  - 兩 ID 之 `ai-status.sh show` 均 exit 0，回讀 `source: archive`，`effective_status: blocked`，`dependency_satisfied: false`。
 
 ---
 
-## 7. AVM 的 Human-only review-churn continuation：獨立保留
+## 6. Supervisor 維護與派工恢復結果
 
-`ODP-AVM-QUALITY-NULLABLE-001`：
-
-- **apply 改變的只有依賴閘**：唯一依賴 `ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001` 變為 archive 解析的 `done`，`dependencies_satisfied` 變為 true。
-- **apply 沒有改變的**：`status` 仍是 `blocked`、`waiting_for` 仍是 `Human/Ops`、`review_reopen_count` 仍是 11。
-- **它沒有、也不應該變成可派送**：`blocked_task_auto_recovery_eligible` 仍為空集合——`task_is_human_gate()` 對 `waiting_for=Human/Ops` 直接否決，歷史修復不會解除 Human-only continuation 閘。修復歷史 ≠ 解除 churn。
-
----
-
-## 8. Codex 實質審查意見（P1 & P2）深度查證與更正記錄
-
-依據 Codex 審查意見，本輪對兩項爭議任務進行逐 byte 與逐 commit 的精確核實，並產出版控更正記錄 `recovery_disposition_corrections_20260909.json`：
-
-### 8.1 P1: `ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001`（Human-only 缺口誤標 done）
-
-1. **原始事實查證**：
-   - 任務 PR #1169（merge commit `830a8ebf919cd3f9dc3d53fc13c4f76e65eeff6e`，交付檔 `docs/evidence/ODP_MERGE_QUEUE_DISPOSITION_2026-09-03.md`）。
-   - 該收據第 9 行明文：「判定狀態：`BLOCKED_BY_EVIDENCE`（查無權威裁決，阻擋至 Human/Ops；未代簽任何 disposition）」。
-   - 第 23-25 行確認決策不存在、第 95-99 行判定任務阻擋至 `Human/Ops`，第 109-113 行法定欄位（decider、decision_date、risk_owner）皆為「待填」。
-   - 原任務驗收 A2（`task_evidence_inventory.json:9701`）明文規定：「找不到權威決策時 task 轉 blocked waiting Human/Ops」。
-2. **批次缺陷判定**：
-   - 套用批次將其重建為 `reconstructable_done`、`gaps=[]` 屬於過度推論。PR MERGED 與 CI 綠燈僅為交付證明，不能取代 Human/Ops 法定簽署。
-3. **更正處置與現狀確認**：
-   - 確認其真實處置應為 `evidence_tier: merge_verified`、`status: blocked`、`waiting_for: Human/Ops`，並帶 `human_authority_missing` 與 `acceptance_gap_blocked_by_evidence` 缺口。
-   - **實質現狀**：磁碟上 `ai-task-archive/tasks/ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001.json` 仍為 `status: done`, `terminal_outcome: completed`。`task_archive.py:136-137` 判定其依賴為滿足。此完成語意在控制面尚未失效，需經協調者受控路徑處置。
-4. **下游依賴影響**：
-   - 看板直接依賴者：`ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001`（status `todo`）。
-   - 其驗收要求「20 項逐一有 VERIFIED 或有效 formal nonimplementation disposition 且無 OPEN／BLOCKED_BY_EVIDENCE」。
-   - `ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001` 的 Human/Ops disposition 缺口必須實質保留，正當阻止 downstream closeout 任務在缺乏權威裁決時冒充全案完成。
-
-### 8.2 P2: `ODP-MODELREADY-QUALITY-NULLABLE-001`（生產入口負向測試適用性缺口）
-
-1. **原始事實查證**：
-   - 任務 PR #1168（head `a2a8d9c235e88820572b30700d5f5cc9b31bb0af`，merge commit `10d47d17a7b3ca8d3c655afaaf02b931c3fb7e0f`）。
-   - 驗收 A4（`task_evidence_inventory.json:10150-10179`）要求：「植入缺值 production-entry 測試與兩筆 exemption 移除在同一 commit」。
-   - 實查 head `a2a8d9c235e8` 被引用的 `modules/learninghub/tests/test_learninghub_production_runtime.py`，`_rows` 始終提供正向 `quality=.98/confidence=.95`，未植入缺值負向測試；實作 commit `38a58161b4c7` 亦未改該檔。
-   - 新增的缺值負向測試實位於 `tests/data/test_pit_snapshot.py:313-378`，屬 domain builder 單元測試，而非 HTTP/runtime 生產入口測試。
-2. **批次缺陷判定**：
-   - 驗收 A4 存在證據適用性缺口，不能以 green CI 取代 exact-head 生產入口測試核實，不能在無缺口下評定為 `reconstructable_done`。
-3. **更正處置與現狀確認**：
-   - 確認其真實處置應保留 `acceptance_gap_production_entry_test_unverified` 缺口，狀態應為 blocked waiting Human/Ops。
-   - **實質現狀**：磁碟上 `ai-task-archive/tasks/ODP-MODELREADY-QUALITY-NULLABLE-001.json` 仍為 `status: done`, `terminal_outcome: completed`。`task_archive.py:136-137` 判定其依賴為滿足。此完成語意在控制面尚未失效，需經協調者受控路徑處置。
-4. **下游依賴影響**：
-   - 看板直接依賴者：`ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001`（status `todo`）。
-   - 其驗收要求「六個 production-shaped 缺值測試證明 abstain／mark／reject 且六筆 exemptions 同 commit 歸零」。
-   - 下游 cutover 任務必須在 W3 切換時將 ModelReadyRecord production-shaped 缺值測試完整補齊，歷史 acceptance 缺口不得視為已被解決。
+依據 `post-restart-health.json`（觀察時間 `2026-09-09T16:24:23.358511Z`，actor Codex）：
+- Supervisor PID：`1789757`（started_at: `2026-09-09T16:23:46Z`）
+- `lifecycle`: `running`
+- `loaded_code_sha`: `50581b3b180aedaf76fbe4aaffb3bf7e2d120050`
+- `last_heartbeat_at`: `2026-09-09T16:24:04Z`
+- `last_successful_loop_at`: `2026-09-09T16:24:04Z`（duration 17000 ms, error: null）
+- `active_workers`: `[]`
+- **派工結論**：Supervisor 正常維護並監控看板，未釋放新產品任務，未新增未授權派工。
 
 ---
 
-## 9. 控制面限制、Mutation 拒絕與安全處置方案
+## 7. NLTK 最終驗證與 AVM 狀態處置
 
-本輪實查控制面工具鏈，確認以下關鍵限制：
+- **NLTK 最終驗證**（`ODP-DRIFT-SECURITY-VERIFY-003`）：
+  - status: `done`，`terminal_outcome: completed`（於 2026-09-08T04:55:07Z 收尾進 archive，PR #1241）。
+  - 不可派送之原因是已完成。
+- **AVM Human-Only Churn**（`ODP-AVM-QUALITY-NULLABLE-001`）：
+  - status: `blocked`，`waiting_for: Human/Ops`，`review_reopen_count: 11`。
+  - 歷史修復未解除 Human-only churn 閘，獨立保留等待人類裁決。
 
-1. **Canonical Writer 拒絕 In-Place Reopen Archived ID**：
-   - `scripts/ai_status.py` 第 6546-6550 行明文限制：若任務存在於 `ai-task-archive/tasks/`，`reopen` 直接拒絕並提示 `Task <task-id> is archived and cannot be reopened in place. Create a new follow-up task that references <task-id>.`
-   - 控制面亦無撤回 snapshot 或就地修改 `evidence_tier` 的子命令。
-2. **依賴判定機制與純文件撤回無效性**：
-   - `task_archive.py:136-137` 僅以 `is_terminal_task(task)`（即 `status == done`）且 `terminal_outcome != superseded` 判定依賴是否滿足。
-   - 僅在 docs 撰寫撤銷聲明、或僅在 JSON 調整 `evidence_tier`/`gaps` 但保留 `status: done`，在 live runtime 均無法撤回依賴完成語意。
-3. **禁止繞過 CAS 手寫磁碟**：
-   - 依據專案治理規則與驗收條件，禁止 worker 直接修改 `ai-task-archive/tasks/*.json`、`ai-status.json` 或 `ai-task-archive/index.json`，亦禁止在無 hold 下重跑 batch。
-4. **安全處置方案（已提交 `control_plane_remediation_blocker_20260909.json`）**：
-   - **方案 1（維護窗口控制面 Migration）**：由前景協調者建立正式維護窗口並簽署 hold，透過受控控制面修復工具或 migration 腳本，將 `ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001` 與 `ODP-MODELREADY-QUALITY-NULLABLE-001` 自 archive 移回 board 成為 blocked recovery_placeholder（waiting_for: Human/Ops 並帶明確 gaps），並重建 archive index，使 `task_archive.task_satisfies_dependency` 正確返回 false。
-   - **方案 2（下游 Gate 鎖定與 Follow-up 任務）**：由前景協調者與審查者在下游任務（`ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001` 與 `ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001`）建立法定前置阻擋 gate 或 follow-up 任務，在控制面強制阻擋下游派工，直至 Human/Ops 裁決與 ModelReady 缺值測試完成。
+---
+
+## 8. 審查意見 P1/P2 實質缺口分析
+
+1. **P1: `ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001`**
+   - 交付收據（`docs/evidence/ODP_MERGE_QUEUE_DISPOSITION_2026-09-03.md`）載明 `BLOCKED_BY_EVIDENCE`，缺 decider/decision_date/risk_owner。
+   - 原始驗收 A2 要求缺權威決策時保持 blocked。
+   - Invalidation 已成功撤回完成語意，缺口實質保留，不代簽 disposition。
+2. **P2: `ODP-MODELREADY-QUALITY-NULLABLE-001`**
+   - 驗收 A4 要求之缺值 production-entry 測試未植入於 `modules/learninghub/tests/test_learninghub_production_runtime.py`。
+   - Invalidation 已成功撤回完成語意，缺口實質保留，交由下游 cutover 任務補齊。
+
+---
+
+## 9. 時間誠信與量測來源揭露
+
+- **原第 3/4 輪時間說明**：第 3/4 輪記錄中提及之 01:15Z–01:25Z 為手動撰寫整理時間，原命令終端之 timestamp 與 exit receipt 無法恢復，已明列 unknown 並標記為沿用舊觀察。
+- **第 5 輪不可變時間收據**：本輪控制面 invalidation 與 Supervisor 重啟時間均來自 2026-09-09T16:22–16:24Z 之真實命令 exit receipt（包含完整 argv、exit_code、stdout、stderr 與 UTC ISO-8601 時間戳）。
 
 ---
 
@@ -244,19 +161,55 @@ live board 在量測期間持續變動，兩個時間點直接相減會把別的
 
 | 檔案路徑 | SHA-256 | 說明 |
 | --- | --- | --- |
-| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_apply_receipt_20260908.json` | `1f50ed25765d18c4f6a4815335a5d6c1c29af646534124ecd185141b156755fd` | Apply 執行收據 |
-| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_apply_checkpoint_20260908T235531Z.json` | `cee66fee0de0fd9ed39d1d7ed8abc9a176b3cc96065f2004cc7efe02a2de8f40` | Canonical apply checkpoint 副本 |
-| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_batch_20260908_applied.json` | `1833ca8656ae30efc34d6ade6437ba850c5a53f9fcda67bb1cd4f7c8c70b34fe` | 已套用 batch 副本（原始 bytes 不動） |
-| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/maintenance_hold_20260908_applied.json` | `e88435aecada1b7b84f4811c3144a54afdb9e428299430e6f6766d4b1ec60348` | 已核准 hold 副本（原始 bytes 不動） |
-| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/archive_snapshots_untouched_20260908_post_apply.json` | `24d4eb9bbf9af6e6ec89b9000539b151676284e5cc5612289151186a221eae36` | 既有 38 筆 snapshot 零更動量測證據 |
-| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/archive_readback_20260908_post_apply.json` | `cc252dd693eec6f5a8a1e67e54756b7e00a1c880ac3f4e43e37c3491217fa4aa` | 第 2 輪 23+15 讀回記錄 |
-| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/archive_readback_20260909_post_findings.json` | `773a32b494434113cdaa42b3942b0e2cfb6e78b92f1014a62627cc9904ed7a4e` | 第 4 輪最新看板與 archive 讀回記錄（實測時間 01:25:22Z） |
-| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/dependency_release_analysis_20260908_post_apply.json` | `72567991fe37d1222da753ac012d8f6c5c64f9b8a511661fd75d54baa615a9d1` | 反事實 A/B 依賴解除分析 |
-| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/supervisor_dispatch_recovery_20260909.json` | `275daa15cf0c096f189289282312b2eef8e090911345b9e385cbba6734336524` | Supervisor 恢復與重啟紀錄 |
-| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/nltk_avm_disposition_20260909.json` | `4387d03cc5e3fea6023020ec9083f90eb63e762c16d78e70ed8f11d144b8482a` | NLTK 完成與 AVM 狀態處置 |
-| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_disposition_corrections_20260909.json` | `baf84335ce3b5091ffbe974cece5db3f31217d6bd99538fb483bca0e42a0aea4` | **P1/P2 審查意見實質更正記錄（實測時間 01:25:22Z）** |
-| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/control_plane_remediation_blocker_20260909.json` | `c37fa50072daa295e44026bb0d5a3de7bba7188c85d06866850360ebae9e4840` | **控制面限制與修復方案報告（實測時間 01:25:22Z）** |
-| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/dependency_release_probe_20260908.py.txt` | `5d25f108655d196fa8350d24914448d9a38b7fef67962fe3e51edf3fe412e7de` | 依賴解析量測探針原始碼 |
-| `docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_EXECUTE_APPLY_20260908_ZH_TW.md` | — | 本收據文件 |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/HISTORY_CLOSEOUT_HANDOFF_ZH_TW.md` | `d3940b563538399bd7baecc443c19d2b041c3ef788b83ad299c252854989f36f` | **收尾交接指引原文副本** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/RECOVERY_APPLY_CHECKPOINT_20260907.json` | `c7c003d9c2000c78a1515d352b4462972635be582e85d76043079e7012fc2ad9` | RECOVERY_APPLY_CHECKPOINT_20260907.json |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/after-apply.json` | `ad69bef2d23657d99117f836cf25f95d4a320462e39ce44708510a437f005350` | **維護窗口 Invalidation 後 TaskResolver 讀回** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/after-readback-command.json` | `7321b3dca8b64a6b3720cb19e504ca3c2a394e5ea83b983acbc69c63748bcb8e` | **Invalidation 後讀回命令收據** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/apply_window.py` | `e79fab35c00b0a2a44c028b71cbfefeef29a379f4773d974dbb6e2e649da0e55` | **維護窗口 Invalidation 自動化執行腳本** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/archive_readback_20260908_post_apply.json` | `cc252dd693eec6f5a8a1e67e54756b7e00a1c880ac3f4e43e37c3491217fa4aa` | archive_readback_20260908_post_apply.json |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/archive_readback_20260909_post_findings.json` | `773a32b494434113cdaa42b3942b0e2cfb6e78b92f1014a62627cc9904ed7a4e` | archive_readback_20260909_post_findings.json |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/archive_snapshots_untouched_20260907_close.json` | `8389552aabbb0c4671aa718d53653d2b47dd6c772ef556c1a13dbf7100ba6b09` | archive_snapshots_untouched_20260907_close.json |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/archive_snapshots_untouched_20260907_open.json` | `521116874d5cd8ce1d8686c2516422c044e3099f9163baf8566132fb2fc8e097` | archive_snapshots_untouched_20260907_open.json |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/archive_snapshots_untouched_20260908_post_apply.json` | `24d4eb9bbf9af6e6ec89b9000539b151676284e5cc5612289151186a221eae36` | archive_snapshots_untouched_20260908_post_apply.json |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/attestations_planner_input_20260907.json` | `c84822169f6b824dfdcd0315de57338f416536e6da678bbea4fed047d93bb5e3` | attestations_planner_input_20260907.json |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/before-apply.json` | `3b372db1192c65b15375c95791d8e2beeed43f832ae713506fc03a1147128105` | **維護窗口 Invalidation 前 TaskResolver 讀回** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/before-readback-command.json` | `d14167907a017535d30c6a3c89da5db33d055391ca7cec2253a8dfa88357ad40` | **Invalidation 前讀回命令收據** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/canonical-show-1.json` | `2c4acb2b7457ddd26e6b594470fbcf669b657c8d8a4a34f0b35c3f2f4b13ba5f` | **ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001 Canonical Show 讀回收據** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/canonical-show-2.json` | `341f8addde5a74004c950e0d14aaea604b87acc28a3c9e10660b4be11b4a404c` | **ODP-MODELREADY-QUALITY-NULLABLE-001 Canonical Show 讀回收據** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/confirm-1.json` | `3ceb6a46cab3cf23c235d38297ffe6180e9327e26b6a8411649d0866373e59a3` | **ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001 Invalidation 執行收據** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/confirm-2.json` | `5eb66cad0532ad20a939ae04f5d2f223af80b28534299d7fecec275f9969e19b` | **ODP-MODELREADY-QUALITY-NULLABLE-001 Invalidation 執行收據** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/control_plane_remediation_blocker_20260909.json` | `84e6c6045f00f1cab7af3d3bbf93135ffef31ce9cd17e8135fedc8ce0981ce6c` | **控制面 Blocker 解除報告** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/dependency_release_analysis_20260907_execute.json` | `91c7cd64483a714a3ae8b270aa485d89b77c8c2730ba49a197ee73cbcd796993` | dependency_release_analysis_20260907_execute.json |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/dependency_release_analysis_20260907_execute_live_runtime.json` | `383ee36004458edc36062ecbb64f6a0bb364bf11c35e44d112f43f737bf845f5` | dependency_release_analysis_20260907_execute_live_runtime.json |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/dependency_release_analysis_20260908_post_apply.json` | `72567991fe37d1222da753ac012d8f6c5c64f9b8a511661fd75d54baa615a9d1` | dependency_release_analysis_20260908_post_apply.json |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/dependency_release_probe_20260908.py.txt` | `5d25f108655d196fa8350d24914448d9a38b7fef67962fe3e51edf3fe412e7de` | dependency_release_probe_20260908.py.txt |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/dry-run-1.json` | `af89475d392a2bb7d1fc4686054919dc6cdea74d16e5b41d4a889558c0bc9348` | **Invalidation Dry Run 1 收據** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/dry-run-2.json` | `99a5c27f6fa55fe5aa880ba085f04f6f53fcac307c101acdb98342e54e67dee6` | **Invalidation Dry Run 2 收據** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/history-closeout-metadata.json` | `d770514360743574e7f2993898384f974fbd1a48c191dfad523ca837f79f2fb2` | **歷史收尾指派 Metadata** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/history-closeout-reopen.json` | `63b4688c8eef367ca78d1c1b6048d92293fa819c713a42ce56812223bb24beae` | **歷史收尾 Reopen 狀態收據** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/live-evidence-manifest.json` | `9cfa3829230a65412e7cf45dafbea5dff09a1fe3d7a4115283e4b52885ed8dc8` | **Live Invalidation 證據清單** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/maintenance-window.json` | `fe681d1b81dc704c626c5b6cbe1ed3a1d60f127e6f9f3aeb8b4144db2a848d14` | **2026-09-09 Invalidation 維護窗口記錄** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/maintenance_hold_20260908_applied.json` | `e88435aecada1b7b84f4811c3144a54afdb9e428299430e6f6766d4b1ec60348` | 原始 Apply hold 副本（bytes 不動） |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/maintenance_hold_template_NOT_A_HOLD.json` | `459940b255b0e85ebaff4468010afee666a87eaa9462a1218363f1c896e83f0f` | maintenance_hold_template_NOT_A_HOLD.json |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/nltk_avm_disposition_20260909.json` | `4387d03cc5e3fea6023020ec9083f90eb63e762c16d78e70ed8f11d144b8482a` | nltk_avm_disposition_20260909.json |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/nltk_followup_recheck_20260907.txt` | `49c51466a063f97e05aa1933c1c082505d582161cf68d92b9b8ac9c0d16a51c9` | nltk_followup_recheck_20260907.txt |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/plan.json` | `9edb88c60dbe490b8f3a04b835dd32456739e9668127a536e51d96a8698daea8` | **Invalidation 維護計劃** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/post-restart-dispatch.json` | `bb3fdeb60b90359abff61641db590867eb38c9100bd078d38397c87a8e14876f` | **Supervisor 重啟後派工狀態收據** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/post-restart-health.json` | `0a97ae386008ba05b56e5ee5829af67dae1e5a2a06d3b86e0f1d8e5c10acc8bc` | **Supervisor 重啟後健康收據** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/preadmission_check_20260907.json` | `dc48073589b0ad99d7b9a42498107a02ca53ff0d8d9f8f9117c3bfcdd449a05a` | preadmission_check_20260907.json |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/priority_two_local_recheck_20260907.txt` | `dd2de6c573553bfa05808b7bba0d43e8259b1a74eeafbf562275844e5ea10813` | priority_two_local_recheck_20260907.txt |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/priority_two_reverification_20260907.txt` | `8315265533fdfe855ee46d1c5b9d61393823a2459b864cd2065158e561ec9630` | priority_two_reverification_20260907.txt |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/readback.py` | `99ed1d2c328d4867220ca4ab7bde9e83d9317e2ccb6ee26e4653eaccc7161041` | **維護窗口 TaskResolver 讀回探針指令碼** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_apply_checkpoint_20260908T235531Z.json` | `cee66fee0de0fd9ed39d1d7ed8abc9a176b3cc96065f2004cc7efe02a2de8f40` | 原始 Apply checkpoint 副本（bytes 不動） |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_apply_receipt_20260908.json` | `1f50ed25765d18c4f6a4815335a5d6c1c29af646534124ecd185141b156755fd` | 2026-09-08 Apply 執行收據 |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_batch_20260907_scenarioA_as_documented.json` | `3c7f5928db956bb6fd49840a09ab9e27de85fa5f550b15773327ec1988ab71c5` | recovery_batch_20260907_scenarioA_as_documented.json |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_batch_20260907_scenarioB.json` | `639059236692d8b0fc32d9b6cb1f0210f84068c023c0fdcf90c7760875f674a6` | recovery_batch_20260907_scenarioB.json |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_batch_20260908_applied.json` | `1833ca8656ae30efc34d6ade6437ba850c5a53f9fcda67bb1cd4f7c8c70b34fe` | 原始 Apply batch 副本（bytes 不動） |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_disposition_corrections_20260909.json` | `e4c04640395b45d609b5b2cfcd648a52e35c1060b9fb5a4b894aa198164e3231` | **P1/P2 實質更正與 Invalidation 記錄** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/rollout-preflight.json` | `cd805edf4c1b5fce602c36e2f05360c1ceb7915ab02874c21968803e1eff31c6` | **Runtime Rollout 預檢收據** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/rollout-result.json` | `fbfa8cdf843b35d0a9db4648f717a8d9d89110d5b52c7fc34217974c79713e91` | **Runtime Rollout 執行結果收據** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/supervisor-restart.json` | `71af05961963fab4793c10230ccebcb472276f5db0f228e74396c11b4b2eb21f` | **Supervisor 重啟命令收據** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/supervisor_dispatch_recovery_20260909.json` | `275daa15cf0c096f189289282312b2eef8e090911345b9e385cbba6734336524` | supervisor_dispatch_recovery_20260909.json |
+| `docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_EXECUTE_APPLY_20260908_ZH_TW.md` | — | 本收據主文件 |
 
-本輪只新增/更新 docs/evidence 檔案，未動任何 `.py`、config、workflow 或治理 manifest。交付物由指定審查者 Codex 獨立審查。
+交付物由指定審查者 Codex 獨立審查。
