@@ -1027,6 +1027,52 @@ else:
                 )
             return active_tenant_id
 
+        def _normalize_batch_item_scope(
+            raw_item: dict[str, Any], item_id: str
+        ) -> tuple[dict[str, Any], dict[str, Any]]:
+            """Normalize scope aliases on a batch item and reject conflicting values.
+
+            Returns (normalized_item, collection_scope).
+            """
+            normalized = dict(raw_item)
+            axis_pairs = (
+                ("heatZoneId", "heat_zone_id"),
+                ("regionId", "region_id"),
+                ("brandId", "brand_id"),
+                ("assignedAreaId", "assigned_area_id"),
+            )
+            scope: dict[str, Any] = {}
+            for camel_key, snake_key in axis_pairs:
+                has_camel = camel_key in raw_item and raw_item[camel_key] is not None
+                has_snake = snake_key in raw_item and raw_item[snake_key] is not None
+                val_camel = (
+                    str(raw_item[camel_key]).strip()
+                    if has_camel and str(raw_item[camel_key]).strip()
+                    else None
+                )
+                val_snake = (
+                    str(raw_item[snake_key]).strip()
+                    if has_snake and str(raw_item[snake_key]).strip()
+                    else None
+                )
+
+                if val_camel is not None and val_snake is not None and val_camel != val_snake:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={
+                            "code": "CONFLICTING_SCOPE_ALIAS",
+                            "message": (
+                                f"Conflicting values for {camel_key} ('{val_camel}') and "
+                                f"{snake_key} ('{val_snake}') in item '{item_id}'"
+                            ),
+                        },
+                    )
+                authoritative = val_camel if val_camel is not None else val_snake
+                normalized[camel_key] = authoritative
+                normalized[snake_key] = authoritative
+                scope[camel_key] = authoritative
+            return normalized, scope
+
         @platform_router.post("/jobs", status_code=status.HTTP_202_ACCEPTED, tags=["jobs"])
         def enqueue_job(
             body: JobCreatePayload,
@@ -1094,6 +1140,7 @@ else:
                 }
                 raw_items = payload.get("items") or payload.get("rows")
                 principal = principal_from_headers(request.headers)
+                normalized_items: list[dict[str, Any]] = []
                 if isinstance(raw_items, list):
                     seen_ids: set[str] = set()
                     for idx, raw_item in enumerate(raw_items):
@@ -1108,18 +1155,21 @@ else:
                                     },
                                 )
                             seen_ids.add(item_id)
+                            norm_item, item_scope = _normalize_batch_item_scope(raw_item, item_id)
                             authorize_intake_action(
                                 principal,
                                 "submit_csv",
-                                collection_scope={
-                                    "heatZoneId": raw_item.get("heatZoneId") or raw_item.get("heat_zone_id"),
-                                    "assignedAreaId": raw_item.get("assignedAreaId") or raw_item.get("assigned_area_id"),
-                                    "regionId": raw_item.get("regionId") or raw_item.get("region_id"),
-                                    "brandId": raw_item.get("brandId") or raw_item.get("brand_id"),
-                                },
+                                collection_scope=item_scope,
                                 tenant_id=active_tenant_id,
                                 correlation_id=getattr(request.state, "correlation_id", None),
                             )
+                            normalized_items.append(norm_item)
+                        else:
+                            normalized_items.append(raw_item)
+                    if "items" in payload or "rows" not in payload:
+                        payload["items"] = normalized_items
+                    else:
+                        payload["rows"] = normalized_items
                 actor_role_val = "expansion_user"
                 if principal.roles:
                     first_r = next(iter(principal.roles))
@@ -1225,17 +1275,14 @@ else:
 
                 raw_items = job.payload.get("items") or job.payload.get("rows") or []
                 if isinstance(raw_items, list):
-                    for raw_item in raw_items:
+                    for idx, raw_item in enumerate(raw_items):
                         if isinstance(raw_item, dict):
+                            item_id = str(raw_item.get("item_id") or f"row-{idx+1:03d}").strip()
+                            _, item_scope = _normalize_batch_item_scope(raw_item, item_id)
                             authorize_intake_action(
                                 principal,
                                 "view",
-                                collection_scope={
-                                    "heatZoneId": raw_item.get("heatZoneId") or raw_item.get("heat_zone_id"),
-                                    "assignedAreaId": raw_item.get("assignedAreaId") or raw_item.get("assigned_area_id"),
-                                    "regionId": raw_item.get("regionId") or raw_item.get("region_id"),
-                                    "brandId": raw_item.get("brandId") or raw_item.get("brand_id"),
-                                },
+                                collection_scope=item_scope,
                                 tenant_id=active_tenant_id,
                             )
             elif job_tenant:
@@ -1321,17 +1368,14 @@ else:
 
                 raw_items = job.payload.get("items") or job.payload.get("rows") or []
                 if isinstance(raw_items, list):
-                    for raw_item in raw_items:
+                    for idx, raw_item in enumerate(raw_items):
                         if isinstance(raw_item, dict):
+                            item_id = str(raw_item.get("item_id") or f"row-{idx+1:03d}").strip()
+                            _, item_scope = _normalize_batch_item_scope(raw_item, item_id)
                             authorize_intake_action(
                                 principal,
                                 "submit_csv",
-                                collection_scope={
-                                    "heatZoneId": raw_item.get("heatZoneId") or raw_item.get("heat_zone_id"),
-                                    "assignedAreaId": raw_item.get("assignedAreaId") or raw_item.get("assigned_area_id"),
-                                    "regionId": raw_item.get("regionId") or raw_item.get("region_id"),
-                                    "brandId": raw_item.get("brandId") or raw_item.get("brand_id"),
-                                },
+                                collection_scope=item_scope,
                                 tenant_id=active_tenant_id,
                             )
             else:

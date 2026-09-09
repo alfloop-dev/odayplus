@@ -59,7 +59,18 @@ handoff §3.0／§3.3 以 `GET /platform/jobs/{job_id}` 與 `POST /platform/jobs
 
 ---
 
-## 2. 對 Codex 審查意見（R1–R5）的處置
+## 2. 對 Codex 審查意見（PR #1285 與前置輪次）的處置
+
+### 2.1 PR #1285 Codex 審查意見修復
+
+| 審查意見（PR #1285 Findings） | 處置方式 | 對應測試 |
+|---|---|---|
+| **Finding 1 (Scope Aliases Normalization & Conflict Rejection)**: Snake_case 與 camelCase 範圍別名若同列出現且值衝突（如 `heatZoneId` 與 `heat_zone_id` 衝突）缺乏檢驗 | 新增 `_normalize_batch_item_scope`，跨四軸（`heatZoneId`/`heat_zone_id`、`regionId`/`region_id`、`brandId`/`brand_id`、`assignedAreaId`/`assigned_area_id`）偵測衝突，衝突時回傳 HTTP 422 `CONFLICTING_SCOPE_ALIAS`；無衝突時正規化為 canonical camelCase。Enqueue、GET 與 Retries 一致使用該正規化 | `test_review_finding_r3_r4_scope_and_submitter_preservation` |
+| **Finding 2 (Multi-axis Scope Preservation on Intake)**: 批次匯入落入 intake 記錄時，僅寫入 `heatZoneId`，遺失 `regionId`、`brandId`、`assignedAreaId`，導致受限範圍之創建者讀取時被 403 `SCOPE_DENIED` 拒絕 | 在 `NetworkListingService.record_batch_assisted_entry` 補齊 `heatZoneId`、`regionId`、`brandId`、`assignedAreaId` 的完整保存，確保與 `correct_intake` 及授權檢驗一致 | `test_review_finding_r3_r4_scope_and_submitter_preservation` |
+| **Finding 3 (Cancellation Races & Status Derivation Parity)**: 終態寫入與 Attempt 開始競爭時，取消未保留全成功狀態或跳過收據持久化 | 修正 `_write_receipt` 與 `settle_cancelled_batch_receipt`：當所有項目於取消前已成功時，推導結果保持 `SUCCEEDED`；終態結算時持久化已落地的項目成果與取消項目，不提早 return 跳過寫入 | `test_4_live_operator_cancellation_during_execution`、`test_review_finding_3_cancellation_races` |
+| **Finding 4 (Test 5 Durable Replay Integration)**: Test 5 原為 in-memory mock 測試，未能驗證持久化 SQLite 與跨程序重啟的真實 fencing | 將 Test 5 重構為完整的 durable SQLite 整合測試（Subcases 5.1–5.5），驗證重送 attempt=0 業務調用、重複 enqueue 冪等防護、過期 attempt 失敗不覆寫成功、未啟動取消項不復活、以及訊息抵達順序置換等價性 | `test_5_duplicate_delivery_and_out_of_order` |
+
+### 2.2 前置輪次審查意見（R1–R5）處置
 
 | 審查意見（Finding） | 本輪處置 | 對應測試 |
 |---|---|---|

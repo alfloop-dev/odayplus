@@ -6,11 +6,14 @@ durable receipts, scoped retry (FAILED_ONLY), and deterministic aggregate deriva
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
 from shared.governance.vocabularies import JobStatus
+
+logger = logging.getLogger(__name__)
 
 
 class ItemStatus(StrEnum):
@@ -263,10 +266,21 @@ def apply_item_result(
 
     # Stale result rule (b): item is already in SUCCEEDED status (terminal for item)
     if existing.item_status == ItemStatus.SUCCEEDED.value:
+        logger.info(
+            "Stale item result discarded: item %s already in terminal SUCCEEDED status (incoming attempt %s, existing attempt %s)",
+            new_result.item_id,
+            new_result.attempt,
+            existing.attempt,
+        )
         return current_items, False
 
     # Stale result on pre-execution CANCELLED item (attempt == 0)
     if existing.item_status == ItemStatus.CANCELLED.value and existing.attempt == 0:
+        logger.info(
+            "Stale item result discarded: item %s is unstarted CANCELLED (incoming attempt %s)",
+            new_result.item_id,
+            new_result.attempt,
+        )
         return current_items, False
 
     # A result may only carry the item forward: it either completes the attempt
@@ -274,11 +288,23 @@ def apply_item_result(
     # outcome is already recorded rejects a second result for that same attempt,
     # which is what makes a duplicate delivery a no-op.
     if new_result.attempt < existing.attempt:
+        logger.info(
+            "Stale item result discarded: item %s incoming attempt %s < existing attempt %s",
+            new_result.item_id,
+            new_result.attempt,
+            existing.attempt,
+        )
         return current_items, False
     if (
         new_result.attempt == existing.attempt
         and existing.item_status != ItemStatus.PENDING.value
     ):
+        logger.info(
+            "Duplicate item result discarded: item %s attempt %s already resolved as %s",
+            new_result.item_id,
+            new_result.attempt,
+            existing.item_status,
+        )
         return current_items, False
 
     # Apply new result
@@ -342,14 +368,14 @@ def settle_cancelled_batch_receipt(
             else:
                 updated_items.append(rec.to_dict() if isinstance(rec, ItemReceipt) else dict(it))
 
-        _, summary = derive_batch_status_and_summary(updated_items)
+        derived_status, summary = derive_batch_status_and_summary(updated_items)
         receipt_dict = dict(receipt)
         receipt_dict["job_id"] = str(job_id or receipt_dict.get("job_id") or payload.get("job_id") or "")
         receipt_dict["job_type"] = str(job_type or receipt_dict.get("job_type") or payload.get("job_type") or "")
         receipt_dict["tenant_id"] = str(tenant_id or receipt_dict.get("tenant_id") or payload.get("tenant_id") or "")
         receipt_dict["correlation_id"] = correlation_id or receipt_dict.get("correlation_id") or payload.get("correlation_id")
         receipt_dict["idempotency_key"] = idempotency_key or receipt_dict.get("idempotency_key") or payload.get("idempotency_key")
-        receipt_dict["status"] = JobStatus.CANCELLED.value.upper()
+        receipt_dict["status"] = derived_status.value.upper()
         receipt_dict["completed_at"] = completed_iso
         receipt_dict["items"] = updated_items
         receipt_dict["summary"] = summary.to_dict()
@@ -375,13 +401,13 @@ def settle_cancelled_batch_receipt(
             )
             updated_items.append(cancelled_rec.to_dict())
 
-        _, summary = derive_batch_status_and_summary(updated_items)
+        derived_status, summary = derive_batch_status_and_summary(updated_items)
         created_at_str = created_at or payload.get("created_at") or completed_iso
         receipt_dict = {
             "job_id": job_id or payload.get("job_id"),
             "job_type": job_type or payload.get("job_type", ""),
             "tenant_id": tenant_id or payload.get("tenant_id", ""),
-            "status": JobStatus.CANCELLED.value.upper(),
+            "status": derived_status.value.upper(),
             "items": updated_items,
             "summary": summary.to_dict(),
             "created_at": created_at_str,

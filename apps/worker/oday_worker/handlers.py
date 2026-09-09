@@ -487,7 +487,7 @@ def handle_batch_listing_intake(job: JobRecord, persistence: PersistenceBundle) 
                     f"Job fence token moved: expected {job.fence_token}, "
                     f"got {latest.fence_token}"
                 )
-            if job_status != JobStatus.CANCELLED and latest.status != JobStatus.RUNNING:
+            if latest.status != JobStatus.RUNNING and require_running:
                 raise JobFenceRejectedError(
                     f"Job {job.job_id} left RUNNING mid-batch "
                     f"(now {latest.status.value})"
@@ -521,19 +521,23 @@ def handle_batch_listing_intake(job: JobRecord, persistence: PersistenceBundle) 
         latest = persistence.job_queue.get(job.job_id)
         if latest is None:
             raise JobFenceRejectedError(f"Job {job.job_id} not found in queue")
-        if latest.status != JobStatus.CANCELLED:
-            return False
-        _write_receipt(
-            [
+        if latest.status == JobStatus.CANCELLED:
+            final_items = [
                 _cancelled_item(it, it.item_id, it.idempotency_key)
                 if it.item_status == ItemStatus.PENDING.value
                 else it
                 for it in current_items
-            ],
-            JobStatus.CANCELLED,
-            completed_at=datetime.now(UTC).isoformat(),
-        )
-        return True
+            ]
+            derived_status, _ = derive_batch_status_and_summary(final_items)
+            _write_receipt(
+                final_items,
+                derived_status,
+                completed_at=datetime.now(UTC).isoformat(),
+            )
+            return True
+        elif latest.status in (JobStatus.SUCCEEDED, JobStatus.PARTIAL, JobStatus.FAILED):
+            return True
+        return False
 
     existing_receipt = payload.get("receipt")
     current_items: list[ItemReceipt] = []
@@ -673,7 +677,17 @@ def handle_batch_listing_intake(job: JobRecord, persistence: PersistenceBundle) 
 
         # 3. Checkpoint the result through the (job, item, attempt) fence, so a
         # late result from an older attempt cannot overwrite a newer one.
-        current_items, _ = apply_item_result(current_items, item_result)
+        current_items, applied = apply_item_result(current_items, item_result)
+        if not applied:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Stale or duplicate item result discarded for job %s, item %s, attempt %s (status: %s)",
+                job.job_id,
+                item_result.item_id,
+                item_result.attempt,
+                item_result.item_status,
+            )
         try:
             _write_receipt(current_items, JobStatus.RUNNING, require_running=True)
         except JobFenceRejectedError:

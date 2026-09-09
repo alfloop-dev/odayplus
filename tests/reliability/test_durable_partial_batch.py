@@ -875,7 +875,7 @@ def test_5_duplicate_delivery_and_out_of_order(db_path: str) -> None:
     try:
         tenant_id = "tenant-tw-01"
 
-        # 5.2: Duplicate enqueue with same idempotency_key
+        # 5.2: Duplicate enqueue with same idempotency_key before execution
         initial_items = [
             {"item_id": "item-X", "address_raw": "台北市大安區新生南路一段1號"},
             {"item_id": "item-Y", "address_raw": "台北市大安區新生南路一段2號"},
@@ -898,7 +898,7 @@ def test_5_duplicate_delivery_and_out_of_order(db_path: str) -> None:
         assert created2 is False
         assert rec2.job_id == rec1.job_id
 
-        # Run attempt 1 where X succeeds, Y fails (retryable), Z fails (retryable)
+        # Run attempt 1 where X succeeds, Y fails (retryable timeout), Z fails (retryable timeout)
         calls_by_item: dict[str, int] = {}
         original_executor = _default_batch_listing_item_executor
 
@@ -931,37 +931,82 @@ def test_5_duplicate_delivery_and_out_of_order(db_path: str) -> None:
         assert receipt_p1.summary.failed_count == 2
         assert calls_by_item == {"item-X": 1, "item-Y": 1, "item-Z": 1}
 
-        # 5.1: Duplicate delivery of same attempt (item-X, attempt=1)
-        item_x_initial = receipt_p1.items[0]
-        assert item_x_initial.item_id == "item-X"
-        assert item_x_initial.item_status == ItemStatus.SUCCEEDED.value
-        assert item_x_initial.attempt == 1
+        # 5.1 & Scoped Retry: Retry FAILED_ONLY where Y succeeds on attempt 2, Z fails on attempt 2
+        app = create_app(job_queue=bundle.job_queue, audit_log=bundle.audit_log, persistence=bundle)
+        client = TestClient(app)
+        headers = _auth_headers(tenant_id, role="expansion_user", subject="retry-user")
 
-        duplicate_msg = ItemReceipt(
-            item_id="item-X",
-            item_status=ItemStatus.SUCCEEDED.value,
-            attempt=1,
-            result_ref=item_x_initial.result_ref,
-            last_attempt_at="2026-09-08T16:20:00Z",
+        def executor_pass2(raw_item, *args, **kwargs):
+            iid = raw_item.get("item_id")
+            calls_by_item[iid] = calls_by_item.get(iid, 0) + 1
+            if iid == "item-Z":
+                return None, ItemError(
+                    code="GEOCODING_UPSTREAM_TIMEOUT",
+                    message="Timeout on attempt 2",
+                    retryable=True,
+                )
+            return original_executor(raw_item, *args, **kwargs)
+
+        # POST /jobs/{job_id}/retries
+        resp_retry = client.post(
+            f"/api/v1/jobs/{rec1.job_id}/retries",
+            headers=headers,
+            json={"retry_scope": "FAILED_ONLY", "expected_version": job_p1.version},
         )
-        current_receipt_items = list(receipt_p1.items)
-        items_after_dup, applied = apply_item_result(current_receipt_items, duplicate_msg)
-        assert applied is False
-        item_x_after = next(it for it in items_after_dup if it.item_id == "item-X")
-        assert item_x_after.attempt == 1
-        assert item_x_after.last_attempt_at == item_x_initial.last_attempt_at
+        assert resp_retry.status_code == 202
 
-        # 5.3: Out-of-order stale result: item-Y attempt=2 succeeds, then attempt=1 arrives
-        item_y_v2 = ItemReceipt(
+        with patch(
+            "apps.worker.oday_worker.handlers._default_batch_listing_item_executor",
+            side_effect=executor_pass2,
+        ):
+            assert worker.run_once() is True
+
+        job_p2 = bundle.job_queue.get(rec1.job_id)
+        assert job_p2.status == JobStatus.PARTIAL
+        receipt_p2 = DurableJobReceipt.from_dict(job_p2.payload["receipt"])
+        assert receipt_p2.summary.succeeded_count == 2
+        assert receipt_p2.summary.failed_count == 1
+        # Item-X (succeeded in pass 1) was skipped with 0 calls in pass 2;
+        # Item-Y and Item-Z were called exactly once more in pass 2 (total 2 each)
+        assert calls_by_item == {"item-X": 1, "item-Y": 2, "item-Z": 2}
+
+        # 5.1 Duplicate delivery of same attempt (item-Y, attempt=2)
+        item_y_v2 = next(it for it in receipt_p2.items if it.item_id == "item-Y")
+        assert item_y_v2.attempt == 2
+        assert item_y_v2.item_status == ItemStatus.SUCCEEDED.value
+        assert item_y_v2.result_ref is not None
+        y2_last_attempt_at = item_y_v2.last_attempt_at
+
+        duplicate_y2_msg = ItemReceipt(
             item_id="item-Y",
             item_status=ItemStatus.SUCCEEDED.value,
             attempt=2,
-            result_ref="intake-Y2",
-            last_attempt_at="2026-09-08T16:15:00Z",
+            result_ref=item_y_v2.result_ref,
+            last_attempt_at="2099-01-01T00:00:00Z",
         )
-        items_with_y2, applied_y2 = apply_item_result(current_receipt_items, item_y_v2)
-        assert applied_y2 is True
+        current_receipt_items = list(receipt_p2.items)
+        items_after_dup, applied_dup = apply_item_result(current_receipt_items, duplicate_y2_msg)
+        assert applied_dup is False
+        item_y_after_dup = next(it for it in items_after_dup if it.item_id == "item-Y")
+        assert item_y_after_dup.attempt == 2
+        assert item_y_after_dup.last_attempt_at == y2_last_attempt_at
+        assert item_y_after_dup.result_ref == item_y_v2.result_ref
 
+        # 5.2 Duplicate enqueue on completed/partial job does not reset items or summary
+        req_dup = JobRequest(
+            job_type=BATCH_LISTING_INTAKE_JOB_TYPE,
+            payload={"tenant_id": tenant_id, "items": initial_items},
+            idempotency_key="idemp-batch-replay-01",
+        )
+        rec_dup, created_dup = bundle.job_queue.enqueue(req_dup, correlation_id="corr-replay-dup")
+        assert created_dup is False
+        persisted_after_dup_enqueue = bundle.job_queue.get(rec1.job_id)
+        assert persisted_after_dup_enqueue.status == JobStatus.PARTIAL
+        receipt_dup_enqueue = DurableJobReceipt.from_dict(persisted_after_dup_enqueue.payload["receipt"])
+        assert receipt_dup_enqueue.summary.succeeded_count == 2
+        assert receipt_dup_enqueue.summary.failed_count == 1
+
+        # 5.3: Out-of-order stale result: item-Y attempt=2 succeeded, then attempt=1 failure arrives
         stale_y1 = ItemReceipt(
             item_id="item-Y",
             item_status=ItemStatus.FAILED.value,
@@ -974,93 +1019,133 @@ def test_5_duplicate_delivery_and_out_of_order(db_path: str) -> None:
             ),
             last_attempt_at="2026-09-08T16:10:00Z",
         )
-        items_after_stale, applied_stale = apply_item_result(items_with_y2, stale_y1)
+        items_after_stale, applied_stale = apply_item_result(items_after_dup, stale_y1)
         assert applied_stale is False
         item_y_final = next(it for it in items_after_stale if it.item_id == "item-Y")
         assert item_y_final.item_status == ItemStatus.SUCCEEDED.value
-        assert item_y_final.result_ref == "intake-Y2"
+        assert item_y_final.result_ref == item_y_v2.result_ref
         assert item_y_final.error is None
         assert item_y_final.attempt == 2
+        # Downstream executor calls for item-Y remained 2 (0 calls for duplicate or stale delivery)
+        assert calls_by_item["item-Y"] == 2
 
-        # 5.4: Stale result for cancelled unstarted item-Z (attempt=0)
-        items_with_z0 = [
-            it
-            if it.item_id != "item-Z"
-            else ItemReceipt(
-                item_id="item-Z",
-                item_status=ItemStatus.CANCELLED.value,
-                attempt=0,
-                error=ItemError(
-                    code="CANCELLED_BEFORE_EXECUTION",
-                    message="Job cancelled before execution",
-                    retryable=True,
-                ),
-                last_attempt_at=None,
-            )
-            for it in items_after_stale
-        ]
-        stale_z1 = ItemReceipt(
-            item_id="item-Z",
+        # 5.4: Stale result for cancelled unstarted item (attempt=0)
+        req_cancel = JobRequest(
+            job_type=BATCH_LISTING_INTAKE_JOB_TYPE,
+            payload={
+                "tenant_id": tenant_id,
+                "items": [{"item_id": "item-W", "address_raw": "台北市大安區新生南路一段4號"}],
+            },
+            idempotency_key="idemp-batch-cancel-unstarted",
+        )
+        rec_cancel, _ = bundle.job_queue.enqueue(req_cancel, correlation_id="corr-cancel-unstarted")
+        bundle.job_queue.update_status(rec_cancel.job_id, JobStatus.CANCELLED)
+        job_cancelled = bundle.job_queue.get(rec_cancel.job_id)
+        assert job_cancelled.status == JobStatus.CANCELLED
+        receipt_cancelled = DurableJobReceipt.from_dict(job_cancelled.payload["receipt"])
+        item_w = receipt_cancelled.items[0]
+        assert item_w.item_id == "item-W"
+        assert item_w.item_status == ItemStatus.CANCELLED.value
+        assert item_w.attempt == 0
+
+        stale_w_result = ItemReceipt(
+            item_id="item-W",
             item_status=ItemStatus.SUCCEEDED.value,
             attempt=1,
-            result_ref="intake-Z1",
+            result_ref="intake-W1",
+            last_attempt_at="2026-09-08T16:20:00Z",
         )
-        items_after_z1, applied_z1 = apply_item_result(items_with_z0, stale_z1)
-        assert applied_z1 is False
-        item_z_final = next(it for it in items_after_z1 if it.item_id == "item-Z")
-        assert item_z_final.item_status == ItemStatus.CANCELLED.value
-        assert item_z_final.attempt == 0
+        items_w_after, applied_w = apply_item_result(list(receipt_cancelled.items), stale_w_result)
+        assert applied_w is False
+        item_w_after = items_w_after[0]
+        assert item_w_after.item_status == ItemStatus.CANCELLED.value
+        assert item_w_after.attempt == 0
+        assert item_w_after.result_ref is None
 
-        # Persist the items_after_z1 state to the durable job to verify restart & derivation
-        status_after_fencing, summary_after_fencing = derive_batch_status_and_summary(items_after_z1)
-        assert status_after_fencing == JobStatus.CANCELLED
-        assert summary_after_fencing.total_count == 3
-        assert summary_after_fencing.succeeded_count == 2
-        assert summary_after_fencing.failed_count == 0
-        assert summary_after_fencing.cancelled_count == 1
-
-        updated_payload = dict(job_p1.payload)
-        fenced_receipt = DurableJobReceipt(
-            job_id=rec1.job_id,
-            job_type=rec1.job_type,
-            tenant_id=tenant_id,
-            status=status_after_fencing.value,
-            summary=summary_after_fencing,
-            items=tuple(items_after_z1),
-            created_at=receipt_p1.created_at,
-            correlation_id=rec1.correlation_id,
-            idempotency_key=rec1.idempotency_key,
-        )
-        updated_payload["receipt"] = fenced_receipt.to_dict()
-        updated_payload["summary"] = summary_after_fencing.to_dict()
-        bundle.job_queue.update_status(
-            rec1.job_id,
-            status_after_fencing,
-            payload=updated_payload,
-            expected_version=job_p1.version,
-            fence_token=job_p1.fence_token,
-        )
-
-        # 5.5: Post-Restart Aggregate Consistency
+        # 5.5: Post-Restart Aggregate Consistency & Arrival Ordering Parity
         bundle.engine.close()
         reloaded_bundle = _durable_bundle(db_path)
         persisted_job = reloaded_bundle.job_queue.get(rec1.job_id)
         assert persisted_job is not None
-        assert persisted_job.status == JobStatus.CANCELLED
+        assert persisted_job.status == JobStatus.PARTIAL
         reloaded_receipt = DurableJobReceipt.from_dict(persisted_job.payload["receipt"])
         assert reloaded_receipt.summary.succeeded_count == 2
-        assert reloaded_receipt.summary.cancelled_count == 1
+        assert reloaded_receipt.summary.failed_count == 1
         derived_status, derived_summary = derive_batch_status_and_summary(reloaded_receipt.items)
         assert persisted_job.status == derived_status
         assert reloaded_receipt.summary.to_dict() == derived_summary.to_dict()
 
-        # Reordering items produces identical aggregate status and summary
-        reversed_items = list(reversed(reloaded_receipt.items))
-        rev_status, rev_summary = derive_batch_status_and_summary(reversed_items)
-        assert rev_status == derived_status
-        assert rev_summary.to_dict() == derived_summary.to_dict()
-        reloaded_bundle.engine.close()
+        # Arrival ordering permutations: applying messages in different orders yields identical aggregate
 
+        result_messages = [
+            ItemReceipt(
+                item_id="item-X",
+                item_status=ItemStatus.SUCCEEDED.value,
+                attempt=1,
+                result_ref="intake-X",
+                last_attempt_at="2026-09-08T16:01:00Z",
+            ),
+            ItemReceipt(
+                item_id="item-Y",
+                item_status=ItemStatus.FAILED.value,
+                attempt=1,
+                error=ItemError(code="TIMEOUT", message="t1", retryable=True),
+                last_attempt_at="2026-09-08T16:02:00Z",
+            ),
+            ItemReceipt(
+                item_id="item-Y",
+                item_status=ItemStatus.SUCCEEDED.value,
+                attempt=2,
+                result_ref="intake-Y",
+                last_attempt_at="2026-09-08T16:05:00Z",
+            ),
+            ItemReceipt(
+                item_id="item-Z",
+                item_status=ItemStatus.FAILED.value,
+                attempt=1,
+                error=ItemError(code="TIMEOUT", message="t1", retryable=True),
+                last_attempt_at="2026-09-08T16:03:00Z",
+            ),
+            ItemReceipt(
+                item_id="item-Z",
+                item_status=ItemStatus.FAILED.value,
+                attempt=2,
+                error=ItemError(code="TIMEOUT", message="t2", retryable=True),
+                last_attempt_at="2026-09-08T16:06:00Z",
+            ),
+            duplicate_y2_msg,
+            stale_y1,
+        ]
+
+        base_pending = [
+            ItemReceipt(item_id="item-X", item_status=ItemStatus.PENDING.value, attempt=0),
+            ItemReceipt(item_id="item-Y", item_status=ItemStatus.PENDING.value, attempt=0),
+            ItemReceipt(item_id="item-Z", item_status=ItemStatus.PENDING.value, attempt=0),
+        ]
+
+        expected_status, expected_summary = JobStatus.PARTIAL, {
+            "total_count": 3,
+            "succeeded_count": 2,
+            "failed_count": 1,
+            "cancelled_count": 0,
+            "pending_count": 0,
+        }
+
+        # Check multiple arrival orderings (forward, reversed, and sample permutations)
+        for order in [
+            result_messages,
+            list(reversed(result_messages)),
+            [result_messages[i] for i in [2, 0, 4, 1, 3, 5, 6]],
+            [result_messages[i] for i in [6, 5, 4, 3, 2, 1, 0]],
+        ]:
+            curr = list(base_pending)
+            for msg in order:
+                curr, _ = apply_item_result(curr, msg)
+            p_status, p_summary = derive_batch_status_and_summary(curr)
+            assert p_status == expected_status
+            assert p_summary.to_dict() == expected_summary
+
+        reloaded_bundle.engine.close()
     finally:
         bundle.engine.close()
 
@@ -1513,8 +1598,8 @@ def test_review_finding_2_forged_receipt_sanitization(db_path: str) -> None:
 
 
 def test_review_finding_3_cancellation_races(db_path: str) -> None:
-    """F3: Cancellation races on terminal write and attempt start are safely settled."""
-    # Sub-case A: Terminal settlement race
+    """F3: Cancellation races on terminal write and attempt start are safely settled with derive parity."""
+    # Sub-case A1: All items succeeded before cancel arrives -> derive parity yields SUCCEEDED
     bundle_a = _durable_bundle(db_path)
     try:
         queue_a = bundle_a.job_queue
@@ -1544,10 +1629,58 @@ def test_review_finding_3_cancellation_races(db_path: str) -> None:
 
         final_a = queue_a.get(rec_a.job_id)
         assert cancelled_a is True
-        assert final_a.status == JobStatus.CANCELLED
-        assert final_a.payload["receipt"]["status"] == "CANCELLED"
+        derived_a, summary_a = derive_batch_status_and_summary(final_a.payload["receipt"]["items"])
+        assert final_a.status == JobStatus.SUCCEEDED
+        assert final_a.payload["receipt"]["status"] == "SUCCEEDED"
+        assert derived_a == JobStatus.SUCCEEDED
+        assert summary_a.succeeded_count == 1
+        assert summary_a.cancelled_count == 0
     finally:
         bundle_a.engine.close()
+
+    # Sub-case A2: Multi-item batch where item-1 succeeded but cancel arrives before item-2 starts -> CANCELLED
+    bundle_a2 = _durable_bundle(db_path + ".a2.sqlite3")
+    try:
+        queue_a2 = bundle_a2.job_queue
+        rec_a2, _ = queue_a2.enqueue(
+            JobRequest(
+                job_type=BATCH_LISTING_INTAKE_JOB_TYPE,
+                payload={
+                    "tenant_id": "tenant-race-a2",
+                    "items": [
+                        {"item_id": "item-1", "address_raw": "台北市大安區1號"},
+                        {"item_id": "item-2", "address_raw": "台北市大安區2號"},
+                    ],
+                },
+            ),
+            correlation_id="race-mid-cancel",
+        )
+        orig_update_a2 = queue_a2.update_status
+        cancelled_a2 = False
+
+        def racing_mid_update(job_id, status, *args, **kwargs):
+            nonlocal cancelled_a2
+            receipt = (kwargs.get("payload") or {}).get("receipt", {})
+            items = receipt.get("items", [])
+            # Cancel right after item-1 result lands (item-1 is SUCCEEDED, item-2 is PENDING)
+            if not cancelled_a2 and any(it.get("item_id") == "item-1" and it.get("item_status") == "SUCCEEDED" for it in items):
+                cancelled_a2 = True
+                orig_update_a2(job_id, JobStatus.CANCELLED)
+            return orig_update_a2(job_id, status, *args, **kwargs)
+
+        with patch.object(queue_a2, "update_status", side_effect=racing_mid_update):
+            ODayWorker(persistence=bundle_a2, heartbeat_interval_seconds=60.0).run_once()
+
+        final_a2 = queue_a2.get(rec_a2.job_id)
+        assert cancelled_a2 is True
+        derived_a2, summary_a2 = derive_batch_status_and_summary(final_a2.payload["receipt"]["items"])
+        assert final_a2.status == JobStatus.CANCELLED
+        assert final_a2.payload["receipt"]["status"] == "CANCELLED"
+        assert derived_a2 == JobStatus.CANCELLED
+        assert summary_a2.succeeded_count == 1
+        assert summary_a2.cancelled_count == 1
+    finally:
+        bundle_a2.engine.close()
 
     # Sub-case B: Attempt start race (cancellation before attempt checkpoint lands)
     bundle_b = _durable_bundle(db_path + ".b.sqlite3")
@@ -1979,7 +2112,7 @@ def test_review_finding_r2_cancellation_race_distinct_engine(db_path: str) -> No
 
 
 def test_review_finding_r3_r4_scope_and_submitter_preservation(db_path: str) -> None:
-    """R3 & R4: Batch API enforces heat-zone scope and preserves submitter principal for assisted entry."""
+    """R1 & R2 & R3 & R4: Batch API enforces scope aliases consistency, heat-zone/region/brand/area scope, and preserves submitter & scope for assisted entry."""
     from modules.listing.application.intake_authorization import authorize_intake_action
 
     bundle = _durable_bundle(db_path)
@@ -1989,17 +2122,63 @@ def test_review_finding_r3_r4_scope_and_submitter_preservation(db_path: str) -> 
         "x-roles": "expansion_user",
         "x-tenant-id": tenant_id,
         "x-heat-zone-ids": "HZ-A",
+        "x-region-ids": "REG-A",
+        "x-brand-ids": "BRAND-A",
+        "x-assigned-area-ids": "AREA-A",
     }
     headers_other_staff = {
         "x-subject-id": "other-user",
         "x-roles": "expansion_user",
         "x-tenant-id": tenant_id,
         "x-heat-zone-ids": "HZ-A",
+        "x-region-ids": "REG-A",
+        "x-brand-ids": "BRAND-A",
+        "x-assigned-area-ids": "AREA-A",
+    }
+    headers_wrong_region_staff = {
+        "x-subject-id": "scope-user",
+        "x-roles": "expansion_user",
+        "x-tenant-id": tenant_id,
+        "x-heat-zone-ids": "HZ-A",
+        "x-region-ids": "REG-B",
+        "x-brand-ids": "BRAND-A",
+        "x-assigned-area-ids": "AREA-A",
     }
 
     try:
         app = create_app(job_queue=bundle.job_queue, audit_log=bundle.audit_log, persistence=bundle)
         client = TestClient(app)
+
+        # R1: Enqueue with conflicting scope aliases on same item is rejected with 422 CONFLICTING_SCOPE_ALIAS
+        resp_conflict_hz = client.post(
+            "/api/v1/jobs",
+            headers=headers_staff,
+            json={
+                "job_type": "batch-listing-intake",
+                "payload": {
+                    "items": [
+                        {"item_id": "c1", "address_raw": "synthetic", "heatZoneId": "HZ-A", "heat_zone_id": "HZ-B"},
+                    ]
+                },
+            },
+        )
+        assert resp_conflict_hz.status_code == 422
+        assert resp_conflict_hz.json().get("detail", {}).get("code") == "CONFLICTING_SCOPE_ALIAS"
+
+        resp_conflict_reg = client.post(
+            "/api/v1/jobs",
+            headers=headers_staff,
+            json={
+                "job_type": "batch-listing-intake",
+                "payload": {
+                    "items": [
+                        {"item_id": "c2", "address_raw": "synthetic", "regionId": "REG-A", "region_id": "REG-B"},
+                    ]
+                },
+            },
+        )
+        assert resp_conflict_reg.status_code == 422
+        assert resp_conflict_reg.json().get("detail", {}).get("code") == "CONFLICTING_SCOPE_ALIAS"
 
         # R3: Enqueue with out-of-scope heat zone (HZ-B) is rejected with 403 SCOPE_DENIED
         resp_denied = client.post(
@@ -2018,7 +2197,7 @@ def test_review_finding_r3_r4_scope_and_submitter_preservation(db_path: str) -> 
         assert resp_denied.status_code == 403
         assert resp_denied.json().get("detail") == "SCOPE_DENIED"
 
-        # R3: Enqueue with authorized scope (HZ-A) succeeds
+        # R2 & R3: Enqueue with authorized multi-axis scope (HZ-A, REG-A, BRAND-A, AREA-A) succeeds
         resp_ok = client.post(
             "/api/v1/jobs",
             headers=headers_staff,
@@ -2026,7 +2205,14 @@ def test_review_finding_r3_r4_scope_and_submitter_preservation(db_path: str) -> 
                 "job_type": "batch-listing-intake",
                 "payload": {
                     "items": [
-                        {"item_id": "item-1", "address_raw": "台北市大安區新生南路一段1號", "heatZoneId": "HZ-A"},
+                        {
+                            "item_id": "item-1",
+                            "address_raw": "台北市大安區新生南路一段1號",
+                            "heatZoneId": "HZ-A",
+                            "regionId": "REG-A",
+                            "brandId": "BRAND-A",
+                            "assignedAreaId": "AREA-A",
+                        },
                     ]
                 },
             },
@@ -2043,20 +2229,24 @@ def test_review_finding_r3_r4_scope_and_submitter_preservation(db_path: str) -> 
         resp_get = client.get(f"/api/v1/jobs/{job_id}", headers=headers_staff)
         assert resp_get.status_code == 200
 
-        # R4: Other staff cannot view job
+        # R4: Other staff cannot view job (ownership required)
         resp_get_other = client.get(f"/api/v1/jobs/{job_id}", headers=headers_other_staff)
         assert resp_get_other.status_code == 403
 
-        # R4: Creator can view and correct resulting intake record
+        # R2: Intake record contains all authorized scope fields
         intake_id = batch_listing_intake_id(tenant_id, job_id, "item-1")
         intake = bundle.operator_intake_repository.get_intake(intake_id)
         assert intake is not None
         assert intake["submitter"] == "scope-user"
         assert intake["owner"] == "scope-user"
+        assert intake["heatZoneId"] == "HZ-A"
+        assert intake["regionId"] == "REG-A"
+        assert intake["brandId"] == "BRAND-A"
+        assert intake["assignedAreaId"] == "AREA-A"
 
         from apps.api.oday_api.security.dependencies import principal_from_headers
         principal = principal_from_headers(headers_staff)
-        # Should not raise OWNERSHIP_REQUIRED
+        # Should not raise SCOPE_DENIED or OWNERSHIP_REQUIRED
         authorize_intake_action(principal, "view", resource=intake)
 
         # Creator can correct intake
@@ -2072,6 +2262,15 @@ def test_review_finding_r3_r4_scope_and_submitter_preservation(db_path: str) -> 
             correlation_id="creator-correct-01",
         )
         assert corrected["parsedFields"]["address"]["correctedValue"] == "台北市大安區新生南路一段99號"
+
+        # User restricted to REG-B is denied on this intake with 403 SCOPE_DENIED
+        principal_wrong_region = principal_from_headers(headers_wrong_region_staff)
+        import pytest
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc_info:
+            authorize_intake_action(principal_wrong_region, "view", resource=intake)
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail == "SCOPE_DENIED"
     finally:
         bundle.engine.close()
 

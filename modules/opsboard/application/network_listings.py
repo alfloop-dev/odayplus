@@ -1639,6 +1639,30 @@ class NetworkListingService:
             # upsert, preserving any operator corrections and current stage.
             return _copy(existing)
 
+        def _resolve_scope(camel_key: str, snake_key: str) -> Any:
+            has_camel = camel_key in row and row[camel_key] is not None
+            has_snake = snake_key in row and row[snake_key] is not None
+            val_camel = (
+                str(row[camel_key]).strip()
+                if has_camel and str(row[camel_key]).strip()
+                else None
+            )
+            val_snake = (
+                str(row[snake_key]).strip()
+                if has_snake and str(row[snake_key]).strip()
+                else None
+            )
+            if val_camel is not None and val_snake is not None and val_camel != val_snake:
+                raise NetworkListingPolicyError(
+                    f"Conflicting scope aliases in batch row for {camel_key} ('{val_camel}') and {snake_key} ('{val_snake}')"
+                )
+            return val_camel if val_camel is not None else val_snake
+
+        heat_zone_id = _resolve_scope("heatZoneId", "heat_zone_id")
+        region_id = _resolve_scope("regionId", "region_id")
+        brand_id = _resolve_scope("brandId", "brand_id")
+        assigned_area_id = _resolve_scope("assignedAreaId", "assigned_area_id")
+
         now = _now()
         intake: dict[str, Any] = {
             "id": intake_id,
@@ -1647,7 +1671,10 @@ class NetworkListingService:
             "canonicalUrl": None,
             "submitter": actor_name or "批次匯入",
             "owner": actor_name or "批次匯入",
-            "heatZoneId": _first_present(row, "heat_zone_id", "heatZoneId"),
+            "heatZoneId": heat_zone_id,
+            "regionId": region_id,
+            "brandId": brand_id,
+            "assignedAreaId": assigned_area_id,
             "intakeMethod": "BATCH_ASSISTED_ENTRY",
             "stage": "SUBMITTED",
             "sourceId": source_id,

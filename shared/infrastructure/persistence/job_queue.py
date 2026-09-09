@@ -428,6 +428,7 @@ class DurableJobQueue:
                 target_version = int(curr_row["version"])
 
                 resolved_payload = payload
+                resolved_status = status
                 if status == JobStatus.CANCELLED:
                     from shared.jobs.receipts import settle_cancelled_batch_receipt
 
@@ -451,14 +452,18 @@ class DurableJobQueue:
                         idempotency_key=curr_row["idempotency_key"],
                         created_at=curr_row["created_at"],
                     )
+                    if isinstance(resolved_payload, dict) and "receipt" in resolved_payload:
+                        receipt_status = resolved_payload["receipt"].get("status")
+                        if receipt_status:
+                            resolved_status = JobStatus(receipt_status.lower())
 
                 assignments = [
                     "status = ?",
                     "version = version + 1",
                     "error_message = ?",
                 ]
-                params: list[Any] = [status.value, error_message]
-                if status in DELIVERY_SETTLED_JOB_STATUSES:
+                params: list[Any] = [resolved_status.value, error_message]
+                if resolved_status in DELIVERY_SETTLED_JOB_STATUSES:
                     # Without this, writing PARTIAL/CANCELLED with delivery_state=None
                     # emitted no delivery_state assignment at all and the row kept the
                     # RETRYING left by the previous attempt.
@@ -469,7 +474,7 @@ class DurableJobQueue:
                 if resolved_payload is not None:
                     assignments.append("payload_json = ?")
                     params.append(json.dumps(resolved_payload))
-                if status != JobStatus.RUNNING:
+                if resolved_status != JobStatus.RUNNING:
                     assignments.extend(
                         [
                             "locked_by = NULL",

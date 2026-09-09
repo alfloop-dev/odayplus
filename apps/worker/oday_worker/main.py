@@ -239,13 +239,18 @@ class ODayWorker:
                 current_version, heartbeat_failure = heartbeat.stop()
                 duration = time.monotonic() - start_time
                 latest_job = self.job_queue.get(job.job_id)
-                if latest_job and latest_job.status == JobStatus.CANCELLED:
+                if latest_job and latest_job.status in (
+                    JobStatus.CANCELLED,
+                    JobStatus.SUCCEEDED,
+                    JobStatus.PARTIAL,
+                    JobStatus.FAILED,
+                ):
                     self.telemetry.logger.info(
-                        f"Job {job.job_id} execution aborted because it was CANCELLED",
+                        f"Job {job.job_id} execution stopped (status is {latest_job.status.value})",
                         correlation_id=job.correlation_id,
                         actor="worker",
                         resource=f"job/{job.job_type}",
-                        action="cancel",
+                        action="cancel" if latest_job.status == JobStatus.CANCELLED else "execute",
                     )
                 elif heartbeat_failure is not None:
                     self._record_stale_worker(job, heartbeat_failure)
