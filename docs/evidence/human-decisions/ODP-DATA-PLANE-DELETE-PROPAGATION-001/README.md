@@ -3,10 +3,10 @@
 - **Task ID**: `ODP-DATA-PLANE-DELETE-PROPAGATION-001`
 - **Work Package**: WP-34 Follow-up ([ODP 人工決策落地規畫](../../../plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md) §6 WP-34 & [Phase 34A Implementation Handoff](../ODP-CDC-SOURCE-CONTRACT-PREP-001/implementation-handoff.md) §4 跟進項目 1)
 - **決策依據**: 決策編號 `D20`（A：實作／補齊 CDC 適用性與契約）
-- **查證基準 SHA**: `aa8e54cf1e99` (aligned with latest `origin/dev` tip)
-- **負責人 (Owner)**: Antigravity6（修復 Codex2 兩項審查缺陷：保護交易權威免受 stale TRANSACTION 刪除影響、保留 core.brands/core.tenants 審計目標跨重放與重啟）
+- **查證基準 SHA**: `1260d977345f` (aligned with latest `origin/dev` tip)
+- **負責人 (Owner)**: Antigravity6（推進 dev 基準 `1260d977345f`、修復外鍵相依保護、意圖性墓碑保留漂移過濾與模式/版本轉換保留審計更新）
 - **審查人 (Reviewer)**: Codex2
-- **交付狀態**: `IMPLEMENTATION_DELIVERED` (推進 dev 基準 `aa8e54cf1e99`、修復兩項審查缺陷、35 項回歸測試與邊界/SAST 驗證全數通過)
+- **交付狀態**: `IMPLEMENTATION_DELIVERED` (推進 dev 基準 `1260d977345f`、修復審查缺陷、46 項回歸測試與邊界/SAST 驗證全數通過)
 
 ---
 
@@ -70,11 +70,11 @@
 
 | 檔案路徑 | 異動說明 |
 |---|---|
-| `apps/data_platform/deletion.py` | 實作刪除與墓碑傳播語意、版本運算、租戶解析、刪除決策、PurgePlan，修正 `core.transactions` 外鍵依賴清理順序，並提供 `scope_lock_key()` 推導 delete scope 的協調鍵。 |
+| `apps/data_platform/deletion.py` | 實作刪除與墓碑傳播語意、版本運算、租戶解析、刪除決策、PurgePlan，修正 `core.transactions` 外鍵依賴（refund/machine_cycles）保護與清理，並提供 `scope_lock_key()` / `canonical_lock_key()` 協調鍵。 |
 | `apps/data_platform/contracts.py` | 擴充 `QuarantineReason.SOURCE_DELETED`、`ReconciliationResult.sink_delete_drift` 與 `RunSummary` 序列化。 |
 | `apps/data_platform/sql/control_schema.sql` | 建立 `data_plane.tombstones` 稽核資料表，並在 `canonical_lineage` 擴充 `source_version` 欄位。 |
-| `apps/data_platform/store.py` | 實作 `delete_record()`、`tombstone_record()`、`get_tombstone()`、原子租戶墓碑防護、最新落地版本比對與版本感知 drift reconciliation，並以 `_lock_delete_scope()` / `_enter_delete_scope()` 建立 delete 與 upsert 的資料庫級協調（§8）。 |
-| `apps/data_platform/tests/test_delete_propagation.py` | 33 項完整單元、端到端與審查回歸測試套件，覆蓋外鍵依賴清理、重放保留新資料、租戶隔離、對帳，以及 §8 的 delete/upsert 交錯序列化回歸。 |
+| `apps/data_platform/store.py` | 實作 `delete_record()`、`tombstone_record()`、`get_tombstone()`、原子租戶墓碑防護、最新落地版本比對、意圖性墓碑保留過濾之 drift reconciliation、模式／版本轉換時保留審計動態刷新，並以 `_lock_delete_scope()` / `_enter_delete_scope()` 建立資料庫級原子協調。 |
+| `apps/data_platform/tests/test_delete_propagation.py` | 46 項完整單元、端到端與審查回歸測試套件，覆蓋外鍵依賴保護、意圖性墓碑保留對帳、模式轉換保留目標審計刷新、重放保留新資料、租戶隔離、死鎖消除與 delete/upsert 交錯序列化回歸。 |
 | `docs/audits/code-boundary-inventory.csv` | 代碼邊界清單核實與更新。 |
 | `docs/evidence/human-decisions/ODP-DATA-PLANE-DELETE-PROPAGATION-001/README.md` | 本交付報告與架構規範說明。 |
 
@@ -97,13 +97,13 @@
 
 ## 7. 驗證命令與結果收據 (Verification Receipts)
 
-量測基準：本 README 所屬 commit 的工作樹（parent `9b5ea841`）。執行環境 Python 3.12.14；`apps.data_platform` 經確認解析至本 task worktree 而非主 checkout。所有指令均獨立執行並保留原始 exit code（未 pipe、未 `|| true`、未以缺少摘要行推論成敗）。命令雖以背景 job 執行，完成判定一律取原始 exit code 與 JUnit XML，不以輸出樣態推論。綁定 exact head 的正式收據由 `delivery_toolchain/git/task_verification.py run` 於交付 head 產生並存入 `.orchestrator/evidence`。
+量測基準：本 README 所屬 commit 的工作樹（parent `1260d977345f`）。執行環境 Python 3.12.14；`apps.data_platform` 經確認解析至本 task worktree 而非主 checkout。所有指令均獨立執行並保留原始 exit code（未 pipe、未 `|| true`、未以缺少摘要行推論成敗）。命令雖以背景 job 執行，完成判定一律取原始 exit code 與 JUnit XML，不以輸出樣態推論。綁定 exact head 的正式收據由 `delivery_toolchain/git/task_verification.py run` 於交付 head 產生並存入 `.orchestrator/evidence`。
 
 | # | 命令 | Exit Code | 時間 | 結果 |
 |---|---|---|---|---|
 | 1 | `git diff --check` | 0 | — | 通過 |
-| 2 | `env -u INTAKE_TEST_DATABASE_URL uv run --frozen pytest apps/data_platform/tests/test_delete_propagation.py apps/data_platform/tests/test_pipeline.py -q` | 0 | JUnit 自報 17.412s | 33 passed / 0 failed / 0 skipped, 10 warnings |
-| 3 | `uv run --frozen pytest tests/security/test_supply_chain_security_gate.py::test_sast_scan_passes -q` | 0 | JUnit 自報 24.221s | 1 passed / 0 failed |
+| 2 | `env -u INTAKE_TEST_DATABASE_URL uv run --frozen pytest apps/data_platform/tests/test_delete_propagation.py apps/data_platform/tests/test_pipeline.py -q` | 0 | JUnit 自報 13.86s | 46 passed / 0 failed / 0 skipped, 19 warnings |
+| 3 | `uv run --frozen pytest tests/security/test_supply_chain_security_gate.py::test_sast_scan_passes -q` | 0 | JUnit 自報 26.12s | 1 passed / 0 failed |
 | 4 | `uv run --frozen ruff check apps/data_platform/` | 0 | — | All checks passed |
 
 第 2、3 項的 tests / failures / skipped 計數取自各自的 `--junitxml`，非重跑統計。第 2 項的 `requires_live_env` 測試在本環境實際執行（每項 1–4 秒），未被跳過。
@@ -216,3 +216,32 @@
    - `test_delete_first_mid_lock_serialises_upsert_without_deadlock`：在 `scope_key > canonical_key` 之真實 ID 下，模擬 Delete 率先持有 Level 1 鎖並停留在 mid-lock 視窗，驗證 concurrent upsert 在 Level 1 鎖上等待而非取 Level 2 鎖造成死鎖，且 Delete 釋放後 upsert 按版本正確存續或隔離。
    - `test_undeclared_tenant_delete_and_upsert_lock_hierarchy`：驗證 undeclared/inferred tenant 路徑下的鎖定階層與版本防護。
 
+---
+
+## 11. 審查缺陷修復：外鍵依賴保護、意圖性墓碑對帳與保留目標審計刷新 (Review Defect Repairs)
+
+在 PR #1282 (`022508e5`) Codex2 獨立審查重現之三項缺陷，在本輪交付中完成完整修復並納入回歸測試：
+
+### 11.1 外鍵相依防護與正確保留目標判定 (Transaction FK Dependents Protection & Scoped Retention)
+
+- **缺陷機制**：`deletion.py:366-369` / `471-477` 在刪除 `core.transactions` 時，未檢查是否存在參照該交易之外鍵記錄（如 `core.transactions.refund_of_transaction_id` 或 `core.machine_cycles.transaction_id`，見規範遷移 `000002:133,147`）。當存在 refund 或 machine cycle 參照時，PostgreSQL 觸發 `ForeignKeyViolation`，導致整筆交易 rollback，使得 tombstone 無法寫入且 `get_tombstone()` 回傳 `None`。
+- **修復實作**：
+  1. 在 `deletion.py` 之 `_LEAF_PURGE_TEMPLATES["core.transactions"]` 與 `plan_purge()` 語句中，增加 `AND NOT EXISTS (SELECT 1 FROM core.transactions AS dep WHERE dep.refund_of_transaction_id = target.transaction_id) AND NOT EXISTS (SELECT 1 FROM core.machine_cycles AS mc WHERE mc.transaction_id = target.transaction_id)`。
+  2. 當存在依賴時，`transaction_authority` 仍可被依權威正確清理，而 `core.transactions` 則受到保護不予刪除；`store.py` 動態檢測到 `core.transactions` 存續，自動將其納入 `retained_targets = ("core.transactions",)` 並成功持久化墓碑。
+  3. 在 `test_delete_propagation.py` 的 `_MINIMAL_CORE_SCHEMA` 中忠實補齊 `refund_of_transaction_id` 與 `core.machine_cycles` 資料表定義，並新增參數化回歸測試 `test_delete_handles_existing_canonical_transaction_fk` 覆蓋 refund 與 machine_cycle 兩種依賴情境。
+
+### 11.2 對帳漂移過濾意圖性墓碑保留 (Intentional Tombstone Retention Drift Filtering)
+
+- **缺陷機制**：`store.py:1692-1700` 原先之對帳漂移查詢未檢查 `tomb.propagation_mode`，亦未排除 `retained_targets`。當以 `tombstone_record()` 執行 `TOMBSTONE_PURGE` 時，下游資料列依設計故意保留不予刪除，導致後續無關的批次（如空的 CAMPAIGN run）在對帳時判定 `sink_delete_drift=1`、`reconciled=False`，並將 ingestion run 狀態標記為 `RECONCILIATION_FAILED`。
+- **修復實作**：
+  1. 修正 `store.py` 之 `reconcile()` 查詢，加入 `AND tomb.propagation_mode = 'SINK_DELETE' AND NOT (lineage.canonical_table = ANY(tomb.retained_targets))` 條件。
+  2. 確保僅有在 `SINK_DELETE` 模式下且未被列入保留目標的舊版本/未版本化殘留資料才會被判定為漂移，同時繼續嚴格檢測真實的幽靈復活。
+  3. 新增回歸測試 `test_tombstone_only_does_not_fail_later_empty_run` 驗證 `TOMBSTONE_PURGE` 之後接續空 run 對帳成功且狀態為 `SUCCEEDED`。
+
+### 11.3 模式與版本轉換時即時更新保留審計 (Accurate Current Retained Target Audit Refresh)
+
+- **缺陷機制**：`store.py:669-670` 無條件將現有 targets 與歷史 `recorded.retained_targets` 取 union，且 `_upsert_tombstone` 之 SQL 使用 `CASE WHEN cardinality > 0 ... ELSE current END` 保留舊值。當實體先經歷 `tombstone_record(v22)`（保留 `domain_inputs`），隨後執行同版本 `delete_record(v22)`（物理清除 `domain_inputs`）時，雖然資料列已成功被 purge，但 `DeleteResult` 與後續重啟 `get_tombstone()` 依然回報 `domain_inputs` 為 retained。
+- **修復實作**：
+  1. 修正 `_propagate_delete()`，由當前 purge 執行後的真實存在性動態計算最新 `retained_targets`；在有目標被處理時不與歷史 stale 保留目標取聯集。
+  2. 修正 `_upsert_tombstone()` 之 SQL，一律以 `retained_targets = EXCLUDED.retained_targets` 寫入當前狀態。
+  3. 新增回歸測試 `test_tombstone_to_sink_delete_readback_has_no_removed_retained_target` 驗證由 `TOMBSTONE_PURGE` 轉換至 `SINK_DELETE` 時，readback 審計準確反映 `retained_targets = ()`。

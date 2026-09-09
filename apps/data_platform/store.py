@@ -16,6 +16,7 @@ from apps.data_platform.contracts import (
     SourceKind,
 )
 from apps.data_platform.deletion import (
+    RETAINED_CANONICAL_TABLES,
     DeleteEvent,
     DeleteOutcome,
     DeletePropagationMode,
@@ -653,6 +654,10 @@ class PsycopgCanonicalStore:
                                 ).fetchone()
                                 if exists is not None:
                                     retained_set.add(canonical_table)
+                    if not targets and recorded is not None and recorded.retained_targets:
+                        for table in recorded.retained_targets:
+                            if table in RETAINED_CANONICAL_TABLES:
+                                retained_set.add(table)
                     retained = tuple(sorted(retained_set))
 
                     connection.execute(
@@ -665,9 +670,8 @@ class PsycopgCanonicalStore:
                     )
                 else:
                     retained = tuple(sorted({table for table, _ in targets}))
-
-                if recorded is not None and recorded.retained_targets:
-                    retained = tuple(sorted(set(retained) | set(recorded.retained_targets)))
+                    if not retained and recorded is not None and recorded.retained_targets:
+                        retained = recorded.retained_targets
 
                 row = self._upsert_tombstone(
                     connection, event, tenant_id, mode, purged, retained
@@ -793,10 +797,7 @@ class PsycopgCanonicalStore:
                 run_id = EXCLUDED.run_id,
                 purged_row_count = {self._schema}.tombstones.purged_row_count
                     + EXCLUDED.purged_row_count,
-                retained_targets = CASE
-                    WHEN cardinality(EXCLUDED.retained_targets) > 0 THEN EXCLUDED.retained_targets
-                    ELSE {self._schema}.tombstones.retained_targets
-                END,
+                retained_targets = EXCLUDED.retained_targets,
                 context = EXCLUDED.context,
                 replay_count = {self._schema}.tombstones.replay_count + 1,
                 updated_at = CURRENT_TIMESTAMP
@@ -1696,7 +1697,9 @@ class PsycopgCanonicalStore:
                  AND lineage.source_kind = tomb.entity_type
                  AND lineage.source_id = tomb.entity_id
                 WHERE tomb.entity_type = %s
+                  AND tomb.propagation_mode = 'SINK_DELETE'
                   AND (lineage.source_version IS NULL OR lineage.source_version <= tomb.source_version)
+                  AND NOT (lineage.canonical_table = ANY(tomb.retained_targets))
                 """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
                 (source_kind.value,),
             ).fetchone()

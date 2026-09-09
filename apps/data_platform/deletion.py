@@ -366,7 +366,11 @@ _LEAF_PURGE_TEMPLATES: dict[str, tuple[str, ...]] = {
         "DELETE FROM core.transactions AS target USING core.stores AS scope "
         "WHERE target.transaction_id = %s AND target.store_id = scope.store_id "
         "AND scope.tenant_id = %s AND NOT EXISTS ("
-        "SELECT 1 FROM {schema}.transaction_authority AS auth WHERE auth.transaction_id = target.transaction_id)",
+        "SELECT 1 FROM {schema}.transaction_authority AS auth WHERE auth.transaction_id = target.transaction_id) "
+        "AND NOT EXISTS ("
+        "SELECT 1 FROM core.transactions AS dep WHERE dep.refund_of_transaction_id = target.transaction_id) "
+        "AND NOT EXISTS ("
+        "SELECT 1 FROM core.machine_cycles AS mc WHERE mc.transaction_id = target.transaction_id)",
     ),
     "core.machine_status_events": (
         # The data-plane evidence row references the event, so it goes first.
@@ -473,7 +477,13 @@ def plan_purge(
                 f"WHERE target.transaction_id = %s AND target.store_id = scope.store_id "
                 f"AND scope.tenant_id = %s AND NOT EXISTS ("
                 f"SELECT 1 FROM {control_schema}.transaction_authority AS auth "
-                f"WHERE auth.transaction_id = target.transaction_id)"
+                f"WHERE auth.transaction_id = target.transaction_id) "
+                f"AND NOT EXISTS ("
+                f"SELECT 1 FROM core.transactions AS dep "
+                f"WHERE dep.refund_of_transaction_id = target.transaction_id) "
+                f"AND NOT EXISTS ("
+                f"SELECT 1 FROM core.machine_cycles AS mc "
+                f"WHERE mc.transaction_id = target.transaction_id)"
             )
             target_params = (canonical_id, tenant_id)
             statements.append((auth_stmt, auth_params))
