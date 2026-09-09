@@ -79,16 +79,22 @@ from multi_repo_registry import (
 )
 from runtime_state import enqueue_event, load_runtime_state
 from task_archive import (
+    ARCHIVE_CORRECTIONS_DIR,
     ARCHIVE_TASKS_DIR,
     TaskResolver,
+    archive_correction_path,
     archive_display_path,
     archive_task_path,
     archive_task_snapshot,
     is_terminal_task,
+    load_archive_correction,
     load_archive_index,
     load_archived_snapshot,
+    load_archived_task,
     rebuild_archive_index,
     recent_terminal_summaries,
+    save_archive_correction,
+    validate_archive_correction_record,
 )
 from task_archive import (
     DEFAULT_RECENT_LIMIT as DEFAULT_ARCHIVE_RECENT_LIMIT,
@@ -1502,9 +1508,7 @@ def _cross_repo_child_task(state: dict[str, Any], task_id: str) -> dict[str, Any
     active = get_task(state, task_id)
     if active is not None:
         return active
-    snapshot = load_archived_snapshot(task_id)
-    archived = snapshot.get("task") if isinstance(snapshot, dict) else None
-    return archived if isinstance(archived, dict) else None
+    return load_archived_task(task_id)
 
 
 def _cross_repo_requirement_with_child(
@@ -8678,6 +8682,338 @@ def command_archive_recovery_apply(state: dict[str, Any], args: list[str]) -> No
     )
 
 
+ARCHIVE_RECOVERY_INVALIDATE_USAGE = (
+    "Usage: archive_recovery_invalidate <task-id> "
+    "--coordination-task <id> --reason <reason> --evidence-ref <ref> "
+    "[--expected-sha256 <sha256>] [--confirm]"
+)
+
+
+def _parse_archive_recovery_invalidate_args(args: list[str]) -> dict[str, Any]:
+    task_id = ""
+    coord_task_id = ""
+    reason = ""
+    evidence_ref = ""
+    expected_sha256 = ""
+    confirm = False
+
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--confirm":
+            confirm = True
+            i += 1
+        elif arg in {"--task-id", "--task"} and i + 1 < len(args):
+            task_id = args[i + 1]
+            i += 2
+        elif arg.startswith("--task-id="):
+            task_id = arg.split("=", 1)[1]
+            i += 1
+        elif arg.startswith("--task="):
+            task_id = arg.split("=", 1)[1]
+            i += 1
+        elif arg in {
+            "--coordination-task",
+            "--coordination-task-id",
+            "--coordination_task",
+            "--coordination_task_id",
+        } and i + 1 < len(args):
+            coord_task_id = args[i + 1]
+            i += 2
+        elif any(
+            arg.startswith(prefix + "=")
+            for prefix in (
+                "--coordination-task",
+                "--coordination-task-id",
+                "--coordination_task",
+                "--coordination_task_id",
+            )
+        ):
+            coord_task_id = arg.split("=", 1)[1]
+            i += 1
+        elif arg in {"--reason"} and i + 1 < len(args):
+            reason = args[i + 1]
+            i += 2
+        elif arg.startswith("--reason="):
+            reason = arg.split("=", 1)[1]
+            i += 1
+        elif arg in {
+            "--evidence-ref",
+            "--evidence-reference",
+            "--evidence",
+            "--evidence_ref",
+        } and i + 1 < len(args):
+            evidence_ref = args[i + 1]
+            i += 2
+        elif any(
+            arg.startswith(prefix + "=")
+            for prefix in (
+                "--evidence-ref",
+                "--evidence-reference",
+                "--evidence",
+                "--evidence_ref",
+            )
+        ):
+            evidence_ref = arg.split("=", 1)[1]
+            i += 1
+        elif arg in {
+            "--expected-sha256",
+            "--expected-snapshot-sha256",
+            "--expected_sha256",
+        } and i + 1 < len(args):
+            expected_sha256 = args[i + 1]
+            i += 2
+        elif any(
+            arg.startswith(prefix + "=")
+            for prefix in (
+                "--expected-sha256",
+                "--expected-snapshot-sha256",
+                "--expected_sha256",
+            )
+        ):
+            expected_sha256 = arg.split("=", 1)[1]
+            i += 1
+        elif not arg.startswith("-") and not task_id:
+            task_id = arg
+            i += 1
+        else:
+            raise SystemExit(
+                f"Unknown argument {arg!r}. {ARCHIVE_RECOVERY_INVALIDATE_USAGE}"
+            )
+
+    return {
+        "task_id": str(task_id).strip(),
+        "coordination_task_id": str(coord_task_id).strip(),
+        "reason": str(reason).strip(),
+        "evidence_ref": str(evidence_ref).strip(),
+        "expected_sha256": str(expected_sha256).strip(),
+        "confirm": confirm,
+    }
+
+
+def command_archive_recovery_invalidate(state: dict[str, Any], args: list[str]) -> None:
+    """Invalidate a reconstructed archive recovery completion judgment.
+
+    This command records an atomic, append-only per-task correction record
+    within archive storage without rewriting the original historical snapshot,
+    index, hold or checkpoint bytes.
+
+    Safety constraints enforced:
+    * Actor must be the verified reviewer of the specified coordination task.
+    * Coordination task owner and reviewer must be independent (owner != reviewer).
+    * Target task must exist in the archive and must have history_recovery.reconstructed=true.
+    * Target task must not be on the active board.
+    * Stale expected snapshot hash causes immediate refusal.
+    * Dry-run by default; --confirm required to write.
+    * Idempotent re-runs succeed safely; conflicting corrections are refused.
+    """
+    actor = current_actor_validated()
+    parsed = _parse_archive_recovery_invalidate_args(args)
+
+    target_id = parsed["task_id"]
+    coord_task_id = parsed["coordination_task_id"]
+    reason = parsed["reason"]
+    evidence_ref = parsed["evidence_ref"]
+    expected_sha256 = parsed["expected_sha256"]
+    confirm = parsed["confirm"]
+
+    if not target_id:
+        raise SystemExit(f"Target task-id is required. {ARCHIVE_RECOVERY_INVALIDATE_USAGE}")
+    if not coord_task_id:
+        raise SystemExit(
+            f"--coordination-task is required. {ARCHIVE_RECOVERY_INVALIDATE_USAGE}"
+        )
+    if not reason:
+        raise SystemExit(f"--reason is required. {ARCHIVE_RECOVERY_INVALIDATE_USAGE}")
+    if not evidence_ref:
+        raise SystemExit(
+            f"--evidence-ref is required. {ARCHIVE_RECOVERY_INVALIDATE_USAGE}"
+        )
+
+    # 1. Authorize actor via coordination task reviewer
+    coord_task = get_task(state, coord_task_id)
+    if coord_task is None:
+        coord_task = load_archived_task(coord_task_id)
+    if coord_task is None:
+        raise SystemExit(
+            f"Coordination task {coord_task_id!r} not found on board or archive."
+        )
+
+    coord_owner = str(coord_task.get("owner") or "").strip()
+    coord_reviewer = str(coord_task.get("reviewer") or "").strip()
+    if not coord_reviewer:
+        raise SystemExit(f"Coordination task {coord_task_id!r} has no assigned reviewer.")
+    if not coord_owner:
+        raise SystemExit(f"Coordination task {coord_task_id!r} has no assigned owner.")
+    if coord_owner == coord_reviewer:
+        raise SystemExit(
+            f"Coordination task {coord_task_id!r} owner and reviewer must be independent "
+            f"({coord_owner!r} == {coord_reviewer!r})."
+        )
+
+    resolved_actor = resolve_actor_reference(actor, field="current actor")
+    resolved_reviewer = resolve_actor_reference(
+        coord_reviewer, field="coordination task reviewer"
+    )
+    if resolved_actor != resolved_reviewer:
+        raise SystemExit(
+            f"Unauthorized: current actor {actor!r} is not the reviewer of coordination "
+            f"task {coord_task_id!r} (expected reviewer {coord_reviewer!r})."
+        )
+
+    # 2. Check target task in active board and archive
+    if get_task(state, target_id) is not None:
+        raise SystemExit(
+            f"Task {target_id!r} is currently active on the board; only archived tasks can be invalidated."
+        )
+
+    snapshot_path = archive_task_path(target_id)
+    if not snapshot_path.exists():
+        raise SystemExit(
+            f"Archived snapshot for task {target_id!r} not found at {snapshot_path}."
+        )
+
+    try:
+        snapshot_bytes = snapshot_path.read_bytes()
+        snapshot = json.loads(snapshot_bytes.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"Archived snapshot for task {target_id!r} is unreadable: {exc}")
+
+    actual_sha256 = hashlib.sha256(snapshot_bytes).hexdigest()
+    if expected_sha256 and expected_sha256.lower() != actual_sha256.lower():
+        raise SystemExit(
+            f"Stale snapshot hash for task {target_id!r}: expected {expected_sha256!r} "
+            f"but found {actual_sha256!r} on disk."
+        )
+
+    # 3. Check target is reconstructed history recovery
+    target_task = (
+        snapshot.get("task") if isinstance(snapshot.get("task"), dict) else {}
+    )
+    history_rec = (
+        target_task.get("history_recovery")
+        if isinstance(target_task.get("history_recovery"), dict)
+        else {}
+    )
+    if history_rec.get("reconstructed") is not True:
+        raise SystemExit(
+            f"Task {target_id!r} is not a reconstructed history recovery snapshot "
+            "(history_recovery.reconstructed is not true); cannot invalidate."
+        )
+
+    # 4. Check existing correction / idempotency
+    correction_path = archive_correction_path(target_id)
+    if correction_path.exists():
+        try:
+            existing_correction = json.loads(correction_path.read_text(encoding="utf-8"))
+        except Exception:
+            existing_correction = None
+
+        if isinstance(existing_correction, dict):
+            is_same_op = (
+                existing_correction.get("task_id") == target_id
+                and existing_correction.get("snapshot_sha256") == actual_sha256
+                and existing_correction.get("coordination_task_id") == coord_task_id
+                and existing_correction.get("reason") == reason
+                and existing_correction.get("evidence_ref") == evidence_ref
+            )
+            if is_same_op:
+                if not confirm:
+                    print(
+                        json.dumps(
+                            {
+                                "status": "dry_run_already_invalidated",
+                                "task_id": target_id,
+                                "coordination_task_id": coord_task_id,
+                                "existing_correction": existing_correction,
+                                "message": "Task already invalidated with identical correction parameters.",
+                            },
+                            indent=2,
+                            ensure_ascii=False,
+                        )
+                    )
+                    return
+                print(
+                    json.dumps(
+                        {
+                            "status": "already_invalidated",
+                            "task_id": target_id,
+                            "coordination_task_id": coord_task_id,
+                            "correction": existing_correction,
+                            "message": "Task already invalidated with identical correction parameters (idempotent retry).",
+                        },
+                        indent=2,
+                        ensure_ascii=False,
+                    )
+                )
+                return
+            else:
+                raise SystemExit(
+                    f"Task {target_id!r} already has a different correction record at {correction_path}; "
+                    "cannot overwrite with conflicting invalidation."
+                )
+
+    # 5. Dry run
+    if not confirm:
+        dry_run_receipt = {
+            "status": "dry_run",
+            "action": "archive_recovery_invalidation",
+            "task_id": target_id,
+            "snapshot_path": archive_display_path(snapshot_path),
+            "snapshot_sha256": actual_sha256,
+            "actor": actor,
+            "coordination_task_id": coord_task_id,
+            "reason": reason,
+            "evidence_ref": evidence_ref,
+            "effective_status": "blocked",
+            "dependency_satisfied": False,
+            "message": "Dry run succeeded with zero mutations. Re-run with --confirm to write correction record.",
+        }
+        print(json.dumps(dry_run_receipt, indent=2, ensure_ascii=False))
+        return
+
+    # 6. Apply invalidation
+    now_ts = iso_now()
+    correction_record = {
+        "schema_version": 1,
+        "type": "archive_recovery_invalidation",
+        "task_id": target_id,
+        "snapshot_sha256": actual_sha256,
+        "invalidated_at": now_ts,
+        "actor": actor,
+        "coordination_task_id": coord_task_id,
+        "reason": reason,
+        "evidence_ref": evidence_ref,
+        "effective_status": "blocked",
+        "dependency_satisfied": False,
+    }
+    save_archive_correction(correction_record)
+
+    append_log(
+        {
+            "ts": now_ts,
+            "agent": actor,
+            "type": "archive_recovery_invalidate",
+            "task_id": target_id,
+            "coordination_task_id": coord_task_id,
+            "snapshot_sha256": actual_sha256,
+            "reason": reason,
+            "evidence_ref": evidence_ref,
+        }
+    )
+
+    receipt = {
+        "status": "applied",
+        "action": "archive_recovery_invalidation",
+        "task_id": target_id,
+        "correction_path": archive_display_path(correction_path),
+        "correction": correction_record,
+        "effective_status": "blocked",
+        "dependency_satisfied": False,
+    }
+    print(json.dumps(receipt, indent=2, ensure_ascii=False))
+
+
 def command_prompt(state: dict[str, Any], _args: list[str]) -> None:
     print(build_onboarding_prompt(state))
 
@@ -8703,6 +9039,26 @@ def command_show(state: dict[str, Any], args: list[str]) -> None:
     snapshot = archived_task_snapshot(task_id)
     if snapshot is None:
         raise SystemExit(f"Unknown task: {task_id}")
+
+    correction = load_archive_correction(task_id)
+    if correction is not None:
+        effective_task = load_archived_task(task_id)
+        print(
+            json.dumps(
+                {
+                    "source": "archive",
+                    "effective_status": "blocked",
+                    "effective_task": effective_task,
+                    "correction": correction,
+                    "snapshot_path": archive_display_path(archive_task_path(task_id)),
+                    "snapshot": snapshot,
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return
+
     print(
         json.dumps(
             {
@@ -9287,6 +9643,7 @@ MUTATING_COMMANDS = {
     "approve_continuation": command_approve_continuation,
     "archive_migrate": command_archive_migrate,
     "archive_recovery_apply": command_archive_recovery_apply,
+    "archive_recovery_invalidate": command_archive_recovery_invalidate,
     "sync": command_sync,
     "wave": command_wave,
 }
