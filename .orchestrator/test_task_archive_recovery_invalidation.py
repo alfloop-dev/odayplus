@@ -302,25 +302,45 @@ class ArchiveRecoveryInvalidationTests(unittest.TestCase):
         self.assertIn("Unauthorized", err)
 
     def test_authorization_rejects_non_independent_reviewer_and_owner(self) -> None:
-        bad_state = deepcopy(self.state)
-        bad_state["tasks"][0]["owner"] = "Codex"
-        bad_state["tasks"][0]["reviewer"] = "Codex"
+        test_pairs = [
+            ("Codex", "Codex", "Codex"),
+            ("Antigravity3", "Antigravity4", "Antigravity4"),
+            ("Claude", "Claude2", "Claude2"),
+        ]
+        for owner, reviewer, actor in test_pairs:
+            for confirm in (False, True):
+                with self.subTest(owner=owner, reviewer=reviewer, confirm=confirm):
+                    bad_state = deepcopy(self.state)
+                    bad_state["tasks"][0]["owner"] = owner
+                    bad_state["tasks"][0]["reviewer"] = reviewer
 
-        code, err = self._run_invalidate(
-            [
-                "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
-                "--coordination-task",
-                "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
-                "--reason",
-                "Review gap",
-                "--evidence-ref",
-                "docs/evidence/gap.json",
-            ],
-            actor="Codex",
-            state=bad_state,
-        )
-        self.assertNotEqual(code, 0)
-        self.assertIn("must be independent", err)
+                    args = [
+                        "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+                        "--coordination-task",
+                        "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
+                        "--reason",
+                        "Review gap",
+                        "--evidence-ref",
+                        "docs/evidence/gap.json",
+                    ]
+                    if confirm:
+                        args.append("--confirm")
+
+                    code, err = self._run_invalidate(
+                        args,
+                        actor=actor,
+                        state=bad_state,
+                    )
+                    self.assertNotEqual(code, 0)
+                    self.assertTrue(
+                        "must be independent" in err or "not independent" in err,
+                        f"Expected independence error message, got: {err}",
+                    )
+                    # Verify zero-write guarantees in isolation
+                    self.assertEqual(len(list(self.corrections_dir.iterdir())), 0)
+                    self.assertFalse(self.log_file.exists())
+                    self.assertEqual(self.snap_1_path.read_bytes(), self.snap_1_bytes)
+                    self.assertEqual(self.index_file.read_bytes(), self.initial_index_bytes)
 
     def test_target_must_be_reconstructed_recovery_snapshot(self) -> None:
         # Target is normal non-reconstructed archive task -> must be rejected

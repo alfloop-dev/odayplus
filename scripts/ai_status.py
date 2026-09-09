@@ -8845,26 +8845,36 @@ def command_archive_recovery_invalidate(state: dict[str, Any], args: list[str]) 
             f"Coordination task {coord_task_id!r} not found on board or archive."
         )
 
-    coord_owner = str(coord_task.get("owner") or "").strip()
-    coord_reviewer = str(coord_task.get("reviewer") or "").strip()
-    if not coord_reviewer:
+    raw_coord_owner = str(coord_task.get("owner") or "").strip()
+    raw_coord_reviewer = str(coord_task.get("reviewer") or "").strip()
+    if not raw_coord_reviewer:
         raise SystemExit(f"Coordination task {coord_task_id!r} has no assigned reviewer.")
-    if not coord_owner:
+    if not raw_coord_owner:
         raise SystemExit(f"Coordination task {coord_task_id!r} has no assigned owner.")
-    if coord_owner == coord_reviewer:
+
+    resolved_owner = resolve_actor_reference(
+        raw_coord_owner, field="coordination task owner"
+    )
+    resolved_reviewer = resolve_actor_reference(
+        raw_coord_reviewer, field="coordination task reviewer"
+    )
+    if resolved_owner == resolved_reviewer:
         raise SystemExit(
             f"Coordination task {coord_task_id!r} owner and reviewer must be independent "
-            f"({coord_owner!r} == {coord_reviewer!r})."
+            f"({resolved_owner!r} == {resolved_reviewer!r})."
+        )
+    independence_reason = review_independence_block_reason(resolved_owner, resolved_reviewer)
+    if independence_reason:
+        raise SystemExit(
+            f"Coordination task {coord_task_id!r} owner ({resolved_owner}) and reviewer ({resolved_reviewer}) "
+            f"must be independent: {independence_reason}。"
         )
 
     resolved_actor = resolve_actor_reference(actor, field="current actor")
-    resolved_reviewer = resolve_actor_reference(
-        coord_reviewer, field="coordination task reviewer"
-    )
     if resolved_actor != resolved_reviewer:
         raise SystemExit(
             f"Unauthorized: current actor {actor!r} is not the reviewer of coordination "
-            f"task {coord_task_id!r} (expected reviewer {coord_reviewer!r})."
+            f"task {coord_task_id!r} (expected reviewer {raw_coord_reviewer!r})."
         )
 
     # 2. Check target task in active board and archive
