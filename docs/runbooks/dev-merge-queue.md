@@ -38,18 +38,13 @@ applied by `delivery_toolchain/github/apply_branch_protection.py`.
 | `check_response_timeout_minutes` | `60` | CI measures ~25 minutes. 60 leaves 2x headroom, so a slow runner does not eject an otherwise good PR. |
 | `max_entries_to_build` | `5` | Cap on concurrent speculative CI runs. |
 | `max_entries_to_merge` | `5` | Cap on how many PRs land in one group. |
-| `min_entries_to_merge` | `1` | Do not hold a ready PR waiting for company; latency matters more than batching here. |
-| `min_entries_to_merge_wait_minutes` | `5` | Inert while `min_entries_to_merge` is 1; kept explicit so raising the minimum later is a one-value change. |
+| `min_entries_to_merge` | `2` | Minimum PRs to accumulate before merging group when available. Enables batching for concurrent PRs to reduce merge commit churn and base branch rebase races on `dev`. |
+| `min_entries_to_merge_wait_minutes` | `10` | Bounded wait ceiling: holds a solo PR for up to 10 minutes to accumulate companion PRs before merging solo. Per GitHub merge queue semantics, this accumulation timer begins upon queue entry and runs concurrently with speculative CI execution (~20.6 min median), avoiding added serial latency for solo PRs with typical CI runs. |
 
-The `min_entries_to_merge` row is a **tuning default, not a governance ruling**.
-It was read as one: `docs/plans/ODP_OPEN_DECISIONS_2026-09-03.md` item 19 quoted
-it as "already decided not to batch" and then asked for the decider and date
-that a ruling would have. There is no such ruling, and the row next to it
-says so — the wait-minutes value exists precisely so the minimum can be
-raised in one edit. Changing these two values is a config change under this
-runbook; declaring that this queue will never batch is a governance decision
-that belongs to Human/Ops. See
-[`docs/evidence/ODP_MERGE_QUEUE_DISPOSITION_2026-09-03.md`](../evidence/ODP_MERGE_QUEUE_DISPOSITION_2026-09-03.md).
+The `min_entries_to_merge = 2` and `min_entries_to_merge_wait_minutes = 10` rows represent the **Option B engineering default** ratified under WP-35B (per D21 in the execution plan).
+It transitions the merge queue from single-entry baseline (`min_entries_to_merge = 1`) to conservative batching.
+Note that repository policy updates in `policy.json` (WP-35B) are distinct from live GitHub ruleset activation (WP-35C), which requires explicit operator authorization via `apply_branch_protection.py`.
+See [`docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/implementation-handoff.md`](../evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/implementation-handoff.md) and [`docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-IMPLEMENTATION-001/README.md`](../evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-IMPLEMENTATION-001/README.md).
 
 ### `strict` must be off on `dev`
 
