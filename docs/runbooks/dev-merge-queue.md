@@ -39,11 +39,11 @@ applied by `delivery_toolchain/github/apply_branch_protection.py`.
 | `max_entries_to_build` | `5` | Cap on concurrent speculative CI runs. |
 | `max_entries_to_merge` | `5` | Cap on how many PRs land in one group. |
 | `min_entries_to_merge` | `2` | Minimum PRs to accumulate before merging group when available. Enables batching for concurrent PRs to reduce merge commit churn and base branch rebase races on `dev`. |
-| `min_entries_to_merge_wait_minutes` | `10` | Bounded wait ceiling: holds a solo PR for up to 10 minutes to accumulate companion PRs before merging solo. Per GitHub merge queue semantics, this accumulation timer begins upon queue entry and runs concurrently with speculative CI execution (~20.6 min median), avoiding added serial latency for solo PRs with typical CI runs. |
+| `min_entries_to_merge_wait_minutes` | `10` | Bounded wait ceiling: holds a solo PR for up to 10 minutes to accumulate companion PRs before merging solo. Official GitHub documentation notes merge limits affect merges after build checks pass; offline configuration tests cannot verify GitHub timer start points or zero-added-latency claims, so real solo-PR timeline behavior is listed as a WP-35C live verification item. |
 
-The `min_entries_to_merge = 2` and `min_entries_to_merge_wait_minutes = 10` rows represent the **Option B engineering default** ratified under WP-35B (per D21 in the execution plan).
-It transitions the merge queue from single-entry baseline (`min_entries_to_merge = 1`) to conservative batching.
-Note that repository policy updates in `policy.json` (WP-35B) are distinct from live GitHub ruleset activation (WP-35C), which requires explicit operator authorization via `apply_branch_protection.py`.
+D21 confirmed the batch requirement; the `min_entries_to_merge = 2` and `min_entries_to_merge_wait_minutes = 10` parameters are an **adjustable engineering default** adopted by Codex per current user instructions to complete the deliverable, and have not received itemized H08 sign-off or live activation approval.
+They transition repository policy from single-entry baseline (`min_entries_to_merge = 1`) to conservative batching.
+Note that repository policy updates in `policy.json` (WP-35B) are distinct from live GitHub ruleset activation (WP-35C), which requires explicit operator authorization via `apply_branch_protection.py` and live solo-PR timeline receipt verification.
 See [`docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/implementation-handoff.md`](../evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/implementation-handoff.md) and [`docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-IMPLEMENTATION-001/README.md`](../evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-IMPLEMENTATION-001/README.md).
 
 ### `strict` must be off on `dev`

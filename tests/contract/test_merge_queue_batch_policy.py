@@ -84,8 +84,9 @@ def test_scenario_1_batch_formation_parameters_and_ruleset_payload() -> None:
 def test_scenario_2_solo_pr_bounded_wait_timeout() -> None:
     """Scenario 2: Solo PRs are not held indefinitely waiting for companion PRs.
 
-    min_entries_to_merge_wait_minutes bounds accumulation wait to 10 minutes.
-    Per GitHub merge queue semantics, this timer runs concurrently with CI execution.
+    min_entries_to_merge_wait_minutes bounds accumulation wait to 10 minutes in policy.
+    Validates repository configuration and runbook documentation bounds. Real solo-PR
+    timing and timeline behavior are unverified offline and reserved for WP-35C.
     """
     policy = _load_policy()
     dev_queue = merge_queue_config(policy, "dev")

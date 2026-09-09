@@ -13,9 +13,9 @@
 ## 1. Executive Summary
 
 This task delivers the **WP-35B** engineering implementation for the merge queue batch requirement (ratified in D21):
-1. **Repository Policy Configuration**: Updated `.github/branch-protection/policy.json` to adopt Option B (`min_entries_to_merge = 2`, `min_entries_to_merge_wait_minutes = 10`) as an adjustable engineering default for `dev`.
+1. **Repository Policy Configuration**: Updated `.github/branch-protection/policy.json` to adopt Option B (`min_entries_to_merge = 2`, `min_entries_to_merge_wait_minutes = 10`) as an adjustable engineering default for `dev` (adopted by Codex per current user instructions to complete the deliverable, implementing the batch requirement confirmed under D21 without itemized H08 sign-off or live activation approval).
 2. **Toolchain Alignment**: Updated `delivery_toolchain/github/apply_branch_protection.py` fallback defaults to align with the new batch parameters.
-3. **Runbook Documentation**: Updated `docs/runbooks/dev-merge-queue.md` with parameter definitions, bounded accumulation wait timeline semantics, and WP-35B/C stage boundaries.
+3. **Runbook Documentation**: Updated `docs/runbooks/dev-merge-queue.md` with parameter definitions, bounded accumulation wait semantics, precise provenance, and WP-35B/C stage boundaries.
 4. **Automated Verification**: Created `tests/contract/test_merge_queue_batch_policy.py` implementing the 6 verification scenarios from handoff §3.2, and updated `tests/security/test_branch_protection_policy.py`.
 
 ---
@@ -29,7 +29,7 @@ The updated configuration in `.github/branch-protection/policy.json` specifies:
 | `merge_method` | `MERGE` | Preserves standard merge commit history and `LLM-Agent` / `Task-ID` / `Reviewer` trailers. |
 | `grouping_strategy` | `ALLGREEN` | Strictly retained. Every entry's own merge commit must be green, isolating failed PRs. |
 | `min_entries_to_merge` | `2` | Option B default: requires 2 PRs to form a batch when available, reducing `dev` merge commit churn. |
-| `min_entries_to_merge_wait_minutes` | `10` | Bounded wait ceiling: bounds solo PR hold time to 10 minutes. Runs concurrently with CI execution (~20.6 min median). |
+| `min_entries_to_merge_wait_minutes` | `10` | Bounded wait ceiling: bounds solo PR hold time to 10 minutes to accumulate companion PRs before merging solo. Official GitHub documentation notes merge limits affect merges after build checks pass; offline tests verify configuration schema only, while real solo-PR timeline behavior is unverified offline and listed for WP-35C live verification. |
 | `max_entries_to_merge` | `5` | Maximum PRs permitted in a single merged batch group. |
 | `max_entries_to_build` | `5` | Maximum speculative merge group builds executing concurrently. |
 | `check_response_timeout_minutes` | `60` | Maximum check response timeout before candidate ejection. |
@@ -45,7 +45,7 @@ All 6 core contract/policy scenarios defined in `implementation-handoff.md` §3.
 | # | Scenario | Verification Method | Test Case | Result |
 |---|---|---|---|---|
 | 1 | **Multiple qualified PRs form batch** | Policy assertions and payload builder validation (`min_entries_to_merge=2`, `max_entries_to_merge=5`) | `test_scenario_1_batch_formation_parameters_and_ruleset_payload` | `PASSED` |
-| 2 | **Solo-PR bounded wait timeout** | Bounded wait timeout contract verification (wait=10 min, timeout=60 min, runbook doc) | `test_scenario_2_solo_pr_bounded_wait_timeout` | `PASSED` |
+| 2 | **Solo-PR bounded wait timeout** | Bounded wait timeout contract verification (wait=10 min, timeout=60 min, runbook doc; offline contract only, real solo-PR timing reserved for WP-35C) | `test_scenario_2_solo_pr_bounded_wait_timeout` | `PASSED` |
 | 3 | **Unapproved / failing PR exclusion** | Branch protection check assertions & `merge-queue-review-gate.yml` fail-closed status check assertions | `test_scenario_3_unapproved_and_failing_pr_exclusion` | `PASSED` |
 | 4 | **Head change re-validation** | Review gate workflow inspection of exact PR `headRefOid` status + CI triggers on `pull_request`/`merge_group` | `test_scenario_4_head_change_revalidation` | `PASSED` |
 | 5 | **Failure isolation under ALLGREEN** | Strict `grouping_strategy == "ALLGREEN"` verification across policy and generated payload | `test_scenario_5_failure_isolation_under_allgreen` | `PASSED` |
@@ -77,6 +77,6 @@ All 6 core contract/policy scenarios defined in `implementation-handoff.md` §3.
 ## 5. Scope Boundaries & Live Activation Separation (WP-35C)
 
 1. **WP-35B Boundary**: This deliverable updates repository policy definitions, toolchain scripts, runbooks, and automated contract tests.
-2. **WP-35C Separation**: Live application to GitHub rulesets via `python3 delivery_toolchain/github/apply_branch_protection.py` is reserved for WP-35C upon operator authorization.
+2. **WP-35C Separation**: Live application to GitHub rulesets via `python3 delivery_toolchain/github/apply_branch_protection.py` and empirical solo-PR timeline/latency verification are reserved for WP-35C upon operator authorization.
 3. **No Automatic Apply Linkage**: Verified that merging `policy.json` does NOT trigger automatic execution of `apply_branch_protection.py`.
-4. **Simulation vs Live Claims**: Offline test passes verify repository contracts, payload builders, and workflow definitions; they are not claimed as live GitHub merge queue batching evidence.
+4. **Simulation vs Live Claims**: Offline test passes verify repository contracts, payload builders, and workflow definitions; they are not claimed as live GitHub merge queue batching or timing evidence.
