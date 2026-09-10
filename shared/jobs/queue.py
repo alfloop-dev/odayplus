@@ -40,6 +40,12 @@ class NonRetryableJobError(RuntimeError):
     pass
 
 
+class JobFenceRejectedError(ValueError):
+    """Raised when a job status update or heartbeat is rejected due to version or fence token mismatch."""
+
+    pass
+
+
 JOB_FEATURE_FLAG_MAP: dict[str, str] = {
     "priceops.execute": "high_risk.priceops.execute",
     "priceops_job": "high_risk.priceops.execute",
@@ -383,16 +389,35 @@ class InMemoryJobQueue:
                 raise ValueError(f"Job {job_id} not found")
             record = self._jobs[job_id]
             if expected_version is not None and record.version != expected_version:
-                raise ValueError(
+                raise JobFenceRejectedError(
                     f"Job version mismatch: expected {expected_version}, got {record.version}"
                 )
             if fence_token is not None and record.fence_token != fence_token:
-                raise ValueError(
+                raise JobFenceRejectedError(
                     f"Job fence token mismatch: expected {fence_token}, got {record.fence_token}"
                 )
 
+            resolved_payload = payload if payload is not None else record.payload
+            resolved_status = status
+            if status == JobStatus.CANCELLED and isinstance(resolved_payload, dict):
+                from shared.jobs.receipts import settle_cancelled_batch_receipt
+
+                resolved_payload = settle_cancelled_batch_receipt(
+                    resolved_payload,
+                    job_id=record.job_id,
+                    job_type=record.job_type,
+                    tenant_id=resolved_payload.get("tenant_id"),
+                    correlation_id=record.correlation_id,
+                    idempotency_key=record.idempotency_key,
+                    created_at=record.created_at.isoformat() if hasattr(record.created_at, "isoformat") else str(record.created_at),
+                )
+                if isinstance(resolved_payload, dict) and "receipt" in resolved_payload:
+                    receipt_status = resolved_payload["receipt"].get("status")
+                    if receipt_status:
+                        resolved_status = JobStatus(receipt_status.lower())
+
             resolved_delivery = delivery_state if delivery_state is not None else record.delivery_state
-            if status in DELIVERY_SETTLED_JOB_STATUSES:
+            if resolved_status in DELIVERY_SETTLED_JOB_STATUSES:
                 # Parity with DurableJobQueue.update_status: a settled outcome
                 # clears delivery mechanics rather than inheriting the previous
                 # record's RETRYING.
@@ -400,18 +425,18 @@ class InMemoryJobQueue:
 
             self._jobs[job_id] = JobRecord(
                 job_type=record.job_type,
-                payload=payload if payload is not None else record.payload,
+                payload=resolved_payload,
                 correlation_id=record.correlation_id,
                 idempotency_key=record.idempotency_key,
-                status=status,
+                status=resolved_status,
                 delivery_state=resolved_delivery,
                 job_id=record.job_id,
                 created_at=record.created_at,
                 fence_token=record.fence_token,
                 version=record.version + 1,
-                locked_by=record.locked_by if status == JobStatus.RUNNING else None,
-                heartbeat_at=record.heartbeat_at if status == JobStatus.RUNNING else None,
-                lease_expires_at=record.lease_expires_at if status == JobStatus.RUNNING else None,
+                locked_by=record.locked_by if resolved_status == JobStatus.RUNNING else None,
+                heartbeat_at=record.heartbeat_at if resolved_status == JobStatus.RUNNING else None,
+                lease_expires_at=record.lease_expires_at if resolved_status == JobStatus.RUNNING else None,
                 attempts=record.attempts,
                 error_message=error_message or record.error_message,
             )
@@ -426,7 +451,7 @@ class InMemoryJobQueue:
                 or record.version != expected_version
                 or record.fence_token != fence_token
             ):
-                raise ValueError("Fence/version mismatch")
+                raise JobFenceRejectedError("Fence/version mismatch")
             new_version = expected_version + 1
             self._jobs[job_id] = JobRecord(
                 job_type=record.job_type,
@@ -452,6 +477,7 @@ __all__ = [
     "DELIVERY_SETTLED_JOB_STATUSES",
     "InMemoryJobQueue",
     "JobDeliveryState",
+    "JobFenceRejectedError",
     "JobRecord",
     "JobRequest",
     "JobStatus",
