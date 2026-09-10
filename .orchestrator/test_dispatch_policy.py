@@ -3567,6 +3567,144 @@ def test_ci_failure_full_lifecycle_dispatcher_to_resubmission_to_review(tmp_path
     assert queued_events[0]["target_agent"] == "Codex2"
 
 
+def test_ci_failure_lane_adds_no_canonical_read_on_a_quiet_tick() -> None:
+    """The CI-failure lane must cost no extra canonical read when it recovers nothing.
+
+    Every reconciliation lane in `dispatch_ready_tasks` reloads only when its own
+    step reports a change. The CI-failure lane briefly re-synced unconditionally,
+    so every tick paid one extra `load_status` (3 reads on this shape instead of
+    2). That surfaced as `StopIteration` in the callers that drive the dispatcher
+    with a bounded `side_effect` sequence -- `ProcessQueueDispatchGuardTests` in
+    test_supervisor.py supplies exactly two snapshots, which is the same
+    invariant pinned numerically here.
+    """
+    cfg = _base_test_config()
+    # Nothing is in `review`, so the CI lane inspects nothing and recovers
+    # nothing; a quiet tick must not reload on its behalf.
+    status = {
+        "tasks": [
+            {
+                "id": "QUIET-001",
+                "status": "in_progress",
+                "owner": "Antigravity",
+                "reviewer": "Codex2",
+                "depends_on": [],
+            }
+        ],
+        "handoffs": [],
+    }
+    state = {"workers": {}, "queue": {"events": {}}}
+
+    with (
+        mock.patch.object(
+            supervisor, "load_status", return_value=status
+        ) as load_status_mock,
+        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        mock.patch.object(supervisor, "write_activity_log"),
+        mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+        mock.patch.object(
+            dispatch_engine, "task_reality_reconcile_is_due", return_value=False
+        ),
+        mock.patch.object(supervisor, "queue_delivery_event", return_value=True),
+    ):
+        supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["antigravity7"])
+
+    assert load_status_mock.call_count == 2
+
+
+def test_ci_failure_rejected_cas_rebuilds_indices_from_the_resynced_snapshot() -> None:
+    """After a rejected CAS the dispatcher must select from the re-synced snapshot.
+
+    `recover_failed_ci_review_prs` re-syncs `status` in place and still returns
+    False when the canonical commit is rejected. The caller therefore has to
+    rebuild `tasks`/`task_map` from that refreshed snapshot; otherwise candidate
+    selection keeps scoring the detached pre-CAS objects. Here the refreshed
+    snapshot carries a task the stale list never held, so dispatching it is
+    possible only if the indices were genuinely rebuilt.
+    """
+    import github_bus
+
+    cfg = _base_test_config()
+    stale_task = _failed_ci_review_task()
+    # What a concurrent writer leaves on disk once the CAS loses: the review is
+    # gone and an unrelated task is ready for this agent.
+    resynced = {
+        "tasks": [
+            {
+                "id": "RESYNCED-001",
+                "status": "todo",
+                "owner": "Antigravity7",
+                "reviewer": "Codex",
+                "priority": "P2",
+                "depends_on": [],
+            }
+        ],
+        "handoffs": [],
+    }
+    disk = {
+        "current": {
+            "tasks": [stale_task],
+            "handoffs": [
+                {
+                    "task_id": FAILED_CI_TASK_ID,
+                    "from": "Antigravity",
+                    "to": "Codex2",
+                    "status": "pending",
+                }
+            ],
+        }
+    }
+    state = {"workers": {}, "queue": {"events": {}}}
+    queued_events: list[dict] = []
+
+    def fake_run_gh(args, **_kwargs):
+        return subprocess.CompletedProcess(
+            args=["gh", *args], returncode=0, stdout=json.dumps(_failed_ci_pr_facts(head=FAILED_CI_HEAD)), stderr=""
+        )
+
+    def reject_and_advance_disk(*_args, **_kwargs):
+        """Lose the CAS, exactly as a concurrent canonical writer would."""
+        disk["current"] = resynced
+        return False
+
+    with (
+        mock.patch.object(github_bus, "run_gh", side_effect=fake_run_gh),
+        mock.patch.object(
+            supervisor.runtime_ai_status,
+            "task_pr_ci_status",
+            return_value=("OPEN", "failure"),
+        ),
+        mock.patch.object(
+            supervisor, "load_status", side_effect=lambda *_a, **_k: disk["current"]
+        ),
+        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        mock.patch.object(
+            supervisor,
+            "commit_canonical_task_transition",
+            side_effect=reject_and_advance_disk,
+        ),
+        mock.patch.object(supervisor, "write_activity_log"),
+        mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+        mock.patch.object(
+            dispatch_engine, "task_reality_reconcile_is_due", return_value=False
+        ),
+        mock.patch.object(
+            supervisor,
+            "queue_delivery_event",
+            side_effect=lambda _c, evt: queued_events.append(evt) or True,
+        ),
+    ):
+        supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["antigravity7"])
+
+    # The rejected transition leaves the in-memory object detached and already
+    # mutated -- precisely the hazard the index rebuild exists to contain.
+    assert stale_task["status"] == "in_progress"
+    # It must never reach dispatch on the strength of that uncommitted mutation...
+    assert all(evt.get("task_id") != FAILED_CI_TASK_ID for evt in queued_events)
+    # ...and selection must have run against the re-synced snapshot instead.
+    assert [evt["task_id"] for evt in queued_events] == ["RESYNCED-001"]
+
+
 # --- Preemption readiness ----------------------------------------------------
 #
 # `higher_priority_ready_task_exists` decides whether a running worker is killed

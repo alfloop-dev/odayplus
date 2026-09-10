@@ -42,9 +42,8 @@ PR for task <task_id> has CI failure (failure); review dispatch suppressed until
   - 中斷該 tick 之進一步 recovery 操作並安全退出，防止在過時 snapshot 上繼續操作。
 
 ### 2.3 派工候選狀態同步（Finding 3）
-- 在 `dispatch_ready_tasks` 的 reconciliation 階段（包含 helper claims 釋放、churn 重派、mainline 正規化、衝突恢復與 CI 失敗恢復）完成後：
-  - 在進入候選任務派工迴圈前，強制重新從磁碟載入最新 `status`、`tasks` 與 `task_map`。
-  - 徹底杜絕因記憶體中物件狀態曾被暫時修改但未成功持久化，導致錯誤派發 `owned_in_progress_dispatch` 的風險。
+- 在進入候選任務派工迴圈前，`tasks` 與 `task_map` 必須來自最新的 canonical snapshot，杜絕因記憶體中物件曾被暫時修改但未成功持久化而錯誤派發 `owned_in_progress_dispatch` 的風險。
+- 本輪（見第 2A 節）已修正此處的實作方式：改為與其他所有 reconciliation lane 一致的條件式重載，而非無條件重載。CAS 遭拒時 `recover_failed_ci_review_prs` 本就會就地 `status.clear(); status.update(load_status(config))`，caller 只需自該已刷新的 snapshot 重建索引，不需再讀一次磁碟。
 
 ### 2.4 Human Gate 與 Human Waiting 完整保護（Finding 4）
 - 在 `requeue_task_for_ci_repair`、`recover_failed_ci_review_prs` 與 `recover_conflicted_review_prs` 中：
@@ -56,6 +55,51 @@ PR for task <task_id> has CI failure (failure); review dispatch suppressed until
 - 統一測試命名，確保 pytest `-k "ci_repair or ci_failure or conflicted_review"` 完整選中所有相關回歸測試。
 
 ---
+
+## 2A. 第二輪審查回應：PR #1288 CI 失敗（run 34420166244 / job 102693620862）
+
+### 2A.1 實測失敗
+Reviewer 於 2026-09-10T08:57:27Z 以 review_finding 回派，指出 PR #1288 head `e60a8a6f5afc62465b6181aea8e6fb6b63699121` 的 `orchestrator` job 真實失敗，三項既有測試同時 `StopIteration`：
+
+- `.orchestrator/test_supervisor.py::ProcessQueueDispatchGuardTests::test_dispatcher_reassigns_mainline_helper_owner_before_dispatch`
+- `.orchestrator/test_supervisor.py::ProcessQueueDispatchGuardTests::test_dispatcher_reassigns_mainline_helper_reviewer_before_dispatch`
+- `.orchestrator/test_supervisor.py::ProcessQueueDispatchGuardTests::test_dispatcher_spreads_paused_review_to_registered_idle_reviewer`
+
+本地已重現，堆疊終點為 `.orchestrator/dispatch_engine.py:2687` 的 `status = load_status(config)`。
+
+### 2A.2 根因
+`dispatch_ready_tasks` 中每一個 reconciliation lane 都遵循同一個慣例：**只有在該步驟回報有變更時才重載** canonical snapshot。上一輪為了涵蓋 CAS 遭拒的情境，把 CI-failure lane 之後的重載寫成**無條件執行**，位於 `if` 之外。
+
+後果是每一個 tick（即使完全沒有任何 recovery）都多付一次 `load_status`。以這三項測試的情境量測：**修復前 3 次、修復後 2 次**。它們以 `side_effect=[initial_status, normalized_status]`（恰好兩筆）驅動 dispatcher，第三次讀取即耗盡迭代器而 `StopIteration`。
+
+這不是 fixture 過時，而是產品碼多做了一次不必要的 canonical 讀取；因此修的是產品碼，三項測試與其 dispatch 行為斷言完全未更動。
+
+### 2A.3 修正
+`dispatch_engine.py` 恢復與其他 lane 一致的條件式重載，並以 `else` 分支保留上一輪的 CAS 防禦：
+
+- 有 recovery（回傳 True）：`changed = True`，重載 canonical snapshot 並重建 `tasks` / `task_map`。
+- 無 recovery（回傳 False）：CAS 遭拒時 `recover_failed_ci_review_prs` 已就地刷新 `status`，故僅自該 snapshot **重建索引**，不再讀一次磁碟。若本來就無事發生，這只是以手上同一份 snapshot 重建等值內容。
+
+上一輪的 CAS / pending-check / Human gate 修正全部原樣保留，未刪除或跳過任何測試。
+
+**為何不會削弱 `recover_conflicted_review_prs` 的 CAS 防禦**：該 lane 有完全相同的就地刷新模式（CAS 遭拒時 `status.clear(); status.update(load_status(config))` 後回傳 `changed`，可能為 False），其 caller 同樣沒有 `else` 分支。原本是靠 CI lane 之後那次無條件重載順帶覆蓋。由於本輪的 `else` 分支位置在**兩個 lane 之後**，四種組合都仍能在進入派工迴圈前自當前 snapshot 重建索引：
+
+- conflicted True → 該 `if` 自行重載；
+- conflicted False（CAS 遭拒，就地刷新）+ CI True → CI 的 `if` 重新讀取磁碟；
+- conflicted False（CAS 遭拒，就地刷新）+ CI False → 本輪 `else` 自已刷新的 snapshot 重建索引；
+- 兩者皆無事發生 → `else` 以手上同一份 snapshot 重建等值內容。
+
+### 2A.4 新增回歸（並經變異驗證確認非空測）
+兩項新回歸自兩側夾住此修正，各自針對一種失敗模式；已分別以變異版本實測確認會轉紅：
+
+| 新回歸 | 針對的失敗模式 | 變異驗證結果 |
+|---|---|---|
+| `test_ci_failure_lane_adds_no_canonical_read_on_a_quiet_tick` | 原缺陷：無條件重載（安靜 tick 讀 3 次而非 2 次） | 對「無條件重載」變異版 FAILED |
+| `test_ci_failure_rejected_cas_rebuilds_indices_from_the_resynced_snapshot` | 過度修正：直接刪掉重載而不補 `else` 分支，CAS 遭拒後索引仍為脫鉤物件 | 對「僅刪除重載」變異版 FAILED |
+
+第二項刻意讓 CAS 遭拒時的 disk snapshot 換成一筆原清單不存在的任務，唯有真正重建索引才可能派出它。
+
+**必要說明**：此二回歸的第一版設計（差分讀取計數）在缺陷版上同樣通過，屬空測；已改寫並以上述變異測試證實其有效性後才納入。
 
 ## 3. 解決架構與設計
 

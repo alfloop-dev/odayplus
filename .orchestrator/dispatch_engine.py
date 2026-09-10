@@ -2681,12 +2681,17 @@ def dispatch_ready_tasks(
         busy_task_ids=active_task_ids | pending_task_ids,
     ):
         changed = True
-
-    # Re-sync status, tasks, and task_map from canonical disk state to ensure
-    # candidate selection never acts on stale or detached in-memory objects.
-    status = load_status(config)
-    tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
-    task_map = {task.get(task_id_field): task for task in tasks}
+        status = load_status(config)
+        tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
+        task_map = {task.get(task_id_field): task for task in tasks}
+    else:
+        # A rejected canonical CAS resyncs `status` in place and still reports
+        # no recovery, so rebuild the indices from that refreshed snapshot:
+        # candidate selection must never act on the detached pre-CAS task
+        # objects. When no recovery ran this rebuilds identical content from
+        # the snapshot already in hand, without a second canonical read.
+        tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
+        task_map = {task.get(task_id_field): task for task in tasks}
 
     dispatches = 0
     agent_sequence = (
