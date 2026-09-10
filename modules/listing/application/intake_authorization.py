@@ -5,6 +5,7 @@ Enforces the role/action/resource/scope/state/field/risk matrix from docs/design
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 from fastapi import HTTPException
@@ -520,4 +521,60 @@ def mask_intake(principal: Principal, intake: dict[str, Any]) -> dict[str, Any]:
             masked["originalUrl_masked"] = True
             masked["originalUrl_mask_reason_code"] = "FIELD_MASKED"
 
+    return masked
+
+
+def mask_batch_intake_job(principal: Principal, job: dict[str, Any]) -> dict[str, Any]:
+    """Apply intake field policy to raw batch rows and unstructured errors.
+
+    Unknown import columns and free-form diagnostics have no classification
+    contract, so they stay restricted. Mask copies only: job payloads can alias
+    the in-memory queue's authoritative record.
+    """
+    clearance = principal.scope.clearance if principal.authenticated else DataClassification.PUBLIC
+    if clearance >= DataClassification.RESTRICTED:
+        return job
+    masked = deepcopy(job)
+    aliases = {
+        "address_raw": "address", "addressRaw": "address", "address": "address",
+        "rent_per_month": "rent", "rentPerMonth": "rent", "rent": "rent",
+        "area_ping": "areaPing", "areaPing": "areaPing", "floor": "floor",
+        "coordinates": "coordinates", "rawSnapshot": "rawSnapshot",
+        "brokerCompany": "brokerCompany", "contactEmail": "contactEmail",
+        "contactPhone": "contactPhone", "brokerEmail": "brokerEmail",
+        "privateNotes": "privateNotes",
+    }
+    payload = masked.get("payload")
+    if not isinstance(payload, dict):
+        return masked
+    for field, value in list(payload.items()):
+        if field in ("items", "rows") and isinstance(value, list):
+            rows = []
+            for row in value:
+                if not isinstance(row, dict):
+                    rows.append(None)
+                    continue
+                clean = {}
+                for key, raw in row.items():
+                    if key == "item_id":
+                        clean[key] = raw
+                    elif key in aliases:
+                        canonical = aliases[key]
+                        view = mask_intake(
+                            principal, {"parsedFields": {canonical: {"sourceValue": raw}}}
+                        )
+                        clean[key] = view["parsedFields"][canonical].get("sourceValue")
+                    else:
+                        clean[key] = None
+                rows.append(clean)
+            payload[field] = rows
+        elif field not in ("tenant_id", "submitter", "actor_role_id", "receipt", "summary"):
+            payload[field] = None
+    receipt = payload.get("receipt")
+    if isinstance(receipt, dict):
+        for item in receipt.get("items", []):
+            if isinstance(item, dict) and isinstance(item.get("error"), dict):
+                item["error"]["message"] = "Item processing failed; details are restricted"
+                item["error"]["details"] = None
+    masked["error_message"] = None
     return masked

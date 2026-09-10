@@ -53,7 +53,11 @@ class _LeaseHeartbeat:
         with self._state_lock:
             try:
                 latest = self._queue.get(self._job_id)
-                if latest is not None:
+                if (
+                    latest is not None
+                    and latest.status == JobStatus.RUNNING
+                    and latest.fence_token == self._fence_token
+                ):
                     self._version = latest.version
             except Exception:
                 pass
@@ -206,6 +210,13 @@ class ODayWorker:
                     )
                     return True
 
+                if (
+                    latest_job is None
+                    or latest_job.status != JobStatus.RUNNING
+                    or latest_job.fence_token != job.fence_token
+                ):
+                    self._record_stale_worker(job, JobFenceRejectedError("Job execution ownership changed"))
+                    return True
                 if heartbeat_failure is not None:
                     self._record_stale_worker(job, heartbeat_failure)
                     return True
@@ -214,7 +225,7 @@ class ODayWorker:
                     self.job_queue.update_status(
                         job.job_id,
                         JobStatus.SUCCEEDED,
-                        expected_version=current_version,
+                        expected_version=latest_job.version,
                         fence_token=job.fence_token,
                     )
                 except (JobFenceRejectedError, ValueError) as exc:
@@ -252,6 +263,12 @@ class ODayWorker:
                         resource=f"job/{job.job_type}",
                         action="cancel" if latest_job.status == JobStatus.CANCELLED else "execute",
                     )
+                elif (
+                    latest_job is None
+                    or latest_job.status != JobStatus.RUNNING
+                    or latest_job.fence_token != job.fence_token
+                ):
+                    self._record_stale_worker(job, JobFenceRejectedError("Job execution ownership changed"))
                 elif heartbeat_failure is not None:
                     self._record_stale_worker(job, heartbeat_failure)
                 else:

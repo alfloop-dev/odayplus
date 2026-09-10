@@ -364,6 +364,82 @@ def _default_batch_listing_item_executor(
     return str(intake["id"]), None
 
 
+
+def checkpoint_batch_item_result(
+    job: JobRecord, persistence: PersistenceBundle, result: Any
+) -> tuple[list[Any], bool]:
+    """Deliver one result through the persisted job/item/attempt and lease fence.
+
+    The attempt-start receipt is the authority. Every CAS retry reloads it so
+    neither duplicate results nor another item's checkpoint can be overwritten
+    from a worker's old in-memory receipt.
+    """
+    import logging
+    from dataclasses import replace
+
+    from shared.jobs.queue import JobFenceRejectedError
+    from shared.jobs.receipts import (
+        DurableJobReceipt,
+        apply_item_result,
+        derive_batch_status_and_summary,
+    )
+
+    def discarded(reason: str) -> None:
+        logging.getLogger(__name__).warning(
+            "Batch item result discarded: job=%s item=%s attempt=%s reason=%s",
+            job.job_id, result.item_id, result.attempt, reason,
+        )
+
+    for _ in range(_CHECKPOINT_WRITE_ATTEMPTS):
+        latest = persistence.job_queue.get(job.job_id)
+        if (
+            latest is None
+            or latest.status != JobStatus.RUNNING
+            or latest.fence_token != job.fence_token
+            or latest.job_type != job.job_type
+            or latest.payload.get("tenant_id") != job.payload.get("tenant_id")
+        ):
+            discarded("execution ownership changed")
+            raise JobFenceRejectedError("Batch result no longer owns a RUNNING job lease")
+        raw_receipt = latest.payload.get("receipt")
+        if not isinstance(raw_receipt, dict):
+            discarded("attempt checkpoint missing")
+            raise JobFenceRejectedError("Batch result has no persisted attempt checkpoint")
+        receipt = DurableJobReceipt.from_dict(raw_receipt)
+        current = list(receipt.items)
+        existing = next((item for item in current if item.item_id == result.item_id), None)
+        if existing is None or existing.attempt != result.attempt:
+            discarded("item attempt mismatch")
+            return current, False
+        # Timestamps and item keys belong to the persisted attempt, not to an
+        # incoming result that can be duplicated or delayed.
+        trusted_result = replace(
+            result, last_attempt_at=existing.last_attempt_at,
+            idempotency_key=existing.idempotency_key,
+        )
+        updated, applied = apply_item_result(current, trusted_result)
+        if not applied:
+            discarded("duplicate or settled item")
+            return current, False
+        _, summary = derive_batch_status_and_summary(updated)
+        payload = dict(latest.payload)
+        payload["receipt"] = replace(
+            receipt, items=tuple(updated), summary=summary,
+            status=JobStatus.RUNNING.value.upper(), completed_at=None,
+        ).to_dict()
+        payload["summary"] = summary.to_dict()
+        try:
+            persistence.job_queue.update_status(
+                job.job_id, JobStatus.RUNNING, payload=payload,
+                expected_version=latest.version, fence_token=job.fence_token,
+            )
+        except (JobFenceRejectedError, ValueError):
+            continue
+        return updated, True
+    discarded("checkpoint CAS retries exhausted")
+    raise JobFenceRejectedError("Batch result checkpoint did not persist")
+
+
 def handle_batch_listing_intake(job: JobRecord, persistence: PersistenceBundle) -> None:
     """Process a batch listing intake job with durable per-item receipts.
 
@@ -381,7 +457,6 @@ def handle_batch_listing_intake(job: JobRecord, persistence: PersistenceBundle) 
         ItemError,
         ItemReceipt,
         ItemStatus,
-        apply_item_result,
         derive_batch_status_and_summary,
     )
 
@@ -512,32 +587,14 @@ def handle_batch_listing_intake(job: JobRecord, persistence: PersistenceBundle) 
         )
 
     def _settle_if_cancelled() -> bool:
-        """Settle the batch when the live job row shows an operator cancellation.
-
-        Members that never ran keep ``attempt == 0``; a member whose
-        attempt-start checkpoint had already landed keeps its attempt, and a
-        result that did land is kept rather than thrown away.
-        """
+        # Cancellation is settled atomically by the queue from its persisted
+        # checkpoint. A late worker must never re-settle it from local results.
         latest = persistence.job_queue.get(job.job_id)
         if latest is None:
             raise JobFenceRejectedError(f"Job {job.job_id} not found in queue")
-        if latest.status == JobStatus.CANCELLED:
-            final_items = [
-                _cancelled_item(it, it.item_id, it.idempotency_key)
-                if it.item_status == ItemStatus.PENDING.value
-                else it
-                for it in current_items
-            ]
-            derived_status, _ = derive_batch_status_and_summary(final_items)
-            _write_receipt(
-                final_items,
-                derived_status,
-                completed_at=datetime.now(UTC).isoformat(),
-            )
-            return True
-        elif latest.status in (JobStatus.SUCCEEDED, JobStatus.PARTIAL, JobStatus.FAILED):
-            return True
-        return False
+        return latest.status in (
+            JobStatus.CANCELLED, JobStatus.SUCCEEDED, JobStatus.PARTIAL, JobStatus.FAILED,
+        )
 
     existing_receipt = payload.get("receipt")
     current_items: list[ItemReceipt] = []
@@ -574,7 +631,7 @@ def handle_batch_listing_intake(job: JobRecord, persistence: PersistenceBundle) 
         if latest_job is None:
             raise JobFenceRejectedError(f"Job {job.job_id} not found in queue")
 
-        if latest_job.status in (JobStatus.CANCELLED, JobStatus.FAILED, JobStatus.SUCCEEDED):
+        if latest_job.status in (JobStatus.CANCELLED, JobStatus.FAILED, JobStatus.SUCCEEDED, JobStatus.PARTIAL):
             _settle_if_cancelled()
             return
 
@@ -675,21 +732,10 @@ def handle_batch_listing_intake(job: JobRecord, persistence: PersistenceBundle) 
                 last_attempt_at=now_iso,
             )
 
-        # 3. Checkpoint the result through the (job, item, attempt) fence, so a
-        # late result from an older attempt cannot overwrite a newer one.
-        current_items, applied = apply_item_result(current_items, item_result)
-        if not applied:
-            import logging
-
-            logging.getLogger(__name__).warning(
-                "Stale or duplicate item result discarded for job %s, item %s, attempt %s (status: %s)",
-                job.job_id,
-                item_result.item_id,
-                item_result.attempt,
-                item_result.item_status,
-            )
+        # Deliver through the same durable result boundary used by retries
+        # and delayed/duplicate result deliveries.
         try:
-            _write_receipt(current_items, JobStatus.RUNNING, require_running=True)
+            current_items, _ = checkpoint_batch_item_result(job, persistence, item_result)
         except JobFenceRejectedError:
             if _settle_if_cancelled():
                 return
@@ -709,6 +755,7 @@ def handle_batch_listing_intake(job: JobRecord, persistence: PersistenceBundle) 
             current_items,
             aggregate_status,
             completed_at=datetime.now(UTC).isoformat(),
+            require_running=True,
         )
     except JobFenceRejectedError:
         if _settle_if_cancelled():

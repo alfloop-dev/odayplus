@@ -1195,6 +1195,13 @@ else:
                 queue_idempotency_key = (
                     f"{idempotency_scope}:{idempotency_tenant_id}:{effective_idempotency_key}"
                 )
+            elif effective_idempotency_key and effective_idempotency_key.startswith(
+                ("forecast:v1:", "external-fetch:v1:", "batch-listing-intake:v1:")
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={"code": "RESERVED_IDEMPOTENCY_NAMESPACE"},
+                )
             job, created = job_queue.enqueue(
                 JobRequest(
                     job_type=body.job_type,
@@ -1203,6 +1210,14 @@ else:
                 ),
                 correlation_id=request.state.correlation_id,
             )
+            # Enqueue may return an existing record. Authorize that actual
+            # record exactly as GET does, including ownership and field masks.
+            response_job = _authorized_job_response(job, request)
+            if job.job_type != body.job_type:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={"code": "IDEMPOTENCY_JOB_TYPE_MISMATCH"},
+                )
             audit_event = audit_log.record(
                 AuditEvent(
                     event_type="job.enqueue",
@@ -1220,17 +1235,13 @@ else:
                 "status": job.status.value,
                 "correlation_id": job.correlation_id,
                 "idempotency_key": effective_idempotency_key,
-                "job": job.to_dict(),
+                "job": response_job,
                 "created": created,
                 "audit_event_id": audit_event.event_id,
             }
 
-        def _get_job_response(job_id: str, request: Request) -> dict[str, Any]:
+        def _authorized_job_response(job: Any, request: Request) -> dict[str, Any]:
             from apps.api.oday_api.security.dependencies import principal_from_headers
-
-            job = job_queue.get(job_id)
-            if job is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
 
             job_tenant = str(job.payload.get("tenant_id") or "").strip()
             if job.job_type == "forecast":
@@ -1306,7 +1317,17 @@ else:
             res = job.to_dict()
             if "summary" in job.payload and "summary" not in res:
                 res["summary"] = job.payload["summary"]
+            if job.job_type in ("batch-listing-intake", "assisted-listing-intake"):
+                from modules.listing.application.intake_authorization import mask_batch_intake_job
+
+                res = mask_batch_intake_job(principal_from_headers(request.headers), res)
             return res
+
+        def _get_job_response(job_id: str, request: Request) -> dict[str, Any]:
+            job = job_queue.get(job_id)
+            if job is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
+            return _authorized_job_response(job, request)
 
         @platform_router.get("/jobs/{job_id}", tags=["jobs"])
         def get_job(job_id: str, request: Request) -> dict[str, Any]:

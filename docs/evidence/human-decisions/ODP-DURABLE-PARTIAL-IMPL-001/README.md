@@ -5,8 +5,8 @@
 - **前置任務**：
   - `ODP-DURABLE-PARTIAL-CONTRACT-PREP-001`（WP-33A：工程準備、盤點與契約草案）
   - `ODP-JOB-DELIVERY-STATE-CLEAR-001`（修正 PARTIAL／CANCELLED 終態殘留重試狀態並保持兩種佇列一致）
-- **任務負責人**：Antigravity7（承接並完成 R1–R5 審查意見修復與 Test 5 整合測試）
-- **審查人**：Codex
+- **任務負責人**：Codex（2026-09-10 依使用者授權前景接手；保留先前實作及六次退回歷史）
+- **審查人**：Claude（本輪與實作者不同帳號）
 - **依據規範**：
   - `docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md`
   - `docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/implementation-handoff.md`
@@ -22,7 +22,7 @@
 
 - `ItemStatus`、`ItemError`、`ItemReceipt`、`JobSummary`、`DurableJobReceipt`。
 - `derive_batch_status_and_summary`：純函式，由持久化 items 依優先級規則重新推導聚合狀態與計數，不由訊息逐次累加。
-- `apply_item_result`：以 `(job_id, item_id, attempt)` 三元組 fencing 套用結果。本輪修正其 attempt 判定：結果只能「完成目前記錄為執行中（`PENDING`）的該次 attempt」或「回報更後面的 attempt」；已有結果的 attempt 再收到同號結果一律丟棄。原本的「attempt 必須嚴格遞增」在導入開始 checkpoint 後會把該次 attempt 自己的結果誤判為 stale。
+- `apply_item_result` 是 item 結果合併的純函式；真實結果交付由 `checkpoint_batch_item_result` 綁定持久 job/tenant/lease 與已保存的 item attempt，要求 attempt 精確相等，再執行合併及 CAS。未來 attempt 不能憑傳入的數字取得執行權。
 
 ### 1.2 真實業務路徑（`modules/opsboard/application/network_listings.py`）
 
@@ -92,7 +92,7 @@ handoff §3.0／§3.3 以 `GET /platform/jobs/{job_id}` 與 `POST /platform/jobs
 | `test_3_orthogonality_and_delivery_state_clear` | §4 測試 3 | 先實際進入 `RETRYING` 再寫 `PARTIAL`，自 SQLite 與 API 皆讀回 `delivery_state` 為 `null`；`FAILED` + `DEAD_LETTER` 行為保留；in-memory 與 durable 各跑一次 |
 | `test_4_restart_re_readability_and_cancellation` | §4 測試 4 | 重啟後完整回讀收據；取消情境以真實崩潰＋真實 DB 取消驅動：第 1 筆 `SUCCEEDED`(attempt=1)、第 2 筆 `CANCELLED`(attempt=1, `CANCELLED_MID_EXECUTION`)、第 3 筆 `CANCELLED`(attempt=0, `CANCELLED_BEFORE_EXECUTION`) |
 | `test_4_mid_batch_interruption_and_resumption` | §4 測試 4 | 中途崩潰後重啟續跑，已完成項不重跑 |
-| `test_4_live_operator_cancellation_during_execution` | §4 測試 4 | 執行中由 operator 在 DB 取消，已落地結果保留、未執行項 `attempt=0` |
+| `test_4_live_operator_cancellation_during_execution` | §4 測試 4 | 執行中由 operator 在 DB 取消：已開始但尚未 checkpoint 的項保留 `attempt=1` 並取消，未執行項 `attempt=0`；晚到結果不得覆寫取消狀態 |
 | `test_5_duplicate_delivery_and_out_of_order` | §4 測試 5 | 真實持久化 SQLite 整合測試（Subcases 5.1–5.5）：重複投遞同一 attempt、重複 enqueue 同一 idempotency key、舊 attempt 失敗後到不得覆寫 `SUCCEEDED`、對 `attempt=0` 取消項的後到結果不復活、重排順序後聚合不變 |
 | `test_6_auth_and_tenant_isolation_guards` | §3.3／隔離要求 | 401（未認證）、403（角色與租戶不符）、404（跨租戶）、409（QUEUED/RUNNING 重試）、400（SUCCEEDED 與 0 可重試項） |
 | `test_7_same_submitted_intake_id_cannot_cross_tenants` | 本輪 review 反例 | 兩租戶各送同一 `intake_id`：留下兩筆記錄、各自租戶、各自資料，且皆非提交端給的那個 id |
@@ -128,3 +128,21 @@ handoff §3.0／§3.3 以 `GET /platform/jobs/{job_id}` 與 `POST /platform/jobs
 2. **非目標**：不宣稱生產環境已啟用或已上線；未讀取任何秘密、未連線 production、未修改 IAM／release lease／provider 設定、未降低任何 required check。
 3. **未由本任務取證**：真實來源資料匯入、live 佇列政策套用、production 驗收，仍屬後續獨立階段。
 4. H06 未被本任務視為已由使用者逐項回覆；`batch-listing-intake` 是 Codex 採用的可調整工程預設，不記為 Human 簽署。
+
+
+## 2026-09-10：第六次退回後的前景修復
+
+本輪交付狀態為 `PENDING_INDEPENDENT_REVIEW`；既有 task/PR 延續，前景 Codex 接手，Claude 獨立審查。真實來源、H06 與 production 驗收仍依原任務界線另行取證。
+
+| 最後退回 | 本輪修復及可執行反例 |
+|---|---|
+| R1：idempotency replay 回傳受保護 job | enqueue 對 queue 實際返回的 record 套用與 GET 相同的 tenant/ownership/scope 授權；拒絕一般 job 使用保護類型的 key namespace，並核對 replay 的實際 job type。測試同租戶非 owner、匿名 legacy collision、租戶 key collision 與合法 replay |
+| R2：batch response 未套欄位遮罩 | enqueue/replay/GET 共用 `mask_batch_intake_job`，已知原始欄位套既有 intake 分類，未知欄位與無分類 error message/details 限 restricted；複製 response 後遮罩，避免改寫 in-memory queue 的權威 payload。測試 PUBLIC/RESTRICTED 回讀、原始 rows、error details、retry response 與 storage 不受影響 |
+| R3：old worker 覆写 API 已接受 retry | outer worker 成功／例外收尾都要求最新 row 仍為同一 fence 的 RUNNING，CAS 使用該次確認的 version；heartbeat stop 不採納另一生命週期的 version。正常 handler → retry API → old worker 收尾交錯後，QUEUED 與成功項 receipt 保留，正常新 worker 只做失敗項 |
+| R4：持久重播驗收不足 | production result 路徑改用 `checkpoint_batch_item_result`，每次 CAS retry 從持久 receipt 讀取 items，檢查 job lease 與精確 item attempt，保留 server-owned timestamp/key，記錄拒絕觀測。Test 5 在真正 RUNNING job 中投遞 duplicate/舊結果，驗證三種抵達順序、取消後晚到結果、業務調用次數、version/payload 不變與 SQLite 重啟聚合；另以兩個獨立 engine 驗證 lease reclaim 前後晚到結果 |
+
+取消的判定以持久 checkpoint 為準：已存成功結果保留；取消時尚未保存的結果不可由舊 worker 的本機變數補寫成功。測試中「取消在成功結果保存之後」的 hook 已改為實際先完成原始 update，再取消；另保留取消在結果保存之前的反例。
+
+六個新的 API／lost-retry 反例覆蓋 memory/durable，修正版 focused selection 全部通過。以原 head `48da14aa` 的四個 production 檔案作負向對照時，六項均在預期的授權／值遮罩／QUEUED 被覆寫斷言失敗（exit 1），不是環境或 import 錯誤。原始對照收據：`/tmp/odp-foreground-repair-20260910/partial-negative.json` 與 JUnit XML。
+
+精確交付 head 的完整四條 verification 由 `delivery_toolchain/git/task_verification.py run` 留存原始 exit code、命令、耗時與 SHA，獨立審查及合併以這些收據和 required CI 為準。
