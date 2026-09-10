@@ -8,6 +8,9 @@ Guarantees:
 4. All 18 ephemeral staging contract and plan tests are collected and fail closed (no green skips) in CI when Terraform or init is unavailable.
 5. The selection CI actually runs collects those 18 tests for real, so a marker
    expression or a conftest that silently empties the run cannot pass as wiring.
+   The probe replays the workflow's whole argument vector, so an exclusion the
+   probe has no case for (`--ignore`, `--deselect`, `-k`) cannot be dropped on
+   the way in and leave this gate certifying coverage CI does not have.
 6. The Terraform plan probes run offline: no GCP credentials in scope, no remote
    backend, and no apply/destroy reachable from the test harness.
 """
@@ -24,6 +27,8 @@ import sys
 import tempfile
 import tomllib
 import unittest
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import patch
 
@@ -105,18 +110,74 @@ def covers_ephemeral_staging_suite(target: str) -> bool:
     return EPHEMERAL_TEST_RELPATH == candidate or EPHEMERAL_TEST_RELPATH.is_relative_to(candidate)
 
 
-def parse_pytest_selection(run_line: str) -> tuple[str, list[str]]:
-    """Split a `uv run pytest ...` line into its `-m` expression and its targets."""
+# Options that consume the following token, so that token is a value and not a
+# collection target. Only used to keep the `targets` reading honest; the
+# collection probe replays `args` and never consults this set.
+OPTIONS_TAKING_A_VALUE = frozenset(
+    {"-m", "-k", "-p", "-o", "-c", "-n", "--deselect", "--ignore", "--ignore-glob", "--maxfail", "--rootdir"}
+)
+
+
+@dataclass(frozen=True)
+class PytestSelection:
+    """Everything a workflow's `uv run pytest ...` line hands to pytest.
+
+    `args` is every token after `pytest`, verbatim and in order. It is the only
+    faithful description of what CI selects, and it is what the collection probe
+    replays.
+
+    `marker` and `targets` are a convenience *reading* of those tokens for the
+    wiring assertions. A reading is always a subset: `--ignore`, `--ignore-glob`,
+    `--deselect`, `-k` and a second `-m` all change which tests run, and none of
+    them appear in either field. Rebuilding a probe command out of this reading
+    is what let the gate report coverage for a selection CI does not run --
+    measured 2026-09-10, see
+    `test_the_probe_replays_an_exclusion_that_empties_the_suite`. So treat these
+    two fields as structural hints and the execution probe as authoritative.
+    """
+
+    args: tuple[str, ...]
+    marker: str
+    targets: tuple[str, ...]
+
+    def covering_targets(self) -> list[str]:
+        """Targets that name a path containing the ephemeral staging suite."""
+
+        return [target for target in self.targets if covers_ephemeral_staging_suite(target)]
+
+    def with_marker(self, expression: str) -> list[str]:
+        """`args` with the `-m` expression swapped out, every other token intact.
+
+        Used to drive the probe's negative control through the real selection
+        rather than through a hand-built command that shares none of its risk.
+        """
+
+        if "-m" not in self.args:
+            return [*self.args, "-m", expression]
+        swapped = list(self.args)
+        swapped[swapped.index("-m") + 1] = expression
+        return swapped
+
+
+def parse_pytest_selection(run_line: str) -> PytestSelection:
+    """Read a `uv run pytest ...` line into its full argument vector.
+
+    Every token after `pytest` is preserved in `args`. The `-m` expression and
+    the positional targets are additionally surfaced for the wiring assertions.
+    """
 
     tokens = shlex.split(run_line)
-    tokens = tokens[tokens.index("pytest") + 1 :]
+    args = tokens[tokens.index("pytest") + 1 :]
     marker = ""
     targets: list[str] = []
     index = 0
-    while index < len(tokens):
-        token = tokens[index]
+    while index < len(args):
+        token = args[index]
         if token == "-m":
-            marker = tokens[index + 1]
+            marker = args[index + 1]
+            index += 2
+            continue
+        if token in OPTIONS_TAKING_A_VALUE:
             index += 2
             continue
         if token.startswith("-"):
@@ -124,7 +185,7 @@ def parse_pytest_selection(run_line: str) -> tuple[str, list[str]]:
             continue
         targets.append(token)
         index += 1
-    return marker, targets
+    return PytestSelection(args=tuple(args), marker=marker, targets=tuple(targets))
 
 
 class StagingIaCCIWorkflowCollectionTests(unittest.TestCase):
@@ -171,11 +232,11 @@ class StagingIaCCIWorkflowCollectionTests(unittest.TestCase):
         )
 
     def test_orchestrator_pytest_targets_cover_the_ephemeral_staging_suite(self) -> None:
-        _, targets = parse_pytest_selection(job_pytest_command(self.jobs))
-        covering = [target for target in targets if covers_ephemeral_staging_suite(target)]
+        selection = parse_pytest_selection(job_pytest_command(self.jobs))
         self.assertTrue(
-            covering,
-            f"no orchestrator pytest target collects {EPHEMERAL_TEST_RELPATH}. Targets: {targets}",
+            selection.covering_targets(),
+            f"no orchestrator pytest target collects {EPHEMERAL_TEST_RELPATH}. "
+            f"Targets: {list(selection.targets)}",
         )
 
     def test_orchestrator_job_lints_infra_code(self) -> None:
@@ -261,11 +322,11 @@ class StagingIaCTerraformPinTests(unittest.TestCase):
         # that does not install Terraform, `test_ci_plans_with_the_pinned_terraform`
         # would quietly stop enforcing anything: GITHUB_JOB would never match, so
         # a missing binary would return early instead of failing.
-        _, targets = parse_pytest_selection(job_pytest_command(self.jobs, self.plan_job))
+        selection = parse_pytest_selection(job_pytest_command(self.jobs, self.plan_job))
         self.assertTrue(
-            any(covers_ephemeral_staging_suite(target) for target in targets),
-            f"job {self.plan_job!r} installs terraform but its pytest selection {targets} "
-            "does not reach the ephemeral staging plan probes",
+            selection.covering_targets(),
+            f"job {self.plan_job!r} installs terraform but its pytest selection "
+            f"{list(selection.targets)} does not reach the ephemeral staging plan probes",
         )
 
 
@@ -369,6 +430,62 @@ class EphemeralStagingTestCollectionIntegrityTests(unittest.TestCase):
                 EphemeralStagingDefaultTenantPlanTests.setUpClass()
 
 
+class PytestSelectionParsingTests(unittest.TestCase):
+    """The parsed selection must not quietly lose arguments.
+
+    This is the unit-level half of the repair. The execution probe catches a
+    lossy replay by observing an empty collection, but only for the one
+    exclusion it exercises and only at the cost of a subprocess. This pins the
+    property itself: whatever the workflow passes, `args` still holds it.
+    """
+
+    LINE = (
+        'uv run pytest -m "not requires_live_env" --ignore=infra/terraform/tests '
+        '-k "not slow" --deselect infra/terraform/tests/test_ephemeral_staging.py::T::t '
+        "-p no:randomly tests/tooling infra"
+    )
+
+    def test_every_token_after_pytest_is_preserved_verbatim(self) -> None:
+        tokens = shlex.split(self.LINE)
+        expected = tuple(tokens[tokens.index("pytest") + 1 :])
+        self.assertEqual(parse_pytest_selection(self.LINE).args, expected)
+
+    def test_selection_narrowing_options_reach_args(self) -> None:
+        args = parse_pytest_selection(self.LINE).args
+        for narrowing in (
+            "--ignore=infra/terraform/tests",
+            "-k",
+            "not slow",
+            "--deselect",
+            "infra/terraform/tests/test_ephemeral_staging.py::T::t",
+        ):
+            self.assertIn(narrowing, args, f"{narrowing!r} dropped from the replayed selection")
+
+    def test_targets_are_a_lossy_reading_and_exclude_option_values(self) -> None:
+        # Documents why `args` and not this list is what the probe replays: an
+        # option that removes the entire suite leaves `targets` looking correct.
+        selection = parse_pytest_selection(self.LINE)
+        self.assertEqual(selection.targets, ("tests/tooling", "infra"))
+        self.assertEqual(selection.marker, "not requires_live_env")
+        self.assertTrue(selection.covering_targets())
+        self.assertNotIn("no:randomly", selection.targets)
+        self.assertNotIn("not slow", selection.targets)
+
+    def test_with_marker_swaps_only_the_marker(self) -> None:
+        selection = parse_pytest_selection(self.LINE)
+        swapped = selection.with_marker("nothing and not nothing")
+        self.assertEqual(swapped[swapped.index("-m") + 1], "nothing and not nothing")
+        self.assertEqual(len(swapped), len(selection.args))
+        for token in selection.args:
+            if token != "not requires_live_env":
+                self.assertIn(token, swapped)
+
+    def test_with_marker_appends_when_the_line_has_no_marker(self) -> None:
+        selection = parse_pytest_selection("uv run pytest tests/tooling infra")
+        self.assertEqual(selection.marker, "")
+        self.assertEqual(selection.with_marker("performance"), ["tests/tooling", "infra", "-m", "performance"])
+
+
 class StagingIaCCollectionExecutionTests(unittest.TestCase):
     """Collect the CI selection for real.
 
@@ -376,22 +493,32 @@ class StagingIaCCollectionExecutionTests(unittest.TestCase):
     names, which paths `testpaths` lists. Wiring can be entirely correct and the
     run still be empty -- a marker expression that deselects the suite, a
     `collect_ignore` in a conftest, or a rename of the test file all leave the
-    workflow line looking exactly the same. So this replays the marker and the
-    covering target straight out of `ci.yml` and asserts the node IDs come back.
+    workflow line looking exactly the same. So this replays what `ci.yml`
+    selects and asserts the node IDs come back.
+
+    The replay is the *whole* argument vector, not a command rebuilt from the
+    parts this file understands. A rebuilt command silently drops whatever the
+    rebuilder has no case for, and every dropped argument is one this gate then
+    reports coverage in spite of. Passing the vector through unchanged means an
+    argument nobody here anticipated is still honoured; at worst it makes the
+    probe itself fail loudly, which the return-code assertion below turns into a
+    red test rather than a false pass.
+
+    Replaying the full vector also means this probe collects everything the
+    orchestrator job collects. That adds no new fragility: a collection error
+    anywhere in that selection already fails the job outright, so there is no
+    state where CI is green and this probe is red for an unrelated module.
     """
 
     def setUp(self) -> None:
         jobs = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8")).get("jobs", {})
-        self.marker, targets = parse_pytest_selection(job_pytest_command(jobs))
-        covering = [
-            target
-            for target in targets
-            if EPHEMERAL_TEST_RELPATH == Path(target) or EPHEMERAL_TEST_RELPATH.is_relative_to(Path(target))
-        ]
-        self.assertTrue(covering, f"ci.yml collects no target covering {EPHEMERAL_TEST_RELPATH}")
-        self.target = covering[0]
+        self.selection = parse_pytest_selection(job_pytest_command(jobs))
+        self.assertTrue(
+            self.selection.covering_targets(),
+            f"ci.yml collects no target covering {EPHEMERAL_TEST_RELPATH}",
+        )
 
-    def _collect(self, marker: str, target: str) -> list[str]:
+    def _collect(self, args: Sequence[str]) -> list[str]:
         command = [
             sys.executable,
             "-m",
@@ -405,10 +532,10 @@ class StagingIaCCollectionExecutionTests(unittest.TestCase):
             "addopts=",
             "-p",
             "no:cacheprovider",
+            # The workflow's own arguments come last so that anything it sets
+            # explicitly wins over the probe's presentation flags above.
+            *args,
         ]
-        if marker:
-            command += ["-m", marker]
-        command.append(target)
         result = subprocess.run(
             command,
             cwd=REPO_ROOT,
@@ -427,11 +554,12 @@ class StagingIaCCollectionExecutionTests(unittest.TestCase):
         return [line for line in result.stdout.splitlines() if line.startswith(EPHEMERAL_NODE_PREFIX)]
 
     def test_ci_selection_collects_every_ephemeral_staging_test(self) -> None:
-        node_ids = self._collect(self.marker, self.target)
+        node_ids = self._collect(self.selection.args)
+        rendered = shlex.join(self.selection.args)
         self.assertEqual(
             len(node_ids),
             EXPECTED_EPHEMERAL_TEST_COUNT,
-            f"ci.yml selection (-m {self.marker!r} {self.target}) collected {len(node_ids)} "
+            f"ci.yml selection (pytest {rendered}) collected {len(node_ids)} "
             f"ephemeral staging tests, expected {EXPECTED_EPHEMERAL_TEST_COUNT}:\n"
             + "\n".join(node_ids),
         )
@@ -441,8 +569,41 @@ class StagingIaCCollectionExecutionTests(unittest.TestCase):
         # A guard that cannot fail is not a guard. Deselect the suite through the
         # same code path and confirm the probe reports zero rather than passing
         # on a stale expectation.
-        node_ids = self._collect("requires_live_env and not requires_live_env", self.target)
+        node_ids = self._collect(self.selection.with_marker("requires_live_env and not requires_live_env"))
         self.assertEqual(node_ids, [])
+
+    def test_the_probe_replays_an_exclusion_that_empties_the_suite(self) -> None:
+        """An exclusion CI would honour must reach the probe, or the gate lies.
+
+        Measured on 2026-09-10 against head 01b86ea1, before this repair: adding
+        `--ignore=infra/terraform/tests` to the orchestrator pytest line left the
+        real CI selection collecting zero ephemeral staging nodes, while this
+        file still passed all 18 of its guards. The probe rebuilt `-m <marker>
+        <covering target>` from the parsed reading and dropped the option, so the
+        gate certified coverage of a suite CI had entirely excluded.
+
+        The exclusion has to name a *descendant* directory. `--ignore=infra`
+        does not work as a control: pytest honours a target named explicitly on
+        the command line over an ignore of that same path, so the suite is still
+        collected and the probe proves nothing about whether the option arrived.
+        """
+
+        ignored_dir = EPHEMERAL_TEST_RELPATH.parent.as_posix()
+        self.assertNotIn(
+            ignored_dir,
+            self.selection.targets,
+            "this control assumes ci.yml names an ancestor of the suite, not the suite "
+            "directory itself; an explicitly named target defeats --ignore",
+        )
+
+        node_ids = self._collect([*self.selection.args, f"--ignore={ignored_dir}"])
+        self.assertEqual(
+            node_ids,
+            [],
+            f"the probe still collected {len(node_ids)} ephemeral staging tests with "
+            f"--ignore={ignored_dir} in the selection, so it is not replaying every "
+            "selection-affecting argument and can certify coverage CI does not have",
+        )
 
 
 class EphemeralStagingOfflineHarnessTests(unittest.TestCase):
