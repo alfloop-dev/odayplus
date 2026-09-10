@@ -9589,6 +9589,11 @@ def reconcile_status_check_outbox(
                     # The canonical state may have changed since this exact
                     # payload was queued. Sync must refresh even the same SHA.
                     task["review_gate_refresh_pending"] = True
+                    if payload.get("state") == "success":
+                        # A retried, freshly authorized positive gate confirmed at GitHub
+                        # must be remembered so subsequent revocation has a target if
+                        # a later HEAD lookup times out or fails.
+                        task["review_gate_sha"] = payload.get("sha") or task.get("review_gate_sha")
                 delivered += 1
                 task.setdefault("status_check_delivery_history", []).append(
                     {
