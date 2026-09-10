@@ -4166,9 +4166,11 @@ class StatusCheckEmissionTests(unittest.TestCase):
         remote.assert_not_called()
         post.assert_not_called()
         with mock.patch.object(ai_status, "resolve_task_sha", return_value=None), \
-                mock.patch.object(ai_status, "post_task_review_status_payload") as post:
+                mock.patch.object(ai_status, "post_task_review_status_payload", return_value=(False, "network down")) as post:
             self.assertEqual(ai_status.reconcile_status_check_outbox(state), (0, 1))
-        post.assert_not_called()
+        post.assert_called_once()
+        self.assertEqual(post.call_args.args[0]["state"], "failure")
+        self.assertEqual(task["status_check_outbox"][0]["state"], "failure")
         with (
             mock.patch.object(ai_status, "resolve_task_sha", return_value=sha),
             mock.patch.object(ai_status, "task_repository_slug_safe", return_value="owner/repo"),
@@ -4178,6 +4180,115 @@ class StatusCheckEmissionTests(unittest.TestCase):
             ai_status.emit_status_checks_for_changed_tasks(json.loads(json.dumps(state)), state, "sync", [])
         self.assertTrue(all(call.args[0]["state"] == "failure" for call in post.call_args_list))
         self.assertNotIn("review_gate_refresh_pending", task)
+
+    def test_lost_success_response_revokes_all_targets_after_timeout_and_reload(self) -> None:
+        # Model real delivery separately from the client acknowledgement. B may
+        # already be success although the last confirmed gate is A or absent.
+        for previous in ("a" * 40, None):
+            for command, status, expected in (("reopen", "in_progress", "failure"),
+                                              ("re_review", "review", "pending")):
+                for revocation_fails in (False, True):
+                    with self.subTest(previous=previous, command=command, revocation_fails=revocation_fails):
+                        sha = "b" * 40
+                        task = {"id": "T-LOST-RESPONSE", "status": "review", "reviewer": "Codex2",
+                                "review_submission": {"remote_sha": sha}}
+                        if previous:
+                            task["review_gate_sha"] = previous
+                        state = {"tasks": [task]}
+                        github = {}
+
+                        def accepted(payload, github=github):
+                            github[ai_status.status_check_target(payload)] = payload["state"]
+                            return True, ""
+
+                        def response_lost(payload, accept=accepted):
+                            accept(payload)
+                            return False, "Response lost after server accepted POST"
+
+                        with mock.patch.object(ai_status, "resolve_task_sha", return_value=sha), \
+                                mock.patch.object(ai_status, "task_repository_slug_safe", return_value="owner/repo"):
+                            with mock.patch.object(ai_status, "post_task_review_status_payload",
+                                                   return_value=(False, "network down")):
+                                ai_status.emit_task_review_status_check(task, "review")
+                            task.update(status="review_approved", approved_head=sha)
+                            with mock.patch.object(ai_status, "post_task_review_status_payload", side_effect=accepted):
+                                ai_status.reconcile_status_check_outbox(state, refresh_review_gates=False)
+                            with mock.patch.object(ai_status, "post_task_review_status_payload", side_effect=response_lost):
+                                ai_status.emit_task_review_status_check(task, "review_approved")
+                        target = ("owner/repo", sha, "task-review-gate")
+                        self.assertEqual(github[target], "success")
+                        self.assertEqual(task.get("review_gate_sha"), previous)
+                        self.assertEqual(task["status_check_outbox"][0]["state"], "success")
+                        state = json.loads(json.dumps(state))
+                        before = json.loads(json.dumps(state))
+                        task = state["tasks"][0]
+                        task["status"] = status
+                        task.pop("approved_head")
+                        ai_status.clear_ai_status_caches()
+                        with (
+                            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+                            mock.patch.object(ai_status, "load_state", return_value=state),
+                            mock.patch.object(ai_status, "resolve_task_repository", return_value=mock.Mock(resolved=False)),
+                            mock.patch.object(ai_status, "task_repository_slug_safe", return_value="owner/repo"),
+                            mock.patch.object(ai_status.subprocess, "run", side_effect=subprocess.TimeoutExpired(
+                                ["git", "ls-remote"], ai_status.COMMAND_TIMEOUT_SECONDS)),
+                        ):
+                            with mock.patch.object(ai_status, "post_task_review_status_payload",
+                                                   side_effect=(lambda payload: (False, "API down"))
+                                                   if revocation_fails else accepted):
+                                ai_status.reconcile_status_check_outbox(state, refresh_review_gates=False)
+                                ai_status.emit_status_checks_for_changed_tasks(before, state, command, [task["id"]])
+                            if revocation_fails:
+                                queued = [p for p in task["status_check_outbox"]
+                                          if ai_status.status_check_target(p) == target]
+                                self.assertEqual(len(queued), 1)
+                                self.assertEqual(queued[0]["state"], expected)
+                            else:
+                                self.assertEqual(github[target], expected)
+                            state = json.loads(json.dumps(state))
+                            ai_status.clear_ai_status_caches()
+                            with mock.patch.object(ai_status, "post_task_review_status_payload", side_effect=accepted):
+                                ai_status.reconcile_status_check_outbox(state)
+                                ai_status.emit_status_checks_for_changed_tasks(
+                                    json.loads(json.dumps(state)), state, "sync", [])
+                            self.assertEqual(github[target], expected)
+                            self.assertTrue(state["tasks"][0]["review_gate_refresh_pending"])
+                            with mock.patch.object(ai_status, "resolve_task_sha", return_value=sha), \
+                                    mock.patch.object(ai_status, "post_task_review_status_payload", side_effect=accepted):
+                                ai_status.emit_status_checks_for_changed_tasks(
+                                    json.loads(json.dumps(state)), state, "sync", [])
+                        self.assertEqual(github[target], expected)
+                        self.assertNotIn("status_check_outbox", state["tasks"][0])
+                        self.assertNotIn("review_gate_refresh_pending", state["tasks"][0])
+                        self.assertNotIn("approved_head", state["tasks"][0])
+
+    def test_uncertain_success_keeps_original_repository_and_sha_on_refresh(self) -> None:
+        for path in ("emit", "outbox_sync"):
+            with self.subTest(path=path):
+                old_sha, new_sha = "b" * 40, "c" * 40
+                task = {"id": "T-RETARGET", "status": "review_approved", "reviewer": "Codex2",
+                        "approved_head": new_sha}
+                old = {"repo_slug": "previous/repo", "sha": old_sha, "context": "task-review-gate",
+                       "state": "success", "description": "Previously approved; acknowledgement lost"}
+                ai_status.enqueue_status_check_outbox(task, old, "Response lost")
+                state = {"tasks": [task]}
+                with (
+                    mock.patch.object(ai_status, "resolve_task_sha", return_value=new_sha),
+                    mock.patch.object(ai_status, "task_repository_slug_safe", return_value="current/repo"),
+                    mock.patch.object(ai_status, "post_task_review_status_payload", return_value=(True, "")) as post,
+                ):
+                    if path == "outbox_sync":
+                        self.assertEqual(ai_status.reconcile_status_check_outbox(state), (1, 0))
+                    ai_status.emit_task_review_status_check(task, "review_approved")
+                payloads = [call.args[0] for call in post.call_args_list]
+                self.assertEqual(len(payloads), 2)
+                self.assertEqual(ai_status.status_check_target(payloads[0]),
+                                 ("previous/repo", old_sha, "task-review-gate"))
+                self.assertEqual(payloads[0]["state"], "pending")
+                self.assertEqual(ai_status.status_check_target(payloads[1]),
+                                 ("current/repo", new_sha, "task-review-gate"))
+                self.assertEqual(payloads[1]["state"], "success")
+                self.assertNotIn("status_check_outbox", task)
 
     def test_fresh_approval_supersedes_failed_same_head_revocation(self) -> None:
         sha = "a" * 40

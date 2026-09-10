@@ -9516,6 +9516,30 @@ def enqueue_status_check_outbox(
     )
 
 
+
+def status_check_target(payload: dict[str, Any]) -> tuple[str, str, str]:
+    return tuple(str(payload.get(key) or "") for key in ("repo_slug", "sha", "context"))
+
+
+def discard_superseded_status_payloads(task: dict[str, Any], payload: dict[str, Any]) -> None:
+    pending = task.get("status_check_outbox")
+    if not isinstance(pending, list):
+        return
+    remaining = [item for item in pending if not isinstance(item, dict)
+                 or status_check_target(item) != status_check_target(payload)]
+    if remaining:
+        task["status_check_outbox"] = remaining
+    else:
+        task.pop("status_check_outbox", None)
+
+
+def review_gate_revocation_payload(target: dict[str, Any], state_status: str) -> dict[str, str]:
+    return {
+        **dict(zip(("repo_slug", "sha", "context"), status_check_target(target), strict=True)),
+        "state": "pending" if state_status in {"review", "review_approved", "done"} else "failure",
+        "description": "Review gate revoked pending current HEAD verification",
+    }
+
 def reconcile_status_check_outbox(
     state: dict[str, Any], *, refresh_review_gates: bool = True,
 ) -> tuple[int, int]:
@@ -9549,12 +9573,16 @@ def reconcile_status_check_outbox(
                     continue
                 task["review_gate_refresh_pending"] = True
                 current = task_review_status_payload(task, str(task.get("status") or ""))
-                if current is None:
-                    item["last_error"] = "Review gate HEAD unavailable; positive retry deferred"
-                    remaining.append(item)
-                    retained += 1
-                    continue
-                payload = current
+                # A lost response may mean this exact target already has a
+                # success at GitHub. Unknown HEAD or a different current target
+                # must revoke the original target, not silently replace it.
+                if current is None or status_check_target(current) != status_check_target(payload):
+                    payload = review_gate_revocation_payload(payload, str(task.get("status") or ""))
+                else:
+                    payload = current
+                # A failed revocation remains a revocation in the durable queue;
+                # never leave the superseded success available for replay.
+                item.update(payload)
             ok, error = post_task_review_status_payload(payload)
             if ok:
                 if payload["context"] == "task-review-gate":
@@ -9624,54 +9652,47 @@ def review_gate_head_drifted(task: dict[str, Any]) -> bool:
 
 def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> None:
     payload = task_review_status_payload(task, state_status)
+    # Failed acknowledgements do not prove failed delivery. Preserve the exact
+    # repo/SHA/context of every queued success, even before any gate SHA was
+    # recorded or after the task moved to a different branch/repository.
+    pending = task.get("status_check_outbox")
+    targets = {
+        status_check_target(item): item
+        for item in (pending if isinstance(pending, list) else [])
+        if isinstance(item, dict) and item.get("state") == "success"
+        and item.get("context") == "task-review-gate" and item.get("repo_slug")
+        and re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", str(item.get("sha") or ""))
+    }
     if payload is None:
-        # Persist the missing emission before attempting a fail-closed
-        # revocation. A remembered SHA is only a revocation target, never
-        # evidence that the current branch is approved.
         last = str(task.get("review_gate_sha") or "").strip()
-        if not (last or task.get("review_submission") or state_status in {"review", "review_approved", "done"}):
-            # A new unpublished assignment has no review grant to revoke; its
-            # first submission will emit. Do not make every human/todo record
-            # a permanent remote probe on sync.
+        if not (targets or last or task.get("review_submission")
+                or state_status in {"review", "review_approved", "done"}):
+            # Unpublished assignments have no grant to revoke and should not
+            # become permanent remote probes on every sync.
             return
-        task["review_gate_refresh_pending"] = True
-        if not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", last):
-            return
-        revoked = {
-            "repo_slug": task_repository_slug_safe(task),
-            "sha": last,
-            "state": "pending" if state_status in {"review", "review_approved", "done"} else "failure",
-            "context": "task-review-gate",
-            "description": "HEAD unavailable; review gate revoked pending canonical refresh",
-        }
+        if re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", last):
+            target = {"repo_slug": task_repository_slug_safe(task), "sha": last,
+                      "context": "task-review-gate"}
+            targets[status_check_target(target)] = target
+    task["review_gate_refresh_pending"] = True
+    for key, target in targets.items():
+        if payload is not None and key == status_check_target(payload):
+            # The fresh payload below supersedes this exact target, including
+            # when its state is failure/pending or its delivery fails.
+            continue
+        revoked = review_gate_revocation_payload(target, state_status)
         ok, error = post_task_review_status_payload(revoked)
+        discard_superseded_status_payloads(task, revoked)
         if not ok:
             enqueue_status_check_outbox(task, revoked, error)
+    if payload is None:
         return
-    task["review_gate_refresh_pending"] = True
     ok, error = post_task_review_status_payload(payload)
+    discard_superseded_status_payloads(task, payload)
     if ok:
-        # Remember which commit carries the gate. A GitHub status belongs to one
-        # SHA, so once the branch advances the new head has no gate at all and the
-        # required check reads as absent rather than failing. Recording the SHA is
-        # what lets the next sync notice the drift and re-post.
+        # Only a freshly resolved target may acquire a positive gate.
         task["review_gate_sha"] = payload.get("sha") or task.get("review_gate_sha")
         task.pop("review_gate_refresh_pending", None)
-        # A confirmed current emission supersedes older failed payloads for
-        # this same gate. Do not replay an old revocation after a new approval.
-        pending = task.get("status_check_outbox")
-        if isinstance(pending, list):
-            remaining = [
-                item for item in pending
-                if not isinstance(item, dict) or any(
-                    str(item.get(key) or "") != str(payload.get(key) or "")
-                    for key in ("repo_slug", "sha", "context")
-                )
-            ]
-            if remaining:
-                task["status_check_outbox"] = remaining
-            else:
-                task.pop("status_check_outbox", None)
         print(
             f"Successfully emitted status check '{payload['context']}'="
             f"{payload['state']} to GitHub API.",
