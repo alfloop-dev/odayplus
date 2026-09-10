@@ -4278,6 +4278,94 @@ class StatusCheckEmissionTests(unittest.TestCase):
             )
 
 
+    def test_note_and_assignment_do_not_probe_unchanged_review_heads(self) -> None:
+        before = {
+            "tasks": [
+                {"id": "ODP-001", "status": "in_progress", "owner": "Claude", "review_gate_sha": "a" * 40},
+                {"id": "ODP-002", "status": "review_approved", "review_gate_sha": "b" * 40},
+            ]
+        }
+        for command, update in (
+            ("note", {"next": "Preserved task work; resume dispatch."}),
+            ("assign", {"owner": "Antigravity", "reviewer": "Codex2"}),
+        ):
+            with self.subTest(command=command):
+                after = {"tasks": [dict(task) for task in before["tasks"]]}
+                after["tasks"][0].update(update)
+                with (
+                    mock.patch.object(ai_status, "resolve_task_sha") as resolve,
+                    mock.patch.object(ai_status, "emit_task_review_status_check") as emit,
+                ):
+                    ai_status.emit_status_checks_for_changed_tasks(before, after, command, ["ODP-001"])
+                resolve.assert_not_called()
+                emit.assert_not_called()
+
+    def test_review_target_emits_at_current_head_without_probing_other_tasks(self) -> None:
+        for command in ("submit_review", "set_dependencies"):
+            with self.subTest(command=command):
+                before = {
+                    "tasks": [
+                        {"id": "ODP-001", "status": "review", "reviewer": "Codex2", "review_gate_sha": "a" * 40},
+                        {"id": "ODP-002", "status": "review_approved", "review_gate_sha": "b" * 40},
+                    ]
+                }
+                after = {"tasks": [dict(task) for task in before["tasks"]]}
+                with (
+                    mock.patch.object(ai_status, "resolve_task_sha", return_value="c" * 40) as resolve,
+                    mock.patch.object(ai_status, "task_repository_slug_safe", return_value="owner/repo"),
+                    mock.patch.object(ai_status, "post_task_review_status_payload", return_value=(True, "")) as post,
+                ):
+                    ai_status.emit_status_checks_for_changed_tasks(before, after, command, ["odp-001"])
+                resolve.assert_called_once_with("ODP-001")
+                post.assert_called_once()
+                self.assertEqual(post.call_args.args[0]["sha"], "c" * 40)
+                self.assertEqual(post.call_args.args[0]["state"], "pending")
+                self.assertEqual(after["tasks"][0]["review_gate_sha"], "c" * 40)
+                self.assertEqual(after["tasks"][1]["review_gate_sha"], "b" * 40)
+
+    def test_real_status_change_still_emits_during_an_ordinary_task_write(self) -> None:
+        before = {
+            "tasks": [
+                {"id": "ODP-001", "status": "in_progress", "review_gate_sha": "a" * 40},
+                {"id": "ODP-002", "status": "review", "review_gate_sha": "b" * 40},
+            ]
+        }
+        after = {"tasks": [dict(task) for task in before["tasks"]]}
+        after["tasks"][1]["status"] = "in_progress"
+        with (
+            mock.patch.object(ai_status, "resolve_task_sha", return_value="c" * 40) as resolve,
+            mock.patch.object(ai_status, "task_repository_slug_safe", return_value="owner/repo"),
+            mock.patch.object(ai_status, "post_task_review_status_payload", return_value=(True, "")) as post,
+        ):
+            ai_status.emit_status_checks_for_changed_tasks(before, after, "note", ["ODP-001"])
+        resolve.assert_called_once_with("ODP-002")
+        post.assert_called_once()
+        self.assertEqual(post.call_args.args[0]["state"], "failure")
+
+    def test_sync_reconciles_drift_without_a_task_status_change(self) -> None:
+        before = {
+            "tasks": [
+                {"id": "ODP-001", "status": "review", "review_gate_sha": "a" * 40},
+                {"id": "ODP-002", "status": "review", "review_gate_sha": "b" * 40},
+            ]
+        }
+        after = {"tasks": [dict(task) for task in before["tasks"]]}
+        with (
+            mock.patch.object(
+                ai_status, "resolve_task_sha", side_effect=lambda task_id: {"ODP-001": "c" * 40, "ODP-002": "b" * 40}[task_id]
+            ) as resolve,
+            mock.patch.object(ai_status, "task_repository_slug_safe", return_value="owner/repo"),
+            mock.patch.object(ai_status, "post_task_review_status_payload", return_value=(True, "")) as post,
+        ):
+            ai_status.emit_status_checks_for_changed_tasks(before, after, "sync", [])
+        self.assertEqual({call.args[0] for call in resolve.call_args_list}, {"ODP-001", "ODP-002"})
+        post.assert_called_once()
+        self.assertEqual(post.call_args.args[0]["sha"], "c" * 40)
+        self.assertEqual(post.call_args.args[0]["state"], "pending")
+        self.assertEqual(after["tasks"][0]["review_gate_sha"], "c" * 40)
+        self.assertEqual(after["tasks"][1]["review_gate_sha"], "b" * 40)
+
+
 class ActorReferenceValidationTests(unittest.TestCase):
     """Actor-shaped fields must hold agent names, never prose or task ids.
 

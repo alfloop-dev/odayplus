@@ -9645,7 +9645,15 @@ def emit_status_checks_for_changed_tasks(state_before: dict[str, Any], state_aft
         after_status = after_task.get("status")
 
         is_target = target_task_id and (str(task_id).upper() == str(target_task_id).upper())
-        if after_status != before_status or is_target or review_gate_head_drifted(after_task):
+        # Ordinary task writes hold the canonical status lock. Do not make a
+        # note or assignment wait for remote HEAD probes across the whole board;
+        # the explicit sync command owns reconciliation of unchanged tasks.
+        # Actual status changes and review-command targets still emit immediately.
+        if (
+            after_status != before_status
+            or is_target
+            or (command == "sync" and review_gate_head_drifted(after_task))
+        ):
             emit_task_review_status_check(after_task, after_status)
 
 
