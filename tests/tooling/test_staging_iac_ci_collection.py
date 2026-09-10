@@ -58,17 +58,51 @@ def pinned_terraform_version(jobs: dict) -> str:
     return pins[0]
 
 
-def orchestrator_pytest_command(jobs: dict) -> str:
-    """Return the single `uv run pytest` line the orchestrator job executes."""
+def terraform_plan_job(jobs: dict) -> str:
+    """Return the workflow job id that installs Terraform for the plan probes.
+
+    Derived from the workflow rather than hard-coded, so that moving the plan
+    probes to a different job moves this requirement with them instead of
+    leaving it asserted against a job that no longer runs them.
+    """
+
+    owners = [
+        job_id
+        for job_id, job in jobs.items()
+        if isinstance(job, dict)
+        and any(
+            isinstance(step, dict) and str(step.get("uses", "")).startswith("hashicorp/setup-terraform")
+            for step in job.get("steps", [])
+        )
+    ]
+    if len(owners) != 1:
+        raise AssertionError(f"expected exactly one job to install terraform, found {owners}")
+    return owners[0]
+
+
+def job_pytest_command(jobs: dict, job_id: str = "orchestrator") -> str:
+    """Return the single `uv run pytest` line the named job executes."""
 
     runs = [
         str(step.get("run", ""))
-        for step in jobs.get("orchestrator", {}).get("steps", [])
+        for step in jobs.get(job_id, {}).get("steps", [])
         if isinstance(step, dict) and "uv run pytest" in str(step.get("run", ""))
     ]
     if len(runs) != 1:
-        raise AssertionError(f"expected exactly one pytest step in the orchestrator job, found {len(runs)}")
+        raise AssertionError(f"expected exactly one pytest step in the {job_id} job, found {len(runs)}")
     return runs[0]
+
+
+def covers_ephemeral_staging_suite(target: str) -> bool:
+    """True when a pytest target collects the ephemeral staging test file.
+
+    Path containment rather than a substring: `infra`, `infra/terraform` and the
+    file itself are all correct spellings, and a target that merely has "infra"
+    somewhere in it is not.
+    """
+
+    candidate = Path(target)
+    return EPHEMERAL_TEST_RELPATH == candidate or EPHEMERAL_TEST_RELPATH.is_relative_to(candidate)
 
 
 def parse_pytest_selection(run_line: str) -> tuple[str, list[str]]:
@@ -137,15 +171,8 @@ class StagingIaCCIWorkflowCollectionTests(unittest.TestCase):
         )
 
     def test_orchestrator_pytest_targets_cover_the_ephemeral_staging_suite(self) -> None:
-        # Path containment rather than a substring: `infra`, `infra/terraform` and
-        # the file itself are all correct spellings, and a target that merely has
-        # "infra" somewhere in it is not.
-        _, targets = parse_pytest_selection(orchestrator_pytest_command(self.jobs))
-        covering = [
-            target
-            for target in targets
-            if EPHEMERAL_TEST_RELPATH == Path(target) or EPHEMERAL_TEST_RELPATH.is_relative_to(Path(target))
-        ]
+        _, targets = parse_pytest_selection(job_pytest_command(self.jobs))
+        covering = [target for target in targets if covers_ephemeral_staging_suite(target)]
         self.assertTrue(
             covering,
             f"no orchestrator pytest target collects {EPHEMERAL_TEST_RELPATH}. Targets: {targets}",
@@ -182,6 +209,7 @@ class StagingIaCTerraformPinTests(unittest.TestCase):
     def setUp(self) -> None:
         self.jobs = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8")).get("jobs", {})
         self.pin = pinned_terraform_version(self.jobs)
+        self.plan_job = terraform_plan_job(self.jobs)
 
     def test_terraform_version_is_pinned_to_an_exact_release(self) -> None:
         self.assertRegex(
@@ -191,11 +219,20 @@ class StagingIaCTerraformPinTests(unittest.TestCase):
         )
 
     def test_ci_plans_with_the_pinned_terraform(self) -> None:
+        # This file lives under tests/tooling, which *two* CI jobs collect: the
+        # job that installs Terraform for the plan probes, and `product`, which
+        # deliberately does not install it and does not run the probes. So the
+        # requirement is keyed to the job actually running them, read out of
+        # GITHUB_JOB. Keying it to `CI` instead only proves that some job
+        # somewhere set CI=true, and turns `product` red for a tool it has no
+        # reason to carry.
+        in_plan_job = os.environ.get("GITHUB_JOB") == self.plan_job
         binary = shutil.which("terraform")
         if binary is None:
-            self.assertIsNone(
-                os.environ.get("CI"),
-                "CI must install the pinned terraform; the plan probes cannot run without it",
+            self.assertFalse(
+                in_plan_job,
+                f"job {self.plan_job!r} runs the plan probes and must install the pinned "
+                "terraform; without it those probes cannot run",
             )
             return
 
@@ -208,7 +245,7 @@ class StagingIaCTerraformPinTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, f"terraform version failed: {result.stderr}")
         observed = json.loads(result.stdout)["terraform_version"]
 
-        if os.environ.get("CI"):
+        if in_plan_job:
             self.assertEqual(
                 observed,
                 self.pin,
@@ -216,8 +253,20 @@ class StagingIaCTerraformPinTests(unittest.TestCase):
             )
         else:
             # A contributor is free to hold a different local Terraform; the
-            # binding claim is about CI, which is where the pin is installed.
+            # binding claim is about the job that installs the pin.
             self.assertTrue(observed, "terraform reported no version")
+
+    def test_the_job_that_installs_terraform_is_the_one_that_runs_the_probes(self) -> None:
+        # Guards the discriminator above. If the plan probes were moved to a job
+        # that does not install Terraform, `test_ci_plans_with_the_pinned_terraform`
+        # would quietly stop enforcing anything: GITHUB_JOB would never match, so
+        # a missing binary would return early instead of failing.
+        _, targets = parse_pytest_selection(job_pytest_command(self.jobs, self.plan_job))
+        self.assertTrue(
+            any(covers_ephemeral_staging_suite(target) for target in targets),
+            f"job {self.plan_job!r} installs terraform but its pytest selection {targets} "
+            "does not reach the ephemeral staging plan probes",
+        )
 
 
 class StagingIaCPyprojectConfigTests(unittest.TestCase):
@@ -333,7 +382,7 @@ class StagingIaCCollectionExecutionTests(unittest.TestCase):
 
     def setUp(self) -> None:
         jobs = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8")).get("jobs", {})
-        self.marker, targets = parse_pytest_selection(orchestrator_pytest_command(jobs))
+        self.marker, targets = parse_pytest_selection(job_pytest_command(jobs))
         covering = [
             target
             for target in targets
@@ -415,7 +464,6 @@ class EphemeralStagingOfflineHarnessTests(unittest.TestCase):
             env = offline_terraform_env(Path("/tmp/scratch-home"))
 
         for leaked in (
-            "GOOGLE_APPLICATION_CREDENTIALS",
             "GOOGLE_CREDENTIALS",
             "GCLOUD_PROJECT",
             "CLOUDSDK_AUTH_ACCESS_TOKEN",
@@ -423,11 +471,60 @@ class EphemeralStagingOfflineHarnessTests(unittest.TestCase):
             "TF_VAR_credentials",
         ):
             self.assertNotIn(leaked, env, f"{leaked} reached the terraform subprocess")
-        # HOME is redirected so Application Default Credentials on a developer
-        # machine cannot stand in for a credential-free CI runner.
+        # HOME is redirected so a developer's Application Default Credentials
+        # file cannot stand in for a credential-free CI runner.
         self.assertEqual(env["HOME"], "/tmp/scratch-home")
         self.assertEqual(env["TF_INPUT"], "0")
         self.assertIn("PATH", env, "terraform must still be locatable")
+        # The planted ADC path must not survive, but simply dropping it is not
+        # enough: on a Google Cloud VM an unset GOOGLE_APPLICATION_CREDENTIALS
+        # falls through to the metadata server and the provider authenticates
+        # as the VM. The harness replaces it with a path that does not exist,
+        # which ADC consults first and fails on, so the fallback is never
+        # reached and the probes behave the same on a runner and on a VM.
+        adc = env["GOOGLE_APPLICATION_CREDENTIALS"]
+        self.assertNotEqual(adc, "/tmp/adc.json", "the ambient ADC path reached terraform")
+        self.assertFalse(
+            Path(adc).exists(),
+            f"GOOGLE_APPLICATION_CREDENTIALS must point at a file that does not exist, got {adc}",
+        )
+
+    def test_the_offline_override_stays_out_of_the_production_module(self) -> None:
+        from infra.terraform.tests.test_ephemeral_staging import (
+            MODULE_DIR,
+            OFFLINE_PROVIDER_OVERRIDE_FILENAME,
+            write_offline_provider_override,
+        )
+
+        # Terraform only merges a file into the base configuration when its name
+        # ends in `_override.tf`; under any other name the harness would be a
+        # second `provider "google"` block, which is a duplicate-configuration
+        # error rather than an override.
+        self.assertTrue(
+            OFFLINE_PROVIDER_OVERRIDE_FILENAME.endswith("_override.tf"),
+            f"{OFFLINE_PROVIDER_OVERRIDE_FILENAME} is not a name Terraform treats as an override",
+        )
+
+        # The shim exists so the probes can plan without credentials. It must
+        # never reach the module that actually gets deployed: a checked-in
+        # `access_token` would pin the deployed provider to a dead credential,
+        # and a real one would be a leaked secret.
+        self.assertFalse(
+            (MODULE_DIR / OFFLINE_PROVIDER_OVERRIDE_FILENAME).exists(),
+            f"{OFFLINE_PROVIDER_OVERRIDE_FILENAME} was committed into the deployed module",
+        )
+        for tf_file in sorted(MODULE_DIR.glob("*.tf")):
+            self.assertNotIn(
+                "access_token",
+                tf_file.read_text(encoding="utf-8"),
+                f"{tf_file.name} hands the provider a credential; that belongs to the test harness only",
+            )
+
+        # Writing it lands beside a module copy, not in the module itself.
+        with tempfile.TemporaryDirectory() as scratch:
+            written = write_offline_provider_override(Path(scratch))
+            self.assertEqual(written.parent, Path(scratch))
+            self.assertIn("access_token", written.read_text(encoding="utf-8"))
 
     def test_harness_refuses_state_changing_terraform_subcommands(self) -> None:
         from infra.terraform.tests.test_ephemeral_staging import run_terraform

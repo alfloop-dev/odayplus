@@ -20,20 +20,48 @@ MODULE_DIR = Path(__file__).resolve().parents[1] / "modules" / "ephemeral_stagin
 
 # The plan probes below have to prove the module plans *offline*: no GCP login,
 # no remote backend, no apply. Leaving that to "the runner happens to have no
-# credentials" makes it a property of the machine rather than of the test -- a
-# workstation with `gcloud auth application-default login` would quietly pass a
-# module that CI, which has no credentials at all, cannot plan. The harness
-# makes it structural instead:
+# credentials" makes it a property of the machine rather than of the test, and
+# the two machines disagree in both directions:
 #
+#   * on a Google Cloud VM, Application Default Credentials resolve through the
+#     metadata server even with an empty environment and an empty HOME, so the
+#     provider silently authenticates as that VM and the probe proves nothing;
+#   * on a GitHub runner there is no metadata server, so the same provider
+#     stops with "Attempted to load application default credentials since
+#     neither `credentials` nor `access_token` was set in the provider block".
+#
+# So the harness fixes both ends rather than depending on either:
+#
+#   * an override file hands the provider a synthetic `access_token`, which is
+#     the branch the provider takes *before* it ever looks for ADC;
+#   * GOOGLE_APPLICATION_CREDENTIALS points at a file that does not exist.
+#     That is the first source ADC consults and it fails outright instead of
+#     falling through to the metadata server, so no ambient identity is
+#     reachable even when the tests run on Google Cloud;
 #   * every environment variable the google provider reads credentials from is
-#     dropped, and HOME points at a scratch directory so the Application
-#     Default Credentials file cannot be found either;
+#     dropped, and HOME points at a scratch directory;
 #   * only init/plan/validate are reachable, so no edit here can grow into an
 #     apply or a destroy against a real project;
 #   * init always carries -backend=false, so no remote state is configured.
 CREDENTIAL_ENV_PREFIXES = ("GOOGLE_", "GCLOUD_", "CLOUDSDK_", "GCP_")
 CREDENTIAL_ENV_NAMES = ("TF_VAR_credentials", "TF_TOKEN_app_terraform_io")
 OFFLINE_TERRAFORM_SUBCOMMANDS = frozenset({"init", "plan", "validate"})
+
+# The file name matters: Terraform treats `*_override.tf` as an override file
+# and merges it into the base configuration argument by argument, so the
+# module's own `project` and `region` survive and only `access_token` is added.
+# A plain second `provider "google"` block would be a duplicate-configuration
+# error instead. The token is never sent anywhere -- the module declares no
+# data sources, so a create-only plan needs no API call to resolve.
+OFFLINE_PROVIDER_OVERRIDE_FILENAME = "zz_offline_provider_override.tf"
+OFFLINE_PROVIDER_OVERRIDE = """\
+# Written by the test harness. Not part of the module under test: it exists so
+# the provider configures without credentials, and it must never be applied.
+provider "google" {
+  access_token = "offline"
+}
+"""
+ABSENT_ADC_FILENAME = "absent-application-default-credentials.json"
 
 
 def offline_terraform_env(home: Path) -> dict[str, str]:
@@ -47,7 +75,18 @@ def offline_terraform_env(home: Path) -> dict[str, str]:
     env["HOME"] = str(home)
     env["TF_IN_AUTOMATION"] = "1"
     env["TF_INPUT"] = "0"
+    # Deliberately a path that is never created. See the module comment: this
+    # is what stops ADC from reaching the metadata server on a Google Cloud VM.
+    env["GOOGLE_APPLICATION_CREDENTIALS"] = str(home / ABSENT_ADC_FILENAME)
     return env
+
+
+def write_offline_provider_override(module_dir: Path) -> Path:
+    """Give the google provider a synthetic token so it never looks for ADC."""
+
+    path = module_dir / OFFLINE_PROVIDER_OVERRIDE_FILENAME
+    path.write_text(OFFLINE_PROVIDER_OVERRIDE, encoding="utf-8")
+    return path
 
 
 def run_terraform(
@@ -285,6 +324,7 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
 
             # Init terraform
             scratch_home = tmppath / "offline-home"
+            write_offline_provider_override(tmppath)
             init_res = run_terraform("init", chdir=tmppath, home=scratch_home)
             self.assertEqual(init_res.returncode, 0, f"terraform init failed: {init_res.stderr}")
 
@@ -359,6 +399,7 @@ class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
             else:
                 shutil.copy(MODULE_DIR / filename, cls.workdir / filename)
 
+        write_offline_provider_override(cls.workdir)
         init_res = run_terraform("init", chdir=cls.workdir, home=cls.scratch_home)
         if init_res.returncode != 0:
             cls._tmpdir.cleanup()
