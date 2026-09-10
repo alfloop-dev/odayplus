@@ -27,15 +27,14 @@ record and the checklist is the explanation.
 
 **NO-GO.** All seven gates are `blocked`, none carries a receipt, and
 `release.decision` is `no-go` against candidate SHA
-`ebc4fca5c2dd5871275aee39a18406dd67464f04`. Deterministic product-E2E readiness
+`596b9c9a1788d952811a2bf8d4bba8a4e4d76b12`. Deterministic product-E2E readiness
 (`docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md`) is not release readiness. The
 current state is `candidate-built` in `dev`, with admission target `dev`.
 
-The candidate was rebound from `a027fa1c3935360e6fc4b3bd073cd91cbee07548` by
-ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001. This is the first candidate
-with a real artifact behind it: `RELEASE_MANIFEST.json` is now the byte-exact
-`runtime-release-manifest` artifact of Runtime Release run
-[33003734045](https://github.com/alfloop-dev/odayplus/actions/runs/33003734045),
+The candidate was rebound from `ebc4fca5c2dd5871275aee39a18406dd67464f04` by
+ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002. `RELEASE_MANIFEST.json` is the byte-exact
+`runtime-release-manifest` artifact of Runtime Release handoff run
+[34179791241](https://github.com/alfloop-dev/odayplus/actions/runs/34179791241),
 so it records `release_status: ready`, four `@sha256:`-pinned component images,
 four Cosign signature references, and four CycloneDX SBOM attestation
 references. `registry.candidate_rebind` records what that does *not* mean: no
@@ -49,11 +48,17 @@ and the Runtime Release deploy phase to present a signed Supervisor lease bound
 to `manifest_digest`. Both are absent, so the release stays fail-closed:
 `check_release_gate_registry.py --require-go` exits non-zero.
 
-Re-resolving the image, SBOM, and signature digests against Artifact Registry
-needs a registry credential and has not been done outside the build run itself;
-`docs/evidence/runtime/ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001/`
-records that probe failing closed rather than reporting it as a pass, and leaves
-it as an open item for whoever attests Gate 4.
+Image producer run [34179207603](https://github.com/alfloop-dev/odayplus/actions/runs/34179207603)
+built, pushed, signed, and attested the four images; it failed in the later
+handoff step. Run `34179791241` reused those digests, performed in-run
+`cosign verify`, and published the six manifest/handoff/receipt artifacts.
+The recorded verification used bundle SET verification without live Rekor
+network queries. Existing raw-byte comparison receipts and provenance are
+indexed in [the candidate evidence README](../runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/README.md).
+This documentation continuation does not perform a new artifact download,
+registry probe, signature verification, or runtime readback. Sources-off build
+contract evidence and target-absence receipts do not establish live egress
+behavior; those runtime observations remain outstanding for the applicable gates.
 
 ## Gate 0-6
 
@@ -82,7 +87,7 @@ reassigns them at the final gate audit.
 # Integrity check. Exits 0 for a well-formed registry, including a NO-GO one.
 python3 delivery_toolchain/e2e/check_release_gate_registry.py
 
-# Release check. Exits non-zero unless every gate is cleared and the recorded
+# Release check. Exits non-zero unless the current target's required gates are cleared and the recorded
 # decision is 'go'. This is the form a release promotion must call.
 python3 delivery_toolchain/e2e/check_release_gate_registry.py --require-go
 
@@ -128,7 +133,8 @@ The validator exits non-zero when any of these is true:
 10. A `passed-with-deviation` gate has no `deviation` object with description,
     approver, and `review_by` date; or a `not-applicable` gate has no
     justification, or still carries blockers.
-11. `release.decision` is `go` while any gate is not cleared, or without a
+11. `release.decision` is `go` while any gate required by the current
+    `release.admission_target` is not cleared, or without a
     `release.human_signoff` approver and date.
 12. `--expected-sha` was passed and does not match `release.candidate_sha`.
 13. `--require-go` was passed and the release is not in a cleared GO state.
@@ -251,6 +257,15 @@ The `staging` admission target is the `dev-verified` boundary. It does not
 require staging receipts, because those receipts can only be produced after
 the ephemeral environment exists. Staging verification is a later
 `staging-verified` boundary used to request production approval.
+
+依既有部署規劃 §6.1，各 gate 的適用准入邊界如下：
+
+- `dev`：Gate 0 (Code)、Gate 1 (Contract)、Gate 4 (Security)。
+- `staging`：Gate 2 (Data)，使用 dev live deployment 的驗證收據。
+- `production`：Gate 3 (Model & Solver)、Gate 5 (E2E/UAT)、Gate 6 (Ops & Audit)，使用 staging 演練與 UAT 收據。
+
+每次准入仍需要真實 Human/Ops signoff 與該目標要求的收據。目前七道 gate
+全部 `blocked`、receipts 為空，決策維持 `no-go`；此映射沒有清除任何 gate。
 
 ## Legacy migration
 
