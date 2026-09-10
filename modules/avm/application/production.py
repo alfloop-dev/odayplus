@@ -69,6 +69,28 @@ class LiquidityArtifactEvidence:
         }
 
 
+@dataclass(frozen=True)
+class DepreciationCutoverEvidence:
+    approved_by: str
+    approved_at: datetime
+    thresholds_reference: str
+    model_version: str = "avm-depreciation-straight-line-v1"
+    numerical_threshold_asset_delta_ratio: float = 0.20
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "approved_by": self.approved_by,
+            "approved_at": (
+                self.approved_at.isoformat()
+                if hasattr(self.approved_at, "isoformat")
+                else str(self.approved_at)
+            ),
+            "thresholds_reference": self.thresholds_reference,
+            "model_version": self.model_version,
+            "numerical_threshold_asset_delta_ratio": self.numerical_threshold_asset_delta_ratio,
+        }
+
+
 class AVMProductionExecutor:
     """Execute approved AVM and liquidity artifacts without formula fallback."""
 
@@ -78,10 +100,12 @@ class AVMProductionExecutor:
         model_runtime: ModelRuntime,
         liquidity_runtime: LiquidityRuntime,
         liquidity_evidence: LiquidityArtifactEvidence,
+        depreciation_cutover_evidence: DepreciationCutoverEvidence | None = None,
     ) -> None:
         self.model_runtime = model_runtime
         self.liquidity_runtime = liquidity_runtime
         self.liquidity_evidence = liquidity_evidence
+        self.depreciation_cutover_evidence = depreciation_cutover_evidence
 
     @classmethod
     def from_environment(
@@ -100,6 +124,7 @@ class AVMProductionExecutor:
                     model_names=production_model_names(("avm",))
                 )
             liquidity_runtime, liquidity_evidence = _load_liquidity_artifact()
+            cutover_evidence = _load_depreciation_cutover_evidence_optional()
         except Exception as exc:
             if isinstance(exc, AVMProductionExecutionError):
                 raise
@@ -110,6 +135,7 @@ class AVMProductionExecutor:
             model_runtime=model_runtime,
             liquidity_runtime=liquidity_runtime,
             liquidity_evidence=liquidity_evidence,
+            depreciation_cutover_evidence=cutover_evidence,
         )
 
     def execute(
@@ -123,6 +149,12 @@ class AVMProductionExecutor:
             case.valuation_input,
             depreciation_version_pin=depreciation_version_pin,
         )
+
+        if dep_calc.depreciation_applied:
+            if self.depreciation_cutover_evidence is None:
+                raise AVMProductionExecutionError(
+                    "production v1 depreciation activation requires authentic Finance approval and threshold evidence"
+                )
 
         row = {
             **case.valuation_input.to_dict(),
@@ -171,14 +203,20 @@ class AVMProductionExecutor:
                 "approved AVM production model failed to execute"
             ) from exc
 
+        # R3: Validate the raw model interval before adjustment.
+        if min(lower, point, upper) < 0 or not lower <= point <= upper:
+            raise AVMProductionExecutionError(
+                "approved AVM model returned an invalid valuation interval"
+            )
+
         if dep_calc.delta_from_undepreciated != 0.0:
             lower = max(0.0, round(lower + dep_calc.delta_from_undepreciated, 2))
             point = max(0.0, round(point + dep_calc.delta_from_undepreciated, 2))
             upper = max(0.0, round(upper + dep_calc.delta_from_undepreciated, 2))
 
-        if min(lower, point, upper) < 0 or not lower <= point <= upper:
+        if not lower <= point <= upper:
             raise AVMProductionExecutionError(
-                "approved AVM model returned an invalid valuation interval"
+                "depreciation-adjusted valuation interval is not ordered"
             )
 
         model_evidence = inference.to_audit_metadata()
@@ -194,6 +232,10 @@ class AVMProductionExecutor:
         }
         if dep_calc.evidence is not None:
             execution_metadata["depreciation"] = dep_calc.evidence
+        if self.depreciation_cutover_evidence is not None and dep_calc.depreciation_applied:
+            execution_metadata["depreciation_cutover_approval"] = (
+                self.depreciation_cutover_evidence.to_dict()
+            )
 
         return build_model_valuation_report(
             case,
@@ -288,12 +330,35 @@ def _parse_datetime(value: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
-        raise AVMProductionExecutionError("liquidity approval timestamp is invalid") from exc
+        raise AVMProductionExecutionError("approval timestamp is invalid") from exc
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _load_depreciation_cutover_evidence_optional() -> DepreciationCutoverEvidence | None:
+    approved_by = os.getenv("ODP_AVM_DEPRECIATION_CUTOVER_APPROVED_BY", "").strip()
+    approved_at_raw = os.getenv("ODP_AVM_DEPRECIATION_CUTOVER_APPROVED_AT", "").strip()
+    thresholds_ref = os.getenv("ODP_AVM_DEPRECIATION_CUTOVER_THRESHOLDS_REFERENCE", "").strip()
+    if not (approved_by and approved_at_raw and thresholds_ref):
+        return None
+    approved_at = _parse_datetime(approved_at_raw)
+    ratio_raw = os.getenv("ODP_AVM_DEPRECIATION_CUTOVER_DELTA_THRESHOLD", "").strip()
+    ratio = float(ratio_raw) if ratio_raw else 0.20
+    model_ver = (
+        os.getenv("ODP_AVM_DEPRECIATION_CUTOVER_MODEL_VERSION", "").strip()
+        or "avm-depreciation-straight-line-v1"
+    )
+    return DepreciationCutoverEvidence(
+        approved_by=approved_by,
+        approved_at=approved_at,
+        thresholds_reference=thresholds_ref,
+        model_version=model_ver,
+        numerical_threshold_asset_delta_ratio=ratio,
+    )
 
 
 __all__ = [
     "AVMProductionExecutionError",
     "AVMProductionExecutor",
+    "DepreciationCutoverEvidence",
     "LiquidityArtifactEvidence",
 ]

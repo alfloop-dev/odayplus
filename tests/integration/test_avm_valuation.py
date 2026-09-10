@@ -901,3 +901,303 @@ def test_fresh_input_with_omitted_status_is_measured_not_legacy(tmp_path) -> Non
     assert durable_latest.confidence == "high"
     assert repository.report_history(durable_case.case_id)[0].confidence == "high"
     engine.close()
+
+
+def test_durable_avm_repository_depreciation_and_deal_outcomes_roundtrip(tmp_path) -> None:
+    """R6: Verify DurableAVMRepository persists and rehydrates straight-line depreciation v1,
+    lenses evidence, dataroom, and deal outcomes faithfully."""
+    from datetime import UTC, datetime
+
+    from modules.avm.domain import (
+        AVM_DEPRECIATION_VERSION,
+        DealOutcome,
+    )
+    from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+    from shared.infrastructure.persistence.engine import SqliteEngine
+    from shared.infrastructure.persistence.repositories import DurableAVMRepository
+
+    engine = SqliteEngine(tmp_path / "avm-depreciation-roundtrip.sqlite3")
+    store = SqliteDocumentStore(engine)
+    repository = DurableAVMRepository(store)
+    service = AVMService(repository=repository)
+
+    payload = {
+        "store_id": "store-dep-roundtrip-01",
+        "gm_ttm": 2_000_000,
+        "forecast_gm_next_12m": 2_200_000,
+        "asset_book_value": 800_000,
+        "equipment_fair_value": 300_000,
+        "equipment_depreciation_basis": "original_cost",
+        "equipment_original_cost": 400_000.0,
+        "useful_life_months": 60,
+        "residual_value_ratio": 0.10,
+        "depreciation_method": "straight_line",
+        "asset_in_service_date": "2024-01-01",
+        "depreciation_effective_date": "2026-07-01",
+        "quality_score": 0.95,
+        "source_snapshot_ids": ["snap-rt-01"],
+        "prediction_origin_time": datetime(2026, 7, 1, tzinfo=UTC),
+    }
+    case = service.create_case(payload, created_by="tester", correlation_id="corr-rt-01")
+    report = service.value(case.case_id, actor="worker-1", correlation_id="corr-rt-01")
+
+    assert report.depreciation_applied is True
+    assert report.depreciation_version == AVM_DEPRECIATION_VERSION
+
+    # Check persistence and rehydration
+    reloaded_report = repository.latest_report(case.case_id)
+    assert reloaded_report is not None
+    assert reloaded_report.report_id == report.report_id
+    assert reloaded_report.depreciation_applied is True
+    assert reloaded_report.depreciation_version == AVM_DEPRECIATION_VERSION
+    assert reloaded_report.fair_price.p50 == report.fair_price.p50
+
+    # Deal Outcome persistence
+    outcome = DealOutcome(
+        outcome_id="outcome-dep-01",
+        valuation_id=report.report_id,
+        store_id="store-dep-roundtrip-01",
+        sold=True,
+        settlement_price=2_100_000.0,
+        settlement_date=datetime(2026, 8, 1, tzinfo=UTC).date(),
+    )
+    repository.save_deal_outcome(outcome)
+    saved_outcome = repository.get_deal_outcome("outcome-dep-01")
+    assert saved_outcome is not None
+    assert saved_outcome.outcome_id == "outcome-dep-01"
+    assert saved_outcome.store_id == "store-dep-roundtrip-01"
+    assert saved_outcome.sold is True
+    assert saved_outcome.settlement_price == 2_100_000.0
+
+    outcomes_for_val = repository.get_deal_outcomes_for_valuation(report.report_id)
+    assert len(outcomes_for_val) == 1
+    assert outcomes_for_val[0].outcome_id == "outcome-dep-01"
+
+    all_outcomes = repository.list_deal_outcomes()
+    assert any(o.outcome_id == "outcome-dep-01" for o in all_outcomes)
+
+    engine.close()
+
+
+def test_pre_upgrade_create_case_idempotency_receipt_replay(tmp_path) -> None:
+    """R4: Pre-upgrade create-case requests omitting new depreciation fields produce
+    fingerprints matching pre-upgrade requests, enabling seamless replay without 409 conflict,
+    while genuinely changed depreciation requests on the same key are rejected."""
+    db_path = tmp_path / "avm-idempotency.sqlite3"
+    bundle = build_persistence(mode="durable", db_path=db_path)
+    client = TestClient(
+        create_app(persistence=bundle),
+        headers=AVM_HEADERS,
+        backend_options={"use_uvloop": True},
+    )
+
+    pre_upgrade_body = {
+        "store_id": "store-idemp-01",
+        "gm_ttm": 1_000_000,
+        "forecast_gm_next_12m": 1_000_000,
+        "asset_book_value": 500_000,
+        "equipment_fair_value": 200_000,
+        "lease_liability": 50_000,
+        "working_capital": 50_000,
+        "comparable_multiples": [2.5],
+        "liquidity_discount": 0.1,
+        "quality_score": 0.90,
+        "source_snapshot_ids": ["snap-1"],
+        "created_by": "lead",
+    }
+    key = "idemp-avm-legacy-key-001"
+
+    # First submission
+    resp1 = client.post(
+        "/avm/cases",
+        json=pre_upgrade_body,
+        headers={"x-correlation-id": "corr-idemp-1", "Idempotency-Key": key},
+    )
+    assert resp1.status_code == 201
+    assert resp1.json()["created"] is True
+    case_id = resp1.json()["case_id"]
+
+    # Replay identical legacy request with same idempotency key -> 201 Created with created: False (replayed)
+    resp2 = client.post(
+        "/avm/cases",
+        json=pre_upgrade_body,
+        headers={"x-correlation-id": "corr-idemp-2", "Idempotency-Key": key},
+    )
+    assert resp2.status_code == 201
+    assert resp2.json()["created"] is False
+    assert resp2.json()["case_id"] == case_id
+
+    # Genuinely changed request with different depreciation fields on same key -> 409 Conflict
+    conflict_body = {
+        **pre_upgrade_body,
+        "equipment_depreciation_basis": "original_cost",
+        "equipment_original_cost": 300_000.0,
+    }
+    resp3 = client.post(
+        "/avm/cases",
+        json=conflict_body,
+        headers={"x-correlation-id": "corr-idemp-3", "Idempotency-Key": key},
+    )
+    assert resp3.status_code == 409
+    assert resp3.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REUSED"
+
+    bundle.engine.close()
+
+
+def test_missing_depreciation_inputs_fail_closed_and_persist_review_required(tmp_path) -> None:
+    """R5: An original_cost case missing required fields fails closed on valuation,
+    persisting case state as REVIEW_REQUIRED with failure reason, and producing no fake report."""
+    db_path = tmp_path / "avm-missing-input.sqlite3"
+    bundle = build_persistence(mode="durable", db_path=db_path)
+    client = TestClient(
+        create_app(persistence=bundle),
+        headers=AVM_HEADERS,
+        backend_options={"use_uvloop": True},
+    )
+
+    # Missing equipment_original_cost and asset_in_service_date
+    invalid_body = {
+        "store_id": "store-missing-dep-01",
+        "gm_ttm": 1_000_000,
+        "forecast_gm_next_12m": 1_000_000,
+        "asset_book_value": 500_000,
+        "equipment_fair_value": 200_000,
+        "quality_score": 0.90,
+        "equipment_depreciation_basis": "original_cost",
+        "created_by": "operator",
+    }
+    created = client.post(
+        "/avm/cases",
+        json=invalid_body,
+        headers={"x-correlation-id": "corr-missing-dep-1"},
+    )
+    assert created.status_code == 201
+    case_id = created.json()["case_id"]
+
+    # Attempt to value
+    val_resp = client.post(
+        f"/avm/cases/{case_id}/value",
+        json={"actor": "worker-1"},
+        headers={"x-correlation-id": "corr-missing-dep-2"},
+    )
+    assert val_resp.status_code == 422
+    assert "equipment_original_cost is required" in val_resp.json()["detail"]
+
+    # Verify case state in repository transitioned to REVIEW_REQUIRED
+    case_get = client.get(f"/avm/cases/{case_id}")
+    assert case_get.status_code == 200
+    case_data = case_get.json()
+    assert case_data["status"] == ValuationCaseStatus.REVIEW_REQUIRED.value
+    assert any("valuation failed" in h["reason"] for h in case_data["status_history"])
+
+    # Verify no report was produced
+    repo = bundle.avm_repository
+    assert repo.latest_report(case_id) is None
+
+    bundle.engine.close()
+
+
+def test_api_operational_rollback_with_valid_receipt_preserves_v1_history(tmp_path) -> None:
+    """R2: Verify operational rollback to v0 via API router/service with valid receipt
+    reproduces pre-cutover arithmetic while preserving prior v1 reports in immutable history."""
+    from modules.avm.domain import AVM_DEPRECIATION_LEGACY_VERSION, AVM_DEPRECIATION_VERSION
+
+    db_path = tmp_path / "avm-rollback.sqlite3"
+    bundle = build_persistence(mode="durable", db_path=db_path)
+    client = TestClient(
+        create_app(persistence=bundle),
+        headers=AVM_HEADERS,
+        backend_options={"use_uvloop": True},
+    )
+
+    body = {
+        "store_id": "store-rollback-test-01",
+        "gm_ttm": 4_800_000.0,
+        "forecast_gm_next_12m": 5_100_000.0,
+        "asset_book_value": 3_000_000.0,
+        "equipment_fair_value": 6_000_000.0,
+        "working_capital": 400_000.0,
+        "lease_liability": 900_000.0,
+        "comparable_multiples": [2.3, 2.6, 2.9],
+        "liquidity_discount": 0.12,
+        "quality_score": 0.95,
+        "source_snapshot_ids": ["snap-rb-01"],
+        "equipment_depreciation_basis": "original_cost",
+        "equipment_original_cost": 6_000_000.0,
+        "useful_life_months": 84,
+        "residual_value_ratio": 0.10,
+        "depreciation_method": "straight_line",
+        "asset_in_service_date": "2021-03-03",
+        "depreciation_effective_date": "2026-09-03",
+        "created_by": "lead",
+    }
+    created = client.post("/avm/cases", json=body, headers={"x-correlation-id": "corr-rb-1"})
+    assert created.status_code == 201
+    case_id = created.json()["case_id"]
+
+    # 1. Normal v1 valuation
+    val1 = client.post(
+        f"/avm/cases/{case_id}/value",
+        json={"actor": "worker-1"},
+        headers={"x-correlation-id": "corr-rb-2"},
+    )
+    assert val1.status_code == 200
+    res1 = val1.json()
+    assert res1["depreciation_version"] == AVM_DEPRECIATION_VERSION
+    assert res1["depreciation_applied"] is True
+    assert res1["valuation_version"] == 1
+
+    # 2. Rollback to v0 without receipt -> rejected
+    val_bad_rb = client.post(
+        f"/avm/cases/{case_id}/value",
+        json={
+            "actor": "worker-1",
+            "depreciation_version_pin": AVM_DEPRECIATION_LEGACY_VERSION,
+        },
+        headers={"x-correlation-id": "corr-rb-3"},
+    )
+    assert val_bad_rb.status_code == 422
+    assert "DepreciationRollbackReceipt" in val_bad_rb.json()["detail"]
+
+    # 3. Rollback to v0 with valid receipt -> succeeds and reproduces pre-cutover arithmetic
+    valid_receipt = {
+        "decider": "finance-lead-sarah",
+        "decision_time": "2026-09-10T10:00:00+00:00",
+        "reason": "Emergency operational incident rollback to v0 for asset verification",
+        "target_expiry": "2026-09-17T10:00:00+00:00",
+        "depreciation_version_pin": AVM_DEPRECIATION_LEGACY_VERSION,
+    }
+    val_rb = client.post(
+        f"/avm/cases/{case_id}/value",
+        json={
+            "actor": "worker-1",
+            "depreciation_version_pin": AVM_DEPRECIATION_LEGACY_VERSION,
+            "rollback_receipt": valid_receipt,
+        },
+        headers={"x-correlation-id": "corr-rb-4"},
+    )
+    assert val_rb.status_code == 200
+    res_rb = val_rb.json()
+    assert res_rb["depreciation_version"] == AVM_DEPRECIATION_LEGACY_VERSION
+    assert res_rb["depreciation_applied"] is False
+    assert res_rb["valuation_version"] == 2
+    assert res_rb["fair_price"] == {
+        "p10": 9228258.13,
+        "p50": 11253973.33,
+        "p90": 13279688.53,
+    }
+    assert res_rb["reserve_price"] == 8951410.39
+    assert res_rb["asking_price"] == 13943672.96
+
+    # 4. Verify history preserves both reports
+    repo = bundle.avm_repository
+    history = repo.report_history(case_id)
+    assert len(history) == 2
+    assert history[0].valuation_version == 1
+    assert history[0].depreciation_version == AVM_DEPRECIATION_VERSION
+    assert history[1].valuation_version == 2
+    assert history[1].depreciation_version == AVM_DEPRECIATION_LEGACY_VERSION
+
+    bundle.engine.close()
+
+

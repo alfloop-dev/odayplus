@@ -33,6 +33,7 @@ from modules.adlift.domain.incrementality import IncrementalityReport
 from modules.avm.domain import (
     LEGACY_UNKNOWN_QUALITY_STATUS,
     DataRoom,
+    DealOutcome,
     NormalizedMargin,
     ValuationCase,
     ValuationInput,
@@ -285,6 +286,7 @@ class DurableAVMRepository:
     _MARGINS = "avm.margins"
     _REPORTS = "avm.reports"
     _DATAROOMS = "avm.datarooms"
+    _DEAL_OUTCOMES = "avm.deal_outcomes"
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
@@ -444,6 +446,24 @@ class DurableAVMRepository:
     def get_dataroom(self, case_id: str) -> DataRoom | None:
         dataroom = self._store.get(self._DATAROOMS, case_id)
         return None if dataroom is None else self._dispose_legacy_dataroom(dataroom)
+
+    def save_deal_outcome(self, outcome: DealOutcome) -> DealOutcome:
+        self._store.put(
+            self._DEAL_OUTCOMES,
+            outcome.outcome_id,
+            outcome,
+            group_key=outcome.valuation_id,
+        )
+        return outcome
+
+    def get_deal_outcome(self, outcome_id: str) -> DealOutcome | None:
+        return self._store.get(self._DEAL_OUTCOMES, outcome_id)
+
+    def get_deal_outcomes_for_valuation(self, valuation_id: str) -> list[DealOutcome]:
+        return self._store.list_by_group(self._DEAL_OUTCOMES, valuation_id)
+
+    def list_deal_outcomes(self) -> list[DealOutcome]:
+        return self._store.list_all(self._DEAL_OUTCOMES)
 
 
 class DurableForecastOpsRepository:

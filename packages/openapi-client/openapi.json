@@ -10112,6 +10112,43 @@
         "title": "ValidationError",
         "type": "object"
       },
+      "ValueCasePayload": {
+        "properties": {
+          "actor": {
+            "minLength": 1,
+            "title": "Actor",
+            "type": "string"
+          },
+          "depreciation_version_pin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Depreciation Version Pin"
+          },
+          "rollback_receipt": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rollback Receipt"
+          }
+        },
+        "required": [
+          "actor"
+        ],
+        "title": "ValueCasePayload",
+        "type": "object"
+      },
       "XlsxCommitReceipt": {
         "properties": {
           "accepted_count": {
@@ -14014,7 +14051,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ActorPayload"
+                "$ref": "#/components/schemas/ValueCasePayload"
               }
             }
           },

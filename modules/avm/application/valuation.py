@@ -14,7 +14,10 @@ from modules.avm.application.calibration import (
     DealOutcomeCalibrationReport,
     evaluate_calibration_coverage,
 )
-from modules.avm.application.production import AVMProductionExecutor
+from modules.avm.application.production import (
+    AVMProductionExecutionError,
+    AVMProductionExecutor,
+)
 from modules.avm.domain import (
     LEGACY_UNKNOWN_QUALITY_STATUS,
     QUALITY_SCORE_REQUIRED_MESSAGE,
@@ -42,11 +45,37 @@ class AVMError(ValueError):
 @dataclass(frozen=True)
 class DepreciationRollbackReceipt:
     decider: str
-    decision_time: datetime
+    decision_time: datetime | str
     reason: str
     target_expiry: str | datetime
     depreciation_version_pin: str
     receipt_id: str = field(default_factory=lambda: f"dep-rollback-{uuid4()}")
+
+    def validate(self) -> None:
+        if not self.decider or not str(self.decider).strip():
+            raise AVMError("rollback receipt requires a non-empty decider")
+        if not self.reason or not str(self.reason).strip():
+            raise AVMError("rollback receipt requires a non-empty reason")
+        if not self.depreciation_version_pin or not str(self.depreciation_version_pin).strip():
+            raise AVMError("rollback receipt requires a depreciation_version_pin")
+        dt = (
+            self.decision_time
+            if isinstance(self.decision_time, datetime)
+            else datetime.fromisoformat(str(self.decision_time).replace("Z", "+00:00"))
+        )
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        exp = (
+            self.target_expiry
+            if isinstance(self.target_expiry, datetime)
+            else datetime.fromisoformat(str(self.target_expiry).replace("Z", "+00:00"))
+        )
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=UTC)
+        if exp <= dt:
+            raise AVMError("rollback receipt target_expiry must be after decision_time")
+        if exp <= datetime.now(UTC):
+            raise AVMError("rollback receipt target_expiry has already expired")
 
     def to_dict(self) -> dict[str, Any]:
         dt = (
@@ -178,14 +207,44 @@ class AVMService:
         pin = depreciation_version_pin or self.depreciation_version_pin
         receipt = rollback_receipt or self.rollback_receipt
 
-        if self.production_required:
-            executor = self.production_executor
-            if executor is None:
-                executor = AVMProductionExecutor.from_environment()
-                self.production_executor = executor
-            report = executor.execute(valuing, margin, depreciation_version_pin=pin)
-        else:
-            report = value_store(valuing, margin, depreciation_version_pin=pin)
+        from modules.avm.domain import AVM_DEPRECIATION_LEGACY_VERSION
+
+        if pin == AVM_DEPRECIATION_LEGACY_VERSION:
+            if receipt is None:
+                raise AVMError(
+                    "depreciation rollback to v0 requires a valid matching DepreciationRollbackReceipt"
+                )
+            receipt.validate()
+            if receipt.depreciation_version_pin != pin:
+                raise AVMError(
+                    f"rollback receipt version pin {receipt.depreciation_version_pin!r} does not match active pin {pin!r}"
+                )
+        elif receipt is not None:
+            raise AVMError("rollback receipt provided without an active rollback version pin")
+
+        try:
+            if self.production_required:
+                executor = self.production_executor
+                if executor is None:
+                    executor = AVMProductionExecutor.from_environment()
+                    self.production_executor = executor
+                report = executor.execute(valuing, margin, depreciation_version_pin=pin)
+            else:
+                report = value_store(valuing, margin, depreciation_version_pin=pin)
+        except (ValueError, AVMProductionExecutionError) as exc:
+            # R5: Persist case transition to REVIEW_REQUIRED on named depreciation / valuation failures
+            self.repository.save_case(
+                valuing.transition(
+                    ValuationCaseStatus.REVIEW_REQUIRED,
+                    actor=actor,
+                    reason=f"valuation failed: {exc}",
+                    correlation_id=correlation_id,
+                )
+            )
+            if isinstance(exc, AVMError):
+                raise
+            raise AVMError(str(exc)) from exc
+
         if receipt is not None and pin is not None:
             report.execution_metadata["depreciation_rollback_receipt"] = receipt.to_dict()
         if case.valuation_input.effective_quality_score_status == LEGACY_UNKNOWN_QUALITY_STATUS:

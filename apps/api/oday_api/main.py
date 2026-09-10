@@ -7,6 +7,7 @@ correlation ID tracking middleware, job queues, and the audit log.
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
@@ -1885,6 +1886,46 @@ else:
             ),
             exact_responses=True,
         )
+        avm_dep_pin = os.getenv("ODP_AVM_DEPRECIATION_VERSION_PIN", "").strip() or None
+        avm_rollback_receipt = None
+        avm_rollback_json = os.getenv("ODP_AVM_DEPRECIATION_ROLLBACK_RECEIPT_JSON", "").strip()
+        if avm_rollback_json:
+            try:
+                parsed_receipt = json.loads(avm_rollback_json)
+                from modules.avm.application import DepreciationRollbackReceipt
+
+                avm_rollback_receipt = DepreciationRollbackReceipt(
+                    decider=parsed_receipt["decider"],
+                    decision_time=parsed_receipt["decision_time"],
+                    reason=parsed_receipt["reason"],
+                    target_expiry=parsed_receipt["target_expiry"],
+                    depreciation_version_pin=parsed_receipt.get(
+                        "depreciation_version_pin", avm_dep_pin or ""
+                    ),
+                    receipt_id=parsed_receipt.get("receipt_id", f"dep-rollback-{uuid4()}"),
+                )
+            except Exception:
+                avm_rollback_receipt = None
+        elif avm_dep_pin:
+            decider = os.getenv("ODP_AVM_DEPRECIATION_ROLLBACK_DECIDER", "").strip()
+            reason = os.getenv("ODP_AVM_DEPRECIATION_ROLLBACK_REASON", "").strip()
+            target_exp = os.getenv("ODP_AVM_DEPRECIATION_ROLLBACK_EXPIRY", "").strip()
+            decision_time = os.getenv("ODP_AVM_DEPRECIATION_ROLLBACK_DECISION_TIME", "").strip()
+            if decider and reason and target_exp:
+                from modules.avm.application import DepreciationRollbackReceipt
+
+                avm_rollback_receipt = DepreciationRollbackReceipt(
+                    decider=decider,
+                    decision_time=(
+                        datetime.fromisoformat(decision_time.replace("Z", "+00:00"))
+                        if decision_time
+                        else datetime.now(UTC)
+                    ),
+                    reason=reason,
+                    target_expiry=datetime.fromisoformat(target_exp.replace("Z", "+00:00")),
+                    depreciation_version_pin=avm_dep_pin,
+                )
+
         mount_versioned(
             api,
             create_avm_router(
@@ -1894,6 +1935,8 @@ else:
                 require_durable_commands=require_live_data,
                 production_executor=avm_production_executor,
                 runtime_mode=domain_runtime_mode,
+                depreciation_version_pin=avm_dep_pin,
+                rollback_receipt=avm_rollback_receipt,
             ),
         )
         mount_versioned(

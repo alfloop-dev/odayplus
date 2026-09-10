@@ -13,6 +13,7 @@ from modules.avm.application.calibration import (
 from modules.avm.application.production import (
     AVMProductionExecutionError,
     AVMProductionExecutor,
+    DepreciationCutoverEvidence,
     LiquidityArtifactEvidence,
 )
 from modules.avm.application.valuation import (
@@ -25,6 +26,7 @@ __all__ = [
     "AVMProductionExecutor",
     "AVMService",
     "DealOutcomeCalibrationReport",
+    "DepreciationCutoverEvidence",
     "DepreciationRollbackReceipt",
     "IDEAL_P10_P90_COVERAGE",
     "LiquidityArtifactEvidence",

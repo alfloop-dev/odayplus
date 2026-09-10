@@ -272,6 +272,7 @@ class TestTheDepreciationContract:
         The legacy tag is assigned at rehydration, never as a dataclass
         default -- a default would quietly relabel new cards as legacy too.
         """
+        import json
         legacy_version = _domain_constant("AVM_DEPRECIATION_LEGACY_VERSION")
         assert legacy_version == "avm-depreciation-absent-v0"
 
@@ -282,7 +283,8 @@ class TestTheDepreciationContract:
             and fields["depreciation_version"].default_factory is dataclasses.MISSING
         ), "depreciation_version has a default; every card must state its version on purpose"
 
-        legacy_card = {
+        # Genuine pre-change serialized JSON bytes (stored before depreciation was added)
+        legacy_card_json = json.dumps({
             "case_id": "avm-case-legacy",
             "store_id": BASE_INPUT["store_id"],
             "fair_price": {"p10": 100.0, "p50": 200.0, "p90": 300.0},
@@ -291,7 +293,8 @@ class TestTheDepreciationContract:
             "model_version": "dealroom-avm-baseline-v1",
             "valuation_version": 1,
             "finance_approval": None,
-        }
+        })
+        legacy_card = json.loads(legacy_card_json)
         rehydrate = getattr(
             __import__("modules.avm.domain.valuation", fromlist=["x"]),
             "rehydrate_legacy_valuation_card",
@@ -303,6 +306,7 @@ class TestTheDepreciationContract:
         tagged = rehydrate(legacy_card)
         assert tagged["depreciation_version"] == legacy_version
         assert tagged["depreciation_applied"] is False
+        assert tagged["depreciation_disposition"] == "本估值採 2026-09-03 前之計算版本，資產折舊未納入"
         for key, value in legacy_card.items():
             assert tagged[key] == value, f"rehydration recomputed {key}; see {DOC} section L-1"
 
@@ -313,9 +317,20 @@ class TestTheDepreciationContract:
         the arithmetic that shipped before the cutover.
         """
         legacy_version = _domain_constant("AVM_DEPRECIATION_LEGACY_VERSION")
+        expected_pre_cutover_fair_price = {
+            "p10": 9228258.13,
+            "p50": 11253973.33,
+            "p90": 13279688.53,
+        }
+        expected_pre_cutover_reserve_price = 8951410.39
+        expected_pre_cutover_asking_price = 13943672.96
+
         baseline, baseline_error = _try_report(dict(BASE_INPUT), pin=legacy_version)
         assert baseline_error is None, f"the pre-cutover input path broke: {baseline_error}"
         assert baseline is not None
+        assert baseline.fair_price.to_dict() == expected_pre_cutover_fair_price
+        assert baseline.reserve_price == expected_pre_cutover_reserve_price
+        assert baseline.asking_price == expected_pre_cutover_asking_price
 
         pinned, pin_error = _try_report(
             _payload(asset_in_service_date="2021-03-03"), pin=legacy_version
@@ -323,11 +338,11 @@ class TestTheDepreciationContract:
         assert pin_error is None, f"value_store accepts no depreciation version pin: {pin_error}"
         assert pinned is not None
 
-        assert pinned.fair_price.to_dict() == baseline.fair_price.to_dict(), (
+        assert pinned.fair_price.to_dict() == expected_pre_cutover_fair_price, (
             "a v0 pin did not reproduce the pre-cutover fair price band"
         )
-        assert pinned.reserve_price == baseline.reserve_price
-        assert pinned.asking_price == baseline.asking_price
+        assert pinned.reserve_price == expected_pre_cutover_reserve_price
+        assert pinned.asking_price == expected_pre_cutover_asking_price
         assert pinned.depreciation_version == legacy_version
         assert pinned.depreciation_applied is False
 

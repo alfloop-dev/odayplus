@@ -1875,6 +1875,13 @@ export type ValidationError = {
   type: string;
 };
 
+/** ValueCasePayload */
+export type ValueCasePayload = {
+  actor: string;
+  depreciation_version_pin?: string | null;
+  rollback_receipt?: Record<string, unknown> | null;
+};
+
 /** XlsxCommitReceipt */
 export type XlsxCommitReceipt = {
   accepted_count: number;
