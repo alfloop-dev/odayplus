@@ -8,8 +8,10 @@
 - **Reviewer**: `Codex`
 - **Branch**: `task/ODP-STAGING-IAC-CI-COLLECTION-001`
 - **Target Branch**: `dev`
-- **Base after advance**: `6218337fbe88b99ee45af6c98e0c2f9e4a33fbee`（merge commit `c4be4509`；task brief 開立時的 base 是 `1260d977`）
-- **Code head measured here**: `1965b3636e93881aedb82a9d68282a81f7443a58`
+- **Base after advance**: `9d847c16cae91d5aa842adde0078b8a8b21e10c7`（merge commit `6b2a26cd`；task brief 開立時的 base 是 `1260d977`）
+  - dispatch 要求的 base 是 `91dd050ad1e3`，但備妥這次 merge 期間 dev 已前進到 `9d847c16`（PR #1293，`ORCH-FROZEN-EVIDENCE-BASE-DISPATCH-001`），因此第二個 parent 是 `9d847c16`，`91dd050a` 包含在其中；`git rev-list --count HEAD..origin/dev` = `0`。
+  - `6b2a26cd` 的 commit message 仍寫 `91dd050ad1e3`：那是訊息寫定當下的 dev tip，之後 dev 才前進。auto worker 無權 `git commit --amend`，因此在此更正，而不改寫已成形的 commit。
+- **Code head measured here**: `6b2a26cd52188805683e8866cf463d59fa4537f2`（第 5 節 receipt 全部量測於此 head）
 - **Date**: 2026-09-10
 
 ---
@@ -42,26 +44,74 @@
 ### 3.2 `infra/terraform/tests/test_ephemeral_staging.py` — fail-closed 與離線 harness
 
 - **Fail closed（commit `ba4e8c5f`）**：`CI` 環境變數存在時，缺 `terraform` 直接 `fail()` / `AssertionError`；`terraform init` 非 0 也改為 `AssertionError`。CI 不再有綠色 skip。
-- **離線 harness（commit `1965b363`）**：新增 `run_terraform()` / `offline_terraform_env()`，把「離線」從環境的偶然變成測試的性質：
+- **離線 harness（commit `1965b363`，由 `0a9c27c9` 補完）**：新增 `run_terraform()` / `offline_terraform_env()`，把「離線」從環境的偶然變成測試的性質：
   - 移除所有 `GOOGLE_*`、`GCLOUD_*`、`CLOUDSDK_*`、`GCP_*` 以及 `TF_VAR_credentials`、`TF_TOKEN_app_terraform_io`；
-  - `HOME` 指向 scratch 目錄，因此 `~/.config/gcloud/application_default_credentials.json`（ADC）也找不到。沒有這一步，開發機上 `gcloud auth application-default login` 過的人會讓一個 CI 根本 plan 不動的 module 靜靜通過；
+  - `HOME` 指向 scratch 目錄，因此 `~/.config/gcloud/application_default_credentials.json`（ADC）也找不到；
+  - **provider override（`0a9c27c9`）**：在 module 副本旁寫一個 `zz_offline_provider_override.tf`，給 google provider 一個合成的 `access_token`。Terraform 對 `*_override.tf` 是**逐 argument 合併**，因此 module 自己的 `project` / `region` 原封不動，只多出憑證這一項；換成一般檔名則會是 duplicate provider configuration 錯誤。
+  - **`GOOGLE_APPLICATION_CREDENTIALS` 指向不存在的檔案（`0a9c27c9`）**：只剝環境變數並不夠——ADC 還有 GCE metadata server 這條路。詳見第 3.5 節。
   - 只允許 `init` / `plan` / `validate`，其餘 subcommand（`apply`、`destroy`、`import`）一律 `AssertionError`；
   - `init` 一律附帶 `-backend=false`，不會設定 remote backend。
 - 既有斷言全部保留：真實 HCL、未來 `created_at` 必須讓 plan 失敗、以及 default / empty / long / explicit tenant 四條 plan 斷言。production module（`infra/terraform/modules/`）一個字都沒改。
 
-### 3.3 `tests/tooling/test_staging_iac_ci_collection.py` — 守門測試（16 項）
+### 3.3 `tests/tooling/test_staging_iac_ci_collection.py` — 守門測試（18 項）
 
 `ba4e8c5f` 的 9 項守門測試檢查的是**接線字串**。接線可以完全正確而選集仍然是空的：marker 表達式把整組 deselect、conftest 的 `collect_ignore`、或單純改名，這三種情況下 workflow 那一行長得一模一樣。`1965b363` 因此補上會真的執行的守門：
 
 - `StagingIaCCollectionExecutionTests` 從 `ci.yml` 解析出 marker 與涵蓋該檔案的 target，實跑 `pytest --collect-only`，要求 18 個 node ID 全數回來且不重複。
 - 同類別的 negative control 用一個必然為空的 marker 走同一條程式路徑，確認這個探針**看得見空選集**（pytest exit 5 視為「收集到 0 個」的合法觀測，其他 exit code 一律視為探針本身壞掉）。不能失敗的守門不是守門。
 - `StagingIaCTerraformPinTests` 把 pin 綁到實際執行的 binary：GitHub 的 ubuntu image 自己就帶 Terraform，所以刪掉 setup-terraform step 並不會讓 plan 測試轉紅——它們會繼續對一個未宣告版本通過，而 `ci.yml` 裡的 pin 就變成純文件。現在 `CI` 下 `terraform version -json` 必須回報 `ci.yml` 宣告的版本。
-- `EphemeralStagingOfflineHarnessTests` 直接測 harness 行為：植入的憑證變數確實被剝掉、`HOME` 確實被改寫、`apply`/`destroy`/`import` 確實被拒、`init` 確實帶 `-backend=false`。
+- `EphemeralStagingOfflineHarnessTests` 直接測 harness 行為：植入的憑證變數確實被剝掉、`HOME` 確實被改寫、`GOOGLE_APPLICATION_CREDENTIALS` 確實指向一個**不存在**的路徑（`Path(...).exists()` 為 False，不是只比對字串）、`apply`/`destroy`/`import` 確實被拒、`init` 確實帶 `-backend=false`。
+- `test_the_offline_override_stays_out_of_the_production_module`（`0a9c27c9` 新增）守的是離線 shim 的**外洩方向**：`infra/terraform/modules/` 底下不得出現該 override 檔，任何 `*.tf` 也不得含 `access_token`。寫死的 `access_token` 進了會部署的 module，輕則把 provider 綁在一個死憑證上，重則是外洩的 secret。
 
 ### 3.4 `pyproject.toml`
 
 - `testpaths` 加入 `"infra"`，讓本機裸跑 pytest 與 CI 的收集一致。
 - `norecursedirs`：`ba4e8c5f` 寫成三筆清單，但 pytest 的 `norecursedirs` 是**取代**預設值而非附加，那會讓收集開始遞迴進 `.git`、`build`、`dist` 等目錄。`1965b363` 把 pytest 預設值逐條寫回，只額外加上 `.orchestrator/source-doc-cache`——它是 `.git/info/exclude` 排除的本機快取，收了 `infra` 之後裡面會出現第二個 `test_ephemeral_staging.py`，pytest 會以重複模組名拒絕收集。
+
+### 3.5 修復 PR #1291 required CI 的兩處失敗（commit `0a9c27c9`）
+
+Reviewer 於 2026-09-10T14:20:47Z reopen，指出 run `34464145157` 是**真的紅**、不是 stale gate。兩處失敗成因互不相同，兩處都不是靠「缺工具就 skip」修掉的。
+
+#### (1) `orchestrator` job：5 項 plan 探針全紅
+
+Job `102828645320` 的實際錯誤（自 CI log 取得，非轉述）：
+
+```
+Error: Attempted to load application default credentials since neither
+`credentials` nor `access_token` was set in the provider block.
+No credentials loaded.
+```
+
+`1965b363` 的 harness 只做到「把憑證環境變數剝乾淨」，但那只移除 ADC 的**檔案**路徑；google provider 仍然需要*某個*憑證才能完成 configure。修法是給它一個合成的 `access_token`（見 3.2）。
+
+**為什麼本機一直是綠的**：本機開發機是 GCE VM（`Linux 7.0.0-1011-gcp`），ADC 在環境變數與 `HOME` 都被清空後，仍會 fallback 到 metadata server（實測 `169.254.169.254` 可達，回傳 `alfaloop-data-project-2`），provider 於是以該 VM 的身分通過。GitHub runner 沒有 metadata server，所以同一份 harness 在 CI 必紅。這正是 3.2 註解原本自稱要避免、卻沒真正擋住的「測試性質變成機器性質」。
+
+因此 harness 另外把 `GOOGLE_APPLICATION_CREDENTIALS` 指向一個不存在的檔案：ADC 會**優先**讀它、讀不到就直接失敗，不會 fallback 到 metadata server。副作用是本機從此可以忠實重現 CI 的憑證條件。
+
+**反向對照（negative control）**：把 `write_offline_provider_override()` 的寫檔那行換成 `pass`（其餘不動），在本機重跑：
+
+（`addopts` 已含 `-q`，命令再帶 `-q` 會疊成 `-qq`，因此沒有摘要行；以下是 exit code 與實際的 `FAILED` 行）
+
+```
+exit code: 1
+FAILED ...::EphemeralStagingModuleContractTests::test_terraform_standalone_plan_guards_future_timestamp_and_accepts_valid
+FAILED ...::EphemeralStagingDefaultTenantPlanTests::test_default_generated_tfvars_plan_succeeds_with_derived_tenant
+FAILED ...::EphemeralStagingDefaultTenantPlanTests::test_explicit_tenant_still_wins_over_the_derived_one
+FAILED ...::EphemeralStagingDefaultTenantPlanTests::test_plan_tolerates_an_explicitly_empty_tenant_id
+FAILED ...::EphemeralStagingDefaultTenantPlanTests::test_terraform_and_python_derive_the_same_bounded_tenant
+```
+
+與 CI job `102828645320` 的 5 個 node ID 及錯誤訊息**逐項相同**，且 `Attempted to load application default credentials` 出現 5 次。這同時證明兩件事：override 是承重的（拿掉就紅），以及本機現在量到的綠是 CI 條件下的綠，不是靠機器身分蒙混過去的。改動已還原。
+
+#### (2) `product` job：`test_ci_plans_with_the_pinned_terraform` 失敗
+
+Job `102828700363`。本檔位於 `tests/tooling`，而**兩個** job 都會收集它：`orchestrator`（裝了 Terraform、真的跑 plan 探針）與 `product`（`tests modules apps shared models`，刻意不裝 Terraform、也不跑探針）。原本的判準是 `os.environ.get("CI")`，於是它對著 `product` 要一個該 job 沒有理由攜帶的工具。
+
+改成以 `GITHUB_JOB` 比對「**由 `ci.yml` 推導出來**、裝了 setup-terraform 的那個 job」（`terraform_plan_job()`），要求就跟著探針走，而不是釘死在某個 job 名字上。缺工具在**那個** job 仍然 fail-closed。
+
+新增 `test_the_job_that_installs_terraform_is_the_one_that_runs_the_probes` 守住這個判準本身：若探針被搬到不裝 Terraform 的 job，`GITHUB_JOB` 永遠比不中，上面那條就會安靜地不再要求任何東西。
+
+三種情境實測（見 Receipt 8）：`product` 無 Terraform → 綠；`orchestrator` 無 Terraform → 紅（fail-closed 保住）；`orchestrator` 有 Terraform → 綠且版本 pin 生效。
 
 ---
 
@@ -100,16 +150,17 @@
 ## 5. 驗證收據 (Verification Receipts)
 
 以下 Receipt 1–3 由 `delivery_toolchain/git/task_verification.py run` 產生，收據檔案在
-`.orchestrator/evidence/verification-odp_staging_iac_ci_collection_001-*.json`，各自綁定 head SHA、確切命令、真實 exit code 與時長。全部量測於 code head `1965b3636e93881aedb82a9d68282a81f7443a58`。
+`.orchestrator/evidence/verification-odp_staging_iac_ci_collection_001-*.json`，各自綁定 head SHA、確切命令、真實 exit code 與時長。全部量測於 code head `6b2a26cd52188805683e8866cf463d59fa4537f2`（base advance merge 之後）。
 
 | # | Command | Exit | Duration | Recorded (UTC) |
 |---|---------|------|----------|----------------|
-| 1 | `git diff --check` | 0 | 0.014s | 2026-09-10T10:00:54Z |
-| 2 | `uv run pytest infra/terraform/tests/test_ephemeral_staging.py -q` | 0 | 21.038s | 2026-09-10T10:01:16Z |
-| 3 | `uv run pytest tests/tooling/test_staging_iac_ci_collection.py -q` | 0 | 10.508s | 2026-09-10T10:01:26Z |
+| 1 | `git diff --check` | 0 | 0.018s | 2026-09-10T15:08:36Z |
+| 2 | `uv run pytest infra/terraform/tests/test_ephemeral_staging.py -q` | 0 | 23.131s | 2026-09-10T15:08:59Z |
+| 3 | `uv run pytest tests/tooling/test_staging_iac_ci_collection.py -q` | 0 | 12.508s | 2026-09-10T15:09:12Z |
 
-- Receipt 2 = 18 passed（`addopts` 已含 `-q`，加上命令自己的 `-q` 後不印摘要行，計數以第 5 節的收集輸出為準）。
-- Receipt 3 = 16 passed。
+- Receipt 2 = 18 passed（`addopts` 已含 `-q`，加上命令自己的 `-q` 後不印摘要行；獨立以 `-v` 跑同一選集為 `18 passed`，計數另見第 5 節 Receipt 5 的收集輸出）。
+- Receipt 3 = 18 passed。
+- 本文件 commit 之後 head 會再前進一次，屆時會以新 head 重跑同一組宣告命令，`task_finalize.sh` 的 `task_verification check` 即以該次收據為準。
 - **Terraform version（本機實測）**: `terraform version -json` → `1.9.8`，與 `ci.yml` 的 pin 相同。
 
 ### Receipt 4: ruff（CI 的兩組 selection）
@@ -129,10 +180,10 @@ uv run pytest -o addopts= --collect-only -q -m "not requires_live_env" \
 ```
 
 - Exit code: `0`
-- `2717/2727 tests collected (10 deselected) in 1.35s`
+- `2727/2737 tests collected (10 deselected) in 3.18s`
 - `infra/terraform/tests/test_ephemeral_staging.py::` 開頭的 node ID：**18**
 - `infra/` 開頭的 node ID：32
-- `tests/tooling/test_staging_iac_ci_collection.py::` 開頭的 node ID：16
+- `tests/tooling/test_staging_iac_ci_collection.py::` 開頭的 node ID：18
 
 ### Receipt 6: 守門測試的 mutation check
 
@@ -145,12 +196,40 @@ uv run pytest -o addopts= --collect-only -q -m "not requires_live_env" \
 
 ### Receipt 7: base advance 完整性
 
+第一次 base advance（`c4be4509`）：
+
 | 檢查 | 結果 |
 |------|------|
 | `git merge-tree --write-tree HEAD origin/dev`（merge 前） | `f8d9c9349e4595497d27c876dae3ac179ec2c07c` |
 | `git rev-parse HEAD^{tree}`（merge 後） | `f8d9c9349e4595497d27c876dae3ac179ec2c07c` — 逐位元相同，非縮水 merge |
 | `git log -1 --format=%P` | 兩個 parent（`ba4e8c5f`、`6218337f`） |
 | `git rev-list --count HEAD..origin/dev` | `0` |
+
+第二次 base advance（`6b2a26cd`，本次 dispatch）。`worker_commit.py` 不理解 merge，它是以 `--scope` 清單重建 tree，漏一個檔就會做出無聲的 evil merge，所以這裡逐位元比對：
+
+| 檢查 | 結果 |
+|------|------|
+| `git merge-tree --write-tree HEAD origin/dev`（merge 前） | `0859dbf63392c50fd63eb53f2611181a629dcf6a` |
+| `git rev-parse HEAD^{tree}`（merge 後） | `0859dbf63392c50fd63eb53f2611181a629dcf6a` — 逐位元相同 |
+| `git log -1 --format=%P` | 兩個 parent（`0a9c27c9`、`9d847c16`） |
+| `git rev-list --count HEAD..origin/dev` | `0` |
+| `--scope` 檔數 vs `git diff --cached --name-only HEAD` | 55 vs 55（35 A、20 M，無刪除） |
+| `check_code_boundaries.py` | exit 0，1153 files |
+| boundary inventory 重複列（`cut -d, -f1 \| sort \| uniq -d`） | 無 |
+
+### Receipt 8: `GITHUB_JOB` 判準的三種情境實測
+
+`/usr/local/bin` 只有 `terraform` 一個執行檔，因此把它移出 `PATH` 就是乾淨的「runner 沒裝 Terraform」模擬。選集固定為 `tests/tooling/test_staging_iac_ci_collection.py::StagingIaCTerraformPinTests::test_ci_plans_with_the_pinned_terraform`：
+
+| 情境 | Exit | 說明 |
+|------|------|------|
+| `GITHUB_JOB=product`、`CI=true`、PATH 無 terraform | 0 | 正是 job `102828700363` 修掉的那個紅 |
+| `GITHUB_JOB=orchestrator`、`CI=true`、PATH 無 terraform | 1 | fail-closed 保住：`job 'orchestrator' runs the plan probes and must install the pinned terraform` |
+| `GITHUB_JOB=orchestrator`、`CI=true`、terraform 在 PATH | 0 | 版本 pin 生效（`1.9.8`） |
+
+### Receipt 9: secret scan
+
+`uv run python delivery_toolchain/security/secret_scan.py` → exit `0`，`No violations found`。harness 的 `access_token` 值刻意短於掃描器 `access[_-]token` 樣式的 16 字元門檻，且該值只存在於 test-side override，不在任何會部署的 `.tf`。
 
 ---
 
