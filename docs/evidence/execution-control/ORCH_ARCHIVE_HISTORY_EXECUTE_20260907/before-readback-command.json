@@ -1,0 +1,12 @@
+{
+  "started_at": "2026-09-09T16:22:56.796251+00:00",
+  "finished_at": "2026-09-09T16:22:57.315733+00:00",
+  "argv": [
+    "python3",
+    "/home/lupin/odayplus-handoffs/archive-invalidation-live-20260909/readback.py",
+    "before-apply.json"
+  ],
+  "exit_code": 0,
+  "stdout": "{\"receipt\": \"/home/lupin/odayplus-handoffs/archive-invalidation-live-20260909/before-apply.json\", \"runtime_sha\": \"50581b3b180aedaf76fbe4aaffb3bf7e2d120050\", \"targets\": [{\"task_id\": \"ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001\", \"original_status\": \"done\", \"snapshot_sha256\": \"2f1436d107dd1b13111db3550b1b7566c2db69e90bd8a757cf33a085a1237114\", \"effective_status\": \"done\", \"dependency_satisfied\": true, \"correction\": null, \"downstream_task_id\": \"ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001\", \"downstream_status\": \"todo\", \"downstream_declares_target_dependency\": true, \"downstream_admission_by_runtime\": false}, {\"task_id\": \"ODP-MODELREADY-QUALITY-NULLABLE-001\", \"original_status\": \"done\", \"snapshot_sha256\": \"d70d96a8acae775d9babb277d033760062c84a702210d68827455fdfa1be73ea\", \"effective_status\": \"done\", \"dependency_satisfied\": true, \"correction\": null, \"downstream_task_id\": \"ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001\", \"downstream_status\": \"todo\", \"downstream_declares_target_dependency\": true, \"downstream_admission_by_runtime\": false}]}\n",
+  "stderr": ""
+}

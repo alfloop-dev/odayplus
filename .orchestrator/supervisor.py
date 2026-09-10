@@ -104,6 +104,12 @@ from common import (
     REOPEN_REASON_WORKTREE_LEASE_MISMATCH,
 )
 from coordination_file_watcher import sync_coordination_files
+# The account-pool resolver (`agent_account_pool_id` and the three functions it
+# is built from) and `review_is_independent` live in `dispatch_policy` rather
+# than here: the canonical CLI has to answer "are these two names the same real
+# account?" before it writes an assignment, and it must be able to do that
+# without importing the supervisor. They stay bound in this module's namespace,
+# which is the one every existing caller -- and every test patch point -- uses.
 from dispatch_policy import (
     DISPATCH_STATUS_ACTIONS,
     REASON_HELPER_CLAIM,
@@ -111,11 +117,22 @@ from dispatch_policy import (
     REASON_OWNED_IN_PROGRESS,
     REASON_OWNED_READY,
     REASON_REVIEW_READY,
+    ROLE_HELPER,
+    ROLE_OWNER,
+    ROLE_REVIEWER,
+    agent_account_pool_id,
+    agent_provider_id,
+    agent_quota_group_id,
     dispatch_reason_priority,
+    dispatch_reason_role,
     is_execution_dispatch_reason,
     normalized_status_set,
+    provider_dispatch_group_id,
     ready_dispatch_settings,
+    review_is_independent,
+    role_provider_block_reason,
     task_priority_rank,
+    task_submitted_author,
 )
 from github_reconciliation import (
     CI_FAILURE,
@@ -460,7 +477,14 @@ def reconcile_capacity_controller(
     )
     if additions:
         known = {str(task.get(task_id_field) or task.get("id") or "") for task in tasks}
-        additions = [task for task in additions if str(task.get(task_id_field) or task.get("id") or "") not in known]
+        additions = [
+            task
+            for task in additions
+            if (
+                str(task.get(task_id_field) or task.get("id") or "") not in known
+                and load_archived_task(str(task.get(task_id_field) or task.get("id") or "")) is None
+            )
+        ]
     if additions:
         status.setdefault(tasks_path, []).extend(additions)
         if not commit_canonical_task_transition(config, status):
@@ -509,7 +533,7 @@ from runtime_state import (
     replace_event_queue,
     save_runtime_state,
 )
-from task_archive import TaskResolver
+from task_archive import TaskResolver, load_archived_task
 from watch_events import (
     enqueue_runtime_events_enabled,
     queue_delivery_event,
@@ -1407,44 +1431,6 @@ def provider_runtime_config_block_reason(config: dict[str, Any], provider: str |
     return str(health.get("error") or f"{provider_key or provider} provider config is invalid.")
 
 
-def provider_dispatch_group_id(config: dict[str, Any], provider: str | None) -> str:
-    provider_id = normalize_agent_id(provider or "")
-    if not provider_id:
-        return ""
-    provider_cfg = provider_config(config, provider)
-    group = (
-        provider_cfg.get("quota_group")
-        or provider_cfg.get("dispatch_group")
-        or provider_cfg.get("account_group")
-    )
-    return normalize_agent_id(str(group or provider_id))
-
-
-def agent_provider_id(config: dict[str, Any], agent_id: str | None) -> str:
-    normalized = normalize_agent_id(agent_id or "")
-    if not normalized:
-        return ""
-    agent = (config.get("agents", {}) or {}).get(normalized, {}) or {}
-    return normalize_agent_id(str(agent.get("provider") or normalized))
-
-
-def agent_quota_group_id(config: dict[str, Any], agent_id: str | None) -> str:
-    """Return the real account pool for an execution identity.
-
-    `quota_group` was historically provider-scoped, which made aliases such as
-    Antigravity2..7 look like independent accounts.  An explicit agent
-    `account_pool` is authoritative and lets multiple logical roles share one
-    provider account, quota budget, and worker-slot set.
-    """
-    normalized = normalize_agent_id(agent_id or "")
-    agent = (config.get("agents", {}) or {}).get(normalized, {}) or {}
-    explicit_pool = agent.get("account_pool") or agent.get("quota_group")
-    if explicit_pool:
-        return normalize_agent_id(str(explicit_pool))
-    provider_id = agent_provider_id(config, agent_id)
-    return provider_dispatch_group_id(config, provider_id or agent_id)
-
-
 def account_pool_settings(config: dict[str, Any], agent_id: str | None) -> tuple[str, dict[str, Any]]:
     """Return the configured real-account pool for an execution identity.
 
@@ -1686,17 +1672,6 @@ def account_pool_dispatch_block_reason(
         detail = str(runtime.get("reason") or "").strip()
         return f"account pool {pool_id} is {lifecycle}" + (f": {detail}" if detail else "")
     return None
-
-
-def agent_account_pool_id(config: dict[str, Any], agent_id: str | None) -> str:
-    """Semantic alias used for independence checks and dashboard reporting."""
-    return agent_quota_group_id(config, agent_id)
-
-
-def review_is_independent(config: dict[str, Any], owner: str | None, reviewer: str | None) -> bool:
-    owner_pool = agent_account_pool_id(config, owner)
-    reviewer_pool = agent_account_pool_id(config, reviewer)
-    return bool(owner_pool and reviewer_pool and owner_pool != reviewer_pool)
 
 
 def active_quota_group_counts(
@@ -3783,10 +3758,20 @@ def review_submission_is_complete(config: dict[str, Any], task: dict[str, Any]) 
         pr_number = 0
     task_ref = task_id.lower().replace("_", "-")
     branch_ref = expected_branch.strip("/").lower().replace("_", "-")
+    # A task may need a distinct, auditable replacement branch (for example
+    # ``task/<task-id>-clean``) while an older PR ref remains published. Accept
+    # only the task-id itself or a suffix separated by ``-``/``/``; never treat
+    # an unrelated branch that merely contains the task id as its provenance.
+    branch_task_match = (
+        branch_ref == task_ref
+        or branch_ref.endswith(f"/{task_ref}")
+        or branch_ref.startswith(f"{task_ref}-")
+        or branch_ref.startswith(f"task/{task_ref}-")
+    )
     return bool(
         task_id
         and pr_number > 0
-        and (branch_ref == task_ref or branch_ref.endswith(f"/{task_ref}"))
+        and branch_task_match
         and str(submission.get("branch") or "") == expected_branch
         and str(submission.get("base_branch") or "") == expected_base
         and re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", str(submission.get("remote_sha") or ""))
@@ -3800,12 +3785,19 @@ def task_actor_assignment_block_reason(
     agent_name: str | None,
     *,
     require_dispatch_eligibility: bool = True,
+    role: str | None = None,
 ) -> str | None:
     """Return a stable assignment problem, excluding momentary slot occupancy.
 
     Non-dispatchable and human-gate tasks still need registered actors for
     durable ownership and audit history, but their actors must not be judged
     by the dispatch predicate that deliberately rejects those task classes.
+
+    `role` names which side of the assignment is being audited, so an actor that
+    a role/provider policy excludes is reported here as a stable assignment
+    problem rather than only being skipped later by the selector. That is what
+    makes a reviewer left on an excluded lane get repaired instead of sitting on
+    the board looking assigned while no dispatch will ever reach it.
     """
     name = str(agent_name or "").strip()
     if not name:
@@ -3820,7 +3812,7 @@ def task_actor_assignment_block_reason(
         return f"actor {name} is a dispatch slot"
     if not require_dispatch_eligibility:
         return None
-    if not agent_can_take_task(config, name, task):
+    if not agent_can_take_task(config, name, task, role=role):
         return f"actor {name} is disabled or not eligible for this task"
     pool_reason = account_pool_dispatch_block_reason(config, name, runtime_state=state)
     if pool_reason:
@@ -3849,6 +3841,7 @@ def task_assignment_integrity_issues(
         task,
         owner,
         require_dispatch_eligibility=requires_dispatch,
+        role=ROLE_OWNER,
     )
     reviewer_reason = task_actor_assignment_block_reason(
         config,
@@ -3856,6 +3849,7 @@ def task_assignment_integrity_issues(
         task,
         reviewer,
         require_dispatch_eligibility=requires_dispatch,
+        role=ROLE_REVIEWER,
     )
     if owner_reason:
         issues.append(f"owner_unavailable:{owner_reason}")
@@ -3877,7 +3871,18 @@ def task_assignment_integrity_issues(
         and waiting_for
         and not is_human_gate_agent(waiting_for)
     ):
-        waiting_reason = task_actor_assignment_block_reason(config, state, task, waiting_for)
+        # `waiting_for` is not a third role. It names whichever of the two
+        # actors the board is currently waiting on, so it is audited as that
+        # actor's role; a label matching neither is audited without one rather
+        # than being assumed to be owner work.
+        waiting_role = (
+            ROLE_REVIEWER
+            if reviewer and waiting_for == reviewer
+            else (ROLE_OWNER if owner and waiting_for == owner else None)
+        )
+        waiting_reason = task_actor_assignment_block_reason(
+            config, state, task, waiting_for, role=waiting_role
+        )
         if waiting_reason:
             issues.append(f"waiting_for_unavailable:{waiting_reason}")
     elif str(task.get("status") or "").strip().lower() == "blocked" and not waiting_for:
@@ -3938,7 +3943,26 @@ def normalize_task_assignment_integrity(
     new_waiting_for: str | None = None
     changes: list[str] = []
 
-    if "owner_unavailable" in assignment_issues and not is_human_gate_agent(owner):
+    # Once work has been submitted, the owner field is the author of the commits
+    # under review, not a slot the reconciler may re-fill. Replacing it here
+    # would do more than relabel the record: the reviewer search below excludes
+    # the *new* owner's pool, so rewriting a Codex author to Claude would leave
+    # the author's own Codex pool eligible to review its own commits -- exactly
+    # the self-review a provider policy is supposed to prevent, reached by
+    # obeying that policy. The author is therefore pinned for every reason, not
+    # only for policy ones: a disabled or out-of-quota author on a pinned head
+    # is a task that waits, not a task that changes hands.
+    submitted_author = task_submitted_author(config, task)
+    author_pool_exclusions = (
+        {agent_account_pool_id(config, submitted_author)} if submitted_author else set()
+    )
+    author_is_pinned = bool(submitted_author) and submitted_author == owner
+
+    if (
+        "owner_unavailable" in assignment_issues
+        and not is_human_gate_agent(owner)
+        and not author_is_pinned
+    ):
         owner_candidates = get_agent_reassignment_candidates(config, owner, role="owner", task=task)
         replacement = first_viable_agent(
             config,
@@ -3970,12 +3994,17 @@ def normalize_task_assignment_integrity(
         replacement = first_viable_agent(
             config,
             reviewer_candidates,
-            exclude={new_owner, reviewer},
+            exclude={new_owner, reviewer} | ({submitted_author} if submitted_author else set()),
             state=state,
             task=task,
             status=status,
             role="reviewer",
-            exclude_pools={agent_account_pool_id(config, new_owner)},
+            # The submitted author's pool is excluded alongside the current
+            # owner's. They are the same pool while the author is still the
+            # owner; they differ exactly when an earlier pass already moved the
+            # owner, and that is the case where dropping it would hand the
+            # review back to whoever wrote the branch.
+            exclude_pools={agent_account_pool_id(config, new_owner)} | author_pool_exclusions,
         )
         if replacement:
             new_reviewer = replacement
@@ -4357,14 +4386,14 @@ def normalize_mainline_task_assignment(
     reopen_blocked = blocked_task_auto_recovery_eligible(config, task, task_map)
     owner_allowed = (
         task_status not in {"todo", "in_progress", "review_approved", "blocked"}
-        or agent_can_take_task(config, owner, task)
+        or agent_can_take_task(config, owner, task, role=ROLE_OWNER)
     )
     # A reviewer label is only executable while the task is in review.  Older
     # task records commonly keep a coordinator/placeholder reviewer on todo
     # work; that metadata must not trigger an unnecessary owner reassignment.
     reviewer_allowed = (
         task_status != "review"
-        or agent_can_take_task(config, reviewer, task)
+        or agent_can_take_task(config, reviewer, task, role=ROLE_REVIEWER)
     )
     if owner_allowed and reviewer_allowed and not reopen_blocked:
         return False
@@ -4373,8 +4402,18 @@ def normalize_mainline_task_assignment(
     new_reviewer = reviewer
     changed_fields: list[str] = []
 
+    # A reopen returns the task to `in_progress` -- an eligible status here --
+    # while `review_submission` and `approved_head` stay on the record. So this
+    # path can also reach work whose owner is the author of an already-submitted
+    # branch, and the same rule applies: the author is preserved, and its pool
+    # stays out of the reviewer search.
+    submitted_author = task_submitted_author(config, task)
+    author_pool_exclusions = (
+        {agent_account_pool_id(config, submitted_author)} if submitted_author else set()
+    )
+
     if owner and not owner_allowed:
-        if is_human_gate_agent(owner):
+        if is_human_gate_agent(owner) or submitted_author == owner:
             return False
         owner_candidates = get_agent_reassignment_candidates(config, owner, role="owner", task=task)
         replacement_owner = first_viable_agent(config, owner_candidates, exclude={owner, reviewer}, task=task, role="owner")
@@ -4393,7 +4432,14 @@ def normalize_mainline_task_assignment(
         if owner:
             reviewer_candidates.extend(get_agent_reassignment_candidates(config, owner, role="reviewer", task=task))
             reviewer_candidates.extend(get_agent_reassignment_candidates(config, owner, role="owner", task=task))
-        replacement_reviewer = first_viable_agent(config, reviewer_candidates, exclude={new_owner}, task=task, role="reviewer")
+        replacement_reviewer = first_viable_agent(
+            config,
+            reviewer_candidates,
+            exclude={new_owner} | ({submitted_author} if submitted_author else set()),
+            task=task,
+            role="reviewer",
+            exclude_pools={agent_account_pool_id(config, new_owner)} | author_pool_exclusions,
+        )
         if not replacement_reviewer or is_human_gate_agent(replacement_reviewer):
             return False
         new_reviewer = replacement_reviewer
@@ -4405,8 +4451,8 @@ def normalize_mainline_task_assignment(
 
     blocked_agents = [
         agent_name
-        for agent_name in (owner, reviewer)
-        if agent_name and not agent_can_take_task(config, agent_name, task)
+        for agent_name, agent_role in ((owner, ROLE_OWNER), (reviewer, ROLE_REVIEWER))
+        if agent_name and not agent_can_take_task(config, agent_name, task, role=agent_role)
     ]
     blocked_summary = ", ".join(dict.fromkeys(blocked_agents)) or "disallowed lane"
     if changed_fields:
@@ -4525,7 +4571,7 @@ def _dispatcher_owner_execution_priority(
     if is_human_gate_agent(owner) or is_human_gate_agent(waiting_for):
         return None
 
-    if not owner or not agent_can_take_task(config, owner, task):
+    if not owner or not agent_can_take_task(config, owner, task, role=ROLE_OWNER):
         return None
 
     settings_map = ready_dispatch_settings(config)

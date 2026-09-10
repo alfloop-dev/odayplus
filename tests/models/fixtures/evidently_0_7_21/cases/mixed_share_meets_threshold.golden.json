@@ -1,0 +1,99 @@
+{
+  "case_id": "mixed_share_meets_threshold",
+  "description": "One of two numeric columns drifts; drift_share == drift_share_threshold.",
+  "kind": "data_drift",
+  "metrics_index": {
+    "columns": {
+      "demand": {
+        "id": "d68f9d174bd22d48d0856d226943a02b",
+        "method": "K-S p_value",
+        "metric_name": "ValueDrift(column=demand,method=K-S p_value,threshold=0.05)",
+        "threshold": 0.05,
+        "value": 1.9426434495222354e-119
+      },
+      "rent": {
+        "id": "c13e4e091769a22086e848a83ae8cf52",
+        "method": "K-S p_value",
+        "metric_name": "ValueDrift(column=rent,method=K-S p_value,threshold=0.05)",
+        "threshold": 0.05,
+        "value": 1.0
+      }
+    },
+    "drifted_columns_count": {
+      "count": 1.0,
+      "drift_share_argument": 0.5,
+      "id": "15e89f895b482f9b84ba7274ed18a106",
+      "metric_name": "DriftedColumnsCount(drift_share=0.5)",
+      "share": 0.5
+    }
+  },
+  "outcome": "completed",
+  "result": {
+    "cohort_key": null,
+    "current_snapshot_id": null,
+    "decision_policy_version_id": null,
+    "drift_detected": true,
+    "drift_share": 0.5,
+    "drifted_column_names": [
+      "demand"
+    ],
+    "drifted_columns": 1,
+    "engine": "evidently",
+    "model_name": null,
+    "model_version": null,
+    "prediction_columns": [],
+    "prediction_output_types": null,
+    "reference_snapshot_id": null,
+    "snapshot_id": "baseline-share-meets"
+  },
+  "routing_expectation": "N<=1000, Numerical, merged unique>5 -> ks_stat_test on both columns",
+  "to_dict": {
+    "drift_detected": true,
+    "drift_share": 0.5,
+    "drifted_column_names": [
+      "demand"
+    ],
+    "drifted_columns": 1,
+    "engine": "evidently",
+    "report": {
+      "metrics": [
+        {
+          "config": {
+            "drift_share": 0.5,
+            "type": "evidently:metric_v2:DriftedColumnsCount"
+          },
+          "id": "15e89f895b482f9b84ba7274ed18a106",
+          "metric_name": "DriftedColumnsCount(drift_share=0.5)",
+          "value": {
+            "count": 1.0,
+            "share": 0.5
+          }
+        },
+        {
+          "config": {
+            "column": "demand",
+            "method": "K-S p_value",
+            "threshold": 0.05,
+            "type": "evidently:metric_v2:ValueDrift"
+          },
+          "id": "d68f9d174bd22d48d0856d226943a02b",
+          "metric_name": "ValueDrift(column=demand,method=K-S p_value,threshold=0.05)",
+          "value": 1.9426434495222354e-119
+        },
+        {
+          "config": {
+            "column": "rent",
+            "method": "K-S p_value",
+            "threshold": 0.05,
+            "type": "evidently:metric_v2:ValueDrift"
+          },
+          "id": "c13e4e091769a22086e848a83ae8cf52",
+          "metric_name": "ValueDrift(column=rent,method=K-S p_value,threshold=0.05)",
+          "value": 1.0
+        }
+      ],
+      "tests": []
+    },
+    "snapshot_id": "baseline-share-meets"
+  }
+}

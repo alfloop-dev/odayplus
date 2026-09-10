@@ -20,6 +20,19 @@ def is_non_executable_receipt_job_type(job_type: str) -> bool:
 
 from shared.governance.vocabularies import JobDeliveryState, JobStatus
 
+# Business outcomes that also settle delivery: once the work itself has reached
+# one of these, no further delivery attempt is owed, so a leftover
+# ``JobDeliveryState.RETRYING`` from an earlier attempt would misreport the job
+# as still being redelivered (ODP-FR-SHARED-001 orthogonality rule).
+#
+# ``JobStatus.FAILED`` is deliberately excluded: a failure that exhausted its
+# retry budget carries ``JobDeliveryState.DEAD_LETTER``, which is delivery
+# information the caller still needs. ``QUEUED`` and ``RUNNING`` are excluded
+# because delivery is still in flight there.
+DELIVERY_SETTLED_JOB_STATUSES: frozenset[JobStatus] = frozenset(
+    {JobStatus.SUCCEEDED, JobStatus.PARTIAL, JobStatus.CANCELLED}
+)
+
 
 class NonRetryableJobError(RuntimeError):
     """Raised when a job should fail permanently without further retries."""
@@ -346,6 +359,25 @@ class InMemoryJobQueue:
         fence_token: int | None = None,
         error_message: str | None = None,
     ) -> None:
+        """Write a job's outcome, and settle its delivery state alongside it.
+
+        ``delivery_state`` keeps its existing three-way meaning for callers:
+
+        - omitted / ``None`` on a non-settled status (``QUEUED``, ``RUNNING``,
+          ``FAILED``) leaves the stored delivery state untouched;
+        - an explicit value writes that value, so the worker's
+          ``FAILED`` + ``DEAD_LETTER`` and ``QUEUED`` + ``RETRYING`` writes in
+          ``apps/worker/oday_worker/main.py`` are unchanged;
+        - any status in :data:`DELIVERY_SETTLED_JOB_STATUSES` clears it to
+          ``None``, because the work is finished and no delivery attempt is
+          still owed.
+
+        The settled-status rule wins over an explicit ``delivery_state``. That
+        is the pre-existing behaviour for ``SUCCEEDED``, now extended to
+        ``PARTIAL`` and ``CANCELLED``; no call site has to change and no
+        signature changes.
+        """
+
         with self._reservation_lock:
             if job_id not in self._jobs:
                 raise ValueError(f"Job {job_id} not found")
@@ -360,7 +392,10 @@ class InMemoryJobQueue:
                 )
 
             resolved_delivery = delivery_state if delivery_state is not None else record.delivery_state
-            if status == JobStatus.SUCCEEDED:
+            if status in DELIVERY_SETTLED_JOB_STATUSES:
+                # Parity with DurableJobQueue.update_status: a settled outcome
+                # clears delivery mechanics rather than inheriting the previous
+                # record's RETRYING.
                 resolved_delivery = None
 
             self._jobs[job_id] = JobRecord(
@@ -414,6 +449,7 @@ class InMemoryJobQueue:
 
 
 __all__ = [
+    "DELIVERY_SETTLED_JOB_STATUSES",
     "InMemoryJobQueue",
     "JobDeliveryState",
     "JobRecord",

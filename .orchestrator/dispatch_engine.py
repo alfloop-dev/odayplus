@@ -10,10 +10,18 @@ from common import parse_iso_timestamp as parse_runtime_timestamp
 from dispatch_policy import (
     DEFAULT_HELPER_CLAIMABLE_STATUSES,
     REASON_HELPER_CLAIM,
+    ROLE_OWNER,
+    dispatch_priority_reason,
+    dispatch_reason_role,
+    role_provider_block_reason,
     task_priority_rank,
+    task_submitted_author,
     worker_logical_dispatch_agent_id,
 )
-from worker_failure_policy import owner_preference_ranks
+from worker_failure_policy import (
+    auto_dispatch_block_is_temporary_capacity,
+    owner_preference_ranks,
+)
 
 
 def _supervisor_module():
@@ -393,22 +401,60 @@ def approved_pr_change_scope(pr_number: int) -> str | None:
         return None
 
 
+def _is_repository_slug(value: str | None) -> bool:
+    """Whether a value is the `owner/name` GitHub slug `gh --repo` accepts."""
+    owner, sep, name = str(value or "").strip().partition("/")
+    return bool(sep and owner and name and "/" not in name)
+
+
 def _task_repository_slug(config: dict[str, Any], task: dict[str, Any]) -> str:
-    """The task's repository slug, or "" when it cannot be resolved.
+    """The task's repository as an `owner/name` slug, or "" when unresolvable.
 
     Routing used to rely on the supervisor's cwd, which silently answered for
-    ODay Plus whatever repository the task belonged to.
+    ODay Plus whatever repository the task belonged to. Declaring the repository
+    on the task fixed that, but the declared value was then handed to
+    `gh --repo` verbatim -- and `task.repository` is a *registry name*, not a
+    slug. `pantheon` is the registry id of this very checkout (see
+    `multi_repo_registry.LEGACY_SELF_REPO_ID`), written into task records going
+    back months, so an approved PR carrying it was routed with `--repo pantheon`;
+    `gh` rejects that, and the PR was reported `merge_route_blocked` every tick
+    and never enqueued.
+
+    The registry already owns name -> slug for ids, aliases and display names,
+    so this asks it rather than growing a second spelling here. A repository the
+    registry does not carry can still be addressed directly, as long as it was
+    written as `owner/name` in the first place.
     """
     declared = str((task or {}).get("repository") or "").strip()
-    if declared:
-        return declared
     try:
-        from multi_repo_registry import resolve_task_repository
+        from multi_repo_registry import (
+            matching_repo_id,
+            repository_slug,
+            resolve_task_repository,
+        )
+    except ImportError:
+        return declared if _is_repository_slug(declared) else ""
 
+    if declared:
+        try:
+            resolved = repository_slug(config, matching_repo_id(config, declared))
+        except Exception:
+            resolved = None
+        if _is_repository_slug(resolved):
+            return str(resolved).strip()
+        # Unknown to the registry, or registered without a slug. Only a value
+        # that already is a slug can be routed; anything else names a repository
+        # `gh` has no way to reach, and the caller must say so rather than guess.
+        return declared if _is_repository_slug(declared) else ""
+
+    # Nothing declared: the registry's artifact-prefix fallback is the one place
+    # allowed to infer this, and it answers with the configured slug.
+    try:
         binding = resolve_task_repository(config, task)
-        return str(binding.slug or "")
     except Exception:
         return ""
+    slug = str(binding.slug or "").strip()
+    return slug if _is_repository_slug(slug) else ""
 
 
 _MERGE_QUEUE_BY_REPO: dict[str, bool] = {}
@@ -523,6 +569,16 @@ def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> 
     # with no strategy has nothing to do there. Ask once per repository and pick
     # the only route that repository actually has.
     slug = _task_repository_slug(config, task)
+    declared_repository = str(task.get("repository") or "").strip()
+    if declared_repository and not slug:
+        # Falling through without `--repo` routes against the supervisor's own
+        # checkout, which is the wrong-repository merge this path exists to
+        # prevent. A declaration the registry cannot place is reported, not
+        # guessed at.
+        return "blocked", (
+            f"declared repository {declared_repository!r} does not resolve to an "
+            "owner/name slug in the repository registry"
+        )
     base = str(task.get("base_branch") or "dev").strip() or "dev"
     queued_repo = repository_has_merge_queue(slug, base)
     if queued_repo is False:
@@ -750,6 +806,9 @@ def recover_conflicted_review_prs(
         # there is one spelling of "what is CI saying". Any answer other than
         # "GitHub has run nothing here" - success, failure, pending, or the
         # `unknown` that means `gh` could not answer - ends this lane's business.
+        # This first read may be served from the reader's cache: it exists to
+        # drop the many tasks that are obviously not this shape without paying
+        # for a `gh` call each tick, not to authorise the transition.
         try:
             pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
         except Exception:
@@ -767,10 +826,26 @@ def recover_conflicted_review_prs(
             # Head drift: the branch has moved past what was reviewed, and what
             # GitHub is describing is not the submission this task recorded.
             continue
-        # Read again. Between the CI verdict and here the owner may have pushed,
-        # the PR may have closed, or the conflict may have been resolved and the
-        # checks started. Acting on a fact that has already changed is how a
-        # repair becomes a corruption, so an unstable read keeps waiting.
+        # "No check has ever run here" is the whole premise of this repair, and
+        # a cached verdict cannot carry it. A conflict resolved a moment ago
+        # starts the checks, and requeueing then would pull a review out from
+        # under a run that is already going. Ask the same canonical reader again
+        # with the cache bypassed, so the fact the transition acts on was true
+        # after the PR facts above were taken, not up to a cache lifetime
+        # earlier. Anything other than a still-open PR with nothing run on it -
+        # including a read that fails - waits for the next tick.
+        try:
+            fresh_pr_status, fresh_ci_status = runtime_ai_status.task_pr_ci_status(
+                task_id, max_age_seconds=0
+            )
+        except Exception:
+            continue
+        if fresh_ci_status != "none" or str(fresh_pr_status or "").strip().upper() != "OPEN":
+            continue
+        # Read the PR again. Between the CI verdict and here the owner may have
+        # pushed, the PR may have closed, or the conflict may have been resolved
+        # and the checks started. Acting on a fact that has already changed is
+        # how a repair becomes a corruption, so an unstable read keeps waiting.
         if _review_pr_facts(slug, pr_number) != before:
             continue
 
@@ -898,6 +973,7 @@ def is_task_review_dispatch_eligible(
     *,
     review_statuses: set[str] | None = None,
     finalize_statuses: set[str] | None = None,
+    readiness_force_refresh: bool = True,
 ) -> bool:
     """Return whether a task is eligible for reviewer dispatch (review_ready_dispatch).
 
@@ -906,6 +982,15 @@ def is_task_review_dispatch_eligible(
     (no merge_route), has independent owner/reviewer, the target agent matches the reviewer,
     the review submission is valid with matching exact remote head, and all required CI
     checks on that exact head have concluded with terminal success.
+
+    `readiness_force_refresh` controls only how the submitted head is read.
+    Dispatch -- the caller that is about to start a worker on this answer --
+    keeps the forced `git ls-remote`. A caller that only asks whether this work
+    exists, repeatedly and for every running worker of the agent, passes `False`
+    and is served from the resolver's own short-lived cache instead of paying
+    for a network read per question. Both readers already fail closed on an
+    answer they cannot get, so a cache miss or a failed read still refuses
+    rather than assuming readiness.
     """
     if not isinstance(task, dict) or not task:
         return False
@@ -962,7 +1047,9 @@ def is_task_review_dispatch_eligible(
 
     task_id = str(task.get(schema.get("task_id_field", "id")) or task.get("id") or "")
     try:
-        current_head = runtime_ai_status.resolve_task_sha(task_id, force_refresh=True)
+        current_head = runtime_ai_status.resolve_task_sha(
+            task_id, force_refresh=readiness_force_refresh
+        )
     except Exception:
         return False
     if not current_head or current_head != submitted_sha:
@@ -989,6 +1076,7 @@ def dispatch_priority_for_task(
     *,
     task_map: dict[str, dict[str, Any]] | None = None,
     dependencies_done_statuses: set[str] | None = None,
+    readiness_force_refresh: bool = True,
 ) -> int | None:
     settings = ready_dispatch_settings(config)
     review_statuses = normalized_status_set(settings.get("review_statuses"), ["review"])
@@ -1011,6 +1099,7 @@ def dispatch_priority_for_task(
         agent_name,
         review_statuses=review_statuses,
         finalize_statuses=finalize_statuses,
+        readiness_force_refresh=readiness_force_refresh,
     ):
         return 0
     if task_status in finalize_statuses and task_owner == norm_target:
@@ -1022,7 +1111,7 @@ def dispatch_priority_for_task(
             return None
         try:
             curr_head = runtime_ai_status.resolve_task_checkout_sha(
-                task, force_refresh=True
+                task, force_refresh=readiness_force_refresh
             )
             if not curr_head or not runtime_ai_status.is_approved_head_satisfied(task, curr_head, approved_head):
                 return None
@@ -1103,7 +1192,7 @@ def helper_owner_is_saturated(
     )
     if not owner_id or owner_id not in (config.get("agents", {}) or {}):
         owner_undispatchable = True
-    elif not agent_can_take_task(config, owner, task):
+    elif not agent_can_take_task(config, owner, task, role=ROLE_OWNER):
         owner_undispatchable = True
     elif owner_id not in dispatchable:
         owner_undispatchable = True
@@ -1239,19 +1328,26 @@ def reassign_unavailable_reviewers(
         else:
             continue
 
+        submitted_author = task_submitted_author(config, task)
+        author_pool_exclusions = (
+            {agent_account_pool_id(config, submitted_author)}
+            if submitted_author and not is_human_gate_agent(submitted_author)
+            else set()
+        )
+
         claimed_agent = str(task.get(claimed_field) or "").strip()
         if not claimed_agent or is_human_gate_agent(claimed_agent):
             continue
         if claimed_role == "owner":
             claimed_id = normalize_agent_id(claimed_agent)
-            if agent_dispatch_paused(config, state, claimed_id):
-                claimed_block_reason = (
-                    f"dispatch is paused or disabled for {display_name_for(config, claimed_id) or claimed_agent}"
-                )
-            elif account_pool_dispatch_block_reason(config, claimed_id, runtime_state=state):
-                claimed_block_reason = account_pool_dispatch_block_reason(
-                    config, claimed_id, runtime_state=state
-                )
+            auto_block_reason = agent_auto_dispatch_block_reason(
+                config,
+                state,
+                claimed_id,
+                provider_report,
+            )
+            if auto_block_reason and not auto_dispatch_block_is_temporary_capacity(auto_block_reason):
+                claimed_block_reason = auto_block_reason
             else:
                 claimed_block_reason = None
             reviewer_same_pool = False
@@ -1266,6 +1362,10 @@ def reassign_unavailable_reviewers(
                 counterpart
                 and not is_human_gate_agent(counterpart)
                 and not review_is_independent(config, counterpart, claimed_agent)
+            ) or bool(
+                submitted_author
+                and not is_human_gate_agent(submitted_author)
+                and not review_is_independent(config, submitted_author, claimed_agent)
             )
         if not claimed_block_reason and not reviewer_same_pool:
             continue
@@ -1293,14 +1393,24 @@ def reassign_unavailable_reviewers(
             if (
                 not candidate
                 or candidate in {claimed_agent, counterpart}
+                or (claimed_role == "reviewer" and submitted_author and candidate == submitted_author)
                 or candidate_id in reserved_agents
                 or not isinstance(candidate_config, dict)
                 or agent_is_dispatch_slot(candidate_config)
                 or is_human_gate_agent(candidate)
-                or not agent_can_take_task(config, candidate, task)
+                or not agent_can_take_task(config, candidate, task, role=claimed_role)
                 or (
                     bool(counterpart and not is_human_gate_agent(counterpart))
                     and not review_is_independent(config, owner_for_independence, reviewer_for_independence)
+                )
+                or (
+                    claimed_role == "reviewer"
+                    and bool(submitted_author and not is_human_gate_agent(submitted_author))
+                    and not review_is_independent(config, submitted_author, candidate)
+                )
+                or (
+                    claimed_role == "reviewer"
+                    and agent_account_pool_id(config, candidate) in author_pool_exclusions
                 )
                 or agent_auto_dispatch_block_reason(config, state, candidate_id, provider_report)
             ):
@@ -1312,9 +1422,14 @@ def reassign_unavailable_reviewers(
             continue
 
         if reviewer_same_pool:
+            violator = (
+                f"owner {counterpart}"
+                if counterpart and not review_is_independent(config, counterpart, claimed_agent)
+                else f"submitted author {submitted_author}"
+            )
             message = (
                 f"Reassigned review to {replacement}: {claimed_agent} shares account pool "
-                f"with owner {counterpart}, so independent review requires a different pool."
+                f"with {violator}, so independent review requires a different pool."
             )
         else:
             message = (
@@ -1425,39 +1540,79 @@ def higher_priority_ready_task_exists(
             continue
         if task_is_sidecar(task) and not task_is_sidecar(current_task or {}):
             continue
+        # Business rank decides first, and decides without reading anything.
+        # `candidate_priority` below is bounded at 0, so a candidate ranked
+        # worse than the running worker's task can never win the (rank, lane)
+        # comparison, and at equal rank nothing outranks a review. Cutting those
+        # here is what keeps the readiness reads further down to the few
+        # candidates whose answer can actually end a worker, rather than one
+        # read per task per poll.
+        candidate_task_rank = task_priority_rank(task)
+        if candidate_task_rank > current_task_rank:
+            continue
+        if candidate_task_rank == current_task_rank and current_priority <= 0:
+            continue
+        # A human gate or a task flagged `non_dispatchable` is never handed to a
+        # worker by any lane, so it can never be the work a freed slot is freed
+        # for. Refusing it here also means GitHub is not asked about a task with
+        # no reachable outcome.
+        if task_is_human_gate(task) or bool(task.get("non_dispatchable")):
+            continue
         task_status = str(task.get("status") or "").lower()
-        candidate_priority = None
-        if task_status in review_statuses and normalize_agent_id(str(task.get(reviewer_field) or "")) == normalize_agent_id(agent_name):
-            if is_sidecar_review_of_current_parent(
+        if (
+            task_status in review_statuses
+            and normalize_agent_id(str(task.get(reviewer_field) or ""))
+            == normalize_agent_id(agent_name)
+            and is_sidecar_review_of_current_parent(
                 task,
                 current_task,
                 agent_name=agent_name,
                 review_statuses=review_statuses,
                 owner_field=owner_field,
                 reviewer_field=reviewer_field,
+            )
+        ):
+            continue
+
+        # One eligibility judgement, the same one the dispatcher itself makes.
+        # Reviews used to skip it: any task in a review status naming this agent
+        # as reviewer scored 0 on status and role alone. Between 2026-09-06
+        # 11:01Z and 2026-09-07 04:03Z that killed the same Codex2 review worker
+        # 286 consecutive times, because the three P0 reviews that outranked it
+        # -- one `non_dispatchable`, two with failing CI -- could never take the
+        # slot they kept emptying. A candidate that cannot be dispatched is not
+        # a reason to stop work that can.
+        candidate_priority = dispatch_priority_for_task(
+            config,
+            task,
+            agent_name,
+            task_map=task_map,
+            dependencies_done_statuses=dependency_done_statuses,
+            readiness_force_refresh=False,
+        )
+        if candidate_priority is None:
+            continue
+        # The other half of the dispatcher's own gate: role/provider policy,
+        # disabled and sidecar-only agents. `dispatch_priority_for_task` answers
+        # "is this work ready", not "may this agent be given it", and preemption
+        # needs both to be true before it ends a running worker.
+        if not agent_can_take_task(
+            config,
+            agent_name,
+            task,
+            role=dispatch_reason_role(dispatch_priority_reason(candidate_priority)),
+        ):
+            continue
+
+        if (candidate_task_rank, candidate_priority) < current_key:
+            if (
+                slot_count
+                and urgent_priority_cutoff is not None
+                and candidate_priority > urgent_priority_cutoff
+                and candidate_task_rank >= current_task_rank
             ):
                 continue
-            candidate_priority = 0
-        else:
-            candidate_priority = dispatch_priority_for_task(
-                config,
-                task,
-                agent_name,
-                task_map=task_map,
-                dependencies_done_statuses=dependency_done_statuses,
-            )
-
-        if candidate_priority is not None:
-            candidate_task_rank = task_priority_rank(task)
-            if (candidate_task_rank, candidate_priority) < current_key:
-                if (
-                    slot_count
-                    and urgent_priority_cutoff is not None
-                    and candidate_priority > urgent_priority_cutoff
-                    and candidate_task_rank >= current_task_rank
-                ):
-                    continue
-                higher_priority_task_ids.add(str(task_id))
+            higher_priority_task_ids.add(str(task_id))
 
     if not higher_priority_task_ids:
         return False
@@ -1657,6 +1812,23 @@ def stale_dispatch_skip_message(config: dict[str, Any], event: dict[str, Any], t
             f"Skipped stale queued wake event for {task_id}: task state changed; "
             "dependency gate is not satisfied."
         )
+
+    # A queue event carries the eligibility decision made when it was queued.
+    # If the role/provider policy changed in between -- or the task acquired a
+    # `task_class` that the policy scopes differently -- launching now would run
+    # a lane the current policy excludes, and no later gate re-asks: the worker
+    # would already be executing. Re-checking exactly the policy (rather than the
+    # whole dispatch predicate) keeps this to the one thing that can go stale
+    # here without any other state changing.
+    if task:
+        policy_reason = role_provider_block_reason(
+            config, target, role=dispatch_reason_role(reason), task=task
+        )
+        if policy_reason:
+            return (
+                f"Skipped stale queued wake event for {task_id}: role/provider policy no "
+                f"longer permits this dispatch: {policy_reason}"
+            )
 
     if reason == REASON_HELPER_CLAIM:
         dispatched_task = (event.get("metadata") or {}).get("task") or event.get("task") or {}
@@ -2522,7 +2694,9 @@ def dispatch_ready_tasks(
                     reason = REASON_HELPER_CLAIM
                     priority = 4
 
-            if reason is not None and not agent_can_take_task(config, target_agent, task):
+            if reason is not None and not agent_can_take_task(
+                config, target_agent, task, role=dispatch_reason_role(reason)
+            ):
                 continue
             if reason is None or priority is None:
                 continue
