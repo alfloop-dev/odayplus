@@ -940,6 +940,11 @@ export type JobReceipt = {
   version: number;
 };
 
+/** JobRetryPayload */
+export type JobRetryPayload = {
+  retry_scope?: string;
+};
+
 /** JobStatus */
 export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "PARTIAL";
 
@@ -2087,6 +2092,7 @@ export const API_PATHS = {
   "/api/v1/jobs": ["POST"],
   "/api/v1/jobs/{job_id}": ["GET"],
   "/api/v1/jobs/{job_id}/receipt": ["GET"],
+  "/api/v1/jobs/{job_id}/retries": ["POST"],
   "/api/v1/jobs/{job_id}/retry": ["POST"],
   "/api/v1/learninghub/dataset-snapshots": ["POST"],
   "/api/v1/learninghub/dataset-snapshots/{dataset_snapshot_id}/triage": ["GET", "POST"],
