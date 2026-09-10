@@ -1,0 +1,307 @@
+{
+  "command": "gh api --paginate repos/alfloop-dev/odayplus/environments/dev/variables",
+  "argv": [
+    "gh",
+    "api",
+    "--paginate",
+    "repos/alfloop-dev/odayplus/environments/dev/variables"
+  ],
+  "endpoint": "GET repos/alfloop-dev/odayplus/environments/dev/variables",
+  "exit_code": 0,
+  "timestamp_utc": "2026-09-08T11:46:07Z",
+  "target": "github-environment-dev-variables",
+  "total_variables_count": 41,
+  "variable_names": [
+    "GCP_AR_REPO",
+    "GCP_CLOUD_SQL_INSTANCE",
+    "GCP_PROJECT_ID",
+    "GCP_REGION",
+    "GCP_SERVICE_ACCOUNT",
+    "GCP_WORKLOAD_IDENTITY_PROVIDER",
+    "MLFLOW_TRACKING_URI",
+    "ODAY_DATABASE_URL_SECRET",
+    "ODP_AUTH_AUDIENCES",
+    "ODP_AUTH_ISSUER",
+    "ODP_AUTH_JWKS_URI",
+    "ODP_AUTH_MODE",
+    "ODP_AUTH_PRINCIPAL_MAP_SECRET",
+    "ODP_CLOUD_RUN_API_SERVICE",
+    "ODP_CLOUD_RUN_MIGRATION_JOB",
+    "ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT",
+    "ODP_CLOUD_RUN_SCHEDULER_JOB",
+    "ODP_CLOUD_RUN_VPC_CONNECTOR",
+    "ODP_CLOUD_RUN_VPC_EGRESS",
+    "ODP_CLOUD_RUN_WEB_SERVICE",
+    "ODP_CLOUD_RUN_WORKER_JOB",
+    "ODP_CLOUD_SCHEDULER_SCHEDULER_TRIGGER",
+    "ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT",
+    "ODP_CLOUD_SCHEDULER_WORKER_TRIGGER",
+    "ODP_DEV_DEPLOY_URL",
+    "ODP_FORECAST_ENGINE",
+    "ODP_FORECAST_MODEL",
+    "ODP_MLFLOW_CLOUD_RUN_AUDIENCE",
+    "ODP_OPERATOR_SMOKE_ROLE",
+    "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT",
+    "ODP_RELEASE_LEASE_PUBLIC_KEY",
+    "ODP_RELEASE_LEASE_STATE_URI",
+    "ODP_SCHEDULED_INGESTION_TENANT_ID",
+    "ODP_SCHEDULER_CRON",
+    "ODP_SCHEDULER_TIME_ZONE",
+    "ODP_SNAPSHOT_BUCKET",
+    "ODP_TENANT_ID",
+    "ODP_WEB_OIDC_CLIENT_SECRET_SECRET",
+    "ODP_WEB_OIDC_ISSUER",
+    "ODP_WEB_SESSION_SECRET_SECRET",
+    "ODP_WORKER_CRON"
+  ],
+  "readback_masked": false,
+  "variables": [
+    {
+      "name": "GCP_AR_REPO",
+      "value": "oday-plus-dev",
+      "created_at": "2026-07-26T15:07:41Z",
+      "updated_at": "2026-07-27T13:44:16Z"
+    },
+    {
+      "name": "GCP_CLOUD_SQL_INSTANCE",
+      "value": "odayplus-runtime-20260825:asia-east1:oday-dev-sql",
+      "created_at": "2026-07-27T13:47:10Z",
+      "updated_at": "2026-08-25T00:45:08Z"
+    },
+    {
+      "name": "GCP_PROJECT_ID",
+      "value": "odayplus-runtime-20260825",
+      "created_at": "2026-07-26T15:07:39Z",
+      "updated_at": "2026-08-25T00:45:05Z"
+    },
+    {
+      "name": "GCP_REGION",
+      "value": "asia-east1",
+      "created_at": "2026-07-26T15:07:41Z",
+      "updated_at": "2026-07-26T15:07:41Z"
+    },
+    {
+      "name": "GCP_SERVICE_ACCOUNT",
+      "value": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+      "created_at": "2026-07-26T15:07:43Z",
+      "updated_at": "2026-08-25T00:45:07Z"
+    },
+    {
+      "name": "GCP_WORKLOAD_IDENTITY_PROVIDER",
+      "value": "projects/767864276141/locations/global/workloadIdentityPools/github-actions/providers/odayplus",
+      "created_at": "2026-07-26T15:07:42Z",
+      "updated_at": "2026-08-25T00:45:06Z"
+    },
+    {
+      "name": "MLFLOW_TRACKING_URI",
+      "value": "https://oday-mlflow-767864276141.asia-east1.run.app",
+      "created_at": "2026-08-25T10:34:51Z",
+      "updated_at": "2026-08-25T10:34:51Z"
+    },
+    {
+      "name": "ODAY_DATABASE_URL_SECRET",
+      "value": "oday-plus-dev-api-database-url-pg16:latest",
+      "created_at": "2026-07-27T13:47:36Z",
+      "updated_at": "2026-07-27T15:23:46Z"
+    },
+    {
+      "name": "ODP_AUTH_AUDIENCES",
+      "value": "https://oday-api-767864276141.asia-east1.run.app",
+      "created_at": "2026-07-27T13:47:32Z",
+      "updated_at": "2026-08-25T00:46:57Z"
+    },
+    {
+      "name": "ODP_AUTH_ISSUER",
+      "value": "https://accounts.google.com",
+      "created_at": "2026-07-27T13:47:31Z",
+      "updated_at": "2026-07-27T13:47:31Z"
+    },
+    {
+      "name": "ODP_AUTH_JWKS_URI",
+      "value": "https://www.googleapis.com/oauth2/v3/certs",
+      "created_at": "2026-07-27T13:47:33Z",
+      "updated_at": "2026-07-27T13:47:33Z"
+    },
+    {
+      "name": "ODP_AUTH_MODE",
+      "value": "local",
+      "created_at": "2026-08-31T00:54:13Z",
+      "updated_at": "2026-08-31T00:54:13Z"
+    },
+    {
+      "name": "ODP_AUTH_PRINCIPAL_MAP_SECRET",
+      "value": "oday-plus-dev-auth-principal-map:latest",
+      "created_at": "2026-07-28T00:27:41Z",
+      "updated_at": "2026-07-28T00:27:41Z"
+    },
+    {
+      "name": "ODP_CLOUD_RUN_API_SERVICE",
+      "value": "oday-api",
+      "created_at": "2026-07-27T13:47:11Z",
+      "updated_at": "2026-07-27T13:47:11Z"
+    },
+    {
+      "name": "ODP_CLOUD_RUN_MIGRATION_JOB",
+      "value": "oday-migration",
+      "created_at": "2026-07-27T13:47:13Z",
+      "updated_at": "2026-07-27T13:47:13Z"
+    },
+    {
+      "name": "ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT",
+      "value": "gke-oday-dev-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com",
+      "created_at": "2026-07-27T13:47:17Z",
+      "updated_at": "2026-08-25T00:45:10Z"
+    },
+    {
+      "name": "ODP_CLOUD_RUN_SCHEDULER_JOB",
+      "value": "oday-scheduler",
+      "created_at": "2026-07-27T13:47:15Z",
+      "updated_at": "2026-07-27T13:47:15Z"
+    },
+    {
+      "name": "ODP_CLOUD_RUN_VPC_CONNECTOR",
+      "value": "projects/odayplus-runtime-20260825/locations/asia-east1/connectors/oday-staging-vpc",
+      "created_at": "2026-09-02T11:56:55Z",
+      "updated_at": "2026-09-02T11:56:55Z"
+    },
+    {
+      "name": "ODP_CLOUD_RUN_VPC_EGRESS",
+      "value": "all-traffic",
+      "created_at": "2026-09-02T11:56:56Z",
+      "updated_at": "2026-09-02T11:56:56Z"
+    },
+    {
+      "name": "ODP_CLOUD_RUN_WEB_SERVICE",
+      "value": "oday-web",
+      "created_at": "2026-07-27T13:47:12Z",
+      "updated_at": "2026-07-27T13:47:12Z"
+    },
+    {
+      "name": "ODP_CLOUD_RUN_WORKER_JOB",
+      "value": "oday-worker",
+      "created_at": "2026-07-27T13:47:14Z",
+      "updated_at": "2026-07-27T13:47:14Z"
+    },
+    {
+      "name": "ODP_CLOUD_SCHEDULER_SCHEDULER_TRIGGER",
+      "value": "oday-scheduler-trigger",
+      "created_at": "2026-07-27T13:47:16Z",
+      "updated_at": "2026-07-27T13:47:16Z"
+    },
+    {
+      "name": "ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT",
+      "value": "oday-dev-scheduler@odayplus-runtime-20260825.iam.gserviceaccount.com",
+      "created_at": "2026-07-27T13:47:18Z",
+      "updated_at": "2026-08-25T00:45:11Z"
+    },
+    {
+      "name": "ODP_CLOUD_SCHEDULER_WORKER_TRIGGER",
+      "value": "oday-worker-trigger",
+      "created_at": "2026-07-27T13:47:15Z",
+      "updated_at": "2026-07-27T13:47:15Z"
+    },
+    {
+      "name": "ODP_DEV_DEPLOY_URL",
+      "value": "https://oday-web-767864276141.asia-east1.run.app",
+      "created_at": "2026-08-25T00:46:58Z",
+      "updated_at": "2026-08-25T00:46:58Z"
+    },
+    {
+      "name": "ODP_FORECAST_ENGINE",
+      "value": "statsforecast",
+      "created_at": "2026-07-27T13:47:22Z",
+      "updated_at": "2026-07-27T13:47:22Z"
+    },
+    {
+      "name": "ODP_FORECAST_MODEL",
+      "value": "seasonal_naive",
+      "created_at": "2026-07-27T13:47:24Z",
+      "updated_at": "2026-07-27T13:47:24Z"
+    },
+    {
+      "name": "ODP_MLFLOW_CLOUD_RUN_AUDIENCE",
+      "value": "https://oday-mlflow-767864276141.asia-east1.run.app",
+      "created_at": "2026-08-25T10:34:52Z",
+      "updated_at": "2026-08-25T10:34:52Z"
+    },
+    {
+      "name": "ODP_OPERATOR_SMOKE_ROLE",
+      "value": "operations_manager,model_owner,data_owner",
+      "created_at": "2026-07-27T13:47:35Z",
+      "updated_at": "2026-08-03T09:10:46Z"
+    },
+    {
+      "name": "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT",
+      "value": "oday-dev-smoke-operator@odayplus-runtime-20260825.iam.gserviceaccount.com",
+      "created_at": "2026-07-27T14:41:35Z",
+      "updated_at": "2026-08-25T00:45:12Z"
+    },
+    {
+      "name": "ODP_RELEASE_LEASE_PUBLIC_KEY",
+      "value": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA4e3O9nqyRLsX4qGmPSIe+4H46tYzqxhUUW6UzSX0If0=\n-----END PUBLIC KEY-----",
+      "created_at": "2026-08-26T14:51:53Z",
+      "updated_at": "2026-09-04T14:48:23Z"
+    },
+    {
+      "name": "ODP_RELEASE_LEASE_STATE_URI",
+      "value": "gs://odayplus-runtime-20260825-release-leases/leases",
+      "created_at": "2026-08-26T14:51:52Z",
+      "updated_at": "2026-08-26T20:08:58Z"
+    },
+    {
+      "name": "ODP_SCHEDULED_INGESTION_TENANT_ID",
+      "value": "a11ce505-70bc-56d9-8564-ad22efa23c9e",
+      "created_at": "2026-08-12T08:50:09Z",
+      "updated_at": "2026-08-12T08:50:09Z"
+    },
+    {
+      "name": "ODP_SCHEDULER_CRON",
+      "value": "0 * * * *",
+      "created_at": "2026-07-27T13:47:20Z",
+      "updated_at": "2026-07-27T13:47:20Z"
+    },
+    {
+      "name": "ODP_SCHEDULER_TIME_ZONE",
+      "value": "Asia/Taipei",
+      "created_at": "2026-07-27T13:47:21Z",
+      "updated_at": "2026-07-27T13:47:21Z"
+    },
+    {
+      "name": "ODP_SNAPSHOT_BUCKET",
+      "value": "oday-dev-source-snapshots-odayplus-runtime-20260825",
+      "created_at": "2026-07-27T14:45:10Z",
+      "updated_at": "2026-08-25T00:45:17Z"
+    },
+    {
+      "name": "ODP_TENANT_ID",
+      "value": "a11ce505-70bc-56d9-8564-ad22efa23c9e",
+      "created_at": "2026-08-12T08:50:06Z",
+      "updated_at": "2026-08-12T08:50:06Z"
+    },
+    {
+      "name": "ODP_WEB_OIDC_CLIENT_SECRET_SECRET",
+      "value": "oday-dev-web-oidc-client-secret",
+      "created_at": "2026-08-27T05:21:23Z",
+      "updated_at": "2026-08-27T05:21:23Z"
+    },
+    {
+      "name": "ODP_WEB_OIDC_ISSUER",
+      "value": "https://accounts.google.com",
+      "created_at": "2026-07-27T13:47:34Z",
+      "updated_at": "2026-07-27T13:47:34Z"
+    },
+    {
+      "name": "ODP_WEB_SESSION_SECRET_SECRET",
+      "value": "oday-plus-dev-web-session-secret:latest",
+      "created_at": "2026-07-27T13:47:40Z",
+      "updated_at": "2026-07-27T13:47:40Z"
+    },
+    {
+      "name": "ODP_WORKER_CRON",
+      "value": "*/5 * * * *",
+      "created_at": "2026-07-27T13:47:19Z",
+      "updated_at": "2026-07-27T13:47:19Z"
+    }
+  ],
+  "stderr": ""
+}

@@ -1,0 +1,21 @@
+{
+  "command": "gcloud --quiet iam service-accounts describe github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com --project=odayplus-runtime-20260825 --format=json",
+  "argv": [
+    "gcloud",
+    "--quiet",
+    "iam",
+    "service-accounts",
+    "describe",
+    "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    "--project=odayplus-runtime-20260825",
+    "--format=json"
+  ],
+  "exit_code": 1,
+  "timestamp_utc": "2026-09-08T11:46:22Z",
+  "executor_account": "oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com",
+  "target": "github-deployer-sa",
+  "readback_masked": false,
+  "stdout": "",
+  "stderr": "ERROR: (gcloud.iam.service-accounts.describe) PERMISSION_DENIED: Permission 'iam.serviceAccounts.get' denied on resource '//iam.googleapis.com/projects/-/serviceAccounts/105055954881480121269' (or it may not exist). Remediate access with this Troubleshooter URL or share it with your administrator - https://console.cloud.google.com/iam-admin/troubleshooter/summary;errorId=CiQwMWEwODBkNy0zYjA3LTc5NGItYWUyZC05ZGUzZWJhZGFkODgSMHByb2plY3RzLy0vc2VydmljZUFjY291bnRzLzEwNTA1NTk1NDg4MTQ4MDEyMTI2OQ%3D%3D . This command is authenticated as oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com which is the active account specified by the [core/account] property.\n- '@type': type.googleapis.com/google.rpc.ErrorInfo\n  domain: iam.googleapis.com\n  metadata:\n    error_info_id: CiQwMWEwODBkNy0zYjA3LTc5NGItYWUyZC05ZGUzZWJhZGFkODgSMHByb2plY3RzLy0vc2VydmljZUFjY291bnRzLzEwNTA1NTk1NDg4MTQ4MDEyMTI2OQ==\n    permission: iam.serviceAccounts.get\n    resource: projects/-/serviceAccounts/105055954881480121269\n    troubleshooter_url: https://console.cloud.google.com/iam-admin/troubleshooter/summary;errorId=CiQwMWEwODBkNy0zYjA3LTc5NGItYWUyZC05ZGUzZWJhZGFkODgSMHByb2plY3RzLy0vc2VydmljZUFjY291bnRzLzEwNTA1NTk1NDg4MTQ4MDEyMTI2OQ%3D%3D\n  reason: IAM_PERMISSION_DENIED",
+  "finding": "PERMISSION_DENIED (exit 1). Active caller lacks IAM permissions on target github-deployer-sa."
+}
