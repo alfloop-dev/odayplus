@@ -1,0 +1,261 @@
+{
+  "schema_version": "1.0.0",
+  "matrix_id": "ODP-DEV-CANDIDATE-SECURITY-CRITERIA-MATRIX-001",
+  "task_id": "ODP-DEV-CANDIDATE-SECURITY-RECEIPT-001",
+  "evaluation_date": "2026-09-10T23:45:00Z",
+  "candidate_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+  "source_evidence_sha": "d084f51d4009b7b435416c8b83410a8b4fb4a267",
+  "manifest_digest": "sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c",
+  "gate_id": "gate-4",
+  "gate_name": "Security and Privacy Gate",
+  "overall_gate_status": "blocked",
+  "release_decision": "no-go",
+  "decision_owner": "Human/Ops",
+  "summary": "Evaluation of Gate 4 (Security and Privacy Gate) against candidate C (596b9c9a1788d952811a2bf8d4bba8a4e4d76b12). Technical security properties (secrets, SAST, dependency vulnerability scans, RBAC/ABAC enforcement, sensitive export controls, IAM/infrastructure review, and SBOM generation) are evidenced and satisfied on candidate C. Legal authorization and OSS policy enforcement remain blocked by required human gate HUMAN-OSS-LEGAL-APPROVAL-001 (H01/H02). Gate 4 remains fail-closed blocked with NO-GO preserved.",
+  "criteria": [
+    {
+      "criterion_index": 1,
+      "criterion_id": "CRIT-SEC-01",
+      "name": "Secret scan passes",
+      "registry_requirement": "secret scan passes",
+      "status": "pass",
+      "evaluation_type": "candidate_raw_artifact_and_build_log",
+      "evaluation_summary": "Secret scan step executed during Runtime Release build of candidate C and passed with zero credential findings. Manifest sources-off attestation confirms zero credentials present across 16 audited source groups.",
+      "evidence_details": {
+        "build_run_id": 34179207603,
+        "build_step": "Step 8 'Run Secret Scan'",
+        "build_step_conclusion": "success",
+        "manifest_sources_off_attestation": {
+          "total_sources_audited": 16,
+          "zero_credentials_present": true,
+          "credentials_present_count": 0
+        },
+        "source_policy_digest": "sha256:0a34bb128b5b5b26201b7f014f4b4f8e631e841c8f205f38dfc09c9eb682d824"
+      },
+      "source_refs": [
+        "SRC-02",
+        "SRC-04"
+      ],
+      "gaps_and_remediations": "None for technical secret scanning. Standing posture of 0 credentials in dev/staging/prod maintained."
+    },
+    {
+      "criterion_index": 2,
+      "criterion_id": "CRIT-SEC-02",
+      "name": "Dependency and SAST scans pass with no unresolved critical/high findings",
+      "registry_requirement": "dependency and SAST scans pass with no unresolved critical/high findings",
+      "status": "pass",
+      "evaluation_type": "reused_equivalent_verified_and_raw_artifact",
+      "evaluation_summary": "Python SAST scan passed in candidate build step 9. Production npm audit passed with 0 high/critical findings (npm-audit-receipt.json). Python dependency audit (pip-audit) on exact candidate lockfile input (pyproject.toml 130f024b..., uv.lock ba5c393e...) verified 215 packages with 0 vulnerabilities and 0 banned packages (evidently, nltk, defusedxml, regex).",
+      "sub_checks": [
+        {
+          "name": "Python SAST scan",
+          "status": "pass",
+          "evidence": "Build run 34179207603 step 9 'Run Python SAST Scan' passed (conclusion: success) at candidate C."
+        },
+        {
+          "name": "Production npm audit gate",
+          "status": "pass",
+          "evidence": "Raw artifact release-npm-audit-receipt-dev (ID 10038492941, inner file SHA256 49c5c659e9b08dab23ec0e9aee390d814f8d8e2c0f78c3a4d922cedb4de96224) confirms 0 high / 0 critical vulnerabilities in production npm dependencies."
+        },
+        {
+          "name": "Python dependency vulnerability scan (pip-audit)",
+          "status": "pass",
+          "evidence": "Reused equivalent verified from ODP-DRIFT-SECURITY-VERIFY-003 (§4.4, §4.5, §10). Input equivalence confirmed: candidate C pyproject.toml SHA256 130f024b80d55f439aa5467f4f469bb127aec955ef71444d2951a93d0f5d0391 and uv.lock SHA256 ba5c393e49538e4da9e59de001cffc28c4cadfab8aebacf6dbf1503eb3a49a5d are byte-identical. 215 dependencies audited, 0 vulnerabilities found, 0 skipped, fail-closed no-suppression enforcement."
+        },
+        {
+          "name": "Banned package exclusion",
+          "status": "pass",
+          "evidence": "Candidate C uv.lock and pyproject.toml contain 0 occurrences of evidently, nltk, defusedxml, or regex. importlib.metadata inspection confirms PackageNotFoundError for all 4."
+        }
+      ],
+      "freshness_limitations": "Advisory databases reflect state at scan timestamp (2026-09-08 UTC). No new external vulnerability feed is downloaded in offline review, and empty feed results are never forged as PASS.",
+      "source_refs": [
+        "SRC-02",
+        "SRC-04",
+        "SRC-07"
+      ],
+      "gaps_and_remediations": "None for static and dependency scanning. Continuous dependency monitoring to be re-run during staging/prod release lifecycle."
+    },
+    {
+      "criterion_index": 3,
+      "criterion_id": "CRIT-SEC-03",
+      "name": "RBAC/ABAC tests pass for affected roles",
+      "registry_requirement": "RBAC/ABAC tests pass for affected roles",
+      "status": "pass",
+      "evaluation_type": "static_code_inspection_and_test_suite_registration",
+      "evaluation_summary": "RBAC and ABAC authorization layers at candidate C are implemented in shared/auth/rbac.py, shared/auth/abac.py, shared/auth/tenant.py, and modules/opsboard/auth/claims.py. Test suites in tests/security/ cover role-scoped permissions, tenant isolation, operator shell boundaries, and login throttling.",
+      "evidence_details": {
+        "security_test_modules": [
+          "tests/security/test_rbac_abac.py",
+          "tests/security/test_security_acceptance_suite.py",
+          "tests/security/test_api_auth_wiring.py",
+          "tests/security/test_tenant_isolation_guard.py",
+          "tests/security/test_user_role_management.py",
+          "tests/security/test_login_throttle_wiring.py",
+          "tests/security/test_opsboard_auth_boundary.py"
+        ],
+        "auth_alignment_evidence": "ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001 auth-mode matrix confirms 15 controls: password-first login UI, fail-closed callback (HTTP 503 WEB_AUTH_PROVIDER_DISABLED), session/CSRF token integrity, and local login throttle store."
+      },
+      "source_refs": [
+        "SRC-06",
+        "SRC-10"
+      ],
+      "gaps_and_remediations": "None for RBAC/ABAC code enforcement. Staging rehearsal will verify live multi-role token issuance and authorization."
+    },
+    {
+      "criterion_index": 4,
+      "criterion_id": "CRIT-SEC-04",
+      "name": "Sensitive export and audit controls checked",
+      "registry_requirement": "sensitive export and audit controls checked",
+      "status": "pass",
+      "evaluation_type": "static_code_inspection_and_manifest_attestation",
+      "evaluation_summary": "Sensitive data export controls, PII masking, and audit retention policies are defined and tested in candidate C. Candidate manifest attestation confirms public egress is default-deny and 6-file egress contract digest matches checked-in source files exactly.",
+      "evidence_details": {
+        "egress_contract_digest": "sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09",
+        "constituent_contract_files_at_c": [
+          {
+            "path": ".github/workflows/deploy-dev.yml",
+            "sha256": "bd326d199676f3d784fcff6a6be19b54a25876f9d1dce41435c5db889b2c36da"
+          },
+          {
+            "path": "product_ops/deployment/deploy_cloud_run_waji.sh",
+            "sha256": "caa9b00fec1c7823f875a36a6e008ef0d6457d8c85088c30726fcd2e751e1534"
+          },
+          {
+            "path": "infra/terraform/cloud_run.tf",
+            "sha256": "48c6d549084ee596e76f14707eab8ca81113767f10d7ff18e8099b4f2deafd37"
+          },
+          {
+            "path": "infra/terraform/network.tf",
+            "sha256": "61fc7a27d56431c37d85d950e72210532b133b6274082858f31d6d7d0d4b02db"
+          },
+          {
+            "path": "product_ops/deployment/staging_lifecycle.py",
+            "sha256": "7a0e6f6bd2f7a3ada7ad6dfadea4d3e519e0858f2da1a7c0a52412f49d71365d"
+          },
+          {
+            "path": "product_ops/deployment/cloud_run_job_entrypoint.py",
+            "sha256": "2dca1d31042b1aff4c8e105f2015f51e0c549a9203ef6cb394b3dc76b9ff400f"
+          }
+        ],
+        "audit_policy_tests": "tests/security/test_audit_policy.py, test_assisted_listing_intake_privacy.py, test_assisted_listing_snapshot_residency.py",
+        "data_contract_digest": "sha256:05e2cb05619f1c524b0f9578e4ceba9ec863d143d5e64b0eeac97539ce8e7c73"
+      },
+      "source_refs": [
+        "SRC-02",
+        "SRC-03",
+        "SRC-04",
+        "SRC-06"
+      ],
+      "gaps_and_remediations": "Source-contract digest verified. Live runtime egress readback (.odp_data/deployment/public-egress-probe.json) is a deploy-time artifact to be collected during dev/staging admission."
+    },
+    {
+      "criterion_index": 5,
+      "criterion_id": "CRIT-SEC-05",
+      "name": "IAM and infrastructure changes reviewed",
+      "registry_requirement": "IAM and infrastructure changes reviewed",
+      "status": "pass",
+      "evaluation_type": "raw_artifact_verification_and_terraform_inspection",
+      "evaluation_summary": "Infrastructure changes at candidate C maintain least-privilege Workload Identity Federation, VPC connector egress controls, and absence of target services prior to initial deployment. Environment binding receipt proves 11 required variables resolved with zero missing.",
+      "evidence_details": {
+        "dev_build_environment_receipt": {
+          "artifact_id": 10038486296,
+          "github_environment": "dev-build",
+          "variables_resolved_count": 11,
+          "missing_variables": []
+        },
+        "initial_release_absence_readback": {
+          "artifact_id": 10038569730,
+          "target_environment": "dev",
+          "prior_release_absent": true,
+          "targets_audited": [
+            "api (Cloud Run Service oday-api: absent)",
+            "migration (Cloud Run Job oday-migration-r-596b9c9a1788: absent)",
+            "scheduler (Cloud Run Job oday-scheduler-r-596b9c9a1788: absent)",
+            "web (Cloud Run Service oday-web: absent)",
+            "worker (Cloud Run Job oday-worker-r-596b9c9a1788: absent)"
+          ]
+        },
+        "terraform_conditional_oidc": "infra/terraform/checks.tf lines 76, 238, 275 enforce conditional Google OAuth secret presence only when auth_mode=oidc."
+      },
+      "source_refs": [
+        "SRC-02",
+        "SRC-03",
+        "SRC-04",
+        "SRC-10"
+      ],
+      "gaps_and_remediations": "Dev infrastructure preflight verified. Ephemeral staging IaC and production blue-green infrastructure review to follow in subsequent deployment waves."
+    },
+    {
+      "criterion_index": 6,
+      "criterion_id": "CRIT-SEC-06",
+      "name": "Licence-aware SBOM produced and OSS licence gate passes",
+      "registry_requirement": "licence-aware SBOM produced and OSS licence gate passes",
+      "status": "blocked",
+      "evaluation_type": "human_legal_gate_blocked",
+      "evaluation_summary": "Technical SBOM production, Cosign signing, image attestation, and D01-D14 case matrix engineering preparation are complete. However, formal legal license policy approval is an authoritative human gate (HUMAN-OSS-LEGAL-APPROVAL-001) that remains pending. docs/security/license_policy.json remains 'proposed', and no AI assistant has authority to grant legal approval or sign waivers.",
+      "technical_readiness": {
+        "image_sbom_attestations": [
+          "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:c962987fdaeaab721b5fe7f08fd70af9ee730271aff365f2d604a3f8c6ad8980",
+          "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:c6f75a41ca6433441a1d6e31de24985bae16087a470a7889fc71960bc90ae0ff",
+          "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:359ccfd3a2d2e41e4fd44733d5ac7138dd92acec58eff3d2be02cc1dd358f598",
+          "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:e6f6b390e9a143745fcbdd18f2e78dc7364a75d3180f2d975d3916c1f2036915"
+        ],
+        "image_signatures": [
+          "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:1d27d5394eec6436b74acffac2acea3285f0bb58cdc53e8243f38ebd64c82258",
+          "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:b57a2e39e35d23f69b926371f0ba32282c2cc0dfcfe9a07321fccdce46d65fc7",
+          "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:7ba935dddad224e6b466fae54e8318f71ead2f352a2fcd8c8fc3d6ff125e0b3f",
+          "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:3d70e5873e12c0ab121bedd48caaf3f03292c9f36f1cbea04e621257d5386b6c"
+        ],
+        "rekor_transparency_log_indices": {
+          "api": 2754425715,
+          "worker": 2754426118,
+          "scheduler": 2754426482,
+          "web": 2754427686
+        },
+        "cyclonedx_sbom": "CycloneDX 1.5 format generated (775 components) in ODP-OSS-DECISION-PACK-001 (package-lock.json SHA256 dbda4082..., uv.lock SHA256 ba5c393e...).",
+        "d01_d14_case_matrix": "D01-D05 evaluated (sharp/libvips, psycopg2, psycopg3, moocore/pymoo, 8 first-party workspace packages marked UNLICENSED in ODP-OSS-POLICY-NOTICE-IMPLEMENTATION-001). D06 dev toolchain vulnerabilities fully resolved (0 active findings in pip-audit and npm-audit).",
+        "external_data_sources": "16 source decision cards prepared with all sources default-deny and ENABLED=false."
+      },
+      "blocking_human_gap": {
+        "human_gate_id": "HUMAN-OSS-LEGAL-APPROVAL-001",
+        "owner": "Human/Ops",
+        "h01_gap": "Named legal approver identity (display_name, principal_id, role), external authoritative decision reference (approval_reference, source_system), and cryptographic/verifiable signature.",
+        "policy_status": "docs/security/license_policy.json remains status='proposed'; license_exemptions.json remains unsigned.",
+        "enforcement_boundary": "AI assistant cannot sign legal approvals, cannot convert proposed policy to active, cannot forge authoritative receipts, and cannot waive OSS obligations."
+      },
+      "source_refs": [
+        "SRC-01",
+        "SRC-02",
+        "SRC-04",
+        "SRC-08",
+        "SRC-09"
+      ],
+      "gaps_and_remediations": "Requires Human/Ops to execute HUMAN-OSS-LEGAL-APPROVAL-001 and deliver authoritative signed receipt. Gate 4 cannot move to cleared until this human gate is satisfied."
+    }
+  ],
+  "standing_external_sources_posture": {
+    "total_sources_audited": 16,
+    "all_sources_disabled": true,
+    "zero_credentials_present": true,
+    "public_egress_posture": "default-deny",
+    "sources": [
+      "admin_boundary_snapshot",
+      "competitor_store_snapshot",
+      "customer_service_case_event",
+      "demographics_snapshot",
+      "geocode_result_snapshot",
+      "listing_raw_snapshot",
+      "machine_cycle_event",
+      "machine_master_snapshot",
+      "machine_status_event",
+      "maintenance_work_order_event",
+      "poi_snapshot",
+      "price_schedule_snapshot",
+      "store_master_snapshot",
+      "store_opening_authority_snapshot",
+      "transaction_event",
+      "weather_daily_snapshot"
+    ]
+  }
+}

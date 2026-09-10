@@ -1,0 +1,147 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "ODP-DEV-CANDIDATE-SECURITY-RECEIPT-001",
+  "generated_at": "2026-09-10T23:45:00Z",
+  "candidate_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+  "source_evidence_sha": "d084f51d4009b7b435416c8b83410a8b4fb4a267",
+  "manifest_digest": "sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c",
+  "description": "Source documents, build receipts, and historical evidence index for Gate 4 (Security and Privacy Gate) evaluation on candidate C (596b9c9a1788d952811a2bf8d4bba8a4e4d76b12).",
+  "sources": [
+    {
+      "source_id": "SRC-01",
+      "uri": "github://alfloop-dev/odayplus@d084f51d4009b7b435416c8b83410a8b4fb4a267/docs/evidence/gates/RELEASE_GATE_REGISTRY.json",
+      "sha": "d084f51d4009b7b435416c8b83410a8b4fb4a267",
+      "path": "docs/evidence/gates/RELEASE_GATE_REGISTRY.json",
+      "role": "Canonical release gate registry declaring Gate 4 (Security and Privacy Gate) scope, required checks, blockers, and candidate rebind to 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12.",
+      "relevance": "Defines the 6 required Gate 4 checks and records fail-closed NO-GO state."
+    },
+    {
+      "source_id": "SRC-02",
+      "uri": "github://alfloop-dev/odayplus@d084f51d4009b7b435416c8b83410a8b4fb4a267/docs/evidence/gates/RELEASE_MANIFEST.json",
+      "sha": "d084f51d4009b7b435416c8b83410a8b4fb4a267",
+      "path": "docs/evidence/gates/RELEASE_MANIFEST.json",
+      "role": "Immutable candidate release manifest published by build run 34179791241 for candidate 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12.",
+      "relevance": "Carries candidate digest, 4 image digests, 4 SBOM refs, 4 Cosign signature refs, sources_off_attestation (16 sources disabled, 0 credentials, default-deny egress contract digest sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09), and initial_release_recovery absence readback."
+    },
+    {
+      "source_id": "SRC-03",
+      "uri": "github://alfloop-dev/odayplus@d084f51d4009b7b435416c8b83410a8b4fb4a267/docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/README.md",
+      "sha": "d084f51d4009b7b435416c8b83410a8b4fb4a267",
+      "path": "docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/README.md",
+      "role": "Evidence reconciliation document establishing candidate C image build vs artifact handoff run provenance, byte-exact raw artifact comparisons, and staged gate model (§6.1).",
+      "relevance": "Clarifies run 34179207603 (builder/signer) vs run 34179791241 (publisher/verifier) and preserves ancestry failures of earlier PRs."
+    },
+    {
+      "source_id": "SRC-04",
+      "uri": "github://alfloop-dev/odayplus@108249fa921e128f734ebd917a933fa562f4b7e1/docs/evidence/runtime/ODP-DEV-BUILD-ARTIFACT-HANDOFF-003/build-dispatch-evidence.md",
+      "sha": "108249fa921e128f734ebd917a933fa562f4b7e1",
+      "path": "docs/evidence/runtime/ODP-DEV-BUILD-ARTIFACT-HANDOFF-003/build-dispatch-evidence.md",
+      "role": "Authoritative build dispatch evidence for candidate C (596b9c9a1788d952811a2bf8d4bba8a4e4d76b12) across runs 34140207274, 34179207603, and 34179791241.",
+      "relevance": "Records pre-image-push security checks (secret scan step 8, Python SAST step 9, npm audit step 10, SBOM generation step 12), Cosign v2.5.2 verification, Rekor transparency log indices, and 6-file egress contract computation."
+    },
+    {
+      "source_id": "SRC-05",
+      "uri": "github://alfloop-dev/odayplus@596b9c9a1788d952811a2bf8d4bba8a4e4d76b12/docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md",
+      "sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "path": "docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md",
+      "role": "System rollout plan defining staged gate model (§6.1), single-pipeline build-once deployment principles, external source standing disabled posture (§9.1), and human decision boundaries (§11.3, §16).",
+      "relevance": "Establishes candidate-built vs dev-verified vs staging-verified gate boundaries."
+    },
+    {
+      "source_id": "SRC-06",
+      "uri": "github://alfloop-dev/odayplus@596b9c9a1788d952811a2bf8d4bba8a4e4d76b12/tests/security/README.md",
+      "sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "path": "tests/security/README.md",
+      "role": "Security test suite index at candidate C covering RBAC, ABAC, PII masking, export permission, OWASP API, and supply chain gates.",
+      "relevance": "Index of candidate C security acceptance tests in tests/security/."
+    },
+    {
+      "source_id": "SRC-07",
+      "uri": "github://alfloop-dev/odayplus@15bb7a6bd527285a202f0b8f3601ab2884aca67d/docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/verification_evidence.md",
+      "sha": "15bb7a6bd527285a202f0b8f3601ab2884aca67d",
+      "path": "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/verification_evidence.md",
+      "role": "Verification evidence for complete removal of banned packages (evidently, nltk, defusedxml, regex) and pip-audit gate execution.",
+      "relevance": "Input hash equivalence proof: pyproject.toml (130f024b...) and uv.lock (ba5c393e...) at candidate C match this evidence exactly. 215 Python dependencies audited, 0 vulnerabilities, fail-closed no-suppression enforcement."
+    },
+    {
+      "source_id": "SRC-08",
+      "uri": "github://alfloop-dev/odayplus@21a5e783544aaf14b25bb7ef00eeffe4c1ca49b6/docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/README.md",
+      "sha": "21a5e783544aaf14b25bb7ef00eeffe4c1ca49b6",
+      "path": "docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/README.md",
+      "role": "Stage A engineering decision pack for OSS license compliance and 16 external data source decision cards.",
+      "relevance": "Contains D01-D14 case matrix (sharp/libvips, psycopg2, psycopg3, moocore/pymoo, 8 first-party workspace packages), 16 source decision cards, and identifies H01/H02 missing human legal inputs."
+    },
+    {
+      "source_id": "SRC-09",
+      "uri": "github://alfloop-dev/odayplus@174e9ba1373b45bd9e52115f36c90f9e0101421a/docs/evidence/human-decisions/ODP-OSS-POLICY-NOTICE-IMPLEMENTATION-001/README.md",
+      "sha": "174e9ba1373b45bd9e52115f36c90f9e0101421a",
+      "path": "docs/evidence/human-decisions/ODP-OSS-POLICY-NOTICE-IMPLEMENTATION-001/README.md",
+      "role": "Implementation evidence for D05 first-party UNLICENSED marking across 8 workspace packages and NOTICE/SBOM consistency.",
+      "relevance": "Details first-party scope boundary, SBOM component exclusion, and emphasizes that license_policy.json remains proposed until authoritative human receipt."
+    },
+    {
+      "source_id": "SRC-10",
+      "uri": "github://alfloop-dev/odayplus@9fc7e2a8a59085a02ea030f02fdfb3dfb4eee47d/docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/README.md",
+      "sha": "9fc7e2a8a59085a02ea030f02fdfb3dfb4eee47d",
+      "path": "docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/README.md",
+      "role": "Evidence alignment package for D15 (password-first, Google OIDC disabled default).",
+      "relevance": "Provides 15-control evidence matrix for auth-mode precedence, fail-closed callback (HTTP 503), session/CSRF integrity, and defines standby boundary for HUMAN-GCP-WEB-OAUTH-CLIENTS-001."
+    }
+  ],
+  "candidate_raw_artifacts": [
+    {
+      "artifact_id": 10038482325,
+      "name": "release-phase-receipt-dev-build",
+      "run_id": 34179791241,
+      "raw_zip_sha256": "bcfbf76667f7c5892dd4832851ec30d966aea346e054ac4b9832b84dbe3e11d5",
+      "inner_file": "release-phase-receipt.json",
+      "inner_file_sha256": "af1f1d5d1be169187a054a83d09b47e5978d4018d1c366144a99fe8f88deb8c7",
+      "key_claims": "phase=build, environment=dev, lease_supplied=false, image_handoff=null, manifest_handoff=null"
+    },
+    {
+      "artifact_id": 10038486296,
+      "name": "release-environment-receipt-dev-build",
+      "run_id": 34179791241,
+      "raw_zip_sha256": "9180ed873afc9d08b05ff948b7d358d6bf10fc8416e2d8864c1f554c9a13a6cf",
+      "inner_file": "release-environment-receipt.json",
+      "inner_file_sha256": "a5fc3cc7847bbbec3bb0dbd651428b9a6fcebb18db770ff2abd09cd2b850f9bb",
+      "key_claims": "github_environment=dev-build, 11 required variables resolved, missing_variables=[]"
+    },
+    {
+      "artifact_id": 10038492941,
+      "name": "release-npm-audit-receipt-dev",
+      "run_id": 34179791241,
+      "raw_zip_sha256": "fb61bd06cfc8da6d4c4c5a495b96c7bdf5d92f5743d68c7a568a8147fd3d921a",
+      "inner_file": "npm-audit-receipt.json",
+      "inner_file_sha256": "49c5c659e9b08dab23ec0e9aee390d814f8d8e2c0f78c3a4d922cedb4de96224",
+      "key_claims": "production npm audit passed, 0 high/critical vulnerabilities"
+    },
+    {
+      "artifact_id": 10038569219,
+      "name": "runtime-release-images-596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "run_id": 34179791241,
+      "raw_zip_sha256": "7f0515c6d92b4351da4a5a425d0b20cc1f49c519eeda1754adcbfe996e35d05b",
+      "inner_file": "runtime-release-images.json",
+      "inner_file_sha256": "612507f59edb8e09807dfa5a9f15fafaa622fb03473e2eff4015dda64494fa12",
+      "key_claims": "4 component images (api, web, worker, scheduler) bound to exact immutable digests in Artifact Registry"
+    },
+    {
+      "artifact_id": 10038569478,
+      "name": "runtime-release-manifest-596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "run_id": 34179791241,
+      "raw_zip_sha256": "fab4a3e97c20a0fc89481a6055d97959fea37cbdc1d647cd2f3dad7d0c1fdae4",
+      "inner_file": "RELEASE_MANIFEST.json",
+      "inner_file_sha256": "8bb6e72ed1306862ddb4c40d48c851b31ecf8c4ab5f361ac5cc7e1856537f56d",
+      "key_claims": "manifest_digest=sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c, sources_off_attestation contract_digest=sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09"
+    },
+    {
+      "artifact_id": 10038569730,
+      "name": "initial-release-absence-readback-596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "run_id": 34179791241,
+      "raw_zip_sha256": "b76ce7a65f97baa306e4ec9bc96c5cc7e49f753143e2c1238c3604daa888aa95",
+      "inner_file": "initial-release-absence-readback.json",
+      "inner_file_sha256": "ec316739eecd6c0438582a29c3803acad38fe283aa4167ca30db9dc481ffa283",
+      "key_claims": "5 Cloud Run resources (api, migration, scheduler, web, worker) verified absent on dev target prior to initial release"
+    }
+  ]
+}

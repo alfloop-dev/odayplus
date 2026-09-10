@@ -1,0 +1,101 @@
+{
+  "schema_version": "1.0.0",
+  "receipt_id": "ODP-DEV-CANDIDATE-SECURITY-REVIEW-RECEIPT-001",
+  "task_id": "ODP-DEV-CANDIDATE-SECURITY-RECEIPT-001",
+  "task_title": "交固定 C 的 Security Gate 證據與法務待辦邊界",
+  "created_at": "2026-09-10T23:45:00Z",
+  "owner": "Antigravity4",
+  "reviewer": "Codex2",
+  "candidate": {
+    "candidate_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+    "source_evidence_sha": "d084f51d4009b7b435416c8b83410a8b4fb4a267",
+    "manifest_digest": "sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c",
+    "build_run_id": 34179791241,
+    "producer_run_id": 34179207603,
+    "release_id": "odp-596b9c9a1788"
+  },
+  "gate_evaluation": {
+    "gate_id": "gate-4",
+    "gate_name": "Security and Privacy Gate",
+    "stage": "candidate-built",
+    "environment": "dev",
+    "admission_target": "dev",
+    "gate_status": "blocked",
+    "release_decision": "no-go",
+    "decision_owner": "Human/Ops",
+    "decision_rationale": "Mechanical security review of candidate C (596b9c9a1788d952811a2bf8d4bba8a4e4d76b12) confirms technical security and supply-chain controls pass. However, Gate 4 remains blocked because authoritative legal approval (HUMAN-OSS-LEGAL-APPROVAL-001) is unfulfilled and license policy remains proposed. Fail-closed NO-GO preserved."
+  },
+  "criteria_summary": {
+    "total_criteria": 6,
+    "passed_count": 5,
+    "blocked_count": 1,
+    "criteria_results": [
+      {
+        "criterion_id": "CRIT-SEC-01",
+        "name": "Secret scan passes",
+        "status": "pass",
+        "evidence_ref": "Build run 34179207603 step 8; manifest sources_off_attestation.zero_credentials_present: true"
+      },
+      {
+        "criterion_id": "CRIT-SEC-02",
+        "name": "Dependency and SAST scans pass with no unresolved critical/high findings",
+        "status": "pass",
+        "evidence_ref": "Build run 34179207603 step 9 (SAST); artifact 10038492941 (npm audit 0 high/critical); pip-audit equivalent verified on lockfiles (pyproject.toml 130f024b..., uv.lock ba5c393e..., 215 deps, 0 vulns, 0 banned pkgs)"
+      },
+      {
+        "criterion_id": "CRIT-SEC-03",
+        "name": "RBAC/ABAC tests pass for affected roles",
+        "status": "pass",
+        "evidence_ref": "tests/security/ test suites (test_rbac_abac.py, test_security_acceptance_suite.py); ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001 15-control matrix"
+      },
+      {
+        "criterion_id": "CRIT-SEC-04",
+        "name": "Sensitive export and audit controls checked",
+        "status": "pass",
+        "evidence_ref": "tests/security/test_audit_policy.py; 6-file egress contract digest sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09"
+      },
+      {
+        "criterion_id": "CRIT-SEC-05",
+        "name": "IAM and infrastructure changes reviewed",
+        "status": "pass",
+        "evidence_ref": "artifact 10038486296 (11 required vars resolved, 0 missing); artifact 10038569730 (5 Cloud Run resources absent); infra/terraform/checks.tf conditional OIDC"
+      },
+      {
+        "criterion_id": "CRIT-SEC-06",
+        "name": "Licence-aware SBOM produced and OSS licence gate passes",
+        "status": "blocked",
+        "evidence_ref": "4 image SBOM (.att) and signature (.sig) refs present; CycloneDX 1.5 SBOM generated (775 components); BLOCKED by HUMAN-OSS-LEGAL-APPROVAL-001 (H01/H02) human legal approval gate"
+      }
+    ]
+  },
+  "active_blockers": [
+    {
+      "blocker_id": "BLK-HUMAN-LEGAL-001",
+      "type": "human_gate",
+      "required_gate": "HUMAN-OSS-LEGAL-APPROVAL-001",
+      "owner": "Human/Ops",
+      "description": "Authoritative legal review and signed receipt (H01 approver identity, principal ID, role, and external approval reference) required. license_policy.json remains status='proposed'.",
+      "impact": "Gate 4 cannot be moved to cleared; dev deployment admission remains blocked."
+    }
+  ],
+  "standing_external_sources_posture": {
+    "total_sources_audited": 16,
+    "all_sources_disabled": true,
+    "zero_credentials_present": true,
+    "public_egress": "default-deny",
+    "contract_digest": "sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09"
+  },
+  "verified_input_hashes": {
+    "pyproject_toml": "130f024b80d55f439aa5467f4f469bb127aec955ef71444d2951a93d0f5d0391",
+    "uv_lock": "ba5c393e49538e4da9e59de001cffc28c4cadfab8aebacf6dbf1503eb3a49a5d",
+    "package_lock_json": "dbda408248444c617bf0b124e9d2ce73ce18be0ee6bf6d463f148ba3cd8b1c8a",
+    "egress_contract_digest": "sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09"
+  },
+  "governance_and_boundary_affirmations": [
+    "Completing this task delivers an honest review evidence package and does NOT clear Gate 4, grant Human/Ops GO, approve legal policies, or authorize deployment.",
+    "Candidate C SHA 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12, manifest digest sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c, and RELEASE_GATE_REGISTRY.json are strictly preserved and untouched.",
+    "No container images rebuilt, no release lease signed, no deployment dispatched, no external sources enabled, no production secrets read, and no human legal signatures forged.",
+    "Reused verification receipts are backed by exact input hash and tool version equivalence proofs.",
+    "Fail-closed NO-GO state is preserved."
+  ]
+}
