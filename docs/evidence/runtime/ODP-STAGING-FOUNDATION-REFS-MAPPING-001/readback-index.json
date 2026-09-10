@@ -1,0 +1,191 @@
+{
+  "task_id": "ODP-STAGING-FOUNDATION-REFS-MAPPING-001",
+  "schema_version": 1,
+  "generated_at_utc": "2026-09-10T23:45:00Z",
+  "executor_worker": "Antigravity5",
+  "purpose": "Index of all historical receipts, live readbacks, and GitHub environment variable audits used to establish staging foundation reference mapping and binding proposals without performing new cloud mutations or unauthorized probes.",
+  "authority_boundary": {
+    "permitted_actions": [
+      "Read immutable existing foundation metadata and state receipts",
+      "Read immutable preflight and CI collection receipts",
+      "Correlate Terraform outputs, remote state coordinates, and GitHub environment variables",
+      "Produce mapping tables, binding proposals, and required authority checklists"
+    ],
+    "prohibited_actions": [
+      "No reading secret payload versions or plaintext keys",
+      "No reading raw Terraform binary state plans or signing keys/tokens",
+      "No creating, modifying, or deleting cloud resources",
+      "No modifying IAM policy bindings or enabling GCP APIs",
+      "No running terraform init, plan, apply, import, or state commands",
+      "No running gh variable set or releasing dispatch triggers",
+      "No deleting or modifying quarantined security state artifacts prior to 2026-09-26T09:24:24Z"
+    ]
+  },
+  "source_receipts": [
+    {
+      "receipt_id": "RCPT-LIVE-FOUNDATION-READBACK-001",
+      "source_task": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+      "source_pr": "#1046",
+      "source_commit_sha": "494d09145b2932d5bbc27682e918b1afa176a140",
+      "origin_dev_sha": "1fdec6cbed15660bdf89531cb1bb69d4c36aa00b",
+      "source_file": "docs/evidence/runtime/ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001/live-foundation-readback-receipt.json",
+      "verified_at_utc": "2026-08-30T15:52:48Z",
+      "governance_adjusted_at_utc": "2026-09-01T09:14:13Z",
+      "principal_identity": "user:admin@dev.cctech-support.com / serviceAccount:github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+      "target_project": "odayplus-runtime-20260825",
+      "target_project_number": "767864276141",
+      "target_region": "asia-east1",
+      "exit_code": 0,
+      "state_backend": {
+        "bucket": "oday-tfstate-staging-odayplus-runtime-20260825",
+        "prefix": "oday-plus/staging/foundation/default.tfstate",
+        "object_generation": "1787822614666629",
+        "terraform_state_serial": 10,
+        "state_status": "CONVERGED_WITH_REMOTE_STATE"
+      },
+      "resources_verified": [
+        "module.runtime_foundation.google_compute_network.runtime (oday-staging-runtime)",
+        "module.runtime_foundation.google_compute_subnetwork.runtime (oday-staging-runtime, 10.42.0.0/24)",
+        "module.runtime_foundation.google_kms_crypto_key.runtime (projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime)",
+        "module.runtime_foundation.google_sql_database_instance.primary (oday-staging-foundation-sql, 10.149.0.3, POSTGRES_16)",
+        "google_compute_firewall (oday-staging-deny-all-egress, oday-staging-allow-private-egress, oday-staging-allow-restricted-google-apis)",
+        "state_backend bucket controls (CMEK, object versioning, PAP enforced, UBLA enabled, retention 30d)",
+        "least_privilege_iam for github-deployer (roles/storage.objectUser on state bucket)"
+      ],
+      "quarantine_incident": {
+        "incident_ref": "live-apply-plan-receipt.json#security_quarantine_incident",
+        "object_generation": "1787822664931431",
+        "retention_expires_at": "2026-09-26T09:24:24Z",
+        "cleanup_not_before": "2026-09-26T09:24:24Z",
+        "status": "CONTAINED_CLEANUP_DEFERRED"
+      }
+    },
+    {
+      "receipt_id": "RCPT-GH-ENV-VARS-STAGING-001",
+      "source_task": "ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003",
+      "source_pr": "#1245",
+      "source_commit_sha": "6ee658a0bd65ab79303fdfd75baa09c14410a220",
+      "source_file": "docs/evidence/runtime/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003/receipts/github-receipts/receipt-gh-env-vars-staging.json",
+      "command": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables",
+      "argv": [
+        "gh",
+        "api",
+        "--paginate",
+        "repos/alfloop-dev/odayplus/environments/staging/variables"
+      ],
+      "timestamp_utc": "2026-09-08T11:46:08Z",
+      "target": "github-environment-staging-variables",
+      "total_variables_count": 44,
+      "exit_code": 0,
+      "relevant_findings": {
+        "missing_foundation_vars": [
+          "ODP_STAGING_VPC_NETWORK",
+          "ODP_STAGING_VPC_SUBNETWORK",
+          "ODP_STAGING_KMS_KEY_ID",
+          "ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT",
+          "ODP_STAGING_TERRAFORM_STATE_BUCKET",
+          "ODP_STAGING_RECOVERY_BUNDLE_BUCKET"
+        ],
+        "bound_sql_instance_legacy": "odayplus-runtime-20260825:asia-east1:oday-staging-sql",
+        "bound_vpc_connector_legacy": "projects/odayplus-runtime-20260825/locations/asia-east1/connectors/oday-staging-vpc",
+        "bound_vpc_egress_legacy": "private-ranges-only"
+      }
+    },
+    {
+      "receipt_id": "RCPT-GH-ENV-VARS-DEV-001",
+      "source_task": "ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003",
+      "source_pr": "#1245",
+      "source_commit_sha": "6ee658a0bd65ab79303fdfd75baa09c14410a220",
+      "source_file": "docs/evidence/runtime/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003/receipts/github-receipts/receipt-gh-env-vars-dev.json",
+      "command": "gh api --paginate repos/alfloop-dev/odayplus/environments/dev/variables",
+      "argv": [
+        "gh",
+        "api",
+        "--paginate",
+        "repos/alfloop-dev/odayplus/environments/dev/variables"
+      ],
+      "timestamp_utc": "2026-09-08T11:46:07Z",
+      "target": "github-environment-dev-variables",
+      "total_variables_count": 40,
+      "exit_code": 0
+    },
+    {
+      "receipt_id": "RCPT-GH-ENV-VARS-PROD-001",
+      "source_task": "ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003",
+      "source_pr": "#1245",
+      "source_commit_sha": "6ee658a0bd65ab79303fdfd75baa09c14410a220",
+      "source_file": "docs/evidence/runtime/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003/receipts/github-receipts/receipt-gh-env-vars-production.json",
+      "command": "gh api --paginate repos/alfloop-dev/odayplus/environments/production/variables",
+      "argv": [
+        "gh",
+        "api",
+        "--paginate",
+        "repos/alfloop-dev/odayplus/environments/production/variables"
+      ],
+      "timestamp_utc": "2026-09-08T11:46:09Z",
+      "target": "github-environment-production-variables",
+      "total_variables_count": 39,
+      "exit_code": 0
+    },
+    {
+      "receipt_id": "RCPT-GCP-SQL-DESCRIBE-STAGING-001",
+      "source_task": "ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003",
+      "source_pr": "#1245",
+      "source_commit_sha": "6ee658a0bd65ab79303fdfd75baa09c14410a220",
+      "source_file": "docs/evidence/runtime/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003/receipts/gcp-receipts/receipt-gcp-sql-instance-describe-staging.json",
+      "command": "gcloud --quiet sql instances describe oday-staging-sql --project=odayplus-runtime-20260825 --format=json",
+      "argv": [
+        "gcloud",
+        "--quiet",
+        "sql",
+        "instances",
+        "describe",
+        "oday-staging-sql",
+        "--project=odayplus-runtime-20260825",
+        "--format=json"
+      ],
+      "timestamp_utc": "2026-09-08T11:46:17Z",
+      "executor_account": "oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com",
+      "target": "oday-staging-sql",
+      "exit_code": 1,
+      "outcome_classification": "not_found_or_unauthorized_ambiguous",
+      "stderr_sanitized": "ERROR: (gcloud.sql.instances.describe) There was no instance found at projects/odayplus-runtime-20260825/instances/oday-staging-sql or you are not authorized to access it."
+    },
+    {
+      "receipt_id": "RCPT-GCP-SA-DESCRIBE-DEPLOYER-001",
+      "source_task": "ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003",
+      "source_pr": "#1245",
+      "source_commit_sha": "6ee658a0bd65ab79303fdfd75baa09c14410a220",
+      "source_file": "docs/evidence/runtime/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003/receipts/gcp-receipts/receipt-gcp-sa-describe-deployer.json",
+      "command": "gcloud --quiet iam service-accounts describe github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com --project=odayplus-runtime-20260825 --format=json",
+      "argv": [
+        "gcloud",
+        "--quiet",
+        "iam",
+        "service-accounts",
+        "describe",
+        "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+        "--project=odayplus-runtime-20260825",
+        "--format=json"
+      ],
+      "timestamp_utc": "2026-09-08T11:46:22Z",
+      "executor_account": "oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com",
+      "target": "github-deployer-sa",
+      "exit_code": 1,
+      "outcome_classification": "permission_denied_explicit",
+      "stderr_sanitized": "ERROR: (gcloud.iam.service-accounts.describe) PERMISSION_DENIED: Permission 'iam.serviceAccounts.get' denied on resource '//iam.googleapis.com/projects/-/serviceAccounts/105055954881480121269' (or it may not exist)."
+    },
+    {
+      "receipt_id": "RCPT-STAGING-IAC-CI-COLLECTION-001",
+      "source_task": "ODP-STAGING-IAC-CI-COLLECTION-001",
+      "source_pr": "#1291",
+      "source_commit_sha": "726065c3aec57147f37902b94d754234dd55e25f",
+      "source_file": "docs/evidence/execution-control/ODP-STAGING-IAC-CI-COLLECTION-001/README.md",
+      "verified_at_utc": "2026-09-10T15:08:59Z",
+      "ci_tests_collected": 18,
+      "exit_code": 0,
+      "testpaths": "infra/terraform/tests/test_ephemeral_staging.py",
+      "summary": "18 ephemeral staging contract and offline plan tests integrated into unconditional orchestrator CI job with fail-closed harness and pinned Terraform 1.9.8."
+    }
+  ]
+}

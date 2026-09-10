@@ -1,0 +1,117 @@
+{
+  "task_id": "ODP-STAGING-FOUNDATION-REFS-MAPPING-001",
+  "schema_version": 1,
+  "generated_at_utc": "2026-09-10T23:45:00Z",
+  "executor_worker": "Antigravity5",
+  "reviewer": "Codex",
+  "executive_summary": "Actionable proposal for binding staging foundation coordinates into GitHub repository environments based on immutable readback receipts (#1046, #1245, #1291). This task does not execute any variable mutation or cloud provisioning; all actions are formatted for Human/Ops execution behind existing governance gates.",
+  "target_environment_proposals": {
+    "staging": {
+      "github_environment": "staging",
+      "target_gcp_project": "odayplus-runtime-20260825",
+      "actionable_foundation_bindings": [
+        {
+          "variable_name": "ODP_STAGING_VPC_NETWORK",
+          "action": "SET",
+          "proposed_value": "oday-staging-runtime",
+          "rationale": "Matches converged VPC network confirmed in PR #1046 remote state readback.",
+          "verification_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_VPC_NETWORK\")]'"
+        },
+        {
+          "variable_name": "ODP_STAGING_VPC_SUBNETWORK",
+          "action": "SET",
+          "proposed_value": "oday-staging-runtime",
+          "rationale": "Matches converged subnet (10.42.0.0/24) confirmed in PR #1046 remote state readback.",
+          "verification_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_VPC_SUBNETWORK\")]'"
+        },
+        {
+          "variable_name": "ODP_STAGING_KMS_KEY_ID",
+          "action": "SET",
+          "proposed_value": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime",
+          "rationale": "Matches converged runtime CMEK key with rotation_period=7776000s and prevent_destroy=true.",
+          "verification_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_KMS_KEY_ID\")]'"
+        },
+        {
+          "variable_name": "ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT",
+          "action": "SET",
+          "proposed_value": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+          "rationale": "Matches authenticated deployer SA bound via WIF pool 'github-actions' and provider 'odayplus'.",
+          "verification_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT\")]'"
+        },
+        {
+          "variable_name": "ODP_STAGING_TERRAFORM_STATE_BUCKET",
+          "action": "SET",
+          "proposed_value": "oday-tfstate-staging-odayplus-runtime-20260825",
+          "rationale": "Matches live state backend bucket with CMEK, versioning, PAP enforced, UBLA, and 30-day retention.",
+          "verification_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_TERRAFORM_STATE_BUCKET\")]'"
+        }
+      ],
+      "cloud_sql_remediation_binding": {
+        "variable_name": "GCP_CLOUD_SQL_INSTANCE",
+        "action": "UPDATE",
+        "current_value": "odayplus-runtime-20260825:asia-east1:oday-staging-sql",
+        "proposed_value": "odayplus-runtime-20260825:asia-east1:oday-staging-foundation-sql",
+        "rationale": "Current value incorrectly points to legacy unmanaged instance 'oday-staging-sql' on the default network. Must point to foundation managed instance 'oday-staging-foundation-sql' located in VPC 'oday-staging-runtime' (private IP 10.149.0.3).",
+        "verification_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"GCP_CLOUD_SQL_INSTANCE\")]'"
+      },
+      "human_input_and_provisioning_required": [
+        {
+          "variable_name": "ODP_STAGING_RECOVERY_BUNDLE_BUCKET",
+          "status": "REQUIRES_PROVISIONING_BEFORE_BINDING",
+          "suggested_value": "oday-staging-recovery-odayplus-runtime-20260825",
+          "prerequisite_provisioning_steps": [
+            "1. Human/Ops or authorized provisioning task creates distinct GCS bucket: oday-staging-recovery-odayplus-runtime-20260825 in region asia-east1.",
+            "2. Enforce Public Access Prevention (enforced) and Uniform Bucket-Level Access (true).",
+            "3. Enable Object Versioning (true) and 30-day retention policy.",
+            "4. Configure CMEK encryption with runtime key: projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime.",
+            "5. Grant roles/storage.objectUser to serviceAccount:github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com.",
+            "6. Verify distinct name is NOT equal to state bucket (satisfying deploy-dev.yml:1207-1212 separation guard).",
+            "7. Bind ODP_STAGING_RECOVERY_BUNDLE_BUCKET in GitHub staging environment."
+          ]
+        },
+        {
+          "variable_name": "ODP_PRODUCTION_WATCH_CLOSEOUT_URI",
+          "status": "DEPENDS_ON_PRODUCTION_ROLLOUT_PRODUCER",
+          "producer_task": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+          "rationale": "Requires the production watch-window receipt GCS URI, which cannot be finalized until production blue-green rollout is staged and watch window producer URI is established."
+        }
+      ]
+    },
+    "staging_build": {
+      "github_environment": "staging-build",
+      "status": "OBSERVATION_GAP_NEEDS_ENUMERATION_AND_DIRECT_VPC_ALIGNMENT",
+      "analysis": "The build job binds 'staging-build'. check_release_environment.py --scope build requires 11 variables. For Cloud Run networking, Direct VPC uses ODP_STAGING_VPC_NETWORK/ODP_STAGING_VPC_SUBNETWORK rather than Serverless VPC Access Connectors. Tooling remediation is required to ensure build-scope checks do not fail when Direct VPC is used in place of VPC connectors.",
+      "readback_command": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging-build/variables --jq '[.variables[].name]'"
+    }
+  },
+  "operator_runbook_commands": {
+    "warning": "FOR REFERENCE ONLY. DO NOT EXECUTE FROM AUTO WORKER. Must be executed by Human/Ops or authorized release operator after reviewing prerequisites.",
+    "commands": [
+      "# 1. Set the 5 confirmed staging foundation variables",
+      "gh variable set ODP_STAGING_VPC_NETWORK --env staging --body 'oday-staging-runtime'",
+      "gh variable set ODP_STAGING_VPC_SUBNETWORK --env staging --body 'oday-staging-runtime'",
+      "gh variable set ODP_STAGING_KMS_KEY_ID --env staging --body 'projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime'",
+      "gh variable set ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT --env staging --body 'github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com'",
+      "gh variable set ODP_STAGING_TERRAFORM_STATE_BUCKET --env staging --body 'oday-tfstate-staging-odayplus-runtime-20260825'",
+      "",
+      "# 2. Update Cloud SQL instance to point to foundation SQL",
+      "gh variable set GCP_CLOUD_SQL_INSTANCE --env staging --body 'odayplus-runtime-20260825:asia-east1:oday-staging-foundation-sql'",
+      "",
+      "# 3. Set recovery bucket after provisioning distinct GCS bucket",
+      "gh variable set ODP_STAGING_RECOVERY_BUNDLE_BUCKET --env staging --body 'oday-staging-recovery-odayplus-runtime-20260825'"
+    ]
+  },
+  "security_and_governance_rules": {
+    "bucket_separation_enforced": true,
+    "state_only_backend_contract_preserved": true,
+    "security_quarantine_expiry_date": "2026-09-26T09:24:24Z",
+    "security_quarantine_cleanup_deferred": true,
+    "no_early_deletion": true,
+    "human_review_gates_preserved": [
+      "GitHub 'staging' environment required_reviewers (Alien-alfaloop, ajoe734)",
+      "GitHub 'production' environment required_reviewers (Alien-alfaloop, ajoe734)",
+      "Supervisor release lease signature and manifest-digest admission gate",
+      "Production watch-window gate and its closeout receipt verification"
+    ]
+  }
+}
