@@ -3416,7 +3416,7 @@ def test_ci_failure_real_cas_race_aborts_and_does_not_dispatch_detached_in_progr
             side_effect=lambda _c, evt: queued_events.append(evt) or True,
         ),
     ):
-        changed = supervisor.dispatch_ready_tasks(
+        supervisor.dispatch_ready_tasks(
             cfg,
             state,
             agent_ids_override=["antigravity"],
@@ -3427,6 +3427,7 @@ def test_ci_failure_real_cas_race_aborts_and_does_not_dispatch_detached_in_progr
     assert queued_events == []
     final_disk = json.loads(status_file.read_text(encoding="utf-8"))
     assert final_disk["tasks"][0]["status"] == "review"
+    assert final_disk["_status_write_revision"] == "rev-2"
 
 
 def test_ci_failure_full_lifecycle_dispatcher_to_resubmission_to_review(tmp_path: Path) -> None:
