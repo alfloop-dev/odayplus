@@ -13,7 +13,16 @@ from common import (
     spawn_background_process,
     substantive_review_reopen_count,
 )
-from provider_runtime import configured_provider_binary
+from dispatch_policy import (
+    ROLE_HELPER,
+    ROLE_OWNER,
+    ROLE_REVIEWER,
+    dispatch_reason_role,
+    role_provider_block_reason,
+)
+from dispatch_policy import DEFAULT_FROZEN_CLOSEOUT_STATUSES, task_closeout_is_frozen, task_submitted_author
+from dispatch_policy import agent_provider_identity_ids as dispatch_policy_agent_provider_identity_ids
+from provider_runtime import configured_provider_binary, provider_config_entry
 import status_transition
 
 
@@ -28,7 +37,14 @@ def _sync_supervisor_scope() -> None:
     excluded = {
         "__name__", "__doc__", "__package__", "__loader__", "__spec__", "__file__", "__cached__", "__builtins__",
         "Any", "_supervisor_module", "_sync_supervisor_scope", "_entrypoint", "_sync_scope_guard", "status_transition",
-        "claude_model_selection_args", "configured_provider_binary", "spawn_background_process",
+        "claude_model_selection_args", "configured_provider_binary", "provider_config_entry", "spawn_background_process",
+        # The role/provider policy is a leaf that both this module and the
+        # supervisor import from `dispatch_policy`. Listing the names keeps this
+        # module's own bindings authoritative rather than depending on the two
+        # copies happening to be the same object.
+        "ROLE_HELPER", "ROLE_OWNER", "ROLE_REVIEWER", "dispatch_reason_role",
+        "role_provider_block_reason", "dispatch_policy_agent_provider_identity_ids",
+        "task_closeout_is_frozen", "DEFAULT_FROZEN_CLOSEOUT_STATUSES", "task_submitted_author",
     }
     module_exports = {
         "__all__",
@@ -1620,7 +1636,13 @@ def agent_dispatch_disabled(config: dict[str, Any], agent_name: str | None) -> b
     return False
 
 @_entrypoint
-def agent_can_take_task(config: dict[str, Any], agent_name: str | None, task: dict[str, Any] | None) -> bool:
+def agent_can_take_task(
+    config: dict[str, Any],
+    agent_name: str | None,
+    task: dict[str, Any] | None,
+    *,
+    role: str | None = None,
+) -> bool:
     name = str(agent_name or "").strip()
     if not name:
         return False
@@ -1638,11 +1660,22 @@ def agent_can_take_task(config: dict[str, Any], agent_name: str | None, task: di
     if agent_dispatch_disabled(config, name):
         return False
     if not isinstance(task, dict):
-        return True
+        # No task to read a `task_class` from. Role-wide rules -- the ones that
+        # say a role belongs to a provider regardless of what the work is --
+        # still apply; class-scoped ones cannot be evaluated and are skipped
+        # rather than guessed at.
+        return not role_provider_block_reason(config, name, role=role, task_class=None)
     # This is the shared eligibility predicate for owned dispatch, helper
     # claims, and quota failover. A non-dispatchable or human-gate task must
     # never become executable merely because an automated lane is idle.
     if task_is_human_gate(task) or bool(task.get("non_dispatchable")):
+        return False
+    # Role/provider eligibility is asked here, once, for every lane that can
+    # take work: initial assignment, repair, failover, churn rotation and
+    # helper claims all funnel through this predicate. Putting it anywhere else
+    # would mean one of those paths could still hand review to a lane the
+    # policy excludes.
+    if role_provider_block_reason(config, name, role=role, task=task):
         return False
     if task_is_sidecar(task):
         return True
@@ -1678,6 +1711,357 @@ def agent_open_task_counts(
             counts[agent] = counts.get(agent, 0) + 1
     return counts
 
+#: Where the single owner-provider preference group is configured. It lives
+#: under `ready_dispatcher` because it answers the same question that block
+#: already answers -- which lane should take this work next -- rather than
+#: introducing a second scheduler with its own settings.
+OWNER_PROVIDER_PREFERENCE_KEY = "owner_provider_preference"
+#: The preference is an implementation-lane policy. Deployment/integration
+#: classes such as `runtime_release`, review work, `human_gate` approvals and
+#: `sidecar` helpers keep whatever owner the existing rules choose.
+DEFAULT_OWNER_PREFERENCE_TASK_CLASSES = ["implementation", "remediation", "documentation"]
+#: Statuses whose owner is frozen no matter how the fleet is configured.
+#: Entering `review_approved` pins an exact reviewed PR head, and closeout from
+#: there is read-only with respect to the branch, so the owner is not a choice
+#: about who should implement -- it is the identity of whoever already did.
+#: Kept as a name here, derived from the leaf definition the freeze predicate
+#: itself reads, so the two cannot drift apart.
+DEFAULT_OWNER_PREFERENCE_FROZEN_STATUSES = list(DEFAULT_FROZEN_CLOSEOUT_STATUSES)
+
+
+@_entrypoint
+def owner_provider_preference_settings(config: dict[str, Any]) -> dict[str, Any]:
+    """Return the owner-provider preference block with its defaults applied.
+
+    `preferred_providers` deliberately defaults to empty: an operator who has
+    not configured a group gets exactly the previous selector behaviour, and
+    the whole preference path -- including its capacity probe -- stays off.
+    """
+    raw = (config.get("ready_dispatcher", {}) or {}).get(OWNER_PROVIDER_PREFERENCE_KEY, {}) or {}
+    settings = dict(raw) if isinstance(raw, dict) else {}
+    settings.setdefault("enabled", True)
+    settings.setdefault("preferred_providers", [])
+    settings.setdefault("task_classes", list(DEFAULT_OWNER_PREFERENCE_TASK_CLASSES))
+    return settings
+
+
+@_entrypoint
+def preferred_owner_provider_ids(config: dict[str, Any]) -> set[str]:
+    settings = owner_provider_preference_settings(config)
+    if settings.get("enabled") is False:
+        return set()
+    values = settings.get("preferred_providers")
+    if isinstance(values, str):
+        values = [values]
+    return {
+        normalize_agent_id(str(value))
+        for value in list(values or [])
+        if normalize_agent_id(str(value))
+    }
+
+
+@_entrypoint
+def agent_provider_identity_ids(config: dict[str, Any], agent_name: str | None) -> set[str]:
+    """Every configured provider/adapter id that names the model behind an agent.
+
+    A display name is not model identity. `Antigravity2` runs on the
+    `antigravity2` provider alias, whose `delivery_mode` and whose agent
+    `adapter` are both `antigravity`; guessing from the name would either miss
+    that alias or start matching on spelling. Resolving through the configured
+    provider entry keeps the preference group a statement about providers.
+
+    The body lives in `dispatch_policy` so the hard role/provider gate and this
+    soft preference read identity from one resolver, and so the canonical CLI
+    can ask the same question without importing the supervisor. This wrapper
+    keeps the name in the supervisor scope its callers already use.
+    """
+    return dispatch_policy_agent_provider_identity_ids(config, agent_name)
+
+
+@_entrypoint
+def agent_is_preferred_owner_provider(config: dict[str, Any], agent_name: str | None) -> bool:
+    preferred = preferred_owner_provider_ids(config)
+    if not preferred:
+        return False
+    return bool(agent_provider_identity_ids(config, agent_name) & preferred)
+
+
+@_entrypoint
+def task_closeout_owner_is_frozen(config: dict[str, Any], task: dict[str, Any] | None) -> bool:
+    """Whether an approved or merging head has already fixed this task's owner.
+
+    The body lives in `dispatch_policy` as `task_closeout_is_frozen`, because the
+    hard role/provider gate needs the same exemption this preference does: on a
+    frozen closeout neither one is choosing who should do the work. Keeping one
+    definition is what stops the two from disagreeing about when a head is
+    pinned.
+    """
+    return task_closeout_is_frozen(config, task)
+
+
+@_entrypoint
+def owner_preference_applies_to_task(
+    config: dict[str, Any],
+    task: dict[str, Any] | None,
+    role: str = "owner",
+) -> bool:
+    """Whether the owner preference may influence this selection at all.
+
+    Reviewer selection, human gates and non-dispatchable records are outside
+    the policy by construction, and a caller that cannot show the task cannot
+    show its `task_class` either -- so the preference stays off rather than
+    guessing that an unknown task is implementation work.
+
+    A frozen closeout is outside it for a stronger reason: there the preference
+    would not be choosing an implementer at all, it would be handing somebody
+    else's reviewed commit to a lane that never wrote it. Ordinary owned work
+    that has not been approved keeps its normal fallback.
+    """
+    if str(role or "").lower() != "owner":
+        return False
+    if not preferred_owner_provider_ids(config):
+        return False
+    if not isinstance(task, dict):
+        return False
+    if task_is_human_gate(task) or bool(task.get("non_dispatchable")):
+        return False
+    if task_closeout_owner_is_frozen(config, task):
+        return False
+    task_class = str(task.get("task_class") or "").strip().lower()
+    if not task_class:
+        return False
+    values = owner_provider_preference_settings(config).get("task_classes")
+    if isinstance(values, str):
+        values = [values]
+    eligible = {str(value).strip().lower() for value in list(values or []) if str(value).strip()}
+    return task_class in eligible
+
+
+@_entrypoint
+def dispatch_slot_loads(config: dict[str, Any], state: dict[str, Any] | None) -> dict[str, list[int]] | None:
+    """Active-plus-undelivered dispatch load per logical agent, or None.
+
+    This is the ready dispatcher's own accounting (`agent_dispatch_loads`), not
+    a second one: it counts running workers and queue events that have not been
+    delivered yet. None means "not measurable from here" -- no runtime state,
+    or no readable event queue -- which callers must treat as "no known
+    capacity" rather than as an empty lane.
+    """
+    if not isinstance(state, dict):
+        return None
+    try:
+        return agent_dispatch_loads(config, state, active_worker_statuses(config))
+    except (KeyError, OSError, TypeError, ValueError):
+        return None
+
+
+@_entrypoint
+def dispatch_pool_usage(config: dict[str, Any], state: dict[str, Any] | None) -> dict[str, int] | None:
+    """Active-plus-pending dispatch count per real account pool, or None.
+
+    `dispatch_slot_loads` answers "how busy is this logical agent". That is a
+    different question from "can this real account start another process" the
+    moment aliases share one pool: Antigravity, Antigravity2 and Antigravity3
+    are three logical agents on one account, so five queue events targeting
+    Antigravity2 leave Antigravity's own load at zero while the shared pool has
+    nothing left to run.
+
+    Both halves are the ready dispatcher's own quota accounting rather than a
+    second one, and `queued_quota_group_counts` already drops queue events whose
+    worker is counted as active -- so a single dispatch is never charged twice.
+    None means "not measurable from here", which callers must treat as no known
+    capacity rather than as an idle pool.
+    """
+    if not isinstance(state, dict):
+        return None
+    try:
+        # `queued_quota_group_counts` answers "zero pending" for a queue it
+        # never read: `load_jsonl` returns [] for a missing file, and that is
+        # indistinguishable from an idle pool. Resolving the configured path is
+        # not enough to tell those apart -- a path can be set and point at
+        # nothing -- so the queue is opened here. Reading it is still
+        # `load_event_queue`'s job; this only establishes that there is
+        # something readable to read, which is what "measured zero" requires.
+        # Missing, unreadable, or not a file all raise OSError and become None.
+        with config_path(config, "event_queue").open("rb"):
+            pass
+        active = active_quota_group_counts(config, state, active_worker_statuses(config))
+        pending = queued_quota_group_counts(config, state)
+    except (KeyError, OSError, TypeError, ValueError):
+        return None
+    usage: dict[str, int] = {}
+    for counts in (active, pending):
+        for group_id, count in (counts or {}).items():
+            try:
+                usage[group_id] = usage.get(group_id, 0) + int(count)
+            except (TypeError, ValueError):
+                return None
+    return usage
+
+
+@_entrypoint
+def account_pool_physical_capacity(config: dict[str, Any], agent_name: str | None) -> int:
+    """How many workers can run at once on the real account behind this agent.
+
+    `agent_dispatch_capacity` answers this for one logical name, but its answer
+    is neither additive across a pool nor a per-name budget:
+    `logical_worker_slot_ids` resolves every alias sharing an account onto the
+    same `dispatch_slot_for_pool` slots, so Antigravity, Antigravity2 and
+    Antigravity3 each report five while five processes exist between them.
+    Counting the distinct slot identities once is what turns three answers of
+    five into the single physical ceiling of five.
+
+    A logical agent that declares no slots contributes itself, which is exactly
+    the one process `agent_dispatch_capacity` grants it. A genuinely unpooled
+    configuration therefore gets one slot per identity and its pool ceiling is
+    the sum of the per-agent ones, so it can never bind tighter than the check
+    that was already there; the pool bound only bites where slots are shared.
+    """
+    pool_id = agent_quota_group_id(config, agent_name)
+    if not pool_id:
+        return 0
+    agents = config.get("agents", {}) or {}
+    members = [
+        normalize_agent_id(name)
+        for name, agent in agents.items()
+        if not agent_is_dispatch_slot(agent if isinstance(agent, dict) else {})
+        and agent_quota_group_id(config, name) == pool_id
+    ]
+    agent_id = normalize_agent_id(agent_name or "")
+    # An agent absent from `agents` still occupies its own process; without this
+    # it would report a capacity of zero and be permanently unpreferred.
+    if agent_id and agent_id not in members and not agent_is_dispatch_slot(agents.get(agent_id)):
+        members.append(agent_id)
+    slots: set[str] = set()
+    for member in members:
+        if not member:
+            continue
+        slots.update(logical_worker_slot_ids(config, member) or [member])
+    return len(slots)
+
+
+@_entrypoint
+def account_pool_has_free_dispatch_slot(
+    config: dict[str, Any],
+    state: dict[str, Any] | None,
+    agent_name: str | None,
+    pool_usage: dict[str, int] | None,
+) -> bool:
+    """Whether the real account behind this agent can start another worker.
+
+    `agent_auto_dispatch_block_reason` does not already answer this. It compares
+    the pool's *active* workers against the limit, so a pool whose last slots
+    are spoken for by undelivered queue events still passes it, and it skips the
+    comparison entirely whenever the effective limit is falsy.
+
+    Two independent ceilings bound one account and the lower one is the truth:
+    how many processes it has (`account_pool_physical_capacity`) and how many it
+    is currently permitted to use (`account_pool_effective_concurrency`). A
+    dynamic quota is not a grant of hardware -- a pool of five slots allowed ten
+    can still only run five -- and an absent quota is not an absent pool, which
+    is why the missing limit is answered by the slot count rather than by yes.
+    """
+    if pool_usage is None:
+        return False
+    agent_id = normalize_agent_id(agent_name or "")
+    if not agent_id:
+        return False
+    quota_group = agent_quota_group_id(config, agent_id)
+    if not quota_group:
+        # No resolvable account is no evidence about a shared budget.
+        return False
+    effective_limit = account_pool_effective_concurrency(config, state, agent_id)
+    # 0 is a stated answer, not a missing one: a disabled, paused, exhausted or
+    # cooled-down pool reports it, and reading it as "no limit" would prefer the
+    # one lane that certainly cannot run.
+    if effective_limit is not None and effective_limit <= 0:
+        return False
+    ceiling = account_pool_physical_capacity(config, agent_id)
+    if ceiling <= 0:
+        # A pool with no countable process is not an idle one.
+        return False
+    if effective_limit is not None:
+        ceiling = min(ceiling, effective_limit)
+    return pool_usage.get(quota_group, 0) < ceiling
+
+
+@_entrypoint
+def agent_has_free_dispatch_slot(
+    config: dict[str, Any],
+    agent_name: str | None,
+    loads: dict[str, list[int]] | None,
+    *,
+    state: dict[str, Any] | None,
+    pool_usage: dict[str, int] | None,
+) -> bool:
+    """Whether a worker for this agent could actually start right now.
+
+    Open task count is board bookkeeping, not capacity. An agent holding nine
+    open tasks with two idle slots can start immediately; an agent holding one
+    open task with its only slot busy cannot.
+
+    Its own slots are not the whole of capacity either. The logical agent and
+    the account pool behind it are two independent ceilings and the lower one
+    decides, so both are asked here. Dispatch pauses and account-pool lifecycle
+    blocks stay where they are -- every candidate reaching this point has
+    already passed `agent_auto_dispatch_block_reason` -- but that check counts
+    only active workers, which is why the shared-pool arithmetic cannot be
+    inherited from it. The final dispatcher still repeats both checks before it
+    queues anything.
+    """
+    if loads is None:
+        return False
+    agent_id = normalize_agent_id(agent_name or "")
+    if not agent_id:
+        return False
+    used = len(loads.get(display_name_for(config, agent_id), []) or [])
+    if used >= agent_dispatch_capacity(config, agent_id):
+        return False
+    return account_pool_has_free_dispatch_slot(config, state, agent_id, pool_usage)
+
+
+@_entrypoint
+def owner_preference_ranks(
+    config: dict[str, Any],
+    agent_names: list[str],
+    *,
+    state: dict[str, Any] | None,
+    task: dict[str, Any] | None,
+    role: str = "owner",
+) -> dict[str, int]:
+    """Rank 0 for a preferred-provider owner with a free slot, 1 for everyone else.
+
+    Both owner selection paths -- `first_viable_agent` and the paused-owner
+    failover in `dispatch_engine.reassign_unavailable_reviewers` -- rank through
+    this one function, so they cannot drift into two different preferences. The
+    rank is only ever a leading sort key: everything after it stays whatever the
+    caller already did, and a rank of 1 for every candidate reproduces the
+    previous ordering exactly.
+    """
+    names = [str(name) for name in agent_names]
+    if not owner_preference_applies_to_task(config, task, role):
+        return dict.fromkeys(names, 1)
+    loads = dispatch_slot_loads(config, state)
+    pool_usage = dispatch_pool_usage(config, state)
+    if loads is None or pool_usage is None:
+        # Preferring a lane whose capacity cannot be measured would move work
+        # onto an agent that may have nothing free to run it. Both pictures are
+        # taken once per selection so every candidate is ranked against the same
+        # instant, and so the shared pool is counted once rather than per name.
+        return dict.fromkeys(names, 1)
+    return {
+        name: (
+            0
+            if agent_is_preferred_owner_provider(config, name)
+            and agent_has_free_dispatch_slot(
+                config, name, loads, state=state, pool_usage=pool_usage
+            )
+            else 1
+        )
+        for name in names
+    }
+
+
 @_entrypoint
 def first_viable_agent(
     config: dict[str, Any],
@@ -1711,7 +2095,7 @@ def first_viable_agent(
                 continue
             if agent_account_pool_id(config, name) in excluded_pool_ids:
                 continue
-            if task is not None and not agent_can_take_task(config, name, task):
+            if task is not None and not agent_can_take_task(config, name, task, role=role):
                 continue
             viable.append(name)
 
@@ -1724,8 +2108,22 @@ def first_viable_agent(
     # among them is free. Take the least loaded and keep the caller's ordering
     # as the tie-break, which preserves the configured preference whenever the
     # load is equal.
+    #
+    # The owner preference group leads that ordering, and only for owners with a
+    # genuinely free slot. Load balancing alone cannot express "this provider
+    # should implement" -- a busy-but-idle-slotted Antigravity lane always sorts
+    # behind a Codex lane holding one fewer open task -- while a bare reordering
+    # of the fallback list cannot either, because load is compared before order.
     counts = agent_open_task_counts(config, status, role=role)
-    return min(viable, key=lambda name: (counts.get(normalize_agent_id(name), 0), viable.index(name)))
+    ranks = owner_preference_ranks(config, viable, state=state, task=task, role=role)
+    return min(
+        viable,
+        key=lambda name: (
+            ranks.get(name, 1),
+            counts.get(normalize_agent_id(name), 0),
+            viable.index(name),
+        ),
+    )
 
 @_entrypoint
 def has_configured_reassignment_candidates(
@@ -1735,7 +2133,17 @@ def has_configured_reassignment_candidates(
     *,
     task: dict[str, Any] | None = None,
     exclude_pools: set[str] | None = None,
+    role: str = "owner",
 ) -> bool:
+    """Whether any *role-eligible* alternative is configured for this search.
+
+    Callers use this to tell "the lane is momentarily busy, wait" apart from
+    "there is nobody who could ever take this, block". That distinction is what
+    keeps a role restricted to one provider waiting for that provider instead of
+    escalating to a human the moment it is saturated -- so this has to apply the
+    same role filter `first_viable_agent` applies, or a policy-excluded lane
+    would be counted as an alternative that will never actually be selected.
+    """
     known = known_agent_display_names(config)
     seen: set[str] = set()
     excluded_pool_ids = {normalize_agent_id(pool) for pool in (exclude_pools or set()) if normalize_agent_id(pool)}
@@ -1749,7 +2157,7 @@ def has_configured_reassignment_candidates(
         if name in known:
             if agent_account_pool_id(config, name) in excluded_pool_ids:
                 continue
-            if not agent_can_take_task(config, name, task):
+            if not agent_can_take_task(config, name, task, role=role):
                 continue
             return True
     return False
@@ -2157,6 +2565,7 @@ def reassign_tasks_after_review_churn(
                 exclude=set(epoch_failed_owners) | {owner, reviewer},
                 task=snapshot,
                 exclude_pools=excluded_pools,
+                role=ROLE_OWNER,
             ):
                 continue
             # Fail closed: no viable alternative owner available in this review churn epoch
@@ -2196,6 +2605,12 @@ def reassign_tasks_after_review_churn(
                 changed = True
             continue
 
+        submitted_author = task_submitted_author(config, snapshot)
+        author_pool_exclusions = (
+            {agent_account_pool_id(config, submitted_author)}
+            if submitted_author and not is_human_gate_agent(submitted_author)
+            else set()
+        )
         reviewer_candidates: list[str] = []
         if is_human_gate_agent(reviewer):
             new_reviewer = reviewer
@@ -2204,14 +2619,14 @@ def reassign_tasks_after_review_churn(
                 first_viable_agent(
                     config,
                     [reviewer],
-                    exclude={new_owner},
+                    exclude={new_owner} | ({submitted_author} if submitted_author else set()),
                     state=state,
                     task=snapshot,
                     provider_report=provider_report,
                     status=status,
                     balance_load=False,
                     role="reviewer",
-                    exclude_pools={agent_account_pool_id(config, new_owner)},
+                    exclude_pools={agent_account_pool_id(config, new_owner)} | author_pool_exclusions,
                 )
                 if reviewer
                 else None
@@ -2223,23 +2638,24 @@ def reassign_tasks_after_review_churn(
                 new_reviewer = first_viable_agent(
                     config,
                     reviewer_candidates,
-                    exclude={new_owner},
+                    exclude={new_owner} | ({submitted_author} if submitted_author else set()),
                     state=state,
                     task=snapshot,
                     provider_report=provider_report,
                     status=status,
                     role="reviewer",
-                    exclude_pools={agent_account_pool_id(config, new_owner)},
+                    exclude_pools={agent_account_pool_id(config, new_owner)} | author_pool_exclusions,
                 )
         if not new_reviewer:
-            reviewer_pool_exclusions = {agent_account_pool_id(config, new_owner)}
+            reviewer_pool_exclusions = {agent_account_pool_id(config, new_owner)} | author_pool_exclusions
             all_reviewer_candidates = ([reviewer] if reviewer else []) + reviewer_candidates
             if has_configured_reassignment_candidates(
                 config,
                 all_reviewer_candidates,
-                exclude={new_owner},
+                exclude={new_owner} | ({submitted_author} if submitted_author else set()),
                 task=snapshot,
                 exclude_pools=reviewer_pool_exclusions,
+                role=ROLE_REVIEWER,
             ):
                 continue
             # Fail closed: no viable reviewer available for new owner
@@ -2358,14 +2774,14 @@ def maybe_reassign_task_after_worker_failure(
     if task_is_human_gate(task) or bool(task.get("non_dispatchable")):
         return None
 
-    task_status = str(task.get("status") or "").lower()
-    if task_status not in {str(value).lower() for value in settings.get("eligible_statuses", [])}:
-        return None
-
     dispatch_settings = ready_dispatch_settings(config)
     review_statuses = {str(value).lower() for value in dispatch_settings.get("review_statuses", ["review"])}
     finalize_statuses = {str(value).lower() for value in dispatch_settings.get("finalize_statuses", ["review_approved"])}
     owned_statuses = {str(value).lower() for value in dispatch_settings.get("owned_statuses", ["in_progress", "todo"])}
+
+    task_status = str(task.get("status") or "").lower()
+    if task_status not in {str(value).lower() for value in settings.get("eligible_statuses", [])}:
+        return None
 
     failing_agent = display_name_for(
         config,
@@ -2381,6 +2797,12 @@ def maybe_reassign_task_after_worker_failure(
     reviewer = str(task.get("reviewer") or "")
     failed_pool = agent_account_pool_id(config, failing_agent)
     quota_exclusions = {failed_pool} if is_terminal_quota_failure_kind(str(failure.get("kind") or "")) and failed_pool else set()
+    submitted_author = task_submitted_author(config, task)
+    author_pool_exclusions = (
+        {agent_account_pool_id(config, submitted_author)}
+        if submitted_author and not is_human_gate_agent(submitted_author)
+        else set()
+    )
 
     if task_status in review_statuses and reviewer == failing_agent:
         if is_human_gate_agent(reviewer):
@@ -2389,11 +2811,11 @@ def maybe_reassign_task_after_worker_failure(
         new_reviewer = first_viable_agent(
             config,
             candidates,
-            exclude={owner, reviewer},
+            exclude={owner, reviewer} | ({submitted_author} if submitted_author else set()),
             state=state,
             task=task,
             role="reviewer",
-            exclude_pools=quota_exclusions | {agent_account_pool_id(config, owner)},
+            exclude_pools=quota_exclusions | {agent_account_pool_id(config, owner)} | author_pool_exclusions,
         )
         if not new_reviewer or is_human_gate_agent(new_reviewer):
             return None
@@ -2459,11 +2881,11 @@ def maybe_reassign_task_after_worker_failure(
                 first_viable_agent(
                     config,
                     [reviewer],
-                    exclude={new_owner},
+                    exclude={new_owner} | ({submitted_author} if submitted_author else set()),
                     state=state,
                     task=task,
                     balance_load=False,
-                    exclude_pools={agent_account_pool_id(config, new_owner)},
+                    exclude_pools={agent_account_pool_id(config, new_owner)} | author_pool_exclusions,
                     role="reviewer",
                 )
                 if reviewer
@@ -2475,11 +2897,11 @@ def maybe_reassign_task_after_worker_failure(
                 new_reviewer = first_viable_agent(
                     config,
                     reviewer_candidates,
-                    exclude={new_owner},
+                    exclude={new_owner} | ({submitted_author} if submitted_author else set()),
                     state=state,
                     task=task,
                     role="reviewer",
-                    exclude_pools=quota_exclusions | {agent_account_pool_id(config, new_owner)},
+                    exclude_pools=quota_exclusions | {agent_account_pool_id(config, new_owner)} | author_pool_exclusions,
                 )
             if not new_reviewer or is_human_gate_agent(new_reviewer):
                 return None

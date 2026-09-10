@@ -17,15 +17,25 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
-OUTPUT_DIR = ROOT / "docs/evidence/completion/ODP-PGAP-SUPPLY-001"
-EVIDENCE_TASK_DIR = ROOT / "docs/evidence/completion/ODP-OSS-LICENSE-GATE-002"
+OUTPUT_DIR = ROOT / "docs/evidence"
 RELEASE_BINDINGS_PATH = ROOT / "docs/security/release_bindings.json"
 NODE_MODULES = ROOT / "node_modules"
 UV_LOCK = ROOT / "uv.lock"
 PACKAGE_LOCK = ROOT / "package-lock.json"
 PYPROJECT = ROOT / "pyproject.toml"
 
-FIRST_PARTY_PREFIXES = ("@oday-plus/", "oday-plus")
+# Our own packages: the `@oday-plus` scope plus the monorepo root name.
+# Matched as a scope and an exact name rather than a bare string prefix, so an
+# unrelated registry package called `oday-plus-anything` cannot inherit the
+# first-party exclusion and disappear from the catalogue.
+FIRST_PARTY_SCOPE = "@oday-plus/"
+FIRST_PARTY_ROOT_NAMES = frozenset({"oday-plus"})
+
+
+def is_first_party(name: str) -> bool:
+    """True only for our own packages: the @oday-plus scope or the root name."""
+    return name.startswith(FIRST_PARTY_SCOPE) or name in FIRST_PARTY_ROOT_NAMES
+
 
 CONTAINER_BASE_IMAGES = [
     "python:3.12-slim",
@@ -289,13 +299,21 @@ def generate_sbom() -> dict[str, Any]:
             for pkg_path, pkg_info in packages.items():
                 if not pkg_path:  # Root workspace
                     continue
-                pkg_name = pkg_path.replace("node_modules/", "")
-                if "/" in pkg_name and not pkg_name.startswith("@"):
-                    pkg_name = pkg_name.split("/")[-1]
+                if "node_modules/" in pkg_path:
+                    pkg_name = pkg_path.split("node_modules/")[-1]
+                    if "/" in pkg_name and not pkg_name.startswith("@"):
+                        pkg_name = pkg_name.split("/")[-1]
+                else:
+                    # A workspace member is keyed by its directory, not by its
+                    # package name. Splitting that directory apart renames
+                    # `@oday-plus/ui` to `ui`, which hides it from the
+                    # first-party test above and mints `pkg:npm/ui@0.1.0` --
+                    # a purl that belongs to an unrelated public package.
+                    pkg_name = str(pkg_info.get("name") or pkg_path.split("/")[-1])
                 version = pkg_info.get("version")
                 if not version or pkg_info.get("link"):
                     continue
-                if pkg_name.startswith(FIRST_PARTY_PREFIXES):
+                if is_first_party(pkg_name):
                     continue
 
                 purl = f"pkg:npm/{pkg_name}@{version}"
@@ -350,13 +368,24 @@ def generate_sbom() -> dict[str, Any]:
 
                 components.append(comp)
 
-            # Direct dependencies of root npm packages
-            root_npm = packages.get("", {})
-            for d in root_npm.get("dependencies", {}):
-                if not d.startswith(FIRST_PARTY_PREFIXES):
-                    for p_path, p_url in npm_purls_by_pkg_path.items():
-                        if p_path == f"node_modules/{d}":
-                            root_depends_on.add(p_url)
+            def _resolve_npm_purl(dep_name: str, requester_path: str = "") -> str | None:
+                if requester_path and f"{requester_path}/node_modules/{dep_name}" in npm_purls_by_pkg_path:
+                    return npm_purls_by_pkg_path[f"{requester_path}/node_modules/{dep_name}"]
+                if f"node_modules/{dep_name}" in npm_purls_by_pkg_path:
+                    return npm_purls_by_pkg_path[f"node_modules/{dep_name}"]
+                for p_path, p_url in npm_purls_by_pkg_path.items():
+                    if p_path.endswith(f"node_modules/{dep_name}"):
+                        return p_url
+                return None
+
+            # Direct dependencies of root npm package and workspace members
+            for pkg_path, pkg_info in packages.items():
+                if not pkg_path or "node_modules" not in pkg_path:
+                    for d in pkg_info.get("dependencies", {}):
+                        if not is_first_party(d):
+                            resolved_purl = _resolve_npm_purl(d, pkg_path)
+                            if resolved_purl:
+                                root_depends_on.add(resolved_purl)
         except Exception as e:
             print(f"Warning: Failed to parse package-lock.json: {e}", file=sys.stderr)
 
@@ -421,7 +450,7 @@ def generate_sbom() -> dict[str, Any]:
                 version = pkg.get("version")
                 if not name or not version:
                     continue
-                if name.startswith(FIRST_PARTY_PREFIXES):
+                if is_first_party(name):
                     continue
 
                 norm_name = re.sub(r"[-_.]+", "-", name).lower()
@@ -586,6 +615,13 @@ def generate_sbom() -> dict[str, Any]:
     return sbom
 
 
+def _display_path(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(ROOT.resolve()))
+    except ValueError:
+        return str(path)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -607,12 +643,15 @@ def main() -> int:
 
     if args.check:
         if not target_path.exists():
-            print(f"SBOM file is missing at {target_path}", file=sys.stderr)
+            print(f"SBOM file is missing at {_display_path(target_path)}", file=sys.stderr)
             return 1
         try:
             committed = json.loads(target_path.read_text(encoding="utf-8"))
         except Exception as e:
-            print(f"Failed to read committed SBOM at {target_path}: {e}", file=sys.stderr)
+            print(
+                f"Failed to read committed SBOM at {_display_path(target_path)}: {e}",
+                file=sys.stderr,
+            )
             return 1
 
         def filter_properties(props):
@@ -647,24 +686,19 @@ def main() -> int:
 
         if not (components_match and deps_match and props_match):
             print(
-                f"Committed SBOM at {target_path.relative_to(ROOT)} is stale; "
+                f"Committed SBOM at {_display_path(target_path)} is stale; "
                 "run delivery_toolchain/security/generate_sbom.py to regenerate.",
                 file=sys.stderr,
             )
             return 1
-        print(f"SBOM at {target_path.relative_to(ROOT)} is valid and up to date.")
+        print(f"SBOM at {_display_path(target_path)} is valid and up to date.")
         return 0
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    EVIDENCE_TASK_DIR.mkdir(parents=True, exist_ok=True)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
 
     content = json.dumps(sbom, indent=2) + "\n"
     target_path.write_text(content, encoding="utf-8")
-    print(f"SBOM successfully generated at {target_path.relative_to(ROOT)}")
-    if target_path != (EVIDENCE_TASK_DIR / "sbom.json"):
-        (EVIDENCE_TASK_DIR / "sbom.json").write_text(content, encoding="utf-8")
-        print(f"Mirrored SBOM to {EVIDENCE_TASK_DIR.relative_to(ROOT)}/sbom.json")
-
+    print(f"SBOM successfully generated at {_display_path(target_path)}")
     print(f"Total components cataloged: {len(sbom['components'])}")
     print(f"SBOM Content Digest: {sbom['metadata']['properties'][2]['value']}")
     return 0

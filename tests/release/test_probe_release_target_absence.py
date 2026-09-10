@@ -33,6 +33,8 @@ from delivery_toolchain.release.release_manifest import (
     INITIAL_RELEASE_READBACK_KIND,
     INITIAL_RELEASE_RECOVERY_METHOD,
     INITIAL_RELEASE_TARGET_INVENTORY,
+    build_release_manifest,
+    compute_data_contract_digest,
     initial_release_readback_errors,
     release_candidate_job_name,
     validate_release_admission,
@@ -114,6 +116,109 @@ def set_cloud_state(
 
 def ref(name: str, fill: str) -> str:
     return f"{REPO}/{name}@sha256:{fill * 64}"
+
+
+def data_snapshot() -> dict:
+    return {
+        "id": "snap-probe-001",
+        "uri": "gs://odayplus-snapshots/masked/snap-probe-001.tar.gz",
+        "object_generation": 123,
+        "content_sha256": "sha256:" + "7" * 64,
+        "data_contract_digest": compute_data_contract_digest(root=ROOT),
+        "masked": True,
+    }
+
+
+def rollback_release_summary(candidate_sha: str) -> dict:
+    """The rollback binding the *previous* release itself carried."""
+
+    older_sha = "9" * 40 if candidate_sha != "9" * 40 else "8" * 40
+    return {
+        "release_id": "odp-older-001",
+        "candidate_sha": older_sha,
+        "manifest_digest": "sha256:" + "8" * 64,
+        "components": {
+            "api": {"image": ref("api", "a")},
+            "web": {"image": ref("web", "b")},
+        },
+        "data_snapshot": {
+            "id": "snap-older-001",
+            "uri": "gs://odayplus-snapshots/masked/snap-older-001.tar.gz",
+            "object_generation": 122,
+            "content_sha256": "sha256:" + "c" * 64,
+            "data_contract_digest": compute_data_contract_digest(root=ROOT),
+            "masked": True,
+        },
+    }
+
+
+def previous_release_manifest() -> dict:
+    """A complete previous release manifest for this release to roll back to."""
+
+    prev_sha = "0" * 40
+    return build_release_manifest(
+        release_id="odp-prev-001",
+        candidate_sha=prev_sha,
+        components={
+            "api": {"image": ref("api", "a")},
+            "web": {"image": ref("web", "b")},
+            "worker": {"image": ref("worker", "c")},
+            "scheduler": {"image": ref("scheduler", "d")},
+        },
+        sbom_refs=[ref("api", "5")],
+        signature_refs=[ref("api", "6")],
+        created_at="2026-08-25T12:00:00+00:00",
+        created_by_workflow=(
+            "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@" + prev_sha
+        ),
+        data_snapshot={
+            "id": "snap-prev-001",
+            "uri": "gs://odayplus-snapshots/masked/snap-prev-001.tar.gz",
+            "object_generation": 121,
+            "content_sha256": "sha256:" + "c" * 64,
+            "data_contract_digest": compute_data_contract_digest(root=ROOT),
+            "masked": True,
+        },
+        rollback_release=rollback_release_summary(prev_sha),
+        release_status="ready",
+        root=ROOT,
+    )
+
+
+# ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001: built here, not read from
+# `docs/evidence/gates/RELEASE_MANIFEST.json`.
+#
+# The committed gate manifest is rebound by every build. Reading it as the
+# "ordinary release" fixture meant this test asserted a property of whichever
+# release happened to be committed, not a property of the probe: the moment a
+# build published an initial-release-recovery manifest -- which the current v2
+# artifact is -- the fixture stopped being an ordinary release and the test
+# started failing for a release event rather than a regression. Building the
+# manifest here makes the fixture say what it means.
+def ordinary_release_manifest() -> dict:
+    """A normal release: bound to a rollback release, with no absence readback."""
+
+    _, manifest = build_handoff(
+        release_sha=SHA,
+        components={
+            "api": ref("api", "1"),
+            "web": ref("web", "2"),
+            "worker": ref("worker", "3"),
+            "scheduler": ref("scheduler", "4"),
+        },
+        sbom_refs=[ref("api", "5")],
+        signature_refs=[ref("api", "6")],
+        data_snapshot=data_snapshot(),
+        rollback_release=previous_release_manifest(),
+        target_environment="dev",
+        created_at=CREATED_AT,
+        created_by_workflow=(
+            "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@" + SHA
+        ),
+        root=ROOT,
+    )
+    assert manifest.get("initial_release_recovery") is None
+    return manifest
 
 
 def first_release_manifest(readback: dict) -> dict:
@@ -367,10 +472,7 @@ def test_an_ordinary_release_is_not_asked_about_an_empty_target(
 
     set_cloud_state(monkeypatch, present=list(TARGETS.values()))
     manifest_path = tmp_path / "RELEASE_MANIFEST.json"
-    manifest_path.write_text(
-        (ROOT / "docs/evidence/gates/RELEASE_MANIFEST.json").read_text(encoding="utf-8"),
-        encoding="utf-8",
-    )
+    manifest_path.write_text(json.dumps(ordinary_release_manifest()), encoding="utf-8")
 
     assert main(probe_argv(fake_gcloud, manifest=str(manifest_path))) == 0
 

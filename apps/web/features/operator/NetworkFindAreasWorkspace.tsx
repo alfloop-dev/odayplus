@@ -39,7 +39,12 @@ import { SiteScorePanel } from "./network/SiteScorePanel";
 import { ComparePanel } from "./network/ComparePanel";
 import { ReviewPanel } from "./network/ReviewPanel";
 import { NetworkShell } from "./network/NetworkShell";
-import { RebalancePanel } from "./network/RebalancePanel";
+import type { RebalancePanelProps } from "./network/RebalancePanel";
+import type {
+  HeatZoneMergeSplitPanelProps,
+  HeatZoneProposal,
+  ProposalPreviewData,
+} from "./network/HeatZoneMergeSplitPanel";
 import {
   buildNetworkTabHref,
   parseNetworkTabIndex,
@@ -103,6 +108,53 @@ const HeatZoneMap = dynamic<HeatZoneMapProps>(
   },
 );
 
+// Rebalance is the tab-6 panel: it carries the AVM valuation card, the NetPlan
+// scenario table and the review submission flow, and none of it is on screen
+// until the operator opens that tab. It is deferred for the same reason the
+// merge/split panel below is, so /operator and /intake do not pay for it on
+// first load. `ssr: false` matches the other deferred panels -- the panel is
+// driven entirely by client state and callbacks from this workspace.
+const RebalancePanel = dynamic<RebalancePanelProps>(
+  () => import("./network/RebalancePanel").then((mod) => mod.RebalancePanel),
+  {
+    ssr: false,
+    loading: function RebalancePanelLoading() {
+      return (
+        <div
+          aria-live="polite"
+          className={styles.mapLoading}
+          data-testid="rebalance-panel-loading"
+          role="status"
+        >
+          低效重配面板載入中…
+        </div>
+      );
+    },
+  },
+);
+
+const HeatZoneMergeSplitPanel = dynamic<HeatZoneMergeSplitPanelProps>(
+  () =>
+    import("./network/HeatZoneMergeSplitPanel").then(
+      (mod) => mod.HeatZoneMergeSplitPanel,
+    ),
+  {
+    ssr: false,
+    loading: function HeatZoneMergeSplitPanelLoading() {
+      return (
+        <div
+          aria-live="polite"
+          className={styles.mapLoading}
+          data-testid="heat-zone-merge-split-loading"
+          role="status"
+        >
+          熱區重組提案載入中…
+        </div>
+      );
+    },
+  },
+);
+
 export type NetworkFindAreasWorkspaceCallbacks = {
   onSelectHeatZone?: (heatZone: OperatorHeatZone) => void;
   onChangeLens?: (lens: NetworkFindAreasLens) => void;
@@ -152,6 +204,7 @@ const networkTabs = [
   "比較 / Compare",
   "審核 / Review",
   "低效重配 / Rebalance",
+  "空間治理 / Merge & Split",
 ] as const;
 
 const EMPTY_CANDIDATES: Candidate[] = [];
@@ -218,6 +271,7 @@ export function resolveNetworkTabGateState({
   bindingLoadStates,
   fixturesAllowed,
   networkLoadState,
+  proposalsLoadState,
   rebalanceLoadState,
   reviewsLoadState,
   scoringLoadState,
@@ -226,6 +280,7 @@ export function resolveNetworkTabGateState({
   bindingLoadStates: readonly OperatorDataAvailability[];
   fixturesAllowed: boolean;
   networkLoadState: OperatorDataAvailability;
+  proposalsLoadState?: OperatorDataAvailability;
   rebalanceLoadState: OperatorDataAvailability;
   reviewsLoadState: OperatorDataAvailability;
   scoringLoadState: OperatorDataAvailability;
@@ -245,6 +300,9 @@ export function resolveNetworkTabGateState({
   }
   if (activeTab === 6) {
     return resolveNetworkDataUnavailableState([rebalanceLoadState]);
+  }
+  if (activeTab === 7) {
+    return proposalsLoadState ? resolveNetworkDataUnavailableState([proposalsLoadState]) : null;
   }
   return null;
 }
@@ -603,6 +661,101 @@ export function NetworkFindAreasWorkspace({
   );
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
+
+  const [proposals, setProposals] = useState<HeatZoneProposal[]>([]);
+  const [proposalsLoadState, setProposalsLoadState] = useState<OperatorDataAvailability>(
+    fixturesAllowed ? "fixture" : "loading",
+  );
+  const [proposalsApiError, setProposalsApiError] = useState<string | null>(null);
+
+  const getCompositionClient = useCallback(async () => {
+    const { buildHeatZoneCompositionClient } = await import(
+      "./network/heatZoneCompositionClient"
+    );
+    return buildHeatZoneCompositionClient(activeRoleId);
+  }, [activeRoleId]);
+
+  const reloadProposals = useCallback(async () => {
+    try {
+      const client = await getCompositionClient();
+      const items = await client.fetchProposals();
+      if (items.length > 0 || !fixturesAllowed) {
+        setProposals(items);
+        setProposalsLoadState("ready");
+      } else {
+        setProposals([]);
+        setProposalsLoadState(fixturesAllowed ? "fixture" : "empty");
+      }
+      setProposalsApiError(null);
+    } catch {
+      setProposalsLoadState(fixturesAllowed ? "fixture" : "error");
+      setProposalsApiError("Failed to load merge/split proposals");
+    }
+  }, [fixturesAllowed, getCompositionClient]);
+
+  useEffect(() => {
+    if (activeTab !== 7) {
+      return;
+    }
+    let cancelled = false;
+    async function load() {
+      try {
+        const client = await getCompositionClient();
+        const items = await client.fetchProposals();
+        if (!cancelled) {
+          if (items.length > 0 || !fixturesAllowed) {
+            setProposals(items);
+            setProposalsLoadState("ready");
+          } else {
+            setProposals([]);
+            setProposalsLoadState(fixturesAllowed ? "fixture" : "empty");
+          }
+          setProposalsApiError(null);
+        }
+      } catch {
+        if (!cancelled) {
+          setProposalsLoadState(fixturesAllowed ? "fixture" : "error");
+          setProposalsApiError("Failed to load merge/split proposals");
+        }
+      }
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, fixturesAllowed, getCompositionClient]);
+
+  const handleApproveProposal = useCallback(
+    async (proposalId: string, notes?: string) => {
+      const client = await getCompositionClient();
+      const ok = await client.approveProposal(proposalId, notes);
+      if (!ok) {
+        throw new Error("Failed to approve proposal");
+      }
+      await reloadProposals();
+    },
+    [getCompositionClient, reloadProposals],
+  );
+
+  const handleRejectProposal = useCallback(
+    async (proposalId: string, reason: string) => {
+      const client = await getCompositionClient();
+      const ok = await client.rejectProposal(proposalId, reason);
+      if (!ok) {
+        throw new Error("Failed to reject proposal");
+      }
+      await reloadProposals();
+    },
+    [getCompositionClient, reloadProposals],
+  );
+
+  const handlePreviewProposal = useCallback(
+    async (proposalId: string): Promise<ProposalPreviewData | null> => {
+      const client = await getCompositionClient();
+      return await client.previewProposal(proposalId);
+    },
+    [getCompositionClient],
+  );
 
   const changeActiveTab = useCallback((tabIndex: number) => {
     setTabOverride({ from: urlTab, requested: tabIndex });
@@ -1250,6 +1403,7 @@ export function NetworkFindAreasWorkspace({
     bindingLoadStates,
     fixturesAllowed,
     networkLoadState,
+    proposalsLoadState,
     rebalanceLoadState,
     reviewsLoadState,
     scoringLoadState,
@@ -1259,7 +1413,9 @@ export function NetworkFindAreasWorkspace({
       ? networkApiError
       : activeTab === 6
         ? rebalanceApiError
-        : null;
+        : activeTab === 7
+          ? proposalsApiError
+          : null;
 
   const listingRadarPanel = (
     <ListingRadarPanel
@@ -1391,6 +1547,15 @@ export function NetworkFindAreasWorkspace({
             onSolveNetPlan={(storeId) => postRebalanceAction(storeId, "solve-netplan")}
             onSubmitReview={(storeId, submission) => postRebalanceAction(storeId, "submit-review", submission)}
             rows={viewModel.rebalanceQueue}
+          />
+        ) : activeTab === 7 ? (
+          <HeatZoneMergeSplitPanel
+            activeRoleId={activeRoleId}
+            isLoading={proposalsLoadState === "loading"}
+            onApproveProposal={handleApproveProposal}
+            onPreviewProposal={handlePreviewProposal}
+            onRejectProposal={handleRejectProposal}
+            proposals={proposals}
           />
         ) : (
           <FindAreasPanel

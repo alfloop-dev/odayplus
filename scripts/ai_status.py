@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import fcntl
 import gzip
+import hashlib
 import json
 import os
 import re
@@ -80,14 +81,19 @@ from runtime_state import enqueue_event, load_runtime_state
 from task_archive import (
     ARCHIVE_TASKS_DIR,
     TaskResolver,
+    archive_correction_path,
     archive_display_path,
     archive_task_path,
     archive_task_snapshot,
     is_terminal_task,
+    load_archive_correction,
     load_archive_index,
     load_archived_snapshot,
+    load_archived_task,
     rebuild_archive_index,
     recent_terminal_summaries,
+    save_archive_correction,
+    validate_archive_correction_record,
 )
 from task_archive import (
     DEFAULT_RECENT_LIMIT as DEFAULT_ARCHIVE_RECENT_LIMIT,
@@ -1310,6 +1316,51 @@ def save_state(state: dict[str, Any]) -> None:
     os.replace(temp_path, STATUS_FILE)
 
 
+# Verifications that can only run *after* `sync_all()` has written the board,
+# while the canonical lock is still held. A command that wrote outside the board
+# document (archive snapshots are separate files) cannot otherwise tell whether
+# the rows it staged actually reached disk, and "staged" is not a receipt.
+_POST_COMMIT_VERIFIERS: list[Any] = []
+
+
+def register_post_commit_verifier(verifier) -> None:
+    _POST_COMMIT_VERIFIERS.append(verifier)
+
+
+def run_post_commit_verifiers(
+    *,
+    transaction_succeeded: bool = True,
+    transaction_error: BaseException | None = None,
+) -> list[str]:
+    """Run and drain every registered verifier, collecting what they refuse.
+
+    A verifier failing is itself a finding, not a reason to lose the others, so
+    an exception here becomes a problem string rather than propagating: the
+    caller reports every problem after the transaction closes.
+    """
+
+    import inspect
+
+    problems: list[str] = []
+    while _POST_COMMIT_VERIFIERS:
+        verifier = _POST_COMMIT_VERIFIERS.pop(0)
+        try:
+            sig = inspect.signature(verifier)
+            if "transaction_succeeded" in sig.parameters:
+                problems.extend(
+                    verifier(
+                        transaction_succeeded=transaction_succeeded,
+                        transaction_error=transaction_error,
+                    )
+                    or []
+                )
+            else:
+                problems.extend(verifier() or [])
+        except Exception as exc:  # noqa: BLE001 - reported, never swallowed
+            problems.append(f"post-commit verification failed: {exc}")
+    return problems
+
+
 @contextmanager
 def status_write_transaction():
     """Serialize canonical status commands with Supervisor compare-and-swap writes."""
@@ -1456,9 +1507,7 @@ def _cross_repo_child_task(state: dict[str, Any], task_id: str) -> dict[str, Any
     active = get_task(state, task_id)
     if active is not None:
         return active
-    snapshot = load_archived_snapshot(task_id)
-    archived = snapshot.get("task") if isinstance(snapshot, dict) else None
-    return archived if isinstance(archived, dict) else None
+    return load_archived_task(task_id)
 
 
 def _cross_repo_requirement_with_child(
@@ -3606,6 +3655,81 @@ def task_metadata_from_env() -> dict[str, Any]:
         metadata["source_docs"] = parse_csv_env("TASK_SOURCE_DOCS")
 
     return metadata
+
+
+def role_provider_assignment_block_reason(
+    agent_name: str | None,
+    *,
+    role: str,
+    task_class: str | None = None,
+    task: dict[str, Any] | None = None,
+    grants_new_authority: bool = False,
+) -> str | None:
+    """Ask the dispatcher's own role/provider policy about a canonical assignment.
+
+    The board and the dispatcher have to agree on who may hold a role. If the
+    CLI could record an assignment the dispatcher will never act on, the task
+    just sits there looking owned, and the supervisor's reconcile pass spends
+    every tick trying to repair a record the operator keeps re-creating.
+
+    `dispatch_policy` is the leaf module the supervisor reads this from, so it
+    is imported directly rather than through `worker_failure_policy` -- the CLI
+    must not drag the supervisor into its process to answer a config question.
+
+    Human-gate actors and tasks that no automatic lane may take are outside the
+    policy: it governs which provider gets automated work, and those records
+    exist precisely because the work is not automated. Judging them here would
+    reject an operator writing `Human/Ops` onto a gate, because a human has no
+    provider identity at all and therefore fails closed.
+    """
+    from dispatch_policy import role_provider_block_reason
+
+    if canonical_agent_name(agent_name) in NON_WORKER_ACTORS:
+        return None
+    if isinstance(task, dict) and (
+        str(task.get("task_class") or "").strip().lower() == "human_gate"
+        or bool(task.get("human_required_roles"))
+        or str(task.get("gate_status") or "").strip().lower().startswith("pending_human")
+        or bool(task.get("non_dispatchable"))
+    ):
+        return None
+    return role_provider_block_reason(
+        merged_orchestrator_config(),
+        agent_name,
+        role=role,
+        task_class=task_class,
+        task=task,
+        grants_new_authority=grants_new_authority,
+    )
+
+
+def review_independence_block_reason(owner: str | None, reviewer: str | None) -> str | None:
+    """Why these two names are not two independent accounts, or None.
+
+    Logical names are not accounts. `Claude`/`Claude2` and `Antigravity2..7` are
+    aliases over one credential, one quota budget and one worker-slot set, so
+    comparing the strings -- which is all `owner == reviewer` does -- lets the
+    same account be recorded on both sides of its own review. The dispatcher has
+    always resolved this through the account-pool resolver; the CLI reads the
+    same leaf so a hand-written assignment cannot record what dispatch would
+    refuse to produce.
+    """
+    from dispatch_policy import agent_account_pool_id, review_is_independent
+
+    owner_name = canonical_agent_name(owner)
+    reviewer_name = canonical_agent_name(reviewer)
+    if not owner_name or not reviewer_name:
+        return None
+    if owner_name in NON_WORKER_ACTORS or reviewer_name in NON_WORKER_ACTORS:
+        return None
+    config = merged_orchestrator_config()
+    if review_is_independent(config, owner_name, reviewer_name):
+        return None
+    pool = agent_account_pool_id(config, owner_name) or "(unresolved)"
+    return (
+        f"owner {owner_name} 與 reviewer {reviewer_name} 屬於同一個 account pool {pool}"
+        "，不是獨立審查身分"
+    )
 
 
 def validate_assignment_source_docs(
@@ -5838,6 +5962,32 @@ def dashboard_orchestrator_state(state: dict[str, Any], orchestrator_state: dict
     return dashboard_state
 
 
+def docs_site_mirror_pairs() -> list[tuple[Path, Path]]:
+    """Every `(source, published mirror)` pair `sync_docs_site` writes.
+
+    One list, read at call time so relocated roots are honoured, because two
+    callers need exactly the same answer: the mirror writer below, and the
+    checkpoint-destination gate that has to refuse those same destinations.
+    Keeping them apart is how a mirror added to one list quietly becomes a
+    destination the other no longer protects.
+    """
+
+    rename_map = {"state.json": "orchestrator-state.json"}
+    sources = [
+        STATUS_FILE,
+        CURRENT_WORK_FILE,
+        DASHBOARD_BUNDLE_FILE,
+        ORCHESTRATOR_STATE_FILE,
+        APPROVAL_QUEUE_FILE,
+        PLANNING_STATE_FILE,
+        LOG_FILE,
+    ]
+    return [
+        (source, DOCS_SITE_DIR / rename_map.get(source.name, source.name))
+        for source in sources
+    ]
+
+
 def sync_docs_site(state: dict[str, Any]) -> None:
     DOCS_SITE_DIR.mkdir(parents=True, exist_ok=True)
     config = status_runtime_config()
@@ -5845,30 +5995,20 @@ def sync_docs_site(state: dict[str, Any]) -> None:
         runtime_state = load_runtime_state(config)
     except KeyError:
         runtime_state = {}
-    mirror_files = [
-        STATUS_FILE,
-        CURRENT_WORK_FILE,
-        DASHBOARD_BUNDLE_FILE,
-        ORCHESTRATOR_STATE_FILE,
-        APPROVAL_QUEUE_FILE,
-        PLANNING_STATE_FILE,
-    ]
-    rename_map = {
-        "state.json": "orchestrator-state.json",
-        "approval-queue.json": "approval-queue.json",
-    }
-    for path in mirror_files:
-        if path.exists():
-            target_name = rename_map.get(path.name, path.name)
-            if path.name == "state.json":
-                dashboard_state = dashboard_orchestrator_state(state, runtime_state)
-                (DOCS_SITE_DIR / target_name).write_text(
-                    json.dumps(dashboard_state, indent=2, ensure_ascii=False) + "\n",
-                    encoding="utf-8",
-                )
-            else:
-                shutil.copy2(path, DOCS_SITE_DIR / target_name)
-    _mirror_log_tail(LOG_FILE, DOCS_SITE_DIR / LOG_FILE.name, DASHBOARD_LOG_TAIL_LINES)
+    for source, target in docs_site_mirror_pairs():
+        if source == LOG_FILE:
+            # The log is mirrored as a bounded tail, not a whole-file copy.
+            _mirror_log_tail(source, target, DASHBOARD_LOG_TAIL_LINES)
+        elif not source.exists():
+            continue
+        elif source == ORCHESTRATOR_STATE_FILE:
+            dashboard_state = dashboard_orchestrator_state(state, runtime_state)
+            target.write_text(
+                json.dumps(dashboard_state, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+        else:
+            shutil.copy2(source, target)
 
 
 def sync_all(state: dict[str, Any]) -> None:
@@ -6016,6 +6156,52 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
         metadata["priority"] = priority
     if owner == reviewer:
         raise SystemExit("Reviewer cannot equal owner")
+    independence_reason = review_independence_block_reason(owner, reviewer)
+    if independence_reason:
+        raise SystemExit(
+            f"Cannot assign {task_id}: {independence_reason}。未寫入任何 assignment。"
+        )
+
+    # Judge the record this assignment is about to create, not the one it
+    # replaces. The task_class an explicit value in this invocation sets wins
+    # over the stored one, and the actors are the incoming pair -- reading the
+    # old task alone would measure the assignment against a class and a shape it
+    # will not have once written.
+    effective_task_class = str(
+        metadata.get("task_class")
+        if "task_class" in metadata
+        else ((task or {}).get("task_class") or "")
+    ).strip()
+    # `metadata` is folded in because it is where this invocation declares the
+    # things that decide whether the policy applies at all -- `task_class`,
+    # `non_dispatchable`, `human_required_roles`. Creating a human gate would
+    # otherwise be judged against a task that does not exist yet, and re-classing
+    # an existing one against the class it is being moved off.
+    effective_task = {**(task or {}), **metadata, "owner": owner, "reviewer": reviewer}
+    if effective_task_class:
+        effective_task["task_class"] = effective_task_class
+    for actor_name, actor_role, field in (
+        (owner, "owner", "owner"),
+        (reviewer, "reviewer", "reviewer"),
+    ):
+        # Re-recording the actor a task already has preserves history; writing a
+        # different name grants execution or review that does not exist yet. Only
+        # the second is a new grant, and only the second loses the pinned-head
+        # exemption -- otherwise an approved task would be a place where any lane
+        # could be installed precisely because its head was already frozen.
+        recorded = canonical_agent_name((task or {}).get(field))
+        block_reason = role_provider_assignment_block_reason(
+            actor_name,
+            role=actor_role,
+            task_class=effective_task_class,
+            task=effective_task,
+            grants_new_authority=canonical_agent_name(actor_name) != recorded,
+        )
+        if block_reason:
+            raise SystemExit(
+                f"Cannot assign {task_id}: {field} {actor_name} 不符合 role/provider 派工政策"
+                f"（{block_reason}）。未寫入任何 assignment。"
+            )
 
     timestamp = iso_now()
     if task is None:
@@ -6543,6 +6729,12 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"{task_id} has no assigned reviewer")
 
     submission = review_submission_for_task(task, pr_number)
+    # Who authored what is now under review. The owner field can legitimately be
+    # rewritten later -- by an operator, or by a reconcile pass -- and once it is,
+    # nothing else on the record still names the account whose commits the
+    # reviewer is supposed to be independent of. Recorded here, at the one moment
+    # it is certain, so the independence check keeps working afterwards.
+    submission["submitted_by"] = actor
     timestamp = iso_now()
     task["status"] = "review"
     task["last_update"] = timestamp
@@ -6631,6 +6823,8 @@ def command_retarget_branch(state: dict[str, Any], args: list[str]) -> None:
             "Push it first; retargeting onto an unpublished name only moves the problem."
         )
 
+    # Capture legacy SHA-only grants before clearing approval during retarget.
+    retain_review_gate_targets(task)
     timestamp = iso_now()
     task["branch"] = branch
     task["last_update"] = timestamp
@@ -7285,8 +7479,31 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
     reviewer = canonical_agent_name(task.get("reviewer"))
     if owner and reviewer and owner == reviewer:
         raise SystemExit(f"Owner ({owner}) and reviewer ({reviewer}) must be separate identities for task {task_id}")
+    independence_reason = review_independence_block_reason(owner, reviewer)
+    if independence_reason:
+        raise SystemExit(
+            f"Cannot approve task {task_id}: {independence_reason}。未記錄任何 approval。"
+        )
     if task.get("reviewer") != actor:
         raise SystemExit(f"Only the reviewer ({task.get('reviewer')}) can approve {task_id}")
+    # Same policy the dispatcher applies when it decides who may be woken for a
+    # review. Without it, a reviewer the policy excludes could still land the
+    # approval by hand, and the approval -- not the dispatch -- is the thing the
+    # merge gate trusts.
+    #
+    # An approval is always a new signature, never the preservation of one, so
+    # the pinned-head exemption does not apply. A task that already carries an
+    # `approved_head` and was reopened is exactly where it would otherwise: the
+    # freeze would let an excluded reviewer sign the *next* approval on the
+    # strength of the previous one.
+    reviewer_block_reason = role_provider_assignment_block_reason(
+        task.get("reviewer"), role="reviewer", task=task, grants_new_authority=True
+    )
+    if reviewer_block_reason:
+        raise SystemExit(
+            f"Cannot approve task {task_id}: reviewer {task.get('reviewer')} 不符合 role/provider "
+            f"審查政策（{reviewer_block_reason}）。未記錄任何 approval。"
+        )
     if task.get("status") != "review":
         raise SystemExit(f"{task_id} must be in review before it can move to review_approved")
 
@@ -7417,6 +7634,1422 @@ def command_archive_migrate(state: dict[str, Any], _args: list[str]) -> None:
     )
 
 
+class ArchiveRecoveryPreview(SystemExit):
+    """`archive_recovery_apply` without `--confirm`: plan printed, nothing written.
+
+    Raised rather than returned so `main()` unwinds before `sync_all()`. A
+    preview that still advanced `_status_write_revision` would invalidate the
+    baseline of the very batch it just previewed, and the operator's next run
+    with `--confirm` would fail closed on drift the preview itself caused.
+    """
+
+
+class ArchiveRecoveryInvalidationPreview(SystemExit):
+    """`archive_recovery_invalidate` without `--confirm`: preview printed, nothing written.
+
+    Raised rather than returned so `main()` unwinds before `sync_all()`.
+    """
+
+
+ARCHIVE_RECOVERY_USAGE = (
+    "Usage: archive_recovery_apply --batch <file> --maintenance-hold <hold-file> "
+    "[--checkpoint <file>] [--confirm]"
+)
+
+# The maintenance hold is a document, not a reference string: it has to bind a
+# declared dispatch pause and the reviewer's approval to this batch's hash.
+RECOVERY_MAINTENANCE_HOLD_TYPE = "task_history_recovery_maintenance_hold"
+
+
+def _recovery_planner_module():
+    """Import the planner that produced the batch, lazily and path-scoped.
+
+    The planner is a tool under `scripts/orchestrator`, not part of this
+    writer's import surface, and only this command needs it. Reading its
+    constants instead of restating them here is the point: a second copy of
+    the batch schema is exactly how an apply path drifts away from the planner
+    that feeds it.
+    """
+
+    planner_dir = Path(__file__).resolve().parent / "orchestrator"
+    if str(planner_dir) not in sys.path:
+        sys.path.append(str(planner_dir))
+    import backfill_task_archive_snapshots
+
+    return backfill_task_archive_snapshots
+
+
+def _parse_archive_recovery_args(args: list[str]) -> dict[str, Any]:
+    parsed: dict[str, Any] = {
+        "batch": "",
+        "maintenance_hold": "",
+        "checkpoint": "",
+        "confirm": False,
+    }
+    flags = {
+        "--batch": "batch",
+        "--maintenance-hold": "maintenance_hold",
+        "--checkpoint": "checkpoint",
+    }
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token == "--confirm":
+            parsed["confirm"] = True
+            index += 1
+            continue
+        key = flags.get(token)
+        if key is None or index + 1 >= len(args):
+            raise SystemExit(ARCHIVE_RECOVERY_USAGE)
+        parsed[key] = args[index + 1]
+        index += 2
+    return parsed
+
+
+def _archive_recovery_git(repo: Path, *args: str) -> tuple[int, str]:
+    """Run one read-only git command, returning (returncode, stdout).
+
+    Returns a non-zero code rather than raising for every failure mode --
+    missing repo, missing git, timeout -- because every one of them means the
+    same thing to the caller: the pinned evidence could not be re-verified, so
+    the batch is refused.
+    """
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo), *args],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return 1, ""
+    return result.returncode, result.stdout.strip()
+
+
+def _archive_recovery_hold(
+    hold_value: str, *, batch_sha256: str, recovery_reviewer: str, actor: str
+) -> tuple[Path, str, dict[str, Any]]:
+    """Load the maintenance hold, or refuse before anything is written.
+
+    A free-text hold reference proves nothing: it is a string the applying
+    worker types. This wants a document that is bound to *this* batch by hash,
+    that declares dispatch actually paused, that has not expired, and that
+    carries the reviewer's approval of the same hash -- from someone other than
+    the actor about to write. Without that binding a hold approved for an
+    earlier, more conservative batch would authorise this one.
+    """
+
+    hold_path = Path(hold_value).expanduser()
+    try:
+        payload = json.loads(hold_path.read_text(encoding="utf-8"))
+        raw = hold_path.read_bytes()
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(
+            f"Maintenance hold unreadable ({hold_path}): {exc}. --maintenance-hold "
+            "takes the path to a hold document, not a free-text reference. "
+            "Nothing was written."
+        ) from exc
+    hold_sha256 = hashlib.sha256(raw).hexdigest()
+
+    problems: list[str] = []
+    if not isinstance(payload, dict):
+        raise SystemExit("Maintenance hold must be a JSON object; nothing was written.")
+    if str(payload.get("type") or "") != RECOVERY_MAINTENANCE_HOLD_TYPE:
+        problems.append(f"type must be {RECOVERY_MAINTENANCE_HOLD_TYPE!r}")
+    for field in ("hold_id", "declared_by", "declared_at", "expires_at", "scope"):
+        if not str(payload.get(field) or "").strip():
+            problems.append(f"missing {field}")
+    if payload.get("dispatch_paused") is not True:
+        problems.append(
+            "dispatch_paused must be true: a hold that does not assert dispatch is "
+            "paused is not a hold"
+        )
+    if str(payload.get("batch_sha256") or "") != batch_sha256:
+        problems.append(
+            f"batch_sha256 {payload.get('batch_sha256')!r} is not this batch "
+            f"({batch_sha256})"
+        )
+
+    expires_at = _archive_recovery_parse_utc(payload.get("expires_at"))
+    declared_at = _archive_recovery_parse_utc(payload.get("declared_at"))
+    now = datetime.now(UTC)
+    if str(payload.get("expires_at") or "").strip() and expires_at is None:
+        problems.append(f"expires_at {payload.get('expires_at')!r} is not a UTC timestamp")
+    elif expires_at is not None and expires_at <= now:
+        problems.append(f"the hold expired at {payload.get('expires_at')}; it is no longer held")
+    if str(payload.get("declared_at") or "").strip() and declared_at is None:
+        problems.append(f"declared_at {payload.get('declared_at')!r} is not a UTC timestamp")
+    elif declared_at is not None and declared_at > now:
+        problems.append(f"declared_at {payload.get('declared_at')} is in the future")
+
+    approval = payload.get("batch_approval")
+    approval = approval if isinstance(approval, dict) else {}
+    if not approval:
+        problems.append("carries no batch_approval")
+    else:
+        approver = str(approval.get("reviewer") or "").strip()
+        if approver != recovery_reviewer:
+            problems.append(
+                f"batch_approval.reviewer {approver!r} is not the batch reviewer "
+                f"{recovery_reviewer!r}"
+            )
+        if approver and approver == actor:
+            problems.append(
+                f"{actor} cannot both approve and apply this batch"
+            )
+        if str(approval.get("approved_batch_sha256") or "") != batch_sha256:
+            problems.append(
+                "batch_approval.approved_batch_sha256 approves a different batch "
+                f"({approval.get('approved_batch_sha256')!r})"
+            )
+        for field in ("approved_at", "source"):
+            if not str(approval.get(field) or "").strip():
+                problems.append(f"batch_approval is missing {field}")
+
+    if problems:
+        raise SystemExit(
+            f"Maintenance hold refused ({hold_path}); nothing was written: "
+            + "; ".join(problems)
+        )
+    return hold_path, hold_sha256, payload
+
+
+def _archive_recovery_parse_utc(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(UTC)
+
+
+def _archive_snapshot_digests() -> dict[str, str]:
+    if not ARCHIVE_TASKS_DIR.exists():
+        return {}
+    return {
+        path.stem: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(ARCHIVE_TASKS_DIR.glob("*.json"))
+    }
+
+
+def _archive_recovery_baseline_drift(
+    state: dict[str, Any], baseline: dict[str, Any]
+) -> list[str]:
+    """Return every way the live baseline no longer matches the planned one.
+
+    This is the compare half of the compare-and-swap. It runs inside the
+    canonical status lock against state that was loaded inside that lock, so a
+    concurrent writer either finished before the load (and is seen here) or
+    cannot start until this transaction commits.
+
+    Every input the plan was derived from is re-checked, not just the ones that
+    are cheap to compare. The board revision can stay put while the board bytes
+    move; the evidence ref can move under a batch that still names its old
+    commit; and the inventory and authorization documents that decided which
+    ids are in scope can be edited after the plan was reviewed.
+    """
+
+    problems: list[str] = []
+
+    expected_revision = str(baseline.get("board_revision") or "").strip()
+    actual_revision = str(state.get("_status_write_revision") or "").strip()
+    if not expected_revision:
+        problems.append("batch carries no baseline board_revision")
+    elif expected_revision != actual_revision:
+        problems.append(
+            f"board revision moved ({expected_revision} -> {actual_revision or 'unset'})"
+        )
+
+    expected_board = str(baseline.get("board_sha256") or "").strip()
+    actual_board = (
+        hashlib.sha256(STATUS_FILE.read_bytes()).hexdigest()
+        if STATUS_FILE.exists()
+        else None
+    )
+    if not expected_board:
+        problems.append("batch carries no baseline board_sha256")
+    elif expected_board != actual_board:
+        problems.append(f"board bytes moved ({expected_board} -> {actual_board})")
+
+    # Derived from ARCHIVE_TASKS_DIR rather than bound as its own module global:
+    # the tests that relocate this module's archive root rebind that one name,
+    # and a second root would silently keep pointing at the live archive.
+    index_file = ARCHIVE_TASKS_DIR.parent / "index.json"
+    expected_index = baseline.get("archive_index_sha256")
+    actual_index = (
+        hashlib.sha256(index_file.read_bytes()).hexdigest()
+        if index_file.exists()
+        else None
+    )
+    if expected_index != actual_index:
+        problems.append(f"archive index digest moved ({expected_index} -> {actual_index})")
+
+    expected_digests = baseline.get("archive_snapshot_digests") or {}
+    actual_digests = _archive_snapshot_digests()
+    if expected_digests != actual_digests:
+        missing = sorted(set(expected_digests) - set(actual_digests))
+        added = sorted(set(actual_digests) - set(expected_digests))
+        changed = sorted(
+            task_id
+            for task_id in set(expected_digests) & set(actual_digests)
+            if expected_digests[task_id] != actual_digests[task_id]
+        )
+        problems.append(
+            f"archive snapshots moved (missing={missing}, added={added}, changed={changed})"
+        )
+
+    repo_raw = str(baseline.get("repo") or "").strip()
+    ref = str(baseline.get("ref") or "").strip()
+    expected_commit = str(baseline.get("ref_commit") or "").strip()
+    if not repo_raw or not ref or not expected_commit:
+        problems.append("batch carries no pinned repo/ref/ref_commit for its evidence")
+    else:
+        code, actual_commit = _archive_recovery_git(Path(repo_raw), "rev-parse", ref)
+        if code != 0 or not actual_commit:
+            problems.append(
+                f"cannot resolve {ref!r} in {repo_raw}; the pinned evidence ref is "
+                "no longer verifiable"
+            )
+        elif actual_commit != expected_commit:
+            problems.append(f"evidence ref moved ({ref}: {expected_commit} -> {actual_commit})")
+
+    for label, path_key, digest_key in (
+        ("inventory", "inventory_path", "inventory_sha256"),
+        ("authorization", "authorization_path", "authorization_sha256"),
+    ):
+        source_raw = str(baseline.get(path_key) or "").strip()
+        expected_digest = str(baseline.get(digest_key) or "").strip()
+        if not source_raw or not expected_digest:
+            problems.append(f"batch carries no {label} provenance ({path_key}/{digest_key})")
+            continue
+        source = Path(source_raw)
+        if not source.is_file():
+            problems.append(
+                f"{label} source is gone ({source_raw}); its hash can no longer be checked"
+            )
+            continue
+        actual_digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        if actual_digest != expected_digest:
+            problems.append(
+                f"{label} source drifted ({source_raw}: {expected_digest} -> {actual_digest})"
+            )
+    return problems
+
+
+def _archive_recovery_evidence_drift(
+    archive_entries: list[dict[str, Any]], baseline: dict[str, Any]
+) -> list[str]:
+    """Re-verify each reconstructed-done merge against the pinned ref, in the lock.
+
+    The planner proved these merges when it graded the batch. Between then and
+    now the batch file travelled through a review, so the writer re-derives the
+    one claim that turns a placeholder into terminal history: that local git,
+    on the commit the baseline pins, really contains the merge this record is
+    reconstructed from, that the merge commit actually delivered this task, and
+    that candidate/local_merge metadata has not been tampered with.
+    """
+
+    if not archive_entries:
+        return []
+    repo_raw = str(baseline.get("repo") or "").strip()
+    ref_commit = str(baseline.get("ref_commit") or "").strip()
+    if not repo_raw or not ref_commit:
+        return ["batch carries no pinned repo/ref_commit to re-verify merges against"]
+
+    repo = Path(repo_raw)
+    planner = _recovery_planner_module()
+    problems: list[str] = []
+    for entry in archive_entries:
+        task_id = str(entry.get("task_id") or "").strip()
+        evidence = (
+            ((entry.get("record") or {}).get("history_recovery") or {}).get("evidence")
+            or {}
+        )
+        local_merge = evidence.get("local_merge")
+        if not isinstance(local_merge, dict):
+            problems.append(f"{task_id}: record carries no local_merge evidence dict")
+            continue
+        merge_commit = str(local_merge.get("merge_commit") or "").strip()
+        if not merge_commit:
+            problems.append(f"{task_id}: no local merge commit to re-verify")
+            continue
+
+        code, _ = _archive_recovery_git(
+            repo, "merge-base", "--is-ancestor", merge_commit, ref_commit
+        )
+        if code != 0:
+            problems.append(
+                f"{task_id}: merge commit {merge_commit[:12]} is not contained in the "
+                f"pinned ref {ref_commit[:12]}"
+            )
+            continue
+
+        code, subject = _archive_recovery_git(
+            repo, "log", "-1", "--format=%s", merge_commit
+        )
+        code_date, commit_date = _archive_recovery_git(
+            repo, "log", "-1", "--format=%cI", merge_commit
+        )
+        if code != 0 or not subject:
+            problems.append(
+                f"{task_id}: cannot read commit subject for {merge_commit[:12]}"
+            )
+            continue
+
+        form = planner.subject_delivers(subject, task_id)
+        if form is None:
+            problems.append(
+                f"{task_id}: merge commit {merge_commit[:12]} subject {subject!r} does not "
+                f"deliver this task"
+            )
+            continue
+
+        if local_merge.get("subject") != subject:
+            problems.append(
+                f"{task_id}: local_merge subject {local_merge.get('subject')!r} does not "
+                f"match git commit subject {subject!r}"
+            )
+        if local_merge.get("delivery_form") != form:
+            problems.append(
+                f"{task_id}: local_merge delivery_form {local_merge.get('delivery_form')!r} "
+                f"does not match git {form!r}"
+            )
+        if commit_date and local_merge.get("merged_at") != commit_date:
+            problems.append(
+                f"{task_id}: local_merge merged_at {local_merge.get('merged_at')!r} "
+                f"does not match git {commit_date!r}"
+            )
+
+        candidates = evidence.get("candidates") or []
+        declared = {
+            c["merge_commit"]
+            for c in candidates
+            if isinstance(c, dict) and c.get("merge_commit")
+        }
+        if declared and merge_commit not in declared:
+            problems.append(
+                f"{task_id}: candidate merge commit mismatch ({merge_commit[:12]} not in "
+                f"declared candidates)"
+            )
+
+        actual_merge = planner.find_merge_evidence(repo, task_id, ref_commit)
+        if actual_merge is None:
+            problems.append(
+                f"{task_id}: no merge evidence found in git on {ref_commit[:12]}"
+            )
+        elif actual_merge.get("merge_commit") != merge_commit:
+            problems.append(
+                f"{task_id}: record merge commit {merge_commit[:12]} disagrees with git "
+                f"merge evidence {str(actual_merge.get('merge_commit'))[:12]}"
+            )
+
+    return problems
+
+
+def _is_same_or_alias(path1: Path, path2: Path) -> bool:
+    try:
+        if path1.exists() and path2.exists():
+            if os.path.samefile(path1, path2):
+                return True
+        if path1.resolve() == path2.resolve():
+            return True
+    except (OSError, ValueError):
+        pass
+    return False
+
+
+def _validate_checkpoint_destination(
+    checkpoint_path: Path,
+    *,
+    batch_path: Path | None = None,
+    hold_path: Path | None = None,
+    baseline: dict[str, Any] | None = None,
+) -> list[str]:
+    problems: list[str] = []
+    archive_root = ARCHIVE_TASKS_DIR.parent
+    # Every directory `sync_all` owns.  A checkpoint landing anywhere in here
+    # is either destroyed by the next sync or destroys a managed output; both
+    # lose the receipt, so neither is allowed to reach the write stage.
+    protected_dirs: list[tuple[str, Path]] = [
+        ("archive directory", ARCHIVE_TASKS_DIR),
+        ("docs-site mirror directory", DOCS_SITE_DIR),
+    ]
+    try:
+        chk_res = checkpoint_path.resolve()
+        archive_root_res = archive_root.resolve()
+        matched_dir = False
+        for label, protected_dir in protected_dirs:
+            dir_res = protected_dir.resolve()
+            if chk_res == dir_res or chk_res.is_relative_to(dir_res):
+                problems.append(
+                    f"checkpoint path {checkpoint_path} is inside {label} {protected_dir}"
+                )
+                matched_dir = True
+        if not matched_dir and chk_res == (archive_root_res / "index.json").resolve():
+            problems.append(
+                f"checkpoint path {checkpoint_path} targets archive index ({archive_root / 'index.json'})"
+            )
+    except (OSError, ValueError) as exc:
+        problems.append(f"cannot resolve checkpoint path {checkpoint_path}: {exc}")
+        return problems
+
+    protected_named: list[tuple[str, Path]] = [
+        ("canonical board", STATUS_FILE),
+        ("canonical lock", STATUS_FILE.with_name(f"{STATUS_FILE.name}.lock")),
+        ("canonical log", LOG_FILE),
+        ("canonical current-work", CURRENT_WORK_FILE),
+        # `sync_all` rewrites these on every canonical transaction, including
+        # this one.  Accepting either as a checkpoint means the command
+        # returns having replaced a managed output and lost its own receipt.
+        ("dashboard bundle", DASHBOARD_BUNDLE_FILE),
+        ("orchestrator state", ORCHESTRATOR_STATE_FILE),
+        ("approval queue", APPROVAL_QUEUE_FILE),
+        ("planning state", PLANNING_STATE_FILE),
+        ("archive index", archive_root / "index.json"),
+    ]
+    # The published mirrors, by name and therefore by inode. The directory
+    # check above only sees paths that *spell* their way into `docs-site/`;
+    # `Path.resolve()` follows symlinks but cannot follow a hard link, because
+    # a hard link is not a reference to a path, it is a second directory entry
+    # for the same file. A checkpoint hard-linked to a mirror from anywhere on
+    # the same filesystem therefore resolves outside the directory while still
+    # being the mirror, and the final receipt write truncates it.
+    for source, mirror in docs_site_mirror_pairs():
+        protected_named.append((f"docs-site mirror of {source.name}", mirror))
+    if batch_path is not None:
+        protected_named.append(("recovery batch", batch_path))
+    if hold_path is not None:
+        protected_named.append(("maintenance hold", hold_path))
+
+    if baseline:
+        provenance = baseline.get("provenance_sources") or {}
+        if isinstance(provenance, dict):
+            for label, item in provenance.items():
+                if isinstance(item, dict) and item.get("path"):
+                    protected_named.append(
+                        (f"provenance source ({label})", Path(str(item["path"])))
+                    )
+        for key in ("inventory_path", "authorization_path"):
+            if baseline.get(key):
+                protected_named.append((f"baseline {key}", Path(str(baseline[key]))))
+
+    for label, protected_path in protected_named:
+        if _is_same_or_alias(checkpoint_path, protected_path):
+            problems.append(
+                f"checkpoint path {checkpoint_path} aliases protected {label} ({protected_path})"
+            )
+
+    if ARCHIVE_TASKS_DIR.is_dir():
+        try:
+            for snap in ARCHIVE_TASKS_DIR.glob("*.json"):
+                if _is_same_or_alias(checkpoint_path, snap):
+                    problems.append(
+                        f"checkpoint path {checkpoint_path} aliases existing archive snapshot {snap}"
+                    )
+        except OSError:
+            pass
+
+    # Everything else already published under `docs-site/`, so that a mirror
+    # added to the dashboard later is covered by inode from its first sync
+    # rather than from whenever someone remembers this gate exists.
+    already_named = {mirror for _, mirror in docs_site_mirror_pairs()}
+    if DOCS_SITE_DIR.is_dir():
+        try:
+            for published in DOCS_SITE_DIR.rglob("*"):
+                if published in already_named or not published.is_file():
+                    continue
+                if _is_same_or_alias(checkpoint_path, published):
+                    problems.append(
+                        f"checkpoint path {checkpoint_path} aliases published "
+                        f"docs-site file {published}"
+                    )
+        except OSError:
+            pass
+
+    return problems
+
+
+def command_archive_recovery_apply(state: dict[str, Any], args: list[str]) -> None:
+    """Apply a reviewed task-history recovery batch inside the canonical lock.
+
+    The batch is planned offline by
+    `scripts/orchestrator/backfill_task_archive_snapshots.py`; this is its only
+    writer, and it deliberately reuses the existing archive writer and the
+    enclosing `status_write_transaction()` rather than opening its own. That
+    also means it must never re-enter the lock: `main()` already holds it.
+
+    Four honesty properties matter more than convenience here:
+
+    * **Admission is re-derived, never assumed.** Between planning and applying,
+      the batch is a JSON file anyone can edit, so the planner's own validator
+      is re-run here on the whole document: evidence tier, gaps, attestations,
+      provenance, record shape and record identity all have to hold again.
+    * **All or nothing.** A batch is one reviewed unit. Any planning refusal,
+      any drift, any conflicting id refuses the entire document before a single
+      byte is written -- never just the entry that failed.
+    * **Fail closed on drift.** The batch is valid only against the board
+      revision and bytes, archive index, per-snapshot digests, evidence ref and
+      source documents it was planned from, and only under a maintenance hold
+      bound to this batch's hash.
+    * **No rollback theatre.** Archive snapshots are separate files; the board
+      is one document written by the enclosing transaction. That is not one
+      atomic unit, so every checkpoint reports what was read back from disk --
+      not what this function believes it staged -- and says plainly that
+      nothing was rolled back.
+    """
+
+    actor = current_actor_validated()
+    parsed = _parse_archive_recovery_args(args)
+    if not parsed["batch"] or not str(parsed["maintenance_hold"]).strip():
+        raise SystemExit(ARCHIVE_RECOVERY_USAGE)
+
+    planner = _recovery_planner_module()
+    batch_path = Path(parsed["batch"]).expanduser()
+    try:
+        batch_bytes = batch_path.read_bytes()
+        batch = json.loads(batch_bytes.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"Recovery batch unreadable: {exc}") from exc
+    batch_sha256 = hashlib.sha256(batch_bytes).hexdigest()
+
+    baseline = batch.get("baseline") if isinstance(batch.get("baseline"), dict) else {}
+
+    checkpoint_raw = str(parsed["checkpoint"]).strip()
+    if checkpoint_raw:
+        chk_dest_problems = _validate_checkpoint_destination(
+            Path(checkpoint_raw).expanduser(),
+            batch_path=batch_path,
+            hold_path=Path(parsed["maintenance_hold"]).expanduser(),
+            baseline=baseline,
+        )
+        if chk_dest_problems:
+            raise SystemExit(
+                "Recovery checkpoint refused; protected path cannot be overwritten: "
+                + "; ".join(chk_dest_problems)
+            )
+
+    # The planner's validator is the admission gate, re-run here on the whole
+    # document. Anything it refuses refuses the batch: there is no partial
+    # admission, and no entry is examined on its own merits.
+    admission = planner.validate_recovery_batch(batch, for_apply=True)
+    if admission:
+        raise SystemExit(
+            "Recovery batch refused; nothing was written: " + "; ".join(admission)
+        )
+
+    # The recovery pair is validated the loud way, before anything is staged.
+    # `ensure_agent()` further down the write path is deliberately tolerant so
+    # that loading a corrupt board still works, which means an unknown name in
+    # a hand-edited batch would otherwise be registered rather than refused.
+    actors = batch.get("recovery_actors") if isinstance(batch.get("recovery_actors"), dict) else {}
+    declared_owner = str(actors.get("owner") or "").strip()
+    declared_reviewer = str(actors.get("reviewer") or "").strip()
+    recovery_owner = resolve_actor_reference(declared_owner, field="recovery owner")
+    recovery_reviewer = resolve_actor_reference(declared_reviewer, field="recovery reviewer")
+    if (recovery_owner, recovery_reviewer) != (declared_owner, declared_reviewer):
+        raise SystemExit(
+            "Recovery batch must name canonical actors "
+            f"({declared_owner!r}, {declared_reviewer!r} resolve to "
+            f"{recovery_owner!r}, {recovery_reviewer!r}); nothing was written."
+        )
+
+    entries = [item for item in (batch.get("entries") or []) if isinstance(item, dict)]
+    for entry in entries:
+        t_id = str(entry.get("task_id") or "").strip()
+        rec_ev = (
+            ((entry.get("record") or {}).get("history_recovery") or {}).get("evidence")
+            or {}
+        )
+        rec_atts = rec_ev.get("attestations")
+        if isinstance(rec_atts, dict):
+            for att_k, att_v in rec_atts.items():
+                if isinstance(att_v, dict) and "verifier" in att_v:
+                    v_raw = str(att_v.get("verifier") or "").strip()
+                    if v_raw == planner.UNKNOWN_ACTOR:
+                        raise SystemExit(
+                            f"{t_id}: attestation {att_k} verifier cannot be {planner.UNKNOWN_ACTOR}; nothing was written."
+                        )
+                    if v_raw:
+                        v_res = resolve_actor_reference(
+                            v_raw, field=f"{t_id} {att_k} attestation verifier"
+                        )
+                        if v_res != v_raw:
+                            raise SystemExit(
+                                f"{t_id}: attestation {att_k} verifier {v_raw!r} resolves to {v_res!r}; nothing was written."
+                            )
+
+    hold_path, hold_sha256, hold = _archive_recovery_hold(
+        parsed["maintenance_hold"],
+        batch_sha256=batch_sha256,
+        recovery_reviewer=recovery_reviewer,
+        actor=actor,
+    )
+
+    baseline = batch.get("baseline") if isinstance(batch.get("baseline"), dict) else {}
+    drift = _archive_recovery_baseline_drift(state, baseline)
+    if drift:
+        raise SystemExit(
+            "Recovery batch baseline drifted; nothing was written. Re-plan the "
+            "batch against the current baseline: " + "; ".join(drift)
+        )
+
+    entries = [item for item in (batch.get("entries") or []) if isinstance(item, dict)]
+    conflicts: list[str] = []
+    for entry in entries:
+        task_id = str(entry.get("task_id") or "").strip()
+        if get_task(state, task_id) is not None:
+            conflicts.append(f"{task_id}: already on the active board")
+        if archived_task_snapshot(task_id) is not None:
+            conflicts.append(f"{task_id}: already has an archive snapshot")
+    if conflicts:
+        raise SystemExit(
+            "Recovery batch refused; nothing was written: " + "; ".join(conflicts)
+        )
+
+    archive_entries = [
+        entry for entry in entries if entry.get("action") == planner.ACTION_ARCHIVE_DONE
+    ]
+    board_entries = [
+        entry
+        for entry in entries
+        if entry.get("action") == planner.ACTION_BLOCKED_PLACEHOLDER
+    ]
+
+    evidence_problems = _archive_recovery_evidence_drift(archive_entries, baseline)
+    if evidence_problems:
+        raise SystemExit(
+            "Recovery batch evidence no longer verifies; nothing was written: "
+            + "; ".join(evidence_problems)
+        )
+
+    if not parsed["confirm"]:
+        print(
+            f"PLAN ONLY ({batch_path}): {len(archive_entries)} reconstructed done "
+            f"snapshot(s), {len(board_entries)} blocked placeholder(s). Baseline, "
+            f"evidence and maintenance hold {hold.get('hold_id')} all match. "
+            "Nothing was written; re-run with --confirm."
+        )
+        raise ArchiveRecoveryPreview(0)
+
+    if not str(parsed["checkpoint"]).strip():
+        raise SystemExit(
+            "--confirm requires --checkpoint <file>: a multi-file apply must "
+            "leave a receipt of exactly what landed. Nothing was written."
+        )
+
+    checkpoint_path = Path(parsed["checkpoint"]).expanduser()
+    started_at = iso_now()
+    archive_ids = [str(entry["task_id"]).strip() for entry in archive_entries]
+    board_ids = [str(entry["task_id"]).strip() for entry in board_entries]
+    baseline_digests = dict(baseline.get("archive_snapshot_digests") or {})
+    # Flipped only by the post-commit read-back below. Until then no checkpoint
+    # may claim board persistence, not even a batch with no board rows at all:
+    # "nothing to persist" and "persisted" are different receipts.
+    board_commit_verified = {"value": False}
+
+    def read_archive_index() -> dict[str, Any]:
+        index_path = ARCHIVE_TASKS_DIR.parent / "index.json"
+        document: dict[str, Any] = {}
+        raw: bytes | None = None
+        if index_path.is_file():
+            try:
+                raw = index_path.read_bytes()
+                document = json.loads(raw.decode("utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                document = {}
+        return {
+            "path": str(index_path),
+            "exists": index_path.is_file(),
+            "sha256": hashlib.sha256(raw).hexdigest() if raw is not None else None,
+            "counts": document.get("counts") if isinstance(document, dict) else None,
+            "recent_terminal_ids": (
+                list(document.get("recent_terminal_ids") or [])
+                if isinstance(document, dict)
+                else []
+            ),
+        }
+
+    def read_archive() -> tuple[list[dict[str, Any]], list[str]]:
+        """What the archive holds *right now*, read back file by file."""
+
+        index = read_archive_index()
+        listed = {str(item) for item in index["recent_terminal_ids"]}
+        rows: list[dict[str, Any]] = []
+        landed: list[str] = []
+        for task_id in archive_ids:
+            snapshot_path = ARCHIVE_TASKS_DIR / f"{task_id}.json"
+            on_disk = snapshot_path.is_file()
+            snapshot = load_archived_snapshot(task_id) if on_disk else None
+            rows.append(
+                {
+                    "task_id": task_id,
+                    "snapshot_on_disk": on_disk,
+                    "snapshot_sha256": (
+                        hashlib.sha256(snapshot_path.read_bytes()).hexdigest()
+                        if on_disk
+                        else None
+                    ),
+                    "terminal_status": str((snapshot or {}).get("terminal_status") or "") or None,
+                    "listed_in_archive_index": task_id in listed,
+                }
+            )
+            if on_disk:
+                landed.append(task_id)
+        return rows, landed
+
+    def read_board() -> tuple[list[dict[str, Any]], list[str], dict[str, Any]]:
+        """What the canonical board file holds right now, read back from disk."""
+
+        document: dict[str, Any] = {}
+        on_disk: dict[str, dict[str, Any]] = {}
+        if STATUS_FILE.exists():
+            try:
+                document = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                document = {}
+            if isinstance(document, dict):
+                on_disk = {
+                    str((task or {}).get("id") or "").strip(): task
+                    for task in (document.get("tasks") or [])
+                    if isinstance(task, dict)
+                }
+        rows: list[dict[str, Any]] = []
+        persisted: list[str] = []
+        for task_id in board_ids:
+            row = on_disk.get(task_id)
+            rows.append(
+                {
+                    "task_id": task_id,
+                    "on_disk": row is not None,
+                    "status": str((row or {}).get("status") or "") or None,
+                    "non_dispatchable": bool((row or {}).get("non_dispatchable")) if row else None,
+                    "history_recovery_present": isinstance(
+                        (row or {}).get("history_recovery"), dict
+                    ),
+                }
+            )
+            if row is not None:
+                persisted.append(task_id)
+        return rows, persisted, document
+
+    def write_checkpoint(status: str, detail: str) -> dict[str, Any]:
+        """Write the receipt from what is on disk, never from bookkeeping.
+
+        Every field here is a read-back. The difference matters at exactly the
+        moment it is hardest to see: `archive_task_snapshot()` writes the
+        snapshot file first and the index second, so a failure between them
+        leaves a snapshot on disk that this function never got to record. A
+        checkpoint built from an in-memory "applied" list would omit it and the
+        operator would go looking for a file the receipt says is not there.
+        """
+
+        archive_rows, landed = read_archive()
+        board_rows, persisted, board_doc = read_board()
+        on_disk_revision = (
+            str(board_doc.get("_status_write_revision") or "").strip()
+            if isinstance(board_doc, dict)
+            else None
+        )
+        expected_revision = str(state.get("_status_write_revision") or "").strip() or None
+        payload = {
+            "type": "task_history_recovery_checkpoint",
+            "status": status,
+            "actor": actor,
+            "batch_path": str(batch_path),
+            "batch_sha256": batch_sha256,
+            "batch_generated_at": batch.get("generated_at"),
+            "maintenance_hold": {
+                "path": str(hold_path),
+                "sha256": hold_sha256,
+                "hold_id": hold.get("hold_id"),
+                "declared_by": hold.get("declared_by"),
+                "expires_at": hold.get("expires_at"),
+                "approved_by": (hold.get("batch_approval") or {}).get("reviewer"),
+                "approval_source": (hold.get("batch_approval") or {}).get("source"),
+            },
+            "started_at": started_at,
+            "finished_at": iso_now(),
+            "archive_snapshots_intended": list(archive_ids),
+            "archive_readback": archive_rows,
+            "applied_archive_snapshots": landed,
+            "archive_index": read_archive_index(),
+            "board_placeholders_intended": list(board_ids),
+            "board_readback": board_rows,
+            "board_placeholders_on_disk": persisted,
+            "board_revision_expected": expected_revision,
+            "board_revision_on_disk": on_disk_revision,
+            "board_persistence_verified": (
+                board_commit_verified["value"]
+                and bool(expected_revision)
+                and on_disk_revision == expected_revision
+                and (
+                    sorted(persisted) == sorted(board_ids)
+                    if board_ids
+                    else STATUS_FILE.is_file()
+                )
+            ),
+            "board_persisted_by": "enclosing canonical status transaction",
+            "rollback_performed": False,
+            "detail": detail,
+        }
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        checkpoint_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        return payload
+
+    def survivors_tampered() -> list[str]:
+        surviving = _archive_snapshot_digests()
+        return sorted(
+            task_id
+            for task_id, digest in baseline_digests.items()
+            if surviving.get(task_id) != digest
+        )
+
+    for task_id, entry in zip(archive_ids, archive_entries, strict=True):
+        try:
+            archive_task_snapshot(
+                deepcopy(entry["record"]),
+                archived_at=str(entry.get("archived_at") or "").strip() or None,
+                recent_limit=task_archive_recent_limit(),
+            )
+        except Exception as exc:
+            receipt = write_checkpoint("partial", f"archive write failed at {task_id}: {exc}")
+            raise SystemExit(
+                f"Recovery apply stopped at {task_id}: {exc}. "
+                f"{len(receipt['applied_archive_snapshots'])} archive snapshot(s) are on "
+                "disk and have NOT been rolled back; no board row was committed. "
+                f"Checkpoint: {checkpoint_path}"
+            ) from exc
+
+    # Read the archive back as a whole rather than trusting the writer's return
+    # value: a snapshot can exist on disk while the index save that follows it
+    # failed, and only the files can say which of those happened.
+    archive_rows, landed = read_archive()
+    incomplete = [
+        row["task_id"]
+        for row in archive_rows
+        if not row["snapshot_on_disk"] or row["terminal_status"] != "done"
+    ]
+    if incomplete:
+        write_checkpoint(
+            "partial", f"archive read-back found no terminal snapshot for {incomplete}"
+        )
+        raise SystemExit(
+            f"Recovery apply could not read back terminal snapshots for {incomplete}; "
+            f"{len(landed)} snapshot(s) are on disk and nothing was rolled back. "
+            f"No board row was committed. Checkpoint: {checkpoint_path}"
+        )
+
+    if landed:
+        try:
+            rebuild_archive_index(recent_limit=task_archive_recent_limit())
+        except Exception as exc:
+            write_checkpoint("partial", f"archive index rebuild failed: {exc}")
+            raise SystemExit(
+                f"Recovery apply wrote {len(landed)} archive snapshot(s) but could not "
+                f"rebuild the archive index: {exc}. Nothing was rolled back and no board "
+                f"row was committed. Checkpoint: {checkpoint_path}"
+            ) from exc
+
+    tampered = survivors_tampered()
+    if tampered:
+        write_checkpoint("partial", f"pre-existing snapshots changed: {tampered}")
+        raise SystemExit(
+            f"Recovery apply changed pre-existing archive snapshots {tampered}, which it "
+            "must never do. No board row was committed and nothing was rolled back. "
+            f"Checkpoint: {checkpoint_path}"
+        )
+
+    for entry in board_entries:
+        state["tasks"].append(deepcopy(entry["record"]))
+
+    def verify_board_persistence(
+        *,
+        transaction_succeeded: bool = True,
+        transaction_error: BaseException | None = None,
+    ) -> list[str]:
+        """Read the board back after the enclosing transaction wrote it.
+
+        Until this runs, the placeholders exist only in the state dict this
+        command mutated. Calling that "applied" would be the same substitution
+        the archive half avoids: a receipt has to describe the file, and the
+        file does not exist yet when this command returns.
+        """
+
+        still_tampered = survivors_tampered()
+        _, persisted_now, board_doc = read_board()
+        missing = [task_id for task_id in board_ids if task_id not in persisted_now]
+        on_disk_revision = (
+            str(board_doc.get("_status_write_revision") or "").strip()
+            if isinstance(board_doc, dict)
+            else None
+        )
+        expected_revision = str(state.get("_status_write_revision") or "").strip() or None
+
+        if not transaction_succeeded:
+            board_commit_verified["value"] = False
+            write_checkpoint(
+                "partial",
+                f"canonical status transaction failed: {transaction_error}",
+            )
+            return [
+                f"Recovery apply failed during canonical transaction: {transaction_error}; "
+                f"checkpoint: {checkpoint_path}"
+            ]
+
+        if still_tampered:
+            board_commit_verified["value"] = False
+            write_checkpoint(
+                "partial", f"pre-existing snapshots changed after commit: {still_tampered}"
+            )
+            return [
+                f"Recovery apply left pre-existing archive snapshots {still_tampered} "
+                f"changed; nothing was rolled back. Checkpoint: {checkpoint_path}"
+            ]
+
+        if missing:
+            board_commit_verified["value"] = False
+            write_checkpoint(
+                "partial",
+                f"board placeholders missing after the canonical transaction: {missing}",
+            )
+            return [
+                f"Recovery apply wrote {len(landed)} archive snapshot(s) but the canonical "
+                f"board is missing {len(missing)} placeholder row(s) {missing}; nothing "
+                f"was rolled back. Checkpoint: {checkpoint_path}"
+            ]
+
+        if not STATUS_FILE.is_file():
+            board_commit_verified["value"] = False
+            write_checkpoint(
+                "partial",
+                "canonical board file ai-status.json not found on disk after transaction",
+            )
+            return [
+                f"Recovery apply could not verify ai-status.json persistence on disk. "
+                f"Checkpoint: {checkpoint_path}"
+            ]
+
+        if not expected_revision or on_disk_revision != expected_revision:
+            board_commit_verified["value"] = False
+            write_checkpoint(
+                "partial",
+                f"canonical board on-disk revision {on_disk_revision!r} does not match "
+                f"expected revision {expected_revision!r}",
+            )
+            return [
+                f"Recovery apply could not verify ai-status.json persistence on disk "
+                f"(revision mismatch: expected {expected_revision!r}, got {on_disk_revision!r}). "
+                f"Checkpoint: {checkpoint_path}"
+            ]
+
+        board_commit_verified["value"] = True
+        write_checkpoint(
+            "applied",
+            "batch applied; archive snapshots and board rows both read back from disk"
+            if board_ids
+            else "batch applied; archive snapshots read back from disk and board persistence verified",
+        )
+        return []
+
+    register_post_commit_verifier(verify_board_persistence)
+    write_checkpoint(
+        "applied_pending_board_persistence",
+        "archive snapshots read back from disk; board rows staged for this transaction",
+    )
+    append_log(
+        {
+            "ts": iso_now(),
+            "agent": actor,
+            "type": "archive_history_recovery_apply",
+            "message": (
+                f"Applied recovery batch {batch_path.name}: "
+                f"{len(landed)} reconstructed archive snapshot(s), "
+                f"{len(board_ids)} blocked recovery placeholder(s). "
+                "Reconstructed records are labelled and are not original archive bytes."
+            ),
+            "task_ids": [*landed, *board_ids],
+            "batch_sha256": batch_sha256,
+            "maintenance_hold": {"path": str(hold_path), "sha256": hold_sha256},
+            "checkpoint": str(checkpoint_path),
+        }
+    )
+    print(
+        f"Applied {len(landed)} archive snapshot(s) and staged {len(board_ids)} blocked "
+        "recovery placeholder(s). The board rows are committed by this canonical "
+        "transaction and read back into the checkpoint once it commits. Reconstructed "
+        f"records are labelled history_recovery.reconstructed=true. Checkpoint: "
+        f"{checkpoint_path}"
+    )
+
+
+ARCHIVE_RECOVERY_INVALIDATE_USAGE = (
+    "Usage: archive_recovery_invalidate <task-id> "
+    "--coordination-task <id> --reason <reason> --evidence-ref <ref> "
+    "[--expected-sha256 <sha256>] [--confirm]"
+)
+
+
+def _parse_archive_recovery_invalidate_args(args: list[str]) -> dict[str, Any]:
+    task_id = ""
+    coord_task_id = ""
+    reason = ""
+    evidence_ref = ""
+    expected_sha256 = ""
+    confirm = False
+
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--confirm":
+            confirm = True
+            i += 1
+        elif arg in {"--task-id", "--task"} and i + 1 < len(args):
+            task_id = args[i + 1]
+            i += 2
+        elif arg.startswith("--task-id="):
+            task_id = arg.split("=", 1)[1]
+            i += 1
+        elif arg.startswith("--task="):
+            task_id = arg.split("=", 1)[1]
+            i += 1
+        elif arg in {
+            "--coordination-task",
+            "--coordination-task-id",
+            "--coordination_task",
+            "--coordination_task_id",
+        } and i + 1 < len(args):
+            coord_task_id = args[i + 1]
+            i += 2
+        elif any(
+            arg.startswith(prefix + "=")
+            for prefix in (
+                "--coordination-task",
+                "--coordination-task-id",
+                "--coordination_task",
+                "--coordination_task_id",
+            )
+        ):
+            coord_task_id = arg.split("=", 1)[1]
+            i += 1
+        elif arg in {"--reason"} and i + 1 < len(args):
+            reason = args[i + 1]
+            i += 2
+        elif arg.startswith("--reason="):
+            reason = arg.split("=", 1)[1]
+            i += 1
+        elif arg in {
+            "--evidence-ref",
+            "--evidence-reference",
+            "--evidence",
+            "--evidence_ref",
+        } and i + 1 < len(args):
+            evidence_ref = args[i + 1]
+            i += 2
+        elif any(
+            arg.startswith(prefix + "=")
+            for prefix in (
+                "--evidence-ref",
+                "--evidence-reference",
+                "--evidence",
+                "--evidence_ref",
+            )
+        ):
+            evidence_ref = arg.split("=", 1)[1]
+            i += 1
+        elif arg in {
+            "--expected-sha256",
+            "--expected-snapshot-sha256",
+            "--expected_sha256",
+        } and i + 1 < len(args):
+            expected_sha256 = args[i + 1]
+            i += 2
+        elif any(
+            arg.startswith(prefix + "=")
+            for prefix in (
+                "--expected-sha256",
+                "--expected-snapshot-sha256",
+                "--expected_sha256",
+            )
+        ):
+            expected_sha256 = arg.split("=", 1)[1]
+            i += 1
+        elif not arg.startswith("-") and not task_id:
+            task_id = arg
+            i += 1
+        else:
+            raise SystemExit(
+                f"Unknown argument {arg!r}. {ARCHIVE_RECOVERY_INVALIDATE_USAGE}"
+            )
+
+    return {
+        "task_id": str(task_id).strip(),
+        "coordination_task_id": str(coord_task_id).strip(),
+        "reason": str(reason).strip(),
+        "evidence_ref": str(evidence_ref).strip(),
+        "expected_sha256": str(expected_sha256).strip(),
+        "confirm": confirm,
+    }
+
+
+def command_archive_recovery_invalidate(state: dict[str, Any], args: list[str]) -> None:
+    """Invalidate a reconstructed archive recovery completion judgment.
+
+    This command records an atomic, append-only per-task correction record
+    within archive storage without rewriting the original historical snapshot,
+    index, hold or checkpoint bytes.
+
+    Safety constraints enforced:
+    * Actor must be the verified reviewer of the specified coordination task.
+    * Coordination task owner and reviewer must be independent (owner != reviewer).
+    * Target task must exist in the archive and must have history_recovery.reconstructed=true.
+    * Target task must not be on the active board.
+    * Stale expected snapshot hash causes immediate refusal.
+    * Dry-run by default; --confirm required to write.
+    * Idempotent re-runs succeed safely; conflicting corrections are refused.
+    """
+    actor = current_actor_validated()
+    parsed = _parse_archive_recovery_invalidate_args(args)
+
+    target_id = parsed["task_id"]
+    coord_task_id = parsed["coordination_task_id"]
+    reason = parsed["reason"]
+    evidence_ref = parsed["evidence_ref"]
+    expected_sha256 = parsed["expected_sha256"]
+    confirm = parsed["confirm"]
+
+    if not target_id:
+        raise SystemExit(f"Target task-id is required. {ARCHIVE_RECOVERY_INVALIDATE_USAGE}")
+    if not coord_task_id:
+        raise SystemExit(
+            f"--coordination-task is required. {ARCHIVE_RECOVERY_INVALIDATE_USAGE}"
+        )
+    if not reason:
+        raise SystemExit(f"--reason is required. {ARCHIVE_RECOVERY_INVALIDATE_USAGE}")
+    if not evidence_ref:
+        raise SystemExit(
+            f"--evidence-ref is required. {ARCHIVE_RECOVERY_INVALIDATE_USAGE}"
+        )
+
+    # 1. Authorize actor via coordination task reviewer
+    coord_task = get_task(state, coord_task_id)
+    if coord_task is None:
+        coord_task = load_archived_task(coord_task_id)
+    if coord_task is None:
+        raise SystemExit(
+            f"Coordination task {coord_task_id!r} not found on board or archive."
+        )
+
+    raw_coord_owner = str(coord_task.get("owner") or "").strip()
+    raw_coord_reviewer = str(coord_task.get("reviewer") or "").strip()
+    if not raw_coord_reviewer:
+        raise SystemExit(f"Coordination task {coord_task_id!r} has no assigned reviewer.")
+    if not raw_coord_owner:
+        raise SystemExit(f"Coordination task {coord_task_id!r} has no assigned owner.")
+
+    resolved_owner = resolve_actor_reference(
+        raw_coord_owner, field="coordination task owner"
+    )
+    resolved_reviewer = resolve_actor_reference(
+        raw_coord_reviewer, field="coordination task reviewer"
+    )
+    if resolved_owner == resolved_reviewer:
+        raise SystemExit(
+            f"Coordination task {coord_task_id!r} owner and reviewer must be independent "
+            f"({resolved_owner!r} == {resolved_reviewer!r})."
+        )
+    independence_reason = review_independence_block_reason(resolved_owner, resolved_reviewer)
+    if independence_reason:
+        raise SystemExit(
+            f"Coordination task {coord_task_id!r} owner ({resolved_owner}) and reviewer ({resolved_reviewer}) "
+            f"must be independent: {independence_reason}。"
+        )
+
+    resolved_actor = resolve_actor_reference(actor, field="current actor")
+    if resolved_actor != resolved_reviewer:
+        raise SystemExit(
+            f"Unauthorized: current actor {actor!r} is not the reviewer of coordination "
+            f"task {coord_task_id!r} (expected reviewer {raw_coord_reviewer!r})."
+        )
+
+    # 2. Check target task in active board and archive
+    if get_task(state, target_id) is not None:
+        raise SystemExit(
+            f"Task {target_id!r} is currently active on the board; only archived tasks can be invalidated."
+        )
+
+    snapshot_path = archive_task_path(target_id)
+    if not snapshot_path.exists():
+        raise SystemExit(
+            f"Archived snapshot for task {target_id!r} not found at {snapshot_path}."
+        )
+
+    try:
+        snapshot_bytes = snapshot_path.read_bytes()
+        snapshot = json.loads(snapshot_bytes.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"Archived snapshot for task {target_id!r} is unreadable: {exc}") from exc
+
+    actual_sha256 = hashlib.sha256(snapshot_bytes).hexdigest()
+    if expected_sha256 and expected_sha256.lower() != actual_sha256.lower():
+        raise SystemExit(
+            f"Stale snapshot hash for task {target_id!r}: expected {expected_sha256!r} "
+            f"but found {actual_sha256!r} on disk."
+        )
+
+    # 3. Check target is reconstructed history recovery
+    target_task = (
+        snapshot.get("task") if isinstance(snapshot.get("task"), dict) else {}
+    )
+    history_rec = (
+        target_task.get("history_recovery")
+        if isinstance(target_task.get("history_recovery"), dict)
+        else {}
+    )
+    if history_rec.get("reconstructed") is not True:
+        raise SystemExit(
+            f"Task {target_id!r} is not a reconstructed history recovery snapshot "
+            "(history_recovery.reconstructed is not true); cannot invalidate."
+        )
+
+    # 4. Check existing correction / idempotency
+    correction_path = archive_correction_path(target_id)
+    if correction_path.exists():
+        try:
+            raw_corr_bytes = correction_path.read_bytes()
+            existing_correction = json.loads(raw_corr_bytes.decode("utf-8"))
+        except Exception as exc:
+            raise SystemExit(
+                f"Task {target_id!r} already has an unreadable correction record at {correction_path} ({exc}); "
+                "refusing to overwrite."
+            ) from exc
+        if not isinstance(existing_correction, dict):
+            raise SystemExit(
+                f"Task {target_id!r} already has a non-object correction record at {correction_path}; "
+                "refusing to overwrite."
+            )
+
+        existing_problems = validate_archive_correction_record(
+            existing_correction, target_id, snapshot_bytes
+        )
+        if existing_problems:
+            err_summary = "; ".join(existing_problems)
+            raise SystemExit(
+                f"Task {target_id!r} already has an invalid/corrupt correction record at {correction_path} "
+                f"({err_summary}); refusing to overwrite."
+            )
+
+        is_same_op = (
+            existing_correction.get("task_id") == target_id
+            and str(existing_correction.get("snapshot_sha256") or "").strip().lower() == actual_sha256.lower()
+            and existing_correction.get("coordination_task_id") == coord_task_id
+            and existing_correction.get("reason") == reason
+            and existing_correction.get("evidence_ref") == evidence_ref
+        )
+        if is_same_op:
+            if not confirm:
+                print(
+                    json.dumps(
+                        {
+                            "status": "dry_run_already_invalidated",
+                            "task_id": target_id,
+                            "coordination_task_id": coord_task_id,
+                            "existing_correction": existing_correction,
+                            "message": "Task already invalidated with identical correction parameters.",
+                        },
+                        indent=2,
+                        ensure_ascii=False,
+                    )
+                )
+                raise ArchiveRecoveryInvalidationPreview(0)
+            print(
+                json.dumps(
+                    {
+                        "status": "already_invalidated",
+                        "task_id": target_id,
+                        "coordination_task_id": coord_task_id,
+                        "correction": existing_correction,
+                        "message": "Task already invalidated with identical correction parameters (idempotent retry).",
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
+            return
+        else:
+            raise SystemExit(
+                f"Task {target_id!r} already has a different correction record at {correction_path}; "
+                "cannot overwrite with conflicting invalidation."
+            )
+
+    # 5. Dry run
+    if not confirm:
+        dry_run_receipt = {
+            "status": "dry_run",
+            "action": "archive_recovery_invalidation",
+            "task_id": target_id,
+            "snapshot_path": archive_display_path(snapshot_path),
+            "snapshot_sha256": actual_sha256,
+            "actor": actor,
+            "coordination_task_id": coord_task_id,
+            "reason": reason,
+            "evidence_ref": evidence_ref,
+            "effective_status": "blocked",
+            "dependency_satisfied": False,
+            "message": "Dry run succeeded with zero mutations. Re-run with --confirm to write correction record.",
+        }
+        print(json.dumps(dry_run_receipt, indent=2, ensure_ascii=False))
+        raise ArchiveRecoveryInvalidationPreview(0)
+
+    # 6. Apply invalidation
+    now_ts = iso_now()
+    correction_record = {
+        "schema_version": 1,
+        "type": "archive_recovery_invalidation",
+        "task_id": target_id,
+        "snapshot_sha256": actual_sha256,
+        "invalidated_at": now_ts,
+        "actor": actor,
+        "coordination_task_id": coord_task_id,
+        "reason": reason,
+        "evidence_ref": evidence_ref,
+        "effective_status": "blocked",
+        "dependency_satisfied": False,
+    }
+    save_archive_correction(correction_record)
+
+    append_log(
+        {
+            "ts": now_ts,
+            "agent": actor,
+            "type": "archive_recovery_invalidate",
+            "task_id": target_id,
+            "coordination_task_id": coord_task_id,
+            "snapshot_sha256": actual_sha256,
+            "reason": reason,
+            "evidence_ref": evidence_ref,
+        }
+    )
+
+    receipt = {
+        "status": "applied",
+        "action": "archive_recovery_invalidation",
+        "task_id": target_id,
+        "correction_path": archive_display_path(correction_path),
+        "correction": correction_record,
+        "effective_status": "blocked",
+        "dependency_satisfied": False,
+    }
+    print(json.dumps(receipt, indent=2, ensure_ascii=False))
+
+
 def command_prompt(state: dict[str, Any], _args: list[str]) -> None:
     print(build_onboarding_prompt(state))
 
@@ -7442,6 +9075,26 @@ def command_show(state: dict[str, Any], args: list[str]) -> None:
     snapshot = archived_task_snapshot(task_id)
     if snapshot is None:
         raise SystemExit(f"Unknown task: {task_id}")
+
+    correction = load_archive_correction(task_id)
+    if correction is not None:
+        effective_task = load_archived_task(task_id)
+        print(
+            json.dumps(
+                {
+                    "source": "archive",
+                    "effective_status": "blocked",
+                    "effective_task": effective_task,
+                    "correction": correction,
+                    "snapshot_path": archive_display_path(archive_task_path(task_id)),
+                    "snapshot": snapshot,
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return
+
     print(
         json.dumps(
             {
@@ -7553,18 +9206,33 @@ def resolve_task_sha(
     # The record's own branch leads: a task reimported from an existing PR does
     # not follow either naming convention, and asking origin only about the
     # conventional names finds nothing and reads as "the branch is gone".
-    branch_names = [f"task/{task_id}", f"task-{task_id}"]
-    if recorded_branch and recorded_branch not in branch_names:
-        branch_names.insert(0, recorded_branch)
+    # Once a task record names a branch, that ref is authoritative. Do not
+    # also probe legacy fallbacks: an old PR branch may remain published for
+    # audit while a root-created clean replacement is active. Requiring
+    # exactly one match across both refs would reject the active branch even
+    # though its own remote SHA is unambiguous.
+    branch_names = (
+        [recorded_branch]
+        if recorded_branch
+        else [f"task/{task_id}", f"task-{task_id}"]
+    )
 
     remote_refs = [f"refs/heads/{branch_name}" for branch_name in branch_names]
-    result = subprocess.run(
-        ["git", "ls-remote", "--heads", "origin", *remote_refs],
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=repo_root,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", "--heads", "origin", *remote_refs],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=repo_root,
+            timeout=COMMAND_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        # An incomplete origin response cannot establish a reviewable head.
+        # Replace a warm cache too: a forced refresh must never fall back to a
+        # previously verified SHA after the authoritative read times out.
+        _TASK_SHA_CACHE[task_id] = (time.time(), None)
+        return None
     matches: list[str] = []
     if result.returncode == 0:
         for line in result.stdout.splitlines():
@@ -7850,8 +9518,80 @@ def enqueue_status_check_outbox(
     )
 
 
-def reconcile_status_check_outbox(state: dict[str, Any]) -> tuple[int, int]:
-    """Retry exact failed status payloads and remove only confirmed deliveries."""
+
+def status_check_target(payload: dict[str, Any]) -> tuple[str, str, str]:
+    return tuple(str(payload.get(key) or "") for key in ("repo_slug", "sha", "context"))
+
+
+
+def confirmed_review_gate_targets(task: dict[str, Any]) -> list[dict[str, Any]]:
+    confirmed = task.get("review_gate_target")
+    targets = []
+    if (isinstance(confirmed, dict) and confirmed.get("repo_slug")
+            and confirmed.get("context") == "task-review-gate"
+            and re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", str(confirmed.get("sha") or ""))):
+        targets.append(confirmed)
+    last = str(task.get("review_gate_sha") or "").strip()
+    if re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", last) and (
+        not targets or last != targets[0]["sha"]
+    ):
+        targets.append({"repo_slug": task_repository_slug_safe(task), "sha": last,
+                        "context": "task-review-gate"})
+    return targets
+
+
+def retain_review_gate_targets(task: dict[str, Any], replacement: dict[str, Any] | None = None) -> None:
+    # A confirmed grant must survive changing branches, repositories or the
+    # acknowledged target. Keep it until revoked or transferred to the outbox.
+    targets = {status_check_target(p): p for p in task.get("review_gate_revocations", [])}
+    for target in confirmed_review_gate_targets(task):
+        if replacement is None or status_check_target(target) != status_check_target(replacement):
+            targets[status_check_target(target)] = target
+    if targets:
+        task["review_gate_revocations"] = list(targets.values())
+
+
+def remember_confirmed_review_gate(task: dict[str, Any], payload: dict[str, Any]) -> None:
+    retain_review_gate_targets(task, payload)
+    task["review_gate_sha"] = str(payload["sha"])
+    task["review_gate_target"] = dict(zip(
+        ("repo_slug", "sha", "context"), status_check_target(payload), strict=True,
+    ))
+
+
+def retire_review_gate_targets(task: dict[str, Any], handled: set[tuple[str, str, str]]) -> None:
+    # Each handled target has either an ACK or its exact payload in the outbox.
+    remaining = [p for p in task.get("review_gate_revocations", [])
+                 if status_check_target(p) not in handled]
+    if remaining:
+        task["review_gate_revocations"] = remaining
+    else:
+        task.pop("review_gate_revocations", None)
+
+
+def discard_superseded_status_payloads(task: dict[str, Any], payload: dict[str, Any]) -> None:
+    pending = task.get("status_check_outbox")
+    if not isinstance(pending, list):
+        return
+    remaining = [item for item in pending if not isinstance(item, dict)
+                 or status_check_target(item) != status_check_target(payload)]
+    if remaining:
+        task["status_check_outbox"] = remaining
+    else:
+        task.pop("status_check_outbox", None)
+
+
+def review_gate_revocation_payload(target: dict[str, Any], state_status: str) -> dict[str, str]:
+    return {
+        **dict(zip(("repo_slug", "sha", "context"), status_check_target(target), strict=True)),
+        "state": "pending" if state_status in {"review", "review_approved", "done"} else "failure",
+        "description": "Review gate revoked pending current HEAD verification",
+    }
+
+def reconcile_status_check_outbox(
+    state: dict[str, Any], *, refresh_review_gates: bool = True,
+) -> tuple[int, int]:
+    """Retry failed payloads; a positive review gate needs fresh authority."""
     delivered = 0
     retained = 0
     for task in state.get("tasks", []):
@@ -7871,8 +9611,34 @@ def reconcile_status_check_outbox(state: dict[str, Any]) -> tuple[int, int]:
                 remaining.append(item)
                 retained += 1
                 continue
+            if payload["context"] == "task-review-gate" and payload["state"] == "success":
+                # A formerly valid success is not authority after a reopen or
+                # branch change. Only sync may perform these queued HEAD reads;
+                # unrelated notes/assignments must stay free of remote probes.
+                if not refresh_review_gates:
+                    remaining.append(item)
+                    retained += 1
+                    continue
+                task["review_gate_refresh_pending"] = True
+                current = task_review_status_payload(task, str(task.get("status") or ""))
+                # A lost response may mean this exact target already has a
+                # success at GitHub. Unknown HEAD or a different current target
+                # must revoke the original target, not silently replace it.
+                if current is None or status_check_target(current) != status_check_target(payload):
+                    payload = review_gate_revocation_payload(payload, str(task.get("status") or ""))
+                else:
+                    payload = current
+                # A failed revocation remains a revocation in the durable queue;
+                # never leave the superseded success available for replay.
+                item.update(payload)
             ok, error = post_task_review_status_payload(payload)
             if ok:
+                if payload["context"] == "task-review-gate":
+                    if payload["state"] == "success":
+                        remember_confirmed_review_gate(task, payload)
+                    # The canonical state may have changed since this exact
+                    # payload was queued. Sync must refresh even the same SHA.
+                    task["review_gate_refresh_pending"] = True
                 delivered += 1
                 task.setdefault("status_check_delivery_history", []).append(
                     {
@@ -7918,6 +9684,11 @@ def review_gate_head_drifted(task: dict[str, Any]) -> bool:
     if not task_id:
         return False
 
+    if task.get("review_gate_refresh_pending"):
+        # A failed HEAD lookup is a durable delivery intent, even when origin
+        # recovers without moving the branch (or no gate was recorded yet).
+        return True
+
     last = str(task.get("review_gate_sha") or "").strip()
     if not last:
         # Never emitted, or emitted before this field existed. A status transition
@@ -7931,15 +9702,45 @@ def review_gate_head_drifted(task: dict[str, Any]) -> bool:
 
 def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> None:
     payload = task_review_status_payload(task, state_status)
+    # Failed acknowledgements do not prove failed delivery. Preserve the exact
+    # repo/SHA/context of every queued success, even before any gate SHA was
+    # recorded or after the task moved to a different branch/repository.
+    pending = task.get("status_check_outbox")
+    targets = {
+        status_check_target(item): item
+        for item in (pending if isinstance(pending, list) else [])
+        if isinstance(item, dict) and item.get("state") == "success"
+        and item.get("context") == "task-review-gate" and item.get("repo_slug")
+        and re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", str(item.get("sha") or ""))
+    }
+    for target in [*task.get("review_gate_revocations", []), *confirmed_review_gate_targets(task)]:
+        targets[status_check_target(target)] = target
+    if payload is None and not (
+        targets or task.get("review_submission") or state_status in {"review", "review_approved", "done"}
+    ):
+        # Unpublished assignments have no grant to revoke.
+        return
+    task["review_gate_refresh_pending"] = True
+    for key, target in targets.items():
+        if payload is not None and key == status_check_target(payload):
+            # The fresh payload below supersedes this exact target, including
+            # when its state is failure/pending or its delivery fails.
+            continue
+        revoked = review_gate_revocation_payload(target, state_status)
+        ok, error = post_task_review_status_payload(revoked)
+        discard_superseded_status_payloads(task, revoked)
+        if not ok:
+            enqueue_status_check_outbox(task, revoked, error)
     if payload is None:
+        retire_review_gate_targets(task, set(targets))
         return
     ok, error = post_task_review_status_payload(payload)
+    discard_superseded_status_payloads(task, payload)
     if ok:
-        # Remember which commit carries the gate. A GitHub status belongs to one
-        # SHA, so once the branch advances the new head has no gate at all and the
-        # required check reads as absent rather than failing. Recording the SHA is
-        # what lets the next sync notice the drift and re-post.
-        task["review_gate_sha"] = payload.get("sha") or task.get("review_gate_sha")
+        # Only a freshly resolved target may acquire a positive gate.
+        remember_confirmed_review_gate(task, payload)
+        retire_review_gate_targets(task, set(targets) | {status_check_target(payload)})
+        task.pop("review_gate_refresh_pending", None)
         print(
             f"Successfully emitted status check '{payload['context']}'="
             f"{payload['state']} to GitHub API.",
@@ -7948,6 +9749,7 @@ def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> No
         return
     print(error, file=sys.stderr)
     enqueue_status_check_outbox(task, payload, error)
+    retire_review_gate_targets(task, set(targets) | {status_check_target(payload)})
     print(
         "Warning: Status check emission failed; exact payload recorded for reconciliation.",
         file=sys.stderr,
@@ -7976,6 +9778,7 @@ def emit_status_checks_for_changed_tasks(state_before: dict[str, Any], state_aft
                 "restore_approved_head",
                 "approve_continuation",
                 "set_dependencies",
+                "retarget_branch",
             }
         )
         else None
@@ -7987,7 +9790,17 @@ def emit_status_checks_for_changed_tasks(state_before: dict[str, Any], state_aft
         after_status = after_task.get("status")
 
         is_target = target_task_id and (str(task_id).upper() == str(target_task_id).upper())
-        if after_status != before_status or is_target or review_gate_head_drifted(after_task):
+        reviewer_changed = before_task is not None and before_task.get("reviewer") != after_task.get("reviewer")
+        # Ordinary task writes hold the canonical status lock. Do not make a
+        # note or assignment wait for remote HEAD probes across the whole board;
+        # the explicit sync command owns reconciliation of unchanged tasks.
+        # Actual status changes and review-command targets still emit immediately.
+        if (
+            after_status != before_status
+            or is_target
+            or reviewer_changed
+            or (command == "sync" and review_gate_head_drifted(after_task))
+        ):
             emit_task_review_status_check(after_task, after_status)
 
 
@@ -8018,6 +9831,8 @@ MUTATING_COMMANDS = {
     "approve": command_approve,
     "approve_continuation": command_approve_continuation,
     "archive_migrate": command_archive_migrate,
+    "archive_recovery_apply": command_archive_recovery_apply,
+    "archive_recovery_invalidate": command_archive_recovery_invalidate,
     "sync": command_sync,
     "wave": command_wave,
 }
@@ -8045,27 +9860,53 @@ def main(argv: list[str]) -> int:
     if command not in commands:
         raise SystemExit(f"Unknown command: {command}")
 
+    post_commit_problems: list[str] = []
     with status_write_transaction():
         # Load only after acquiring the lock. Otherwise two well-formed CLI
         # commands could serialize their writes while the second still acted
         # on a pre-lock snapshot.
         state = load_state()
         state_before = deepcopy(state)
+        tx_succeeded = False
+        tx_error: BaseException | None = None
         try:
-            commands[command](state, args)
-        except CrossRepoDeliveryBlocked:
-            # A rejected terminal transition still has to persist the active
-            # child-delivery blocker and the supervisor wake metadata.  Other
-            # command failures retain the historical all-or-nothing behavior.
+            try:
+                commands[command](state, args)
+            except CrossRepoDeliveryBlocked:
+                # A rejected terminal transition still has to persist the active
+                # child-delivery blocker and the supervisor wake metadata.  Other
+                # command failures retain the historical all-or-nothing behavior.
+                sync_all(state)
+                raise
             sync_all(state)
+            # Reaching GitHub is best-effort — an unreachable API has never
+            # failed a canonical transition — but persisting what the outbox
+            # pass changed is not optional: this second sync is the last write
+            # the command makes, so it is the state the receipt below has to
+            # describe.  Only the emission is allowed to degrade to a warning.
+            try:
+                reconcile_status_check_outbox(state, refresh_review_gates=command == "sync")
+                emit_status_checks_for_changed_tasks(state_before, state, command, args)
+            except Exception as exc:
+                print(f"Warning: Failed to emit status checks: {exc}", file=sys.stderr)
+            sync_all(state)
+            tx_succeeded = True
+        except BaseException as exc:
+            tx_error = exc
             raise
-        sync_all(state)
-        try:
-            reconcile_status_check_outbox(state)
-            emit_status_checks_for_changed_tasks(state_before, state, command, args)
-            sync_all(state)
-        except Exception as exc:
-            print(f"Warning: Failed to emit status checks: {exc}", file=sys.stderr)
+        finally:
+            # Still inside the lock, and on the failure path too: a command that
+            # wrote outside the board document has to be able to read back what
+            # actually landed before another writer can touch it.  Running after
+            # every required persistence step is what makes this a receipt for
+            # the whole command instead of for an intermediate revision that a
+            # later sync in the same lock then replaced.
+            post_commit_problems = run_post_commit_verifiers(
+                transaction_succeeded=tx_succeeded,
+                transaction_error=tx_error,
+            )
+    if post_commit_problems:
+        raise SystemExit("; ".join(post_commit_problems))
     return 0
 
 

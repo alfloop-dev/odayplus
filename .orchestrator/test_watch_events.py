@@ -162,6 +162,64 @@ class WatcherBookkeepingTests(unittest.TestCase):
         self.assertEqual(state["pending_handoff_keys"], [])
         self.assertEqual(state["last_scan_at"], "2026-04-06T09:00:00Z")
 
+    def test_wakeup_prompt_includes_test_completion_guidance_for_all_providers(self) -> None:
+        base = {
+            "schema": {},
+            "branch_workflow": {"dev_branch": "dev", "task_branch_prefix": "task/"},
+            "agents": {
+                "antigravity4": {"id": "antigravity4", "display_name": "Antigravity4", "wake_template": ".orchestrator/templates/wakeup.txt"},
+                "claude2": {"id": "claude2", "display_name": "Claude2", "wake_template": ".orchestrator/templates/wakeup.txt"},
+                "codex6": {"id": "codex6", "display_name": "Codex6", "wake_template": ".orchestrator/templates/wakeup.txt"},
+            },
+        }
+        for agent_id in ("antigravity4", "claude2", "codex6"):
+            for reason in ("owned_ready_dispatch", "owned_in_progress_dispatch"):
+                with self.subTest(agent=agent_id, reason=reason):
+                    event = {
+                        "task_id": "ODP-TEST-GUIDE-001",
+                        "reason": reason,
+                        "context_files": ["AI_COLLABORATION_GUIDE.md"],
+                        "task": {"artifacts": []},
+                    }
+                    message = watch_events.render_wakeup_message(base, event, agent_id)
+                    self.assertIn("測試執行與完成判定規範（僅在任務允許驗證時啟動測試）", message)
+                    self.assertIn("原工具 terminal status 與 exit code", message)
+                    self.assertIn("原背景 job handle 完成收據", message)
+                    self.assertIn("同一個 shell child 可使用啟動時捕捉的 PID 執行 `wait` 並保存 exit code", message)
+                    self.assertIn("禁止用等待 passed 摘要的 grep 迴圈", message)
+                    self.assertIn("pgrep -f", message)
+                    self.assertIn("kill -0", message)
+                    self.assertIn("自身 wait shell", message)
+                    self.assertIn("區分程序結束與 exit 成功", message)
+                    self.assertIn("缺少摘要或測試 count 不代表程序仍在執行", message)
+                    self.assertIn("讀取既有 log 或 JUnit", message)
+                    self.assertIn("不得只為統計 count 重跑測試", message)
+                    self.assertIn("退出收據不足或丟失時應回報狀態未知", message)
+                    self.assertIn("不得冒充成功", message)
+                    self.assertIn("不得無限等待", message)
+                    self.assertIn("合理且單次的 diagnostic grep 或 process 狀態查詢不受此限", message)
+
+        finalize_event = {
+            "task_id": "ODP-FINALIZE-001",
+            "reason": "owned_finalize_dispatch",
+            "context_files": ["AI_COLLABORATION_GUIDE.md"],
+            "task": {"artifacts": [], "status": "review_approved"},
+        }
+        finalize_msg = watch_events.render_wakeup_message(base, finalize_event, "antigravity4")
+        self.assertIn("明確禁止執行 pytest、npm test、build、lint、security scan 與 E2E 等驗證命令", finalize_msg)
+        self.assertIn("僅讀取 exact approved head 的 PR、CI 與 receipt 證據，不得重跑測試", finalize_msg)
+        self.assertIn("測試執行與完成判定規範（僅在任務允許驗證時啟動測試）", finalize_msg)
+
+        nonmutating_event = {
+            "task_id": "ODP-NONMUTATING-003",
+            "reason": "owned_ready_dispatch",
+            "context_files": ["AI_COLLABORATION_GUIDE.md"],
+            "task": {"artifacts": [], "mutates_canonical": False},
+        }
+        nonmutating_msg = watch_events.render_wakeup_message(base, nonmutating_event, "antigravity4")
+        self.assertIn("明確禁止執行 pytest、npm test、build、lint、security scan 與 E2E 等不必要的測試或驗證命令", nonmutating_msg)
+        self.assertIn("測試執行與完成判定規範（僅在任務允許驗證時啟動測試）", nonmutating_msg)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -33,7 +33,7 @@ export type AVMCasePayload = {
   lease_liability?: number;
   liquidity_discount?: number;
   prediction_origin_time?: string | null;
-  quality_score?: number;
+  quality_score?: number | null;
   source_snapshot_ids?: string[];
   store_id: string;
   working_capital?: number;
@@ -714,6 +714,68 @@ export type HTTPValidationError = {
   detail?: ValidationError[];
 };
 
+/** One cell-period of HZ-004 absorption, to be measured and recorded.
+
+The body carries *inputs*, not results. `absorbed_demand`,
+`absorption_ratio`, `absorbing_store_count` and `under_realized` are
+computed here from the published `oday.store-daily-performance.v1` and
+`oday.operational-start-observation.v1` rows, and the basis snapshot ids
+are lifted from each row's `raw_contract_fingerprint`. A caller cannot
+state what a zone absorbed, because merge/split is judged against this
+history and a caller who could write the evidence could decide the
+merge. */
+export type HeatZoneAbsorptionOutcomePayload = {
+  barrier_description?: string;
+  barrier_side?: string | null;
+  cell_id: string;
+  operational_starts?: Record<string, unknown>[] | null;
+  original_demand: number;
+  performances?: Record<string, unknown>[] | null;
+  period_end: string;
+  period_start: string;
+  store_ids: string[];
+};
+
+/** Request to evaluate merge/split for the caller's tenant.
+
+There is nothing to send but the policy to evaluate under. Readiness
+metrics and cell outcomes are read from trusted server-side HZ-004
+evidence; a request that supplies them is refused rather than obeyed,
+because a caller able to name its own maturity could talk the engine
+past a gate the production snapshot fails. */
+export type HeatZoneMergeSplitEvaluatePayload = {
+  policy_version_id?: string | null;
+};
+
+/** Human override of a composition.
+
+The deciding operator is taken from the authenticated principal, so the
+body carries only the reason and the shape of the override. `extra` is
+forbidden so a client that still sends `decided_by` is told its identity
+claim was rejected instead of having it silently dropped. */
+export type HeatZoneOverridePayload = {
+  decision_policy_version_id?: string | null;
+  member_cell_ids?: string[] | null;
+  new_kind?: string | null;
+  override_reason: string;
+  parent_zone_id?: string | null;
+};
+
+/** HeatZoneProposalApprovePayload */
+export type HeatZoneProposalApprovePayload = {
+  notes?: string | null;
+};
+
+/** HeatZoneProposalRejectPayload */
+export type HeatZoneProposalRejectPayload = {
+  reason: string;
+};
+
+/** HeatZoneRollbackPayload */
+export type HeatZoneRollbackPayload = {
+  revert_reason?: string | null;
+};
+
 /** HeatZoneScoreJobPayload */
 export type HeatZoneScoreJobPayload = {
   features?: Record<string, unknown>[];
@@ -888,6 +950,11 @@ export type JobReceipt = {
   job_id: string;
   status: JobStatus;
   version: number;
+};
+
+/** JobRetryPayload */
+export type JobRetryPayload = {
+  retry_scope?: string;
 };
 
 /** JobStatus */
@@ -1430,6 +1497,8 @@ export type RebalanceStore = {
   avmP10?: number | null;
   avmP50?: number | null;
   avmP90?: number | null;
+  avmQualityDisposition?: string | null;
+  avmQualityScoreStatus?: string | null;
   avmRequestId?: string | null;
   avmReserve?: string | null;
   avmSnapshotId?: string | null;
@@ -1996,9 +2065,21 @@ export const API_PATHS = {
   "/api/v1/forecastops/prediction-runs/{prediction_run_id}": ["GET"],
   "/api/v1/forecastops/timeseries": ["GET", "POST"],
   "/api/v1/heatzones": ["GET"],
+  "/api/v1/heatzones/absorption/outcomes": ["POST"],
+  "/api/v1/heatzones/compositions": ["GET"],
   "/api/v1/heatzones/map": ["GET"],
+  "/api/v1/heatzones/merge-split/evaluate": ["POST"],
+  "/api/v1/heatzones/merge-split/proposals": ["GET"],
+  "/api/v1/heatzones/merge-split/proposals/{proposal_id}": ["GET"],
+  "/api/v1/heatzones/merge-split/proposals/{proposal_id}/approve": ["POST"],
+  "/api/v1/heatzones/merge-split/proposals/{proposal_id}/preview": ["POST"],
+  "/api/v1/heatzones/merge-split/proposals/{proposal_id}/reject": ["POST"],
   "/api/v1/heatzones/score-jobs": ["POST"],
   "/api/v1/heatzones/snapshots/{snapshot_id}": ["GET"],
+  "/api/v1/heatzones/zones/{zone_id}/composition": ["GET"],
+  "/api/v1/heatzones/zones/{zone_id}/lineage": ["GET"],
+  "/api/v1/heatzones/zones/{zone_id}/override": ["POST"],
+  "/api/v1/heatzones/zones/{zone_id}/rollback": ["POST"],
   "/api/v1/heatzones/{h3_index}": ["GET"],
   "/api/v1/identity-decisions/{decision_id}": ["GET"],
   "/api/v1/identity-decisions/{decision_id}/actions/reverse": ["POST"],
@@ -2040,6 +2121,7 @@ export const API_PATHS = {
   "/api/v1/jobs": ["POST"],
   "/api/v1/jobs/{job_id}": ["GET"],
   "/api/v1/jobs/{job_id}/receipt": ["GET"],
+  "/api/v1/jobs/{job_id}/retries": ["POST"],
   "/api/v1/jobs/{job_id}/retry": ["POST"],
   "/api/v1/learninghub/dataset-snapshots": ["POST"],
   "/api/v1/learninghub/dataset-snapshots/{dataset_snapshot_id}/triage": ["GET", "POST"],

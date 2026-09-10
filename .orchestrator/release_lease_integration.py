@@ -32,6 +32,7 @@ from typing import Any
 from common import config_path, load_status, parse_iso_timestamp, write_activity_log
 from release_lease import ISSUER_NAME, issuance_errors, issue_release_lease
 
+from delivery_toolchain.release.check_runtime_admission import check_candidate_ancestry
 from delivery_toolchain.release.release_lease import (
     DEFAULT_ACTION,
     SHA256_DIGEST_PATTERN,
@@ -49,6 +50,11 @@ ISSUANCE_HISTORY_FIELD = "release_lease_issuance_history"
 REQUEST_KIND = "runtime_release_deploy"
 RUNTIME_RELEASE_WORKFLOW_PATH = ".github/workflows/deploy-dev.yml"
 RUNTIME_RELEASE_WORKFLOW_ID = "deploy-dev.yml"
+DEFAULT_DISPATCH_REF = "dev"
+# A read-only `git ls-remote` against one repository; long enough to survive a
+# slow round trip, short enough that a hung remote blocks the lease instead of
+# the whole Supervisor cycle.
+REMOTE_QUERY_TIMEOUT_SECONDS = 15
 DEFAULT_SECRET_REFERENCE = (
     "projects/767864276141/secrets/odp-release-lease-private-key"
 )
@@ -60,6 +66,7 @@ _SECRET_REFERENCE = re.compile(
 )
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _MANIFEST_RUN_ID = re.compile(r"^[1-9][0-9]{0,18}$")
+_REF_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$")
 _FINAL_NO_RETRY_STATES = {"issued", "dispatched", "dispatch_unknown"}
 
 
@@ -101,6 +108,8 @@ def issuer_settings(config: dict[str, Any]) -> tuple[dict[str, Any] | None, list
     state_uri = str(raw.get("state_uri") or "").strip()
     repository = str(raw.get("github_repository") or "").strip()
     workflow = str(raw.get("workflow") or RUNTIME_RELEASE_WORKFLOW_PATH).strip()
+    raw_ref = raw.get("dispatch_ref")
+    dispatch_ref = str(raw_ref if raw_ref is not None else DEFAULT_DISPATCH_REF).strip()
     errors: list[str] = []
     if not _SECRET_REFERENCE.fullmatch(secret_reference):
         errors.append("secret_reference must be a Secret Manager projects/<number>/secrets/<id> reference")
@@ -110,6 +119,12 @@ def issuer_settings(config: dict[str, Any]) -> tuple[dict[str, Any] | None, list
         errors.append("github_repository must be an owner/repository identifier")
     if workflow != RUNTIME_RELEASE_WORKFLOW_PATH:
         errors.append("workflow must remain the existing .github/workflows/deploy-dev.yml Runtime Release")
+    if not dispatch_ref:
+        errors.append("dispatch_ref must not be empty")
+    elif SHA_PATTERN.fullmatch(dispatch_ref):
+        errors.append("dispatch_ref must be a git branch or tag reference, not a commit SHA")
+    elif not _REF_PATTERN.fullmatch(dispatch_ref):
+        errors.append(f"dispatch_ref {dispatch_ref!r} is not a valid git branch or tag reference")
     try:
         ttl_seconds = int(raw.get("ttl_seconds", DEFAULT_TTL_SECONDS))
     except (TypeError, ValueError):
@@ -126,6 +141,7 @@ def issuer_settings(config: dict[str, Any]) -> tuple[dict[str, Any] | None, list
         "github_repository": repository,
         "workflow": workflow,
         "ttl_seconds": ttl_seconds,
+        "dispatch_ref": dispatch_ref,
     }, []
 
 
@@ -337,6 +353,8 @@ def _receipt(
     *,
     errors: list[str],
     issued_at: datetime,
+    dispatch_ref: str | None = None,
+    dispatch_ref_sha: str | None = None,
 ) -> dict[str, Any]:
     document = build_receipt(
         lease or {},
@@ -346,6 +364,10 @@ def _receipt(
         verifier=ISSUER_NAME,
     )
     document["event"] = "lease_issued" if lease is not None and not errors else "lease_issue_blocked"
+    if dispatch_ref is not None:
+        document["dispatch_ref"] = dispatch_ref
+    if dispatch_ref_sha is not None:
+        document["dispatch_ref_sha"] = dispatch_ref_sha
     return document
 
 
@@ -375,6 +397,8 @@ def _issuance_record(
         "secret_reference": settings["secret_reference"],
         "state_uri": settings["state_uri"],
         "workflow": RUNTIME_RELEASE_WORKFLOW_PATH,
+        "dispatch_ref": settings.get("dispatch_ref", DEFAULT_DISPATCH_REF),
+        "dispatch_ref_sha": receipt.get("dispatch_ref_sha"),
         "updated_at": updated_at.replace(microsecond=0).isoformat(),
         "receipt": receipt,
     }
@@ -400,6 +424,8 @@ def _write_activity(
             "candidate_sha": record.get("candidate_sha"),
             "manifest_digest": record.get("manifest_digest"),
             "target_environment": record.get("target_environment"),
+            "dispatch_ref": record.get("dispatch_ref"),
+            "dispatch_ref_sha": record.get("dispatch_ref_sha"),
             "lease_id": receipt.get("lease_id"),
             "signature_key_id": receipt.get("signature_key_id"),
             "errors": receipt.get("errors", []),
@@ -503,6 +529,110 @@ def _runtime_release_inputs(lease: dict[str, Any], request: dict[str, Any], mani
     }
 
 
+def _remote_ref_lines(root: Path, remote: str, patterns: list[str]) -> list[str] | None:
+    """Return ``git ls-remote`` output lines, or ``None`` if the remote cannot be read.
+
+    ``None`` means "unknown", never "no such ref": a network failure, an
+    authentication failure, and a timeout are all indistinguishable from the
+    outside, so none of them may be reported as a definitive answer.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "ls-remote", remote, *patterns],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=REMOTE_QUERY_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.splitlines()
+
+
+def resolve_ref_sha(root: Path, ref: str, *, repository: str | None = None) -> str | None:
+    """Resolve *ref* to the exact commit the configured GitHub repository holds.
+
+    Only the configured repository's remote is read. There is deliberately no
+    fallback to ``origin``, to `refs/remotes/*`, or to local branches: the lease
+    binds the deploy to the commit GitHub will actually check out, and a local
+    clone is evidence of what some worktree fetched at some point, not of what
+    the remote holds now. A ref that cannot be read as an exact commit -- unknown,
+    ambiguous, unreachable, or unpeelable -- returns ``None`` so the caller blocks
+    rather than signing a lease against a guess.
+
+    Annotated tags are peeled: GitHub runs the commit a tag points at, so the tag
+    object's own SHA is never the answer.
+    """
+    if repository is None or not _REPOSITORY.fullmatch(str(repository).strip()):
+        return None
+    if not ref or SHA_PATTERN.fullmatch(ref) or not _REF_PATTERN.fullmatch(ref):
+        return None
+
+    remote = f"https://github.com/{str(repository).strip()}.git"
+    branch_ref = f"refs/heads/{ref}"
+    tag_ref = f"refs/tags/{ref}"
+    peeled_tag_ref = f"{tag_ref}^{{}}"
+
+    lines = _remote_ref_lines(root, remote, [branch_ref, tag_ref, peeled_tag_ref])
+    if lines is None:
+        return None
+
+    found: dict[str, str] = {}
+    for line in lines:
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        sha, ref_name = parts[0].strip(), parts[1].strip()
+        if ref_name in (branch_ref, tag_ref, peeled_tag_ref) and SHA_PATTERN.fullmatch(sha):
+            found[ref_name] = sha
+
+    # An annotated tag reports the tag object under `refs/tags/<ref>` and the
+    # commit it points at under `refs/tags/<ref>^{}`. A lightweight tag reports
+    # only the former, which is already a commit.
+    tag_sha = found.get(peeled_tag_ref) or found.get(tag_ref)
+    branch_sha = found.get(branch_ref)
+
+    if branch_sha and tag_sha and branch_sha != tag_sha:
+        # `workflow_dispatch` takes a bare ref name and resolves the collision
+        # server-side. Which commit runs is then not something the Supervisor can
+        # state, so it does not sign a lease claiming to know.
+        return None
+    return branch_sha or tag_sha
+
+
+def check_dispatch_ref_errors(
+    settings: dict[str, Any],
+    candidate_sha: str,
+    root: Path,
+    *,
+    ref_resolver: Callable[..., str | None] = resolve_ref_sha,
+) -> tuple[str | None, list[str]]:
+    """Verify that dispatch_ref resolves in git and is compatible with candidate_sha.
+
+    Returns (resolved_ref_sha, errors).
+    """
+    dispatch_ref = str(settings.get("dispatch_ref") or DEFAULT_DISPATCH_REF).strip()
+    if not dispatch_ref:
+        return None, ["dispatch_ref is missing or empty"]
+    if SHA_PATTERN.fullmatch(dispatch_ref):
+        return None, ["dispatch_ref must be a git branch or tag reference, not a commit SHA"]
+    if not _REF_PATTERN.fullmatch(dispatch_ref):
+        return None, [f"dispatch_ref {dispatch_ref!r} is not a valid git branch or tag reference"]
+    repository = str(settings.get("github_repository") or "").strip()
+    ref_sha = ref_resolver(root, dispatch_ref, repository=repository)
+    if ref_sha is None:
+        return None, [
+            f"dispatch_ref {dispatch_ref!r} does not resolve to exactly one commit in "
+            f"{repository or 'the configured repository'}; a lease is never signed against "
+            "a local ref or an unreadable remote"
+        ]
+    ancestry_errors = check_candidate_ancestry(candidate_sha, ref_sha, root)
+    return ref_sha, ancestry_errors
+
+
 def dispatch_runtime_release(
     *,
     lease: dict[str, Any],
@@ -516,9 +646,12 @@ def dispatch_runtime_release(
     stdin so it never appears in a process argument, status file, activity log,
     receipt, or captured command output.
     """
+    dispatch_ref = str(settings.get("dispatch_ref") or DEFAULT_DISPATCH_REF).strip()
+    if not dispatch_ref or SHA_PATTERN.fullmatch(dispatch_ref) or not _REF_PATTERN.fullmatch(dispatch_ref):
+        raise RuntimeReleaseDispatchError(f"invalid dispatch_ref: {dispatch_ref!r}")
 
     payload = {
-        "ref": str(lease["candidate_sha"]),
+        "ref": dispatch_ref,
         "inputs": _runtime_release_inputs(lease, request, manifest),
     }
     command = [
@@ -578,6 +711,7 @@ def _record_blocked(
     errors: list[str],
     *,
     commit_status: Callable[[dict[str, Any], dict[str, Any]], bool],
+    dispatch_ref_sha: str | None = None,
 ) -> bool:
     record = _issuance_record(
         state="blocked",
@@ -585,7 +719,13 @@ def _record_blocked(
         request=request,
         fingerprint=fingerprint,
         settings=settings,
-        receipt=_receipt(None, errors=errors, issued_at=_utc()),
+        receipt=_receipt(
+            None,
+            errors=errors,
+            issued_at=_utc(),
+            dispatch_ref=settings.get("dispatch_ref", DEFAULT_DISPATCH_REF),
+            dispatch_ref_sha=dispatch_ref_sha,
+        ),
         updated_at=_utc(),
     )
     if not _commit_result(config, status, task, record, commit_status=commit_status):
@@ -600,6 +740,7 @@ def process_release_lease_issuance(
     commit_status: Callable[[dict[str, Any], dict[str, Any]], bool],
     private_key_loader: Callable[[str], Any] = load_private_key_from_secret_reference,
     dispatch: Callable[..., None] = dispatch_runtime_release,
+    ref_resolver: Callable[..., str | None] = resolve_ref_sha,
     now: datetime | None = None,
 ) -> bool:
     """Run release issuance within the existing Supervisor cycle.
@@ -687,6 +828,10 @@ def process_release_lease_issuance(
         errors.extend(input_errors)
         errors.extend(_exact_binding_errors(request, registry, manifest))
         errors.extend(_build_run_binding_errors(request, registry))
+        ref_sha, ref_errors = check_dispatch_ref_errors(
+            settings, str(request.get("candidate_sha") or ""), root, ref_resolver=ref_resolver
+        )
+        errors.extend(ref_errors)
         errors.extend(
             _nonce_reuse_errors(
                 status, task_id, fingerprint, _safe_digest(request.get("nonce")), archive_dir=archive_dir
@@ -707,7 +852,15 @@ def process_release_lease_issuance(
         )
         if errors:
             changed = _record_blocked(
-                config, status, task, request, fingerprint, settings, errors, commit_status=commit_status
+                config,
+                status,
+                task,
+                request,
+                fingerprint,
+                settings,
+                errors,
+                commit_status=commit_status,
+                dispatch_ref_sha=ref_sha,
             ) or changed
             continue
 
@@ -723,6 +876,7 @@ def process_release_lease_issuance(
                 settings,
                 ["durable GCS lease state is unavailable"],
                 commit_status=commit_status,
+                dispatch_ref_sha=ref_sha,
             ) or changed
             continue
 
@@ -738,6 +892,7 @@ def process_release_lease_issuance(
                 settings,
                 ["Secret Manager signing key is unavailable"],
                 commit_status=commit_status,
+                dispatch_ref_sha=ref_sha,
             ) or changed
             continue
 
@@ -753,6 +908,10 @@ def process_release_lease_issuance(
         errors.extend(input_errors)
         errors.extend(_exact_binding_errors(request, registry, manifest))
         errors.extend(_build_run_binding_errors(request, registry))
+        ref_sha, post_ref_errors = check_dispatch_ref_errors(
+            settings, str(request.get("candidate_sha") or ""), root, ref_resolver=ref_resolver
+        )
+        errors.extend(post_ref_errors)
         errors.extend(
             _nonce_reuse_errors(
                 status, task_id, fingerprint, _safe_digest(request.get("nonce")), archive_dir=archive_dir
@@ -774,7 +933,15 @@ def process_release_lease_issuance(
         if errors:
             del private_key
             changed = _record_blocked(
-                config, status, task, request, fingerprint, settings, errors, commit_status=commit_status
+                config,
+                status,
+                task,
+                request,
+                fingerprint,
+                settings,
+                errors,
+                commit_status=commit_status,
+                dispatch_ref_sha=ref_sha,
             ) or changed
             continue
 
@@ -806,6 +973,7 @@ def process_release_lease_issuance(
                 settings,
                 ["lease issuance or durable GCS CAS failed"],
                 commit_status=commit_status,
+                dispatch_ref_sha=ref_sha,
             ) or changed
             continue
         del private_key
@@ -816,7 +984,13 @@ def process_release_lease_issuance(
             request=request,
             fingerprint=fingerprint,
             settings=settings,
-            receipt=_receipt(lease, errors=[], issued_at=_utc(now)),
+            receipt=_receipt(
+                lease,
+                errors=[],
+                issued_at=_utc(now),
+                dispatch_ref=settings.get("dispatch_ref", DEFAULT_DISPATCH_REF),
+                dispatch_ref_sha=ref_sha,
+            ),
             updated_at=_utc(now),
         )
         if not _commit_result(config, status, task, issued_record, commit_status=commit_status):
@@ -853,16 +1027,20 @@ def process_release_lease_issuance(
 
 
 __all__ = [
+    "DEFAULT_DISPATCH_REF",
     "DEFAULT_SECRET_REFERENCE",
     "ISSUANCE_FIELD",
+    "REMOTE_QUERY_TIMEOUT_SECONDS",
     "REQUEST_FIELD",
     "REQUEST_KIND",
     "RUNTIME_RELEASE_WORKFLOW_ID",
     "RUNTIME_RELEASE_WORKFLOW_PATH",
+    "check_dispatch_ref_errors",
     "dispatch_runtime_release",
     "issuer_settings",
     "load_private_key_from_secret_reference",
     "process_release_lease_issuance",
     "request_errors",
     "request_fingerprint",
+    "resolve_ref_sha",
 ]

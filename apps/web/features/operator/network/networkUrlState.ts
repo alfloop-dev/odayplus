@@ -6,6 +6,7 @@ export const NETWORK_TAB_IDS = [
   "compare",
   "review",
   "rebalance",
+  "composition",
 ] as const;
 
 export type NetworkTabId = (typeof NETWORK_TAB_IDS)[number];
@@ -20,6 +21,10 @@ const NETWORK_TAB_ALIASES: Readonly<Record<string, NetworkTabId>> = {
   "listing-radar": "radar",
   candidate: "candidates",
   sitescore: "score",
+  merge: "composition",
+  split: "composition",
+  "merge-split": "composition",
+  topology: "composition",
 };
 
 export function parseNetworkTabIndex(

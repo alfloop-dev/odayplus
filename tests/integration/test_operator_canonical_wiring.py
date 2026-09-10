@@ -292,6 +292,7 @@ def _seed_rebalance_inputs(
             lease_liability=150_000,
             working_capital=80_000,
             comparable_multiples=(2.1, 2.4, 2.7),
+            quality_score=0.95,
             source_snapshot_ids=("finance-snapshot-live-1",),
         ),
         created_by="finance-live",
@@ -489,6 +490,329 @@ def test_rebalance_invokes_avm_and_netplan_oss_and_persists_results(
         assert reopened.netplan("tenant-b").get_solve(scenario_id) is None
     finally:
         reopened.close()
+
+
+def _rebalance_row(payload: dict[str, Any], store_id: str) -> dict[str, Any]:
+    row = next(
+        (item for item in payload["stores"] if item["storeId"] == store_id),
+        None,
+    )
+    assert row is not None, f"{store_id} missing from rebalance snapshot"
+    return row
+
+
+def _strip_quality_status(item: Any) -> Any:
+    """Reproduce a record pickled before ``quality_score_status`` existed.
+
+    ``__init__`` always writes the field, so deleting it from the instance dict
+    is what unpickling a previous-release record actually yields -- as opposed
+    to constructing a fresh object that merely left the argument out, which is
+    a measured input and must not be treated as legacy.
+    """
+
+    for field_name in ("quality_score_status", "quality_disposition"):
+        if field_name in item.__dict__:
+            object.__delattr__(item, field_name)
+    return item
+
+
+def _seed_additional_rebalance_case(
+    harness: CanonicalHarness,
+    tenant_id: str,
+    store_id: str,
+) -> str:
+    """Seed a second, independently measured AVM case for the same tenant."""
+
+    case = AVMService(repository=harness.avm(tenant_id)).create_case(
+        ValuationInput(
+            store_id=store_id,
+            gm_ttm=1_100_000,
+            forecast_gm_next_12m=1_250_000,
+            asset_book_value=780_000,
+            equipment_fair_value=620_000,
+            lease_liability=140_000,
+            working_capital=70_000,
+            comparable_multiples=(2.0, 2.3, 2.6),
+            quality_score=0.93,
+            source_snapshot_ids=(f"finance-snapshot-{store_id}",),
+        ),
+        created_by="finance-live",
+        correlation_id=f"corr-avm-{store_id}",
+    )
+    return case.case_id
+
+
+def _completions_for(payload: dict[str, Any], store_id: str) -> list[dict[str, Any]]:
+    return [
+        event
+        for event in payload["auditEvents"]
+        if event.get("action") == "rebalance.avm.completed"
+        and event.get("targetId") == store_id
+    ]
+
+
+def _replay_avm_completion(
+    client: TestClient,
+    store_id: str,
+    idempotency_key: str,
+) -> dict[str, Any]:
+    """Re-POST a finished AVM completion under its original Idempotency-Key.
+
+    A 200 here is only reachable through the durable idempotency cache: the
+    store is already ``avmready``, so a request that fell through to the action
+    itself would be refused as a conflict. That is what makes this the response
+    shape a real client retry gets back, rather than a fresh valuation.
+    """
+
+    replayed = client.post(
+        f"{BASE}/network-rebalance/stores/{store_id}/avm/complete",
+        headers=_headers("tenant-a", idempotency_key=idempotency_key),
+        json={"actorRoleId": "operationsManager"},
+    )
+    assert replayed.status_code == 200, replayed.text
+    return replayed.json()
+
+
+def test_durable_rebalance_card_cannot_outlive_the_quality_claim_it_was_written_with(
+    tmp_path: Path,
+) -> None:
+    """A restored AVM card must re-derive its quality claim from its own report.
+
+    The Operator card is a projection persisted in rebalance state, so a restart
+    brings back whatever confidence was written when the valuation completed.
+    That is the whole failure: a card produced before quality-score handling
+    keeps advertising high confidence even though its case cannot tell a
+    measured perfect score from an omitted one. The measured card must survive
+    the same restart untouched, or the downgrade would just be a blanket
+    pessimism that says nothing.
+
+    The idempotency cache is durable too, and is restored as a separate copy
+    that no read path passes through. A client still holding the original key
+    therefore has a second way to ask for the same card -- one that has to reach
+    the same answer as the snapshot, or the downgrade is only cosmetic and the
+    replay becomes the response that still claims the retired quality.
+    """
+
+    database_path = tmp_path / "operator-canonical-rebalance-quality.sqlite3"
+    harness = CanonicalHarness(database_path)
+    store_id, _ = _seed_rebalance_inputs(harness, "tenant-a")
+    fresh_store_id = "store-live-fresh-1"
+    fresh_case_id = _seed_additional_rebalance_case(harness, "tenant-a", fresh_store_id)
+    try:
+        with TestClient(harness.app()) as client:
+            requested = client.post(
+                f"{BASE}/network-rebalance/stores/{store_id}/avm/request",
+                headers=_headers("tenant-a", idempotency_key="avm-request-quality-1"),
+                json={"actorRoleId": "operationsManager"},
+            )
+            completed = client.post(
+                f"{BASE}/network-rebalance/stores/{store_id}/avm/complete",
+                headers=_headers("tenant-a", idempotency_key="avm-complete-quality-1"),
+                json={"actorRoleId": "operationsManager"},
+            )
+        assert requested.status_code == 200, requested.text
+        assert completed.status_code == 200, completed.text
+        card = completed.json()["store"]
+        completion_audit_id = completed.json()["auditEvent"]["id"]
+        case_id = card["canonicalAvmCaseId"]
+        report_id = card["avm"]["reportId"]
+        measured_confidence = card["avmConf"]
+        measured_p50 = card["avmP50"]
+        assert measured_confidence
+        assert card["avmQualityScoreStatus"] == "measured"
+        assert card["avmQualityDisposition"] is None
+    finally:
+        harness.close()
+
+    # A measured card is not collateral damage: restarting must not downgrade it,
+    # on the snapshot or on a retry of the key that produced it.
+    restarted = CanonicalHarness(database_path)
+    try:
+        with TestClient(restarted.app()) as client:
+            snapshot = client.get(
+                f"{BASE}/network-rebalance",
+                headers=_headers("tenant-a"),
+            )
+            replayed = _replay_avm_completion(client, store_id, "avm-complete-quality-1")
+        assert snapshot.status_code == 200, snapshot.text
+        row = _rebalance_row(snapshot.json(), store_id)
+        assert row["avmConf"] == measured_confidence
+        assert row["avmQualityDisposition"] is None
+        assert row["avmP50"] is not None
+        replayed_card = replayed["store"]
+        assert replayed_card["avmConf"] == measured_confidence
+        assert replayed_card["avm"]["confidence"] == measured_confidence
+        assert replayed_card["avmQualityScoreStatus"] == "measured"
+        assert replayed_card["avmQualityDisposition"] is None
+        # The retry answered the original action, so it neither valued again nor
+        # recorded a second completion.
+        assert replayed["auditEvent"]["id"] == completion_audit_id
+        assert len(restarted.avm("tenant-a").report_history(case_id)) == 1
+    finally:
+        restarted.close()
+
+    # Make the stored case opaque exactly the way a pre-nullability pickle is,
+    # while leaving the already-written card claiming its original confidence.
+    opaque = CanonicalHarness(database_path)
+    try:
+        scoped = opaque.scoped("tenant-a")
+        stored_case = scoped.get("avm.cases", case_id)
+        assert stored_case is not None
+        _strip_quality_status(stored_case.valuation_input)
+        scoped.put("avm.cases", case_id, stored_case)
+    finally:
+        opaque.close()
+
+    legacy = CanonicalHarness(database_path)
+    try:
+        with TestClient(legacy.app()) as client:
+            snapshot = client.get(
+                f"{BASE}/network-rebalance",
+                headers=_headers("tenant-a"),
+            )
+            legacy_replay = _replay_avm_completion(
+                client, store_id, "avm-complete-quality-1"
+            )
+            # A valuation measured after the legacy card exists, so the downgrade
+            # has to be about this card rather than about the tenant.
+            fresh_requested = client.post(
+                f"{BASE}/network-rebalance/stores/{fresh_store_id}/avm/request",
+                headers=_headers("tenant-a", idempotency_key="avm-request-fresh-1"),
+                json={"actorRoleId": "operationsManager"},
+            )
+            fresh_completed = client.post(
+                f"{BASE}/network-rebalance/stores/{fresh_store_id}/avm/complete",
+                headers=_headers("tenant-a", idempotency_key="avm-complete-fresh-1"),
+                json={"actorRoleId": "operationsManager"},
+            )
+            fresh_replay = _replay_avm_completion(
+                client, fresh_store_id, "avm-complete-fresh-1"
+            )
+            after = client.get(
+                f"{BASE}/network-rebalance",
+                headers=_headers("tenant-a"),
+            )
+        assert snapshot.status_code == 200, snapshot.text
+        row = _rebalance_row(snapshot.json(), store_id)
+        assert row["avmQualityScoreStatus"] == "legacy_unknown"
+        assert row["avmQualityDisposition"] == "legacy_unknown_downgraded"
+        assert row["avmConf"] == "low"
+        assert row["avmConf"] != measured_confidence
+        # The historical price the operator was shown is still the record.
+        assert row["avmP50"] is not None
+        # The downgrade came from this card's own report, not from a newer one.
+        disposed = legacy.avm("tenant-a").latest_report(case_id)
+        assert disposed is not None
+        assert disposed.report_id == report_id
+        assert disposed.quality_disposition == "legacy_unknown_downgraded"
+
+        # The retry of the original key reaches the same verdict as the snapshot,
+        # in both the flattened and the nested shape it publishes.
+        legacy_card = legacy_replay["store"]
+        assert legacy_card["avmConf"] == "low"
+        assert legacy_card["avmConf"] != measured_confidence
+        assert legacy_card["avmQualityScoreStatus"] == "legacy_unknown"
+        assert legacy_card["avmQualityDisposition"] == "legacy_unknown_downgraded"
+        assert legacy_card["avm"]["confidence"] == "low"
+        assert legacy_card["avm"]["qualityScoreStatus"] == "legacy_unknown"
+        assert legacy_card["avm"]["qualityDisposition"] == "legacy_unknown_downgraded"
+        # Identity and price are the historical record and stay put; the replay is
+        # still the same action, answered once.
+        assert legacy_card["avm"]["reportId"] == report_id
+        assert legacy_card["avm"]["requestId"] == case_id
+        assert legacy_card["avmP50"] == measured_p50
+        assert legacy_replay["auditEvent"]["id"] == completion_audit_id
+
+        assert fresh_requested.status_code == 200, fresh_requested.text
+        assert fresh_completed.status_code == 200, fresh_completed.text
+        fresh_card = fresh_completed.json()["store"]
+        assert fresh_card["avmQualityScoreStatus"] == "measured"
+        assert fresh_card["avmQualityDisposition"] is None
+        assert fresh_card["avmConf"]
+        fresh_replayed_card = fresh_replay["store"]
+        assert fresh_replayed_card["avmConf"] == fresh_card["avmConf"]
+        assert fresh_replayed_card["avm"]["confidence"] == fresh_card["avmConf"]
+        assert fresh_replayed_card["avmQualityScoreStatus"] == "measured"
+        assert fresh_replayed_card["avmQualityDisposition"] is None
+
+        # No replay valued anything again or filed a second completion.
+        assert len(legacy.avm("tenant-a").report_history(case_id)) == 1
+        assert len(legacy.avm("tenant-a").report_history(fresh_case_id)) == 1
+        assert len(_completions_for(after.json(), store_id)) == 1
+        assert len(_completions_for(after.json(), fresh_store_id)) == 1
+    finally:
+        legacy.close()
+
+    # The cached card answers for itself. Point only the cached copy at a report
+    # the canonical store cannot produce: the snapshot still resolves the store's
+    # own report, so a replay that reported anything but "unverifiable" would be
+    # reading the current store instead of the card it is replaying.
+    cached_dangling = CanonicalHarness(database_path)
+    try:
+        scoped = cached_dangling.scoped("tenant-a")
+        state = scoped.get("operator.live_domain_state", "network-rebalance")
+        assert state is not None
+        cached = state["idempotencyCache"][("complete_avm", "avm-complete-quality-1")]
+        # The stored record still carries the claim it was written with: the
+        # downgrade is a projection applied on the way out, not a rewrite of the
+        # response that was actually served.
+        assert cached["store"]["avm"]["reportId"] == report_id
+        assert cached["store"]["avm"]["confidence"] == measured_confidence
+        cached["store"]["avm"]["reportId"] = "avm-report-does-not-exist"
+        scoped.put("operator.live_domain_state", "network-rebalance", state)
+    finally:
+        cached_dangling.close()
+
+    unverifiable_replay = CanonicalHarness(database_path)
+    try:
+        with TestClient(unverifiable_replay.app()) as client:
+            snapshot = client.get(
+                f"{BASE}/network-rebalance",
+                headers=_headers("tenant-a"),
+            )
+            replayed = _replay_avm_completion(client, store_id, "avm-complete-quality-1")
+        assert snapshot.status_code == 200, snapshot.text
+        row = _rebalance_row(snapshot.json(), store_id)
+        assert row["avmQualityDisposition"] == "legacy_unknown_downgraded"
+        replayed_card = replayed["store"]
+        assert replayed_card["avmConf"] is None
+        assert replayed_card["avmQualityScoreStatus"] is None
+        assert replayed_card["avmQualityDisposition"] == "unverifiable_report_reference"
+        assert replayed_card["avm"]["confidence"] is None
+        assert replayed_card["avm"]["qualityScoreStatus"] is None
+        assert replayed_card["avm"]["qualityDisposition"] == "unverifiable_report_reference"
+        assert replayed_card["avmP50"] == measured_p50
+    finally:
+        unverifiable_replay.close()
+
+    # A card naming a report the canonical store cannot produce is unverifiable,
+    # so it claims nothing -- rather than borrowing the case's latest report.
+    dangling = CanonicalHarness(database_path)
+    try:
+        scoped = dangling.scoped("tenant-a")
+        state = scoped.get("operator.live_domain_state", "network-rebalance")
+        assert state is not None
+        for entry in state["stores"]:
+            if entry.get("storeId") == store_id:
+                entry["avm"]["reportId"] = "avm-report-does-not-exist"
+        scoped.put("operator.live_domain_state", "network-rebalance", state)
+    finally:
+        dangling.close()
+
+    unverifiable = CanonicalHarness(database_path)
+    try:
+        with TestClient(unverifiable.app()) as client:
+            snapshot = client.get(
+                f"{BASE}/network-rebalance",
+                headers=_headers("tenant-a"),
+            )
+        assert snapshot.status_code == 200, snapshot.text
+        row = _rebalance_row(snapshot.json(), store_id)
+        assert row["avmConf"] is None
+        assert row["avmQualityScoreStatus"] is None
+        assert row["avmQualityDisposition"] == "unverifiable_report_reference"
+    finally:
+        unverifiable.close()
 
 
 def test_growth_and_governance_aggregate_canonical_priceops_and_decisions(

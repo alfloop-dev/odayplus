@@ -12,6 +12,7 @@ import threading
 import time
 from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 from apps.api.oday_api.routes.heatzone import HeatZoneResultStore, create_heatzone_router
 from apps.api.oday_api.runtime_mode import deployment_mode, live_data_required
@@ -26,9 +27,10 @@ from modules.external_data.connectors import (
     validate_external_providers_or_raise,
 )
 from shared.api.errors import ApiError, error_response_body, install_error_handlers
+from shared.api.route_table_safety import ensure_atomic_route_table_publication
 from shared.api.versioning import install_deprecation_headers, mount_versioned
 from shared.audit import AuditEvent, InMemoryAuditLog
-from shared.jobs import InMemoryJobQueue, JobRequest
+from shared.jobs import InMemoryJobQueue, JobRequest, JobStatus
 from shared.observability import CORRELATION_ID_HEADER, CorrelationContext
 
 API_VERSION = "0.1.0"
@@ -103,6 +105,9 @@ else:
         payload: dict[str, Any] = Field(default_factory=dict)
         idempotency_key: str | None = None
 
+    class JobRetryPayload(BaseModel):
+        retry_scope: str = Field(default="FAILED_ONLY")
+
     def create_app(
         *,
         audit_log: InMemoryAuditLog | None = None,
@@ -138,6 +143,13 @@ else:
         market_intelligence_repository: Any = None,
         telemetry: Any = None,
     ) -> FastAPI:
+        # Included routers resolve their route table lazily on the first request
+        # that walks them, and FastAPI 0.138 publishes that table while it is
+        # still being filled. Two cold-start requests then race and one of them
+        # matches against a table with routes missing -- the intermittent
+        # POST /jobs 404 (ODP-API-COLD-ROUTE-RACE-001). Fix the publication
+        # before any router is mounted; raises if the framework internals moved.
+        ensure_atomic_route_table_publication()
         # Defaults come from the persistence factory, including the production
         # PostgreSQL runtime. Explicit arguments still win so tests can inject
         # hand-built doubles. See ODP-PV-009.
@@ -270,6 +282,15 @@ else:
         from modules.external_data.application.ingestion_service import ExternalIngestionService
 
         heatzone_store_for_tenant = bundle.heatzone_store_for_tenant if bundle.is_durable else None
+        heatzone_composition_repo_for_tenant = (
+            bundle.heatzone_composition_repository_for_tenant if bundle.is_durable else None
+        )
+        heatzone_evidence_repo_for_tenant = (
+            bundle.heatzone_evidence_repository_for_tenant if bundle.is_durable else None
+        )
+        heatzone_absorption_writer_for_tenant = (
+            bundle.heatzone_absorption_outcome_writer_for_tenant if bundle.is_durable else None
+        )
         ingestion_run_store_for_tenant = (
             bundle.ingestion_run_store_for_tenant if bundle.is_durable else None
         )
@@ -968,12 +989,121 @@ else:
                 )
             return active_tenant_id
 
+        def batch_intake_job_tenant(request: Request, *, action: str) -> str:
+            from apps.api.oday_api.security.dependencies import principal_from_headers
+            from shared.auth import Action, rbac_allows
+
+            principal = principal_from_headers(request.headers)
+            if not principal.authenticated:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail={
+                        "code": "AUTHENTICATION_REQUIRED",
+                        "message": "Batch intake jobs require an authenticated principal",
+                    },
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            required_action = (
+                Action.EXECUTE
+                if action == "execute"
+                else (Action.CREATE if action == "create" else Action.VIEW)
+            )
+            if not rbac_allows(principal, "listing", required_action):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "BATCH_INTAKE_FORBIDDEN",
+                        "message": "Principal cannot access batch intake jobs",
+                    },
+                )
+            active_tenant_id = str(principal.tenant_id or "").strip()
+            if not active_tenant_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "TENANT_SCOPE_REQUIRED",
+                        "message": "Batch intake jobs require an authenticated tenant scope",
+                    },
+                )
+            return active_tenant_id
+
+        def _normalize_batch_item_scope(
+            raw_item: dict[str, Any], item_id: str
+        ) -> tuple[dict[str, Any], dict[str, Any]]:
+            """Normalize scope aliases on a batch item and reject conflicting values.
+
+            Returns (normalized_item, collection_scope).
+            """
+            normalized = dict(raw_item)
+            axis_pairs = (
+                ("heatZoneId", "heat_zone_id"),
+                ("regionId", "region_id"),
+                ("brandId", "brand_id"),
+                ("assignedAreaId", "assigned_area_id"),
+            )
+            scope: dict[str, Any] = {}
+            for camel_key, snake_key in axis_pairs:
+                has_camel = camel_key in raw_item and raw_item[camel_key] is not None
+                has_snake = snake_key in raw_item and raw_item[snake_key] is not None
+                val_camel = (
+                    str(raw_item[camel_key]).strip()
+                    if has_camel and str(raw_item[camel_key]).strip()
+                    else None
+                )
+                val_snake = (
+                    str(raw_item[snake_key]).strip()
+                    if has_snake and str(raw_item[snake_key]).strip()
+                    else None
+                )
+
+                if val_camel is not None and val_snake is not None and val_camel != val_snake:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={
+                            "code": "CONFLICTING_SCOPE_ALIAS",
+                            "message": (
+                                f"Conflicting values for {camel_key} ('{val_camel}') and "
+                                f"{snake_key} ('{val_snake}') in item '{item_id}'"
+                            ),
+                        },
+                    )
+                authoritative = val_camel if val_camel is not None else val_snake
+                normalized[camel_key] = authoritative
+                normalized[snake_key] = authoritative
+                scope[camel_key] = authoritative
+            return normalized, scope
+
         @platform_router.post("/jobs", status_code=status.HTTP_202_ACCEPTED, tags=["jobs"])
         def enqueue_job(
             body: JobCreatePayload,
             request: Request,
             idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
+            from apps.api.oday_api.security.dependencies import principal_from_headers
+
+            try:
+                return _enqueue_job_response(body, request, idempotency_key)
+            except HTTPException as exc:
+                principal = principal_from_headers(request.headers)
+                audit_log.record(
+                    AuditEvent(
+                        event_type="job.enqueue",
+                        actor=principal.subject_id or "anonymous",
+                        action="enqueue",
+                        resource=f"job/{body.job_type}",
+                        outcome="denied",
+                        correlation_id=request.state.correlation_id,
+                        metadata={"status_code": exc.status_code, "tenant_id": principal.tenant_id},
+                    )
+                )
+                raise
+
+        def _enqueue_job_response(
+            body: JobCreatePayload, request: Request, idempotency_key: str | None,
+        ) -> dict[str, Any]:
+            from apps.api.oday_api.security.dependencies import principal_from_headers
+            from modules.listing.application.intake_authorization import authorize_intake_action
+
             payload = body.payload
             idempotency_tenant_id: str | None = None
             idempotency_scope = ""
@@ -1010,21 +1140,121 @@ else:
                 payload = {**payload, "tenant_id": active_tenant_id}
                 idempotency_tenant_id = active_tenant_id
                 idempotency_scope = "external-fetch:v1"
+            elif body.job_type == "batch-listing-intake":
+                active_tenant_id = batch_intake_job_tenant(request, action="create")
+                supplied_tenant_id = str(payload.get("tenant_id") or "").strip()
+                if supplied_tenant_id and supplied_tenant_id != active_tenant_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail={
+                            "code": "TENANT_SCOPE_MISMATCH",
+                            "message": (
+                                "Batch intake job tenant does not match the "
+                                "authenticated tenant scope"
+                            ),
+                        },
+                    )
+                # Strip server-owned receipt/summary/state fields from payload
+                payload = {
+                    k: v
+                    for k, v in payload.items()
+                    if k not in ("receipt", "summary", "delivery_state", "status", "_retry_count")
+                }
+                raw_items = payload.get("items") or payload.get("rows")
+                principal = principal_from_headers(request.headers)
+                normalized_items: list[dict[str, Any]] = []
+                if isinstance(raw_items, list):
+                    seen_ids: set[str] = set()
+                    for idx, raw_item in enumerate(raw_items):
+                        if isinstance(raw_item, dict):
+                            item_id = str(raw_item.get("item_id") or f"row-{idx+1:03d}").strip()
+                            if item_id in seen_ids:
+                                raise HTTPException(
+                                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                    detail={
+                                        "code": "DUPLICATE_ITEM_ID",
+                                        "message": f"Duplicate item_id '{item_id}' in batch items",
+                                    },
+                                )
+                            seen_ids.add(item_id)
+                            norm_item, item_scope = _normalize_batch_item_scope(raw_item, item_id)
+                            authorize_intake_action(
+                                principal,
+                                "submit_csv",
+                                collection_scope=item_scope,
+                                tenant_id=active_tenant_id,
+                                correlation_id=getattr(request.state, "correlation_id", None),
+                            )
+                            normalized_items.append(norm_item)
+                        else:
+                            normalized_items.append(raw_item)
+                    if "items" in payload or "rows" not in payload:
+                        payload["items"] = normalized_items
+                    else:
+                        payload["rows"] = normalized_items
+                actor_role_val = "expansion_user"
+                if principal.roles:
+                    first_r = next(iter(principal.roles))
+                    actor_role_val = getattr(first_r, "value", str(first_r))
+                actor_name_val = (
+                    getattr(principal, "name", None)
+                    or (principal.attributes.get("name") if hasattr(principal, "attributes") and isinstance(principal.attributes, dict) else None)
+                    or principal.subject_id
+                )
+                payload = {
+                    **payload,
+                    "tenant_id": active_tenant_id,
+                    "submitter": principal.subject_id,
+                    "actor_name": actor_name_val,
+                    "actor_role_id": actor_role_val,
+                }
+                idempotency_tenant_id = active_tenant_id
+                idempotency_scope = "batch-listing-intake:v1"
 
             effective_idempotency_key = body.idempotency_key or idempotency_key
             queue_idempotency_key = effective_idempotency_key
             if effective_idempotency_key and idempotency_tenant_id is not None:
+                # Length-prefix both components: tenant/key delimiters cannot
+                # alias another tenant's namespace. Preserve a genuine v1
+                # replay only after checking the actual legacy record's scope.
+                legacy_key = f"{idempotency_scope}:{idempotency_tenant_id}:{effective_idempotency_key}"
+                legacy_job = job_queue.get_by_idempotency_key(legacy_key)
                 queue_idempotency_key = (
-                    f"{idempotency_scope}:{idempotency_tenant_id}:{effective_idempotency_key}"
+                    f"{idempotency_scope.removesuffix(':v1')}:v2:"
+                    f"{len(idempotency_tenant_id)}:{idempotency_tenant_id}:"
+                    f"{len(effective_idempotency_key)}:{effective_idempotency_key}"
                 )
-            job, created = job_queue.enqueue(
-                JobRequest(
-                    job_type=body.job_type,
-                    payload=payload,
-                    idempotency_key=queue_idempotency_key,
-                ),
-                correlation_id=request.state.correlation_id,
+                if (
+                    legacy_job is not None
+                    and legacy_job.job_type == body.job_type
+                    and legacy_job.payload.get("tenant_id") == idempotency_tenant_id
+                ):
+                    queue_idempotency_key = legacy_key
+            elif effective_idempotency_key and effective_idempotency_key.startswith(
+                tuple(f"{scope}:{version}:" for scope in ("forecast", "external-fetch", "batch-listing-intake") for version in ("v1", "v2"))
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={"code": "RESERVED_IDEMPOTENCY_NAMESPACE"},
+                )
+            job_request = JobRequest(
+                job_type=body.job_type, payload=payload,
+                idempotency_key=queue_idempotency_key,
             )
+            # Never commit new work which this request cannot read. The
+            # post-enqueue check below still authorizes the actual replay.
+            _authorize_job_access(job_request, request)
+            job, created = job_queue.enqueue(
+                job_request, correlation_id=request.state.correlation_id,
+            )
+            # Enqueue may return an existing record. Authorize that actual
+            # record exactly as GET does, including ownership and field masks.
+            response_job = _authorized_job_response(job, request)
+            if job.job_type != body.job_type:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={"code": "IDEMPOTENCY_JOB_TYPE_MISMATCH"},
+                )
             audit_event = audit_log.record(
                 AuditEvent(
                     event_type="job.enqueue",
@@ -1042,20 +1272,18 @@ else:
                 "status": job.status.value,
                 "correlation_id": job.correlation_id,
                 "idempotency_key": effective_idempotency_key,
-                "job": job.to_dict(),
+                "job": response_job,
                 "created": created,
                 "audit_event_id": audit_event.event_id,
             }
 
-        @platform_router.get("/jobs/{job_id}", tags=["jobs"])
-        def get_job(job_id: str, request: Request) -> dict[str, Any]:
-            job = job_queue.get(job_id)
-            if job is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
+        def _authorize_job_access(job: Any, request: Request) -> None:
+            from apps.api.oday_api.security.dependencies import principal_from_headers
+
+            job_tenant = str(job.payload.get("tenant_id") or "").strip()
             if job.job_type == "forecast":
                 active_tenant_id = forecast_job_tenant(request, action="view")
-                owner_tenant_id = str(job.payload.get("tenant_id") or "").strip()
-                if not owner_tenant_id:
+                if not job_tenant:
                     raise HTTPException(
                         status_code=status.HTTP_403_FORBIDDEN,
                         detail={
@@ -1063,12 +1291,291 @@ else:
                             "message": "Forecast job receipt has no tenant ownership scope",
                         },
                     )
-                if owner_tenant_id != active_tenant_id:
+                if job_tenant != active_tenant_id:
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="job not found",
                     )
-            return job.to_dict()
+            elif job.job_type in ("batch-listing-intake", "assisted-listing-intake"):
+                active_tenant_id = batch_intake_job_tenant(request, action="view")
+                if not job_tenant or job_tenant != active_tenant_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="job not found",
+                    )
+                principal = principal_from_headers(request.headers)
+                from modules.listing.application.intake_authorization import authorize_intake_action
+                from shared.auth import Role
+
+                is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE, Role.DATA_OWNER)
+                is_staff = (
+                    principal.has_role(Role.EXPANSION_USER)
+                    or any(r in ("expansion_user", "expansion-user", "expansionStaff", "expansion-staff") for r in [r.value for r in principal.roles])
+                ) and not is_manager
+
+                if is_staff:
+                    submitter = job.payload.get("submitter") or job.payload.get("owner")
+                    if submitter and submitter != principal.subject_id:
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail="OWNERSHIP_REQUIRED",
+                        )
+
+                raw_items = job.payload.get("items") or job.payload.get("rows") or []
+                if isinstance(raw_items, list):
+                    for idx, raw_item in enumerate(raw_items):
+                        if isinstance(raw_item, dict):
+                            item_id = str(raw_item.get("item_id") or f"row-{idx+1:03d}").strip()
+                            _, item_scope = _normalize_batch_item_scope(raw_item, item_id)
+                            authorize_intake_action(
+                                principal,
+                                "view",
+                                collection_scope=item_scope,
+                                tenant_id=active_tenant_id,
+                            )
+            elif job_tenant:
+                principal = principal_from_headers(request.headers)
+                if not principal.authenticated:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail={
+                            "code": "AUTHENTICATION_REQUIRED",
+                            "message": "Authentication required to read jobs",
+                        },
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+                active_tenant_id = str(principal.tenant_id or "").strip()
+                if not active_tenant_id or job_tenant != active_tenant_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="job not found",
+                    )
+
+        def _authorized_job_response(job: Any, request: Request) -> dict[str, Any]:
+            from apps.api.oday_api.security.dependencies import principal_from_headers
+
+            _authorize_job_access(job, request)
+            res = job.to_dict()
+            if "summary" in job.payload and "summary" not in res:
+                res["summary"] = job.payload["summary"]
+            if job.job_type in ("batch-listing-intake", "assisted-listing-intake"):
+                from modules.listing.application.intake_authorization import mask_batch_intake_job
+
+                res = mask_batch_intake_job(principal_from_headers(request.headers), res)
+            return res
+
+        def _get_job_response(job_id: str, request: Request) -> dict[str, Any]:
+            job = job_queue.get(job_id)
+            if job is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
+            return _authorized_job_response(job, request)
+
+        @platform_router.get("/jobs/{job_id}", tags=["jobs"])
+        def get_job(job_id: str, request: Request) -> dict[str, Any]:
+            return _get_job_response(job_id, request)
+
+        def _retry_job_response(
+            job_id: str,
+            body: JobRetryPayload | None,
+            request: Request,
+        ) -> dict[str, Any]:
+            from apps.api.oday_api.security.dependencies import principal_from_headers
+            from shared.auth import Action, rbac_allows
+            from shared.infrastructure.persistence.job_queue import JobFenceRejectedError
+
+            job = job_queue.get(job_id)
+            if job is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
+
+            # 1. Auth & Tenant Isolation & RBAC
+            job_tenant = str(job.payload.get("tenant_id") or "").strip()
+            if job.job_type in ("batch-listing-intake", "assisted-listing-intake"):
+                principal = principal_from_headers(request.headers)
+                if not principal.authenticated:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail={
+                            "code": "AUTHENTICATION_REQUIRED",
+                            "message": "Authentication required to retry jobs",
+                        },
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+                if not rbac_allows(principal, "listing", Action.EXECUTE) and not rbac_allows(principal, "listing", Action.CREATE):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail={"code": "BATCH_INTAKE_RETRY_FORBIDDEN", "message": "Principal cannot retry listing jobs"},
+                    )
+                active_tenant_id = str(principal.tenant_id or "").strip()
+                if not active_tenant_id or not job_tenant or job_tenant != active_tenant_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="job not found",
+                    )
+                from modules.listing.application.intake_authorization import authorize_intake_action
+                from shared.auth import Role
+
+                is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE, Role.DATA_OWNER)
+                is_staff = (
+                    principal.has_role(Role.EXPANSION_USER)
+                    or any(r in ("expansion_user", "expansion-user", "expansionStaff", "expansion-staff") for r in [r.value for r in principal.roles])
+                ) and not is_manager
+
+                if is_staff:
+                    submitter = job.payload.get("submitter") or job.payload.get("owner")
+                    if submitter and submitter != principal.subject_id:
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail="OWNERSHIP_REQUIRED",
+                        )
+
+                raw_items = job.payload.get("items") or job.payload.get("rows") or []
+                if isinstance(raw_items, list):
+                    for idx, raw_item in enumerate(raw_items):
+                        if isinstance(raw_item, dict):
+                            item_id = str(raw_item.get("item_id") or f"row-{idx+1:03d}").strip()
+                            _, item_scope = _normalize_batch_item_scope(raw_item, item_id)
+                            authorize_intake_action(
+                                principal,
+                                "submit_csv",
+                                collection_scope=item_scope,
+                                tenant_id=active_tenant_id,
+                            )
+            else:
+                principal = principal_from_headers(request.headers)
+                if not principal.authenticated:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail={
+                            "code": "AUTHENTICATION_REQUIRED",
+                            "message": "Authentication required to retry jobs",
+                        },
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "code": "JOB_TYPE_NOT_SUPPORTED",
+                        "message": f"Retry is not supported for job type {job.job_type!r}",
+                    },
+                )
+
+            # 2. State validation: reject RUNNING, QUEUED, SUCCEEDED
+            if job.status in (JobStatus.RUNNING, JobStatus.QUEUED):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "INVALID_JOB_STATE",
+                        "message": f"Cannot retry job in {job.status.value.upper()} state",
+                    },
+                )
+            if job.status == JobStatus.SUCCEEDED:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "code": "INVALID_JOB_STATE",
+                        "message": "Cannot retry a SUCCEEDED job",
+                    },
+                )
+            if job.status not in (JobStatus.PARTIAL, JobStatus.FAILED):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "code": "INVALID_JOB_STATE",
+                        "message": f"Cannot retry job in {job.status.value.upper()} state",
+                    },
+                )
+
+            retry_scope = (body.retry_scope if body else "FAILED_ONLY") or "FAILED_ONLY"
+            if retry_scope not in ("FAILED_ONLY", "FAILED_RETRYABLE_ONLY"):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Invalid retry_scope: {retry_scope}",
+                )
+
+            payload = dict(job.payload)
+            receipt = payload.get("receipt")
+            items = []
+            if isinstance(receipt, dict) and "items" in receipt:
+                items = receipt["items"]
+            elif "items" in payload:
+                items = payload["items"]
+            elif "rows" in payload:
+                items = payload["rows"]
+
+            retried_count = 0
+            for it in items:
+                status_val = it.get("item_status") if isinstance(it, dict) else getattr(it, "item_status", None)
+                err = it.get("error") if isinstance(it, dict) else getattr(it, "error", None)
+                is_retryable = True
+                if isinstance(err, dict):
+                    is_retryable = bool(err.get("retryable", False))
+                elif err is not None:
+                    is_retryable = bool(getattr(err, "retryable", False))
+
+                if status_val == "FAILED" and is_retryable:
+                    retried_count += 1
+
+            if retried_count == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "code": "NO_RETRYABLE_ITEMS",
+                        "message": "Job has zero retryable failed items",
+                    },
+                )
+
+            payload["_retry_scope"] = retry_scope
+            try:
+                job_queue.update_status(
+                    job.job_id,
+                    JobStatus.QUEUED,
+                    payload=payload,
+                    delivery_state=None,
+                    expected_version=job.version,
+                )
+            except (JobFenceRejectedError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "JOB_CONCURRENT_MUTATION",
+                        "message": "Job status was modified concurrently by another process",
+                    },
+                ) from exc
+
+            correlation_id = getattr(getattr(request, "state", None), "correlation_id", None) or request.headers.get("x-correlation-id") or f"corr-retry-{uuid4().hex[:8]}"
+            audit_log.record(
+                AuditEvent(
+                    event_type="job.retry",
+                    actor=principal.subject_id or "system",
+                    action="retry",
+                    resource=f"job/{job.job_type}",
+                    outcome="accepted",
+                    correlation_id=correlation_id,
+                    job_id=job.job_id,
+                    metadata={"retry_scope": retry_scope, "retried_items_count": retried_count},
+                )
+            )
+
+            return {
+                "job_id": job.job_id,
+                "status": "queued",
+                "retry_scope": retry_scope,
+                "retried_items_count": retried_count,
+            }
+
+        # A retry attempt is created under the job it belongs to. The sibling
+        # ``/jobs/{job_id}/retry`` already belongs to the assisted-listing-intake
+        # router's checkpoint replay (operation ``retryJob``); mounting a second
+        # handler on that path would shadow it rather than reuse it.
+        @platform_router.post(
+            "/jobs/{job_id}/retries", status_code=status.HTTP_202_ACCEPTED, tags=["jobs"]
+        )
+        def create_job_retry(
+            job_id: str,
+            request: Request,
+            body: JobRetryPayload | None = None,
+        ) -> dict[str, Any]:
+            return _retry_job_response(job_id, body, request)
 
         @platform_router.get("/audit/events", tags=["audit"])
         def list_audit_events(
@@ -1310,7 +1817,17 @@ else:
             api,
             create_heatzone_router(
                 store=heatzone_store,
+                composition_repository=getattr(bundle, "heatzone_composition_repository", None),
+                policy_repository=forecastops_policy_repository or getattr(bundle, "forecastops_policy_repository", None),
                 heatzone_store_for_tenant=heatzone_store_for_tenant,
+                composition_repository_for_tenant=heatzone_composition_repo_for_tenant,
+                evidence_repository=getattr(bundle, "heatzone_evidence_repository", None),
+                evidence_repository_for_tenant=heatzone_evidence_repo_for_tenant,
+                absorption_outcome_writer=getattr(
+                    bundle, "heatzone_absorption_outcome_writer", None
+                ),
+                absorption_outcome_writer_for_tenant=heatzone_absorption_writer_for_tenant,
+                market_data_facade=market_intelligence_facade,
                 audit_log=audit_log,
                 model_binding=scoring_bindings.get("heatzone"),
                 model_runtime=model_runtime,

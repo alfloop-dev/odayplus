@@ -1,0 +1,34 @@
+{
+  "observed_at": "2026-09-07T16:02:32Z",
+  "purpose": "本輪結束時的同一組量測；與 _open.json 相同即證明未觸碰任何既有 archive snapshot。",
+  "archive_tasks_dir": "/home/lupin/odayplus/ai-task-archive/tasks",
+  "archive_index_sha256": "70806f76ae03c7d797875d9a25e916399670f0cca9fda61165a472fd954d4747",
+  "snapshot_count": 15,
+  "snapshot_digests": {
+    "DPF-EMGI-MASKED-RELEASE-SNAPSHO-SIDECAR-C4E84D0D": "417e7694ed3458d965dc81c01ce1ca4f0235b12d6ad99643041ee64ded33c392",
+    "ODP-AVM-QUALITY-NULLABLE-001-SIDECAR-7ADA379B": "64af487c6d49d0dd483cec319f6f7b33888698b7aa00a49dccd70c15dacbf71b",
+    "ODP-CI-DEPENDENCY-AUDIT-BOUNDARY-001": "42eb0dffd7188789c0d3653019ab906dab787a6a8e95f8dd87735ea7f7992b1e",
+    "ODP-CODEX-CLI-ASTRA-COMPAT-UPGR-SIDECAR-0034B398": "0cb216e2027fa35610fbdccf931e928e8e302c3826a569b249a689e741af0d65",
+    "ODP-DEV-LIVE-ROLLOUT-REMEDIATIO-SIDECAR-7CC5581A": "11ac24e19bada5d5cf2c2ca8b0a010e9d09dc5b7091fb705ba557112b1f7e79a",
+    "ODP-EPHEMERAL-STAGING-ROLLOUT-0-SIDECAR-C1E25549": "d0444ad813ee02c69915479fbe98e03a92244cb940b7c9f0d4e504cf81dbeca0",
+    "ODP-ORCH-REPO-SLUG-MERGE-ROUTING-001": "d2809e912c8c0224f7ec77198815ffb2e9fd0bea50fcb985f86cbf2d73bc0f38",
+    "ODP-STAGING-FOUNDATION-IAC-REME-SIDECAR-D7ED3693": "b5b894554efb7d48ccedb110c8ef124b5ff5ec52846f3f4348f56c393e7527c8",
+    "ORCH-ARCHIVE-HISTORY-APPLY-001": "8b5978c99be6bf19bd1d6739149f32869cd9fb0ace09156c49a6925beb6fb911",
+    "ORCH-ARCHIVE-HISTORY-RECOVERY-001": "d234dc3e36a27d305df8519f5f8198e49a7193811f1a6fe563faf752a9eb9501",
+    "ORCH-ARCHIVE-HISTORY-RESTORE-002": "a843f418e48118e42e9956f9a9092868821fd4090caebf56c0e0840e7ce62a5a",
+    "ORCH-ARCHIVE-RECOVERY-EVIDENCE-001": "e210be1c59ade925da76d69e568e851905054553f2a20a2939a9c8e0daff752d",
+    "ORCH-CAPACITY-ARCHIVE-DEDUP-001": "8f3b8eeadb4371811a597d23bf481c04f64656212facf7c4e6424a76b4ad2afd",
+    "ORCH-PREEMPTION-READINESS-001": "308d27c773b5190d8e699172a831b43ce8ec83587561ac1fd46da01bf5974c15",
+    "ORCH-STATUS-SYNC-RUNTIME-AUTHORITY-001": "5fc0af9249ca94a4fa9e38d0d673528d08f7dddae67425134bdee285ebb59da1"
+  },
+  "board_sha256": "5735847f7ebda3478123c6a36bff5768e1d49f4d8e404c2c6b07a47ea83f1fad",
+  "board_revision": "1180b4b8a0b647b89ffc67ead56581aa",
+  "delta_vs_open": {
+    "pre_existing_snapshots_changed": [],
+    "pre_existing_snapshots_removed": [],
+    "snapshots_added_by_live_fleet_not_by_this_task": [
+      "ODP-ORCH-REPO-SLUG-MERGE-ROUTING-001"
+    ],
+    "interpretation": "本輪未觸碰任何既有 snapshot（changed 與 removed 皆為空）。新增者是 live fleet 在本輪期間正常收尾的任務，與本任務無關；本任務未執行 archive_recovery_apply。"
+  }
+}

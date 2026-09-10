@@ -6,34 +6,6 @@
   "_expiry_note": "An expiry date is not a deadline for the check; it is a date on which the owner has to say something. Renewing an entry on the day it fires without a changed reason is a decision to keep the defect, and should be visible as one. Removing an entry is only correct in the same commit as the fix -- the stale-exemption check refuses an entry whose field no longer violates, which is what stops the file drifting into a list of debts that were quietly paid or quietly forgotten.",
   "exemptions": [
     {
-      "field": "modules/avm/domain/valuation.py::ValuationInput.quality_score",
-      "layer": "dataclass",
-      "owner": "Antigravity4",
-      "reason": "A valuation built from incomplete inputs claims the same input quality as one built from complete inputs, and the valuation card is shown to a buyer.",
-      "expires": "2026-11-30"
-    },
-    {
-      "field": "modules/avm/domain/valuation.py::ValuationInput.from_mapping.data_quality_score",
-      "layer": "mapper",
-      "owner": "Antigravity4",
-      "reason": "from_mapping falls back to 1.0 for both spellings of the field, so making the dataclass annotation optional would change nothing for any valuation built from a mapping -- which is every valuation that arrives over the API.",
-      "expires": "2026-11-30"
-    },
-    {
-      "field": "apps/api/app/routes/avm.py::AVMCasePayload.quality_score",
-      "layer": "pydantic",
-      "owner": "Antigravity4",
-      "reason": "The API's own copy of the contract. A caller who omits quality_score has a perfect score inserted before the domain sees the request, so the domain can no longer tell an unmeasured case from a flawless one. This is the layer where absence was still visible.",
-      "expires": "2026-11-30"
-    },
-    {
-      "field": "packages/openapi-client/openapi.json::components.schemas.AVMCasePayload.quality_score",
-      "layer": "openapi",
-      "owner": "Antigravity4",
-      "reason": "The published schema states default 1.0, so the substitution is now part of the external contract. The generated TypeScript type is quality_score?: number and carries no default, meaning no client author ever sees the choice being made for them. Changing this changes what integrators are promised, which is why it belongs in the same batch as the domain fix and not after it.",
-      "expires": "2026-11-30"
-    },
-    {
       "field": "shared/domain/models.py::Poi.confidence",
       "layer": "dataclass",
       "owner": "Claude2",

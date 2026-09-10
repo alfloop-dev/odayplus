@@ -21,6 +21,7 @@ from modules.learninghub import (
     ModelReleaseSaga,
     ReleaseSagaState,
 )
+from modules.learninghub.domain import DatasetQualityAdmissionError
 from modules.learninghub.infrastructure.mlflow_adapter import MlflowRegistryAdapter
 from shared.audit import InMemoryAuditLog
 from shared.infrastructure.persistence import (
@@ -316,3 +317,193 @@ def test_production_mlflow_rejects_local_sqlite_and_accepts_remote_client(
         runtime_mode="production",
     )
     adapter.require_production_binding()
+
+
+def test_production_dataset_snapshot_rejects_missing_or_null_quality_fields_and_leaves_no_durable_traces(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "learninghub_production_rejection.sqlite3"
+    engine, repository, artifacts, audit = _durable(database)
+    registry = RecordingRemoteRegistry(repository)
+    service = LearningHubService(
+        repository=repository,
+        registry=registry,  # type: ignore[arg-type]
+        audit_log=audit,  # type: ignore[arg-type]
+        artifact_store=artifacts,
+        runtime_mode="production",
+    )
+
+    base_row = {
+        "view_name": "store_machine_timeseries_view",
+        "view_version": "store-machine-timeseries-view-v1",
+        "feature_snapshot_time": NOW.isoformat(),
+        "prediction_origin_time": NOW.isoformat(),
+        "source_snapshot_ids": ["pos-live-001"],
+        "features": {"event_time": NOW.isoformat()},
+        "labels": {"w4_revenue": 410_000.0},
+    }
+
+    try:
+        # Case A: Missing data_quality_score
+        with pytest.raises(DatasetQualityAdmissionError) as exc_a:
+            service.register_dataset_snapshot(
+                [
+                    {
+                        **base_row,
+                        "entity_id": "store-missing-quality",
+                        "confidence": 0.95,
+                    }
+                ],
+                dataset_snapshot_id="snapshot-missing-quality",
+            )
+        assert "store-missing-quality" in str(exc_a.value)
+        assert "data_quality_score" in str(exc_a.value)
+        assert repository.get_dataset_snapshot("snapshot-missing-quality") is None
+
+        # Case B: Missing confidence
+        with pytest.raises(DatasetQualityAdmissionError) as exc_b:
+            service.register_dataset_snapshot(
+                [
+                    {
+                        **base_row,
+                        "entity_id": "store-missing-confidence",
+                        "data_quality_score": 0.98,
+                    }
+                ],
+                dataset_snapshot_id="snapshot-missing-confidence",
+            )
+        assert "store-missing-confidence" in str(exc_b.value)
+        assert "confidence" in str(exc_b.value)
+        assert repository.get_dataset_snapshot("snapshot-missing-confidence") is None
+
+        # Case C: Explicit None / null values
+        with pytest.raises(DatasetQualityAdmissionError) as exc_c:
+            service.register_dataset_snapshot(
+                [
+                    {
+                        **base_row,
+                        "entity_id": "store-explicit-none",
+                        "data_quality_score": None,
+                        "confidence": None,
+                    }
+                ],
+                dataset_snapshot_id="snapshot-explicit-none",
+            )
+        assert "store-explicit-none" in str(exc_c.value)
+        assert "data_quality_score" in str(exc_c.value)
+        assert "confidence" in str(exc_c.value)
+        assert repository.get_dataset_snapshot("snapshot-explicit-none") is None
+
+        # Case D: Mixed valid and invalid rows
+        with pytest.raises(DatasetQualityAdmissionError) as exc_d:
+            service.register_dataset_snapshot(
+                [
+                    {
+                        **base_row,
+                        "entity_id": "store-valid",
+                        "data_quality_score": 0.98,
+                        "confidence": 0.95,
+                    },
+                    {
+                        **base_row,
+                        "entity_id": "store-mixed-no-quality",
+                        "confidence": 0.90,
+                    },
+                    {
+                        **base_row,
+                        "entity_id": "store-mixed-no-confidence",
+                        "data_quality_score": 0.92,
+                    },
+                ],
+                dataset_snapshot_id="snapshot-mixed-failure",
+            )
+        assert "store-mixed-no-quality" in str(exc_d.value)
+        assert "data_quality_score" in str(exc_d.value)
+        assert "store-mixed-no-confidence" in str(exc_d.value)
+        assert "confidence" in str(exc_d.value)
+        assert repository.get_dataset_snapshot("snapshot-mixed-failure") is None
+    finally:
+        engine.close()
+
+    # Verify no partial or residual writes exist in durable repository after restart
+    reopened_engine, reopened_repository, _, _ = _durable(database)
+    try:
+        assert reopened_repository.get_dataset_snapshot("snapshot-missing-quality") is None
+        assert reopened_repository.get_dataset_snapshot("snapshot-missing-confidence") is None
+        assert reopened_repository.get_dataset_snapshot("snapshot-explicit-none") is None
+        assert reopened_repository.get_dataset_snapshot("snapshot-mixed-failure") is None
+    finally:
+        reopened_engine.close()
+
+
+def test_production_dataset_snapshot_preserves_explicit_zero_and_persists_durable_receipt(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "learninghub_production_zero.sqlite3"
+    engine, repository, artifacts, audit = _durable(database)
+    registry = RecordingRemoteRegistry(repository)
+    service = LearningHubService(
+        repository=repository,
+        registry=registry,  # type: ignore[arg-type]
+        audit_log=audit,  # type: ignore[arg-type]
+        artifact_store=artifacts,
+        runtime_mode="production",
+    )
+
+    base_row = {
+        "view_name": "store_machine_timeseries_view",
+        "view_version": "store-machine-timeseries-view-v1",
+        "feature_snapshot_time": NOW.isoformat(),
+        "prediction_origin_time": NOW.isoformat(),
+        "source_snapshot_ids": ["pos-live-001"],
+        "features": {"event_time": NOW.isoformat()},
+        "labels": {"w4_revenue": 410_000.0},
+    }
+
+    snapshot_id = "forecastops-zero-quality-001"
+    try:
+        snapshot = service.register_dataset_snapshot(
+            [
+                {
+                    **base_row,
+                    "entity_id": "store-zero",
+                    "data_quality_score": 0.0,
+                    "confidence": 0.0,
+                },
+                {
+                    **base_row,
+                    "entity_id": "store-positive",
+                    "data_quality_score": 1.0,
+                    "confidence": 0.95,
+                },
+            ],
+            dataset_snapshot_id=snapshot_id,
+        )
+        assert snapshot.dataset_snapshot_id == snapshot_id
+        assert len(snapshot.records) == 2
+        # Verify 0.0 is preserved exactly and not treated as None or coalesced to 1.0
+        assert snapshot.records[0].data_quality_score == 0.0
+        assert snapshot.records[0].confidence == 0.0
+        assert snapshot.records[1].data_quality_score == 1.0
+        assert snapshot.records[1].confidence == 0.95
+
+        saved = repository.get_dataset_snapshot(snapshot_id)
+        assert saved is not None
+        assert saved.records[0].data_quality_score == 0.0
+        assert saved.records[0].confidence == 0.0
+        assert saved.records[1].data_quality_score == 1.0
+        assert saved.records[1].confidence == 0.95
+    finally:
+        engine.close()
+
+    # Reopen durable store to confirm receipt survives restart
+    reopened_engine, reopened_repository, _, _ = _durable(database)
+    try:
+        reopened_snapshot = reopened_repository.get_dataset_snapshot(snapshot_id)
+        assert reopened_snapshot is not None
+        assert reopened_snapshot.records[0].data_quality_score == 0.0
+        assert reopened_snapshot.records[0].confidence == 0.0
+        assert reopened_snapshot.records[1].data_quality_score == 1.0
+        assert reopened_snapshot.records[1].confidence == 0.95
+    finally:
+        reopened_engine.close()

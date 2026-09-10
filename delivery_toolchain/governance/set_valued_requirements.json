@@ -122,13 +122,26 @@
         {
           "name": "LEASE",
           "status": "absent",
-          "note": "Per-option lease availability windows and early termination cost schedules are absent across candidate site feeds and core.stores schemas per ODP_NET002_LEASE_DATA_READINESS_2026-09-03.md. No decorative constraint is wired. ConstraintClass.LEASE is reported in unmodelled_constraint_classes on every solve, displayed in Operator UI, and requires explicit acknowledgement/policy governance. Formal handback HB-NET002-LEASE-001 submitted to Human/Ops and Architecture Board per docs/evidence/ODP_NET002_LEASE_DISPOSITION_2026-09-03.md.",
+          "note": "Per-option lease availability windows and early termination cost schedules are absent across candidate site feeds and core.stores schemas per ODP_NET002_LEASE_DATA_READINESS_2026-09-03.md. No decorative constraint is wired. ConstraintClass.LEASE is reported in unmodelled_constraint_classes on every solve, displayed in Operator UI, and requires explicit acknowledgement/policy governance. Formal handback HB-NET002-LEASE-001 submitted to Human/Ops and Architecture Board per docs/evidence/ODP_NET002_LEASE_DISPOSITION_2026-09-03.md. User confirmed decision D18 on 2026-09-08 (Option A: implement lease contract). Stage 32A engineering prep delivered in ODP-NET002-LEASE-CONTRACT-PREP-001 (PR #1256); Stage 32B implementation task ODP-NET002-LEASE-IMPLEMENTATION-001 awaits H05 minimal authorized lease export.",
           "disposition": {
             "state": "BLOCKED_BY_EVIDENCE",
+            "history": [
+              {
+                "state": "BLOCKED_BY_EVIDENCE",
+                "date": "2026-09-03",
+                "note": "Batch 0 audit confirmed production system lacks per-store lease expiry/penalties; formal handback HB-NET002-LEASE-001 submitted per ODP_NET002_LEASE_DISPOSITION_2026-09-03.md."
+              },
+              {
+                "state": "BLOCKED_BY_EVIDENCE",
+                "date": "2026-09-08",
+                "note": "User confirmed decision D18 (implement lease contract); Stage 32A completed in ODP-NET002-LEASE-CONTRACT-PREP-001 (PR #1256); Stage 32B assigned to ODP-NET002-LEASE-IMPLEMENTATION-001 pending H05 data."
+              }
+            ],
             "evidence_needed": "Store lease contract master data (lease_expiry_date, break clauses, termination penalties in core.store_leases/CLM) and automated candidate site lease feed with freshness SLA and signing deadlines",
             "evidence_owner": "Store Operations Lead / Real Estate Finance Lead / Data Platform Lead",
             "next_review_date": "2026-10-01",
-            "rationale": "Batch 0 audit confirmed production system lacks per-store lease expiry/penalties and automated candidate listing feed. Wiring fake constraints or treating None as 0.0 violates fail-closed principles. Maintained in unmodelled_constraint_classes; handback package HB-NET002-LEASE-001 submitted to Human/Ops and Architecture Board per ODP_NET002_LEASE_DISPOSITION_2026-09-03.md.",
+            "evidence_ref": "docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/README.md",
+            "rationale": "Batch 0 audit confirmed production system lacks per-store lease expiry/penalties and automated candidate listing feed. Wiring fake constraints or treating None as 0.0 violates fail-closed principles. Maintained in unmodelled_constraint_classes; handback package HB-NET002-LEASE-001 submitted to Human/Ops and Architecture Board per ODP_NET002_LEASE_DISPOSITION_2026-09-03.md. User confirmed D18 implementation direction; Stage 32A delivered under ODP-NET002-LEASE-CONTRACT-PREP-001.",
             "formal_handback_ref": "docs/evidence/ODP_NET002_LEASE_DISPOSITION_2026-09-03.md#2-人類授權移交單human-authority-handback-package",
             "reopen_trigger": "Store lease contract master table (core.store_leases or CLM) is deployed with per-store lease_expiry_date and early termination penalty formula, and candidate site partner feed is contracted with signing deadline and fitout grace days."
           }
@@ -288,10 +301,10 @@
         {
           "name": "PARTIAL",
           "status": "absent",
-          "note": "JobStatus in shared/governance/vocabularies.py carries PARTIAL per ODP-FR-SHARED-001, but no job in the tree currently reports it. The vocabulary fork between queue.py and listings.py was resolved under ODP-JOBSTATUS-OUTCOME-VS-DELIVERY-001 by separating outcome from delivery mechanics. Producer trace under ODP-JOB-PARTIAL-PRODUCER-EVIDENCE-001 closed the tree-level question against all registered job types. Formal disposition and handback package HB-SHARED001-PARTIAL-001 submitted to Human/Ops, Architecture Board, and Platform Infrastructure Lead per docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md.",
+          "note": "JobStatus in shared/governance/vocabularies.py carries PARTIAL per ODP-FR-SHARED-001, but no job in the tree currently reports it. The vocabulary fork between queue.py and listings.py was resolved under ODP-JOBSTATUS-OUTCOME-VS-DELIVERY-001 by separating outcome from delivery mechanics. Producer trace under ODP-JOB-PARTIAL-PRODUCER-EVIDENCE-001 closed the tree-level question against all registered job types. Formal disposition and handback package HB-SHARED001-PARTIAL-001 submitted to Human/Ops, Architecture Board, and Platform Infrastructure Lead per docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md. User confirmed decision D19 on 2026-09-08 (Option A: implement partial/receipt/retry). Stage 33A engineering prep delivered in ODP-DURABLE-PARTIAL-CONTRACT-PREP-001 (PR #1257); prerequisite queue clear in PR #1280; Stage 33B assigned to ODP-DURABLE-PARTIAL-IMPL-001 pending H06.",
           "disposition": {
             "state": "BLOCKED_BY_EVIDENCE",
-            "previous_state": "OPEN",
+            "previous_state": "BLOCKED_BY_EVIDENCE",
             "history": [
               {
                 "state": "OPEN",
@@ -302,17 +315,22 @@
                 "state": "BLOCKED_BY_EVIDENCE",
                 "date": "2026-09-03",
                 "note": "ODP-JOB-PARTIAL-PRODUCER-EVIDENCE-001 completed producer trace and ODP-JOB-PARTIAL-DISPOSITION-001 established formal disposition and Human-Authority Handback Package (HB-SHARED001-PARTIAL-001)."
+              },
+              {
+                "state": "BLOCKED_BY_EVIDENCE",
+                "date": "2026-09-08",
+                "note": "User confirmed decision D19 (implement partial/receipt/retry); Stage 33A delivered in ODP-DURABLE-PARTIAL-CONTRACT-PREP-001 (PR #1257); Stage 33B assigned to ODP-DURABLE-PARTIAL-IMPL-001 pending H06."
               }
             ],
             "evidence_needed": "Two things, neither of which the tree can answer. (1) A live production queue/scheduler/worker receipt inventory, to say whether any deployed job has ever reported JobStatus.PARTIAL; the repo trace only establishes that no code path writes it. (2) A product decision on whether the partial-shaped command outcomes that do exist -- batch intake 207 per-row receipts, XLSX partial commit, external ingestion accepted/quarantined counts -- should become durable jobs carrying member-level receipts and a member retry contract.",
             "evidence_owner": "Platform Infrastructure Lead",
             "next_review_date": "2026-10-01",
             "assigned_to": "Platform Infrastructure Lead",
-            "evidence_ref": "docs/evidence/ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md",
+            "evidence_ref": "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/README.md",
             "formal_handback_ref": "docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md#3-人類授權移交單human-authority-handback-package",
             "handback_id": "HB-SHARED001-PARTIAL-001",
             "reopen_trigger": "(1) Production worker registry adds a multi-item batch job handler with reachable JobStatus.PARTIAL transition, OR (2) synchronous command operations (batch intake / external ingestion) are formally scheduled to become durable jobs with itemized receipts and member-level retry contracts, OR (3) live production queue/worker audit receipts demonstrate deployed jobs reporting PARTIAL.",
-            "rationale": "JobStatus vocabulary declares PARTIAL but no long-running batch job currently produces partial status (Batch 5b). The producer trace walked the default registry (forecast, external-fetch, assisted-listing-intake) and every module worker entry point and found no PARTIAL write. The partial-shaped outcomes that do exist are synchronous command receipts, not queue jobs; wiring them onto JobStatus to complete the member count would be the fake implementation this gate exists to prevent. Handback package HB-SHARED001-PARTIAL-001 submitted per ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md."
+            "rationale": "JobStatus vocabulary declares PARTIAL but no long-running batch job currently produces partial status (Batch 5b). The producer trace walked the default registry (forecast, external-fetch, assisted-listing-intake) and every module worker entry point and found no PARTIAL write. The partial-shaped outcomes that do exist are synchronous command receipts, not queue jobs; wiring them onto JobStatus to complete the member count would be the fake implementation this gate exists to prevent. Handback package HB-SHARED001-PARTIAL-001 submitted per ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md. User confirmed D19 implementation direction; Stage 33A delivered in ODP-DURABLE-PARTIAL-CONTRACT-PREP-001."
           }
         }
       ]
@@ -349,13 +367,26 @@
         {
           "name": "BRAND_TRANSFER",
           "status": "absent",
-          "note": "core.brands holds static metadata only; brand_transfer_view.sql is a synthetic mock view (cross join with fixed 0.15 transfer_ratio and 1.0 confidence) unconsumed by SiteScore; no producer in repo. Evidence request ER-SITE001-BRAND-TRANSFER-001 and formal handback HB-SITE001-BRAND-TRANSFER-001 submitted to Human/Ops and Architecture Board per docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md.",
+          "note": "core.brands holds static metadata only; brand_transfer_view.sql is a synthetic mock view (cross join with fixed 0.15 transfer_ratio and 1.0 confidence) unconsumed by SiteScore; no producer in repo. Evidence request ER-SITE001-BRAND-TRANSFER-001 and formal handback HB-SITE001-BRAND-TRANSFER-001 submitted to Human/Ops and Architecture Board per docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md. User confirmed decision D16 on 2026-09-08 (Option A: implement brand transfer contract). Stage 30A delivered in ODP-BRAND-TRANSFER-CONTRACT-PREP-001 (PR #1254); Stage 30B assigned to ODP-BRAND-TRANSFER-IMPLEMENTATION-001 pending H03.",
           "disposition": {
             "state": "BLOCKED_BY_EVIDENCE",
+            "history": [
+              {
+                "state": "BLOCKED_BY_EVIDENCE",
+                "date": "2026-09-03",
+                "note": "Batch 0 audit confirmed repo lacks real producer; formal handback HB-SITE001-BRAND-TRANSFER-001 submitted per ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md."
+              },
+              {
+                "state": "BLOCKED_BY_EVIDENCE",
+                "date": "2026-09-08",
+                "note": "User confirmed decision D16 (implement brand transfer); Stage 30A delivered in ODP-BRAND-TRANSFER-CONTRACT-PREP-001 (PR #1254); Stage 30B assigned to ODP-BRAND-TRANSFER-IMPLEMENTATION-001 pending H03."
+              }
+            ],
             "evidence_needed": "External consumer panel feed (e.g. receipt/panel provider) or cross-brand POS loyalty dataset confirmation with versioned schema, producer SLA, and feature specification",
             "evidence_owner": "Market Intelligence Lead / Commercial Strategy Lead",
             "next_review_date": "2026-10-01",
-            "rationale": "Repo contains only static brand metadata and synthetic cross-join mock view; no real producer exists. Handback package HB-SITE001-BRAND-TRANSFER-001 submitted to Human/Ops and Architecture Board for data ingestion contract or formal amendment per ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md.",
+            "evidence_ref": "docs/evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/README.md",
+            "rationale": "Repo contains only static brand metadata and synthetic cross-join mock view; no real producer exists. Handback package HB-SITE001-BRAND-TRANSFER-001 submitted to Human/Ops and Architecture Board for data ingestion contract or formal amendment per ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md. User confirmed D16 implementation direction; Stage 30A delivered under ODP-BRAND-TRANSFER-CONTRACT-PREP-001.",
             "formal_handback_ref": "docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md#2-member-1brand-transfer既有品牌客群移轉處置",
             "reopen_trigger": "External consumer panel feed or cross-brand POS loyalty dataset is contracted and ingested into raw data platform with versioned schema, verified producer SLA, and formal feature extraction specification approved by Commercial Strategy Lead."
           }
@@ -363,13 +394,26 @@
         {
           "name": "FORMAT_CONVERSION",
           "status": "absent",
-          "note": "PostgreSQL (000001) and SQLite (000004) schemas maintain static store_format_code with no format conversion event or renovation history tables; TargetFormatRegistry only selects format by area (new store selection, not conversion); simulator.py only models greenfield new stores. Production-path conversion hits are Listing-to-Candidate conversion or Evidence Level migration notes. Evidence request ER-SITE001-FORMAT-CONVERSION-001 and formal handback HB-SITE001-FORMAT-CONVERSION-001 submitted per docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md.",
+          "note": "PostgreSQL (000001) and SQLite (000004) schemas maintain static store_format_code with no format conversion event or renovation history tables; TargetFormatRegistry only selects format by area (new store selection, not conversion); simulator.py only models greenfield new stores. Production-path conversion hits are Listing-to-Candidate conversion or Evidence Level migration notes. Evidence request ER-SITE001-FORMAT-CONVERSION-001 and formal handback HB-SITE001-FORMAT-CONVERSION-001 submitted per docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md. User confirmed decision D17 on 2026-09-08 (Option A: implement format conversion events and financial models). Stage 31A delivered in ODP-FORMAT-CONVERSION-CONTRACT-PREP-001 (PR #1252); Stage 31B assigned to ODP-FORMAT-CONVERSION-IMPLEMENTATION-001 pending H04.",
           "disposition": {
             "state": "BLOCKED_BY_EVIDENCE",
+            "history": [
+              {
+                "state": "BLOCKED_BY_EVIDENCE",
+                "date": "2026-09-03",
+                "note": "Batch 0 audit confirmed static schema only; formal handback HB-SITE001-FORMAT-CONVERSION-001 submitted per ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md."
+              },
+              {
+                "state": "BLOCKED_BY_EVIDENCE",
+                "date": "2026-09-08",
+                "note": "User confirmed decision D17 (implement format conversion); Stage 31A delivered in ODP-FORMAT-CONVERSION-CONTRACT-PREP-001 (PR #1252); Stage 31B assigned to ODP-FORMAT-CONVERSION-IMPLEMENTATION-001 pending H04."
+              }
+            ],
             "evidence_needed": "Active store format conversion operational workflow playbook, brownfield financial simulation parameters (downtime loss, capex schedules), and conversion event schema confirmation",
             "evidence_owner": "Retail Operations Lead / Site Economics Lead",
             "next_review_date": "2026-10-01",
-            "rationale": "Repo contains only static store format codes and greenfield simulation logic; no format conversion event tracking or remodeling financial model exists in repo. Handback package HB-SITE001-FORMAT-CONVERSION-001 submitted to Human/Ops and Architecture Board for operational playbook confirmation or formal amendment per ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md.",
+            "evidence_ref": "docs/evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/README.md",
+            "rationale": "Repo contains only static store format codes and greenfield simulation logic; no format conversion event tracking or remodeling financial model exists in repo. Handback package HB-SITE001-FORMAT-CONVERSION-001 submitted to Human/Ops and Architecture Board for operational playbook confirmation or formal amendment per ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md. User confirmed D17 implementation direction; Stage 31A delivered under ODP-FORMAT-CONVERSION-CONTRACT-PREP-001.",
             "formal_handback_ref": "docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md#3-member-2format-conversion店型轉換業務事件處置",
             "reopen_trigger": "Store Operations formally approves a brownfield format conversion playbook with remodeling cost schedules and downtime impact parameters; schema migration introduces store format transition event tables and tracking with authoritative owner sign-off."
           }
@@ -463,12 +507,25 @@
         {
           "name": "CDC",
           "status": "absent",
-          "note": "Audited in ODP_INT001_CDC_SOURCE_EVIDENCE_2026-09-03.md and ODP_INT001_CDC_DISPOSITION_2026-09-03.md. No production upstream requires CDC for change log, ordering, latency, or delete semantics; downstream data plane has no delete propagation path; change stream credentials require expanded cluster-level privileges. Maintained as absent; handback submitted for formal human requirement amendment / waiver governance.",
+          "note": "Audited in ODP_INT001_CDC_SOURCE_EVIDENCE_2026-09-03.md and ODP_INT001_CDC_DISPOSITION_2026-09-03.md. User confirmed decision D20 on 2026-09-08 (Option A: implement CDC applicability matrix and contracts). Stage 34A delivered in ODP-CDC-SOURCE-CONTRACT-PREP-001 (PR #1258). Follow-up data-plane delete propagation and schema tasks created; Stage 34B assigned to ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001 pending H07.",
           "disposition": {
             "state": "OPEN",
             "assigned_to": "Data Platform Lead",
             "next_review_date": "2026-10-01",
-            "rationale": "No production upstream requires CDC; downstream sink has no delete path; credential boundary expansion unapproved. AI cannot self-sign waivers; pending human governance amendment/waiver authorization.",
+            "history": [
+              {
+                "state": "OPEN",
+                "date": "2026-09-03",
+                "note": "No production upstream requires CDC; handback submitted for formal human requirement amendment / waiver governance."
+              },
+              {
+                "state": "OPEN",
+                "date": "2026-09-08",
+                "note": "User confirmed decision D20 (implement CDC applicability and contract); Stage 34A delivered in ODP-CDC-SOURCE-CONTRACT-PREP-001 (PR #1258); Stage 34B assigned to ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001 pending H07."
+              }
+            ],
+            "rationale": "User confirmed D20 implementation direction; Stage 34A source applicability matrix and event contract draft delivered. Data plane delete propagation and schema follow-up tasks registered; Stage 34B awaiting H07 human decision on candidate streams and SLA.",
+            "evidence_ref": "docs/evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/README.md",
             "formal_handback_ref": "docs/evidence/ODP_INT001_CDC_DISPOSITION_2026-09-03.md"
           }
         }

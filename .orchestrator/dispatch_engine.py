@@ -10,8 +10,17 @@ from common import parse_iso_timestamp as parse_runtime_timestamp
 from dispatch_policy import (
     DEFAULT_HELPER_CLAIMABLE_STATUSES,
     REASON_HELPER_CLAIM,
+    ROLE_OWNER,
+    dispatch_priority_reason,
+    dispatch_reason_role,
+    role_provider_block_reason,
     task_priority_rank,
+    task_submitted_author,
     worker_logical_dispatch_agent_id,
+)
+from worker_failure_policy import (
+    auto_dispatch_block_is_temporary_capacity,
+    owner_preference_ranks,
 )
 
 
@@ -46,6 +55,8 @@ def _sync_supervisor_scope() -> None:
         'escalated_lease_block', 
         'build_dispatch_event', 
         'dispatch_discussion_planning', 
+        'recover_conflicted_review_prs',
+        'recover_failed_ci_review_prs',
         'dispatch_ready_tasks'
     }
     # Skip only dunders. The four copies of this function used to disagree --
@@ -78,6 +89,26 @@ MERGE_ROUTE_MAX_ATTEMPTS = 4
 #: Reconciling costs one `gh pr view` per task with a PR, so it runs on its own
 #: cadence rather than every tick. Drift is measured in hours, not seconds.
 TASK_REALITY_RECONCILE_INTERVAL_SECONDS = 900.0
+
+#: Records the exact submitted head a conflicted-review recovery already acted
+#: on. Written by the same canonical commit that moves the status, so repeated
+#: polls and supervisor restarts recover one head exactly once.
+REVIEW_CONFLICT_RECOVERY_HEAD_FIELD = "review_conflict_recovery_head"
+
+#: Records the exact submitted head a review CI failure recovery already acted
+#: on. Written by the same canonical commit that moves the status, so repeated
+#: polls and supervisor restarts recover one head exactly once.
+REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD = "review_ci_failure_recovery_head"
+
+#: GitHub stating outright that a head cannot be merged because it conflicts
+#: with its base. Deliberately not BLOCKED, BEHIND or UNKNOWN: those describe a
+#: PR that later events resolve without an owner touching the branch.
+PR_CONFLICT_MERGE_STATES = frozenset({"DIRTY", "CONFLICTING"})
+
+#: The single PR read the conflicted-review recovery is allowed to act on.
+_REVIEW_CONFLICT_PR_JSON_FIELDS = "state,mergeStateStatus,headRefOid"
+
+_MARKER_UNSET = object()
 
 
 def _pr_changed_paths(pr_number: int) -> list[str] | None:
@@ -121,6 +152,242 @@ def _pr_merge_state(pr_number: int) -> str | None:
     except ValueError:
         return None
     return str(payload.get("mergeStateStatus") or "").strip().upper() or None
+
+
+def _review_pr_facts(slug: str, pr_number: int) -> tuple[str, str, str] | None:
+    """`(state, mergeStateStatus, headRefOid)` for a PR, or None when unreadable.
+
+    Bound to the repository the task declares rather than this checkout's
+    `origin`: `gh pr view 6` run from the wrong checkout answers about an
+    unrelated PR number, and a confident wrong answer is worse here than none.
+
+    The three facts come from one read so they describe one moment. Asked twice
+    around a CI verdict they are also the caller's race check: a head that
+    moved, a PR that closed, or a conflict that was resolved all show up as a
+    changed tuple.
+    """
+    import json as _json
+
+    from github_bus import GitHubBusError, GitHubBusOffline, run_gh
+
+    if not slug or "/" not in slug or pr_number <= 0:
+        return None
+    try:
+        proc = run_gh(
+            [
+                "pr",
+                "view",
+                str(pr_number),
+                "--repo",
+                slug,
+                "--json",
+                _REVIEW_CONFLICT_PR_JSON_FIELDS,
+            ]
+        )
+    except (GitHubBusError, GitHubBusOffline):
+        return None
+    try:
+        payload = _json.loads(proc.stdout or "{}")
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    state = str(payload.get("state") or "").strip().upper()
+    merge_state = str(payload.get("mergeStateStatus") or "").strip().upper()
+    head = str(payload.get("headRefOid") or "").strip().lower()
+    if not state or not merge_state or not head:
+        # A partial answer is an unreadable one. Treating a missing
+        # `mergeStateStatus` as "not conflicting" would be a guess either way.
+        return None
+    return state, merge_state, head
+
+
+_REVIEW_CI_FAILURE_PR_JSON_FIELDS = "state,headRefOid,statusCheckRollup"
+
+
+def _review_pr_failed_ci_facts(
+    slug: str, pr_number: int
+) -> tuple[str, str, list[dict[str, Any]]] | None:
+    """`(state, headRefOid, failed_checks)` for an open review PR with conclusive CI failure.
+
+    Bound to the repository the task declares. Requires:
+    - PR state is OPEN and headRefOid is present,
+    - statusCheckRollup is a non-empty list of checks,
+    - all non-task-review-gate checks have completed without any pending/queued/in-progress/unverifiable runs,
+    - at least one check is in a recognized terminal failure condition (FAILURE, CANCELLED, TIMED_OUT, ACTION_REQUIRED, ERROR).
+
+    Returns None if:
+    - the PR cannot be queried from GitHub,
+    - any check is malformed (e.g. not a dict or unparseable),
+    - any check is pending, in-progress, queued, or waiting,
+    - any check has an unrecognized conclusion or state,
+    - no checks exist or no check failed.
+    """
+    import json as _json
+
+    from github_bus import GitHubBusError, GitHubBusOffline, run_gh
+
+    if not slug or "/" not in slug or pr_number <= 0:
+        return None
+    try:
+        proc = run_gh(
+            [
+                "pr",
+                "view",
+                str(pr_number),
+                "--repo",
+                slug,
+                "--json",
+                _REVIEW_CI_FAILURE_PR_JSON_FIELDS,
+            ]
+        )
+    except (GitHubBusError, GitHubBusOffline):
+        return None
+    try:
+        payload = _json.loads(proc.stdout or "{}")
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    state = str(payload.get("state") or "").strip().upper()
+    head = str(payload.get("headRefOid") or "").strip().lower()
+    raw_rollup = payload.get("statusCheckRollup")
+    if not state or not head or not isinstance(raw_rollup, list) or not raw_rollup:
+        return None
+
+    try:
+        raw_checks, _superseded_checks = runtime_ai_status.latest_status_check_runs(raw_rollup)
+    except Exception:
+        return None
+
+    has_pending = False
+    has_unverifiable = False
+    valid_checks_count = 0
+    failed_checks: list[dict[str, Any]] = []
+
+    terminal_failure_conclusions = {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}
+    terminal_success_conclusions = {"SUCCESS", "NEUTRAL", "SKIPPED"}
+    pending_states = {"PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS", "WAITING"}
+    pending_statuses = {"PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"}
+
+    for index, check in enumerate(raw_checks):
+        if not isinstance(check, dict):
+            has_unverifiable = True
+            break
+
+        check_name = str(check.get("name") or "").strip()
+        check_context = str(check.get("context") or "").strip()
+
+        # Exclude pre-approval reviewer gate
+        if check_context == "task-review-gate" or check_name == "task-review-gate":
+            continue
+
+        valid_checks_count += 1
+
+        check_type = str(check.get("__typename") or "").strip()
+        conclusion = str(check.get("conclusion") or "").upper()
+        state_val = str(check.get("state") or "").upper()
+        status_val = str(check.get("status") or "").upper()
+        workflow_name = str(check.get("workflowName") or "").strip()
+        details_url = str(
+            check.get("detailsUrl") or check.get("targetUrl") or check.get("url") or ""
+        ).strip()
+        display_name = check_name or check_context or f"check-{index}"
+
+        if check_type == "CheckRun":
+            if status_val != "COMPLETED" or not conclusion:
+                has_pending = True
+            elif conclusion in terminal_success_conclusions:
+                pass
+            elif conclusion in terminal_failure_conclusions:
+                failed_checks.append(
+                    {
+                        "name": display_name,
+                        "workflow": workflow_name,
+                        "conclusion": conclusion,
+                        "url": details_url,
+                    }
+                )
+            else:
+                has_unverifiable = True
+        elif check_type == "StatusContext":
+            if state_val in pending_states or not state_val:
+                has_pending = True
+            elif state_val == "SUCCESS":
+                pass
+            elif state_val in {"FAILURE", "ERROR"}:
+                failed_checks.append(
+                    {
+                        "name": display_name,
+                        "workflow": workflow_name,
+                        "conclusion": state_val,
+                        "url": details_url,
+                    }
+                )
+            else:
+                has_unverifiable = True
+        else:
+            if conclusion:
+                if conclusion in terminal_failure_conclusions:
+                    failed_checks.append(
+                        {
+                            "name": display_name,
+                            "workflow": workflow_name,
+                            "conclusion": conclusion,
+                            "url": details_url,
+                        }
+                    )
+                elif conclusion in {"PENDING", "IN_PROGRESS"}:
+                    has_pending = True
+                elif conclusion in terminal_success_conclusions:
+                    pass
+                else:
+                    has_unverifiable = True
+            elif state_val:
+                if state_val in {"FAILURE", "ERROR"}:
+                    failed_checks.append(
+                        {
+                            "name": display_name,
+                            "workflow": workflow_name,
+                            "conclusion": state_val,
+                            "url": details_url,
+                        }
+                    )
+                elif state_val in pending_states:
+                    has_pending = True
+                elif state_val == "SUCCESS":
+                    pass
+                else:
+                    has_unverifiable = True
+            elif status_val:
+                if status_val in pending_statuses:
+                    has_pending = True
+                elif status_val in {"FAILURE", "ERROR"}:
+                    failed_checks.append(
+                        {
+                            "name": display_name,
+                            "workflow": workflow_name,
+                            "conclusion": status_val,
+                            "url": details_url,
+                        }
+                    )
+                elif status_val in {"COMPLETED", "SUCCESS"}:
+                    pass
+                else:
+                    has_unverifiable = True
+            else:
+                has_unverifiable = True
+
+    if (
+        valid_checks_count == 0
+        or has_pending
+        or has_unverifiable
+        or not failed_checks
+        or state != "OPEN"
+    ):
+        return None
+
+    return state, head, failed_checks
 
 
 def _remote_branch_names() -> set[str] | None:
@@ -329,22 +596,60 @@ def approved_pr_change_scope(pr_number: int) -> str | None:
         return None
 
 
+def _is_repository_slug(value: str | None) -> bool:
+    """Whether a value is the `owner/name` GitHub slug `gh --repo` accepts."""
+    owner, sep, name = str(value or "").strip().partition("/")
+    return bool(sep and owner and name and "/" not in name)
+
+
 def _task_repository_slug(config: dict[str, Any], task: dict[str, Any]) -> str:
-    """The task's repository slug, or "" when it cannot be resolved.
+    """The task's repository as an `owner/name` slug, or "" when unresolvable.
 
     Routing used to rely on the supervisor's cwd, which silently answered for
-    ODay Plus whatever repository the task belonged to.
+    ODay Plus whatever repository the task belonged to. Declaring the repository
+    on the task fixed that, but the declared value was then handed to
+    `gh --repo` verbatim -- and `task.repository` is a *registry name*, not a
+    slug. `pantheon` is the registry id of this very checkout (see
+    `multi_repo_registry.LEGACY_SELF_REPO_ID`), written into task records going
+    back months, so an approved PR carrying it was routed with `--repo pantheon`;
+    `gh` rejects that, and the PR was reported `merge_route_blocked` every tick
+    and never enqueued.
+
+    The registry already owns name -> slug for ids, aliases and display names,
+    so this asks it rather than growing a second spelling here. A repository the
+    registry does not carry can still be addressed directly, as long as it was
+    written as `owner/name` in the first place.
     """
     declared = str((task or {}).get("repository") or "").strip()
-    if declared:
-        return declared
     try:
-        from multi_repo_registry import resolve_task_repository
+        from multi_repo_registry import (
+            matching_repo_id,
+            repository_slug,
+            resolve_task_repository,
+        )
+    except ImportError:
+        return declared if _is_repository_slug(declared) else ""
 
+    if declared:
+        try:
+            resolved = repository_slug(config, matching_repo_id(config, declared))
+        except Exception:
+            resolved = None
+        if _is_repository_slug(resolved):
+            return str(resolved).strip()
+        # Unknown to the registry, or registered without a slug. Only a value
+        # that already is a slug can be routed; anything else names a repository
+        # `gh` has no way to reach, and the caller must say so rather than guess.
+        return declared if _is_repository_slug(declared) else ""
+
+    # Nothing declared: the registry's artifact-prefix fallback is the one place
+    # allowed to infer this, and it answers with the configured slug.
+    try:
         binding = resolve_task_repository(config, task)
-        return str(binding.slug or "")
     except Exception:
         return ""
+    slug = str(binding.slug or "").strip()
+    return slug if _is_repository_slug(slug) else ""
 
 
 _MERGE_QUEUE_BY_REPO: dict[str, bool] = {}
@@ -459,6 +764,16 @@ def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> 
     # with no strategy has nothing to do there. Ask once per repository and pick
     # the only route that repository actually has.
     slug = _task_repository_slug(config, task)
+    declared_repository = str(task.get("repository") or "").strip()
+    if declared_repository and not slug:
+        # Falling through without `--repo` routes against the supervisor's own
+        # checkout, which is the wrong-repository merge this path exists to
+        # prevent. A declaration the registry cannot place is reported, not
+        # guessed at.
+        return "blocked", (
+            f"declared repository {declared_repository!r} does not resolve to an "
+            "owner/name slug in the repository registry"
+        )
     base = str(task.get("base_branch") or "dev").strip() or "dev"
     queued_repo = repository_has_merge_queue(slug, base)
     if queued_repo is False:
@@ -615,6 +930,320 @@ def advance_approved_prs_to_merge(
     return changed
 
 
+def recover_conflicted_review_prs(
+    config: dict[str, Any],
+    status: dict[str, Any],
+    review_statuses: set[str],
+    *,
+    busy_task_ids: set[str],
+) -> bool:
+    """Return a review whose PR GitHub will never check back to its owner.
+
+    A PR that conflicts with its base has no merge commit, so no workflow ever
+    starts on that head: check-runs, check-suites and Actions runs are all zero
+    and `task_pr_ci_status` answers `none` indefinitely. Reviewer dispatch
+    requires terminal CI success on the exact submitted head, so the task waits
+    for a check that cannot arrive. #1170 sat that way at head 847d4984.
+
+    The queue-ejection repair is this same failure one step later in the lane
+    and only accepts `review_approved`, so nothing covered a review. This runs
+    in the reconciliation stage rather than the per-agent loop, because the task
+    is waiting on the reviewer's slot and must not be gated by it.
+
+    Only the owner can advance a base, and a wrong recovery discards a real
+    review, so this repairs only what GitHub states outright: an OPEN PR at
+    exactly the submitted head, called conflicting, with no check on that head.
+    Anything unreadable, drifting, pending, or already closed keeps waiting.
+    """
+    changed = False
+    for task in list(status.get("tasks", []) or []):
+        if not isinstance(task, dict):
+            continue
+        task_id = str(task.get("id") or "").strip()
+        if not task_id or task_id in busy_task_ids:
+            continue
+        if str(task.get("status") or "").strip().lower() not in review_statuses:
+            continue
+        # Human gates and non-dispatchable tasks are never handed to an owner by
+        # the control plane; the transition refuses them too, but asking GitHub
+        # about them first would be a probe with no reachable outcome.
+        if (
+            task_is_human_gate(task)
+            or bool(task.get("non_dispatchable"))
+            or is_human_gate_agent(task.get("owner"))
+            or is_human_gate_agent(task.get("waiting_for"))
+        ):
+            continue
+        # An approved or queued head is frozen, and a live helper lease means
+        # someone already holds this branch.
+        if task.get("approved_head") or task.get("merge_route") is not None:
+            continue
+        if helper_claim_is_live(task.get("helper_execution_lease")):
+            continue
+        # A review with no verified remote PR belongs to
+        # `repair_unsubmitted_review_tasks`; without that provenance there is no
+        # PR number or submitted head worth asking GitHub about.
+        if not review_submission_is_complete(config, task):
+            continue
+        submission = task.get("review_submission") or {}
+        submitted_sha = str(submission.get("remote_sha") or "").strip().lower()
+        try:
+            pr_number = int(submission.get("pr_number") or 0)
+        except (TypeError, ValueError):
+            continue
+        if pr_number <= 0 or not submitted_sha:
+            continue
+        # One recovery per head. Repeated polls and supervisor restarts see the
+        # marker the transition's own commit persisted; an owner who resubmits
+        # the identical conflicting head is not bounced a second time.
+        if str(task.get(REVIEW_CONFLICT_RECOVERY_HEAD_FIELD) or "").strip().lower() == submitted_sha:
+            continue
+        slug = _task_repository_slug(config, task)
+        if not slug:
+            continue
+
+        # Cheapest disqualifier first, and through the canonical CI reader so
+        # there is one spelling of "what is CI saying". Any answer other than
+        # "GitHub has run nothing here" - success, failure, pending, or the
+        # `unknown` that means `gh` could not answer - ends this lane's business.
+        # This first read may be served from the reader's cache: it exists to
+        # drop the many tasks that are obviously not this shape without paying
+        # for a `gh` call each tick, not to authorise the transition.
+        try:
+            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
+        except Exception:
+            continue
+        if ci_status != "none" or str(pr_status or "").strip().upper() != "OPEN":
+            continue
+
+        before = _review_pr_facts(slug, pr_number)
+        if before is None:
+            continue
+        state, merge_state, head = before
+        if state != "OPEN" or merge_state not in PR_CONFLICT_MERGE_STATES:
+            continue
+        if head != submitted_sha:
+            # Head drift: the branch has moved past what was reviewed, and what
+            # GitHub is describing is not the submission this task recorded.
+            continue
+        # "No check has ever run here" is the whole premise of this repair, and
+        # a cached verdict cannot carry it. A conflict resolved a moment ago
+        # starts the checks, and requeueing then would pull a review out from
+        # under a run that is already going. Ask the same canonical reader again
+        # with the cache bypassed, so the fact the transition acts on was true
+        # after the PR facts above were taken, not up to a cache lifetime
+        # earlier. Anything other than a still-open PR with nothing run on it -
+        # including a read that fails - waits for the next tick.
+        try:
+            fresh_pr_status, fresh_ci_status = runtime_ai_status.task_pr_ci_status(
+                task_id, max_age_seconds=0
+            )
+        except Exception:
+            continue
+        if fresh_ci_status != "none" or str(fresh_pr_status or "").strip().upper() != "OPEN":
+            continue
+        # Read the PR again. Between the CI verdict and here the owner may have
+        # pushed, the PR may have closed, or the conflict may have been resolved
+        # and the checks started. Acting on a fact that has already changed is
+        # how a repair becomes a corruption, so an unstable read keeps waiting.
+        if _review_pr_facts(slug, pr_number) != before:
+            continue
+
+        message = (
+            f"Review PR #{pr_number} for task {task_id} conflicts with its base "
+            f"({merge_state.lower()}), so GitHub has run no check on the submitted head "
+            f"{submitted_sha[:8]} and review readiness can never resolve. Returned to the "
+            "owner to advance the base, resolve the conflict, and resubmit the same PR "
+            "for an independent review."
+        )
+        previous_marker = task.get(REVIEW_CONFLICT_RECOVERY_HEAD_FIELD, _MARKER_UNSET)
+        task[REVIEW_CONFLICT_RECOVERY_HEAD_FIELD] = submitted_sha
+        if not requeue_task_for_ci_repair(
+            config,
+            status,
+            task,
+            message=message,
+            clear_approval=False,
+            allow_conflicted_review=True,
+        ):
+            # Refused, or the canonical commit did not land. The marker is only
+            # true once that commit persisted it; leaving it behind would make
+            # this head permanently unrecoverable.
+            if previous_marker is _MARKER_UNSET:
+                task.pop(REVIEW_CONFLICT_RECOVERY_HEAD_FIELD, None)
+            else:
+                task[REVIEW_CONFLICT_RECOVERY_HEAD_FIELD] = previous_marker
+            # CAS mismatch or rejected canonical commit: disk snapshot has diverged.
+            # Abort further recovery on this stale snapshot and reload from disk.
+            status.clear()
+            status.update(load_status(config))
+            return changed
+        changed = True
+        write_activity_log(
+            config,
+            {
+                "type": "review_conflict_ci_recovered",
+                "task_id": task_id,
+                "pr_number": pr_number,
+                "head": submitted_sha,
+                "merge_state": merge_state,
+                "message": message,
+            },
+        )
+    return changed
+
+
+def recover_failed_ci_review_prs(
+    config: dict[str, Any],
+    status: dict[str, Any],
+    review_statuses: set[str],
+    *,
+    busy_task_ids: set[str],
+) -> bool:
+    """Return an unapproved review whose PR CI checks have conclusively failed back to its owner.
+
+    When an unapproved review PR experiences a required CI failure, reviewer
+    dispatch is suppressed, but without recovery the task stalls: the reviewer
+    cannot review a failing PR and the owner is not re-dispatched.
+
+    This repairs the gap by returning the task to its owner under
+    control_plane_recovery so the owner can repair the CI failure and resubmit
+    via task_finalize.sh.
+
+    Only the owner can advance/fix the branch, and a wrong recovery discards a
+    real review, so this repairs only what GitHub confirms: an OPEN PR at exactly
+    the submitted head, with a recognized, verifiable, terminal CI failure (and
+    no pending/in-progress checks). Anything unreadable, drifting, pending,
+    unverifiable, or already closed/approved/queued keeps waiting.
+    """
+    changed = False
+    for task in list(status.get("tasks", []) or []):
+        if not isinstance(task, dict):
+            continue
+        task_id = str(task.get("id") or "").strip()
+        if not task_id or task_id in busy_task_ids:
+            continue
+        if str(task.get("status") or "").strip().lower() not in review_statuses:
+            continue
+        # Human gates, Human-waiting tasks, and non-dispatchable tasks are never handed
+        # to an AI owner by the control plane; the transition refuses them too, but asking
+        # GitHub about them first would be a probe with no reachable outcome.
+        if (
+            task_is_human_gate(task)
+            or bool(task.get("non_dispatchable"))
+            or is_human_gate_agent(task.get("owner"))
+            or is_human_gate_agent(task.get("waiting_for"))
+        ):
+            continue
+        # An approved or queued head is frozen, and a live helper lease means
+        # someone already holds this branch.
+        if task.get("approved_head") or task.get("merge_route") is not None:
+            continue
+        if helper_claim_is_live(task.get("helper_execution_lease")):
+            continue
+        # A review with no verified remote PR belongs to
+        # `repair_unsubmitted_review_tasks`; without that provenance there is no
+        # PR number or submitted head worth asking GitHub about.
+        if not review_submission_is_complete(config, task):
+            continue
+        submission = task.get("review_submission") or {}
+        submitted_sha = str(submission.get("remote_sha") or "").strip().lower()
+        try:
+            pr_number = int(submission.get("pr_number") or 0)
+        except (TypeError, ValueError):
+            continue
+        if pr_number <= 0 or not submitted_sha:
+            continue
+        # One recovery per head. Repeated polls and supervisor restarts see the
+        # marker the transition's own commit persisted; an owner who resubmits
+        # the identical failing head is not bounced a second time.
+        if str(task.get(REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD) or "").strip().lower() == submitted_sha:
+            continue
+        slug = _task_repository_slug(config, task)
+        if not slug:
+            continue
+
+        # Cheapest disqualifier first, through the canonical CI reader.
+        # Any answer other than failure on an open PR ends this lane's business.
+        try:
+            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
+        except Exception:
+            continue
+        if ci_status != "failure" or str(pr_status or "").strip().upper() != "OPEN":
+            continue
+
+        before = _review_pr_failed_ci_facts(slug, pr_number)
+        if before is None:
+            continue
+        state, head, failed_checks = before
+        if state != "OPEN" or head != submitted_sha or not failed_checks:
+            continue
+
+        # Fresh uncached CI read to ensure CI failure is current.
+        try:
+            fresh_pr_status, fresh_ci_status = runtime_ai_status.task_pr_ci_status(
+                task_id, max_age_seconds=0
+            )
+        except Exception:
+            continue
+        if fresh_ci_status != "failure" or str(fresh_pr_status or "").strip().upper() != "OPEN":
+            continue
+
+        # Re-read the PR failed CI facts to ensure nothing changed while probing CI.
+        if _review_pr_failed_ci_facts(slug, pr_number) != before:
+            continue
+
+        check_summaries: list[str] = []
+        for fc in failed_checks:
+            fc_name = fc.get("name") or "unknown"
+            fc_reason = fc.get("conclusion") or "FAILURE"
+            fc_url = fc.get("url")
+            if fc_url:
+                check_summaries.append(f"{fc_name} ({fc_reason}: {fc_url})")
+            else:
+                check_summaries.append(f"{fc_name} ({fc_reason})")
+        failed_summary = ", ".join(check_summaries)
+
+        message = (
+            f"Review PR #{pr_number} for task {task_id} failed required CI check(s) on "
+            f"submitted head {submitted_sha[:8]}: {failed_summary}. "
+            "Returned to owner to repair CI or boundedly retry transient infra failures, "
+            "and resubmit via task_finalize.sh."
+        )
+        previous_marker = task.get(REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD, _MARKER_UNSET)
+        task[REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD] = submitted_sha
+        if not requeue_task_for_ci_repair(
+            config,
+            status,
+            task,
+            message=message,
+            clear_approval=False,
+            allow_failed_ci_review=True,
+        ):
+            if previous_marker is _MARKER_UNSET:
+                task.pop(REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD, None)
+            else:
+                task[REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD] = previous_marker
+            # CAS mismatch or rejected canonical commit: disk snapshot has diverged.
+            # Abort further recovery on this stale snapshot and reload from disk.
+            status.clear()
+            status.update(load_status(config))
+            return changed
+        changed = True
+        write_activity_log(
+            config,
+            {
+                "type": "review_ci_failure_recovered",
+                "task_id": task_id,
+                "pr_number": pr_number,
+                "head": submitted_sha,
+                "failed_checks": failed_checks,
+                "message": message,
+            },
+        )
+    return changed
+
+
 @_entrypoint
 
 def task_index_from_status(config: dict[str, Any], status: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -699,6 +1328,7 @@ def is_task_review_dispatch_eligible(
     *,
     review_statuses: set[str] | None = None,
     finalize_statuses: set[str] | None = None,
+    readiness_force_refresh: bool = True,
 ) -> bool:
     """Return whether a task is eligible for reviewer dispatch (review_ready_dispatch).
 
@@ -707,6 +1337,15 @@ def is_task_review_dispatch_eligible(
     (no merge_route), has independent owner/reviewer, the target agent matches the reviewer,
     the review submission is valid with matching exact remote head, and all required CI
     checks on that exact head have concluded with terminal success.
+
+    `readiness_force_refresh` controls only how the submitted head is read.
+    Dispatch -- the caller that is about to start a worker on this answer --
+    keeps the forced `git ls-remote`. A caller that only asks whether this work
+    exists, repeatedly and for every running worker of the agent, passes `False`
+    and is served from the resolver's own short-lived cache instead of paying
+    for a network read per question. Both readers already fail closed on an
+    answer they cannot get, so a cache miss or a failed read still refuses
+    rather than assuming readiness.
     """
     if not isinstance(task, dict) or not task:
         return False
@@ -763,7 +1402,9 @@ def is_task_review_dispatch_eligible(
 
     task_id = str(task.get(schema.get("task_id_field", "id")) or task.get("id") or "")
     try:
-        current_head = runtime_ai_status.resolve_task_sha(task_id, force_refresh=True)
+        current_head = runtime_ai_status.resolve_task_sha(
+            task_id, force_refresh=readiness_force_refresh
+        )
     except Exception:
         return False
     if not current_head or current_head != submitted_sha:
@@ -790,6 +1431,7 @@ def dispatch_priority_for_task(
     *,
     task_map: dict[str, dict[str, Any]] | None = None,
     dependencies_done_statuses: set[str] | None = None,
+    readiness_force_refresh: bool = True,
 ) -> int | None:
     settings = ready_dispatch_settings(config)
     review_statuses = normalized_status_set(settings.get("review_statuses"), ["review"])
@@ -812,6 +1454,7 @@ def dispatch_priority_for_task(
         agent_name,
         review_statuses=review_statuses,
         finalize_statuses=finalize_statuses,
+        readiness_force_refresh=readiness_force_refresh,
     ):
         return 0
     if task_status in finalize_statuses and task_owner == norm_target:
@@ -823,7 +1466,7 @@ def dispatch_priority_for_task(
             return None
         try:
             curr_head = runtime_ai_status.resolve_task_checkout_sha(
-                task, force_refresh=True
+                task, force_refresh=readiness_force_refresh
             )
             if not curr_head or not runtime_ai_status.is_approved_head_satisfied(task, curr_head, approved_head):
                 return None
@@ -904,7 +1547,7 @@ def helper_owner_is_saturated(
     )
     if not owner_id or owner_id not in (config.get("agents", {}) or {}):
         owner_undispatchable = True
-    elif not agent_can_take_task(config, owner, task):
+    elif not agent_can_take_task(config, owner, task, role=ROLE_OWNER):
         owner_undispatchable = True
     elif owner_id not in dispatchable:
         owner_undispatchable = True
@@ -1040,19 +1683,26 @@ def reassign_unavailable_reviewers(
         else:
             continue
 
+        submitted_author = task_submitted_author(config, task)
+        author_pool_exclusions = (
+            {agent_account_pool_id(config, submitted_author)}
+            if submitted_author and not is_human_gate_agent(submitted_author)
+            else set()
+        )
+
         claimed_agent = str(task.get(claimed_field) or "").strip()
         if not claimed_agent or is_human_gate_agent(claimed_agent):
             continue
         if claimed_role == "owner":
             claimed_id = normalize_agent_id(claimed_agent)
-            if agent_dispatch_paused(config, state, claimed_id):
-                claimed_block_reason = (
-                    f"dispatch is paused or disabled for {display_name_for(config, claimed_id) or claimed_agent}"
-                )
-            elif account_pool_dispatch_block_reason(config, claimed_id, runtime_state=state):
-                claimed_block_reason = account_pool_dispatch_block_reason(
-                    config, claimed_id, runtime_state=state
-                )
+            auto_block_reason = agent_auto_dispatch_block_reason(
+                config,
+                state,
+                claimed_id,
+                provider_report,
+            )
+            if auto_block_reason and not auto_dispatch_block_is_temporary_capacity(auto_block_reason):
+                claimed_block_reason = auto_block_reason
             else:
                 claimed_block_reason = None
             reviewer_same_pool = False
@@ -1067,13 +1717,30 @@ def reassign_unavailable_reviewers(
                 counterpart
                 and not is_human_gate_agent(counterpart)
                 and not review_is_independent(config, counterpart, claimed_agent)
+            ) or bool(
+                submitted_author
+                and not is_human_gate_agent(submitted_author)
+                and not review_is_independent(config, submitted_author, claimed_agent)
             )
         if not claimed_block_reason and not reviewer_same_pool:
             continue
 
         replacement = ""
         replacement_id = ""
-        for candidate_id in candidate_agent_ids:
+        # The owner branch picks the first candidate that survives the filters
+        # below, so its ordering *is* its preference. Rank it through the same
+        # policy the reassignment selector uses instead of growing a second one;
+        # the sort is stable, so within a rank the configured dispatch order is
+        # untouched, and the reviewer branch keeps its existing ordering.
+        candidate_sequence = candidate_agent_ids
+        if claimed_role == "owner":
+            owner_ranks = owner_preference_ranks(
+                config, candidate_agent_ids, state=state, task=task, role="owner"
+            )
+            candidate_sequence = sorted(
+                candidate_agent_ids, key=lambda agent_id: owner_ranks.get(agent_id, 1)
+            )
+        for candidate_id in candidate_sequence:
             candidate = display_name_for(config, candidate_id)
             candidate_config = (config.get("agents", {}) or {}).get(candidate_id)
             owner_for_independence = candidate if claimed_role == "owner" else counterpart
@@ -1081,14 +1748,24 @@ def reassign_unavailable_reviewers(
             if (
                 not candidate
                 or candidate in {claimed_agent, counterpart}
+                or (claimed_role == "reviewer" and submitted_author and candidate == submitted_author)
                 or candidate_id in reserved_agents
                 or not isinstance(candidate_config, dict)
                 or agent_is_dispatch_slot(candidate_config)
                 or is_human_gate_agent(candidate)
-                or not agent_can_take_task(config, candidate, task)
+                or not agent_can_take_task(config, candidate, task, role=claimed_role)
                 or (
                     bool(counterpart and not is_human_gate_agent(counterpart))
                     and not review_is_independent(config, owner_for_independence, reviewer_for_independence)
+                )
+                or (
+                    claimed_role == "reviewer"
+                    and bool(submitted_author and not is_human_gate_agent(submitted_author))
+                    and not review_is_independent(config, submitted_author, candidate)
+                )
+                or (
+                    claimed_role == "reviewer"
+                    and agent_account_pool_id(config, candidate) in author_pool_exclusions
                 )
                 or agent_auto_dispatch_block_reason(config, state, candidate_id, provider_report)
             ):
@@ -1100,9 +1777,14 @@ def reassign_unavailable_reviewers(
             continue
 
         if reviewer_same_pool:
+            violator = (
+                f"owner {counterpart}"
+                if counterpart and not review_is_independent(config, counterpart, claimed_agent)
+                else f"submitted author {submitted_author}"
+            )
             message = (
                 f"Reassigned review to {replacement}: {claimed_agent} shares account pool "
-                f"with owner {counterpart}, so independent review requires a different pool."
+                f"with {violator}, so independent review requires a different pool."
             )
         else:
             message = (
@@ -1213,39 +1895,79 @@ def higher_priority_ready_task_exists(
             continue
         if task_is_sidecar(task) and not task_is_sidecar(current_task or {}):
             continue
+        # Business rank decides first, and decides without reading anything.
+        # `candidate_priority` below is bounded at 0, so a candidate ranked
+        # worse than the running worker's task can never win the (rank, lane)
+        # comparison, and at equal rank nothing outranks a review. Cutting those
+        # here is what keeps the readiness reads further down to the few
+        # candidates whose answer can actually end a worker, rather than one
+        # read per task per poll.
+        candidate_task_rank = task_priority_rank(task)
+        if candidate_task_rank > current_task_rank:
+            continue
+        if candidate_task_rank == current_task_rank and current_priority <= 0:
+            continue
+        # A human gate or a task flagged `non_dispatchable` is never handed to a
+        # worker by any lane, so it can never be the work a freed slot is freed
+        # for. Refusing it here also means GitHub is not asked about a task with
+        # no reachable outcome.
+        if task_is_human_gate(task) or bool(task.get("non_dispatchable")):
+            continue
         task_status = str(task.get("status") or "").lower()
-        candidate_priority = None
-        if task_status in review_statuses and normalize_agent_id(str(task.get(reviewer_field) or "")) == normalize_agent_id(agent_name):
-            if is_sidecar_review_of_current_parent(
+        if (
+            task_status in review_statuses
+            and normalize_agent_id(str(task.get(reviewer_field) or ""))
+            == normalize_agent_id(agent_name)
+            and is_sidecar_review_of_current_parent(
                 task,
                 current_task,
                 agent_name=agent_name,
                 review_statuses=review_statuses,
                 owner_field=owner_field,
                 reviewer_field=reviewer_field,
+            )
+        ):
+            continue
+
+        # One eligibility judgement, the same one the dispatcher itself makes.
+        # Reviews used to skip it: any task in a review status naming this agent
+        # as reviewer scored 0 on status and role alone. Between 2026-09-06
+        # 11:01Z and 2026-09-07 04:03Z that killed the same Codex2 review worker
+        # 286 consecutive times, because the three P0 reviews that outranked it
+        # -- one `non_dispatchable`, two with failing CI -- could never take the
+        # slot they kept emptying. A candidate that cannot be dispatched is not
+        # a reason to stop work that can.
+        candidate_priority = dispatch_priority_for_task(
+            config,
+            task,
+            agent_name,
+            task_map=task_map,
+            dependencies_done_statuses=dependency_done_statuses,
+            readiness_force_refresh=False,
+        )
+        if candidate_priority is None:
+            continue
+        # The other half of the dispatcher's own gate: role/provider policy,
+        # disabled and sidecar-only agents. `dispatch_priority_for_task` answers
+        # "is this work ready", not "may this agent be given it", and preemption
+        # needs both to be true before it ends a running worker.
+        if not agent_can_take_task(
+            config,
+            agent_name,
+            task,
+            role=dispatch_reason_role(dispatch_priority_reason(candidate_priority)),
+        ):
+            continue
+
+        if (candidate_task_rank, candidate_priority) < current_key:
+            if (
+                slot_count
+                and urgent_priority_cutoff is not None
+                and candidate_priority > urgent_priority_cutoff
+                and candidate_task_rank >= current_task_rank
             ):
                 continue
-            candidate_priority = 0
-        else:
-            candidate_priority = dispatch_priority_for_task(
-                config,
-                task,
-                agent_name,
-                task_map=task_map,
-                dependencies_done_statuses=dependency_done_statuses,
-            )
-
-        if candidate_priority is not None:
-            candidate_task_rank = task_priority_rank(task)
-            if (candidate_task_rank, candidate_priority) < current_key:
-                if (
-                    slot_count
-                    and urgent_priority_cutoff is not None
-                    and candidate_priority > urgent_priority_cutoff
-                    and candidate_task_rank >= current_task_rank
-                ):
-                    continue
-                higher_priority_task_ids.add(str(task_id))
+            higher_priority_task_ids.add(str(task_id))
 
     if not higher_priority_task_ids:
         return False
@@ -1445,6 +2167,23 @@ def stale_dispatch_skip_message(config: dict[str, Any], event: dict[str, Any], t
             f"Skipped stale queued wake event for {task_id}: task state changed; "
             "dependency gate is not satisfied."
         )
+
+    # A queue event carries the eligibility decision made when it was queued.
+    # If the role/provider policy changed in between -- or the task acquired a
+    # `task_class` that the policy scopes differently -- launching now would run
+    # a lane the current policy excludes, and no later gate re-asks: the worker
+    # would already be executing. Re-checking exactly the policy (rather than the
+    # whole dispatch predicate) keeps this to the one thing that can go stale
+    # here without any other state changing.
+    if task:
+        policy_reason = role_provider_block_reason(
+            config, target, role=dispatch_reason_role(reason), task=task
+        )
+        if policy_reason:
+            return (
+                f"Skipped stale queued wake event for {task_id}: role/provider policy no "
+                f"longer permits this dispatch: {policy_reason}"
+            )
 
     if reason == REASON_HELPER_CLAIM:
         dispatched_task = (event.get("metadata") or {}).get("task") or event.get("task") or {}
@@ -1921,6 +2660,39 @@ def dispatch_ready_tasks(
         tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
         task_map = {task.get(task_id_field): task for task in tasks}
 
+    # Same stage, and deliberately not the per-agent loop below: the task this
+    # recovers is waiting on its reviewer's slot, so gating it by that slot
+    # would make the wait its own cause.
+    if recover_conflicted_review_prs(
+        config,
+        status,
+        review_statuses,
+        busy_task_ids=active_task_ids | pending_task_ids,
+    ):
+        changed = True
+        status = load_status(config)
+        tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
+        task_map = {task.get(task_id_field): task for task in tasks}
+
+    if recover_failed_ci_review_prs(
+        config,
+        status,
+        review_statuses,
+        busy_task_ids=active_task_ids | pending_task_ids,
+    ):
+        changed = True
+        status = load_status(config)
+        tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
+        task_map = {task.get(task_id_field): task for task in tasks}
+    else:
+        # A rejected canonical CAS resyncs `status` in place and still reports
+        # no recovery, so rebuild the indices from that refreshed snapshot:
+        # candidate selection must never act on the detached pre-CAS task
+        # objects. When no recovery ran this rebuilds identical content from
+        # the snapshot already in hand, without a second canonical read.
+        tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
+        task_map = {task.get(task_id_field): task for task in tasks}
+
     dispatches = 0
     agent_sequence = (
         [normalize_agent_id(agent_id) for agent_id in agent_ids_override if normalize_agent_id(agent_id)]
@@ -2296,7 +3068,9 @@ def dispatch_ready_tasks(
                     reason = REASON_HELPER_CLAIM
                     priority = 4
 
-            if reason is not None and not agent_can_take_task(config, target_agent, task):
+            if reason is not None and not agent_can_take_task(
+                config, target_agent, task, role=dispatch_reason_role(reason)
+            ):
                 continue
             if reason is None or priority is None:
                 continue

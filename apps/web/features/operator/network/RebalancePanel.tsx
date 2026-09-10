@@ -185,6 +185,7 @@ export function RebalancePanel({
   );
   const actionBusy = busyAction?.startsWith(`${selected.id}:`) ?? false;
   const avmP50 = typeof selected.avmP50 === "number" ? selected.avmP50 : null;
+  const avmQuality = describeAvmQuality(selected.avmQualityDisposition, selected.avmConf);
 
   function handlePrimary() {
     if (cta.disabled) return;
@@ -314,9 +315,18 @@ export function RebalancePanel({
           {avmP50 !== null ? (
             <section className={styles.rebalanceAvmBlock} data-testid={`rebalance-avm-${selected.id}`}>
               <div className={styles.rebalanceAvmHeader}>
-                <span>AVM 估值（service output）</span>
-                <span>{selected.avmConf ?? "—"}</span>
+                <span>{avmQuality.heading}</span>
+                <span data-testid={`rebalance-avm-confidence-${selected.id}`}>{avmQuality.confidenceLabel}</span>
               </div>
+              {avmQuality.notice ? (
+                <div
+                  className={styles.avmQualityNotice}
+                  data-quality-disposition={selected.avmQualityDisposition}
+                  data-testid={`rebalance-avm-quality-${selected.id}`}
+                >
+                  {avmQuality.notice}
+                </div>
+              ) : null}
               <div className={styles.avmValueP50}>{formatCurrency(avmP50)}</div>
               <div className={styles.avmBands}>
                 <span>P10: {typeof selected.avmP10 === "number" ? formatCurrency(selected.avmP10) : "—"}</span>
@@ -696,6 +706,37 @@ function primaryCta(
     return { action: null, disabled: true, label: "已核准 — 等待後續執行計畫", note: "本 task 不標記 relocation executed。" };
   }
   return { action: null, disabled: true, label: "已結案" };
+}
+
+/**
+ * Describe what the card is allowed to claim about its own input quality.
+ *
+ * The confidence string alone is ambiguous once a card can outlive the quality
+ * handling that produced it: a restored snapshot and a freshly measured
+ * valuation look identical. The backend attaches a named disposition to the
+ * card instead, and the header must repeat it rather than presenting every
+ * card as a plain service output.
+ */
+function describeAvmQuality(disposition: string | undefined, confidence: string | undefined) {
+  if (disposition === "legacy_unknown_downgraded") {
+    return {
+      heading: "AVM 估值（歷史卡片 · 品質未量測）",
+      confidenceLabel: confidence ?? "—",
+      notice: "此卡片產生時未量測輸入品質，信心已降級；價格為當時的歷史紀錄，不代表現況品質。",
+    };
+  }
+  if (disposition === "unverifiable_report_reference") {
+    return {
+      heading: "AVM 估值（來源報告無法驗證）",
+      confidenceLabel: "不宣稱",
+      notice: "找不到此卡片對應的估值報告，因此不對其品質或信心作任何宣稱；請重新產生估值。",
+    };
+  }
+  return {
+    heading: "AVM 估值（service output）",
+    confidenceLabel: confidence ?? "—",
+    notice: null as string | null,
+  };
 }
 
 function workflowStep(status: RebalanceQueueRow["status"]) {

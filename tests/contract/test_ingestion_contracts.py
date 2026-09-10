@@ -17,10 +17,16 @@ They assert that:
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 
 import pytest
 
+from apps.data_platform.store_opening import (
+    APPROVED_STORE_OPENING_SOURCES,
+    UnauthoritativeStoreOpeningError,
+    validate_store_opening_record,
+)
 from modules.external_data.application.external_contracts import external_contracts
 from modules.integration.application.internal_contracts import (
     batch_envelope,
@@ -231,3 +237,103 @@ def test_invalid_fixtures_route_to_quarantine(
 def test_unknown_contract_id_raises() -> None:
     with pytest.raises(ContractError):
         _contract_by_id("does_not_exist")
+
+
+# --- store opening authority: contract mirrors the executable engine -------
+#
+# ``modules/external_data/connectors/provider_registry.py`` has referenced the
+# ``store_opening_authority_snapshot`` contract id since ODP-STORE-OPENING-001,
+# but the contract itself was never published (recorded as a gap in
+# docs/evidence/ODP_INT001_CDC_SOURCE_EVIDENCE_2026-09-03.md §7). These tests
+# pin the published contract to the engine that already validates the records,
+# so the two cannot drift apart again.
+
+STORE_OPENING_CONTRACT_ID = "store_opening_authority_snapshot"
+STORE_OPENING_REQUIRED_FIELDS = {
+    "source_id",
+    "snapshot_id",
+    "tenant_id",
+    "store_id",
+    "opened_on",
+}
+
+
+def _store_opening_contract() -> SourceContract:
+    return _contract_by_id(STORE_OPENING_CONTRACT_ID)
+
+
+def _store_opening_fixture(kind: str) -> dict:
+    path = FIXTURES_ROOT / "external" / f"{STORE_OPENING_CONTRACT_ID}.{kind}.json"
+    return _load_fixture(path)
+
+
+def test_store_opening_contract_matches_the_registered_provider_semantics() -> None:
+    contract = _store_opening_contract()
+
+    # External: the provider is registered in the external provider registry
+    # with a manual attestation credential, not an internal upstream dataset.
+    assert contract.kind == "external"
+    assert contract.acquisition_method == "manual"
+    # The engine writes core.stores.opened_on and lineage rows whose
+    # canonical_table is core.stores, through a replayable backfill run.
+    assert contract.canonical_target == "store"
+    assert contract.integration_mode == "backfill"
+
+
+def test_store_opening_source_id_enum_mirrors_the_engine_allowlist() -> None:
+    enum = _store_opening_contract().field_map()["source_id"].enum
+
+    assert enum is not None
+    assert set(enum) == APPROVED_STORE_OPENING_SOURCES
+
+
+def test_store_opening_required_fields_are_exactly_the_engine_hard_fails() -> None:
+    """Every contract-required field is one the engine refuses to do without."""
+    contract = _store_opening_contract()
+    record = _store_opening_fixture("valid")["records"][0]
+    required = set(contract.required_fields())
+
+    assert required == STORE_OPENING_REQUIRED_FIELDS
+    for name in sorted(required):
+        with pytest.raises(UnauthoritativeStoreOpeningError):
+            validate_store_opening_record({k: v for k, v in record.items() if k != name})
+    for name in sorted({f.name for f in contract.fields} - required):
+        # Optional in the contract because the engine supplies a default or
+        # ignores the field; dropping it must not fail the engine.
+        validate_store_opening_record({k: v for k, v in record.items() if k != name})
+
+
+def test_store_opening_valid_fixtures_are_accepted_by_the_engine() -> None:
+    for record in _store_opening_fixture("valid")["records"]:
+        authority = validate_store_opening_record(record)
+
+        assert authority.opened_on.isoformat() == record["opened_on"]
+        assert authority.created_at_ignored is True
+        # opened_on is an independent business date, never a restatement of the
+        # record-keeping timestamp the same payload carries.
+        assert not record.get("created_at", "").startswith(record["opened_on"])
+
+
+def test_store_opening_invalid_fixtures_are_rejected_by_the_engine_too() -> None:
+    for case in _store_opening_fixture("invalid")["cases"]:
+        with pytest.raises(UnauthoritativeStoreOpeningError):
+            validate_store_opening_record(case["record"])
+
+
+def test_store_opening_contract_pins_the_canonical_field_spelling() -> None:
+    """The engine answers to legacy aliases; the landing contract does not.
+
+    ``validate_store_opening_record`` accepts ``opening_date`` for ``opened_on``
+    and ``source_store_id`` for ``store_id``. The contract declares only the
+    spelling that ``intake.store_opening_authority_lineage`` persists, so an
+    alias-only payload is quarantined at landing rather than admitted under a
+    second name. The narrowing is fail-closed: it can reject, never fabricate.
+    """
+    record = dict(_store_opening_fixture("valid")["records"][1])
+    record["opening_date"] = record.pop("opened_on")
+    record["source_store_id"] = record.pop("store_id")
+
+    assert validate_store_opening_record(record).opened_on == date(2024, 11, 2)
+
+    result = validate_record(_store_opening_contract(), record)
+    assert result.quarantine_reasons() == ("missing_required_field",)

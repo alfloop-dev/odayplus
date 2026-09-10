@@ -1,0 +1,19 @@
+{
+  "command": "gcloud --quiet projects describe odayplus-prod-20260826 --format=json",
+  "argv": [
+    "gcloud",
+    "--quiet",
+    "projects",
+    "describe",
+    "odayplus-prod-20260826",
+    "--format=json"
+  ],
+  "exit_code": 1,
+  "timestamp_utc": "2026-09-08T11:46:13Z",
+  "executor_account": "oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com",
+  "target": "odayplus-prod-20260826",
+  "readback_masked": false,
+  "stdout": "",
+  "stderr": "ERROR: (gcloud.projects.describe) [oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com] does not have permission to access projects instance [odayplus-prod-20260826] (or it may not exist): Cloud Resource Manager API has not been used in project 323781672261 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/cloudresourcemanager.googleapis.com/overview?project=323781672261 then retry. If you enabled this API recently, wait a few minutes for the action to propagate to our systems and retry. This command is authenticated as oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com which is the active account specified by the [core/account] property.\nCloud Resource Manager API has not been used in project 323781672261 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/cloudresourcemanager.googleapis.com/overview?project=323781672261 then retry. If you enabled this API recently, wait a few minutes for the action to propagate to our systems and retry.\nGoogle developers console API activation\nhttps://console.developers.google.com/apis/api/cloudresourcemanager.googleapis.com/overview?project=323781672261\n- '@type': type.googleapis.com/google.rpc.ErrorInfo\n  domain: googleapis.com\n  metadata:\n    activationUrl: https://console.developers.google.com/apis/api/cloudresourcemanager.googleapis.com/overview?project=323781672261\n    consumer: projects/323781672261\n    containerInfo: '323781672261'\n    service: cloudresourcemanager.googleapis.com\n    serviceTitle: Cloud Resource Manager API\n  reason: SERVICE_DISABLED",
+  "finding": "Command failed (exit 1): ERROR: (gcloud.projects.describe) [oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com] does not have permi"
+}
