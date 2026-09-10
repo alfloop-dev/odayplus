@@ -9674,21 +9674,22 @@ def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> No
         and item.get("context") == "task-review-gate" and item.get("repo_slug")
         and re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", str(item.get("sha") or ""))
     }
+    confirmed = task.get("review_gate_target")
+    confirmed_valid = (
+        isinstance(confirmed, dict) and confirmed.get("repo_slug")
+        and confirmed.get("context") == "task-review-gate"
+        and re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", str(confirmed.get("sha") or ""))
+    )
+    if confirmed_valid:
+        targets[status_check_target(confirmed)] = confirmed
+
     if payload is None:
         last = str(task.get("review_gate_sha") or "").strip()
-        confirmed = task.get("review_gate_target")
-        confirmed_valid = (
-            isinstance(confirmed, dict) and confirmed.get("repo_slug")
-            and confirmed.get("context") == "task-review-gate"
-            and re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", str(confirmed.get("sha") or ""))
-        )
         if not (targets or last or confirmed_valid or task.get("review_submission")
                 or state_status in {"review", "review_approved", "done"}):
             # Unpublished assignments have no grant to revoke and should not
             # become permanent remote probes on every sync.
             return
-        if confirmed_valid:
-            targets[status_check_target(confirmed)] = confirmed
         if re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", last) and (
             not confirmed_valid or last != confirmed.get("sha")
         ):
