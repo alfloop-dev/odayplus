@@ -9516,8 +9516,10 @@ def enqueue_status_check_outbox(
     )
 
 
-def reconcile_status_check_outbox(state: dict[str, Any]) -> tuple[int, int]:
-    """Retry exact failed status payloads and remove only confirmed deliveries."""
+def reconcile_status_check_outbox(
+    state: dict[str, Any], *, refresh_review_gates: bool = True,
+) -> tuple[int, int]:
+    """Retry failed payloads; a positive review gate needs fresh authority."""
     delivered = 0
     retained = 0
     for task in state.get("tasks", []):
@@ -9537,8 +9539,28 @@ def reconcile_status_check_outbox(state: dict[str, Any]) -> tuple[int, int]:
                 remaining.append(item)
                 retained += 1
                 continue
+            if payload["context"] == "task-review-gate" and payload["state"] == "success":
+                # A formerly valid success is not authority after a reopen or
+                # branch change. Only sync may perform these queued HEAD reads;
+                # unrelated notes/assignments must stay free of remote probes.
+                if not refresh_review_gates:
+                    remaining.append(item)
+                    retained += 1
+                    continue
+                task["review_gate_refresh_pending"] = True
+                current = task_review_status_payload(task, str(task.get("status") or ""))
+                if current is None:
+                    item["last_error"] = "Review gate HEAD unavailable; positive retry deferred"
+                    remaining.append(item)
+                    retained += 1
+                    continue
+                payload = current
             ok, error = post_task_review_status_payload(payload)
             if ok:
+                if payload["context"] == "task-review-gate":
+                    # The canonical state may have changed since this exact
+                    # payload was queued. Sync must refresh even the same SHA.
+                    task["review_gate_refresh_pending"] = True
                 delivered += 1
                 task.setdefault("status_check_delivery_history", []).append(
                     {
@@ -9584,6 +9606,11 @@ def review_gate_head_drifted(task: dict[str, Any]) -> bool:
     if not task_id:
         return False
 
+    if task.get("review_gate_refresh_pending"):
+        # A failed HEAD lookup is a durable delivery intent, even when origin
+        # recovers without moving the branch (or no gate was recorded yet).
+        return True
+
     last = str(task.get("review_gate_sha") or "").strip()
     if not last:
         # Never emitted, or emitted before this field existed. A status transition
@@ -9598,7 +9625,30 @@ def review_gate_head_drifted(task: dict[str, Any]) -> bool:
 def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> None:
     payload = task_review_status_payload(task, state_status)
     if payload is None:
+        # Persist the missing emission before attempting a fail-closed
+        # revocation. A remembered SHA is only a revocation target, never
+        # evidence that the current branch is approved.
+        last = str(task.get("review_gate_sha") or "").strip()
+        if not (last or task.get("review_submission") or state_status in {"review", "review_approved", "done"}):
+            # A new unpublished assignment has no review grant to revoke; its
+            # first submission will emit. Do not make every human/todo record
+            # a permanent remote probe on sync.
+            return
+        task["review_gate_refresh_pending"] = True
+        if not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", last):
+            return
+        revoked = {
+            "repo_slug": task_repository_slug_safe(task),
+            "sha": last,
+            "state": "pending" if state_status in {"review", "review_approved", "done"} else "failure",
+            "context": "task-review-gate",
+            "description": "HEAD unavailable; review gate revoked pending canonical refresh",
+        }
+        ok, error = post_task_review_status_payload(revoked)
+        if not ok:
+            enqueue_status_check_outbox(task, revoked, error)
         return
+    task["review_gate_refresh_pending"] = True
     ok, error = post_task_review_status_payload(payload)
     if ok:
         # Remember which commit carries the gate. A GitHub status belongs to one
@@ -9606,6 +9656,22 @@ def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> No
         # required check reads as absent rather than failing. Recording the SHA is
         # what lets the next sync notice the drift and re-post.
         task["review_gate_sha"] = payload.get("sha") or task.get("review_gate_sha")
+        task.pop("review_gate_refresh_pending", None)
+        # A confirmed current emission supersedes older failed payloads for
+        # this same gate. Do not replay an old revocation after a new approval.
+        pending = task.get("status_check_outbox")
+        if isinstance(pending, list):
+            remaining = [
+                item for item in pending
+                if not isinstance(item, dict) or any(
+                    str(item.get(key) or "") != str(payload.get(key) or "")
+                    for key in ("repo_slug", "sha", "context")
+                )
+            ]
+            if remaining:
+                task["status_check_outbox"] = remaining
+            else:
+                task.pop("status_check_outbox", None)
         print(
             f"Successfully emitted status check '{payload['context']}'="
             f"{payload['state']} to GitHub API.",
@@ -9749,7 +9815,7 @@ def main(argv: list[str]) -> int:
             # the command makes, so it is the state the receipt below has to
             # describe.  Only the emission is allowed to degrade to a warning.
             try:
-                reconcile_status_check_outbox(state)
+                reconcile_status_check_outbox(state, refresh_review_gates=command == "sync")
                 emit_status_checks_for_changed_tasks(state_before, state, command, args)
             except Exception as exc:
                 print(f"Warning: Failed to emit status checks: {exc}", file=sys.stderr)
