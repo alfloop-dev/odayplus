@@ -83,6 +83,12 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
       - name: Install dependencies
         run: uv sync
 
@@ -125,20 +131,20 @@ jobs:
       - name: Check governed vocabularies for drift and new forks
         run: uv run python delivery_toolchain/governance/generate_vocabularies.py --check
 
-      - name: Lint orchestrator code
-        run: uv run ruff check .orchestrator delivery_toolchain scripts
+      - name: Lint orchestrator and infrastructure code
+        run: uv run ruff check .orchestrator delivery_toolchain scripts infra
 
       - name: Check config wiring
         run: |
           uv run python delivery_toolchain/governance/check_orchestrator_config.py
           uv run python delivery_toolchain/governance/check_config_wiring.py
 
-      # tests/tooling covers the delivery scripts themselves. It lives under
-      # tests/ but must run here: the `product` job is skipped for
-      # development_tooling scope, so a tooling-only change that breaks these
-      # scripts would otherwise land on dev with the covering tests never run.
-      - name: Test orchestrator code
-        run: uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling
+      # tests/tooling covers the delivery scripts themselves and infra covers
+      # ephemeral staging Terraform/harness tests. They must run here: the `product`
+      # job is skipped for development_tooling scope, so a tooling/infra-only change
+      # would otherwise land on dev with these tests never run.
+      - name: Test orchestrator and infrastructure code
+        run: uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling infra
 
   product:
     needs: change-scope
