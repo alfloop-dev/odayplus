@@ -2376,6 +2376,23 @@ def clear_ai_status_caches() -> None:
 _UNUSABLE_BRANCH_CHARS = re.compile(r"[\s~^:?*\[\\]")
 
 
+def task_explicit_branch(
+    task: dict[str, Any] | None = None,
+    branch: str | None = None,
+) -> str | None:
+    """The branch explicitly recorded on the task, or None if absent/invalid.
+
+    Reuses the validity rules from ``task_branch_name`` (rejecting whitespace,
+    git ref metacharacters, and empty strings) without falling back to the
+    derived ``task/<id>`` default name.
+    """
+    candidate = branch if branch is not None else (task or {}).get("branch")
+    recorded = str(candidate or "").strip()
+    if recorded and not _UNUSABLE_BRANCH_CHARS.search(recorded) and ".." not in recorded:
+        return recorded
+    return None
+
+
 def task_branch_name(task: dict[str, Any] | None, task_id: str | None = None) -> str:
     """The task's branch as recorded, falling back to the derived name.
 
@@ -2384,9 +2401,9 @@ def task_branch_name(task: dict[str, Any] | None, task_id: str | None = None) ->
     convention. Looking a task up by an invented ref finds nothing, and the
     caller reads that as missing work rather than as a wrong question.
     """
-    recorded = str((task or {}).get("branch") or "").strip()
-    if recorded and not _UNUSABLE_BRANCH_CHARS.search(recorded) and ".." not in recorded:
-        return recorded
+    explicit = task_explicit_branch(task)
+    if explicit:
+        return explicit
     resolved_id = str(task_id or (task or {}).get("id") or "").strip()
     return f"task/{resolved_id}"
 
@@ -2772,6 +2789,7 @@ def resolve_task_delivery_checkout(
     repository_root: Path,
     task_id: str,
     approved_head: str | None = None,
+    recorded_branch: str | None = None,
 ) -> dict[str, Any]:
     """Resolve the checkout owned by ``task_id``, or report that none survives.
 
@@ -2799,7 +2817,12 @@ def resolve_task_delivery_checkout(
     so it stays ambiguous and still fails closed.
     """
 
-    branch_names = [f"task/{task_id}", f"task-{task_id}"]
+    explicit_branch = task_explicit_branch(branch=recorded_branch)
+    branch_names = (
+        [explicit_branch]
+        if explicit_branch
+        else [f"task/{task_id}", f"task-{task_id}"]
+    )
     approved_head = str(approved_head or "").strip()
     current_branch = run_git_command(
         ["rev-parse", "--abbrev-ref", "HEAD"],
@@ -2898,12 +2921,25 @@ def is_stale_task_checkout(
     )
 
 
-def task_delivery_checkout(repository_root: Path, task_id: str) -> tuple[Path, str]:
+def task_delivery_checkout(
+    repository_root: Path,
+    task_id: str,
+    recorded_branch: str | None = None,
+) -> tuple[Path, str]:
     """Resolve the one checkout owned by ``task_id`` instead of central writer HEAD."""
 
-    resolved = resolve_task_delivery_checkout(repository_root, task_id)
+    resolved = resolve_task_delivery_checkout(
+        repository_root,
+        task_id,
+        recorded_branch=recorded_branch,
+    )
     if not resolved["present"]:
-        branch_names = [f"task/{task_id}", f"task-{task_id}"]
+        explicit_branch = task_explicit_branch(branch=recorded_branch)
+        branch_names = (
+            [explicit_branch]
+            if explicit_branch
+            else [f"task/{task_id}", f"task-{task_id}"]
+        )
         raise SystemExit(
             f"Cannot finalize task {task_id}: expected exactly one task-owned delivery "
             f"checkout for {', '.join(branch_names)}, found 0."
@@ -3325,8 +3361,12 @@ def collect_done_delivery_metadata(
             repository_id = "pantheon"
             repository_root = pantheon_root
     configured_repository_root = repository_root.resolve(strict=False)
+    recorded_branch = task_explicit_branch(task)
     resolved_checkout = resolve_task_delivery_checkout(
-        configured_repository_root, task_id, approved_head=approved_head
+        configured_repository_root,
+        task_id,
+        approved_head=approved_head,
+        recorded_branch=recorded_branch,
     )
     repository_root = resolved_checkout["checkout"]
     branch = resolved_checkout["branch"]
@@ -9189,19 +9229,19 @@ def resolve_task_sha(
                 return cached_sha
 
     repo_root = ROOT
-    recorded_branch = ""
+    recorded_branch: str | None = None
     try:
         config = status_runtime_config()
         state = load_state()
         task = get_task(state, task_id)
         if task:
-            recorded_branch = task_branch_name(task, task_id)
+            recorded_branch = task_explicit_branch(task)
             binding = resolve_task_repository(config, task)
             if binding.resolved and binding.root:
                 repo_root = binding.root
     except Exception:
         repo_root = ROOT
-        recorded_branch = ""
+        recorded_branch = None
 
     # The record's own branch leads: a task reimported from an existing PR does
     # not follow either naming convention, and asking origin only about the
