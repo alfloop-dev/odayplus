@@ -2,7 +2,7 @@
   "task_id": "ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003",
   "schema_version": 4,
   "generated_at_utc": "2026-09-08T11:46:07Z",
-  "last_corrected_at_utc": "2026-09-08T13:15:36Z",
+  "last_corrected_at_utc": "2026-09-10T10:04:30.512959Z",
   "generated_at_note": "generated_at_utc anchors the underlying preflight collection run; last_corrected_at_utc anchors the most recent review correction. See review_correction_log.",
   "executor_worker": "Claude",
   "source_preflight": "docs/evidence/runtime/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003/preflight-results.json",
@@ -76,6 +76,18 @@
       "correction": "The conditional from commit c8b7ba6a is restored and strengthened: ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001 must first resolve the approved existing foundation resources, IAM bindings and retention policies, preserving Terraform identity/import/migration, then bind two distinct bucket references; creation is permitted only where that task confirms none exists and holds the authority. The authority_note now states that bucket existence is unknown from this evidence.",
       "scope_extension": "The same unset-variable-implies-absent inference appeared in the six staging foundation variable rows (ODP_STAGING_VPC_NETWORK, ODP_STAGING_VPC_SUBNETWORK, ODP_STAGING_KMS_KEY_ID, ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT, ODP_STAGING_TERRAFORM_STATE_BUCKET, ODP_STAGING_RECOVERY_BUNDLE_BUCKET), each of which read 'Provision the staging foundation and bind X'. All six now require resolving the approved existing resource first, per the reviewer's request to check related foundation remediation wording. The two bucket skip findings in preflight-results.json were aligned to the same boundary.",
       "retained_unchanged": "The FAIL observation for CHK-STAGING-BUCKET-SEPARATION, its critical severity, its fail-closed reading of the deploy-dev.yml:1207-1212 and :1477-1481 guards, and the two unset-variable findings are all retained. This preflight performs no remediation."
+    },
+    {
+      "correction_id": "CORR-DEPLOY-SHELL-INPUT-CLASSIFICATION",
+      "raised_by": "Codex",
+      "raised_at_utc": "2026-09-08T13:52:08Z",
+      "review_head": "51c9a851b69616e12826d33601ec4c5ceadd570e",
+      "corrected_by": "Codex",
+      "corrected_at_utc": "2026-09-10T10:04:30.512959Z",
+      "finding": "Production endpoint URLs and the dev/production tenant fallback group were incorrectly classified informational; derived staging/production checks used the run anchor rather than the enumeration receipt timestamp.",
+      "correction": "Model, variable inventory and six checks now reflect production required HTTPS URLs and the required tenant alternative group with scheduled-ingestion precedence. Derived check timestamps use their unchanged receipt. Staging Terraform tenant authority and non-applicable production URLs remain unchanged.",
+      "remediation_impact": "No missing-input or resource finding was added: the recorded URLs and tenant group already satisfy these guards. The 25 existing remediation rows, routing, severity and authority boundaries are unchanged.",
+      "verification": "Static comparison to deploy_cloud_run_waji.sh guards, existing JSON decoding/counts and raw receipt SHA-256 equality; no tests/build/lint/scan or new resource probes."
     }
   ],
   "follow_up_readback_validation": {
@@ -560,7 +572,7 @@
       "github_environment": "staging",
       "affected_input": "ODP_STAGING_TERRAFORM_STATE_BUCKET + ODP_STAGING_RECOVERY_BUNDLE_BUCKET",
       "observation": "FAIL: both bucket variables are unset in the staging environment. The separation guard at .github/workflows/deploy-dev.yml:1207-1212 (and again at :1477-1481 for closeout) refuses when they are equal, and the `: \"${VAR:?}\"` guards immediately above refuse when either is empty, so the staging path cannot start. Separation cannot be satisfied by two empty values.",
-      "remediation_action": "Under ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001, first resolve the approved existing staging foundation resources, their IAM bindings and retention policies, preserving Terraform identity, import and migration for anything already under state; then bind ODP_STAGING_TERRAFORM_STATE_BUCKET and ODP_STAGING_RECOVERY_BUNDLE_BUCKET to two distinct bucket references. Do NOT create new buckets without that foundation task\u0027s authority: this preflight observed only that both variables are unset, and made no bucket describe or list call, so it is not evidence that no suitable bucket exists. Create a bucket only where the owning task confirms none exists and holds the authority to create it. Whichever references are bound must be distinct -- the recovery bundle is what remains readable when the Terraform state is lost.",
+      "remediation_action": "Under ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001, first resolve the approved existing staging foundation resources, their IAM bindings and retention policies, preserving Terraform identity, import and migration for anything already under state; then bind ODP_STAGING_TERRAFORM_STATE_BUCKET and ODP_STAGING_RECOVERY_BUNDLE_BUCKET to two distinct bucket references. Do NOT create new buckets without that foundation task's authority: this preflight observed only that both variables are unset, and made no bucket describe or list call, so it is not evidence that no suitable bucket exists. Create a bucket only where the owning task confirms none exists and holds the authority to create it. Whichever references are bound must be distinct -- the recovery bundle is what remains readable when the Terraform state is lost.",
       "responsible_task_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
       "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_TERRAFORM_STATE_BUCKET\")]' && gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_RECOVERY_BUNDLE_BUCKET\")]'",
       "receipt_ref": "receipts/github-receipts/receipt-gh-env-vars-staging.json",
