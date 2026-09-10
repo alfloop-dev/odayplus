@@ -6823,6 +6823,8 @@ def command_retarget_branch(state: dict[str, Any], args: list[str]) -> None:
             "Push it first; retargeting onto an unpublished name only moves the problem."
         )
 
+    # Capture legacy SHA-only grants before clearing approval during retarget.
+    retain_review_gate_targets(task)
     timestamp = iso_now()
     task["branch"] = branch
     task["last_update"] = timestamp
@@ -9522,13 +9524,50 @@ def status_check_target(payload: dict[str, Any]) -> tuple[str, str, str]:
 
 
 
+def confirmed_review_gate_targets(task: dict[str, Any]) -> list[dict[str, Any]]:
+    confirmed = task.get("review_gate_target")
+    targets = []
+    if (isinstance(confirmed, dict) and confirmed.get("repo_slug")
+            and confirmed.get("context") == "task-review-gate"
+            and re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", str(confirmed.get("sha") or ""))):
+        targets.append(confirmed)
+    last = str(task.get("review_gate_sha") or "").strip()
+    if re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", last) and (
+        not targets or last != targets[0]["sha"]
+    ):
+        targets.append({"repo_slug": task_repository_slug_safe(task), "sha": last,
+                        "context": "task-review-gate"})
+    return targets
+
+
+def retain_review_gate_targets(task: dict[str, Any], replacement: dict[str, Any] | None = None) -> None:
+    # A confirmed grant must survive changing branches, repositories or the
+    # acknowledged target. Keep it until revoked or transferred to the outbox.
+    targets = {status_check_target(p): p for p in task.get("review_gate_revocations", [])}
+    for target in confirmed_review_gate_targets(task):
+        if replacement is None or status_check_target(target) != status_check_target(replacement):
+            targets[status_check_target(target)] = target
+    if targets:
+        task["review_gate_revocations"] = list(targets.values())
+
+
 def remember_confirmed_review_gate(task: dict[str, Any], payload: dict[str, Any]) -> None:
-    # Store the target in the same canonical save that dequeues an acknowledged
-    # positive retry. A later HEAD timeout must not lose the only known grant.
+    retain_review_gate_targets(task, payload)
     task["review_gate_sha"] = str(payload["sha"])
     task["review_gate_target"] = dict(zip(
         ("repo_slug", "sha", "context"), status_check_target(payload), strict=True,
     ))
+
+
+def retire_review_gate_targets(task: dict[str, Any], handled: set[tuple[str, str, str]]) -> None:
+    # Each handled target has either an ACK or its exact payload in the outbox.
+    remaining = [p for p in task.get("review_gate_revocations", [])
+                 if status_check_target(p) not in handled]
+    if remaining:
+        task["review_gate_revocations"] = remaining
+    else:
+        task.pop("review_gate_revocations", None)
+
 
 def discard_superseded_status_payloads(task: dict[str, Any], payload: dict[str, Any]) -> None:
     pending = task.get("status_check_outbox")
@@ -9674,29 +9713,13 @@ def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> No
         and item.get("context") == "task-review-gate" and item.get("repo_slug")
         and re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", str(item.get("sha") or ""))
     }
-    if payload is None:
-        last = str(task.get("review_gate_sha") or "").strip()
-        confirmed = task.get("review_gate_target")
-        confirmed_valid = (
-            isinstance(confirmed, dict) and confirmed.get("repo_slug")
-            and confirmed.get("context") == "task-review-gate"
-            and re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", str(confirmed.get("sha") or ""))
-        )
-        if not (targets or last or confirmed_valid or task.get("review_submission")
-                or state_status in {"review", "review_approved", "done"}):
-            # Unpublished assignments have no grant to revoke and should not
-            # become permanent remote probes on every sync.
-            return
-        if confirmed_valid:
-            targets[status_check_target(confirmed)] = confirmed
-        if re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", last) and (
-            not confirmed_valid or last != confirmed.get("sha")
-        ):
-            # Legacy states have only a SHA. New confirmations retain the
-            # original repository too, so later retargets cannot misdirect it.
-            target = {"repo_slug": task_repository_slug_safe(task), "sha": last,
-                      "context": "task-review-gate"}
-            targets[status_check_target(target)] = target
+    for target in [*task.get("review_gate_revocations", []), *confirmed_review_gate_targets(task)]:
+        targets[status_check_target(target)] = target
+    if payload is None and not (
+        targets or task.get("review_submission") or state_status in {"review", "review_approved", "done"}
+    ):
+        # Unpublished assignments have no grant to revoke.
+        return
     task["review_gate_refresh_pending"] = True
     for key, target in targets.items():
         if payload is not None and key == status_check_target(payload):
@@ -9709,12 +9732,14 @@ def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> No
         if not ok:
             enqueue_status_check_outbox(task, revoked, error)
     if payload is None:
+        retire_review_gate_targets(task, set(targets))
         return
     ok, error = post_task_review_status_payload(payload)
     discard_superseded_status_payloads(task, payload)
     if ok:
         # Only a freshly resolved target may acquire a positive gate.
         remember_confirmed_review_gate(task, payload)
+        retire_review_gate_targets(task, set(targets) | {status_check_target(payload)})
         task.pop("review_gate_refresh_pending", None)
         print(
             f"Successfully emitted status check '{payload['context']}'="
@@ -9724,6 +9749,7 @@ def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> No
         return
     print(error, file=sys.stderr)
     enqueue_status_check_outbox(task, payload, error)
+    retire_review_gate_targets(task, set(targets) | {status_check_target(payload)})
     print(
         "Warning: Status check emission failed; exact payload recorded for reconciliation.",
         file=sys.stderr,

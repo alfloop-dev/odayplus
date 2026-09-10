@@ -4065,7 +4065,9 @@ class StatusCheckEmissionTests(unittest.TestCase):
             ai_status.emit_status_checks_for_changed_tasks(before, after, "sync", [])
         self.assertEqual(remote.call_count, 2)
         self.assertTrue(all(call.kwargs["timeout"] == ai_status.COMMAND_TIMEOUT_SECONDS for call in remote.call_args_list))
-        post.assert_called_once()
+        self.assertEqual([(call.args[0]["sha"], call.args[0]["state"])
+                          for call in post.call_args_list],
+                         [("b" * 40, "pending"), ("c" * 40, "pending")])
         self.assertEqual(post.call_args.args[0]["sha"], "c" * 40)
         self.assertEqual(post.call_args.args[0]["state"], "pending")
         self.assertEqual(after["tasks"][0]["review_gate_sha"], "a" * 40)
@@ -4218,7 +4220,8 @@ class StatusCheckEmissionTests(unittest.TestCase):
                         target = ("owner/repo", sha, "task-review-gate")
                         self.assertEqual(github[target], "success")
                         self.assertEqual(task.get("review_gate_sha"), previous)
-                        self.assertEqual(task["status_check_outbox"][0]["state"], "success")
+                        self.assertEqual([p["state"] for p in task["status_check_outbox"]
+                                          if p["sha"] == sha], ["success"])
                         state = json.loads(json.dumps(state))
                         before = json.loads(json.dumps(state))
                         task = state["tasks"][0]
@@ -4261,6 +4264,101 @@ class StatusCheckEmissionTests(unittest.TestCase):
                         self.assertNotIn("status_check_outbox", state["tasks"][0])
                         self.assertNotIn("review_gate_refresh_pending", state["tasks"][0])
                         self.assertNotIn("approved_head", state["tasks"][0])
+
+    def test_approved_retarget_revokes_previous_target_and_recovers_after_reload(self) -> None:
+        for legacy in (False, True):
+            for old_revocation_fails in (False, True):
+                with self.subTest(legacy=legacy, old_revocation_fails=old_revocation_fails):
+                    old_sha, new_sha = "b" * 40, "c" * 40
+                    task = {"id": "T-RETARGET-GRANT", "owner": "Claude", "reviewer": "Codex2",
+                            "status": "review_approved", "approved_head": old_sha,
+                            "branch": "task/old"}
+                    state = {"tasks": [task]}
+                    github = {}
+
+                    def accepted(payload, github=github):
+                        github[ai_status.status_check_target(payload)] = payload["state"]
+                        return True, ""
+
+                    def retarget_post(payload, accept=accepted, fails=old_revocation_fails):
+                        if payload["sha"] == "b" * 40 and fails:
+                            return False, "Old repository temporarily unavailable"
+                        return accept(payload)
+
+                    with mock.patch.object(ai_status, "task_repository_slug_safe", return_value="old/repo"):
+                        with mock.patch.object(ai_status, "resolve_task_sha", return_value=old_sha), \
+                                mock.patch.object(ai_status, "post_task_review_status_payload", side_effect=accepted):
+                            ai_status.emit_task_review_status_check(task, "review_approved")
+                        if legacy:
+                            task.pop("review_gate_target")
+                        before = json.loads(json.dumps(state))
+                        with (
+                            mock.patch.object(ai_status, "current_actor_validated", return_value="Claude"),
+                            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+                            mock.patch.object(ai_status, "task_repository_id", return_value="pantheon"),
+                            mock.patch.object(ai_status, "repository_local_path", return_value=ai_status.ROOT),
+                            mock.patch.object(ai_status, "run_git_command", return_value=new_sha + "\trefs/heads/task/new"),
+                            mock.patch.object(ai_status, "append_log"),
+                        ):
+                            ai_status.command_retarget_branch(state, [task["id"], "task/new", "published replacement"])
+                    self.assertEqual(task["status"], "review")
+                    self.assertNotIn("approved_head", task)
+                    with mock.patch.object(ai_status, "task_repository_slug_safe", return_value="new/repo"), \
+                            mock.patch.object(ai_status, "resolve_task_sha", return_value=new_sha), \
+                            mock.patch.object(ai_status, "post_task_review_status_payload", side_effect=retarget_post):
+                        ai_status.emit_status_checks_for_changed_tasks(before, state, "retarget_branch", [task["id"]])
+                    old_target = ("old/repo", old_sha, "task-review-gate")
+                    new_target = ("new/repo", new_sha, "task-review-gate")
+                    self.assertEqual(github[new_target], "pending")
+                    if old_revocation_fails:
+                        self.assertEqual(github[old_target], "success")
+                        self.assertEqual(ai_status.status_check_target(task["status_check_outbox"][0]), old_target)
+                        self.assertEqual(task["status_check_outbox"][0]["state"], "pending")
+                    else:
+                        self.assertEqual(github[old_target], "pending")
+                    state = json.loads(json.dumps(state))
+                    with mock.patch.object(ai_status, "task_repository_slug_safe", return_value="new/repo"), \
+                            mock.patch.object(ai_status, "resolve_task_sha", return_value=None), \
+                            mock.patch.object(ai_status, "post_task_review_status_payload", side_effect=accepted):
+                        ai_status.reconcile_status_check_outbox(state)
+                        ai_status.emit_status_checks_for_changed_tasks(
+                            json.loads(json.dumps(state)), state, "re_review", [task["id"]])
+                    self.assertEqual(github[old_target], "pending")
+                    self.assertEqual(github[new_target], "pending")
+                    self.assertNotIn("status_check_outbox", state["tasks"][0])
+                    self.assertNotIn("review_gate_revocations", state["tasks"][0])
+
+    def test_positive_retry_preserves_superseded_confirmed_grant_before_refresh(self) -> None:
+        old_sha, new_sha = "b" * 40, "c" * 40
+        old = {"repo_slug": "old/repo", "sha": old_sha, "context": "task-review-gate"}
+        task = {"id": "T-RETRY-RETARGET", "status": "review_approved", "approved_head": new_sha,
+                "review_gate_sha": old_sha, "review_gate_target": old}
+        new = {"repo_slug": "new/repo", "sha": new_sha, "context": "task-review-gate",
+               "state": "success", "description": "Previously approved; ACK lost"}
+        ai_status.enqueue_status_check_outbox(task, new, "Response lost")
+        state = {"tasks": [task]}
+        github = {ai_status.status_check_target(old): "success"}
+
+        def accepted(payload):
+            github[ai_status.status_check_target(payload)] = payload["state"]
+            return True, ""
+
+        with mock.patch.object(ai_status, "resolve_task_sha", return_value=new_sha), \
+                mock.patch.object(ai_status, "task_repository_slug_safe", return_value="new/repo"), \
+                mock.patch.object(ai_status, "post_task_review_status_payload", side_effect=accepted):
+            self.assertEqual(ai_status.reconcile_status_check_outbox(state), (1, 0))
+        # The ACK save is independently durable before sync emits anything else.
+        state = json.loads(json.dumps(state))
+        self.assertNotIn("status_check_outbox", state["tasks"][0])
+        self.assertEqual(state["tasks"][0]["review_gate_target"]["sha"], new_sha)
+        self.assertEqual(state["tasks"][0]["review_gate_revocations"], [old])
+        with mock.patch.object(ai_status, "resolve_task_sha", return_value=None), \
+                mock.patch.object(ai_status, "task_repository_slug_safe", return_value="new/repo"), \
+                mock.patch.object(ai_status, "post_task_review_status_payload", side_effect=accepted):
+            ai_status.emit_status_checks_for_changed_tasks(json.loads(json.dumps(state)), state, "sync", [])
+        self.assertEqual(github[ai_status.status_check_target(old)], "pending")
+        self.assertEqual(github[ai_status.status_check_target(new)], "pending")
+        self.assertNotIn("review_gate_revocations", state["tasks"][0])
 
     def test_acknowledged_positive_retry_retains_target_across_cache_expiry(self) -> None:
         for previous in ("a" * 40, None):
@@ -4321,7 +4419,7 @@ class StatusCheckEmissionTests(unittest.TestCase):
                             ]) as remote,
                             mock.patch.object(ai_status, "post_task_review_status_payload", side_effect=delayed_ack),
                         ):
-                            self.assertEqual(ai_status.reconcile_status_check_outbox(state), (1, 0))
+                            self.assertEqual(ai_status.reconcile_status_check_outbox(state), (2 if previous else 1, 0))
                             ai_status.emit_status_checks_for_changed_tasks(before_sync, state, "sync", [])
                         self.assertEqual(remote.call_count, 2)
                         self.assertEqual(task["review_gate_sha"], sha)
@@ -4699,7 +4797,9 @@ class StatusCheckEmissionTests(unittest.TestCase):
                 ):
                     ai_status.emit_status_checks_for_changed_tasks(before, after, command, ["odp-001"])
                 resolve.assert_called_once_with("ODP-001")
-                post.assert_called_once()
+                self.assertEqual([(call.args[0]["sha"], call.args[0]["state"])
+                                  for call in post.call_args_list],
+                                 [("a" * 40, "pending"), ("c" * 40, "pending")])
                 self.assertEqual(post.call_args.args[0]["sha"], "c" * 40)
                 self.assertEqual(post.call_args.args[0]["state"], "pending")
                 self.assertEqual(after["tasks"][0]["review_gate_sha"], "c" * 40)
@@ -4721,7 +4821,9 @@ class StatusCheckEmissionTests(unittest.TestCase):
         ):
             ai_status.emit_status_checks_for_changed_tasks(before, after, "note", ["ODP-001"])
         resolve.assert_called_once_with("ODP-002")
-        post.assert_called_once()
+        self.assertEqual([(call.args[0]["sha"], call.args[0]["state"])
+                          for call in post.call_args_list],
+                         [("b" * 40, "failure"), ("c" * 40, "failure")])
         self.assertEqual(post.call_args.args[0]["state"], "failure")
 
     def test_retargeted_branch_emits_new_head_gate_without_unrelated_probes(self) -> None:
@@ -4742,7 +4844,9 @@ class StatusCheckEmissionTests(unittest.TestCase):
                 ):
                     ai_status.emit_status_checks_for_changed_tasks(before, after, "retarget_branch", ["ODP-001", "task/new", "repair"])
                 resolve.assert_called_once_with("ODP-001")
-                post.assert_called_once()
+                self.assertEqual([(call.args[0]["sha"], call.args[0]["state"])
+                                  for call in post.call_args_list],
+                                 [("a" * 40, expected_gate), ("c" * 40, expected_gate)])
                 self.assertEqual(post.call_args.args[0]["sha"], "c" * 40)
                 self.assertEqual(post.call_args.args[0]["state"], expected_gate)
                 self.assertEqual(after["tasks"][0]["review_gate_sha"], "c" * 40)
@@ -4784,7 +4888,9 @@ class StatusCheckEmissionTests(unittest.TestCase):
         ):
             ai_status.emit_status_checks_for_changed_tasks(before, after, "sync", [])
         self.assertEqual({call.args[0] for call in resolve.call_args_list}, {"ODP-001", "ODP-002"})
-        post.assert_called_once()
+        self.assertEqual([(call.args[0]["sha"], call.args[0]["state"])
+                          for call in post.call_args_list],
+                         [("a" * 40, "pending"), ("c" * 40, "pending")])
         self.assertEqual(post.call_args.args[0]["sha"], "c" * 40)
         self.assertEqual(post.call_args.args[0]["state"], "pending")
         self.assertEqual(after["tasks"][0]["review_gate_sha"], "c" * 40)
