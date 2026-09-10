@@ -223,6 +223,7 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "branch_name_is_usable",
 "canonical_task_record",
 "resolve_worker_base",
+"resolve_frozen_evidence_base",
 "worker_task_branch",
 "worker_task_repository_binding",
 "worker_task_repo_root",
