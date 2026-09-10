@@ -1,0 +1,264 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "ODP-DEV-CANDIDATE-CODE-RECEIPT-001",
+  "candidate_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+  "gate_id": "gate-0",
+  "gate_name": "Code Gate",
+  "overall_gate_status": "blocked",
+  "release_decision": "no-go",
+  "criteria": [
+    {
+      "criterion_id": "GATE0-CRIT-1",
+      "index": 1,
+      "title": "Lint and Format Checks",
+      "requirement": "lint and format checks pass on the release candidate commit",
+      "status": "blocked",
+      "verdict_reason": "Ruff Python lint and Next.js frontend lint passed (EXIT=0), but delivery_toolchain/governance/check_code_boundaries.py failed (EXIT=1) due to stale boundary inventory on candidate C.",
+      "evidence": [
+        {
+          "kind": "offline_command",
+          "argv": ["uv", "run", "ruff", "check", ".orchestrator", "delivery_toolchain", "scripts", "tests", "modules", "apps", "shared", "models", "solver", "pipelines", "infra"],
+          "exit_code": 0,
+          "result": "PASSED",
+          "summary": "All checks passed across all Python directories."
+        },
+        {
+          "kind": "offline_command",
+          "argv": ["uv", "run", "python", "delivery_toolchain/governance/check_code_boundaries.py"],
+          "exit_code": 1,
+          "result": "FAILED",
+          "summary": "Code boundary checks failed: boundary inventory is stale (requires --write-inventory update)."
+        },
+        {
+          "kind": "offline_command",
+          "argv": ["npm", "run", "lint", "--workspace=@oday-plus/web"],
+          "exit_code": 0,
+          "result": "PASSED",
+          "summary": "No ESLint warnings or errors in apps/web."
+        }
+      ],
+      "verified_items": [
+        "Python ruff static lint clean across full repository tree",
+        "Frontend apps/web ESLint rules clean"
+      ],
+      "gaps_and_uncovered": [
+        "Boundary inventory at candidate C is stale against code tree, causing make boundary-check / check_code_boundaries.py failure (exit code 1)."
+      ],
+      "follow_up_owner": "Platform / Tooling Owner"
+    },
+    {
+      "criterion_id": "GATE0-CRIT-2",
+      "index": 2,
+      "title": "Static and Type Checks",
+      "requirement": "static/type checks pass where configured",
+      "status": "passed",
+      "verdict_reason": "TypeScript compiler validation (tsc --noEmit) and all repository governance static verifiers passed on candidate C.",
+      "evidence": [
+        {
+          "kind": "offline_command",
+          "argv": ["npm", "run", "typecheck", "--workspace=@oday-plus/web"],
+          "exit_code": 0,
+          "result": "PASSED",
+          "summary": "tsc --noEmit exited 0 with 0 type errors in web workspace."
+        },
+        {
+          "kind": "offline_command",
+          "argv": ["uv", "run", "python", "delivery_toolchain/governance/check_measurement_defaults.py"],
+          "exit_code": 0,
+          "result": "PASSED",
+          "summary": "19 known score defaults verified, 19 valid exemptions recorded with owners."
+        },
+        {
+          "kind": "offline_command",
+          "argv": ["uv", "run", "python", "delivery_toolchain/governance/check_requirement_members.py"],
+          "exit_code": 0,
+          "result": "PASSED",
+          "summary": "9 set-valued requirements verified across 47 members (36 satisfied, 11 noted)."
+        },
+        {
+          "kind": "offline_command",
+          "argv": ["uv", "run", "python", "delivery_toolchain/governance/generate_vocabularies.py", "--check"],
+          "exit_code": 0,
+          "result": "PASSED",
+          "summary": "3 governed vocabularies clean, no unapproved drift or new forks."
+        },
+        {
+          "kind": "offline_command",
+          "argv": ["uv", "run", "python", "delivery_toolchain/governance/check_orchestrator_config.py"],
+          "exit_code": 0,
+          "result": "PASSED",
+          "summary": "3 config documents and merged runtime views validated."
+        },
+        {
+          "kind": "offline_command",
+          "argv": ["uv", "run", "python", "delivery_toolchain/governance/check_config_wiring.py"],
+          "exit_code": 0,
+          "result": "PASSED",
+          "summary": "All 190 config keys are read by production code."
+        }
+      ],
+      "verified_items": [
+        "Web TypeScript typecheck passed cleanly",
+        "Governance measurement default enforcement passed",
+        "Requirement member resolvability passed",
+        "Governed vocabulary drift check passed",
+        "Config validation and wiring checks passed"
+      ],
+      "gaps_and_uncovered": [],
+      "follow_up_owner": null
+    },
+    {
+      "criterion_id": "GATE0-CRIT-3",
+      "index": 3,
+      "title": "Unit Tests for Backend and Domain Logic",
+      "requirement": "unit tests pass for changed backend and domain logic",
+      "status": "passed_scoped",
+      "verdict_reason": "Focused unit and integration suites covering domains modified between review base 04e1572f and candidate 596b9c9a passed on candidate C (936 passed, 127 subtests passed, 0 failures). Full CI suite (make ci) was not run to preserve gate boundary.",
+      "evidence": [
+        {
+          "kind": "offline_command",
+          "argv": ["uv", "run", "pytest", "tests/models/test_heatzone_merge_split.py", "tests/models/test_native_drift.py", "tests/models/test_evidently_monitor_baseline.py", "tests/tooling/test_dependency_audit_boundary.py", "tests/tooling/test_generate_sbom_output_isolation.py", "scripts/test_ai_status.py", "tests/release/test_probe_release_target_absence.py", "tests/release/test_release_environment_precheck.py", "tests/release/test_release_manifest.py", "tests/release/test_release_manifest_cli.py"],
+          "exit_code": 0,
+          "result": "PASSED",
+          "summary": "791 passed, 17 warnings, 101 subtests passed in 331.87s."
+        },
+        {
+          "kind": "offline_command",
+          "argv": ["uv", "run", "pytest", "tests/unit/persistence/test_sql_decision_policy_repository.py", "tests/ops/test_heatzone_composition_migration.py", "scripts/orchestrator/test_archive_history_recovery.py"],
+          "exit_code": 0,
+          "result": "PASSED",
+          "summary": "104 passed, 26 subtests passed in 9.89s."
+        },
+        {
+          "kind": "offline_command",
+          "argv": ["uv", "run", "pytest", "tests/integration/test_heatzone_composition_api.py"],
+          "exit_code": 0,
+          "result": "PASSED",
+          "summary": "41 passed, 22 warnings in 222.30s."
+        }
+      ],
+      "verified_items": [
+        "HeatZone merge and split domain logic and composition API",
+        "Native statistical drift calculation engine and Evidently 0.7.21 golden baselines",
+        "Dependency audit boundary and SBOM isolation tooling",
+        "Orchestrator ai-status CLI, snapshot recovery, and archive history",
+        "SQL decision policy persistence repository",
+        "Release manifest generation and absence readback verification"
+      ],
+      "gaps_and_uncovered": [
+        "GitHub Actions CI on candidate commit 596b9c9a skipped the product and product-e2e test jobs.",
+        "Full non-domain regression suites and live environment suites (requires_live_env) are outside Gate 0 offline scope."
+      ],
+      "follow_up_owner": "Backend / QA Lead"
+    },
+    {
+      "criterion_id": "GATE0-CRIT-4",
+      "index": 4,
+      "title": "Component Tests for Frontend Surfaces",
+      "requirement": "component tests pass for changed frontend surfaces",
+      "status": "passed",
+      "verdict_reason": "Frontend component tests (vitest), Next.js workspace build, and bundle budget checks passed cleanly on candidate C.",
+      "evidence": [
+        {
+          "kind": "offline_command",
+          "argv": ["npm", "run", "test", "--workspace=@oday-plus/web"],
+          "exit_code": 0,
+          "result": "PASSED",
+          "summary": "57 test files passed, 525 tests passed in 67.64s."
+        },
+        {
+          "kind": "offline_command",
+          "argv": ["npm", "run", "build", "--workspace=@oday-plus/web"],
+          "exit_code": 0,
+          "result": "PASSED",
+          "summary": "Next.js production build succeeded, 4 static pages, 13 routes compiled."
+        },
+        {
+          "kind": "offline_command",
+          "argv": ["npm", "run", "bundle:budget", "--workspace=@oday-plus/web"],
+          "exit_code": 0,
+          "result": "PASSED",
+          "summary": "All 13 routes within bundle size budget (e.g. /operator at 299.8 kB vs 300.0 kB budget)."
+        }
+      ],
+      "verified_items": [
+        "Operator console and HeatZone merge/split panel component tests",
+        "Decision comments panel and network workspace UI tests",
+        "Next.js build compilation and static bundle emission",
+        "First Load JS bundle budget compliance"
+      ],
+      "gaps_and_uncovered": [],
+      "follow_up_owner": null
+    },
+    {
+      "criterion_id": "GATE0-CRIT-5",
+      "index": 5,
+      "title": "Immutable Build Traceability",
+      "requirement": "build artifacts are immutable and traceable to the release candidate SHA",
+      "status": "passed",
+      "verdict_reason": "Four component container images (api, web, worker, scheduler) and migration job are built, signed with Cosign (Rekor logged), verified with cosign verify, and bound to candidate SHA 596b9c9a in release manifest sha256:1b5348d9.",
+      "evidence": [
+        {
+          "kind": "ci_run_evidence",
+          "run_id": 34179207603,
+          "role": "Image producer run (built, pushed, signed, and attested four images)",
+          "timestamp_rekor": "2026-09-08T02:17:01Z - 02:19:42Z",
+          "rekor_log_indices": {
+            "api": "2754425715",
+            "worker": "2754426118",
+            "scheduler": "2754426482",
+            "web": "2754427686"
+          }
+        },
+        {
+          "kind": "ci_run_evidence",
+          "run_id": 34179791241,
+          "role": "Artifact publisher run (reused immutable digests, verified with cosign verify, published 6 artifacts)",
+          "conclusion": "success",
+          "workflow_head_sha": "8c570a56353abdcc8ba70fe0a3fdd9b963902391",
+          "release_sha_checkout": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12"
+        },
+        {
+          "kind": "manifest_validation",
+          "manifest_digest": "sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c",
+          "result": "PASSED",
+          "summary": "validate_manifest passed cleanly against expected_candidate_sha 596b9c9a."
+        }
+      ],
+      "verified_items": [
+        "Four immutable container images in Artifact Registry pinned by exact digest",
+        "Cosign signatures with Fulcio certificate claims and offline Rekor timestamp bundles",
+        "Release manifest digest self-consistency and candidate SHA binding",
+        "Six raw release artifacts byte-compared and verified"
+      ],
+      "gaps_and_uncovered": [],
+      "follow_up_owner": null
+    }
+  ],
+  "uncovered_gaps_and_blockers": [
+    {
+      "gap_id": "GAP-CODE-001",
+      "type": "code_defect",
+      "severity": "high",
+      "description": "Boundary inventory at candidate C is stale, failing delivery_toolchain/governance/check_code_boundaries.py (make boundary-check).",
+      "resolution_required": "Run check_code_boundaries.py --write-inventory in future dev commit to synchronize inventory with codebase.",
+      "owner": "Platform / Tooling"
+    },
+    {
+      "gap_id": "GAP-CODE-002",
+      "type": "ci_coverage_gap",
+      "severity": "medium",
+      "description": "GitHub Actions CI run on candidate commit 596b9c9a skipped the product and product-e2e workflows.",
+      "resolution_required": "Full end-to-end CI execution required for candidate admission; cannot substitute green CI on other commits.",
+      "owner": "CI / Infrastructure"
+    },
+    {
+      "gap_id": "GAP-CODE-003",
+      "type": "historical_dependency",
+      "severity": "medium",
+      "description": "ODP-PLAN-ENGINEERING-HARDENING-001 is listed as a blocker in RELEASE_GATE_REGISTRY.json. It is confirmed as historical pending reconciliation (歷史待核對) with no active canonical task in ai-status.json.",
+      "resolution_required": "Tracked as historical pending reconciliation; not claiming completion or recreating task.",
+      "owner": "Architecture / Governance"
+    }
+  ]
+}

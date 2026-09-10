@@ -1,0 +1,182 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "ODP-DEV-CANDIDATE-CODE-RECEIPT-001",
+  "receipt_generated_at": "2026-09-10T23:56:00Z",
+  "candidate": {
+    "sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+    "manifest_digest": "sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c",
+    "environment": "dev",
+    "stage": "candidate-built"
+  },
+  "baseline_evidence": {
+    "sha": "d084f51d4009b7b435416c8b83410a8b4fb4a267",
+    "task_id": "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002"
+  },
+  "evaluation_scope": {
+    "gate_id": "gate-0",
+    "gate_name": "Code Gate",
+    "description": "All code releases: formatting, lint, static/type checks, unit and component tests, and build artifacts traceable to the exact release commit SHA."
+  },
+  "overall_verdict": {
+    "gate_status": "blocked",
+    "release_admission_decision": "no-go",
+    "summary": "Gate 0 remains BLOCKED due to make boundary-check failure (exit code 1, stale inventory) and skipped CI product jobs on candidate commit 596b9c9a. Fail-closed NO-GO state is preserved."
+  },
+  "receipts": [
+    {
+      "receipt_id": "RCPT-CODE-001",
+      "category": "lint_and_format",
+      "command": "make lint",
+      "argv": ["uv", "run", "ruff", "check", ".orchestrator", "delivery_toolchain", "scripts", "tests", "modules", "apps", "shared", "models", "solver", "pipelines", "infra"],
+      "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "cwd": "<scratch>/c-scratch",
+      "executed_at": "2026-09-10T23:38:57Z",
+      "duration_seconds": 1.2,
+      "exit_code": 0,
+      "status": "passed",
+      "summary": "All checks passed across all Python directories."
+    },
+    {
+      "receipt_id": "RCPT-CODE-002",
+      "category": "boundary_check",
+      "command": "make boundary-check",
+      "argv": ["uv", "run", "python", "delivery_toolchain/governance/check_code_boundaries.py"],
+      "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "cwd": "<scratch>/c-scratch",
+      "executed_at": "2026-09-10T23:38:55Z",
+      "duration_seconds": 0.5,
+      "exit_code": 1,
+      "status": "failed",
+      "summary": "Code boundary checks failed: boundary inventory is stale: run delivery_toolchain/governance/check_code_boundaries.py --write-inventory"
+    },
+    {
+      "receipt_id": "RCPT-CODE-003",
+      "category": "frontend_lint",
+      "command": "npm run lint --workspace=@oday-plus/web",
+      "argv": ["npm", "run", "lint", "--workspace=@oday-plus/web"],
+      "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "cwd": "<scratch>/c-scratch",
+      "executed_at": "2026-09-10T23:40:51Z",
+      "duration_seconds": 7.8,
+      "exit_code": 0,
+      "status": "passed",
+      "summary": "No ESLint warnings or errors in apps/web."
+    },
+    {
+      "receipt_id": "RCPT-CODE-004",
+      "category": "typecheck",
+      "command": "npm run typecheck --workspace=@oday-plus/web",
+      "argv": ["npm", "run", "typecheck", "--workspace=@oday-plus/web"],
+      "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "cwd": "<scratch>/c-scratch",
+      "executed_at": "2026-09-10T23:40:06Z",
+      "duration_seconds": 43.0,
+      "exit_code": 0,
+      "status": "passed",
+      "summary": "TypeScript compiler (tsc --noEmit) completed with 0 errors."
+    },
+    {
+      "receipt_id": "RCPT-CODE-005",
+      "category": "static_governance",
+      "command": "governance static checks pack",
+      "argv": [
+        "uv run python delivery_toolchain/governance/check_measurement_defaults.py",
+        "uv run python delivery_toolchain/governance/check_requirement_members.py",
+        "uv run python delivery_toolchain/governance/generate_vocabularies.py --check",
+        "uv run python delivery_toolchain/governance/check_orchestrator_config.py",
+        "uv run python delivery_toolchain/governance/check_config_wiring.py"
+      ],
+      "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "cwd": "<scratch>/c-scratch",
+      "executed_at": "2026-09-10T23:39:00Z",
+      "duration_seconds": 15.0,
+      "exit_code": 0,
+      "status": "passed",
+      "summary": "All 5 governance static checks passed (measurement defaults, requirement members, vocabularies, config wiring)."
+    },
+    {
+      "receipt_id": "RCPT-CODE-006",
+      "category": "frontend_component_tests",
+      "command": "npm run test --workspace=@oday-plus/web",
+      "argv": ["npm", "run", "test", "--workspace=@oday-plus/web"],
+      "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "cwd": "<scratch>/c-scratch",
+      "executed_at": "2026-09-10T23:41:01Z",
+      "duration_seconds": 67.64,
+      "exit_code": 0,
+      "status": "passed",
+      "summary": "Vitest component suite: 57 test files passed, 525 tests passed."
+    },
+    {
+      "receipt_id": "RCPT-CODE-007",
+      "category": "frontend_build_and_budget",
+      "command": "npm run build && npm run bundle:budget",
+      "argv": ["npm", "run", "build", "--workspace=@oday-plus/web", "&&", "npm", "run", "bundle:budget", "--workspace=@oday-plus/web"],
+      "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "cwd": "<scratch>/c-scratch",
+      "executed_at": "2026-09-10T23:42:11Z",
+      "duration_seconds": 170.0,
+      "exit_code": 0,
+      "status": "passed",
+      "summary": "Next.js production build succeeded; 13 routes within First Load JS budget."
+    },
+    {
+      "receipt_id": "RCPT-CODE-008",
+      "category": "backend_unit_tests",
+      "command": "focused pytest domain unit suite",
+      "argv": ["uv", "run", "pytest", "tests/models/test_heatzone_merge_split.py", "tests/models/test_native_drift.py", "tests/models/test_evidently_monitor_baseline.py", "tests/tooling/test_dependency_audit_boundary.py", "tests/tooling/test_generate_sbom_output_isolation.py", "scripts/test_ai_status.py", "tests/release/test_probe_release_target_absence.py", "tests/release/test_release_environment_precheck.py", "tests/release/test_release_manifest.py", "tests/release/test_release_manifest_cli.py"],
+      "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "cwd": "<scratch>/c-scratch",
+      "executed_at": "2026-09-10T23:45:07Z",
+      "duration_seconds": 331.87,
+      "exit_code": 0,
+      "status": "passed",
+      "summary": "791 passed, 17 warnings, 101 subtests passed in 331.87s."
+    },
+    {
+      "receipt_id": "RCPT-CODE-009",
+      "category": "backend_persistence_unit_tests",
+      "command": "persistence and recovery unit suite",
+      "argv": ["uv", "run", "pytest", "tests/unit/persistence/test_sql_decision_policy_repository.py", "tests/ops/test_heatzone_composition_migration.py", "scripts/orchestrator/test_archive_history_recovery.py"],
+      "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "cwd": "<scratch>/c-scratch",
+      "executed_at": "2026-09-10T23:51:23Z",
+      "duration_seconds": 9.89,
+      "exit_code": 0,
+      "status": "passed",
+      "summary": "104 passed, 26 subtests passed in 9.89s."
+    },
+    {
+      "receipt_id": "RCPT-CODE-010",
+      "category": "backend_integration_tests",
+      "command": "heatzone composition API test",
+      "argv": ["uv", "run", "pytest", "tests/integration/test_heatzone_composition_api.py"],
+      "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "cwd": "<scratch>/c-scratch",
+      "executed_at": "2026-09-10T23:51:45Z",
+      "duration_seconds": 222.30,
+      "exit_code": 0,
+      "status": "passed",
+      "summary": "41 passed, 22 warnings in 222.30s."
+    },
+    {
+      "receipt_id": "RCPT-CODE-011",
+      "category": "build_traceability_reused",
+      "command": "reused build handoff and cosign verification from run 34179791241",
+      "argv": ["gh", "run", "view", "34179791241"],
+      "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "cwd": "github://alfloop-dev/odayplus",
+      "executed_at": "2026-09-08T02:26:33Z",
+      "duration_seconds": 284.0,
+      "exit_code": 0,
+      "status": "passed",
+      "summary": "Four component images built & signed in run 34179207603, verified with cosign verify and published as 6 immutable artifacts in run 34179791241."
+    }
+  ],
+  "hardening_task_tracking": {
+    "task_id": "ODP-PLAN-ENGINEERING-HARDENING-001",
+    "registry_blocker_reference": "ODP-PLAN-ENGINEERING-HARDENING-001 (OpenAPI, frontend dependency, and documentation hardening) is open.",
+    "investigation_result": "Historical task with sidecar support packet (support/sidecars/ODP-PLAN-ENGINEERING-HARDENING-001/ODP-PLAN-ENGINEERING-HARDENING-001-SIDECAR-ACCEPTANCE.md) recorded at head d24fd0c4. No active canonical task in ai-status.json.",
+    "canonical_disposition": "歷史待核對 (historical pending reconciliation); task is not marked completed, recreated, or bypassed."
+  }
+}

@@ -1,0 +1,122 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "ODP-DEV-CANDIDATE-CODE-RECEIPT-001",
+  "generated_at": "2026-09-10T23:55:00Z",
+  "candidate": {
+    "sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+    "ref": "refs/heads/dev",
+    "commit_date": "2026-09-07T15:29:32+00:00",
+    "subject": "Merge pull request #1234 from alfloop-dev/task/ORCH-ARCHIVE-HISTORY-RESTORE-002",
+    "manifest_digest": "sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c"
+  },
+  "prior_evidence_baseline": {
+    "sha": "d084f51d4009b7b435416c8b83410a8b4fb4a267",
+    "task_id": "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+    "registry_ref": "docs/evidence/gates/RELEASE_GATE_REGISTRY.json",
+    "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json"
+  },
+  "source_documents": [
+    {
+      "uri": "github://alfloop-dev/odayplus@d084f51d4009b7b435416c8b83410a8b4fb4a267/docs/evidence/gates/RELEASE_GATE_REGISTRY.json",
+      "purpose": "Release gate registry establishing Gate 0 Code Gate requirements and blocked baseline status."
+    },
+    {
+      "uri": "github://alfloop-dev/odayplus@d084f51d4009b7b435416c8b83410a8b4fb4a267/docs/evidence/gates/RELEASE_MANIFEST.json",
+      "purpose": "Release manifest defining immutable component image digests and supply chain refs for candidate C."
+    },
+    {
+      "uri": "github://alfloop-dev/odayplus@d084f51d4009b7b435416c8b83410a8b4fb4a267/docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/README.md",
+      "purpose": "Authoritative reconciliation document linking run 34179207603 (builder) and run 34179791241 (artifact handoff)."
+    },
+    {
+      "uri": "github://alfloop-dev/odayplus@108249fa921e128f734ebd917a933fa562f4b7e1/docs/evidence/runtime/ODP-DEV-BUILD-ARTIFACT-HANDOFF-003/build-dispatch-evidence.md",
+      "purpose": "Build dispatch evidence §13 confirming complete artifact handoff, raw hashes, and cosign verification."
+    },
+    {
+      "uri": "github://alfloop-dev/odayplus@596b9c9a1788d952811a2bf8d4bba8a4e4d76b12/docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md",
+      "purpose": "Staged admission model (§6.1) decoupling dev build admission from staging and prod proofs."
+    },
+    {
+      "uri": "github://alfloop-dev/odayplus@596b9c9a1788d952811a2bf8d4bba8a4e4d76b12/Makefile",
+      "purpose": "Authoritative build and test target definitions at candidate C."
+    },
+    {
+      "uri": "github://alfloop-dev/odayplus@596b9c9a1788d952811a2bf8d4bba8a4e4d76b12/apps/web/package.json",
+      "purpose": "Frontend workspace scripts and dependencies at candidate C."
+    },
+    {
+      "uri": "github://alfloop-dev/odayplus@596b9c9a1788d952811a2bf8d4bba8a4e4d76b12/.github/workflows/ci.yml",
+      "purpose": "CI workflow specification detailing test matrix, markers, and scopes."
+    }
+  ],
+  "build_runs": {
+    "image_producer_run": {
+      "run_id": 34179207603,
+      "workflow": "Deploy Dev (Runtime Release)",
+      "conclusion": "failure",
+      "failure_step": "Step 20: Write the build-once artifact handoff (INITIAL_RELEASE_RECOVERY: false)",
+      "images_built_and_signed": true,
+      "workflow_head_sha": "8c570a56353abdcc8ba70fe0a3fdd9b963902391",
+      "release_sha_input": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12"
+    },
+    "artifact_publisher_run": {
+      "run_id": 34179791241,
+      "workflow": "Deploy Dev (Runtime Release)",
+      "conclusion": "success",
+      "role": "Reused image digests, executed cosign verify, published manifest and receipts",
+      "workflow_head_sha": "8c570a56353abdcc8ba70fe0a3fdd9b963902391",
+      "release_sha_input": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12"
+    }
+  },
+  "component_images": {
+    "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:5e1a152e839cbfa7a2bf422b924928b56fad89f35e44243619a3f2fe98802cee",
+    "web": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:38c716462b569b7420fe95788a84f8a1b3778e2e7c938d535a1dc13288a78971",
+    "worker": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:b2c0e4473ad529ad71f215b76fc125115d8ba0b4e845a87e532d10ebdb8ddba3",
+    "scheduler": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:f3fd22c00478d730273494c23c512a87c807de645a8b759d0af4908d82cd4cc9",
+    "migration": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:b2c0e4473ad529ad71f215b76fc125115d8ba0b4e845a87e532d10ebdb8ddba3"
+  },
+  "raw_artifacts": [
+    {
+      "id": 10038569478,
+      "name": "runtime-release-manifest-596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "bytes": 2440,
+      "raw_zip_sha256": "fab4a3e97c20a0fc89481a6055d97959fea37cbdc1d647cd2f3dad7d0c1fdae4",
+      "inner_file_sha256": "8bb6e72ed1306862ddb4c40d48c851b31ecf8c4ab5f361ac5cc7e1856537f56d"
+    },
+    {
+      "id": 10038569219,
+      "name": "runtime-release-images-596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "bytes": 453,
+      "raw_zip_sha256": "7f0515c6d92b4351da4a5a425d0b20cc1f49c519eeda1754adcbfe996e35d05b",
+      "inner_file_sha256": "612507f59edb8e09807dfa5a9f15fafaa622fb03473e2eff4015dda64494fa12"
+    },
+    {
+      "id": 10038569730,
+      "name": "initial-release-absence-readback-596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "bytes": 508,
+      "raw_zip_sha256": "b76ce7a65f97baa306e4ec9bc96c5cc7e49f753143e2c1238c3604daa888aa95",
+      "inner_file_sha256": "ec316739eecd6c0438582a29c3803acad38fe283aa4167ca30db9dc481ffa283"
+    },
+    {
+      "id": 10038486296,
+      "name": "release-environment-receipt-dev-build",
+      "bytes": 795,
+      "raw_zip_sha256": "9180ed873afc9d08b05ff948b7d358d6bf10fc8416e2d8864c1f554c9a13a6cf",
+      "inner_file_sha256": "a5fc3cc7847bbbec3bb0dbd651428b9a6fcebb18db770ff2abd09cd2b850f9bb"
+    },
+    {
+      "id": 10038492941,
+      "name": "release-npm-audit-receipt-dev",
+      "bytes": 508,
+      "raw_zip_sha256": "fb61bd06cfc8da6d4c4c5a495b96c7bdf5d92f5743d68c7a568a8147fd3d921a",
+      "inner_file_sha256": "49c5c659e9b08dab23ec0e9aee390d814f8d8e2c0f78c3a4d922cedb4de96224"
+    },
+    {
+      "id": 10038482325,
+      "name": "release-phase-receipt-dev-build",
+      "bytes": 631,
+      "raw_zip_sha256": "bcfbf76667f7c5892dd4832851ec30d966aea346e054ac4b9832b84dbe3e11d5",
+      "inner_file_sha256": "af1f1d5d1be169187a054a83d09b47e5978d4018d1c366144a99fe8f88deb8c7"
+    }
+  ]
+}
