@@ -190,10 +190,9 @@ stateDiagram-v2
 ### 4.4 `ODP-FR-INTV-006`：介入處置生命週期
 
 #### 成員：`ADJUST`（調整中途狀態）
-- **處置狀態**：`OPEN`
-- **負責人 (Assigned To)**: `Intervention Workflow Lead`
-- **下次檢視日期 (Next Review Date)**: `2026-10-01`
-- **理由 (Rationale)**: AdLift 目前採 Continue/Scale/Stop/Change_Channel 詞彙；評估是否需增加 Adjust 或維持關聯重建。
+- **處置狀態**：`VERIFIED`
+- **實作證據 (Evidence)**: `modules/intervention/application/workflow.py::InterventionWorkflow.adjust_case`
+- **理由 (Rationale)**: 實作 stop-plus-recreate 具 lineage 之 replacement/adjust action，停止前置介入並建立繼承/調整之新介入案例，具備 predecessor_id、replacement_id 與 adjustment_json 之 durable lineage，保留原介入參數、理由、actor、policy version 與 rollback plan；未誤用 AdLift Change Channel 詞彙，並提供 API 與 DB 交易原子性保證。
 
 ---
 
