@@ -1,8 +1,8 @@
 # ORCH-REVIEW-CI-RECOVERY-001：讓 review CI 失敗可沿原任務回派 owner 修復
 
 - Task: ORCH-REVIEW-CI-RECOVERY-001
-- Owner: Antigravity ／ Reviewer: Codex2
-- Base commit（dev）: `1260d977`
+- Owner: Claude（第三輪；前兩輪為 Antigravity，2026-09-10 quota terminal 後自動改派）／ Reviewer: Codex2
+- Base commit（dev）: `91dd050a`（第三輪 base advance 後；前兩輪為 `1260d977`）
 - 交付 branch: `task/ORCH-REVIEW-CI-RECOVERY-001`
 - 本文件不宣稱 live runtime 已部署；修復在於本 branch 程式碼與回歸測試，等待 PR 審查與合併。
 
@@ -101,6 +101,90 @@ Reviewer 於 2026-09-10T08:57:27Z 以 review_finding 回派，指出 PR #1288 he
 
 **必要說明**：此二回歸的第一版設計（差分讀取計數）在缺陷版上同樣通過，屬空測；已改寫並以上述變異測試證實其有效性後才納入。
 
+## 2B. 第三輪：接手、base advance 與再送審（owner：Claude）
+
+### 2B.1 交接事實
+- 2026-09-10T14:48:32Z，Antigravity3 連續 quota terminal，orchestrator 將 owner 由 Antigravity3 自動改派為 Claude，task 退回 `todo` 等待新一輪。
+- 第二輪修復（見 2A）已由前一位 worker 以 anchor commit `725f919c` 保存並推上 PR #1288。本輪接手後**未改動**該修復的實作、測試或既有結論；本輪的工作是重新實測它，並把 branch 推進到當前 dev。
+- 接手時於 `725f919c` 實測基線：宣告 selection 70 passed（exit 0）、2A 指名的三項 supervisor 回歸 3 passed（exit 0）。2A 的宣稱在接手當下成立。
+
+### 2B.2 Base advance（本輪唯一的程式碼樹變動）
+接手時 branch 落後 `origin/dev`（`91dd050a`）5 個 commit。依規以 merge 而非 rebase 合併：
+
+- `git merge --no-commit --no-ff origin/dev` → 自動合併成功，**0 個 conflict**。
+- dev 這 5 個 commit 完全不觸及 `.orchestrator/`（`git diff --name-only HEAD...origin/dev` 過濾 `^\.orchestrator/` 無輸出），與本任務 surface 無重疊。
+- 以 `worker_commit.py` 提交，`--scope` 帶入 staged 的**全部 52 個檔案**：worker_commit 的私有 index 是自 HEAD 重建的，漏檔會在合併裡無聲丟掉 dev 的內容（evil merge）。
+- 產生 merge commit `573156a7`，parents = `725f919c` + `91dd050a`。
+
+合併正確性以實測確認，非以「合併成功」推論：
+
+| 檢查 | 命令 | 結果 |
+|---|---|---|
+| 雙 parent | `git log -1 --format='%P'` | `725f919c 91dd050a` |
+| dev 已完整併入 | `git merge-base --is-ancestor origin/dev HEAD` | exit 0 |
+| worktree 乾淨 | `git status --porcelain` | 無輸出 |
+| 無 evil merge | `git diff --name-only HEAD origin/dev` | 恰為本任務 5 個檔案 |
+
+最後一列是 evil merge 的直接反證：若 scope 漏檔而改寫了 dev 的內容，合併後與 dev 的差集必然出現非本任務檔案。
+
+### 2B.3 宣告命令的執行環境（需要 reviewer 知道）
+宣告的 verification 第二條為 `python3 -m pytest ...`。本機 `/usr/bin/python3` **沒有** pytest：
+
+```text
+$ python3 -c "import pytest"
+ModuleNotFoundError: No module named 'pytest'
+```
+
+因此執行時把專案 `.venv/bin` 置於 `PATH` 前綴並設 `PYTHONPATH=.orchestrator:scripts`，使 `python3` 解析到專案 venv（Python 3.12.14）。**命令字串未改寫**，收據記錄的即為宣告的命令；改的是 `python3` 解析到哪個直譯器。若在沒有這個 PATH 前綴的環境重跑收據上的命令，會得到 `No module named pytest` 而非測試結果。
+
+
+### 2B.4 獨立複驗 2A 的變異測試宣稱
+2A 自承其第一版回歸是空測，改寫後才納入。接手者不採信該宣稱，於 `573156a7` 自行重跑兩側變異，兩者都在**乾淨的 worktree** 上施加變異、實測、再 `git checkout --` 還原：
+
+| 變異 | 施加方式 | 受測回歸 | 實測結果 |
+|---|---|---|---|
+| 還原原缺陷（無條件重載） | `git show 725f919c -- .orchestrator/dispatch_engine.py \| git apply -R` | `test_ci_failure_lane_adds_no_canonical_read_on_a_quiet_tick` | **FAILED**（`assert 3 == 2`，安靜 tick 多讀一次 canonical），exit 1 |
+| 過度修正（刪掉 `else` 分支） | 直接刪除該分支 | `test_ci_failure_rejected_cas_rebuilds_indices_from_the_resynced_snapshot` | **FAILED**，exit 1 |
+
+兩次變異中，另一項回歸各自維持 passed，代表兩者確實各自釘住一種失敗模式，而非同一條件的重複。
+
+更重要的是**因果直接對上 reviewer 回報的 CI 失敗**：在第一種變異（即 PR #1288 head `e60a8a6f` 的狀態）下重跑 reviewer 指名的三項測試，
+
+```text
+FAILED .orchestrator/test_supervisor.py::ProcessQueueDispatchGuardTests::test_dispatcher_reassigns_mainline_helper_owner_before_dispatch
+FAILED .orchestrator/test_supervisor.py::ProcessQueueDispatchGuardTests::test_dispatcher_reassigns_mainline_helper_reviewer_before_dispatch
+FAILED .orchestrator/test_supervisor.py::ProcessQueueDispatchGuardTests::test_dispatcher_spreads_paused_review_to_registered_idle_reviewer
+3 failed, 635 deselected（exit 1）
+```
+
+還原修正後同樣三項為 `3 passed`（exit 0）。這是本 branch 確實修掉 run 34420166244 / job 102693620862 那次失敗的實測證據，而不是「測試現在是綠的」這種相關性陳述。
+
+### 2B.5 全 `.orchestrator/` 套件差集（針對第二輪失敗的那一類）
+第二輪之所以被回派，是因為宣告的 selection 選不到被本變更**間接**影響的 `test_supervisor.py`。宣告 selection 綠燈本身無法證明這一類不會再發生，因此本輪額外做了**差集**比對而非只看單邊綠燈：本機在隔離 worktree 執行完整 `.orchestrator/` 套件必定會紅（缺少 gitignored 的 `.orchestrator/config.json`），所以單邊結果不可判讀，只有與乾淨 dev 的差集可判讀。
+
+兩次執行為同一命令、同一直譯器、同一 `-p no:randomly`：
+
+| 執行 | 位置 | 結果 | Exit |
+|---|---|---|---|
+| 本 branch `573156a7` | 本 task worktree | **20 failed, 1916 passed**, 6 skipped, 450 subtests passed（204.42s） | 1 |
+| 乾淨 dev `91dd050a` | `git worktree add --detach /tmp/orch-ci-recovery-devbaseline` 的臨時 worktree | **20 failed, 1872 passed**, 6 skipped, 450 subtests passed（205.17s） | 1 |
+
+兩邊的 FAILED 清單經 `diff` 比對為**逐字元相同**（各 20 筆）：
+
+```text
+$ diff /tmp/dev_failures.txt /tmp/head_failures.txt   # 無輸出，exit 0
+```
+
+即本 branch **新增 44 個通過的測試、新增 0 個失敗**。
+
+那 20 筆全部屬同一個既有環境類別，與本任務無關：
+
+- 16 筆為 `common.ConfigError: Orchestrator config does not exist: .../.orchestrator/config.json` — 該檔是 gitignored 的本機覆蓋，隔離 worktree 內不存在。
+- 其餘為同一成因的下游斷言，例如 `ReviewHeadFreezeTests::test_approve_refuses_to_overwrite_uncleared_approved_head` 因缺 config 而落到 role/provider 審查政策的錯誤訊息，而非預期的 `uncleared approved head`。
+- 三個受影響檔案（`test_supervisor.py` 的 `ReviewHeadFreezeTests`、`test_worker_hard_inactivity.py`、`test_worker_settlement_paths.py`）都不觸及本變更的 dispatch CI-recovery lane。
+
+**這不是在主張 CI 會綠**：CI 跑的是 `uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling`，範圍更廣且有 config 存在，與本機環境不同。此處成立的是較窄但可判讀的結論——在同一環境下，本 branch 相對 dev 沒有引入任何新的測試失敗，第二輪那一類間接破壞在本輪未重演。CI 本身的判定仍以 PR #1288 的 required checks 為準。
+
 ## 3. 解決架構與設計
 
 ### 3.1 `status_transition.requeue_task_for_ci_repair`
@@ -145,6 +229,33 @@ Reviewer 於 2026-09-10T08:57:27Z 以 review_finding 回派，指出 PR #1288 he
 | 2 | `PYTHONPATH=.orchestrator:scripts .venv/bin/python -m pytest -v .orchestrator/test_dispatch_policy.py -k "ci_repair or ci_failure or conflicted_review"` | 0 | 68 passed, 107 deselected in 2.23s |
 | 3 | `PYTHONPATH=.orchestrator:scripts .venv/bin/python -m pytest -v .orchestrator/test_dispatch_policy.py` | 0 | 175 passed in 30.10s |
 | 4 | `PYTHONPATH=.orchestrator:scripts .venv/bin/python -m pytest -v .orchestrator/ -k "ci_repair or review_resubmission or reopen_audit"` | 0 | 12 passed, 1928 deselected in 6.14s |
+
+上表為前兩輪在其各自 head 的量測，保留備查。以下為**第三輪在 base advance 後的 head `573156a7` 重新量測**的收據；上表的數字不代表本 head。
+
+### 4A. 第三輪收據（head `573156a7`）
+
+宣告的兩條 verification 由 `delivery_toolchain/git/task_verification.py run` 執行，收據由該工具寫入 `.orchestrator/evidence/`，各自綁定 head SHA、原命令字串、真實 exit code、duration 與 test selection：
+
+| # | 宣告命令 | Exit Code | Duration | 收據 |
+|---|---|---|---|---|
+| 1 | `git diff --check` | 0 | 0.015s | `verification-orch_review_ci_recovery_001-1d481ca8486d107d.json` |
+| 2 | `python3 -m pytest -q .orchestrator/test_dispatch_policy.py -k "ci_repair or ci_failure or conflicted_review"` | 0 | 5.253s | `verification-orch_review_ci_recovery_001-d22bbc586dee6e90.json` |
+
+宣告以外、本輪另外執行的量測（同一 head，未經 pipe 吃掉 exit code、未 background、未加 `|| true`）：
+
+| # | 命令 | Exit Code | 結果摘要 |
+|---|---|---|---|
+| 3 | `python3 -m pytest .orchestrator/test_supervisor.py -k "<2A 指名的三項>"` | 0 | 3 passed, 635 deselected |
+| 4 | `uv run --frozen ruff check .orchestrator delivery_toolchain scripts` | 0 | All checks passed（與 CI 的 lint 步驟同範圍） |
+| 5 | `python3 delivery_toolchain/governance/check_code_boundaries.py` | 0 | 1152 files passed |
+| 6 | `python3 -m pytest -p no:randomly .orchestrator/`（本 branch） | 1 | 20 failed, 1916 passed — 差集見 2B.5 |
+| 7 | 同上，於乾淨 dev `91dd050a` 的臨時 worktree | 1 | 20 failed, 1872 passed — FAILED 清單與第 6 項逐字元相同 |
+
+量測用的臨時 worktree `/tmp/orch-ci-recovery-devbaseline`（detached at `91dd050a`）**尚未移除**：`git worktree remove` 在本 worker 的權限下被拒絕。它在 `/tmp` 下、與本 repo 交付無關，但仍會出現在 `git worktree list`，留待前景協調者或下一次 prune 清理。此處據實記錄而非宣稱已清理。
+
+第 6、7 兩項的 exit code 為 1 且**不宣稱為通過**：它們是差集量測的兩個端點，可判讀的結論是兩端 FAILED 清單相同（見 2B.5），不是任一端為綠。
+
+第 2 項的 `python3` 需要專案 venv 在 `PATH` 前綴才可解析到有 pytest 的直譯器，理由與實測見 2B.3。
 
 ---
 
