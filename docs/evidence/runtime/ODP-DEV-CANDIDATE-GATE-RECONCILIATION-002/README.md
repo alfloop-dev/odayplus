@@ -1,27 +1,36 @@
 # ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002 — 真實 build artifact 與 dev gate registry 的 exact candidate reconciliation
 
-- Owner: Claude2（前段實作由 Antigravity4／Antigravity5 完成）
-- Reviewer: Codex2
-- 記錄日期: 2026-09-08
+- 原證據整理: Claude2／Antigravity4／Antigravity5；2026-09-10 文件續修整合: Codex
+- 原 PR #1243 reviewer: Codex2；本次續修須另綁獨立 reviewer 與 exact head
+- 原始記錄日期: 2026-09-08；文件續修日期: 2026-09-10
 - Candidate SHA: `596b9c9a1788d952811a2bf8d4bba8a4e4d76b12`
 - Workflow head SHA（提供 workflow 定義的 `dev` tip，**不是候選**）: `8c570a56353abdcc8ba70fe0a3fdd9b963902391`
 - Image 產出 run（build／push／sign／attest 四個 image）: [Runtime Release 34179207603](https://github.com/alfloop-dev/odayplus/actions/runs/34179207603)，`conclusion: failure`（在 step 20 `Write the build-once artifact handoff` 失敗）
 - Artifact handoff run（重用既有 digest、`cosign verify` 驗章、發布 manifest／handoff／receipt artifact）: [Runtime Release 34179791241](https://github.com/alfloop-dev/odayplus/actions/runs/34179791241)，`conclusion: success`
-- 兩個 run 的來源與逐字證據: `ODP-DEV-BUILD-ARTIFACT-HANDOFF-003` §13（`docs/evidence/runtime/ODP-DEV-BUILD-ARTIFACT-HANDOFF-003/build-dispatch-evidence.md`）
-- 結論: **維持 NO-GO。本次完成 candidate C exact binding 重整與 staged gate 語意校準，不清任何 gate、不偽造 Human/Ops GO、不簽發 lease、不執行部署。**
-- 未達成: **C -> E 尚未是 evidence-only 歷史**，需 root 依 acceptance 安排整合，詳見下方「尚未達成」章節。
+- 兩個 run 的來源與逐字證據: `ODP-DEV-BUILD-ARTIFACT-HANDOFF-003` §13（[固定歷史 commit 的 build-dispatch-evidence.md](https://github.com/alfloop-dev/odayplus/blob/eaa7f8c51b81718a3582ce047fd86867c6db9eda/docs/evidence/runtime/ODP-DEV-BUILD-ARTIFACT-HANDOFF-003/build-dispatch-evidence.md)；該檔不在本次 evidence-only tree 中）
+- 結論: **維持 NO-GO。沿用既有 candidate C exact binding 收據，本次補正 staged gate 與歷史說明，不清任何 gate、不偽造 Human/Ops GO、不簽發 lease、不執行部署。**
+- 歷史與現況: **PR #1205／#1243 的 ancestry 失敗保留為歷史；本次從已合併的 clean E `070504c2` 延伸文件修正，待新 exact head 的獨立 review 與 CI，不沿用舊 PR 的核准。**
 
-## Root clean integration（本次 003）
+## Root clean integration 與本次 002 文件續修
 
 本檔案由 root 以 exact candidate C `596b9c9a1788d952811a2bf8d4bba8a4e4d76b12`
-重新建立；本次待審 E 是本分支的新 commit，並非沿用 PR #1243 的 dev-based
-merge 歷史。PR #1243／#1205 與其 ancestry failure 仍保留為歷史證據，不重寫。
-本次 E 只包含本任務允許的 `docs/evidence/gates/` 與
-`docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/` 路徑；
-使用既有 ancestry validator 逐一記錄成功或 fail-closed 結果。此整合仍維持七道
-gate blocked、NO-GO，沒有簽 lease 或部署。
-本次 clean E=`c09185fdbcde10d22c54f9c134c008e17ccad3ad` 的 validator
-readback 為 EXIT=0，完整命令與結果見 `root-clean-ancestry-receipt.json`。
+重新建立 clean commit `c09185fdbcde10d22c54f9c134c008e17ccad3ad`，再追加
+receipt commit `070504c2be2e88afa01bafe65d231dbfc1e774a2`。
+[PR #1246](https://github.com/alfloop-dev/odayplus/pull/1246) 已於
+2026-09-08T10:07:25Z 合併，merge commit 為 `00c0347383806e8aa6679ed78215b4ac31b1da57`。
+其審查限於原樣送審的 003 範圍，留下 gates README 的舊 candidate／all-gates
+文字及本 README 的歷史／現況混寫，並未核准 002 的全部 acceptance。
+
+本次 `task/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002-CONTINUATION` 直接從
+`070504c2` 延伸，只修正兩份 README 與 registry note。C→E 維持線性且只涉及
+`docs/evidence/gates/` 及 `docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/`。
+不得把持續前進的 dev merge／rebase 回這條 evidence 歷史；舊 PR、raw artifacts、
+歷史 probe 與 transcript 均保留。新 E 必須另行正式提交並綁定獨立 review 與 CI。
+
+`root-clean-ancestry-receipt.json` 的既有 validator EXIT=0 精確對象是
+`c09185fdbcde10d22c54f9c134c008e17ccad3ad`；本次沒有改寫這份收據，也不把它
+描述為對新 E 重跑 validator 的結果。本次僅做文件與唯讀 Git/API 比對，沒有
+重抓 artifacts、重建 candidate、簽 lease 或部署；七 gate 仍 blocked、NO-GO。
 
 ## 這次做了什麼
 
@@ -148,13 +157,13 @@ bash docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/verify_live
 - **C04 時期的逐字驗證紀錄**：`verification-transcript-C04-run33942097235.txt`。
 - **C04 時期的固定驗證器**：`verify_live_artifact_binding-C04-run33942097235.sh`。
 
-後三份以 `git show 972cad87:<path>` 由本分支歷史取出，`git hash-object` 與來源 blob id 相同，
+後三份在原整理階段以 `git show 972cad87:<path>` 由舊分支歷史取出，`git hash-object` 與來源 blob id 相同，
 確為 byte-exact 而非改寫摘要。該目錄內所有檔案都只描述 C04，**不驗證也不宣稱驗證候選 C**。
 
-## 尚未達成：C -> E 不是 evidence-only（本任務的結構性阻擋）
+## 歷史 ancestry 失敗：PR #1205 與 #1243
 
-acceptance 要求「使用乾淨且只含允許證據路徑的 C→E 歷史」。**這一點目前沒有達成，
-本輪也無法在 owner 權限內達成**，實測如下（2026-09-08，於 task worktree）：
+acceptance 要求「使用乾淨且只含允許證據路徑的 C→E 歷史」。以下是
+2026-09-08 對歷史 PR #1205 head `ddf10054` 的失敗記錄，不是本次 E 的結果：
 
 ```
 python3 -c 'from delivery_toolchain.e2e.check_release_gate_registry import check_candidate_ancestry; ...'
@@ -176,7 +185,7 @@ but intervening commits touch non-evidence paths:
 `git log --first-parent -m --name-only C..E`（第一父鏈逐 commit 觸碰路徑）。
 
 C `596b9c9a` 是 2026-09-07T15:29:32Z 的 `dev`；`dev` 之後持續前進到
-`961934d7`（2026-09-08T04:28:33Z）。本分支為了維持可合併，先後做過三次
+`961934d7`（2026-09-08T04:28:33Z）。歷史 PR #1205 分支為了維持可合併，先後做過三次
 base advance merge（`a80622b5`、`cc261bbc`、`f831125a`）。**每一次 merge 都把
 C 之後的 `dev` 產品碼帶進第一父鏈**，因此上述聯集必然包含大量非 evidence 路徑。
 第一父鏈另外仍含早期的 `82c22f4d`（曾改 `delivery_toolchain/release/release_manifest.py`、
@@ -184,25 +193,19 @@ C 之後的 `dev` 產品碼帶進第一父鏈**，因此上述聯集必然包含
 
 這不是可以靠再補一顆 commit 修掉的：新增 commit 不會從歷史移除既有 merge 帶進來的路徑。
 
-### 為什麼 owner 不自行處理
+### PR #1243 再次污染與保留範圍
 
-三條可能出路都被明文封住，或超出 auto worker 權限：
+PR #1243 最初 head `571ccb46804b14329798b4a84df50b91b8d6cb76` 直接銜接 C，
+只有 evidence 變更。但 merge `5a79c321` 把 dev `367fa6aa` 的非 evidence 路徑
+帶入第一父鏈，因此後續 head `3a9fb628d83bb0ff39e36ef652d3e4164922e992`
+仍遭 ancestry review 退回。當時 CI 成功沒有修復這項 acceptance。
 
-1. **從 exact C 重建乾淨 E**：需要新分支／force-push 重寫 `task/…-002`。acceptance 與
-   reviewer 均要求「保留既有 branch/PR 證據，不擅自 force push 重寫」，且
-   「若需新乾淨 evidence 分支/PR，先由 root 完成整合安排」。
-2. **改用新候選**：需要 root 重跑 build 並交接新的 exact C／run／manifest。
-3. **放寬 validator**：acceptance 明文禁止（「不得再改 tests 或 toolchain，更不能為舊 C04
-   artifact 改 validator 比較方式或僅驗 hash 格式」），且 `deploy-dev.yml` 的
-   `Validate candidate ancestry against the dispatch event SHA` 這道 deploy 前閘門
-   直接呼叫同一個函式，放寬它等於同時拆掉部署端的防線。
-
-因此本輪把可在 evidence 範圍內修好的都修好（provenance 更正、歷史封存補齊），
-並把此項留為**明確未達成**，交由 root 依 acceptance 安排 C→E 整合。
+Root 隨後安排上述 PR #1246 的 clean integration。本次使用該乾淨歷史追加
+文件續修，不使用舊 PR #1243 的 merge 歷史，也不藉由 revert、force-push 或
+放寬 validator 隱藏污染。原 PR #1205／#1243 及 raw artifacts 原樣保留。
 完整逐字輸出（含 203 個路徑全列、第一父鏈清單）見同目錄的 `candidate-ancestry-probe.txt`，
-摘要見 `verification-transcript.txt` 第 8 節。
-**在此之前不得視本 PR 為完成，也不得因為 CI 綠燈就當作 ancestry 已通過**——
-CI 並未帶 `--expected-sha`，這道檢查在 CI 裡根本沒有執行。
+摘要見 `verification-transcript.txt` 第 8 節；這些都是明確綁定舊 head 的歷史記錄。
+未帶 `--expected-sha` 的 CI 檢查不能代替 C→新 E 的 ancestry 審查。
 
 ## Scope 邊界
 
@@ -225,7 +228,7 @@ CI 並未帶 `--expected-sha`，這道檢查在 CI 裡根本沒有執行。
 | 檔案 | 內容 |
 |---|---|
 | `README.md` | 本說明文件 |
-| `verification-transcript.txt` | 歷史與本次命令輸出節錄、exit code 與摘要；第 5-9 節為 2026-09-08 Claude2 的第二次紀錄 |
+| `verification-transcript.txt` | 2026-09-08 歷史命令輸出節錄、exit code 與摘要；第 5-9 節為當日 Claude2 的第二次紀錄，本次未追加或重寫 |
 | `candidate-ancestry-probe.txt` | C -> E ancestry 檢查的完整逐字輸出（EXIT=1，203 個非 evidence 路徑） |
 | `verify_live_artifact_binding.sh` | 既有檢查 API 的組合封裝；需明確下載目錄與固定 C worktree，必要來源缺漏時失敗 |
 | `runtime-release-images.json` | run 34179791241 的 build-once image handoff（原始 artifact） |
