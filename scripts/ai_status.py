@@ -9521,6 +9521,15 @@ def status_check_target(payload: dict[str, Any]) -> tuple[str, str, str]:
     return tuple(str(payload.get(key) or "") for key in ("repo_slug", "sha", "context"))
 
 
+
+def remember_confirmed_review_gate(task: dict[str, Any], payload: dict[str, Any]) -> None:
+    # Store the target in the same canonical save that dequeues an acknowledged
+    # positive retry. A later HEAD timeout must not lose the only known grant.
+    task["review_gate_sha"] = str(payload["sha"])
+    task["review_gate_target"] = dict(zip(
+        ("repo_slug", "sha", "context"), status_check_target(payload), strict=True,
+    ))
+
 def discard_superseded_status_payloads(task: dict[str, Any], payload: dict[str, Any]) -> None:
     pending = task.get("status_check_outbox")
     if not isinstance(pending, list):
@@ -9586,14 +9595,11 @@ def reconcile_status_check_outbox(
             ok, error = post_task_review_status_payload(payload)
             if ok:
                 if payload["context"] == "task-review-gate":
+                    if payload["state"] == "success":
+                        remember_confirmed_review_gate(task, payload)
                     # The canonical state may have changed since this exact
                     # payload was queued. Sync must refresh even the same SHA.
                     task["review_gate_refresh_pending"] = True
-                    if payload.get("state") == "success":
-                        # A retried, freshly authorized positive gate confirmed at GitHub
-                        # must be remembered so subsequent revocation has a target if
-                        # a later HEAD lookup times out or fails.
-                        task["review_gate_sha"] = payload.get("sha") or task.get("review_gate_sha")
                 delivered += 1
                 task.setdefault("status_check_delivery_history", []).append(
                     {
@@ -9670,12 +9676,24 @@ def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> No
     }
     if payload is None:
         last = str(task.get("review_gate_sha") or "").strip()
-        if not (targets or last or task.get("review_submission")
+        confirmed = task.get("review_gate_target")
+        confirmed_valid = (
+            isinstance(confirmed, dict) and confirmed.get("repo_slug")
+            and confirmed.get("context") == "task-review-gate"
+            and re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", str(confirmed.get("sha") or ""))
+        )
+        if not (targets or last or confirmed_valid or task.get("review_submission")
                 or state_status in {"review", "review_approved", "done"}):
             # Unpublished assignments have no grant to revoke and should not
             # become permanent remote probes on every sync.
             return
-        if re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", last):
+        if confirmed_valid:
+            targets[status_check_target(confirmed)] = confirmed
+        if re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", last) and (
+            not confirmed_valid or last != confirmed.get("sha")
+        ):
+            # Legacy states have only a SHA. New confirmations retain the
+            # original repository too, so later retargets cannot misdirect it.
             target = {"repo_slug": task_repository_slug_safe(task), "sha": last,
                       "context": "task-review-gate"}
             targets[status_check_target(target)] = target
@@ -9696,7 +9714,7 @@ def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> No
     discard_superseded_status_payloads(task, payload)
     if ok:
         # Only a freshly resolved target may acquire a positive gate.
-        task["review_gate_sha"] = payload.get("sha") or task.get("review_gate_sha")
+        remember_confirmed_review_gate(task, payload)
         task.pop("review_gate_refresh_pending", None)
         print(
             f"Successfully emitted status check '{payload['context']}'="
