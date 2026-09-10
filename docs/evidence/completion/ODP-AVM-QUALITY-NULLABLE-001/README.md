@@ -104,9 +104,26 @@ governance checker 已執行，確認 AVM dataclass 豁免不再生效。
 
 ## Base advance
 
-### 第二次（2026-09-05，本輪）
+### 第三次（2026-09-10，交付 head）
 
-本輪 base 為 `origin/dev` `eed8d51bb8a1`，以 merge commit 併入，第一父為上一個
+`ce40265f` 以 merge commit 把 `origin/dev` `73f98c7de78a`
+（PR #1282 ODP-DATA-PLANE-DELETE-PROPAGATION-001 的合併點）併入，第一父為上一個
+task head `631b142bb7b6`；沒有 rebase、沒有 reset、沒有 force push。這一次併入的是
+一批很大的 base 變動（533 檔），主要是 drift/security/tooling 測試與 `uv.lock`，
+與本 task 的交付面沒有重疊。
+
+這一輪**沒有再發生 migration 槽位相撞**：`origin/dev` 上最新的 alembic revision 仍是
+`0017_heatzone_composition.py`，`0018` 槽位未被占用，因此上面「第二次」讓號後的
+`0018` / `000024` 命名維持不變，不需再讓號。PR #1149 對 `dev` 的 `mergeable`
+在此之後為 `MERGEABLE`。
+
+`ce4a4021` 接著把前一位 Claude worker 被 quota 中斷的
+`NetworkFindAreasWorkspace.tsx` dynamic import 原封保存下來；該 commit 只動這一個
+檔案，沒有其他實作改動。
+
+### 第二次（2026-09-05，較早的 head）
+
+該輪 base 為 `origin/dev` `eed8d51bb8a1`，以 merge commit 併入，第一父為上一個
 approved head `9cf97feb`；沒有 rebase、沒有 reset、沒有 force push。
 
 ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001 先落地並占用了 `0017` / `000023` 兩個
@@ -135,7 +152,7 @@ migration 槽位，因此本 task（較晚到者）再次讓號：
 - `shared/infrastructure/persistence/engine.py` 的 SQLite bootstrap 清單跟著改為
   `000024_avm_quality_score_nullable_sqlite.sql`，仍排在最後。
 - `packages/openapi-client/openapi.json` 與 `src/generated/types.ts` 由合成後的 app
-  重新產生，本輪新增 `avmQualityScoreStatus` / `avmQualityDisposition` 兩個
+  重新產生，該輪新增 `avmQualityScoreStatus` / `avmQualityDisposition` 兩個
   `string | null` 欄位；`quality_score` 的 nullability 不變、未被任一分支收窄。
 
 ### 第一次（2026-09-05，較早的 head）
@@ -159,7 +176,77 @@ PR #1149 在 ODP-INT-MANUAL-CORRECTION-AUDIT-001 落地後被 merge queue 以
 repository 預設的 CPython 3.14 環境裝不了釘住的 `pgserver==0.1.4` wheel，因此所有命令
 都經由 `uv run --frozen --python 3.12` 執行。
 
-### 本輪 head（base advance 至 dev `eed8d51bb8a1` + Operator 卡片投影）
+### 交付 head `ce4a4021c57e`（2026-09-10，最新一輪重跑）
+
+前一輪的收據停在 Operator 卡片投影的 head。之後 `ce40265f` 做了 base advance merge
+到 `origin/dev`，`ce4a4021` 又補上被 quota 中斷的 `RebalancePanel` dynamic import
+（保存自前一位 Claude worker，byte-for-byte）。**下列命令全部在交付 head
+`ce4a4021c57e6f795a521f2d4d8a5d28d2c33f95` 上重跑**，於 2026-09-10 14:26–14:36 UTC 之間
+完成，全部先於本節所在的 commit。
+
+**Python（focused，`uv run --frozen --python 3.12 pytest`，9 個檔案）**
+
+```
+tests/integration/test_avm_valuation.py
+tests/ops/test_avm_quality_nullable_migration.py
+tests/ops/test_migration_backfill.py
+tests/contract/test_openapi_artifact_and_client.py
+tests/integration/test_operator_canonical_wiring.py
+tests/integration/test_model_ready_materialization.py
+tests/integration/test_avm_deal_outcome.py
+modules/avm/tests/test_deal_outcome_and_calibration.py
+delivery_toolchain/governance/test_check_measurement_defaults.py
+```
+
+— `163 passed, 9 warnings in 199.45s`，exit 0（exit code 由背景 job 的 `PYTEST_EXIT=`
+收據取得，非從摘要行推論）。
+
+**Web**
+
+- `npm run test --workspace=apps/web`（完整 vitest suite，非只跑新檔）—
+  `Test Files 58 passed (58)`、`Tests 528 passed (528)`，exit 0。
+  執行期間 log 內有數則 `ECONNREFUSED 127.0.0.1:3000`：那是本機沒有起 dev server
+  的既有環境限制，該 suite 仍以 exit 0 結束，與本 task 的改動無關。
+- `npm run typecheck --workspace=apps/web`（`tsc --noEmit`）— exit 0。
+  這一項在本輪特別重要：`ce4a4021` 把 `RebalancePanel` 改成 `dynamic<RebalancePanelProps>`
+  的具名 type import，若 `RebalancePanelProps` 沒有被 export（實際 export 於
+  `RebalancePanel.tsx:24`），typecheck 會紅。
+
+**Bundle 預算閘（`unchanged 300 kB` 的實測）**
+
+- `npm run build --workspace=apps/web` — exit 0。
+- `npm run bundle:budget --workspace=apps/web` — exit 0：
+
+```
+route                           first load      budget  status
+/operator                         288.2 kB    300.0 kB  ok
+/intake/[intakeId]                288.2 kB    300.0 kB  ok
+/franchisee                       116.6 kB    130.0 kB  ok
+shared by all: 103.4 kB
+```
+
+  關鍵在於預算本身沒有被調高以換取通過：
+  `git diff origin/dev...HEAD -- apps/web/bundle-budget.json` 為 **0 行**，
+  `/operator` 仍以原本的 300.0 kB 上限受檢，實測 288.2 kB（餘裕 11.8 kB）。
+  也就是說 RebalancePanel 的 dynamic import 是真的把重量移出首載，
+  而不是把閘門放寬。
+
+**Lint**
+
+- `uv run --frozen --python 3.12 ruff check`（modules/avm、`apps/api/app/routes/avm.py`、
+  `modules/opsboard/application/network_rebalance.py`、
+  `shared/infrastructure/persistence`、`infra/db/migrations` 及三個新測試檔）
+  — `All checks passed!`，exit 0。
+
+**Migration 衝突與鏈結**
+
+- PR #1149 對 `dev` 的 `mergeable` 為 `MERGEABLE`：`ce40265f` 的 base advance merge
+  已解掉先前的 migration 衝突。
+- Alembic 號碼未被平行分支搶走：`origin/dev` 上最新是 `0017_heatzone_composition.py`，
+  `0018` 這個槽位在 `dev` 上仍是空的，本分支的 `0018_avm_quality_score_nullable.py`
+  `down_revision = "0017"`，鏈結完整且為單一 head。
+
+### 先前 head（base advance 至 dev `eed8d51bb8a1` + Operator 卡片投影）
 
 所有命令都在合成後的樹上重跑，不是從合併前的 head 沿用。
 
@@ -182,7 +269,7 @@ pytest tests/integration/test_operator_canonical_wiring.py \
 
 — `190 passed, 8 xfailed, 9 warnings in 183.59s`，exit 0。清單中的
 `test_heatzone_composition_migration.py` 與 `test_operator_network_rebalance_api.py`
-是為了證明本輪 base advance 與投影修正沒有弄壞併進來的 base，不是本 task 的交付物。
+是為了證明該輪 base advance 與投影修正沒有弄壞併進來的 base，不是本 task 的交付物。
 
 註：`pyproject.toml` 的 `addopts = "-q"` 加上命令列再給一次 `-q` 會變成 `-qq`，
 pytest 會**完全不印**總結行。上面的數字來自不帶額外 `-q` 的那一次執行。
@@ -225,8 +312,8 @@ pytest 會**完全不印**總結行。上面的數字來自不帶額外 `-q` 的
 
 ### 歷史收據（先前 head，未於本輪重跑）
 
-以下是先前 head 上留下的收據，保留供對照，**不代表本輪的量測**；本輪重跑的範圍
-以上一節為準。
+以下是更早的 head 上留下的收據，保留供對照，**不代表交付 head 的量測**；
+交付 head `ce4a4021c57e` 的重跑範圍以上面「交付 head」那一節為準。
 
 - 合成至 dev `6c4a8be8` 的 head：`uv run --frozen pytest -q`（12 個檔案，含 base 自身的
   manual-correction contract 與 persistence suite）— 208 passed, 0 failed。
