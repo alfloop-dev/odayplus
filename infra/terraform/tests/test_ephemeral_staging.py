@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -13,6 +17,63 @@ if str(ROOT) not in sys.path:
 from product_ops.deployment.staging_lifecycle import validate_module_contract
 
 MODULE_DIR = Path(__file__).resolve().parents[1] / "modules" / "ephemeral_staging"
+
+# The plan probes below have to prove the module plans *offline*: no GCP login,
+# no remote backend, no apply. Leaving that to "the runner happens to have no
+# credentials" makes it a property of the machine rather than of the test -- a
+# workstation with `gcloud auth application-default login` would quietly pass a
+# module that CI, which has no credentials at all, cannot plan. The harness
+# makes it structural instead:
+#
+#   * every environment variable the google provider reads credentials from is
+#     dropped, and HOME points at a scratch directory so the Application
+#     Default Credentials file cannot be found either;
+#   * only init/plan/validate are reachable, so no edit here can grow into an
+#     apply or a destroy against a real project;
+#   * init always carries -backend=false, so no remote state is configured.
+CREDENTIAL_ENV_PREFIXES = ("GOOGLE_", "GCLOUD_", "CLOUDSDK_", "GCP_")
+CREDENTIAL_ENV_NAMES = ("TF_VAR_credentials", "TF_TOKEN_app_terraform_io")
+OFFLINE_TERRAFORM_SUBCOMMANDS = frozenset({"init", "plan", "validate"})
+
+
+def offline_terraform_env(home: Path) -> dict[str, str]:
+    """Return os.environ with every GCP credential source removed."""
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(CREDENTIAL_ENV_PREFIXES) and key not in CREDENTIAL_ENV_NAMES
+    }
+    env["HOME"] = str(home)
+    env["TF_IN_AUTOMATION"] = "1"
+    env["TF_INPUT"] = "0"
+    return env
+
+
+def run_terraform(
+    subcommand: str,
+    *args: str,
+    chdir: Path,
+    home: Path,
+) -> subprocess.CompletedProcess[str]:
+    """Run one read-only terraform subcommand with no credentials in scope."""
+
+    if subcommand not in OFFLINE_TERRAFORM_SUBCOMMANDS:
+        raise AssertionError(
+            f"refusing to run 'terraform {subcommand}': these tests may only run "
+            f"{sorted(OFFLINE_TERRAFORM_SUBCOMMANDS)} so they can never reach real infrastructure"
+        )
+    command = ["terraform", f"-chdir={chdir}", subcommand, *args]
+    if subcommand == "init":
+        command.append("-backend=false")
+    home.mkdir(parents=True, exist_ok=True)
+    return subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        env=offline_terraform_env(home),
+        check=False,
+    )
 
 
 class EphemeralStagingModuleContractTests(unittest.TestCase):
@@ -173,10 +234,6 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
         self.assertEqual(tenant_label_value(tenant_id), "custom_tenant")
 
     def test_terraform_standalone_plan_guards_future_timestamp_and_accepts_valid(self) -> None:
-        import os
-        import shutil
-        import subprocess
-        import tempfile
         from datetime import UTC, datetime
 
         if not shutil.which("terraform"):
@@ -227,11 +284,8 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
                     shutil.copy(MODULE_DIR / f, tmppath / f)
 
             # Init terraform
-            init_res = subprocess.run(
-                ["terraform", f"-chdir={tmppath}", "init", "-backend=false"],
-                capture_output=True,
-                text=True,
-            )
+            scratch_home = tmppath / "offline-home"
+            init_res = run_terraform("init", chdir=tmppath, home=scratch_home)
             self.assertEqual(init_res.returncode, 0, f"terraform init failed: {init_res.stderr}")
 
             # 1. Test future timestamp produces plan failure
@@ -239,10 +293,11 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
             future_vars["created_at"] = future_ts
             (tmppath / "future.tfvars.json").write_text(json.dumps(future_vars), encoding="utf-8")
 
-            future_plan = subprocess.run(
-                ["terraform", f"-chdir={tmppath}", "plan", "-var-file=future.tfvars.json"],
-                capture_output=True,
-                text=True,
+            future_plan = run_terraform(
+                "plan",
+                "-var-file=future.tfvars.json",
+                chdir=tmppath,
+                home=scratch_home,
             )
             self.assertNotEqual(
                 future_plan.returncode,
@@ -256,10 +311,11 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
             valid_vars["created_at"] = valid_now
             (tmppath / "valid.tfvars.json").write_text(json.dumps(valid_vars), encoding="utf-8")
 
-            valid_plan = subprocess.run(
-                ["terraform", f"-chdir={tmppath}", "plan", "-var-file=valid.tfvars.json"],
-                capture_output=True,
-                text=True,
+            valid_plan = run_terraform(
+                "plan",
+                "-var-file=valid.tfvars.json",
+                chdir=tmppath,
+                home=scratch_home,
             )
             self.assertEqual(
                 valid_plan.returncode,
@@ -282,18 +338,15 @@ class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        import os
-        import shutil
-        import subprocess
-        import tempfile
-
         if not shutil.which("terraform"):
             if os.environ.get("CI"):
                 raise AssertionError("terraform binary not available in CI environment")
             raise unittest.SkipTest("terraform binary not available in environment")
 
         cls._tmpdir = tempfile.TemporaryDirectory()
-        cls.workdir = Path(cls._tmpdir.name)
+        cls.workdir = Path(cls._tmpdir.name) / "module"
+        cls.workdir.mkdir()
+        cls.scratch_home = Path(cls._tmpdir.name) / "offline-home"
         for filename in ("main.tf", "variables.tf", "outputs.tf"):
             if filename == "main.tf":
                 main_text = (MODULE_DIR / filename).read_text(encoding="utf-8")
@@ -306,11 +359,7 @@ class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
             else:
                 shutil.copy(MODULE_DIR / filename, cls.workdir / filename)
 
-        init_res = subprocess.run(
-            ["terraform", f"-chdir={cls.workdir}", "init", "-backend=false"],
-            capture_output=True,
-            text=True,
-        )
+        init_res = run_terraform("init", chdir=cls.workdir, home=cls.scratch_home)
         if init_res.returncode != 0:
             cls._tmpdir.cleanup()
             raise AssertionError(f"terraform init failed with code {init_res.returncode}: {init_res.stderr}\n{init_res.stdout}")
@@ -345,14 +394,14 @@ class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
         )
 
     def _plan(self, name: str, tfvars: dict) -> str:
-        import subprocess
-
         var_file = f"{name}.tfvars.json"
         (self.workdir / var_file).write_text(json.dumps(tfvars), encoding="utf-8")
-        result = subprocess.run(
-            ["terraform", f"-chdir={self.workdir}", "plan", "-no-color", f"-var-file={var_file}"],
-            capture_output=True,
-            text=True,
+        result = run_terraform(
+            "plan",
+            "-no-color",
+            f"-var-file={var_file}",
+            chdir=self.workdir,
+            home=self.scratch_home,
         )
         self.assertEqual(
             result.returncode,

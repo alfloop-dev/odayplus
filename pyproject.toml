@@ -91,10 +91,23 @@ testpaths = [
     "models",
     "infra",
 ]
+# `norecursedirs` replaces pytest's default list rather than extending it, so the
+# defaults are repeated here verbatim; dropping them would let collection descend
+# into `.git`, `build`, `dist` and friends. The one addition is the orchestrator's
+# source-doc cache: it is a local-only checkout of files from other commits (see
+# `.git/info/exclude`), and now that `infra` is collected it holds a second
+# `test_ephemeral_staging.py`, which pytest rejects as a duplicate module name.
 norecursedirs = [
-    ".orchestrator/source-doc-cache",
-    ".venv",
+    "*.egg",
+    ".*",
+    "_darcs",
+    "build",
+    "CVS",
+    "dist",
     "node_modules",
+    "venv",
+    "{arch}",
+    ".orchestrator/source-doc-cache",
 ]
 python_files = ["test_*.py"]
 addopts = "-q"
