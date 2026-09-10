@@ -1080,6 +1080,28 @@ else:
             idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
             from apps.api.oday_api.security.dependencies import principal_from_headers
+
+            try:
+                return _enqueue_job_response(body, request, idempotency_key)
+            except HTTPException as exc:
+                principal = principal_from_headers(request.headers)
+                audit_log.record(
+                    AuditEvent(
+                        event_type="job.enqueue",
+                        actor=principal.subject_id or "anonymous",
+                        action="enqueue",
+                        resource=f"job/{body.job_type}",
+                        outcome="denied",
+                        correlation_id=request.state.correlation_id,
+                        metadata={"status_code": exc.status_code, "tenant_id": principal.tenant_id},
+                    )
+                )
+                raise
+
+        def _enqueue_job_response(
+            body: JobCreatePayload, request: Request, idempotency_key: str | None,
+        ) -> dict[str, Any]:
+            from apps.api.oday_api.security.dependencies import principal_from_headers
             from modules.listing.application.intake_authorization import authorize_intake_action
 
             payload = body.payload
@@ -1192,23 +1214,38 @@ else:
             effective_idempotency_key = body.idempotency_key or idempotency_key
             queue_idempotency_key = effective_idempotency_key
             if effective_idempotency_key and idempotency_tenant_id is not None:
+                # Length-prefix both components: tenant/key delimiters cannot
+                # alias another tenant's namespace. Preserve a genuine v1
+                # replay only after checking the actual legacy record's scope.
+                legacy_key = f"{idempotency_scope}:{idempotency_tenant_id}:{effective_idempotency_key}"
+                legacy_job = job_queue.get_by_idempotency_key(legacy_key)
                 queue_idempotency_key = (
-                    f"{idempotency_scope}:{idempotency_tenant_id}:{effective_idempotency_key}"
+                    f"{idempotency_scope.removesuffix(':v1')}:v2:"
+                    f"{len(idempotency_tenant_id)}:{idempotency_tenant_id}:"
+                    f"{len(effective_idempotency_key)}:{effective_idempotency_key}"
                 )
+                if (
+                    legacy_job is not None
+                    and legacy_job.job_type == body.job_type
+                    and legacy_job.payload.get("tenant_id") == idempotency_tenant_id
+                ):
+                    queue_idempotency_key = legacy_key
             elif effective_idempotency_key and effective_idempotency_key.startswith(
-                ("forecast:v1:", "external-fetch:v1:", "batch-listing-intake:v1:")
+                tuple(f"{scope}:{version}:" for scope in ("forecast", "external-fetch", "batch-listing-intake") for version in ("v1", "v2"))
             ):
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail={"code": "RESERVED_IDEMPOTENCY_NAMESPACE"},
                 )
+            job_request = JobRequest(
+                job_type=body.job_type, payload=payload,
+                idempotency_key=queue_idempotency_key,
+            )
+            # Never commit new work which this request cannot read. The
+            # post-enqueue check below still authorizes the actual replay.
+            _authorize_job_access(job_request, request)
             job, created = job_queue.enqueue(
-                JobRequest(
-                    job_type=body.job_type,
-                    payload=payload,
-                    idempotency_key=queue_idempotency_key,
-                ),
-                correlation_id=request.state.correlation_id,
+                job_request, correlation_id=request.state.correlation_id,
             )
             # Enqueue may return an existing record. Authorize that actual
             # record exactly as GET does, including ownership and field masks.
@@ -1240,7 +1277,7 @@ else:
                 "audit_event_id": audit_event.event_id,
             }
 
-        def _authorized_job_response(job: Any, request: Request) -> dict[str, Any]:
+        def _authorize_job_access(job: Any, request: Request) -> None:
             from apps.api.oday_api.security.dependencies import principal_from_headers
 
             job_tenant = str(job.payload.get("tenant_id") or "").strip()
@@ -1314,6 +1351,10 @@ else:
                         detail="job not found",
                     )
 
+        def _authorized_job_response(job: Any, request: Request) -> dict[str, Any]:
+            from apps.api.oday_api.security.dependencies import principal_from_headers
+
+            _authorize_job_access(job, request)
             res = job.to_dict()
             if "summary" in job.payload and "summary" not in res:
                 res["summary"] = job.payload["summary"]

@@ -389,6 +389,35 @@ def checkpoint_batch_item_result(
             "Batch item result discarded: job=%s item=%s attempt=%s reason=%s",
             job.job_id, result.item_id, result.attempt, reason,
         )
+        if reason == "execution ownership changed" and result.result_ref:
+            # Cancellation/fencing wins the receipt CAS, but a business write
+            # may already have landed. Preserve a durable reconciliation link
+            # rather than pretending the rejected result produced nothing.
+            persisted_items = (latest.payload.get("receipt") or {}).get("items", []) if latest else []
+            accounted = any(
+                item.get("item_id") == result.item_id
+                and item.get("result_ref") == result.result_ref
+                for item in persisted_items if isinstance(item, dict)
+            )
+            if not accounted:
+                from shared.audit import AuditEvent
+
+                persistence.audit_log.record(
+                    AuditEvent(
+                        event_type="batch.item_result.uncheckpointed",
+                        actor="worker", action="reconcile", resource="job/batch-listing-intake",
+                        outcome="reconciliation_required", correlation_id=job.correlation_id,
+                        job_id=job.job_id,
+                        metadata={
+                            "tenant_id": job.payload.get("tenant_id"),
+                            "item_id": result.item_id, "attempt": result.attempt,
+                            "landed_result_ref": result.result_ref,
+                            "observed_job_status": latest.status.value if latest else "missing",
+                            "submitted_fence_token": job.fence_token,
+                            "reason": reason,
+                        },
+                    )
+                )
 
     for _ in range(_CHECKPOINT_WRITE_ATTEMPTS):
         latest = persistence.job_queue.get(job.job_id)

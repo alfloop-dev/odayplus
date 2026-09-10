@@ -146,3 +146,13 @@ handoff §3.0／§3.3 以 `GET /platform/jobs/{job_id}` 與 `POST /platform/jobs
 六個新的 API／lost-retry 反例覆蓋 memory/durable，修正版 focused selection 全部通過。以原 head `48da14aa` 的四個 production 檔案作負向對照時，六項均在預期的授權／值遮罩／QUEUED 被覆寫斷言失敗（exit 1），不是環境或 import 錯誤。原始對照收據：`/tmp/odp-foreground-repair-20260910/partial-negative.json` 與 JUnit XML。
 
 精確交付 head 的完整四條 verification 由 `delivery_toolchain/git/task_verification.py run` 留存原始 exit code、命令、耗時與 SHA，獨立審查及合併以這些收據和 required CI 為準。
+
+### 2026-09-10：獨立審查 B1–B3 接續修復
+
+Claude 對 `05756dae01aedd0139c29926fe7408e300e82787` 的公開程式獨立審查認列原 R1–R4 大部分修复，另退回三項具體邊界，本次由 Codex 接續：
+
+- B1：在 queue 建立之前套用與讀取相同的授權，建立後仍檢查 queue 實際返回的 record。enqueue 拒絕路徑透過既有 audit log 留下 denied 事件；API 回 401／403／404 時不再留下可執行的新 job。一般無 tenant 的既有通用 job 契約保留。
+- B2：正常 item 結果因取消或 lease 變更被 checkpoint 拒絕時，若成功結果尚未被持久 receipt 記錄，既有 audit log 保存 `batch.item_result.uncheckpointed`／`reconciliation_required`，包含 tenant、job、item、attempt 與 `landed_result_ref`。取消收據保持 CANCELLED、`result_ref=null`；這筆補充稽核讓已落地副作用可回查，不是覆寫取消或自動重跑。
+- B3：受保護 job 使用 v2 長度前綴編碼 tenant 與 client key，兩個成分含冒號也不會互相佔用 namespace。遇到既有 v1 key，只在實際 record 的 tenant／job type 相符時沿原 key 交給 queue 重播，並保留 owner／scope／clearance 與 feature-flag 檢查；generic job 不得使用 v1／v2 保留 prefix。
+
+新增 memory／SQLite 的拒絕建立與拒絕稽核、合法 v1 replay／跨 tenant 共存測試；取消測試在真實 result CAS 注入取消，完整使用 default registry／business executor，確認實際 intake 落地後的補充 audit 在 SQLite 重啟後仍可查回。七項聚焦反例在前一版 production code 全部失敗，在本次修復後全部通過（原始負向／正向收據：`/tmp/odp-foreground-repair-20260910/partial-round2-negative.*`、`partial-round2-focused.*`）。完整指定驗證與新 head 的獨立審查仍以正式 exact-head receipts／canonical review 為準；前一版審查退回不當作新版本批准。

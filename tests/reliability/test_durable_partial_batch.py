@@ -2233,7 +2233,8 @@ def test_foreground_replay_authorizes_actual_job(db_path, backend):
         scoped = {**request, "idempotency_key": "tail"}
         assert client.post("/api/v1/jobs", headers=_auth_headers("tenant:segment", subject="owner"), json=scoped).status_code == 202
         collision = client.post("/api/v1/jobs", headers=_auth_headers("tenant", subject="owner"), json={**scoped, "idempotency_key": "segment:tail"})
-        assert collision.status_code == 404 and "PRIVATE-ADDRESS" not in collision.text
+        assert collision.status_code == 202 and collision.json()["created"] is True
+        assert collision.json()["job"]["payload"]["tenant_id"] == "tenant"
     finally:
         if getattr(bundle, "engine", None) is not None:
             bundle.engine.close()
@@ -2370,3 +2371,110 @@ def test_foreground_late_result_from_reclaimed_worker(db_path, caplog, deliver_b
     finally:
         original.engine.close()
         replacement.engine.close()
+
+
+@pytest.mark.parametrize("backend", ["memory", "durable"])
+def test_foreground_denied_enqueue_creates_no_work_and_is_audited(db_path, backend):
+    bundle = _memory_bundle() if backend == "memory" else _durable_bundle(db_path)
+    try:
+        client = TestClient(create_app(job_queue=bundle.job_queue, audit_log=bundle.audit_log, persistence=bundle))
+        cases = [({}, "private-tenant", "denied-anonymous", 401),
+                 (_auth_headers("other-tenant"), "private-tenant", "denied-foreign", 404)]
+        for headers, tenant, key, expected in cases:
+            response = client.post("/api/v1/jobs", headers={**headers, "x-correlation-id": key}, json={"job_type": "synthetic-generic", "payload": {"tenant_id": tenant}, "idempotency_key": key})
+            assert response.status_code == expected
+            assert bundle.job_queue.get_by_idempotency_key(key) is None
+            events = bundle.audit_log.list_events(correlation_id=key)
+            assert len(events) == 1
+            assert events[0].event_type == "job.enqueue" and events[0].outcome == "denied"
+            assert events[0].metadata["status_code"] == expected
+        denied_batch = client.post("/api/v1/jobs", headers={**_auth_headers("private-tenant", role="auditor"), "x-correlation-id": "denied-batch"}, json={"job_type": BATCH_LISTING_INTAKE_JOB_TYPE, "payload": {"items": [{"item_id": "one", "address_raw": "PRIVATE"}]}})
+        assert denied_batch.status_code == 403
+        assert bundle.audit_log.list_events(correlation_id="denied-batch")[0].outcome == "denied"
+        accepted = client.post("/api/v1/jobs", headers=_auth_headers("private-tenant"), json={"job_type": "synthetic-generic", "payload": {"tenant_id": "private-tenant"}, "idempotency_key": "allowed-generic"})
+        assert accepted.status_code == 202
+        calls = []
+        registry = JobRegistry()
+        registry.register("synthetic-generic", lambda job, persistence: calls.append(job.job_id))
+        worker = ODayWorker(persistence=bundle, registry=registry)
+        assert worker.run_once() is True
+        assert worker.run_once() is False
+        assert calls == [accepted.json()["job_id"]]
+        if backend == "durable":
+            bundle.engine.close()
+            bundle = _durable_bundle(db_path)
+            assert bundle.audit_log.list_events(correlation_id="denied-anonymous")[0].outcome == "denied"
+    finally:
+        if getattr(bundle, "engine", None) is not None:
+            bundle.engine.close()
+
+
+@pytest.mark.parametrize("backend", ["memory", "durable"])
+def test_foreground_legacy_namespace_replay_preserves_separate_tenants(db_path, backend):
+    bundle = _memory_bundle() if backend == "memory" else _durable_bundle(db_path)
+    try:
+        payload = {"tenant_id": "tenant:segment", "submitter": "owner", "items": [{"item_id": "one", "address_raw": "LEGACY-PRIVATE"}]}
+        legacy, _ = bundle.job_queue.enqueue(JobRequest(job_type=BATCH_LISTING_INTAKE_JOB_TYPE, payload=payload, idempotency_key="batch-listing-intake:v1:tenant:segment:tail"), correlation_id="legacy-scoped")
+        client = TestClient(create_app(job_queue=bundle.job_queue, audit_log=bundle.audit_log, persistence=bundle))
+        body = {"job_type": BATCH_LISTING_INTAKE_JOB_TYPE, "idempotency_key": "tail", "payload": {"items": [{"item_id": "one", "address_raw": "ADDRESS"}]}}
+        first = client.post("/api/v1/jobs", headers=_auth_headers("tenant:segment", subject="owner"), json=body)
+        assert first.status_code == 202 and first.json()["created"] is False
+        assert first.json()["job_id"] == legacy.job_id
+        other_body = {**body, "idempotency_key": "segment:tail"}
+        second = client.post("/api/v1/jobs", headers=_auth_headers("tenant", subject="owner"), json=other_body)
+        assert second.status_code == 202 and second.json()["created"] is True
+        assert second.json()["job_id"] != legacy.job_id
+        for tenant, request, expected_id in [("tenant:segment", body, legacy.job_id), ("tenant", other_body, second.json()["job_id"])]:
+            replay = client.post("/api/v1/jobs", headers=_auth_headers(tenant, subject="owner"), json=request)
+            assert replay.status_code == 202 and replay.json()["created"] is False
+            assert replay.json()["job_id"] == expected_id
+        denied = client.post("/api/v1/jobs", headers={**_auth_headers("tenant:segment", subject="different-owner"), "x-correlation-id": "denied-legacy-replay"}, json=body)
+        assert denied.status_code == 403
+        assert bundle.audit_log.list_events(correlation_id="denied-legacy-replay")[0].outcome == "denied"
+    finally:
+        if getattr(bundle, "engine", None) is not None:
+            bundle.engine.close()
+
+
+def test_foreground_cancellation_records_landed_intake_for_reconciliation(db_path):
+    bundle = _durable_bundle(db_path)
+    try:
+        tenant = "cancelled-landed-tenant"
+        job, _ = bundle.job_queue.enqueue(JobRequest(job_type=BATCH_LISTING_INTAKE_JOB_TYPE, payload={"tenant_id": tenant, "items": [{"item_id": "one", "address_raw": "台北市大安區1號"}]}), correlation_id="cancelled-after-business-write")
+        original = bundle.job_queue.update_status
+        injected = False
+
+        def cancel_before_result_checkpoint(job_id, status, **kwargs):
+            nonlocal injected
+            items = kwargs.get("payload", {}).get("receipt", {}).get("items", [])
+            if not injected and status == JobStatus.RUNNING and any(item["item_status"] == "SUCCEEDED" for item in items):
+                injected = True
+                assert len(bundle.operator_intake_repository.list_intakes()) == 1
+                before = bundle.job_queue.get(job_id)
+                original(job_id, JobStatus.CANCELLED, expected_version=before.version, fence_token=before.fence_token)
+            return original(job_id, status, **kwargs)
+
+        # Inject at the result CAS; the default registry and actual business
+        # executor still create the real durable intake before cancellation.
+        with patch.object(bundle.job_queue, "update_status", side_effect=cancel_before_result_checkpoint):
+            assert ODayWorker(persistence=bundle).run_once() is True
+        assert injected
+        cancelled = bundle.job_queue.get(job.job_id)
+        assert cancelled.status == JobStatus.CANCELLED
+        item = cancelled.payload["receipt"]["items"][0]
+        assert item["item_status"] == "CANCELLED" and item["result_ref"] is None
+        assert item["attempt"] == 1
+        bundle.engine.close()
+        bundle = _durable_bundle(db_path)
+        intakes = bundle.operator_intake_repository.list_intakes()
+        assert len(intakes) == 1
+        events = [event for event in bundle.audit_log.list_events(tenant_id=tenant) if event.event_type == "batch.item_result.uncheckpointed"]
+        assert len(events) == 1
+        event = events[0]
+        assert event.job_id == job.job_id and event.outcome == "reconciliation_required"
+        assert event.metadata["item_id"] == "one" and event.metadata["attempt"] == 1
+        assert event.metadata["landed_result_ref"] == intakes[0]["id"]
+        assert event.metadata["observed_job_status"] == "cancelled"
+        assert bundle.job_queue.get(job.job_id).payload == cancelled.payload
+    finally:
+        bundle.engine.close()

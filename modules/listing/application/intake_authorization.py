@@ -535,6 +535,7 @@ def mask_batch_intake_job(principal: Principal, job: dict[str, Any]) -> dict[str
     if clearance >= DataClassification.RESTRICTED:
         return job
     masked = deepcopy(job)
+    masked["error_message"] = None
     aliases = {
         "address_raw": "address", "addressRaw": "address", "address": "address",
         "rent_per_month": "rent", "rentPerMonth": "rent", "rent": "rent",
@@ -576,5 +577,4 @@ def mask_batch_intake_job(principal: Principal, job: dict[str, Any]) -> dict[str
             if isinstance(item, dict) and isinstance(item.get("error"), dict):
                 item["error"]["message"] = "Item processing failed; details are restricted"
                 item["error"]["details"] = None
-    masked["error_message"] = None
     return masked
