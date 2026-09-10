@@ -2557,6 +2557,8 @@ def test_ci_that_starts_after_the_cached_verdict_stops_the_recovery(
         ("human_gate_class", {"task_class": "human_gate"}, frozenset()),
         ("human_required_roles", {"human_required_roles": ["ops"]}, frozenset()),
         ("pending_human_gate", {"gate_status": "pending_human_review"}, frozenset()),
+        ("human_waiting_gate", {"waiting_for": "Human/Ops"}, frozenset()),
+        ("human_owner", {"owner": "Human/Ops"}, frozenset()),
         ("non_dispatchable", {"non_dispatchable": True}, frozenset()),
         ("active_or_pending_worker", {}, frozenset({CONFLICT_TASK_ID})),
         (
@@ -2594,7 +2596,7 @@ def test_ci_that_starts_after_the_cached_verdict_stops_the_recovery(
         ("already_approved", {"status": "review_approved"}, frozenset()),
     ],
 )
-def test_recovery_never_acts_on_a_gated_frozen_or_busy_task(
+def test_conflicted_review_never_acts_on_a_gated_frozen_or_busy_task(
     label: str, task_overrides: dict, busy_task_ids: frozenset
 ) -> None:
     """These are decided locally, so GitHub is never asked about them at all."""
@@ -2611,7 +2613,7 @@ def test_recovery_never_acts_on_a_gated_frozen_or_busy_task(
     assert logged == [], label
 
 
-def test_recovery_declines_when_the_task_repository_cannot_be_resolved() -> None:
+def test_conflicted_review_declines_when_the_task_repository_cannot_be_resolved() -> None:
     """A PR number is only meaningful against a known repository."""
     task = _conflicted_review_task()
     task.pop("repository")
@@ -2624,7 +2626,7 @@ def test_recovery_declines_when_the_task_repository_cannot_be_resolved() -> None
     assert gh_calls == []
 
 
-def test_repeated_polls_and_restarts_recover_one_head_exactly_once() -> None:
+def test_conflicted_review_repeated_polls_and_restarts_recover_one_head_exactly_once() -> None:
     """The marker is written by the same commit that moves the status."""
     task = _conflicted_review_task()
     status = {
@@ -2669,7 +2671,7 @@ def test_repeated_polls_and_restarts_recover_one_head_exactly_once() -> None:
     assert advanced[dispatch_engine.REVIEW_CONFLICT_RECOVERY_HEAD_FIELD] == advanced_head
 
 
-def test_a_recovery_that_does_not_persist_leaves_the_head_recoverable() -> None:
+def test_conflicted_review_a_recovery_that_does_not_persist_leaves_the_head_recoverable() -> None:
     """Marking a head recovered on a commit that never landed would strand it."""
     task = _conflicted_review_task()
 
@@ -2725,11 +2727,13 @@ def test_canonical_ci_repair_transition_keeps_its_review_approved_guard() -> Non
         ("queued_merge_route", {"merge_route": {"head": CONFLICT_HEAD, "route": "queued"}}),
         ("unsubmitted_review", {"review_submission": None}),
         ("human_gate", {"task_class": "human_gate"}),
+        ("human_waiting_gate", {"waiting_for": "Human/Ops"}),
+        ("human_owner", {"owner": "Human/Ops"}),
         ("non_dispatchable", {"non_dispatchable": True}),
         ("wrong_status", {"status": "in_progress"}),
     ],
 )
-def test_named_entry_still_refuses_a_review_it_must_not_move(
+def test_conflicted_review_named_entry_still_refuses_invalid_review(
     label: str, overrides: dict
 ) -> None:
     """Even through the restricted door, the transition guards itself."""
@@ -2755,14 +2759,8 @@ def test_named_entry_still_refuses_a_review_it_must_not_move(
     assert task["status"] == original_status, label
 
 
-def test_dispatch_ready_tasks_recovers_a_conflicted_review_without_a_reviewer_slot() -> None:
-    """The wait is on the reviewer's slot, so the repair must not need one.
-
-    Dispatch runs with only an unrelated agent in the rotation: neither the
-    owner nor the reviewer is considered, nothing is queued, and the recovery
-    still lands - which is the point of it living in the reconciliation stage
-    rather than the per-agent loop.
-    """
+def test_conflicted_review_dispatch_ready_tasks_recovers_without_reviewer_slot() -> None:
+    """The wait is on the reviewer's slot, so the repair must not need one."""
     import github_bus
 
     cfg = _base_test_config()
@@ -2855,6 +2853,45 @@ def _failed_ci_review_task(**overrides) -> dict:
     return task
 
 
+def _failed_ci_pr_facts(
+    *,
+    state="OPEN",
+    head=FAILED_CI_HEAD,
+    status_check_rollup=None,
+    failed_check_name="product-e2e-gate",
+    details_url="https://github.com/alfloop-dev/odayplus/actions/runs/34386285095/job/102583329286",
+) -> dict:
+    if status_check_rollup is not None:
+        rollup = status_check_rollup
+    else:
+        rollup = [
+            {
+                "__typename": "CheckRun",
+                "name": failed_check_name,
+                "workflowName": "CI",
+                "status": "COMPLETED",
+                "conclusion": "FAILURE",
+                "detailsUrl": details_url,
+                "startedAt": "2026-09-09T23:00:00Z",
+                "completedAt": "2026-09-09T23:05:00Z",
+            },
+            {
+                "__typename": "CheckRun",
+                "name": "product",
+                "workflowName": "CI",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+                "startedAt": "2026-09-09T23:00:00Z",
+                "completedAt": "2026-09-09T23:04:00Z",
+            },
+        ]
+    return {
+        "state": state,
+        "headRefOid": head,
+        "statusCheckRollup": rollup,
+    }
+
+
 def _run_ci_failure_recovery(
     task,
     *,
@@ -2884,7 +2921,7 @@ def _run_ci_failure_recovery(
     dispatch_engine._sync_supervisor_scope()
 
     head = task.get("review_submission", {}).get("remote_sha", FAILED_CI_HEAD)
-    remaining = list(reads if reads is not None else [_pr_facts(head=head)])
+    remaining = list(reads if reads is not None else [_failed_ci_pr_facts(head=head)])
     gh_calls: list[list[str]] = []
     events = timeline if timeline is not None else []
 
@@ -2929,8 +2966,8 @@ def _run_ci_failure_recovery(
     return changed, gh_calls, logged, status
 
 
-def test_failed_ci_review_is_returned_to_its_owner() -> None:
-    """An unapproved review task with CI failure is returned to its owner."""
+def test_ci_failure_review_is_returned_to_its_owner_with_actionable_diagnostics() -> None:
+    """An unapproved review task with CI failure is returned to its owner with exact diagnostics."""
     task = _failed_ci_review_task()
 
     changed, gh_calls, logged, status = _run_ci_failure_recovery(task)
@@ -2949,7 +2986,10 @@ def test_failed_ci_review_is_returned_to_its_owner() -> None:
     assert task[dispatch_engine.REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD] == FAILED_CI_HEAD
     assert "waiting_for" not in task
     assert status["handoffs"][0]["status"] == "done"
-    assert "failed required CI checks" in task["next"]
+    assert "product-e2e-gate" in task["next"]
+    assert "FAILURE" in task["next"]
+    assert "actions/runs/34386285095/job/102583329286" in task["next"]
+    assert "boundedly retry transient infra failures" in task["next"]
     assert FAILED_CI_HEAD[:8] in task["next"]
     assert "task_finalize.sh" in task["next"]
 
@@ -2962,10 +3002,98 @@ def test_failed_ci_review_is_returned_to_its_owner() -> None:
     assert len(recovered) == 1
     assert recovered[0]["pr_number"] == 1282
     assert recovered[0]["head"] == FAILED_CI_HEAD
+    assert len(recovered[0]["failed_checks"]) == 1
+    assert recovered[0]["failed_checks"][0]["name"] == "product-e2e-gate"
+    assert recovered[0]["failed_checks"][0]["conclusion"] == "FAILURE"
     assert len(gh_calls) == 2
     for call in gh_calls:
         assert call[:3] == ["pr", "view", "1282"]
         assert call[call.index("--repo") + 1] == FAILED_CI_REPO
+
+
+def test_ci_failure_recovery_declines_pending_in_progress_checks() -> None:
+    """When a CI run is still in-progress (e.g. 1 failure + 1 in_progress), do not recover."""
+    task = _failed_ci_review_task()
+    rollup = [
+        {
+            "__typename": "CheckRun",
+            "name": "product-e2e-gate",
+            "workflowName": "CI",
+            "status": "COMPLETED",
+            "conclusion": "FAILURE",
+            "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34386285095/job/102583329286",
+        },
+        {
+            "__typename": "CheckRun",
+            "name": "product-integration",
+            "workflowName": "CI",
+            "status": "IN_PROGRESS",
+            "conclusion": None,
+        },
+    ]
+    changed, _gh_calls, logged, _status = _run_ci_failure_recovery(
+        task, reads=[_failed_ci_pr_facts(status_check_rollup=rollup)]
+    )
+
+    assert changed is False
+    assert task["status"] == "review"
+    assert dispatch_engine.REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD not in task
+    assert logged == []
+
+
+def test_ci_failure_recovery_declines_unknown_conclusion() -> None:
+    """When a check has an unrecognized conclusion, treat as unverifiable reading."""
+    task = _failed_ci_review_task()
+    rollup = [
+        {
+            "__typename": "CheckRun",
+            "name": "product-e2e-gate",
+            "workflowName": "CI",
+            "status": "COMPLETED",
+            "conclusion": "SOME_UNKNOWN_CONCLUSION",
+        }
+    ]
+    changed, _gh_calls, logged, _status = _run_ci_failure_recovery(
+        task, reads=[_failed_ci_pr_facts(status_check_rollup=rollup)]
+    )
+
+    assert changed is False
+    assert task["status"] == "review"
+    assert logged == []
+
+
+def test_ci_failure_recovery_declines_malformed_checks() -> None:
+    """When rollup has malformed non-dict items, fail safe and decline recovery."""
+    task = _failed_ci_review_task()
+    rollup = ["not-a-dict-check-object"]
+    changed, _gh_calls, logged, _status = _run_ci_failure_recovery(
+        task, reads=[_failed_ci_pr_facts(status_check_rollup=rollup)]
+    )
+
+    assert changed is False
+    assert task["status"] == "review"
+    assert logged == []
+
+
+def test_ci_failure_recovery_declines_human_waiting_gate() -> None:
+    """When a review task is waiting for Human/Ops, recovery must not reopen or clear it."""
+    task = _failed_ci_review_task(waiting_for="Human/Ops")
+    changed, _gh_calls, logged, _status = _run_ci_failure_recovery(task)
+
+    assert changed is False
+    assert task["status"] == "review"
+    assert task["waiting_for"] == "Human/Ops"
+    assert logged == []
+
+
+def test_ci_failure_recovery_declines_human_owner() -> None:
+    """When a review task is owned by Human/Ops, recovery must not act on it."""
+    task = _failed_ci_review_task(owner="Human/Ops")
+    changed, _gh_calls, logged, _status = _run_ci_failure_recovery(task)
+
+    assert changed is False
+    assert task["status"] == "review"
+    assert logged == []
 
 
 @pytest.mark.parametrize(
@@ -2978,17 +3106,35 @@ def test_failed_ci_review_is_returned_to_its_owner() -> None:
         ("ci_unreadable_pr", {"ci": (None, "unknown")}),
         ("ci_probe_raises", {"ci_error": RuntimeError("gh unreachable")}),
         ("pr_closed_by_ci_probe", {"ci": ("CLOSED", "failure")}),
-        ("pr_closed", {"reads": [_pr_facts(state="CLOSED", head=FAILED_CI_HEAD)]}),
-        ("pr_merged", {"reads": [_pr_facts(state="MERGED", head=FAILED_CI_HEAD)]}),
+        ("pr_closed", {"reads": [_failed_ci_pr_facts(state="CLOSED", head=FAILED_CI_HEAD)]}),
+        ("pr_merged", {"reads": [_failed_ci_pr_facts(state="MERGED", head=FAILED_CI_HEAD)]}),
         ("gh_offline", {"reads": [None]}),
         ("gh_malformed_json", {"reads": ["not json"]}),
         ("gh_empty_payload", {"reads": [{}]}),
-        ("missing_head", {"reads": [_pr_facts(head=None)]}),
-        ("missing_state", {"reads": [_pr_facts(state=None, head=FAILED_CI_HEAD)]}),
-        ("head_drift", {"reads": [_pr_facts(head="b" * 40)]}),
+        ("missing_head", {"reads": [_failed_ci_pr_facts(head=None)]}),
+        ("missing_state", {"reads": [_failed_ci_pr_facts(state=None, head=FAILED_CI_HEAD)]}),
+        ("head_drift", {"reads": [_failed_ci_pr_facts(head="b" * 40)]}),
+        ("empty_rollup", {"reads": [_failed_ci_pr_facts(status_check_rollup=[])]}),
+        (
+            "all_green_rollup",
+            {
+                "reads": [
+                    _failed_ci_pr_facts(
+                        status_check_rollup=[
+                            {
+                                "__typename": "CheckRun",
+                                "name": "product",
+                                "status": "COMPLETED",
+                                "conclusion": "SUCCESS",
+                            }
+                        ]
+                    )
+                ]
+            },
+        ),
     ],
 )
-def test_failed_ci_recovery_declines_every_unconfirmable_reading(
+def test_ci_failure_recovery_declines_every_unconfirmable_reading(
     label: str, kwargs: dict
 ) -> None:
     task = _failed_ci_review_task()
@@ -3000,7 +3146,7 @@ def test_failed_ci_recovery_declines_every_unconfirmable_reading(
     assert logged == [], label
 
 
-def test_repeated_tick_on_same_failed_ci_head_is_idempotent() -> None:
+def test_ci_failure_repeated_tick_on_same_failed_ci_head_is_idempotent() -> None:
     """Repeated ticks on the same head recover exactly once."""
     task = _failed_ci_review_task(
         **{dispatch_engine.REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD: FAILED_CI_HEAD}
@@ -3014,7 +3160,7 @@ def test_repeated_tick_on_same_failed_ci_head_is_idempotent() -> None:
     assert task["status"] == "review"
 
 
-def test_resubmitted_new_head_with_ci_failure_can_recover_again() -> None:
+def test_ci_failure_resubmitted_new_head_can_recover_again() -> None:
     """When the owner pushes a new head and resubmits, a new failure can recover."""
     new_head = "e1f2a3b4" * 5
     task = _failed_ci_review_task(
@@ -3031,7 +3177,7 @@ def test_resubmitted_new_head_with_ci_failure_can_recover_again() -> None:
     )
 
     changed, gh_calls, logged, _status = _run_ci_failure_recovery(
-        task, reads=[_pr_facts(head=new_head)]
+        task, reads=[_failed_ci_pr_facts(head=new_head)]
     )
 
     assert changed is True
@@ -3072,11 +3218,13 @@ def test_canonical_ci_repair_transition_allows_failed_ci_review_and_keeps_guard(
         ("queued_merge_route", {"merge_route": {"head": FAILED_CI_HEAD, "route": "queued"}}),
         ("unsubmitted_review", {"review_submission": None}),
         ("human_gate", {"task_class": "human_gate"}),
+        ("human_waiting_gate", {"waiting_for": "Human/Ops"}),
+        ("human_owner", {"owner": "Human/Ops"}),
         ("non_dispatchable", {"non_dispatchable": True}),
         ("wrong_status", {"status": "in_progress"}),
     ],
 )
-def test_failed_ci_review_entry_still_refuses_invalid_review_states(
+def test_canonical_ci_repair_transition_failed_ci_review_entry_still_refuses_invalid_states(
     label: str, overrides: dict
 ) -> None:
     cfg = _base_test_config()
@@ -3101,7 +3249,7 @@ def test_failed_ci_review_entry_still_refuses_invalid_review_states(
     assert task["status"] == original_status, label
 
 
-def test_dispatch_ready_tasks_recovers_failed_ci_review_without_reviewer_slot() -> None:
+def test_ci_failure_dispatch_ready_tasks_recovers_failed_ci_review_without_reviewer_slot() -> None:
     """Review CI failure recovery runs during reconciliation without a reviewer slot."""
     import github_bus
 
@@ -3118,7 +3266,7 @@ def test_dispatch_ready_tasks_recovers_failed_ci_review_without_reviewer_slot() 
 
     def fake_run_gh(args, **_kwargs):
         return subprocess.CompletedProcess(
-            args=["gh", *args], returncode=0, stdout=json.dumps(_pr_facts(head=FAILED_CI_HEAD)), stderr=""
+            args=["gh", *args], returncode=0, stdout=json.dumps(_failed_ci_pr_facts(head=FAILED_CI_HEAD)), stderr=""
         )
 
     with (
@@ -3152,7 +3300,7 @@ def test_dispatch_ready_tasks_recovers_failed_ci_review_without_reviewer_slot() 
     assert status["handoffs"][0]["status"] == "done"
 
 
-def test_failed_ci_review_recovery_then_success_reaches_review_dispatch() -> None:
+def test_ci_failure_recovery_then_success_reaches_review_dispatch() -> None:
     """When a task is resubmitted and CI succeeds, reviewer is dispatch eligible."""
     cfg = _base_test_config()
     fixed_head = "c3d4e5f6" * 5
@@ -3187,6 +3335,235 @@ def test_failed_ci_review_recovery_then_success_reaches_review_dispatch() -> Non
         )
 
     assert eligible is True
+
+
+def test_ci_failure_real_cas_race_aborts_and_does_not_dispatch_detached_in_progress(tmp_path: Path) -> None:
+    """When concurrent writer approves a review task, CAS mismatch aborts and prevents detached dispatch."""
+    import github_bus
+
+    cfg = _base_test_config()
+    cfg["agents"]["antigravity"] = {
+        "id": "antigravity",
+        "display_name": "Antigravity",
+        "provider": "antigravity",
+        "slot_id": "slot-antigravity-main",
+    }
+    cfg["agents"]["codex2"] = {
+        "id": "codex2",
+        "display_name": "Codex2",
+        "provider": "codex",
+        "slot_id": "slot-codex2",
+    }
+    status_file = tmp_path / "ai-status.json"
+    cfg["paths"] = {
+        "status_file": str(status_file),
+        "activity_log": str(tmp_path / "ai-activity-log.jsonl"),
+        "task_archive_dir": str(tmp_path / "ai-task-archive"),
+    }
+
+    task_id = "ODP-DATA-PLANE-DELETE-PROPAGATION-001"
+    initial_task = _failed_ci_review_task(id=task_id, status="review")
+    initial_status = {
+        "_status_write_revision": "rev-1",
+        "tasks": [initial_task],
+        "handoffs": [{"task_id": task_id, "from": "Antigravity", "to": "Codex2", "status": "pending"}],
+    }
+    status_file.write_text(json.dumps(initial_status), encoding="utf-8")
+
+    # Concurrent writer updates review task with revision rev-2 to disk
+    concurrent_disk_task = _failed_ci_review_task(
+        id=task_id,
+        status="review",
+    )
+    concurrent_disk_task["next"] = "Review in progress by Codex2"
+    disk_status = {
+        "_status_write_revision": "rev-2",
+        "tasks": [concurrent_disk_task],
+        "handoffs": [{"task_id": task_id, "from": "Antigravity", "to": "Codex2", "status": "pending"}],
+    }
+
+    state = {"workers": {}, "queue": {"events": {}}}
+    queued_events: list[dict] = []
+
+    def fake_run_gh(args, **_kwargs):
+        # When GitHub probe runs, disk status has already been advanced by concurrent writer
+        status_file.write_text(json.dumps(disk_status), encoding="utf-8")
+        return subprocess.CompletedProcess(
+            args=["gh", *args], returncode=0, stdout=json.dumps(_failed_ci_pr_facts(head=FAILED_CI_HEAD)), stderr=""
+        )
+
+    with (
+        mock.patch.object(github_bus, "run_gh", side_effect=fake_run_gh),
+        mock.patch.object(
+            supervisor.runtime_ai_status,
+            "task_pr_ci_status",
+            return_value=("OPEN", "failure"),
+        ),
+        mock.patch.object(
+            supervisor.runtime_ai_status,
+            "resolve_task_sha",
+            return_value=FAILED_CI_HEAD,
+        ),
+        mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+        mock.patch.object(
+            dispatch_engine, "task_reality_reconcile_is_due", return_value=False
+        ),
+        mock.patch.object(
+            supervisor,
+            "queue_delivery_event",
+            side_effect=lambda _c, evt: queued_events.append(evt) or True,
+        ),
+    ):
+        changed = supervisor.dispatch_ready_tasks(
+            cfg,
+            state,
+            agent_ids_override=["antigravity"],
+        )
+
+    # CAS mismatch should reject requeue_task_for_ci_repair, status reloads to disk_status (review),
+    # and no owned_in_progress_dispatch is emitted!
+    assert queued_events == []
+    final_disk = json.loads(status_file.read_text(encoding="utf-8"))
+    assert final_disk["tasks"][0]["status"] == "review"
+
+
+def test_ci_failure_full_lifecycle_dispatcher_to_resubmission_to_review(tmp_path: Path) -> None:
+    """Full lifecycle: CI failure -> recovery to in_progress -> owner dispatch -> resubmission -> review dispatch."""
+    import github_bus
+
+    cfg = _base_test_config()
+    cfg["agents"]["antigravity"] = {
+        "id": "antigravity",
+        "display_name": "Antigravity",
+        "provider": "antigravity",
+        "slot_id": "slot-antigravity-main",
+    }
+    cfg["agents"]["codex2"] = {
+        "id": "codex2",
+        "display_name": "Codex2",
+        "provider": "codex",
+        "slot_id": "slot-codex2",
+    }
+    status_file = tmp_path / "ai-status.json"
+    cfg["paths"] = {
+        "status_file": str(status_file),
+        "activity_log": str(tmp_path / "ai-activity-log.jsonl"),
+        "task_archive_dir": str(tmp_path / "ai-task-archive"),
+    }
+
+    task_id = "ODP-DATA-PLANE-DELETE-PROPAGATION-001"
+    initial_task = _failed_ci_review_task(id=task_id, status="review", owner="Antigravity", reviewer="Codex2")
+    initial_status = {
+        "_status_write_revision": "rev-1",
+        "tasks": [initial_task],
+        "handoffs": [{"task_id": task_id, "from": "Antigravity", "to": "Codex2", "status": "pending"}],
+    }
+    status_file.write_text(json.dumps(initial_status), encoding="utf-8")
+
+    state = {"workers": {}, "queue": {"events": {}}}
+    queued_events: list[dict] = []
+
+    def fake_run_gh(args, **_kwargs):
+        return subprocess.CompletedProcess(
+            args=["gh", *args], returncode=0, stdout=json.dumps(_failed_ci_pr_facts(head=FAILED_CI_HEAD)), stderr=""
+        )
+
+    # Step 1: Tick 1 - reconciliation recovers task from review to in_progress
+    with (
+        mock.patch.object(github_bus, "run_gh", side_effect=fake_run_gh),
+        mock.patch.object(
+            supervisor.runtime_ai_status,
+            "task_pr_ci_status",
+            return_value=("OPEN", "failure"),
+        ),
+        mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+        mock.patch.object(
+            dispatch_engine, "task_reality_reconcile_is_due", return_value=False
+        ),
+        mock.patch.object(
+            supervisor,
+            "queue_delivery_event",
+            side_effect=lambda _c, evt: queued_events.append(evt) or True,
+        ),
+    ):
+        changed = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["codex2"])
+
+    assert changed is True
+    disk1 = json.loads(status_file.read_text(encoding="utf-8"))
+    assert disk1["tasks"][0]["status"] == "in_progress"
+    assert disk1["tasks"][0]["last_reopened_reason"] == "control_plane_recovery"
+    assert disk1["handoffs"][0]["status"] == "done"
+
+    # Step 2: Tick 2 - owner Antigravity is dispatched to repair CI
+    queued_events.clear()
+    with (
+        mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+        mock.patch.object(
+            dispatch_engine, "task_reality_reconcile_is_due", return_value=False
+        ),
+        mock.patch.object(
+            supervisor,
+            "queue_delivery_event",
+            side_effect=lambda _c, evt: queued_events.append(evt) or True,
+        ),
+    ):
+        changed2 = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["antigravity"])
+
+    assert changed2 is True
+    assert len(queued_events) == 1
+    assert queued_events[0]["reason"] == "owned_in_progress_dispatch"
+    assert queued_events[0]["target_agent"] == "Antigravity"
+
+    # Step 3: Owner repairs code and resubmits review at new SHA
+    fixed_head = "f00d1234" * 5
+    disk1["tasks"][0]["status"] = "review"
+    disk1["tasks"][0]["review_submission"] = {
+        "pr_number": 1282,
+        "branch": f"task/{task_id}",
+        "base_branch": "dev",
+        "remote_sha": fixed_head,
+        "pr_url": f"https://github.com/{FAILED_CI_REPO}/pull/1282",
+    }
+    disk1["_status_write_revision"] = "rev-3"
+    status_file.write_text(json.dumps(disk1), encoding="utf-8")
+
+    # Step 4: CI passes for new head -> reviewer Codex2 is dispatched
+    queued_events.clear()
+    with (
+        mock.patch.object(
+            supervisor.runtime_ai_status,
+            "resolve_task_sha",
+            return_value=fixed_head,
+        ),
+        mock.patch.object(
+            supervisor.runtime_ai_status,
+            "task_pr_ci_status",
+            return_value=("OPEN", "success"),
+        ),
+        mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+        mock.patch.object(
+            dispatch_engine, "task_reality_reconcile_is_due", return_value=False
+        ),
+        mock.patch.object(
+            supervisor,
+            "queue_delivery_event",
+            side_effect=lambda _c, evt: queued_events.append(evt) or True,
+        ),
+    ):
+        changed3 = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["codex2"])
+
+    assert changed3 is True
+    assert len(queued_events) == 1
+    assert queued_events[0]["reason"] == "review_ready_dispatch"
+    assert queued_events[0]["target_agent"] == "Codex2"
 
 
 # --- Preemption readiness ----------------------------------------------------

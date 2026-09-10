@@ -612,6 +612,8 @@ def requeue_task_for_ci_repair(
         or not any(item is task for item in status_tasks)
         or sv.task_is_human_gate(task)
         or bool(task.get("non_dispatchable"))
+        or sv.is_human_gate_agent(task.get("owner"))
+        or sv.is_human_gate_agent(task.get("waiting_for"))
     ):
         return False
 

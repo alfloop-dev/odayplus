@@ -202,6 +202,194 @@ def _review_pr_facts(slug: str, pr_number: int) -> tuple[str, str, str] | None:
     return state, merge_state, head
 
 
+_REVIEW_CI_FAILURE_PR_JSON_FIELDS = "state,headRefOid,statusCheckRollup"
+
+
+def _review_pr_failed_ci_facts(
+    slug: str, pr_number: int
+) -> tuple[str, str, list[dict[str, Any]]] | None:
+    """`(state, headRefOid, failed_checks)` for an open review PR with conclusive CI failure.
+
+    Bound to the repository the task declares. Requires:
+    - PR state is OPEN and headRefOid is present,
+    - statusCheckRollup is a non-empty list of checks,
+    - all non-task-review-gate checks have completed without any pending/queued/in-progress/unverifiable runs,
+    - at least one check is in a recognized terminal failure condition (FAILURE, CANCELLED, TIMED_OUT, ACTION_REQUIRED, ERROR).
+
+    Returns None if:
+    - the PR cannot be queried from GitHub,
+    - any check is malformed (e.g. not a dict or unparseable),
+    - any check is pending, in-progress, queued, or waiting,
+    - any check has an unrecognized conclusion or state,
+    - no checks exist or no check failed.
+    """
+    import json as _json
+
+    from github_bus import GitHubBusError, GitHubBusOffline, run_gh
+
+    if not slug or "/" not in slug or pr_number <= 0:
+        return None
+    try:
+        proc = run_gh(
+            [
+                "pr",
+                "view",
+                str(pr_number),
+                "--repo",
+                slug,
+                "--json",
+                _REVIEW_CI_FAILURE_PR_JSON_FIELDS,
+            ]
+        )
+    except (GitHubBusError, GitHubBusOffline):
+        return None
+    try:
+        payload = _json.loads(proc.stdout or "{}")
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    state = str(payload.get("state") or "").strip().upper()
+    head = str(payload.get("headRefOid") or "").strip().lower()
+    raw_rollup = payload.get("statusCheckRollup")
+    if not state or not head or not isinstance(raw_rollup, list) or not raw_rollup:
+        return None
+
+    try:
+        raw_checks, _superseded_checks = runtime_ai_status.latest_status_check_runs(raw_rollup)
+    except Exception:
+        return None
+
+    has_pending = False
+    has_unverifiable = False
+    valid_checks_count = 0
+    failed_checks: list[dict[str, Any]] = []
+
+    terminal_failure_conclusions = {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}
+    terminal_success_conclusions = {"SUCCESS", "NEUTRAL", "SKIPPED"}
+    pending_states = {"PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS", "WAITING"}
+    pending_statuses = {"PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"}
+
+    for index, check in enumerate(raw_checks):
+        if not isinstance(check, dict):
+            has_unverifiable = True
+            break
+
+        check_name = str(check.get("name") or "").strip()
+        check_context = str(check.get("context") or "").strip()
+
+        # Exclude pre-approval reviewer gate
+        if check_context == "task-review-gate" or check_name == "task-review-gate":
+            continue
+
+        valid_checks_count += 1
+
+        check_type = str(check.get("__typename") or "").strip()
+        conclusion = str(check.get("conclusion") or "").upper()
+        state_val = str(check.get("state") or "").upper()
+        status_val = str(check.get("status") or "").upper()
+        workflow_name = str(check.get("workflowName") or "").strip()
+        details_url = str(
+            check.get("detailsUrl") or check.get("targetUrl") or check.get("url") or ""
+        ).strip()
+        display_name = check_name or check_context or f"check-{index}"
+
+        if check_type == "CheckRun":
+            if status_val != "COMPLETED" or not conclusion:
+                has_pending = True
+            elif conclusion in terminal_success_conclusions:
+                pass
+            elif conclusion in terminal_failure_conclusions:
+                failed_checks.append(
+                    {
+                        "name": display_name,
+                        "workflow": workflow_name,
+                        "conclusion": conclusion,
+                        "url": details_url,
+                    }
+                )
+            else:
+                has_unverifiable = True
+        elif check_type == "StatusContext":
+            if state_val in pending_states or not state_val:
+                has_pending = True
+            elif state_val == "SUCCESS":
+                pass
+            elif state_val in {"FAILURE", "ERROR"}:
+                failed_checks.append(
+                    {
+                        "name": display_name,
+                        "workflow": workflow_name,
+                        "conclusion": state_val,
+                        "url": details_url,
+                    }
+                )
+            else:
+                has_unverifiable = True
+        else:
+            if conclusion:
+                if conclusion in terminal_failure_conclusions:
+                    failed_checks.append(
+                        {
+                            "name": display_name,
+                            "workflow": workflow_name,
+                            "conclusion": conclusion,
+                            "url": details_url,
+                        }
+                    )
+                elif conclusion in {"PENDING", "IN_PROGRESS"}:
+                    has_pending = True
+                elif conclusion in terminal_success_conclusions:
+                    pass
+                else:
+                    has_unverifiable = True
+            elif state_val:
+                if state_val in {"FAILURE", "ERROR"}:
+                    failed_checks.append(
+                        {
+                            "name": display_name,
+                            "workflow": workflow_name,
+                            "conclusion": state_val,
+                            "url": details_url,
+                        }
+                    )
+                elif state_val in pending_states:
+                    has_pending = True
+                elif state_val == "SUCCESS":
+                    pass
+                else:
+                    has_unverifiable = True
+            elif status_val:
+                if status_val in pending_statuses:
+                    has_pending = True
+                elif status_val in {"FAILURE", "ERROR"}:
+                    failed_checks.append(
+                        {
+                            "name": display_name,
+                            "workflow": workflow_name,
+                            "conclusion": status_val,
+                            "url": details_url,
+                        }
+                    )
+                elif status_val in {"COMPLETED", "SUCCESS"}:
+                    pass
+                else:
+                    has_unverifiable = True
+            else:
+                has_unverifiable = True
+
+    if (
+        valid_checks_count == 0
+        or has_pending
+        or has_unverifiable
+        or not failed_checks
+        or state != "OPEN"
+    ):
+        return None
+
+    return state, head, failed_checks
+
+
 def _remote_branch_names() -> set[str] | None:
     """Every branch that exists on `origin`, or None when it cannot be read."""
     import subprocess
@@ -779,7 +967,12 @@ def recover_conflicted_review_prs(
         # Human gates and non-dispatchable tasks are never handed to an owner by
         # the control plane; the transition refuses them too, but asking GitHub
         # about them first would be a probe with no reachable outcome.
-        if task_is_human_gate(task) or bool(task.get("non_dispatchable")):
+        if (
+            task_is_human_gate(task)
+            or bool(task.get("non_dispatchable"))
+            or is_human_gate_agent(task.get("owner"))
+            or is_human_gate_agent(task.get("waiting_for"))
+        ):
             continue
         # An approved or queued head is frozen, and a live helper lease means
         # someone already holds this branch.
@@ -880,7 +1073,11 @@ def recover_conflicted_review_prs(
                 task.pop(REVIEW_CONFLICT_RECOVERY_HEAD_FIELD, None)
             else:
                 task[REVIEW_CONFLICT_RECOVERY_HEAD_FIELD] = previous_marker
-            continue
+            # CAS mismatch or rejected canonical commit: disk snapshot has diverged.
+            # Abort further recovery on this stale snapshot and reload from disk.
+            status.clear()
+            status.update(load_status(config))
+            return changed
         changed = True
         write_activity_log(
             config,
@@ -903,7 +1100,7 @@ def recover_failed_ci_review_prs(
     *,
     busy_task_ids: set[str],
 ) -> bool:
-    """Return an unapproved review whose PR CI checks have failed back to its owner.
+    """Return an unapproved review whose PR CI checks have conclusively failed back to its owner.
 
     When an unapproved review PR experiences a required CI failure, reviewer
     dispatch is suppressed, but without recovery the task stalls: the reviewer
@@ -915,8 +1112,9 @@ def recover_failed_ci_review_prs(
 
     Only the owner can advance/fix the branch, and a wrong recovery discards a
     real review, so this repairs only what GitHub confirms: an OPEN PR at exactly
-    the submitted head, with a conclusive CI failure. Anything unreadable,
-    drifting, pending, or already closed/approved/queued keeps waiting.
+    the submitted head, with a recognized, verifiable, terminal CI failure (and
+    no pending/in-progress checks). Anything unreadable, drifting, pending,
+    unverifiable, or already closed/approved/queued keeps waiting.
     """
     changed = False
     for task in list(status.get("tasks", []) or []):
@@ -927,10 +1125,15 @@ def recover_failed_ci_review_prs(
             continue
         if str(task.get("status") or "").strip().lower() not in review_statuses:
             continue
-        # Human gates and non-dispatchable tasks are never handed to an owner by
-        # the control plane; the transition refuses them too, but asking GitHub
-        # about them first would be a probe with no reachable outcome.
-        if task_is_human_gate(task) or bool(task.get("non_dispatchable")):
+        # Human gates, Human-waiting tasks, and non-dispatchable tasks are never handed
+        # to an AI owner by the control plane; the transition refuses them too, but asking
+        # GitHub about them first would be a probe with no reachable outcome.
+        if (
+            task_is_human_gate(task)
+            or bool(task.get("non_dispatchable"))
+            or is_human_gate_agent(task.get("owner"))
+            or is_human_gate_agent(task.get("waiting_for"))
+        ):
             continue
         # An approved or queued head is frozen, and a live helper lease means
         # someone already holds this branch.
@@ -961,7 +1164,7 @@ def recover_failed_ci_review_prs(
             continue
 
         # Cheapest disqualifier first, through the canonical CI reader.
-        # Any answer other than conclusive failure on an open PR ends this lane's business.
+        # Any answer other than failure on an open PR ends this lane's business.
         try:
             pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
         except Exception:
@@ -969,15 +1172,11 @@ def recover_failed_ci_review_prs(
         if ci_status != "failure" or str(pr_status or "").strip().upper() != "OPEN":
             continue
 
-        before = _review_pr_facts(slug, pr_number)
+        before = _review_pr_failed_ci_facts(slug, pr_number)
         if before is None:
             continue
-        state, merge_state, head = before
-        if state != "OPEN":
-            continue
-        if head != submitted_sha:
-            # Head drift: the branch has moved past what was reviewed, and what
-            # GitHub is describing is not the submission this task recorded.
+        state, head, failed_checks = before
+        if state != "OPEN" or head != submitted_sha or not failed_checks:
             continue
 
         # Fresh uncached CI read to ensure CI failure is current.
@@ -990,14 +1189,26 @@ def recover_failed_ci_review_prs(
         if fresh_ci_status != "failure" or str(fresh_pr_status or "").strip().upper() != "OPEN":
             continue
 
-        # Re-read the PR to ensure the head/state did not change while probing CI.
-        if _review_pr_facts(slug, pr_number) != before:
+        # Re-read the PR failed CI facts to ensure nothing changed while probing CI.
+        if _review_pr_failed_ci_facts(slug, pr_number) != before:
             continue
 
+        check_summaries: list[str] = []
+        for fc in failed_checks:
+            fc_name = fc.get("name") or "unknown"
+            fc_reason = fc.get("conclusion") or "FAILURE"
+            fc_url = fc.get("url")
+            if fc_url:
+                check_summaries.append(f"{fc_name} ({fc_reason}: {fc_url})")
+            else:
+                check_summaries.append(f"{fc_name} ({fc_reason})")
+        failed_summary = ", ".join(check_summaries)
+
         message = (
-            f"Review PR #{pr_number} for task {task_id} failed required CI checks on "
-            f"submitted head {submitted_sha[:8]}; review dispatch cannot proceed. "
-            "Returned to owner to repair CI and resubmit via task_finalize.sh."
+            f"Review PR #{pr_number} for task {task_id} failed required CI check(s) on "
+            f"submitted head {submitted_sha[:8]}: {failed_summary}. "
+            "Returned to owner to repair CI or boundedly retry transient infra failures, "
+            "and resubmit via task_finalize.sh."
         )
         previous_marker = task.get(REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD, _MARKER_UNSET)
         task[REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD] = submitted_sha
@@ -1013,7 +1224,11 @@ def recover_failed_ci_review_prs(
                 task.pop(REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD, None)
             else:
                 task[REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD] = previous_marker
-            continue
+            # CAS mismatch or rejected canonical commit: disk snapshot has diverged.
+            # Abort further recovery on this stale snapshot and reload from disk.
+            status.clear()
+            status.update(load_status(config))
+            return changed
         changed = True
         write_activity_log(
             config,
@@ -1022,6 +1237,7 @@ def recover_failed_ci_review_prs(
                 "task_id": task_id,
                 "pr_number": pr_number,
                 "head": submitted_sha,
+                "failed_checks": failed_checks,
                 "message": message,
             },
         )
@@ -2465,9 +2681,12 @@ def dispatch_ready_tasks(
         busy_task_ids=active_task_ids | pending_task_ids,
     ):
         changed = True
-        status = load_status(config)
-        tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
-        task_map = {task.get(task_id_field): task for task in tasks}
+
+    # Re-sync status, tasks, and task_map from canonical disk state to ensure
+    # candidate selection never acts on stale or detached in-memory objects.
+    status = load_status(config)
+    tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
+    task_map = {task.get(task_id_field): task for task in tasks}
 
     dispatches = 0
     agent_sequence = (
