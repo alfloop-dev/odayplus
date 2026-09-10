@@ -16,6 +16,7 @@ from modules.avm.domain import (
     ValuationCase,
     ValuationReport,
     build_model_valuation_report,
+    calculate_depreciation,
 )
 from modules.avm.domain.liquidity import LiquidityPrediction
 from modules.avm.infrastructure.lifelines_survival import (
@@ -115,7 +116,14 @@ class AVMProductionExecutor:
         self,
         case: ValuationCase,
         normalized_margin: NormalizedMargin,
+        *,
+        depreciation_version_pin: str | None = None,
     ) -> ValuationReport:
+        dep_calc = calculate_depreciation(
+            case.valuation_input,
+            depreciation_version_pin=depreciation_version_pin,
+        )
+
         row = {
             **case.valuation_input.to_dict(),
             "normalized_gm": normalized_margin.normalized_gm,
@@ -162,13 +170,19 @@ class AVMProductionExecutor:
             raise AVMProductionExecutionError(
                 "approved AVM production model failed to execute"
             ) from exc
+
+        if dep_calc.delta_from_undepreciated != 0.0:
+            lower = max(0.0, round(lower + dep_calc.delta_from_undepreciated, 2))
+            point = max(0.0, round(point + dep_calc.delta_from_undepreciated, 2))
+            upper = max(0.0, round(upper + dep_calc.delta_from_undepreciated, 2))
+
         if min(lower, point, upper) < 0 or not lower <= point <= upper:
             raise AVMProductionExecutionError(
                 "approved AVM model returned an invalid valuation interval"
             )
 
         model_evidence = inference.to_audit_metadata()
-        execution_metadata = {
+        execution_metadata: dict[str, Any] = {
             "mode": "production_oss",
             "model": model_evidence,
             "liquidity": {
@@ -178,6 +192,9 @@ class AVMProductionExecutor:
             },
             "source_snapshot_ids": list(case.valuation_input.source_snapshot_ids),
         }
+        if dep_calc.evidence is not None:
+            execution_metadata["depreciation"] = dep_calc.evidence
+
         return build_model_valuation_report(
             case,
             normalized_margin,
@@ -186,6 +203,10 @@ class AVMProductionExecutor:
             p90=upper,
             model_version=str(model_evidence["model_version"]),
             execution_metadata=execution_metadata,
+            depreciation_version=dep_calc.depreciation_version,
+            depreciation_applied=dep_calc.depreciation_applied,
+            asset_p50=dep_calc.asset_p50,
+            depreciation_evidence=dep_calc.evidence,
         )
 
 

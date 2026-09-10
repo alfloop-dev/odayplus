@@ -48,6 +48,7 @@ def _valuation_payload() -> dict:
         "quality_score": 0.93,
         "source_snapshot_ids": ["forecast-20260627", "asset-ledger-202606"],
         "prediction_origin_time": "2026-06-27T09:00:00+00:00",
+        "equipment_depreciation_basis": "appraised_fair_value",
     }
 
 
@@ -467,6 +468,7 @@ def test_legacy_unknown_quality_score_disposition_and_durable_migration(tmp_path
         equipment_fair_value=100_000,
         quality_score=1.0,
         quality_score_status="legacy_unknown",
+        equipment_depreciation_basis="appraised_fair_value",
     )
     legacy_case = ValuationCase.create(
         legacy_input,
@@ -490,6 +492,7 @@ def test_legacy_unknown_quality_score_disposition_and_durable_migration(tmp_path
         equipment_fair_value=100_000,
         quality_score=1.0,
         quality_score_status="measured",
+        equipment_depreciation_basis="appraised_fair_value",
     )
     measured_case = ValuationCase.create(
         measured_input,
@@ -515,6 +518,7 @@ def test_legacy_unknown_quality_score_disposition_and_durable_migration(tmp_path
             asset_book_value=400_000,
             equipment_fair_value=50_000,
             quality_score=1.0,
+            equipment_depreciation_basis="appraised_fair_value",
         )
     )
     raw_case = ValuationCase.create(
@@ -559,6 +563,7 @@ def test_value_downgrades_persisted_high_confidence_legacy_margin() -> None:
             equipment_fair_value=100_000,
             quality_score=1.0,
             quality_score_status="legacy_unknown",
+            equipment_depreciation_basis="appraised_fair_value",
         ),
         created_by="legacy-system",
         correlation_id="corr-legacy-persisted-margin",
@@ -621,6 +626,7 @@ def test_legacy_report_and_dataroom_are_downgraded_on_every_read_path(tmp_path) 
                     asset_book_value=500_000,
                     equipment_fair_value=100_000,
                     quality_score=1.0,
+                    equipment_depreciation_basis="appraised_fair_value",
                 )
             ),
             created_by="legacy-system",
@@ -755,6 +761,7 @@ def test_persisted_legacy_margin_is_downgraded_before_valuation(tmp_path) -> Non
             equipment_fair_value=100_000,
             quality_score=1.0,
             quality_score_status=LEGACY_UNKNOWN_QUALITY_STATUS,
+            equipment_depreciation_basis="appraised_fair_value",
         ),
         created_by="legacy-system",
         correlation_id="corr-legacy-margin",
@@ -818,6 +825,7 @@ def test_fresh_input_with_omitted_status_is_measured_not_legacy(tmp_path) -> Non
             asset_book_value=500_000,
             equipment_fair_value=100_000,
             quality_score=0.95,
+            equipment_depreciation_basis="appraised_fair_value",
         )
 
     domain_input = fresh_input("store-fresh-measured")

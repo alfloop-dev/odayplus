@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -12,6 +13,8 @@ AVM_FEATURE_VERSION = "valuation-view-v2"
 AVM_POLICY_VERSION = "avm-finance-approval-policy-v1"
 AVM_DEPRECIATION_VERSION = "avm-depreciation-straight-line-v1"
 AVM_DEPRECIATION_LEGACY_VERSION = "avm-depreciation-absent-v0"
+AVM_DEPRECIATION_NOT_APPLICABLE_VERSION = "avm-depreciation-not-applicable-v1"
+AVM_DEPRECIATION_LEGACY_DISPOSITION_TEXT = "本估值採 2026-09-03 前之計算版本，資產折舊未納入"
 QUALITY_SCORE_REQUIRED_MESSAGE = (
     "quality_score is required before AVM valuation; input quality is unmeasured"
 )
@@ -94,8 +97,35 @@ class ValuationInput:
             quality_score_status = MEASURED_QUALITY_STATUS
 
         useful_life = data.get("useful_life_months")
+        if useful_life is not None:
+            try:
+                ul_val = int(useful_life)
+            except (TypeError, ValueError) as err:
+                raise ValueError("useful_life_months must be an integer >= 1") from err
+            if ul_val < 1:
+                raise ValueError(f"useful_life_months must be >= 1, got {ul_val}")
+            useful_life = ul_val
+
         residual_ratio = data.get("residual_value_ratio")
+        if residual_ratio is not None:
+            try:
+                r_val = float(residual_ratio)
+            except (TypeError, ValueError) as err:
+                raise ValueError("residual_value_ratio must be a numeric float between 0.0 and 1.0") from err
+            if math.isnan(r_val) or math.isinf(r_val) or not (0.0 <= r_val <= 1.0):
+                raise ValueError(f"residual_value_ratio must be between 0.0 and 1.0, got {r_val}")
+            residual_ratio = r_val
+
         equipment_cost = data.get("equipment_original_cost")
+        if equipment_cost is not None:
+            try:
+                ec_val = float(equipment_cost)
+            except (TypeError, ValueError) as err:
+                raise ValueError("equipment_original_cost must be a numeric float >= 0.0") from err
+            if math.isnan(ec_val) or math.isinf(ec_val) or ec_val < 0.0:
+                raise ValueError(f"equipment_original_cost must be a non-negative finite float, got {ec_val}")
+            equipment_cost = ec_val
+
         includes_equip = data.get("asset_book_value_includes_equipment")
         dep_basis = data.get("equipment_depreciation_basis")
         dep_method = data.get("depreciation_method")
@@ -355,13 +385,26 @@ class ValuationReport:
     quality_score_status: str | None = None
     quality_disposition: str | None = None
 
+    def __getattr__(self, name: str) -> Any:
+        if name == "depreciation_version":
+            return AVM_DEPRECIATION_LEGACY_VERSION
+        if name == "depreciation_applied":
+            return False
+        raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
+
     def with_version(self, *, valuation_version: int, report_id: str) -> ValuationReport:
+        d = dict(self.__dict__)
+        d.setdefault("depreciation_version", getattr(self, "depreciation_version", AVM_DEPRECIATION_LEGACY_VERSION))
+        d.setdefault("depreciation_applied", getattr(self, "depreciation_applied", False))
         return ValuationReport(
-            **{**self.__dict__, "valuation_version": valuation_version, "report_id": report_id}
+            **{**d, "valuation_version": valuation_version, "report_id": report_id}
         )
 
     def with_approval(self, approval: ApprovalDecision) -> ValuationReport:
-        return ValuationReport(**{**self.__dict__, "finance_approval": approval})
+        d = dict(self.__dict__)
+        d.setdefault("depreciation_version", getattr(self, "depreciation_version", AVM_DEPRECIATION_LEGACY_VERSION))
+        d.setdefault("depreciation_applied", getattr(self, "depreciation_applied", False))
+        return ValuationReport(**{**d, "finance_approval": approval})
 
     @property
     def is_legacy_quality_unknown(self) -> bool:
@@ -396,9 +439,12 @@ class ValuationReport:
             metadata.setdefault("legacy_finance_approval", previous_approval.to_dict())
         metadata["quality_score_status"] = LEGACY_UNKNOWN_QUALITY_STATUS
         metadata["quality_disposition"] = LEGACY_QUALITY_DISPOSITION
+        d = dict(self.__dict__)
+        d.setdefault("depreciation_version", getattr(self, "depreciation_version", AVM_DEPRECIATION_LEGACY_VERSION))
+        d.setdefault("depreciation_applied", getattr(self, "depreciation_applied", False))
         return ValuationReport(
             **{
-                **self.__dict__,
+                **d,
                 "normalized_margin": normalized_margin,
                 "confidence": "low",
                 "execution_metadata": metadata,
@@ -425,8 +471,8 @@ class ValuationReport:
             "quality_disposition": getattr(self, "quality_disposition", None),
             "model_version": self.model_version,
             "feature_version": self.feature_version,
-            "depreciation_version": self.depreciation_version,
-            "depreciation_applied": self.depreciation_applied,
+            "depreciation_version": getattr(self, "depreciation_version", AVM_DEPRECIATION_LEGACY_VERSION),
+            "depreciation_applied": getattr(self, "depreciation_applied", False),
             "prediction_origin_time": self.prediction_origin_time.isoformat(),
             "valued_at": self.valued_at.isoformat(),
             "execution_metadata": self.execution_metadata,
@@ -434,6 +480,39 @@ class ValuationReport:
                 self.finance_approval.to_dict() if self.finance_approval else None
             ),
         }
+
+
+def rehydrate_legacy_report(report: ValuationReport) -> ValuationReport:
+    """Rehydrate a legacy report instance deserialized from pre-cutover store."""
+    dep_version = getattr(report, "depreciation_version", AVM_DEPRECIATION_LEGACY_VERSION)
+    dep_applied = getattr(report, "depreciation_applied", False)
+    if (
+        "depreciation_version" in report.__dict__
+        and "depreciation_applied" in report.__dict__
+    ):
+        return report
+    return ValuationReport(
+        report_id=report.report_id,
+        case_id=report.case_id,
+        store_id=report.store_id,
+        normalized_margin=report.normalized_margin,
+        lenses=report.lenses,
+        fair_price=report.fair_price,
+        reserve_price=report.reserve_price,
+        asking_price=report.asking_price,
+        confidence=report.confidence,
+        model_version=report.model_version,
+        feature_version=report.feature_version,
+        prediction_origin_time=report.prediction_origin_time,
+        valued_at=report.valued_at,
+        depreciation_version=dep_version,
+        depreciation_applied=dep_applied,
+        execution_metadata=dict(getattr(report, "execution_metadata", {}) or {}),
+        finance_approval=getattr(report, "finance_approval", None),
+        valuation_version=getattr(report, "valuation_version", 1),
+        quality_score_status=getattr(report, "quality_score_status", None),
+        quality_disposition=getattr(report, "quality_disposition", None),
+    )
 
 
 @dataclass(frozen=True)
@@ -576,11 +655,177 @@ def ensure_legacy_quality_disposition(
 
 def rehydrate_legacy_valuation_card(card: Mapping[str, Any]) -> dict[str, Any]:
     rehydrated = dict(card)
-    if "depreciation_version" not in rehydrated:
+    if "depreciation_version" not in rehydrated or rehydrated.get("depreciation_version") is None:
         rehydrated["depreciation_version"] = AVM_DEPRECIATION_LEGACY_VERSION
-    if "depreciation_applied" not in rehydrated:
+    if "depreciation_applied" not in rehydrated or rehydrated.get("depreciation_applied") is None:
         rehydrated["depreciation_applied"] = False
+    if rehydrated.get("depreciation_version") == AVM_DEPRECIATION_LEGACY_VERSION:
+        if "depreciation_disposition" not in rehydrated:
+            rehydrated["depreciation_disposition"] = AVM_DEPRECIATION_LEGACY_DISPOSITION_TEXT
     return rehydrated
+
+
+@dataclass(frozen=True)
+class DepreciationCalculationResult:
+    depreciation_version: str
+    depreciation_applied: bool
+    equipment_value_after_depreciation: float
+    asset_p50: float
+    evidence: dict[str, Any] | None
+    delta_from_undepreciated: float
+    accumulated_depreciation: float = 0.0
+    residual: float = 0.0
+    elapsed_months: int = 0
+
+
+def calculate_depreciation(
+    item: ValuationInput,
+    *,
+    depreciation_version_pin: str | None = None,
+) -> DepreciationCalculationResult:
+    """Calculate straight-line depreciation or evaluate basis per contract ODP-AVM-DEPRECIATION-CONTRACT-001."""
+    if depreciation_version_pin == AVM_DEPRECIATION_LEGACY_VERSION:
+        # Explicit operational rollback pin to v0 (R-1)
+        equipment_value = item.equipment_fair_value
+        asset_p50 = max(
+            item.asset_book_value
+            + equipment_value
+            + item.working_capital
+            - item.lease_liability,
+            0.0,
+        )
+        return DepreciationCalculationResult(
+            depreciation_version=AVM_DEPRECIATION_LEGACY_VERSION,
+            depreciation_applied=False,
+            equipment_value_after_depreciation=equipment_value,
+            asset_p50=asset_p50,
+            evidence=None,
+            delta_from_undepreciated=0.0,
+        )
+
+    if item.equipment_depreciation_basis is None:
+        raise ValueError(
+            "equipment_depreciation_basis is required (must be 'original_cost' or 'appraised_fair_value')"
+        )
+
+    if item.equipment_depreciation_basis == "appraised_fair_value":
+        # Appraised fair value is already net of age; do not depreciate twice (C-1)
+        equipment_value = item.equipment_fair_value
+        asset_p50 = max(
+            item.asset_book_value
+            + equipment_value
+            + item.working_capital
+            - item.lease_liability,
+            0.0,
+        )
+        version = AVM_DEPRECIATION_NOT_APPLICABLE_VERSION
+        evidence = {
+            "basis": "appraised_fair_value",
+            "equipment_value_after_depreciation": equipment_value,
+            "method": "none",
+            "version": version,
+        }
+        return DepreciationCalculationResult(
+            depreciation_version=version,
+            depreciation_applied=False,
+            equipment_value_after_depreciation=equipment_value,
+            asset_p50=asset_p50,
+            evidence=evidence,
+            delta_from_undepreciated=0.0,
+        )
+
+    if item.equipment_depreciation_basis == "original_cost":
+        # Straight-line depreciation based on original acquisition cost (C-1, C-3, C-5)
+        if item.asset_book_value_includes_equipment is True:
+            raise ValueError(
+                "asset_book_value_includes_equipment cannot be True when equipment_depreciation_basis is 'original_cost'"
+            )
+        if item.equipment_original_cost is None:
+            raise ValueError(
+                "equipment_original_cost is required when equipment_depreciation_basis is 'original_cost'"
+            )
+        cost = float(item.equipment_original_cost)
+        if cost < 0.0 or math.isnan(cost) or math.isinf(cost):
+            raise ValueError("equipment_original_cost must be a non-negative finite number")
+
+        if item.useful_life_months is None or item.useful_life_months < 1:
+            raise ValueError("useful_life_months is required and must be >= 1")
+        useful_life = int(item.useful_life_months)
+
+        if item.asset_in_service_date is None:
+            raise ValueError(
+                "asset_in_service_date is required when equipment_depreciation_basis is 'original_cost'"
+            )
+        if item.depreciation_effective_date is None:
+            raise ValueError(
+                "depreciation_effective_date is required when equipment_depreciation_basis is 'original_cost'"
+            )
+        if item.residual_value_ratio is None:
+            raise ValueError(
+                "residual_value_ratio is required when equipment_depreciation_basis is 'original_cost'"
+            )
+        ratio = float(item.residual_value_ratio)
+        if not (0.0 <= ratio <= 1.0) or math.isnan(ratio) or math.isinf(ratio):
+            raise ValueError("residual_value_ratio is required and must be between 0.0 and 1.0")
+
+        if item.depreciation_method != "straight_line":
+            raise ValueError("depreciation_method must be 'straight_line'")
+
+        in_service = _parse_date(item.asset_in_service_date)
+        effective = _parse_date(item.depreciation_effective_date)
+        elapsed_months, negative_clamped = _calculate_elapsed_months(in_service, effective)
+
+        residual = round(cost * ratio, 2)
+        depreciable = max(0.0, round(cost - residual, 2))
+        monthly = depreciable / max(1, useful_life)
+        accumulated = round(min(depreciable, monthly * elapsed_months), 2)
+        equipment_value = round(cost - accumulated, 2)
+
+        asset_p50 = max(
+            item.asset_book_value
+            + equipment_value
+            + item.working_capital
+            - item.lease_liability,
+            0.0,
+        )
+        version = AVM_DEPRECIATION_VERSION
+        evidence = {
+            "basis": "original_cost",
+            "in_service_date": item.asset_in_service_date,
+            "effective_date": item.depreciation_effective_date,
+            "elapsed_months": elapsed_months,
+            "useful_life_months": useful_life,
+            "residual_value_ratio": ratio,
+            "residual": residual,
+            "accumulated_depreciation": accumulated,
+            "equipment_value_after_depreciation": equipment_value,
+            "method": "straight_line",
+            "version": version,
+        }
+        if negative_clamped:
+            evidence["negative_elapsed_clamped"] = True
+
+        undepreciated_asset_p50 = max(
+            item.asset_book_value + cost + item.working_capital - item.lease_liability,
+            0.0,
+        )
+        delta = round(asset_p50 - undepreciated_asset_p50, 2)
+
+        return DepreciationCalculationResult(
+            depreciation_version=version,
+            depreciation_applied=True,
+            equipment_value_after_depreciation=equipment_value,
+            asset_p50=asset_p50,
+            evidence=evidence,
+            delta_from_undepreciated=delta,
+            accumulated_depreciation=accumulated,
+            residual=residual,
+            elapsed_months=elapsed_months,
+        )
+
+    raise ValueError(
+        f"Unsupported equipment_depreciation_basis: {item.equipment_depreciation_basis!r}; must be 'original_cost' or 'appraised_fair_value'"
+    )
 
 
 def value_store(
@@ -595,106 +840,8 @@ def value_store(
     quality_status = item.effective_quality_score_status
     income_p50 = normalized_margin.normalized_gm * 2.8
 
-    dep_evidence: dict[str, Any] | None = None
-    if (
-        depreciation_version_pin == AVM_DEPRECIATION_LEGACY_VERSION
-        or item.equipment_depreciation_basis is None
-    ):
-        # Legacy pre-cutover behavior (v0)
-        asset_p50 = max(
-            item.asset_book_value
-            + item.equipment_fair_value
-            + item.working_capital
-            - item.lease_liability,
-            0.0,
-        )
-        depreciation_version = AVM_DEPRECIATION_LEGACY_VERSION
-        depreciation_applied = False
-    elif item.equipment_depreciation_basis == "appraised_fair_value":
-        # Appraised fair value is already net of age; do not depreciate twice (C-1)
-        asset_p50 = max(
-            item.asset_book_value
-            + item.equipment_fair_value
-            + item.working_capital
-            - item.lease_liability,
-            0.0,
-        )
-        depreciation_version = "avm-depreciation-not-applicable-v1"
-        depreciation_applied = False
-        dep_evidence = {
-            "basis": "appraised_fair_value",
-            "equipment_value_after_depreciation": item.equipment_fair_value,
-            "method": "none",
-            "version": depreciation_version,
-        }
-    elif item.equipment_depreciation_basis == "original_cost":
-        # Straight-line depreciation based on original acquisition cost (C-1, C-3, C-5)
-        if item.asset_book_value_includes_equipment is True:
-            raise ValueError(
-                "asset_book_value_includes_equipment cannot be True when equipment_depreciation_basis is 'original_cost'"
-            )
-        if item.equipment_original_cost is None:
-            raise ValueError(
-                "equipment_original_cost is required when equipment_depreciation_basis is 'original_cost'"
-            )
-        if item.useful_life_months is None or item.useful_life_months < 1:
-            raise ValueError("useful_life_months is required and must be >= 1")
-        if item.asset_in_service_date is None:
-            raise ValueError(
-                "asset_in_service_date is required when equipment_depreciation_basis is 'original_cost'"
-            )
-        if item.depreciation_effective_date is None:
-            raise ValueError(
-                "depreciation_effective_date is required when equipment_depreciation_basis is 'original_cost'"
-            )
-        if item.residual_value_ratio is None:
-            raise ValueError(
-                "residual_value_ratio is required when equipment_depreciation_basis is 'original_cost'"
-            )
-        if item.depreciation_method != "straight_line":
-            raise ValueError("depreciation_method must be 'straight_line'")
-
-        in_service = _parse_date(item.asset_in_service_date)
-        effective = _parse_date(item.depreciation_effective_date)
-        elapsed_months, negative_clamped = _calculate_elapsed_months(in_service, effective)
-        cost = float(item.equipment_original_cost)
-        ratio = float(item.residual_value_ratio)
-        useful_life = int(item.useful_life_months)
-
-        residual = round(cost * ratio, 2)
-        depreciable = max(0.0, round(cost - residual, 2))
-        monthly = depreciable / max(1, useful_life)
-        accumulated = round(min(depreciable, monthly * elapsed_months), 2)
-        equipment_value_after_depreciation = round(cost - accumulated, 2)
-
-        asset_p50 = max(
-            item.asset_book_value
-            + equipment_value_after_depreciation
-            + item.working_capital
-            - item.lease_liability,
-            0.0,
-        )
-        depreciation_version = AVM_DEPRECIATION_VERSION
-        depreciation_applied = True
-        dep_evidence = {
-            "basis": "original_cost",
-            "in_service_date": item.asset_in_service_date,
-            "effective_date": item.depreciation_effective_date,
-            "elapsed_months": elapsed_months,
-            "useful_life_months": useful_life,
-            "residual_value_ratio": ratio,
-            "residual": residual,
-            "accumulated_depreciation": accumulated,
-            "equipment_value_after_depreciation": equipment_value_after_depreciation,
-            "method": "straight_line",
-            "version": depreciation_version,
-        }
-        if negative_clamped:
-            dep_evidence["negative_elapsed_clamped"] = True
-    else:
-        raise ValueError(
-            f"Unsupported equipment_depreciation_basis: {item.equipment_depreciation_basis}"
-        )
+    dep_calc = calculate_depreciation(item, depreciation_version_pin=depreciation_version_pin)
+    asset_p50 = dep_calc.asset_p50
 
     multiple = _median(item.comparable_multiples) if item.comparable_multiples else 2.4
     market_p50 = normalized_margin.normalized_gm * multiple * (1 - item.liquidity_discount)
@@ -707,8 +854,8 @@ def value_store(
         "lease_liability": item.lease_liability,
         "source_snapshot_ids": source_snapshot_ids,
     }
-    if dep_evidence is not None:
-        asset_evidence["depreciation"] = dep_evidence
+    if dep_calc.evidence is not None:
+        asset_evidence["depreciation"] = dep_calc.evidence
 
     base_lenses = (
         _lens(
@@ -780,8 +927,8 @@ def value_store(
         feature_version=AVM_FEATURE_VERSION,
         prediction_origin_time=item.prediction_origin_time,
         valued_at=datetime.now(UTC),
-        depreciation_version=depreciation_version,
-        depreciation_applied=depreciation_applied,
+        depreciation_version=dep_calc.depreciation_version,
+        depreciation_applied=dep_calc.depreciation_applied,
     )
 
 
@@ -796,6 +943,8 @@ def build_model_valuation_report(
     execution_metadata: Mapping[str, Any],
     depreciation_version: str | None = None,
     depreciation_applied: bool | None = None,
+    asset_p50: float | None = None,
+    depreciation_evidence: Mapping[str, Any] | None = None,
 ) -> ValuationReport:
     """Build policy outputs from an already executed approved model interval."""
 
@@ -808,16 +957,39 @@ def build_model_valuation_report(
         p50=round(float(p50), 2),
         p90=round(float(p90), 2),
     )
+    meta = dict(execution_metadata)
     model_lens = LensValuation(
         lens="approved_model",
         p10=fair.p10,
         p50=fair.p50,
         p90=fair.p90,
         method="approved_oss_model_artifact",
-        evidence=dict(execution_metadata),
+        evidence=meta,
     )
+    lenses: list[LensValuation] = [model_lens]
+    if asset_p50 is not None:
+        asset_evidence = {
+            "asset_book_value": case.valuation_input.asset_book_value,
+            "equipment_fair_value": case.valuation_input.equipment_fair_value,
+            "working_capital": case.valuation_input.working_capital,
+            "lease_liability": case.valuation_input.lease_liability,
+            "source_snapshot_ids": list(case.valuation_input.source_snapshot_ids),
+        }
+        if depreciation_evidence is not None:
+            asset_evidence["depreciation"] = dict(depreciation_evidence)
+        lenses.append(
+            LensValuation(
+                lens="asset",
+                p10=round(asset_p50 * 0.82, 2),
+                p50=round(asset_p50, 2),
+                p90=round(asset_p50 * 1.18, 2),
+                method="net_asset_value",
+                evidence=asset_evidence,
+            )
+        )
+
     dep_version = depreciation_version or (
-        "avm-depreciation-not-applicable-v1"
+        AVM_DEPRECIATION_NOT_APPLICABLE_VERSION
         if case.valuation_input.equipment_depreciation_basis == "appraised_fair_value"
         else (
             AVM_DEPRECIATION_LEGACY_VERSION
@@ -835,7 +1007,7 @@ def build_model_valuation_report(
         case_id=case.case_id,
         store_id=case.store_id,
         normalized_margin=normalized_margin,
-        lenses=(model_lens,),
+        lenses=tuple(lenses),
         fair_price=fair,
         reserve_price=round(fair.p10 * 0.97, 2),
         asking_price=round(fair.p90 * 1.05, 2),
@@ -850,7 +1022,7 @@ def build_model_valuation_report(
         feature_version=AVM_FEATURE_VERSION,
         prediction_origin_time=case.valuation_input.prediction_origin_time,
         valued_at=datetime.now(UTC),
-        execution_metadata=dict(execution_metadata),
+        execution_metadata=meta,
         depreciation_version=dep_version,
         depreciation_applied=dep_applied,
     )

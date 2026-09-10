@@ -313,7 +313,7 @@ class TestTheDepreciationContract:
         the arithmetic that shipped before the cutover.
         """
         legacy_version = _domain_constant("AVM_DEPRECIATION_LEGACY_VERSION")
-        baseline, baseline_error = _try_report(dict(BASE_INPUT))
+        baseline, baseline_error = _try_report(dict(BASE_INPUT), pin=legacy_version)
         assert baseline_error is None, f"the pre-cutover input path broke: {baseline_error}"
         assert baseline is not None
 

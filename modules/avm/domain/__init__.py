@@ -10,7 +10,9 @@ from modules.avm.domain.liquidity import (
     SurvivalModelCapability,
 )
 from modules.avm.domain.valuation import (
+    AVM_DEPRECIATION_LEGACY_DISPOSITION_TEXT,
     AVM_DEPRECIATION_LEGACY_VERSION,
+    AVM_DEPRECIATION_NOT_APPLICABLE_VERSION,
     AVM_DEPRECIATION_VERSION,
     AVM_FEATURE_VERSION,
     AVM_MODEL_VERSION,
@@ -21,6 +23,7 @@ from modules.avm.domain.valuation import (
     ApprovalDecision,
     DataRoom,
     DataRoomDocument,
+    DepreciationCalculationResult,
     LensValuation,
     NormalizedMargin,
     PriceBand,
@@ -30,15 +33,19 @@ from modules.avm.domain.valuation import (
     ValuationReport,
     build_model_valuation_report,
     build_valuation_view,
+    calculate_depreciation,
     ensure_legacy_quality_disposition,
     generate_data_room,
     normalize_margin,
+    rehydrate_legacy_report,
     rehydrate_legacy_valuation_card,
     value_store,
 )
 
 __all__ = [
+    "AVM_DEPRECIATION_LEGACY_DISPOSITION_TEXT",
     "AVM_DEPRECIATION_LEGACY_VERSION",
+    "AVM_DEPRECIATION_NOT_APPLICABLE_VERSION",
     "AVM_DEPRECIATION_VERSION",
     "AVM_FEATURE_VERSION",
     "AVM_MODEL_VERSION",
@@ -50,6 +57,7 @@ __all__ = [
     "DataRoom",
     "DataRoomDocument",
     "DealOutcome",
+    "DepreciationCalculationResult",
     "LensValuation",
     "LiquidityPrediction",
     "LiquidityTrainingRecord",
@@ -65,9 +73,11 @@ __all__ = [
     "ValuationReport",
     "build_model_valuation_report",
     "build_valuation_view",
+    "calculate_depreciation",
     "ensure_legacy_quality_disposition",
     "generate_data_room",
     "normalize_margin",
+    "rehydrate_legacy_report",
     "rehydrate_legacy_valuation_card",
     "value_store",
 ]

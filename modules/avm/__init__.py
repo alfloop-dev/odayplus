@@ -7,6 +7,7 @@ from modules.avm.application import (
     AVMProductionExecutor,
     AVMService,
     DealOutcomeCalibrationReport,
+    DepreciationRollbackReceipt,
     LiquidityArtifactEvidence,
     OutcomeCalibrationItem,
     assert_finance_view_authorized,
@@ -17,7 +18,9 @@ from modules.avm.application import (
     record_deal_outcome_export_audit,
 )
 from modules.avm.domain import (
+    AVM_DEPRECIATION_LEGACY_DISPOSITION_TEXT,
     AVM_DEPRECIATION_LEGACY_VERSION,
+    AVM_DEPRECIATION_NOT_APPLICABLE_VERSION,
     AVM_DEPRECIATION_VERSION,
     AVM_FEATURE_VERSION,
     AVM_MODEL_VERSION,
@@ -31,6 +34,7 @@ from modules.avm.domain import (
     DataRoom,
     DataRoomDocument,
     DealOutcome,
+    DepreciationCalculationResult,
     LensValuation,
     LiquidityPrediction,
     LiquidityTrainingRecord,
@@ -44,8 +48,10 @@ from modules.avm.domain import (
     ValuationReport,
     build_model_valuation_report,
     build_valuation_view,
+    calculate_depreciation,
     generate_data_room,
     normalize_margin,
+    rehydrate_legacy_report,
     rehydrate_legacy_valuation_card,
     value_store,
 )
@@ -60,7 +66,9 @@ from modules.avm.infrastructure import (
 from modules.avm.workers import AVMBatchResult, AVMValuationWorker, run_avm_batch_valuation
 
 __all__ = [
+    "AVM_DEPRECIATION_LEGACY_DISPOSITION_TEXT",
     "AVM_DEPRECIATION_LEGACY_VERSION",
+    "AVM_DEPRECIATION_NOT_APPLICABLE_VERSION",
     "AVM_DEPRECIATION_VERSION",
     "AVM_FEATURE_VERSION",
     "AVM_MODEL_VERSION",
@@ -78,6 +86,8 @@ __all__ = [
     "DataRoomDocument",
     "DealOutcome",
     "DealOutcomeCalibrationReport",
+    "DepreciationCalculationResult",
+    "DepreciationRollbackReceipt",
     "IDEAL_P10_P90_COVERAGE",
     "InMemoryAVMRepository",
     "LIFELINES_ARTIFACT_SCHEMA_VERSION",
@@ -104,6 +114,7 @@ __all__ = [
     "assert_finance_view_authorized",
     "build_model_valuation_report",
     "build_valuation_view",
+    "calculate_depreciation",
     "calculate_valuation_deviation",
     "compute_deal_outcome_calibration",
     "evaluate_calibration_coverage",
@@ -111,6 +122,7 @@ __all__ = [
     "is_finance_view_authorized",
     "normalize_margin",
     "record_deal_outcome_export_audit",
+    "rehydrate_legacy_report",
     "rehydrate_legacy_valuation_card",
     "run_avm_batch_valuation",
     "value_store",

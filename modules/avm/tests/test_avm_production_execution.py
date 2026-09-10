@@ -85,6 +85,7 @@ def _input() -> dict[str, Any]:
         "forecast_gm_next_12m": 450_000,
         "asset_book_value": 200_000,
         "equipment_fair_value": 100_000,
+        "equipment_depreciation_basis": "appraised_fair_value",
         "quality_score": 0.95,
         "source_snapshot_ids": ["finance-snapshot-live"],
         "prediction_origin_time": datetime(2026, 7, 24, tzinfo=UTC),
@@ -290,3 +291,58 @@ def test_production_avm_reloads_and_executes_real_oss_artifacts(
     assert report.execution_metadata["model"]["model_approved_by"] == "model-risk"
     assert report.execution_metadata["liquidity"]["engine"] == ("lifelines.CoxPHFitter")
     assert report.execution_metadata["liquidity"]["library_version"]
+
+
+def test_production_avm_executes_with_straight_line_depreciation_delta(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Finding F1: Production executor calculates depreciation and adjusts interval by delta_from_undepreciated."""
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+    monkeypatch.setattr(
+        valuation_service,
+        "value_store",
+        lambda *_args, **_kwargs: pytest.fail("heuristic AVM fallback was called"),
+    )
+    executor, model, liquidity = _executor()
+    repository = InMemoryAVMRepository()
+    service = AVMService(repository=repository, production_executor=executor)
+
+    dep_input = {
+        "store_id": "store-live-dep",
+        "gm_ttm": 400_000,
+        "forecast_gm_next_12m": 450_000,
+        "asset_book_value": 200_000,
+        "equipment_fair_value": 100_000,
+        "equipment_depreciation_basis": "original_cost",
+        "equipment_original_cost": 100_000.0,
+        "useful_life_months": 84,
+        "residual_value_ratio": 0.10,
+        "depreciation_method": "straight_line",
+        "asset_in_service_date": "2023-01-01",
+        "depreciation_effective_date": "2026-07-01",
+        "quality_score": 0.95,
+        "source_snapshot_ids": ["finance-snapshot-live"],
+        "prediction_origin_time": datetime(2026, 7, 24, tzinfo=UTC),
+    }
+    case = service.create_case(dep_input, created_by="finance", correlation_id="corr-avm-dep")
+    report = service.value(case.case_id, actor="worker", correlation_id="corr-avm-dep")
+
+    # 42 months elapsed: residual = 10,000, depreciable = 90,000, monthly = 90000/84 = 1071.428...
+    # accumulated = min(90000, round(1071.42857 * 42, 2)) = 45000.0
+    # delta_from_undepreciated = -45000.0
+    # Baseline model output is (800k, 1000k, 1250k), so adjusted output should be:
+    # lower = 800k - 45k = 755,000.0
+    # point = 1000k - 45k = 955,000.0
+    # upper = 1250k - 45k = 1,205,000.0
+    assert report.fair_price.to_dict() == {
+        "p10": 755_000.0,
+        "p50": 955_000.0,
+        "p90": 1_205_000.0,
+    }
+    assert report.depreciation_applied is True
+    assert report.depreciation_version == "avm-depreciation-straight-line-v1"
+    assert "depreciation" in report.execution_metadata
+    dep_meta = report.execution_metadata["depreciation"]
+    assert dep_meta["basis"] == "original_cost"
+    assert dep_meta["elapsed_months"] == 42
+    assert dep_meta["accumulated_depreciation"] == 45_000.0

@@ -23,6 +23,7 @@ from pathlib import Path
 from delivery_toolchain.governance.check_requirement_members import (
     MANIFEST_PATH,
     REPO_ROOT,
+    WAIVER_SIGNAL_FIELDS,
     check,
     resolve,
 )
@@ -100,8 +101,8 @@ def _write_manifest(tmp_path: Path, manifest: dict) -> Path:
     return path
 
 
-def test_the_six_members_are_registered_and_all_of_them_resolve() -> None:
-    """All six members must name code that exists and be satisfied."""
+def test_the_six_members_are_registered_and_five_of_them_resolve() -> None:
+    """Five satisfied members must name code that exists; the sixth is the gap."""
     manifest = _load_manifest()
     requirement = _requirement(manifest)
 
@@ -118,11 +119,42 @@ def test_the_six_members_are_registered_and_all_of_them_resolve() -> None:
         "NORMALIZATION",
     }
 
-    for name in ("GM_TTM", "GM_FWD", "DEPRECIATION", "ASSET", "LEASE", "NORMALIZATION"):
+    for name in ("GM_TTM", "GM_FWD", "ASSET", "LEASE", "NORMALIZATION"):
         member = by_name[name]
-        assert member["status"] == "satisfied", f"{name} is not satisfied"
-        assert member["disposition"]["state"] == "VERIFIED", f"{name} is not VERIFIED"
-        assert resolve(REPO_ROOT, member["evidence"]) is None, f"{name} evidence does not resolve: {member['evidence']}"
+        assert member["status"] == "satisfied"
+        assert member["disposition"]["state"] == "VERIFIED"
+        assert resolve(REPO_ROOT, member["evidence"]) is None, name
+
+    assert by_name["DEPRECIATION"]["status"] == "absent"
+
+
+def test_depreciation_is_implementation_ready_with_an_owner_and_a_batch() -> None:
+    disposition = _members(_load_manifest())["DEPRECIATION"]["disposition"]
+
+    assert disposition["state"] == "IMPLEMENTATION_READY"
+    assert disposition["assigned_to"].strip()
+    assert disposition["target_phase"].strip()
+    assert disposition["acceptance_criteria"].strip()
+    assert disposition["rationale"].strip()
+
+    # The state names a scheduled implementation, not a closed gap or a ruling.
+    assert disposition["state"] not in {"VERIFIED", "DECIDED"}
+
+
+def test_the_disposition_carries_no_decision_fields() -> None:
+    """`IMPLEMENTATION_READY` must not be a waiver wearing another state's name.
+
+    §3.5 of the policy judges statutory fields wherever they sit. Carrying one
+    here would drag the member into the `DECIDED` gate, whose only exit is a
+    signed decider -- and the only signature available to an autoworker is its
+    own, which §3.2 forbids. The honest reading is that nobody ruled on this.
+    """
+    member = _members(_load_manifest())["DEPRECIATION"]
+    disposition = member["disposition"]
+
+    for field in WAIVER_SIGNAL_FIELDS:
+        assert not disposition.get(field), f"{field} present on a non-DECIDED disposition"
+    assert "formal_handback_ref" not in disposition
 
 
 def test_the_disposition_points_at_documents_that_exist() -> None:
@@ -133,20 +165,42 @@ def test_the_disposition_points_at_documents_that_exist() -> None:
 
     note = member["note"]
     assert "ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md" in note
+    assert "ODP_AVM001_DEPRECIATION_DISPOSITION_2026-09-04.md" in note
+    assert "ODP_REQUIREMENT_DISPOSITIONS.md" in note
 
     governance = GOVERNANCE_DOC.read_text(encoding="utf-8")
     assert "### 4.9 `ODP-FR-AVM-001`" in governance
-    assert "VERIFIED" in governance
+    assert "IMPLEMENTATION_READY" in governance
+    assert "ODP_AVM001_DEPRECIATION_DISPOSITION_2026-09-04.md" in governance
+
+    evidence = DISPOSITION_DOC.read_text(encoding="utf-8")
+    assert "IMPLEMENTATION_READY" in evidence
+    assert "test_avm_depreciation_contract.py" in evidence
+
+
+def test_the_acceptance_criteria_name_specs_that_exist() -> None:
+    """The criteria are executable and name specs that exist."""
+    disposition = _members(_load_manifest())["DEPRECIATION"]["disposition"]
+    assert "modules/avm/tests/test_avm_depreciation_contract.py" in disposition["acceptance_criteria"]
+
+    tree = ast.parse(SPEC_FILE.read_text(encoding="utf-8"))
+    functions = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    missing = set(CONTRACT_SPECS) - functions
+    assert not missing, f"contract specs missing from {SPEC_FILE}: {missing}"
 
 
 def test_the_live_manifest_passes_the_governance_checker() -> None:
     failures, tally = check(REPO_ROOT, MANIFEST_PATH, reference_date=date(2026, 9, 3))
     assert failures == [], "\n".join(f.describe() for f in failures)
+    assert tally["dispositions"]["IMPLEMENTATION_READY"] >= 3
 
 
-def test_claiming_the_gap_verified_when_absent_is_refused(tmp_path: Path) -> None:
+def test_claiming_the_gap_verified_is_refused(tmp_path: Path) -> None:
     manifest = _load_manifest()
-    _members(manifest)["DEPRECIATION"]["status"] = "absent"
     _members(manifest)["DEPRECIATION"]["disposition"]["state"] = "VERIFIED"
 
     failures, _ = check(REPO_ROOT, _write_manifest(tmp_path, manifest), reference_date=date(2026, 9, 3))
@@ -156,10 +210,9 @@ def test_claiming_the_gap_verified_when_absent_is_refused(tmp_path: Path) -> Non
     ), "an absent member claiming VERIFIED must be refused"
 
 
-def test_an_ai_signed_ruling_on_an_absent_member_is_refused(tmp_path: Path) -> None:
+def test_an_ai_signed_ruling_on_the_gap_is_refused(tmp_path: Path) -> None:
     """The cheapest way past this member is to rule it out and sign it here."""
     manifest = _load_manifest()
-    _members(manifest)["DEPRECIATION"]["status"] = "absent"
     _members(manifest)["DEPRECIATION"]["disposition"] = {
         "state": "DECIDED",
         "formal_decision_ref": "docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md",
@@ -178,10 +231,9 @@ def test_an_ai_signed_ruling_on_an_absent_member_is_refused(tmp_path: Path) -> N
     ), "an AI-signed waiver on the depreciation gap must be refused"
 
 
-def test_dropping_the_disposition_block_on_an_absent_member_is_refused(tmp_path: Path) -> None:
+def test_dropping_the_disposition_block_is_refused(tmp_path: Path) -> None:
     """The failure this task was reopened for: an absent member with only a note."""
     manifest = _load_manifest()
-    _members(manifest)["DEPRECIATION"]["status"] = "absent"
     del _members(manifest)["DEPRECIATION"]["disposition"]
 
     failures, _ = check(REPO_ROOT, _write_manifest(tmp_path, manifest), reference_date=date(2026, 9, 3))

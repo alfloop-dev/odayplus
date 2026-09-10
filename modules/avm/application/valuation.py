@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -38,6 +39,36 @@ class AVMError(ValueError):
     pass
 
 
+@dataclass(frozen=True)
+class DepreciationRollbackReceipt:
+    decider: str
+    decision_time: datetime
+    reason: str
+    target_expiry: str | datetime
+    depreciation_version_pin: str
+    receipt_id: str = field(default_factory=lambda: f"dep-rollback-{uuid4()}")
+
+    def to_dict(self) -> dict[str, Any]:
+        dt = (
+            self.decision_time.isoformat()
+            if hasattr(self.decision_time, "isoformat")
+            else str(self.decision_time)
+        )
+        exp = (
+            self.target_expiry.isoformat()
+            if hasattr(self.target_expiry, "isoformat")
+            else str(self.target_expiry)
+        )
+        return {
+            "receipt_id": self.receipt_id,
+            "decider": self.decider,
+            "decision_time": dt,
+            "reason": self.reason,
+            "target_expiry": exp,
+            "depreciation_version_pin": self.depreciation_version_pin,
+        }
+
+
 class AVMService:
     def __init__(
         self,
@@ -45,6 +76,8 @@ class AVMService:
         repository: InMemoryAVMRepository | None = None,
         production_executor: AVMProductionExecutor | None = None,
         runtime_mode: str | None = None,
+        depreciation_version_pin: str | None = None,
+        rollback_receipt: DepreciationRollbackReceipt | None = None,
     ) -> None:
         self.production_required = production_execution_required(runtime_mode)
         self.strict_production_composition = runtime_mode is not None and self.production_required
@@ -60,6 +93,8 @@ class AVMService:
             )
         self.repository = repository or InMemoryAVMRepository()
         self.production_executor = production_executor
+        self.depreciation_version_pin = depreciation_version_pin
+        self.rollback_receipt = rollback_receipt
 
     def create_case(
         self,
@@ -105,7 +140,15 @@ class AVMService:
         )
         return margin
 
-    def value(self, case_id: str, *, actor: str, correlation_id: str) -> ValuationReport:
+    def value(
+        self,
+        case_id: str,
+        *,
+        actor: str,
+        correlation_id: str,
+        depreciation_version_pin: str | None = None,
+        rollback_receipt: DepreciationRollbackReceipt | None = None,
+    ) -> ValuationReport:
         case = self._case(case_id)
         self._require_status(
             case,
@@ -132,14 +175,19 @@ class AVMService:
             reason="valuation started",
             correlation_id=correlation_id,
         )
+        pin = depreciation_version_pin or self.depreciation_version_pin
+        receipt = rollback_receipt or self.rollback_receipt
+
         if self.production_required:
             executor = self.production_executor
             if executor is None:
                 executor = AVMProductionExecutor.from_environment()
                 self.production_executor = executor
-            report = executor.execute(valuing, margin)
+            report = executor.execute(valuing, margin, depreciation_version_pin=pin)
         else:
-            report = value_store(valuing, margin)
+            report = value_store(valuing, margin, depreciation_version_pin=pin)
+        if receipt is not None and pin is not None:
+            report.execution_metadata["depreciation_rollback_receipt"] = receipt.to_dict()
         if case.valuation_input.effective_quality_score_status == LEGACY_UNKNOWN_QUALITY_STATUS:
             report = report.with_legacy_quality_disposition()
         self.repository.save_case(valuing)

@@ -42,10 +42,10 @@ else:
         source_snapshot_ids: list[str] = Field(default_factory=list)
         prediction_origin_time: str | None = None
         equipment_depreciation_basis: str | None = None
-        equipment_original_cost: float | None = None
+        equipment_original_cost: float | None = Field(default=None, ge=0.0)
         asset_book_value_includes_equipment: bool | None = None
-        useful_life_months: int | None = None
-        residual_value_ratio: float | None = None
+        useful_life_months: int | None = Field(default=None, ge=1)
+        residual_value_ratio: float | None = Field(default=None, ge=0.0, le=1.0)
         depreciation_method: str | None = None
         depreciation_effective_date: str | None = None
         asset_in_service_date: str | None = None

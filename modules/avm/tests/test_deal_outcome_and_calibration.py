@@ -44,6 +44,8 @@ def _make_dummy_valuation_report(
     p90: float = 12_000_000.0,
     reserve: float = 7_760_000.0,
     asking: float = 12_600_000.0,
+    depreciation_version: str = AVM_DEPRECIATION_VERSION,
+    depreciation_applied: bool = True,
 ) -> ValuationReport:
     margin = NormalizedMargin(
         case_id=case_id,
@@ -76,8 +78,8 @@ def _make_dummy_valuation_report(
         feature_version="valuation-view-v1",
         prediction_origin_time=datetime.now(UTC),
         valued_at=datetime.now(UTC),
-        depreciation_version=AVM_DEPRECIATION_VERSION,
-        depreciation_applied=True,
+        depreciation_version=depreciation_version,
+        depreciation_applied=depreciation_applied,
     )
 
 
@@ -552,6 +554,7 @@ class TestAVMServiceIntegration:
             forecast_gm_next_12m=1_100_000.0,
             asset_book_value=2_000_000.0,
             equipment_fair_value=500_000.0,
+            equipment_depreciation_basis="appraised_fair_value",
             quality_score=0.95,
         )
         case = service.create_case(val_input, created_by="operator-1", correlation_id="corr-1")
@@ -581,3 +584,89 @@ class TestAVMServiceIntegration:
         assert calib.p10_p90_coverage_rate == 1.0
         assert calib.mae == 0.0
         assert calib.median_calibration_ratio == 1.0
+        assert calib.depreciation_version == "avm-depreciation-not-applicable-v1"
+        assert "avm-depreciation-not-applicable-v1" in calib.version_metrics
+
+    def test_mixed_cohort_calibration_gating(self) -> None:
+        """Finding F4: Mixed cohort calibration gates coverage if any cohort fails."""
+        # Report 1: v0 legacy report (fair price p10=80, p50=100, p90=120)
+        rep_v0_1 = _make_dummy_valuation_report("c-v0-1", "rep-v0-1", p10=80, p50=100, p90=120, depreciation_version="avm-depreciation-absent-v0", depreciation_applied=False)
+        rep_v0_2 = _make_dummy_valuation_report("c-v0-2", "rep-v0-2", p10=80, p50=100, p90=120, depreciation_version="avm-depreciation-absent-v0", depreciation_applied=False)
+        # Report 2: v1 straight-line report (fair price p10=80, p50=100, p90=120)
+        rep_v1_1 = _make_dummy_valuation_report("c-v1-1", "rep-v1-1", p10=80, p50=100, p90=120, depreciation_version="avm-depreciation-straight-line-v1", depreciation_applied=True)
+        rep_v1_2 = _make_dummy_valuation_report("c-v1-2", "rep-v1-2", p10=80, p50=100, p90=120, depreciation_version="avm-depreciation-straight-line-v1", depreciation_applied=True)
+
+        # Scenario A: v0 has 100% coverage (2/2 covered), v1 has 50% coverage (1/2 covered)
+        # Total coverage = 3/4 = 75% -> target not met
+        pairs_a = [
+            (DealOutcome("d1", "rep-v0-1", "s1", True, settlement_price=100.0), rep_v0_1),
+            (DealOutcome("d2", "rep-v0-2", "s2", True, settlement_price=100.0), rep_v0_2),
+            (DealOutcome("d3", "rep-v1-1", "s3", True, settlement_price=100.0), rep_v1_1),
+            (DealOutcome("d4", "rep-v1-2", "s4", True, settlement_price=150.0), rep_v1_2),  # not covered
+        ]
+        calib_a = compute_deal_outcome_calibration(pairs_a)
+        assert calib_a.depreciation_version == "mixed"
+        assert calib_a.p10_p90_coverage_rate == 0.75
+        assert calib_a.is_coverage_target_met is False
+        assert calib_a.version_metrics["avm-depreciation-absent-v0"]["is_coverage_target_met"] is True
+        assert calib_a.version_metrics["avm-depreciation-straight-line-v1"]["is_coverage_target_met"] is False
+
+        # Scenario B: Aggregate is 80% (v0 5/5 = 100%, v1 3/5 = 60%, total 8/10 = 80%)
+        # In unsegmented pooling, 80% would pass. But v1 is failing (60% < 80%), so mixed gating must FAIL.
+        pairs_b = [
+            (DealOutcome(f"dv0-{i}", "rep-v0-1", f"s-{i}", True, settlement_price=100.0), rep_v0_1)
+            for i in range(5)
+        ] + [
+            (DealOutcome(f"dv1-{i}", "rep-v1-1", f"s1-{i}", True, settlement_price=100.0 if i < 3 else 200.0), rep_v1_1)
+            for i in range(5)
+        ]
+        calib_b = compute_deal_outcome_calibration(pairs_b)
+        assert calib_b.depreciation_version == "mixed"
+        assert calib_b.p10_p90_coverage_rate == 0.80
+        assert calib_b.is_coverage_target_met is False  # Rejected because v1 is only 60%!
+
+    def test_depreciation_version_pin_and_rollback_receipt(self) -> None:
+        """Finding F6: Rollback pin and R-3 receipt attached in execution metadata."""
+        from datetime import UTC, datetime
+
+        from modules.avm.application.valuation import DepreciationRollbackReceipt
+        from modules.avm.domain.valuation import AVM_DEPRECIATION_LEGACY_VERSION
+
+        repo = InMemoryAVMRepository()
+        receipt = DepreciationRollbackReceipt(
+            decider="finance_lead",
+            decision_time=datetime(2026, 9, 10, 12, 0, tzinfo=UTC),
+            reason="Market dislocation observed during canary rollout",
+            target_expiry="2026-09-30",
+            depreciation_version_pin=AVM_DEPRECIATION_LEGACY_VERSION,
+        )
+        service = AVMService(
+            repository=repo,
+            depreciation_version_pin=AVM_DEPRECIATION_LEGACY_VERSION,
+            rollback_receipt=receipt,
+        )
+        val_input = ValuationInput(
+            store_id="store-pin-test",
+            gm_ttm=1_000_000.0,
+            forecast_gm_next_12m=1_100_000.0,
+            asset_book_value=2_000_000.0,
+            equipment_fair_value=500_000.0,
+            equipment_depreciation_basis="original_cost",
+            equipment_original_cost=500_000.0,
+            useful_life_months=84,
+            residual_value_ratio=0.1,
+            depreciation_method="straight_line",
+            asset_in_service_date="2021-01-01",
+            depreciation_effective_date="2026-09-01",
+            quality_score=0.95,
+        )
+        case = service.create_case(val_input, created_by="operator-1", correlation_id="corr-pin-1")
+        report = service.value(case.case_id, actor="operator-1", correlation_id="corr-pin-2")
+
+        assert report.depreciation_version == AVM_DEPRECIATION_LEGACY_VERSION
+        assert report.depreciation_applied is False
+        assert "depreciation_rollback_receipt" in report.execution_metadata
+        rb_meta = report.execution_metadata["depreciation_rollback_receipt"]
+        assert rb_meta["decider"] == "finance_lead"
+        assert rb_meta["reason"] == "Market dislocation observed during canary rollout"
+        assert rb_meta["depreciation_version_pin"] == AVM_DEPRECIATION_LEGACY_VERSION
