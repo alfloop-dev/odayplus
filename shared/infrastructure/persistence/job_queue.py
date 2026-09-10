@@ -18,17 +18,11 @@ from shared.jobs.queue import (
     DELIVERY_SETTLED_JOB_STATUSES,
     NON_EXECUTABLE_RECEIPT_JOB_TYPE_SUFFIXES,
     JobDeliveryState,
+    JobFenceRejectedError,
     JobRecord,
     JobRequest,
     JobStatus,
 )
-
-
-class JobFenceRejectedError(ValueError):
-    """Raised when a job write/checkpoint fails due to stale fence_token or version."""
-
-    pass
-
 
 _LEGACY_RETRYING_STATUS_VALUES = (JobDeliveryState.RETRYING.value, "RETRYING")
 
@@ -413,66 +407,116 @@ class DurableJobQueue:
         """
 
         with self._engine.lock:
-            assignments = [
-                "status = ?",
-                "version = version + 1",
-                "error_message = ?",
-            ]
-            params: list[Any] = [status.value, error_message]
-            if status in DELIVERY_SETTLED_JOB_STATUSES:
-                # Without this, writing PARTIAL/CANCELLED with delivery_state=None
-                # emitted no delivery_state assignment at all and the row kept the
-                # RETRYING left by the previous attempt.
-                assignments.append("delivery_state = NULL")
-            elif delivery_state is not None:
-                assignments.append("delivery_state = ?")
-                params.append(delivery_state.value)
-            if payload is not None:
-                assignments.append("payload_json = ?")
-                params.append(json.dumps(payload))
-            if status != JobStatus.RUNNING:
-                assignments.extend(
-                    [
-                        "locked_by = NULL",
-                        "heartbeat_at = NULL",
-                        "lease_expires_at = NULL",
-                    ]
+            max_retries = 10
+            for _attempt in range(max_retries):
+                curr_row = self._engine.query_one(
+                    "SELECT version, fence_token, job_type, correlation_id, idempotency_key, created_at, payload_json, status FROM durable_jobs WHERE job_id = ?",
+                    (job_id,),
                 )
+                if curr_row is None:
+                    raise ValueError(f"Job {job_id} not found")
 
-            predicates = ["job_id = ?"]
-            params.append(job_id)
-            if expected_version is not None:
-                predicates.append("version = ?")
-                params.append(expected_version)
-            if fence_token is not None:
-                predicates.append("fence_token = ?")
-                params.append(fence_token)
+                if expected_version is not None and int(curr_row["version"]) != expected_version:
+                    raise JobFenceRejectedError(
+                        f"Job {job_id} fence/version rejected: expected v{expected_version}, got v{curr_row['version']}"
+                    )
+                if fence_token is not None and curr_row["fence_token"] is not None and int(curr_row["fence_token"]) != fence_token:
+                    raise JobFenceRejectedError(
+                        f"Job {job_id} fence/version rejected: expected f{fence_token}, got f{curr_row['fence_token']}"
+                    )
 
-            # assignments/predicates hold only fixed literal fragments;
-            # every value is bound through ? placeholders in `params`.
-            result = self._engine.execute(
-                "UPDATE durable_jobs SET "  # nosec B608 - fixed fragments, values bound via ? placeholders
-                + ", ".join(assignments)
-                + " WHERE "
-                + " AND ".join(predicates),
-                tuple(params),
-            )
-            if int(getattr(result, "rowcount", 0)) == 1:
-                return
+                target_version = int(curr_row["version"])
 
-            current = self._engine.query_one(
-                "SELECT version, fence_token FROM durable_jobs WHERE job_id = ?",
-                (job_id,),
-            )
-            if current is None:
-                raise ValueError(f"Job {job_id} not found")
-            if expected_version is not None or fence_token is not None:
-                raise JobFenceRejectedError(
-                    f"Job {job_id} fence/version rejected: expected "
-                    f"v{expected_version} f{fence_token}, got "
-                    f"v{current['version']} f{current['fence_token']}"
+                resolved_payload = payload
+                resolved_status = status
+                if status == JobStatus.CANCELLED:
+                    from shared.jobs.receipts import settle_cancelled_batch_receipt
+
+                    base_payload: dict[str, Any] = {}
+                    if resolved_payload is not None:
+                        base_payload = resolved_payload
+                    elif curr_row["payload_json"]:
+                        try:
+                            parsed = json.loads(curr_row["payload_json"])
+                            if isinstance(parsed, dict):
+                                base_payload = parsed
+                        except Exception:
+                            pass
+
+                    resolved_payload = settle_cancelled_batch_receipt(
+                        base_payload,
+                        job_id=job_id,
+                        job_type=curr_row["job_type"],
+                        tenant_id=base_payload.get("tenant_id"),
+                        correlation_id=curr_row["correlation_id"],
+                        idempotency_key=curr_row["idempotency_key"],
+                        created_at=curr_row["created_at"],
+                    )
+                    if isinstance(resolved_payload, dict) and "receipt" in resolved_payload:
+                        receipt_status = resolved_payload["receipt"].get("status")
+                        if receipt_status:
+                            resolved_status = JobStatus(receipt_status.lower())
+
+                assignments = [
+                    "status = ?",
+                    "version = version + 1",
+                    "error_message = ?",
+                ]
+                params: list[Any] = [resolved_status.value, error_message]
+                if resolved_status in DELIVERY_SETTLED_JOB_STATUSES:
+                    # Without this, writing PARTIAL/CANCELLED with delivery_state=None
+                    # emitted no delivery_state assignment at all and the row kept the
+                    # RETRYING left by the previous attempt.
+                    assignments.append("delivery_state = NULL")
+                elif delivery_state is not None:
+                    assignments.append("delivery_state = ?")
+                    params.append(delivery_state.value)
+                if resolved_payload is not None:
+                    assignments.append("payload_json = ?")
+                    params.append(json.dumps(resolved_payload))
+                if resolved_status != JobStatus.RUNNING:
+                    assignments.extend(
+                        [
+                            "locked_by = NULL",
+                            "heartbeat_at = NULL",
+                            "lease_expires_at = NULL",
+                        ]
+                    )
+
+                predicates = ["job_id = ?", "version = ?"]
+                params.extend([job_id, target_version])
+                if fence_token is not None:
+                    predicates.append("fence_token = ?")
+                    params.append(fence_token)
+
+                # assignments/predicates hold only fixed literal fragments;
+                # every value is bound through ? placeholders in `params`.
+                result = self._engine.execute(
+                    "UPDATE durable_jobs SET "  # nosec B608 - fixed fragments, values bound via ? placeholders
+                    + ", ".join(assignments)
+                    + " WHERE "
+                    + " AND ".join(predicates),
+                    tuple(params),
                 )
-            raise RuntimeError(f"Job {job_id} status update did not persist")
+                if int(getattr(result, "rowcount", 0)) == 1:
+                    return
+
+                if expected_version is not None:
+                    current = self._engine.query_one(
+                        "SELECT version, fence_token FROM durable_jobs WHERE job_id = ?",
+                        (job_id,),
+                    )
+                    if current is None:
+                        raise ValueError(f"Job {job_id} not found")
+                    raise JobFenceRejectedError(
+                        f"Job {job_id} fence/version rejected: expected "
+                        f"v{expected_version} f{fence_token}, got "
+                        f"v{current['version']} f{current['fence_token']}"
+                    )
+                # If caller did not provide expected_version, retry CAS loop
+                continue
+
+            raise JobFenceRejectedError(f"Job {job_id} status update CAS failed after {max_retries} attempts")
 
     def heartbeat(self, job_id: str, expected_version: int, fence_token: int) -> int:
         """Update lease expiration and heartbeat timestamp.

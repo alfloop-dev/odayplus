@@ -1,0 +1,22 @@
+{
+  "command": "gcloud --quiet run services describe oday-api --project=odayplus-runtime-20260825 --region=asia-east1 --format=json",
+  "argv": [
+    "gcloud",
+    "--quiet",
+    "run",
+    "services",
+    "describe",
+    "oday-api",
+    "--project=odayplus-runtime-20260825",
+    "--region=asia-east1",
+    "--format=json"
+  ],
+  "exit_code": 1,
+  "timestamp_utc": "2026-09-08T11:46:24Z",
+  "executor_account": "oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com",
+  "target": "oday-api-service",
+  "readback_masked": false,
+  "stdout": "",
+  "stderr": "ERROR: (gcloud.run.services.describe) PERMISSION_DENIED: Permission 'run.services.get' denied on resource 'namespaces/odayplus-runtime-20260825/services/oday-api' (or resource may not exist). This command is authenticated as oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com which is the active account specified by the [core/account] property.",
+  "finding": "PERMISSION_DENIED (exit 1). Active caller lacks IAM permissions on target oday-api-service."
+}

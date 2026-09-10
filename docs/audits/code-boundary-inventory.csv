@@ -151,6 +151,7 @@ apps/data_platform/__init__.py,product_system,product_required,true,,engineering
 apps/data_platform/config.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/data_platform/contracts.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/data_platform/definitions.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+apps/data_platform/deletion.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/data_platform/dlt_runtime.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/data_platform/geography_backfill.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/data_platform/identifiers.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -166,6 +167,7 @@ apps/data_platform/tests/__init__.py,verification,verification_only,false,produc
 apps/data_platform/tests/conftest.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 apps/data_platform/tests/test_config.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 apps/data_platform/tests/test_definitions_and_backfill.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+apps/data_platform/tests/test_delete_propagation.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 apps/data_platform/tests/test_dlt_runtime.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 apps/data_platform/tests/test_live_source_shapes.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 apps/data_platform/tests/test_mapping.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
@@ -820,6 +822,7 @@ shared/infrastructure/persistence/repositories.py,product_system,product_require
 shared/integrity.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/jobs/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/jobs/queue.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+shared/jobs/receipts.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/jobs/registry.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/notification/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/observability/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -1094,6 +1097,7 @@ tests/reliability/test_assisted_listing_intake_jobs.py,verification,verification
 tests/reliability/test_cold_start_route_table.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/reliability/test_concurrency_recovery.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/reliability/test_cross_flow_gate.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/reliability/test_durable_partial_batch.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/reliability/test_health_endpoints.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/reliability/test_job_delivery_state_clear.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/reliability/test_live_data_fail_closed.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.

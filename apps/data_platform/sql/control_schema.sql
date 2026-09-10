@@ -54,8 +54,11 @@ CREATE TABLE IF NOT EXISTS {{control_schema}}.canonical_lineage (
     canonical_table TEXT NOT NULL,
     canonical_id UUID NOT NULL,
     projected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    source_version BIGINT,
     PRIMARY KEY (source_snapshot_id, canonical_table, canonical_id)
 );
+ALTER TABLE {{control_schema}}.canonical_lineage
+    ADD COLUMN IF NOT EXISTS source_version BIGINT;
 CREATE INDEX IF NOT EXISTS ix_data_plane_lineage_run
     ON {{control_schema}}.canonical_lineage(run_id, source_kind);
 CREATE INDEX IF NOT EXISTS ix_data_plane_lineage_tenant
@@ -289,3 +292,34 @@ CREATE INDEX IF NOT EXISTS ix_data_plane_machine_status_event_evidence
     ON {{control_schema}}.machine_status_event_evidence(
         tenant_id, machine_id, observation_time DESC
     );
+
+-- Downstream delete / tombstone propagation (ODP-DATA-PLANE-DELETE-PROPAGATION-001).
+-- One row per (tenant, source kind, source id) that upstream deleted. The row is
+-- both the resurrection guard for later projection upserts and the readback
+-- audit record: it keeps the minimal upstream reference (snapshot id, content
+-- hash, run) and the monotonic source version the delete won at. `retained_targets`
+-- names the canonical tables that were deliberately tombstoned rather than
+-- purged, so the audit never implies an erasure that did not happen.
+CREATE TABLE IF NOT EXISTS {{control_schema}}.tombstones (
+    tenant_id UUID NOT NULL REFERENCES core.tenants(tenant_id),
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    source_version BIGINT NOT NULL CHECK (source_version >= 0),
+    purged_at TIMESTAMPTZ NOT NULL,
+    propagation_mode TEXT NOT NULL CHECK (
+        propagation_mode IN ('TOMBSTONE_PURGE', 'SINK_DELETE')
+    ),
+    tombstone_hash TEXT NOT NULL CHECK (length(tombstone_hash) = 64),
+    source_snapshot_id UUID NOT NULL,
+    run_id UUID NOT NULL REFERENCES {{control_schema}}.ingestion_runs(run_id),
+    purged_row_count BIGINT NOT NULL DEFAULT 0 CHECK (purged_row_count >= 0),
+    retained_targets TEXT[] NOT NULL DEFAULT '{}',
+    replay_count BIGINT NOT NULL DEFAULT 0 CHECK (replay_count >= 0),
+    context JSONB NOT NULL DEFAULT '{}'::jsonb,
+    first_observed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (tenant_id, entity_type, entity_id),
+    CHECK (jsonb_typeof(context) = 'object')
+);
+CREATE INDEX IF NOT EXISTS ix_data_plane_tombstones_entity
+    ON {{control_schema}}.tombstones(entity_type, entity_id, source_version DESC);
