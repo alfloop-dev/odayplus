@@ -610,8 +610,11 @@ class PsycopgCanonicalStore:
                         purged += max(int(getattr(cursor, "rowcount", 0) or 0), 0)
 
                     retained_set = set(plan.retained_targets)
+                    retained_pairs: set[tuple[str, str]] = set()
                     for canonical_table, canonical_id in targets:
-                        if canonical_table not in retained_set:
+                        if canonical_table in plan.retained_targets:
+                            retained_pairs.add((canonical_table, str(canonical_id)))
+                        else:
                             if canonical_table == "core.transactions":
                                 exists = connection.execute(
                                     "SELECT 1 FROM core.transactions WHERE transaction_id = %s",
@@ -619,6 +622,7 @@ class PsycopgCanonicalStore:
                                 ).fetchone()
                                 if exists is not None:
                                     retained_set.add(canonical_table)
+                                    retained_pairs.add((canonical_table, str(canonical_id)))
                             elif canonical_table == "core.machine_status_events":
                                 exists = connection.execute(
                                     "SELECT 1 FROM core.machine_status_events WHERE status_event_id = %s",
@@ -626,6 +630,7 @@ class PsycopgCanonicalStore:
                                 ).fetchone()
                                 if exists is not None:
                                     retained_set.add(canonical_table)
+                                    retained_pairs.add((canonical_table, str(canonical_id)))
                             elif canonical_table == f"{self._schema}.store_daily_facts":
                                 exists = connection.execute(
                                     f"SELECT 1 FROM {self._schema}.store_daily_facts WHERE source_snapshot_id = %s",  # nosec B608 -- DataPlaneConfig validates the schema identifier.
@@ -633,6 +638,7 @@ class PsycopgCanonicalStore:
                                 ).fetchone()
                                 if exists is not None:
                                     retained_set.add(canonical_table)
+                                    retained_pairs.add((canonical_table, str(canonical_id)))
                             elif canonical_table == f"{self._schema}.forecast_inputs":
                                 exists = connection.execute(
                                     f"SELECT 1 FROM {self._schema}.forecast_inputs WHERE source_snapshot_id = %s",  # nosec B608 -- DataPlaneConfig validates the schema identifier.
@@ -640,6 +646,7 @@ class PsycopgCanonicalStore:
                                 ).fetchone()
                                 if exists is not None:
                                     retained_set.add(canonical_table)
+                                    retained_pairs.add((canonical_table, str(canonical_id)))
                             elif canonical_table == f"{self._schema}.learning_import_lineage":
                                 exists = connection.execute(
                                     f"SELECT 1 FROM {self._schema}.learning_import_lineage WHERE source_snapshot_id = %s",  # nosec B608 -- DataPlaneConfig validates the schema identifier.
@@ -647,6 +654,7 @@ class PsycopgCanonicalStore:
                                 ).fetchone()
                                 if exists is not None:
                                     retained_set.add(canonical_table)
+                                    retained_pairs.add((canonical_table, str(canonical_id)))
                             elif canonical_table == f"{self._schema}.domain_inputs":
                                 exists = connection.execute(
                                     f"SELECT 1 FROM {self._schema}.domain_inputs WHERE source_snapshot_id = %s",  # nosec B608 -- DataPlaneConfig validates the schema identifier.
@@ -654,20 +662,36 @@ class PsycopgCanonicalStore:
                                 ).fetchone()
                                 if exists is not None:
                                     retained_set.add(canonical_table)
+                                    retained_pairs.add((canonical_table, str(canonical_id)))
                     if not targets and recorded is not None and recorded.retained_targets:
                         for table in recorded.retained_targets:
                             if table in RETAINED_CANONICAL_TABLES:
                                 retained_set.add(table)
                     retained = tuple(sorted(retained_set))
 
-                    connection.execute(
-                        f"""
-                        DELETE FROM {self._schema}.canonical_lineage
-                        WHERE tenant_id = %s AND source_kind = %s AND source_id = %s
-                          AND (source_version IS NULL OR source_version <= %s)
-                        """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
-                        (tenant_id, scope.source_kind.value, scope.source_id, event.source_version),
-                    )
+                    # A protected row still needs its source/target identity:
+                    # the next delete must rediscover and lock it, then recheck
+                    # current authority and FK protection. Only discard lineage
+                    # for an exact target that the sink no longer retains.
+                    for canonical_table, canonical_id in targets:
+                        if (canonical_table, str(canonical_id)) in retained_pairs:
+                            continue
+                        connection.execute(
+                            f"""
+                            DELETE FROM {self._schema}.canonical_lineage
+                            WHERE tenant_id = %s AND source_kind = %s AND source_id = %s
+                              AND canonical_table = %s AND canonical_id = %s
+                              AND (source_version IS NULL OR source_version <= %s)
+                            """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
+                            (
+                                tenant_id,
+                                scope.source_kind.value,
+                                scope.source_id,
+                                canonical_table,
+                                canonical_id,
+                                event.source_version,
+                            ),
+                        )
                 else:
                     retained = tuple(sorted({table for table, _ in targets}))
                     if not retained and recorded is not None and recorded.retained_targets:

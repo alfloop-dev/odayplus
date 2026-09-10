@@ -4,9 +4,9 @@
 - **Work Package**: WP-34 Follow-up ([ODP 人工決策落地規畫](../../../plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md) §6 WP-34 & [Phase 34A Implementation Handoff](../ODP-CDC-SOURCE-CONTRACT-PREP-001/implementation-handoff.md) §4 跟進項目 1)
 - **決策依據**: 決策編號 `D20`（A：實作／補齊 CDC 適用性與契約）
 - **查證基準 SHA**: `1260d977345f` (aligned with latest `origin/dev` tip)
-- **負責人 (Owner)**: Antigravity6（推進 dev 基準 `1260d977345f`、修復外鍵相依保護、意圖性墓碑保留漂移過濾與模式/版本轉換保留審計更新）
-- **審查人 (Reviewer)**: Codex2
-- **交付狀態**: `IMPLEMENTATION_DELIVERED` (推進 dev 基準 `1260d977345f`、修復審查缺陷、46 項回歸測試與邊界/SAST 驗證全數通過)
+- **負責人 (Owner)**: Codex（2026-09-10 依使用者授權前景接手；先前實作與退回歷史保留）
+- **審查人 (Reviewer)**: Claude（與本輪實作者不同帳號）
+- **交付狀態**: `PENDING_INDEPENDENT_REVIEW`（本輪保留目標重播修復；下文舊驗證數字是歷史紀錄）
 
 ---
 
@@ -245,3 +245,18 @@
   1. 修正 `_propagate_delete()`，由當前 purge 執行後的真實存在性動態計算最新 `retained_targets`；在有目標被處理時不與歷史 stale 保留目標取聯集。
   2. 修正 `_upsert_tombstone()` 之 SQL，一律以 `retained_targets = EXCLUDED.retained_targets` 寫入當前狀態。
   3. 新增回歸測試 `test_tombstone_to_sink_delete_readback_has_no_removed_retained_target` 驗證由 `TOMBSTONE_PURGE` 轉換至 `SINK_DELETE` 時，readback 審計準確反映 `retained_targets = ()`。
+
+
+## 2026-09-10：保留目標身份與可重播刪除修復
+
+第六次審查指出：transaction 因退款或 machine cycle 的 FK 保護而保留時，原程式卻刪除了該來源的全部 canonical lineage。重播因而找不到目標，錯報 retained_targets 為空；解除依賴後也無法清除仍存在的 row。
+
+本輪只清除已不再保留之精確 `(canonical_table, canonical_id)` 的 lineage，繼續保存受保護目標的 tenant/source/version 身份。每次重播仍沿既有 scope 與 target locks 重新發現目標，套用原 authority/FK 保護與 version guard；不靠合併歷史 table names 偽造保留審計。
+
+新增四項真實 disposable PostgreSQL 回歸，交叉覆蓋 refund／machine_cycle 及相同版本／較新版本刪除：第一次刪除、重建 store、重播仍回報保留並查得精確 lineage；移除測試依賴、再次刪除後 row 與 lineage 均消失，重啟審計不再聲稱保留，後續重播不重複累計 purge。
+
+- 對照 `a964c83d` 原程式：四項新測試均於 retained_targets 重播斷言失敗，exit 1；修正測試匯入後的有效負向收據為 `/tmp/odp-foreground-repair-20260910/delete-negative-v2.json`。
+- 修正版完整 deletion/pipeline selection：50 passed，exit 0，命令耗時 16.364 秒；原始收據 `delete-after-v2.json`。較早 `delete-negative.json`／`delete-after.json` 含測試漏匯入造成的 NameError，不作缺陷負向證據。
+- 正式交付 head 的宣告 verification 另由既有 task_verification 工具保存，不將工作樹測試冒充後續精確 commit 收據。
+
+本次沿原 task 與 PR 接續；沒有執行 live deletion、連線 CDC 或聲稱上游真實整合驗收完成。

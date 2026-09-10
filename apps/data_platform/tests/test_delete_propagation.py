@@ -26,6 +26,7 @@ import time
 import uuid
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Event
@@ -56,6 +57,7 @@ from apps.data_platform.deletion import (
 from apps.data_platform.identifiers import (
     brand_id_for_merchant,
     store_id_for_place,
+    tenant_id_for_merchant,
     transaction_id_for_source,
 )
 from apps.data_platform.serialization import aggregate_checksum
@@ -1769,6 +1771,69 @@ def test_delete_handles_existing_canonical_transaction_fk(live_store, dependency
     )
     assert tombstone is not None
     assert tombstone.retained_targets == ("core.transactions",)
+
+
+@pytest.mark.requires_live_env
+@pytest.mark.parametrize("dependency", ["refund", "machine_cycle"])
+@pytest.mark.parametrize("version_delta", [0, 1])
+def test_retained_transaction_replay_survives_restart_and_dependency_release(
+    live_store, dependency, version_delta
+) -> None:
+    test_delete_handles_existing_canonical_transaction_fk(live_store, dependency)
+    tenant = tenant_id_for_merchant("merchant-a")
+    source_id = "gateway-transaction-1"
+    target = transaction_id_for_source("shared-order-1")
+    store = live_store.build()
+    recorded = store.get_tombstone(tenant, SourceKind.TRANSACTION, source_id)
+    assert recorded is not None
+    event = DeleteEvent(
+        scope=DeleteScope(SourceKind.TRANSACTION, source_id, tenant),
+        source_version=recorded.source_version,
+        purged_at=recorded.purged_at,
+        source_snapshot_id=recorded.source_snapshot_id,
+        tombstone_hash=recorded.tombstone_hash,
+        run_id=recorded.run_id,
+    )
+    replay = store.delete_record(event)
+    assert replay.outcome is DeleteOutcome.REPLAYED
+    assert replay.retained_targets == ("core.transactions",)
+    restarted = live_store.build()
+    readback = restarted.get_tombstone(tenant, SourceKind.TRANSACTION, source_id)
+    assert readback is not None
+    assert readback.retained_targets == replay.retained_targets
+    with live_store.connect() as conn:
+        assert conn.execute(
+            "SELECT canonical_id FROM data_plane.canonical_lineage "
+            "WHERE tenant_id = %s AND source_kind = %s AND source_id = %s "
+            "AND canonical_table = 'core.transactions'",
+            (tenant, SourceKind.TRANSACTION.value, source_id),
+        ).fetchall() == [(target,)]
+        if dependency == "refund":
+            conn.execute(
+                "DELETE FROM core.transactions WHERE refund_of_transaction_id = %s",
+                (target,),
+            )
+        else:
+            conn.execute("DELETE FROM core.machine_cycles WHERE transaction_id = %s", (target,))
+    released_event = replace(event, source_version=event.source_version + version_delta)
+    deleted = restarted.delete_record(released_event)
+    assert deleted.outcome is (DeleteOutcome.REPLAYED if version_delta == 0 else DeleteOutcome.APPLIED)
+    assert deleted.retained_targets == ()
+    with live_store.connect() as conn:
+        assert conn.execute(
+            "SELECT 1 FROM core.transactions WHERE transaction_id = %s", (target,)
+        ).fetchone() is None
+        assert conn.execute(
+            "SELECT 1 FROM data_plane.canonical_lineage "
+            "WHERE tenant_id = %s AND source_kind = %s AND source_id = %s",
+            (tenant, SourceKind.TRANSACTION.value, source_id),
+        ).fetchone() is None
+    final_store = live_store.build()
+    final = final_store.get_tombstone(tenant, SourceKind.TRANSACTION, source_id)
+    assert final is not None and final.retained_targets == ()
+    again = final_store.delete_record(released_event)
+    assert again.outcome is DeleteOutcome.REPLAYED
+    assert again.purged_row_count == deleted.purged_row_count
 
 
 @pytest.mark.requires_live_env
