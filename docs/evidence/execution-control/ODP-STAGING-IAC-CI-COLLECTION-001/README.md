@@ -12,9 +12,10 @@
   - dispatch 要求的 base 是 `91dd050ad1e3`，但備妥這次 merge 期間 dev 已前進到 `9d847c16`（PR #1293，`ORCH-FROZEN-EVIDENCE-BASE-DISPATCH-001`），因此第二個 parent 是 `9d847c16`，`91dd050a` 包含在其中；`git rev-list --count HEAD..origin/dev` = `0`。
   - `6b2a26cd` 的 commit message 仍寫 `91dd050ad1e3`：那是訊息寫定當下的 dev tip，之後 dev 才前進。auto worker 無權 `git commit --amend`，因此在此更正，而不改寫已成形的 commit。
 - **Base after advance (round 3)**: `8eee47a49065c7535767f97fc9977a126eef76ae`（merge commit `01b86ea1`，PR #1288 `ORCH-REVIEW-CI-RECOVERY-001`）。這次 merge 的是**釘死的 SHA 而非 `origin/dev` 這個 ref**，所以不會再有第二親與訊息不符的問題；完整性檢查見 Receipt 13。
-- **Code head measured here**: Receipt 1–9 量測於 `6b2a26cd52188805683e8866cf463d59fa4537f2`；Receipt 10–13（review round 3 的修復）量測於 `01b86ea1ccbb4a696ae577748204f070784dea57` 及其之上尚未 commit 的修復。宣告命令的正式收據於最終 head 重跑。
+- **Base after advance (round 4)**: `b66d18130f3bac78cf5af32b1c7000933e5d931d`（merge commit `1ca1030c`，PR #1294 `ORCH-STATUS-LOCK-REMOTE-PROBE-001` 與 PR #1149 `ODP-AVM-QUALITY-NULLABLE-001`）。merge tree 與 `git merge-tree --write-tree` 比對逐位元相同（`7fa6b92613a8f97c2ed6024a6420519e4e93fdd8`）；完整性檢查見 Receipt 14。
+- **Code head measured here**: Receipt 1–9 量測於 `6b2a26cd52188805683e8866cf463d59fa4537f2`；Receipt 10–13（review round 3 的修復）量測於 `01b86ea1ccbb4a696ae577748204f070784dea57`；Receipt 14 量測於 `1ca1030cfce5f5d03add7d84b2d8378191d822c6`。宣告命令的正式收據於最終 head 重跑。
 - **Date**: 2026-09-10
-- **Review rounds**: round 1/2 的 ADC 與 `product` job Terraform 兩項 finding 已修復且未被重開；round 3 的 finding 是收集守門的 false negative，修法與量測見 §3.6 與 Receipt 10–12。
+- **Review rounds**: round 1/2 的 ADC 與 `product` job Terraform 兩項 finding 已修復且未被重開；round 3 的 finding 是收集守門的 false negative，修法與量測見 §3.6 與 Receipt 10–12。round 4 為 dev base advance (`b66d18130f3b`) 正常合併。
 
 ---
 
@@ -323,6 +324,22 @@ dispatch 指名的 base 是 `8eee47a49065`。這次**直接 merge 那個 SHA 而
 | 衝突 | 無 |
 
 dev 這次帶進來的全部落在 `.orchestrator/`（`dispatch_engine.py`、`status_transition.py`、`supervisor.py`、`test_dispatch_policy.py`）與 `ORCH-REVIEW-CI-RECOVERY-001` 自己的 evidence README。與本任務 owned paths（`ci.yml`、`pyproject.toml`、`infra/terraform/tests/`、`tests/tooling/`）**沒有任何共用檔案**，交付物逐位元未變。
+
+### Receipt 14: 第四次 base advance（`1ca1030c`）
+
+dispatch 指名的 base 是 `b66d18130f3b`（PR #1294 `ORCH-STATUS-LOCK-REMOTE-PROBE-001` 與 PR #1149 `ODP-AVM-QUALITY-NULLABLE-001`）。直接 merge 該釘死的 SHA：
+
+| 檢查 | 結果 |
+|------|------|
+| `git merge-tree --write-tree HEAD b66d18130f3b`（merge 前） | `7fa6b92613a8f97c2ed6024a6420519e4e93fdd8` |
+| `git rev-parse HEAD^{tree}`（merge 後） | `7fa6b92613a8f97c2ed6024a6420519e4e93fdd8` — 逐位元相同 |
+| `git log -1 --format=%P` | 兩個 parent（`f1fbfb6c`、`b66d1813`） |
+| `git rev-list --count HEAD..origin/dev` | `0` |
+| `git merge-base --is-ancestor b66d18130f3b HEAD` | 真 |
+| `check_code_boundaries.py` | exit 0，1155 files |
+| 衝突 | 無（`docs/audits/code-boundary-inventory.csv` 自動合併且檢查通過） |
+
+dev 這次帶進來的改動落在 `.orchestrator/`, `apps/`, `docs/`, `infra/db/`, `modules/`, `packages/`, `scripts/`, `shared/`, `tests/`；與本任務 owned paths（`.github/workflows/ci.yml`, `pyproject.toml`, `infra/terraform/tests/`, `tests/tooling/`）沒有衝突，交付物逐位元未變。
 
 ## 6. Exact-head CI 證明
 
