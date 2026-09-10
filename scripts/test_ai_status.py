@@ -3981,6 +3981,7 @@ class StatusCheckEmissionTests(unittest.TestCase):
                 text=True,
                 check=False,
                 cwd=ai_status.ROOT,
+                timeout=ai_status.COMMAND_TIMEOUT_SECONDS,
             )
 
     def test_resolve_task_sha_prefers_pushed_remote_over_local_and_merged_pr(self) -> None:
@@ -4018,6 +4019,57 @@ class StatusCheckEmissionTests(unittest.TestCase):
         ) as mock_run:
             self.assertIsNone(ai_status.resolve_task_sha("ODP-001"))
         mock_run.assert_called_once()
+
+    def test_remote_sha_timeout_rejects_warm_cache_and_partial_output(self) -> None:
+        task_id = "ODP-TIMEOUT-001"
+        old_sha, partial_sha = "a" * 40, "b" * 40
+        with mock.patch(
+            "subprocess.run",
+            return_value=mock.Mock(returncode=0, stdout=f"{old_sha}\trefs/heads/task/{task_id}\n"),
+        ):
+            self.assertEqual(ai_status.resolve_task_sha(task_id), old_sha)
+
+        timed_out = subprocess.TimeoutExpired(
+            ["git", "ls-remote"], ai_status.COMMAND_TIMEOUT_SECONDS,
+            output=f"{partial_sha}\trefs/heads/task/{task_id}\n",
+        )
+        with (
+            mock.patch("subprocess.run", side_effect=timed_out) as remote,
+            mock.patch.object(ai_status, "post_task_review_status_payload") as post,
+        ):
+            self.assertIsNone(ai_status.resolve_task_sha(task_id, force_refresh=True))
+            ai_status.emit_task_review_status_check(
+                {"id": task_id, "approved_head": old_sha}, "review_approved"
+            )
+        remote.assert_called_once()
+        self.assertEqual(remote.call_args.kwargs["timeout"], ai_status.COMMAND_TIMEOUT_SECONDS)
+        post.assert_not_called()
+
+    def test_sync_continues_other_tasks_after_a_remote_head_timeout(self) -> None:
+        before = {
+            "tasks": [
+                {"id": "ODP-TIMEOUT-001", "status": "review_approved", "review_gate_sha": "a" * 40},
+                {"id": "ODP-READY-001", "status": "review", "review_gate_sha": "b" * 40},
+            ]
+        }
+        after = {"tasks": [dict(task) for task in before["tasks"]]}
+        responses = [
+            subprocess.TimeoutExpired(["git", "ls-remote"], ai_status.COMMAND_TIMEOUT_SECONDS),
+            mock.Mock(returncode=0, stdout=f"{'c' * 40}\trefs/heads/task/ODP-READY-001\n"),
+        ]
+        with (
+            mock.patch("subprocess.run", side_effect=responses) as remote,
+            mock.patch.object(ai_status, "task_repository_slug_safe", return_value="owner/repo"),
+            mock.patch.object(ai_status, "post_task_review_status_payload", return_value=(True, "")) as post,
+        ):
+            ai_status.emit_status_checks_for_changed_tasks(before, after, "sync", [])
+        self.assertEqual(remote.call_count, 2)
+        self.assertTrue(all(call.kwargs["timeout"] == ai_status.COMMAND_TIMEOUT_SECONDS for call in remote.call_args_list))
+        post.assert_called_once()
+        self.assertEqual(post.call_args.args[0]["sha"], "c" * 40)
+        self.assertEqual(post.call_args.args[0]["state"], "pending")
+        self.assertEqual(after["tasks"][0]["review_gate_sha"], "a" * 40)
+        self.assertEqual(after["tasks"][1]["review_gate_sha"], "c" * 40)
 
     def test_resolve_task_sha_rejects_ambiguous_or_malformed_remote_refs(self) -> None:
         task_id = "ODP-001"
@@ -4287,7 +4339,7 @@ class StatusCheckEmissionTests(unittest.TestCase):
         }
         for command, update in (
             ("note", {"next": "Preserved task work; resume dispatch."}),
-            ("assign", {"owner": "Antigravity", "reviewer": "Codex2"}),
+            ("assign", {"owner": "Antigravity"}),
         ):
             with self.subTest(command=command):
                 after = {"tasks": [dict(task) for task in before["tasks"]]}
@@ -4341,6 +4393,49 @@ class StatusCheckEmissionTests(unittest.TestCase):
         resolve.assert_called_once_with("ODP-002")
         post.assert_called_once()
         self.assertEqual(post.call_args.args[0]["state"], "failure")
+
+    def test_retargeted_branch_emits_new_head_gate_without_unrelated_probes(self) -> None:
+        for task_status, expected_gate in (("in_progress", "failure"), ("review", "pending")):
+            with self.subTest(task_status=task_status):
+                before = {
+                    "tasks": [
+                        {"id": "ODP-001", "status": task_status, "branch": "task/old", "review_gate_sha": "a" * 40},
+                        {"id": "ODP-002", "status": "review", "review_gate_sha": "b" * 40},
+                    ]
+                }
+                after = {"tasks": [dict(task) for task in before["tasks"]]}
+                after["tasks"][0]["branch"] = "task/new"
+                with (
+                    mock.patch.object(ai_status, "resolve_task_sha", return_value="c" * 40) as resolve,
+                    mock.patch.object(ai_status, "task_repository_slug_safe", return_value="owner/repo"),
+                    mock.patch.object(ai_status, "post_task_review_status_payload", return_value=(True, "")) as post,
+                ):
+                    ai_status.emit_status_checks_for_changed_tasks(before, after, "retarget_branch", ["ODP-001", "task/new", "repair"])
+                resolve.assert_called_once_with("ODP-001")
+                post.assert_called_once()
+                self.assertEqual(post.call_args.args[0]["sha"], "c" * 40)
+                self.assertEqual(post.call_args.args[0]["state"], expected_gate)
+                self.assertEqual(after["tasks"][0]["review_gate_sha"], "c" * 40)
+
+    def test_assignment_refreshes_only_the_changed_reviewer_gate(self) -> None:
+        before = {
+            "tasks": [
+                {"id": "ODP-001", "status": "review", "reviewer": "Codex", "review_gate_sha": "a" * 40},
+                {"id": "ODP-002", "status": "review_approved", "reviewer": "Codex", "review_gate_sha": "b" * 40},
+            ]
+        }
+        after = {"tasks": [dict(task) for task in before["tasks"]]}
+        after["tasks"][0]["reviewer"] = "Codex2"
+        with (
+            mock.patch.object(ai_status, "resolve_task_sha", return_value="a" * 40) as resolve,
+            mock.patch.object(ai_status, "task_repository_slug_safe", return_value="owner/repo"),
+            mock.patch.object(ai_status, "post_task_review_status_payload", return_value=(True, "")) as post,
+        ):
+            ai_status.emit_status_checks_for_changed_tasks(before, after, "assign", ["ODP-001", "Claude", "Codex2"])
+        resolve.assert_called_once_with("ODP-001")
+        post.assert_called_once()
+        self.assertEqual(post.call_args.args[0]["state"], "pending")
+        self.assertEqual(post.call_args.args[0]["description"], "Pending review by Codex2")
 
     def test_sync_reconciles_drift_without_a_task_status_change(self) -> None:
         before = {

@@ -9216,13 +9216,21 @@ def resolve_task_sha(
     )
 
     remote_refs = [f"refs/heads/{branch_name}" for branch_name in branch_names]
-    result = subprocess.run(
-        ["git", "ls-remote", "--heads", "origin", *remote_refs],
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=repo_root,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", "--heads", "origin", *remote_refs],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=repo_root,
+            timeout=COMMAND_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        # An incomplete origin response cannot establish a reviewable head.
+        # Replace a warm cache too: a forced refresh must never fall back to a
+        # previously verified SHA after the authoritative read times out.
+        _TASK_SHA_CACHE[task_id] = (time.time(), None)
+        return None
     matches: list[str] = []
     if result.returncode == 0:
         for line in result.stdout.splitlines():
@@ -9634,6 +9642,7 @@ def emit_status_checks_for_changed_tasks(state_before: dict[str, Any], state_aft
                 "restore_approved_head",
                 "approve_continuation",
                 "set_dependencies",
+                "retarget_branch",
             }
         )
         else None
@@ -9645,6 +9654,7 @@ def emit_status_checks_for_changed_tasks(state_before: dict[str, Any], state_aft
         after_status = after_task.get("status")
 
         is_target = target_task_id and (str(task_id).upper() == str(target_task_id).upper())
+        reviewer_changed = before_task is not None and before_task.get("reviewer") != after_task.get("reviewer")
         # Ordinary task writes hold the canonical status lock. Do not make a
         # note or assignment wait for remote HEAD probes across the whole board;
         # the explicit sync command owns reconciliation of unchanged tasks.
@@ -9652,6 +9662,7 @@ def emit_status_checks_for_changed_tasks(state_before: dict[str, Any], state_aft
         if (
             after_status != before_status
             or is_target
+            or reviewer_changed
             or (command == "sync" and review_gate_head_drifted(after_task))
         ):
             emit_task_review_status_check(after_task, after_status)
