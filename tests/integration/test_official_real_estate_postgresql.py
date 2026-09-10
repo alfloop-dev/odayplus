@@ -5,7 +5,7 @@ import hashlib
 import io
 import json
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -368,6 +368,97 @@ def test_intervention_adjust_lineage_migration_binds_to_production_interventions
                 (str(uuid4()), store_id, "executing", str(uuid4())),
             )
     assert "foreign key" in str(dangling.value).lower()
+
+
+def test_durable_intervention_repository_postgresql_backfill_and_adjust_legacy_cases(
+    intake_blank_db: Any,
+) -> None:
+    """ODP-FR-INTV-006: PostgreSQL relational backfill and adjust lifecycle
+    compatibility with legacy intervention IDs and relational persistence."""
+    _upgrade_official_schema(intake_blank_db)
+    runtime_url, _ = _urls(intake_blank_db)
+    engine = PostgresEngine(
+        runtime_url,
+        bootstrap=True,
+        validate_schema=False,
+    )
+
+    from modules.intervention.application.workflow import InterventionWorkflow
+    from modules.intervention.domain.lifecycle import (
+        Intervention,
+        InterventionKind,
+        InterventionStatus,
+        default_window_for,
+    )
+    from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+    from shared.infrastructure.persistence.repositories import (
+        DurableInterventionRepository,
+    )
+
+    tenant_id = str(uuid4())
+    store_id = str(uuid4())
+    with intake_blank_db.connect() as conn:
+        conn.execute(
+            "INSERT INTO core.tenants (tenant_id, tenant_name) VALUES (%s, %s)",
+            (tenant_id, "PG Test Tenant"),
+        )
+        conn.execute(
+            "INSERT INTO core.stores (store_id, tenant_id, store_name) VALUES (%s, %s, %s)",
+            (store_id, tenant_id, "PG Test Store"),
+        )
+
+    doc_store = SqliteDocumentStore(engine)
+    legacy_uuid = str(uuid4())
+    legacy_id = f"intervention-{legacy_uuid}"
+    now = datetime.now(UTC)
+
+    legacy_case = Intervention(
+        intervention_id=legacy_id,
+        store_id=store_id,
+        kind=InterventionKind.PRICE_CHANGE,
+        status=InterventionStatus.APPROVED,
+        trigger_ref="alert-pg-legacy",
+        expected_outcome="pg legacy test",
+        planned_start=now,
+        planned_end=now + timedelta(days=14),
+        window_spec=default_window_for(InterventionKind.PRICE_CHANGE),
+        created_by="pg-admin",
+        created_at=now,
+    )
+    doc_store.put("intervention.interventions", legacy_id, legacy_case, group_key=store_id)
+
+    # Initialize repository on PostgreSQL -> triggers backfill into operations.interventions
+    repo = DurableInterventionRepository(doc_store)
+
+    with intake_blank_db.connect() as conn:
+        row = conn.execute(
+            "SELECT intervention_id, status FROM operations.interventions WHERE intervention_id = %s",
+            (legacy_uuid,),
+        ).fetchone()
+        assert row is not None
+        assert row[1] == "approved"
+
+    workflow = InterventionWorkflow(repository=repo)
+    outcome = workflow.adjust_case(
+        legacy_id,
+        actor="pg-ops",
+        reason="adjust on postgresql",
+        action_spec={"price_change_pct": -6},
+        rollback_plan="revert pg",
+    )
+
+    assert outcome.original.status is InterventionStatus.STOPPED
+    assert outcome.original.replacement_id == outcome.replacement.intervention_id
+    assert outcome.replacement.predecessor_id == legacy_id
+
+    with intake_blank_db.connect() as conn:
+        orig_row = conn.execute(
+            "SELECT status, replacement_id FROM operations.interventions WHERE intervention_id = %s",
+            (legacy_uuid,),
+        ).fetchone()
+        assert orig_row is not None
+        assert orig_row[0] == "stopped"
+        assert str(orig_row[1]) == outcome.replacement.intervention_id
 
 
 def _create_model_view_prerequisites(database: Any) -> None:

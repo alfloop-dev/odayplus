@@ -209,8 +209,17 @@ stateDiagram-v2
 
 #### 成員：`ADJUST`（調整中途狀態）
 - **處置狀態**：`VERIFIED`
-- **實作證據 (Evidence)**: `modules/intervention/application/workflow.py::InterventionWorkflow.adjust_case`
-- **理由 (Rationale)**: 實作 stop-plus-recreate 具 lineage 之 replacement/adjust action，停止前置介入並建立繼承/調整之新介入案例，具備 predecessor_id、replacement_id 與 adjustment_json 之 durable lineage，保留原介入參數、理由、actor、policy version 與 rollback plan；未誤用 AdLift Change Channel 詞彙，並提供 API 與 DB 交易原子性保證。
+- **Formal Decision Ref**: `docs/plans/ODP_OPEN_DECISIONS_2026-09-03.md#16-intv-006-adjust` 及 `docs/plans/ODP_REMEDIATION_PLAN_2026-09-03.md`
+- **實作證據 (Evidence)**:
+  - `modules/intervention/application/workflow.py::InterventionWorkflow.adjust_case`
+  - `modules/intervention/infrastructure/repositories.py::InMemoryInterventionRepository`
+  - `shared/infrastructure/persistence/repositories.py::DurableInterventionRepository`
+  - `infra/db/migrations/000004_durable_product_domain.sql`
+  - `infra/db/migrations/000025_intervention_adjust_lineage.sql`
+- **驗證證據 (Verification Evidence)**:
+  - `tests/integration/test_intervention_workflow.py`（涵蓋 production-entry API、storage CAS、concurrent barrier、SQLite commit failure rollback、pre-upgrade relational backfill、explicit rollback plan consistency）
+  - `tests/integration/test_official_real_estate_postgresql.py::test_intervention_adjust_lineage_migration_binds_to_production_interventions`
+- **理由 (Rationale)**: 依循現行門市營運實務（stop-plus-recreate）實作具 lineage 之 replacement/adjust action，停止前置介入並建立繼承/調整之新介入案例，具備 predecessor_id、replacement_id 與 adjustment_json 之 durable lineage，保留原介入參數、理由、actor、policy version 與 rollback plan；未誤用 AdLift Change Channel 詞彙；透過 storage-level CAS、row lock、RLock 與引擎級 transaction 提供 API、In-Memory、SQLite 與 PostgreSQL 交易原子性、並行衝突拒絕（STALE_UPDATE_CONFLICT）、回滾一致性與既有 document 資料庫升級 backfill 保證。
 
 ---
 

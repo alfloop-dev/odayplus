@@ -13,8 +13,9 @@ Covers the acceptance criteria:
 from __future__ import annotations
 
 import json
+import threading
 from datetime import UTC, datetime, timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -29,6 +30,7 @@ from modules.intervention import (
     EvidenceLevel,
     InMemoryInterventionRepository,
     InMemoryLabelRegistry,
+    Intervention,
     InterventionError,
     InterventionKind,
     InterventionStatus,
@@ -37,6 +39,8 @@ from modules.intervention import (
     Recommendation,
     can_claim_causal,
     can_claim_effect,
+    default_window_for,
+    new_intervention,
     resolve_evidence_level,
     run_observation_sweep,
 )
@@ -87,7 +91,12 @@ def _new_workflow() -> tuple[InterventionWorkflow, InMemoryLabelRegistry]:
     return workflow, registry
 
 
-def _open_case(workflow: InterventionWorkflow, *, store_id: str = "store-001"):
+def _open_case(
+    workflow: InterventionWorkflow,
+    *,
+    store_id: str = "store-001",
+    action_spec: dict | None = None,
+):
     return workflow.open_case(
         store_id=store_id,
         kind=InterventionKind.PRICE_CHANGE,
@@ -96,6 +105,7 @@ def _open_case(workflow: InterventionWorkflow, *, store_id: str = "store-001"):
         planned_start=START,
         planned_end=END,
         created_by="supervisor-a",
+        action_spec=action_spec,
     )
 
 
@@ -2328,4 +2338,304 @@ def test_api_adjust_relational_stop_failure_leaves_no_half_lineage(
     replacement_id = retry_res.json()["replacement_intervention_id"]
     assert _intervention_row(engine, iid)["replacement_id"] == replacement_id
     assert _intervention_row(engine, replacement_id)["predecessor_id"] == iid
+    engine.close()
+
+
+def test_adjust_case_rollback_plan_resolution_consistency_and_conflict() -> None:
+    """ODP-FR-INTV-006: rollback_plan in action_spec or arguments resolves consistently,
+    preserves explicit empty values, and rejects conflicting values."""
+    workflow, _ = _new_workflow()
+    case = _open_case(workflow, action_spec={"price_change_pct": -5, "rollback_plan": "initial plan"})
+    _drive_to_approved(workflow, case.intervention_id)
+
+    # 1. Action spec overrides rollback_plan without top-level arg
+    adj1 = workflow.adjust_case(
+        case.intervention_id,
+        actor="ops-lead",
+        reason="adjust plan in action_spec",
+        action_spec={"price_change_pct": -10, "rollback_plan": "new spec plan"},
+    )
+    assert adj1.replacement.action_spec["rollback_plan"] == "new spec plan"
+    assert adj1.replacement.adjustment is not None
+    assert adj1.replacement.adjustment.rollback_plan == "new spec plan"
+    assert adj1.original.adjustment is not None
+    assert adj1.original.adjustment.rollback_plan == "new spec plan"
+    events = workflow.audit_log.list_events()
+    stop_event = next(e for e in events if e.action == "adjust" and e.resource == f"intervention/{case.intervention_id}")
+    create_event = next(e for e in events if e.action == "create" and e.resource == f"intervention/{adj1.replacement.intervention_id}")
+    assert stop_event.metadata.get("rollback_plan") == "new spec plan"
+    assert create_event.metadata.get("rollback_plan") == "new spec plan"
+
+    # 2. Explicit empty string is preserved and not coalesced
+    case2 = _open_case(workflow, action_spec={"price_change_pct": -5, "rollback_plan": "initial plan"})
+    _drive_to_approved(workflow, case2.intervention_id)
+    adj2 = workflow.adjust_case(
+        case2.intervention_id,
+        actor="ops-lead",
+        reason="clear rollback plan explicitly",
+        rollback_plan="",
+    )
+    assert adj2.replacement.action_spec["rollback_plan"] == ""
+    assert adj2.replacement.adjustment.rollback_plan == ""
+    assert adj2.original.adjustment.rollback_plan == ""
+
+    # 3. Conflicting rollback_plan raises InterventionError
+    case3 = _open_case(workflow, action_spec={"price_change_pct": -5, "rollback_plan": "initial plan"})
+    _drive_to_approved(workflow, case3.intervention_id)
+    with pytest.raises(InterventionError, match="conflicting rollback_plan"):
+        workflow.adjust_case(
+            case3.intervention_id,
+            actor="ops-lead",
+            reason="conflicting plans",
+            rollback_plan="plan_a",
+            action_spec={"rollback_plan": "plan_b"},
+        )
+
+
+def test_concurrent_adjust_stale_update_conflict_only_one_succeeds(tmp_path: pytest.TempPathFactory) -> None:
+    """ODP-FR-INTV-006: Concurrent adjust requests on the same active intervention
+    with the same expected version reject stale revisions. Exactly one succeeds,
+    one fails with STALE_UPDATE_CONFLICT (409), exactly one replacement is persisted,
+    and only one successful audit event is appended."""
+    engine = SqliteEngine(tmp_path / "concurrent_adjust.db")
+    _seed_store(engine, store_id="store-concurrent-01")
+    store = SqliteDocumentStore(engine)
+    repo = DurableInterventionRepository(store)
+
+    app = create_app(intervention_repository=repo)
+    client = TestClient(app, headers=INTERVENTION_HEADERS)
+
+    # 1. Create and drive to approved
+    res = client.post(
+        "/interventions",
+        json={
+            "store_id": "store-concurrent-01",
+            "kind": "PRICE_CHANGE",
+            "expected_outcome": "concurrency test",
+            "planned_start": START.isoformat(),
+            "planned_end": END.isoformat(),
+            "created_by": "ops-admin",
+        },
+    )
+    assert res.status_code == 201
+    iid = res.json()["intervention_id"]
+    client.post(f"/interventions/{iid}/eligibility", json={"eligible": True, "actor": "ops-admin"})
+    client.post(f"/interventions/{iid}/action", json={"action_spec": {"price_change_pct": -5}, "actor": "ops-admin"})
+    client.post(f"/interventions/{iid}/conflict-check", json={"actor": "ops-admin"})
+    client.post(f"/interventions/{iid}/submit", json={"actor": "ops-admin"})
+    approve_res = client.post(f"/interventions/{iid}/approve", json={"action": "APPROVE", "actor": "sup-admin", "reason": "approved"})
+    assert approve_res.status_code == 200
+    current_version = approve_res.json()["version"]
+
+    # 2. Run two concurrent adjust requests with the same expected version
+    barrier = threading.Barrier(2)
+    results = []
+
+    def run_adjust(worker_id: int):
+        barrier.wait()
+        c = TestClient(
+            app,
+            headers=auth_headers(
+                Role.OPERATIONS_MANAGER,
+                Role.REGIONAL_SUPERVISOR,
+                subject=f"worker-{worker_id}",
+            ),
+        )
+        response = c.post(
+            f"/interventions/{iid}/adjust",
+            json={
+                "actor": f"worker-{worker_id}",
+                "reason": f"adjust by worker {worker_id}",
+                "action_spec": {"price_change_pct": -5 * worker_id},
+                "expected_version": current_version,
+            },
+        )
+        results.append((worker_id, response.status_code, response.json()))
+
+    threads = [threading.Thread(target=run_adjust, args=(1,)), threading.Thread(target=run_adjust, args=(2,))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # 3. Assert exactly one 200 and one 409
+    status_codes = sorted([r[1] for r in results])
+    assert status_codes == [200, 409], f"Results were: {results}"
+
+    conflict_res = next(r[2] for r in results if r[1] == 409)
+    assert conflict_res["detail"]["code"] == "STALE_UPDATE_CONFLICT"
+
+    success_res = next(r[2] for r in results if r[1] == 200)
+    replacement_id = success_res["replacement_intervention_id"]
+
+    # 4. Verify DB has exactly 2 rows: original (stopped) and the 1 winning replacement
+    all_rows = engine.query("SELECT intervention_id, status, predecessor_id, replacement_id FROM interventions")
+    assert len(all_rows) == 2
+    orig_row = next(r for r in all_rows if r["intervention_id"] == iid)
+    assert orig_row["status"] == "stopped"
+    assert orig_row["replacement_id"] == replacement_id
+
+    repl_row = next(r for r in all_rows if r["intervention_id"] == replacement_id)
+    assert repl_row["status"] == "candidate"
+    assert repl_row["predecessor_id"] == iid
+    engine.close()
+
+
+def test_in_memory_adjust_barrier_interleaved_write_safety() -> None:
+    """ODP-FR-INTV-006: InMemoryInterventionRepository thread safety and atomic rollback
+    does not overwrite or erase concurrent successful saves from another thread."""
+    repo = InMemoryInterventionRepository()
+    workflow = InterventionWorkflow(repository=repo)
+    case_a = _open_case(workflow, store_id="store-a")
+    _drive_to_approved(workflow, case_a.intervention_id)
+    case_b = _open_case(workflow, store_id="store-b")
+
+    # Thread A begins atomic adjust and fails
+    entered_atomic = threading.Event()
+    b_saved = threading.Event()
+
+    def thread_a_worker():
+        try:
+            with repo.atomic():
+                # save replacement for case_a
+                repl_a = new_intervention(
+                    store_id=case_a.store_id,
+                    kind=case_a.kind,
+                    trigger_ref="adjust:a",
+                    expected_outcome="outcome a",
+                    planned_start=START,
+                    planned_end=END,
+                    created_by="worker-a",
+                    predecessor_id=case_a.intervention_id,
+                )
+                repo.save(repl_a)
+                entered_atomic.set()
+                # wait until thread b attempts save
+                b_saved.wait(timeout=5)
+                # inject error to trigger rollback in thread a
+                raise RuntimeError("Thread A simulated crash")
+        except RuntimeError:
+            pass
+
+    def thread_b_worker():
+        entered_atomic.wait(timeout=5)
+        # Thread B performs save on case_b (blocks on _lock until A finishes, then succeeds)
+        repo.save(case_b)
+        b_saved.set()
+
+    t_a = threading.Thread(target=thread_a_worker)
+    t_b = threading.Thread(target=thread_b_worker)
+    t_a.start()
+    t_b.start()
+    t_a.join()
+    t_b.join()
+
+    # Verify that case_b is preserved and not erased by thread A's rollback
+    assert repo.get(case_b.intervention_id) is not None
+    assert case_b.intervention_id in [i.intervention_id for i in repo.list_all()]
+    # Verify case_a has no half-written replacement
+    assert len(repo.list_all()) == 2  # case_a and case_b only
+
+
+def test_sqlite_engine_commit_failure_rolls_back_transaction(tmp_path: pytest.TempPathFactory) -> None:
+    """ODP-FR-INTV-006: Outermost commit failure in SqliteEngine.transaction rolls back
+    the open transaction, preventing subsequent writes from committing previous failed writes."""
+    db_file = tmp_path / "commit_failure_engine.db"
+    engine = SqliteEngine(db_file)
+    _seed_store(engine, store_id="store-commit-fail")
+
+    real_conn = engine._conn
+    commit_failed = False
+
+    class FailingConn:
+        def __getattr__(self, name):
+            return getattr(real_conn, name)
+
+        def commit(self):
+            nonlocal commit_failed
+            if not commit_failed:
+                commit_failed = True
+                raise RuntimeError("simulated disk I/O commit failure")
+            return real_conn.commit()
+
+        def rollback(self):
+            return real_conn.rollback()
+
+    engine._conn = FailingConn()
+
+    # Attempt a grouped transaction that fails during commit
+    with pytest.raises(RuntimeError, match="simulated disk I/O commit failure"):
+        with engine.transaction():
+            _insert_intervention_row(engine, "fail-row-1", "store-commit-fail")
+            _insert_intervention_row(engine, "fail-row-2", "store-commit-fail")
+
+    engine._conn = real_conn
+
+    # Now execute an unrelated ordinary write
+    _insert_intervention_row(engine, "unrelated-success-row", "store-commit-fail")
+
+    # Assert that the failed rows were rolled back and NOT committed by the subsequent write
+    assert _intervention_row(engine, "fail-row-1") is None
+    assert _intervention_row(engine, "fail-row-2") is None
+    assert _intervention_row(engine, "unrelated-success-row") is not None
+    engine.close()
+
+
+def test_durable_intervention_repository_backfills_pre_upgrade_legacy_documents(tmp_path: pytest.TempPathFactory) -> None:
+    """ODP-FR-INTV-006: DurableInterventionRepository automatically backfills legacy document-only
+    interventions (including legacy ID prefixes like intervention-<uuid>) into the relational table
+    so subsequent adjustments and FK relationships succeed."""
+    db_file = tmp_path / "legacy_backfill.db"
+    engine = SqliteEngine(db_file)
+    _seed_store(engine, store_id="store-legacy-01")
+    store = SqliteDocumentStore(engine)
+
+    # 1. Directly insert legacy documents into durable_documents without relational table entries
+    legacy_id_1 = f"intervention-{uuid4()}"
+    legacy_case_1 = Intervention(
+        intervention_id=legacy_id_1,
+        store_id="store-legacy-01",
+        kind=InterventionKind.PRICE_CHANGE,
+        status=InterventionStatus.APPROVED,
+        trigger_ref="alert-legacy-1",
+        expected_outcome="legacy outcome",
+        planned_start=START,
+        planned_end=END,
+        window_spec=default_window_for(InterventionKind.PRICE_CHANGE),
+        created_by="legacy-admin",
+        created_at=START,
+    )
+    store.put("intervention.interventions", legacy_id_1, legacy_case_1, group_key="store-legacy-01")
+
+    # Verify relational table is initially empty
+    assert engine.query("SELECT * FROM interventions") == []
+
+    # 2. Instantiate DurableInterventionRepository (triggers backfill)
+    repo = DurableInterventionRepository(store)
+
+    # Verify relational table now contains the legacy intervention
+    row = engine.query_one("SELECT * FROM interventions WHERE intervention_id = ?", (legacy_id_1,))
+    assert row is not None
+    assert row["status"] == "approved"
+    assert row["store_id"] == "store-legacy-01"
+
+    # 3. Execute an adjust workflow on the legacy case
+    workflow = InterventionWorkflow(repository=repo)
+    outcome = workflow.adjust_case(
+        legacy_id_1,
+        actor="ops-upgrader",
+        reason="adjust legacy case after upgrade",
+        action_spec={"price_change_pct": -7},
+        rollback_plan="revert legacy",
+    )
+
+    # Verify replacement is created and linked in relational table
+    repl_row = engine.query_one("SELECT * FROM interventions WHERE intervention_id = ?", (outcome.replacement.intervention_id,))
+    assert repl_row is not None
+    assert repl_row["predecessor_id"] == legacy_id_1
+    assert repl_row["status"] == "candidate"
+
+    orig_row = engine.query_one("SELECT * FROM interventions WHERE intervention_id = ?", (legacy_id_1,))
+    assert orig_row["status"] == "stopped"
+    assert orig_row["replacement_id"] == outcome.replacement.intervention_id
     engine.close()

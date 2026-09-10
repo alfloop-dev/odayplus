@@ -901,14 +901,39 @@ class InterventionWorkflow:
         version, and rollback specifications.
         """
         original = self._require(intervention_id)
-        self._require_status(original, ACTIVE_INTERVENTION_STATUSES, "adjust")
         self._check_version(original, expected_version)
+        self._require_status(original, ACTIVE_INTERVENTION_STATUSES, "adjust")
         if not reason.strip():
             raise InterventionError("adjusting an intervention requires a reason")
 
+        # Conflict check for rollback_plan in arguments vs action_spec
+        if (
+            rollback_plan is not None
+            and action_spec is not None
+            and "rollback_plan" in action_spec
+            and rollback_plan != action_spec["rollback_plan"]
+        ):
+            raise InterventionError(
+                "conflicting rollback_plan provided in arguments and action_spec"
+            )
+
+        merged_action_spec = dict(original.action_spec) if original.action_spec else {}
+        if action_spec is not None:
+            merged_action_spec.update(action_spec)
+
+        if rollback_plan is not None:
+            effective_rollback = rollback_plan
+            merged_action_spec["rollback_plan"] = rollback_plan
+        elif action_spec is not None and "rollback_plan" in action_spec:
+            effective_rollback = action_spec["rollback_plan"]
+        elif original.action_spec and "rollback_plan" in original.action_spec:
+            effective_rollback = original.action_spec["rollback_plan"]
+            merged_action_spec["rollback_plan"] = effective_rollback
+        else:
+            effective_rollback = None
+
         now = datetime.now(UTC)
         replacement_id = str(uuid4())
-        effective_rollback = rollback_plan or original.action_spec.get("rollback_plan")
 
         adjustment_record = AdjustmentRecord(
             predecessor_id=original.intervention_id,
@@ -919,24 +944,6 @@ class InterventionWorkflow:
             policy_version=self.policy_version,
             rollback_plan=effective_rollback,
         )
-
-        stopped_original = original.with_transition(
-            to_status=InterventionStatus.STOPPED,
-            actor=actor,
-            action="adjust",
-            reason=f"adjusted by replacement {replacement_id}: {reason}",
-            correlation_id=correlation_id,
-            replacement_id=replacement_id,
-            adjustment=adjustment_record,
-        )
-
-        merged_action_spec = dict(original.action_spec)
-        if action_spec is not None:
-            merged_action_spec.update(action_spec)
-        if rollback_plan is not None:
-            merged_action_spec["rollback_plan"] = rollback_plan
-        elif "rollback_plan" not in merged_action_spec and effective_rollback is not None:
-            merged_action_spec["rollback_plan"] = effective_rollback
 
         new_start = planned_start or now
         duration = original.planned_end - original.planned_start
@@ -960,6 +967,28 @@ class InterventionWorkflow:
         )
 
         with self._atomic_lineage_write():
+            # Inside the transaction / atomic lock, re-fetch and re-validate the original
+            # state to guarantee storage-level CAS and prevent concurrent stale revisions
+            # from creating duplicate replacements or broken one-way lineages.
+            fresh_original = self._require(intervention_id)
+            if fresh_original.replacement_id is not None:
+                raise InterventionError(
+                    f"stale update: intervention {intervention_id} is already stopped and replaced by {fresh_original.replacement_id}"
+                )
+            expected = expected_version if expected_version is not None else original.version
+            self._check_version(fresh_original, expected)
+            self._require_status(fresh_original, ACTIVE_INTERVENTION_STATUSES, "adjust")
+
+            stopped_original = fresh_original.with_transition(
+                to_status=InterventionStatus.STOPPED,
+                actor=actor,
+                action="adjust",
+                reason=f"adjusted by replacement {replacement_id}: {reason}",
+                correlation_id=correlation_id,
+                replacement_id=replacement_id,
+                adjustment=adjustment_record,
+            )
+
             # The replacement is written first so its ``predecessor_id`` always
             # resolves against a row that already exists, which is exactly what
             # makes a failure on the second write dangerous: the replacement

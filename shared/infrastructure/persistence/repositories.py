@@ -18,7 +18,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from threading import RLock
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from models.shared_ml.artifact_store import (
     ArtifactRecord,
@@ -68,7 +68,12 @@ from modules.heatzone.domain.composition import (
     validate_composition_record,
 )
 from modules.heatzone.workers import HeatZoneBatchScoreResult
-from modules.intervention.domain.lifecycle import Intervention, LabelRecord
+from modules.intervention.domain.lifecycle import (
+    Intervention,
+    InterventionError,
+    InterventionStatus,
+    LabelRecord,
+)
 from modules.learninghub.domain import (
     BacktestReceipt,
     DatasetSnapshot,
@@ -709,6 +714,22 @@ _INTERVENTION_UPSERT_SQL: dict[str, str] = {
 }
 
 
+_INTERVENTION_EXISTS_SQL: dict[str, str] = {
+    "interventions": "SELECT intervention_id FROM interventions WHERE intervention_id = ?",
+    "operations.interventions": "SELECT intervention_id FROM operations.interventions WHERE intervention_id = ?",
+}
+
+
+def _to_uuid_if_prefixed(val: str | None) -> str | None:
+    if val is None:
+        return None
+    cleaned = val.removeprefix("intervention-")
+    try:
+        return str(UUID(cleaned))
+    except (ValueError, AttributeError):
+        return val
+
+
 @contextmanager
 def _atomic_write(engine: Any) -> Iterator[None]:
     """Run a group of statements as one all-or-nothing unit.
@@ -737,12 +758,45 @@ class DurableInterventionRepository:
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
+        self._backfill_relational_if_needed()
 
     @property
     def table(self) -> str:
         if str(getattr(self._store.engine, "dialect", "")).lower() == "postgresql":
             return "operations.interventions"
         return "interventions"
+
+    def _backfill_relational_if_needed(self) -> None:
+        engine = self._store.engine
+        table = self.table
+        is_pg = str(getattr(engine, "dialect", "")).lower() == "postgresql"
+        if is_pg:
+            row = engine.query_one("SELECT to_regclass(?) AS regclass", (table,))
+            if not row or not row.get("regclass"):
+                return
+        else:
+            row = engine.query_one(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                (table,),
+            )
+            if not row:
+                return
+
+        exists_statement = _INTERVENTION_EXISTS_SQL.get(table)
+        if not exists_statement:
+            return
+
+        docs = self._store.list_all(self._C)
+        if not docs:
+            return
+
+        with _atomic_write(engine):
+            for doc in docs:
+                if isinstance(doc, Intervention):
+                    lookup_id = _to_uuid_if_prefixed(doc.intervention_id) if is_pg else doc.intervention_id
+                    existing = engine.query_one(exists_statement, (lookup_id,))
+                    if not existing:
+                        self._sync_sql(doc)
 
     def _sync_sql(self, intervention: Intervention) -> None:
         engine = self._store.engine
@@ -753,7 +807,8 @@ class DurableInterventionRepository:
                 f"intervention relational persistence has no statement for table {table!r}"
             )
 
-        if str(getattr(engine, "dialect", "")).lower() == "postgresql":
+        is_pg = str(getattr(engine, "dialect", "")).lower() == "postgresql"
+        if is_pg:
             row = engine.query_one("SELECT to_regclass(?) AS regclass", (table,))
             if not row or not row.get("regclass"):
                 raise RuntimeError(
@@ -794,10 +849,14 @@ class DurableInterventionRepository:
             else intervention.effective_window_end().isoformat()
         )
 
+        iid = _to_uuid_if_prefixed(intervention.intervention_id) if is_pg else intervention.intervention_id
+        pred_id = _to_uuid_if_prefixed(intervention.predecessor_id) if is_pg else intervention.predecessor_id
+        repl_id = _to_uuid_if_prefixed(intervention.replacement_id) if is_pg else intervention.replacement_id
+
         engine.execute(
             statement,
             (
-                intervention.intervention_id,
+                iid,
                 intervention.store_id,
                 intervention.kind.value if hasattr(intervention.kind, "value") else str(intervention.kind),
                 eligibility_status,
@@ -808,14 +867,31 @@ class DurableInterventionRepository:
                 obs_start,
                 obs_end,
                 intervention.status.value.lower() if hasattr(intervention.status, "value") else str(intervention.status).lower(),
-                intervention.predecessor_id,
-                intervention.replacement_id,
+                pred_id,
+                repl_id,
                 adjustment_json,
                 intervention.created_at.isoformat() if hasattr(intervention, "created_at") else datetime.now(UTC).isoformat(),
             ),
         )
 
     def save(self, intervention: Intervention) -> Intervention:
+        engine = self._store.engine
+        is_pg = str(getattr(engine, "dialect", "")).lower() == "postgresql"
+        if is_pg:
+            with engine.lock:
+                engine.query_one(
+                    "SELECT doc_id FROM durable_documents WHERE collection = ? AND doc_id = ? FOR UPDATE",
+                    (self._C, intervention.intervention_id),
+                )
+                if intervention.status == InterventionStatus.STOPPED and intervention.replacement_id:
+                    row = engine.query_one(
+                        "SELECT intervention_id, status, replacement_id FROM operations.interventions WHERE intervention_id = ? FOR UPDATE",
+                        (_to_uuid_if_prefixed(intervention.intervention_id),),
+                    )
+                    if row and row.get("replacement_id") and row.get("replacement_id") != _to_uuid_if_prefixed(intervention.replacement_id):
+                        raise InterventionError(
+                            f"stale update: intervention {intervention.intervention_id} is already stopped and replaced by {row.get('replacement_id')}"
+                        )
         self._sync_sql(intervention)
         # Relational persistence is the production contract.  Write the
         # document mirror only after it succeeds so a migration/driver/FK

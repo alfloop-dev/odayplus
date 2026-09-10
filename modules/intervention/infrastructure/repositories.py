@@ -9,6 +9,7 @@ or mark in its organic baseline (ODP-MOD-05 AC-05-05).
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -20,15 +21,17 @@ from modules.intervention.domain.lifecycle import Intervention, LabelRecord
 class InMemoryInterventionRepository:
     _by_id: dict[str, Intervention] = field(default_factory=dict)
     _by_store: dict[str, list[str]] = field(default_factory=dict)
+    _lock: threading.RLock = field(default_factory=threading.RLock)
 
     def save(self, intervention: Intervention) -> Intervention:
         """Upsert an intervention, keeping the per-store index in sync."""
-        if intervention.intervention_id not in self._by_id:
-            self._by_store.setdefault(intervention.store_id, []).append(
-                intervention.intervention_id
-            )
-        self._by_id[intervention.intervention_id] = intervention
-        return intervention
+        with self._lock:
+            if intervention.intervention_id not in self._by_id:
+                self._by_store.setdefault(intervention.store_id, []).append(
+                    intervention.intervention_id
+                )
+            self._by_id[intervention.intervention_id] = intervention
+            return intervention
 
     @contextmanager
     def atomic(self) -> Iterator[None]:
@@ -40,23 +43,27 @@ class InMemoryInterventionRepository:
         are restored from a snapshot rather than undone write by write, so a
         failure anywhere in the block is equivalent to never having entered it.
         """
-        by_id = dict(self._by_id)
-        by_store = {store: list(ids) for store, ids in self._by_store.items()}
-        try:
-            yield
-        except BaseException:
-            self._by_id = by_id
-            self._by_store = by_store
-            raise
+        with self._lock:
+            by_id = dict(self._by_id)
+            by_store = {store: list(ids) for store, ids in self._by_store.items()}
+            try:
+                yield
+            except BaseException:
+                self._by_id = by_id
+                self._by_store = by_store
+                raise
 
     def get(self, intervention_id: str) -> Intervention | None:
-        return self._by_id.get(intervention_id)
+        with self._lock:
+            return self._by_id.get(intervention_id)
 
     def list_all(self) -> list[Intervention]:
-        return list(self._by_id.values())
+        with self._lock:
+            return list(self._by_id.values())
 
     def list_by_store(self, store_id: str) -> list[Intervention]:
-        return [self._by_id[i] for i in self._by_store.get(store_id, []) if i in self._by_id]
+        with self._lock:
+            return [self._by_id[i] for i in self._by_store.get(store_id, []) if i in self._by_id]
 
 
 @dataclass
