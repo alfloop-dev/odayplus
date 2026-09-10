@@ -81,6 +81,7 @@
           "equipment_original_cost": {
             "anyOf": [
               {
+                "minimum": 0.0,
                 "type": "number"
               },
               {
@@ -143,6 +144,8 @@
           "residual_value_ratio": {
             "anyOf": [
               {
+                "maximum": 1.0,
+                "minimum": 0.0,
                 "type": "number"
               },
               {
@@ -166,6 +169,7 @@
           "useful_life_months": {
             "anyOf": [
               {
+                "minimum": 1.0,
                 "type": "integer"
               },
               {
