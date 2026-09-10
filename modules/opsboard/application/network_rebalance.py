@@ -125,6 +125,16 @@ _STATUS_LABELS = {
 # measured card nor a legacy-quality one -- it is a card we refuse to vouch for.
 _UNVERIFIABLE_QUALITY_DISPOSITION = "unverifiable_report_reference"
 
+# `_view_store` publishes the card's quality claim twice: nested under ``avm``
+# and flattened onto the row. Anything that re-derives the claim has to move
+# both, or the same response answers the question two ways -- so the pairing is
+# named here instead of being restated at each projection.
+_AVM_QUALITY_VIEW_FIELDS = {
+    "avmConf": "confidence",
+    "avmQualityScoreStatus": "qualityScoreStatus",
+    "avmQualityDisposition": "qualityDisposition",
+}
+
 _AVM_MODEL = {
     "modelVersion": "avm-rebalance-income-market-v1.0.0",
     "snapshotId": "AVM-SNAP-20260714-0600",
@@ -413,7 +423,7 @@ class NetworkRebalanceService:
     ) -> dict[str, Any]:
         cache_key = ("request_avm", idempotency_key or "")
         if idempotency_key and cache_key in self._idempotency_cache:
-            return _copy(self._idempotency_cache[cache_key])
+            return self._replay_cached(cache_key)
 
         store = self._store(store_id)
         if simulate_unavailable:
@@ -504,7 +514,7 @@ class NetworkRebalanceService:
     ) -> dict[str, Any]:
         cache_key = ("complete_avm", idempotency_key or "")
         if idempotency_key and cache_key in self._idempotency_cache:
-            return _copy(self._idempotency_cache[cache_key])
+            return self._replay_cached(cache_key)
 
         store = self._store(store_id)
         if simulate_unavailable:
@@ -634,7 +644,7 @@ class NetworkRebalanceService:
     ) -> dict[str, Any]:
         cache_key = ("solve_netplan", idempotency_key or "")
         if idempotency_key and cache_key in self._idempotency_cache:
-            return _copy(self._idempotency_cache[cache_key])
+            return self._replay_cached(cache_key)
 
         store = self._store(store_id)
         if simulate_unavailable:
@@ -844,7 +854,7 @@ class NetworkRebalanceService:
     ) -> dict[str, Any]:
         cache_key = ("select_scenario", idempotency_key or "")
         if idempotency_key and cache_key in self._idempotency_cache:
-            return _copy(self._idempotency_cache[cache_key])
+            return self._replay_cached(cache_key)
 
         store = self._store(store_id)
         if store["status"] != "netplanreview":
@@ -926,7 +936,7 @@ class NetworkRebalanceService:
 
         cache_key = ("submit_review", idempotency_key or "")
         if idempotency_key and cache_key in self._idempotency_cache:
-            return _copy(self._idempotency_cache[cache_key])
+            return self._replay_cached(cache_key)
 
         store = self._store(store_id)
         if store["status"] != "netplanreview":
@@ -2060,6 +2070,42 @@ class NetworkRebalanceService:
             refreshed.append(row)
         self._state["stores"] = refreshed
 
+    def _replay_cached(self, cache_key: tuple[str, str]) -> dict[str, Any]:
+        """Return a cached action response with its AVM card re-derived.
+
+        The idempotency cache is durable and is restored as its own copy, so it
+        never passes through `_refresh_canonical_stores`. A replay of a key kept
+        from before quality-score handling therefore hands back the card exactly
+        as it was first projected -- still claiming high confidence -- even after
+        the same restart has already downgraded what `GET /network-rebalance`
+        shows. A retry must not be the one response that still asserts a quality
+        the report no longer supports, so the cached card is re-derived here from
+        the identifiers it carries itself.
+
+        Only the quality claim moves. Prices, report and request identity, the
+        audit event and any approval are returned untouched: replaying a key is
+        the same action being answered again, not a new one, and the card stays
+        the record of the numbers the operator was shown.
+        """
+
+        result = _copy(self._idempotency_cache[cache_key])
+        # Same condition under which a read re-derives the card. Fixture mode has
+        # no report store to re-derive from, and holding replay to a rule the GET
+        # does not follow would just make the two disagree in the other
+        # direction.
+        if not self._require_canonical:
+            return result
+        store = result.get("store")
+        if not isinstance(store, dict):
+            return result
+        avm = store.get("avm")
+        if not isinstance(avm, dict) or not avm:
+            return result
+        self._reproject_avm_card(store)
+        for flat, nested in _AVM_QUALITY_VIEW_FIELDS.items():
+            store[flat] = avm.get(nested)
+        return result
+
     def _reproject_avm_card(self, row: dict[str, Any]) -> None:
         """Re-derive a stored AVM card's quality claim from its own report.
 
@@ -2176,9 +2222,7 @@ class NetworkRebalanceService:
             "avmP10": avm.get("p10"),
             "avmP50": avm.get("p50"),
             "avmP90": avm.get("p90"),
-            "avmConf": avm.get("confidence"),
-            "avmQualityScoreStatus": avm.get("qualityScoreStatus"),
-            "avmQualityDisposition": avm.get("qualityDisposition"),
+            **{flat: avm.get(nested) for flat, nested in _AVM_QUALITY_VIEW_FIELDS.items()},
             "avmReserve": avm.get("reserve"),
             "avmModelVersion": avm.get("modelVersion"),
             "avmSnapshotId": avm.get("snapshotId"),
