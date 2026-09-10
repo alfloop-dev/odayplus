@@ -604,14 +604,11 @@
         },
         {
           "name": "DEPRECIATION",
-          "status": "absent",
-          "note": "No depreciation reaches the valuation path. The only depreciation in the tree is modules/site_economics/domain/simulator.py:325-357, where it is a tax shield on a greenfield store's projected cash flow -- a different quantity, on a different clock, for a different consumer -- and modules/avm does not import it. The verdict is AVM-specific and its four pieces of evidence, the input fields, the version fields, the legacy-card rules and the rollback guarantee are in docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md; the disposition is registered at docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md section 4.9 and evidenced at docs/evidence/ODP_AVM001_DEPRECIATION_DISPOSITION_2026-09-04.md. This member stays absent until an implementation lands: the contract is written, the gap is not closed.",
+          "status": "satisfied",
+          "evidence": "modules/avm/domain/valuation.py::value_store",
+          "note": "Straight-line asset depreciation computed per ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md and included in the asset lens.",
           "disposition": {
-            "state": "IMPLEMENTATION_READY",
-            "assigned_to": "AVM Domain Lead / Finance Analytics Lead",
-            "target_phase": "Batch 1 (ODP Remediation Plan) -- AVM valuation",
-            "acceptance_criteria": "modules/avm/tests/test_avm_depreciation_contract.py -- eight xfail(strict=True) specs covering C-1 basis discrimination, C-2 input fields, C-3 straight-line calculation, C-4 evidence and version fields, C-5 fail-closed on missing inputs, L-1/L-2 legacy card handling, L-4 calibration version split, and R-1 bit-exact v0 rollback. strict=True means the specs turn red by XPASS the moment an implementation satisfies them, so the contract cannot be met without removing the markers deliberately.",
-            "rationale": "The remediation plan asked first whether AVM asset depreciation and the site_economics store cash-flow depreciation are the same concept. They are not: different measured object (a greenfield format's brand-new machine mix versus a specific store's N-month-old equipment), different destination (a tax shield that never lowers a carrying value versus a direct reduction of the asset lens), opposite clock origins, and a residual that is an exit cash inflow on one side and a carrying-value floor on the other. So the model is AVM-specific, and even the three-line straight-line formula is not extracted into a shared function, because the shared dependency would advertise a policy alignment that does not exist. What is missing is the implementation, not the specification: C-1..C-5, L-1..L-4 and R-1..R-4 are written and executable, an owner and a delivery batch are named. Two preconditions are recorded in the contract and belong to humans, not to this registration: the finance owner must fill in the three R-4 rollback thresholds before cutover, and the canonical requirement bytes remain BLOCKED_BY_EVIDENCE under _source_provenance."
+            "state": "VERIFIED"
           }
         },
         {

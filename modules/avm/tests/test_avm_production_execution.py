@@ -18,6 +18,7 @@ from models.shared_ml.oss_estimators import LoadedOSSEstimator, train_oss_estima
 from models.shared_ml.production_contracts import PRODUCTION_MODEL_CONTRACTS
 from models.shared_ml.production_runtime import MlflowProductionModelRuntime
 from modules.avm import (
+    AVM_FEATURE_VERSION,
     AVMProductionExecutionError,
     AVMProductionExecutor,
     AVMService,
@@ -206,7 +207,7 @@ def test_production_avm_reloads_and_executes_real_oss_artifacts(
             version="2026.07.24",
             artifact_uri=artifact_path.as_uri(),
             dataset_snapshot_id="avm-training-live",
-            feature_schema_version="valuation-view-v1",
+            feature_schema_version=AVM_FEATURE_VERSION,
             label_version="avm-sale-price-v2",
             metrics={"mae": 20_000.0},
             stage=ModelStage.PRODUCTION,

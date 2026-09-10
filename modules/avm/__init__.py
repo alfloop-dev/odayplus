@@ -17,6 +17,8 @@ from modules.avm.application import (
     record_deal_outcome_export_audit,
 )
 from modules.avm.domain import (
+    AVM_DEPRECIATION_LEGACY_VERSION,
+    AVM_DEPRECIATION_VERSION,
     AVM_FEATURE_VERSION,
     AVM_MODEL_VERSION,
     AVM_POLICY_VERSION,
@@ -44,6 +46,7 @@ from modules.avm.domain import (
     build_valuation_view,
     generate_data_room,
     normalize_margin,
+    rehydrate_legacy_valuation_card,
     value_store,
 )
 from modules.avm.infrastructure import (
@@ -57,6 +60,8 @@ from modules.avm.infrastructure import (
 from modules.avm.workers import AVMBatchResult, AVMValuationWorker, run_avm_batch_valuation
 
 __all__ = [
+    "AVM_DEPRECIATION_LEGACY_VERSION",
+    "AVM_DEPRECIATION_VERSION",
     "AVM_FEATURE_VERSION",
     "AVM_MODEL_VERSION",
     "AVM_POLICY_VERSION",
@@ -106,6 +111,7 @@ __all__ = [
     "is_finance_view_authorized",
     "normalize_margin",
     "record_deal_outcome_export_audit",
+    "rehydrate_legacy_valuation_card",
     "run_avm_batch_valuation",
     "value_store",
 ]

@@ -24,8 +24,6 @@ import dataclasses
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from modules.avm.application.calibration import DealOutcomeCalibrationReport
 from modules.avm.domain.valuation import (
     ValuationCase,
@@ -154,18 +152,9 @@ class TestTheVerdictIsAVMSpecific:
         )
 
 
-class TestTheDepreciationContractIsNotImplementedYet:
-    """Contract sections C-1 through C-5, L-1/L-2/L-4 and R-1, as specs.
+class TestTheDepreciationContract:
+    """Contract sections C-1 through C-5, L-1/L-2/L-4 and R-1, as specs."""
 
-    Remove the marker on a test when the behaviour it describes lands. Leaving
-    it on turns the suite red via strict XPASS.
-    """
-
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason=f"{DOC} C-3: depreciation is not in the valuation path (ODP-FR-AVM-001)",
-    )
     def test_two_inputs_differing_only_in_depreciation_produce_different_valuation(self) -> None:
         """The acceptance test for the whole batch.
 
@@ -191,11 +180,6 @@ class TestTheDepreciationContractIsNotImplementedYet:
         assert old.reserve_price != young.reserve_price
         assert old.asking_price != young.asking_price
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason=f"{DOC} C-2: ValuationInput carries no depreciation fields",
-    )
     def test_valuation_input_carries_the_depreciation_contract_fields(self) -> None:
         view = build_valuation_view(_payload(asset_in_service_date="2021-03-03"))
         serialized = view.to_dict()
@@ -208,11 +192,6 @@ class TestTheDepreciationContractIsNotImplementedYet:
             "ValuationInput changed shape, so the feature version must move with it"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason=f"{DOC} C-4: the asset lens publishes no depreciation evidence",
-    )
     def test_the_asset_lens_publishes_its_depreciation_evidence(self) -> None:
         """Every intermediate value in C-3, on the card.
 
@@ -244,11 +223,6 @@ class TestTheDepreciationContractIsNotImplementedYet:
         assert report.depreciation_applied is True
         assert report.depreciation_version == _domain_constant("AVM_DEPRECIATION_VERSION")
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason=f"{DOC} C-5: missing depreciation inputs are not refused",
-    )
     def test_missing_depreciation_inputs_do_not_yield_a_complete_card(self) -> None:
         """Fail closed, one required field at a time.
 
@@ -267,11 +241,6 @@ class TestTheDepreciationContractIsNotImplementedYet:
                 f"the refusal for a missing {omitted} does not name the field: {error}"
             )
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason=f"{DOC} C-1: the depreciation basis is not distinguished",
-    )
     def test_an_appraised_basis_is_not_depreciated_twice(self) -> None:
         """An independently appraised value is already net of age.
 
@@ -297,11 +266,6 @@ class TestTheDepreciationContractIsNotImplementedYet:
         assert report.depreciation_applied is False
         assert report.depreciation_version == "avm-depreciation-not-applicable-v1"
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason=f"{DOC} L-1/L-2: no legacy depreciation version exists to tag old cards with",
-    )
     def test_a_legacy_card_keeps_its_legacy_version_and_is_not_recomputed(self) -> None:
         """Cards already sent to buyers stay byte-comparable.
 
@@ -342,11 +306,6 @@ class TestTheDepreciationContractIsNotImplementedYet:
         for key, value in legacy_card.items():
             assert tagged[key] == value, f"rehydration recomputed {key}; see {DOC} section L-1"
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason=f"{DOC} R-1: there is no version pin to roll back to",
-    )
     def test_a_v0_pin_reproduces_the_pre_cutover_numbers(self) -> None:
         """Rollback has to land on a known state, not an approximate one.
 
@@ -372,11 +331,6 @@ class TestTheDepreciationContractIsNotImplementedYet:
         assert pinned.depreciation_version == legacy_version
         assert pinned.depreciation_applied is False
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason=f"{DOC} L-4: calibration pools every report regardless of version",
-    )
     def test_calibration_does_not_silently_mix_depreciation_versions(self) -> None:
         """`AVMService.calibrate_deal_outcomes` collects every stored report.
 

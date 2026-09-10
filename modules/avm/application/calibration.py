@@ -93,6 +93,8 @@ class DealOutcomeCalibrationReport:
     is_coverage_target_met: bool
     no_deal_reason_distribution: dict[str, int]
     items: tuple[OutcomeCalibrationItem, ...]
+    depreciation_version: str | None = None
+    depreciation_version_breakdown: dict[str, int] = field(default_factory=dict)
     evaluated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def to_dict(self, *, redact_settlement_price: bool = False) -> dict[str, Any]:
@@ -111,6 +113,8 @@ class DealOutcomeCalibrationReport:
             "is_coverage_target_met": self.is_coverage_target_met,
             "ideal_coverage_target": IDEAL_P10_P90_COVERAGE,
             "no_deal_reason_distribution": dict(self.no_deal_reason_distribution),
+            "depreciation_version": self.depreciation_version,
+            "depreciation_version_breakdown": dict(self.depreciation_version_breakdown),
             "items": [item.to_dict(redact_settlement_price=redact_settlement_price) for item in self.items],
             "evaluated_at": self.evaluated_at.isoformat(),
         }
@@ -218,12 +222,21 @@ def compute_deal_outcome_calibration(
     no_deal_dist: dict[str, int] = {
         code.value: 0 for code in NoDealReasonCode
     }
+    dep_breakdown: dict[str, int] = {}
 
     for outcome, report in pairs:
         item = calculate_valuation_deviation(outcome, report)
         items.append(item)
         if not item.sold and item.no_deal_reason_code:
             no_deal_dist[item.no_deal_reason_code] = no_deal_dist.get(item.no_deal_reason_code, 0) + 1
+        ver = getattr(report, "depreciation_version", None) or "avm-depreciation-absent-v0"
+        dep_breakdown[ver] = dep_breakdown.get(ver, 0) + 1
+
+    dep_version: str | None = None
+    if len(dep_breakdown) == 1:
+        dep_version = next(iter(dep_breakdown))
+    elif len(dep_breakdown) > 1:
+        dep_version = "mixed"
 
     total = len(items)
     sold_items = [item for item in items if item.sold]
@@ -246,6 +259,8 @@ def compute_deal_outcome_calibration(
             is_coverage_target_met=False,
             no_deal_reason_distribution=no_deal_dist,
             items=tuple(items),
+            depreciation_version=dep_version,
+            depreciation_version_breakdown=dep_breakdown,
         )
 
     cov_p10_p90 = sum(1 for item in sold_items if item.is_covered_p10_p90) / sold_count
@@ -280,6 +295,8 @@ def compute_deal_outcome_calibration(
         is_coverage_target_met=is_target_met,
         no_deal_reason_distribution=no_deal_dist,
         items=tuple(items),
+        depreciation_version=dep_version,
+        depreciation_version_breakdown=dep_breakdown,
     )
 
 

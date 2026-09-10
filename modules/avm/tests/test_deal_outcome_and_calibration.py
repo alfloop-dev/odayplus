@@ -22,6 +22,7 @@ from modules.avm.domain.deal_outcome import (
 )
 from modules.avm.domain.liquidity import LiquidityTrainingRecord
 from modules.avm.domain.valuation import (
+    AVM_DEPRECIATION_VERSION,
     LensValuation,
     NormalizedMargin,
     PriceBand,
@@ -75,6 +76,8 @@ def _make_dummy_valuation_report(
         feature_version="valuation-view-v1",
         prediction_origin_time=datetime.now(UTC),
         valued_at=datetime.now(UTC),
+        depreciation_version=AVM_DEPRECIATION_VERSION,
+        depreciation_applied=True,
     )
 
 

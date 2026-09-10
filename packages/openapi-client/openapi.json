@@ -7,6 +7,28 @@
             "title": "Asset Book Value",
             "type": "number"
           },
+          "asset_book_value_includes_equipment": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Book Value Includes Equipment"
+          },
+          "asset_in_service_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset In Service Date"
+          },
           "comparable_multiples": {
             "items": {
               "type": "number"
@@ -19,9 +41,53 @@
             "title": "Created By",
             "type": "string"
           },
+          "depreciation_effective_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Depreciation Effective Date"
+          },
+          "depreciation_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Depreciation Method"
+          },
+          "equipment_depreciation_basis": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Equipment Depreciation Basis"
+          },
           "equipment_fair_value": {
             "title": "Equipment Fair Value",
             "type": "number"
+          },
+          "equipment_original_cost": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Equipment Original Cost"
           },
           "forecast_gm_next_12m": {
             "title": "Forecast Gm Next 12M",
@@ -74,6 +140,17 @@
             ],
             "title": "Quality Score"
           },
+          "residual_value_ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Residual Value Ratio"
+          },
           "source_snapshot_ids": {
             "items": {
               "type": "string"
@@ -85,6 +162,17 @@
             "minLength": 1,
             "title": "Store Id",
             "type": "string"
+          },
+          "useful_life_months": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Useful Life Months"
           },
           "working_capital": {
             "default": 0.0,

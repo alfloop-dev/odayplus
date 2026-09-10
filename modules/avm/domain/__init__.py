@@ -10,6 +10,8 @@ from modules.avm.domain.liquidity import (
     SurvivalModelCapability,
 )
 from modules.avm.domain.valuation import (
+    AVM_DEPRECIATION_LEGACY_VERSION,
+    AVM_DEPRECIATION_VERSION,
     AVM_FEATURE_VERSION,
     AVM_MODEL_VERSION,
     AVM_POLICY_VERSION,
@@ -31,10 +33,13 @@ from modules.avm.domain.valuation import (
     ensure_legacy_quality_disposition,
     generate_data_room,
     normalize_margin,
+    rehydrate_legacy_valuation_card,
     value_store,
 )
 
 __all__ = [
+    "AVM_DEPRECIATION_LEGACY_VERSION",
+    "AVM_DEPRECIATION_VERSION",
     "AVM_FEATURE_VERSION",
     "AVM_MODEL_VERSION",
     "AVM_POLICY_VERSION",
@@ -63,5 +68,6 @@ __all__ = [
     "ensure_legacy_quality_disposition",
     "generate_data_room",
     "normalize_margin",
+    "rehydrate_legacy_valuation_card",
     "value_store",
 ]
