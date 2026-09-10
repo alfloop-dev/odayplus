@@ -9093,6 +9093,129 @@ class ReusedWorkerWorktreeBaseAdvanceTests(unittest.TestCase):
             self.task_branch,
         )
 
+    def _prepare_frozen_evidence(
+        self, task_fields: dict[str, Any], *, reason: str = "owned_in_progress_dispatch",
+        snapshot: dict[str, Any] | None = None, canonical: bool = True,
+    ):
+        task_id = self.task_branch.removeprefix("task/")
+        task = {"id": task_id, "branch": self.task_branch, "status": "in_progress", **task_fields}
+        status_file = self.repo_root / "ai-status.json"
+        status_file.write_text(json.dumps({"tasks": [task] if canonical else []}), encoding="utf-8")
+        config = {
+            "paths": {"status_file": str(status_file)},
+            "schema": {"tasks_path": "tasks", "task_id_field": "id"},
+            "worker_worktrees": {"root": str(Path(self.tmp.name) / "workers")},
+            "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+        }
+        request = supervisor.DeliveryRequest(
+            agent_id="claude", provider="claude", delivery_mode="claude", message="wake",
+            task_id=task_id, reason=reason, metadata={"task": snapshot or {}},
+        )
+        state: dict[str, Any] = {}
+        with (
+            mock.patch.object(supervisor, "materialize_worker_context_files", return_value=[]),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            ok, message = supervisor.prepare_worker_workspace(
+                config, state, request, queue_event_id="evt-frozen-evidence", target_agent="Claude",
+            )
+        return ok, message, request, state
+
+    def test_frozen_evidence_owner_and_helper_preserve_candidate_base(self) -> None:
+        for reason in ("owned_ready_dispatch", "owned_in_progress_dispatch", "helper_claim_dispatch"):
+            with self.subTest(reason=reason):
+                ok, message, request, state = self._prepare_frozen_evidence(
+                    {"frozen_evidence_base_sha": self.initial_head}, reason=reason,
+                )
+                self.assertTrue(ok, message)
+                self.assertEqual(request.metadata["base_sha"], self.initial_head)
+                self.assertEqual(request.metadata["base_ref"], self.initial_head)
+                self.assertEqual(request.metadata["frozen_evidence_base_sha"], self.initial_head)
+                self.assertIn("FROZEN EVIDENCE BASE", request.message)
+                self.assertNotIn("BASE ADVANCE REQUIRED", request.message)
+                self.assertNotIn("base_advance_required", request.metadata)
+                self.assertEqual(self._git(self.worktree, "rev-parse", "HEAD").stdout.strip(), self.task_head)
+                lease = next(iter(state["worker_worktrees"]["leases"].values()))
+                self.assertEqual(lease["base_sha"], self.initial_head)
+
+    def test_frozen_evidence_without_metadata_keeps_registry_base(self) -> None:
+        ok, message, request, _state = self._prepare_frozen_evidence({})
+        self.assertTrue(ok, message)
+        self.assertEqual(request.metadata["base_sha"], self.base_head)
+        self.assertIn("BASE ADVANCE REQUIRED", request.message)
+        self.assertNotIn("frozen_evidence_base_sha", request.metadata)
+
+    def test_frozen_evidence_rejects_invalid_missing_and_nonancestor_sha(self) -> None:
+        for sha in (None, "", "abc123", 123, "A" * 40, self.initial_head + " ", "f" * 40, self.base_head):
+            with self.subTest(sha=sha):
+                ok, message, _request, state = self._prepare_frozen_evidence(
+                    {"frozen_evidence_base_sha": sha},
+                )
+                self.assertFalse(ok)
+                self.assertIn("frozen_evidence_base", message)
+                self.assertNotIn("worker_worktrees", state)
+                self.assertEqual(self._git(self.worktree, "rev-parse", "HEAD").stdout.strip(), self.task_head)
+
+    def test_frozen_evidence_uses_canonical_value_not_request_snapshot(self) -> None:
+        ok, message, request, _state = self._prepare_frozen_evidence(
+            {"frozen_evidence_base_sha": self.initial_head},
+            snapshot={"frozen_evidence_base_sha": self.base_head},
+        )
+        self.assertTrue(ok, message)
+        self.assertEqual(request.metadata["base_sha"], self.initial_head)
+        ok, message, request, _state = self._prepare_frozen_evidence(
+            {}, snapshot={"frozen_evidence_base_sha": self.initial_head},
+        )
+        self.assertTrue(ok, message)
+        self.assertEqual(request.metadata["base_sha"], self.base_head)
+
+    def test_frozen_evidence_refuses_snapshot_without_canonical_record(self) -> None:
+        ok, message, _request, state = self._prepare_frozen_evidence(
+            {}, snapshot={"branch": self.task_branch, "frozen_evidence_base_sha": self.initial_head},
+            canonical=False,
+        )
+        self.assertFalse(ok)
+        self.assertIn("frozen_evidence_base_requires_canonical_task", message)
+        self.assertNotIn("worker_worktrees", state)
+
+    def test_frozen_evidence_does_not_override_review_or_approved_head(self) -> None:
+        for reason in ("review_ready_dispatch", "owned_finalize_dispatch"):
+            with self.subTest(reason=reason):
+                ok, message, request, _state = self._prepare_frozen_evidence(
+                    {"frozen_evidence_base_sha": "invalid", "approved_head": self.task_head,
+                     "review_submission": {"remote_sha": self.task_head}}, reason=reason,
+                )
+                self.assertTrue(ok, message)
+                self.assertNotIn("frozen_evidence_base_sha", request.metadata)
+                self.assertEqual(self._git(self.worktree, "rev-parse", "HEAD").stdout.strip(), self.task_head)
+                if reason == "review_ready_dispatch":
+                    self.assertEqual(request.metadata["base_relation"], "review_head_pinned")
+                else:
+                    self.assertTrue(request.metadata["approved_head_immutable"])
+
+    def test_frozen_evidence_new_worktree_uses_existing_remote_evidence_branch(self) -> None:
+        self._git(self.repo_root, "worktree", "remove", str(self.worktree))
+        self._git(self.repo_root, "branch", "-D", self.task_branch)
+        ok, message, request, _state = self._prepare_frozen_evidence(
+            {"frozen_evidence_base_sha": self.initial_head},
+        )
+        self.assertTrue(ok, message)
+        workspace = Path(request.metadata["workspace_path"])
+        self.assertEqual(self._git(workspace, "rev-parse", "HEAD").stdout.strip(), self.task_head)
+        self.assertEqual(request.metadata["base_sha"], self.initial_head)
+        self.assertNotIn("BASE ADVANCE REQUIRED", request.message)
+
+    def test_frozen_evidence_missing_task_branch_refuses_creation(self) -> None:
+        self._git(self.repo_root, "worktree", "remove", str(self.worktree))
+        self._git(self.repo_root, "branch", "-D", self.task_branch)
+        self._git(self.repo_root, "update-ref", "-d", f"refs/remotes/origin/{self.task_branch}")
+        ok, message, _request, state = self._prepare_frozen_evidence(
+            {"frozen_evidence_base_sha": self.initial_head},
+        )
+        self.assertFalse(ok)
+        self.assertIn("frozen_evidence_task_branch_unavailable", message)
+        self.assertNotIn("worker_worktrees", state)
+
     def test_clean_matching_task_head_diverged_from_dev_dispatches_for_owner_rebase(self) -> None:
         before = self._git(self.worktree, "rev-parse", "HEAD").stdout.strip()
 
