@@ -7,6 +7,7 @@
 - **Reviewer**: Codex
 - **Target Branch**: `task/ODP-MODELREADY-A4-REMEDIATION-001`
 - **Base Branch**: `dev` (`1260d977345f18f4c8db05821e238be87614f4b2`)
+- **Tested Implementation Head SHA**: `30443885419d79385e40c19e7a6f9c1ff901c19c`
 
 ## Purpose & Scope
 This task provides forward remediation for the A4 acceptance requirement originally declared in `ODP-MODELREADY-QUALITY-NULLABLE-001`. It verifies that when `ModelReadyRecord` datasets missing `data_quality_score` or `confidence` (or carrying explicit `None`/`null` values) enter via real production entrypoints (both service and HTTP router), they are rejected with field- and record-identifying diagnostic messages, and leave no durable or partial snapshot records in storage.
@@ -16,6 +17,9 @@ All test fixtures use synthetic domain datasets representing ModelReady store an
 
 ### Forward Remediation Boundary
 This deliverable represents new forward verification for ModelReady nullable quality and confidence enforcement. In accordance with governance policy, historical archive and correction documents are not retroactively modified.
+
+### Docs-Only Evidence Binding
+This update provides a docs-only evidence binding and verification receipt for implementation head `30443885419d79385e40c19e7a6f9c1ff901c19c`. There are zero runtime or test implementation changes relative to reviewed head `30443885419d79385e40c19e7a6f9c1ff901c19c`.
 
 ## Delivered Verifications
 
@@ -60,43 +64,36 @@ In `tests/integration/test_learninghub_dataset_snapshot_api.py`:
 ## Verification Receipts & Execution Records
 
 ### Retry Reason
-Re-running focused verification suite on new implementation head after resolving Codex independent review findings [P2][R1] (adding real `runtime_mode="production"` router and durable/registry bindings for HTTP cases) and [P2][R2] (durable SQLite restart assertions across all negative and positive HTTP cases).
+Re-running verification on clean implementation head `30443885419d79385e40c19e7a6f9c1ff901c19c` to record exact head SHA binding, timestamps, and execution receipts per task Verification Evidence Policy and Codex review finding R3.
 
 ### 1. Diff Whitespace Check
 - **Command**: `git diff --check`
+- **Tested Head SHA**: `30443885419d79385e40c19e7a6f9c1ff901c19c`
+- **Start Time**: `2026-09-10T01:11:40Z`
+- **End Time**: `2026-09-10T01:11:40Z`
+- **Duration**: `0.017s`
 - **Exit Code**: `0`
+- **Receipt ID**: `1fc4a06d285428fc` (`.orchestrator/evidence/verification-odp_modelready_a4_remediation_001-1fc4a06d285428fc.json`)
 - **Output Receipt**: `docs/evidence/completion/ODP-MODELREADY-A4-REMEDIATION-001/git-diff-check.txt`
-- **Status**: Passed (0 whitespace errors)
+- **Status**: Passed (0 whitespace errors, exit code `0`)
 
 ### 2. Pytest Focused Test Suite (Quiet Mode)
 - **Command**: `uv run pytest modules/learninghub/tests/test_learninghub_production_runtime.py tests/integration/test_learninghub_dataset_snapshot_api.py tests/data/test_pit_snapshot.py -q`
-- **Start Time**: `2026-09-10T00:21:58Z`
-- **End Time**: `2026-09-10T00:22:32Z`
-- **Duration**: `34s`
+- **Tested Head SHA**: `30443885419d79385e40c19e7a6f9c1ff901c19c`
+- **Selection**: `modules/learninghub/tests/test_learninghub_production_runtime.py`, `tests/integration/test_learninghub_dataset_snapshot_api.py`, `tests/data/test_pit_snapshot.py` (fingerprint: `9b619a9085348ac7da589c61b03757ad`)
+- **Start Time**: `2026-09-10T01:11:40Z`
+- **End Time**: `2026-09-10T01:12:12Z`
+- **Duration**: `31.806s`
 - **Exit Code**: `0`
+- **Receipt ID**: `7d732fdee3d16234` (`.orchestrator/evidence/verification-odp_modelready_a4_remediation_001-7d732fdee3d16234.json`)
 - **Output Receipt**: `docs/evidence/completion/ODP-MODELREADY-A4-REMEDIATION-001/pytest-focused-q.txt`
-- **Result**: `30 passed, 6 warnings in 22.89s` (exit code `0`)
-
-### 3. Pytest Focused Test Suite (Verbose Mode)
-- **Command**: `uv run pytest modules/learninghub/tests/test_learninghub_production_runtime.py tests/integration/test_learninghub_dataset_snapshot_api.py tests/data/test_pit_snapshot.py -v`
-- **Start Time**: `2026-09-10T00:22:35Z`
-- **End Time**: `2026-09-10T00:23:09Z`
-- **Duration**: `34s`
-- **Exit Code**: `0`
-- **Output Receipt**: `docs/evidence/completion/ODP-MODELREADY-A4-REMEDIATION-001/pytest-focused-v.txt`
-- **Result**: `30 passed, 6 warnings in 22.98s` (exit code `0`)
-
-### 4. Code Quality & Linting
-- **Command**: `uv run ruff check modules/learninghub/tests/test_learninghub_production_runtime.py tests/integration/test_learninghub_dataset_snapshot_api.py`
-- **Exit Code**: `0`
-- **Result**: `All checks passed!`
+- **Status**: Passed (exit code `0`)
 
 ## Artifact & Output Checksums (SHA256)
 
 | File | SHA256 Checksum |
 |---|---|
 | `docs/evidence/completion/ODP-MODELREADY-A4-REMEDIATION-001/pytest-focused-q.txt` | `cd8fcef3c645a8830453cb61e5ec5348f33b0ae1655949ab17c272c8e5e359af` |
-| `docs/evidence/completion/ODP-MODELREADY-A4-REMEDIATION-001/pytest-focused-v.txt` | `9bb06a00ee6a10dcf569c8bdf7c6181f14cf47bc7ab9e826e73445b2bf3232ba` |
 | `docs/evidence/completion/ODP-MODELREADY-A4-REMEDIATION-001/git-diff-check.txt` | `1ca4a13146b2891c0e462123ac0cb848f92e6221f18b870a1b78c232d1956c35` |
 | `tests/integration/test_learninghub_dataset_snapshot_api.py` | `abd45edc4cadff6c4505f2d9f36abaa0ac66e443f055f130f7c5abee814f6527` |
 | `modules/learninghub/tests/test_learninghub_production_runtime.py` | `831531c79f32146571821154c12d268f637e8d93c9d9bd58cd6924069f0059ec` |
