@@ -39,7 +39,7 @@ import { SiteScorePanel } from "./network/SiteScorePanel";
 import { ComparePanel } from "./network/ComparePanel";
 import { ReviewPanel } from "./network/ReviewPanel";
 import { NetworkShell } from "./network/NetworkShell";
-import { RebalancePanel } from "./network/RebalancePanel";
+import type { RebalancePanelProps } from "./network/RebalancePanel";
 import type {
   HeatZoneMergeSplitPanelProps,
   HeatZoneProposal,
@@ -102,6 +102,31 @@ const HeatZoneMap = dynamic<HeatZoneMapProps>(
           role="status"
         >
           HeatZone 地圖載入中…
+        </div>
+      );
+    },
+  },
+);
+
+// Rebalance is the tab-6 panel: it carries the AVM valuation card, the NetPlan
+// scenario table and the review submission flow, and none of it is on screen
+// until the operator opens that tab. It is deferred for the same reason the
+// merge/split panel below is, so /operator and /intake do not pay for it on
+// first load. `ssr: false` matches the other deferred panels -- the panel is
+// driven entirely by client state and callbacks from this workspace.
+const RebalancePanel = dynamic<RebalancePanelProps>(
+  () => import("./network/RebalancePanel").then((mod) => mod.RebalancePanel),
+  {
+    ssr: false,
+    loading: function RebalancePanelLoading() {
+      return (
+        <div
+          aria-live="polite"
+          className={styles.mapLoading}
+          data-testid="rebalance-panel-loading"
+          role="status"
+        >
+          低效重配面板載入中…
         </div>
       );
     },

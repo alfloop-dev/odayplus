@@ -17299,6 +17299,9 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
                     stdout="",
                 ),
                 mock.MagicMock(returncode=0, stderr="", stdout="created"),
+                # After draining a queued gate, sync refreshes current canonical
+                # authority even when the remote HEAD has not changed.
+                mock.MagicMock(returncode=0, stderr="", stdout="created"),
             ]
 
             def fake_post(*_args: Any, **_kwargs: Any) -> Any:
@@ -17354,7 +17357,10 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
             self.assertEqual(len(history), 1)
             self.assertEqual(history[0]["sha"], sha)
             self.assertEqual(history[0]["state"], "failure")
-            self.assertEqual(observed_status_at_post, ["in_progress", "in_progress"])
+            self.assertEqual(observed_status_at_post, ["in_progress"] * 3)
+            self.assertEqual(post_results, [])
+            self.assertEqual(reconciled_task["review_gate_sha"], sha)
+            self.assertNotIn("review_gate_refresh_pending", reconciled_task)
             self.assertEqual(runtime_file.read_bytes(), runtime_before)
             self.assertTrue(backup_file.exists())
             self.assertEqual(backup_file.read_text(encoding="utf-8"), "patch content")
