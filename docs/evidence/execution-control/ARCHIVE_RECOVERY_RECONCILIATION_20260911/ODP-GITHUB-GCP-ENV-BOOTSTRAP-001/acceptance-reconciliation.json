@@ -1,0 +1,295 @@
+{
+  "task_id": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+  "task_title": "歷史驗收續辦：ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+  "original_title": "建立 staging/production GitHub 與 GCP 環境保護",
+  "task_class": "remediation",
+  "phase": "History Recovery — executable acceptance reconciliation",
+  "owner": "Antigravity6",
+  "reviewer": "Codex",
+  "recorded_at": "2026-09-11T11:15:00Z",
+  "reconciliation_target": {
+    "repository": "alfloop-dev/odayplus",
+    "continuation_branch": "task/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001-RECOVERY-20260911",
+    "base_commit_sha": "4499a2993e37b62033926b07de8d8d2e8469a6c7"
+  },
+  "historical_delivery": {
+    "pr_number": 1011,
+    "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1011",
+    "head_sha": "5edcf009640ae31dde160b1ce4c9123ac2c31a2f",
+    "merge_commit_sha": "8ad3f10dab707711bc1394ff3f6a81042b0b5648",
+    "merged": true,
+    "merged_at": "2026-08-25T16:26:32Z",
+    "delivered_artifacts": [
+      "docs/evidence/runtime/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/README.md",
+      "docs/evidence/runtime/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/gcp-wif-iam-audit.json",
+      "docs/evidence/runtime/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/github-environments-audit.json",
+      "docs/evidence/runtime/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/github-variables-audit.json",
+      "docs/evidence/runtime/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/production-authority-prerequisites.json",
+      "docs/deployment/GCP_DEPLOY_GUIDE.md"
+    ],
+    "ci_checks": [
+      {
+        "name": "classify",
+        "conclusion": "success",
+        "completed_at": "2026-08-25T15:47:35Z"
+      },
+      {
+        "name": "change-scope",
+        "conclusion": "success",
+        "completed_at": "2026-08-25T15:47:35Z"
+      },
+      {
+        "name": "boundary",
+        "conclusion": "success",
+        "completed_at": "2026-08-25T15:47:37Z"
+      },
+      {
+        "name": "performance-gate",
+        "conclusion": "success",
+        "completed_at": "2026-08-25T15:49:08Z"
+      },
+      {
+        "name": "orchestrator",
+        "conclusion": "success",
+        "completed_at": "2026-08-25T15:49:48Z"
+      },
+      {
+        "name": "product-e2e-gate",
+        "conclusion": "success",
+        "completed_at": "2026-08-25T15:55:23Z"
+      },
+      {
+        "name": "product",
+        "conclusion": "success",
+        "completed_at": "2026-08-25T16:05:44Z"
+      }
+    ],
+    "historical_approval": {
+      "context": "task-review-gate",
+      "approver": "Antigravity2",
+      "state": "success",
+      "updated_at": "2026-08-25T16:00:33Z",
+      "description": "Approved by assigned reviewer Antigravity2"
+    },
+    "commit_trailers_at_head": {
+      "LLM-Agent": "Claude2",
+      "Task-ID": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+      "Reviewer": "Antigravity2",
+      "Verified": "uv run --python 3.12 pytest tests/ops/"
+    }
+  },
+  "readback_evidence_sources": {
+    "github_protected_environments": {
+      "source_ref": "support/handoffs/max-dispatch-20260910/archive-evidence/github-protected-environments.json",
+      "observed_at": "2026-09-10T23:31:25Z",
+      "collector": "Codex",
+      "environments": [
+        {
+          "name": "dev",
+          "id": 17295066036,
+          "exists": true,
+          "protection_rules": [],
+          "required_reviewers_configured": false,
+          "can_admins_bypass": true
+        },
+        {
+          "name": "staging",
+          "id": 17295059155,
+          "exists": true,
+          "protection_rules": [
+            {
+              "id": 63664350,
+              "type": "required_reviewers",
+              "reviewers": [
+                {
+                  "login": "Alien-alfaloop",
+                  "type": "User"
+                },
+                {
+                  "login": "ajoe734",
+                  "type": "User"
+                }
+              ]
+            }
+          ],
+          "required_reviewers_configured": true,
+          "can_admins_bypass": true
+        },
+        {
+          "name": "production",
+          "id": 20574639394,
+          "exists": true,
+          "protection_rules": [
+            {
+              "id": 63664338,
+              "type": "required_reviewers",
+              "reviewers": [
+                {
+                  "login": "Alien-alfaloop",
+                  "type": "User"
+                },
+                {
+                  "login": "ajoe734",
+                  "type": "User"
+                }
+              ]
+            }
+          ],
+          "required_reviewers_configured": true,
+          "can_admins_bypass": true
+        }
+      ]
+    },
+    "gcp_staging_execution_preflight": {
+      "source_task": "ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003",
+      "source_pr": 1245,
+      "approved_head_sha": "6ee658a0bd65ab79303fdfd75baa09c14410a220",
+      "merge_sha": "f21fd2a242d7f1f76d1bb69c0b067730f6576fe6",
+      "evidence_path": "docs/evidence/runtime/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003/",
+      "paginated_variable_counts": {
+        "dev": 41,
+        "staging": 44,
+        "production": 42
+      },
+      "target_policy_status": "dev/staging target variables verified; production target fail-closed on dedicated GCP infrastructure"
+    },
+    "staging_foundation_refs_mapping": {
+      "source_task": "ODP-STAGING-FOUNDATION-REFS-MAPPING-001",
+      "source_pr": 1296,
+      "approved_head_sha": "f741af4def8734d4206f3736d557a433aefd3a70",
+      "evidence_path": "docs/evidence/runtime/ODP-STAGING-FOUNDATION-REFS-MAPPING-001/",
+      "summary": "Resolved staging infrastructure bindings to ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001"
+    },
+    "human_decisions_execution_plan": {
+      "source_path": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+      "status": "D01-D21 governance direction transcribed; PROD-GCP-01~05 human authority checklist preserved"
+    }
+  },
+  "acceptance_criteria_reconciliation": [
+    {
+      "index": 1,
+      "criterion": "staging/production environments具 required reviewers",
+      "classes": [
+        "R"
+      ],
+      "classes_zh": [
+        "runtime／部署"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "Historical audit (github-environments-audit.json @ 8ad3f10dab70) and live readback (support/handoffs/max-dispatch-20260910/archive-evidence/github-protected-environments.json @ 2026-09-10T23:31:25Z) confirm staging (id 17295059155) and production (id 20574639394) have active required_reviewers protection rules assigned to Alien-alfaloop and ajoe734. Dev (id 17295066036) has no protection rule as specified.",
+      "boundary": "Verified GitHub Environment configuration only; does not assert that live deployments have occurred."
+    },
+    {
+      "index": 2,
+      "criterion": "WIF/IAM/vars/secret references 完整且只有 references 被記錄",
+      "classes": [
+        "R"
+      ],
+      "classes_zh": [
+        "runtime／部署"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "gcp-wif-iam-audit.json and github-variables-audit.json at merge commit 8ad3f10dab70 confirm WIF pool (projects/767864276141/.../pools/github-actions), provider (odayplus with condition assertion.repository == 'alfloop-dev/odayplus'), deployer SA (github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com), and 4 Secret Manager secret references (ODAY_DATABASE_URL_SECRET, ODP_AUTH_PRINCIPAL_MAP_SECRET, ODP_WEB_SESSION_SECRET_SECRET, ODP_WEB_OIDC_CLIENT_SECRET_SECRET) are fully recorded. Re-verified by Preflight #1245 paginated receipts. All secret values are strictly redacted (secret_values_redacted=true).",
+      "boundary": "Verified secret references and WIF binding contracts; no plaintext secrets or credentials exist in the repository."
+    },
+    {
+      "index": 3,
+      "criterion": "production environment存在且保護有效",
+      "classes": [
+        "R",
+        "H"
+      ],
+      "classes_zh": [
+        "runtime／部署",
+        "人類授權"
+      ],
+      "status": "met_with_downstream_gates",
+      "status_zh": "GitHub環境保護已滿足，GCP實體資源與人類GO留後續Gate",
+      "evidence": "GitHub side: Environment production (id 20574639394) exists and required_reviewers rule (Alien-alfaloop, ajoe734) is active (verified 2026-09-10). GCP side & Human Authority: Dedicated production GCP resources (PROD-GCP-01~04) and operations signoff (PROD-OPS-05) are explicitly pending human governance in production-authority-prerequisites.json (status=blocked_pending_human_authority). Responsibility is explicitly mapped to downstream execution tasks: ODP-PROD-BLUEGREEN-ROLLOUT-001 (production rollout execution), HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001 (human GO), ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001 (staging foundation), and ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 (dev rollout).",
+      "boundary": "Clearly distinguishes GitHub environment protection (which is verified and active) from GCP production infrastructure provisioning and Human GO (which remain fail-closed and gated behind designated downstream tasks)."
+    },
+    {
+      "index": 4,
+      "criterion": "缺少人類 authority 時明確 blocked而非填 placeholder",
+      "classes": [
+        "H"
+      ],
+      "classes_zh": [
+        "人類授權"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "production-authority-prerequisites.json delivered in PR #1011 explicitly records status=blocked_pending_human_authority with checklist items PROD-GCP-01 to PROD-OPS-05. github-variables-audit.json explicitly notes: 'Production variables are intentionally omitted to prevent fake/placeholder configs until human Ops authority provides dedicated production GCP resources.' No placeholder tokens or synthetic secrets were created.",
+      "boundary": "Fulfills fail-closed compliance; non-fabrication of human governance values verified."
+    },
+    {
+      "index": 5,
+      "criterion": "redacted readback receipts 完整",
+      "classes": [
+        "R"
+      ],
+      "classes_zh": [
+        "runtime／部署"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "All 5 runtime audit files in docs/evidence/runtime/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/ are present and complete at merge commit 8ad3f10dab70 with secret_values_redacted=true. Supplementary command receipts in Preflight #1245 and 2026-09-10 protected-environments readback provide full command provenance and sanitized API output.",
+      "boundary": "Readback receipts verified complete, structured, and sanitized."
+    }
+  ],
+  "downstream_responsibility_mapping": [
+    {
+      "scope": "Production Blue-Green Rollout",
+      "responsible_task_id": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+      "prerequisites": [
+        "PROD-GCP-01 (GCP Project & Resource Naming)",
+        "PROD-GCP-02 (WIF & IAM Service Accounts)",
+        "PROD-GCP-03 (Cloud SQL & Secret Manager)",
+        "PROD-GCP-04 (Web OAuth Client & Domain URLs)",
+        "PROD-OPS-05 (Operations & Incident Governance)"
+      ],
+      "governance_gate": "Human GO required prior to live execution"
+    },
+    {
+      "scope": "Staging Foundation Infrastructure",
+      "responsible_task_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+      "related_task_id": "ODP-STAGING-FOUNDATION-REFS-MAPPING-001",
+      "prerequisites": [
+        "Resolution of staging foundation bucket and Cloud SQL bindings",
+        "Verification of direct VPC and egress contracts"
+      ],
+      "governance_gate": "Terraform execution gated under staging authority"
+    },
+    {
+      "scope": "Dev Live Rollout Remediation",
+      "responsible_task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+      "prerequisites": [
+        "Resolution of dev Cloud Run service deployment health and IAM bindings"
+      ],
+      "governance_gate": "Standard dev CI/CD pipeline"
+    },
+    {
+      "scope": "Human Governance Decisions",
+      "responsible_task_id": "HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001",
+      "source_plan": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+      "prerequisites": [
+        "Formal human operator signoff on PROD-GCP-01~05 parameters"
+      ],
+      "governance_gate": "Legal / Security / Ops Human signoff"
+    }
+  ],
+  "summary": {
+    "criteria_total": 5,
+    "criteria_met": 5,
+    "criteria_partially_met": 0,
+    "criteria_unmet": 0,
+    "github_environment_protection_verified": true,
+    "wif_iam_secret_reference_policy_verified": true,
+    "fail_closed_human_authority_compliance_verified": true,
+    "production_gcp_and_human_go_bound_to_downstream": true,
+    "no_dependency_cycles": true,
+    "reconciliation_verdict": "acceptance_reconciliation_complete"
+  }
+}
