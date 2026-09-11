@@ -1611,14 +1611,23 @@ def account_pool_runtime_state(
     if lifecycle == "cooldown":
         next_probe = _parse_iso_utc(str(entry.get("next_probe_at") or entry.get("blocked_until") or ""))
         if next_probe is not None and next_probe <= current_time:
-            # A real task executed on one slot is the authenticated canary
-            # probe.  This avoids a second provider-specific probe protocol
-            # while still proving the exact credential that will do the work.
-            lifecycle = "recovering"
-            entry["state"] = lifecycle
-            entry["effective_concurrency"] = 1
-            entry["last_probe_at"] = utc_now()
-            entry["probe_attempts"] = int(entry.get("probe_attempts", 0)) + 1
+            pool_auth = entry.get("auth_identity_hash")
+            is_fenced_by_shared_canary = False
+            if pool_auth:
+                for other_id, other_entry in bucket.items():
+                    if other_id != pool_id and isinstance(other_entry, dict) and other_entry.get("auth_identity_hash") == pool_auth:
+                        if str(other_entry.get("state") or "").lower() == "recovering":
+                            is_fenced_by_shared_canary = True
+                            break
+            if not is_fenced_by_shared_canary:
+                # A real task executed on one slot is the authenticated canary
+                # probe.  This avoids a second provider-specific probe protocol
+                # while still proving the exact credential that will do the work.
+                lifecycle = "recovering"
+                entry["state"] = lifecycle
+                entry["effective_concurrency"] = 1
+                entry["last_probe_at"] = utc_now()
+                entry["probe_attempts"] = int(entry.get("probe_attempts", 0)) + 1
     if lifecycle == "recovering":
         current_eff = entry.get("effective_concurrency")
         if current_eff is None:

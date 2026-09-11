@@ -73,36 +73,28 @@ Observational evidence recorded in `/home/lupin/odayplus/support/handoffs/parall
 
 ---
 
-## 5. Review Round 3 Remediation & Regression Handling
+## 5. Review Round 3 & 4 Remediation & Base Advance
 
-Addressed Codex2 review findings on PR #1305 head `0ffb100b602509cda898cc9d507dc76390ad1bec`:
-1. **P1 — Multi-Epoch Clearance Coverage (`runtime_state.py:645-655`, `worker_failure_policy.py:930-975, 1290-1320`)**:
-   - Retain all tombstones across providers and auth/run epochs using `_record_clearance_tombstone()`.
-   - `_merge_provider_guardrails()` checks candidate pauses against all retained clearances in `merged_cleared.values()`.
-   - Handles multi-clear disk interleavings: earlier clears survive later clears and delayed clears of older epochs do not replace newer clearance records.
-2. **P1 — Durable Shared-Account Canary Admission Fencing (`runtime_state.py:740-775`, `worker_failure_policy.py:1470-1510`, `supervisor.py:1570-1600`)**:
-   - Advance generation on canary recovery so disk merges preserve the fence.
-   - At equal generation in `_merge_account_pool_runtime()`, `recovering` takes precedence over `healthy` unless the healthy entry possesses a newer `last_recovered_at`.
-   - Dynamically fence uninitialized sibling pools sharing the authenticated identity in both `clear_provider_dispatch_pause()` and `account_pool_runtime_state()`.
-3. **P1 — Failure-Kind & Failure-Epoch Guard Preservation (`worker_failure_policy.py:820-840, 1485-1510`)**:
-   - Shared-auth fan-out preserves cooldowns for newer failure epochs and non-quota failures (e.g. `failure_kind="auth"`).
-   - Canary success fanout in `record_account_pool_canary_success()` verifies that sibling pools do not carry non-quota failure kinds before restoring capacity.
-4. **P2 — Structured Reopen Reason Assertions (`test_supervisor.py:21904-21920`)**:
-   - Restored assertions verifying `--reason=review_finding` and message forwarding in `test_run_ai_status_forwards_extra_args`.
+1. **Base Advance & Divergence Convergence**:
+   - Merged current base from `origin/dev` (`21929049e5c1`) into `task/ODP-ORCH-QUOTA-RECOVERY-STATE-001` (merge commit `890ea228`).
+2. **Account-Pool Merging Discards Newer Failure (`runtime_state.py`)**:
+   - `_merge_account_pool_runtime()` compares `last_failure_at` first so newer failure records survive stale recovery states regardless of disk write interleaving order.
+3. **Conflicting Run IDs & Canary Budget Fencing (`worker_failure_policy.py`)**:
+   - Conflicting run IDs (`rem_run != pool_run`) never fall back to same-second timestamp matches.
+   - Enforced maximum aggregate canary budget of 1 slot across all sibling pools sharing `auth_identity_hash`.
+4. **Canary Promotion Provenance & Auth Binding (`worker_failure_policy.py`)**:
+   - Enforced `started_at >= last_probe_at` in `record_account_pool_canary_success()`.
+   - Sibling promotion strictly checks matching `auth_identity_hash`.
+5. **Inherited CODEX_HOME Support (`worker_failure_policy.py`)**:
+   - `provider_auth_identity_hash()` checks `os.environ["CODEX_HOME"]` before defaulting to `Path.home() / ".codex"`.
+6. **Same-Second Blind Clearance Tombstone (`runtime_state.py`, `worker_failure_policy.py`)**:
+   - Updated `_is_pause_entry_cleared()` so clearance records without `cleared_paused_at` or matching run ID do not erase same-second new failures (`p_at == c_at`).
+7. **Time Source Mock Binding (`worker_failure_policy.py`)**:
+   - Bound `mark_provider_dispatch_paused()` time evaluation to `datetime.now(UTC)` so test patches on `supervisor.datetime` take effect properly.
 
 ---
 
 ## 6. Verification Receipts
-
-### Red Verification Receipts (Pre-Fix Baseline on Head `0ffb100b602509cda898cc9d507dc76390ad1bec`)
-- **Reviewer Scratch Suite 1 (Clear History)**:
-  - Command: `uv run pytest -q /home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260911T031635Z-6abc7d82/test_clear_history_review.py`
-  - Exit Code: `1` (3 failures)
-  - Failure Reasons: Single provider clearance tombstone replaced by subsequent clear; stale writer resurrected cleared pause.
-- **Reviewer Scratch Suite 2 (Pool Canary & Cooldown)**:
-  - Command: `uv run pytest -q /home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260911T031635Z-6abc7d82/review_pool/test_quota_pool_review.py`
-  - Exit Code: `1` (4 failures)
-  - Failure Reasons: Uninitialized sibling pool bypassed canary fence; newer quota epoch cooldown rewritten; auth failure promoted to healthy; disk save regressed recovering/0 to healthy/2.
 
 ### Green Verification Receipts (Post-Fix)
 
@@ -111,45 +103,40 @@ Addressed Codex2 review findings on PR #1305 head `0ffb100b602509cda898cc9d507dc
 git diff --check
 ```
 - **Exit Code**: `0`
-- **Duration**: `0.055s`
 - **Result**: Clean; no trailing whitespace or format issues.
 
-#### Command 2: Runtime State Unit & Interleaved Concurrency Tests
+#### Command 2: Ruff Linter
+```bash
+uv run ruff check .orchestrator/runtime_state.py .orchestrator/worker_failure_policy.py .orchestrator/supervisor.py .orchestrator/test_runtime_state.py .orchestrator/test_supervisor.py
+```
+- **Exit Code**: `0`
+- **Result**: `All checks passed!`
+
+#### Command 3: Runtime State Unit & Interleaved Concurrency Tests
 ```bash
 uv run pytest -q .orchestrator/test_runtime_state.py
 ```
 - **Exit Code**: `0`
-- **Duration**: `2.310s`
-- **Result**: `53 passed` (including `test_multi_clear_earlier_clear_survives_later_clear_and_stale_writer`, `test_delayed_old_clear_does_not_replace_newer_failure_clear`, `test_disk_clear_preserves_shared_auth_canary_fence`).
+- **Result**: `57 passed in 2.38s`.
 
-#### Command 3: Supervisor & Failure Policy Unit Tests
+#### Command 4: Supervisor & Quota Recovery Review Tests
 ```bash
-uv run pytest -q .orchestrator/test_supervisor.py -k "quota or pause or account_pool or config"
+uv run pytest -q .orchestrator/test_supervisor.py
 ```
 - **Exit Code**: `0`
-- **Duration**: `3.410s`
-- **Result**: `90 passed, 184 deselected` (including `QuotaClearAndCooldownRecoveryReviewTests`, `test_shared_auth_pool_without_runtime_entry_respects_canary_budget`, `test_shared_auth_newer_quota_epoch_keeps_cooldown`, `test_shared_auth_auth_failure_keeps_cooldown_after_other_pool_success`).
+- **Result**: `689 passed in 90.15s` (including all `QuotaClearAndCooldownRecoveryReviewTests`, `DetectWorkerFailureTests`, `ReviewHeadFreezeTests`).
 
-#### Command 4: Orchestrator Common Tests
+#### Command 5: Common & Worker Failure Policy Tests
 ```bash
-uv run pytest -q .orchestrator/test_common.py
+uv run pytest -q .orchestrator/test_common.py .orchestrator/test_worker_failure_policy.py
 ```
 - **Exit Code**: `0`
-- **Duration**: `2.111s`
-- **Result**: `44 passed`.
+- **Result**: `101 passed in 2.22s`.
 
-#### Command 5: Reviewer Multi-Clear Interleaving Suite
+#### Command 6: Dispatch Policy Tests
 ```bash
-uv run pytest -q /home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260911T031635Z-6abc7d82/test_clear_history_review.py
+PYTHONPATH=.orchestrator:scripts uv run pytest -q .orchestrator/test_dispatch_policy.py
 ```
 - **Exit Code**: `0`
-- **Duration**: `2.787s`
-- **Result**: `3 passed`.
+- **Result**: `177 passed in 33.72s`.
 
-#### Command 6: Reviewer Pool Canary & Cooldown Suite
-```bash
-uv run pytest -q /home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260911T031635Z-6abc7d82/review_pool/test_quota_pool_review.py
-```
-- **Exit Code**: `0`
-- **Duration**: `2.625s`
-- **Result**: `4 passed`.

@@ -804,6 +804,24 @@ def record_account_pool_canary_success(config: dict[str, Any], state: dict[str, 
     entry = _account_pool_runtime_bucket(state).get(pool_id)
     if not pool_id or not isinstance(entry, dict) or str(entry.get("state") or "") != "recovering":
         return False
+
+    # Validate timing: worker must have started at or after recovery / probe initiation
+    worker_started = _parse_iso_utc(str(worker.get("started_at") or worker.get("created_at") or ""))
+    probe_started = _parse_iso_utc(str(entry.get("last_probe_at") or entry.get("last_failure_at") or ""))
+    if worker_started is not None and probe_started is not None and worker_started < probe_started:
+        return False
+
+    # Validate auth identity
+    worker_auth = str(
+        worker.get("auth_identity_hash")
+        or provider_auth_identity_hash(
+            config,
+            str(worker.get("provider") or worker.get("logical_agent_id") or worker.get("agent_id") or ""),
+        )
+        or ""
+    )
+    pool_auth = str(entry.get("auth_identity_hash") or "")
+
     try:
         configured = max(0, int(pool.get("max_concurrent")))
     except (TypeError, ValueError):
@@ -815,17 +833,16 @@ def record_account_pool_canary_success(config: dict[str, Any], state: dict[str, 
             "effective_concurrency": configured,
             "last_recovered_at": recovered_at,
             "last_canary_run_id": worker.get("run_id"),
+            "auth_identity_hash": worker_auth or pool_auth or None,
             "reason": None,
         }
     )
-    canary_auth = entry.get("auth_identity_hash") or provider_auth_identity_hash(
-        config, str(worker.get("provider") or worker.get("logical_agent_id") or "")
-    )
+    canary_auth = worker_auth or pool_auth
     if canary_auth:
         for other_id, other_entry in _account_pool_runtime_bucket(state).items():
             if other_id == pool_id or not isinstance(other_entry, dict):
                 continue
-            if other_entry.get("auth_identity_hash") == canary_auth and str(other_entry.get("state") or "") == "recovering":
+            if str(other_entry.get("auth_identity_hash") or "") == canary_auth and str(other_entry.get("state") or "") == "recovering":
                 other_fk = str(other_entry.get("failure_kind") or "").strip().lower()
                 if other_fk and not (
                     is_terminal_quota_failure_kind(other_fk)
@@ -874,7 +891,12 @@ def provider_auth_identity_hash(config: dict[str, Any], provider: str | None) ->
     provider_cfg = provider_config(config, provider_id) or provider_config(config, "codex")
     codex_profile = provider_section(config, provider_id=provider_id, section="codex", default="codex")
     configured_home = str(codex_profile.get("codex_home") or provider_cfg.get("codex_home") or "").strip()
-    codex_home = Path(configured_home).expanduser() if configured_home else Path.home() / ".codex"
+    if configured_home:
+        codex_home = Path(configured_home).expanduser()
+    elif os.environ.get("CODEX_HOME"):
+        codex_home = Path(os.environ["CODEX_HOME"]).expanduser()
+    else:
+        codex_home = Path.home() / ".codex"
     auth = load_json(codex_home / "auth.json", default={})
     if not isinstance(auth, dict):
         return None
@@ -929,9 +951,9 @@ def _is_pause_entry_cleared(
         if p_at < c_at:
             return True
         elif p_at == c_at:
-            if c_run and p_run and c_run != p_run:
-                return False
-            return True
+            if c_run and p_run and c_run == p_run:
+                return True
+            return False
         else:
             return False
 
@@ -1354,6 +1376,7 @@ def clear_provider_dispatch_pause(config: dict[str, Any], state: dict[str, Any],
 
     pools_recovered: list[str] = []
     recovered_auth_hashes: set[str] = set()
+    allocated_canary_auths: set[str] = set()
 
     # Consider all target pools and any pools currently in cooldown in the bucket
     candidate_pools = list(dict.fromkeys(list(target_pools) + list(account_pools_bucket.keys())))
@@ -1425,8 +1448,11 @@ def clear_provider_dispatch_pause(config: dict[str, Any], state: dict[str, Any],
 
             # Positive failure epoch verification:
             epoch_matched = False
-            if rem_run and pool_run and rem_run == pool_run:
-                epoch_matched = True
+            if rem_run and pool_run:
+                if rem_run == pool_run:
+                    epoch_matched = True
+                else:
+                    epoch_matched = False
             elif rem_paused_at and pool_failure_at and rem_paused_at == pool_failure_at:
                 if (rem_auth and pool_auth and rem_auth == pool_auth) or (pool_id in target_pools):
                     epoch_matched = True
@@ -1448,7 +1474,17 @@ def clear_provider_dispatch_pause(config: dict[str, Any], state: dict[str, Any],
         if pool_cfg.get("enabled") is False or configured_limit == 0 or str(pool_cfg.get("state") or "").lower() == "disabled":
             continue
 
-        canary_limit = min(1, configured_limit)
+        auth_hash = pool_entry.get("auth_identity_hash") or matched_clearance.get("auth_identity_hash")
+        if auth_hash:
+            recovered_auth_hashes.add(auth_hash)
+
+        if auth_hash and auth_hash in allocated_canary_auths:
+            canary_limit = 0
+        else:
+            canary_limit = min(1, configured_limit)
+            if auth_hash and canary_limit > 0:
+                allocated_canary_auths.add(auth_hash)
+
         pool_entry["state"] = "recovering"
         pool_entry["effective_concurrency"] = canary_limit
         pool_entry["generation"] = int(pool_entry.get("generation", 0) or 0) + 1
@@ -1457,9 +1493,6 @@ def clear_provider_dispatch_pause(config: dict[str, Any], state: dict[str, Any],
         pool_entry["recovery_reason"] = f"provider pause cleared for {provider_id}"
         pool_entry.pop("next_probe_at", None)
         pools_recovered.append(pool_id)
-        auth_hash = pool_entry.get("auth_identity_hash") or matched_clearance.get("auth_identity_hash")
-        if auth_hash:
-            recovered_auth_hashes.add(auth_hash)
 
         write_activity_log(
             config,
@@ -1487,7 +1520,7 @@ def clear_provider_dispatch_pause(config: dict[str, Any], state: dict[str, Any],
                     all_pool_ids.add(ap)
 
         for p_id in all_pool_ids:
-            if p_id in pools_recovered:
+            if p_id in pools_recovered and account_pools_bucket.get(p_id, {}).get("effective_concurrency", 0) > 0:
                 continue
             p_auth = None
             p_entry = account_pools_bucket.get(p_id)

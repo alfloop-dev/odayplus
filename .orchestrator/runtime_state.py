@@ -632,9 +632,9 @@ def _is_pause_entry_cleared(
         if p_at < c_at:
             return True
         elif p_at == c_at:
-            if c_run and p_run and c_run != p_run:
-                return False
-            return True
+            if c_run and p_run and c_run == p_run:
+                return True
+            return False
         else:
             return False
 
@@ -738,62 +738,118 @@ def _merge_account_pool_runtime(
             merged_pools[pool_id] = deepcopy(m_entry)
             continue
         if d_entry and m_entry:
+            d_fail = str(d_entry.get("last_failure_at") or "")
+            m_fail = str(m_entry.get("last_failure_at") or "")
+            d_state = str(d_entry.get("state") or "").lower()
+            m_state = str(m_entry.get("state") or "").lower()
             d_gen = int(d_entry.get("generation", 0) or 0)
             m_gen = int(m_entry.get("generation", 0) or 0)
+            d_rec = str(d_entry.get("last_recovered_at") or "")
+            m_rec = str(m_entry.get("last_recovered_at") or "")
+            d_probe = str(d_entry.get("last_probe_at") or "")
+            m_probe = str(m_entry.get("last_probe_at") or "")
+            d_latest_rec = max(d_rec, d_probe)
+            m_latest_rec = max(m_rec, m_probe)
+
+            # 1. Compare failure epochs: a newer genuine failure must always survive stale recovery / older cooldown
+            if d_fail and m_fail and d_fail != m_fail:
+                if d_fail > m_fail:
+                    if d_state == "cooldown":
+                        merged_pools[pool_id] = deepcopy(d_entry)
+                        continue
+                    elif m_state == "cooldown":
+                        merged_pools[pool_id] = deepcopy(d_entry)
+                        continue
+                    elif d_state in {"recovering", "healthy"}:
+                        merged_pools[pool_id] = deepcopy(d_entry)
+                        continue
+                elif m_fail > d_fail:
+                    if m_state == "cooldown":
+                        merged_pools[pool_id] = deepcopy(m_entry)
+                        continue
+                    elif d_state == "cooldown":
+                        merged_pools[pool_id] = deepcopy(m_entry)
+                        continue
+                    elif m_state in {"recovering", "healthy"}:
+                        merged_pools[pool_id] = deepcopy(m_entry)
+                        continue
+            elif d_fail and not m_fail:
+                if d_state == "cooldown":
+                    if not m_latest_rec or d_fail > m_latest_rec:
+                        merged_pools[pool_id] = deepcopy(d_entry)
+                        continue
+                    else:
+                        merged_pools[pool_id] = deepcopy(m_entry)
+                        continue
+            elif m_fail and not d_fail:
+                if m_state == "cooldown":
+                    if not d_latest_rec or m_fail > d_latest_rec:
+                        merged_pools[pool_id] = deepcopy(m_entry)
+                        continue
+                    else:
+                        merged_pools[pool_id] = deepcopy(d_entry)
+                        continue
+
+            # 2. Check if a new failure happened AFTER a previous recovery
+            if d_state == "cooldown" and d_fail:
+                if m_latest_rec and d_fail > m_latest_rec:
+                    merged_pools[pool_id] = deepcopy(d_entry)
+                    continue
+            if m_state == "cooldown" and m_fail:
+                if d_latest_rec and m_fail > d_latest_rec:
+                    merged_pools[pool_id] = deepcopy(m_entry)
+                    continue
+
+            # 3. Same failure epoch (d_fail == m_fail)
+            # If one is cooldown and the other is recovering/healthy for this epoch:
+            if d_fail == m_fail and d_fail:
+                if d_state == "cooldown" and m_state in {"recovering", "healthy"}:
+                    if m_latest_rec >= d_fail:
+                        merged_pools[pool_id] = deepcopy(m_entry)
+                        continue
+                elif m_state == "cooldown" and d_state in {"recovering", "healthy"}:
+                    if d_latest_rec >= m_fail:
+                        merged_pools[pool_id] = deepcopy(d_entry)
+                        continue
+
+            # 4. Compare generation / recovery / probe
             if d_gen > m_gen:
                 merged_pools[pool_id] = deepcopy(d_entry)
             elif m_gen > d_gen:
                 merged_pools[pool_id] = deepcopy(m_entry)
             else:
-                d_state = str(d_entry.get("state") or "").lower()
-                m_state = str(m_entry.get("state") or "").lower()
-
-                d_rec = str(d_entry.get("last_recovered_at") or "")
-                m_rec = str(m_entry.get("last_recovered_at") or "")
-                if d_rec and not m_rec:
+                if d_rec and m_rec:
+                    if d_rec > m_rec:
+                        merged_pools[pool_id] = deepcopy(d_entry)
+                    elif m_rec > d_rec:
+                        merged_pools[pool_id] = deepcopy(m_entry)
+                    else:
+                        merged_pools[pool_id] = deepcopy(m_entry)
+                elif d_rec and not m_rec:
                     if d_state == "healthy":
                         merged_pools[pool_id] = deepcopy(d_entry)
-                        continue
+                    else:
+                        merged_pools[pool_id] = deepcopy(m_entry)
                 elif m_rec and not d_rec:
                     if m_state == "healthy":
                         merged_pools[pool_id] = deepcopy(m_entry)
-                        continue
-                elif d_rec and m_rec:
-                    if d_rec > m_rec:
-                        merged_pools[pool_id] = deepcopy(d_entry)
-                        continue
-                    elif m_rec > d_rec:
-                        merged_pools[pool_id] = deepcopy(m_entry)
-                        continue
-
-                d_fail = str(d_entry.get("last_failure_at") or "")
-                m_fail = str(m_entry.get("last_failure_at") or "")
-                d_probe = str(d_entry.get("last_probe_at") or "")
-                m_probe = str(m_entry.get("last_probe_at") or "")
-
-                if d_state == "cooldown" and m_state in {"recovering", "healthy"}:
-                    if d_fail and m_probe and d_fail > m_probe:
-                        merged_pools[pool_id] = deepcopy(d_entry)
-                    else:
-                        merged_pools[pool_id] = deepcopy(m_entry)
-                elif m_state == "cooldown" and d_state in {"recovering", "healthy"}:
-                    if m_fail and d_probe and m_fail > d_probe:
-                        merged_pools[pool_id] = deepcopy(m_entry)
                     else:
                         merged_pools[pool_id] = deepcopy(d_entry)
-                elif d_state == "healthy" and m_state == "recovering":
-                    merged_pools[pool_id] = deepcopy(m_entry)
-                elif m_state == "healthy" and d_state == "recovering":
-                    merged_pools[pool_id] = deepcopy(d_entry)
-                else:
+                elif d_probe and m_probe:
                     if d_probe > m_probe:
                         merged_pools[pool_id] = deepcopy(d_entry)
                     elif m_probe > d_probe:
                         merged_pools[pool_id] = deepcopy(m_entry)
                     else:
-                        merged_entry = deepcopy(d_entry)
-                        merged_entry.update(deepcopy(m_entry))
-                        merged_pools[pool_id] = merged_entry
+                        merged_pools[pool_id] = deepcopy(m_entry)
+                elif d_probe and not m_probe:
+                    merged_pools[pool_id] = deepcopy(d_entry)
+                elif m_probe and not d_probe:
+                    merged_pools[pool_id] = deepcopy(m_entry)
+                else:
+                    merged_entry = deepcopy(d_entry)
+                    merged_entry.update(deepcopy(m_entry))
+                    merged_pools[pool_id] = merged_entry
 
     return merged_pools
 

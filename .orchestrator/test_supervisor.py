@@ -1674,7 +1674,10 @@ class DetectWorkerFailureTests(unittest.TestCase):
             },
         }
 
-        with mock.patch.object(supervisor, "write_activity_log"):
+        with (
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="test-auth-hash"),
+        ):
             changed = supervisor.clear_provider_dispatch_pause(config, state, "codex")
 
         self.assertTrue(changed)
@@ -1726,7 +1729,10 @@ class DetectWorkerFailureTests(unittest.TestCase):
             },
         }
 
-        with mock.patch.object(supervisor, "write_activity_log"):
+        with (
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="test-auth-hash"),
+        ):
             changed = supervisor.clear_provider_dispatch_pause(config, state, "codex")
 
         self.assertTrue(changed)
@@ -1753,7 +1759,10 @@ class DetectWorkerFailureTests(unittest.TestCase):
             },
         }
 
-        with mock.patch.object(supervisor, "write_activity_log"):
+        with (
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="test-auth-hash"),
+        ):
             changed = supervisor.clear_provider_dispatch_pause(config, state, "codex")
 
         self.assertFalse(changed)
@@ -1778,7 +1787,10 @@ class DetectWorkerFailureTests(unittest.TestCase):
             },
         }
 
-        with mock.patch.object(supervisor, "write_activity_log"):
+        with (
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="test-auth-hash"),
+        ):
             changed = supervisor.clear_provider_dispatch_pause(config, state, "codex")
 
         self.assertFalse(changed)
@@ -1816,7 +1828,10 @@ class DetectWorkerFailureTests(unittest.TestCase):
             },
         }
 
-        with mock.patch.object(supervisor, "write_activity_log"):
+        with (
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="auth-a"),
+        ):
             changed = supervisor.clear_provider_dispatch_pause(config, state, "codex")
 
         self.assertTrue(changed)
@@ -1855,7 +1870,10 @@ class DetectWorkerFailureTests(unittest.TestCase):
             },
         }
 
-        with mock.patch.object(supervisor, "write_activity_log"):
+        with (
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="auth-a"),
+        ):
             changed = supervisor.clear_provider_dispatch_pause(config, state, "codex")
 
         self.assertTrue(changed)
@@ -14770,6 +14788,7 @@ class SupervisorHeartbeatWarningSemanticsTests(unittest.TestCase):
                     ],
                 ),
                 mock.patch.object(supervisor, "authoritative_status_root", return_value=None),
+                mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="test-auth-hash"),
             ):
                 exit_code = supervisor.main()
 
@@ -14885,19 +14904,19 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                 {
                     "id": "FREEZE-TEST-001",
                     "owner": "Antigravity4",
-                    "reviewer": "Claude",
+                    "reviewer": "Codex",
                     "status": "review",
                     "review_submission": {"remote_sha": "1111111122222222333333334444444455555555"},
                 },
                 {
                     "id": "FREEZE-TEST-002",
-                    "owner": "Claude",
-                    "reviewer": "Claude",
+                    "owner": "Codex",
+                    "reviewer": "Codex",
                     "status": "review",
                 },
             ]
         }
-        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"):
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex"):
             with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
                  unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
                 with unittest.mock.patch("ai_status.sync_all"):
@@ -15315,7 +15334,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                     {
                         "id": "FREEZE-TEST-020A",
                         "owner": "Antigravity4",
-                        "reviewer": "Claude",
+                        "reviewer": "Codex",
                         "status": "review",
                         "review_submission": {"remote_sha": "1111111122222222333333334444444455555555"},
                     }
@@ -15324,7 +15343,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
 
         # Positive control: a resolvable head still approves and freezes.
         state = _fresh_state()
-        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex"), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
              unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
              unittest.mock.patch("ai_status.append_log"), \
@@ -15336,7 +15355,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
 
         # Unresolvable head -> abort, and leave no half-applied approval behind.
         state = _fresh_state()
-        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex"), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value=None), \
              unittest.mock.patch("ai_status.sync_all"):
             with self.assertRaises(SystemExit) as cm:
@@ -15348,7 +15367,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
 
         # A raising probe must fail closed too, not escape as a traceback.
         state = _fresh_state()
-        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex"), \
              unittest.mock.patch("ai_status.resolve_task_sha", side_effect=RuntimeError("gh down")), \
              unittest.mock.patch("ai_status.sync_all"):
             with self.assertRaises(SystemExit) as cm:
@@ -15372,14 +15391,14 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                 {
                     "id": "FREEZE-TEST-020B",
                     "owner": "Antigravity4",
-                    "reviewer": "Claude",
+                    "reviewer": "Codex",
                     "status": "review",
                     "approved_head": old_head,
                     "review_submission": {"remote_sha": new_head},
                 }
             ]
         }
-        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex"), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value=new_head), \
              unittest.mock.patch("ai_status.sync_all"):
             with self.assertRaises(SystemExit) as cm:
@@ -15392,7 +15411,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         # Positive control: re-approving at the *same* head is not a conflict,
         # so the guard cannot be satisfied by rejecting every stale-head task.
         state["tasks"][0]["review_submission"]["remote_sha"] = old_head
-        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex"), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value=old_head), \
              unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
              unittest.mock.patch("ai_status.append_log"), \
@@ -16258,7 +16277,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                 {
                     "id": "FREEZE-TEST-021A",
                     "owner": "Antigravity4",
-                    "reviewer": "Claude",
+                    "reviewer": "Codex",
                     "status": "review",
                     "review_notes_zh": "已審核通過",
                     "review_submission": {"remote_sha": approved},
@@ -16268,7 +16287,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         task = ai_status.get_task(state, "FREEZE-TEST-021A")
         ai_status.clear_ai_status_caches()
         with unittest.mock.patch("ai_status.append_log"), unittest.mock.patch("ai_status.sync_all"):
-            with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
+            with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex"), \
                  unittest.mock.patch("ai_status.resolve_task_sha", return_value=approved), \
                  unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
                 ai_status.command_approve(state, ["FREEZE-TEST-021A", "Approved"])
@@ -22059,6 +22078,134 @@ class QuotaClearAndCooldownRecoveryReviewTests(unittest.TestCase):
                 )
             )
             self.assertEqual(supervisor.account_pool_effective_concurrency(config, state, "codex2"), 0)
+
+    def test_different_failure_runs_in_same_second_remain_distinct(self) -> None:
+        config, state = self.fixture()
+        config["account_pools"]["pool_b"] = {"max_concurrent": 2, "state": "healthy", "enabled": True}
+        config["agents"]["codex2"] = {"id": "codex2", "provider": "codex2", "account_pool": "pool_b"}
+        config["providers"]["codex2"] = {"delivery_mode": "codex", "quota_group": "codex"}
+
+        failed_at = "2026-09-11T01:37:15Z"
+        cleared_at = "2026-09-11T02:04:50Z"
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 9, 11, 1, 37, 15, tzinfo=UTC)
+
+        with (
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="auth-a"),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "utc_now", return_value=failed_at),
+            mock.patch.object(supervisor, "datetime", Clock),
+            mock.patch.object(supervisor.model_rotation, "rotation_enabled", return_value=False),
+        ):
+            for agent, run in [("codex2", "failed-b"), ("codex", "failed-a")]:
+                worker = {"run_id": run, "provider": agent, "logical_agent_id": agent}
+                supervisor.mark_provider_dispatch_paused(
+                    config, state, agent, "quota exhausted", worker_run_id=run,
+                    failure_kind="quota_terminal", worker=worker,
+                )
+
+        self.assertEqual(state["provider_guardrails"]["dispatch_pauses"]["codex"]["worker_run_id"], "failed-a")
+        self.assertEqual(state["account_pool_runtime"]["pool_b"]["last_worker_run_id"], "failed-b")
+
+        with (
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="auth-a"),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "utc_now", return_value=cleared_at),
+        ):
+            self.assertTrue(supervisor.clear_provider_dispatch_pause(config, state, "codex"))
+
+        with mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="auth-a"):
+            limits = {agent: supervisor.account_pool_effective_concurrency(config, state, agent)
+                      for agent in ("codex", "codex2")}
+        self.assertEqual(state["account_pool_runtime"]["pool_b"]["state"], "cooldown")
+        self.assertLessEqual(sum(limits.values()), 1)
+
+    def test_preclear_sibling_worker_success_cannot_certify_new_canary(self) -> None:
+        config, state = self.fixture()
+        config["account_pools"]["pool_b"] = {"max_concurrent": 2, "state": "healthy", "enabled": True}
+        config["agents"]["codex2"] = {"id": "codex2", "provider": "codex2", "account_pool": "pool_b"}
+        config["providers"]["codex2"] = {"delivery_mode": "codex", "quota_group": "codex"}
+        state["provider_guardrails"]["dispatch_pauses"]["codex"]["auth_identity_hash"] = "auth-a"
+        state["account_pool_runtime"]["pool_a"]["auth_identity_hash"] = "auth-a"
+        state["account_pool_runtime"]["pool_b"] = {
+            "state": "healthy", "effective_concurrency": 2, "auth_identity_hash": "auth-a",
+        }
+
+        with (
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="auth-a"),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-09-11T02:04:50Z"),
+        ):
+            self.assertTrue(supervisor.clear_provider_dispatch_pause(config, state, "codex"))
+        self.assertEqual(state["account_pool_runtime"]["pool_b"]["effective_concurrency"], 0)
+
+        old_sibling_worker = {
+            "run_id": "success-codex2", "provider": "codex2", "logical_agent_id": "codex2",
+            "started_at": "2026-09-11T01:00:00Z", "status": "completed", "exit_code": 0,
+            "auth_identity_hash": "auth-a",
+        }
+        with (
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="auth-a"),
+        ):
+            res = supervisor.record_account_pool_canary_success(config, state, old_sibling_worker)
+        self.assertFalse(res)
+        self.assertEqual(state["account_pool_runtime"]["pool_a"]["state"], "recovering")
+
+    def test_rotated_auth_success_cannot_certify_previous_auth_siblings(self) -> None:
+        config, state = self.fixture()
+        config["account_pools"]["pool_b"] = {"max_concurrent": 2, "state": "healthy", "enabled": True}
+        config["agents"]["codex2"] = {"id": "codex2", "provider": "codex2", "account_pool": "pool_b"}
+        config["providers"]["codex2"] = {"delivery_mode": "codex", "quota_group": "codex"}
+        state["provider_guardrails"]["dispatch_pauses"]["codex"]["auth_identity_hash"] = "auth-a"
+        state["account_pool_runtime"]["pool_a"]["auth_identity_hash"] = "auth-a"
+        state["account_pool_runtime"]["pool_b"] = {
+            "state": "healthy", "effective_concurrency": 2, "auth_identity_hash": "auth-a",
+        }
+
+        with (
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="auth-a"),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-09-11T02:04:50Z"),
+        ):
+            self.assertTrue(supervisor.clear_provider_dispatch_pause(config, state, "codex"))
+
+        rotated_worker = {
+            "run_id": "success-codex", "provider": "codex", "logical_agent_id": "codex",
+            "started_at": "2026-09-11T02:05:00Z", "status": "completed", "exit_code": 0,
+            "auth_identity_hash": "auth-b",
+        }
+        with (
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="auth-b"),
+        ):
+            self.assertTrue(supervisor.record_account_pool_canary_success(config, state, rotated_worker))
+        self.assertEqual(state["account_pool_runtime"]["pool_b"]["state"], "recovering")
+
+    def test_auth_identity_uses_inherited_codex_home_like_adapter(self) -> None:
+        import hashlib
+        config = {"providers": {"codex": {"delivery_mode": "codex", "quota_group": "codex"}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            inherited = Path(tmp) / "fake-inherited-codex-home"
+            fallback_user_home = Path(tmp) / "fake-default-user-home"
+            expected_path = inherited / "auth.json"
+            seen = []
+
+            def fake_load_json(path, default=None):
+                seen.append(path)
+                account = "inherited-account" if path == expected_path else "different-default-account"
+                return {"auth_mode": "chatgpt", "tokens": {"account_id": account}}
+
+            with (
+                mock.patch.dict(os.environ, {"CODEX_HOME": str(inherited)}),
+                mock.patch.object(supervisor.Path, "home", return_value=fallback_user_home),
+                mock.patch.object(supervisor, "load_json", side_effect=fake_load_json),
+            ):
+                identity = supervisor.provider_auth_identity_hash(config, "codex")
+            expected_identity = hashlib.sha256(b"chatgpt:inherited-account").hexdigest()
+            self.assertEqual((seen, identity), ([expected_path], expected_identity))
 
 if __name__ == "__main__":
     unittest.main()
