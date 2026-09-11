@@ -3,7 +3,7 @@
   "receipt_id": "ODP-DEV-CANDIDATE-SECURITY-REVIEW-RECEIPT-001",
   "task_id": "ODP-DEV-CANDIDATE-SECURITY-RECEIPT-001",
   "task_title": "交固定 C 的 Security Gate 證據與法務待辦邊界",
-  "created_at": "2026-09-10T23:45:00Z",
+  "created_at": "2026-09-11T00:20:00Z",
   "owner": "Antigravity4",
   "reviewer": "Codex2",
   "candidate": {
@@ -23,48 +23,48 @@
     "gate_status": "blocked",
     "release_decision": "no-go",
     "decision_owner": "Human/Ops",
-    "decision_rationale": "Mechanical security review of candidate C (596b9c9a1788d952811a2bf8d4bba8a4e4d76b12) confirms technical security and supply-chain controls pass. However, Gate 4 remains blocked because authoritative legal approval (HUMAN-OSS-LEGAL-APPROVAL-001) is unfulfilled and license policy remains proposed. Fail-closed NO-GO preserved."
+    "decision_rationale": "Independent evaluation of candidate C (596b9c9a1788d952811a2bf8d4bba8a4e4d76b12) against Gate 4 criteria confirms verified technical secret scanning and dependency/SAST controls. However, Gate 4 remains blocked due to missing exact-C RBAC/ABAC test execution receipts, missing dynamic export/PII/audit test execution receipts, unreviewed IAM policy/role bindings, candidate C pre-D05 lockfile/SBOM defects, and unfulfilled authoritative legal approval (HUMAN-OSS-LEGAL-APPROVAL-001). Fail-closed NO-GO preserved."
   },
   "criteria_summary": {
     "total_criteria": 6,
-    "passed_count": 5,
-    "blocked_count": 1,
+    "passed_count": 2,
+    "blocked_count": 4,
     "criteria_results": [
       {
         "criterion_id": "CRIT-SEC-01",
         "name": "Secret scan passes",
         "status": "pass",
-        "evidence_ref": "Build run 34179207603 step 8; manifest sources_off_attestation.zero_credentials_present: true"
+        "evidence_ref": "Build run 34179207603 step 8 (success); manifest sources_off_attestation.zero_credentials_present: true (16 source groups audited)"
       },
       {
         "criterion_id": "CRIT-SEC-02",
         "name": "Dependency and SAST scans pass with no unresolved critical/high findings",
         "status": "pass",
-        "evidence_ref": "Build run 34179207603 step 9 (SAST); artifact 10038492941 (npm audit 0 high/critical); pip-audit equivalent verified on lockfiles (pyproject.toml 130f024b..., uv.lock ba5c393e..., 215 deps, 0 vulns, 0 banned pkgs)"
+        "evidence_ref": "Build run 34179207603 step 9 SAST with Bandit (-r modules apps shared solver -ll --skip B301,B310,B324,B104 -x .venv,apps/data_platform/.venv, exit 0); artifact 10038492941 (npm audit 0 high/critical); pip-audit 2.10.1 on candidate lockfiles (pyproject.toml 130f024b..., uv.lock ba5c393e..., 215 deps, 0 vulns, 0 banned pkgs)"
       },
       {
         "criterion_id": "CRIT-SEC-03",
         "name": "RBAC/ABAC tests pass for affected roles",
-        "status": "pass",
-        "evidence_ref": "tests/security/ test suites (test_rbac_abac.py, test_security_acceptance_suite.py); ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001 15-control matrix"
+        "status": "blocked",
+        "evidence_ref": "Static auth models exist at candidate C; exact candidate C pytest execution receipts for tests/security/ are uncaptured in build receipts; CI at 95646a5c does not prove C; assigned to Security Engineering / QA"
       },
       {
         "criterion_id": "CRIT-SEC-04",
         "name": "Sensitive export and audit controls checked",
-        "status": "pass",
-        "evidence_ref": "tests/security/test_audit_policy.py; 6-file egress contract digest sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09"
+        "status": "blocked",
+        "evidence_ref": "6-file egress source contract digest sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09 and 16 sources off verified; dynamic export/PII/audit test execution and live egress readback unevidenced on C; assigned to Security / Data Governance / Release Ops"
       },
       {
         "criterion_id": "CRIT-SEC-05",
         "name": "IAM and infrastructure changes reviewed",
-        "status": "pass",
-        "evidence_ref": "artifact 10038486296 (11 required vars resolved, 0 missing); artifact 10038569730 (5 Cloud Run resources absent); infra/terraform/checks.tf conditional OIDC"
+        "status": "blocked",
+        "evidence_ref": "Environment receipt 10038486296 (11 vars resolved, 0 missing) and target absence receipt 10038569730 (5 Cloud Run resources absent) verified; formal IAM least-privilege review of roles/principals/bindings and staging IaC unevidenced on C; assigned to Cloud Ops / Security Engineering"
       },
       {
         "criterion_id": "CRIT-SEC-06",
         "name": "Licence-aware SBOM produced and OSS licence gate passes",
         "status": "blocked",
-        "evidence_ref": "4 image SBOM (.att) and signature (.sig) refs present; CycloneDX 1.5 SBOM generated (775 components); BLOCKED by HUMAN-OSS-LEGAL-APPROVAL-001 (H01/H02) human legal approval gate"
+        "evidence_ref": "4 image SBOM (.att) and signature (.sig) refs present; candidate C package-lock dbda4082... and 8 workspace manifests lack D05 license: UNLICENSED markers; historical 775-component SBOM defects at C; missing exact-C NOTICE receipt; blocked by HUMAN-OSS-LEGAL-APPROVAL-001 (H01/H02); assigned to Release Engineering / Tooling and Human/Ops Legal"
       }
     ]
   },
@@ -74,8 +74,40 @@
       "type": "human_gate",
       "required_gate": "HUMAN-OSS-LEGAL-APPROVAL-001",
       "owner": "Human/Ops",
-      "description": "Authoritative legal review and signed receipt (H01 approver identity, principal ID, role, and external approval reference) required. license_policy.json remains status='proposed'.",
+      "description": "Authoritative legal review and signed receipt (H01 approver identity, principal ID, role, and external approval reference) required. license_policy.json remains status='proposed'; license_exemptions.json remains unsigned.",
       "impact": "Gate 4 cannot be moved to cleared; dev deployment admission remains blocked."
+    },
+    {
+      "blocker_id": "BLK-ENG-EXACT-C-AUTH-001",
+      "type": "engineering_followup",
+      "required_gate": "ODP-DEV-EXACT-C-AUTH-VERIFY",
+      "owner": "Security Engineering / QA / Identity Team",
+      "description": "Capture exact-C execution receipts for tests/security/ suites (test_rbac_abac.py, test_security_acceptance_suite.py, test_api_auth_wiring.py, test_tenant_isolation_guard.py, test_user_role_management.py, test_login_throttle_wiring.py, test_opsboard_auth_boundary.py) in isolated scratch.",
+      "impact": "RBAC/ABAC dynamic test coverage unproven on candidate C."
+    },
+    {
+      "blocker_id": "BLK-ENG-EXACT-C-EXPORT-AUDIT-001",
+      "type": "engineering_followup",
+      "required_gate": "ODP-DEV-EXACT-C-EXPORT-AUDIT-VERIFY",
+      "owner": "Security / Data Governance / Release Ops",
+      "description": "Capture exact-C execution receipts for export authorization, PII masking (test_assisted_listing_intake_privacy.py), and audit retention (test_audit_policy.py, test_assisted_listing_snapshot_residency.py), and collect live runtime egress readback during admission.",
+      "impact": "Sensitive export and audit control execution unproven on candidate C."
+    },
+    {
+      "blocker_id": "BLK-ENG-EXACT-C-IAM-001",
+      "type": "engineering_followup",
+      "required_gate": "ODP-DEV-EXACT-C-IAM-REVIEW",
+      "owner": "Cloud Ops / Security Engineering / IAM Reviewer",
+      "description": "Conduct formal least-privilege IAM review of GCP service account permissions, roles, principals, IAM policy bindings, and condition statements bound to candidate C.",
+      "impact": "IAM least-privilege verification unrecorded on candidate C."
+    },
+    {
+      "blocker_id": "BLK-ENG-EXACT-C-SBOM-NOTICE-001",
+      "type": "engineering_followup",
+      "required_gate": "ODP-DEV-EXACT-C-SBOM-NOTICE-RECONCILE",
+      "owner": "Release Engineering / Security Tooling",
+      "description": "Reconcile candidate C lockfile dbda4082... (pre-D05) and historical 775-component SBOM defects (8 first-party workspace entries, 14 malformed purls, missing root dependencies) against dev-verified requirements and capture exact-C NOTICE receipt.",
+      "impact": "Exact-C SBOM and NOTICE technical defects unclosed on candidate C."
     }
   ],
   "standing_external_sources_posture": {
@@ -89,7 +121,10 @@
     "pyproject_toml": "130f024b80d55f439aa5467f4f469bb127aec955ef71444d2951a93d0f5d0391",
     "uv_lock": "ba5c393e49538e4da9e59de001cffc28c4cadfab8aebacf6dbf1503eb3a49a5d",
     "package_lock_json": "dbda408248444c617bf0b124e9d2ce73ce18be0ee6bf6d463f148ba3cd8b1c8a",
-    "egress_contract_digest": "sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09"
+    "egress_contract_digest": "sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09",
+    "data_contract_digest": "sha256:05e2cb05619f1c524b0f9578e4ceba9ec863d143d5e64b0eeac97539ce8e7c73",
+    "source_policy_digest": "sha256:0a34bb128b5b5b26201b7f014f4b4f8e631e841c8f205f38dfc09c9eb682d824",
+    "manifest_digest": "sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c"
   },
   "governance_and_boundary_affirmations": [
     "Completing this task delivers an honest review evidence package and does NOT clear Gate 4, grant Human/Ops GO, approve legal policies, or authorize deployment.",

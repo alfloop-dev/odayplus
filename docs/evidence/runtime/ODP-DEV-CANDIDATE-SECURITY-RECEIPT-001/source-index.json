@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "task_id": "ODP-DEV-CANDIDATE-SECURITY-RECEIPT-001",
-  "generated_at": "2026-09-10T23:45:00Z",
+  "generated_at": "2026-09-11T00:20:00Z",
   "candidate_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
   "source_evidence_sha": "d084f51d4009b7b435416c8b83410a8b4fb4a267",
   "manifest_digest": "sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c",

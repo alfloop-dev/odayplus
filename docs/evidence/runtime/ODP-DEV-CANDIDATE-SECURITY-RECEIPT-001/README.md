@@ -4,7 +4,7 @@
 - **任務名稱**: 交固定 C 的 Security Gate 證據與法務待辦邊界
 - **Owner**: `Antigravity4`
 - **Reviewer**: `Codex2`
-- **評估日期**: 2026-09-10 UTC
+- **評估日期**: 2026-09-11 UTC
 - **固定候選 SHA (C)**: `596b9c9a1788d952811a2bf8d4bba8a4e4d76b12`
 - **原證據參考 SHA (E)**: `d084f51d4009b7b435416c8b83410a8b4fb4a267`
 - **候選 Manifest Digest**: `sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c`
@@ -18,23 +18,22 @@
 
 | 產物檔案 | 格式 | 說明 |
 |---|---|---|
-| [`review-receipt.json`](review-receipt.json) | JSON | 機器可讀之 Gate 4 獨立審查收據，記錄 candidate C 評估總結、6 項 criteria 結果、活躍法務阻塞、輸入雜湊及合規宣告。 |
-| [`criteria-evidence-matrix.json`](criteria-evidence-matrix.json) | JSON | 完整對齊 `RELEASE_GATE_REGISTRY.json` 中 Gate 4 之 6 項標準（Criteria 1–6）的證據矩陣，含技術就緒證明、輸入等價核對、法務缺口與 16 個外部來源現況。 |
+| [`review-receipt.json`](review-receipt.json) | JSON | 機器可讀之 Gate 4 獨立審查收據，記錄 candidate C 評估總結、6 項 criteria 結果、活躍工程/法務阻塞、輸入雜湊及合規宣告。 |
+| [`criteria-evidence-matrix.json`](criteria-evidence-matrix.json) | JSON | 完整對齊 `RELEASE_GATE_REGISTRY.json` 中 Gate 4 之 6 項標準（Criteria 1–6）的證據矩陣，含技術就緒證明、輸入等價核對、工具範圍/跳過規則、技術缺口、法務缺口與 16 個外部來源現況。 |
 | [`source-index.json`](source-index.json) | JSON | 完整引用之 10 份 source documents、6 份 candidate 原始 release artifact 及 build run 產物來源索引。 |
-| [`README.md`](README.md) | Markdown | 本說明文件，提供審查脈絡、技術證據分析、法務邊界揭露與嚴格合規宣告。 |
+| [`README.md`](README.md) | Markdown | 本說明文件，提供審查脈絡、技術證據分析、候選 C 技術缺口揭露、法務邊界與嚴格合規宣告。 |
 
 ---
 
 ## 2. 核心結論與門禁邊界 (Core Findings & Gate Boundaries)
 
-1. **技術安全性檢驗全部具備真實收據**：
-   - **Secret scan**：Runtime Release build run `34179207603` Step 8 成功通過，`RELEASE_MANIFEST.json` 之 `sources_off_attestation` 證實 16 個外部資料來源 `credentials_present: false`，零憑證洩漏。
-   - **SAST 與靜態安全**：Build run `34179207603` Step 9 Python SAST 成功通過；生產環境 npm audit（artifact `10038492941`）0 high / 0 critical。
-   - **依賴漏洞掃描（pip-audit）**：Candidate C 之 `pyproject.toml`（`130f024b...`）與 `uv.lock`（`ba5c393e...`）與 `ODP-DRIFT-SECURITY-VERIFY-003` 證實完全位元組一致；215 個 Python 依賴 0 漏洞、0 略過，且 `evidently`、`nltk`、`defusedxml`、`regex` 均已自依賴樹完全移除。
-   - **RBAC / ABAC 授權**：`tests/security/` 完整測試套件守住角色授權、租戶隔離與 operator 邊界；`ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001` 證實 15 項 auth-mode 控制（帳密為預設、OIDC 回呼 503 fail-closed、CSRF/session 完整性）。
-   - **敏感匯出與審計**：Candidate C 之 6 檔 egress contract digest（`sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09`）與 checked-in source files 完全吻合，維持 default-deny public egress。
-   - **IAM 與基礎設施**：WIF 最小權限綁定，`initial-release-absence-readback.json` 證實 dev 目標 5 個 Cloud Run 資源初始不存在，11 個必要變數均已解析（`missing_variables: []`）。
-   - **SBOM 與容器簽章**：Candidate 4 個 component images 均經 Cosign v2.5.2 簽章、附帶 CycloneDX SBOM attestation，並登錄於 Rekor 透明日誌（api: `2754425715`, worker: `2754426118`, scheduler: `2754426482`, web: `2754427686`）。
+1. **技術安全性檢驗與實測範圍**：
+   - **Secret scan (CRIT-SEC-01: PASS)**：Runtime Release build run `34179207603` Step 8 成功通過；`RELEASE_MANIFEST.json` 之 `sources_off_attestation` 證實 16 個外部資料來源 `credentials_present: false`，零憑證洩漏。
+   - **SAST 與靜態安全 (CRIT-SEC-02: PASS)**：Build run `34179207603` Step 9 Python SAST 執行 Bandit（掃描 `modules`, `apps`, `shared`, `solver`；排除 `.venv`, `apps/data_platform/.venv`；過濾 `-ll`；跳過 `B301, B310, B324, B104`）成功通過（exit 0）；生產環境 npm audit（artifact `10038492941`）0 high / 0 critical；Python `pip-audit` 2.10.1 依賴稽核在候選 C lockfile 基準下證實 215 個依賴 0 漏洞、0 略過，4 禁用套件（`evidently`, `nltk`, `defusedxml`, `regex`）完全排除。
+   - **RBAC / ABAC 授權 (CRIT-SEC-03: BLOCKED)**：靜態授權模型存在於 candidate C；但 build run 未採集 candidate C 專屬之 pytest 執行收據，CI run `34252508138` 係於 `95646a5c` 執行故不能代替 C，降級為 `blocked` 並指派責任給 `Security Engineering / QA / Identity Team`。
+   - **敏感匯出與審計 (CRIT-SEC-04: BLOCKED)**：狹義靜態子主張證實：6 檔 egress contract digest（`sha256:a9ab95a0...`）與 checked-in source 完全吻合，16 外部來源 disabled；但動態匯出權限、PII masking 與審計保留之 exact-C 測試執行收據及 live runtime egress readback 尚未採集，降級為 `blocked` 並指派責任給 `Security / Data Governance`。
+   - **IAM 與基礎設施 (CRIT-SEC-05: BLOCKED)**：環境變數綁定（11 變數全解析）與初始 Cloud Run 目標不存在（5 資源皆 absent）證實成立；但 candidate C 缺乏具名最小權限 IAM policy / roles / bindings 審查收據，降級為 `blocked` 並指派責任給 `Cloud Ops / Security Engineering`。
+   - **SBOM 與容器簽章 (CRIT-SEC-06: BLOCKED)**：4 個 component images 附帶 Cosign 簽章與 CycloneDX SBOM attestation（Rekor log 可查）；但 candidate C 為 pre-D05 lockfile（`dbda4082...`），8 個 workspace package manifest 均缺 `license: UNLICENSED`，且歷史 775 元件 SBOM 存在第一方誤列與 purl 格式缺陷；同時具名法務門禁 `HUMAN-OSS-LEGAL-APPROVAL-001`（H01/H02）仍未完成，`license_policy.json` 維持 `proposed`。
 
 2. **法務核准仍為具名 Human Gate（硬阻塞）**：
    - `HUMAN-OSS-LEGAL-APPROVAL-001` 仍為具名 Human/Ops 門禁；`ODP-OSS-DECISION-PACK-001` 指出 H01 缺口（具名 approver 身分、角色、外部權威系統參照與簽章）尚未提供。
@@ -42,7 +41,7 @@
    - **AI 助理嚴禁代簽法務核准、嚴禁自造 authoritative receipt、嚴禁修改 policy 狀態為 active，亦嚴禁沿用歷史 waiver**。
 
 3. **Gate 4 維持 Fail-Closed Blocked**：
-   - 本證據包交付為**審查用途**，不代表 Gate 4 已通過（cleared）。
+   - 本證據包交付為**客觀獨立審查用途**，不代表 Gate 4 已通過（cleared）。
    - 全系統 release decision 維持 `no-go`。
 
 ---
@@ -51,59 +50,83 @@
 
 詳細資料見 [`criteria-evidence-matrix.json`](criteria-evidence-matrix.json)。
 
-### 3.1 Criteria 1: Secret scan passes (通過)
+### 3.1 Criteria 1: Secret scan passes (通過 PASS)
 - **要求**: secret scan passes。
 - **證據**: 
-  - Candidate C build run `34179207603` 之 Step 8 `Run Secret Scan` 執行結果為 `success`。
+  - Candidate C build run `34179207603` 之 Step 8 `Run Secret Scan` 執行結果為 `success`（exit code `0`）。
   - `RELEASE_MANIFEST.json` 中 `sources_off_attestation.zero_credentials_present: true`，16 個第三方來源盤點 `credentials_present: false`。
   - `source_policy_digest`: `sha256:0a34bb128b5b5b26201b7f014f4b4f8e631e841c8f205f38dfc09c9eb682d824`。
+- **限制**: 掃描涵蓋 repo 程式碼與 build 變數，不探測 live 雲端 secret store。
 
-### 3.2 Criteria 2: Dependency and SAST scans pass with no unresolved critical/high findings (通過)
+### 3.2 Criteria 2: Dependency and SAST scans pass with no unresolved critical/high findings (通過 PASS)
 - **要求**: dependency and SAST scans pass with no unresolved critical/high findings。
 - **證據**:
-  - **Python SAST**: Run `34179207603` Step 9 `Run Python SAST Scan` exit code `0` (success)。
-  - **npm audit**: 原始收據 `npm-audit-receipt.json`（artifact ID `10038492941`）證實生產環境 npm 依賴 0 high / 0 critical。
-  - **Python pip-audit 等價證明**: Candidate C 的 `pyproject.toml`（`130f024b80d55f439aa5467f4f469bb127aec955ef71444d2951a93d0f5d0391`）與 `uv.lock`（`ba5c393e49538e4da9e59de001cffc28c4cadfab8aebacf6dbf1503eb3a49a5d`）與 `ODP-DRIFT-SECURITY-VERIFY-003` §10 完全一致。該任務實測 215 個 Python 依賴無漏洞、無略過，且禁用套件（`evidently`、`nltk`、`defusedxml`、`regex`）均不存在。
-  - **掃描時效限制**: 本證據基於 2026-09-08 UTC 掃描基準，未在離線審查中重新連網查詢新漏洞庫，亦不以空結果冒充 PASS。
+  - **Python SAST 掃描範圍與跳過規則**:
+    - 工具與腳本: `delivery_toolchain/security/sast_scan.py` 呼叫 Bandit（`uv run --with bandit`）。
+    - 完整 Argv: `bandit -r modules apps shared solver -x .venv,apps/data_platform/.venv -ll --skip B301,B310,B324,B104`。
+    - 掃描範圍: `modules/`, `apps/`, `shared/`, `solver/`。
+    - 排除目錄: `.venv/`, `apps/data_platform/.venv/`。
+    - 嚴重度/信心過濾: `-ll`（MEDIUM 及 HIGH）。
+    - 明確跳過之規則: `B301`（pickle 序列化）、`B310`（urllib urlopen）、`B324`（md5 mock/non-security hashes）、`B104`（bind 0.0.0.0）。
+    - 執行出處: Build run `34179207603` Step 9，exit code `0`（success），原始日誌參照 `ODP-DEV-BUILD-ARTIFACT-HANDOFF-003` §4/§5。
+  - **生產環境 npm audit**:
+    - 原始收據 `npm-audit-receipt.json`（artifact ID `10038492941`，inner SHA256 `49c5c659e9b08dab23ec0e9aee390d814f8d8e2c0f78c3a4d922cedb4de96224`）證實生產 npm 依賴 0 high / 0 critical。
+  - **Python pip-audit 等價證明**:
+    - Candidate C 之 `pyproject.toml`（`130f024b80d55f439aa5467f4f469bb127aec955ef71444d2951a93d0f5d0391`）與 `uv.lock`（`ba5c393e49538e4da9e59de001cffc28c4cadfab8aebacf6dbf1503eb3a49a5d`）與 `ODP-DRIFT-SECURITY-VERIFY-003` §10 完全一致（byte-identical）。
+    - 工具: `pip-audit` 2.10.1（`pip_audit_gate.py` SHA256 `7116063f67c6c8310e2d165787f934a9eea4642fcd3d968a657afb51182a7c64`）。
+    - 實測結果: 215 個 Python 依賴無漏洞、無略過，無 suppression/waiver。
+  - **禁用套件排除**:
+    - Candidate C 依賴樹確認 `evidently`, `nltk`, `defusedxml`, `regex` 完全不存在（`importlib.metadata` 報 `PackageNotFoundError`）。
+- **掃描時效限制**: 本證據基於 2026-09-08 UTC 掃描基準，未在離線審查中重新連網查詢新漏洞庫，亦不以空結果冒充 PASS。
 
-### 3.3 Criteria 3: RBAC/ABAC tests pass for affected roles (通過)
+### 3.3 Criteria 3: RBAC/ABAC tests pass for affected roles (阻塞 BLOCKED)
 - **要求**: RBAC/ABAC tests pass for affected roles。
-- **證據**:
-  - Candidate C 包含 `tests/security/test_rbac_abac.py`、`test_security_acceptance_suite.py`、`test_api_auth_wiring.py`、`test_tenant_isolation_guard.py`、`test_user_role_management.py` 等安全測試套件。
-  - `ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001` 證實 15 項身分控制（`shared/auth/mode.py`、`apps/web/src/lib/auth/runtime.ts`、`login/route.ts`、`auth/callback/route.ts`），包括 local auth 預設、OIDC 回呼 503 fail-closed、CSRF 及 login throttle wiring。
+- **已驗證靜態子主張**:
+  - Candidate C 包含 `shared/auth/rbac.py`, `shared/auth/abac.py`, `shared/auth/tenant.py`, `modules/opsboard/auth/claims.py` 之授權架構。
+  - `ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001`（SRC-10）在 `95646a5c` 靜態審查 15 項 auth-mode 控制（12 pass, 3 unknown），且 7 個 D15 控制檔案在 E2E-002 與 `95646a5c` 間無 diff。
+- **未覆蓋缺口與降級原因**:
+  - Build run `34179207603`/`34179791241` 未包含 `tests/security/`（`test_rbac_abac.py`, `test_security_acceptance_suite.py` 等）在 candidate C 上的測試執行收據。
+  - CI run `34252508138` 係針對 `95646a5c` 執行，不能證明 candidate C（`596b9c9a`）。
+  - Staging/prod 多角色 token 簽發與跨租戶隔離之 live 驗證尚未執行。
+- **後續責任分派**: `Security Engineering / QA / Identity Team`（負責在 dev-verified 階段補齊 exact-C pytest 執行收據）與 `Release Ops`（負責 staging 多角色驗證）。
 
-### 3.4 Criteria 4: Sensitive export and audit controls checked (通過)
+### 3.4 Criteria 4: Sensitive export and audit controls checked (阻塞 BLOCKED)
 - **要求**: sensitive export and audit controls checked。
-- **證據**:
-  - `tests/security/test_audit_policy.py`、`test_assisted_listing_intake_privacy.py`、`test_assisted_listing_snapshot_residency.py`。
-  - 六檔 Egress Contract Digest 雙向核實：Candidate C 重算之 `compute_sources_off_egress_contract_digest()` 為 `sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09`，與 `RELEASE_MANIFEST.json` 中 `sources_off_attestation.egress_evidence.contract_digest` 完全一致。
-  - 六檔 checked-in source files 內容雜湊：
-    1. `.github/workflows/deploy-dev.yml`: `bd326d19...`
-    2. `product_ops/deployment/deploy_cloud_run_waji.sh`: `caa9b00f...`
-    3. `infra/terraform/cloud_run.tf`: `48c6d549...`
-    4. `infra/terraform/network.tf`: `61fc7a27...`
-    5. `product_ops/deployment/staging_lifecycle.py`: `7a0e6f6b...`
-    6. `product_ops/deployment/cloud_run_job_entrypoint.py`: `2dca1d31...`
+- **已驗證靜態子主張**:
+  - 6 檔 Egress Contract Digest 雙向核實：Candidate C 重算之 `compute_sources_off_egress_contract_digest()` 為 `sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09`，與 `RELEASE_MANIFEST.json` 完全一致。
+  - 16 個外部資料來源群組盤點為 disabled、零憑證且 public egress default-deny。
+  - `data_contract_digest`: `sha256:05e2cb05619f1c524b0f9578e4ceba9ec863d143d5e64b0eeac97539ce8e7c73`。
+- **未覆蓋缺口與降級原因**:
+  - `tests/security/test_audit_policy.py`, `test_assisted_listing_intake_privacy.py` (PII), `test_assisted_listing_snapshot_residency.py` (審計保留) 在 candidate C 上的動態測試執行收據未在 build run 中採集。
+  - Live runtime egress readback（`.odp_data/deployment/public-egress-probe.json`）為 deploy-time artifact，build 階段未執行。
+- **後續責任分派**: `Security / Data Governance Team`（負責補齊 export/PII 測試執行收據）與 `Release Ops`（負責採集 live egress probe）。
 
-### 3.5 Criteria 5: IAM and infrastructure changes reviewed (通過)
+### 3.5 Criteria 5: IAM and infrastructure changes reviewed (阻塞 BLOCKED)
 - **要求**: IAM and infrastructure changes reviewed。
-- **證據**:
-  - `release-environment-receipt.json`（artifact ID `10038486296`）：`github_environment=dev-build`，11 個必要變數均已解析，`missing_variables: []`。
-  - `initial-release-absence-readback.json`（artifact ID `10038569730`）：dev 環境 5 個 Cloud Run 資源（`api`, `migration`, `scheduler`, `web`, `worker`）證實初次部署前均不存在。
-  - `infra/terraform/checks.tf`（lines 76, 238, 275）落實條件式 OIDC 與最小權限 IAM 檢查。
+- **已驗證靜態子主張**:
+  - `release-environment-receipt-dev-build`（artifact `10038486296`）：`github_environment=dev-build`，11 個必要變數均已解析，`missing_variables: []`。
+  - `initial-release-absence-readback.json`（artifact `10038569730`）：dev 環境 5 個 Cloud Run 資源初始不存在。
+  - `release-phase-receipt-dev-build`（artifact `10038482325`）：`lease_supplied: false`，未提供部署輸入。
+- **未覆蓋缺口與降級原因**:
+  - 缺少針對 candidate C 綁定之 GCP IAM service accounts, roles, principals, bindings 與 condition statements 的具名最小權限審查紀錄。
+  - Terraform conditional OIDC 檢查係於 `95646a5c` 審查，非 C 專屬審查。
+  - Staging IaC 與 production blue-green 基礎設施審查待後續階段執行。
+- **後續責任分派**: `Cloud Ops / Security Engineering / IAM Reviewer`（負責完成具名 IAM 權限審查）與 `DevOps / Infrastructure Team`（負責 staging IaC 審查）。
 
 ### 3.6 Criteria 6: Licence-aware SBOM produced and OSS licence gate passes (阻塞 BLOCKED)
 - **要求**: licence-aware SBOM produced and OSS licence gate passes。
-- **技術就緒狀態 (已完成)**:
-  - 4 個 component images 附帶 CycloneDX SBOM attestation refs 與 Cosign 簽章 refs（`RELEASE_MANIFEST.json`）。
-  - `ODP-OSS-DECISION-PACK-001` 完成 CycloneDX 1.5 SBOM（775 元件，`package-lock.json` `dbda4082...`, `uv.lock` `ba5c393e...`）。
-  - `ODP-OSS-POLICY-NOTICE-IMPLEMENTATION-001` 完成 D05 第一方 8 個 workspace package 標示 `UNLICENSED` 之工程落地。
+- **技術就緒狀態與 candidate C 實測差異揭露**:
+  - 4 個 component images 附帶 CycloneDX SBOM attestation refs 與 Cosign 簽章 refs（`RELEASE_MANIFEST.json`），Rekor 日誌可查。
   - 16 個外部資料來源決策卡建立完畢，全部設為 `ENABLED=false` 且 default-deny。
+  - **Candidate C 技術缺口與差異**:
+    1. **Lockfile 與 Manifests 缺 D05 標示**: Candidate C 的 `package-lock.json`（SHA256 `dbda408248444c617bf0b124e9d2ce73ce18be0ee6bf6d463f148ba3cd8b1c8a`）與 8 個 workspace package manifest 均**未包含** `license: "UNLICENSED"`（此標示係於後續任務 `ODP-OSS-POLICY-NOTICE-IMPLEMENTATION-001` 中引入，lockfile 隨之變更為 `3afe5f1b...`；candidate C 處於 D05 之前）。
+    2. **SBOM 結構缺陷**: Candidate C 歷史產出之 775 元件 SBOM 存在 8 個第一方 workspace 套件被誤列為第三方（授權 UNKNOWN）、14 筆巢狀 `node_modules` purl 格式損毀，以及 root node 缺少 12 個 workspace 直接依賴（僅 39 個而非 51 個）；這些缺陷在後續修復中降至 767 元件，但 candidate C 仍含舊缺陷。
+    3. **缺少 exact-C NOTICE 執行收據**: Candidate C 未留下 `generate_oss_notice.py --check` 之專屬執行收據。
 - **活躍法務阻塞 (Active Blocker)**:
   - **`HUMAN-OSS-LEGAL-APPROVAL-001`** 尚未完成。
   - H01 具名法務簽署人身分（`display_name`, `principal_id`, `role`）與外部權威系統決策參照（`approval_reference`, `source_system`）仍缺失。
   - `docs/security/license_policy.json` 維持 `proposed` 狀態，`license_exemptions.json` 未簽署。
-  - **判定**: Criteria 6 判定為 `blocked`（`pending_human`），導致 Gate 4 整體維持 `blocked`。
+- **後續責任分派**: `Release Engineering / Security Tooling`（負責 candidate C SBOM/NOTICE 技術修復與 dev-verified 驗證）與 `Human/Ops / Legal Counsel`（負責 `HUMAN-OSS-LEGAL-APPROVAL-001` 權威法務簽署）。
 
 ---
 
@@ -115,8 +138,10 @@
 |---|---|---|---|
 | `pyproject.toml` | `130f024b80d55f439aa5467f4f469bb127aec955ef71444d2951a93d0f5d0391` | `130f024b80d5...` (`ODP-DRIFT-SECURITY-VERIFY-003` §10) | **完全一致 (Byte-identical)** |
 | `uv.lock` | `ba5c393e49538e4da9e59de001cffc28c4cadfab8aebacf6dbf1503eb3a49a5d` | `ba5c393e4953...` (`ODP-DRIFT-SECURITY-VERIFY-003` §10) | **完全一致 (Byte-identical)** |
-| `package-lock.json` | `dbda408248444c617bf0b124e9d2ce73ce18be0ee6bf6d463f148ba3cd8b1c8a` | `dbda40824844...` (`ODP-OSS-DECISION-PACK-001` CMD-003) | **完全一致 (Byte-identical)** |
+| `package-lock.json` | `dbda408248444c617bf0b124e9d2ce73ce18be0ee6bf6d463f148ba3cd8b1c8a` | `dbda40824844...` (`ODP-OSS-DECISION-PACK-001` CMD-003) | **完全一致 (Byte-identical, pre-D05)** |
 | Egress Contract Digest | `sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09` | `sha256:a9ab95a0...` (`RELEASE_MANIFEST.json`) | **完全一致 (Byte-identical)** |
+| Data Contract Digest | `sha256:05e2cb05619f1c524b0f9578e4ceba9ec863d143d5e64b0eeac97539ce8e7c73` | `sha256:05e2cb05...` (`RELEASE_MANIFEST.json`) | **完全一致 (Byte-identical)** |
+| Source Policy Digest | `sha256:0a34bb128b5b5b26201b7f014f4b4f8e631e841c8f205f38dfc09c9eb682d824` | `sha256:0a34bb12...` (`RELEASE_MANIFEST.json`) | **完全一致 (Byte-identical)** |
 | Manifest Digest | `sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c` | `sha256:1b5348d9...` (`RELEASE_GATE_REGISTRY.json`) | **完全一致 (Byte-identical)** |
 
 ---
