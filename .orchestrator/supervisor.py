@@ -1585,7 +1585,7 @@ def account_pool_runtime_state(
                         break
         is_fenced_by_shared_canary = False
         if pool_auth:
-            for other_id, other_entry in bucket.items():
+            for other_entry in bucket.values():
                 if isinstance(other_entry, dict) and other_entry.get("auth_identity_hash") == pool_auth:
                     if str(other_entry.get("state") or "").lower() == "recovering":
                         is_fenced_by_shared_canary = True

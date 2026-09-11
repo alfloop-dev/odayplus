@@ -1480,7 +1480,7 @@ def clear_provider_dispatch_pause(config: dict[str, Any], state: dict[str, Any],
     # Shared-auth recovery/admission fence: ensure sibling pools on the same auth cannot bypass canary limit
     if recovered_auth_hashes:
         all_pool_ids = set(account_pools_bucket.keys()) | set((config.get("account_pools") or {}).keys())
-        for aid, acfg in (config.get("agents") or {}).items():
+        for acfg in (config.get("agents") or {}).values():
             if isinstance(acfg, dict):
                 ap = str(acfg.get("account_pool") or "").strip()
                 if ap:
