@@ -2906,8 +2906,7 @@ def dispatch_ready_tasks(
                                 resynced = True
                                 break
                             else:
-                                candidates = []
-                                break
+                                return changed
                         continue
                     elif task_status in finalize_statuses and norm_task_owner == norm_target:
                         approved_head = task.get("approved_head")
@@ -2944,8 +2943,7 @@ def dispatch_ready_tasks(
                                     resynced = True
                                     break
                                 else:
-                                    candidates = []
-                                    break
+                                    return changed
                             continue
 
                         if not current_head or not runtime_ai_status.is_approved_head_satisfied(task, current_head, approved_head):
@@ -2995,8 +2993,7 @@ def dispatch_ready_tasks(
                                         resynced = True
                                         break
                                     else:
-                                        candidates = []
-                                        break
+                                        return changed
                             continue
 
                         pr_status = "UNKNOWN"
@@ -3052,8 +3049,7 @@ def dispatch_ready_tasks(
                                     resynced = True
                                     break
                                 else:
-                                    candidates = []
-                                    break
+                                    return changed
 
                             continue
                         elif ci_status == "failure":
@@ -3092,8 +3088,7 @@ def dispatch_ready_tasks(
                                     resynced = True
                                     break
                                 else:
-                                    candidates = []
-                                    break
+                                    return changed
                             continue
                         else:
                             if task.pop("ci_pending_since_ts", None) is not None:
@@ -3101,8 +3096,7 @@ def dispatch_ready_tasks(
                                     resynced = True
                                     break
                                 else:
-                                    candidates = []
-                                    break
+                                    return changed
 
                         # CI success on an open PR is only merge readiness, not task
                         # completion. Dispatching an LLM here caused it to compose dev
@@ -3220,8 +3214,7 @@ def dispatch_ready_tasks(
                                     resynced = True
                                     break
                                 else:
-                                    candidates = []
-                                    break
+                                    return changed
                         continue
 
                     if is_sidecar_task:
@@ -3305,13 +3298,19 @@ def dispatch_ready_tasks(
                         else:
                             live_task.pop("helper_execution_lease", None)
                         deferred_task_ids.add(task_id)
+                        fresh_loaded = False
                         try:
                             fresh = load_status(config)
                             if fresh is not status and isinstance(fresh, dict) and "tasks" in fresh:
                                 status.clear()
                                 status.update(fresh)
+                                fresh_loaded = True
+                            elif isinstance(fresh, dict) and "tasks" in fresh:
+                                fresh_loaded = True
                         except Exception:
-                            pass
+                            fresh_loaded = False
+                        if not fresh_loaded:
+                            return changed
                         continue
                     tasks = [t for t in status.get(tasks_path, []) if t.get(task_id_field)]
                     task_map = {t.get(task_id_field): t for t in tasks}
@@ -3337,6 +3336,34 @@ def dispatch_ready_tasks(
                             "message": "Idle capacity leased existing canonical work without changing owner.",
                         },
                     )
+
+                claimable_statuses = {
+                    str(value).lower()
+                    for value in helper_settings.get("claimable_statuses", ["todo", "in_progress"])
+                }
+                live_status = str(live_task.get("status") or "").lower()
+                live_owner = normalize_agent_id(str(live_task.get(owner_field) or ""))
+                live_reviewer = normalize_agent_id(str(live_task.get(reviewer_field) or ""))
+                norm_target = normalize_agent_id(target_agent or "")
+                claim = live_task.get("helper_execution_lease") or {}
+                claimed_by = normalize_agent_id(str(claim.get("claimed_by") or ""))
+                claim_live = helper_claim_is_live(claim)
+                independent = norm_target not in {live_owner, live_reviewer}
+
+                if (
+                    not helper_settings.get("enabled", True)
+                    or live_status not in claimable_statuses
+                    or live_status in {"review", "review_approved", "blocked", "done"}
+                    or task_is_human_gate(live_task)
+                    or bool(live_task.get("non_dispatchable"))
+                    or is_human_gate_agent(str(live_task.get("waiting_for") or ""))
+                    or is_human_gate_agent(str(live_task.get(owner_field) or ""))
+                    or not dependencies_satisfied(live_task, task_map, dependency_done_statuses)
+                    or not independent
+                    or not claim_live
+                    or claimed_by != norm_target
+                ):
+                    continue
             else:
                 norm_target = normalize_agent_id(target_agent or "")
                 live_status = str(live_task.get("status") or "").lower()
@@ -3350,11 +3377,32 @@ def dispatch_ready_tasks(
                     if live_status not in finalize_statuses or live_owner != norm_target:
                         continue
                 elif reason == "owned_in_progress_dispatch":
-                    if live_status != "in_progress" or live_owner != norm_target:
+                    if (
+                        live_status != "in_progress"
+                        or live_owner != norm_target
+                        or not dependencies_satisfied(live_task, task_map, dependency_done_statuses)
+                    ):
                         continue
                 elif reason == "owned_ready_dispatch":
-                    if live_status != "todo" or live_owner != norm_target:
+                    if (
+                        live_status != "todo"
+                        or live_owner != norm_target
+                        or not dependencies_satisfied(live_task, task_map, dependency_done_statuses)
+                    ):
                         continue
+
+            if not agent_can_take_task(
+                config, target_agent, live_task, role=dispatch_reason_role(reason)
+            ):
+                continue
+            if worktree_block_still_matches_dispatch(
+                state,
+                live_task,
+                reason,
+                task_map,
+                retry_after_seconds=lease_block_retry_after_seconds(config),
+            ):
+                continue
 
             event = build_dispatch_event(live_task, target_agent, reason, task_map)
             if queue_dispatch_event_safely(config, event):
