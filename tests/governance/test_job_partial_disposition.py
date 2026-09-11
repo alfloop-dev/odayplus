@@ -105,6 +105,18 @@ def test_shared001_partial_disposition_state_and_handback_metadata() -> None:
     assert disp.get("evidence_needed")
     assert disp.get("rationale")
     assert "b19513a1419497dce2ddd5054df5bbe0bd732a69" in disp["rationale"] or "b19513a1419497dce2ddd5054df5bbe0bd732a69" in partial["note"]
+    assert "human-input-request-H06.md" in disp["evidence_needed"]
+    assert "human-input-request-H06.md" in disp["reopen_trigger"]
+    assert "human-input-request-H06.md" in partial["note"]
+
+    # Verify history entry for 2026-09-11 carries UTC observation timestamp and source SHA
+    hist = disp.get("history", [])
+    entry_20260911 = next((h for h in hist if h.get("date") == "2026-09-11"), None)
+    assert entry_20260911 is not None, "Must have history entry for 2026-09-11"
+    assert entry_20260911.get("observed_at") == "2026-09-11T00:47:47Z"
+    assert entry_20260911.get("source_sha") == "b19513a1419497dce2ddd5054df5bbe0bd732a69"
+    assert "2026-09-11T00:47:47Z" in entry_20260911["note"]
+    assert "human-input-request-H06.md" in entry_20260911["note"]
 
     # PARTIAL may NOT be claimed as DECIDED, IMPLEMENTATION_READY, or VERIFIED without human sign-off / live production evidence
     assert disp["state"] != "DECIDED"
@@ -116,6 +128,7 @@ def test_shared001_partial_producer_symbol_resolution_and_default_registry() -> 
     # 1. Verify symbol resolution through governance check resolve()
     assert resolve(REPO_ROOT, "apps/worker/oday_worker/handlers.py::handle_batch_listing_intake") is None
     assert resolve(REPO_ROOT, "apps/worker/oday_worker/handlers.py::build_default_registry") is None
+    assert resolve(REPO_ROOT, "apps/worker/oday_worker/handlers.py::checkpoint_batch_item_result") is None
     assert resolve(REPO_ROOT, "shared/jobs/receipts.py::derive_batch_status_and_summary") is None
 
     # 2. Verify handler registration in default runtime registry
@@ -175,9 +188,12 @@ def test_shared001_reconciliation_evidence_document() -> None:
     content = doc_path.read_text(encoding="utf-8")
     assert "ODP-JOB-PARTIAL-PRODUCER-RECONCILIATION-001" in content
     assert "b19513a1419497dce2ddd5054df5bbe0bd732a69" in content
+    assert "2026-09-11T00:47:47Z" in content
     assert "handle_batch_listing_intake" in content
     assert "build_default_registry" in content
     assert "derive_batch_status_and_summary" in content
+    assert "checkpoint_batch_item_result" in content
+    assert "human-input-request-H06.md" in content
     assert "HB-SHARED001-PARTIAL-001" in content
     assert "BLOCKED_BY_EVIDENCE" in content
     assert "test_durable_partial_batch.py" in content
