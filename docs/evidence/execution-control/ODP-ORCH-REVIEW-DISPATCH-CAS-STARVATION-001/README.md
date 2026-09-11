@@ -29,8 +29,11 @@
 2. **Root Cause 2（Advisory Diagnostic 寫入失敗導致提前退出）**：
    在 `dispatch_ready_tasks` 中，當檢查到 PR CI pending、unresolved 或 head drift 等非致命診斷資訊時，會嘗試更新 `task["next"]` 並執行 `commit_canonical_task_transition(config, status)`。原實作在 commit 回傳 False 時直接 `return changed` 退出整個派工迴圈，使該 tick 之後的所有綠燈待審任務完全失去被評估與派工的機會。
 
-3. **Root Cause 3（Snapshot 重載與候選索引重建）**：
-   在 CAS 寫入失敗或 snapshot 刷新時，若未自最新 snapshot 重建 `tasks` 與 `task_map` 索引，候選挑選迴圈可能繼續評估已脫鉤或已被外部 writer 修改的記憶體物件。
+3. **Root Cause 3（Snapshot 重載與候選評估 Iterator / 物件脫鉤）**：
+   在 CAS 寫入或 snapshot 刷新後，若僅賦值新變數而使用 `continue` 繼續既有 `enumerate(tasks)` iterator，該 iterator 仍會巡歷過期 list 與 detached 物件。當外部 writer 在 sync 期間修改 reviewer（如改派 Codex）時，過期 iterator 會誤將舊 reviewer（如 Antigravity7）放入派工佇列。此外，若 helper claim 連續派發多筆任務，第一筆 commit 後 snapshot 刷新，第二筆若未重新獲取 live task 物件，會修改 detached 物件導致 lease 未持久化至磁碟。
+
+4. **Root Cause 4（Retry Exhaustion 仍派發過期候選）**：
+   當 advisory CAS 寫入連續遭拒並耗盡有界重試（8 次）時，若未清空當輪候選，過期候選仍會進入 dispatch loop，造成 stale event 派發。
 
 ---
 
@@ -41,57 +44,70 @@
   - `commit_canonical_task_transition` 於 `sync_status_pipeline(config)` 成功後，透過 `load_status(config)` 重新載入磁碟上的最新 snapshot。
   - 當 `latest is not status and isinstance(latest, dict) and "tasks" in latest` 時，以 `status.clear(); status.update(latest)` 原地更新 `status`，確保記憶體內的 `_status_write_revision` 與磁碟保持一致。
 
-### 3.2 `dispatch_ready_tasks` 診斷寫入容錯與動態重試
+### 3.2 `dispatch_ready_tasks` 重構候選重試與狀態刷新
 - 在 `.orchestrator/dispatch_engine.py` 中：
-  - 對於非生命週期變更的 advisory diagnostic 寫入（`review_dispatch_suppressed`、`approved_head_missing`、`approved_head_unresolved`、`ci_status_unresolved`）：
-    - 寫入失敗時不中斷 tick（不直接 `return changed`）。
-    - 重新刷新 `tasks` 與 `task_map`，設定 `resynced = True` 並以 `break` 重啟該 agent 的候選評估。
-    - 不將純 advisory 訊息標記為 `changed = True`，避免在無實質派工或狀態變更時誤報變更。
-  - 將候選評估限制為動態有界的 `max_agent_eval_attempts = max(8, len(tasks) + 1)`，防止無限迴圈。
+  - 在每次 snapshot 變更（包含 advisory note 寫入、`re-review_required`、`requeue_task_for_ci_repair` 或 CAS rejection）後，立即以 `resynced = True; break` 中斷當前 iterator，並在下一輪 attempt 重新自 `status` 讀取全新 `tasks` 與 `task_map` 重新評估。
+  - 追蹤 `deferred_task_ids`，避免同一 tick 內剛發生 lifecycle 狀態轉移（如轉回 `in_progress` 或 `review`）的任務在同一 tick 被重複派發。
+  - 若 `eval_attempt` 達到上限且仍因 CAS 衝突退出（retry exhaustion），強制清空 `candidates = []`，嚴禁派發未經乾淨驗證的 stale 候選。
 
-### 3.3 嚴格保留關鍵生命週期 Fail-Closed 與 單一 Tick 轉移語義
-- 對於必須保證原子性的實質生命週期狀態變更（`requeue_task_for_ci_repair`、`re-review_required` 狀態轉移、`release_dead_helper_claims`）：
-  - 嚴格保留 fail-closed 行為：若 CAS commit 失敗立即終止操作並返回，確保不可在過時狀態上派發 worker。
-  - 狀態轉移成功後使用 `continue` 繼續當前派工輪次評估，不在同一 tick 內重新將剛轉移至 `in_progress` 的任務重複加入候選派工佇列，確保生命週期狀態轉移與派發 worker 的週期界線分明。
+### 3.3 Candidate Dispatch 重新綁定 Live Task 物件與資格二度驗證
+- 在派發候選佇列時：
+  - 每次迭代皆透過 `task_id` 從最新 `status` 重獲 `live_task`。
+  - 對於 `REASON_HELPER_CLAIM`：在 `live_task` 上施加 lease 變更並 commit，commit 成功後再次自最新 `status` 驗證 lease 是否確實存在於磁碟，確保 event 與磁碟狀態完全一致。
+  - 對於非 helper 派發：在 build event 前二度比對 `live_task` 的狀態、owner 與 reviewer，若外部 writer 已變更指派則自動跳過，杜絕 stale reviewer event。
+
+### 3.4 審計其他 commit callers（`advance_approved_prs_to_merge` 與 Recovery Loops）
+- 審計並重構 `advance_approved_prs_to_merge`、`recover_conflicted_review_prs` 與 `recover_failed_ci_review_prs`：
+  - 改用 `while True:` 與 `processed_ids` 遍歷，確保每次 `requeue_task_for_ci_repair` commit 刷新 `status` 後，後續迭代皆自最新 snapshot 取得未處理的 live task 物件，徹底排除 detached object 問題。
 
 ---
 
 ## 4. 驗證記錄（Test Receipts）
 
-### 4.1 新增回歸測試
-在 `.orchestrator/test_dispatch_policy.py` 新增以下回歸測試：
-1. `test_diagnostic_cas_rejection_does_not_starve_subsequent_green_reviews`:
-   - 模擬 2 個 pending CI 任務在 advisory 寫入時遭遇 CAS rejection，驗證後續 2 個 green CI 任務仍能正常派工，不發生飢餓。
-2. `test_canonical_sync_advancing_disk_revision_reloads_status_for_subsequent_writes`:
-   - 驗證第一次 commit 後 canonical sync 推進磁碟 revision，第二次 commit 能正確依據新 revision 成功寫入，不被 stale CAS 拒絕。
-3. `test_diagnostic_cas_mismatch_resyncs_and_rebuilds_indices_from_disk`:
-   - 驗證 external writer 推進磁碟狀態並加入新任務時，dispatcher 在 CAS 競爭後正確重載 snapshot 並派發新任務。
+### 4.1 新增回歸測試（`.orchestrator/test_dispatch_policy.py`）
+1. `test_diagnostic_cas_two_pending_two_green_revision_changing_dispatch`:
+   - 2 個 CI pending 任務在前、2 個 CI green 任務在後。真實 temp-file 與 sync 推進 revision，驗證 2 個 green 任務皆正常產生正確 reviewer event。
+2. `test_diagnostic_cas_canonical_sync_advancing_disk_revision_reloads_status_for_subsequent_writes`:
+   - 驗證同一個 tick 內連續兩筆 commit 能在 sync 推進 revision 後正確重載並成功寫入。
+3. `test_diagnostic_cas_external_writer_race_preserves_data_and_dispatches_ready_tasks`:
+   - 模擬 external writer 在 advisory 寫入時競態推進 revision 並注入新任務與自訂欄位，驗證 CAS rejection 後 dispatcher 成功重載 snapshot、保留外部更新並派發新任務。
+4. `test_diagnostic_cas_lifecycle_sync_does_not_enqueue_reassigned_reviewer`:
+   - 驗證 lifecycle 轉移後 external sync 將候選 reviewer 改派，dispatcher 重啟評估且不對舊 reviewer 派發 stale event。
+5. `test_diagnostic_cas_helper_claims_persist_leases_for_all_queued_helpers`:
+   - 驗證同一 tick 內多筆 helper lease 派發時，所有 queued events 在磁碟上皆具備對應的持久化 lease。
+6. `test_diagnostic_cas_retry_exhaustion_does_not_enqueue_stale_reviewer`:
+   - 驗證 8 次 CAS rejection 耗盡重試時，stale candidate 被乾淨丟棄，不產生 stale reviewer event。
 
-### 4.2 測試執行結果
+### 4.2 測試執行收據（Test Execution Receipts）
 ```bash
-# 1. 執行新加入與現有 dispatch policy 測試
-uv run pytest -q .orchestrator/test_dispatch_policy.py -k 'diagnostic_cas or review_dispatch or stale_wake or cas or release_dead_helper_claims'
-.....................................                                    [100%]
-37 passed in 9.20s
+# 1. Whitespace & diff 檢查
+$ git diff --check
+(exit code 0)
 
-# 2. 執行 Supervisor Concurrency & Sync 測試
-uv run pytest -q .orchestrator/test_supervisor.py::DispatchStatusSyncTests .orchestrator/test_supervisor.py::AutomaticRecoveryTests::test_ci_failure_requeue_fails_closed_on_stale_status_snapshot
+# 2. Focused Dispatch Policy 測試（41 passed）
+$ uv run pytest -q .orchestrator/test_dispatch_policy.py -k 'diagnostic_cas or review_dispatch or stale_wake or cas or release_dead_helper_claims'
+.........................................                                [100%]
+41 passed in 9.35s (exit code 0)
+
+# 3. Supervisor Concurrency & Recovery 測試（14 passed）
+$ uv run pytest -q .orchestrator/test_supervisor.py::DispatchStatusSyncTests .orchestrator/test_supervisor.py::AutomaticRecoveryTests::test_ci_failure_requeue_fails_closed_on_stale_status_snapshot
 ..............                                                           [100%]
-14 passed in 3.63s
+14 passed in 3.61s (exit code 0)
 
-# 3. 執行 ReviewHeadFreezeTests 完整測試套件 (33/33 PASSED)
-uv run pytest -v .orchestrator/test_supervisor.py::ReviewHeadFreezeTests
-============================= 33 passed in 17.58s ==============================
-
-# 4. 執行 Orchestrator 完整 CI 測試套件 (2794/2794 PASSED)
-uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling infra
-2794 passed, 6 skipped, 10 deselected, 3 warnings, 618 subtests passed in 476.64s (0:07:56)
+# 4. Codex2 Reproduction Probes 測試（4 passed）
+$ uv run pytest -v /home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260911T022943Z-8a15a998/test_review_lifecycle_snapshot.py /home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260911T022943Z-8a15a998/test_reviewer_helper_claims.py /home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260911T022943Z-8a15a998/test_codex2_review_retry_exhaustion.py
+============================== 4 passed in 6.58s ===============================
+(exit code 0)
 ```
 
 ---
 
 ## 5. 上線與發布說明（Rollout Instructions）
 
-1. 本修復屬於控制平面（Orchestrator Control Plane）派工排程核心修正。
-2. 合併入 `dev` 後，Supervisor 重啟或下一輪派工週期會自動載入新版 `status_transition.py`、`dispatch_engine.py` 與 `supervisor.py`。
-3. 無需進行資料庫 migration，向下相容既有 `ai-status.json` 格式。
+1. **隔離 Worktree 限制**：
+   - 任務執行與驗證僅在隔離之 task worktree 內進行，未直接修改 live runtime、state 或 supervisor config。
+   - 不手動重啟 supervisor、不提高 quota、不觸動 product tests。
+2. **協調者統一管理 Rollout**：
+   - 本變更經獨立 PR 審查與 CI 通過並正式合併入 `dev` 後，由協調者（Coordinator）在維護窗口內統一重啟 Supervisor 載入最新控制平面程式碼。
+3. **資料相容性**：
+   - 無需資料庫或狀態遷移，完全向下相容既有 `ai-status.json` 結構。

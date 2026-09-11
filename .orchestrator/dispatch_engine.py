@@ -847,10 +847,17 @@ def advance_approved_prs_to_merge(
     task_id_field = schema.get("task_id_field", "id")
 
     changed = False
-    for task in status.get(tasks_path, []) or []:
+    advisory_changed = False
+    processed_ids: set[str] = set()
+    while True:
+        tasks = [t for t in status.get(tasks_path, []) if isinstance(t, dict) and t.get(task_id_field)]
+        unprocessed = [t for t in tasks if str(t.get(task_id_field)) not in processed_ids]
+        if not unprocessed:
+            break
+        task = unprocessed[0]
         task_id = str(task.get(task_id_field) or "")
-        if not task_id:
-            continue
+        processed_ids.add(task_id)
+
         if str(task.get("status") or "").lower() not in finalize_statuses:
             continue
         if not str(task.get("approved_head") or "").strip():
@@ -868,6 +875,7 @@ def advance_approved_prs_to_merge(
                 f"PR for task {task_id} was enqueued in the dev merge queue ({detail}); "
                 "approved branch head remains immutable until the queue merges it."
             )
+            advisory_changed = True
         elif route == "blocked":
             # Reported here rather than left silent: a PR GitHub refuses to
             # enqueue is parked indefinitely, and the operator needs the reason.
@@ -878,6 +886,7 @@ def advance_approved_prs_to_merge(
             if task.get("next") == msg:
                 continue
             task["next"] = msg
+            advisory_changed = True
             write_activity_log(
                 config,
                 {"type": "merge_route_blocked", "task_id": task_id, "message": msg},
@@ -895,6 +904,7 @@ def advance_approved_prs_to_merge(
             if task.get("next") == msg:
                 continue
             task["next"] = msg
+            advisory_changed = True
             write_activity_log(
                 config,
                 {"type": "merge_route_stalled", "task_id": task_id, "message": msg},
@@ -910,6 +920,7 @@ def advance_approved_prs_to_merge(
             if task.get("next") == msg:
                 continue
             task["next"] = msg
+            advisory_changed = True
         elif route == "ejected":
             # The queue dropped it and will not retry on its own.  Advancing the
             # base rewrites the reviewed head, so this has to go back to the
@@ -925,13 +936,14 @@ def advance_approved_prs_to_merge(
                 clear_approval=True,
             ):
                 changed = True
+                advisory_changed = False
             continue
         else:
             continue
-        changed = True
 
-    if changed:
-        commit_canonical_task_transition(config, status)
+    if advisory_changed:
+        if commit_canonical_task_transition(config, status):
+            changed = True
     return changed
 
 
@@ -962,10 +974,15 @@ def recover_conflicted_review_prs(
     Anything unreadable, drifting, pending, or already closed keeps waiting.
     """
     changed = False
-    for task in list(status.get("tasks", []) or []):
-        if not isinstance(task, dict):
-            continue
+    processed_ids: set[str] = set()
+    while True:
+        tasks = [t for t in status.get("tasks", []) or [] if isinstance(t, dict) and t.get("id")]
+        unprocessed = [t for t in tasks if str(t.get("id")) not in processed_ids]
+        if not unprocessed:
+            break
+        task = unprocessed[0]
         task_id = str(task.get("id") or "").strip()
+        processed_ids.add(task_id)
         if not task_id or task_id in busy_task_ids:
             continue
         if str(task.get("status") or "").strip().lower() not in review_statuses:
@@ -1124,10 +1141,15 @@ def recover_failed_ci_review_prs(
     unverifiable, or already closed/approved/queued keeps waiting.
     """
     changed = False
-    for task in list(status.get("tasks", []) or []):
-        if not isinstance(task, dict):
-            continue
+    processed_ids: set[str] = set()
+    while True:
+        tasks = [t for t in status.get("tasks", []) or [] if isinstance(t, dict) and t.get("id")]
+        unprocessed = [t for t in tasks if str(t.get("id")) not in processed_ids]
+        if not unprocessed:
+            break
+        task = unprocessed[0]
         task_id = str(task.get("id") or "").strip()
+        processed_ids.add(task_id)
         if not task_id or task_id in busy_task_ids:
             continue
         if str(task.get("status") or "").strip().lower() not in review_statuses:
@@ -2702,6 +2724,7 @@ def dispatch_ready_tasks(
         task_map = {task.get(task_id_field): task for task in tasks}
 
     dispatches = 0
+    deferred_task_ids: set[str] = set()
     agent_sequence = (
         [normalize_agent_id(agent_id) for agent_id in agent_ids_override if normalize_agent_id(agent_id)]
         if agent_ids_override
@@ -2749,17 +2772,21 @@ def dispatch_ready_tasks(
         # then by lifecycle action (review/finalize/execute), then stable board
         # order.  The previous implementation ignored task.priority entirely.
         candidates: list[tuple[int, int, int, dict[str, Any], str]] = []
-        max_agent_eval_attempts = max(8, len(tasks) + 1)
+        max_agent_eval_attempts = max(8, len(status.get(tasks_path, []) or []) + 1)
         eval_attempt = 0
         while eval_attempt < max_agent_eval_attempts:
             eval_attempt += 1
             resynced = False
             candidates = []
+            tasks = [t for t in status.get(tasks_path, []) if t.get(task_id_field)]
+            task_map = {t.get(task_id_field): t for t in tasks}
             for index, task in enumerate(tasks):
                 task_id = str(task.get(task_id_field) or "")
                 if not task_id:
                     continue
                 if task_id in active_task_ids or task_id in pending_task_ids:
+                    continue
+                if task_id in deferred_task_ids:
                     continue
                 is_sidecar_task = task_is_sidecar(task)
                 task_status = str(task.get("status") or "").lower()
@@ -2829,8 +2856,6 @@ def dispatch_ready_tasks(
                     if msg and task.get("next") != msg and "merge group" not in str(task.get("next") or "").lower():
                         task["next"] = msg
                         committed = commit_canonical_task_transition(config, status)
-                        tasks = [t for t in status.get(tasks_path, []) if t.get(task_id_field)]
-                        task_map = {t.get(task_id_field): t for t in tasks}
                         if committed:
                             try:
                                 write_activity_log(
@@ -2870,8 +2895,6 @@ def dispatch_ready_tasks(
                         if task.get("next") != msg:
                             task["next"] = msg
                             committed = commit_canonical_task_transition(config, status)
-                            tasks = [t for t in status.get(tasks_path, []) if t.get(task_id_field)]
-                            task_map = {t.get(task_id_field): t for t in tasks}
                             if committed:
                                 write_activity_log(
                                     config,
@@ -2897,8 +2920,7 @@ def dispatch_ready_tasks(
                             if not commit_canonical_task_transition(config, status):
                                 return changed
                             changed = True
-                            tasks = [t for t in status.get(tasks_path, []) if t.get(task_id_field)]
-                            task_map = {t.get(task_id_field): t for t in tasks}
+                            deferred_task_ids.add(task_id)
                             write_activity_log(
                                 config,
                                 {
@@ -2907,7 +2929,8 @@ def dispatch_ready_tasks(
                                     "message": task["next"],
                                 },
                             )
-                            continue
+                            resynced = True
+                            break
                         else:
                             # B20: head unresolvable. Suppressing finalize here
                             # is correct, but doing it silently leaves the task
@@ -2921,8 +2944,6 @@ def dispatch_ready_tasks(
                             if task.get("next") != msg:
                                 task["next"] = msg
                                 committed = commit_canonical_task_transition(config, status)
-                                tasks = [t for t in status.get(tasks_path, []) if t.get(task_id_field)]
-                                task_map = {t.get(task_id_field): t for t in tasks}
                                 if committed:
                                     write_activity_log(
                                         config,
@@ -2935,7 +2956,6 @@ def dispatch_ready_tasks(
                                 resynced = True
                                 break
                         continue
-
 
                     pr_status = "UNKNOWN"
                     ci_status = "unknown"
@@ -2982,13 +3002,11 @@ def dispatch_ready_tasks(
                                 ):
                                     return changed
                                 changed = True
-                                tasks = [t for t in status.get(tasks_path, []) if t.get(task_id_field)]
-                                task_map = {t.get(task_id_field): t for t in tasks}
-                                continue
+                                deferred_task_ids.add(task_id)
+                                resynced = True
+                                break
                         if status_dirty:
                             committed = commit_canonical_task_transition(config, status)
-                            tasks = [t for t in status.get(tasks_path, []) if t.get(task_id_field)]
-                            task_map = {t.get(task_id_field): t for t in tasks}
                             resynced = True
                             break
 
@@ -3004,9 +3022,9 @@ def dispatch_ready_tasks(
                         ):
                             return changed
                         changed = True
-                        tasks = [t for t in status.get(tasks_path, []) if t.get(task_id_field)]
-                        task_map = {t.get(task_id_field): t for t in tasks}
-                        continue
+                        deferred_task_ids.add(task_id)
+                        resynced = True
+                        break
                     elif ci_status not in {"success", "none"}:
                         # B20: catch-all for probe states that are neither pending,
                         # failure, nor green (e.g. "unknown" when `gh` is
@@ -3018,8 +3036,6 @@ def dispatch_ready_tasks(
                         if task.get("next") != msg:
                             task["next"] = msg
                             committed = commit_canonical_task_transition(config, status)
-                            tasks = [t for t in status.get(tasks_path, []) if t.get(task_id_field)]
-                            task_map = {t.get(task_id_field): t for t in tasks}
                             if committed:
                                 write_activity_log(
                                     config,
@@ -3035,8 +3051,6 @@ def dispatch_ready_tasks(
                     else:
                         if task.pop("ci_pending_since_ts", None) is not None:
                             committed = commit_canonical_task_transition(config, status)
-                            tasks = [t for t in status.get(tasks_path, []) if t.get(task_id_field)]
-                            task_map = {t.get(task_id_field): t for t in tasks}
                             resynced = True
                             break
 
@@ -3142,8 +3156,6 @@ def dispatch_ready_tasks(
                         if task.get("next") != msg:
                             task["next"] = msg
                             committed = commit_canonical_task_transition(config, status)
-                            tasks = [t for t in status.get(tasks_path, []) if t.get(task_id_field)]
-                            task_map = {t.get(task_id_field): t for t in tasks}
                             if committed:
                                 changed = True
                                 write_activity_log(
@@ -3171,9 +3183,22 @@ def dispatch_ready_tasks(
             if not resynced:
                 break
 
+        if resynced:
+            candidates = []
+
         candidates.sort(key=lambda item: (item[0], item[1], item[2]))
         queued_for_agent = 0
-        for _, _, _, task, reason in candidates[:available_agent_slots]:
+        for _, _, _, candidate_task, reason in candidates[:available_agent_slots]:
+            task_id = str(candidate_task.get(task_id_field) or "")
+            if not task_id:
+                continue
+
+            tasks = [t for t in status.get(tasks_path, []) if t.get(task_id_field)]
+            task_map = {t.get(task_id_field): t for t in tasks}
+            live_task = task_map.get(task_id)
+            if live_task is None:
+                continue
+
             if reason == REASON_HELPER_CLAIM:
                 helper_settings = settings.get("helper_execution_lease", {}) or {}
                 active_claims_for_agent = sum(
@@ -3197,7 +3222,7 @@ def dispatch_ready_tasks(
                 max_helper = min(int(helper_settings.get("max_claims_per_tick", 4)), chair_max or 0)
                 if helper_dispatches >= max_helper:
                     continue
-                existing_claim = task.get("helper_execution_lease") or {}
+                existing_claim = live_task.get("helper_execution_lease") or {}
                 existing_claim_live = helper_claim_is_live(existing_claim)
                 existing_claimant = normalize_agent_id(str(existing_claim.get("claimed_by") or ""))
 
@@ -3206,9 +3231,9 @@ def dispatch_ready_tasks(
                 if not (existing_claim_live and existing_claimant == normalize_agent_id(target_agent)):
                     now = datetime.now(UTC)
                     generation = int(existing_claim.get("generation", 0) or 0) + 1
-                    task["helper_execution_lease"] = {
+                    live_task["helper_execution_lease"] = {
                         "claimed_by": target_agent,
-                        "original_owner": task.get(owner_field),
+                        "original_owner": live_task.get(owner_field),
                         "claimed_at": now.isoformat().replace("+00:00", "Z"),
                         "lease_expires_at": (
                             now + timedelta(seconds=float(helper_settings.get("lease_seconds", 1800)))
@@ -3217,33 +3242,56 @@ def dispatch_ready_tasks(
                         "generation": generation,
                     }
                     if not commit_canonical_task_transition(config, status):
-                        if existing_claim:
-                            task["helper_execution_lease"] = existing_claim
-                        else:
-                            task.pop("helper_execution_lease", None)
-                        tasks = [t for t in status.get(tasks_path, []) if t.get(task_id_field)]
-                        task_map = {t.get(task_id_field): t for t in tasks}
                         continue
                     tasks = [t for t in status.get(tasks_path, []) if t.get(task_id_field)]
                     task_map = {t.get(task_id_field): t for t in tasks}
+                    live_task = task_map.get(task_id)
+                    if (
+                        live_task is None
+                        or not helper_claim_is_live(live_task.get("helper_execution_lease") or {})
+                        or normalize_agent_id(
+                            str((live_task.get("helper_execution_lease") or {}).get("claimed_by") or "")
+                        )
+                        != normalize_agent_id(target_agent)
+                    ):
+                        continue
                     dispatch_state["helper_dispatches_this_tick"] = helper_dispatches + 1
                     write_activity_log(
                         config,
                         {
                             "type": "helper_claim_leased",
-                            "task_id": task.get(task_id_field),
+                            "task_id": live_task.get(task_id_field),
                             "claimed_by": target_agent,
-                            "owner": task.get(owner_field),
-                            "lease_expires_at": task["helper_execution_lease"]["lease_expires_at"],
+                            "owner": live_task.get(owner_field),
+                            "lease_expires_at": live_task["helper_execution_lease"]["lease_expires_at"],
                             "message": "Idle capacity leased existing canonical work without changing owner.",
                         },
                     )
-            event = build_dispatch_event(task, target_agent, reason, task_map)
+            else:
+                norm_target = normalize_agent_id(target_agent or "")
+                live_status = str(live_task.get("status") or "").lower()
+                live_owner = normalize_agent_id(str(live_task.get(owner_field) or ""))
+                live_reviewer = normalize_agent_id(str(live_task.get(reviewer_field) or ""))
+
+                if reason == "review_ready_dispatch":
+                    if live_status not in review_statuses or live_reviewer != norm_target:
+                        continue
+                elif reason == "owned_finalize_dispatch":
+                    if live_status not in finalize_statuses or live_owner != norm_target:
+                        continue
+                elif reason == "owned_in_progress_dispatch":
+                    if live_status != "in_progress" or live_owner != norm_target:
+                        continue
+                elif reason == "owned_ready_dispatch":
+                    if live_status != "todo" or live_owner != norm_target:
+                        continue
+
+            event = build_dispatch_event(live_task, target_agent, reason, task_map)
             if queue_dispatch_event_safely(config, event):
                 pending_event_keys.add(event["key"])
                 pending_agents.add(agent_id)
-                pending_task_ids.add(str(task.get(task_id_field) or ""))
-                pending_task_agents.add((str(task.get(task_id_field) or ""), agent_id))
+                pending_task_ids.add(str(live_task.get(task_id_field) or ""))
+                pending_task_agents.add((str(live_task.get(task_id_field) or ""), agent_id))
                 agent_loads.setdefault(target_agent, []).append(dispatch_reason_priority(reason) or 9)
                 if quota_group:
                     pending_quota_counts[quota_group] = pending_quota_counts.get(quota_group, 0) + 1
