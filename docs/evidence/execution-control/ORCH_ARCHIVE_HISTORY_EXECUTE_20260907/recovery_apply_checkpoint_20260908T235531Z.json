@@ -1,0 +1,411 @@
+{
+  "type": "task_history_recovery_checkpoint",
+  "status": "applied",
+  "actor": "Claude2",
+  "batch_path": "/tmp/odayplus-recovery-plan-ef76/recovery_batch_window.json",
+  "batch_sha256": "1833ca8656ae30efc34d6ade6437ba850c5a53f9fcda67bb1cd4f7c8c70b34fe",
+  "batch_generated_at": "2026-09-08T23:55:11Z",
+  "maintenance_hold": {
+    "path": "/tmp/odayplus-recovery-plan-ef76/maintenance_hold_window.json",
+    "sha256": "e88435aecada1b7b84f4811c3144a54afdb9e428299430e6f6766d4b1ec60348",
+    "hold_id": "odp-history-recovery-20260908T235531Z",
+    "declared_by": "Codex",
+    "expires_at": "2026-09-09T01:55:31Z",
+    "approved_by": "Codex",
+    "approval_source": "Codex readback 2026-09-08T23:55:31Z; user-authorized maintenance window; existing planner output and current baseline"
+  },
+  "started_at": "2026-09-08T23:56:44Z",
+  "finished_at": "2026-09-08T23:57:20Z",
+  "archive_snapshots_intended": [
+    "ODP-AVM-DEPRECIATION-CONTRACT-001",
+    "ODP-CANONICAL-LEGACY-LINEAGE-001",
+    "ODP-DRIFT-DEP-REMOVE-002",
+    "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+    "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+    "ODP-INT-MANUAL-CORRECTION-AUDIT-001",
+    "ODP-LH-PREDICTION-DRIFT-001",
+    "ODP-LH003-BACKTEST-RELEASE-GATE-001",
+    "ODP-MEASUREMENT-CROSSLAYER-GATE-001",
+    "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+    "ODP-MODELREADY-QUALITY-NULLABLE-001",
+    "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+    "ODP-OPS002-DECISION-COMMENTS-001",
+    "ODP-PRICE006-BANDIT-GATED-001",
+    "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+    "ODP-RELEASE-GATE-FIXTURE-STAGING-002",
+    "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+    "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
+    "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+    "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+    "ODP-SITESCORE-QUALITY-NULLABLE-001",
+    "ODP-SPEC-SOURCE-PROVENANCE-001",
+    "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001"
+  ],
+  "archive_readback": [
+    {
+      "task_id": "ODP-AVM-DEPRECIATION-CONTRACT-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "aac3dcc725f6747123b20054c179bb24db09d6ae8123ef6f7639041cbf89b565",
+      "terminal_status": "done",
+      "listed_in_archive_index": false
+    },
+    {
+      "task_id": "ODP-CANONICAL-LEGACY-LINEAGE-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "4f0fbc242345dbe9dc4ffc05c74707907d42be22cdcf5e613d6d5a492a49d48e",
+      "terminal_status": "done",
+      "listed_in_archive_index": false
+    },
+    {
+      "task_id": "ODP-DRIFT-DEP-REMOVE-002",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "3fe71f40c756d10c22cafae4174c5d00ab6f3597b3157f6b21c544c4fb8d06b5",
+      "terminal_status": "done",
+      "listed_in_archive_index": false
+    },
+    {
+      "task_id": "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "e301e34584b136a9ac2376b4ce65d42e0302b72ed4cc33e29d7b4bd6c3b57863",
+      "terminal_status": "done",
+      "listed_in_archive_index": false
+    },
+    {
+      "task_id": "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "b03e462447e3ce6c0270fe2ef9b51cb3c58e94cf8a374924520eed7629de88b6",
+      "terminal_status": "done",
+      "listed_in_archive_index": false
+    },
+    {
+      "task_id": "ODP-INT-MANUAL-CORRECTION-AUDIT-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "1a7335b0b5007237740b034b57397d0cb93319dfc8c5b8a4dc8ffdecda99bd4e",
+      "terminal_status": "done",
+      "listed_in_archive_index": false
+    },
+    {
+      "task_id": "ODP-LH-PREDICTION-DRIFT-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "31eee5dfcb14f600670fd5d18bda755ce484aa7d0794657d56e5b2ed46e1ebca",
+      "terminal_status": "done",
+      "listed_in_archive_index": false
+    },
+    {
+      "task_id": "ODP-LH003-BACKTEST-RELEASE-GATE-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "727303eac509fa586e5ca7afb4162091ebf199480335d3dbede9f74608a04b7c",
+      "terminal_status": "done",
+      "listed_in_archive_index": false
+    },
+    {
+      "task_id": "ODP-MEASUREMENT-CROSSLAYER-GATE-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "bff31e0e24eaf77594b58e05412f5551fa681e5fbbbb0d0f8145c02afbc4c6f5",
+      "terminal_status": "done",
+      "listed_in_archive_index": false
+    },
+    {
+      "task_id": "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "2f1436d107dd1b13111db3550b1b7566c2db69e90bd8a757cf33a085a1237114",
+      "terminal_status": "done",
+      "listed_in_archive_index": false
+    },
+    {
+      "task_id": "ODP-MODELREADY-QUALITY-NULLABLE-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "d70d96a8acae775d9babb277d033760062c84a702210d68827455fdfa1be73ea",
+      "terminal_status": "done",
+      "listed_in_archive_index": false
+    },
+    {
+      "task_id": "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "d88b30c072338c6c6ae04197cce0133195c378528f9d6cf3ea8c606f74a1bb84",
+      "terminal_status": "done",
+      "listed_in_archive_index": false
+    },
+    {
+      "task_id": "ODP-OPS002-DECISION-COMMENTS-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "7e2a976dd88a87ba6f6abf3f3301cb06815abb1b753f47a8b27ab51bec14f175",
+      "terminal_status": "done",
+      "listed_in_archive_index": false
+    },
+    {
+      "task_id": "ODP-PRICE006-BANDIT-GATED-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "fa9f70257e250f85049918deaa86a034f3e3f59f8ec69c36fa7a9a2b97afe2eb",
+      "terminal_status": "done",
+      "listed_in_archive_index": false
+    },
+    {
+      "task_id": "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "e6fc92432c3550ab058c2046727a6b7d654f1f97c2ccb4e19214ee9f2bbd6cf2",
+      "terminal_status": "done",
+      "listed_in_archive_index": false
+    },
+    {
+      "task_id": "ODP-RELEASE-GATE-FIXTURE-STAGING-002",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "ae3ecc8ce084e70e4de9e517fe635993ba9eada3ecaa7ee65a6cd39d545b515f",
+      "terminal_status": "done",
+      "listed_in_archive_index": false
+    },
+    {
+      "task_id": "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "1b35059496b0541e59cb9049867ac05ca7f8ef3ef74b632da79fab066fa48340",
+      "terminal_status": "done",
+      "listed_in_archive_index": false
+    },
+    {
+      "task_id": "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "3e79613b50fd408ee8e420bc8db8a920df26841a6201649143d2f2088c2e6c8f",
+      "terminal_status": "done",
+      "listed_in_archive_index": false
+    },
+    {
+      "task_id": "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "c306deecf0a9c4b449a23bc970d8a9d3d74773c0847e3c8ac00ba98a36ae067b",
+      "terminal_status": "done",
+      "listed_in_archive_index": false
+    },
+    {
+      "task_id": "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "3cef429545c1ef06ecd6babc4836c1bff8b90c76df663a3b978c9f671e33dcb9",
+      "terminal_status": "done",
+      "listed_in_archive_index": false
+    },
+    {
+      "task_id": "ODP-SITESCORE-QUALITY-NULLABLE-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "ef6c499e23d4349c5f6b5c624ad3c4f0ae5be921309c5aaf4514337c15699478",
+      "terminal_status": "done",
+      "listed_in_archive_index": false
+    },
+    {
+      "task_id": "ODP-SPEC-SOURCE-PROVENANCE-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "bb63787648120e917021b7d08a093a42df74ccedec722ce15342bdf543e4c83c",
+      "terminal_status": "done",
+      "listed_in_archive_index": false
+    },
+    {
+      "task_id": "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "04fb5506932c8c38690b55948e428cfc549efddf4472f62c60e0e35360a3198a",
+      "terminal_status": "done",
+      "listed_in_archive_index": false
+    }
+  ],
+  "applied_archive_snapshots": [
+    "ODP-AVM-DEPRECIATION-CONTRACT-001",
+    "ODP-CANONICAL-LEGACY-LINEAGE-001",
+    "ODP-DRIFT-DEP-REMOVE-002",
+    "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+    "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+    "ODP-INT-MANUAL-CORRECTION-AUDIT-001",
+    "ODP-LH-PREDICTION-DRIFT-001",
+    "ODP-LH003-BACKTEST-RELEASE-GATE-001",
+    "ODP-MEASUREMENT-CROSSLAYER-GATE-001",
+    "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+    "ODP-MODELREADY-QUALITY-NULLABLE-001",
+    "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+    "ODP-OPS002-DECISION-COMMENTS-001",
+    "ODP-PRICE006-BANDIT-GATED-001",
+    "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+    "ODP-RELEASE-GATE-FIXTURE-STAGING-002",
+    "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+    "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
+    "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+    "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+    "ODP-SITESCORE-QUALITY-NULLABLE-001",
+    "ODP-SPEC-SOURCE-PROVENANCE-001",
+    "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001"
+  ],
+  "archive_index": {
+    "path": "/home/lupin/odayplus/ai-task-archive/index.json",
+    "exists": true,
+    "sha256": "a0b9f4e1349d5657bd1bd89fb85f443e727e9d29f34682416f1a55b7ee2b1dd5",
+    "counts": {
+      "total": 61,
+      "completed": 50,
+      "superseded": 11
+    },
+    "recent_terminal_ids": [
+      "ORCH-PROVIDER-OWNER-FAILOVER-001",
+      "ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001",
+      "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001",
+      "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001",
+      "ODP-MERGE-QUEUE-BATCH-DESIGN-001",
+      "ODP-CDC-SOURCE-CONTRACT-PREP-001",
+      "ODP-NET002-LEASE-CONTRACT-PREP-001",
+      "ODP-BRAND-TRANSFER-CONTRACT-PREP-001",
+      "ODP-OSS-DECISION-PACK-001",
+      "ODP-HUMAN-DECISIONS-WAVE-IMPORT-001",
+      "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001",
+      "ORCH-ACCOUNT-POOL-CANARY-RECOVERY-001",
+      "ODP-GCP-STAGING-EXECUTION-PREFL-SIDECAR-FF72D3C4",
+      "ODP-HUMAN-DECISIONS-EXECUTION-P-SIDECAR-CAD75975",
+      "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-003",
+      "ODP-DEV-CANDIDATE-GATE-RECONCIL-SIDECAR-5D18B859",
+      "ODP-DRIFT-SECURITY-VERIFY-003",
+      "ODP-DEV-BUILD-ARTIFACT-HANDOFF-003",
+      "ODP-API-COLD-ROUTE-RACE-001",
+      "ODP-CODEX-ULTRA-DRIFT-REPAIR-001"
+    ]
+  },
+  "board_placeholders_intended": [
+    "DPF-EMGI-LIVE-ROLLOUT-001",
+    "ODP-DEV-ROLLOUT-001",
+    "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+    "ODP-EPHEMERAL-STAGING-IAC-001",
+    "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+    "ODP-INT001-CDC-DISPOSITION-001",
+    "ODP-JOB-PARTIAL-DISPOSITION-001",
+    "ODP-NET002-LEASE-DISPOSITION-001",
+    "ODP-ROLE-PROVIDER-CODEX-REVIEW-001",
+    "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+    "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+    "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+    "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
+    "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+    "XR-EXT-OSS-FINAL-AUDIT-001"
+  ],
+  "board_readback": [
+    {
+      "task_id": "DPF-EMGI-LIVE-ROLLOUT-001",
+      "on_disk": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "history_recovery_present": true
+    },
+    {
+      "task_id": "ODP-DEV-ROLLOUT-001",
+      "on_disk": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "history_recovery_present": true
+    },
+    {
+      "task_id": "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+      "on_disk": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "history_recovery_present": true
+    },
+    {
+      "task_id": "ODP-EPHEMERAL-STAGING-IAC-001",
+      "on_disk": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "history_recovery_present": true
+    },
+    {
+      "task_id": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+      "on_disk": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "history_recovery_present": true
+    },
+    {
+      "task_id": "ODP-INT001-CDC-DISPOSITION-001",
+      "on_disk": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "history_recovery_present": true
+    },
+    {
+      "task_id": "ODP-JOB-PARTIAL-DISPOSITION-001",
+      "on_disk": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "history_recovery_present": true
+    },
+    {
+      "task_id": "ODP-NET002-LEASE-DISPOSITION-001",
+      "on_disk": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "history_recovery_present": true
+    },
+    {
+      "task_id": "ODP-ROLE-PROVIDER-CODEX-REVIEW-001",
+      "on_disk": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "history_recovery_present": true
+    },
+    {
+      "task_id": "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+      "on_disk": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "history_recovery_present": true
+    },
+    {
+      "task_id": "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+      "on_disk": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "history_recovery_present": true
+    },
+    {
+      "task_id": "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+      "on_disk": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "history_recovery_present": true
+    },
+    {
+      "task_id": "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
+      "on_disk": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "history_recovery_present": true
+    },
+    {
+      "task_id": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+      "on_disk": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "history_recovery_present": true
+    },
+    {
+      "task_id": "XR-EXT-OSS-FINAL-AUDIT-001",
+      "on_disk": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "history_recovery_present": true
+    }
+  ],
+  "board_placeholders_on_disk": [
+    "DPF-EMGI-LIVE-ROLLOUT-001",
+    "ODP-DEV-ROLLOUT-001",
+    "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+    "ODP-EPHEMERAL-STAGING-IAC-001",
+    "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+    "ODP-INT001-CDC-DISPOSITION-001",
+    "ODP-JOB-PARTIAL-DISPOSITION-001",
+    "ODP-NET002-LEASE-DISPOSITION-001",
+    "ODP-ROLE-PROVIDER-CODEX-REVIEW-001",
+    "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+    "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+    "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+    "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
+    "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+    "XR-EXT-OSS-FINAL-AUDIT-001"
+  ],
+  "board_revision_expected": "dbd49aee44644ab89e6e3ffab0d58029",
+  "board_revision_on_disk": "dbd49aee44644ab89e6e3ffab0d58029",
+  "board_persistence_verified": true,
+  "board_persisted_by": "enclosing canonical status transaction",
+  "rollback_performed": false,
+  "detail": "batch applied; archive snapshots and board rows both read back from disk"
+}

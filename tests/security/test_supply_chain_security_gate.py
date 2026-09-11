@@ -44,14 +44,14 @@ def test_npm_audit_passes(monkeypatch) -> None:
     assert "PASS" in verdict
 
 
-def test_pip_audit_passes() -> None:
-    res = subprocess.run(
-        ["uv", "run", "--with", "pip-audit", "pip-audit", "--local"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-    )
-    assert res.returncode == 0, f"pip-audit failed with output:\n{res.stdout}\n{res.stderr}"
+def test_npm_audit_gate_is_wired() -> None:
+    package_json = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+    assert "npm_audit_gate.py" in package_json["scripts"]["audit:security"]
+
+
+def test_pip_audit_gate_is_wired() -> None:
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    assert "pip_audit_gate.py" in makefile
 
 
 def test_secrets_scan_passes() -> None:
@@ -366,7 +366,13 @@ def test_npm_audit_gate_rejects_report_without_severity_counts() -> None:
 def test_npm_audit_gate_retries_transport_failures_before_giving_up(monkeypatch) -> None:
     gate = _audit_gate()
     attempts: list[int] = []
-    transport = gate.AuditOutcome(gate.UNAVAILABLE, None, "registry error (statusCode=503)")
+    # Build the transport failure through the real classifier: retrying is now
+    # reserved for failures it marks transient, so a hand-made outcome would
+    # test the loop against a shape the gate never actually produces.
+    transport = gate.classify_audit_output(
+        json.dumps({"statusCode": 503, "message": "Service Unavailable"}), ""
+    )
+    assert transport.retryable, "a 503 must be classified as a retryable transport failure"
     healthy = gate.classify_audit_output(_report_json(), "")
 
     def fake_run(cwd=gate.ROOT, timeout=1.0):
@@ -398,12 +404,23 @@ def test_npm_audit_gate_stops_retrying_once_a_report_arrives(monkeypatch) -> Non
 
 def test_npm_audit_gate_exhausted_retries_stay_closed(monkeypatch) -> None:
     gate = _audit_gate()
-    transport = gate.AuditOutcome(gate.UNAVAILABLE, None, "registry error (statusCode=400)")
-    monkeypatch.setattr(gate, "run_npm_audit", lambda cwd=gate.ROOT, timeout=1.0: transport)
+    attempts: list[int] = []
+    # A 503 is retryable, so this genuinely exhausts the budget rather than
+    # stopping early on a non-transient classification.
+    transport = gate.classify_audit_output(
+        json.dumps({"statusCode": 503, "message": "Service Unavailable"}), ""
+    )
+
+    def fake_run(cwd=gate.ROOT, timeout=1.0):
+        attempts.append(1)
+        return transport
+
+    monkeypatch.setattr(gate, "run_npm_audit", fake_run)
 
     outcome = gate.audit_with_retry(attempts=3, backoff=0, sleep=lambda _s: None)
     code, verdict = gate.evaluate(outcome, "high")
 
+    assert len(attempts) == 3, "a retryable failure must use the whole attempt budget"
     assert code == gate.EXIT_AUDIT_UNAVAILABLE, "an unreachable registry must never pass the gate"
     assert code != gate.EXIT_OK, verdict
 
@@ -421,6 +438,66 @@ def test_npm_audit_gate_omits_dev_dependencies() -> None:
     """The gate audits the production tree only, matching the original command."""
     source = (ROOT / "delivery_toolchain/security/npm_audit_gate.py").read_text(encoding="utf-8")
     assert '"--omit=dev"' in source
+
+
+# --- pip audit gate: vulnerability database transport failures must fail closed ---
+
+
+def _pip_audit_gate():
+    sys.path.insert(0, str(ROOT))
+    from delivery_toolchain.security import pip_audit_gate
+
+    return pip_audit_gate
+
+
+def _pip_report_json(deps: list[dict]) -> str:
+    return json.dumps({"dependencies": deps, "fixes": []})
+
+
+def test_pip_audit_gate_fails_closed_on_vulnerabilities() -> None:
+    gate = _pip_audit_gate()
+    payload = _pip_report_json(
+        [
+            {
+                "name": "insecure-pkg",
+                "version": "1.0.0",
+                "vulns": [{"id": "PYSEC-2026-001", "description": "critical flaw"}],
+            }
+        ]
+    )
+    outcome = gate.classify_pip_audit_output(payload, "")
+    assert outcome.has_report
+    code, verdict = gate.evaluate(outcome)
+    assert code == gate.EXIT_VULNERABLE
+    assert "VULNERABILITIES FOUND" in verdict
+    assert "insecure-pkg" in verdict
+
+
+def test_pip_audit_gate_passes_on_clean_report() -> None:
+    gate = _pip_audit_gate()
+    payload = _pip_report_json(
+        [{"name": "safe-pkg", "version": "2.0.0", "vulns": []}]
+    )
+    outcome = gate.classify_pip_audit_output(payload, "")
+    assert outcome.has_report
+    code, verdict = gate.evaluate(outcome)
+    assert code == gate.EXIT_OK
+    assert "PASS" in verdict
+
+
+def test_pip_audit_gate_does_not_pass_on_transport_failure() -> None:
+    gate = _pip_audit_gate()
+    for err in ("503 Service Unavailable", "HTTPSConnectionPool: Read timed out", "DNS resolution failed"):
+        outcome = gate.classify_pip_audit_output("", err)
+        assert not outcome.has_report
+        code, verdict = gate.evaluate(outcome)
+        assert code == gate.EXIT_AUDIT_UNAVAILABLE
+        assert "AUDIT UNAVAILABLE" in verdict
+
+
+def test_pip_audit_gate_is_wired_into_makefile() -> None:
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    assert "delivery_toolchain/security/pip_audit_gate.py" in makefile
 
 
 def test_npm_audit_gate_rejects_lowering_threshold_to_critical() -> None:
@@ -547,7 +624,14 @@ def test_npm_audit_gate_receipt_distinguishes_unavailable_from_vulnerabilities(
 
 
 def test_ci_does_not_execute_live_npm_audit_in_makefile() -> None:
-    """PR and merge CI do not execute live npm audit directly."""
+    """PR and merge CI do not execute live npm audit directly.
+
+    ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001 moved the live npm audit to
+    Runtime Release (deploy-dev.yml runs npm_audit_gate.py and archives its
+    receipt). A second entry point under `make security` would put a registry
+    round trip back on every product PR and leave two npm audit paths to keep
+    in agreement.
+    """
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
     lines = makefile.splitlines()
     in_dep_audit = False
@@ -564,3 +648,13 @@ def test_ci_does_not_execute_live_npm_audit_in_makefile() -> None:
     dep_audit_body = "\n".join(dep_audit_lines)
     assert "npm run audit:security" not in dep_audit_body
     assert "npm audit" not in dep_audit_body
+
+
+def test_live_npm_audit_stays_in_the_release_workflow() -> None:
+    """The single live npm audit path is the Runtime Release gate, not CI."""
+    deploy = (ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
+    assert "delivery_toolchain/security/npm_audit_gate.py" in deploy
+
+    ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "npm_audit_gate.py" not in ci
+    assert "npm run audit:security" not in ci

@@ -223,6 +223,7 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "branch_name_is_usable",
 "canonical_task_record",
 "resolve_worker_base",
+"resolve_frozen_evidence_base",
 "worker_task_branch",
 "worker_task_repository_binding",
 "worker_task_repo_root",
@@ -477,7 +478,14 @@ def reconcile_capacity_controller(
     )
     if additions:
         known = {str(task.get(task_id_field) or task.get("id") or "") for task in tasks}
-        additions = [task for task in additions if str(task.get(task_id_field) or task.get("id") or "") not in known]
+        additions = [
+            task
+            for task in additions
+            if (
+                str(task.get(task_id_field) or task.get("id") or "") not in known
+                and load_archived_task(str(task.get(task_id_field) or task.get("id") or "")) is None
+            )
+        ]
     if additions:
         status.setdefault(tasks_path, []).extend(additions)
         if not commit_canonical_task_transition(config, status):
@@ -526,7 +534,7 @@ from runtime_state import (
     replace_event_queue,
     save_runtime_state,
 )
-from task_archive import TaskResolver
+from task_archive import TaskResolver, load_archived_task
 from watch_events import (
     enqueue_runtime_events_enabled,
     queue_delivery_event,
@@ -3751,10 +3759,20 @@ def review_submission_is_complete(config: dict[str, Any], task: dict[str, Any]) 
         pr_number = 0
     task_ref = task_id.lower().replace("_", "-")
     branch_ref = expected_branch.strip("/").lower().replace("_", "-")
+    # A task may need a distinct, auditable replacement branch (for example
+    # ``task/<task-id>-clean``) while an older PR ref remains published. Accept
+    # only the task-id itself or a suffix separated by ``-``/``/``; never treat
+    # an unrelated branch that merely contains the task id as its provenance.
+    branch_task_match = (
+        branch_ref == task_ref
+        or branch_ref.endswith(f"/{task_ref}")
+        or branch_ref.startswith(f"{task_ref}-")
+        or branch_ref.startswith(f"task/{task_ref}-")
+    )
     return bool(
         task_id
         and pr_number > 0
-        and (branch_ref == task_ref or branch_ref.endswith(f"/{task_ref}"))
+        and branch_task_match
         and str(submission.get("branch") or "") == expected_branch
         and str(submission.get("base_branch") or "") == expected_base
         and re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", str(submission.get("remote_sha") or ""))
@@ -5055,6 +5073,7 @@ def requeue_task_for_ci_repair(
     requeued_head: str | None = None,
     now_ts: float | None = None,
     allow_conflicted_review: bool = False,
+    allow_failed_ci_review: bool = False,
 ) -> bool:
     return status_transition.requeue_task_for_ci_repair(
         config,
@@ -5065,6 +5084,7 @@ def requeue_task_for_ci_repair(
         requeued_head=requeued_head,
         now_ts=now_ts,
         allow_conflicted_review=allow_conflicted_review,
+        allow_failed_ci_review=allow_failed_ci_review,
     )
 
 

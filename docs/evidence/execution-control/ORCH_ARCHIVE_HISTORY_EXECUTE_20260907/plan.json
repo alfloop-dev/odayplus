@@ -1,0 +1,45 @@
+{
+  "recorded_at": "2026-09-09T16:02:59.822320+00:00",
+  "recorded_by": "Codex",
+  "status": "prepared_not_applied",
+  "coordination_task_id": "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
+  "implementation_pr": 1287,
+  "required_before_apply": [
+    "independently reviewed exact head and green CI",
+    "PR merged into dev",
+    "immutable runtime rollout via existing tool",
+    "maintenance window with no supervisor/worker/other canonical writers",
+    "fresh original snapshot and archive index baseline"
+  ],
+  "targets": [
+    {
+      "task_id": "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+      "expected_snapshot_sha256": "2f1436d107dd1b13111db3550b1b7566c2db69e90bd8a757cf33a085a1237114",
+      "reason": "撤回錯誤歷史完成判定：原驗收要求缺少權威裁決時保持 blocked；目前沒有適用的 Human/Ops 裁決證據。",
+      "evidence_ref": "https://github.com/alfloop-dev/odayplus/blob/af6b027439f2525cd03e78b5720f6cef855869ff/docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_disposition_corrections_20260909.json",
+      "observed_original_status": "done"
+    },
+    {
+      "task_id": "ODP-MODELREADY-QUALITY-NULLABLE-001",
+      "expected_snapshot_sha256": "d70d96a8acae775d9babb277d033760062c84a702210d68827455fdfa1be73ea",
+      "reason": "撤回錯誤歷史完成判定：原 A4 所要求的缺值 production-entry 測試證據尚未成立；所引測試仍提供完整 quality/confidence。",
+      "evidence_ref": "https://github.com/alfloop-dev/odayplus/blob/af6b027439f2525cd03e78b5720f6cef855869ff/docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_disposition_corrections_20260909.json",
+      "observed_original_status": "done"
+    }
+  ],
+  "preserve_originals": [
+    "all existing archive snapshot bytes",
+    "archive index bytes",
+    "applied batch",
+    "applied hold",
+    "persistent checkpoint"
+  ],
+  "after_apply": [
+    "canonical show reports original done and effective blocked for both targets",
+    "runtime TaskResolver reports false dependencies for both targets",
+    "both downstream admission gates remain false",
+    "other reconstructed archives remain unaffected",
+    "restart Supervisor and record new heartbeat/code SHA",
+    "hand immutable receipts to original history execution task owner"
+  ]
+}

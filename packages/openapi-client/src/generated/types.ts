@@ -33,7 +33,7 @@ export type AVMCasePayload = {
   lease_liability?: number;
   liquidity_discount?: number;
   prediction_origin_time?: string | null;
-  quality_score?: number;
+  quality_score?: number | null;
   source_snapshot_ids?: string[];
   store_id: string;
   working_capital?: number;
@@ -940,6 +940,11 @@ export type JobReceipt = {
   version: number;
 };
 
+/** JobRetryPayload */
+export type JobRetryPayload = {
+  retry_scope?: string;
+};
+
 /** JobStatus */
 export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "PARTIAL";
 
@@ -1480,6 +1485,8 @@ export type RebalanceStore = {
   avmP10?: number | null;
   avmP50?: number | null;
   avmP90?: number | null;
+  avmQualityDisposition?: string | null;
+  avmQualityScoreStatus?: string | null;
   avmRequestId?: string | null;
   avmReserve?: string | null;
   avmSnapshotId?: string | null;
@@ -2087,6 +2094,7 @@ export const API_PATHS = {
   "/api/v1/jobs": ["POST"],
   "/api/v1/jobs/{job_id}": ["GET"],
   "/api/v1/jobs/{job_id}/receipt": ["GET"],
+  "/api/v1/jobs/{job_id}/retries": ["POST"],
   "/api/v1/jobs/{job_id}/retry": ["POST"],
   "/api/v1/learninghub/dataset-snapshots": ["POST"],
   "/api/v1/learninghub/dataset-snapshots/{dataset_snapshot_id}/triage": ["GET", "POST"],

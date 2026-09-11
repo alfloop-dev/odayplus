@@ -1,0 +1,16 @@
+### local merge containment on origin/dev (596b9c9a1788d952811a2bf8d4bba8a4e4d76b12)
+  66244b30c2615dcad8373e03fff096e298d21e98: contained in origin/dev
+     subject: Merge pull request #1222 from alfloop-dev/task/ODP-DRIFT-DEP-REMOVE-002
+     committed: 2026-09-06T05:31:37+00:00
+  eed8d51bb8a18c677baa25ab30a536cc576ae5fe: contained in origin/dev
+     subject: Merge pull request #1170 from alfloop-dev/task/ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001
+     committed: 2026-09-05T15:43:25+00:00
+
+### merged-inventory disclosure re-check: declared artifact tests/models/evidently_baseline_support.py
+  ABSENT at 66244b30c2615dcad8373e03fff096e298d21e98
+  ABSENT at 66244b30c2615dcad8373e03fff096e298d21e98^1
+  ABSENT at 66244b30c2615dcad8373e03fff096e298d21e98^2
+  ABSENT at origin/dev
+
+### nltk presence at origin/dev (596b9c9a)
+  uv.lock nltk entries: 0

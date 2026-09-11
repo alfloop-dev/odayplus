@@ -64,9 +64,15 @@
             "title": "Prediction Origin Time"
           },
           "quality_score": {
-            "default": 1.0,
-            "title": "Quality Score",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quality Score"
           },
           "source_snapshot_ids": {
             "items": {
@@ -4575,6 +4581,17 @@
         "title": "JobReceipt",
         "type": "object"
       },
+      "JobRetryPayload": {
+        "properties": {
+          "retry_scope": {
+            "default": "FAILED_ONLY",
+            "title": "Retry Scope",
+            "type": "string"
+          }
+        },
+        "title": "JobRetryPayload",
+        "type": "object"
+      },
       "JobStatus": {
         "enum": [
           "QUEUED",
@@ -7760,6 +7777,28 @@
               }
             ],
             "title": "Avmp90"
+          },
+          "avmQualityDisposition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avmqualitydisposition"
+          },
+          "avmQualityScoreStatus": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avmqualityscorestatus"
           },
           "avmRequestId": {
             "anyOf": [
@@ -23049,6 +23088,127 @@
         "summary": "Get Job Receipt",
         "tags": [
           "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/jobs/{job_id}/retries": {
+      "post": {
+        "operationId": "create_job_retry_api_v1_jobs__job_id__retries_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/JobRetryPayload"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Job Retry Api V1 Jobs  Job Id  Retries Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Create Job Retry",
+        "tags": [
+          "jobs"
         ]
       }
     },

@@ -7,6 +7,7 @@ This refactor re-applies the intent from tag `archive/codex-orchestrator-dispatc
 ## Public Helpers
 
 - `dispatch_reason_priority(reason)` returns the current execution dispatch order: review wakeups first, then owner finalize, owner in-progress, and owner ready work. Unknown reasons return `None`.
+- `dispatch_priority_reason(priority)` reads that order backwards, so a caller holding a lane priority (what `dispatch_priority_for_task` returns) can ask role/provider policy about it without restating the mapping. Unknown priorities return `None`.
 - `is_execution_dispatch_reason(reason)` recognizes only execution task wake reasons and excludes coordination or discussion-planning wakeups.
 - `normalized_status_set(values, default)` lowercases configured status values and uses `default` only when `values is None`.
 - `ready_dispatch_settings(config)` returns the `ready_dispatcher` settings with current supervisor defaults filled in.

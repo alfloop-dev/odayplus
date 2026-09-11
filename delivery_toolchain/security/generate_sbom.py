@@ -24,7 +24,18 @@ UV_LOCK = ROOT / "uv.lock"
 PACKAGE_LOCK = ROOT / "package-lock.json"
 PYPROJECT = ROOT / "pyproject.toml"
 
-FIRST_PARTY_PREFIXES = ("@oday-plus/", "oday-plus")
+# Our own packages: the `@oday-plus` scope plus the monorepo root name.
+# Matched as a scope and an exact name rather than a bare string prefix, so an
+# unrelated registry package called `oday-plus-anything` cannot inherit the
+# first-party exclusion and disappear from the catalogue.
+FIRST_PARTY_SCOPE = "@oday-plus/"
+FIRST_PARTY_ROOT_NAMES = frozenset({"oday-plus"})
+
+
+def is_first_party(name: str) -> bool:
+    """True only for our own packages: the @oday-plus scope or the root name."""
+    return name.startswith(FIRST_PARTY_SCOPE) or name in FIRST_PARTY_ROOT_NAMES
+
 
 CONTAINER_BASE_IMAGES = [
     "python:3.12-slim",
@@ -288,13 +299,21 @@ def generate_sbom() -> dict[str, Any]:
             for pkg_path, pkg_info in packages.items():
                 if not pkg_path:  # Root workspace
                     continue
-                pkg_name = pkg_path.replace("node_modules/", "")
-                if "/" in pkg_name and not pkg_name.startswith("@"):
-                    pkg_name = pkg_name.split("/")[-1]
+                if "node_modules/" in pkg_path:
+                    pkg_name = pkg_path.split("node_modules/")[-1]
+                    if "/" in pkg_name and not pkg_name.startswith("@"):
+                        pkg_name = pkg_name.split("/")[-1]
+                else:
+                    # A workspace member is keyed by its directory, not by its
+                    # package name. Splitting that directory apart renames
+                    # `@oday-plus/ui` to `ui`, which hides it from the
+                    # first-party test above and mints `pkg:npm/ui@0.1.0` --
+                    # a purl that belongs to an unrelated public package.
+                    pkg_name = str(pkg_info.get("name") or pkg_path.split("/")[-1])
                 version = pkg_info.get("version")
                 if not version or pkg_info.get("link"):
                     continue
-                if pkg_name.startswith(FIRST_PARTY_PREFIXES):
+                if is_first_party(pkg_name):
                     continue
 
                 purl = f"pkg:npm/{pkg_name}@{version}"
@@ -349,13 +368,24 @@ def generate_sbom() -> dict[str, Any]:
 
                 components.append(comp)
 
-            # Direct dependencies of root npm packages
-            root_npm = packages.get("", {})
-            for d in root_npm.get("dependencies", {}):
-                if not d.startswith(FIRST_PARTY_PREFIXES):
-                    for p_path, p_url in npm_purls_by_pkg_path.items():
-                        if p_path == f"node_modules/{d}":
-                            root_depends_on.add(p_url)
+            def _resolve_npm_purl(dep_name: str, requester_path: str = "") -> str | None:
+                if requester_path and f"{requester_path}/node_modules/{dep_name}" in npm_purls_by_pkg_path:
+                    return npm_purls_by_pkg_path[f"{requester_path}/node_modules/{dep_name}"]
+                if f"node_modules/{dep_name}" in npm_purls_by_pkg_path:
+                    return npm_purls_by_pkg_path[f"node_modules/{dep_name}"]
+                for p_path, p_url in npm_purls_by_pkg_path.items():
+                    if p_path.endswith(f"node_modules/{dep_name}"):
+                        return p_url
+                return None
+
+            # Direct dependencies of root npm package and workspace members
+            for pkg_path, pkg_info in packages.items():
+                if not pkg_path or "node_modules" not in pkg_path:
+                    for d in pkg_info.get("dependencies", {}):
+                        if not is_first_party(d):
+                            resolved_purl = _resolve_npm_purl(d, pkg_path)
+                            if resolved_purl:
+                                root_depends_on.add(resolved_purl)
         except Exception as e:
             print(f"Warning: Failed to parse package-lock.json: {e}", file=sys.stderr)
 
@@ -420,7 +450,7 @@ def generate_sbom() -> dict[str, Any]:
                 version = pkg.get("version")
                 if not name or not version:
                     continue
-                if name.startswith(FIRST_PARTY_PREFIXES):
+                if is_first_party(name):
                     continue
 
                 norm_name = re.sub(r"[-_.]+", "-", name).lower()

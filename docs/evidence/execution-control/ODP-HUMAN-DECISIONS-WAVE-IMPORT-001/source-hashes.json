@@ -1,0 +1,10 @@
+{
+  "proposed-wave.json": "dca1a58c0b1e312604bcd384c8df7d0df8e8383ad93bce0c47bd69ec068a6089",
+  "import_wave.py": "b03d0502f48c598747eb8f84614492c1f6d548ca6b9163e493c86fca23c3912a",
+  "root-import-receipt.json": "c000671f04bb25b9c1bdb4d29da9d16d2559d57f7f64aadec2e0f24cadc28cd3",
+  "runtime-rollout-before.json": "3e15ed60e76d01fae318fa99cdb49b1fcd2ef666cb3939d11c686690cfc000a6",
+  "runtime-rollout-after.json": "2fb9ec64347737b2a8384e77be631b1f0d76525aed15de1554137a3eacf11916",
+  "publication_plan_commit": "be04fe7954d3414f024901e034caacd95ae81538",
+  "publication_pr": 1247,
+  "publication_approved_head": "c7d9735834daa670baa64c54f25b5fb0dd25ceaf"
+}

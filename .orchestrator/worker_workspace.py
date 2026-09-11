@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 from common import normalize_agent_id, utc_now
-from dispatch_policy import REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY, REASON_REVIEW_READY, worker_logical_dispatch_agent_id
+from dispatch_policy import REASON_HELPER_CLAIM, REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY, REASON_REVIEW_READY, worker_logical_dispatch_agent_id
 import verification_evidence
 from runtime_state import ACTIVE_WORKER_STATUSES
 
@@ -175,6 +175,38 @@ def resolve_worker_base(
     resolved = WorkerBaseResolution(repository_id, branch, sha, f"origin/{branch}")
     cache[key] = resolved
     return resolved, None
+
+
+@_entrypoint
+def resolve_frozen_evidence_base(
+    repo_root: Path,
+    *,
+    repository_id: str,
+    default_branch: str,
+    branch: str,
+    sha: Any,
+) -> tuple[WorkerBaseResolution | None, str | None]:
+    """Resolve a canonical evidence task's fixed base without moving dev.
+
+    Require an existing task branch descended from the exact commit. This is
+    a workspace base selection only; it grants no evidence, review or release
+    approval and does not replace the candidate ancestry validator.
+    """
+    if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
+        return None, "invalid_frozen_evidence_base_sha: expected full lowercase commit SHA"
+    if _git_commit_oid(repo_root, sha) != sha:
+        return None, f"frozen_evidence_base_unavailable:{sha}"
+    head = (
+        _git_commit_oid(repo_root, f"refs/heads/{branch}")
+        or _git_commit_oid(repo_root, f"refs/remotes/origin/{branch}")
+    )
+    if not head:
+        return None, f"frozen_evidence_task_branch_unavailable:{branch}"
+    rc, _ = _git_output(repo_root, "merge-base", "--is-ancestor", sha, head)
+    if rc != 0:
+        return None, f"frozen_evidence_base_not_task_ancestor:{sha}:{head}"
+    return WorkerBaseResolution(repository_id, default_branch, sha, sha), None
+
 
 @_entrypoint
 def _task_id_slug(task_id: str | None) -> str:
@@ -1833,11 +1865,8 @@ def prepare_worker_workspace(
     # fell back to a derived name and the default repository. Read the canonical
     # record instead, and keep the snapshot only as the fallback.
     task_metadata = request.metadata.get("task")
-    task_record = canonical_task_record(
-        config,
-        workspace_task_id,
-        task_metadata if isinstance(task_metadata, dict) else None,
-    )
+    canonical_record = canonical_task_record(config, workspace_task_id)
+    task_record = canonical_record or (task_metadata if isinstance(task_metadata, dict) else None)
     binding = worker_task_repository_binding(config, task_record)
     repo_root = binding.root
     repo_root_source = binding.source if binding.resolved else (binding.error or binding.source)
@@ -1871,17 +1900,37 @@ def prepare_worker_workspace(
         repo_root,
         fallback=binding.repo_id or "pantheon",
     )
-    base, base_error = resolve_worker_base(
-        repo_root,
-        repository_id=repository_id,
-        default_branch=binding.default_branch,
-        base_cache=base_cache,
-        network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
+    branch = worker_task_branch(config, workspace_task_id, task_record)
+    frozen_evidence = (
+        str(request.reason or "") in {REASON_OWNED_READY, REASON_OWNED_IN_PROGRESS, REASON_HELPER_CLAIM}
+        and isinstance(task_record, dict)
+        and "frozen_evidence_base_sha" in task_record
     )
+    if frozen_evidence:
+        if canonical_record is None:
+            base, base_error = None, "frozen_evidence_base_requires_canonical_task"
+        else:
+            base, base_error = resolve_frozen_evidence_base(
+                repo_root,
+                repository_id=repository_id,
+                default_branch=binding.default_branch,
+                branch=branch,
+                sha=canonical_record["frozen_evidence_base_sha"],
+            )
+    else:
+        # Review/approved-head pinning and ordinary tasks keep their existing
+        # registry base path. A stale request snapshot cannot pin a task base.
+        base, base_error = resolve_worker_base(
+            repo_root,
+            repository_id=repository_id,
+            default_branch=binding.default_branch,
+            base_cache=base_cache,
+            network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
+        )
     if base is None:
         message = (
             f"Cannot lease isolated worker worktree for {workspace_task_id}: "
-            f"failed to resolve fresh registry base ({base_error or 'unknown error'})."
+            f"failed to resolve worker base ({base_error or 'unknown error'})."
         )
         write_activity_log(
             config,
@@ -1898,7 +1947,6 @@ def prepare_worker_workspace(
         )
         return False, message
 
-    branch = worker_task_branch(config, workspace_task_id, task_record)
     worktree_path = worker_task_worktree_path(
         config,
         workspace_task_id,
@@ -2214,6 +2262,18 @@ def prepare_worker_workspace(
                         "worktree_refresh_status": refresh_status,
                     }
                 )
+
+    if frozen_evidence:
+        rc, _ = _git_output(worktree_path, "merge-base", "--is-ancestor", base.sha, "HEAD")
+        if rc != 0:
+            return False, "Cannot lease frozen evidence task: base is not an ancestor of workspace HEAD."
+        request.metadata["frozen_evidence_base_sha"] = base.sha
+        request.message = (
+            f"FROZEN EVIDENCE BASE: canonical task branch is {branch}; fixed candidate is {base.sha}. "
+            "Keep this branch's evidence-only history. Do not merge or rebase moving dev into it, "
+            "and do not create a replacement branch from dev. Independent review, required CI "
+            "and all candidate/release validators still apply.\n\n"
+        ) + request.message
 
     # The workspace is the task's own repository; the status root is not. It
     # names the fleet that owns ai-status.json, the approval queue and the
