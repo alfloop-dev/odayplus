@@ -5,7 +5,7 @@
   "phase": "History Recovery — executable acceptance reconciliation",
   "owner": "Antigravity5",
   "reviewer": "Codex2",
-  "recorded_at": "2026-09-11T11:03:00Z",
+  "recorded_at": "2026-09-11T11:45:00Z",
   "reconciliation_target": {
     "repository": "alfloop-dev/odayplus",
     "continuation_branch": "task/ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001-RECOVERY-20260911",
@@ -74,24 +74,75 @@
       "description": "Approved by assigned reviewer Antigravity3 (task-review-gate)"
     }
   },
+  "dependencies_transition": {
+    "before_dependencies": [
+      {
+        "task_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+        "status": "blocked",
+        "title": "補齊 ephemeral staging 的受治理 foundation 與 durable state"
+      },
+      {
+        "task_id": "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
+        "status": "done",
+        "title": "Release rollback 與 masked snapshot handoff"
+      },
+      {
+        "task_id": "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+        "status": "blocked",
+        "title": "產生可驗證的 EMGI masked release snapshot artifact"
+      }
+    ],
+    "after_dependencies": [],
+    "transition_rationale": "原 Wave 2 排程中此 3 項依賴係針對 end-to-end ephemeral staging live 部署所列。本任務 (ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001 / PR #1041) 本質為程式與 workflow 契約整合（.github/workflows/deploy-dev.yml、product_ops/deployment/staging_lifecycle.py 與測試），不包含 live cloud 部署、亦不建立線上資源。ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001 歷史已完成；而未完成之 live foundation (ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001) 與資料平台 snapshot (DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001) 係作為下游 live 任務 (ODP-EPHEMERAL-STAGING-ROLLOUT-001) 之阻塞條件，非本純 code/contract 任務之必要前置。因此復原記錄依真實 scope 將 dependencies 收斂為 []。"
+  },
+  "dependents_mapping_and_cycle_check": {
+    "downstream_dependents": [
+      {
+        "task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+        "status": "blocked",
+        "title": "執行 Ephemeral Staging 首次端到端發布演練與驗證",
+        "depends_on_this_task": true,
+        "gated_by_live_release": true,
+        "live_gates_note": "ODP-EPHEMERAL-STAGING-ROLLOUT-001 維持 blocked，其所需的 live foundation IaC、EMGI snapshot、Human GO 與 cloud deployment 權限未因本 code 任務驗收通過而放行。"
+      }
+    ],
+    "cycle_check": {
+      "has_cycle": false,
+      "dag_topology": "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001 -> ODP-EPHEMERAL-STAGING-ROLLOUT-001 (acyclic DAG)"
+    }
+  },
   "gaps_resolution": {
     "a3_iac_ci_collection_gap": {
-      "description": "infra/terraform/tests/test_ephemeral_staging.py was delivered in PR #1041 but originally was not collected by CI jobs on dev.",
-      "resolution": "Fully resolved by ODP-STAGING-IAC-CI-COLLECTION-001 (PR #1291). Added infra target to orchestrator job and pyproject.toml, pinned Terraform 1.9.8, added offline provider override and fail-closed harness, and introduced 24 collection and mutation tests in tests/tooling/test_staging_iac_ci_collection.py.",
-      "evidence_ref": "docs/evidence/execution-control/ODP-STAGING-IAC-CI-COLLECTION-001/README.md"
+      "description": "infra/terraform/tests/test_ephemeral_staging.py 於 PR #1041 交付，但歷史上未被 dev 上的 CI job 收集執行。",
+      "resolution": "由 ODP-STAGING-IAC-CI-COLLECTION-001 (PR #1291) 完整修復：在 .github/workflows/ci.yml 的 orchestrator job 納入 infra target、pyproject.toml 加入 testpaths，釘死 Terraform 1.9.8，實作 offline provider override 與 fail-closed harness，並於 tests/tooling/test_staging_iac_ci_collection.py 建立 24 項收集守門與 mutation 測試。",
+      "pinned_pr": {
+        "pr_number": 1291,
+        "url": "https://github.com/alfloop-dev/odayplus/pull/1291",
+        "head_sha": "726065c3aec57147f37902b94d754234dd55e25f",
+        "merge_sha": "025323f36d05c81f40085ba80c87f370d7c49c83",
+        "orchestrator_ci_url": "https://github.com/alfloop-dev/odayplus/actions/runs/34514563856/job/102996659589"
+      }
     },
     "a5_receipt_generation_capability_gap": {
-      "description": "Historical inventory noted that PR #1041 did not carry generated staging receipt files for A5.",
-      "resolution": "A5 states that API, Web, worker, scheduler, migration, one-shot, backup restore, and rollback rehearsal can all produce secret-free receipts from the same state machine. This capability requirement is verified by tests/ops/test_ephemeral_staging_lifecycle.py covering all 9 rehearsal stages (REHEARSAL_STAGE_NAMES) and secret_values_redacted=True, and locally demonstrated via verify_staging_lifecycle_receipts.py generating sample-secret-free-verify-receipt.json. As a code/workflow integration task, live staging deployment is not part of this task scope and no live cloud writes are inferred.",
-      "evidence_ref": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001/verify_staging_lifecycle_receipts.py"
+      "description": "歷史盤點註記 PR #1041 未帶已產生的 staging receipt 檔案。",
+      "resolution": "A5 條款原文為「API Web worker scheduler migration one-shot backup restore rollback rehearsal 均可由同一狀態機產生 secret-free receipts」，要求狀態機具備收據生成能力。由 PR #1298 (ODP-RUNTIME-RELEASE-SINGLE-PATH-001) 整合之單一狀態機與 tests/ops/test_ephemeral_staging_lifecycle.py 96 項契約測試驗證，並由 sample-secret-free-verify-receipt.json 明確展示 dry_run=true, remote_state_verified=false, secret_values_redacted=true 之契約收據。本任務不要求亦不推斷 live 雲端部署。",
+      "pinned_single_path_pr": {
+        "pr_number": 1298,
+        "url": "https://github.com/alfloop-dev/odayplus/pull/1298",
+        "head_sha": "adfb5cb5ce05c5f4ddbdfc809d0dad828e6937de",
+        "merge_sha": "50d932207bd57c23663f6121586a4de7149f70fd"
+      },
+      "sample_receipt_ref": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001/sample-secret-free-verify-receipt.json"
     }
   },
   "readback_evidence_sources": {
     "pr_1041_merge_commit": "462c8cd4ff2569cec0f2c383d9e601c5bdbec715",
     "pr_1041_exact_head": "fada677569265ed258649b841e5a67fe7bb5dd80",
-    "iac_ci_collection_pr": "https://github.com/alfloop-dev/odayplus/pull/1291",
-    "single_path_reconciliation_pr": "https://github.com/alfloop-dev/odayplus/pull/1298",
-    "offline_verification_script": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001/verify_staging_lifecycle_receipts.py",
+    "pr_1291_head_sha": "726065c3aec57147f37902b94d754234dd55e25f",
+    "pr_1291_merge_sha": "025323f36d05c81f40085ba80c87f370d7c49c83",
+    "pr_1291_ci_url": "https://github.com/alfloop-dev/odayplus/actions/runs/34514563856/job/102996659589",
+    "pr_1298_head_sha": "adfb5cb5ce05c5f4ddbdfc809d0dad828e6937de",
+    "pr_1298_merge_sha": "50d932207bd57c23663f6121586a4de7149f70fd",
     "sample_verify_receipt": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001/sample-secret-free-verify-receipt.json"
   },
   "acceptance_criteria_reconciliation": [
@@ -108,8 +159,8 @@
       ],
       "status": "met",
       "status_zh": "已滿足",
-      "evidence": ".github/workflows/deploy-dev.yml and tests/ops/test_deploy_workflow_contract.py delivered in PR #1041 (merge commit 462c8cd4ff25); verified that deploy-dev.yml invokes staging_lifecycle.py create/verify/hold/cleanup directly without second wrapper entrypoints; exact-head product CI success.",
-      "boundary": "Verified workflow invocation contract and single entrypoint; no secondary deployment workflows introduced."
+      "evidence": ".github/workflows/deploy-dev.yml 與 tests/ops/test_deploy_workflow_contract.py 於 PR #1041 交付（merge commit 462c8cd4ff25）；驗證 deploy-dev.yml 直接調用 staging_lifecycle.py create/verify/hold/cleanup 四大進入點，無額外 workflow wrapper；exact-head product CI 結論 success。",
+      "boundary": "驗證 workflow 呼叫契約與單一進入點；未新增第二套部署 workflow。"
     },
     {
       "index": 2,
@@ -122,8 +173,8 @@
       ],
       "status": "met",
       "status_zh": "已滿足",
-      "evidence": "Immutable release identity bundle verified by tests/ops/test_deploy_workflow_contract.py and tests/ops/test_ephemeral_staging_lifecycle.py (e.g. test_rerun_create_rejects_mismatched_candidate_sha_and_preserves_existing_state, test_rerun_create_rejects_mismatched_manifest_digest, test_immutable_release_identity_detects_worker_and_scheduler_image_mismatch); exact-head CI success.",
-      "boundary": "Verified handoff contract and rebuild prohibition in contract tests; no live image rebuild attempted."
+      "evidence": "不可變發布身分綁定由 tests/ops/test_deploy_workflow_contract.py 與 tests/ops/test_ephemeral_staging_lifecycle.py（如 test_rerun_create_rejects_mismatched_candidate_sha_and_preserves_existing_state、test_rerun_create_rejects_mismatched_manifest_digest、test_immutable_release_identity_detects_worker_and_scheduler_image_mismatch）驗證；exact-head CI success。",
+      "boundary": "契約測試驗證 handoff 綁定與禁止 rebuild 規則；無 live image rebuild 操作。"
     },
     {
       "index": 3,
@@ -138,8 +189,8 @@
       ],
       "status": "met",
       "status_zh": "已滿足",
-      "evidence": "REQUIRED_STAGING_OUTPUTS in product_ops/deployment/staging_lifecycle.py defines authoritative output mapping; verified by tests/ops/test_ephemeral_staging_lifecycle.py and infra/terraform/tests/test_ephemeral_staging.py (now collected in CI via PR #1291 ODP-STAGING-IAC-CI-COLLECTION-001); exact-head CI success.",
-      "boundary": "Outputs authority contract verified; foundation inputs separated from release-scoped resources."
+      "evidence": "product_ops/deployment/staging_lifecycle.py 之 REQUIRED_STAGING_OUTPUTS 定義權威 output 映射；由 tests/ops/test_ephemeral_staging_lifecycle.py 與 infra/terraform/tests/test_ephemeral_staging.py（經 PR #1291 ODP-STAGING-IAC-CI-COLLECTION-001 補齊 CI 收集，head 726065c3, merge 025323f3, CI success https://github.com/alfloop-dev/odayplus/actions/runs/34514563856/job/102996659589）完整驗證；exact-head CI success。",
+      "boundary": "Outputs authority 契約核實；長期 foundation inputs 與 release-scoped 隔離。"
     },
     {
       "index": 4,
@@ -152,22 +203,24 @@
       ],
       "status": "met",
       "status_zh": "已滿足",
-      "evidence": "tests/ops/test_ephemeral_staging_lifecycle.py::EphemeralStagingVerificationAndHoldTests::test_verify_ephemeral_staging_dev_identity_rejection and test_live_executor_rejects_arbitrary_operator_identity enforce that dev smoke operator or arbitrary identities are rejected; exact-head CI success.",
-      "boundary": "Negative identity enforcement verified; no live IAM credential assumed."
+      "evidence": "tests/ops/test_ephemeral_staging_lifecycle.py::EphemeralStagingVerificationAndHoldTests::test_verify_ephemeral_staging_dev_identity_rejection 與 test_live_executor_rejects_arbitrary_operator_identity 嚴格拒絕 dev smoke operator 或未宣告身分；exact-head CI success。",
+      "boundary": "負向身分安全規則驗證；未假冒或使用線上 IAM credentials。"
     },
     {
       "index": 5,
       "criterion": "API Web worker scheduler migration one-shot backup restore rollback rehearsal 均可由同一狀態機產生 secret-free receipts",
       "classes": [
-        "T"
+        "T",
+        "R"
       ],
       "classes_zh": [
-        "可由測試證明"
+        "可由測試證明",
+        "runtime／契約能力"
       ],
       "status": "met",
       "status_zh": "已滿足",
-      "evidence": "REHEARSAL_STAGE_NAMES in staging_lifecycle.py implements all 9 stages (db_expand_migration, data_platform_snapshot, api_web_authenticated_smoke, worker_idempotency, scheduler_oneshot, backup_restore_drill, rollback_rehearsal, public_egress_denied_probe, external_providers_disabled_readback); verify_ephemeral_staging produces StagingLifecycleReceipt with secret_values_redacted=True; verified by 96 tests in test_ephemeral_staging_lifecycle.py and demonstrated offline via verify_staging_lifecycle_receipts.py generating sample-secret-free-verify-receipt.json; exact-head CI success.",
-      "boundary": "Verified state machine receipt generation capability across all 9 rehearsal stages; does not assert executed live staging deployment."
+      "evidence": "product_ops/deployment/staging_lifecycle.py::REHEARSAL_STAGE_NAMES 實作全部 9 項演練階段；verify_ephemeral_staging() 產生帶有 secret_values_redacted=True 與 identity_scope=release_scoped_least_privilege 之 StagingLifecycleReceipt；由 test_ephemeral_staging_lifecycle.py 96 項測試覆蓋，並由 sample-secret-free-verify-receipt.json（dry_run=true, remote_state_verified=false）證明收據生成能力；exact-head CI success。",
+      "boundary": "驗證狀態機具備產生 9 項演練階段之 secret-free 收據能力；不推斷已執行 live 雲端部署。"
     },
     {
       "index": 6,
@@ -182,8 +235,8 @@
       ],
       "status": "met",
       "status_zh": "已滿足",
-      "evidence": "infra/terraform/modules/ephemeral_staging/main.tf and tests/ops/test_ephemeral_staging_lifecycle.py & infra/terraform/tests/test_ephemeral_staging.py verify default-deny egress configuration and sources disabled flags in staging receipts; exact-head CI success.",
-      "boundary": "Verified IaC module and lifecycle metadata default-deny postures; external sources remain disabled."
+      "evidence": "infra/terraform/modules/ephemeral_staging/main.tf 與 tests/ops/test_ephemeral_staging_lifecycle.py & infra/terraform/tests/test_ephemeral_staging.py 驗證 default-deny VPC egress 與 external sources disabled 設定；exact-head CI success。",
+      "boundary": "IaC 模組與狀態機預設值 default-deny 姿勢驗證；第三方來源維持 disabled。"
     },
     {
       "index": 7,
@@ -196,8 +249,8 @@
       ],
       "status": "met",
       "status_zh": "已滿足",
-      "evidence": "tests/ops/test_ephemeral_staging_lifecycle.py (test_cleanup_exact_label_matching_and_safety, test_create_failure_triggers_exact_cleanup, test_scan_orphans_detects_expired_and_unmanaged, ReleaseScopedAutoCleanupTests, FailClosedReviewBlockerRegressionTests); exact-head CI success.",
-      "boundary": "Cleanup label-matching and fail-closed policies verified via contract tests; no destructive live cloud cleanup executed."
+      "evidence": "tests/ops/test_ephemeral_staging_lifecycle.py (test_cleanup_exact_label_matching_and_safety, test_create_failure_triggers_exact_cleanup, test_scan_orphans_detects_expired_and_unmanaged, ReleaseScopedAutoCleanupTests, FailClosedReviewBlockerRegressionTests)；exact-head CI success。",
+      "boundary": "清理標籤精確匹配與 fail-closed 政策經由契約測試驗證；未執行破壞性線上清理。"
     },
     {
       "index": 8,
@@ -210,8 +263,8 @@
       ],
       "status": "met",
       "status_zh": "已滿足",
-      "evidence": "tests/ops/test_deploy_workflow_contract.py, tests/ops/test_workflow_expression_contexts.py, and tests/ops/test_ephemeral_staging_lifecycle.py execute negative tests asserting failure upon lifecycle bypass, static service names, or dev identity reuse; exact-head CI success.",
-      "boundary": "Negative contract assertions verified; failure conditions actively enforced."
+      "evidence": "tests/ops/test_deploy_workflow_contract.py、tests/ops/test_workflow_expression_contexts.py 與 tests/ops/test_ephemeral_staging_lifecycle.py 包含負向測試，確保繞過 lifecycle、使用靜態名稱或 dev 身分時必然失敗；exact-head CI success。",
+      "boundary": "負向契約斷言驗證；違規狀況被主動阻擋。"
     },
     {
       "index": 9,
@@ -225,9 +278,9 @@
         "執行過程約束"
       ],
       "status": "met",
-      "status_zh": "已滿足",
-      "evidence": "PR #1041 title \"[ReviewBus] ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001 把 ephemeral staging lifecycle 接進唯一 Runtime Release\", PR description, and docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md delivered in Chinese with explicit replacement and rollback documentation.",
-      "boundary": "Observable in PR #1041 metadata and deployment documentation."
+      "status_zh": "已滿足 (歷史狀態: process_constraint_unverifiable，現存產物可觀察)",
+      "evidence": "PR #1041 標題「[ReviewBus] ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001 把 ephemeral staging lifecycle 接進唯一 Runtime Release」、PR 說明與 docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md 均以中文交付，詳述取代關係與 rollback 機制。歷史執行流程標記為 process_constraint_unverifiable，交付產物為可觀察 met。",
+      "boundary": "可於 PR #1041 標頭與部署文件直接觀察。"
     }
   ],
   "summary": {
@@ -237,6 +290,10 @@
     "criteria_unmet": 0,
     "a3_iac_ci_collection_gap_resolved": true,
     "a5_receipt_generation_capability_verified": true,
+    "dependencies_before_count": 3,
+    "dependencies_after_count": 0,
+    "downstream_dependents_count": 1,
+    "downstream_remain_blocked": true,
     "human_disposition_required": false,
     "historical_unknown_retained": true,
     "current_gate_is_not_original_approval": true,
