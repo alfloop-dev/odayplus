@@ -49,7 +49,7 @@
     1. 依循 [`docs/runbooks/supervisor-runtime-rollout.md`](file:///tmp/pantheon-worker-worktrees/pantheon/odp-orch-recorded-branch-delivery-001/docs/runbooks/supervisor-runtime-rollout.md) 第 6 節規範，確立 `scripts/orchestrator/rollout_supervisor_runtime.py` 協調者流程。
     2. 明確指定 canonical status root (`/home/lupin/odayplus`)、config path (`/home/lupin/odayplus/.orchestrator/config.json`)、乾淨 `origin/dev` source worktree 與 stable runtime link (`/home/lupin/oday-plus-supervisor-runtime-current`)。
     3. 加入真實 runtime link 與 HEAD SHA 驗證指令。
-    4. 修正健康檢查 probe：使用具有絕對路徑之唯讀 derived probe config 或明確區分 canonical state 檢查（`--repo /home/lupin/odayplus`）與 runtime Git freshness 檢查（指定 `--git-upstream origin/dev`），確保精確驗證。
+    4. 修正健康檢查 probe：使用具有絕對路徑之唯讀 derived probe config 進行統一健康與 Git freshness probe（指定 `--git-upstream origin/dev` 與 `--config-path`），確保正確 anchor canonical 狀態並精確驗證。
     5. 修正狀態指令：改用支援之 task-scoped read 指令 `show`（如 `AI_NAME=Supervisor /home/lupin/odayplus/scripts/ai-status.sh show ODP-ORCH-RECORDED-BRANCH-DELIVERY-001`）驗證 launcher 通訊，並輔以 `sync` 重新計算衍生視圖。
     6. 明確界定職責：Worker 僅於隔離工作區修復交接文件，由 Coordinator 於 PR 合併後執行 rollout，保全現場 live draft 快照與其他 worker。
 
@@ -164,36 +164,19 @@
    ```
 
 4. **執行 Supported Supervisor 健康檢查 Probe (Accurately Anchored Health & Freshness Probe)**：
-   因 live config 內之 `state_file` 與 `status_file` 為相對路徑，且 `supervisor_runtime_health.py` 將其相對於 `--repo` 解析；同時 rollout 新建之 `runtime-live-<sha>` 分支無預設 upstream，故需明確指定 `--git-upstream origin/dev` 並確保狀態路徑正確 anchor。可採以下任一標準檢驗方式：
+   因 live config 內之 `state_file` 與 `status_file` 為相對路徑，且 `supervisor_runtime_health.py` 將其相對於 `--repo` 解析；同時 rollout 新建之 `runtime-live-<sha>` 分支無預設 upstream，故需透過 derived probe config 確保狀態路徑正確 anchor 至 canonical root，並明確指定 `--git-upstream origin/dev`（`--check-git-freshness` 會附加 Git 鮮度檢查，與 supervisor 狀態健康檢查統一驗證）：
+   ```bash
+   # 1. 於 scratch/tmp 產生具絕對 canonical 狀態路徑之 probe config（不修改 canonical 設定檔）:
+   jq '.paths.state_file = "/home/lupin/odayplus/.orchestrator/state.json" | .paths.status_file = "/home/lupin/odayplus/ai-status.json"' \
+     /home/lupin/odayplus/.orchestrator/config.json > /tmp/supervisor-probe-config.json
 
-   - **方法 A：使用 Derived Probe Config 進行統一健康與 Git 鮮度驗證**
-     於 scratch/tmp 建立包含絕對 canonical 路徑之 probe config（不修改 canonical 設定檔），並針對 runtime repo 執行：
-     ```bash
-     # 產生具絕對 canonical 狀態路徑之 probe config:
-     jq '.paths.state_file = "/home/lupin/odayplus/.orchestrator/state.json" | .paths.status_file = "/home/lupin/odayplus/ai-status.json"' \
-       /home/lupin/odayplus/.orchestrator/config.json > /tmp/supervisor-probe-config.json
-
-     # 執行 runtime 統一健康與 Git freshness probe（指定 --git-upstream origin/dev）:
-     python3 /home/lupin/oday-plus-supervisor-runtime-current/scripts/supervisor_runtime_health.py \
-       --repo /home/lupin/oday-plus-supervisor-runtime-current \
-       --config-path /tmp/supervisor-probe-config.json \
-       --check-git-freshness \
-       --git-upstream origin/dev
-     ```
-
-   - **方法 B：分別執行 Canonical State 與 Runtime Git Freshness 檢查**
-     ```bash
-     # 1. 驗證 Canonical Supervisor 狀態、Heartbeat 與 Lock（anchored 在 canonical root）:
-     python3 /home/lupin/oday-plus-supervisor-runtime-current/scripts/supervisor_runtime_health.py \
-       --repo /home/lupin/odayplus \
-       --config-path /home/lupin/odayplus/.orchestrator/config.json
-
-     # 2. 驗證 Runtime Checkout 之 Git Freshness（明確指定 origin/dev upstream）:
-     python3 /home/lupin/oday-plus-supervisor-runtime-current/scripts/supervisor_runtime_health.py \
-       --repo /home/lupin/oday-plus-supervisor-runtime-current \
-       --check-git-freshness \
-       --git-upstream origin/dev
-     ```
+   # 2. 執行 runtime 統一健康與 Git freshness probe（指定 --git-upstream origin/dev 與 --config-path）:
+   python3 /home/lupin/oday-plus-supervisor-runtime-current/scripts/supervisor_runtime_health.py \
+     --repo /home/lupin/oday-plus-supervisor-runtime-current \
+     --config-path /tmp/supervisor-probe-config.json \
+     --check-git-freshness \
+     --git-upstream origin/dev
+   ```
 
 5. **以 Canonical Status Launcher 與授權身份驗證狀態系統 (Supported Status Inspection)**：
    使用 canonical `PANTHEON_STATUS_ROOT` 之 launcher 執行支援之 task-scoped read 指令 `show`，驗證 canonical launcher 與新版 runtime writer 正確通訊與解析：
