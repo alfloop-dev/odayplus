@@ -171,8 +171,8 @@
       },
       "runtime_state_readback": {
         "source_files": [
-          "/home/lupin/oday-plus-supervisor-runtime-b66d18130f3b/.orchestrator/state.json",
-          "/home/lupin/oday-plus-supervisor-runtime-b66d18130f3b/.orchestrator/config.json",
+          "/home/lupin/odayplus/.orchestrator/state.json",
+          "/home/lupin/odayplus/.orchestrator/config.json",
           "/proc/2585616/cwd"
         ],
         "collector_script": "support/handoffs/max-dispatch-20260910/archive-evidence/collect_readback.py",
@@ -328,6 +328,19 @@
         "conclusion": "success",
         "completed_at": "2026-09-06T05:35:33Z"
       }
+    },
+    "recovery_verification_receipt": {
+      "exact_command": "git diff --check 4499a2993e37b62033926b07de8d8d2e8469a6c7 339fb693d2205a575b03c537eb320547ae41e0c0",
+      "exact_head_sha": "339fb693d2205a575b03c537eb320547ae41e0c0",
+      "base_sha": "4499a2993e37b62033926b07de8d8d2e8469a6c7",
+      "observed_at": "2026-09-11T11:45:27Z",
+      "terminal_receipt_chunk_id": "8ccdc1",
+      "exit_code": 0,
+      "wall_time_seconds": 0.000022539,
+      "output": "",
+      "selection": "僅 recovery delivered diff whitespace check",
+      "execution_reason": "前輪 exit 2 whitespace failure 已有新修正，首次核對此新 head",
+      "offline_json_verification_metadata_status": "unknown"
     }
   }
 }
