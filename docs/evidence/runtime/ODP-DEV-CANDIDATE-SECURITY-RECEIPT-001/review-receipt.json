@@ -3,7 +3,7 @@
   "receipt_id": "ODP-DEV-CANDIDATE-SECURITY-REVIEW-RECEIPT-001",
   "task_id": "ODP-DEV-CANDIDATE-SECURITY-RECEIPT-001",
   "task_title": "交固定 C 的 Security Gate 證據與法務待辦邊界",
-  "created_at": "2026-09-11T00:20:00Z",
+  "created_at": "2026-09-11T00:50:00Z",
   "owner": "Antigravity4",
   "reviewer": "Codex2",
   "candidate": {
@@ -34,37 +34,37 @@
         "criterion_id": "CRIT-SEC-01",
         "name": "Secret scan passes",
         "status": "pass",
-        "evidence_ref": "Build run 34179207603 step 8 (success); manifest sources_off_attestation.zero_credentials_present: true (16 source groups audited)"
+        "evidence_ref": "Build runs 34140207274 Step 8 and 34179791241 Step 8 (step conclusion: success; raw exit code/stdout/version unknown); manifest sources_off_attestation.zero_credentials_present: true (16 source groups audited in build static contract and dev-build environment; live state unprobed/unknown)"
       },
       {
         "criterion_id": "CRIT-SEC-02",
         "name": "Dependency and SAST scans pass with no unresolved critical/high findings",
         "status": "pass",
-        "evidence_ref": "Build run 34179207603 step 9 SAST with Bandit (-r modules apps shared solver -ll --skip B301,B310,B324,B104 -x .venv,apps/data_platform/.venv, exit 0); artifact 10038492941 (npm audit 0 high/critical); pip-audit 2.10.1 on candidate lockfiles (pyproject.toml 130f024b..., uv.lock ba5c393e..., 215 deps, 0 vulns, 0 banned pkgs)"
+        "evidence_ref": "Build runs 34140207274 Step 9 and 34179791241 Step 9 Python SAST (step conclusion: success; static scanner script delivery_toolchain/security/sast_scan.py with Bandit -r modules apps shared solver -ll --skip B301,B310,B324,B104 -x .venv,apps/data_platform/.venv; raw execution exit code/version/stdout unknown); artifact 10038492941 (npm audit 0 high/critical); pip-audit 2.10.1 on candidate lockfiles (pyproject.toml 130f024b..., uv.lock ba5c393e..., 215 deps, 0 vulns, 0 banned pkgs, raw hash f32d534e0612b51171bc2b83c5d051acf9ee1e6a5ea44b50a044434962c21cd9)"
       },
       {
         "criterion_id": "CRIT-SEC-03",
         "name": "RBAC/ABAC tests pass for affected roles",
         "status": "blocked",
-        "evidence_ref": "Static auth models exist at candidate C; exact candidate C pytest execution receipts for tests/security/ are uncaptured in build receipts; CI at 95646a5c does not prove C; assigned to Security Engineering / QA"
+        "evidence_ref": "Static auth models exist at candidate C; exact candidate C pytest execution receipts for tests/security/ are uncaptured in build receipts; CI at 95646a5c does not prove C; assigned to Security Engineering / QA / Identity Team for offline execution prior to candidate-built dev admission"
       },
       {
         "criterion_id": "CRIT-SEC-04",
         "name": "Sensitive export and audit controls checked",
         "status": "blocked",
-        "evidence_ref": "6-file egress source contract digest sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09 and 16 sources off verified; dynamic export/PII/audit test execution and live egress readback unevidenced on C; assigned to Security / Data Governance / Release Ops"
+        "evidence_ref": "6-file egress source contract digest sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09 and 16 sources off verified; dynamic export/PII/audit test execution unevidenced on C (assigned offline prior to dev admission) and live egress readback unevidenced (assigned to Release Ops during dev admission)"
       },
       {
         "criterion_id": "CRIT-SEC-05",
         "name": "IAM and infrastructure changes reviewed",
         "status": "blocked",
-        "evidence_ref": "Environment receipt 10038486296 (11 vars resolved, 0 missing) and target absence receipt 10038569730 (5 Cloud Run resources absent) verified; formal IAM least-privilege review of roles/principals/bindings and staging IaC unevidenced on C; assigned to Cloud Ops / Security Engineering"
+        "evidence_ref": "Environment receipt 10038486296 (11 vars resolved, 0 missing) and target absence receipt 10038569730 (5 Cloud Run resources absent) verified; formal IAM least-privilege review of roles/principals/bindings unevidenced on C (assigned offline prior to dev admission) and staging IaC unevidenced (assigned to staging-verified stage)"
       },
       {
         "criterion_id": "CRIT-SEC-06",
         "name": "Licence-aware SBOM produced and OSS licence gate passes",
         "status": "blocked",
-        "evidence_ref": "4 image SBOM (.att) and signature (.sig) refs present; candidate C package-lock dbda4082... and 8 workspace manifests lack D05 license: UNLICENSED markers; historical 775-component SBOM defects at C; missing exact-C NOTICE receipt; blocked by HUMAN-OSS-LEGAL-APPROVAL-001 (H01/H02); assigned to Release Engineering / Tooling and Human/Ops Legal"
+        "evidence_ref": "4 image SBOM (.att) and signature (.sig) refs present; candidate C package-lock dbda4082... and 8 workspace manifests lack D05 license: UNLICENSED markers; historical 775-component SBOM defects at C; missing exact-C NOTICE receipt; blocked by active legal gate HUMAN-OSS-LEGAL-APPROVAL-001 (H01 active blocker; H02 conditional and currently unnecessary with 0 active findings); assigned to Release Engineering / Tooling offline prior to dev admission and Human/Ops Legal"
       }
     ]
   },
@@ -74,7 +74,7 @@
       "type": "human_gate",
       "required_gate": "HUMAN-OSS-LEGAL-APPROVAL-001",
       "owner": "Human/Ops",
-      "description": "Authoritative legal review and signed receipt (H01 approver identity, principal ID, role, and external approval reference) required. license_policy.json remains status='proposed'; license_exemptions.json remains unsigned.",
+      "description": "Authoritative legal review and signed receipt (H01 active blocker: approver identity, principal ID, role, and external approval reference) required; H02 risk acceptance is conditional and currently unnecessary with 0 active findings. license_policy.json remains status='proposed'; license_exemptions.json remains unsigned.",
       "impact": "Gate 4 cannot be moved to cleared; dev deployment admission remains blocked."
     },
     {
@@ -82,7 +82,7 @@
       "type": "engineering_followup",
       "required_gate": "ODP-DEV-EXACT-C-AUTH-VERIFY",
       "owner": "Security Engineering / QA / Identity Team",
-      "description": "Capture exact-C execution receipts for tests/security/ suites (test_rbac_abac.py, test_security_acceptance_suite.py, test_api_auth_wiring.py, test_tenant_isolation_guard.py, test_user_role_management.py, test_login_throttle_wiring.py, test_opsboard_auth_boundary.py) in isolated scratch.",
+      "description": "Capture exact-C execution receipts for tests/security/ suites (test_rbac_abac.py, test_security_acceptance_suite.py, test_api_auth_wiring.py, test_tenant_isolation_guard.py, test_user_role_management.py, test_login_throttle_wiring.py, test_opsboard_auth_boundary.py) in isolated scratch offline prior to candidate-built dev admission.",
       "impact": "RBAC/ABAC dynamic test coverage unproven on candidate C."
     },
     {
@@ -90,7 +90,7 @@
       "type": "engineering_followup",
       "required_gate": "ODP-DEV-EXACT-C-EXPORT-AUDIT-VERIFY",
       "owner": "Security / Data Governance / Release Ops",
-      "description": "Capture exact-C execution receipts for export authorization, PII masking (test_assisted_listing_intake_privacy.py), and audit retention (test_audit_policy.py, test_assisted_listing_snapshot_residency.py), and collect live runtime egress readback during admission.",
+      "description": "Capture exact-C execution receipts for export authorization, PII masking (test_assisted_listing_intake_privacy.py), and audit retention (test_audit_policy.py, test_assisted_listing_snapshot_residency.py) offline prior to candidate-built dev admission, and collect live runtime egress readback during dev admission.",
       "impact": "Sensitive export and audit control execution unproven on candidate C."
     },
     {
@@ -98,7 +98,7 @@
       "type": "engineering_followup",
       "required_gate": "ODP-DEV-EXACT-C-IAM-REVIEW",
       "owner": "Cloud Ops / Security Engineering / IAM Reviewer",
-      "description": "Conduct formal least-privilege IAM review of GCP service account permissions, roles, principals, IAM policy bindings, and condition statements bound to candidate C.",
+      "description": "Conduct formal least-privilege IAM review of GCP service account permissions, roles, principals, IAM policy bindings, and condition statements bound to candidate C offline prior to candidate-built dev admission.",
       "impact": "IAM least-privilege verification unrecorded on candidate C."
     },
     {
@@ -106,7 +106,7 @@
       "type": "engineering_followup",
       "required_gate": "ODP-DEV-EXACT-C-SBOM-NOTICE-RECONCILE",
       "owner": "Release Engineering / Security Tooling",
-      "description": "Reconcile candidate C lockfile dbda4082... (pre-D05) and historical 775-component SBOM defects (8 first-party workspace entries, 14 malformed purls, missing root dependencies) against dev-verified requirements and capture exact-C NOTICE receipt.",
+      "description": "Reconcile candidate C lockfile dbda4082... (pre-D05) and historical 775-component SBOM defects (8 first-party workspace entries, 14 malformed purls, missing root dependencies) offline prior to candidate-built dev admission and capture exact-C NOTICE receipt.",
       "impact": "Exact-C SBOM and NOTICE technical defects unclosed on candidate C."
     }
   ],
@@ -115,7 +115,8 @@
     "all_sources_disabled": true,
     "zero_credentials_present": true,
     "public_egress": "default-deny",
-    "contract_digest": "sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09"
+    "contract_digest": "sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09",
+    "scope_limitations": "Attestation certifies static build contract and dev-build environment; live runtime credential stores and live staging/prod states are unprobed (unknown)."
   },
   "verified_input_hashes": {
     "pyproject_toml": "130f024b80d55f439aa5467f4f469bb127aec955ef71444d2951a93d0f5d0391",

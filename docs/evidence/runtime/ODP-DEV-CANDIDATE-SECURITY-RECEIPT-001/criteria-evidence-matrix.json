@@ -2,7 +2,7 @@
   "schema_version": "1.0.0",
   "matrix_id": "ODP-DEV-CANDIDATE-SECURITY-CRITERIA-MATRIX-001",
   "task_id": "ODP-DEV-CANDIDATE-SECURITY-RECEIPT-001",
-  "evaluation_date": "2026-09-11T00:20:00Z",
+  "evaluation_date": "2026-09-11T00:50:00Z",
   "candidate_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
   "source_evidence_sha": "d084f51d4009b7b435416c8b83410a8b4fb4a267",
   "manifest_digest": "sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c",
@@ -11,7 +11,7 @@
   "overall_gate_status": "blocked",
   "release_decision": "no-go",
   "decision_owner": "Human/Ops",
-  "summary": "Independent evaluation of Gate 4 (Security and Privacy Gate) against candidate C (596b9c9a1788d952811a2bf8d4bba8a4e4d76b12). Technical secret scanning (CRIT-SEC-01) and dependency/SAST scans (CRIT-SEC-02) are evidenced with exact tool provenance, scope, skips, and input equivalence. CRIT-SEC-03 (RBAC/ABAC), CRIT-SEC-04 (export/audit), and CRIT-SEC-05 (IAM/infrastructure) are evaluated with narrow verified static subclaims while unevidenced dynamic test execution, runtime probes, and IAM policy reviews are downgraded to blocked/unknown with explicit engineering owners. CRIT-SEC-06 (SBOM & OSS license) is blocked both by candidate C technical lockfile/SBOM defects (pre-D05 package-lock.json dbda4082..., 775-component SBOM defects, missing exact-C NOTICE receipt) and by required human gate HUMAN-OSS-LEGAL-APPROVAL-001. Gate 4 remains fail-closed blocked with NO-GO decision preserved.",
+  "summary": "Independent evaluation of Gate 4 (Security and Privacy Gate) against candidate C (596b9c9a1788d952811a2bf8d4bba8a4e4d76b12). Technical secret scanning (CRIT-SEC-01) and dependency/SAST scans (CRIT-SEC-02) are evaluated via observed CI step success conclusions (run 34140207274 / run 34179791241), static scanner script configurations, raw npm audit receipt, and pip-audit input byte-equivalence; uncaptured raw scanner execution parameters (numeric exit code, exact Bandit version, raw stdout) are marked unknown. CRIT-SEC-03 (RBAC/ABAC), CRIT-SEC-04 (export/audit), and CRIT-SEC-05 (IAM/infrastructure) are evaluated with narrow verified static subclaims while unevidenced dynamic test execution, runtime probes, and IAM policy reviews are downgraded to blocked/unknown with explicit engineering owners assigned offline prior to candidate-built dev admission. CRIT-SEC-06 (SBOM & OSS license) is blocked both by candidate C technical lockfile/SBOM defects (pre-D05 package-lock.json dbda4082..., 775-component SBOM defects, missing exact-C NOTICE receipt) and by required human gate HUMAN-OSS-LEGAL-APPROVAL-001 (H01 active blocker; H02 conditional and currently unnecessary). Gate 4 remains fail-closed blocked with NO-GO decision preserved.",
   "criteria": [
     {
       "criterion_index": 1,
@@ -20,23 +20,48 @@
       "registry_requirement": "secret scan passes",
       "status": "pass",
       "evaluation_type": "candidate_raw_artifact_and_build_log",
-      "evaluation_summary": "Secret scan step executed during Runtime Release build run 34179207603 (Step 8) and passed with zero credential findings. Manifest sources-off attestation confirms zero credentials present across 16 audited source groups with default-deny public egress.",
+      "evaluation_summary": "Secret scan step executed during Runtime Release build runs (run 34140207274 Step 8 on 2026-09-07 and run 34179791241 Step 8 on 2026-09-08) with step conclusion 'success'. Dated manifest sources-off attestation confirms zero credentials present across 16 audited source groups in build static contract and dev-build environment.",
       "evidence_details": {
-        "build_run_id": 34179207603,
-        "build_step": "Step 8 'Run Secret Scan'",
-        "build_step_conclusion": "success",
+        "build_step_records": [
+          {
+            "run_id": 34140207274,
+            "step": "Step 8 'Run Secret Scan'",
+            "job": "Build once and publish the immutable artifact handoff",
+            "conclusion": "success",
+            "observed_exit_code": "unknown",
+            "raw_stdout": "unknown",
+            "tool_version": "unknown",
+            "timestamp": "2026-09-07T15:48:54Z",
+            "source_ref": "SRC-04 §4"
+          },
+          {
+            "run_id": 34179791241,
+            "step": "Step 8 'Run Secret Scan'",
+            "job": "101916404681",
+            "conclusion": "success",
+            "observed_exit_code": "unknown",
+            "raw_stdout": "unknown",
+            "tool_version": "unknown",
+            "timestamp": "2026-09-08T02:21:49Z",
+            "source_ref": "SRC-04 §13.2"
+          }
+        ],
         "manifest_sources_off_attestation": {
           "total_sources_audited": 16,
           "zero_credentials_present": true,
-          "credentials_present_count": 0
+          "credentials_present_count": 0,
+          "attestation_date": "2026-09-08",
+          "source_policy_digest": "sha256:0a34bb128b5b5b26201b7f014f4b4f8e631e841c8f205f38dfc09c9eb682d824"
         },
-        "source_policy_digest": "sha256:0a34bb128b5b5b26201b7f014f4b4f8e631e841c8f205f38dfc09c9eb682d824"
+        "static_scanner_script": "delivery_toolchain/security/secret_scan.py (static regex scan of tracked repo files excluding .git, .venv, .odp_data, docs, tests/mock pragmas)"
       },
+      "scope_and_boundary_limitations": "Repository secret scan checks tracked source files matching high-risk pattern regexes. Manifest sources-off attestation certifies 16 external data source groups disabled and 0 credentials in dev-build configuration. Live runtime secret stores, runtime environments, and staging/prod credential states are not probed at build time and remain unverified (unknown).",
       "source_refs": [
         "SRC-02",
+        "SRC-03",
         "SRC-04"
       ],
-      "gaps_and_remediations": "None for static secret scanning. Continuous standing posture of 0 credentials in dev/staging/prod maintained."
+      "gaps_and_remediations": "Repository static scan and build-environment attestation verified. Live runtime secret store readback and runtime environment credential state are separate deploy-time checks."
     },
     {
       "criterion_index": 2,
@@ -45,14 +70,17 @@
       "registry_requirement": "dependency and SAST scans pass with no unresolved critical/high findings",
       "status": "pass",
       "evaluation_type": "reused_equivalent_verified_and_raw_artifact",
-      "evaluation_summary": "Python SAST scan passed in candidate build step 9 using Bandit against modules/apps/shared/solver (-ll, skipping B301, B310, B324, B104; excluding .venv and apps/data_platform/.venv). Production npm audit passed with 0 high/critical findings (artifact 10038492941). Python dependency audit (pip-audit 2.10.1) on exact candidate lockfiles (pyproject.toml 130f024b..., uv.lock ba5c393e...) verified 215 packages with 0 vulnerabilities, 0 skipped, and 4 banned packages (evidently, nltk, defusedxml, regex) confirmed absent.",
+      "evaluation_summary": "Python SAST scan concluded 'success' in build runs 34140207274 Step 9 (2026-09-07) and 34179791241 Step 9 (2026-09-08) using Bandit against modules/apps/shared/solver (-ll, skipping B301, B310, B324, B104; excluding .venv and apps/data_platform/.venv). Static scanner script argv is defined in delivery_toolchain/security/sast_scan.py; raw execution exit code, tool version, and scan stdout were uncaptured in build summaries and are marked unknown. Production npm audit passed with 0 high/critical findings (artifact 10038492941 from run 34179791241). Python dependency audit (pip-audit 2.10.1) on exact candidate lockfiles (pyproject.toml 130f024b..., uv.lock ba5c393e...) verified 215 packages with 0 vulnerabilities, 0 skipped, and 4 banned packages (evidently, nltk, defusedxml, regex) confirmed absent.",
       "sub_checks": [
         {
           "name": "Python SAST scan",
           "status": "pass",
-          "tool": "Bandit (executed via uv run --with bandit)",
-          "scanner_script": "delivery_toolchain/security/sast_scan.py",
-          "argv": "uv run --with bandit bandit -r modules apps shared solver -x .venv,apps/data_platform/.venv -ll --skip B301,B310,B324,B104",
+          "tool": "Bandit (static scanner configured in delivery_toolchain/security/sast_scan.py)",
+          "static_script_argv": "uv run --with bandit bandit -r modules apps shared solver -x .venv,apps/data_platform/.venv -ll --skip B301,B310,B324,B104",
+          "observed_execution_argv": "unknown (invoked via CI workflow step)",
+          "observed_tool_version": "unknown",
+          "observed_exit_code": "unknown (workflow step conclusion: success)",
+          "raw_scan_stdout": "unknown",
           "scanned_scope": [
             "modules",
             "apps",
@@ -77,7 +105,7 @@
             "B324 (md5 mock/non-security hashes)",
             "B104 (bind to 0.0.0.0)"
           ],
-          "provenance": "Build run 34179207603 Step 9 'Run Python SAST Scan', conclusion: success, exit code: 0; raw log ref: ODP-DEV-BUILD-ARTIFACT-HANDOFF-003 §4/§5."
+          "provenance": "Build run 34140207274 Step 9 'Run Python SAST Scan' (2026-09-07, conclusion: success, ref: SRC-04 §4 line 138) and build run 34179791241 Step 9 (2026-09-08, conclusion: success, ref: SRC-04 §13.2 line 570); raw execution exit code, stdout, and Bandit version were uncaptured in CI step summaries and are marked unknown."
         },
         {
           "name": "Production npm audit gate",
@@ -90,7 +118,7 @@
           "status": "pass",
           "tool": "pip-audit 2.10.1 (pip_audit_gate.py SHA256 7116063f67c6c8310e2d165787f934a9eea4642fcd3d968a657afb51182a7c64)",
           "argv": "uv run --with pip-audit pip-audit --path .venv/lib/python3.12/site-packages --format json --timeout 15",
-          "evidence": "Reused equivalent verified from ODP-DRIFT-SECURITY-VERIFY-003 (§4.4, §4.5, §10, measured at d6514b04). Input equivalence confirmed: candidate C pyproject.toml SHA256 130f024b80d55f439aa5467f4f469bb127aec955ef71444d2951a93d0f5d0391 and uv.lock SHA256 ba5c393e49538e4da9e59de001cffc28c4cadfab8aebacf6dbf1503eb3a49a5d are byte-identical. 215 dependencies audited, 0 vulnerabilities found, 0 skipped, fail-closed no-suppression enforcement."
+          "evidence": "Reused equivalent verified from ODP-DRIFT-SECURITY-VERIFY-003 (§4.4, §4.5, §10, measured at d6514b04). Input equivalence confirmed: candidate C pyproject.toml SHA256 130f024b80d55f439aa5467f4f469bb127aec955ef71444d2951a93d0f5d0391 and uv.lock SHA256 ba5c393e49538e4da9e59de001cffc28c4cadfab8aebacf6dbf1503eb3a49a5d are byte-identical. 215 dependencies audited, 0 vulnerabilities found, 0 skipped, fail-closed no-suppression enforcement. Raw hash f32d534e0612b51171bc2b83c5d051acf9ee1e6a5ea44b50a044434962c21cd9."
         },
         {
           "name": "Banned package exclusion",
@@ -104,7 +132,7 @@
         "SRC-04",
         "SRC-07"
       ],
-      "gaps_and_remediations": "None for static and dependency scanning at candidate C. Follow-up: Security tooling to evaluate narrowing Bandit skips (B104, B301) during subsequent hardening waves."
+      "gaps_and_remediations": "Static and dependency scanning evidenced for candidate C. Follow-up: Security tooling to evaluate narrowing Bandit skips (B104, B301) during subsequent hardening waves."
     },
     {
       "criterion_index": 3,
@@ -137,14 +165,14 @@
         }
       ],
       "responsible_owners": {
-        "exact_c_test_execution": "Security Engineering / QA / Identity Team (responsible for collecting exact-C pytest execution receipts during dev-verified gate)",
-        "live_role_enforcement": "Release Ops / Staging Verification Team (responsible for staging multi-role verification)"
+        "exact_c_test_execution": "Security Engineering / QA / Identity Team (responsible for collecting exact-C pytest execution receipts offline in isolated scratch prior to candidate-built dev admission)",
+        "live_role_enforcement": "Release Ops / Staging Verification Team (responsible for staging multi-role verification in staging admission)"
       },
       "source_refs": [
         "SRC-06",
         "SRC-10"
       ],
-      "gaps_and_remediations": "Exact-C pytest execution receipts for tests/security/ are missing. Downstream task must execute the suite against exact candidate C in isolated scratch and capture stdout/stderr/exit receipts."
+      "gaps_and_remediations": "Exact-C pytest execution receipts for tests/security/ are missing. Downstream task must execute the suite against exact candidate C in isolated scratch prior to candidate-built dev admission and capture stdout/stderr/exit receipts."
     },
     {
       "criterion_index": 4,
@@ -177,8 +205,8 @@
         }
       ],
       "responsible_owners": {
-        "dynamic_export_audit_testing": "Security / Data Governance Team (responsible for executing export and PII test suites against exact C)",
-        "live_egress_probe": "Release Ops (responsible for capturing public-egress-probe.json during dev admission)"
+        "dynamic_export_audit_testing": "Security / Data Governance Team (responsible for executing export and PII test suites against exact C offline prior to candidate-built dev admission)",
+        "live_egress_probe": "Release Ops (responsible for capturing public-egress-probe.json during dev deployment admission)"
       },
       "source_refs": [
         "SRC-02",
@@ -186,7 +214,7 @@
         "SRC-04",
         "SRC-06"
       ],
-      "gaps_and_remediations": "Source-contract identity verified. Dynamic export/PII test execution and live egress probe readback must be completed in dev/staging admission stages."
+      "gaps_and_remediations": "Source-contract identity verified. Dynamic export/PII test execution must be completed offline prior to dev admission, and live egress probe readback must be collected during dev deployment admission."
     },
     {
       "criterion_index": 5,
@@ -220,12 +248,12 @@
         {
           "name": "Ephemeral staging IaC and production infrastructure review",
           "status": "unknown",
-          "evidence": "Ephemeral staging Terraform and production blue-green infrastructure review to be completed during subsequent deployment waves."
+          "evidence": "Ephemeral staging Terraform and production blue-green infrastructure review to be completed during subsequent deployment waves in staging-verified stage."
         }
       ],
       "responsible_owners": {
-        "iam_least_privilege_review": "Cloud Ops / Security Engineering / IAM Reviewer (responsible for formal IAM role and binding audit)",
-        "staging_iac_review": "DevOps / Infrastructure Team (responsible for staging and production IaC reviews)"
+        "iam_least_privilege_review": "Cloud Ops / Security Engineering / IAM Reviewer (responsible for formal IAM role and binding audit offline prior to candidate-built dev admission)",
+        "staging_iac_review": "DevOps / Infrastructure Team (responsible for staging and production IaC reviews in staging-verified stage)"
       },
       "source_refs": [
         "SRC-02",
@@ -233,7 +261,7 @@
         "SRC-04",
         "SRC-10"
       ],
-      "gaps_and_remediations": "Environment binding and target absence verified. Formal IAM role/binding review and staging IaC review must be performed by Cloud Ops / Security."
+      "gaps_and_remediations": "Environment binding and target absence verified. Formal IAM role/binding review must be performed offline prior to dev admission, and staging IaC review performed in staging stage."
     },
     {
       "criterion_index": 6,
@@ -242,7 +270,7 @@
       "registry_requirement": "licence-aware SBOM produced and OSS licence gate passes",
       "status": "blocked",
       "evaluation_type": "technical_defects_and_human_legal_gate_blocked",
-      "evaluation_summary": "4 component images carry CycloneDX SBOM attestations and Cosign signatures in Artifact Registry and manifest. However, candidate C exhibits technical differences and defects in SBOM and lockfiles: candidate C package-lock (dbda408248444c617bf0b124e9d2ce73ce18be0ee6bf6d463f148ba3cd8b1c8a) and all 8 workspace manifests lack license: UNLICENSED (prior to D05 implementation in SRC-09); candidate C SBOM historically carried 775 components with 8 first-party workspace entries misclassified as third-party, 14 malformed purls, and missing root dependencies; exact-C NOTICE/OSS receipt is missing. Furthermore, formal legal license policy approval is an authoritative human gate (HUMAN-OSS-LEGAL-APPROVAL-001, H01/H02) that remains unfulfilled with license_policy.json remaining proposed. Evaluated as blocked.",
+      "evaluation_summary": "4 component images carry CycloneDX SBOM attestations and Cosign signatures in Artifact Registry and manifest. However, candidate C exhibits technical differences and defects in SBOM and lockfiles: candidate C package-lock (dbda408248444c617bf0b124e9d2ce73ce18be0ee6bf6d463f148ba3cd8b1c8a) and all 8 workspace manifests lack license: UNLICENSED (prior to D05 implementation in SRC-09); candidate C SBOM historically carried 775 components with 8 first-party workspace entries misclassified as third-party, 14 malformed purls, and missing root dependencies; exact-C NOTICE/OSS receipt is missing. Furthermore, formal legal license policy approval is an authoritative human gate (HUMAN-OSS-LEGAL-APPROVAL-001) where H01 named approver inputs remain an active blocker with license_policy.json remaining proposed; H02 risk acceptance is conditional and currently unnecessary with zero active audit findings. Evaluated as blocked.",
       "sub_checks": [
         {
           "name": "Container image SBOM attestations and Cosign signatures",
@@ -267,11 +295,11 @@
         {
           "name": "Authoritative human legal approval gate",
           "status": "blocked",
-          "evidence": "HUMAN-OSS-LEGAL-APPROVAL-001 remains an open Human/Ops gate. H01 missing inputs (named approver identity, principal_id, role, approval_reference, source_system) are unprovided. docs/security/license_policy.json remains status='proposed'; license_exemptions.json remains unsigned. AI assistants cannot sign legal approval or activate policy."
+          "evidence": "HUMAN-OSS-LEGAL-APPROVAL-001 remains an open Human/Ops gate. H01 missing inputs (named approver identity, principal_id, role, approval_reference, source_system) are unprovided and constitute the active legal blocker. H02 (dev toolchain risk acceptance) is conditional and currently unnecessary as unsuppressed npm audit and pip-audit report 0 active vulnerabilities. docs/security/license_policy.json remains status='proposed'; license_exemptions.json remains unsigned. AI assistants cannot sign legal approval or activate policy."
         }
       ],
       "responsible_owners": {
-        "sbom_notice_remediation": "Release Engineering / Security Tooling (responsible for reconciling candidate C SBOM/NOTICE defects and validating exact-C tool execution in dev-verified stage)",
+        "sbom_notice_remediation": "Release Engineering / Security Tooling (responsible for reconciling candidate C SBOM/NOTICE defects and capturing exact-C tool execution receipts offline prior to candidate-built dev admission)",
         "human_legal_approval": "Human/Ops / Legal Counsel (responsible for HUMAN-OSS-LEGAL-APPROVAL-001 authoritative policy review and signed receipt)"
       },
       "source_refs": [
@@ -281,7 +309,7 @@
         "SRC-08",
         "SRC-09"
       ],
-      "gaps_and_remediations": "Candidate C carries pre-D05 lockfile, 775-component SBOM defects, and lacks exact-C NOTICE receipt. Formal legal approval (HUMAN-OSS-LEGAL-APPROVAL-001) is unfulfilled. Gate 4 cannot move to cleared until both engineering reconciliation and human legal approval are complete."
+      "gaps_and_remediations": "Candidate C carries pre-D05 lockfile, 775-component SBOM defects, and lacks exact-C NOTICE receipt. Formal legal approval (HUMAN-OSS-LEGAL-APPROVAL-001) has active H01 input gap. Gate 4 cannot move to cleared until both offline engineering reconciliation and human legal approval are complete prior to dev admission."
     }
   ],
   "standing_external_sources_posture": {
