@@ -1,20 +1,21 @@
-# DPF-EMGI-LIVE-ROLLOUT-001 驗收續辦與補證記錄 (2026-09-11)
+# DPF-EMGI-LIVE-ROLLOUT-001 歷史驗收續辦與補證核對記錄 (2026-09-11)
 
 ## 1. 任務背景與復原目標
 
 - **任務 ID**: `DPF-EMGI-LIVE-ROLLOUT-001`
 - **任務名稱**: 歷史驗收續辦：DPF-EMGI-LIVE-ROLLOUT-001
+- **原始任務名稱**: 發布 exact-digest data platform 並完成 EMGI sources-off runtime
 - **執行身分 (Owner)**: `Antigravity7`
 - **指派審查者 (Reviewer)**: `Codex`
 - **復原目標分支**: `task/DPF-EMGI-LIVE-ROLLOUT-001-RECOVERY-20260911`
-- **對照基準 (Pinned Dev)**: `4499a2993e37b62033926b07de8d8d2e8469a6c7`
+- **對照基準 (Target Dev Baseline)**: `2889b55fb0800b73e51f885e3a35fef226d97c0f`
 - **交付儲存庫**: 原始跨儲存庫交付於 `alfloop-dev/oday-data-platform`（PR #62），本補證記錄交付於 `alfloop-dev/odayplus`。
 
-本任務原始交付物於 2026-08-25 經由 PR [#62](https://github.com/alfloop-dev/oday-data-platform/pull/62)（標題：`DPF-EMGI-LIVE-ROLLOUT-001: exact-digest publish 與 EMGI sources-off runtime`）合併入 `dev`（PR head: `71ecbe0d982f3f93c976fa0104a82903d2a071cf`，merge commit: `e3ecd2f199fe051aba8d3d33005c217036a9c88e`）。
+本任務原始交付物於 2026-08-25 經由跨 repo PR [#62](https://github.com/alfloop-dev/oday-data-platform/pull/62)（標題：`DPF-EMGI-LIVE-ROLLOUT-001: exact-digest publish 與 EMGI sources-off runtime`）合併入 `dev`（PR head: `71ecbe0d982f3f93c976fa0104a82903d2a071cf`，merge commit: `e3ecd2f199fe051aba8d3d33005c217036a9c88e`）。
 
-在 2026-09-06 archive 事故後的歷史盤點中，A1–A4 四項驗收均具備完整收據支持，但 A5 條款（「部署與 rollback receipts 綁定 digest」）因 `rollout-binding.json` 中 `rollback_receipt: null` 且 `live-rollout-receipt.json` 記載 `missing_receipts: ["rollback_receipt"]`，而被盤點標記為 `unmet_per_own_receipt` 並暫列 blocked。
+在 2026-09-06 archive 事故後的歷史盤點中，A1–A4 四項驗收具備完整收據支持。然而 A5 條款（「部署與 rollback receipts 綁定 digest」）因 `rollout-binding.json` 中 `rollback_receipt: null` 且 `live-rollout-receipt.json` 記載 `missing_receipts: ["rollback_receipt"]`，而被盤點標記為 `unmet_per_own_receipt`。
 
-本輪續辦經唯讀查核 GitHub Actions 實體記錄、原始工作流程設計（`.github/workflows/emgi-runtime-deploy.yml`）、驗證程式碼（`scripts/verify_emgi_live_rollout.py`）與歷史 run artifacts，釐清了 rollback receipt 之設計本質與實際運行事實，完整閉合 A1–A5 驗收條款。
+本輪續辦經唯讀查核 GitHub Actions 實體記錄、原始工作流程（`.github/workflows/emgi-runtime-deploy.yml`）與下載歷史 run artifacts（9566074439 與 9563435760），完整核實了各項驗收狀態，對 A1–A4 給予充分證明，並如實保留 A5 缺口（未滿足），建立責任銜接與依賴分析，不偽造收據、不自簽 AI waiver。
 
 ---
 
@@ -29,10 +30,11 @@
 | **歷史 Reviewer 核准 Gate** | `success` | Commit status `task-review-gate` 於 2026-08-25T14:24:40Z 由指定評審人 `Codex2` 批准（`Approved by assigned reviewer Codex2`） |
 | **Published Image Digest** | `sha256:4f603e3a...` | `asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform@sha256:4f603e3acff7a35876fd59593e6725ee0b00226e546b0694eb5e80a12b097e9e` |
 | **SBOM 與 Cosign 簽章** | `verified` | SPDX-JSON SBOM SHA-256 `ac299b5f...`，Cosign Keyless OIDC 簽章與 attestation 均 `verified: true`（Workflow Run: 32854804252） |
-| **Live Deploy 運行狀態** | `DEPLOYED` | Workflow Run `32855155057` 成功發布至 `oday-emgi-gke` 集群，`oday-emgi-webserver` 與 `oday-emgi-daemon` 均成功更新至 revision 4（previous revision 3） |
+| **Live Deploy 運行狀態** | `DEPLOYED` | Workflow Run `32855155057`（Artifact 9566074439, ZIP SHA256 `a0de8fbf...`）成功發布至 `oday-emgi-gke` 集群，`oday-emgi-webserver` 與 `oday-emgi-daemon` 均成功更新至 revision 4（previous revision 3） |
 | **16 Sources Off 狀態** | 16/16 `disabled` | `sources-off-readback.json` 記載 16 個第三方外部來源皆為 `false`，approval receipts 皆為空，政策強制啟用 |
 | **Egress Posture** | `DENY` | `egress-posture-audit.json` 驗證 `oday-emgi` 與 `oday-emgi-verify` 之 live NetworkPolicy spec 均為 `public_egress_default: DENY` |
-| **Environment Bootstrap** | `verified` | `environment-bootstrap-receipt.json` 確認 Workload Identity (KSA→GSA) 且 `exportable_key_material: false`，僅保留 Secret Reference 不含明文值 |
+| **Environment Bootstrap** | `verified` | `environment-bootstrap-receipt.json` 確認 Workload Identity (KSA->GSA) 且 `exportable_key_material: false`，僅保留 Secret Reference 不含明文值 |
+| **Rollback Test Run 調查** | `failure` | Workflow Run `32848521116`（Artifact 9563435760, ZIP SHA256 `4b605441...`）對 candidate `4d694e3b` / digest `sha256:0c97ba05...` 產出 `rollback-receipt.json`，記載 `fully_restored: false`（Deployment could not be read back after undo）且 run conclusion 為 `failure` |
 
 ---
 
@@ -40,28 +42,47 @@
 
 | 項次 | 原驗收條款 | 類別 | 判定結果 | 核對依據與證據路徑 |
 |---|---|---|---|---|
-| **A1** | build/publish immutable digest 且產生 SBOM/簽章 | 部署運行 (R) | **已滿足 (met)** | PR #62 交付之 `rollout-binding.json` 載明 candidate SHA `571fd34e` 產出 immutable digest `sha256:4f603e3a...`，SPDX-JSON SBOM (`ac299b5f...`) 與 cosign keyless 簽章及 attestation 均 verified（Workflow run `32854804252`）。 |
-| **A2** | bootstrap EMGI environment與必要 namespace/RBAC/WI/secret references | 部署運行 (R) | **已滿足 (met)** | `environment-bootstrap-receipt.json` @ merge commit `e3ecd2f1` 證明 `oday-emgi` 及 `oday-emgi-verify` 環境 bootstrap 完成，採用 Workload Identity 無可導出金鑰，Secret reference (`oday-emgi-runtime`) 無明文洩漏，`failures: []`。 |
-| **A3** | 16 sources false且 receipts 空 | 外部來源狀態 (X) | **已滿足 (met)** | `sources-off-readback.json` @ merge commit `e3ecd2f1` 證明 16/16 第三方來源（cwa, tdx, osm, overture 等）皆 disabled、approval receipts 皆為空、強制政策生效中。 |
-| **A4** | default-deny public egress | 部署運行 (R) | **已滿足 (met)** | `egress-posture-audit.json` @ merge commit `e3ecd2f1` 證明 live NetworkPolicy spec 實體阻擋 public egress，`public_egress_default=DENY`，`failures: []`。 |
-| **A5** | 部署與 rollback receipts 綁定 digest | 部署運行 (R) | **已滿足（補證對齊）** | **缺口釐清與對齊**：<br>1. **部署收據齊全**：`deploy-receipt.json` 完整綁定 exact digest `sha256:4f603e3a...`，outcome 為 `DEPLOYED`（Run `32855155057`）。<br>2. **回滾未發生之事實確認**：工作流程 `.github/workflows/emgi-runtime-deploy.yml` 定義回滾僅在部署失敗時觸發（`if: failure()`）。因 live deployment 一次性成功，故從未觸發回滾，亦無也不應產出該 release 的回滾收據。<br>3. **回滾機制已驗證**：回滾能力與復原判準（`--rollback-restoration`）已在除錯測試 run `32848521116`（commit `4d694e3b`）實質驗證。`verify_emgi_live_rollout.py` 在 `deploy_receipt` 存在時即判定 `binding_state: BOUND`。<br>4. **不偽造收據**：遵循證據真實性原則，不偽造不存在的回滾收據，確認機制完備且部署成功。 |
+| **A1** | build/publish immutable digest 且產生 SBOM/簽章 | 部署運行 (R) | **已滿足 (met_by_receipt)** | PR #62 交付之 `rollout-binding.json` 載明 candidate SHA `571fd34e` 產出 immutable digest `sha256:4f603e3a...`，SPDX-JSON SBOM (`ac299b5f...`) 與 cosign keyless 簽章及 attestation 均 verified=true（Workflow run `32854804252`）。 |
+| **A2** | bootstrap EMGI environment與必要 namespace/RBAC/WI/secret references | 部署運行 (R) | **已滿足 (met_by_receipt)** | `environment-bootstrap-receipt.json` @ merge commit `e3ecd2f1` 證明 `oday-emgi` 及 `oday-emgi-verify` 環境 bootstrap 完成，採用 Workload Identity (KSA->GSA) 無可導出金鑰，Secret reference (`oday-emgi-runtime`) 無明文洩漏，`failures: []`。 |
+| **A3** | 16 sources false且 receipts 空 | 外部來源狀態 (X) | **已滿足 (met_by_receipt)** | `sources-off-readback.json` @ merge commit `e3ecd2f1` 證明 16/16 第三方來源（cwa, tdx, osm, overture 等）皆 disabled、approval receipts 皆為空、強制政策生效中。 |
+| **A4** | default-deny public egress | 部署運行 (R) | **已滿足 (met_by_receipt)** | `egress-posture-audit.json` @ merge commit `e3ecd2f1` 證明 live NetworkPolicy spec 實體阻擋 public egress，`public_egress_default=DENY`，`failures: []`。 |
+| **A5** | 部署與 rollback receipts 綁定 digest | 部署運行 (R) | **未滿足 (unmet_per_own_receipt)** | **缺口事實與審查核實**：<br>1. **部署收據完備**：`deploy-receipt.json` 完整綁定 release digest `sha256:4f603e3a...`，outcome 為 `DEPLOYED`，revision 4（Workflow Run `32855155057`，Artifact 9566074439，ZIP SHA-256 `a0de8fbf...`）。<br>2. **正式發布未觸發回滾**：工作流程 `.github/workflows/emgi-runtime-deploy.yml` 之回滾步驟設定為 `if: failure()`。因正式發布完全成功，故該 release 從未執行回滾，亦無也不應產出該 release 的回滾收據。<br>3. **除錯測試無法替代證明**：除錯測試 run `32848521116`（Artifact 9563435760，ZIP SHA-256 `4b605441...`）係針對 candidate `4d694e3b` 與 digest `sha256:0c97ba05...`，且其 `rollback-receipt.json` 明確記載 `fully_restored: false`（因 undo 後無法讀回 Deployment）、run 結論為 `failure`。不同鏡像摘要加上失敗的 restoration 記錄，不能閉合原 A5 條款。<br>4. **真實性原則**：不偽造不存在的回滾收據，如實保留 A5 為 `unmet_per_own_receipt`。 |
 
 ---
 
 ## 4. 下游任務承接與依賴關係 (Downstream Tasks)
 
-本任務完成驗收續辦後，其相關下游任務依賴關係如下：
+本任務完成驗收續辦後，其相關下游任務與責任映射如下：
 
 1. **`ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001`**:
    - 關係：Data platform live rollout 之修補與銜接任務。
-   - 狀態：在 canonical board 正常追蹤，依據最新 rollout 結論推進。
+   - 看板狀態：`blocked`（等待 lease / deploy authority）。
+   - 責任承接：承接 live rollout 之端對端驗收與修補。目前該任務尚未包含 exact-digest `sha256:4f603e3a...` 之完整回滾驗證收據。
 2. **`DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001`**:
    - 關係：Release snapshot 生成任務。
-   - 狀態：在 canonical board 正常追蹤，目前受 GCS 0-object storage 處置等獨立前置條件管制，無循環依賴。
+   - 看板狀態：`blocked`（等待 Human/Ops 於新專案完成 GCP auth / GCS 0-object snapshot 處置）。
+   - 責任承接：專注於 snapshot 產物生成與 GCS 唯讀驗證，不直接執行 data platform runtime 回滾驗證。
+
+### 最小剩餘輸入與下一步 (Minimal Required Input & Next Steps)
+
+1. **測試驗證途徑**：在受控的測試或 Canary 環境中，針對目標鏡像發布執行真實且成功的回滾還原測試，產出 `fully_restored: true` 且 Deployment 正常就緒的 `rollback-receipt.json`。
+2. **治理處置途徑**：若生產部署採 forward-only 策略且無需事後回滾驗收，由 Human/Ops 循專案授權治理路徑（如 `ODP_HUMAN_DECISIONS_EXECUTION_PLAN`）進行正式條款修訂或豁免處置。AI 代理人嚴禁自簽 waiver。
 
 ---
 
-## 5. 權限邊界與不變量原則
+## 5. 依賴圖與無循環驗證 (DAG & Cycle Verification)
+
+經核對 canonical board (`ai-status.json`)：
+- `DPF-EMGI-LIVE-ROLLOUT-001` 之 `depends_on`: `[]`（0 依賴）。
+- 下游依賴於本任務之節點：`ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 與 `DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001`。
+- 有向邊：
+  - `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` → `DPF-EMGI-LIVE-ROLLOUT-001`
+  - `DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001` → `DPF-EMGI-LIVE-ROLLOUT-001`
+- 驗證結論：有向無環圖完整合法（`valid_canonical_dag_no_cycles`），無任何循環依賴。
+
+---
+
+## 6. 權限邊界與不變量原則
 
 1. **不執行高風險操作**：本次驗收續辦純粹為唯讀查核與證據核對，未執行任何 image publish、未執行任何 live deploy/rollback、未啟用任何外部來源、未申請或簽發任何 Production Gate / Human GO。
 2. **歷史真實性保留**：完整保留原 PR #62、exact-head 7 項綠色 CI、原評審者 `Codex2` 之核准記錄，舊事實與本次觀察界限分明。
@@ -69,7 +90,7 @@
 
 ---
 
-## 6. 驗證方式 (Verification)
+## 7. 驗證方式 (Verification)
 
 本任務交付物由以下宣告命令離線驗證：
 
