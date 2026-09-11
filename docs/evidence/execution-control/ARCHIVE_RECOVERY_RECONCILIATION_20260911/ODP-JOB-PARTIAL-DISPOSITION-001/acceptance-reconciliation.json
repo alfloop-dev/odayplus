@@ -1,0 +1,236 @@
+{
+  "task_id": "ODP-JOB-PARTIAL-DISPOSITION-001",
+  "task_title": "依 producer 證據補 PARTIAL 狀態轉移或正式處置 SHARED-001",
+  "task_class": "remediation",
+  "phase": "History Recovery — executable acceptance reconciliation",
+  "owner": "Antigravity7",
+  "reviewer": "Codex",
+  "recorded_at": "2026-09-11T11:55:00Z",
+  "reconciliation_target": {
+    "repository": "alfloop-dev/odayplus",
+    "continuation_branch": "task/ODP-JOB-PARTIAL-DISPOSITION-001-RECOVERY-20260911",
+    "target_branch": "dev"
+  },
+  "historical_delivery": {
+    "pr_number": 1172,
+    "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1172",
+    "pr_title": "[ReviewBus] ODP-JOB-PARTIAL-DISPOSITION-001 依 producer 證據補 PARTIAL 狀態轉移或正式處置 SHARED-001",
+    "head_sha": "f8caf62e11643f9cbe59ea6b958faeab746fcac2",
+    "merge_commit_sha": "9647d673ccf2c0f11ef565e78511099821d85c19",
+    "merged": true,
+    "merged_at": "2026-09-04T13:14:12Z",
+    "historical_owner": "Antigravity6",
+    "historical_reviewer": "Claude",
+    "delivered_artifacts": [
+      "delivery_toolchain/governance/set_valued_requirements.json",
+      "docs/audits/code-boundary-inventory.csv",
+      "docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md",
+      "docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md",
+      "tests/governance/test_job_partial_disposition.py"
+    ],
+    "ci_checks": [
+      {
+        "name": "change-scope",
+        "conclusion": "success",
+        "completed_at": "2026-09-04T12:30:15Z"
+      },
+      {
+        "name": "boundary",
+        "conclusion": "success",
+        "completed_at": "2026-09-04T12:30:19Z"
+      },
+      {
+        "name": "classify",
+        "conclusion": "success",
+        "completed_at": "2026-09-04T12:30:20Z"
+      },
+      {
+        "name": "orchestrator",
+        "conclusion": "success",
+        "completed_at": "2026-09-04T12:33:20Z"
+      },
+      {
+        "name": "product",
+        "conclusion": "success",
+        "completed_at": "2026-09-04T12:51:24Z"
+      },
+      {
+        "name": "performance-gate",
+        "conclusion": "success",
+        "completed_at": "2026-09-04T12:31:49Z"
+      },
+      {
+        "name": "product-e2e-gate",
+        "conclusion": "success",
+        "completed_at": "2026-09-04T12:36:41Z"
+      }
+    ],
+    "historical_approval": {
+      "approver": "Claude",
+      "state": "success",
+      "updated_at": "2026-09-04T12:50:50Z",
+      "description": "Approved by assigned reviewer Claude"
+    },
+    "candidate_mapping_verdict": "consistent"
+  },
+  "subsequent_evolution": {
+    "decision_d19": {
+      "source_doc": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+      "direction": "Option A: Implement durable partial, itemized receipt, retry for batch jobs"
+    },
+    "stage_33a": {
+      "task_id": "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001",
+      "pr_number": 1257,
+      "merge_commit": "1c7bb182",
+      "head_sha": "57019d8d",
+      "delivered_documents": [
+        "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/producer-inventory.json",
+        "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/partial-retry-contract-draft.json",
+        "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/human-input-request-H06.md"
+      ]
+    },
+    "stage_33b": {
+      "task_id": "ODP-DURABLE-PARTIAL-IMPL-001",
+      "pr_number": 1285,
+      "merge_commit": "91dd050ad1e357af141750a39f144afd54ff588e",
+      "head_sha": "b19513a1419497dce2ddd5054df5bbe0bd732a69",
+      "implemented_symbols": [
+        "apps/worker/oday_worker/handlers.py::handle_batch_listing_intake",
+        "apps/worker/oday_worker/handlers.py::build_default_registry",
+        "apps/worker/oday_worker/handlers.py::checkpoint_batch_item_result",
+        "shared/jobs/receipts.py::derive_batch_status_and_summary",
+        "shared/jobs/receipts.py::DurableJobReceipt"
+      ],
+      "verification_suite": "tests/reliability/test_durable_partial_batch.py"
+    },
+    "producer_reconciliation": {
+      "task_id": "ODP-JOB-PARTIAL-PRODUCER-RECONCILIATION-001",
+      "pr_number": 1302,
+      "merge_commit": "84a024c3448cc4ec418882b5a38e026ed407e6be",
+      "head_sha": "d6a0f327",
+      "reconciled_manifest": "delivery_toolchain/governance/set_valued_requirements.json",
+      "reconciled_tests": "tests/governance/test_job_partial_disposition.py",
+      "reconciled_doc": "docs/evidence/human-decisions/ODP-JOB-PARTIAL-PRODUCER-RECONCILIATION-001/README.md",
+      "retained_disposition": "BLOCKED_BY_EVIDENCE"
+    }
+  },
+  "acceptance_criteria_reconciliation": [
+    {
+      "index": 1,
+      "criterion": "只有證據列名的 job 能產生 PARTIAL",
+      "classes": [
+        "D",
+        "T"
+      ],
+      "classes_zh": [
+        "程式或文件交付",
+        "可由測試證明"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "PR #1172 經 ODP-JOB-PARTIAL-PRODUCER-EVIDENCE-001 查證確認無在樹生產者後，依條件處置將 PARTIAL 保持 absent 並於 set_valued_requirements.json 登錄 BLOCKED_BY_EVIDENCE。PR #1172 交付之 tests/governance/test_job_partial_disposition.py 斷言 status == absent 與 disposition.state == BLOCKED_BY_EVIDENCE，且 resolve() 查無未列名 producer；CI 於 exact head f8caf62e1164 7 項全綠 (conclusion=success)。後續 PR #1285 交付具體列名 producer handle_batch_listing_intake 後，PR #1302 對齊治理測試，原條件處置契約與後續實作一致成立。",
+      "boundary": "原任務條件分支完整履行；後續列名 producer 交付由 PR #1285/1302 承接，不混淆歷史責任。"
+    },
+    {
+      "index": 2,
+      "criterion": "PARTIAL receipt 可區分 succeeded／failed items 且 retry 不重做成功項",
+      "classes": [
+        "D"
+      ],
+      "classes_zh": [
+        "程式或文件交付"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "依條件處置規則（無適用 producer 時保持 absent 並交付 formal handback），PR #1172 交付之 Handback 文件 docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md §4.2 確立明細收據架構契約（total/succeeded/failed 數量及 items 逐項 item_status），§4.3 確立差異化重試契約（retry_scope=FAILED_ONLY，不重做成功項）；tests/governance/test_job_partial_disposition.py 驗證 Handback 契約完整性。該契約於後續 PR #1285 經 tests/reliability/test_durable_partial_batch.py 實體驗證。",
+      "boundary": "PR #1172 交付形式為正式 Handback 設計契約（HB-SHARED001-PARTIAL-001）；執行期程式碼實作已由後續 Stage 33B (PR #1285) 獨立完成交付。"
+    },
+    {
+      "index": 3,
+      "criterion": "business outcome 與 delivery state 型別分離",
+      "classes": [
+        "T"
+      ],
+      "classes_zh": [
+        "可由測試證明"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "業務結果 JobStatus（queued, running, succeeded, failed, cancelled, partial）與隊列傳遞機制 JobDeliveryState（retrying, dead_letter）於 shared/governance/vocabularies.py 定義分離；PR #1172 交付之 tests/governance/test_job_partial_disposition.py::test_job_status_and_delivery_state_type_separation 斷言兩者為互斥集合；PR #1172 exact head f8caf62e1164 CI check product 通過 (conclusion=success)。",
+      "boundary": "型別分離於靜態與測試層面均經嚴格驗證。"
+    },
+    {
+      "index": 4,
+      "criterion": "無適用 producer 時不造功能且 formal disposition 缺人類簽署仍保持未結案",
+      "classes": [
+        "D",
+        "H"
+      ],
+      "classes_zh": [
+        "程式或文件交付",
+        "人類授權"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "PR #1172 嚴守防偽與治理防線，在查無 producer 時不造假功能，將 PARTIAL 保持 absent 並登錄 BLOCKED_BY_EVIDENCE，交付移交單 HB-SHARED001-PARTIAL-001（載明法定風險負責人 Platform Infrastructure Lead、下次檢視日 2026-10-01、reopen_trigger）；tests/governance/test_job_partial_disposition.py 斷言缺少人類簽署時不得標記為 DECIDED/VERIFIED/IMPLEMENTATION_READY。PR #1302 亦嚴格保留 BLOCKED_BY_EVIDENCE 狀態與 Handback 參照。",
+      "boundary": "嚴格保留 BLOCKED_BY_EVIDENCE 治理狀態；未假造人類簽名、未提前放行 live production 門禁。"
+    }
+  ],
+  "retained_gaps_and_downstream_responsibilities": {
+    "h06_human_confirmation": {
+      "status": "pending_human",
+      "reference": "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/human-input-request-H06.md",
+      "owner": "Platform Infrastructure Lead / Human/Ops",
+      "description": "Durable Job 業務候選範圍之具名確認"
+    },
+    "live_production_inventory": {
+      "status": "pending_live_audit",
+      "owner": "Platform Infrastructure Lead",
+      "description": "Live production 隊列/排程/工作者審計收據與線上政策生效"
+    },
+    "handback_package": {
+      "handback_id": "HB-SHARED001-PARTIAL-001",
+      "document": "docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md",
+      "disposition_state": "BLOCKED_BY_EVIDENCE"
+    }
+  },
+  "dependencies_reconciliation": {
+    "dependencies": [
+      {
+        "id": "ODP-JOB-PARTIAL-PRODUCER-EVIDENCE-001",
+        "status": "done",
+        "relationship": "predecessor — verified absence of in-tree production producers"
+      },
+      {
+        "id": "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+        "status": "done",
+        "relationship": "predecessor — established machine-readable disposition gate"
+      },
+      {
+        "id": "ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001",
+        "status": "done",
+        "relationship": "predecessor — lockfile consistency and clean CI baseline"
+      }
+    ],
+    "dependents": [
+      {
+        "id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+        "status": "todo",
+        "relationship": "successor — tracking structural remediation closeout"
+      }
+    ],
+    "cycles_detected": false
+  },
+  "summary": {
+    "criteria_total": 4,
+    "criteria_met": 4,
+    "criteria_partially_met": 0,
+    "criteria_unmet": 0,
+    "conditional_disposition_fulfilled": true,
+    "handback_delivered": true,
+    "type_separation_verified": true,
+    "blocked_by_evidence_retained": true,
+    "historical_unknown_retained": true,
+    "reconciliation_verdict": "acceptance_fully_reconciled"
+  }
+}

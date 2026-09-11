@@ -1,0 +1,36 @@
+{
+  "task_id": "ODP-JOB-PARTIAL-DISPOSITION-001",
+  "generated_at": "2026-09-11T11:56:00Z",
+  "receipts": [
+    {
+      "command": "git rev-parse --verify 9647d673ccf2c0f11ef565e78511099821d85c19",
+      "exit_code": 0,
+      "purpose": "Verify presence of historical PR #1172 merge commit in local git history",
+      "result": "9647d673ccf2c0f11ef565e78511099821d85c19"
+    },
+    {
+      "command": "git rev-parse --verify f8caf62e11643f9cbe59ea6b958faeab746fcac2",
+      "exit_code": 0,
+      "purpose": "Verify presence of historical PR #1172 head commit in local git history",
+      "result": "f8caf62e11643f9cbe59ea6b958faeab746fcac2"
+    },
+    {
+      "command": "UV_PYTHON=/usr/bin/python3.12 uv run pytest tests/governance/test_job_partial_disposition.py",
+      "exit_code": 0,
+      "purpose": "Execute governance and disposition test suite covering ODP-FR-SHARED-001 and PARTIAL",
+      "result": "8 passed in 0.53s"
+    },
+    {
+      "command": "python3 delivery_toolchain/governance/check_requirement_members.py",
+      "exit_code": 0,
+      "purpose": "Execute canonical set-valued requirement member checker",
+      "result": "Requirement member checks passed: 9 set-valued requirements, 47 members (37 satisfied, 10 absent and noted; dispositions: BLOCKED_BY_EVIDENCE=4, DECIDED=1, IMPLEMENTATION_READY=3, OPEN=3, VERIFIED=36)."
+    },
+    {
+      "command": "python3 -c \"from shared.governance.vocabularies import JobStatus, JobDeliveryState; assert {s.value for s in JobStatus}.isdisjoint({d.value for d in JobDeliveryState}); print('Type separation OK')\"",
+      "exit_code": 0,
+      "purpose": "Verify strict type and value disjointness between JobStatus and JobDeliveryState",
+      "result": "Type separation OK"
+    }
+  ]
+}
