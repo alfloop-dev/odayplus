@@ -136,7 +136,7 @@
       "build_job_window": "2026-09-08T02:12:00Z - 2026-09-08T02:20:25Z (job 101914686431, duration 505s)",
       "image_build_sign_step_window": "2026-09-08T02:15:38Z - 2026-09-08T02:20:20Z (step 19, duration 282s)",
       "rekor_signature_events_span": "2026-09-08T02:17:01Z - 2026-09-08T02:19:42Z (161 seconds span across 4 image signatures)",
-      "failure_step": "Step 20: Write the build-once artifact handoff (INITIAL_RELEASE_RECOVERY: false, 02:20:20Z - 02:20:25Z)",
+      "failure_step": "Step 20: Write the build-once artifact handoff (INITIAL_RELEASE_RECOVERY: false, started_at=completed_at=02:20:20Z)",
       "images_built_and_signed": true,
       "workflow_head_sha": "8c570a56353abdcc8ba70fe0a3fdd9b963902391",
       "release_sha_input": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",

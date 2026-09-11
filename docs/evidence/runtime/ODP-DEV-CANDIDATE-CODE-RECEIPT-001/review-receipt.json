@@ -315,20 +315,49 @@
       "source_ref": "github://alfloop-dev/odayplus@596b9c9a1788d952811a2bf8d4bba8a4e4d76b12/actions/runs/34138969380",
       "binding": "GitHub Actions CI Runner / candidate C",
       "command": "GitHub Actions CI product & product-e2e jobs",
-      "argv": [
-        "gh",
-        "run",
-        "view",
-        "34138969380",
-        "--job",
-        "product"
+      "argv": null,
+      "reproducible_inspection_command": "gh api repos/alfloop-dev/odayplus/actions/runs/34138969380/jobs --jq '.jobs[] | select(.conclusion == \"skipped\") | {id,name,head_sha,started_at,completed_at,conclusion,steps}'",
+      "inspection_commands": [
+        "gh api repos/alfloop-dev/odayplus/actions/jobs/101796473509",
+        "gh api repos/alfloop-dev/odayplus/actions/jobs/101796473393",
+        "gh api repos/alfloop-dev/odayplus/actions/jobs/101796473835"
       ],
-      "timestamp_utc": "2026-09-07T15:35:10Z",
-      "duration_seconds": 0,
+      "skipped_jobs": [
+        {
+          "id": 101796473509,
+          "name": "product",
+          "head_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+          "started_at": "2026-09-07T15:34:27Z",
+          "completed_at": "2026-09-07T15:34:27Z",
+          "conclusion": "skipped",
+          "steps": []
+        },
+        {
+          "id": 101796473393,
+          "name": "product-e2e-gate",
+          "head_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+          "started_at": "2026-09-07T15:34:27Z",
+          "completed_at": "2026-09-07T15:34:27Z",
+          "conclusion": "skipped",
+          "steps": []
+        },
+        {
+          "id": 101796473835,
+          "name": "performance-gate",
+          "head_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+          "started_at": "2026-09-07T15:34:27Z",
+          "completed_at": "2026-09-07T15:34:27Z",
+          "conclusion": "skipped",
+          "steps": []
+        }
+      ],
+      "timestamp_utc": null,
+      "duration_seconds": null,
       "exit_code": null,
       "status": "skipped",
-      "sanitized_output": "Jobs product, product-e2e-gate, and performance-gate were skipped on candidate C in push run 34138969380 and merge_group run 34138605942.",
-      "summary": "Full CI product test execution was skipped on candidate C; cannot substitute green CI on other commits."
+      "conclusion": "skipped",
+      "sanitized_output": "Jobs product (job 101796473509), product-e2e-gate (job 101796473393), and performance-gate (job 101796473835) were skipped on candidate C in push run 34138969380 and merge_group run 34138605942 (started_at=completed_at=2026-09-07T15:34:27Z, steps=[]).",
+      "summary": "Full CI product test execution was skipped on candidate C (jobs 101796473509, 101796473393, 101796473835; zero steps executed); cannot substitute green CI on other commits."
     },
     {
       "receipt_id": "RCPT-CODE-UNIT-001",
@@ -481,7 +510,7 @@
       "build_job_window": "2026-09-08T02:12:00Z - 2026-09-08T02:20:25Z (job 101914686431, duration 505s)",
       "image_build_sign_step_window": "2026-09-08T02:15:38Z - 2026-09-08T02:20:20Z (step 19, duration 282s)",
       "rekor_signature_events_span": "2026-09-08T02:17:01Z - 2026-09-08T02:19:42Z (161 seconds span across 4 image signatures)",
-      "step_20_failure_window": "2026-09-08T02:20:20Z - 2026-09-08T02:20:25Z (INITIAL_RELEASE_RECOVERY: false)",
+      "step_20_failure_window": "2026-09-08T02:20:20Z - 2026-09-08T02:20:20Z (started_at=completed_at=2026-09-08T02:20:20Z, INITIAL_RELEASE_RECOVERY: false)",
       "timestamp_utc": "2026-09-08T02:11:41Z",
       "duration_seconds": 526.0,
       "exit_code": null,

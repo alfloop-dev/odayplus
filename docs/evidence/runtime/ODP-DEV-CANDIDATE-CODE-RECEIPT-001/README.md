@@ -77,7 +77,7 @@
 
 ### 3.5 Criterion 5: Build artifacts are immutable and traceable to the release candidate SHA
 - **來源與 Run 職責區分**：
-  - Run `34179207603`（Image Producer）：於 `2026-09-08T02:11:41Z–02:20:27Z` 執行建置，step 19（`02:15:38Z–02:20:20Z`）建置、推播並以 Cosign 簽章 4 個 component images，Rekor 簽章事件區間為 `02:17:01Z–02:19:42Z`（161s，Rekor log index: `api`=2754425715, `worker`=2754426118, `scheduler`=2754426482, `web`=2754427686）。因 step 20 `INITIAL_RELEASE_RECOVERY: false` 而結論為 `failure`。
+  - Run `34179207603`（Image Producer）：於 `2026-09-08T02:11:41Z–02:20:27Z` 執行建置，step 19（`02:15:38Z–02:20:20Z`）建置、推播並以 Cosign 簽章 4 個 component images，Rekor 簽章事件區間為 `02:17:01Z–02:19:42Z`（161s，Rekor log index: `api`=2754425715, `worker`=2754426118, `scheduler`=2754426482, `web`=2754427686）。因 step 20 `INITIAL_RELEASE_RECOVERY: false`（`started_at=completed_at=02:20:20Z`，build job window `02:12:00Z–02:20:25Z`）而結論為 `failure`。
   - Run `34179791241`（Artifact Publisher）：重用該 4 個 image digests，執行 `cosign verify` 全數通過，step 20 以 `INITIAL_RELEASE_RECOVERY: true` 成功產出並發布 6 份 raw artifacts（建立時間 `02:21:49Z`，完成時間 `02:26:33Z`）。引用自固定來源 `build-dispatch-evidence.md#L549-L905`。
   - 兩者的 workflow head SHA 均為 `8c570a56353abdcc8ba70fe0a3fdd9b963902391`（`dev` tip），由 step 3 強制 checkout `release_sha=596b9c9a1788d952811a2bf8d4bba8a4e4d76b12`。
   - 4 個 component images：
@@ -107,14 +107,14 @@
 | `RCPT-CODE-LINT-002` | Frontend Lint | 離線未驗證觀察 | `npm run lint --workspace=@oday-plus/web` | **null** | — | **UNVERIFIED**：CI skipped；離線 scratch 觀察未留存原始 terminal receipt。 |
 | `RCPT-CODE-TSC-001` | TypeScript Web | 離線未驗證觀察 | `npm run typecheck --workspace=@oday-plus/web` | **null** | — | **UNVERIFIED**：CI skipped；離線 scratch 觀察未留存原始 terminal receipt。 |
 | `RCPT-CODE-TSC-002` | TypeScript Packages | 缺口清單 | `npm run typecheck --workspaces` (packages/*) | **null** | — | **UNKNOWN**：套件 workspaces 缺少歷史收據。 |
-| `RCPT-CODE-CI-002` | CI Product Test | 不可變 CI 收據 | GitHub Actions CI `product` / `product-e2e` jobs | **null** | 2026-09-07T15:35:10Z | **SKIPPED**：CI product 測試在 candidate C 上被 skipped。 |
+| `RCPT-CODE-CI-002` | CI Product Test | 不可變 CI 收據 | GitHub Actions CI `product` / `product-e2e` jobs (skipped; gh api .../jobs/101796473509) | **null** | — | **SKIPPED**：CI product 測試在 candidate C 上被 skipped (job 101796473509, 101796473393, 101796473835; started_at=completed_at=2026-09-07T15:34:27Z, steps=[])。 |
 | `RCPT-CODE-UNIT-001` | Domain Unit Tests | 離線未驗證觀察 | `uv run pytest tests/models/...` | **null** | — | **UNVERIFIED**：CI skipped；離線 scratch 觀察未留存原始 terminal receipt。 |
 | `RCPT-CODE-UNIT-002` | Persistence Tests | 離線未驗證觀察 | `uv run pytest tests/unit/persistence/...` | **null** | — | **UNVERIFIED**：CI skipped；離線 scratch 觀察未留存原始 terminal receipt。 |
 | `RCPT-CODE-UNIT-003` | HeatZone API | 離線未驗證觀察 | `uv run pytest tests/integration/test_heatzone_composition_api.py` | **null** | — | **UNVERIFIED**：CI skipped；離線 scratch 觀察未留存原始 terminal receipt。 |
 | `RCPT-CODE-COMP-001` | Component Tests | 離線未驗證觀察 | `npm run test --workspace=@oday-plus/web` | **null** | — | **UNVERIFIED**：CI skipped；離線 scratch 觀察未留存原始 terminal receipt。 |
 | `RCPT-CODE-BLD-001` | Frontend Build | 離線未驗證觀察 | `npm run build --workspace=@oday-plus/web` | **null** | — | **UNVERIFIED**：CI skipped；離線 scratch 觀察未留存原始 terminal receipt。 |
 | `RCPT-CODE-BLD-002` | Bundle Budget | 離線未驗證觀察 | `npm run bundle:budget --workspace=@oday-plus/web` | **null** | — | **UNVERIFIED**：CI skipped；離線 scratch 觀察未留存原始 terminal receipt。 |
-| `RCPT-CODE-BLD-TRACE-001` | Image Producer | 不可變 CI 收據 | Run `34179207603` (4 images built & signed) | **null** (failure) | 2026-09-08T02:11:41Z | **PRODUCER_FAIL**：四映像檔簽章推播完成 (Rekor span 02:17:01Z–02:19:42Z, 161s)，step 20 失敗。 |
+| `RCPT-CODE-BLD-TRACE-001` | Image Producer | 不可變 CI 收據 | Run `34179207603` (4 images built & signed) | **null** (failure) | 2026-09-08T02:11:41Z | **PRODUCER_FAIL**：四映像檔簽章推播完成 (Rekor span 02:17:01Z–02:19:42Z, 161s)，step 20 失敗 (02:20:20Z)。 |
 | `RCPT-CODE-BLD-TRACE-002` | Artifact Publisher | 重用不可變收據 | Run `34179791241` (6 artifacts published) | **null** (success) | 2026-09-08T02:21:49Z | **PASSED**：6 份 artifact raw bytes 完全比對吻合。 |
 | `RCPT-CODE-MANIFEST-001` | Manifest Validation | 重用不可變收據 | `release_manifest` validator (Handoff §13.5) | **null** (success) | — | **PASSED**：重用 build handoff 不可變收據，C 自帶驗證器核驗通過。 |
 
