@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +21,7 @@ from modules.avm import (
     AVM_DEPRECIATION_LEGACY_VERSION,
     AVM_DEPRECIATION_VERSION,
     AVM_FEATURE_VERSION,
+    AVMProductionExecutionError,
     AVMProductionExecutor,
     AVMService,
     DepreciationCutoverEvidence,
@@ -291,6 +292,8 @@ def test_production_avm_reloads_and_executes_real_oss_artifacts(
             approved_by="finance-vp",
             approved_at=datetime(2026, 9, 3, tzinfo=UTC),
             thresholds_reference="docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md#r-4",
+            model_version="avm-depreciation-straight-line-v1",
+            numerical_threshold_asset_delta_ratio=0.20,
         ),
     )
     service = AVMService(production_executor=executor)
@@ -477,6 +480,76 @@ def test_production_avm_paired_inputs_differing_only_in_age_produce_different_pr
     assert young_rep.fair_price.p50 == 993_571.43
 
 
+def test_production_avm_cutover_fails_with_incomplete_or_wrong_version_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """N1: Complete, valid approval matching active depreciation policy is required; incomplete/mismatched rejects."""
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+
+    # 1. Wrong model version in cutover evidence
+    wrong_version_evidence = DepreciationCutoverEvidence(
+        approved_by="finance-vp",
+        approved_at=datetime(2026, 9, 3, tzinfo=UTC),
+        thresholds_reference="docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md#r-4",
+        model_version="avm-depreciation-experimental-v9",
+        numerical_threshold_asset_delta_ratio=0.20,
+    )
+    exec_wrong, _model, _liquidity = _executor()
+    exec_wrong.depreciation_cutover_evidence = wrong_version_evidence
+    repo = InMemoryAVMRepository()
+    svc = AVMService(repository=repo, production_executor=exec_wrong)
+
+    dep_input = {
+        "store_id": "store-live-dep-mismatch",
+        "gm_ttm": 400_000,
+        "forecast_gm_next_12m": 450_000,
+        "asset_book_value": 200_000,
+        "equipment_fair_value": 100_000,
+        "equipment_depreciation_basis": "original_cost",
+        "equipment_original_cost": 100_000.0,
+        "useful_life_months": 84,
+        "residual_value_ratio": 0.10,
+        "depreciation_method": "straight_line",
+        "asset_in_service_date": "2023-01-01",
+        "depreciation_effective_date": "2026-07-01",
+        "quality_score": 0.95,
+        "source_snapshot_ids": ["finance-snapshot-live"],
+        "prediction_origin_time": datetime(2026, 7, 24, tzinfo=UTC),
+    }
+    case1 = svc.create_case(dep_input, created_by="finance", correlation_id="corr-mismatch")
+    with pytest.raises(valuation_service.AVMError, match="does not match active depreciation policy"):
+        svc.value(case1.case_id, actor="worker", correlation_id="corr-mismatch")
+    assert repo.get_case(case1.case_id).status is ValuationCaseStatus.REVIEW_REQUIRED
+
+    # 2. Invalid / non-finite threshold rejection in dataclass
+    with pytest.raises(AVMProductionExecutionError, match="finite positive number"):
+        DepreciationCutoverEvidence(
+            approved_by="finance-vp",
+            approved_at=datetime(2026, 9, 3, tzinfo=UTC),
+            thresholds_reference="docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md#r-4",
+            model_version="avm-depreciation-straight-line-v1",
+            numerical_threshold_asset_delta_ratio=0.0,
+        )
+
+    with pytest.raises(AVMProductionExecutionError, match="finite positive number"):
+        DepreciationCutoverEvidence(
+            approved_by="finance-vp",
+            approved_at=datetime(2026, 9, 3, tzinfo=UTC),
+            thresholds_reference="docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md#r-4",
+            model_version="avm-depreciation-straight-line-v1",
+            numerical_threshold_asset_delta_ratio=float("nan"),
+        )
+
+    # 3. Incomplete env vars
+    monkeypatch.setenv("ODP_AVM_DEPRECIATION_CUTOVER_APPROVED_BY", "finance-vp")
+    monkeypatch.delenv("ODP_AVM_DEPRECIATION_CUTOVER_DELTA_THRESHOLD", raising=False)
+    monkeypatch.delenv("ODP_AVM_DEPRECIATION_CUTOVER_APPROVED_AT", raising=False)
+    monkeypatch.delenv("ODP_AVM_DEPRECIATION_CUTOVER_THRESHOLDS_REFERENCE", raising=False)
+    monkeypatch.delenv("ODP_AVM_DEPRECIATION_CUTOVER_MODEL_VERSION", raising=False)
+    with pytest.raises(AVMProductionExecutionError, match="is required for cutover"):
+        AVMProductionExecutor.from_environment()
+
+
 def test_production_avm_operational_rollback_to_v0_with_valid_receipt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -518,12 +591,64 @@ def test_production_avm_operational_rollback_to_v0_with_valid_receipt(
             depreciation_version_pin=AVM_DEPRECIATION_LEGACY_VERSION,
         )
 
-    # 2. Rollback with valid receipt succeeds
-    receipt = DepreciationRollbackReceipt(
+    # 2. Rollback with expired receipt fails
+    now = datetime.now(UTC)
+    expired_receipt = DepreciationRollbackReceipt(
         decider="finance-director",
-        decision_time=datetime(2026, 9, 10, 12, 0, tzinfo=UTC),
+        decision_time=now - timedelta(days=10),
         reason="reverting to v0 due to numerical anomaly investigation",
-        target_expiry=datetime(2026, 9, 20, 12, 0, tzinfo=UTC),
+        target_expiry=now - timedelta(minutes=5),
+        depreciation_version_pin=AVM_DEPRECIATION_LEGACY_VERSION,
+    )
+    with pytest.raises(valuation_service.AVMError, match="has already expired"):
+        service.value(
+            case.case_id,
+            actor="ops-admin",
+            correlation_id="corr-rb-expired",
+            depreciation_version_pin=AVM_DEPRECIATION_LEGACY_VERSION,
+            rollback_receipt=expired_receipt,
+        )
+
+    # 3. Rollback with target_expiry before decision_time fails
+    inverted_receipt = DepreciationRollbackReceipt(
+        decider="finance-director",
+        decision_time=now + timedelta(days=2),
+        reason="reverting to v0 due to numerical anomaly investigation",
+        target_expiry=now + timedelta(days=1),
+        depreciation_version_pin=AVM_DEPRECIATION_LEGACY_VERSION,
+    )
+    with pytest.raises(valuation_service.AVMError, match="target_expiry must be after decision_time"):
+        service.value(
+            case.case_id,
+            actor="ops-admin",
+            correlation_id="corr-rb-inverted",
+            depreciation_version_pin=AVM_DEPRECIATION_LEGACY_VERSION,
+            rollback_receipt=inverted_receipt,
+        )
+
+    # 4. Rollback with mismatched version pin fails
+    mismatched_receipt = DepreciationRollbackReceipt(
+        decider="finance-director",
+        decision_time=now - timedelta(hours=1),
+        reason="reverting to v0 due to numerical anomaly investigation",
+        target_expiry=now + timedelta(days=7),
+        depreciation_version_pin="avm-depreciation-straight-line-v1",
+    )
+    with pytest.raises(valuation_service.AVMError, match="does not match active pin"):
+        service.value(
+            case.case_id,
+            actor="ops-admin",
+            correlation_id="corr-rb-mismatched",
+            depreciation_version_pin=AVM_DEPRECIATION_LEGACY_VERSION,
+            rollback_receipt=mismatched_receipt,
+        )
+
+    # 5. Rollback with valid receipt succeeds
+    valid_receipt = DepreciationRollbackReceipt(
+        decider="finance-director",
+        decision_time=now - timedelta(hours=1),
+        reason="reverting to v0 due to numerical anomaly investigation",
+        target_expiry=now + timedelta(days=10),
         depreciation_version_pin=AVM_DEPRECIATION_LEGACY_VERSION,
     )
     v0_report = service.value(
@@ -531,7 +656,7 @@ def test_production_avm_operational_rollback_to_v0_with_valid_receipt(
         actor="ops-admin",
         correlation_id="corr-rb-2",
         depreciation_version_pin=AVM_DEPRECIATION_LEGACY_VERSION,
-        rollback_receipt=receipt,
+        rollback_receipt=valid_receipt,
     )
     assert v0_report.depreciation_applied is False
     assert v0_report.depreciation_version == AVM_DEPRECIATION_LEGACY_VERSION
@@ -546,7 +671,7 @@ def test_production_avm_operational_rollback_to_v0_with_valid_receipt(
         == "finance-director"
     )
 
-    # 3. Preserves previously issued v1 report in history
+    # 6. Preserves previously issued v1 report in history
     history = service.report_history(case.case_id)
     assert len(history) == 2
     assert history[0].valuation_version == 1

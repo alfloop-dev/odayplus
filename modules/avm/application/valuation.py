@@ -51,13 +51,22 @@ class DepreciationRollbackReceipt:
     depreciation_version_pin: str
     receipt_id: str = field(default_factory=lambda: f"dep-rollback-{uuid4()}")
 
-    def validate(self) -> None:
+    def validate(
+        self,
+        expected_pin: str | None = None,
+        *,
+        current_time: datetime | None = None,
+    ) -> None:
         if not self.decider or not str(self.decider).strip():
             raise AVMError("rollback receipt requires a non-empty decider")
         if not self.reason or not str(self.reason).strip():
             raise AVMError("rollback receipt requires a non-empty reason")
         if not self.depreciation_version_pin or not str(self.depreciation_version_pin).strip():
             raise AVMError("rollback receipt requires a depreciation_version_pin")
+        if expected_pin and str(self.depreciation_version_pin).strip() != expected_pin:
+            raise AVMError(
+                f"rollback receipt version pin {self.depreciation_version_pin!r} does not match active pin {expected_pin!r}"
+            )
         dt = (
             self.decision_time
             if isinstance(self.decision_time, datetime)
@@ -74,7 +83,10 @@ class DepreciationRollbackReceipt:
             exp = exp.replace(tzinfo=UTC)
         if exp <= dt:
             raise AVMError("rollback receipt target_expiry must be after decision_time")
-        if exp <= datetime.now(UTC):
+        now = current_time or datetime.now(UTC)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=UTC)
+        if exp <= now:
             raise AVMError("rollback receipt target_expiry has already expired")
 
     def to_dict(self) -> dict[str, Any]:
@@ -177,6 +189,7 @@ class AVMService:
         correlation_id: str,
         depreciation_version_pin: str | None = None,
         rollback_receipt: DepreciationRollbackReceipt | None = None,
+        clock: datetime | None = None,
     ) -> ValuationReport:
         case = self._case(case_id)
         self._require_status(
@@ -214,11 +227,7 @@ class AVMService:
                 raise AVMError(
                     "depreciation rollback to v0 requires a valid matching DepreciationRollbackReceipt"
                 )
-            receipt.validate()
-            if receipt.depreciation_version_pin != pin:
-                raise AVMError(
-                    f"rollback receipt version pin {receipt.depreciation_version_pin!r} does not match active pin {pin!r}"
-                )
+            receipt.validate(expected_pin=pin, current_time=clock)
         elif receipt is not None:
             raise AVMError("rollback receipt provided without an active rollback version pin")
 

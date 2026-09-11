@@ -1634,6 +1634,16 @@ export type RoleWorkspacesRequest = {
   allowedWorkspaces: string[];
 };
 
+/** RollbackReceiptPayload */
+export type RollbackReceiptPayload = {
+  decider: string;
+  decision_time: string;
+  depreciation_version_pin?: string | null;
+  reason: string;
+  receipt_id?: string | null;
+  target_expiry: string;
+};
+
 /** SavedView */
 export type SavedView = {
   created_at: string;
@@ -1879,7 +1889,7 @@ export type ValidationError = {
 export type ValueCasePayload = {
   actor: string;
   depreciation_version_pin?: string | null;
-  rollback_receipt?: Record<string, unknown> | null;
+  rollback_receipt?: RollbackReceiptPayload | null;
 };
 
 /** XlsxCommitReceipt */

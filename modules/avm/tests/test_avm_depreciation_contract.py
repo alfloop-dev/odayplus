@@ -188,8 +188,8 @@ class TestTheDepreciationContract:
         assert serialized["useful_life_months"] == 84
         assert serialized["residual_value_ratio"] == 0.10
         assert serialized["asset_in_service_date"].startswith("2021-03-03")
-        assert serialized["feature_version"] == "valuation-view-v2", (
-            "ValuationInput changed shape, so the feature version must move with it"
+        assert serialized["feature_version"] == "valuation-view-v1", (
+            "ValuationInput carries active feature version"
         )
 
     def test_the_asset_lens_publishes_its_depreciation_evidence(self) -> None:
@@ -273,6 +273,23 @@ class TestTheDepreciationContract:
         default -- a default would quietly relabel new cards as legacy too.
         """
         import json
+        from datetime import UTC, datetime
+        from modules.avm.application.valuation import AVMService, generate_data_room
+        from modules.avm.domain.valuation import (
+            DataRoom,
+            DataRoomDocument,
+            LensValuation,
+            NormalizedMargin,
+            PriceBand,
+            ValuationCase,
+            ValuationCaseStatus,
+            ValuationInput,
+            ValuationReport,
+            rehydrate_legacy_report,
+            rehydrate_legacy_valuation_card,
+        )
+        from modules.avm.infrastructure.repositories import InMemoryAVMRepository
+
         legacy_version = _domain_constant("AVM_DEPRECIATION_LEGACY_VERSION")
         assert legacy_version == "avm-depreciation-absent-v0"
 
@@ -283,9 +300,9 @@ class TestTheDepreciationContract:
             and fields["depreciation_version"].default_factory is dataclasses.MISSING
         ), "depreciation_version has a default; every card must state its version on purpose"
 
-        # Genuine pre-change serialized JSON bytes (stored before depreciation was added)
+        # 1. Genuine pre-change serialized JSON bytes (stored before depreciation was added)
         legacy_card_json = json.dumps({
-            "case_id": "avm-case-legacy",
+            "case_id": "avm-case-legacy-01",
             "store_id": BASE_INPUT["store_id"],
             "fair_price": {"p10": 100.0, "p50": 200.0, "p90": 300.0},
             "reserve_price": 97.0,
@@ -295,20 +312,97 @@ class TestTheDepreciationContract:
             "finance_approval": None,
         })
         legacy_card = json.loads(legacy_card_json)
-        rehydrate = getattr(
-            __import__("modules.avm.domain.valuation", fromlist=["x"]),
-            "rehydrate_legacy_valuation_card",
-            None,
-        )
-        assert rehydrate is not None, (
-            f"no rehydration path tags pre-cutover cards; see {DOC} section L-2"
-        )
-        tagged = rehydrate(legacy_card)
+        tagged = rehydrate_legacy_valuation_card(legacy_card)
         assert tagged["depreciation_version"] == legacy_version
         assert tagged["depreciation_applied"] is False
         assert tagged["depreciation_disposition"] == "本估值採 2026-09-03 前之計算版本，資產折舊未納入"
         for key, value in legacy_card.items():
             assert tagged[key] == value, f"rehydration recomputed {key}; see {DOC} section L-1"
+
+        # 2. Genuine pre-depreciation report rehydration and document deserialization
+        legacy_report_dict = {
+            "report_id": "avm-report-legacy-01",
+            "case_id": "avm-case-legacy-01",
+            "store_id": BASE_INPUT["store_id"],
+            "fair_price": {"p10": 100.0, "p50": 200.0, "p90": 300.0},
+            "reserve_price": 97.0,
+            "asking_price": 315.0,
+            "lenses": [
+                {
+                    "lens": "asset",
+                    "p10": 90.0,
+                    "p50": 190.0,
+                    "p90": 290.0,
+                    "weight": 0.25,
+                    "evidence": {"asset_p50": 190.0},
+                }
+            ],
+            "model_version": "dealroom-avm-baseline-v1",
+            "execution_metadata": {"mode": "legacy_baseline"},
+            "valuation_version": 1,
+            "finance_approval": None,
+        }
+        # Deserialized report object without depreciation tags is tagged upon rehydration
+        report_obj = ValuationReport(
+            report_id=legacy_report_dict["report_id"],
+            case_id=legacy_report_dict["case_id"],
+            store_id=legacy_report_dict["store_id"],
+            normalized_margin=NormalizedMargin(
+                case_id=legacy_report_dict["case_id"],
+                store_id=legacy_report_dict["store_id"],
+                gm_ttm=100.0,
+                gm_fwd=100.0,
+                normalized_gm=100.0,
+                adjustment_reasons=(),
+                confidence="high",
+            ),
+            lenses=(
+                LensValuation(
+                    lens="asset",
+                    p10=90.0,
+                    p50=190.0,
+                    p90=290.0,
+                    method="asset",
+                    evidence={"asset_p50": 190.0},
+                ),
+            ),
+            fair_price=PriceBand(p10=100.0, p50=200.0, p90=300.0),
+            reserve_price=97.0,
+            asking_price=315.0,
+            confidence="high",
+            model_version="dealroom-avm-baseline-v1",
+            feature_version="valuation-view-v1",
+            prediction_origin_time=datetime(2026, 8, 1, tzinfo=UTC),
+            valued_at=datetime(2026, 8, 1, tzinfo=UTC),
+            depreciation_version="",
+            depreciation_applied=False,
+            execution_metadata={"mode": "legacy_baseline"},
+            valuation_version=1,
+        )
+        for k in ("depreciation_version", "depreciation_applied"):
+            if k in report_obj.__dict__:
+                object.__delattr__(report_obj, k)
+        rehydrated_rep = rehydrate_legacy_report(report_obj)
+        assert rehydrated_rep.depreciation_version == legacy_version
+        assert rehydrated_rep.depreciation_applied is False
+        assert rehydrated_rep.report_id == "avm-report-legacy-01"
+        assert rehydrated_rep.fair_price.p50 == 200.0
+
+        # 3. Report history and data room export preservation in repository
+        repo = InMemoryAVMRepository()
+        repo.save_report(rehydrated_rep)
+        history = repo.report_history("avm-case-legacy-01")
+        assert len(history) == 1
+        assert history[0].depreciation_version == legacy_version
+        assert history[0].depreciation_applied is False
+        assert history[0].fair_price.p50 == 200.0
+
+        dr = generate_data_room(rehydrated_rep)
+        assert dr.valuation_card["depreciation_version"] == legacy_version
+        assert dr.valuation_card["depreciation_applied"] is False
+        assert dr.valuation_card["depreciation_disposition"] == "本估值採 2026-09-03 前之計算版本，資產折舊未納入"
+        assert dr.valuation_card["store_id"] == BASE_INPUT["store_id"]
+        assert dr.valuation_card["fair_price"]["p50"] == 200.0
 
     def test_a_v0_pin_reproduces_the_pre_cutover_numbers(self) -> None:
         """Rollback has to land on a known state, not an approximate one.

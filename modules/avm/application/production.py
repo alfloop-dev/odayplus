@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -74,8 +75,42 @@ class DepreciationCutoverEvidence:
     approved_by: str
     approved_at: datetime
     thresholds_reference: str
-    model_version: str = "avm-depreciation-straight-line-v1"
-    numerical_threshold_asset_delta_ratio: float = 0.20
+    model_version: str
+    numerical_threshold_asset_delta_ratio: float
+
+    def __post_init__(self) -> None:
+        if not self.approved_by or not self.approved_by.strip():
+            raise AVMProductionExecutionError("depreciation cutover approved_by must be specified")
+        if not isinstance(self.approved_at, datetime):
+            raise AVMProductionExecutionError("depreciation cutover approved_at must be a valid datetime")
+        if not self.thresholds_reference or not self.thresholds_reference.strip():
+            raise AVMProductionExecutionError("depreciation cutover thresholds_reference must be specified")
+        if not self.model_version or not self.model_version.strip():
+            raise AVMProductionExecutionError("depreciation cutover model_version must be specified")
+        try:
+            ratio = float(self.numerical_threshold_asset_delta_ratio)
+        except (TypeError, ValueError) as exc:
+            raise AVMProductionExecutionError("depreciation cutover delta threshold must be numeric") from exc
+        if not math.isfinite(ratio) or ratio <= 0.0:
+            raise AVMProductionExecutionError("depreciation cutover delta threshold must be a finite positive number")
+        object.__setattr__(self, "approved_by", self.approved_by.strip())
+        object.__setattr__(self, "thresholds_reference", self.thresholds_reference.strip())
+        object.__setattr__(self, "model_version", self.model_version.strip())
+        object.__setattr__(self, "numerical_threshold_asset_delta_ratio", ratio)
+
+    def validate_for_policy(self, active_depreciation_version: str) -> None:
+        if self.model_version != active_depreciation_version:
+            raise AVMProductionExecutionError(
+                f"depreciation cutover evidence model_version {self.model_version!r} "
+                f"does not match active depreciation policy {active_depreciation_version!r}"
+            )
+        if (
+            not math.isfinite(self.numerical_threshold_asset_delta_ratio)
+            or self.numerical_threshold_asset_delta_ratio <= 0.0
+        ):
+            raise AVMProductionExecutionError(
+                "depreciation cutover evidence numerical_threshold_asset_delta_ratio is not valid"
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -101,19 +136,23 @@ class AVMProductionExecutor:
         liquidity_runtime: LiquidityRuntime,
         liquidity_evidence: LiquidityArtifactEvidence,
         depreciation_cutover_evidence: DepreciationCutoverEvidence | None = None,
+        expected_feature_schema_version: str = AVM_FEATURE_VERSION,
     ) -> None:
         self.model_runtime = model_runtime
         self.liquidity_runtime = liquidity_runtime
         self.liquidity_evidence = liquidity_evidence
         self.depreciation_cutover_evidence = depreciation_cutover_evidence
+        self.expected_feature_schema_version = expected_feature_schema_version
 
     @classmethod
     def from_environment(
         cls,
         *,
         model_runtime: ModelRuntime | None = None,
+        expected_feature_schema_version: str = AVM_FEATURE_VERSION,
     ) -> AVMProductionExecutor:
         try:
+            cutover_evidence = _load_depreciation_cutover_evidence_optional()
             if model_runtime is None:
                 from models.shared_ml.production_contracts import (
                     production_model_names,
@@ -124,7 +163,6 @@ class AVMProductionExecutor:
                     model_names=production_model_names(("avm",))
                 )
             liquidity_runtime, liquidity_evidence = _load_liquidity_artifact()
-            cutover_evidence = _load_depreciation_cutover_evidence_optional()
         except Exception as exc:
             if isinstance(exc, AVMProductionExecutionError):
                 raise
@@ -136,6 +174,7 @@ class AVMProductionExecutor:
             liquidity_runtime=liquidity_runtime,
             liquidity_evidence=liquidity_evidence,
             depreciation_cutover_evidence=cutover_evidence,
+            expected_feature_schema_version=expected_feature_schema_version,
         )
 
     def execute(
@@ -155,12 +194,13 @@ class AVMProductionExecutor:
                 raise AVMProductionExecutionError(
                     "production v1 depreciation activation requires authentic Finance approval and threshold evidence"
                 )
+            self.depreciation_cutover_evidence.validate_for_policy(dep_calc.depreciation_version)
 
         row = {
             **case.valuation_input.to_dict(),
             "normalized_gm": normalized_margin.normalized_gm,
             "normalization_confidence": normalized_margin.confidence,
-            "view_version": AVM_FEATURE_VERSION,
+            "view_version": self.expected_feature_schema_version,
             "feature_snapshot_time": case.valuation_input.prediction_origin_time.isoformat(),
         }
         liquidity_features: dict[str, float] = {}
@@ -193,7 +233,7 @@ class AVMProductionExecutor:
             inference = self.model_runtime.infer(
                 service="avm",
                 rows=[inference_row],
-                expected_feature_schema_version=AVM_FEATURE_VERSION,
+                expected_feature_schema_version=self.expected_feature_schema_version,
             )
             lower = float(inference.lower[0])
             point = float(inference.point[0])
@@ -338,15 +378,34 @@ def _load_depreciation_cutover_evidence_optional() -> DepreciationCutoverEvidenc
     approved_by = os.getenv("ODP_AVM_DEPRECIATION_CUTOVER_APPROVED_BY", "").strip()
     approved_at_raw = os.getenv("ODP_AVM_DEPRECIATION_CUTOVER_APPROVED_AT", "").strip()
     thresholds_ref = os.getenv("ODP_AVM_DEPRECIATION_CUTOVER_THRESHOLDS_REFERENCE", "").strip()
-    if not (approved_by and approved_at_raw and thresholds_ref):
-        return None
-    approved_at = _parse_datetime(approved_at_raw)
     ratio_raw = os.getenv("ODP_AVM_DEPRECIATION_CUTOVER_DELTA_THRESHOLD", "").strip()
-    ratio = float(ratio_raw) if ratio_raw else 0.20
-    model_ver = (
-        os.getenv("ODP_AVM_DEPRECIATION_CUTOVER_MODEL_VERSION", "").strip()
-        or "avm-depreciation-straight-line-v1"
-    )
+    model_ver = os.getenv("ODP_AVM_DEPRECIATION_CUTOVER_MODEL_VERSION", "").strip()
+
+    cutover_keys_present = [
+        bool(v) for v in (approved_by, approved_at_raw, thresholds_ref, ratio_raw, model_ver)
+    ]
+    if not any(cutover_keys_present):
+        return None
+
+    if not approved_by:
+        raise AVMProductionExecutionError("ODP_AVM_DEPRECIATION_CUTOVER_APPROVED_BY is required for cutover")
+    if not approved_at_raw:
+        raise AVMProductionExecutionError("ODP_AVM_DEPRECIATION_CUTOVER_APPROVED_AT is required for cutover")
+    if not thresholds_ref:
+        raise AVMProductionExecutionError("ODP_AVM_DEPRECIATION_CUTOVER_THRESHOLDS_REFERENCE is required for cutover")
+    if not ratio_raw:
+        raise AVMProductionExecutionError("ODP_AVM_DEPRECIATION_CUTOVER_DELTA_THRESHOLD is required for cutover")
+    if not model_ver:
+        raise AVMProductionExecutionError("ODP_AVM_DEPRECIATION_CUTOVER_MODEL_VERSION is required for cutover")
+
+    approved_at = _parse_datetime(approved_at_raw)
+    try:
+        ratio = float(ratio_raw)
+    except ValueError as exc:
+        raise AVMProductionExecutionError("ODP_AVM_DEPRECIATION_CUTOVER_DELTA_THRESHOLD must be numeric") from exc
+    if not math.isfinite(ratio) or ratio <= 0.0:
+        raise AVMProductionExecutionError("ODP_AVM_DEPRECIATION_CUTOVER_DELTA_THRESHOLD must be finite and positive")
+
     return DepreciationCutoverEvidence(
         approved_by=approved_by,
         approved_at=approved_at,

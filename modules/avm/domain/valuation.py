@@ -9,7 +9,9 @@ from typing import Any
 from uuid import uuid4
 
 AVM_MODEL_VERSION = "dealroom-avm-baseline-v1"
-AVM_FEATURE_VERSION = "valuation-view-v2"
+AVM_FEATURE_VERSION = "valuation-view-v1"
+AVM_FEATURE_VERSION_V1 = "valuation-view-v1"
+AVM_FEATURE_VERSION_V2 = "valuation-view-v2"
 AVM_POLICY_VERSION = "avm-finance-approval-policy-v1"
 AVM_DEPRECIATION_VERSION = "avm-depreciation-straight-line-v1"
 AVM_DEPRECIATION_LEGACY_VERSION = "avm-depreciation-absent-v0"

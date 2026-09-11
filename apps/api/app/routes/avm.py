@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from models.shared_ml import (
@@ -63,10 +64,19 @@ else:
         actor: str = Field(min_length=1)
 
 
+    class RollbackReceiptPayload(BaseModel):
+        decider: str = Field(min_length=1)
+        decision_time: datetime
+        reason: str = Field(min_length=1)
+        target_expiry: datetime
+        depreciation_version_pin: str | None = None
+        receipt_id: str | None = None
+
+
     class ValueCasePayload(BaseModel):
         actor: str = Field(min_length=1)
         depreciation_version_pin: str | None = None
-        rollback_receipt: dict[str, Any] | None = None
+        rollback_receipt: RollbackReceiptPayload | None = None
 
 
     class FinanceApprovalPayload(BaseModel):
@@ -347,14 +357,16 @@ else:
             receipt_obj: DepreciationRollbackReceipt | None = None
             if body.rollback_receipt is not None:
                 receipt_obj = DepreciationRollbackReceipt(
-                    decider=body.rollback_receipt["decider"],
-                    decision_time=body.rollback_receipt["decision_time"],
-                    reason=body.rollback_receipt["reason"],
-                    target_expiry=body.rollback_receipt["target_expiry"],
-                    depreciation_version_pin=body.rollback_receipt.get(
-                        "depreciation_version_pin", body.depreciation_version_pin or ""
+                    decider=body.rollback_receipt.decider,
+                    decision_time=body.rollback_receipt.decision_time,
+                    reason=body.rollback_receipt.reason,
+                    target_expiry=body.rollback_receipt.target_expiry,
+                    depreciation_version_pin=(
+                        body.rollback_receipt.depreciation_version_pin
+                        or body.depreciation_version_pin
+                        or ""
                     ),
-                    receipt_id=body.rollback_receipt.get("receipt_id", f"dep-rollback-{uuid4()}"),
+                    receipt_id=body.rollback_receipt.receipt_id or f"dep-rollback-{uuid4()}",
                 )
             report = _run(
                 lambda: service.value(
