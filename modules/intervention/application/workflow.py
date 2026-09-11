@@ -894,11 +894,11 @@ class InterventionWorkflow:
     ) -> AdjustmentOutcome:
         """Adjust an active intervention with durable lineage (ODP-FR-INTV-006).
 
-        Operational practice stops the original in-flight intervention and opens
-        a replacement intervention with durable lineage linking both cases.
-        This preserves observation windows and clean causal attribution while
-        retaining the original intervention parameters, reason, actor, policy
-        version, and rollback specifications.
+        Proposed remediation workflow stops the original in-flight intervention and opens
+        a replacement intervention with durable lineage linking both cases (ODP-FR-INTV-006
+        candidate technical readiness). This preserves observation windows and clean causal
+        attribution while retaining the original intervention parameters, reason, actor,
+        policy version, and rollback specifications.
         """
         original = self._require(intervention_id)
         self._check_version(original, expected_version)
@@ -975,13 +975,12 @@ class InterventionWorkflow:
                 raise InterventionError(
                     f"stale update: intervention {intervention_id} is already stopped and replaced by {fresh_original.replacement_id}"
                 )
-            if fresh_original.status not in ACTIVE_INTERVENTION_STATUSES:
+            if fresh_original.status != original.status or fresh_original.status not in ACTIVE_INTERVENTION_STATUSES:
                 raise InterventionError(
-                    f"cannot adjust on intervention in status {fresh_original.status.value}"
+                    f"stale update: intervention {intervention_id} status changed from {original.status.value} to {fresh_original.status.value}"
                 )
             expected = expected_version if expected_version is not None else original.version
             self._check_version(fresh_original, expected)
-            self._require_status(fresh_original, ACTIVE_INTERVENTION_STATUSES, "adjust")
 
             stopped_original = fresh_original.with_transition(
                 to_status=InterventionStatus.STOPPED,

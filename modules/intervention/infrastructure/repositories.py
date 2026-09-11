@@ -14,7 +14,12 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
-from modules.intervention.domain.lifecycle import Intervention, LabelRecord
+from modules.intervention.domain.lifecycle import (
+    Intervention,
+    InterventionError,
+    InterventionStatus,
+    LabelRecord,
+)
 
 
 @dataclass
@@ -26,6 +31,15 @@ class InMemoryInterventionRepository:
     def save(self, intervention: Intervention) -> Intervention:
         """Upsert an intervention, keeping the per-store index in sync."""
         with self._lock:
+            existing = self._by_id.get(intervention.intervention_id)
+            if existing is not None and existing.replacement_id:
+                if (
+                    intervention.replacement_id != existing.replacement_id
+                    or intervention.status != InterventionStatus.STOPPED
+                ):
+                    raise InterventionError(
+                        f"stale update: intervention {intervention.intervention_id} is already stopped and replaced by {existing.replacement_id}"
+                    )
             if intervention.intervention_id not in self._by_id:
                 self._by_store.setdefault(intervention.store_id, []).append(
                     intervention.intervention_id

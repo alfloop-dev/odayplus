@@ -246,9 +246,13 @@
           "name": "ADJUST",
           "status": "satisfied",
           "evidence": "modules/intervention/application/workflow.py::InterventionWorkflow.adjust_case",
-          "note": "Adjusts an active intervention via stop-plus-recreate: stops the predecessor case and opens a replacement case with durable predecessor_id/replacement_id lineage, preserving original intervention parameters, reason, actor, policy version, and rollback plan.",
+          "note": "Adjusts an active intervention via stop-plus-recreate: stops the predecessor case and opens a replacement case with durable predecessor_id/replacement_id lineage, preserving original intervention parameters, reason, actor, policy version, and rollback plan. Candidate technical readiness implemented; formal business/operational practice confirmation remains open.",
           "disposition": {
-            "state": "VERIFIED"
+            "state": "BLOCKED_BY_EVIDENCE",
+            "evidence_needed": "A traceable operational confirmation or business decision clarifying whether store operators adjust in-flight interventions via stop-plus-recreate or via direct in-place parameter adjustment, with designated business owner, decision date, and applicable store scope (ODP_OPEN_DECISIONS_2026-09-03.md Item 16).",
+            "evidence_owner": "Operations Lead / Product Lead",
+            "next_review_date": "2026-10-01",
+            "rationale": "Engineering technical readiness for stop-plus-recreate replacement with durable lineage is implemented and tested across API, In-Memory, SQLite and PostgreSQL. However, formal business/operational decision confirming this workflow remains absent (ODP_OPEN_DECISIONS_2026-09-03.md Item 16). The disposition state remains BLOCKED_BY_EVIDENCE pending traceable operational confirmation, preserving open decision gap without self-signed waiver or fabricated business decider."
           }
         }
       ]

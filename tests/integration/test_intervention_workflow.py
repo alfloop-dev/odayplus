@@ -1701,14 +1701,18 @@ def test_adjust_workflow_allowed_active_states() -> None:
     assert adj1.replacement.predecessor_id == case1.intervention_id
 
     # Test EXECUTING
-    case_exec = case1.with_transition(
+    repo_exec = InMemoryInterventionRepository()
+    wf_exec = InterventionWorkflow(repository=repo_exec)
+    case_exec = _open_case(wf_exec, store_id="s-exec")
+    _drive_to_approved(wf_exec, case_exec.intervention_id)
+    case_exec_inst = case_exec.with_transition(
         to_status=InterventionStatus.EXECUTING,
         actor="ops",
         action="execute",
         reason="executing",
     )
-    wf1.repository.save(case_exec)
-    adj_exec = wf1.adjust_case(case_exec.intervention_id, actor="ops", reason="adjust from executing")
+    repo_exec.save(case_exec_inst)
+    adj_exec = wf_exec.adjust_case(case_exec_inst.intervention_id, actor="ops", reason="adjust from executing")
     assert adj_exec.original.status is InterventionStatus.STOPPED
     assert adj_exec.replacement.status is InterventionStatus.CANDIDATE
 
@@ -2730,4 +2734,76 @@ def test_durable_intervention_repository_backfills_pre_upgrade_legacy_documents(
     orig_row = engine.query_one("SELECT * FROM interventions WHERE intervention_id = ?", (legacy_id_1,))
     assert orig_row["status"] == "stopped"
     assert orig_row["replacement_id"] == outcome.replacement.intervention_id
+    engine.close()
+
+
+def test_adjust_lineage_cannot_be_erased_by_stale_aggregate_in_memory_and_sqlite(
+    tmp_path: pytest.TempPathFactory,
+) -> None:
+    """ODP-FR-INTV-006 Finding 1 regression: Saving a stale snapshot (replacement_id=None
+    or status != STOPPED) after an intervention has been adjusted and replaced is rejected
+    by repository lock/CAS checks across InMemory and SQLite backends, preserving durable lineage."""
+    # 1. InMemory repository
+    in_mem_repo = InMemoryInterventionRepository()
+    wf_mem = InterventionWorkflow(repository=in_mem_repo)
+    case_mem = _open_case(wf_mem, store_id="store-mem-lineage")
+    _drive_to_approved(wf_mem, case_mem.intervention_id)
+    stale_mem_snapshot = wf_mem.get(case_mem.intervention_id)
+    assert stale_mem_snapshot.replacement_id is None
+
+    # Adjust case_mem
+    outcome_mem = wf_mem.adjust_case(
+        case_mem.intervention_id,
+        actor="ops-adjuster",
+        reason="adjust in memory",
+        action_spec={"price_change_pct": -8},
+    )
+    stopped_mem = in_mem_repo.get(case_mem.intervention_id)
+    assert stopped_mem.status == InterventionStatus.STOPPED
+    assert stopped_mem.replacement_id == outcome_mem.replacement.intervention_id
+
+    # Attempt to overwrite with stale snapshot (e.g. stale assign/save)
+    from dataclasses import replace
+    stale_modified = replace(stale_mem_snapshot, assigned_to="stale-assignee")
+    with pytest.raises(InterventionError, match="already stopped and replaced by"):
+        in_mem_repo.save(stale_modified)
+
+    # Verify original remains STOPPED with replacement_id
+    persisted_mem = in_mem_repo.get(case_mem.intervention_id)
+    assert persisted_mem.status == InterventionStatus.STOPPED
+    assert persisted_mem.replacement_id == outcome_mem.replacement.intervention_id
+
+    # 2. SQLite repository
+    engine = SqliteEngine(tmp_path / "stale_lineage_sqlite.db")
+    _seed_store(engine, store_id="store-sqlite-lineage")
+    store = SqliteDocumentStore(engine)
+    sql_repo = DurableInterventionRepository(store)
+    wf_sql = InterventionWorkflow(repository=sql_repo)
+    case_sql = _open_case(wf_sql, store_id="store-sqlite-lineage")
+    _drive_to_approved(wf_sql, case_sql.intervention_id)
+    stale_sql_snapshot = wf_sql.get(case_sql.intervention_id)
+
+    outcome_sql = wf_sql.adjust_case(
+        case_sql.intervention_id,
+        actor="ops-adjuster",
+        reason="adjust in sqlite",
+        action_spec={"price_change_pct": -8},
+    )
+    stopped_sql = sql_repo.get(case_sql.intervention_id)
+    assert stopped_sql.status == InterventionStatus.STOPPED
+    assert stopped_sql.replacement_id == outcome_sql.replacement.intervention_id
+
+    # Attempt to overwrite with stale snapshot
+    stale_sql_modified = replace(stale_sql_snapshot, assigned_to="stale-assignee")
+    with pytest.raises(InterventionError, match="already stopped and replaced by"):
+        sql_repo.save(stale_sql_modified)
+
+    # Verify relational table and document store remain STOPPED with replacement_id
+    row = engine.query_one("SELECT status, replacement_id FROM interventions WHERE intervention_id = ?", (case_sql.intervention_id,))
+    assert row["status"] == "stopped"
+    assert row["replacement_id"] == outcome_sql.replacement.intervention_id
+
+    persisted_sql = sql_repo.get(case_sql.intervention_id)
+    assert persisted_sql.status == InterventionStatus.STOPPED
+    assert persisted_sql.replacement_id == outcome_sql.replacement.intervention_id
     engine.close()

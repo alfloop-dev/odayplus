@@ -884,14 +884,36 @@ class DurableInterventionRepository:
                     "SELECT doc_id FROM durable_documents WHERE collection = ? AND doc_id = ? FOR UPDATE",
                     (self._C, intervention.intervention_id),
                 )
-                if intervention.status == InterventionStatus.STOPPED and intervention.replacement_id:
-                    row = engine.query_one(
-                        "SELECT intervention_id, status, replacement_id FROM operations.interventions WHERE intervention_id = ? FOR UPDATE",
-                        (_to_uuid_if_prefixed(intervention.intervention_id),),
-                    )
-                    if row and row.get("replacement_id") and row.get("replacement_id") != _to_uuid_if_prefixed(intervention.replacement_id):
+                row = engine.query_one(
+                    "SELECT intervention_id, status, replacement_id FROM operations.interventions WHERE intervention_id = ? FOR UPDATE",
+                    (_to_uuid_if_prefixed(intervention.intervention_id),),
+                )
+                if row and row.get("replacement_id"):
+                    existing_repl = str(row.get("replacement_id"))
+                    incoming_repl = _to_uuid_if_prefixed(intervention.replacement_id)
+                    if incoming_repl != existing_repl or intervention.status != InterventionStatus.STOPPED:
                         raise InterventionError(
-                            f"stale update: intervention {intervention.intervention_id} is already stopped and replaced by {row.get('replacement_id')}"
+                            f"stale update: intervention {intervention.intervention_id} is already stopped and replaced by {existing_repl}"
+                        )
+            else:
+                existing_repl = None
+                try:
+                    row = engine.query_one(
+                        "SELECT intervention_id, status, replacement_id FROM interventions WHERE intervention_id = ?",
+                        (intervention.intervention_id,),
+                    )
+                    if row and row.get("replacement_id"):
+                        existing_repl = str(row.get("replacement_id"))
+                except Exception:
+                    pass
+                if not existing_repl:
+                    doc = self._store.get(self._C, intervention.intervention_id)
+                    if doc is not None and getattr(doc, "replacement_id", None):
+                        existing_repl = str(doc.replacement_id)
+                if existing_repl:
+                    if intervention.replacement_id != existing_repl or intervention.status != InterventionStatus.STOPPED:
+                        raise InterventionError(
+                            f"stale update: intervention {intervention.intervention_id} is already stopped and replaced by {existing_repl}"
                         )
             self._sync_sql(intervention)
             # Relational persistence is the production contract.  Write the

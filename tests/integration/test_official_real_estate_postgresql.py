@@ -463,42 +463,30 @@ def test_durable_intervention_repository_postgresql_backfill_and_adjust_legacy_c
     engine.close()
 
 
-def test_postgresql_concurrent_adjust_stale_update_conflict_two_independent_engines(
+def test_postgresql_adjust_concurrency_creates_single_replacement_and_rejects_collision(
     intake_blank_db: Any,
 ) -> None:
-    """ODP-FR-INTV-006: Concurrent Adjust operations from two independent PostgreSQL
-    engine instances serialize via FOR UPDATE and re-fetch fresh state. Exactly one
-    succeeds, the other fails with stale update conflict, exactly one replacement is
-    persisted, and the original is stopped pointing to that replacement."""
-    import threading
+    """ODP-FR-INTV-006: Concurrent Adjust requests via production-entry API across independent
+    PostgreSQL engines enforce row lock and storage CAS, resulting in exactly one 200 SUCCESS
+    and one 409 STALE_UPDATE_CONFLICT, consistent relational/document lineage, audit logging,
+    and no duplicate/orphaned replacement."""
     _upgrade_official_schema(intake_blank_db)
     runtime_url, _ = _urls(intake_blank_db)
 
-    engine1 = PostgresEngine(
-        runtime_url,
-        bootstrap=True,
-        validate_schema=False,
-        max_pool_size=4,
-    )
-    engine2 = PostgresEngine(
-        runtime_url,
-        bootstrap=False,
-        validate_schema=False,
-        max_pool_size=4,
-    )
+    engine1 = PostgresEngine(runtime_url, bootstrap=True, validate_schema=False, max_pool_size=8)
+    engine2 = PostgresEngine(runtime_url, bootstrap=False, validate_schema=False, max_pool_size=8)
 
-    from modules.intervention.application.workflow import InterventionWorkflow
-    from modules.intervention.domain.lifecycle import (
-        Intervention,
-        InterventionError,
-        InterventionKind,
-        InterventionStatus,
-        default_window_for,
-    )
+    import threading
+
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
+    from shared.auth import Role
     from shared.infrastructure.persistence.document_store import SqliteDocumentStore
     from shared.infrastructure.persistence.repositories import (
         DurableInterventionRepository,
     )
+    from tests.integration._authz import INTERVENTION_HEADERS, auth_headers
 
     tenant_id = str(uuid4())
     store_id = str(uuid4())
@@ -517,64 +505,78 @@ def test_postgresql_concurrent_adjust_stale_update_conflict_two_independent_engi
     repo1 = DurableInterventionRepository(store1)
     repo2 = DurableInterventionRepository(store2)
 
-    wf1 = InterventionWorkflow(repository=repo1)
-    wf2 = InterventionWorkflow(repository=repo2)
+    app1 = create_app(intervention_repository=repo1)
+    app2 = create_app(intervention_repository=repo2)
 
-    case_uuid = str(uuid4())
-    case_id = f"intervention-{case_uuid}"
+    client1 = TestClient(app1, headers=INTERVENTION_HEADERS)
+    client2 = TestClient(app2, headers=INTERVENTION_HEADERS)
+
     now = datetime.now(UTC)
-
-    case = Intervention(
-        intervention_id=case_id,
-        store_id=store_id,
-        kind=InterventionKind.PRICE_CHANGE,
-        status=InterventionStatus.APPROVED,
-        trigger_ref="alert-pg-concurrent",
-        expected_outcome="pg concurrent adjust test",
-        planned_start=now,
-        planned_end=now + timedelta(days=14),
-        window_spec=default_window_for(InterventionKind.PRICE_CHANGE),
-        created_by="pg-admin",
-        created_at=now,
+    create_res = client1.post(
+        "/interventions",
+        json={
+            "store_id": store_id,
+            "kind": "PRICE_CHANGE",
+            "trigger_ref": "alert-pg-concurrent",
+            "expected_outcome": "pg concurrent adjust test",
+            "planned_start": now.isoformat(),
+            "planned_end": (now + timedelta(days=14)).isoformat(),
+            "created_by": "pg-admin",
+            "action_spec": {"price_change_pct": -5},
+        },
     )
-    repo1.save(case)
+    assert create_res.status_code == 201
+    case_id = create_res.json()["intervention_id"]
+    case_uuid = case_id.removeprefix("intervention-")
 
-    initial_version = case.version
+    client1.post(f"/interventions/{case_id}/eligibility", json={"eligible": True, "actor": "pg-admin"})
+    client1.post(f"/interventions/{case_id}/action", json={"action_spec": {"price_change_pct": -5}, "actor": "pg-admin"})
+    client1.post(f"/interventions/{case_id}/conflict-check", json={"actor": "pg-admin"})
+    client1.post(f"/interventions/{case_id}/submit", json={"actor": "pg-admin"})
+    approve_res = client1.post(f"/interventions/{case_id}/approve", json={"action": "APPROVE", "actor": "sup-admin", "reason": "approved"})
+    assert approve_res.status_code == 200
+    initial_version = approve_res.json()["version"]
 
     barrier = threading.Barrier(2)
     results = []
 
-    def run_adjust(worker_id: int, wf: InterventionWorkflow):
+    def run_adjust(worker_id: int, client: TestClient):
+        c = TestClient(
+            client.app,
+            headers=auth_headers(
+                Role.OPERATIONS_MANAGER,
+                Role.REGIONAL_SUPERVISOR,
+                subject=f"worker-{worker_id}",
+            ),
+        )
         barrier.wait()
-        try:
-            outcome = wf.adjust_case(
-                case_id,
-                actor=f"worker-{worker_id}",
-                reason=f"adjust by worker {worker_id}",
-                action_spec={"price_change_pct": -5 * worker_id},
-                expected_version=initial_version,
-            )
-            results.append((worker_id, "SUCCESS", outcome))
-        except InterventionError as exc:
-            results.append((worker_id, "CONFLICT", str(exc)))
-        except Exception as exc:
-            results.append((worker_id, "ERROR", str(exc)))
+        res = c.post(
+            f"/interventions/{case_id}/adjust",
+            json={
+                "actor": f"worker-{worker_id}",
+                "reason": f"adjust by worker {worker_id}",
+                "action_spec": {"price_change_pct": -5 * worker_id},
+                "expected_version": initial_version,
+            },
+        )
+        results.append((worker_id, res.status_code, res.json()))
 
-    t1 = threading.Thread(target=run_adjust, args=(1, wf1))
-    t2 = threading.Thread(target=run_adjust, args=(2, wf2))
+    t1 = threading.Thread(target=run_adjust, args=(1, client1))
+    t2 = threading.Thread(target=run_adjust, args=(2, client2))
     t1.start()
     t2.start()
     t1.join()
     t2.join()
 
-    statuses = sorted([r[1] for r in results])
-    assert statuses == ["CONFLICT", "SUCCESS"], f"Results were: {results}"
+    status_codes = sorted([r[1] for r in results])
+    assert status_codes == [200, 409], f"Results were: {results}"
 
-    conflict_res = next(r for r in results if r[1] == "CONFLICT")
-    assert "stale update" in conflict_res[2].lower() or "cannot adjust" in conflict_res[2].lower()
+    conflict_res = next(r[2] for r in results if r[1] == 409)
+    assert conflict_res["detail"]["code"] == "STALE_UPDATE_CONFLICT"
 
-    success_res = next(r for r in results if r[1] == "SUCCESS")
-    replacement_id = success_res[2].replacement.intervention_id
+    success_res = next(r[2] for r in results if r[1] == 200)
+    replacement_id = success_res["replacement_intervention_id"]
+    replacement_uuid = replacement_id.removeprefix("intervention-")
 
     # Verify PostgreSQL operations.interventions has exactly original (stopped) and single replacement
     with intake_blank_db.connect() as conn:
@@ -585,11 +587,22 @@ def test_postgresql_concurrent_adjust_stale_update_conflict_two_independent_engi
         assert len(rows) == 2
         orig_row = next(r for r in rows if str(r[0]) == case_uuid)
         assert orig_row[1] == "stopped"
-        assert str(orig_row[3]) == replacement_id
+        assert str(orig_row[3]) == replacement_uuid
 
-        repl_row = next(r for r in rows if str(r[0]) == replacement_id)
+        repl_row = next(r for r in rows if str(r[0]) == replacement_uuid)
         assert repl_row[1] == "candidate"
         assert str(repl_row[2]) == case_uuid
+
+    # Verify document store mirror consistency
+    doc_orig = store1.get("intervention.interventions", case_id)
+    assert doc_orig is not None
+    assert doc_orig.status.value == "STOPPED"
+    assert doc_orig.replacement_id == replacement_id
+
+    doc_repl = store1.get("intervention.interventions", replacement_id)
+    assert doc_repl is not None
+    assert doc_repl.status.value == "CANDIDATE"
+    assert doc_repl.predecessor_id == case_id
 
     engine1.close()
     engine2.close()
@@ -598,27 +611,25 @@ def test_postgresql_concurrent_adjust_stale_update_conflict_two_independent_engi
 def test_postgresql_adjust_interleaved_with_stop_or_version_update_conflict(
     intake_blank_db: Any,
 ) -> None:
-    """ODP-FR-INTV-006: When an intervention is stopped or updated concurrently across
-    independent PostgreSQL engines, Adjust detects the status/version conflict under
-    FOR UPDATE and rejects the adjustment, cleanly rolling back the replacement."""
+    """ODP-FR-INTV-006: Controlled interleaving across independent PostgreSQL engines:
+    Worker 1 reads APPROVED vN and prepares adjust; Worker 2 stops the case concurrently
+    under its own engine before Worker 1's lock/CAS write; Worker 1's adjust detects
+    the stale status under FOR UPDATE, returns HTTP 409 STALE_UPDATE_CONFLICT (not 422),
+    and leaves no orphaned replacement in SQL or document store."""
     _upgrade_official_schema(intake_blank_db)
     runtime_url, _ = _urls(intake_blank_db)
 
     engine1 = PostgresEngine(runtime_url, bootstrap=True, validate_schema=False, max_pool_size=4)
     engine2 = PostgresEngine(runtime_url, bootstrap=False, validate_schema=False, max_pool_size=4)
 
-    from modules.intervention.application.workflow import InterventionWorkflow
-    from modules.intervention.domain.lifecycle import (
-        Intervention,
-        InterventionError,
-        InterventionKind,
-        InterventionStatus,
-        default_window_for,
-    )
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
     from shared.infrastructure.persistence.document_store import SqliteDocumentStore
     from shared.infrastructure.persistence.repositories import (
         DurableInterventionRepository,
     )
+    from tests.integration._authz import INTERVENTION_HEADERS
 
     tenant_id = str(uuid4())
     store_id = str(uuid4())
@@ -628,49 +639,208 @@ def test_postgresql_adjust_interleaved_with_stop_or_version_update_conflict(
 
     repo1 = DurableInterventionRepository(SqliteDocumentStore(engine1))
     repo2 = DurableInterventionRepository(SqliteDocumentStore(engine2))
-    wf1 = InterventionWorkflow(repository=repo1)
-    wf2 = InterventionWorkflow(repository=repo2)
 
-    case_uuid = str(uuid4())
-    case_id = f"intervention-{case_uuid}"
+    app1 = create_app(intervention_repository=repo1)
+    app2 = create_app(intervention_repository=repo2)
+
+    client1 = TestClient(app1, headers=INTERVENTION_HEADERS)
+    client2 = TestClient(app2, headers=INTERVENTION_HEADERS)
+
     now = datetime.now(UTC)
-
-    case = Intervention(
-        intervention_id=case_id,
-        store_id=store_id,
-        kind=InterventionKind.PRICE_CHANGE,
-        status=InterventionStatus.APPROVED,
-        trigger_ref="alert-pg-interleave",
-        expected_outcome="pg interleave test",
-        planned_start=now,
-        planned_end=now + timedelta(days=14),
-        window_spec=default_window_for(InterventionKind.PRICE_CHANGE),
-        created_by="pg-admin",
-        created_at=now,
+    create_res = client1.post(
+        "/interventions",
+        json={
+            "store_id": store_id,
+            "kind": "PRICE_CHANGE",
+            "trigger_ref": "alert-pg-interleave",
+            "expected_outcome": "pg interleave test",
+            "planned_start": now.isoformat(),
+            "planned_end": (now + timedelta(days=14)).isoformat(),
+            "created_by": "pg-admin",
+            "action_spec": {"price_change_pct": -5},
+        },
     )
-    repo1.save(case)
+    assert create_res.status_code == 201
+    case_id = create_res.json()["intervention_id"]
+    case_uuid = case_id.removeprefix("intervention-")
 
-    # wf2 stops the intervention
-    wf2.stop(case_id, actor="ops-stopper", reason="emergency cancellation")
+    client1.post(f"/interventions/{case_id}/eligibility", json={"eligible": True, "actor": "pg-admin"})
+    client1.post(f"/interventions/{case_id}/action", json={"action_spec": {"price_change_pct": -5}, "actor": "pg-admin"})
+    client1.post(f"/interventions/{case_id}/conflict-check", json={"actor": "pg-admin"})
+    client1.post(f"/interventions/{case_id}/submit", json={"actor": "pg-admin"})
+    approve_res = client1.post(f"/interventions/{case_id}/approve", json={"action": "APPROVE", "actor": "sup-admin", "reason": "approved"})
+    assert approve_res.status_code == 200
+    v_approved = approve_res.json()["version"]
 
-    # wf1 attempts to adjust the now-stopped case
-    with pytest.raises(InterventionError, match="cannot adjust|stale update"):
-        wf1.adjust_case(
-            case_id,
-            actor="ops-adjuster",
-            reason="late adjust attempt",
-            action_spec={"price_change_pct": -4},
-        )
+    # Controlled interleave:
+    # 1. client2 concurrently stops the intervention (transitioning to STOPPED v_approved+1)
+    stop_res = client2.post(
+        f"/interventions/{case_id}/stop",
+        json={"actor": "ops-stopper", "reason": "emergency cancellation"},
+    )
+    assert stop_res.status_code == 200
 
-    # Verify DB has only the stopped original and no replacement was left behind
+    # 2. client1 attempts adjust with expected_version=v_approved (which was valid when read)
+    adjust_res = client1.post(
+        f"/interventions/{case_id}/adjust",
+        json={
+            "actor": "ops-adjuster",
+            "reason": "late adjust attempt",
+            "action_spec": {"price_change_pct": -4},
+            "expected_version": v_approved,
+        },
+    )
+    assert adjust_res.status_code == 409
+    assert adjust_res.json()["detail"]["code"] == "STALE_UPDATE_CONFLICT"
+
+    # Verify DB has only the stopped original and NO replacement was created
     with intake_blank_db.connect() as conn:
         rows = conn.execute(
             "SELECT intervention_id, status, replacement_id FROM operations.interventions WHERE store_id = %s",
             (store_id,),
         ).fetchall()
         assert len(rows) == 1
+        assert str(rows[0][0]) == case_uuid
         assert rows[0][1] == "stopped"
         assert rows[0][2] is None
+
+    # Verify document store has only the stopped original
+    doc = repo1.get(case_id)
+    assert doc is not None
+    assert doc.status.value == "STOPPED"
+    assert doc.replacement_id is None
+
+    engine1.close()
+    engine2.close()
+
+
+def test_postgresql_adjust_interleaved_with_stale_assign_or_stop_rejected(
+    intake_blank_db: Any,
+) -> None:
+    """ODP-FR-INTV-006 Finding 1 regression: When an intervention is adjusted and replaced,
+    a concurrent/stale assign or update attempt holding a stale snapshot (replacement_id=None)
+    is rejected by repository lock/CAS guard, preventing erasure of established replacement lineage."""
+    _upgrade_official_schema(intake_blank_db)
+    runtime_url, _ = _urls(intake_blank_db)
+
+    engine1 = PostgresEngine(runtime_url, bootstrap=True, validate_schema=False, max_pool_size=4)
+    engine2 = PostgresEngine(runtime_url, bootstrap=False, validate_schema=False, max_pool_size=4)
+
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
+    from modules.intervention.domain.lifecycle import InterventionError
+    from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+    from shared.infrastructure.persistence.repositories import (
+        DurableInterventionRepository,
+    )
+    from tests.integration._authz import INTERVENTION_HEADERS
+
+    tenant_id = str(uuid4())
+    store_id = str(uuid4())
+    with intake_blank_db.connect() as conn:
+        conn.execute("INSERT INTO core.tenants (tenant_id, tenant_name) VALUES (%s, %s)", (tenant_id, "PG Stale Lineage Tenant"))
+        conn.execute("INSERT INTO core.stores (store_id, tenant_id, store_name) VALUES (%s, %s, %s)", (store_id, tenant_id, "PG Stale Lineage Store"))
+
+    repo1 = DurableInterventionRepository(SqliteDocumentStore(engine1))
+    repo2 = DurableInterventionRepository(SqliteDocumentStore(engine2))
+
+    app1 = create_app(intervention_repository=repo1)
+    app2 = create_app(intervention_repository=repo2)
+
+    client1 = TestClient(app1, headers=INTERVENTION_HEADERS)
+    client2 = TestClient(app2, headers=INTERVENTION_HEADERS)
+
+    now = datetime.now(UTC)
+    create_res = client1.post(
+        "/interventions",
+        json={
+            "store_id": store_id,
+            "kind": "PRICE_CHANGE",
+            "trigger_ref": "alert-pg-stale-lineage",
+            "expected_outcome": "pg stale lineage test",
+            "planned_start": now.isoformat(),
+            "planned_end": (now + timedelta(days=14)).isoformat(),
+            "created_by": "pg-admin",
+            "action_spec": {"price_change_pct": -5},
+        },
+    )
+    assert create_res.status_code == 201
+    case_id = create_res.json()["intervention_id"]
+    case_uuid = case_id.removeprefix("intervention-")
+
+    client1.post(f"/interventions/{case_id}/eligibility", json={"eligible": True, "actor": "pg-admin"})
+    client1.post(f"/interventions/{case_id}/action", json={"action_spec": {"price_change_pct": -5}, "actor": "pg-admin"})
+    client1.post(f"/interventions/{case_id}/conflict-check", json={"actor": "pg-admin"})
+    client1.post(f"/interventions/{case_id}/submit", json={"actor": "pg-admin"})
+    approve_res = client1.post(f"/interventions/{case_id}/approve", json={"action": "APPROVE", "actor": "sup-admin", "reason": "approved"})
+    assert approve_res.status_code == 200
+    v_approved = approve_res.json()["version"]
+
+    # Pre-read snapshot at APPROVED v_approved with replacement_id=None
+    stale_snapshot = repo1.get(case_id)
+    assert stale_snapshot is not None
+    assert stale_snapshot.replacement_id is None
+    stale_write = stale_snapshot.with_transition(
+        to_status=stale_snapshot.status,
+        actor="ops-lead",
+        action="assign",
+        reason="assigning stale",
+        assigned_to="ops-manager-1",
+    )
+
+    # 1. client2 adjusts the intervention -> original becomes STOPPED with replacement_id
+    adjust_res = client2.post(
+        f"/interventions/{case_id}/adjust",
+        json={
+            "actor": "ops-adjuster",
+            "reason": "replace with new parameters",
+            "action_spec": {"price_change_pct": -10},
+            "expected_version": v_approved,
+        },
+    )
+    assert adjust_res.status_code == 200
+    replacement_id = adjust_res.json()["replacement_intervention_id"]
+    replacement_uuid = replacement_id.removeprefix("intervention-")
+
+    # 2. Worker 1 attempts to save its stale write holding replacement_id=None
+    # The repository lock/CAS guard intercepts this and rejects it, preserving lineage
+    with pytest.raises(InterventionError, match="already stopped and replaced by"):
+        repo1.save(stale_write)
+
+    # Also test that a stale adjust attempt with expected_version=v_approved gets 409 STALE_UPDATE_CONFLICT
+    stale_adjust_res = client1.post(
+        f"/interventions/{case_id}/adjust",
+        json={
+            "actor": "ops-adjuster-2",
+            "reason": "late adjust",
+            "action_spec": {"price_change_pct": -8},
+            "expected_version": v_approved,
+        },
+    )
+    assert stale_adjust_res.status_code == 409
+    assert stale_adjust_res.json()["detail"]["code"] == "STALE_UPDATE_CONFLICT"
+
+    # 3. Verify PostgreSQL operations.interventions retains STOPPED status and replacement_id
+    with intake_blank_db.connect() as conn:
+        rows = conn.execute(
+            "SELECT intervention_id, status, predecessor_id, replacement_id FROM operations.interventions WHERE store_id = %s",
+            (store_id,),
+        ).fetchall()
+        assert len(rows) == 2
+        orig_row = next(r for r in rows if str(r[0]) == case_uuid)
+        assert orig_row[1] == "stopped"
+        assert str(orig_row[3]) == replacement_uuid
+
+        repl_row = next(r for r in rows if str(r[0]) == replacement_uuid)
+        assert repl_row[1] == "candidate"
+        assert str(repl_row[2]) == case_uuid
+
+    # 4. Verify document mirror retains replacement_id and STOPPED status
+    doc_orig = repo1.get(case_id)
+    assert doc_orig is not None
+    assert doc_orig.status.value == "STOPPED"
+    assert doc_orig.replacement_id == replacement_id
 
     engine1.close()
     engine2.close()

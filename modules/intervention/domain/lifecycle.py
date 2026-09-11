@@ -490,11 +490,10 @@ class LabelRecord:
 class AdjustmentRecord:
     """Lineage and audit record for an adjusted intervention (ODP-FR-INTV-006).
 
-    When an active intervention is adjusted, operational practice stops the
-    original intervention and opens a replacement intervention to preserve
-    clean observation windows and causal attribution. This record links
-    the predecessor and replacement with reasons, actor, timestamp,
-    policy version, and rollback plan.
+    When an active intervention is adjusted under the candidate stop-plus-recreate
+    workflow (ODP-FR-INTV-006 technical readiness), this record links the predecessor
+    and replacement with reasons, actor, timestamp, policy version, and rollback
+    plan to preserve clean observation windows and causal attribution.
     """
 
     predecessor_id: str
