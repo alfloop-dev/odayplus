@@ -1,0 +1,186 @@
+{
+  "task_id": "ODP-INT001-CDC-DISPOSITION-001",
+  "task_title": "歷史驗收續辦：ODP-INT001-CDC-DISPOSITION-001",
+  "original_task_title": "依 upstream 證據實作 CDC connector 或正式處置 INT-001",
+  "task_class": "documentation",
+  "phase": "History Recovery — executable acceptance reconciliation",
+  "owner": "Antigravity6",
+  "reviewer": "Codex2",
+  "recorded_at": "2026-09-11T11:10:00Z",
+  "reconciliation_target": {
+    "repository": "alfloop-dev/odayplus",
+    "continuation_branch": "task/ODP-INT001-CDC-DISPOSITION-001-RECOVERY-20260911",
+    "target_dev_baseline": "4499a2993e37b62033926b07de8d8d2e8469a6c7"
+  },
+  "historical_delivery": {
+    "pr_number": 1166,
+    "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1166",
+    "pr_title": "[ReviewBus] ODP-INT001-CDC-DISPOSITION-001 依 upstream 證據實作 CDC connector 或正式處置 INT-001",
+    "head_sha": "39289e4207b29d2c7adea071f42901f9f0b5ae20",
+    "merge_commit_sha": "0f35515ed15aad36c496f30973b2e2ce9fa2b026",
+    "merged": true,
+    "merged_at": "2026-09-03T20:50:26Z",
+    "merged_by": "ajoe734",
+    "delivered_artifacts": [
+      "delivery_toolchain/governance/set_valued_requirements.json",
+      "docs/evidence/ODP_INT001_CDC_DISPOSITION_2026-09-03.md",
+      "docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md",
+      "tests/integration/test_int001_cdc_disposition.py",
+      "delivery_toolchain/governance/test_check_requirement_members.py"
+    ],
+    "ci_checks": [
+      {
+        "name": "product",
+        "conclusion": "success",
+        "completed_at": "2026-09-03T20:09:20Z"
+      },
+      {
+        "name": "product-e2e-gate",
+        "conclusion": "success",
+        "completed_at": "2026-09-03T19:53:27Z"
+      },
+      {
+        "name": "performance-gate",
+        "conclusion": "success",
+        "completed_at": "2026-09-03T19:48:42Z"
+      },
+      {
+        "name": "boundary",
+        "conclusion": "success",
+        "completed_at": "2026-09-03T19:47:36Z"
+      },
+      {
+        "name": "orchestrator",
+        "conclusion": "success",
+        "completed_at": "2026-09-03T19:50:46Z"
+      },
+      {
+        "name": "change-scope",
+        "conclusion": "success",
+        "completed_at": "2026-09-03T19:47:35Z"
+      },
+      {
+        "name": "classify",
+        "conclusion": "success",
+        "completed_at": "2026-09-03T19:47:36Z"
+      }
+    ],
+    "historical_approval": {
+      "approver": "Antigravity7",
+      "state": "success",
+      "updated_at": "2026-09-03T20:07:47Z",
+      "description": "Approved by assigned reviewer Antigravity7"
+    }
+  },
+  "acceptance_criteria_reconciliation": [
+    {
+      "index": 1,
+      "criterion": "實作時使用真 upstream contract 並保存 offset／ordering／delete／replay／idempotency semantics",
+      "classes": [
+        "D"
+      ],
+      "classes_zh": [
+        "程式或文件交付"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "依據 conditional task brief 原則，在無實體上游 CDC 需求與下游無刪除路徑之查證事實下，依規定不建立空 connector，交付正式處置報告 docs/evidence/ODP_INT001_CDC_DISPOSITION_2026-09-03.md 及 docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md，並於 PR #1166 (merge commit 0f35515ed15a) 完整交付。",
+      "boundary": "處置交付已落定當時事實；不宣稱已實作生產 CDC connector 或完成實際資料流串接。"
+    },
+    {
+      "index": 2,
+      "criterion": "credential 與 tenant boundary fail closed 且有 production-entry 測試",
+      "classes": [
+        "T"
+      ],
+      "classes_zh": [
+        "可由測試證明"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "PR #1166 交付 tests/integration/test_int001_cdc_disposition.py，精確 head 39289e4207b2 上之 check-run product 成功（2026-09-03T20:09:20Z）；且於當前 dev 環境由 uv run pytest 驗證通過，確保憑證擴大與租戶邊界 fail-closed。",
+      "boundary": "由單元與整合測試驗證 fail-closed 邊界；未在 live production 進行憑證連線或存取。"
+    },
+    {
+      "index": 3,
+      "criterion": "無適用 upstream 時不新增 connector 且 AI 不自簽 waiver",
+      "classes": [
+        "D",
+        "H"
+      ],
+      "classes_zh": [
+        "程式或文件交付",
+        "人類授權"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "delivery_toolchain/governance/set_valued_requirements.json 與 docs/evidence/ODP_INT001_CDC_DISPOSITION_2026-09-03.md 中，ODP-FR-INT-001::CDC 成員維持 status: absent、disposition.state: OPEN，指派予 Data Platform Lead 並附 formal_handback_ref，無 AI 自簽 decider 欄位。",
+      "boundary": "需求保持 OPEN 待後續實作/裁決，未建立 AI waiver，符合架構治理與授權邊界。"
+    },
+    {
+      "index": 4,
+      "criterion": "requirement member 與 formal disposition ref 維持一致",
+      "classes": [
+        "T"
+      ],
+      "classes_zh": [
+        "可由測試證明"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "delivery_toolchain/governance/test_check_requirement_members.py (orchestrator check-run 收集) 與 tests/integration/test_int001_cdc_disposition.py (product check-run 收集) 在 exact-head 39289e4207b2 均為 success；本地執行 check_requirement_members.py 退出碼為 0。",
+      "boundary": "機械式驗證治理清單與處置參照一致；不代表全部需求 member 均已實作完成。"
+    }
+  ],
+  "governance_and_evolution_mapping": {
+    "human_decision_d20": {
+      "source_doc": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+      "decision_id": "D20",
+      "selected_direction": "A：實作／補齊 CDC 適用性與契約",
+      "status": "confirmed_direction"
+    },
+    "completed_downstream_work": [
+      {
+        "task_id": "ODP-CDC-SOURCE-CONTRACT-PREP-001",
+        "stage": "WP-34A",
+        "pr_number": 1258,
+        "merge_commit": "414b5c17927edf3b123bce942b49ccf7580152af",
+        "deliverable": "23 來源 CDC 矩陣及 H07 具體資料請求"
+      },
+      {
+        "task_id": "ODP-DATA-PLANE-DELETE-PROPAGATION-001",
+        "pr_number": 1282,
+        "deliverable": "下游資料落地層刪除傳播路徑修復"
+      },
+      {
+        "task_id": "ODP-DATA-CATALOG-METADATA-ALIGNMENT-001",
+        "pr_number": 1286,
+        "deliverable": "資料型錄中來源 owner 與 latency SLA 對齊"
+      }
+    ],
+    "active_implementation_holder": {
+      "task_id": "ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001",
+      "stage": "WP-34B",
+      "status": "blocked",
+      "holding_entry_condition": "H07：指定來源/collection、可接受延遲/順序/刪除語意，確認上游支援與最小讀取權限；不以空 connector 或權限猜測宣稱 streaming 已可用。"
+    },
+    "requirement_tracking": {
+      "requirement_id": "ODP-FR-INT-001",
+      "member": "CDC",
+      "status": "absent",
+      "disposition_state": "OPEN",
+      "assigned_to": "Data Platform Lead",
+      "rule": "不得因本處置任務驗收核對而將 ODP-FR-INT-001 或 CDC adapter 標記為 VERIFIED"
+    }
+  },
+  "summary": {
+    "criteria_total": 4,
+    "criteria_met": 4,
+    "criteria_partially_met": 0,
+    "criteria_unmet": 0,
+    "historical_evidence_verified": true,
+    "disposition_contract_fulfilled": true,
+    "human_disposition_required": false,
+    "reconciliation_verdict": "acceptance_fully_reconciled"
+  }
+}
