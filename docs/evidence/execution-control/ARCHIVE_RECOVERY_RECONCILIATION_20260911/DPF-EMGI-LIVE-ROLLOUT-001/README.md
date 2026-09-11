@@ -5,7 +5,7 @@
 - **任務 ID**: `DPF-EMGI-LIVE-ROLLOUT-001`
 - **任務名稱**: 歷史驗收續辦：DPF-EMGI-LIVE-ROLLOUT-001
 - **執行身分 (Owner)**: `Antigravity7`
-- **指派審查者 (Reviewer)**: `Codex2`
+- **指派審查者 (Reviewer)**: `Codex`
 - **復原目標分支**: `task/DPF-EMGI-LIVE-ROLLOUT-001-RECOVERY-20260911`
 - **對照基準 (Pinned Dev)**: `4499a2993e37b62033926b07de8d8d2e8469a6c7`
 - **交付儲存庫**: 原始跨儲存庫交付於 `alfloop-dev/oday-data-platform`（PR #62），本補證記錄交付於 `alfloop-dev/odayplus`。
@@ -75,5 +75,5 @@
 
 ```bash
 git diff --check
-python3 docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/DPF-EMGI-LIVE-ROLLOUT-001/verify_reconciliation.py
+bash docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/DPF-EMGI-LIVE-ROLLOUT-001/verify_reconciliation.sh
 ```

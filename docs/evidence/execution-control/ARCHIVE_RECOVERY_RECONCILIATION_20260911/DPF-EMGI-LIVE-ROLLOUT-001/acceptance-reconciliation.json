@@ -4,7 +4,7 @@
   "task_class": "documentation",
   "phase": "History Recovery — executable acceptance reconciliation",
   "owner": "Antigravity7",
-  "reviewer": "Codex2",
+  "reviewer": "Codex",
   "recorded_at": "2026-09-11T11:25:00Z",
   "reconciliation_target": {
     "repository": "alfloop-dev/odayplus",
