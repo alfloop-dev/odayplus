@@ -1,0 +1,281 @@
+{
+  "task_id": "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+  "task_title": "歷史復原佔位：ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+  "task_class": "remediation",
+  "phase": "History Recovery",
+  "owner": "Antigravity6",
+  "reviewer": "Codex",
+  "recorded_at": "2026-09-10T23:44:00Z",
+  "reconciliation_target": {
+    "repository": "alfloop-dev/odayplus",
+    "pinned_dev_sha": "025323f36d05c81f40085ba80c87f370d7c49c83",
+    "continuation_branch": "task/ODP-RUNTIME-RELEASE-SINGLE-PATH-001-RECOVERY-20260910"
+  },
+  "historical_delivery": {
+    "pr_number": 1010,
+    "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1010",
+    "head_sha": "5f80756b84852f935625e502eca9fc038a6bbc9a",
+    "merge_commit_sha": "5ae1e5cee8ef6b5047fa72f2426d2a1f42d9f9ce",
+    "merged": true,
+    "merged_at": "2026-08-25T15:34:07Z",
+    "delivered_artifacts": [
+      ".github/workflows/deploy-dev.yml",
+      "tests/ops/test_deploy_workflow_contract.py",
+      "tests/release/test_runtime_admission.py",
+      "delivery_toolchain/release/check_runtime_admission.py"
+    ],
+    "ci_checks": [
+      {
+        "name": "change-scope",
+        "conclusion": "success",
+        "completed_at": "2026-08-25T14:53:34Z"
+      },
+      {
+        "name": "boundary",
+        "conclusion": "success",
+        "completed_at": "2026-08-25T14:53:39Z"
+      },
+      {
+        "name": "classify",
+        "conclusion": "success",
+        "completed_at": "2026-08-25T14:53:36Z"
+      },
+      {
+        "name": "orchestrator",
+        "conclusion": "success",
+        "completed_at": "2026-08-25T14:55:52Z"
+      },
+      {
+        "name": "product",
+        "conclusion": "success",
+        "completed_at": "2026-08-25T15:11:12Z"
+      },
+      {
+        "name": "performance-gate",
+        "conclusion": "success",
+        "completed_at": "2026-08-25T14:55:39Z"
+      },
+      {
+        "name": "product-e2e-gate",
+        "conclusion": "success",
+        "completed_at": "2026-08-25T15:02:45Z"
+      }
+    ],
+    "historical_approval": {
+      "approver": "Claude",
+      "state": "success",
+      "updated_at": "2026-08-25T15:07:55Z",
+      "description": "Approved by assigned reviewer Claude"
+    },
+    "latest_status_gate": {
+      "state": "failure",
+      "description": "Review rejected or reopened. Task status is blocked",
+      "updated_at": "2026-09-08T23:57:10Z"
+    }
+  },
+  "readback_evidence_sources": {
+    "observed_at": "2026-09-10T23:31:25Z",
+    "collector": "Codex",
+    "readback_bundle": "support/handoffs/max-dispatch-20260910/archive-evidence/",
+    "github_protected_environments": [
+      {
+        "name": "dev",
+        "id": 17295066036,
+        "exists": true,
+        "required_reviewers_configured": false,
+        "protection_rules": [],
+        "can_admins_bypass": true
+      },
+      {
+        "name": "staging",
+        "id": 17295059155,
+        "exists": true,
+        "required_reviewers_configured": true,
+        "reviewers": [
+          {
+            "login": "Alien-alfaloop",
+            "type": "User"
+          },
+          {
+            "login": "ajoe734",
+            "type": "User"
+          }
+        ],
+        "can_admins_bypass": true
+      },
+      {
+        "name": "production",
+        "id": 20574639394,
+        "exists": true,
+        "required_reviewers_configured": true,
+        "reviewers": [
+          {
+            "login": "Alien-alfaloop",
+            "type": "User"
+          },
+          {
+            "login": "ajoe734",
+            "type": "User"
+          }
+        ],
+        "can_admins_bypass": true
+      }
+    ],
+    "github_build_environments": [
+      {
+        "name": "dev-build",
+        "id": 20655859872,
+        "exists": true,
+        "protection_rule_types": []
+      },
+      {
+        "name": "staging-build",
+        "id": 20655927684,
+        "exists": true,
+        "protection_rule_types": []
+      },
+      {
+        "name": "production-build",
+        "id": 20655943111,
+        "exists": true,
+        "protection_rule_types": []
+      }
+    ],
+    "pinned_workflow_bindings": {
+      "path": ".github/workflows/deploy-dev.yml",
+      "sha256": "bd326d199676f3d784fcff6a6be19b54a25876f9d1dce41435c5db889b2c36da",
+      "jobs": {
+        "release_phase": {
+          "environment": null,
+          "needs": null
+        },
+        "build": {
+          "environment": "${{ inputs.environment }}-build",
+          "needs": "release_phase"
+        },
+        "admission": {
+          "environment": "${{ inputs.environment }}",
+          "needs": [
+            "release_phase",
+            "build"
+          ]
+        },
+        "deploy": {
+          "environment": "${{ inputs.environment }}",
+          "needs": [
+            "release_phase",
+            "build",
+            "admission"
+          ]
+        },
+        "staging_closeout": {
+          "environment": "staging",
+          "needs": [
+            "deploy"
+          ]
+        }
+      },
+      "admission_checker": "delivery_toolchain/release/check_runtime_admission.py"
+    },
+    "single_entrypoint_verification": {
+      "deploy_script": "product_ops/deployment/deploy_cloud_run_waji.sh",
+      "deploy_script_callers": [
+        ".github/workflows/deploy-dev.yml"
+      ],
+      "remote_staging_proof_checker": "delivery_toolchain/e2e/check_remote_staging_proof.py",
+      "remote_staging_proof_callers": [
+        ".github/workflows/deploy-dev.yml"
+      ],
+      "single_entrypoint_contract_result": true
+    }
+  },
+  "acceptance_criteria_reconciliation": [
+    {
+      "index": 1,
+      "criterion": "現有 Runtime Release 成為唯一入口",
+      "classes": [
+        "D",
+        "T"
+      ],
+      "classes_zh": [
+        "程式或文件交付",
+        "可由測試證明"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "Pinned current dev (025323f36d05) workflow audit confirms deploy_cloud_run_waji.sh and check_remote_staging_proof.py are exclusively invoked from deploy-dev.yml; original delivered test tests/ops/test_deploy_workflow_contract.py verified via merge commit 5ae1e5cee8ef and PR #1010 exact-head 5f80756b 7-check green CI.",
+      "boundary": "Verified existing deployment/proof entrypoint contract; no unmanaged or hypothetical deployment side channels asserted."
+    },
+    {
+      "index": 2,
+      "criterion": "build job 只執行一次且 deploy-by-digest",
+      "classes": [
+        "T"
+      ],
+      "classes_zh": [
+        "可由測試證明"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "tests/ops/test_deploy_workflow_contract.py delivered in PR #1010 / merge commit 5ae1e5cee8ef; check-run product at head 5f80756b conclusion=success.",
+      "boundary": "Reuses delivered code and green CI test results; no live container build executed during readback."
+    },
+    {
+      "index": 3,
+      "criterion": "依序支援 dev/ephemeral staging/prod blue-green",
+      "classes": [
+        "T",
+        "D"
+      ],
+      "classes_zh": [
+        "可由測試證明",
+        "程式或文件交付"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "Historical PR #1010 (head 5f80756b) tests (tests/ops/test_deploy_workflow_contract.py and tests/release/test_runtime_admission.py; merge commit 5ae1e5cee8ef, product CI success) establish stage admission boundaries across environments; historical workflow @5f80756b:465-478 used static staging and :480-490 used production dry-run capture. Complete ephemeral staging lifecycle (create/verify/proof) and production blue-green state capture are verified via source-only inspection of pinned dev .github/workflows/deploy-dev.yml (025323f36d05:1226-1293 and :1337-1352).",
+      "boundary": "Distinguishes historical admission stage contract tests from pinned dev deploy-dev.yml source inspection of ephemeral staging lifecycle and production blue-green capture; not an assertion of an already-executed live production rollout."
+    },
+    {
+      "index": 4,
+      "criterion": "各階段使用正確 admission 與 protected environments",
+      "classes": [
+        "T",
+        "R"
+      ],
+      "classes_zh": [
+        "可由測試證明",
+        "runtime／部署"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "Gap resolved: 2026-09-10T23:31Z GitHub readback confirms staging (id 17295059155) and production (id 20574639394) have required_reviewers (Alien-alfaloop, ajoe734); build environments (dev-build, staging-build, production-build) have empty protection rules; workflow deploy-dev.yml binds build to <environment>-build and admission/deploy to <environment>; delivery_toolchain/release/check_runtime_admission.py gate is actively wired.",
+      "boundary": "GitHub environment configuration and workflow binding verified; no Human GO, signed lease, live deployment, or executed deployment approval is inferred."
+    },
+    {
+      "index": 5,
+      "criterion": "不存在第二套 proof/deploy 狀態機",
+      "classes": [
+        "T"
+      ],
+      "classes_zh": [
+        "可由測試證明"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "Negative requirement covered by tests/ops/test_deploy_workflow_contract.py in merge commit 5ae1e5cee8ef and verified across all 7 active workflow definitions at pinned dev SHA 025323f36d05.",
+      "boundary": "Verified across tracked workflows and contract tests; no alternative workflow state machines exist."
+    }
+  ],
+  "summary": {
+    "criteria_total": 5,
+    "criteria_met": 5,
+    "criteria_partially_met": 0,
+    "criteria_unmet": 0,
+    "a4_protected_environment_gap_resolved": true,
+    "human_disposition_required": false,
+    "historical_unknown_retained": true,
+    "current_gate_is_not_original_approval": true,
+    "reconciliation_verdict": "acceptance_fully_reconciled"
+  }
+}
