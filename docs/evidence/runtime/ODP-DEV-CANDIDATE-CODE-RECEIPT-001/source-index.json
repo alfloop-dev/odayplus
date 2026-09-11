@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "task_id": "ODP-DEV-CANDIDATE-CODE-RECEIPT-001",
-  "generated_at": "2026-09-11T00:50:00Z",
+  "generated_at": "2026-09-11T01:45:00Z",
   "candidate": {
     "sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
     "ref": "refs/heads/dev",
@@ -49,8 +49,8 @@
       "purpose": "CI workflow specification detailing test matrix, markers, and scopes."
     },
     {
-      "uri": "support/sidecars/ODP-PLAN-ENGINEERING-HARDENING-001/ODP-PLAN-ENGINEERING-HARDENING-001-SIDECAR-ACCEPTANCE.md",
-      "purpose": "Historical sidecar acceptance packet for ODP-PLAN-ENGINEERING-HARDENING-001 recorded at parent HEAD d24fd0c4 (status: blocked pending Human/Ops decision)."
+      "uri": "github://alfloop-dev/odayplus@42e3b207cd125ef6a2fbc3f3aa092a88853587f2/support/sidecars/ODP-PLAN-ENGINEERING-HARDENING-001/ODP-PLAN-ENGINEERING-HARDENING-001-SIDECAR-ACCEPTANCE.md",
+      "purpose": "Historical sidecar acceptance packet for ODP-PLAN-ENGINEERING-HARDENING-001 recorded at source commit 42e3b207cd125ef6a2fbc3f3aa092a88853587f2 (parent last approved HEAD d24fd0c4; status: blocked pending Human/Ops risk decision on 13 dev-tool high vulnerabilities)."
     }
   ],
   "ci_pipeline_runs": {
@@ -63,15 +63,25 @@
         "change_scope_orchestrator": {
           "job_id": 101796385286,
           "conclusion": "success",
-          "timestamp": "2026-09-07T15:35:08.1796384Z",
+          "step_timing_details": {
+            "step_8_boundary_check": "2026-09-07T15:35:03Z - 2026-09-07T15:35:08Z (PASS output at 15:35:08.1796384Z)",
+            "step_9_measurement_defaults": "success",
+            "step_10_requirement_members": "success",
+            "step_11_generate_vocabularies": "success",
+            "step_12_lint_orchestrator": "success",
+            "step_13_config_wiring": "success",
+            "step_14_test_orchestrator_tooling": "success"
+          },
           "log_excerpt": "Code boundary checks passed for 1137 files",
           "checks_executed": [
-            "check_code_boundaries.py",
-            "check_measurement_defaults.py",
-            "check_requirement_members.py",
-            "generate_vocabularies.py --check",
-            "check_orchestrator_config.py",
-            "check_config_wiring.py"
+            "uv run python delivery_toolchain/governance/check_code_boundaries.py",
+            "uv run python delivery_toolchain/governance/check_measurement_defaults.py",
+            "uv run python delivery_toolchain/governance/check_requirement_members.py",
+            "uv run python delivery_toolchain/governance/generate_vocabularies.py --check",
+            "uv run ruff check .orchestrator delivery_toolchain scripts",
+            "uv run python delivery_toolchain/governance/check_orchestrator_config.py",
+            "uv run python delivery_toolchain/governance/check_config_wiring.py",
+            "uv run pytest -m \"not requires_live_env\" .orchestrator delivery_toolchain scripts tests/tooling"
           ]
         },
         "product": {
@@ -120,7 +130,13 @@
       "run_id": 34179207603,
       "workflow": "Deploy Dev (Runtime Release)",
       "conclusion": "failure",
-      "failure_step": "Step 20: Write the build-once artifact handoff (INITIAL_RELEASE_RECOVERY: false)",
+      "run_started_at": "2026-09-08T02:11:41Z",
+      "run_completed_at": "2026-09-08T02:20:27Z",
+      "run_duration_seconds": 526.0,
+      "build_job_window": "2026-09-08T02:12:00Z - 2026-09-08T02:20:25Z (job 101914686431, duration 505s)",
+      "image_build_sign_step_window": "2026-09-08T02:15:38Z - 2026-09-08T02:20:20Z (step 19, duration 282s)",
+      "rekor_signature_events_span": "2026-09-08T02:17:01Z - 2026-09-08T02:19:42Z (161 seconds span across 4 image signatures)",
+      "failure_step": "Step 20: Write the build-once artifact handoff (INITIAL_RELEASE_RECOVERY: false, 02:20:20Z - 02:20:25Z)",
       "images_built_and_signed": true,
       "workflow_head_sha": "8c570a56353abdcc8ba70fe0a3fdd9b963902391",
       "release_sha_input": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
@@ -140,6 +156,7 @@
       "release_sha_input": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
       "created_at": "2026-09-08T02:21:49Z",
       "updated_at": "2026-09-08T02:26:33Z",
+      "duration_seconds": 284.0,
       "source_receipt_ref": "github://alfloop-dev/odayplus@108249fa921e128f734ebd917a933fa562f4b7e1/docs/evidence/runtime/ODP-DEV-BUILD-ARTIFACT-HANDOFF-003/build-dispatch-evidence.md#L549-L905"
     }
   },

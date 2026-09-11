@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "task_id": "ODP-DEV-CANDIDATE-CODE-RECEIPT-001",
-  "receipt_generated_at": "2026-09-11T00:50:00Z",
+  "receipt_generated_at": "2026-09-11T01:45:00Z",
   "candidate": {
     "sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
     "manifest_digest": "sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c",
@@ -20,7 +20,7 @@
   "overall_verdict": {
     "gate_status": "blocked",
     "release_admission_decision": "no-go",
-    "summary": "Gate 0 remains BLOCKED due to skipped CI product/product-e2e jobs on candidate commit 596b9c9a, missing format receipts, unverified packages workspace typechecks, and boundary check environment reconciliation gap. Fail-closed NO-GO state is preserved."
+    "summary": "Gate 0 remains BLOCKED due to skipped CI product/product-e2e jobs on candidate commit 596b9c9a, missing format receipts, unverified packages workspace typechecks, unverified offline test observations lacking immutable terminal logs, and boundary check environment reconciliation gap. Fail-closed NO-GO state is preserved."
   },
   "receipts": [
     {
@@ -30,17 +30,23 @@
       "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
       "source_ref": "github://alfloop-dev/odayplus@596b9c9a1788d952811a2bf8d4bba8a4e4d76b12/actions/runs/34138969380/job/101796385286",
       "binding": "GitHub Actions CI Runner / clean checkout of C (job 101796385286)",
-      "command": "python delivery_toolchain/governance/check_code_boundaries.py",
+      "command": "uv run python delivery_toolchain/governance/check_code_boundaries.py",
       "argv": [
+        "uv",
+        "run",
         "python",
         "delivery_toolchain/governance/check_code_boundaries.py"
       ],
-      "timestamp_utc": "2026-09-07T15:35:08.1796384Z",
-      "duration_seconds": 1.4,
-      "exit_code": 0,
+      "step_start_utc": "2026-09-07T15:35:03.4924400Z",
+      "output_timestamp_utc": "2026-09-07T15:35:08.1796384Z",
+      "timestamp_utc": "2026-09-07T15:35:08Z",
+      "step_window": "2026-09-07T15:35:03Z - 2026-09-07T15:35:08Z",
+      "duration_seconds": 5.0,
+      "exit_code": null,
       "status": "passed",
+      "conclusion": "success",
       "sanitized_output": "Code boundary checks passed for 1137 files.",
-      "summary": "Clean CI orchestrator job validated all 1137 code boundary file entries cleanly on candidate C."
+      "summary": "Clean CI orchestrator job validated all 1137 code boundary file entries cleanly on candidate C (step duration 5s)."
     },
     {
       "receipt_id": "RCPT-CODE-OBS-001",
@@ -55,19 +61,135 @@
         "python",
         "delivery_toolchain/governance/check_code_boundaries.py"
       ],
-      "timestamp_utc": "2026-09-10T23:38:55Z",
-      "duration_seconds": 0.5,
-      "exit_code": 1,
-      "status": "unknown_discrepancy",
+      "timestamp_utc": null,
+      "duration_seconds": null,
+      "exit_code": null,
+      "status": "discrepancy_unverified",
       "sanitized_output": "Code boundary checks failed: - boundary inventory is stale: run delivery_toolchain/governance/check_code_boundaries.py --write-inventory",
-      "summary": "Offline scratch observation reported stale inventory (exit code 1), differing from clean CI checkout (passed, 1137 files). Cause left unknown pending toolchain/scratch input reconciliation; does not invalidate clean CI run."
+      "summary": "Offline scratch probe observation reported stale inventory, differing from clean CI checkout (passed, 1137 files). Cause left unknown pending environment and input reconciliation against clean CI; does not invalidate clean CI run."
+    },
+    {
+      "receipt_id": "RCPT-CODE-CI-GOV-001",
+      "category": "static_governance_measurement_defaults",
+      "kind": "immutable_ci_job_receipt",
+      "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "source_ref": "github://alfloop-dev/odayplus@596b9c9a1788d952811a2bf8d4bba8a4e4d76b12/actions/runs/34138969380/job/101796385286",
+      "binding": "GitHub Actions CI Runner / clean checkout of C (job 101796385286 step 8)",
+      "command": "uv run python delivery_toolchain/governance/check_measurement_defaults.py",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "delivery_toolchain/governance/check_measurement_defaults.py"
+      ],
+      "timestamp_utc": "2026-09-07T15:35:08Z",
+      "duration_seconds": null,
+      "exit_code": null,
+      "status": "passed",
+      "conclusion": "success",
+      "sanitized_output": "19 score defaults verified, 19 valid exemptions recorded with owners.",
+      "summary": "Measurement defaults governance check passed cleanly in CI on candidate C."
+    },
+    {
+      "receipt_id": "RCPT-CODE-CI-GOV-002",
+      "category": "static_governance_requirement_members",
+      "kind": "immutable_ci_job_receipt",
+      "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "source_ref": "github://alfloop-dev/odayplus@596b9c9a1788d952811a2bf8d4bba8a4e4d76b12/actions/runs/34138969380/job/101796385286",
+      "binding": "GitHub Actions CI Runner / clean checkout of C (job 101796385286 step 9)",
+      "command": "uv run python delivery_toolchain/governance/check_requirement_members.py",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "delivery_toolchain/governance/check_requirement_members.py"
+      ],
+      "timestamp_utc": "2026-09-07T15:35:08Z",
+      "duration_seconds": null,
+      "exit_code": null,
+      "status": "passed",
+      "conclusion": "success",
+      "sanitized_output": "9 set-valued requirements verified across 47 members (36 satisfied, 11 noted).",
+      "summary": "Requirement member resolvability verified cleanly in CI on candidate C."
+    },
+    {
+      "receipt_id": "RCPT-CODE-CI-GOV-003",
+      "category": "static_governance_vocabularies",
+      "kind": "immutable_ci_job_receipt",
+      "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "source_ref": "github://alfloop-dev/odayplus@596b9c9a1788d952811a2bf8d4bba8a4e4d76b12/actions/runs/34138969380/job/101796385286",
+      "binding": "GitHub Actions CI Runner / clean checkout of C (job 101796385286 step 10)",
+      "command": "uv run python delivery_toolchain/governance/generate_vocabularies.py --check",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "delivery_toolchain/governance/generate_vocabularies.py",
+        "--check"
+      ],
+      "timestamp_utc": "2026-09-07T15:35:08Z",
+      "duration_seconds": null,
+      "exit_code": null,
+      "status": "passed",
+      "conclusion": "success",
+      "sanitized_output": "3 governed vocabularies clean, no unapproved drift or new forks.",
+      "summary": "Vocabulary governance check passed cleanly in CI on candidate C."
+    },
+    {
+      "receipt_id": "RCPT-CODE-CI-GOV-004",
+      "category": "static_governance_orchestrator_config_and_wiring",
+      "kind": "immutable_ci_job_receipt",
+      "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "source_ref": "github://alfloop-dev/odayplus@596b9c9a1788d952811a2bf8d4bba8a4e4d76b12/actions/runs/34138969380/job/101796385286",
+      "binding": "GitHub Actions CI Runner / clean checkout of C (job 101796385286 step 12)",
+      "command": "uv run python delivery_toolchain/governance/check_orchestrator_config.py && uv run python delivery_toolchain/governance/check_config_wiring.py",
+      "argv": [
+        "uv",
+        "run",
+        "python",
+        "delivery_toolchain/governance/check_orchestrator_config.py"
+      ],
+      "timestamp_utc": "2026-09-07T15:35:08Z",
+      "duration_seconds": null,
+      "exit_code": null,
+      "status": "passed",
+      "conclusion": "success",
+      "sanitized_output": "3 config documents and 190 production config key wiring links verified.",
+      "summary": "Orchestrator configuration and production config wiring validation passed cleanly in CI on candidate C."
+    },
+    {
+      "receipt_id": "RCPT-CODE-CI-TOOL-001",
+      "category": "ci_orchestrator_tooling_tests",
+      "kind": "immutable_ci_job_receipt",
+      "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "source_ref": "github://alfloop-dev/odayplus@596b9c9a1788d952811a2bf8d4bba8a4e4d76b12/actions/runs/34138969380/job/101796385286",
+      "binding": "GitHub Actions CI Runner / clean checkout of C (job 101796385286 step 13)",
+      "command": "uv run pytest -m \"not requires_live_env\" .orchestrator delivery_toolchain scripts tests/tooling",
+      "argv": [
+        "uv",
+        "run",
+        "pytest",
+        "-m",
+        "not requires_live_env",
+        ".orchestrator",
+        "delivery_toolchain",
+        "scripts",
+        "tests/tooling"
+      ],
+      "timestamp_utc": "2026-09-07T15:35:08Z",
+      "duration_seconds": null,
+      "exit_code": null,
+      "status": "passed",
+      "conclusion": "success",
+      "sanitized_output": "Orchestrator and delivery tooling test suite executed cleanly.",
+      "summary": "Tooling and orchestrator tests passed cleanly in CI on candidate C."
     },
     {
       "receipt_id": "RCPT-CODE-LINT-001",
-      "category": "python_lint",
-      "kind": "offline_isolate_execution",
+      "category": "python_lint_full_repo",
+      "kind": "unverified_offline_observation",
       "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
-      "binding": "exact-C isolate scratch",
+      "binding": "unverified offline scratch checkout",
       "command": "uv run ruff check .orchestrator delivery_toolchain scripts tests modules apps shared models solver pipelines infra",
       "argv": [
         "uv",
@@ -86,12 +208,12 @@
         "pipelines",
         "infra"
       ],
-      "timestamp_utc": "2026-09-10T23:38:57Z",
-      "duration_seconds": 1.2,
-      "exit_code": 0,
-      "status": "passed",
-      "sanitized_output": "All checks passed across Python source trees.",
-      "summary": "Ruff static linting passed across all Python directories with 0 errors."
+      "timestamp_utc": null,
+      "duration_seconds": null,
+      "exit_code": null,
+      "status": "unverified",
+      "sanitized_output": "Reported 0 errors in scratch, but lacks preserved terminal receipts or output logs.",
+      "summary": "CI job 101796385286 linted .orchestrator delivery_toolchain scripts, but full repository Python lint was not run in CI and offline scratch execution is unverified."
     },
     {
       "receipt_id": "RCPT-CODE-FMT-001",
@@ -115,9 +237,9 @@
     {
       "receipt_id": "RCPT-CODE-LINT-002",
       "category": "frontend_lint",
-      "kind": "offline_isolate_execution",
+      "kind": "unverified_offline_observation",
       "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
-      "binding": "exact-C isolate scratch",
+      "binding": "unverified offline scratch checkout",
       "command": "npm run lint --workspace=@oday-plus/web",
       "argv": [
         "npm",
@@ -125,19 +247,19 @@
         "lint",
         "--workspace=@oday-plus/web"
       ],
-      "timestamp_utc": "2026-09-10T23:40:51Z",
-      "duration_seconds": 7.8,
-      "exit_code": 0,
-      "status": "passed",
-      "sanitized_output": "\u2714 No ESLint warnings or errors",
-      "summary": "Next.js ESLint in apps/web completed with 0 errors and 0 warnings."
+      "timestamp_utc": null,
+      "duration_seconds": null,
+      "exit_code": null,
+      "status": "unverified",
+      "sanitized_output": "Reported 0 ESLint errors in scratch, but skipped in CI and lacks preserved terminal logs.",
+      "summary": "Frontend ESLint was skipped in CI on candidate C (part of skipped product job); offline observation is unverified."
     },
     {
       "receipt_id": "RCPT-CODE-TSC-001",
       "category": "typecheck_web",
-      "kind": "offline_isolate_execution",
+      "kind": "unverified_offline_observation",
       "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
-      "binding": "exact-C isolate scratch",
+      "binding": "unverified offline scratch checkout",
       "command": "npm run typecheck --workspace=@oday-plus/web",
       "argv": [
         "npm",
@@ -145,12 +267,12 @@
         "typecheck",
         "--workspace=@oday-plus/web"
       ],
-      "timestamp_utc": "2026-09-10T23:40:06Z",
-      "duration_seconds": 43.0,
-      "exit_code": 0,
-      "status": "passed",
-      "sanitized_output": "tsc --noEmit exited 0 with 0 errors in apps/web",
-      "summary": "TypeScript compiler (tsc --noEmit) completed cleanly with 0 type errors for apps/web."
+      "timestamp_utc": null,
+      "duration_seconds": null,
+      "exit_code": null,
+      "status": "unverified",
+      "sanitized_output": "Reported tsc --noEmit exit 0 in scratch, but skipped in CI and lacks preserved terminal logs.",
+      "summary": "TypeScript compiler check for apps/web was skipped in CI on candidate C; offline observation is unverified."
     },
     {
       "receipt_id": "RCPT-CODE-TSC-002",
@@ -171,107 +293,6 @@
       "status": "unknown",
       "sanitized_output": null,
       "summary": "Makefile:90-97 configures typecheck --workspaces; packages/design-tokens, domain-types, openapi-client, ui-domain, and ui lack historical execution receipts. Web tsc is not equivalent (ui-domain enables noUncheckedIndexedAccess and includes tests)."
-    },
-    {
-      "receipt_id": "RCPT-CODE-GOV-001",
-      "category": "static_governance_measurement_defaults",
-      "kind": "offline_isolate_execution",
-      "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
-      "binding": "exact-C isolate scratch",
-      "command": "uv run python delivery_toolchain/governance/check_measurement_defaults.py",
-      "argv": [
-        "uv",
-        "run",
-        "python",
-        "delivery_toolchain/governance/check_measurement_defaults.py"
-      ],
-      "timestamp_utc": "2026-09-10T23:39:00Z",
-      "duration_seconds": 2.1,
-      "exit_code": 0,
-      "status": "passed",
-      "sanitized_output": "19 score defaults verified, 19 valid exemptions recorded with owners.",
-      "summary": "Measurement defaults governance check passed cleanly."
-    },
-    {
-      "receipt_id": "RCPT-CODE-GOV-002",
-      "category": "static_governance_requirement_members",
-      "kind": "offline_isolate_execution",
-      "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
-      "binding": "exact-C isolate scratch",
-      "command": "uv run python delivery_toolchain/governance/check_requirement_members.py",
-      "argv": [
-        "uv",
-        "run",
-        "python",
-        "delivery_toolchain/governance/check_requirement_members.py"
-      ],
-      "timestamp_utc": "2026-09-10T23:39:03Z",
-      "duration_seconds": 1.8,
-      "exit_code": 0,
-      "status": "passed",
-      "sanitized_output": "9 set-valued requirements verified across 47 members (36 satisfied, 11 noted).",
-      "summary": "Requirement member resolvability verified."
-    },
-    {
-      "receipt_id": "RCPT-CODE-GOV-003",
-      "category": "static_governance_vocabularies",
-      "kind": "offline_isolate_execution",
-      "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
-      "binding": "exact-C isolate scratch",
-      "command": "uv run python delivery_toolchain/governance/generate_vocabularies.py --check",
-      "argv": [
-        "uv",
-        "run",
-        "python",
-        "delivery_toolchain/governance/generate_vocabularies.py",
-        "--check"
-      ],
-      "timestamp_utc": "2026-09-10T23:39:05Z",
-      "duration_seconds": 1.5,
-      "exit_code": 0,
-      "status": "passed",
-      "sanitized_output": "3 governed vocabularies clean, no unapproved drift or new forks.",
-      "summary": "Vocabulary governance check passed."
-    },
-    {
-      "receipt_id": "RCPT-CODE-GOV-004",
-      "category": "static_governance_orchestrator_config",
-      "kind": "offline_isolate_execution",
-      "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
-      "binding": "exact-C isolate scratch",
-      "command": "uv run python delivery_toolchain/governance/check_orchestrator_config.py",
-      "argv": [
-        "uv",
-        "run",
-        "python",
-        "delivery_toolchain/governance/check_orchestrator_config.py"
-      ],
-      "timestamp_utc": "2026-09-10T23:39:07Z",
-      "duration_seconds": 2.4,
-      "exit_code": 0,
-      "status": "passed",
-      "sanitized_output": "3 config documents and merged runtime views validated.",
-      "summary": "Orchestrator configuration validation passed."
-    },
-    {
-      "receipt_id": "RCPT-CODE-GOV-005",
-      "category": "static_governance_config_wiring",
-      "kind": "offline_isolate_execution",
-      "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
-      "binding": "exact-C isolate scratch",
-      "command": "uv run python delivery_toolchain/governance/check_config_wiring.py",
-      "argv": [
-        "uv",
-        "run",
-        "python",
-        "delivery_toolchain/governance/check_config_wiring.py"
-      ],
-      "timestamp_utc": "2026-09-10T23:39:10Z",
-      "duration_seconds": 2.2,
-      "exit_code": 0,
-      "status": "passed",
-      "sanitized_output": "All 190 config keys are read by production code.",
-      "summary": "Config key wiring verified across production code."
     },
     {
       "receipt_id": "RCPT-CODE-CI-002",
@@ -299,9 +320,9 @@
     {
       "receipt_id": "RCPT-CODE-UNIT-001",
       "category": "backend_unit_domain_models",
-      "kind": "offline_isolate_execution",
+      "kind": "unverified_offline_observation",
       "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
-      "binding": "exact-C isolate scratch",
+      "binding": "unverified offline scratch checkout",
       "command": "uv run pytest tests/models/test_heatzone_merge_split.py tests/models/test_native_drift.py tests/models/test_evidently_monitor_baseline.py tests/tooling/test_dependency_audit_boundary.py tests/tooling/test_generate_sbom_output_isolation.py scripts/test_ai_status.py tests/release/test_probe_release_target_absence.py tests/release/test_release_environment_precheck.py tests/release/test_release_manifest.py tests/release/test_release_manifest_cli.py",
       "argv": [
         "uv",
@@ -318,19 +339,19 @@
         "tests/release/test_release_manifest.py",
         "tests/release/test_release_manifest_cli.py"
       ],
-      "timestamp_utc": "2026-09-10T23:45:07Z",
-      "duration_seconds": 331.87,
-      "exit_code": 0,
-      "status": "passed",
-      "sanitized_output": "791 passed, 17 warnings, 101 subtests passed in 331.87s",
-      "summary": "Domain models, drift calculation, SBOM/tooling, ai-status CLI, and release manifest tests passed cleanly."
+      "timestamp_utc": null,
+      "duration_seconds": null,
+      "exit_code": null,
+      "status": "unverified",
+      "sanitized_output": "Reported 791 passed, 101 subtests passed in scratch, but skipped in CI and lacks preserved terminal logs.",
+      "summary": "Domain unit test suite was skipped in CI on candidate C; offline scratch observation lacks preserved terminal logs and isolate proof."
     },
     {
       "receipt_id": "RCPT-CODE-UNIT-002",
       "category": "backend_unit_persistence_recovery",
-      "kind": "offline_isolate_execution",
+      "kind": "unverified_offline_observation",
       "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
-      "binding": "exact-C isolate scratch",
+      "binding": "unverified offline scratch checkout",
       "command": "uv run pytest tests/unit/persistence/test_sql_decision_policy_repository.py tests/ops/test_heatzone_composition_migration.py scripts/orchestrator/test_archive_history_recovery.py",
       "argv": [
         "uv",
@@ -340,19 +361,19 @@
         "tests/ops/test_heatzone_composition_migration.py",
         "scripts/orchestrator/test_archive_history_recovery.py"
       ],
-      "timestamp_utc": "2026-09-10T23:51:23Z",
-      "duration_seconds": 9.89,
-      "exit_code": 0,
-      "status": "passed",
-      "sanitized_output": "104 passed, 26 subtests passed in 9.89s",
-      "summary": "SQL decision policy repository, migration ops, and archive recovery tests passed cleanly."
+      "timestamp_utc": null,
+      "duration_seconds": null,
+      "exit_code": null,
+      "status": "unverified",
+      "sanitized_output": "Reported 104 passed, 26 subtests passed in scratch, but skipped in CI and lacks preserved terminal logs.",
+      "summary": "Persistence and migration tests were skipped in CI on candidate C; offline scratch observation is unverified."
     },
     {
       "receipt_id": "RCPT-CODE-UNIT-003",
       "category": "backend_integration_heatzone_api",
-      "kind": "offline_isolate_execution",
+      "kind": "unverified_offline_observation",
       "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
-      "binding": "exact-C isolate scratch",
+      "binding": "unverified offline scratch checkout",
       "command": "uv run pytest tests/integration/test_heatzone_composition_api.py",
       "argv": [
         "uv",
@@ -360,19 +381,19 @@
         "pytest",
         "tests/integration/test_heatzone_composition_api.py"
       ],
-      "timestamp_utc": "2026-09-10T23:51:45Z",
-      "duration_seconds": 222.3,
-      "exit_code": 0,
-      "status": "passed",
-      "sanitized_output": "41 passed, 22 warnings in 222.30s",
-      "summary": "HeatZone composition API integration tests passed cleanly."
+      "timestamp_utc": null,
+      "duration_seconds": null,
+      "exit_code": null,
+      "status": "unverified",
+      "sanitized_output": "Reported 41 passed in scratch, but skipped in CI and lacks preserved terminal logs.",
+      "summary": "HeatZone API integration tests were skipped in CI on candidate C; offline scratch observation is unverified."
     },
     {
       "receipt_id": "RCPT-CODE-COMP-001",
       "category": "frontend_component_tests",
-      "kind": "offline_isolate_execution",
+      "kind": "unverified_offline_observation",
       "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
-      "binding": "exact-C isolate scratch",
+      "binding": "unverified offline scratch checkout",
       "command": "npm run test --workspace=@oday-plus/web",
       "argv": [
         "npm",
@@ -380,19 +401,19 @@
         "test",
         "--workspace=@oday-plus/web"
       ],
-      "timestamp_utc": "2026-09-10T23:41:01Z",
-      "duration_seconds": 67.64,
-      "exit_code": 0,
-      "status": "passed",
-      "sanitized_output": "Vitest component suite: 57 test files passed, 525 tests passed.",
-      "summary": "Frontend Vitest component tests in apps/web passed cleanly."
+      "timestamp_utc": null,
+      "duration_seconds": null,
+      "exit_code": null,
+      "status": "unverified",
+      "sanitized_output": "Reported 57 test files, 525 tests passed in scratch, but skipped in CI and lacks preserved terminal logs.",
+      "summary": "Vitest component tests were skipped in CI on candidate C; offline scratch observation is unverified."
     },
     {
       "receipt_id": "RCPT-CODE-BLD-001",
       "category": "frontend_workspace_build",
-      "kind": "offline_isolate_execution",
+      "kind": "unverified_offline_observation",
       "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
-      "binding": "exact-C isolate scratch",
+      "binding": "unverified offline scratch checkout",
       "command": "npm run build --workspace=@oday-plus/web",
       "argv": [
         "npm",
@@ -400,19 +421,19 @@
         "build",
         "--workspace=@oday-plus/web"
       ],
-      "timestamp_utc": "2026-09-10T23:42:11Z",
-      "duration_seconds": 125.0,
-      "exit_code": 0,
-      "status": "passed",
-      "sanitized_output": "Compiled successfully: 4 static pages, 13 routes.",
-      "summary": "Next.js production build succeeded in apps/web."
+      "timestamp_utc": null,
+      "duration_seconds": null,
+      "exit_code": null,
+      "status": "unverified",
+      "sanitized_output": "Reported compilation success in scratch, but skipped in CI and lacks preserved terminal logs.",
+      "summary": "Next.js production build was skipped in CI on candidate C; offline scratch observation is unverified."
     },
     {
       "receipt_id": "RCPT-CODE-BLD-002",
       "category": "frontend_bundle_budget",
-      "kind": "offline_isolate_execution",
+      "kind": "unverified_offline_observation",
       "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
-      "binding": "exact-C isolate scratch",
+      "binding": "unverified offline scratch checkout",
       "command": "npm run bundle:budget --workspace=@oday-plus/web",
       "argv": [
         "npm",
@@ -420,12 +441,12 @@
         "bundle:budget",
         "--workspace=@oday-plus/web"
       ],
-      "timestamp_utc": "2026-09-10T23:44:16Z",
-      "duration_seconds": 5.0,
-      "exit_code": 0,
-      "status": "passed",
-      "sanitized_output": "All 13 routes within First Load JS budget (e.g. /operator at 299.8 kB <= 300.0 kB budget).",
-      "summary": "Bundle size budget check passed for all web routes."
+      "timestamp_utc": null,
+      "duration_seconds": null,
+      "exit_code": null,
+      "status": "unverified",
+      "sanitized_output": "Reported 13 routes within budget in scratch, but skipped in CI and lacks preserved terminal logs.",
+      "summary": "Bundle budget check was skipped in CI on candidate C; offline scratch observation is unverified."
     },
     {
       "receipt_id": "RCPT-CODE-BLD-TRACE-001",
@@ -434,19 +455,27 @@
       "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
       "source_ref": "github://alfloop-dev/odayplus@8c570a56353abdcc8ba70fe0a3fdd9b963902391/actions/runs/34179207603",
       "binding": "GitHub Actions CI Runner / Deploy Dev workflow (run 34179207603)",
-      "command": "workflow execution: build, push, sign, and attest 4 container images",
+      "command": "workflow execution: build, push, sign, and attest 4 container images (workflow HEAD 8c570a56, checkout release_sha=596b9c9a)",
       "argv": [
         "gh",
         "run",
         "view",
         "34179207603"
       ],
-      "timestamp_utc": "2026-09-08T02:17:01Z",
-      "duration_seconds": 161.0,
+      "run_started_utc": "2026-09-08T02:11:41Z",
+      "run_completed_utc": "2026-09-08T02:20:27Z",
+      "run_duration_seconds": 526.0,
+      "build_job_window": "2026-09-08T02:12:00Z - 2026-09-08T02:20:25Z (job 101914686431, duration 505s)",
+      "image_build_sign_step_window": "2026-09-08T02:15:38Z - 2026-09-08T02:20:20Z (step 19, duration 282s)",
+      "rekor_signature_events_span": "2026-09-08T02:17:01Z - 2026-09-08T02:19:42Z (161 seconds span across 4 image signatures)",
+      "step_20_failure_window": "2026-09-08T02:20:20Z - 2026-09-08T02:20:25Z (INITIAL_RELEASE_RECOVERY: false)",
+      "timestamp_utc": "2026-09-08T02:11:41Z",
+      "duration_seconds": 526.0,
       "exit_code": null,
+      "conclusion": "failure",
       "status": "producer_failure_with_signed_images",
       "sanitized_output": "Images built and signed: api (Rekor: 2754425715), worker (Rekor: 2754426118), scheduler (Rekor: 2754426482), web (Rekor: 2754427686). Step 20 INITIAL_RELEASE_RECOVERY: false failed.",
-      "summary": "Four component images built and signed with Cosign; step 20 failed so handoff artifacts were published in subsequent run 34179791241."
+      "summary": "Producer run 34179207603 built and signed 4 component images (Rekor log indices: api=2754425715, worker=2754426118, scheduler=2754426482, web=2754427686); step 20 failed, so artifact publication was completed in publisher run 34179791241."
     },
     {
       "receipt_id": "RCPT-CODE-BLD-TRACE-002",
@@ -466,33 +495,37 @@
       "duration_seconds": 284.0,
       "exit_code": null,
       "status": "passed",
+      "conclusion": "success",
       "sanitized_output": "Run 34179791241 verified cosign signatures for all 4 images and published 6 immutable artifacts with verified byte hashes.",
       "summary": "Reused immutable source receipt confirming 4 image digests verified and 6 raw artifacts published with matching SHA256 hashes."
     },
     {
       "receipt_id": "RCPT-CODE-MANIFEST-001",
       "category": "manifest_self_validation",
-      "kind": "offline_isolate_execution",
+      "kind": "reused_immutable_source_receipt",
       "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
-      "binding": "exact-C isolate scratch",
-      "command": "python delivery_toolchain/release/validate_manifest.py",
+      "source_ref": "github://alfloop-dev/odayplus@108249fa921e128f734ebd917a933fa562f4b7e1/docs/evidence/runtime/ODP-DEV-BUILD-ARTIFACT-HANDOFF-003/build-dispatch-evidence.md#L652-L689",
+      "binding": "Candidate C extracted read-only via git archive; C release_manifest module validated downloaded RELEASE_MANIFEST.json bytes (artifact 10038569478, raw SHA 8bb6e72ed1306862ddb4c40d48c851b31ecf8c4ab5f361ac5cc7e1856537f56d)",
+      "command": "python3 -c \"from delivery_toolchain.release.release_manifest import compute_manifest_digest, validate_manifest; m=json.load(open(\\\"RELEASE_MANIFEST.json\\\")); compute_manifest_digest(m); validate_manifest(m, expected_candidate_sha=\\\"596b9c9a1788d952811a2bf8d4bba8a4e4d76b12\\\", expected_digest=m[\\\"manifest_digest\\\"])\"",
       "argv": [
-        "python",
-        "delivery_toolchain/release/validate_manifest.py"
+        "python3",
+        "-c",
+        "from delivery_toolchain.release.release_manifest import compute_manifest_digest, validate_manifest; m=json.load(open(\"RELEASE_MANIFEST.json\")); compute_manifest_digest(m); validate_manifest(m, expected_candidate_sha=\"596b9c9a1788d952811a2bf8d4bba8a4e4d76b12\", expected_digest=m[\"manifest_digest\"])"
       ],
-      "timestamp_utc": "2026-09-10T23:52:00Z",
-      "duration_seconds": 0.8,
-      "exit_code": 0,
+      "timestamp_utc": "2026-09-08T02:26:33Z",
+      "duration_seconds": null,
+      "exit_code": null,
       "status": "passed",
-      "sanitized_output": "validate_manifest passed cleanly against expected_candidate_sha 596b9c9a.",
-      "summary": "Release manifest self-consistency and candidate SHA binding verified."
+      "conclusion": "success",
+      "sanitized_output": "compute_manifest_digest returned sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c; validate_manifest returned [] (no errors).",
+      "summary": "Reused immutable manifest validation evidence from build artifact handoff \u00a713.5 confirming candidate C manifest self-consistency and digest matching without local invented execution metadata."
     }
   ],
   "hardening_task_tracking": {
     "task_id": "ODP-PLAN-ENGINEERING-HARDENING-001",
     "registry_blocker_reference": "ODP-PLAN-ENGINEERING-HARDENING-001 (OpenAPI, frontend dependency, and documentation hardening) is open.",
-    "sidecar_ref": "support/sidecars/ODP-PLAN-ENGINEERING-HARDENING-001/ODP-PLAN-ENGINEERING-HARDENING-001-SIDECAR-ACCEPTANCE.md",
-    "investigation_result": "Historical task with sidecar support packet (support/sidecars/ODP-PLAN-ENGINEERING-HARDENING-001/ODP-PLAN-ENGINEERING-HARDENING-001-SIDECAR-ACCEPTANCE.md) recorded at parent HEAD d24fd0c4 with status blocked pending Human/Ops decision on 13 dev-tool high vulnerabilities. Supervisor inspection confirms Unknown task / no active canonical task in ai-status.json.",
+    "source_ref": "github://alfloop-dev/odayplus@42e3b207cd125ef6a2fbc3f3aa092a88853587f2/support/sidecars/ODP-PLAN-ENGINEERING-HARDENING-001/ODP-PLAN-ENGINEERING-HARDENING-001-SIDECAR-ACCEPTANCE.md",
+    "investigation_result": "Historical task with sidecar support packet recorded at source commit 42e3b207cd125ef6a2fbc3f3aa092a88853587f2 (parent last approved HEAD d24fd0c4) with status blocked pending Human/Ops risk decision on 13 dev-tool high vulnerabilities. Supervisor inspection confirms Unknown task / no active canonical task in ai-status.json.",
     "canonical_disposition": "\u6b77\u53f2\u5f85\u6838\u5c0d (historical pending reconciliation); task is not marked completed, recreated, or bypassed."
   }
 }
