@@ -32,7 +32,7 @@
     {
       "source_id": "SRC-ROLLOUT-PLAN",
       "uri": "github://alfloop-dev/odayplus@596b9c9a1788d952811a2bf8d4bba8a4e4d76b12/docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md",
-      "description": "System deployment and ephemeral staging architecture specification (§6.1 staged admission, §8.4 rollback, §8.5 initial release recovery)."
+      "description": "System deployment and ephemeral staging architecture specification (\u00a76.1 staged admission, \u00a78.4 rollback, \u00a78.5 initial release recovery)."
     },
     {
       "source_id": "SRC-CONTRACT-README",

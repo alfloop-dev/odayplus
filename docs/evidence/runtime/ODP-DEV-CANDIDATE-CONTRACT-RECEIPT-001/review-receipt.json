@@ -1,12 +1,12 @@
 {
   "schema_version": "2.0.0",
   "task_id": "ODP-DEV-CANDIDATE-CONTRACT-RECEIPT-001",
-  "task_title": "交固定 C 的 Contract Gate 相容性審查收據",
+  "task_title": "\u4ea4\u56fa\u5b9a C \u7684 Contract Gate \u76f8\u5bb9\u6027\u5be9\u67e5\u6536\u64da",
   "gate_id": "gate-1",
   "gate_name": "Contract Gate",
-  "generated_at": "2026-09-10T23:46:40Z",
+  "generated_at": "2026-09-11T00:26:00Z",
   "owner": "Antigravity3",
-  "reviewer": "Codex",
+  "reviewer": "Codex2",
   "phase": "Dev release evidence preparation",
   "scope_boundary": {
     "owned_directory": "docs/evidence/runtime/ODP-DEV-CANDIDATE-CONTRACT-RECEIPT-001/",
@@ -24,18 +24,18 @@
     "migration_digest": "sha256:17794de9afb84681aabff9ed0966dedde83d950aef132de519fdc193099e620b"
   },
   "baseline_evaluation": {
-    "baseline_type": "initial-release-no-prior-approved-release",
-    "prior_release_absent": true,
-    "rollback_target_available": false,
     "target_environment": "dev",
-    "baseline_sha": null,
-    "baseline_status": "absent_initial_dev_target",
-    "reasoning": "Candidate C is the initial release to the dev target per RELEASE_MANIFEST.json (§initial_release_recovery) and EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md (§8.5). No prior approved contract release or manifest exists for comparison. Comparing C against C is strictly forbidden, as is diffing against moving origin/dev. Backward compatibility against a nonexistent prior release cannot be claimed; Gate 1 remains fail-closed blocked."
+    "baseline_status": "unknown_no_prior_approved_dev_release_baseline",
+    "dev_runtime_absence_inspected": true,
+    "dev_runtime_absence_scope": "Dev target Cloud Run resources absence inspected per ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003 receipts and RELEASE_MANIFEST.json initial_release_recovery section.",
+    "baseline_search_scope": "Search across repository tags, RELEASE_GATE_REGISTRY.json, and RELEASE_MANIFEST.json; no prior approved release manifest or immutable contract baseline exists for candidate C on dev.",
+    "cross_environment_history_claim": "unknown; absence of dev Cloud Run services is strictly scoped to dev runtime and does not imply historical absence across staging or prod, nor does it prove previous contract releases never existed. Cross-release backward compatibility cannot be attested without an immutable baseline and remains unknown/blocked.",
+    "reasoning": "Candidate C is targeted for dev release. Dev environment currently operates under initial-release recovery posture (delete-candidate-zero-traffic). Because no prior approved contract baseline or manifest exists in registry, cross-version breaking change diffs cannot be attested. Diffing against C itself is prohibited; diffing against moving origin/dev is prohibited. Gate 1 remains fail-closed blocked."
   },
   "evaluation_summary": {
     "gate_status": "blocked",
     "release_decision": "no-go",
-    "summary_zh": "針對固定 candidate C 完成 Gate 1 (Contract Gate) 審查收據彙整與離線驗證。OpenAPI artifact、generated TypeScript client 及資料/產品契約 pin 經獨立隔離 scratch 驗證與程式碼吻合，但因 candidate C 屬於 initial release 缺乏已核准前版 baseline 且 ODP-PLAN-ENGINEERING-HARDENING-001 尚未 close，Gate 1 維持 blocked、release 維持 NO-GO。"
+    "summary_zh": "\u91dd\u5c0d\u56fa\u5b9a candidate C \u5b8c\u6210 Gate 1 (Contract Gate) \u5be9\u67e5\u6536\u64da\u5f59\u6574\u8207\u96e2\u7dda\u9a57\u8b49\u3002OpenAPI artifact\u3001generated TypeScript client \u53ca\u8cc7\u6599/\u7522\u54c1\u5951\u7d04 pin \u7d93\u7368\u7acb\u9694\u96e2 scratch \u9a57\u8b49\u8207\u7a0b\u5f0f\u78bc\u543b\u5408\u3002\u56e0 candidate C \u5728 dev target \u7f3a\u4e4f\u5df2\u6838\u51c6\u524d\u7248 baseline\uff0c\u90e8\u5206\u975e\u6838\u5fc3/\u7dda\u4e0a event \u8207 scoring \u5951\u7d04\u6e2c\u8a66\u5728\u96e2\u7dda\u6279\u6b21\u4e2d\u8df3\u904e\uff0c\u4e14 ODP-PLAN-ENGINEERING-HARDENING-001 \u5c1a\u672a close\uff0cGate 1 \u7dad\u6301 fail-closed blocked\uff0crelease decision \u7dad\u6301 NO-GO\u3002"
   },
   "gate_criteria_checks": [
     {
@@ -46,11 +46,12 @@
         "Generated TypeScript client matches OpenAPI artifact",
         "Breaking changes detected and matched against approved breaking changes file"
       ],
-      "status": "verified_fresh_diff_unattested_due_to_initial_release",
-      "offline_verification": {
-        "command": "python3 delivery_toolchain/openapi/check_drift.py --skip-diff",
-        "exit_code": 0,
-        "environment": "isolated scratch worktree at C (596b9c9a1788d952811a2bf8d4bba8a4e4d76b12)",
+      "status": "partially_verified_freshness_passed_diff_baseline_unknown",
+      "executed_evidence": {
+        "execution_refs": [
+          "EXEC-01-OPENAPI-DRIFT",
+          "EXEC-02-CONTRACT-CORE-PYTEST"
+        ],
         "artifact_paths": {
           "openapi_json": {
             "path": "packages/openapi-client/openapi.json",
@@ -65,9 +66,19 @@
             "sha256": "d23d4802c92fd96fecf1166e45cd62abec12cf6c8544cf52652ac962aa31eafd"
           }
         },
-        "test_suite": "tests/contract/test_openapi_artifact_and_client.py (17 test cases passed)"
+        "test_modules_passed": [
+          "tests/contract/test_openapi_artifact_and_client.py (17 passed)"
+        ]
       },
-      "finding": "Artifact and generated client are completely fresh and byte-stable against live app. Diff against an approved prior release cannot be executed because candidate C is an initial dev release."
+      "domain_breaking_change_plan": {
+        "policy": "Expand/contract without destructive drop; client types regenerated deterministically.",
+        "migration_path": "N/A for initial dev release; check_drift confirms byte-exact alignment with live FastAPI app routes.",
+        "compatibility_window": "N/A on dev target; unverified across historical releases due to baseline absence.",
+        "rollback_plan": "delete-candidate-zero-traffic per RELEASE_MANIFEST.json (\u00a7initial_release_recovery).",
+        "enforcement_status": "freshness_verified_baseline_diff_unknown"
+      },
+      "finding": "Artifact and generated client are completely fresh and byte-stable against live app on candidate C. Diff against an approved prior release cannot be attested due to initial release baseline absence.",
+      "downstream_responsibility": "ODP-PLAN-ENGINEERING-HARDENING-001 / Codex"
     },
     {
       "criterion_id": "G1-CRIT-02",
@@ -76,16 +87,46 @@
         "Event payload schemas validated",
         "Ingestion and domain intake state transitions conform to contract"
       ],
-      "status": "verified_by_contract_suite",
-      "evidence_references": [
-        "tests/contract/test_assisted_listing_intake_events.py",
-        "tests/contract/test_assisted_listing_intake_schema.py",
-        "tests/contract/test_assisted_listing_intake_states.py",
-        "tests/contract/test_canonical_schema.py",
-        "tests/contract/test_ingestion_contracts.py",
-        "tests/contract/test_signal_store_client.py"
+      "status": "partially_verified_canonical_schema_only_event_replay_unverified",
+      "executed_evidence": {
+        "execution_refs": [
+          "EXEC-03-SCHEMA-MODEL-PYTEST"
+        ],
+        "test_modules_passed": [
+          "tests/contract/test_canonical_schema.py (12 passed)"
+        ]
+      },
+      "skipped_or_uncovered_evidence": [
+        {
+          "module": "tests/contract/test_assisted_listing_intake_events.py",
+          "reason": "skipped in offline execution batch; requires event bus replay fixture"
+        },
+        {
+          "module": "tests/contract/test_assisted_listing_intake_schema.py",
+          "reason": "skipped in offline execution batch"
+        },
+        {
+          "module": "tests/contract/test_assisted_listing_intake_states.py",
+          "reason": "skipped in offline execution batch"
+        },
+        {
+          "module": "tests/contract/test_ingestion_contracts.py",
+          "reason": "skipped in offline execution batch"
+        },
+        {
+          "module": "tests/contract/test_signal_store_client.py",
+          "reason": "skipped in offline execution batch"
+        }
       ],
-      "finding": "Event schemas under packages/schemas/ and intake state contracts pass unit/contract constraints in candidate C."
+      "domain_breaking_change_plan": {
+        "policy": "Additive schema fields only; unknown fields ignored by consumers.",
+        "migration_path": "Canonical schema defines core entity types; intake domain schemas support dual-read during ingestion transitions.",
+        "compatibility_window": "Requires multi-version event replay window in staging; unverified in offline candidate C unit suite.",
+        "rollback_plan": "Drain intake queue or roll back consumer worker; delete-candidate-zero-traffic for dev deployment.",
+        "enforcement_status": "canonical_schema_verified_intake_replay_unverified"
+      },
+      "finding": "Canonical entity schemas pass validation on candidate C (12 passed). Domain intake and ingestion contracts were not executed in the minimal offline plan and remain unverified on candidate C.",
+      "downstream_responsibility": "Claude / Platform"
     },
     {
       "criterion_id": "G1-CRIT-03",
@@ -95,18 +136,40 @@
         "Data platform product client contract pin verified",
         "Data contract digest matches release manifest"
       ],
-      "status": "verified_by_contract_suite",
-      "evidence_references": [
-        "tests/contract/test_oday_data_contract_pin.py",
-        "tests/contract/test_oday_data_product_contract_pin.py",
-        "tests/contract/test_manual_correction_contract.py"
-      ],
-      "pinned_releases": {
-        "foundation_contracts": "oday-data-foundation-contracts.v0.4.1",
-        "product_contracts": "oday-data-product-contracts.v0.4.1"
+      "status": "partially_verified_contract_pins_passed_manual_correction_skipped",
+      "executed_evidence": {
+        "execution_refs": [
+          "EXEC-02-CONTRACT-CORE-PYTEST"
+        ],
+        "pinned_releases": {
+          "foundation_contracts": "oday-data-foundation-contracts.v0.4.1",
+          "product_contracts": "oday-data-product-contracts.v0.4.1"
+        },
+        "manifest_digests": {
+          "data_contract_digest": "sha256:05e2cb05619f1c524b0f9578e4ceba9ec863d143d5e64b0eeac97539ce8e7c73",
+          "source_policy_digest": "sha256:0a34bb128b5b5b26201b7f014f4b4f8e631e841c8f205f38dfc09c9eb682d824",
+          "migration_digest": "sha256:17794de9afb84681aabff9ed0966dedde83d950aef132de519fdc193099e620b"
+        },
+        "test_modules_passed": [
+          "tests/contract/test_oday_data_contract_pin.py (30 passed)",
+          "tests/contract/test_oday_data_product_contract_pin.py (47 passed)"
+        ]
       },
-      "manifest_data_contract_digest": "sha256:05e2cb05619f1c524b0f9578e4ceba9ec863d143d5e64b0eeac97539ce8e7c73",
-      "finding": "Data contract pin tests pass on C; foundation and product contracts resolve from vendored release bundles without direct coupling to producer storage DDL."
+      "skipped_or_uncovered_evidence": [
+        {
+          "module": "tests/contract/test_manual_correction_contract.py",
+          "reason": "skipped in offline execution batch; not part of foundation/product pin verification"
+        }
+      ],
+      "domain_breaking_change_plan": {
+        "policy": "Consumer isolation via pinned data contracts packages; zero producer DDL coupling.",
+        "migration_path": "Upgraded from v0.4.0 to v0.4.1; schema migration digest tracked in RELEASE_MANIFEST.json.",
+        "compatibility_window": "Pinned packages provide immutable consumer-side schema guarantees during transition window.",
+        "rollback_plan": "Revert consumer package pins to v0.4.0 if data plane incompatibility is detected; dev recovery: delete-candidate-zero-traffic.",
+        "enforcement_status": "package_pins_verified_live_reconciliation_deferred_to_gate2"
+      },
+      "finding": "Data contract foundation and product pin suites pass completely on candidate C (77 total tests passed) and digests match RELEASE_MANIFEST.json. Live database schema reconciliation is deferred to Gate 2 (Data Gate).",
+      "downstream_responsibility": "Codex2 / Data Platform"
     },
     {
       "criterion_id": "G1-CRIT-04",
@@ -115,14 +178,32 @@
         "Model parameter and prediction payload schemas validated",
         "Decision simulation and scoring API request/response contracts conform"
       ],
-      "status": "verified_by_contract_suite",
-      "evidence_references": [
-        "tests/contract/test_pricing_simulation_contract.py",
-        "tests/contract/test_heatzone_composition_schema.py",
-        "tests/contract/test_operator_network_scoring_api.py",
-        "tests/contract/test_decision_policy_registry_schema.py"
+      "status": "partially_verified_offline_interfaces_passed_scoring_skipped",
+      "executed_evidence": {
+        "execution_refs": [
+          "EXEC-03-SCHEMA-MODEL-PYTEST"
+        ],
+        "test_modules_passed": [
+          "tests/contract/test_pricing_simulation_contract.py (6 passed)",
+          "tests/contract/test_heatzone_composition_schema.py (12 passed)",
+          "tests/contract/test_decision_policy_registry_schema.py (15 passed)"
+        ]
+      },
+      "skipped_or_uncovered_evidence": [
+        {
+          "module": "tests/contract/test_operator_network_scoring_api.py",
+          "reason": "skipped in offline execution batch; requires live scoring endpoint stub"
+        }
       ],
-      "finding": "Model interface payload schemas and pricing simulation writeback contracts pass in candidate C."
+      "domain_breaking_change_plan": {
+        "policy": "Typed envelopes with required input validation, explicit versioning, and deterministic writeback schemas.",
+        "migration_path": "Pricing simulation, heatzone composition, and policy registry adhere to schema envelopes; model parameter changes follow additive pattern.",
+        "compatibility_window": "Shadow evaluation and side-by-side execution in staging required for model promotion.",
+        "rollback_plan": "Revert model alias routing in decision registry; dev recovery: delete-candidate-zero-traffic.",
+        "enforcement_status": "interface_schemas_verified_gate3_retains_model_approval"
+      },
+      "finding": "Pricing simulation, heatzone composition, and decision policy registry schemas pass on candidate C (33 passed). Scoring API test was skipped. Gate 3 (Model and Solver Gate) retains responsibility for dataset reproducibility, segment metrics, solver feasibility, and Human/Ops ML risk approval.",
+      "downstream_responsibility": "Codex2 / Antigravity2"
     },
     {
       "criterion_id": "G1-CRIT-05",
@@ -132,45 +213,110 @@
         "Rollback and recovery plan documented and bound in manifest",
         "Initial release recovery posture verified"
       ],
-      "status": "verified_posture_initial_release_recovery",
-      "evidence_references": [
-        "docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md (§8.4, §8.5)",
-        "docs/evidence/gates/RELEASE_MANIFEST.json (initial_release_recovery)",
-        "docs/evidence/gates/RELEASE_GATE_REGISTRY.json (gate-1 blockers)"
-      ],
-      "recovery_method": "delete-candidate-zero-traffic",
-      "finding": "Candidate C utilizes initial release recovery (delete-candidate-zero-traffic) since dev has no prior release. Expand/contract pattern enforced; contract migration delayed to post-compatibility window."
+      "status": "verified_initial_release_recovery_posture_plan_enforcement_unknown",
+      "executed_evidence": {
+        "rollout_plan_ref": "docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md (\u00a78.4, \u00a78.5)",
+        "manifest_recovery_section": {
+          "kind": "initial-release-recovery",
+          "prior_release_absent": true,
+          "rollback_target_available": false,
+          "target_environment": "dev",
+          "recovery_method": "delete-candidate-zero-traffic"
+        },
+        "gate_registry_status": "blocked (gate-1 status in RELEASE_GATE_REGISTRY.json)"
+      },
+      "domain_breaking_change_plan": {
+        "policy": "Expand/contract architecture strictly avoids destructive down migrations; candidate deletions maintain zero traffic.",
+        "migration_path": "Initial release to dev environment; contract migrations scheduled only after compatibility observation.",
+        "compatibility_window": "N/A for initial dev release; cross-environment staging/prod compatibility windows remain untracked.",
+        "rollback_plan": "delete-candidate-zero-traffic (delete created Cloud Run services/jobs to return to clean state).",
+        "enforcement_status": "recovery_posture_bound_cross_version_enforcement_unknown"
+      },
+      "finding": "Candidate C dev deployment posture specifies initial release recovery (delete-candidate-zero-traffic) in RELEASE_MANIFEST.json. Expand/contract architecture is declared, but cross-version breaking change enforcement cannot be verified without an immutable prior release baseline. Gate 1 remains fail-closed blocked.",
+      "downstream_responsibility": "Human/Ops / Platform"
     }
   ],
   "offline_test_executions": [
     {
       "execution_id": "EXEC-01-OPENAPI-DRIFT",
-      "target_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
-      "command": "uv run --python 3.12 python3 delivery_toolchain/openapi/check_drift.py --skip-diff",
+      "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "argv": [
+        "uv",
+        "run",
+        "--python",
+        "3.12",
+        "python3",
+        "delivery_toolchain/openapi/check_drift.py",
+        "--skip-diff"
+      ],
+      "cwd": "/tmp/pantheon-candidate-c-scratch",
+      "started_at": "2026-09-11T00:23:28.815421+00:00",
+      "finished_at": "2026-09-11T00:24:10.746896+00:00",
+      "duration_seconds": 41.9315,
       "exit_code": 0,
-      "duration_seconds": 18.2,
-      "checks_run": [
-        "OpenAPI artifact freshness: matches live schema",
-        "Generated client freshness: matches OpenAPI artifact"
-      ]
+      "stdout_ref": "/tmp/pantheon-contract-receipt-audit/EXEC-01-OPENAPI-DRIFT.stdout",
+      "stdout_sha256": "cdeb9dcf59a50c9239c15cf1d98f6c4557cbbecb6dbcbe237b2306bb72437497",
+      "stderr_ref": "/tmp/pantheon-contract-receipt-audit/EXEC-01-OPENAPI-DRIFT.stderr",
+      "stderr_sha256": "63a13d2250e37dbba25b96fe09e601892aad23ace7d6974489de6c0e0c2e95e5",
+      "scope": "OpenAPI 3.1.0 schema drift check and TypeScript client freshness verification",
+      "tests_passed": 2,
+      "tests_failed": 0,
+      "tests_skipped": 0
     },
     {
       "execution_id": "EXEC-02-CONTRACT-CORE-PYTEST",
-      "target_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
-      "command": "uv run --python 3.12 pytest tests/contract/test_openapi_artifact_and_client.py tests/contract/test_oday_data_contract_pin.py tests/contract/test_oday_data_product_contract_pin.py",
+      "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "argv": [
+        "uv",
+        "run",
+        "--python",
+        "3.12",
+        "pytest",
+        "tests/contract/test_openapi_artifact_and_client.py",
+        "tests/contract/test_oday_data_contract_pin.py",
+        "tests/contract/test_oday_data_product_contract_pin.py"
+      ],
+      "cwd": "/tmp/pantheon-candidate-c-scratch",
+      "started_at": "2026-09-11T00:24:10.747309+00:00",
+      "finished_at": "2026-09-11T00:25:17.959245+00:00",
+      "duration_seconds": 67.2119,
       "exit_code": 0,
-      "duration_seconds": 64.85,
+      "stdout_ref": "/tmp/pantheon-contract-receipt-audit/EXEC-02-CONTRACT-CORE-PYTEST.stdout",
+      "stdout_sha256": "75c6b33225fc0316ea09c194c3e97cffe49d1544ea1082194cf6ad660a547f4c",
+      "stderr_ref": "/tmp/pantheon-contract-receipt-audit/EXEC-02-CONTRACT-CORE-PYTEST.stderr",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "scope": "OpenAPI artifact & client contract (17 tests), Data foundation contract pin (30 tests), Data product contract pin (47 tests)",
       "tests_passed": 94,
-      "tests_failed": 0
+      "tests_failed": 0,
+      "tests_skipped": 0
     },
     {
       "execution_id": "EXEC-03-SCHEMA-MODEL-PYTEST",
-      "target_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
-      "command": "uv run --python 3.12 pytest tests/contract/test_pricing_simulation_contract.py tests/contract/test_heatzone_composition_schema.py tests/contract/test_decision_policy_registry_schema.py tests/contract/test_canonical_schema.py",
+      "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "argv": [
+        "uv",
+        "run",
+        "--python",
+        "3.12",
+        "pytest",
+        "tests/contract/test_pricing_simulation_contract.py",
+        "tests/contract/test_heatzone_composition_schema.py",
+        "tests/contract/test_decision_policy_registry_schema.py",
+        "tests/contract/test_canonical_schema.py"
+      ],
+      "cwd": "/tmp/pantheon-candidate-c-scratch",
+      "started_at": "2026-09-11T00:25:17.959938+00:00",
+      "finished_at": "2026-09-11T00:25:57.418613+00:00",
+      "duration_seconds": 39.4587,
       "exit_code": 0,
-      "duration_seconds": 33.51,
+      "stdout_ref": "/tmp/pantheon-contract-receipt-audit/EXEC-03-SCHEMA-MODEL-PYTEST.stdout",
+      "stdout_sha256": "e4224067d1ce8ae172c7a871f1351f322e4d1ffd43cbd05d1f390cfdd1f61421",
+      "stderr_ref": "/tmp/pantheon-contract-receipt-audit/EXEC-03-SCHEMA-MODEL-PYTEST.stderr",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "scope": "Pricing simulation contract (6 tests), Heatzone composition schema (12 tests), Decision policy registry schema (15 tests), Canonical schema (12 tests)",
       "tests_passed": 45,
-      "tests_failed": 0
+      "tests_failed": 0,
+      "tests_skipped": 0
     }
   ],
   "open_blockers_and_downstream_responsibilities": [
@@ -182,12 +328,18 @@
     },
     {
       "blocker_id": "BLK-G1-02",
-      "description": "No prior approved release baseline exists on dev target; breaking change backward compatibility cannot be formally attested against a nonexistent version.",
+      "description": "No prior approved release baseline exists on dev target; cross-version breaking change backward compatibility cannot be attested against an immutable prior version.",
       "owning_task": "ODP-DEV-ROLLOUT-001",
       "status": "retained_initial_release_unknown"
     },
     {
       "blocker_id": "BLK-G1-03",
+      "description": "Domain intake events (test_assisted_listing_*) and scoring API contract (test_operator_network_scoring_api) were skipped in offline execution batch and remain unverified on candidate C.",
+      "owning_task": "Claude / Platform / Codex2",
+      "status": "unverified_skipped_offline"
+    },
+    {
+      "blocker_id": "BLK-G1-04",
       "description": "Candidate Gate 1 in RELEASE_GATE_REGISTRY.json must remain blocked with NO-GO decision preserved until formal admission prerequisites are cleared.",
       "owning_task": "Human/Ops",
       "status": "blocked"
