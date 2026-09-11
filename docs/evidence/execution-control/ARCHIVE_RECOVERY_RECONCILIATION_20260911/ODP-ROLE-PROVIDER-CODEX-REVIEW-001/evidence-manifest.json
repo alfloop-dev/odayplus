@@ -1,0 +1,264 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-ROLE-PROVIDER-CODEX-REVIEW-001",
+  "task_title": "落實 Agy／Claude 實作、Codex Astra ultra 審查的單一派工政策",
+  "recovery_task_title": "歷史驗收續辦：ODP-ROLE-PROVIDER-CODEX-REVIEW-001",
+  "target_repository": "alfloop-dev/odayplus",
+  "generated_at": "2026-09-11T11:20:00Z",
+  "produced_by": "Antigravity6",
+  "reviewer": "Codex",
+  "purpose": "為 ODP-ROLE-PROVIDER-CODEX-REVIEW-001 提供精確的歷史交付、CI、審查、runtime 讀回及驗證命令來源與收據綁定清單",
+  "evidence_sources": [
+    {
+      "name": "original-evidence.json",
+      "path": "support/handoffs/archive-recovery-dispatch-20260911/ODP-ROLE-PROVIDER-CODEX-REVIEW-001/original-evidence.json",
+      "sha256": "f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715",
+      "kind": "canonical_recovery_snapshot"
+    },
+    {
+      "name": "role-provider-live-readback.json",
+      "path": "support/handoffs/max-dispatch-20260910/archive-evidence/role-provider-live-readback.json",
+      "sha256": "54110ea0cef280a822484067185076b35600accf58dbb24d09adc6c64bbb6cd8",
+      "kind": "runtime_readback_snapshot"
+    },
+    {
+      "name": "command-receipts.json",
+      "path": "support/handoffs/max-dispatch-20260910/archive-evidence/command-receipts.json",
+      "kind": "collection_command_receipts"
+    },
+    {
+      "name": "role-provider-acceptance-plan.md",
+      "path": "support/handoffs/max-dispatch-20260910/archive-evidence/role-provider-acceptance-plan.md",
+      "kind": "acceptance_plan_guideline"
+    }
+  ],
+  "items": {
+    "historical_pr_metadata": {
+      "source_repository": "alfloop-dev/odayplus",
+      "pr_number": 1221,
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1221",
+      "pr_title": "[ReviewBus] ODP-ROLE-PROVIDER-CODEX-REVIEW-001 落實 Agy／Claude 實作、Codex Astra ultra 審查的單一派工政策",
+      "head_ref": "task/ODP-ROLE-PROVIDER-CODEX-REVIEW-001",
+      "head_sha": "c1a382416e4423e22f3bf5dfe86a37d93597e583",
+      "merge_commit_sha": "64f3b2399442e8cd7531284d1e7a3e33bcc3ca9a",
+      "merged_at": "2026-09-06T05:56:17Z",
+      "collection_command": [
+        "gh",
+        "api",
+        "repos/alfloop-dev/odayplus/pulls/1221"
+      ],
+      "collection_exit_code": 0,
+      "collection_time": "2026-09-10T23:31:21.553724+00:00",
+      "elapsed_seconds": 0.85,
+      "raw_receipt_source": "support/handoffs/max-dispatch-20260910/archive-evidence/command-receipts.json"
+    },
+    "historical_ci_checks": {
+      "source_repository": "alfloop-dev/odayplus",
+      "exact_head_sha": "c1a382416e4423e22f3bf5dfe86a37d93597e583",
+      "collection_command": [
+        "gh",
+        "api",
+        "repos/alfloop-dev/odayplus/commits/c1a382416e4423e22f3bf5dfe86a37d93597e583/check-runs?per_page=100"
+      ],
+      "collection_exit_code": 0,
+      "collection_time": "2026-09-10T23:31:22.403851+00:00",
+      "elapsed_seconds": 0.649,
+      "raw_receipt_source": "support/handoffs/max-dispatch-20260910/archive-evidence/command-receipts.json",
+      "check_runs": [
+        {
+          "name": "change-scope",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-06T05:31:53Z"
+        },
+        {
+          "name": "boundary",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-06T05:31:58Z"
+        },
+        {
+          "name": "classify",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-06T05:31:57Z"
+        },
+        {
+          "name": "orchestrator",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-06T05:35:33Z"
+        },
+        {
+          "name": "product",
+          "status": "completed",
+          "conclusion": "skipped",
+          "completed_at": "2026-09-06T05:31:54Z"
+        },
+        {
+          "name": "performance-gate",
+          "status": "completed",
+          "conclusion": "skipped",
+          "completed_at": "2026-09-06T05:31:54Z"
+        },
+        {
+          "name": "product-e2e-gate",
+          "status": "completed",
+          "conclusion": "skipped",
+          "completed_at": "2026-09-06T05:31:54Z"
+        }
+      ]
+    },
+    "historical_approval_status": {
+      "source_repository": "alfloop-dev/odayplus",
+      "exact_head_sha": "c1a382416e4423e22f3bf5dfe86a37d93597e583",
+      "collection_command": [
+        "gh",
+        "api",
+        "repos/alfloop-dev/odayplus/commits/c1a382416e4423e22f3bf5dfe86a37d93597e583/status"
+      ],
+      "collection_exit_code": 0,
+      "collection_time": "2026-09-10T23:31:23.053620+00:00",
+      "elapsed_seconds": 0.579,
+      "raw_receipt_source": "support/handoffs/max-dispatch-20260910/archive-evidence/command-receipts.json",
+      "status_context": "task-review-gate",
+      "status_state": "success",
+      "updated_at": "2026-09-06T05:47:35Z",
+      "description": "Approved by assigned reviewer Codex",
+      "approver": "Codex"
+    },
+    "live_runtime_readback": {
+      "source_runtime_path": "/home/lupin/oday-plus-supervisor-runtime-b66d18130f3b",
+      "collection_command": [
+        "git",
+        "-C",
+        "/home/lupin/oday-plus-supervisor-runtime-b66d18130f3b",
+        "rev-parse",
+        "HEAD"
+      ],
+      "collection_exit_code": 0,
+      "collection_time": "2026-09-10T23:31:25.855971+00:00",
+      "elapsed_seconds": 0.008,
+      "observed_at": "2026-09-10T23:31:25.855941+00:00",
+      "loaded_code_sha": "b66d18130f3bac78cf5af32b1c7000933e5d931d",
+      "loaded_config_digest": "54110ea0cef280a8",
+      "config_sha256": "54110ea0cef280a822484067185076b35600accf58dbb24d09adc6c64bbb6cd8",
+      "config_digest_matches_loaded": true,
+      "supervisor_pid": 2585616,
+      "last_successful_loop_at": "2026-09-10T23:29:01Z",
+      "last_loop_error": null,
+      "observation_scope_note": "Single observed healthy loop snapshot; not a consecutive-loop audit trail.",
+      "raw_receipt_source": "support/handoffs/max-dispatch-20260910/archive-evidence/role-provider-live-readback.json"
+    },
+    "recent_actual_codex_workers": {
+      "observed_at": "2026-09-10T23:31:25.855941+00:00",
+      "raw_receipt_source": "support/handoffs/max-dispatch-20260910/archive-evidence/role-provider-live-readback.json",
+      "command_exit_metadata_status": "historical_command_metadata_unknown",
+      "command_exit_note": "Runner exit_code=0 reflects background codex runner exit; historical collection command/exit invocation metadata is unknown and not substituted.",
+      "runs": [
+        {
+          "task_id": "ODP-AVM-DEPRECIATION-INTEGRATION-001",
+          "provider": "codex",
+          "agent_id": "codex_lupin_slot_1",
+          "logical_agent_id": "codex2",
+          "quota_group": "codex_lupin",
+          "dispatch_slot_id": "codex_lupin_slot_1",
+          "status": "completed",
+          "mode": "codex",
+          "exit_code": 0,
+          "runner_finished_at": "2026-09-10T23:12:07Z",
+          "run_id": "codex-20260910T230855Z-a7ced745",
+          "cli_header": [
+            "model: gpt-6-astra",
+            "provider: openai",
+            "reasoning effort: ultra"
+          ],
+          "log_path": "/home/lupin/oday-plus-supervisor-runtime-b66d18130f3b/.orchestrator/logs/20260910T230855652700Z-codex-codex_lupin_slot_1-938a6a.log"
+        },
+        {
+          "task_id": "ODP-AVM-DEPRECIATION-INTEGRATION-001",
+          "provider": "codex",
+          "agent_id": "codex_lupin_slot_1",
+          "logical_agent_id": "codex2",
+          "quota_group": "codex_lupin",
+          "dispatch_slot_id": "codex_lupin_slot_1",
+          "status": "completed",
+          "mode": "codex",
+          "exit_code": 0,
+          "runner_finished_at": "2026-09-10T21:05:27Z",
+          "run_id": "codex-20260910T210319Z-26b65875",
+          "cli_header": [
+            "model: gpt-6-astra",
+            "provider: openai",
+            "reasoning effort: ultra"
+          ],
+          "log_path": "/home/lupin/oday-plus-supervisor-runtime-b66d18130f3b/.orchestrator/logs/20260910T210319844220Z-codex-codex_lupin_slot_1-ef069a.log"
+        },
+        {
+          "task_id": "ODP-INTV006-ADJUST-WORKFLOW-001",
+          "provider": "codex",
+          "agent_id": "codex_bjoe_slot_1",
+          "logical_agent_id": "codex",
+          "quota_group": "codex_bjoe",
+          "dispatch_slot_id": "codex_bjoe_slot_1",
+          "status": "completed",
+          "mode": "codex",
+          "exit_code": 0,
+          "runner_finished_at": "2026-09-10T19:54:54Z",
+          "run_id": "codex-20260910T195133Z-bc42bafa",
+          "cli_header": [
+            "model: gpt-6-astra",
+            "provider: openai",
+            "reasoning effort: ultra"
+          ],
+          "log_path": "/home/lupin/oday-plus-supervisor-runtime-b66d18130f3b/.orchestrator/logs/20260910T195133237612Z-codex-codex_bjoe_slot_1-0bca28.log"
+        },
+        {
+          "task_id": "ODP-AVM-DEPRECIATION-INTEGRATION-001",
+          "provider": "codex",
+          "agent_id": "codex_lupin_slot_1",
+          "logical_agent_id": "codex2",
+          "quota_group": "codex_lupin",
+          "dispatch_slot_id": "codex_lupin_slot_1",
+          "status": "completed",
+          "mode": "codex",
+          "exit_code": 0,
+          "runner_finished_at": "2026-09-10T19:39:25Z",
+          "run_id": "codex-20260910T193627Z-b5630980",
+          "cli_header": [
+            "model: gpt-6-astra",
+            "provider: openai",
+            "reasoning effort: ultra"
+          ],
+          "log_path": "/home/lupin/oday-plus-supervisor-runtime-b66d18130f3b/.orchestrator/logs/20260910T193627651002Z-codex-codex_lupin_slot_1-28ae67.log"
+        }
+      ]
+    },
+    "delivered_source_and_tests": {
+      "merge_commit_sha": "64f3b2399442e8cd7531284d1e7a3e33bcc3ca9a",
+      "delivered_files": [
+        ".orchestrator/dispatch_engine.py",
+        ".orchestrator/adapters/codex.py",
+        ".orchestrator/config.schema.json",
+        ".orchestrator/test_role_provider_policy.py"
+      ],
+      "named_tests_in_test_role_provider_policy": [
+        "test_reviewer_selection_never_falls_back_to_an_implementation_lane",
+        "test_unmeasurable_codex_capacity_does_not_release_review_to_another_provider",
+        "test_exhausted_codex_pools_make_review_wait_rather_than_reassign",
+        "test_queued_event_is_skipped_when_the_policy_stopped_permitting_it",
+        "test_review_churn_rotation_rotates_owner_without_moving_review_off_codex",
+        "test_owner_failure_fallback_does_not_drag_the_reviewer_off_codex",
+        "test_account_pool_independence_survives_a_single_provider_review_rule",
+        "test_codex_command_carries_the_configured_model_and_ultra_effort",
+        "test_invalid_effort_fails_the_delivery_instead_of_running_at_a_default"
+      ],
+      "bound_ci_check": {
+        "name": "orchestrator",
+        "head_sha": "c1a382416e4423e22f3bf5dfe86a37d93597e583",
+        "conclusion": "success",
+        "completed_at": "2026-09-06T05:35:33Z"
+      }
+    }
+  }
+}
