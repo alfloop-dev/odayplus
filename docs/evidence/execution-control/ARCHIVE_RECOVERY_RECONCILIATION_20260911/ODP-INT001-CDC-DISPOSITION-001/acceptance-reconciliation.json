@@ -174,44 +174,64 @@
     }
   },
   "dependency_graph_and_cycle_verification": {
-    "original_dependencies_before": [
-      "ODP-INT001-CDC-SOURCE-EVIDENCE-001",
-      "ODP-REQ-DISPOSITION-GOVERNANCE-001"
-    ],
-    "original_dependents_before": [
+    "historical_dependencies_snapshot": {
+      "source_of_truth": "original-evidence.json entry.original_task_definition.dependencies (from historical task brief snapshot at 2026-09-03T20:51:14Z)",
+      "historical_dependencies": [
+        "ODP-INT001-CDC-SOURCE-EVIDENCE-001: done · 查證 INT-001 是否存在需要 CDC 的真實來源系統",
+        "ODP-REQ-DISPOSITION-GOVERNANCE-001: done · 建立 MUST requirement amendment／waiver 的可機讀 disposition gate"
+      ],
+      "historical_dependencies_list": [
+        "ODP-INT001-CDC-SOURCE-EVIDENCE-001",
+        "ODP-REQ-DISPOSITION-GOVERNANCE-001"
+      ],
+      "historical_dependents": [
+        "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001"
+      ],
+      "note": "Historical 2-edge prerequisite list recorded in original task brief at PR #1166 creation. Both predecessors were completed (done) prior to PR #1166 and archived in historical runs."
+    },
+    "canonical_dependencies_before": [],
+    "proposed_dependencies_after": [],
+    "dependency_mutation": false,
+    "canonical_dependents_before": [
       "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001"
-    ],
-    "proposed_dependencies_after": [
-      "ODP-INT001-CDC-SOURCE-EVIDENCE-001",
-      "ODP-REQ-DISPOSITION-GOVERNANCE-001"
     ],
     "proposed_dependents_after": [
       "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001"
     ],
-    "dependency_mutation": false,
     "engineering_followup_lane": {
       "holder_task_id": "ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001",
       "stage": "WP-34B",
       "status": "blocked",
       "waiting_for": "Human/Ops",
       "holding_entry_condition": "H07：指定來源/collection、可接受延遲/順序/刪除語意，確認上游支援與最小讀取權限；不以空 connector 或權限猜測宣稱 streaming 已可用。",
+      "canonical_depends_on": [
+        "ODP-CDC-SOURCE-CONTRACT-PREP-001",
+        "ODP-DATA-PLANE-DELETE-PROPAGATION-001",
+        "ODP-DATA-CATALOG-METADATA-ALIGNMENT-001"
+      ],
       "prerequisites": [
         {
           "task_id": "ODP-CDC-SOURCE-CONTRACT-PREP-001",
           "stage": "WP-34A",
           "pr_number": 1258,
           "merge_commit": "414b5c17927edf3b123bce942b49ccf7580152af",
-          "status": "merged"
+          "status": "merged",
+          "board_location": "archive",
+          "terminal_status": "done"
         },
         {
           "task_id": "ODP-DATA-PLANE-DELETE-PROPAGATION-001",
           "pr_number": 1282,
-          "status": "merged"
+          "status": "merged",
+          "board_location": "archive",
+          "terminal_status": "done"
         },
         {
           "task_id": "ODP-DATA-CATALOG-METADATA-ALIGNMENT-001",
           "pr_number": 1286,
-          "status": "merged"
+          "status": "merged",
+          "board_location": "archive",
+          "terminal_status": "done"
         }
       ]
     },
@@ -219,31 +239,85 @@
       "task_id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
       "status": "todo",
       "depends_on_this_disposition": true,
+      "canonical_depends_on": [
+        "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+        "ODP-SPEC-SOURCE-PROVENANCE-001",
+        "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+        "ODP-LH-PREDICTION-DRIFT-001",
+        "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001",
+        "ODP-JOB-PARTIAL-DISPOSITION-001",
+        "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+        "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+        "ODP-NET002-LEASE-DISPOSITION-001",
+        "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+        "ODP-PRICE006-BANDIT-GATED-001",
+        "ODP-INT001-CDC-DISPOSITION-001",
+        "ODP-INTV006-ADJUST-WORKFLOW-001",
+        "ODP-LH003-BACKTEST-RELEASE-GATE-001",
+        "ODP-OPS002-DECISION-COMMENTS-001",
+        "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+        "ODP-NFR-RUNTIME-EVIDENCE-001"
+      ],
       "rule": "Requires all 20 structural remediation findings to be VERIFIED or formally disposed with human authority before closeout."
     },
     "cycle_verification": {
       "nodes_evaluated": [
-        "ODP-INT001-CDC-SOURCE-EVIDENCE-001",
-        "ODP-REQ-DISPOSITION-GOVERNANCE-001",
-        "ODP-INT001-CDC-DISPOSITION-001",
-        "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
-        "ODP-CDC-SOURCE-CONTRACT-PREP-001",
-        "ODP-DATA-PLANE-DELETE-PROPAGATION-001",
-        "ODP-DATA-CATALOG-METADATA-ALIGNMENT-001",
-        "ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001"
+        {
+          "task_id": "ODP-INT001-CDC-DISPOSITION-001",
+          "location": "live_board",
+          "status": "in_progress",
+          "canonical_depends_on": []
+        },
+        {
+          "task_id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "location": "live_board",
+          "status": "todo",
+          "canonical_depends_on_count": 17
+        },
+        {
+          "task_id": "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+          "location": "archive",
+          "terminal_status": "done"
+        },
+        {
+          "task_id": "ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001",
+          "location": "live_board",
+          "status": "blocked",
+          "canonical_depends_on": [
+            "ODP-CDC-SOURCE-CONTRACT-PREP-001",
+            "ODP-DATA-PLANE-DELETE-PROPAGATION-001",
+            "ODP-DATA-CATALOG-METADATA-ALIGNMENT-001"
+          ]
+        },
+        {
+          "task_id": "ODP-CDC-SOURCE-CONTRACT-PREP-001",
+          "location": "archive",
+          "terminal_status": "done"
+        },
+        {
+          "task_id": "ODP-DATA-PLANE-DELETE-PROPAGATION-001",
+          "location": "archive",
+          "terminal_status": "done"
+        },
+        {
+          "task_id": "ODP-DATA-CATALOG-METADATA-ALIGNMENT-001",
+          "location": "archive",
+          "terminal_status": "done"
+        },
+        {
+          "task_id": "ODP-INT001-CDC-SOURCE-EVIDENCE-001",
+          "location": "historical_w6_resolved",
+          "terminal_status": "historical_done"
+        }
       ],
-      "directed_edges": [
-        [
-          "ODP-INT001-CDC-DISPOSITION-001",
-          "ODP-INT001-CDC-SOURCE-EVIDENCE-001"
-        ],
-        [
-          "ODP-INT001-CDC-DISPOSITION-001",
-          "ODP-REQ-DISPOSITION-GOVERNANCE-001"
-        ],
+      "canonical_directed_edges": [
         [
           "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
           "ODP-INT001-CDC-DISPOSITION-001"
+        ],
+        [
+          "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "ODP-REQ-DISPOSITION-GOVERNANCE-001"
         ],
         [
           "ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001",
@@ -258,8 +332,24 @@
           "ODP-DATA-CATALOG-METADATA-ALIGNMENT-001"
         ]
       ],
+      "explicitly_excluded_historical_edges": [
+        {
+          "edge": [
+            "ODP-INT001-CDC-DISPOSITION-001",
+            "ODP-INT001-CDC-SOURCE-EVIDENCE-001"
+          ],
+          "reason": "Historical brief snapshot prerequisite only; live canonical board records depends_on=[]"
+        },
+        {
+          "edge": [
+            "ODP-INT001-CDC-DISPOSITION-001",
+            "ODP-REQ-DISPOSITION-GOVERNANCE-001"
+          ],
+          "reason": "Historical brief snapshot prerequisite only; live canonical board records depends_on=[]"
+        }
+      ],
       "cycle_detected": false,
-      "verdict": "valid_dag_no_cycles"
+      "verdict": "valid_canonical_dag_no_cycles"
     }
   },
   "requirement_and_release_gate_tracking": {
@@ -271,9 +361,9 @@
     "release_gate_policy": "ODP-FR-INT-001::CDC 維持 absent/OPEN 狀態。本處置任務之驗收核對通過，絕不代表將 ODP-FR-INT-001 或 CDC adapter 標記為 VERIFIED。實際 CDC 串流與刪除傳播能力由 ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001 於 H07 滿足並完成程式、測試、獨立審查後正式驗收。"
   },
   "current_observations_and_verification_receipts": {
-    "observed_at": "2026-09-11T11:31:50Z",
+    "observed_at": "2026-09-11T11:47:32Z",
     "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-int001-cdc-disposition-001",
-    "measured_head_sha": "9623d9bfd445043a92a42b342c51f5a312e5d831",
+    "measured_head_sha": "0e63ae40b5b2184946dce0ef1db339a09ed684d2",
     "human_decision_d20_provenance": {
       "source_file": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
       "pinned_baseline_sha": "4499a2993e37b62033926b07de8d8d2e8469a6c7",
@@ -286,10 +376,16 @@
     },
     "live_board_provenance": {
       "source_file": "/home/lupin/odayplus/ai-status.json",
-      "observed_timestamp": "2026-09-11T11:30:38Z",
+      "archive_tasks_dir": "/home/lupin/odayplus/ai-task-archive/tasks/",
+      "observed_timestamp": "2026-09-11T11:47:32Z",
       "task_states_observed": {
-        "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001": "todo (depends on ODP-INT001-CDC-DISPOSITION-001)",
-        "ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001": "blocked (waiting for Human/Ops on H07; depends on ODP-CDC-SOURCE-CONTRACT-PREP-001, ODP-DATA-PLANE-DELETE-PROPAGATION-001, ODP-DATA-CATALOG-METADATA-ALIGNMENT-001)"
+        "ODP-INT001-CDC-DISPOSITION-001": "in_progress (depends_on: [])",
+        "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001": "todo (depends on ODP-INT001-CDC-DISPOSITION-001, ODP-REQ-DISPOSITION-GOVERNANCE-001, and 15 other tasks)",
+        "ODP-REQ-DISPOSITION-GOVERNANCE-001": "archived (terminal_status: done, terminal_outcome: completed)",
+        "ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001": "blocked (waiting for Human/Ops on H07; depends on ODP-CDC-SOURCE-CONTRACT-PREP-001, ODP-DATA-PLANE-DELETE-PROPAGATION-001, ODP-DATA-CATALOG-METADATA-ALIGNMENT-001)",
+        "ODP-CDC-SOURCE-CONTRACT-PREP-001": "archived (terminal_status: done, terminal_outcome: completed)",
+        "ODP-DATA-PLANE-DELETE-PROPAGATION-001": "archived (terminal_status: done, terminal_outcome: completed)",
+        "ODP-DATA-CATALOG-METADATA-ALIGNMENT-001": "archived (terminal_status: done, terminal_outcome: completed)"
       }
     },
     "receipts": [
@@ -343,6 +439,22 @@
         "duration_seconds": 7.211,
         "exit_code": 0,
         "stdout_snippet": "........................................................................ [ 96%]\n...                                                                      [100%]",
+        "stderr_snippet": ""
+      },
+      {
+        "label": "canonical_board_and_dag_verification",
+        "argv": [
+          "python3",
+          "-c",
+          "import json, os\nwith open('/home/lupin/odayplus/ai-status.json') as f:\n    b = json.load(f)\ntasks = {t['id']: t for t in b.get('tasks', []) if 'id' in t}\nassert tasks.get('ODP-INT001-CDC-DISPOSITION-001', {}).get('depends_on') == []\nassert 'ODP-INT001-CDC-DISPOSITION-001' in tasks.get('ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001', {}).get('depends_on', [])\nassert tasks.get('ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001', {}).get('depends_on') == ['ODP-CDC-SOURCE-CONTRACT-PREP-001', 'ODP-DATA-PLANE-DELETE-PROPAGATION-001', 'ODP-DATA-CATALOG-METADATA-ALIGNMENT-001']\nprint('Canonical board dependencies verified.')"
+        ],
+        "repository": "alfloop-dev/odayplus",
+        "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-int001-cdc-disposition-001",
+        "measured_head_sha": "0e63ae40b5b2184946dce0ef1db339a09ed684d2",
+        "started_at": "2026-09-11T11:47:32.000000+00:00",
+        "duration_seconds": 0.021,
+        "exit_code": 0,
+        "stdout_snippet": "Canonical board dependencies verified.",
         "stderr_snippet": ""
       }
     ]

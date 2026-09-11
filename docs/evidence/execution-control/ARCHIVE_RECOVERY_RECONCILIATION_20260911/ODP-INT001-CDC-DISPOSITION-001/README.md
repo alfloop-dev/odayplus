@@ -45,25 +45,38 @@
 
 ### 依賴關係對照與無環驗證 (Dependency Graph & DAG Cycle Verification)
 
-1. **依賴關係前後對照 (Explicitly Unchanged)**：
-   - **本任務依賴 (`depends_on`)**：
-     - 變更前：`["ODP-INT001-CDC-SOURCE-EVIDENCE-001", "ODP-REQ-DISPOSITION-GOVERNANCE-001"]`（均為 `done`）
-     - 變更後：`["ODP-INT001-CDC-SOURCE-EVIDENCE-001", "ODP-REQ-DISPOSITION-GOVERNANCE-001"]`（**完全未變更**，`dependency_mutation: false`）
-   - **下游依賴本任務者 (`dependents`)**：
-     - `ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001`（status: `todo`，整體 20 項結構性修復結案台帳任務，依賴本處置任務）。
+1. **歷史快照與 Canonical 依賴真實對照**：
+   - **歷史任務快照依賴 (Historical Task Brief Snapshot)**：
+     - 來源：`original-evidence.json entry.original_task_definition.dependencies`（PR #1166 當時快照）。
+     - 歷史前置依賴：`["ODP-INT001-CDC-SOURCE-EVIDENCE-001", "ODP-REQ-DISPOSITION-GOVERNANCE-001"]`（當時均已 done，後續已歸檔）。
+   - **當前 Canonical 看板與任務依賴 (Current Canonical Board & Task Brief)**：
+     - 變更前 canonical 依賴 (`depends_on`)：`[]`（無未完成之動態前置依賴）。
+     - 變更後建議依賴 (`depends_on`)：`[]`（**維持無依賴變更**，`dependency_mutation: false`）。
+   - **真實下游依賴本任務者 (`canonical_dependents`)**：
+     - `ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001`（status: `todo`，整體 20 項結構性修復結案台帳任務，在 canonical 看板明確依賴 `ODP-INT001-CDC-DISPOSITION-001`、已歸檔之 `ODP-REQ-DISPOSITION-GOVERNANCE-001` 等 17 項前置修復任務）。
 2. **工程接續任務 (D20 Implementation Follow-up Lane)**：
    - `ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001`（WP-34B，status: `blocked`，`waiting_for: Human/Ops`，持有入場條件 `H07`）。
-   - 前置依賴項（均已合併入 dev）：
-     - `ODP-CDC-SOURCE-CONTRACT-PREP-001`（PR #1258, merge commit `414b5c17927e`）
-     - `ODP-DATA-PLANE-DELETE-PROPAGATION-001`（PR #1282）
-     - `ODP-DATA-CATALOG-METADATA-ALIGNMENT-001`（PR #1286）
-3. **無環驗證 (Cycle Verification)**：
-   - 評估之有向圖節點：`ODP-INT001-CDC-SOURCE-EVIDENCE-001`, `ODP-REQ-DISPOSITION-GOVERNANCE-001`, `ODP-INT001-CDC-DISPOSITION-001`, `ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001`, `ODP-CDC-SOURCE-CONTRACT-PREP-001`, `ODP-DATA-PLANE-DELETE-PROPAGATION-001`, `ODP-DATA-CATALOG-METADATA-ALIGNMENT-001`, `ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001`。
-   - 拓撲結構為嚴格有向無環圖 (DAG)，無任何閉環（`cycle_detected: false`）。
+   - 當前 3 項前置依賴（均已於 dev 合併並於看板歸檔為 `done`）：
+     - `ODP-CDC-SOURCE-CONTRACT-PREP-001`（WP-34A, PR #1258, merge commit `414b5c17927e`, archived `done`）
+     - `ODP-DATA-PLANE-DELETE-PROPAGATION-001`（PR #1282, archived `done`）
+     - `ODP-DATA-CATALOG-METADATA-ALIGNMENT-001`（PR #1286, archived `done`）
+3. **精確範疇無環圖驗證 (Canonical DAG Cycle Verification)**：
+   - **評估節點與看板位置**：
+     - Live 看板節點：`ODP-INT001-CDC-DISPOSITION-001` (`in_progress`, `depends_on: []`), `ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001` (`todo`), `ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001` (`blocked`)。
+     - 歸檔端點：`ODP-REQ-DISPOSITION-GOVERNANCE-001` (archived `done`), `ODP-CDC-SOURCE-CONTRACT-PREP-001` (archived `done`), `ODP-DATA-PLANE-DELETE-PROPAGATION-001` (archived `done`), `ODP-DATA-CATALOG-METADATA-ALIGNMENT-001` (archived `done`)。
+     - 歷史前置端點（已在 W6 結算）：`ODP-INT001-CDC-SOURCE-EVIDENCE-001`。
+   - **Canonical 活躍有向邊 (依賴方 -> 被依賴方)**：
+     - `ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001` -> `ODP-INT001-CDC-DISPOSITION-001`
+     - `ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001` -> `ODP-REQ-DISPOSITION-GOVERNANCE-001`
+     - `ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001` -> `ODP-CDC-SOURCE-CONTRACT-PREP-001`
+     - `ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001` -> `ODP-DATA-PLANE-DELETE-PROPAGATION-001`
+     - `ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001` -> `ODP-DATA-CATALOG-METADATA-ALIGNMENT-001`
+   - **明確排除/歷史邊揭露**：本任務在 live 看板無前置依賴 (`depends_on: []`)；歷史快照的兩條前置邊已結案，不混入當前 canonical DAG。
+   - **拓撲檢查結論**：嚴格有向無環圖 (DAG)，無任何閉環（`cycle_detected: false`）。
 
 ### 決策與看板觀察來源 (Observation Provenance)
 - **決策 D20 依據**：`docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md:68, 202`（基準 SHA `4499a2993e37b62033926b07de8d8d2e8469a6c7`），確認方向為「選項 A：實作／補齊 CDC 適用性與契約」。
-- **看板狀態依據**：`/home/lupin/odayplus/ai-status.json`（觀察時間 `2026-09-11T11:30:38Z`）。
+- **看板狀態依據**：`/home/lupin/odayplus/ai-status.json` 及 `/home/lupin/odayplus/ai-task-archive/tasks/`（觀察時間 `2026-09-11T11:47:32Z`）。
 
 ---
 
@@ -100,7 +113,7 @@
 - **Exit Code**: `0`
 - **Output Summary**: `Requirement member checks passed: 9 set-valued requirements, 47 members (37 satisfied, 10 absent and noted; dispositions: BLOCKED_BY_EVIDENCE=4, DECIDED=1, IMPLEMENTATION_READY=3, OPEN=3, VERIFIED=36).`
 
-### 收據 3：INT-001 與治理聚焦測試
+### 收據 3：INT-001 與治理聚焦測試 (歷史收據保留)
 - **Command**: `uv run pytest delivery_toolchain/governance/test_check_requirement_members.py tests/integration/test_int001_cdc_disposition.py -q`
 - **Worktree**: `/tmp/pantheon-worker-worktrees/pantheon/odp-int001-cdc-disposition-001`
 - **Measured Head SHA**: `9623d9bfd445043a92a42b342c51f5a312e5d831`
@@ -108,3 +121,12 @@
 - **Duration**: `7.211s`
 - **Exit Code**: `0`
 - **Output Summary**: `75 passed (68 in test_check_requirement_members.py, 7 in test_int001_cdc_disposition.py)`
+
+### 收據 4：Canonical 看板與依賴圖拓撲無環驗證
+- **Command**: `python3 -c "import json, os; b = json.load(open('/home/lupin/odayplus/ai-status.json')); tasks = {t['id']: t for t in b.get('tasks', []) if 'id' in t}; assert tasks.get('ODP-INT001-CDC-DISPOSITION-001', {}).get('depends_on') == []; assert 'ODP-INT001-CDC-DISPOSITION-001' in tasks.get('ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001', {}).get('depends_on', []); assert tasks.get('ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001', {}).get('depends_on') == ['ODP-CDC-SOURCE-CONTRACT-PREP-001', 'ODP-DATA-PLANE-DELETE-PROPAGATION-001', 'ODP-DATA-CATALOG-METADATA-ALIGNMENT-001']; print('Canonical board dependencies verified.')"`
+- **Worktree**: `/tmp/pantheon-worker-worktrees/pantheon/odp-int001-cdc-disposition-001`
+- **Measured Head SHA**: `0e63ae40b5b2184946dce0ef1db339a09ed684d2`
+- **Timestamp**: `2026-09-11T11:47:32.000000+00:00`
+- **Duration**: `0.021s`
+- **Exit Code**: `0`
+- **Output Summary**: `Canonical board dependencies verified.`
