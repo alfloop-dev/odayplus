@@ -1,104 +1,133 @@
 {
   "task_id": "ODP-STAGING-FOUNDATION-REFS-MAPPING-001",
-  "schema_version": 1,
-  "generated_at_utc": "2026-09-10T23:45:00Z",
+  "schema_version": 2,
+  "generated_at_utc": "2026-09-11T00:18:00Z",
   "executor_worker": "Antigravity5",
   "reviewer": "Codex",
-  "executive_summary": "Actionable proposal for binding staging foundation coordinates into GitHub repository environments based on immutable readback receipts (#1046, #1245, #1291). This task does not execute any variable mutation or cloud provisioning; all actions are formatted for Human/Ops execution behind existing governance gates.",
+  "executive_summary": "Candidate reference proposals for binding staging foundation coordinates into GitHub repository environments based on historical readbacks (#1046) and preflight audits (#1245, #1291). This task performs no cloud provisioning, IAM mutation, or GitHub variable writes. All candidate values remain non-executable until reconciled against live owner metadata and authorized under existing governance gates.",
+  "acceptance_references": {
+    "parent_foundation_pr_1046": {
+      "status": "BLOCKED_UNMERGED_ON_DEV",
+      "exact_sha": "494d09145b2932d5bbc27682e918b1afa176a140",
+      "original_tests": 46,
+      "governance_note": "Reuses historical remote state graph without asserting PR merge or Direct VPC ALL_TRAFFIC live acceptance."
+    },
+    "staging_ci_collection_pr_1291": {
+      "status": "MERGED",
+      "exact_sha": "726065c3aec57147f37902b94d754234dd55e25f",
+      "ephemeral_staging_tests": 18,
+      "harness": "offline_fail_closed"
+    },
+    "recovery_history_closure_scope": "Resolved candidate dependency only; staging storage requirement is NOT waived and distinct recovery bucket remains required."
+  },
   "target_environment_proposals": {
     "staging": {
       "github_environment": "staging",
       "target_gcp_project": "odayplus-runtime-20260825",
-      "actionable_foundation_bindings": [
+      "candidate_foundation_bindings": [
         {
           "variable_name": "ODP_STAGING_VPC_NETWORK",
-          "action": "SET",
-          "proposed_value": "oday-staging-runtime",
-          "rationale": "Matches converged VPC network confirmed in PR #1046 remote state readback.",
+          "candidate_value": "oday-staging-runtime",
+          "historical_basis": "Matches converged VPC network confirmed in PR #1046 remote state readback (2026-08-30T15:52:48Z).",
+          "current_status": "UNSET_IN_GITHUB_STAGING",
+          "execution_prerequisite": "Owner confirmation or authorized read-only compute.networks.get metadata check.",
           "verification_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_VPC_NETWORK\")]'"
         },
         {
           "variable_name": "ODP_STAGING_VPC_SUBNETWORK",
-          "action": "SET",
-          "proposed_value": "oday-staging-runtime",
-          "rationale": "Matches converged subnet (10.42.0.0/24) confirmed in PR #1046 remote state readback.",
+          "candidate_value": "oday-staging-runtime",
+          "historical_basis": "Matches converged subnet (10.42.0.0/24) confirmed in PR #1046 remote state readback (2026-08-30T15:52:48Z).",
+          "current_status": "UNSET_IN_GITHUB_STAGING",
+          "execution_prerequisite": "Owner confirmation or authorized read-only compute.subnetworks.get metadata check.",
           "verification_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_VPC_SUBNETWORK\")]'"
         },
         {
           "variable_name": "ODP_STAGING_KMS_KEY_ID",
-          "action": "SET",
-          "proposed_value": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime",
-          "rationale": "Matches converged runtime CMEK key with rotation_period=7776000s and prevent_destroy=true.",
+          "candidate_value": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime",
+          "historical_basis": "Matches converged runtime CMEK key with rotation_period=7776000s and prevent_destroy=true (2026-08-30T15:52:48Z).",
+          "current_status": "UNSET_IN_GITHUB_STAGING",
+          "execution_prerequisite": "Owner confirmation or authorized read-only cloudkms.cryptoKeys.get metadata check.",
           "verification_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_KMS_KEY_ID\")]'"
         },
         {
           "variable_name": "ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT",
-          "action": "SET",
-          "proposed_value": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
-          "rationale": "Matches authenticated deployer SA bound via WIF pool 'github-actions' and provider 'odayplus'.",
+          "candidate_value": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+          "historical_basis": "Matches deployer SA bound via WIF pool 'github-actions' and provider 'odayplus' in PR #1046; currently bound to GCP_SERVICE_ACCOUNT in staging.",
+          "current_status": "UNSET_UNDER_ODP_STAGING_PREFIX",
+          "execution_prerequisite": "Owner confirmation or readback from authenticated WIF release identity (separating Preflight #1245 caller permission denial).",
           "verification_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT\")]'"
         },
         {
           "variable_name": "ODP_STAGING_TERRAFORM_STATE_BUCKET",
-          "action": "SET",
-          "proposed_value": "oday-tfstate-staging-odayplus-runtime-20260825",
-          "rationale": "Matches live state backend bucket with CMEK, versioning, PAP enforced, UBLA, and 30-day retention.",
+          "candidate_value": "oday-tfstate-staging-odayplus-runtime-20260825",
+          "historical_basis": "Matches live state backend bucket with CMEK, versioning, PAP enforced, UBLA, and 30-day retention in PR #1046.",
+          "current_status": "UNSET_IN_GITHUB_STAGING",
+          "execution_prerequisite": "Owner confirmation or scoped storage.buckets.get / getIamPolicy readback; strictly state-only, cannot be used as recovery bucket.",
           "verification_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_TERRAFORM_STATE_BUCKET\")]'"
         }
       ],
-      "cloud_sql_remediation_binding": {
+      "cloud_sql_reconciliation_proposal": {
         "variable_name": "GCP_CLOUD_SQL_INSTANCE",
-        "action": "UPDATE",
-        "current_value": "odayplus-runtime-20260825:asia-east1:oday-staging-sql",
-        "proposed_value": "odayplus-runtime-20260825:asia-east1:oday-staging-foundation-sql",
-        "rationale": "Current value incorrectly points to legacy unmanaged instance 'oday-staging-sql' on the default network. Must point to foundation managed instance 'oday-staging-foundation-sql' located in VPC 'oday-staging-runtime' (private IP 10.149.0.3).",
+        "current_bound_value": "odayplus-runtime-20260825:asia-east1:oday-staging-sql",
+        "candidate_foundation_value": "odayplus-runtime-20260825:asia-east1:oday-staging-foundation-sql",
+        "reconciliation_rationale": "Current variable points to legacy unmanaged instance 'oday-staging-sql' on default network. Foundation managed instance 'oday-staging-foundation-sql' resides in VPC 'oday-staging-runtime' (private IP 10.149.0.3). Both instances must remain distinct; legacy instance remains preserved (not destroyed).",
+        "execution_status": "CANDIDATE_PENDING_LIVE_RECONCILIATION",
+        "prerequisite_checks": "Verify foundation SQL instance status via release identity or owner metadata before updating variable binding.",
         "verification_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"GCP_CLOUD_SQL_INSTANCE\")]'"
       },
-      "human_input_and_provisioning_required": [
-        {
-          "variable_name": "ODP_STAGING_RECOVERY_BUNDLE_BUCKET",
-          "status": "REQUIRES_PROVISIONING_BEFORE_BINDING",
-          "suggested_value": "oday-staging-recovery-odayplus-runtime-20260825",
-          "prerequisite_provisioning_steps": [
-            "1. Human/Ops or authorized provisioning task creates distinct GCS bucket: oday-staging-recovery-odayplus-runtime-20260825 in region asia-east1.",
-            "2. Enforce Public Access Prevention (enforced) and Uniform Bucket-Level Access (true).",
-            "3. Enable Object Versioning (true) and 30-day retention policy.",
-            "4. Configure CMEK encryption with runtime key: projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime.",
-            "5. Grant roles/storage.objectUser to serviceAccount:github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com.",
-            "6. Verify distinct name is NOT equal to state bucket (satisfying deploy-dev.yml:1207-1212 separation guard).",
-            "7. Bind ODP_STAGING_RECOVERY_BUNDLE_BUCKET in GitHub staging environment."
-          ]
-        },
-        {
-          "variable_name": "ODP_PRODUCTION_WATCH_CLOSEOUT_URI",
-          "status": "DEPENDS_ON_PRODUCTION_ROLLOUT_PRODUCER",
-          "producer_task": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
-          "rationale": "Requires the production watch-window receipt GCS URI, which cannot be finalized until production blue-green rollout is staged and watch window producer URI is established."
-        }
-      ]
+      "recovery_bucket_resolution_protocol": {
+        "variable_name": "ODP_STAGING_RECOVERY_BUNDLE_BUCKET",
+        "current_status": "UNKNOWN_REQUIRES_IDENTITY_RESOLUTION_BEFORE_BINDING_OR_PROVISIONING",
+        "evidence_context": "Preflight #1245 skipped bucket describe probes (argv [], exit null) due to unset variables; unset variables do NOT establish absence.",
+        "stage_a_resolution_and_verification": [
+          "1. Request approved existing recovery bucket identity and scoped storage.buckets.get / storage.buckets.getIamPolicy authority or owner metadata.",
+          "2. Verify distinct identity: bucket name MUST NOT equal ODP_STAGING_TERRAFORM_STATE_BUCKET (satisfying deploy-dev.yml:1207-1212 separation guard).",
+          "3. Verify security baseline: CMEK encryption (using runtime KMS key), Object Versioning enabled, Uniform Bucket-Level Access (UBLA), Public Access Prevention (enforced), and 30-day Retention policy.",
+          "4. Verify least-privilege IAM: roles/storage.objectUser granted to github-deployer SA (github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com).",
+          "5. If existing compliant bucket is confirmed, proceed to bind ODP_STAGING_RECOVERY_BUNDLE_BUCKET."
+        ],
+        "stage_b_conditional_provisioning": [
+          "1. If and only if absence is confirmed by owner metadata/readback AND explicit provisioning authority is granted by Human/Ops, provision a distinct GCS bucket (suggested naming pattern: oday-staging-recovery-odayplus-runtime-20260825).",
+          "2. Apply complete security baseline (CMEK, versioning, UBLA, PAP enforced, 30d retention, deployer objectUser IAM).",
+          "3. Bind ODP_STAGING_RECOVERY_BUNDLE_BUCKET in GitHub staging environment."
+        ]
+      },
+      "watch_closeout_uri_dependency": {
+        "variable_name": "ODP_PRODUCTION_WATCH_CLOSEOUT_URI",
+        "status": "DEPENDS_ON_PRODUCTION_ROLLOUT_PRODUCER",
+        "producer_task": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+        "rationale": "Names a receipt produced by the production watch window; value cannot be finalized before production rollout producer is staged."
+      }
     },
     "staging_build": {
       "github_environment": "staging-build",
-      "status": "OBSERVATION_GAP_NEEDS_ENUMERATION_AND_DIRECT_VPC_ALIGNMENT",
-      "analysis": "The build job binds 'staging-build'. check_release_environment.py --scope build requires 11 variables. For Cloud Run networking, Direct VPC uses ODP_STAGING_VPC_NETWORK/ODP_STAGING_VPC_SUBNETWORK rather than Serverless VPC Access Connectors. Tooling remediation is required to ensure build-scope checks do not fail when Direct VPC is used in place of VPC connectors.",
+      "status": "OBSERVATION_GAP_NEEDS_ENUMERATION",
+      "analysis": "The build job binds 'staging-build', which was not enumerated in Preflight #1245 (receipt_ref: null). Cloud Run Direct VPC uses ODP_STAGING_VPC_NETWORK and ODP_STAGING_VPC_SUBNETWORK rather than Serverless VPC Access Connectors. Tooling reconciliation belongs to a dedicated release-tooling task.",
       "readback_command": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging-build/variables --jq '[.variables[].name]'"
     }
   },
-  "operator_runbook_commands": {
-    "warning": "FOR REFERENCE ONLY. DO NOT EXECUTE FROM AUTO WORKER. Must be executed by Human/Ops or authorized release operator after reviewing prerequisites.",
-    "commands": [
-      "# 1. Set the 5 confirmed staging foundation variables",
-      "gh variable set ODP_STAGING_VPC_NETWORK --env staging --body 'oday-staging-runtime'",
-      "gh variable set ODP_STAGING_VPC_SUBNETWORK --env staging --body 'oday-staging-runtime'",
-      "gh variable set ODP_STAGING_KMS_KEY_ID --env staging --body 'projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime'",
-      "gh variable set ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT --env staging --body 'github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com'",
-      "gh variable set ODP_STAGING_TERRAFORM_STATE_BUCKET --env staging --body 'oday-tfstate-staging-odayplus-runtime-20260825'",
+  "operator_runbook_reference": {
+    "warning": "FOR HUMAN/OPS REVIEW ONLY. DO NOT EXECUTE FROM AUTO WORKER. All commands are conditional on prior live reconciliation and owner approval.",
+    "prerequisites_checklist": [
+      "1. Verify caller has Human/Ops authority with staging environment write permissions.",
+      "2. Perform live metadata verification of VPC, Subnet, KMS Key, Deployer SA, and State Bucket coordinates.",
+      "3. Execute Recovery Bucket Stage A resolution protocol (request identity & verify baseline; do not assume absence).",
+      "4. Confirm legacy Cloud SQL oday-staging-sql vs foundation SQL oday-staging-foundation-sql distinction and approve rebind.",
+      "5. Ensure Human Review Gates and release lease signatures remain active."
+    ],
+    "conditional_binding_templates": [
+      "# (A) Foundation candidate variables (execute only after live coordinate verification)",
+      "# gh variable set ODP_STAGING_VPC_NETWORK --env staging --body 'oday-staging-runtime'",
+      "# gh variable set ODP_STAGING_VPC_SUBNETWORK --env staging --body 'oday-staging-runtime'",
+      "# gh variable set ODP_STAGING_KMS_KEY_ID --env staging --body 'projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime'",
+      "# gh variable set ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT --env staging --body 'github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com'",
+      "# gh variable set ODP_STAGING_TERRAFORM_STATE_BUCKET --env staging --body 'oday-tfstate-staging-odayplus-runtime-20260825'",
       "",
-      "# 2. Update Cloud SQL instance to point to foundation SQL",
-      "gh variable set GCP_CLOUD_SQL_INSTANCE --env staging --body 'odayplus-runtime-20260825:asia-east1:oday-staging-foundation-sql'",
+      "# (B) Cloud SQL rebind (execute only after foundation SQL live verification; preserve legacy instance)",
+      "# gh variable set GCP_CLOUD_SQL_INSTANCE --env staging --body 'odayplus-runtime-20260825:asia-east1:oday-staging-foundation-sql'",
       "",
-      "# 3. Set recovery bucket after provisioning distinct GCS bucket",
-      "gh variable set ODP_STAGING_RECOVERY_BUNDLE_BUCKET --env staging --body 'oday-staging-recovery-odayplus-runtime-20260825'"
+      "# (C) Recovery Bucket binding (execute only after Stage A verification or authorized Stage B provisioning)",
+      "# gh variable set ODP_STAGING_RECOVERY_BUNDLE_BUCKET --env staging --body '<resolved-distinct-recovery-bucket-name>'"
     ]
   },
   "security_and_governance_rules": {

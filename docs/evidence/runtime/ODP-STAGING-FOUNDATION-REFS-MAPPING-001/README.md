@@ -9,8 +9,8 @@
 - **Phase**: Staging foundation evidence preparation
 - **Branch**: `task/ODP-STAGING-FOUNDATION-REFS-MAPPING-001`
 - **Target Branch**: `dev`
-- **Date**: 2026-09-10
-- **Summary**: 沿 PR #1046 既有 metadata 核對六項缺值與 SQL/state/recovery 身分，不新增資源或修改環境。
+- **Date**: 2026-09-11
+- **Summary**: 沿 PR #1046 既有 metadata 核對六項缺值與 SQL/state/recovery 身分，區隔歷史已確認狀態與當前未授權/未知探針結果，不新增資源或修改環境。
 
 ---
 
@@ -20,47 +20,49 @@
 
 | 產物檔案 | 說明 |
 |---|---|
-| [foundation-reference-map.json](foundation-reference-map.json) | 六項 Staging Foundation 變數逐項 mapping、Terraform 位址、既有 readback 結果、Cloud SQL 新舊實例比對及 VPC 機制分析 |
-| [binding-proposal.json](binding-proposal.json) | 針對 GitHub `staging` 與 `staging-build` 環境之精確綁定建議、Operator Runbook 指令、前置需求與安全治理規範 |
-| [readback-index.json](readback-index.json) | 索引所有引用之唯讀 metadata 收據、執行參數 (argv)、時間戳記 (UTC)、Principal 身分與 Target 資源 |
+| [foundation-reference-map.json](foundation-reference-map.json) | 六項 Staging Foundation 變數逐項 mapping、Terraform 位址、歷史與當前狀態區隔、Cloud SQL 新舊實例比對及 VPC 機制分環境觀測 |
+| [binding-proposal.json](binding-proposal.json) | 針對 GitHub `staging` 與 `staging-build` 環境之候選綁定建議、Operator Runbook 查核準則、二階段 Recovery 儲存桶解析協議與安全治理規範 |
+| [readback-index.json](readback-index.json) | 索引所有引用之唯讀 metadata 收據、執行參數 (argv)、時間戳記 (UTC)、Principal 身分、Target 資源與審計雜湊 (SHA-256) |
 
 ---
 
 ## 3. 六項 Staging Foundation 變數逐項核對 (Six Foundation Refs Mapping)
 
-依據 PR #1046 (`494d09145b2932d5bbc27682e918b1afa176a140`) 於 2026-08-30T15:52:48Z 之 Live Readback 收據，以及 Preflight #1245 (`6ee658a0bd65ab79303fdfd75baa09c14410a220`) 於 2026-09-08T11:46:08Z 之 GitHub 環境變數觀測，逐項核對結果如下：
+依據 PR #1046 (`494d09145b2932d5bbc27682e918b1afa176a140`) 於 2026-08-30T15:52:48Z 之 Live Readback 聚合收據，以及 Preflight #1245 (`6ee658a0bd65ab79303fdfd75baa09c14410a220`) 於 2026-09-08T11:46:08Z 之 GitHub 環境變數與 GCP 探針觀測，逐項核對結果如下：
 
-| # | GitHub 變數名稱 | 資源實體 (Identity) | 來源 Exact SHA & 時間 | Terraform 位址 / 模組輸出 | 當前 GitHub 狀態 | Readback 結果 | 分類判定 |
+| # | GitHub 變數名稱 | 資源實體 (Identity) | 來源 Exact SHA & 時間 | Terraform 位址 / 模組輸出 | 當前 GitHub 狀態 | 當前探針 / Readback 結果 | 分類判定 |
 |---|---|---|---|---|---|---|---|
-| 1 | `ODP_STAGING_VPC_NETWORK` | `oday-staging-runtime` | `494d09145b29`<br>(2026-08-30T15:52:48Z) | `module.runtime_foundation.google_compute_network.runtime`<br>(`network_name`) | 未設定 (UNSET) | `CONFIRMED_IN_REMOTE_STATE`<br>預設阻斷出向流量 (Default-Deny) | `confirmed_in_foundation_readback_proposed_for_binding` |
-| 2 | `ODP_STAGING_VPC_SUBNETWORK` | `oday-staging-runtime` | `494d09145b29`<br>(2026-08-30T15:52:48Z) | `module.runtime_foundation.google_compute_subnetwork.runtime`<br>(`subnetwork_name`) | 未設定 (UNSET) | `CONFIRMED_IN_REMOTE_STATE`<br>CIDR `10.42.0.0/24`<br>Private Google Access 已啟用 | `confirmed_in_foundation_readback_proposed_for_binding` |
-| 3 | `ODP_STAGING_KMS_KEY_ID` | `projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime` | `494d09145b29`<br>(2026-08-30T15:52:48Z) | `module.runtime_foundation.google_kms_crypto_key.runtime`<br>(`kms_crypto_key_id`) | 未設定 (UNSET) | `CONFIRMED_IN_REMOTE_STATE`<br>輪替週期 90 天<br>`prevent_destroy = true` | `confirmed_in_foundation_readback_proposed_for_binding` |
-| 4 | `ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT` | `github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com` | `494d09145b29`<br>(2026-08-30T15:52:48Z) | 既有 WIF Deployer 身分 (已綁定 State Bucket `roles/storage.objectUser`) | 未設定 (UNSET)<br>(現有 `GCP_SERVICE_ACCOUNT` 已綁定同值) | `LIVE_VERIFIED_FOR_REMOTE_STATE_ACCESS`<br>經由 WIF `github-actions` / `odayplus` 認證 | `confirmed_in_foundation_readback_proposed_for_binding` |
-| 5 | `ODP_STAGING_TERRAFORM_STATE_BUCKET` | `oday-tfstate-staging-odayplus-runtime-20260825` | `494d09145b29`<br>(2026-08-30T15:52:48Z) | `backend "gcs"` | 未設定 (UNSET) | `LIVE_CONTROLS_VERIFIED`<br>CMEK, Versioning, PAP enforced, UBLA, 30d Retention | `confirmed_in_foundation_readback_proposed_for_binding` |
-| 6 | `ODP_STAGING_RECOVERY_BUNDLE_BUCKET` | 尚未建立 (UNPROVISIONED)<br>建議命名: `oday-staging-recovery-odayplus-runtime-20260825` | `6ee658a0bd65`<br>(2026-09-08T11:46:07Z) | N/A (獨立儲存桶，非 State Backend) | 未設定 (UNSET) | `UNPROVISIONED_OR_UNKNOWN`<br>不可複用 State Bucket | `unknown_requires_human_or_owner_provisioning` |
+| 1 | `ODP_STAGING_VPC_NETWORK` | `oday-staging-runtime` | `494d09145b29`<br>(2026-08-30T15:52:48Z) | `module.runtime_foundation.google_compute_network.runtime`<br>(`network_name`) | 未設定 (UNSET) | `CONFIRMED_IN_REMOTE_STATE_20260830`<br>預設阻斷出向流量 (Default-Deny) | `candidate_historical_reference_pending_live_reconciliation` |
+| 2 | `ODP_STAGING_VPC_SUBNETWORK` | `oday-staging-runtime` | `494d09145b29`<br>(2026-08-30T15:52:48Z) | `module.runtime_foundation.google_compute_subnetwork.runtime`<br>(`subnetwork_name`) | 未設定 (UNSET) | `CONFIRMED_IN_REMOTE_STATE_20260830`<br>CIDR `10.42.0.0/24`<br>Private Google Access 已啟用 | `candidate_historical_reference_pending_live_reconciliation` |
+| 3 | `ODP_STAGING_KMS_KEY_ID` | `projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime` | `494d09145b29`<br>(2026-08-30T15:52:48Z) | `module.runtime_foundation.google_kms_crypto_key.runtime`<br>(`kms_crypto_key_id`) | 未設定 (UNSET) | `CONFIRMED_IN_REMOTE_STATE_20260830`<br>輪替週期 90 天<br>`prevent_destroy = true` | `candidate_historical_reference_pending_live_reconciliation` |
+| 4 | `ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT` | `github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com` | `494d09145b29`<br>(2026-08-30T15:52:48Z) | 既有 WIF Deployer 身分 (已綁定 State Bucket `roles/storage.objectUser`) | 未設定 (UNSET)<br>(現有 `GCP_SERVICE_ACCOUNT` 已綁定同值) | `PERMISSION_DENIED_IN_1245`<br>(Preflight 呼叫端權限不足，不代表帳號不存在) | `candidate_historical_reference_pending_live_reconciliation` |
+| 5 | `ODP_STAGING_TERRAFORM_STATE_BUCKET` | `oday-tfstate-staging-odayplus-runtime-20260825` | `494d09145b29`<br>(2026-08-30T15:52:48Z) | `backend "gcs"` | 未設定 (UNSET) | `CONFIRMED_IN_REMOTE_STATE_20260830`<br>CMEK, Versioning, PAP enforced, UBLA, 30d Retention | `candidate_historical_reference_pending_live_reconciliation` |
+| 6 | `ODP_STAGING_RECOVERY_BUNDLE_BUCKET` | 未知 (UNKNOWN) | `6ee658a0bd65`<br>(2026-09-08T11:46:07Z) | N/A (獨立儲存桶，非 State Backend) | 未設定 (UNSET) | `PROBE_SKIPPED_IN_1245`<br>(未設變數因此略過探針；存在狀態為未知) | `unknown_requires_owner_identity_resolution_before_binding_or_provisioning` |
 
 > [!IMPORTANT]
 > **推斷防護原則 (Inference Guard)**：
-> 不能因 GitHub 變數未填（UNSET）而推斷資源不存在或應立即新建。
-> 前 5 項資源在 PR #1046 remote state readback 中均已確實驗證存在且收斂；僅第 6 項 `ODP_STAGING_RECOVERY_BUNDLE_BUCKET` 需由 Human/Ops 在獨立權限下建立專屬 GCS 儲存桶後再行綁定。
+> 1. 不能因 GitHub 變數未填（UNSET）而推斷資源不存在或可立即新增。Preflight #1245 中 `CHK-GCP-BUCKET-PROVISION-STATE` 與 `CHK-GCP-BUCKET-PROVISION-RECOVERY` 探針因變數未填而全數略過 (`argv: []`, `exit_code: null`)，因此**變數未設不代表資源不存在**。
+> 2. 前 5 項資源在 PR #1046 歷史遠端狀態中均已記錄收斂；第 6 項 `ODP_STAGING_RECOVERY_BUNDLE_BUCKET` 狀態為 **UNKNOWN**（非 UNPROVISIONED），必須先進行身份解析與基準查核，嚴禁預設不存在而發出無條件建立指令。
 
 ---
 
-## 4. Cloud SQL 實例核對與漂移修正 (Cloud SQL Instance Reconciliation)
+## 4. Cloud SQL 實例核對與漂移隔離 (Cloud SQL Reconciliation)
 
-在比對 GitHub `staging` 環境現況與 Foundation 基礎設施時，發現一項關鍵重大漂移：
+比對 GitHub `staging` 環境現況與 Foundation 基礎設施歷史記錄：
 
 1. **現行 GitHub `staging` 環境變數**：
    - `GCP_CLOUD_SQL_INSTANCE` = `odayplus-runtime-20260825:asia-east1:oday-staging-sql`
-   - 此變數目前指向 **Legacy 未受管實例** `oday-staging-sql`（規格為 `db-f1-micro`，位於 `default` 網路）。
+   - 指向 **Legacy 未受管實例** `oday-staging-sql`（規格為 `db-f1-micro`，位於 `default` 網路）。
 2. **Foundation 受管 Primary Cloud SQL 實例**：
    - 實例名稱：`oday-staging-foundation-sql`
    - 連線名稱：`odayplus-runtime-20260825:asia-east1:oday-staging-foundation-sql`
    - Terraform 位址：`module.runtime_foundation.google_sql_database_instance.primary`
    - 規格：PostgreSQL 16、`db-custom-2-7680`、私有 IP `10.149.0.3`、位於受管 VPC `oday-staging-runtime`、啟用 CMEK 與防刪除保護。
-3. **修復與綁定建議**：
-   - 必須將 GitHub `staging` 環境之 `GCP_CLOUD_SQL_INSTANCE` 更新為 `odayplus-runtime-20260825:asia-east1:oday-staging-foundation-sql`。
-   - Legacy 實例 `oday-staging-sql` 依據 PR #1046 之處置原則保持保留（`preserved_legacy_not_destroyed`），絕不在本任務中執行刪除。
+3. **Preflight #1245 探針狀態**：
+   - Preflight 執行 `gcloud sql instances describe oday-staging-sql` 回傳 exit code 1 (`not_found_or_unauthorized_ambiguous`)，無法單憑此探針斷定存在或不存在。
+4. **處置建議**：
+   - 將 `odayplus-runtime-20260825:asia-east1:oday-staging-foundation-sql` 列為**候選建議綁定值**，待 Release 身份或 Owner metadata 確認後再行執行變數更新。
+   - Legacy 實例 `oday-staging-sql` 依據 PR #1046 之處置原則保持保留（`preserved_legacy_not_destroyed`），絕不執行刪除。
 
 ---
 
@@ -69,32 +71,44 @@
 依據 `.github/workflows/deploy-dev.yml:1207-1212` 及 `:1477-1481` 之工作流程守門規則：
 - `ODP_STAGING_TERRAFORM_STATE_BUCKET` 與 `ODP_STAGING_RECOVERY_BUNDLE_BUCKET` **絕對不能相同**（若兩者相等或任一為空，工作流程將立即 Fail-Closed 拒絕執行）。
 - State Bucket (`oday-tfstate-staging-odayplus-runtime-20260825`) 遵循 **State-Only 契約**：僅存放 Terraform remote state 與 lock 物件，嚴禁存放一般部署產物或 Recovery Bundle。
-- Recovery Bundle Bucket 必須具備以下安全基準方可投入使用：
-  1. 啟用 CMEK（使用 Runtime KMS Key: `projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime`）。
-  2. 啟用 Object Versioning 與 Uniform Bucket-Level Access (UBLA)。
-  3. 強制 Public Access Prevention (`enforced`) 與 30 天 Retention 策略。
-  4. 授予 Deployer Service Account (`github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com`) `roles/storage.objectUser` 最小權限。
+- **Recovery Bundle Bucket 二階段處置協議**：
+  - **階段 A (解析與驗證)**：
+    1. 向 Human/Ops 或權威負責人索取既有 Recovery 儲存桶識別名稱，並以具備 `storage.buckets.get` / `storage.buckets.getIamPolicy` 權限之身份進行唯讀核對。
+    2. 驗證其與 State Bucket 具備完全獨立之名稱（滿足分離守門）。
+    3. 驗證安全合規基準：啟用 CMEK（使用 Runtime KMS Key）、啟用 Object Versioning、啟用 Uniform Bucket-Level Access (UBLA)、強制 Public Access Prevention (`enforced`) 及 30 天 Retention 策略。
+    4. 驗證最小權限 IAM：授予 Deployer Service Account (`github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com`) `roles/storage.objectUser` 權限。
+    5. 若驗證通過，始得綁定該變數。
+  - **階段 B (條件式建立)**：
+    - 僅在階段 A 經 Owner 明確確認**確無現存儲存桶**且取得明確授權時，始由 Human/Ops 建立符合上述基準之專屬儲存桶（建議命名慣例: `oday-staging-recovery-odayplus-runtime-20260825`），再行綁定。
 
 ---
 
 ## 6. VPC Connector 與 Direct VPC Egress 機制分析
 
-針對 `staging` 及 `staging-build` 環境中缺少的網路變數與消費路徑分析如下：
+分環境觀測結果如下：
 
-1. **機制差異**：
-   - **Legacy Serverless VPC Access**：依賴 VPC Access Connector（例如現有 MLflow 使用的 `ODP_CLOUD_RUN_VPC_CONNECTOR=.../connectors/oday-staging-vpc` 與 `ODP_CLOUD_RUN_VPC_EGRESS=private-ranges-only`）。
-   - **Foundation Direct VPC Egress**：Cloud Run API/Web/Jobs 採用 Direct VPC 模式，直接綁定 `network_interfaces` 子網路 (`oday-staging-runtime`) 與 `egress = "ALL_TRAFFIC"`。
-2. **操作守則**：
-   - **嚴禁將 Direct VPC 網路或子網路名稱填入 `ODP_CLOUD_RUN_VPC_CONNECTOR`**。VPC / Subnet 不是 Connector 資源，混淆將導致 Cloud Run 部署失敗。
-   - `check_release_environment.py --scope build` 與 `deploy-dev.yml` 若仍要求 Direct VPC 專案具備 VPC Connector 變數，屬於 release 契約工具鏈之代碼修復範疇（Code Remediation），依工作規則不在本證據 mapping 任務中修改任何程式碼。
+1. **`staging` 環境**：
+   - 觀測到已綁定 `ODP_CLOUD_RUN_VPC_CONNECTOR=projects/.../connectors/oday-staging-vpc` 與 `ODP_CLOUD_RUN_VPC_EGRESS=private-ranges-only`（供既有 MLflow 連接 legacy SQL 使用）。
+2. **`staging-build` 環境**：
+   - 依據 Preflight #1245 `REM-COVERAGE-STAGING-BUILD-ENV`，該環境未被列舉探查，記錄為**觀測缺口 (Observation Gap)**。
+3. **機制原則與代碼邊界**：
+   - **嚴禁將 Direct VPC 網路或子網路名稱填入 `ODP_CLOUD_RUN_VPC_CONNECTOR`**。VPC / Subnet 不是 Connector 資源。
+   - `check_release_environment.py --scope build` 若仍要求 Direct VPC 服務具備 VPC Connector 變數，屬於 release 契約工具鏈之代碼修復範疇（Code Remediation），不在本證據 mapping 任務中修改程式碼。
 
 ---
 
-## 7. 安全隔離區 (Security Quarantine) 處置
+## 7. 驗收依賴與歷史關閉範圍 (Acceptance References & Closures)
 
-- **Quarantine Plan 物件世代**：`1787822664931431`（位於 State Bucket，由 CMEK 加密）。
-- **保留期限 (Retention Expiry)**：`2026-09-26T09:24:24Z`。
-- **治理守則**：在 `2026-09-26T09:24:24Z` 之前（Not-Before），嚴禁嘗試刪除或清理該隔離物件；清理責任歸屬於後續獨立任務 `ODP-STAGING-STATE-PLAN-QUARANTINE-CLEANUP-001` 及 Human/Ops。
+1. **Parent Foundation PR #1046 狀態**：
+   - `ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001` (PR #1046 at `494d09145b2932d5bbc27682e918b1afa176a140`) 包含原始 46 項測試，目前在 `dev` 上仍為 **blocked 且未合併 (unmerged)**。本任務重用其資源圖譜，不簽署 Direct VPC `ALL_TRAFFIC` 之 live 驗收。
+2. **Staging CI 測試收集**：
+   - `ODP-STAGING-IAC-CI-COLLECTION-001` (PR #1291 at `726065c3aec57147f37902b94d754234dd55e25f`) 已將 18 項 ephemeral staging 離線 plan/契約測試納入 CI orchestrator job。
+3. **Recovery History 關閉範圍**：
+   - 歷史 Recovery 阻塞結案僅解除 Candidate 依賴，**絕不取消 staging storage 儲存需求**。
+4. **安全隔離區 (Security Quarantine) 處置**：
+   - Quarantine Plan 物件世代：`1787822664931431`。
+   - 保留期限 (Retention Expiry)：`2026-09-26T09:24:24Z`。
+   - 治理守則：在 `2026-09-26T09:24:24Z` 之前（Not-Before），嚴禁嘗試刪除或清理該隔離物件；清理責任歸屬於後續獨立任務及 Human/Ops。
 
 ---
 

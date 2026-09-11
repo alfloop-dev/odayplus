@@ -1,14 +1,50 @@
 {
   "task_id": "ODP-STAGING-FOUNDATION-REFS-MAPPING-001",
-  "schema_version": 1,
-  "generated_at_utc": "2026-09-10T23:45:00Z",
+  "schema_version": 2,
+  "generated_at_utc": "2026-09-11T00:18:00Z",
   "executor_worker": "Antigravity5",
+  "reviewer": "Codex",
   "summary": {
     "total_staging_foundation_variables_mapped": 6,
-    "confirmed_in_foundation_readback": 5,
-    "unknown_or_requiring_human_input": 1,
-    "legacy_cloud_sql_drift_detected": true,
-    "direct_vpc_vs_connector_mechanism_difference_noted": true
+    "candidate_historical_references_mapped": 5,
+    "unknown_requiring_owner_identity_resolution": 1,
+    "legacy_cloud_sql_discrepancy_documented": true,
+    "direct_vpc_vs_connector_environments_split": true,
+    "governance_and_human_gates_preserved": true
+  },
+  "acceptance_references": {
+    "parent_foundation_task": {
+      "task_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+      "pr": "#1046",
+      "exact_commit_sha": "494d09145b2932d5bbc27682e918b1afa176a140",
+      "status": "BLOCKED_UNMERGED_ON_DEV",
+      "original_foundation_tests": 46,
+      "note": "Parent task remains unmerged; mapping reuses historical resource graph without asserting PR merge or live Direct VPC ALL_TRAFFIC acceptance."
+    },
+    "staging_ci_collection": {
+      "task_id": "ODP-STAGING-IAC-CI-COLLECTION-001",
+      "pr": "#1291",
+      "exact_commit_sha": "726065c3aec57147f37902b94d754234dd55e25f",
+      "status": "MERGED",
+      "ephemeral_staging_tests_collected": 18,
+      "harness_mode": "offline_fail_closed_with_pinned_terraform_1_9_8"
+    },
+    "preflight_evidence": {
+      "task_id": "ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003",
+      "pr": "#1245",
+      "exact_commit_sha": "6ee658a0bd65ab79303fdfd75baa09c14410a220",
+      "remediation_table_sha256": "96d23732685238b5d34b5115ab21c02fb6e4e13b45dd557e5b9aa2c696d38741",
+      "status": "DONE"
+    },
+    "recovery_history_closure_scope": {
+      "finding": "Recovery history blocked closure resolved candidate dependency only; staging storage requirement is NOT waived and distinct recovery bucket remains required."
+    },
+    "security_quarantine": {
+      "state_plan_object_generation": "1787822664931431",
+      "retention_expires_at": "2026-09-26T09:24:24Z",
+      "cleanup_not_before": "2026-09-26T09:24:24Z",
+      "early_deletion_permitted": false
+    }
   },
   "mappings": [
     {
@@ -19,29 +55,23 @@
       "resource_full_uri": "projects/odayplus-runtime-20260825/global/networks/oday-staging-runtime",
       "terraform_address": "module.runtime_foundation.google_compute_network.runtime",
       "terraform_module_output": "network_name",
-      "source_exact_sha": "494d09145b2932d5bbc27682e918b1afa176a140",
-      "source_pr": "#1046",
-      "source_receipt_file": "docs/evidence/runtime/ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001/live-foundation-readback-receipt.json",
-      "source_receipt_timestamp_utc": "2026-08-30T15:52:48Z",
+      "historical_source_exact_sha": "494d09145b2932d5bbc27682e918b1afa176a140",
+      "historical_source_pr": "#1046",
+      "historical_source_receipt": "RCPT-LIVE-FOUNDATION-READBACK-001",
+      "historical_receipt_timestamp_utc": "2026-08-30T15:52:48Z",
+      "historical_readback_status": "CONFIRMED_IN_REMOTE_STATE_20260830",
       "current_github_binding": {
         "status": "unset",
         "observed_value": null,
-        "receipt_ref": "docs/evidence/runtime/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003/receipts/github-receipts/receipt-gh-env-vars-staging.json",
+        "receipt_ref": "RCPT-GH-ENV-VARS-STAGING-001",
         "receipt_timestamp_utc": "2026-09-08T11:46:08Z"
       },
-      "readback_result": {
-        "status": "CONFIRMED_IN_REMOTE_STATE",
-        "project_id": "odayplus-runtime-20260825",
-        "vpc_name": "oday-staging-runtime",
-        "egress_routing": "ALL_TRAFFIC",
-        "firewall_rules": [
-          "oday-staging-deny-all-egress (priority 65534, deny 0.0.0.0/0)",
-          "oday-staging-allow-private-egress (priority 1000, allow RFC1918 + 10.42.0.0/24)",
-          "oday-staging-allow-restricted-google-apis (priority 1000, allow 199.36.153.4/30, 199.36.153.8/30:443)"
-        ]
+      "current_live_probe_status": {
+        "status": "NOT_DIRECTLY_PROBED_IN_1245",
+        "note": "Preflight #1245 enumerated GitHub variables but did not issue an independent compute networks describe for oday-staging-runtime."
       },
-      "classification": "confirmed_in_foundation_readback_proposed_for_binding",
-      "proposed_value": "oday-staging-runtime",
+      "classification": "candidate_historical_reference_pending_live_reconciliation",
+      "candidate_value_for_binding": "oday-staging-runtime",
       "consumed_by": [
         {
           "phase": "staging_lifecycle",
@@ -54,8 +84,8 @@
           "contract_source": "delivery_toolchain/release/check_release_environment.py:50-115"
         }
       ],
-      "inference_guard": "Unset variable does not imply resource absence or need to create new network. Resource exists and is converged in remote state.",
-      "authority_note": "Read-only mapping. No GitHub variable set or cloud mutation performed."
+      "inference_guard": "Unset GitHub variable does not establish resource absence or authorize creation of new VPC network. Resource is recorded as converged in 2026-08-30 remote state.",
+      "minimal_authority_required": "Owner verification or authorized read-only GCP metadata describe (compute.networks.get) before variable binding."
     },
     {
       "variable_name": "ODP_STAGING_VPC_SUBNETWORK",
@@ -65,30 +95,32 @@
       "resource_full_uri": "projects/odayplus-runtime-20260825/regions/asia-east1/subnetworks/oday-staging-runtime",
       "terraform_address": "module.runtime_foundation.google_compute_subnetwork.runtime",
       "terraform_module_output": "subnetwork_name",
-      "source_exact_sha": "494d09145b2932d5bbc27682e918b1afa176a140",
-      "source_pr": "#1046",
-      "source_receipt_file": "docs/evidence/runtime/ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001/live-foundation-readback-receipt.json",
-      "source_receipt_timestamp_utc": "2026-08-30T15:52:48Z",
-      "current_github_binding": {
-        "status": "unset",
-        "observed_value": null,
-        "receipt_ref": "docs/evidence/runtime/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003/receipts/github-receipts/receipt-gh-env-vars-staging.json",
-        "receipt_timestamp_utc": "2026-09-08T11:46:08Z"
-      },
-      "readback_result": {
-        "status": "CONFIRMED_IN_REMOTE_STATE",
-        "project_id": "odayplus-runtime-20260825",
+      "historical_source_exact_sha": "494d09145b2932d5bbc27682e918b1afa176a140",
+      "historical_source_pr": "#1046",
+      "historical_source_receipt": "RCPT-LIVE-FOUNDATION-READBACK-001",
+      "historical_receipt_timestamp_utc": "2026-08-30T15:52:48Z",
+      "historical_readback_status": "CONFIRMED_IN_REMOTE_STATE_20260830",
+      "historical_spec": {
+        "cidr": "10.42.0.0/24",
         "region": "asia-east1",
-        "subnet_name": "oday-staging-runtime",
-        "subnet_cidr": "10.42.0.0/24",
         "private_ip_google_access": true,
         "subnetwork_iam_members": [
           "roles/compute.networkUser for serviceAccount:oday-staging-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com",
           "roles/compute.networkUser for serviceAccount:oday-staging-web@odayplus-runtime-20260825.iam.gserviceaccount.com"
         ]
       },
-      "classification": "confirmed_in_foundation_readback_proposed_for_binding",
-      "proposed_value": "oday-staging-runtime",
+      "current_github_binding": {
+        "status": "unset",
+        "observed_value": null,
+        "receipt_ref": "RCPT-GH-ENV-VARS-STAGING-001",
+        "receipt_timestamp_utc": "2026-09-08T11:46:08Z"
+      },
+      "current_live_probe_status": {
+        "status": "NOT_DIRECTLY_PROBED_IN_1245",
+        "note": "Preflight #1245 enumerated GitHub variables but did not issue an independent compute subnetworks describe."
+      },
+      "classification": "candidate_historical_reference_pending_live_reconciliation",
+      "candidate_value_for_binding": "oday-staging-runtime",
       "consumed_by": [
         {
           "phase": "staging_lifecycle",
@@ -101,8 +133,8 @@
           "contract_source": "delivery_toolchain/release/check_release_environment.py:50-115"
         }
       ],
-      "inference_guard": "Unset variable does not imply subnetwork absence. Subnetwork exists and is converged in remote state.",
-      "authority_note": "Read-only mapping. No GitHub variable set or cloud mutation performed."
+      "inference_guard": "Unset GitHub variable does not establish subnetwork absence. Subnetwork is recorded in 2026-08-30 remote state.",
+      "minimal_authority_required": "Owner verification or authorized read-only GCP metadata describe (compute.subnetworks.get) before variable binding."
     },
     {
       "variable_name": "ODP_STAGING_KMS_KEY_ID",
@@ -112,20 +144,13 @@
       "resource_full_uri": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime",
       "terraform_address": "module.runtime_foundation.google_kms_crypto_key.runtime",
       "terraform_module_output": "kms_crypto_key_id",
-      "source_exact_sha": "494d09145b2932d5bbc27682e918b1afa176a140",
-      "source_pr": "#1046",
-      "source_receipt_file": "docs/evidence/runtime/ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001/live-foundation-readback-receipt.json",
-      "source_receipt_timestamp_utc": "2026-08-30T15:52:48Z",
-      "current_github_binding": {
-        "status": "unset",
-        "observed_value": null,
-        "receipt_ref": "docs/evidence/runtime/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003/receipts/github-receipts/receipt-gh-env-vars-staging.json",
-        "receipt_timestamp_utc": "2026-09-08T11:46:08Z"
-      },
-      "readback_result": {
-        "status": "CONFIRMED_IN_REMOTE_STATE",
+      "historical_source_exact_sha": "494d09145b2932d5bbc27682e918b1afa176a140",
+      "historical_source_pr": "#1046",
+      "historical_source_receipt": "RCPT-LIVE-FOUNDATION-READBACK-001",
+      "historical_receipt_timestamp_utc": "2026-08-30T15:52:48Z",
+      "historical_readback_status": "CONFIRMED_IN_REMOTE_STATE_20260830",
+      "historical_spec": {
         "key_ring": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime",
-        "crypto_key": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime",
         "rotation_period": "7776000s",
         "prevent_destroy": true,
         "encrypter_decrypters": [
@@ -134,8 +159,18 @@
           "serviceAccount:service-767864276141@gcp-sa-pubsub.iam.gserviceaccount.com"
         ]
       },
-      "classification": "confirmed_in_foundation_readback_proposed_for_binding",
-      "proposed_value": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime",
+      "current_github_binding": {
+        "status": "unset",
+        "observed_value": null,
+        "receipt_ref": "RCPT-GH-ENV-VARS-STAGING-001",
+        "receipt_timestamp_utc": "2026-09-08T11:46:08Z"
+      },
+      "current_live_probe_status": {
+        "status": "NOT_DIRECTLY_PROBED_IN_1245",
+        "note": "Preflight #1245 enumerated GitHub variables but did not issue an independent kms keys describe."
+      },
+      "classification": "candidate_historical_reference_pending_live_reconciliation",
+      "candidate_value_for_binding": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime",
       "consumed_by": [
         {
           "phase": "staging_lifecycle",
@@ -148,8 +183,8 @@
           "contract_source": "delivery_toolchain/release/check_release_environment.py:50-115"
         }
       ],
-      "inference_guard": "Unset variable does not imply KMS key absence. Runtime KMS key exists with verified IAM encrypter/decrypters and rotation period.",
-      "authority_note": "Read-only mapping. No GitHub variable set or cloud mutation performed."
+      "inference_guard": "Unset variable does not imply KMS key absence. Key is recorded in 2026-08-30 remote state.",
+      "minimal_authority_required": "Owner verification or authorized read-only KMS key get/getIamPolicy before variable binding."
     },
     {
       "variable_name": "ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT",
@@ -159,10 +194,17 @@
       "resource_full_uri": "projects/odayplus-runtime-20260825/serviceAccounts/github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
       "terraform_address": "Pre-existing deployer identity (WIF bound)",
       "terraform_module_output": "N/A",
-      "source_exact_sha": "494d09145b2932d5bbc27682e918b1afa176a140",
-      "source_pr": "#1046",
-      "source_receipt_file": "docs/evidence/runtime/ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001/live-foundation-readback-receipt.json",
-      "source_receipt_timestamp_utc": "2026-08-30T15:52:48Z",
+      "historical_source_exact_sha": "494d09145b2932d5bbc27682e918b1afa176a140",
+      "historical_source_pr": "#1046",
+      "historical_source_receipt": "RCPT-LIVE-FOUNDATION-READBACK-001",
+      "historical_receipt_timestamp_utc": "2026-08-30T15:52:48Z",
+      "historical_readback_status": "CONFIRMED_IN_REMOTE_STATE_20260830",
+      "historical_spec": {
+        "wif_pool": "github-actions",
+        "wif_provider": "odayplus",
+        "attribute_condition": "assertion.repository == 'alfloop-dev/odayplus'",
+        "state_bucket_iam_binding": "roles/storage.objectUser"
+      },
       "current_github_binding": {
         "status": "unset_under_ODP_STAGING_prefix",
         "observed_value": null,
@@ -171,26 +213,21 @@
           "value": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
           "status": "bound"
         },
-        "receipt_ref": "docs/evidence/runtime/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003/receipts/github-receipts/receipt-gh-env-vars-staging.json",
+        "receipt_ref": "RCPT-GH-ENV-VARS-STAGING-001",
         "receipt_timestamp_utc": "2026-09-08T11:46:08Z"
       },
-      "readback_result": {
-        "status": "LIVE_VERIFIED_FOR_REMOTE_STATE_ACCESS",
-        "service_account": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
-        "wif_pool": "github-actions",
-        "wif_provider": "odayplus",
-        "attribute_condition": "assertion.repository == 'alfloop-dev/odayplus'",
-        "state_bucket_iam_binding": "roles/storage.objectUser",
-        "intended_roles": [
-          "roles/cloudscheduler.admin",
-          "roles/cloudsql.client",
-          "roles/run.admin",
-          "roles/serviceusage.serviceUsageConsumer",
-          "roles/storage.objectUser"
-        ]
+      "current_live_probe_status": {
+        "status": "PERMISSION_DENIED_IN_1245",
+        "receipt_ref": "RCPT-GCP-SA-DESCRIBE-DEPLOYER-001",
+        "timestamp_utc": "2026-09-08T11:46:22Z",
+        "caller": "oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com",
+        "exit_code": 1,
+        "stderr": "ERROR: (gcloud.iam.service-accounts.describe) PERMISSION_DENIED: Permission 'iam.serviceAccounts.get' denied on resource '//iam.googleapis.com/projects/-/serviceAccounts/105055954881480121269' (or it may not exist).",
+        "establishes": "The current caller could not read this service account",
+        "does_not_establish": "Service account non-existence or deployer release identity access"
       },
-      "classification": "confirmed_in_foundation_readback_proposed_for_binding",
-      "proposed_value": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+      "classification": "candidate_historical_reference_pending_live_reconciliation",
+      "candidate_value_for_binding": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
       "consumed_by": [
         {
           "phase": "staging_lifecycle",
@@ -203,8 +240,8 @@
           "contract_source": "delivery_toolchain/release/check_release_environment.py:50-115"
         }
       ],
-      "inference_guard": "Service account exists and is already bound to GCP_SERVICE_ACCOUNT in staging environment; ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT is the explicit staging lifecycle prefix required by release validation.",
-      "authority_note": "Read-only mapping. No GitHub variable set or cloud mutation performed."
+      "inference_guard": "Permission denial on preflight caller does not establish that the deployer SA is absent. Staging environment already binds GCP_SERVICE_ACCOUNT to this identity.",
+      "minimal_authority_required": "Owner verification or readback from authenticated WIF release identity before binding."
     },
     {
       "variable_name": "ODP_STAGING_TERRAFORM_STATE_BUCKET",
@@ -214,35 +251,40 @@
       "resource_full_uri": "gs://oday-tfstate-staging-odayplus-runtime-20260825",
       "terraform_address": "backend.gcs",
       "terraform_module_output": "N/A (backend GCS bucket)",
-      "source_exact_sha": "494d09145b2932d5bbc27682e918b1afa176a140",
-      "source_pr": "#1046",
-      "source_receipt_file": "docs/evidence/runtime/ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001/live-foundation-readback-receipt.json",
-      "source_receipt_timestamp_utc": "2026-08-30T15:52:48Z",
-      "current_github_binding": {
-        "status": "unset",
-        "observed_value": null,
-        "receipt_ref": "docs/evidence/runtime/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003/receipts/github-receipts/receipt-gh-env-vars-staging.json",
-        "receipt_timestamp_utc": "2026-09-08T11:46:08Z"
-      },
-      "readback_result": {
-        "status": "LIVE_CONTROLS_VERIFIED_CLEANUP_DEFERRED",
-        "bucket_name": "oday-tfstate-staging-odayplus-runtime-20260825",
+      "historical_source_exact_sha": "494d09145b2932d5bbc27682e918b1afa176a140",
+      "historical_source_pr": "#1046",
+      "historical_source_receipt": "RCPT-LIVE-FOUNDATION-READBACK-001",
+      "historical_receipt_timestamp_utc": "2026-08-30T15:52:48Z",
+      "historical_readback_status": "CONFIRMED_IN_REMOTE_STATE_20260830",
+      "historical_spec": {
         "public_access_prevention": "enforced",
         "uniform_bucket_level_access": true,
         "versioning_enabled": true,
         "cmek_encrypted": true,
         "cmek_key_id": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-tfstate-staging-state/cryptoKeys/oday-tfstate-staging-state",
         "retention_period_days": 30,
-        "force_destroy": false,
         "prevent_destroy": true,
-        "state_only_contract": "Terraform state and lock objects only; ordinary artifacts and recovery bundles are strictly prohibited",
+        "state_only_contract": "Terraform state and lock objects only; ordinary artifacts and recovery bundles prohibited",
         "least_privilege_iam": {
           "admin_principal": "user:admin@dev.cctech-support.com (roles/storage.admin)",
           "deployer_principal": "serviceAccount:github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com (roles/storage.objectUser)"
         }
       },
-      "classification": "confirmed_in_foundation_readback_proposed_for_binding",
-      "proposed_value": "oday-tfstate-staging-odayplus-runtime-20260825",
+      "current_github_binding": {
+        "status": "unset",
+        "observed_value": null,
+        "receipt_ref": "RCPT-GH-ENV-VARS-STAGING-001",
+        "receipt_timestamp_utc": "2026-09-08T11:46:08Z"
+      },
+      "current_live_probe_status": {
+        "status": "PROBE_SKIPPED_IN_1245",
+        "source_check_id": "CHK-GCP-BUCKET-PROVISION-STATE",
+        "argv": [],
+        "exit_code": null,
+        "note": "Bucket probe was skipped in Preflight #1245 because the variable was unset; no live bucket describe was performed."
+      },
+      "classification": "candidate_historical_reference_pending_live_reconciliation",
+      "candidate_value_for_binding": "oday-tfstate-staging-odayplus-runtime-20260825",
       "consumed_by": [
         {
           "phase": "staging_lifecycle",
@@ -260,34 +302,38 @@
           "contract_source": ".github/workflows/deploy-dev.yml:1207-1212,1477-1481"
         }
       ],
-      "inference_guard": "State bucket exists with verified remote state and security controls. Strictly state-only; cannot be used as recovery bucket.",
-      "authority_note": "Read-only mapping. No GitHub variable set or cloud mutation performed."
+      "inference_guard": "Unset variable does not establish bucket absence. State bucket is strictly state-only and cannot be reused for recovery bundles.",
+      "minimal_authority_required": "Owner verification or scoped storage.buckets.get / storage.buckets.getIamPolicy authority before variable binding."
     },
     {
       "variable_name": "ODP_STAGING_RECOVERY_BUNDLE_BUCKET",
       "target_environment": "staging",
       "resource_type": "google_storage_bucket",
-      "resource_identity": "UNPROVISIONED / UNBOUND",
+      "resource_identity": "UNKNOWN",
       "resource_full_uri": null,
       "terraform_address": "N/A (distinct bucket, not part of runtime_foundation state backend)",
       "terraform_module_output": "N/A",
-      "source_exact_sha": "6ee658a0bd65ab79303fdfd75baa09c14410a220",
-      "source_pr": "#1245",
-      "source_receipt_file": "docs/evidence/runtime/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003/remediation-table.json",
-      "source_receipt_timestamp_utc": "2026-09-08T11:46:07Z",
+      "historical_source_exact_sha": "6ee658a0bd65ab79303fdfd75baa09c14410a220",
+      "historical_source_pr": "#1245",
+      "historical_source_receipt": "RCPT-GH-ENV-VARS-STAGING-001",
+      "historical_receipt_timestamp_utc": "2026-09-08T11:46:08Z",
+      "historical_readback_status": "NOT_PRESENT_IN_1046_FOUNDATION_GRAPH",
       "current_github_binding": {
         "status": "unset",
         "observed_value": null,
-        "receipt_ref": "docs/evidence/runtime/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003/receipts/github-receipts/receipt-gh-env-vars-staging.json",
+        "receipt_ref": "RCPT-GH-ENV-VARS-STAGING-001",
         "receipt_timestamp_utc": "2026-09-08T11:46:08Z"
       },
-      "readback_result": {
-        "status": "UNPROVISIONED_OR_UNKNOWN",
-        "note": "No dedicated staging recovery bundle bucket exists in #1046 readback. Under REM-STAGING-BUCKET-SEPARATION, state bucket cannot be reused for recovery bundles."
+      "current_live_probe_status": {
+        "status": "PROBE_SKIPPED_IN_1245",
+        "source_check_id": "CHK-GCP-BUCKET-PROVISION-RECOVERY",
+        "argv": [],
+        "exit_code": null,
+        "note": "Both bucket probes were skipped (argv [], exit null) in Preflight #1245; unset variable does NOT establish absence."
       },
-      "classification": "unknown_requires_human_or_owner_provisioning",
-      "proposed_value": null,
-      "suggested_naming_convention": "oday-staging-recovery-odayplus-runtime-20260825",
+      "classification": "unknown_requires_owner_identity_resolution_before_binding_or_provisioning",
+      "candidate_value_for_binding": null,
+      "suggested_naming_pattern_if_unprovisioned": "oday-staging-recovery-odayplus-runtime-20260825",
       "consumed_by": [
         {
           "phase": "staging_lifecycle",
@@ -305,20 +351,13 @@
           "contract_source": ".github/workflows/deploy-dev.yml:1207-1212,1477-1481"
         }
       ],
-      "required_minimum_spec_for_provisioning": {
-        "storage_class": "STANDARD",
-        "location": "asia-east1",
-        "uniform_bucket_level_access": true,
-        "public_access_prevention": "enforced",
-        "versioning": true,
-        "cmek_key": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime",
-        "retention_policy_days": 30,
-        "iam_bindings": [
-          "roles/storage.objectUser for serviceAccount:github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com"
-        ]
-      },
-      "inference_guard": "Unset variable does NOT authorize automatic bucket creation by auto workers. Provisioning must be performed by Human/Ops or authorized provisioning task before variable binding.",
-      "authority_note": "Read-only mapping. No bucket creation or GitHub variable set performed."
+      "inference_guard": "Unset variable does NOT establish absence and does NOT authorize unconditional bucket creation. Existence is UNKNOWN from current evidence.",
+      "resolution_and_verification_protocol": [
+        "Step 1: Request approved existing recovery identity and scoped storage.buckets.get / storage.buckets.getIamPolicy authority or owner metadata.",
+        "Step 2: If an existing recovery bucket exists, verify distinct identity (MUST NOT equal state bucket), CMEK encryption, versioning enabled, 30-day retention, PAP (enforced), UBLA (enabled), and least-privilege IAM (roles/storage.objectUser for github-deployer SA).",
+        "Step 3: Only if absence is confirmed by owner/readback and explicit creation authority is granted, create a distinct bucket meeting the security baseline as a separately authorized follow-up."
+      ],
+      "minimal_authority_required": "Owner identity declaration or scoped storage.buckets.get / storage.buckets.getIamPolicy readback authority."
     }
   ],
   "extended_reconciliations": {
@@ -340,7 +379,7 @@
           "ipv4_enabled": false,
           "cmek_key_id": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime",
           "deletion_protection": true,
-          "convergence_status": "ADOPTED_IN_REMOTE_STATE"
+          "convergence_status_20260830": "ADOPTED_IN_REMOTE_STATE"
         },
         {
           "role": "legacy_preserved_unmanaged",
@@ -353,18 +392,39 @@
           "disposition": "preserved_legacy_not_destroyed"
         }
       ],
-      "finding": "CRITICAL DISCREPANCY: Current GitHub staging variable GCP_CLOUD_SQL_INSTANCE points to legacy oday-staging-sql on default network, not the foundation managed instance oday-staging-foundation-sql in VPC oday-staging-runtime.",
-      "remediation_proposal": "Update GitHub environment 'staging' variable GCP_CLOUD_SQL_INSTANCE to 'odayplus-runtime-20260825:asia-east1:oday-staging-foundation-sql'. Legacy instance oday-staging-sql remains preserved in GCP without destruction."
+      "preflight_1245_readback_result": {
+        "source_receipt": "RCPT-GCP-SQL-DESCRIBE-STAGING-001",
+        "target_instance": "oday-staging-sql",
+        "exit_code": 1,
+        "outcome": "not_found_or_unauthorized_ambiguous",
+        "note": "Caller was not authorized or instance not found; absence and presence are both unestablished by this probe."
+      },
+      "finding": "DISCREPANCY NOTED: Current GitHub staging variable GCP_CLOUD_SQL_INSTANCE points to legacy oday-staging-sql on default network, whereas historical foundation remote state contains oday-staging-foundation-sql in VPC oday-staging-runtime.",
+      "reconciliation_proposal": {
+        "candidate_binding_value": "odayplus-runtime-20260825:asia-east1:oday-staging-foundation-sql",
+        "legacy_disposition": "Legacy instance oday-staging-sql remains preserved in GCP without destruction.",
+        "execution_status": "CANDIDATE_PENDING_OWNER_RECONCILIATION",
+        "minimal_authority_required": "Owner verification or Cloud SQL viewer readback from release identity to reconcile live instance state before mutating GitHub variable."
+      }
     },
     "vpc_connector_vs_direct_vpc_egress": {
-      "github_variables_observed": {
-        "ODP_CLOUD_RUN_VPC_CONNECTOR": "projects/odayplus-runtime-20260825/locations/asia-east1/connectors/oday-staging-vpc",
-        "ODP_CLOUD_RUN_VPC_EGRESS": "private-ranges-only"
+      "environments": {
+        "staging": {
+          "status": "OBSERVED_IN_PREFLIGHT_1245",
+          "receipt_ref": "RCPT-GH-ENV-VARS-STAGING-001",
+          "github_variables_observed": {
+            "ODP_CLOUD_RUN_VPC_CONNECTOR": "projects/odayplus-runtime-20260825/locations/asia-east1/connectors/oday-staging-vpc",
+            "ODP_CLOUD_RUN_VPC_EGRESS": "private-ranges-only"
+          },
+          "note": "Legacy Serverless VPC Access connector variables are currently bound in staging (consumed by oday-staging-mlflow)."
+        },
+        "staging_build": {
+          "status": "OBSERVATION_GAP_IN_PREFLIGHT_1245",
+          "receipt_ref": "RCPT-STAGING-BUILD-ENV-OBSERVATION-GAP-001",
+          "github_variables_observed": null,
+          "note": "No staging-build receipt exists; Preflight #1245 finding REM-COVERAGE-STAGING-BUILD-ENV records an observation gap."
+        }
       },
-      "target_environments": [
-        "staging",
-        "staging-build"
-      ],
       "mechanism_comparison": {
         "legacy_serverless_vpc_access": {
           "mechanism": "Serverless VPC Access Connector",
@@ -394,7 +454,7 @@
         }
       },
       "warning": "DO NOT populate Direct VPC network/subnetwork names into ODP_CLOUD_RUN_VPC_CONNECTOR. A VPC network/subnetwork is not a connector resource.",
-      "release_tooling_gap": "check_release_environment.py --scope build and deploy-dev.yml build/deploy steps that expect ODP_CLOUD_RUN_VPC_CONNECTOR for Cloud Run should be evaluated under a dedicated release-tooling remediation task to cleanly support Direct VPC configurations without false variable requirements."
+      "release_tooling_gap": "check_release_environment.py --scope build and deploy-dev.yml build/deploy steps that evaluate ODP_CLOUD_RUN_VPC_CONNECTOR for Direct VPC configurations require a dedicated release-tooling code remediation task and must not be modified in this evidence mapping task."
     }
   }
 }
