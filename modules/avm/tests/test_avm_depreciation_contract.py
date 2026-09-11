@@ -274,16 +274,12 @@ class TestTheDepreciationContract:
         """
         import json
         from datetime import UTC, datetime
-        from modules.avm.application.valuation import AVMService, generate_data_room
+
+        from modules.avm.application.valuation import generate_data_room
         from modules.avm.domain.valuation import (
-            DataRoom,
-            DataRoomDocument,
             LensValuation,
             NormalizedMargin,
             PriceBand,
-            ValuationCase,
-            ValuationCaseStatus,
-            ValuationInput,
             ValuationReport,
             rehydrate_legacy_report,
             rehydrate_legacy_valuation_card,
