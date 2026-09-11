@@ -1301,6 +1301,78 @@ class DoneDeliveryProvenanceRegressionTests(unittest.TestCase):
         self.assertEqual(delivery["verified_head"], POST_MERGE_DEV_HEAD)
         self.assertEqual(delivery["approved_head"], self.APPROVED_HEAD)
 
+    def test_done_finalizes_from_merged_pr_despite_post_merge_checkout_advance_with_explicit_recovery_branch(self) -> None:
+        recovery_branch = f"recovery/{self.TASK_ID}"
+        task = {
+            "id": self.TASK_ID,
+            "owner": "Antigravity4",
+            "reviewer": "Codex4",
+            "status": "review_approved",
+            "approved_head": self.APPROVED_HEAD,
+            "branch": recovery_branch,
+            "artifacts": [],
+        }
+
+        POST_MERGE_DEV_HEAD = "80ba278623b8d4ad4ce81ea749a5aee030e5c18d"
+
+        def fake_git(args: list[str], **kwargs: object) -> str:
+            if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                return recovery_branch
+            if args == ["rev-parse", "HEAD"]:
+                return POST_MERGE_DEV_HEAD
+            if args == ["show", "-s", "--format=%s", self.APPROVED_HEAD]:
+                return f"{self.TASK_ID}: seal done provenance"
+            if args == ["show", "-s", "--format=%b", self.APPROVED_HEAD]:
+                return f"LLM-Agent: Antigravity4\nTask-ID: {self.TASK_ID}\nReviewer: Codex4\n"
+            if args == ["show", "-s", "--format=%an", self.APPROVED_HEAD]:
+                return "Antigravity4"
+            if args == ["show", "-s", "--format=%ae", self.APPROVED_HEAD]:
+                return "antigravity4@example.com"
+            if args == ["status", "--porcelain", "--untracked-files=all"]:
+                return ""
+            if args == ["remote"]:
+                return "origin"
+            if args == ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]:
+                return f"origin/{recovery_branch}"
+            if args == ["rev-list", "--left-right", "--count", f"origin/{recovery_branch}...HEAD"]:
+                return "0 0"
+            if args == ["fetch", "origin", "dev"]:
+                return ""
+            if args == ["rev-parse", "--verify", "origin/dev"]:
+                return POST_MERGE_DEV_HEAD
+            raise AssertionError(f"unexpected git command: {args}")
+
+        def fake_succeeds(args: list[str], **kwargs: object) -> bool:
+            if args == ["merge-base", "--is-ancestor", self.APPROVED_HEAD, "origin/dev"]:
+                return False
+            if args == ["merge-base", "--is-ancestor", self.MERGE_COMMIT, "origin/dev"]:
+                return True
+            if args == ["merge-base", "--is-ancestor", self.MERGE_COMMIT, POST_MERGE_DEV_HEAD]:
+                return True
+            if args == ["merge-base", "--is-ancestor", self.APPROVED_HEAD, POST_MERGE_DEV_HEAD]:
+                return True
+            if args == ["merge-base", "--is-ancestor", POST_MERGE_DEV_HEAD, "origin/dev"]:
+                return True
+            raise AssertionError(f"unexpected git check: {args}")
+
+        pr_status = self.pr_552()
+        pr_status["headRefName"] = recovery_branch
+
+        with (
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_git),
+            mock.patch.object(ai_status, "git_command_succeeds", side_effect=fake_succeeds),
+            mock.patch.object(ai_status, "pull_request_status_for_branch", return_value=pr_status),
+            mock.patch.object(ai_status, "repository_slug", return_value=self.REPOSITORY),
+            mock.patch.object(ai_status, "git_remote_repository_slug", return_value=self.REPOSITORY),
+        ):
+            delivery = ai_status.collect_done_delivery_metadata(task, "Antigravity4", approved_head=self.APPROVED_HEAD)
+
+        self.assertTrue(delivery["merge_verified_via_pr"])
+        self.assertTrue(delivery["post_merge_checkout_advanced"])
+        self.assertEqual(delivery["branch"], recovery_branch)
+        self.assertEqual(delivery["verified_head"], POST_MERGE_DEV_HEAD)
+        self.assertEqual(delivery["approved_head"], self.APPROVED_HEAD)
+
     def test_git_clean_gate_ignores_only_exact_worker_seed_context(self) -> None:
         entries = [
             "?? AI_COLLABORATION_GUIDE.md",
@@ -7542,6 +7614,470 @@ class RetargetBranchTests(unittest.TestCase):
     def test_it_is_registered_as_a_mutating_command(self) -> None:
         self.assertIs(ai_status.MUTATING_COMMANDS["retarget_branch"], ai_status.command_retarget_branch)
         self.assertNotIn("retarget_branch", ai_status.ACTORLESS_MUTATING_COMMANDS)
+
+
+class TaskExplicitBranchTests(unittest.TestCase):
+    """Validate task_explicit_branch rules for recorded branches vs unrecorded/invalid."""
+
+    def test_explicit_valid_branch(self) -> None:
+        task = {"id": "ODP-TEST-001", "branch": "recovery/ODP-TEST-001"}
+        self.assertEqual(ai_status.task_explicit_branch(task), "recovery/ODP-TEST-001")
+        self.assertEqual(
+            ai_status.task_explicit_branch(branch="recovery/ODP-TEST-001"),
+            "recovery/ODP-TEST-001",
+        )
+
+    def test_none_on_missing_empty_or_whitespace_branch(self) -> None:
+        for task in (
+            None,
+            {},
+            {"id": "ODP-TEST-001"},
+            {"id": "ODP-TEST-001", "branch": ""},
+            {"id": "ODP-TEST-001", "branch": "   "},
+        ):
+            with self.subTest(task=task):
+                self.assertIsNone(ai_status.task_explicit_branch(task))
+        self.assertIsNone(ai_status.task_explicit_branch(branch=""))
+        self.assertIsNone(ai_status.task_explicit_branch(branch="   "))
+
+    def test_none_on_git_unusable_chars(self) -> None:
+        for bad in (
+            "has space",
+            "tilde~1",
+            "caret^",
+            "colon:x",
+            "star*",
+            "q?",
+            "br[x",
+            "dot..dot",
+            "slash\\back",
+        ):
+            with self.subTest(branch=bad):
+                self.assertIsNone(ai_status.task_explicit_branch({"id": "T", "branch": bad}))
+                self.assertIsNone(ai_status.task_explicit_branch(branch=bad))
+
+
+class RecordedBranchDeliveryCheckoutTests(unittest.TestCase):
+    """Delivery checkout resolution and done metadata collection with recorded vs fallback branches."""
+
+    TASK_ID = "ODP-ORCH-RECORDED-BRANCH-DELIVERY-001"
+    EXPLICIT_BRANCH = "recovery/ODP-REC-BRANCH-001"
+    CONVENTIONAL_BRANCH = f"task/{TASK_ID}"
+    LEGACY_HYPHEN_BRANCH = f"task-{TASK_ID}"
+    APPROVED_HEAD = "1111222233334444555566667777888899990000"
+    MERGE_COMMIT = "aaaabbbbccccddddeeeeffff0000111122223333"
+    REPOSITORY = "alfloop-dev/odayplus"
+    LIVE_ROOT = Path("/home/lupin/oday-plus-supervisor-live")
+
+    def worktree_listing(self, entries: list[tuple[str, str, str]]) -> str:
+        listing = (
+            f"worktree {self.LIVE_ROOT}\n"
+            "HEAD e496be62c47c45d758681b8a4d3abfae16f1c96d\n"
+            "branch refs/heads/dev\n\n"
+        )
+        for path, head, branch in entries:
+            listing += f"worktree {path}\nHEAD {head}\nbranch refs/heads/{branch}\n\n"
+        return listing
+
+    def test_resolve_explicit_recorded_branch_matches_worktree(self) -> None:
+        listing = self.worktree_listing([
+            ("/tmp/explicit-worktree", self.APPROVED_HEAD, self.EXPLICIT_BRANCH),
+        ])
+
+        def fake_git(args: list[str], **kwargs: object) -> str:
+            if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                return "dev"
+            if args == ["worktree", "list", "--porcelain"]:
+                return listing
+            raise AssertionError(f"unexpected git command: {args}")
+
+        with mock.patch.object(ai_status, "run_git_command", side_effect=fake_git):
+            resolved = ai_status.resolve_task_delivery_checkout(
+                self.LIVE_ROOT, self.TASK_ID, recorded_branch=self.EXPLICIT_BRANCH
+            )
+
+        self.assertTrue(resolved["present"])
+        self.assertEqual(resolved["branch"], self.EXPLICIT_BRANCH)
+        self.assertEqual(resolved["checkout"], Path("/tmp/explicit-worktree"))
+
+    def test_resolve_explicit_recorded_branch_ignores_old_conventional_branch_holding_approved_head(self) -> None:
+        """Old branch with approved_head cannot substitute for explicit retarget branch."""
+        listing = self.worktree_listing([
+            ("/tmp/old-worktree", self.APPROVED_HEAD, self.CONVENTIONAL_BRANCH),
+        ])
+
+        def fake_git(args: list[str], **kwargs: object) -> str:
+            if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                return "dev"
+            if args == ["worktree", "list", "--porcelain"]:
+                return listing
+            raise AssertionError(f"unexpected git command: {args}")
+
+        with mock.patch.object(ai_status, "run_git_command", side_effect=fake_git):
+            resolved = ai_status.resolve_task_delivery_checkout(
+                self.LIVE_ROOT,
+                self.TASK_ID,
+                approved_head=self.APPROVED_HEAD,
+                recorded_branch=self.EXPLICIT_BRANCH,
+            )
+
+        self.assertFalse(resolved["present"])
+        self.assertEqual(resolved["branch"], self.EXPLICIT_BRANCH)
+        self.assertEqual(resolved["checkout"], self.LIVE_ROOT)
+
+    def test_resolve_unrecorded_branch_falls_back_to_legacy_hyphen_worktree(self) -> None:
+        listing = self.worktree_listing([
+            ("/tmp/legacy-hyphen-worktree", self.APPROVED_HEAD, self.LEGACY_HYPHEN_BRANCH),
+        ])
+
+        def fake_git(args: list[str], **kwargs: object) -> str:
+            if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                return "dev"
+            if args == ["worktree", "list", "--porcelain"]:
+                return listing
+            raise AssertionError(f"unexpected git command: {args}")
+
+        with mock.patch.object(ai_status, "run_git_command", side_effect=fake_git):
+            resolved = ai_status.resolve_task_delivery_checkout(
+                self.LIVE_ROOT, self.TASK_ID, recorded_branch=None
+            )
+
+        self.assertTrue(resolved["present"])
+        self.assertEqual(resolved["branch"], self.LEGACY_HYPHEN_BRANCH)
+        self.assertEqual(resolved["checkout"], Path("/tmp/legacy-hyphen-worktree"))
+
+    def test_resolve_invalid_recorded_branch_falls_back_to_legacy_search(self) -> None:
+        listing = self.worktree_listing([
+            ("/tmp/legacy-hyphen-worktree", self.APPROVED_HEAD, self.LEGACY_HYPHEN_BRANCH),
+        ])
+
+        def fake_git(args: list[str], **kwargs: object) -> str:
+            if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                return "dev"
+            if args == ["worktree", "list", "--porcelain"]:
+                return listing
+            raise AssertionError(f"unexpected git command: {args}")
+
+        with mock.patch.object(ai_status, "run_git_command", side_effect=fake_git):
+            resolved = ai_status.resolve_task_delivery_checkout(
+                self.LIVE_ROOT, self.TASK_ID, recorded_branch="invalid branch name"
+            )
+
+        self.assertTrue(resolved["present"])
+        self.assertEqual(resolved["branch"], self.LEGACY_HYPHEN_BRANCH)
+        self.assertEqual(resolved["checkout"], Path("/tmp/legacy-hyphen-worktree"))
+
+    def test_task_delivery_checkout_helper_raises_with_appropriate_branch_names(self) -> None:
+        def fake_git(args: list[str], **kwargs: object) -> str:
+            if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                return "dev"
+            if args == ["worktree", "list", "--porcelain"]:
+                return self.worktree_listing([])
+            raise AssertionError(f"unexpected git command: {args}")
+
+        with mock.patch.object(ai_status, "run_git_command", side_effect=fake_git):
+            with self.assertRaisesRegex(
+                SystemExit, f"expected exactly one task-owned delivery checkout for {self.EXPLICIT_BRANCH}, found 0"
+            ):
+                ai_status.task_delivery_checkout(
+                    self.LIVE_ROOT, self.TASK_ID, recorded_branch=self.EXPLICIT_BRANCH
+                )
+
+            with self.assertRaisesRegex(
+                SystemExit,
+                f"expected exactly one task-owned delivery checkout for {self.CONVENTIONAL_BRANCH}, {self.LEGACY_HYPHEN_BRANCH}, found 0",
+            ):
+                ai_status.task_delivery_checkout(self.LIVE_ROOT, self.TASK_ID, recorded_branch=None)
+
+    def test_collect_done_with_explicit_retarget_branch_success(self) -> None:
+        task = {
+            "id": self.TASK_ID,
+            "owner": "Antigravity5",
+            "reviewer": "Codex2",
+            "status": "review_approved",
+            "approved_head": self.APPROVED_HEAD,
+            "branch": self.EXPLICIT_BRANCH,
+            "artifacts": [],
+        }
+
+        def fake_git(args: list[str], **kwargs: object) -> str:
+            responses = {
+                ("rev-parse", "HEAD"): self.APPROVED_HEAD,
+                ("show", "-s", "--format=%s", self.APPROVED_HEAD): f"{self.TASK_ID}: retarget branch delivery",
+                ("show", "-s", "--format=%b", self.APPROVED_HEAD): (
+                    f"LLM-Agent: Antigravity5\nTask-ID: {self.TASK_ID}\nReviewer: Codex2\n"
+                ),
+                ("show", "-s", "--format=%an", self.APPROVED_HEAD): "Antigravity5",
+                ("show", "-s", "--format=%ae", self.APPROVED_HEAD): "antigravity5@example.com",
+                ("status", "--porcelain", "--untracked-files=all"): "",
+                ("remote",): "origin",
+                ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"): "",
+                ("fetch", "origin", "dev"): "",
+                ("rev-parse", "--verify", "origin/dev"): "dev-tip",
+            }
+            key = tuple(args)
+            if key not in responses:
+                raise AssertionError(f"unexpected git command: {args}")
+            return responses[key]
+
+        def fake_succeeds(args: list[str], **kwargs: object) -> bool:
+            if args == ["cat-file", "-e", f"{self.APPROVED_HEAD}^{{commit}}"]:
+                return True
+            if args == ["merge-base", "--is-ancestor", self.APPROVED_HEAD, "origin/dev"]:
+                return True
+            if args == ["merge-base", "--is-ancestor", self.MERGE_COMMIT, "origin/dev"]:
+                return True
+            raise AssertionError(f"unexpected git check: {args}")
+
+        pr_status = {
+            "number": 901,
+            "state": "MERGED",
+            "headRefOid": self.APPROVED_HEAD,
+            "headRefName": self.EXPLICIT_BRANCH,
+            "baseRefName": "dev",
+            "mergedAt": "2026-09-10T23:00:00Z",
+            "mergeCommit": {"oid": self.MERGE_COMMIT},
+            "url": "https://github.com/alfloop-dev/odayplus/pull/901",
+            "statusCheckRollup": [
+                {"__typename": "CheckRun", "name": "orchestrator", "status": "COMPLETED", "conclusion": "SUCCESS"},
+                {"__typename": "StatusContext", "context": "task-review-gate", "state": "SUCCESS"},
+            ],
+        }
+
+        with (
+            mock.patch.object(
+                ai_status,
+                "resolve_task_delivery_checkout",
+                return_value={
+                    "checkout": Path("/tmp/explicit-worktree"),
+                    "branch": self.EXPLICIT_BRANCH,
+                    "present": True,
+                },
+            ) as mock_resolve,
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_git),
+            mock.patch.object(ai_status, "git_command_succeeds", side_effect=fake_succeeds),
+            mock.patch.object(ai_status, "pull_request_status_for_branch", return_value=pr_status),
+            mock.patch.object(ai_status, "repository_slug", return_value=self.REPOSITORY),
+            mock.patch.object(ai_status, "git_remote_repository_slug", return_value=self.REPOSITORY),
+        ):
+            delivery = ai_status.collect_done_delivery_metadata(
+                task, "Antigravity5", approved_head=self.APPROVED_HEAD
+            )
+
+        self.assertEqual(delivery["branch"], self.EXPLICIT_BRANCH)
+        self.assertTrue(delivery["task_checkout_present"])
+        self.assertEqual(delivery["verified_head"], self.APPROVED_HEAD)
+        mock_resolve.assert_called_once_with(
+            mock.ANY,
+            self.TASK_ID,
+            approved_head=self.APPROVED_HEAD,
+            recorded_branch=self.EXPLICIT_BRANCH,
+        )
+
+    def test_collect_done_legacy_hyphen_branch_without_task_branch_field(self) -> None:
+        task = {
+            "id": self.TASK_ID,
+            "owner": "Antigravity5",
+            "reviewer": "Codex2",
+            "status": "review_approved",
+            "approved_head": self.APPROVED_HEAD,
+            "artifacts": [],
+        }
+
+        def fake_git(args: list[str], **kwargs: object) -> str:
+            responses = {
+                ("rev-parse", "HEAD"): self.APPROVED_HEAD,
+                ("show", "-s", "--format=%s", self.APPROVED_HEAD): f"{self.TASK_ID}: legacy hyphen delivery",
+                ("show", "-s", "--format=%b", self.APPROVED_HEAD): (
+                    f"LLM-Agent: Antigravity5\nTask-ID: {self.TASK_ID}\nReviewer: Codex2\n"
+                ),
+                ("show", "-s", "--format=%an", self.APPROVED_HEAD): "Antigravity5",
+                ("show", "-s", "--format=%ae", self.APPROVED_HEAD): "antigravity5@example.com",
+                ("status", "--porcelain", "--untracked-files=all"): "",
+                ("remote",): "origin",
+                ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"): "",
+                ("fetch", "origin", "dev"): "",
+                ("rev-parse", "--verify", "origin/dev"): "dev-tip",
+            }
+            key = tuple(args)
+            if key not in responses:
+                raise AssertionError(f"unexpected git command: {args}")
+            return responses[key]
+
+        def fake_succeeds(args: list[str], **kwargs: object) -> bool:
+            if args == ["cat-file", "-e", f"{self.APPROVED_HEAD}^{{commit}}"]:
+                return True
+            if args == ["merge-base", "--is-ancestor", self.APPROVED_HEAD, "origin/dev"]:
+                return True
+            if args == ["merge-base", "--is-ancestor", self.MERGE_COMMIT, "origin/dev"]:
+                return True
+            raise AssertionError(f"unexpected git check: {args}")
+
+        pr_status = {
+            "number": 902,
+            "state": "MERGED",
+            "headRefOid": self.APPROVED_HEAD,
+            "headRefName": self.LEGACY_HYPHEN_BRANCH,
+            "baseRefName": "dev",
+            "mergedAt": "2026-09-10T23:00:00Z",
+            "mergeCommit": {"oid": self.MERGE_COMMIT},
+            "url": "https://github.com/alfloop-dev/odayplus/pull/902",
+            "statusCheckRollup": [
+                {"__typename": "CheckRun", "name": "orchestrator", "status": "COMPLETED", "conclusion": "SUCCESS"},
+                {"__typename": "StatusContext", "context": "task-review-gate", "state": "SUCCESS"},
+            ],
+        }
+
+        with (
+            mock.patch.object(
+                ai_status,
+                "resolve_task_delivery_checkout",
+                return_value={
+                    "checkout": Path("/tmp/legacy-hyphen-worktree"),
+                    "branch": self.LEGACY_HYPHEN_BRANCH,
+                    "present": True,
+                },
+            ) as mock_resolve,
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_git),
+            mock.patch.object(ai_status, "git_command_succeeds", side_effect=fake_succeeds),
+            mock.patch.object(ai_status, "pull_request_status_for_branch", return_value=pr_status),
+            mock.patch.object(ai_status, "repository_slug", return_value=self.REPOSITORY),
+            mock.patch.object(ai_status, "git_remote_repository_slug", return_value=self.REPOSITORY),
+        ):
+            delivery = ai_status.collect_done_delivery_metadata(
+                task, "Antigravity5", approved_head=self.APPROVED_HEAD
+            )
+
+        self.assertEqual(delivery["branch"], self.LEGACY_HYPHEN_BRANCH)
+        mock_resolve.assert_called_once_with(
+            mock.ANY,
+            self.TASK_ID,
+            approved_head=self.APPROVED_HEAD,
+            recorded_branch=None,
+        )
+
+    def test_collect_done_explicit_branch_rejects_old_branch_checkout_and_mismatched_pr(self) -> None:
+        """When task has explicit branch, finding only old conventional branch fails absent-checkout PR provenance."""
+        task = {
+            "id": self.TASK_ID,
+            "owner": "Antigravity5",
+            "reviewer": "Codex2",
+            "status": "review_approved",
+            "approved_head": self.APPROVED_HEAD,
+            "branch": self.EXPLICIT_BRANCH,
+            "artifacts": [],
+        }
+
+        def fake_git(args: list[str], **kwargs: object) -> str:
+            responses = {
+                ("show", "-s", "--format=%s", self.APPROVED_HEAD): f"{self.TASK_ID}: retarget branch delivery",
+                ("show", "-s", "--format=%b", self.APPROVED_HEAD): (
+                    f"LLM-Agent: Antigravity5\nTask-ID: {self.TASK_ID}\nReviewer: Codex2\n"
+                ),
+                ("show", "-s", "--format=%an", self.APPROVED_HEAD): "Antigravity5",
+                ("show", "-s", "--format=%ae", self.APPROVED_HEAD): "antigravity5@example.com",
+                ("remote",): "origin",
+                ("fetch", "origin", "dev"): "",
+                ("rev-parse", "--verify", "origin/dev"): "dev-tip",
+            }
+            key = tuple(args)
+            if key not in responses:
+                raise AssertionError(f"unexpected git command: {args}")
+            return responses[key]
+
+        def fake_succeeds(args: list[str], **kwargs: object) -> bool:
+            if args == ["cat-file", "-e", f"{self.APPROVED_HEAD}^{{commit}}"]:
+                return True
+            if args == ["merge-base", "--is-ancestor", self.APPROVED_HEAD, "origin/dev"]:
+                return True
+            if args == ["merge-base", "--is-ancestor", self.MERGE_COMMIT, "origin/dev"]:
+                return True
+            raise AssertionError(f"unexpected git check: {args}")
+
+        # PR for the OLD conventional branch does not prove delivery for the explicit retarget branch
+        mismatched_pr = {
+            "number": 903,
+            "state": "MERGED",
+            "headRefOid": self.APPROVED_HEAD,
+            "headRefName": self.CONVENTIONAL_BRANCH,
+            "baseRefName": "dev",
+            "mergedAt": "2026-09-10T23:00:00Z",
+            "mergeCommit": {"oid": self.MERGE_COMMIT},
+            "url": "https://github.com/alfloop-dev/odayplus/pull/903",
+        }
+
+        with (
+            mock.patch.object(
+                ai_status,
+                "resolve_task_delivery_checkout",
+                return_value={
+                    "checkout": self.LIVE_ROOT,
+                    "branch": self.EXPLICIT_BRANCH,
+                    "present": False,
+                },
+            ),
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_git),
+            mock.patch.object(ai_status, "git_command_succeeds", side_effect=fake_succeeds),
+            mock.patch.object(ai_status, "pull_request_status_for_branch", return_value=mismatched_pr),
+            mock.patch.object(ai_status, "repository_slug", return_value=self.REPOSITORY),
+            mock.patch.object(ai_status, "git_remote_repository_slug", return_value=self.REPOSITORY),
+        ):
+            with self.assertRaisesRegex(SystemExit, "immutable approved-head PR provenance"):
+                ai_status.collect_done_delivery_metadata(
+                    task, "Antigravity5", approved_head=self.APPROVED_HEAD
+                )
+
+    def test_resolve_task_sha_with_explicit_and_fallback_branches(self) -> None:
+        state_with_explicit = {
+            "tasks": [{"id": self.TASK_ID, "branch": self.EXPLICIT_BRANCH}],
+        }
+        state_without_branch = {
+            "tasks": [{"id": self.TASK_ID}],
+        }
+
+        mock_result_explicit = mock.Mock(returncode=0, stdout=f"{self.APPROVED_HEAD}\trefs/heads/{self.EXPLICIT_BRANCH}\n")
+        mock_result_legacy = mock.Mock(returncode=0, stdout=f"{self.APPROVED_HEAD}\trefs/heads/{self.LEGACY_HYPHEN_BRANCH}\n")
+
+        with (
+            mock.patch.object(ai_status, "load_state", return_value=state_with_explicit),
+            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+            mock.patch("subprocess.run", return_value=mock_result_explicit) as mock_run,
+        ):
+            ai_status.clear_ai_status_caches()
+            sha = ai_status.resolve_task_sha(self.TASK_ID, force_refresh=True)
+            self.assertEqual(sha, self.APPROVED_HEAD)
+            mock_run.assert_called_once_with(
+                ["git", "ls-remote", "--heads", "origin", f"refs/heads/{self.EXPLICIT_BRANCH}"],
+                capture_output=True,
+                text=True,
+                check=False,
+                cwd=ai_status.ROOT,
+                timeout=ai_status.COMMAND_TIMEOUT_SECONDS,
+            )
+
+        with (
+            mock.patch.object(ai_status, "load_state", return_value=state_without_branch),
+            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+            mock.patch("subprocess.run", return_value=mock_result_legacy) as mock_run,
+        ):
+            ai_status.clear_ai_status_caches()
+            sha = ai_status.resolve_task_sha(self.TASK_ID, force_refresh=True)
+            self.assertEqual(sha, self.APPROVED_HEAD)
+            mock_run.assert_called_once_with(
+                [
+                    "git",
+                    "ls-remote",
+                    "--heads",
+                    "origin",
+                    f"refs/heads/{self.CONVENTIONAL_BRANCH}",
+                    f"refs/heads/{self.LEGACY_HYPHEN_BRANCH}",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                cwd=ai_status.ROOT,
+                timeout=ai_status.COMMAND_TIMEOUT_SECONDS,
+            )
 
 
 if __name__ == "__main__":
