@@ -39,12 +39,14 @@ TASK_ID=""
 DRY_RUN=0
 STATUS_SUBMIT=1
 BASE_BRANCH="${PANTHEON_TASK_PR_BASE:-dev}"
+EXPLICIT_BRANCH=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
     --no-status-submit) STATUS_SUBMIT=0; shift ;;
     --base) BASE_BRANCH="${2:-}"; shift 2 ;;
+    --branch) EXPLICIT_BRANCH="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     -*) echo "task_finalize: unknown option $1" >&2; usage; exit 2 ;;
     *)
@@ -59,7 +61,7 @@ ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
 PREFIX="${PANTHEON_TASK_BRANCH_PREFIX:-task/}"
-BRANCH="${PREFIX}${TASK_ID}"
+BRANCH="${EXPLICIT_BRANCH:-${PREFIX}${TASK_ID}}"
 CURRENT="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
 
 if [ "$CURRENT" != "$BRANCH" ]; then
