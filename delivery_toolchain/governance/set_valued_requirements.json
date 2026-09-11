@@ -302,8 +302,9 @@
         },
         {
           "name": "PARTIAL",
-          "status": "absent",
-          "note": "JobStatus in shared/governance/vocabularies.py carries PARTIAL per ODP-FR-SHARED-001, but no job in the tree currently reports it. The vocabulary fork between queue.py and listings.py was resolved under ODP-JOBSTATUS-OUTCOME-VS-DELIVERY-001 by separating outcome from delivery mechanics. Producer trace under ODP-JOB-PARTIAL-PRODUCER-EVIDENCE-001 closed the tree-level question against all registered job types. Formal disposition and handback package HB-SHARED001-PARTIAL-001 submitted to Human/Ops, Architecture Board, and Platform Infrastructure Lead per docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md. User confirmed decision D19 on 2026-09-08 (Option A: implement partial/receipt/retry). Stage 33A engineering prep delivered in ODP-DURABLE-PARTIAL-CONTRACT-PREP-001 (PR #1257); prerequisite queue clear in PR #1280; Stage 33B assigned to ODP-DURABLE-PARTIAL-IMPL-001 pending H06.",
+          "status": "satisfied",
+          "evidence": "apps/worker/oday_worker/handlers.py::handle_batch_listing_intake",
+          "note": "JobStatus in shared/governance/vocabularies.py carries PARTIAL per ODP-FR-SHARED-001. PR #1285 (merged head b19513a1419497dce2ddd5054df5bbe0bd732a69 under ODP-DURABLE-PARTIAL-IMPL-001) delivered handle_batch_listing_intake registered in build_default_registry with durable receipts (shared/jobs/receipts.py::derive_batch_status_and_summary) and FAILED_ONLY scoped retries. The in-tree code path is verified via tests/reliability/test_durable_partial_batch.py. However, in-tree SQLite and synthetic fixture verification does not constitute live production receipts or human sign-off; live production queue/worker audit receipts and H06 human item-by-item confirmation remain unverified. Formal disposition and handback package HB-SHARED001-PARTIAL-001 submitted per docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md remain in BLOCKED_BY_EVIDENCE under Platform Infrastructure Lead until live production evidence is obtained. Reconciled under ODP-JOB-PARTIAL-PRODUCER-RECONCILIATION-001.",
           "disposition": {
             "state": "BLOCKED_BY_EVIDENCE",
             "previous_state": "BLOCKED_BY_EVIDENCE",
@@ -322,17 +323,22 @@
                 "state": "BLOCKED_BY_EVIDENCE",
                 "date": "2026-09-08",
                 "note": "User confirmed decision D19 (implement partial/receipt/retry); Stage 33A delivered in ODP-DURABLE-PARTIAL-CONTRACT-PREP-001 (PR #1257); Stage 33B assigned to ODP-DURABLE-PARTIAL-IMPL-001 pending H06."
+              },
+              {
+                "state": "BLOCKED_BY_EVIDENCE",
+                "date": "2026-09-11",
+                "note": "PR #1285 (head b19513a1419497dce2ddd5054df5bbe0bd732a69) delivered handle_batch_listing_intake in default registry with durable receipts and FAILED_ONLY retry under ODP-DURABLE-PARTIAL-IMPL-001. Reconciled in ODP-JOB-PARTIAL-PRODUCER-RECONCILIATION-001: repo producer exists (status: satisfied), while live production queue/worker inventory and H06 human sign-off remain BLOCKED_BY_EVIDENCE."
               }
             ],
-            "evidence_needed": "Two things, neither of which the tree can answer. (1) A live production queue/scheduler/worker receipt inventory, to say whether any deployed job has ever reported JobStatus.PARTIAL; the repo trace only establishes that no code path writes it. (2) A product decision on whether the partial-shaped command outcomes that do exist -- batch intake 207 per-row receipts, XLSX partial commit, external ingestion accepted/quarantined counts -- should become durable jobs carrying member-level receipts and a member retry contract.",
+            "evidence_needed": "Live production queue/scheduler/worker receipt inventory demonstrating deployed production jobs reporting JobStatus.PARTIAL, and human/ops H06 item-by-item sign-off on live production queue policy.",
             "evidence_owner": "Platform Infrastructure Lead",
             "next_review_date": "2026-10-01",
             "assigned_to": "Platform Infrastructure Lead",
-            "evidence_ref": "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/README.md",
+            "evidence_ref": "docs/evidence/human-decisions/ODP-JOB-PARTIAL-PRODUCER-RECONCILIATION-001/README.md",
             "formal_handback_ref": "docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md#3-人類授權移交單human-authority-handback-package",
             "handback_id": "HB-SHARED001-PARTIAL-001",
-            "reopen_trigger": "(1) Production worker registry adds a multi-item batch job handler with reachable JobStatus.PARTIAL transition, OR (2) synchronous command operations (batch intake / external ingestion) are formally scheduled to become durable jobs with itemized receipts and member-level retry contracts, OR (3) live production queue/worker audit receipts demonstrate deployed jobs reporting PARTIAL.",
-            "rationale": "JobStatus vocabulary declares PARTIAL but no long-running batch job currently produces partial status (Batch 5b). The producer trace walked the default registry (forecast, external-fetch, assisted-listing-intake) and every module worker entry point and found no PARTIAL write. The partial-shaped outcomes that do exist are synchronous command receipts, not queue jobs; wiring them onto JobStatus to complete the member count would be the fake implementation this gate exists to prevent. Handback package HB-SHARED001-PARTIAL-001 submitted per ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md. User confirmed D19 implementation direction; Stage 33A delivered in ODP-DURABLE-PARTIAL-CONTRACT-PREP-001."
+            "reopen_trigger": "(1) Live production queue/worker audit receipts demonstrate deployed jobs reporting PARTIAL in production runtime, OR (2) Human/Ops and Platform Infrastructure Lead formally execute H06 production sign-off and requirement closure.",
+            "rationale": "JobStatus vocabulary declares PARTIAL and repo producer is delivered via handle_batch_listing_intake in default registry with durable receipts and FAILED_ONLY scoped retries (ODP-DURABLE-PARTIAL-IMPL-001, PR #1285 @ b19513a1419497dce2ddd5054df5bbe0bd732a69). However, synthetic fixture/SQLite verification does not elevate to live production receipts or human sign-off; disposition state remains BLOCKED_BY_EVIDENCE under handback package HB-SHARED001-PARTIAL-001 pending live production environment audit and H06 sign-off."
           }
         }
       ]
