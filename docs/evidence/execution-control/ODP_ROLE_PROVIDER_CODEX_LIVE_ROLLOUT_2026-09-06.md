@@ -55,7 +55,7 @@
 | Loaded Config Digest | `54110ea0cef280a8`（與 Supervisor 內部狀態 `loaded_config_digest` 逐字相符） |
 | 靜態驗證指令 | `python3 -B delivery_toolchain/governance/check_orchestrator_config.py --config /home/lupin/odayplus/.orchestrator/config.json` |
 | 靜態驗證結果 | `Validated 3 config documents and their merged runtime views.`（通過） |
-| 私有備份路徑 | `/tmp/odp-role-provider-codex-live-rollout-backup-fswthfki/`（私有保存，未 commit、未印出 secret） |
+| 私有備份路徑（歷史操作紀錄與限制說明） | 原始操作時暫存於 `/tmp/odp-role-provider-codex-live-rollout-backup-fswthfki/`（包含 `config.before.json` 與 `launcher.before.sh`，未 commit、未印出 secret）。因 `/tmp` 為本機短暫目錄（ephemeral），後續審查讀回時該實體目錄已隨系統生命週期自然清理（ls exit 2，如實記錄缺證，未事後重建冒充操作前快照）；操作前配置與狀態可透過已記錄之 SHA256（`5e9f4279b14ba6f4595317d4064ccebc952c678693ec2abd2bb243a89be8a12c`）及歷史版本 `ba58ed6723960244d567c5314bfc200ffdf7bae8` 進行精準核驗與還原。 |
 
 ### 3.2 授權變更精準差異（Exact Authorized Diffs）
 
@@ -158,10 +158,32 @@ Supervisor 重啟後，完成連續 2 次完整健康迴圈，無任何新增錯
 | `codex_lupin_slot_1` | `codex_lupin` | `codex` | `gpt-6-astra` | `['-c', 'model_reasoning_effort="ultra"']` |
 | `codex_lupin_slot_2` | `codex_lupin` | `codex` | `gpt-6-astra` | `['-c', 'model_reasoning_effort="ultra"']` |
 
-### 5.3 真實 Review 派工觀測說明
+### 5.3 真實 Review 派工觀測與審查階段補讀證據（Real Review Worker Evidence）
 
-- 盤點當前看板任務，當下無處於可派工狀態的 ready review 任務（例如 `ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002` 因 PR CI 失敗而依安全機制暫停派工，`ODP-CI-DEPENDENCY-AUDIT-BOUNDARY-001` 保留 `non_dispatchable: true` 前景 hold）。
-- 依驗收規定，**誠實記錄當下無 ready review 任務，嚴格禁止製造假任務（synthetic tasks）或故意製造故障以取得派工證據**。實際 review worker 啟動證據將於本任務正常送審階段由 Codex2 審查時補讀真實執行收據。
+#### 5.3.1 原始 2026-09-06 部署時觀測
+
+- 盤點部署當下看板任務，無處於可派工狀態的 ready review 任務（例如 `ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002` 因 PR CI 失敗暫停派工，`ODP-CI-DEPENDENCY-AUDIT-BOUNDARY-001` 保留 `non_dispatchable: true` 前景 hold）。
+- 依驗收規定，**誠實記錄當下無 ready review 任務，嚴格禁止製造假任務（synthetic tasks）或刻意製造故障以取得派工證據**。真實 review worker 派工由後續送審審查階段補讀收據。
+
+#### 5.3.2 第一輪獨立審查（2026-09-08）真實 Review 派工收據讀回
+
+- **派工 Run ID**：`codex-20260908T220840Z-e9177416`
+- **派工事件**：`evt-20260908T220837Z-57f61b6e`（觸發原因：`review_ready_dispatch`）
+- **指派身份與 Slot**：邏輯 `codex2`、Account Pool `codex_lupin`、實體 Slot `codex_lupin_slot_1`
+- **程序 PID**：Runner PID `1288635`，Child PID `1288636`
+- **啟動日誌路徑**：`/home/lupin/oday-plus-supervisor-runtime-ef76cf6d295c/.orchestrator/logs/20260908T220840872968Z-codex-codex_lupin_slot_1-f3c449.log`
+- **啟動 Header 驗證**：CLI `v0.153.4`、model `gpt-6-astra`、reasoning effort `ultra`（真實 worker，非 mock/default）
+- **Supervisor 讀回**：PID `1257037`，runtime SHA `ef76cf6d295ce7a8a470fe6e5f0eab20a0439169`，`loaded_config_digest` `54110ea0cef280a8` 與磁碟 SHA256 `54110ea0cef280a822484067185076b35600accf58dbb24d09adc6c64bbb6cd8` 吻合；兩池共 4 slots、Agy5/Claude5 與 role policy 均正常維持。
+
+#### 5.3.3 第二輪獨立審查（2026-09-11）真實 Review 派工收據讀回
+
+- **派工 Run ID**：`codex-20260911T123257Z-f3120e5e`
+- **派工事件**：`evt-20260911T123232Z-7bb5289f`（觸發原因：`review_ready_dispatch`）
+- **指派身份與 Slot**：邏輯 `codex2`、Account Pool `codex_lupin`、實體 Slot `codex_lupin_slot_1`
+- **程序 PID**：Runner PID `3500442`，Child PID `3500443`
+- **啟動日誌路徑**：`/home/lupin/oday-plus-supervisor-runtime-b66d18130f3b/.orchestrator/logs/20260911T123257909767Z-codex-codex_lupin_slot_1-af4042.log`
+- **啟動 Header 驗證**：CLI `v0.153.4`、model `gpt-6-astra`、reasoning effort `ultra`（真實 worker，非 mock/default；readback 時仍 running，不預先宣稱已完成）
+- **Supervisor 現況讀回**：PID `2957832`，/proc cwd `/home/lupin/oday-plus-supervisor-runtime-b66d18130f3b`，`loaded_code_sha` `b66d18130f3bac78cf5af32b1c7000933e5d931d`，`loaded_config_digest` `54110ea0cef280a8` 與磁碟 SHA256 `54110ea0cef280a822484067185076b35600accf58dbb24d09adc6c64bbb6cd8` 吻合；角色政策、兩 Codex pools 共 4 slots、Agy5/Claude5 設定仍在。（註：此為 09-11 後續 readback，不能替代 09-06 原始 rollout/兩輪 health 證據）。
 
 ---
 
@@ -175,21 +197,27 @@ Supervisor 重啟後，完成連續 2 次完整健康迴圈，無任何新增錯
 
 ---
 
-## 7. 回滾程序與應變措施（Rollback Procedures）
+## 7. 回滾程序與異常處理處置（Rollback Procedures & Failure Handling）
 
-若 live 環境需要回滾，提供以下兩層級處置路徑：
+### 7.1 模型相容性異常處置規範（Ultra Compatibility Failure Policy）
 
-### 7.1 第一級：設定層停用政策或切換模型（需重啟程序生效）
+依任務驗收與安全規範，若真實模型不接受 `model_reasoning_effort="ultra"`（或 CLI/API 報錯不相容）：
+1. **嚴禁擅自降級或回滾**：嚴格禁止擅自將 reasoning effort 降級為 `xhigh`、`high`、`max` 或其他值，亦嚴格禁止擅自將模型改回 `gpt-5.6-luna`。
+2. **保留原始錯誤與停止派工**：必須完整保留原始錯誤日誌與回報，立即停止新的 review 派工，並通報控制面 owner 處置。
+3. **明確邊界**：模型相容性失敗不屬於任務授權之正常回滾路徑，不得以回滾為名擅自降級配置。
 
-1. 將 live config 中的 `ready_dispatcher.role_provider_policy.enabled` 設為 `false`。
-2. 若需切換 Codex 模型，將 `providers.codex.codex.model` 改回 `gpt-5.6-luna` 並移除 `model_reasoning_effort`。
-3. 沿唯一入口 `scripts/orchestrator/rollout_supervisor_runtime.py` 重啟 Supervisor。
+### 7.2 控制面授權回滾程序（Authorized Rollback Procedures via Primitive & Snapshot）
 
-### 7.2 第二級：完整 Runtime 與 Config 回滾（Restore from Snapshot）
+若 live 環境因控制面程序或設定故障需要回滾至操作前狀態，必須透過任務授權之唯一原語與歷史基準執行：
 
-1. 自私有備份目錄 `/tmp/odp-role-provider-codex-live-rollout-backup-fswthfki/` 將 `config.before.json` 與 `launcher.before.sh` 還原至 `/home/lupin/odayplus/.orchestrator/config.json` 及 `scripts/ai-status.sh`。
-2. 沿用唯一 `scripts/orchestrator/rollout_supervisor_runtime.py`，以乾淨的 `ba58ed6723960244d567c5314bfc200ffdf7bae8` 為 `--source-root`，`--tracking-ref` 釘住 `ba58ed6723960244d567c5314bfc200ffdf7bae8`，完成原子切換與重啟。
-3. 唯讀核對程序 PID、cwd、`loaded_code_sha`（`ba58ed672396`）、`loaded_config_digest`（`5e9f4279b14ba6f4`）及連續健康 loops。
+1. **配置還原**：
+   - 若歷史私有暫存 `/tmp/odp-role-provider-codex-live-rollout-backup-fswthfki/` 存在，自該處還原 `config.before.json` 與 `launcher.before.sh` 至 `/home/lupin/odayplus/.orchestrator/config.json` 及 `scripts/ai-status.sh`。
+   - 若該 `/tmp` 目錄已隨系統生命週期自然清理，則從前一穩定版本 `ba58ed6723960244d567c5314bfc200ffdf7bae8` 還原操作前配置（SHA256: `5e9f4279b14ba6f4595317d4064ccebc952c678693ec2abd2bb243a89be8a12c`）及 launcher（SHA256: `3660f2423ddf5169c86199d3bf1699ebb34e733ebe9add2182483a9cfb5be9d1`），嚴禁事後偽造快照。
+2. **Runtime 原子切換與程序重啟**：
+   - 沿用既有唯一 `scripts/orchestrator/rollout_supervisor_runtime.py` 原語，以乾淨的 `ba58ed6723960244d567c5314bfc200ffdf7bae8` 為 `--source-root`，`--tracking-ref` 釘住 `ba58ed6723960244d567c5314bfc200ffdf7bae8`，完成原子切換與 watchdog 程序重啟。
+   - 嚴格禁止自行撰寫第二套 restart / watchdog 或臨時腳本。
+3. **還原後唯讀驗證**：
+   - 唯讀核對 Supervisor PID、cwd（`/home/lupin/oday-plus-supervisor-runtime-ba58ed672396`）、`loaded_code_sha`（`ba58ed672396`）、`loaded_config_digest`（`5e9f4279b14ba6f4`）與磁碟 hash，並確認連續 2 次健康迴圈無錯誤。
 
 ---
 
@@ -199,3 +227,5 @@ Supervisor 重啟後，完成連續 2 次完整健康迴圈，無任何新增錯
 2. **未捏造測試任務**：無 ready review 任務時如實記錄，未人工建立 synthetic tasks 搶跑測試。
 3. **未重跑已核准測試**：本任務為執行控制面 live rollout，不重跑無關的完整測試套件或已核准 PR 的測試。
 4. **未外洩密鑰**：私有 config 備份與 auth secrets 均未 commit 或包含於 PR 中。
+5. **如實揭露快照生命週期限制**：操作前私有快照目錄因位於 `/tmp` 隨系統生命週期已自然清理，如實記錄缺證，未於事後重建冒充；還原與驗證依賴記錄之 SHA256 與 commit `ba58ed672396` 歷史基準。
+6. **未擅自降級模型**：遵循 ultra 政策，未因相容性疑慮擅自降低 effort 或切回 Luna。
