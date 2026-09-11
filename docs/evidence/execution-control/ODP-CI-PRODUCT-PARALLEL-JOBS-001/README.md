@@ -9,7 +9,8 @@
 - **Branch**: `task/ODP-CI-PRODUCT-PARALLEL-JOBS-001`
 - **Target Branch**: `dev`
 - **Change Scope**: `development_tooling` / `product_or_mixed` (with contract test deliverable)
-- **Base Commit**: `4b6a43b3e601` (merged origin/dev base advance)
+- **Base Commit**: `4b6a43b3e601` (composing `b20118700dd5` base advance)
+- **Measured Source SHA**: `cc031c6e35c853cf4524c7ef7b86c1fc5f294f3c`
 - **Date**: 2026-09-11
 
 ---
@@ -45,10 +46,10 @@
      - 正確解析反斜線換行連接之長命令為單一完整 argv。
 
 5. **P2 R5 — 誠實記錄 CI 執行證據、實測同一 Commit 數據與延遲分析**
-   - 綁定實測 Commit HEAD SHA，記錄本地全 suite 與各 lane 實體命令之執行收據（真實 exit code、耗時與開始/結束時間）。
-   - 完整記錄 GitHub Actions PR #1303 遠端 CI 執行（Run ID `34549397718` 與 Run ID `34552063866`），明確說明 tooling scope 下 5 個 product lanes 依設計正確 skip 之行為。
-   - 明確記錄作用域限制：在僅變更 `development_tooling` 路徑時，GitHub CI 的 change-scope 依既有設計輸出 `development_tooling`，由 5 個 product lanes 進行安全 skip，並由 `product` aggregate job 驗收通過；當變更納入 `product_or_mixed` 路徑（例如包含 `tests/contract/`）時，所有 5 個 runner lanes 均在獨立 GitHub runner 上執行並要求 100% 成功。
-   - 明確區分【實測數據 (Measured Receipt)】與【歷史基線估算 (Historical Estimate)】。
+   - 修正歷史記錄中之錯誤 Job ID 與 Commit SHA 標註（Run C 實際對應 `bc6c4d913ef7ea7c259314df16837d02420deaab` 與正確之 API/DB/Security/Node/Lint Job IDs）。
+   - 完整納入 GitHub Actions PR #1303 全量 Product Scope 成功執行之遠端終端收據（Run ID `34558489692`，Head SHA `cc031c6e35c853cf4524c7ef7b86c1fc5f294f3c`），記錄各 runner 實際開始/結束時間與並行重疊區間（03:27:28Z – 03:28:07Z 5 個 runner 100% 同時執行）。
+   - 將延遲分析更新為基於實測關鍵路徑（`product-lint-unit` 18m38s 與 19m10s 總等待），並保留歷史串行 DAG 對比為明確之估算（Historical Estimate），不宣稱虛構之加速倍數。
+   - 本地驗證指令均明確標註量測之 Source HEAD SHA（`cc031c6e35c853cf4524c7ef7b86c1fc5f294f3c` 為主要驗證點）、執行時間、Exit Code 與 Selection。
 
 6. **P1 R6 — 合流與調和 Workflow Contract 測試 (Contract Reconciliation)**
    - 修正：更新 `tests/contract/test_merge_queue_batch_policy.py` 中的 `test_scenario_6_tooling_skip_stays_bounded_to_tooling_only_changes`。
@@ -94,23 +95,31 @@
 ### 4.1 本地驗證 (Local Verification Receipts)
 
 #### Receipt 1: git diff --check
+- **Measured Head SHA**: `cc031c6e35c853cf4524c7ef7b86c1fc5f294f3c` [Measured Receipt]
 - **Command**: `git diff --check`
 - **Selection**: Current worktree diff
+- **Start / End**: `2026-09-11T03:50:39.291Z` – `2026-09-11T03:50:39.407Z`
+- **Duration (Tool Wall Time)**: `0.000005472s`
 - **Exit Code**: `0`
 
 #### Receipt 2: Focused Tooling Regressions (49 Tests)
+- **Measured Head SHA**: `cc031c6e35c853cf4524c7ef7b86c1fc5f294f3c` [Measured Receipt]
 - **Command**: `uv run pytest -q tests/tooling/test_ci_product_parallel.py`
 - **Selection**: `tests/tooling/test_ci_product_parallel.py`
+- **Start / Confirmed End**: `2026-09-11T03:50:39.292Z` – `2026-09-11T03:50:48.565Z`
+- **Duration (Elapsed Upper Bound)**: `9.273s`
 - **Exit Code**: `0`
 - **Output**:
 ```
 .................................................                        [100%]
-49 passed in 0.59s
+49 passed
 ```
 
 #### Receipt 3: Contract Suite (23 Tests)
+- **Measured Head SHA**: `bc6c4d913ef7ea7c259314df16837d02420deaab` [Measured Receipt]
 - **Command**: `uv run pytest -q tests/contract/test_merge_queue_batch_policy.py`
 - **Selection**: `tests/contract/test_merge_queue_batch_policy.py`
+- **Duration**: `8.35s`
 - **Exit Code**: `0`
 - **Output**:
 ```
@@ -119,6 +128,7 @@
 ```
 
 #### Receipt 4: Governance & Linter Checks
+- **Measured Head SHA**: `96438a34dcc3de464112583dbb3246189a6d6aec` [Measured Receipt]
 - **Commands**:
   - `uv run python delivery_toolchain/governance/check_code_boundaries.py`
   - `uv run python delivery_toolchain/governance/check_measurement_defaults.py`
@@ -135,55 +145,56 @@ All checks passed!
 
 ---
 
-### 4.2 同一 Head 本地各 Lane 實測執行收據 (Measured Same-Head Lane Execution Receipts)
+### 4.2 本地各 Lane 命令量測收據 (Measured Historical Lane Receipts)
 
-針對同一 HEAD 原始碼執行各 lane 之實體驗收指令，量測各項耗時與結果：
+在任務初期針對各 lane 實體指令於本機環境執行量測：
+- **Measured Head SHA**: `96438a34dcc3de464112583dbb3246189a6d6aec` [Measured Receipt]
 
 1. **`product-api-contract`**
    - **Command**: `make api-contract`
    - **Exit Code**: `0`
-   - **Duration**: `29.85s` [Measured Receipt]
+   - **Duration**: `29.85s`
    - **Start / End**: `2026-09-11T01:23:02Z` – `2026-09-11T01:23:32Z`
 
 2. **`product-node`**
    - **Command**: `make node-check`
    - **Exit Code**: `0`
-   - **Duration**: `403.81s` (~6.7m) [Measured Receipt]
+   - **Duration**: `403.81s` (~6.7m)
    - **Start / End**: `2026-09-11T01:23:32Z` – `2026-09-11T01:30:16Z`
 
 3. **`product-security`**
    - **Command**: `make security`
    - **Exit Code**: `0`
-   - **Duration**: `617.71s` (~10.3m) [Measured Receipt]
+   - **Duration**: `617.71s` (~10.3m)
    - **Start / End**: `2026-09-11T01:30:16Z` – `2026-09-11T01:40:33Z`
 
 4. **`product-lint-unit` (Lint 部分)**
    - **Command**: `uv run ruff check tests modules apps shared models solver pipelines infra`
    - **Exit Code**: `0`
-   - **Duration**: `0.77s` [Measured Receipt]
+   - **Duration**: `0.77s`
    - **Start / End**: `2026-09-11T01:40:33Z` – `2026-09-11T01:40:34Z`
 
 5. **`product-db`**
    - **Command A**: `uv run pytest tests/integration/test_official_real_estate_postgresql.py`
-     - **Exit Code**: `0`, **Duration**: `18.45s` [Measured Receipt] (2026-09-11T01:40:38Z – 01:40:57Z)
+     - **Exit Code**: `0`, **Duration**: `18.45s` (2026-09-11T01:40:38Z – 01:40:57Z)
    - **Command B**: `uv run pytest -m "requires_live_env and not requires_postgis" tests/contract tests/ops tests/integration`
-     - **Exit Code**: `0`, **Duration**: `197.24s` [Measured Receipt] (2026-09-11T01:40:57Z – 01:44:14Z)
-   - **Lane Total Duration**: `215.69s` (~3.6m) [Measured Receipt]
+     - **Exit Code**: `0`, **Duration**: `197.24s` (2026-09-11T01:40:57Z – 01:44:14Z)
+   - **Lane Total Duration**: `215.69s` (~3.6m)
 
 6. **`product` 聚合驗收器驗證 (Aggregator Verification Receipt)**
    - **Command**: `python3 delivery_toolchain/governance/verify_ci_product_jobs.py --needs '<payload>'`
    - **Scenario A (product_or_mixed, all 5 lanes success)**:
-     - **Exit Code**: `0` [Measured Receipt]
+     - **Exit Code**: `0`
      - **Output**: `[PASS] All 5 product lanes succeeded for scope 'product_or_mixed'.`
    - **Scenario B (development_tooling, all 5 lanes skipped)**:
-     - **Exit Code**: `0` [Measured Receipt]
+     - **Exit Code**: `0`
      - **Output**: `[PASS] Development tooling change scope verified: product lanes safely bypassed.`
 
 ---
 
 ## 5. 遠端 CI 執行與延遲分析 (Remote CI Evidence & Latency Analysis)
 
-### 5.1 遠端 CI 執行觀測 (Remote GitHub Actions Runs)
+### 5.1 遠端 GitHub Actions Runs 記錄
 
 #### Run A: Head `96438a34dcc3de464112583dbb3246189a6d6aec` (Run ID `34552063866`)
 - **Run URL**: `https://github.com/alfloop-dev/odayplus/actions/runs/34552063866`
@@ -217,33 +228,61 @@ All checks passed!
   - `product` (Job ID `103108970819`): `01:08:03Z` – `01:08:12Z` (Duration 9s, Conclusion: `success`)
   - `orchestrator` (Job ID `103108930211`): `01:07:51Z` – `01:11:35Z` (Duration 3m44s, Conclusion: `success`)
 
-#### Run C: Head `bc6c4d91461ffcb582ff0fa3b827e8d6fbb544c4` (Run ID `34556566842`) — Product Scope Trigger & Shallow Clone Discovery
+#### Run C: Head `bc6c4d913ef7ea7c259314df16837d02420deaab` (Run ID `34556566842`) — Product Scope Trigger & Shallow Clone Discovery
 - **Run URL**: `https://github.com/alfloop-dev/odayplus/actions/runs/34556566842`
-- **Head SHA**: `bc6c4d91461ffcb582ff0fa3b827e8d6fbb544c4`
+- **Head SHA**: `bc6c4d913ef7ea7c259314df16837d02420deaab`
 - **Event**: `pull_request` (Attempt 1)
+- **Run Start / Update**: `2026-09-11T02:56:55Z` – `2026-09-11T03:17:00Z`
+- **Overall Status / Conclusion**: `completed / failure`
 - **Change Scope**: `product_or_mixed` (由於納入 `tests/contract/test_merge_queue_batch_policy.py` 調和變更，觸發全量 5 lanes 實體執行)
-- **Parallel Lanes Execution Breakdown**:
-  - `product-db` (Job ID `103130410651`): **SUCCESS** (執行 PostgreSQL 16 整合測試與 DB contracts / schema gates 全部通過)
-  - `product-api-contract` (Job ID `103130410427`): **SUCCESS** (API drift 檢查通過)
-  - `product-security` (Job ID `103130410654`): **SUCCESS** (pip-audit 與安全測試全部通過)
-  - `product-node` (Job ID `103130410884`): **SUCCESS** (Node lint/typecheck/test 通過)
-  - `product-lint-unit` (Job ID `103130410421`): **FAILURE** (5,769 tests passed, 24 skipped, 8 xfailed, 16 subtests passed, 1 failed: `test_receipt_recomputes_aggregate_counts_and_generation_proof`)
-  - `product` (Job ID `103134202248`): **FAILURE** (`verify_ci_product_jobs.py` fail-closed 攔截並正確拒絕未全數通過之狀態)
+- **Parallel Lanes Execution Breakdown (All Times UTC 2026-09-11)**:
+  - `change-scope` (Job ID `103130378774`): `02:56:58Z` – `02:57:07Z` (Duration 9s, Conclusion: `success`, Output: `scope=product_or_mixed`)
+  - `product-db` (Job ID `103130410301`): `02:57:09Z` – `02:59:25Z` (Duration 2m16s, Conclusion: `success`, 執行 PostgreSQL 16 整合測試與 DB contracts / schema gates 全部通過)
+  - `product-api-contract` (Job ID `103130410328`): `02:57:09Z` – `02:57:54Z` (Duration 45s, Conclusion: `success`, API drift 檢查通過)
+  - `product-security` (Job ID `103130410325`): `02:57:10Z` – `03:01:13Z` (Duration 4m03s, Conclusion: `success`, pip-audit 與安全測試全部通過)
+  - `product-node` (Job ID `103130410381`): `02:57:09Z` – `02:59:38Z` (Duration 2m29s, Conclusion: `success`, Node lint/typecheck/test 通過)
+  - `product-lint-unit` (Job ID `103130410421`): `02:57:09Z` – `03:16:50Z` (Duration 19m41s, Conclusion: `failure`, 5,769 tests passed, 24 skipped, 8 xfailed, 16 subtests passed, 1 failed: `test_receipt_recomputes_aggregate_counts_and_generation_proof`)
+  - `product` (Job ID `103134202248`): `03:16:52Z` – `03:16:59Z` (Duration 7s, Conclusion: `failure`, `verify_ci_product_jobs.py` fail-closed 攔截並正確拒絕未全數通過之狀態)
+  - `orchestrator` (Job ID `103130378625`): `02:56:57Z` – `03:00:17Z` (Duration 3m20s, Conclusion: `success`)
+  - `performance-gate` (Job ID `103130410369`): `02:57:09Z` – `02:58:20Z` (Duration 1m11s, Conclusion: `success`)
+  - `product-e2e-gate` (Job ID `103130410388`): `02:57:09Z` – `03:01:59Z` (Duration 4m50s, Conclusion: `success`)
 - **Root Cause & Fix**:
   - `test_acceptance_coverage.py` 在執行 acceptance receipt 與 generation proof 驗證時，會複製 repo 並執行 `git merge-base --is-ancestor` 驗證 checked-in receipt 的 tested source 祖先關聯。
   - GitHub Actions `actions/checkout@v4` 預設為 shallow clone (`fetch-depth: 1`)，導致祖先 commit 缺失而在 ancestry check 時失敗。
   - **修復**：於 `.github/workflows/ci.yml` 之 `product-lint-unit` 與 `product-db` 步驟中加入 `with: fetch-depth: 0`，確保 Git 歷程完整，與原始 monolithic product job 以及 `product-api-contract` 一致。
 
-> **Note on Tooling Scope vs Product Scope Execution Constraint**:
-> 在僅變更 `development_tooling` 白名單路徑時，GitHub CI 的 change-scope 依既有設計判定為 `development_tooling`，5 個 product runner lanes 依條件直接 skip，並由 `product` 聚合驗收通過。當變更納入 `product_or_mixed` 路徑時（例如包含 `tests/contract/`），`change-scope` 判定為 `product_or_mixed`，所有 5 個 runner lanes 均在獨立 GitHub runner 上平行觸發執行並要求 100% success。
+#### Run D: Head `cc031c6e35c853cf4524c7ef7b86c1fc5f294f3c` (Run ID `34558489692`) — 完整全量 Product Scope 成功驗收與 Runner Overlap 終端收據
+- **Run URL**: `https://github.com/alfloop-dev/odayplus/actions/runs/34558489692`
+- **Head SHA**: `cc031c6e35c853cf4524c7ef7b86c1fc5f294f3c`
+- **Event**: `pull_request` (Attempt 1)
+- **Change Scope**: `product_or_mixed` (全量執行 5 個 product runner lanes)
+- **Run Start / Update**: `2026-09-11T03:27:13Z` – `2026-09-11T03:46:24Z`
+- **Overall Status / Conclusion**: `completed / success` (所有 10 個 workflow jobs 均 100% 成功)
+- **REST Jobs API Details (All Times UTC 2026-09-11)**:
+  - `change-scope` (Job ID `103136147226`, Runner `1000026046`): `03:27:15Z` – `03:27:25Z` (Duration 10s, Conclusion: `success`, Output: `scope=product_or_mixed`)
+  - `product-lint-unit` (Job ID `103136185864`, Runner `1000026052`): `03:27:28Z` – `03:46:06Z` (Duration 18m38s, Conclusion: `success`). Step `Test product code` 03:28:46Z – 03:46:01Z 成功完成。
+  - `product-db` (Job ID `103136185817`, Runner `1000026048`): `03:27:27Z` – `03:29:50Z` (Duration 2m23s, Conclusion: `success`). Step `Official PostgreSQL test` 03:28:04Z – 03:28:17Z; Step `DB contracts/migrations/schema` 03:28:17Z – 03:29:47Z 均成功完成。
+  - `product-api-contract` (Job ID `103136185865`, Runner `1000026051`): `03:27:28Z` – `03:28:07Z` (Duration 39s, Conclusion: `success`). Step `API drift` 03:27:49Z – 03:28:05Z 成功完成。
+  - `product-security` (Job ID `103136185798`, Runner `1000026049`): `03:27:28Z` – `03:31:37Z` (Duration 4m09s, Conclusion: `success`). Step `Security` 03:28:08Z – 03:31:32Z 成功完成。
+  - `product-node` (Job ID `103136185915`, Runner `1000026053`): `03:27:28Z` – `03:30:14Z` (Duration 2m46s, Conclusion: `success`). Step `Node` 03:27:38Z – 03:30:12Z 成功完成。
+  - `product` (Job ID `103139656415`, Runner `1000026064`): `03:46:08Z` – `03:46:23Z` (Duration 15s, Conclusion: `success`). Step `Verify parallel product lanes` 於 03:46:20Z 驗證通過，原生日誌確認讀取 `NEEDS_JSON` 範圍為 `product_or_mixed` 且 5 個 lanes 狀態全數為 `success`，最終輸出 `[PASS] All 5 product lanes succeeded for scope 'product_or_mixed'.`
+  - `orchestrator` (Job ID `103136147087`, Runner `1000026045`): `03:27:16Z` – `03:30:52Z` (Duration 3m36s, Conclusion: `success`)
+  - `performance-gate` (Job ID `103136185786`, Runner `1000026050`): `03:27:28Z` – `03:28:43Z` (Duration 1m15s, Conclusion: `success`)
+  - `product-e2e-gate` (Job ID `103136185723`, Runner `1000026047`): `03:27:27Z` – `03:33:22Z` (Duration 5m55s, Conclusion: `success`)
+- **平行 Runner 重疊觀測 (Observed Runner Concurrency Overlap)**:
+  - 觀測到 5 個獨立 product runners（Runner IDs: `1000026052`, `1000026048`, `1000026051`, `1000026049`, `1000026053`）於 `03:27:28Z` 至 `03:28:07Z` 呈現 100% 同時平行重疊執行。
+  - API (39s)、DB (2m23s)、Node (2m46s)、Security (4m09s) 均於前數分鐘內順利完成，而 `product-lint-unit`（耗時 18m38s）作為關鍵路徑持續執行。
+  - 聚合驗收 job `product` 在最慢之 `product-lint-unit` 完成後啟動並順利驗收通過。
 
 ---
 
-### 5.2 延遲與重疊模型分析 (Measured vs Historical Estimates)
+### 5.2 延遲與關鍵路徑分析 (Latency & Critical Path Analysis)
 
-- **歷史串行基線 (Historical Baseline - Serial Execution)** [Historical Estimates]:
-  - 歷史單一 runner 串行執行總等待時間 = `product-lint-unit (~17-25m)` + `product-db (~3.6-8m)` + `product-api-contract (~0.5-3m)` + `product-security (~10.3m)` + `product-node (~6.7m)` = **約 38 ~ 53 分鐘**。
-- **獨立平行 Runner 架構 (Isolated Parallel Runners)** [Concurrency Overlap Model]:
+- **歷史串行基線估算 (Historical Serial Baseline - Estimate)** [Historical Estimate]:
+  - 歷史單一 runner 串行執行總等待時間 = `product-lint-unit (~18-25m)` + `product-db (~2.5-8m)` + `product-api-contract (~0.5-3m)` + `product-security (~4-10m)` + `product-node (~2.5-7m)` = **估計約 28 ~ 53 分鐘**。
+- **實測平行執行關鍵路徑 (Observed Parallel Execution on `cc031c6e`)** [Measured Receipt]:
   - 各獨立 runner 在 `change-scope` 完成後立即**同時啟動並行執行**。
-  - 總等待時間收斂至最慢單一批判路徑：`product-lint-unit` (**約 17 ~ 25 分鐘** [Historical Estimate]) 或 `product-security` (**約 10.3 分鐘** [Measured Receipt])。
-  - DB (~3.6m [Measured])、Node (~6.7m [Measured])、API contract (~0.5m [Measured]) 均在背景平行完成，完全消除原本排隊於大型 unit test 後之累計等待，同時 100% 完整保留所有既有驗收標準與 runner 環境。
+  - 實測最慢單一關鍵路徑為 `product-lint-unit`：**18m38s**。
+  - PR 建立至 Product 聚合驗收完成之總等待時間：**19m10s** (`03:27:13Z` 至 `03:46:23Z`)。
+  - DB (2m23s)、API contract (39s)、Node (2m46s)、Security (4m09s) 均在 `product-lint-unit` 執行期間於獨立 runner 上平行完成，未增加總等待時間。
+  - 歷史串行 DAG 對比保持為明確之估算，不作誇大之單一數值速度宣稱。
