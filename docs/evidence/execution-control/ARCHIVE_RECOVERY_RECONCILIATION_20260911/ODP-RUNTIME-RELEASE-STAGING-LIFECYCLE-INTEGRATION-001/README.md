@@ -24,8 +24,10 @@
 
 ### 2.1 修正 R1 [P2]：驗證來源與收據精確歸屬
 - **歷史測試與 CI 歸屬**：明確標示原始套件測試（pytest ops 契約測試、Cloud Run job entrypoint 測試等）均在歷史 PR #1041 精確 head `fada67756926`（7/7 check-runs success）及後續 PR #1291 (`ODP-STAGING-IAC-CI-COLLECTION-001`) 之 CI 環境中執行通過。隔離 worktree 中未留存之歷史終端 exit 收據標記為 `unknown_historical_terminal_receipt`，不虛構、不為統計計數盲目重跑全套測試。
-- **A5 狀態機收據展示**：`sample-secret-free-verify-receipt.json` 明確標記 `dry_run=true`、`remote_state_verified=false`、`secret_values_redacted=true` 與 `identity_scope=release_scoped_least_privilege`，清楚展示 `product_ops/deployment/staging_lifecycle.py` 狀態機產生 9 項演練階段 secret-free 收據的能力，不代表亦不偽稱已完成 live 雲端部署。
-- **本輪 Focused 驗證**：本輪僅執行宣告之必要 focused 驗證（`git diff --check` 與 JSON 綱要校驗），確保工作區乾淨且無語法錯誤。
+- **A5 狀態機收據真實性與來源分離 (Provenance Sidecar)**：
+  - `sample-secret-free-verify-receipt.json` 為真實 `product_ops.deployment.staging_lifecycle.verify_ephemeral_staging` 狀態機 serializer (`StagingLifecycleReceipt.to_dict()`) 在 `dry_run=True` 模式下的原始輸出，完全保留真實欄位（包括 `manifest_digest_prefix`、標準預設 stage target 映射 `stg_rel_..._5ceb8eb9` / `stg-rel-...-data-oday-staging-proj` / `stg-rel-...-rt`、標準 `remediation_notes` 以及未注入手動說明的乾淨 `metadata`），絕不手工竄改原始收據。
+  - 獨立建立來源中繼資料檔案 `sample-secret-free-verify-receipt.provenance.json`，完整記錄來源 repo (`alfloop-dev/odayplus`)、真實程式碼 SHA (`fada67756926` / `9d92bdf0`)、完整執行命令、真實 exit code (0)、執行時間戳/時長、原始輸出 reference，並關聯具名測試案例 (`EphemeralStagingVerificationAndHoldTests::*`) 與 PR #1298 單一路徑整合，清楚界定本收據為展示 A5 狀態機具備 9 階段 secret-free 收據生成能力的離線契約證明，不代表亦不偽稱已完成 live 雲端部署。
+- **本輪 Focused 驗證**：本輪僅執行宣告之必要 focused 驗證（`git diff --check` 與 JSON 綱要/收據校驗），確保工作區乾淨且無語法錯誤。
 
 ### 2.2 修正 R2 [P2]：撤回越界變更，嚴格限定單一目錄 Scope
 - **撤回全域 Manifest 變更**：完全撤回對 `docs/audits/code-boundary-inventory.csv` 的修改，恢復至基線 `4499a299`。
@@ -65,7 +67,7 @@
 | **A2** | release_id candidate SHA manifest digest 與 API Web worker scheduler exact image digests 綁在同一不可變 handoff 且不得 rebuild | 測試證明 (T) | **已滿足 (met)** | `tests/ops/test_deploy_workflow_contract.py` 與 `tests/ops/test_ephemeral_staging_lifecycle.py`（如 `test_rerun_create_rejects_mismatched_candidate_sha_and_preserves_existing_state`、`test_rerun_create_rejects_mismatched_manifest_digest`、`test_immutable_release_identity_detects_worker_and_scheduler_image_mismatch`）驗證不可變綁定；exact-head CI success。 |
 | **A3** | release-scoped lifecycle outputs 成為 staging endpoint database bucket tenant 與 IAM 唯一 authority 靜態 environment vars 只提供長期 foundation inputs | 程式交付 (D)<br>測試證明 (T) | **已滿足 (met)** | `product_ops/deployment/staging_lifecycle.py` 中 `REQUIRED_STAGING_OUTPUTS` 定義權威 output 映射；經 PR #1291 (`ODP-STAGING-IAC-CI-COLLECTION-001`，head `726065c3`, merge `025323f3`, CI success [run 34514563856](https://github.com/alfloop-dev/odayplus/actions/runs/34514563856/job/102996659589)) 解決 CI 收集後，`infra/terraform/tests/test_ephemeral_staging.py` 與 `tests/ops/test_ephemeral_staging_lifecycle.py` 完整進入 CI 並通過驗證。 |
 | **A4** | staging smoke proof 不得 impersonate dev smoke operator 必須使用 release-scoped least-privilege identity | 測試證明 (T) | **已滿足 (met)** | `tests/ops/test_ephemeral_staging_lifecycle.py` 中 `test_verify_ephemeral_staging_dev_identity_rejection` 與 `test_live_executor_rejects_arbitrary_operator_identity` 嚴格拒絕 dev smoke operator 及未宣告身分；exact-head CI success。 |
-| **A5** | API Web worker scheduler migration one-shot backup restore rollback rehearsal 均可由同一狀態機產生 secret-free receipts | 測試證明 (T)<br>契約能力 (R) | **已滿足 (met)** | `REHEARSAL_STAGE_NAMES` 涵蓋全部 9 項演練階段；`verify_ephemeral_staging` 產生 `secret_values_redacted=True` 之 `StagingLifecycleReceipt`；由 96 項 lifecycle 測試與本目錄 `sample-secret-free-verify-receipt.json`（明示 `dry_run=true`, `remote_state_verified=false`）證明能力具備。 |
+| **A5** | API Web worker scheduler migration one-shot backup restore rollback rehearsal 均可由同一狀態機產生 secret-free receipts | 測試證明 (T)<br>契約能力 (R) | **已滿足 (met)** | `REHEARSAL_STAGE_NAMES` 涵蓋全部 9 項演練階段；`verify_ephemeral_staging` 產生 `secret_values_redacted=True` 之 `StagingLifecycleReceipt`；由 96 項 lifecycle 測試（包含具名 `test_verify_ephemeral_staging_success`）、PR #1298 整合、真實 serializer dry-run 收據 `sample-secret-free-verify-receipt.json` 與來源中繼檔 `sample-secret-free-verify-receipt.provenance.json` 共同證明能力具備。 |
 | **A6** | 第三方來源維持 disabled 且 public egress default-deny | 程式交付 (D)<br>測試證明 (T) | **已滿足 (met)** | `infra/terraform/modules/ephemeral_staging/main.tf` 與 `tests/ops/test_ephemeral_staging_lifecycle.py` / `infra/terraform/tests/test_ephemeral_staging.py` 驗證 default-deny VPC egress 與 external sources disabled 設定；exact-head CI success。 |
 | **A7** | 失敗環境依 TTL 保留成功環境由 prod closeout 精確清理且 orphan cleanup fail closed | 測試證明 (T) | **已滿足 (met)** | `tests/ops/test_ephemeral_staging_lifecycle.py` 中 `test_cleanup_exact_label_matching_and_safety`、`test_create_failure_triggers_exact_cleanup`、`test_scan_orphans_detects_expired_and_unmanaged`、`ReleaseScopedAutoCleanupTests` 等全數通過；exact-head CI success。 |
 | **A8** | focused contract tests 必須在 staging 繞過 lifecycle 或使用 dev identity/靜態 service names 時失敗 | 測試證明 (T) | **已滿足 (met)** | `tests/ops/test_deploy_workflow_contract.py`、`tests/ops/test_workflow_expression_contexts.py` 與 `tests/ops/test_ephemeral_staging_lifecycle.py` 包含負向測試，確保繞過 lifecycle 或沿用 dev 靜態名稱時必然失敗；exact-head CI success。 |
@@ -91,7 +93,7 @@
 # 1. 排版與空白檢查
 git diff --check
 
-# 2. 驗收 JSON 完整性與判定校驗
+# 2. 驗收 JSON 完整性、收據序列化與 Provenance Sidecar 校驗
 python3 -c 'import json
 from pathlib import Path
 p = Path("docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001/")
@@ -100,5 +102,9 @@ x = json.loads((p / "acceptance-reconciliation.json").read_text())
 assert isinstance(x, dict) and x["summary"]["reconciliation_verdict"] == "acceptance_fully_reconciled"
 r = json.loads((p / "sample-secret-free-verify-receipt.json").read_text())
 assert r["metadata"]["dry_run"] is True and r["metadata"]["secret_values_redacted"] is True
+assert r["manifest_digest_prefix"] == "aaaaaaaaaaaaaaaa"
+assert len(r["resources"]) == 9
+prov = json.loads((p / "sample-secret-free-verify-receipt.provenance.json").read_text())
+assert prov["terminal_exit_code"] == 0 and prov["raw_output_reference"].endswith("sample-secret-free-verify-receipt.json")
 print("All verification assertions passed!")'
 ```

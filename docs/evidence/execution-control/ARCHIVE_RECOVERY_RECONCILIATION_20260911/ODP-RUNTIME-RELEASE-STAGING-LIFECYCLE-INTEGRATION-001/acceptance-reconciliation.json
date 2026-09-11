@@ -125,14 +125,15 @@
     },
     "a5_receipt_generation_capability_gap": {
       "description": "歷史盤點註記 PR #1041 未帶已產生的 staging receipt 檔案。",
-      "resolution": "A5 條款原文為「API Web worker scheduler migration one-shot backup restore rollback rehearsal 均可由同一狀態機產生 secret-free receipts」，要求狀態機具備收據生成能力。由 PR #1298 (ODP-RUNTIME-RELEASE-SINGLE-PATH-001) 整合之單一狀態機與 tests/ops/test_ephemeral_staging_lifecycle.py 96 項契約測試驗證，並由 sample-secret-free-verify-receipt.json 明確展示 dry_run=true, remote_state_verified=false, secret_values_redacted=true 之契約收據。本任務不要求亦不推斷 live 雲端部署。",
+      "resolution": "A5 條款原文為「API Web worker scheduler migration one-shot backup restore rollback rehearsal 均可由同一狀態機產生 secret-free receipts」，要求狀態機具備收據生成能力。由 PR #1298 (ODP-RUNTIME-RELEASE-SINGLE-PATH-001) 整合之單一狀態機、PR #1041 精確 head fada67756926 之 CI product 綠燈（涵蓋 tests/ops/test_ephemeral_staging_lifecycle.py 96 項契約測試，具名驗證 EphemeralStagingVerificationAndHoldTests 與 dry_run 收據生成）、以及 sample-secret-free-verify-receipt.json（保留狀態機 serializer 原始 dry-run 輸出，包含 9 階段資源、manifest_digest_prefix、預設 stage target 映射與 remediation_notes；其程式碼 SHA、呼叫命令、exit 0 退出碼及執行中繼資料另存於 sidecar sample-secret-free-verify-receipt.provenance.json）共同支持。本任務為 code/contract 任務，不要求亦不推斷 live 雲端部署。",
       "pinned_single_path_pr": {
         "pr_number": 1298,
         "url": "https://github.com/alfloop-dev/odayplus/pull/1298",
         "head_sha": "adfb5cb5ce05c5f4ddbdfc809d0dad828e6937de",
         "merge_sha": "50d932207bd57c23663f6121586a4de7149f70fd"
       },
-      "sample_receipt_ref": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001/sample-secret-free-verify-receipt.json"
+      "sample_receipt_ref": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001/sample-secret-free-verify-receipt.json",
+      "sample_receipt_provenance_ref": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001/sample-secret-free-verify-receipt.provenance.json"
     }
   },
   "readback_evidence_sources": {
@@ -143,7 +144,8 @@
     "pr_1291_ci_url": "https://github.com/alfloop-dev/odayplus/actions/runs/34514563856/job/102996659589",
     "pr_1298_head_sha": "adfb5cb5ce05c5f4ddbdfc809d0dad828e6937de",
     "pr_1298_merge_sha": "50d932207bd57c23663f6121586a4de7149f70fd",
-    "sample_verify_receipt": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001/sample-secret-free-verify-receipt.json"
+    "sample_verify_receipt": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001/sample-secret-free-verify-receipt.json",
+    "sample_verify_receipt_provenance": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001/sample-secret-free-verify-receipt.provenance.json"
   },
   "acceptance_criteria_reconciliation": [
     {
@@ -219,7 +221,7 @@
       ],
       "status": "met",
       "status_zh": "已滿足",
-      "evidence": "product_ops/deployment/staging_lifecycle.py::REHEARSAL_STAGE_NAMES 實作全部 9 項演練階段；verify_ephemeral_staging() 產生帶有 secret_values_redacted=True 與 identity_scope=release_scoped_least_privilege 之 StagingLifecycleReceipt；由 test_ephemeral_staging_lifecycle.py 96 項測試覆蓋，並由 sample-secret-free-verify-receipt.json（dry_run=true, remote_state_verified=false）證明收據生成能力；exact-head CI success。",
+      "evidence": "product_ops/deployment/staging_lifecycle.py::REHEARSAL_STAGE_NAMES 實作全部 9 項演練階段；verify_ephemeral_staging() 產生帶有 secret_values_redacted=True 與 identity_scope=release_scoped_least_privilege 之 StagingLifecycleReceipt；由 test_ephemeral_staging_lifecycle.py 96 項測試覆蓋（包含具名 test_verify_ephemeral_staging_success、test_verify_ephemeral_staging_stage_failure 等），並由 sample-secret-free-verify-receipt.json（真實 serializer 原始 dry_run 輸出，未手工竄改欄位）與 sample-secret-free-verify-receipt.provenance.json（保存呼叫命令、exit code 0、時間戳與原始程式碼 SHA）共同證明收據生成能力；exact-head CI success。",
       "boundary": "驗證狀態機具備產生 9 項演練階段之 secret-free 收據能力；不推斷已執行 live 雲端部署。"
     },
     {
