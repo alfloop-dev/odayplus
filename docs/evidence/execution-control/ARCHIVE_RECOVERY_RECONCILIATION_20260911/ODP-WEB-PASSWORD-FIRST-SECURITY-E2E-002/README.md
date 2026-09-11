@@ -4,7 +4,7 @@
 - 執行身分：`Antigravity7`（Supervisor Auto Worker 續辦）
 - 審查指派：`Codex2`
 - 交付分支：`task/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002-RECOVERY-20260911`
-- 基準 Commit：`b42b1f82321825ad2c34486418fe2aebab58ef0e`（已合併 `origin/dev` 基準 `b42b1f823218`）
+- 基準 Commit：`2889b55fb1fe76eb9265f49c009d7dfab7621c4b`（已合併 `origin/dev` 最新基準 `2889b55f`）
 - 產出日期：`2026-09-11`
 
 ---
@@ -15,14 +15,16 @@
 
 在歷史交付中，該任務由 PR [#1096](https://github.com/alfloop-dev/odayplus/pull/1096) 實作並於 2026-09-01 合併（Head SHA: `69422d71e8d5ac572ade58562c0aeca28d123648`，Merge SHA: `2377168c2cc07cd2470dd8f43de0486fe8d8fc08`）。
 
-依據 2026-09-11 派工交接契約與審查意見（P2-1 至 P2-5）重整與補強：
-1. **重用歷史收據與決策**：重用 PR #1096 原分層測試收據、`ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001`（PR [#1253](https://github.com/alfloop-dev/odayplus/pull/1253) / Merge `0af51e04`），以及 2026-09-08 人工決策 **D15**（`docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md`，確立「**帳密預設、Google OIDC 不啟用**」）。
+依據 2026-09-11 派工交接契約與審查意見（P2-1 至 P2-2）完成全面修正與補強：
+1. **重用歷史收據與決策**：重用 PR #1096 原分層測試收據、`ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001`（PR [#1253](https://github.com/alfloop-dev/odayplus/pull/1253) / Merge `0af51e04`），以及 2026-09-08 人工決策 **D15**（`docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md` §2.3，確立「**帳密預設、Google OIDC 不啟用**」）。
 2. **A3 條款邊界界定**：原 A3 條款「完整 OIDC 設定時可選登入不回歸」為軟體回歸矩陣（Regression Matrix）層級驗收，已由既有 vitest 與 Python E2E 完整覆蓋，不得擅自升格為真實外部 GCP provider 啟用要求。
-3. **真實 Pinned Evidence（修訂 P2-2）**：嚴格依據真實 pinned 檔案與具名測試。A4 由真實存在的 `test_cross_tenant_read_is_denied_and_audited`（`tests/e2e/test_password_first_security_e2e.py:271-301`）支持跨 tenant 403 與 `operator.tenant_isolation` deny audit event，不引述未包含之測試名稱。
-4. **安全衛生與測試綁定（修訂 P2-3）**：A5 正式綁定專門機敏資料遮蔽測試 `test_receipt_and_rollout_checklist_are_present_and_redacted`（L303–332）、收據 frontmatter `secret_values_redacted: true`、§3 規範及 head commit trailer `Verified: python3 delivery_toolchain/security/secret_scan.py`，不將通用 CI checks（如 boundary/change-scope）當作無洩漏證明。
-5. **區分已證明事實與過程約束（修訂 P2-1）**：A6 拆分為已驗證之繁體中文 PR 交付事實（VERIFIED），以及歷史執行次數之過程約束（`process_constraint_unverifiable`）。該 process unknown 反映客觀事實，不代表違規亦不阻塞驗收，不以重跑測試補證歷史次數。
-6. **精確依賴與閉環分析（修訂 P2-4）**：詳列驗收條款至既有任務之逐條映射、精確依賴 Before/After（本任務 `depends_on: []` 維持不變；下游 `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 維持 `blocked` 並依賴本任務；`HUMAN-GCP-WEB-OAUTH-CLIENTS-001` 維持 `todo` 待命），確認無迴圈（DAG 有效）並嚴格保留 Dev rollout gate。
-7. **交付範圍收斂（修訂 P2-5）**：所有交付物嚴格收斂於專屬目錄 `docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002/`，不修改全域治理清單（如 `code-boundary-inventory.csv`）或產品程式碼。
+3. **真實 Pinned Evidence**：嚴格依據真實 pinned 檔案與具名測試。A4 由真實存在的 `test_cross_tenant_read_is_denied_and_audited`（`tests/e2e/test_password_first_security_e2e.py:271-301`）支持跨 tenant 403 與 `operator.tenant_isolation` deny audit event。
+4. **安全衛生與測試綁定**：A5 正式綁定專門機敏資料遮蔽測試 `test_receipt_and_rollout_checklist_are_present_and_redacted`（L303–332）、收據 frontmatter `secret_values_redacted: true`、§3 規範及 head commit trailer `Verified: python3 delivery_toolchain/security/secret_scan.py`。
+5. **區分已證明事實與過程約束**：A6 拆分為已驗證之繁體中文 PR 交付事實（VERIFIED），以及歷史執行次數之過程約束（`process_constraint_unverifiable`）。該 process unknown 反映客觀事實，不代表違規亦不阻塞驗收，不以重跑測試補證歷史次數。
+6. **修正上游 PR 座標（修訂 P2-2）**：更正上游 PR 錯配，`ODP-WEB-LOGIN-THROTTLE-REMEDIATION-001` 為 PR #1085（merge `595e7501`）、`ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001` 為 PR #1074（merge `84008100`）、`ODP-WEB-LOCAL-IDENTITY-CORE-001` 為 PR #1073（merge `47c876b5`）。
+7. **完整依賴映射與閉環分析（修訂 P2-2）**：保存本任務、`ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001`（10 項依賴 intact）及 `HUMAN-GCP-WEB-OAUTH-CLIENTS-001` 的完整 `depends_on` before/after、canonical 採集投影與無迴圈（DAG 有效）驗證，嚴格保留 Dev live rollout gate。
+8. **可稽核原始命令收據（修訂 P2-1）**：保存 Reviewer Codex2 原始唯讀採集收據（含 argv、cwd、UTC、duration、真實 exit_code、stdout/stderr）以及 PR1253 具名 `collection_receipts`（R31、R07、R30、R32、R01、R03、R27），無法追回欄位如實標註 unknown/null，不虛構退出碼。
+9. **交付範圍收斂**：所有交付物嚴格收斂於專屬目錄 `docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002/` 內兩份文件。
 
 ---
 
@@ -39,16 +41,16 @@
 
 ---
 
-## 3. 驗收條款與既有任務 1-to-1 映射
+## 3. 驗收條款與既有任務 1-to-1 映射及上游 PR 座標
 
-| 驗收條款 | 條款核心要求 | 本任務交付層級 | 相關/承接之既有任務 | 狀態與關係 |
-|---|---|---|---|---|
-| **A1** | 帳密登入與節流路由 | 程式與測試 (vitest + pytest) | `ODP-WEB-LOGIN-THROTTLE-REMEDIATION-001` | 上游已合併 (PR #1093, done) |
-| **A2** | 無 OIDC 預檢與 Fail-Closed | 部署與測試 (pytest + vitest) | `ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001` | 上游已合併 (PR #1080, done) |
-| **A3** | OIDC 設定時密碼登入不回歸 | 軟體回歸矩陣 (pytest + vitest) | `ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001` / `HUMAN-GCP-WEB-OAUTH-CLIENTS-001` | PR #1253 已合併；OAuth 任務依 D15 保持 standby |
-| **A4** | RBAC 租戶隔離審計事件 | 整合測試 (pytest) | `ODP-WEB-LOCAL-IDENTITY-CORE-001` | 上游已合併 (PR #1072, done) |
-| **A5** | 無機敏值洩漏於日誌與收據 | 安全測試與收據 (pytest + regex) | `ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002` | 本任務由收據與專門測試滿足 |
-| **A6** | 分層驗證收據與繁中 PR | 收據記錄與 PR 格式 | `ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002` | PR #1096 格式滿足；次數為 process unknown |
+| 驗收條款 | 條款核心要求 | 本任務交付層級 | 相關/承接之既有任務 | 正確上游 PR 座標與狀態 | 來源收據 |
+|---|---|---|---|---|---|
+| **A1** | 帳密登入與節流路由 | 程式與測試 (vitest + pytest) | `ODP-WEB-LOGIN-THROTTLE-REMEDIATION-001` | PR #1085 / merge `595e7501e73ff4cbb5894c27e199e02a06c2a509` (mergedAt: 2026-09-01T06:37:24Z, done) | RC-11 (R30) / RC-07 |
+| **A2** | 無 OIDC 預檢與 Fail-Closed | 部署與測試 (pytest + vitest) | `ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001` | PR #1074 / merge `840081001084ad9586421de908530a41f3a17333` (mergedAt: 2026-08-30T11:52:38Z, done) | RC-12 (R32) / RC-07 |
+| **A3** | OIDC 設定時密碼登入不回歸 | 軟體回歸矩陣 (pytest + vitest) | `ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001` / `HUMAN-GCP-WEB-OAUTH-CLIENTS-001` | PR #1253 / merge `0af51e04ea5cb6a0a5266b84bc8f7a606d3cb993` (mergedAt: 2026-09-08T19:07:27Z, done)；OAuth 任務依 D15 保持 standby | RC-06 / D15 |
+| **A4** | RBAC 租戶隔離審計事件 | 整合測試 (pytest) | `ODP-WEB-LOCAL-IDENTITY-CORE-001` | PR #1073 / merge `47c876b564a9a62cdab6421288e4507333300889` (mergedAt: 2026-08-30T10:41:57Z, done) | RC-07 |
+| **A5** | 無機敏值洩漏於日誌與收據 | 安全測試與收據 (pytest + regex) | `ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002` | PR #1096 / merge `2377168c2cc07cd2470dd8f43de0486fe8d8fc08` (mergedAt: 2026-09-01T09:10:24Z, done) | RC-09 (R31) / RC-10 (R07) |
+| **A6** | 分層驗證收據與繁中 PR | 收據記錄與 PR 格式 | `ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002` | PR #1096 格式滿足 (VERIFIED)；執行次數為 process unknown | RC-09 (R31) / RC-16 |
 
 ---
 
@@ -60,62 +62,89 @@
 [ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002] (depends_on: [])
        │
        ▼
-[ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001] (status: blocked, depends_on: [..., ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002])
+[ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001] (status: blocked, depends_on: [10 items including ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002])
 
 [HUMAN-GCP-WEB-OAUTH-CLIENTS-001] (status: todo, depends_on: [], standby under D15)
 ```
 
 1. **本任務 (`ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002`)**：
+   - 狀態：`review`（Owner: `Antigravity7`，Reviewer: `Codex2`）
+   - 分支：`task/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002-RECOVERY-20260911`
    - `depends_on` (Before): `[]`
    - `depends_on` (After): `[]`
    - 差異：`unchanged`
 
 2. **下游任務 (`ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001`)**：
    - 狀態 (Before): `blocked`
-   - 狀態 (After): `blocked`
-   - 差異：`unchanged`。明確保留 Dev 環境之 live rollout gate，本歷史驗收續辦不越權解鎖或變更下游部署狀態。
+   - 狀態 (After): `blocked`（Owner: `Antigravity2`，Reviewer: `Codex2`，Review Gate SHA: `045575b0d73bfef29b337fabb7c07408bbcbe670`）
+   - `depends_on` (Before): 10 項依賴完整清單：
+     1. `ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001`
+     2. `ODP-RUNTIME-RELEASE-SINGLE-PATH-001`
+     3. `ODP-GITHUB-GCP-ENV-BOOTSTRAP-001`
+     4. `DPF-EMGI-LIVE-ROLLOUT-001`
+     5. `ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001`
+     6. `ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002`
+     7. `ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001`
+     8. `ODP-DEV-STAGED-GATE-RECONCILIATION-001`
+     9. `ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002`
+     10. `ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001`
+   - `depends_on` (After): 10 項依賴完整清單（同上）
+   - 差異：`unchanged (10 items intact)`。明確保留 Dev 環境之 live rollout gate，本歷史驗收續辦不越權解鎖或變更下游部署狀態。
 
 3. **相關待命任務 (`HUMAN-GCP-WEB-OAUTH-CLIENTS-001`)**：
    - 狀態 (Before): `todo`
-   - 狀態 (After): `todo`
-   - `depends_on`: `[]`（依 D15 決策保持待命狀態，僅在未來明確要求啟用外部 Google OAuth 時啟動）。
+   - 狀態 (After): `todo`（Owner: `Human/Ops`，Reviewer: `Codex`）
+   - `depends_on` (Before): `[]`
+   - `depends_on` (After): `[]`
+   - 差異：`unchanged`（依 D15 決策保持待命狀態，僅在未來明確要求啟用外部 Google OAuth 時啟動）。
 
 ### 4.2 依賴圖無迴圈驗證 (Cycle Check)
-- 依賴關係為單向有向無環圖（DAG）：`ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002` → `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001`。
-- 無任何反向或循環依賴，`has_cycle: false`。
+- 採集時間：`2026-09-11T12:15:56Z`（Canonical `ai-status.json` via jq query receipt RC-08）。
+- 圖結構：`ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002` → `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001`。
+- 無任何反向或循環依賴，`has_cycle: false`，`acyclic_dag_verified`。
 
 ---
 
-## 5. Exact-Head CI、審查核准與本次命令觀察收據
+## 5. Exact-Head CI、審查核准與完整原始命令收據
 
 ### 5.1 歷史 Exact-Head CI 審計 (Head SHA: `69422d71e8d5ac572ade58562c0aeca28d123648`)
-- `product` (completed at 2026-09-01T08:49:57Z) — **success**
-- `product-e2e-gate` (completed at 2026-09-01T08:38:11Z) — **success**
-- `performance-gate` (completed at 2026-09-01T08:33:27Z) — **success**
-- `boundary` (completed at 2026-09-01T08:32:22Z) — **success**
-- `classify` (completed at 2026-09-01T08:32:20Z) — **success**
-- `change-scope` (completed at 2026-09-01T08:32:19Z) — **success**
-- `orchestrator` (completed at 2026-09-01T08:34:29Z) — **success**
+- `product` (completed at 2026-09-01T08:49:57Z) — **success** (RC-04)
+- `product-e2e-gate` (completed at 2026-09-01T08:38:11Z) — **success** (RC-04)
+- `performance-gate` (completed at 2026-09-01T08:33:27Z) — **success** (RC-04)
+- `boundary` (completed at 2026-09-01T08:32:22Z) — **success** (RC-04)
+- `classify` (completed at 2026-09-01T08:32:20Z) — **success** (RC-04)
+- `change-scope` (completed at 2026-09-01T08:32:19Z) — **success** (RC-04)
+- `orchestrator` (completed at 2026-09-01T08:34:29Z) — **success** (RC-04)
 - *註*：CI Job 內部個別步驟之退出碼在歷史彙整收據中記錄為整體 `success`，個別步驟 exit code 保留為 `unknown_in_rollup_receipt`。
 
 ### 5.2 歷史審查核准 (Task Review Gate)
 - Status Context: `task-review-gate`
 - State: `success`
 - Description: `Approved by assigned reviewer Codex2`
-- Updated At: `2026-09-01T08:45:28Z`
+- Updated At: `2026-09-01T08:45:28Z` (RC-05)
 - Approver: `Codex2`（符合獨立評審規範，非 Task Owner `Codex`）
+- 審計說明：歷史核准已由 GitHub statuses 歷史確認；後續 recovery 閘道狀態變更不抹除歷史 approval 事實。
 
-### 5.3 本次觀察與驗證原始命令收據
+### 5.3 原始命令收據清冊 (可稽核收據 RC-01 ~ RC-16)
 
-| 命令 | 執行時間 (UTC) | 執行者 | 退出碼 | 結果摘要 / 輸出參照 |
-|---|---|---|---|---|
-| `git diff --check` | 2026-09-11T12:05:32Z | Antigravity7 | `0` | Clean diff formatting across all changed files |
-| `python3 delivery_toolchain/governance/check_code_boundaries.py` | 2026-09-11T12:05:06Z | Antigravity7 | `0` | Code boundary checks passed for 1157 files |
-| `python3 delivery_toolchain/git/check_task_delivery_identity.py --repo . --task-id ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 --base origin/dev --head HEAD --expected-branch task/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002-RECOVERY-20260911 --actual-branch task/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002-RECOVERY-20260911` | 2026-09-11T12:05:08Z | Antigravity7 | `0` | Delivery range identity verified (no extraneous commits) |
-| `uv run pytest tests/tooling/test_dependency_audit_boundary.py` | 2026-09-11T11:50:40Z | Antigravity7 | `0` | 69 passed in 1.75s |
-| `gh pr view 1096 --json title,body,state,mergedAt,headRefOid,mergeCommit` | 2026-09-07T15:14:37Z | Claude / Orchestrator | `0` | Verified PR #1096 metadata and Traditional Chinese content |
-| `gh api repos/alfloop-dev/odayplus/commits/69422d71e8d5ac572ade58562c0aeca28d123648/check-runs` | 2026-09-07T15:14:37Z | Claude / Orchestrator | `0` | 7/7 success checks at exact head |
-| `gh api repos/alfloop-dev/odayplus/commits/69422d71e8d5ac572ade58562c0aeca28d123648/status` | 2026-09-07T15:14:37Z | Claude / Orchestrator | `0` | task-review-gate: Codex2 approved at 2026-09-01T08:45:28Z |
+| 收據 ID | 目的 | 命令 / 參數 | 執行時間 (UTC) | 耗時 (s) | 退出碼 | 來源與驗證結論 |
+|---|---|---|---|---|---|---|
+| **RC-01** | Reviewer 範圍 diff 檢查 | `git diff --check b42b1f82...0ffddb44` | 2026-09-11T12:15:53Z | 0.0116 | `0` | Codex2 review 原始收據；clean diff formatting |
+| **RC-02** | Reviewer 工作樹狀態 | `git status --porcelain` | 2026-09-11T12:15:53Z | 0.0427 | `0` | Codex2 review 原始收據；worktree clean |
+| **RC-03** | PR #1311 CI 狀態查核 | `gh pr view 1311 --json ...` | 2026-09-11T12:15:53Z | 0.7169 | `0` | Codex2 review 原始收據；change-scope/boundary/classify/orchestrator/product SUCCESS |
+| **RC-04** | PR #1096 歷史 exact-head CI | `gh api repos/alfloop-dev/odayplus/commits/69422d71.../check-runs` | 2026-09-11T12:15:54Z | 0.7176 | `0` | Codex2 review 原始收據；7/7 success checks |
+| **RC-05** | PR #1096 歷史審查核准狀態 | `gh api repos/alfloop-dev/odayplus/commits/69422d71.../statuses` | 2026-09-11T12:15:54Z | 0.5265 | `0` | Codex2 review 原始收據；task-review-gate: Codex2 approved at 2026-09-01T08:45:28Z |
+| **RC-06** | PR #1253 決策矩陣交付查核 | `gh pr view 1253 --json ...` | 2026-09-11T12:15:55Z | 0.6602 | `0` | Codex2 review 原始收據；PR 1253 merge 0af51e04, mergedAt 2026-09-08T19:07:27Z |
+| **RC-07** | 上游 PR merge commits 檢查 | `git show --no-patch --format=fuller 595e7501 84008100 47c876b5` | 2026-09-11T12:15:56Z | 0.0207 | `0` | Codex2 review 原始收據；PR 1085, PR 1074, PR 1073 merge details confirmed |
+| **RC-08** | 看板狀態與依賴投影查詢 | `jq .tasks[] ... ai-status.json` | 2026-09-11T12:15:56Z | 0.0365 | `0` | Codex2 review 原始收據；完整 10 項依賴與 standby task 狀態確認 |
+| **RC-09** | 復用 R31: PR #1096 狀態 | `gh pr view 1096 --json ...` | 2026-09-08T17:14:27Z | null | `0` | `auth-mode-evidence-matrix.json` R31 (PR #1253)；head 69422d71, merge 2377168c |
+| **RC-10** | 復用 R07: PR #1096 merge 父母 | `git log -1 --format=%H %P %cI %s 2377168c...` | 2026-09-08T17:14:24Z | null | `0` | `auth-mode-evidence-matrix.json` R07 (PR #1253)；merge commit parents 35a28741 69422d71 |
+| **RC-11** | 復用 R30: PR #1085 狀態 | `gh pr view 1085 --json ...` | 2026-09-08T17:14:27Z | null | `0` | `auth-mode-evidence-matrix.json` R30 (PR #1253)；head 94e93af9, merge 595e7501 |
+| **RC-12** | 復用 R32: PR #1074 狀態 | `gh pr view 1074 --json ...` | 2026-09-08T17:14:28Z | null | `0` | `auth-mode-evidence-matrix.json` R32 (PR #1253)；head 6e810a9f, merge 84008100 |
+| **RC-13** | 復用 R01: 歷史 composition base | `git rev-parse --verify d0c81635df8e^{commit}` | 2026-09-08T17:14:24Z | null | `0` | `auth-mode-evidence-matrix.json` R01 (PR #1253)；d0c81635df8e842f7910d40873b3886d4237cee8 |
+| **RC-14** | 復用 R03: 歷史 composition merge | `git rev-parse --verify f3095a0e^{commit}` | 2026-09-08T17:14:24Z | null | `0` | `auth-mode-evidence-matrix.json` R03 (PR #1253)；f3095a0ee3ca3dde63d98f35ae8cfedf090fd529 |
+| **RC-15** | 復用 R27: 歷史看板查無此任務 | `ai-status.sh show ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002` | 2026-09-08T17:14:25Z | null | `1` | `auth-mode-evidence-matrix.json` R27 (PR #1253)；紀錄 archive 遺失之客觀歷史事實 |
+| **RC-16** | 歷史不可變收據聲明記錄 | `cat docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md` | 2026-09-01T00:00:00Z | null | null | 歷史 PR #1096 交付收據；exit_code 標註 unknown_in_rollup_receipt，7 層驗證 pass |
 
 ---
 
