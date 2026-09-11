@@ -4,13 +4,15 @@
   "original_task_title": "發布 exact-digest data platform 並完成 EMGI sources-off runtime",
   "task_class": "documentation",
   "phase": "History Recovery — executable acceptance reconciliation",
-  "owner": "Antigravity7",
+  "owner": "Antigravity3",
   "reviewer": "Codex",
-  "recorded_at": "2026-09-11T12:08:00Z",
+  "recorded_at": "2026-09-11T12:35:00Z",
   "reconciliation_target": {
     "repository": "alfloop-dev/odayplus",
     "continuation_branch": "task/DPF-EMGI-LIVE-ROLLOUT-001-RECOVERY-20260911",
-    "target_dev_baseline": "2889b55fb0800b73e51f885e3a35fef226d97c0f",
+    "target_dev_baseline": "2889b55fb1febe95c9f8650f24ead18e86015cca",
+    "pre_fix_parent_sha": "294b67e7b040be26e71cf416df65cbd9f3bf2d8c",
+    "reviewed_head_sha": "40638367bca061d66c474af8fdba9e2a3d51ed0d",
     "canonical_status_root": "/home/lupin/odayplus"
   },
   "historical_cross_repo_delivery": {
@@ -82,9 +84,33 @@
       "description": "Approved by assigned reviewer Codex2"
     }
   },
+  "bounded_historical_task_comparison": {
+    "scope_rule": "歷史完成之 code/handback 任務若明確宣告 runtime_deployment=false，其交付無法替代供應本任務之 live rollback receipt",
+    "tasks_evaluated": [
+      {
+        "task_id": "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+        "pr_number": 1135,
+        "merge_commit": "dd7013df830cdabe33d1b09e093dd728318d50f5",
+        "terminal_status": "done",
+        "runtime_deployment": false,
+        "role": "定義並實作首次 dev release 的 fail-closed recovery admission 規則與程式碼",
+        "cannot_supply_reason": "任務驗收明確為 code_or_docs，不含 live cluster runtime 部署或回滾執行收據。"
+      },
+      {
+        "task_id": "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
+        "pr_number": 1050,
+        "merge_commit": "d41b9328137cef1eceeb5990e8e0bb5963414682",
+        "terminal_status": "done",
+        "runtime_deployment": false,
+        "role": "Release rollback 與 masked snapshot 之合約與交接規格",
+        "cannot_supply_reason": "任務驗收明確為 code_or_docs，不含 data-platform runtime 回滾驗證收據。"
+      }
+    ]
+  },
   "readback_evidence_sources": {
     "observed_at": "2026-09-11T12:08:00Z",
     "collector": "Antigravity7",
+    "re_verified_by": "Antigravity3",
     "target_repo": "alfloop-dev/oday-data-platform",
     "published_image_binding": {
       "candidate_sha": "571fd34e588b64942ea6541fce34de7e7e039335",
@@ -142,10 +168,10 @@
       "sbom_attestation_verified": true
     },
     "rollback_mechanism_and_state_analysis": {
-      "exact_digest_rollback_occurred": false,
+      "inspected_production_deploy_run": "Run 32855155057",
+      "production_deploy_run_analysis": "Workflow .github/workflows/emgi-runtime-deploy.yml rollback step carries condition if: failure(). In production run 32855155057, deployment succeeded cleanly (outcome: DEPLOYED, revision 4); hence rollback was skipped in that run.",
+      "exact_digest_rollback_occurred_in_inspected_run": false,
       "rollback_receipt_for_exact_digest": null,
-      "workflow_design": ".github/workflows/emgi-runtime-deploy.yml step \"Roll back on failure\" executes only on deploy failure (if: failure()); \"Upload rollout receipts\" uploads deploy-receipt.json or rollback-receipt.json with if-no-files-found: ignore.",
-      "historical_deploy_outcome": "Run 32855155057 succeeded completely (outcome: DEPLOYED, revision 4); rollback step was never triggered in production for release digest sha256:4f603e3a...",
       "test_run_investigation": {
         "workflow_run_url": "https://github.com/alfloop-dev/oday-data-platform/actions/runs/32848521116",
         "terminal_conclusion": "failure",
@@ -315,7 +341,7 @@
       ],
       "status": "unmet_per_own_receipt",
       "status_zh": "未滿足（缺少 exact-digest 之 rollback receipt，且歷史測試回滾之 restoration 記錄為 failure / fully_restored=false）",
-      "historical_evidence": "部署收據齊全：deploy-receipt.json 完整綁定 exact digest sha256:4f603e3a...，outcome 為 DEPLOYED (Workflow Run 32855155057, artifact 9566074439, oday-emgi-webserver & daemon revision 4)。但回滾收據缺失：rollout-binding.json 中 rollback_receipt 為 null，live-rollout-receipt.json 記 missing_receipts=[\"rollback_receipt\"]。回滾工作流程 emgi-runtime-deploy.yml 僅在部署失敗時觸發 (if: failure())，故正式發布從未產出該 release 的回滾收據；而中間除錯測試 run 32848521116 (artifact 9563435760, candidate 4d694e3b, digest sha256:0c97ba05...) 之 rollback-receipt.json 記載 fully_restored=false 且終態 conclusion=failure。不同 digest 加上失敗的 restoration 無法閉合原 A5 條款。",
+      "historical_evidence": "部署收據齊全：deploy-receipt.json 完整綁定 exact digest sha256:4f603e3a...，outcome 為 DEPLOYED (Workflow Run 32855155057, artifact 9566074439, oday-emgi-webserver & daemon revision 4)。但回滾收據缺失：rollout-binding.json 中 rollback_receipt 為 null，live-rollout-receipt.json 記 missing_receipts=[\"rollback_receipt\"]。回滾工作流程 emgi-runtime-deploy.yml 僅在部署失敗時觸發 (if: failure())，故正式發布 run 32855155057 成功部署時未產出該 release 的回滾收據；而中間除錯測試 run 32848521116 (artifact 9563435760, candidate 4d694e3b, digest sha256:0c97ba05...) 之 rollback-receipt.json 記載 fully_restored=false 且終態 conclusion=failure。不同 digest 加上失敗的 restoration 無法閉合原 A5 條款。",
       "boundary": "保持事實真實性，不偽造不存在的回滾收據；A5 維持未滿足 (unmet_per_own_receipt)，由下游補救任務或人類治理處置承接。"
     }
   ],
@@ -323,28 +349,50 @@
     "A1_image_publish_and_sbom": {
       "status": "met_by_receipt",
       "disposition_scope_fulfillment": "PR #62 交付之 published image 與 SBOM / Cosign 簽章收據完整閉合。",
-      "followup_responsibility_task": "none (completed in historical delivery)"
+      "followup_responsibility_task": "none (completed in historical delivery PR #62)"
     },
     "A2_environment_bootstrap_and_secrets": {
       "status": "met_by_receipt",
       "disposition_scope_fulfillment": "environment-bootstrap-receipt.json 證明環境初始化與 Workload Identity 邊界完備。",
-      "followup_responsibility_task": "none (completed in historical delivery)"
+      "followup_responsibility_task": "none (completed in historical delivery PR #62)"
     },
     "A3_sources_off_16": {
       "status": "met_by_receipt",
       "disposition_scope_fulfillment": "sources-off-readback.json 證明 16/16 外部來源維持 disabled 與 fail-closed。",
-      "followup_responsibility_task": "none (completed in historical delivery)"
+      "followup_responsibility_task": "none (completed in historical delivery PR #62)"
     },
     "A4_default_deny_public_egress": {
       "status": "met_by_receipt",
       "disposition_scope_fulfillment": "egress-posture-audit.json 證明 NetworkPolicy public egress default-deny 生效。",
-      "followup_responsibility_task": "none (completed in historical delivery)"
+      "followup_responsibility_task": "none (completed in historical delivery PR #62)"
     },
     "A5_deploy_and_rollback_receipts": {
       "status": "unmet_per_own_receipt",
-      "disposition_scope_fulfillment": "部署部分已滿足（deploy-receipt.json 綁定 exact digest sha256:4f603e3a...，revision 4）；回滾部分未滿足（缺 exact-digest rollback receipt，且歷史測試 run 32848521116 fully_restored=false）。",
-      "followup_responsibility_task": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 (下游客戶端/修補任務) 與 DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001 (下游 release snapshot 任務)",
-      "minimal_required_input_and_next_steps": "1. 於受控測試/Canary 環境中針對目標鏡像執行真實回滾還原驗證，產出 fully_restored=true 且可讀取 Deployment 之 rollback-receipt.json；或 2. 由 Human/Ops 依專案治理路徑裁決單向發布部署之豁免／修訂政策。本任務不自簽 AI waiver。"
+      "responsibility_retention_rule": "A5 責任保留於本任務 DPF-EMGI-LIVE-ROLLOUT-001。既有下游任務均尚未完成或承接 exact-digest 回滾收據，故不得視為已轉移或已解除。",
+      "followup_responsibility_evaluation": {
+        "candidate_downstream_task_1": {
+          "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "owner": "Antigravity2",
+          "status": "blocked",
+          "canonical_dependencies_count": 10,
+          "evaluation": "該任務為全域 dev live rollout 修補任務，目前處於 blocked 狀態，且其驗收條款尚未包含 exact-digest sha256:4f603e3a... 之回滾收據。無法直接解除本任務 A5。"
+        },
+        "candidate_downstream_task_2": {
+          "task_id": "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+          "owner": "Antigravity",
+          "status": "blocked",
+          "canonical_dependencies_count": 2,
+          "evaluation": "該任務為 release snapshot 生成與 GCS 驗證任務，不執行 data-platform runtime 回滾驗證。無法直接解除本任務 A5。"
+        }
+      },
+      "scope_transfer_status": "pending_formal_authorization (not effective)",
+      "minimal_required_inputs_and_next_steps": {
+        "candidate_sha": "571fd34e588b64942ea6541fce34de7e7e039335",
+        "image_digest": "sha256:4f603e3acff7a35876fd59593e6725ee0b00226e546b0694eb5e80a12b097e9e",
+        "execution_lane": "受控測試／Canary 集群環境，執行真實且成功的回滾還原驗證，產出 fully_restored=true 且 Deployment 正常就緒的 rollback-receipt.json；或",
+        "governance_lane": "由 Human/Ops 依 ODP_HUMAN_DECISIONS_EXECUTION_PLAN 正式裁決前向部署（forward-only）政策與條款修訂。AI 代理人嚴禁自簽豁免。",
+        "human_decision_disposition": "若無可授權執行路徑，本任務以保留 A5 缺口之狀態提交審查，最終由人類以 blocked-closeout 正式收尾。"
+      }
     }
   },
   "dependency_graph_and_cycle_verification": {
@@ -369,54 +417,95 @@
     "downstream_analysis": {
       "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001": {
         "status_on_canonical_board": "blocked",
+        "owner": "Antigravity2",
+        "reviewer": "Codex2",
         "relationship": "downstream remediation task for live rollout",
-        "depends_on": [
+        "canonical_depends_on": [
+          "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+          "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+          "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
           "DPF-EMGI-LIVE-ROLLOUT-001",
-          "ODP-DEV-STAGED-GATE-RECONCILIATION-001"
+          "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+          "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+          "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+          "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+          "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+          "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
         ],
         "gap_ownership_note": "Currently blocked on lease/deploy authority; does not currently contain completed rollback receipt for DPF image sha256:4f603e3a..."
       },
       "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001": {
         "status_on_canonical_board": "blocked",
+        "owner": "Antigravity",
+        "reviewer": "Codex2",
         "relationship": "downstream release snapshot lane",
-        "depends_on": [
-          "DPF-EMGI-LIVE-ROLLOUT-001"
+        "canonical_depends_on": [
+          "DPF-EMGI-LIVE-ROLLOUT-001",
+          "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001"
         ],
         "gap_ownership_note": "Currently blocked waiting for Human/Ops on GCP auth / GCS 0-object snapshot disposition; does not execute data-platform runtime rollback verification"
       }
     },
     "cycle_verification": {
-      "nodes_evaluated": [
+      "subgraph_nodes": [
         {
           "task_id": "DPF-EMGI-LIVE-ROLLOUT-001",
           "location": "live_board",
           "status": "in_progress",
-          "canonical_depends_on": []
+          "depends_on": []
         },
         {
           "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
           "location": "live_board",
           "status": "blocked",
-          "canonical_depends_on": [
+          "depends_on": [
+            "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+            "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+            "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
             "DPF-EMGI-LIVE-ROLLOUT-001",
-            "ODP-DEV-STAGED-GATE-RECONCILIATION-001"
+            "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+            "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+            "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+            "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+            "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+            "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
           ]
         },
         {
           "task_id": "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
           "location": "live_board",
           "status": "blocked",
-          "canonical_depends_on": [
-            "DPF-EMGI-LIVE-ROLLOUT-001"
+          "depends_on": [
+            "DPF-EMGI-LIVE-ROLLOUT-001",
+            "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001"
           ]
+        },
+        {
+          "task_id": "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
+          "location": "archive",
+          "status": "done",
+          "depends_on": []
+        },
+        {
+          "task_id": "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+          "location": "archive",
+          "status": "done",
+          "depends_on": []
+        },
+        {
+          "task_id": "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+          "location": "archive",
+          "status": "done",
+          "depends_on": []
         },
         {
           "task_id": "ODP-RELEASE-MANIFEST-GATES-001",
           "location": "archive",
-          "terminal_status": "done"
+          "status": "done",
+          "depends_on": []
         }
       ],
-      "canonical_directed_edges": [
+      "directed_edges": [
         [
           "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
           "DPF-EMGI-LIVE-ROLLOUT-001"
@@ -424,6 +513,18 @@
         [
           "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
           "DPF-EMGI-LIVE-ROLLOUT-001"
+        ],
+        [
+          "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+          "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001"
+        ],
+        [
+          "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001"
+        ],
+        [
+          "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "ODP-DEV-STAGED-GATE-RECONCILIATION-001"
         ]
       ],
       "cycle_detected": false,
@@ -441,7 +542,7 @@
     "criteria_partially_met": 0,
     "criteria_unmet": 1,
     "a5_rollback_receipt_gap_resolved": false,
-    "rollback_state_clarification": "Release deploy (run 32855155057) succeeded cleanly at revision 4 with no rollback executed; test run 32848521116 evaluated different candidate 4d694e3b / digest sha256:0c97ba05... and reported fully_restored=false. A5 remains unmet.",
+    "rollback_state_clarification": "Production deploy (run 32855155057) succeeded cleanly at revision 4 with no rollback executed; test run 32848521116 evaluated different candidate 4d694e3b / digest sha256:0c97ba05... and reported fully_restored=false. A5 remains unmet.",
     "human_disposition_required": true,
     "historical_actors_retained": true,
     "cross_repo_pr_reconciled": true,
