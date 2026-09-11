@@ -12,24 +12,34 @@
     {
       "name": "original-evidence.json",
       "path": "support/handoffs/archive-recovery-dispatch-20260911/ODP-ROLE-PROVIDER-CODEX-REVIEW-001/original-evidence.json",
-      "sha256": "f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715",
+      "sha256": "6647bb0ac04649ebc86e21e5213cfb2765a7cd065aa163a1fdbd9bf0bd8dcb30",
+      "embedded_inventory_sha256": "f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715",
       "kind": "canonical_recovery_snapshot"
     },
     {
       "name": "role-provider-live-readback.json",
       "path": "support/handoffs/max-dispatch-20260910/archive-evidence/role-provider-live-readback.json",
-      "sha256": "54110ea0cef280a822484067185076b35600accf58dbb24d09adc6c64bbb6cd8",
+      "sha256": "e02422dc599153337ce108442899cdd27e96dfc29dd102850e80d49b85437aa4",
+      "embedded_loaded_config_sha256": "54110ea0cef280a822484067185076b35600accf58dbb24d09adc6c64bbb6cd8",
       "kind": "runtime_readback_snapshot"
     },
     {
       "name": "command-receipts.json",
       "path": "support/handoffs/max-dispatch-20260910/archive-evidence/command-receipts.json",
+      "sha256": "5ba462961259aa8475bc289860fa6294707cec6d0228a1d937f376860f67eb67",
       "kind": "collection_command_receipts"
     },
     {
       "name": "role-provider-acceptance-plan.md",
       "path": "support/handoffs/max-dispatch-20260910/archive-evidence/role-provider-acceptance-plan.md",
+      "sha256": "c60d7c1d2a11abc3b1c381b2fd1ca83ac230861e42daf591c964ea973032a4c7",
       "kind": "acceptance_plan_guideline"
+    },
+    {
+      "name": "single-path-workflow-and-pr.json",
+      "path": "support/handoffs/max-dispatch-20260910/archive-evidence/single-path-workflow-and-pr.json",
+      "sha256": "dc4350135246367102981bb4d5bcdc3a1b2aa1ee7105dd1b86213846244f4a40",
+      "kind": "workflow_and_pr_snapshot"
     }
   ],
   "items": {
@@ -109,46 +119,105 @@
         }
       ]
     },
-    "historical_approval_status": {
-      "source_repository": "alfloop-dev/odayplus",
-      "exact_head_sha": "c1a382416e4423e22f3bf5dfe86a37d93597e583",
-      "collection_command": [
-        "gh",
-        "api",
-        "repos/alfloop-dev/odayplus/commits/c1a382416e4423e22f3bf5dfe86a37d93597e583/status"
-      ],
-      "collection_exit_code": 0,
-      "collection_time": "2026-09-10T23:31:23.053620+00:00",
-      "elapsed_seconds": 0.579,
-      "raw_receipt_source": "support/handoffs/max-dispatch-20260910/archive-evidence/command-receipts.json",
-      "status_context": "task-review-gate",
-      "status_state": "success",
-      "updated_at": "2026-09-06T05:47:35Z",
-      "description": "Approved by assigned reviewer Codex",
-      "approver": "Codex"
+    "historical_approval_and_commit_status": {
+      "historical_approval_20260906": {
+        "source_snapshot_file": "support/handoffs/archive-recovery-dispatch-20260911/ODP-ROLE-PROVIDER-CODEX-REVIEW-001/original-evidence.json",
+        "exact_head_sha": "c1a382416e4423e22f3bf5dfe86a37d93597e583",
+        "status_context": "task-review-gate",
+        "status_state": "success",
+        "updated_at": "2026-09-06T05:47:35Z",
+        "description": "Approved by assigned reviewer Codex",
+        "approver": "Codex",
+        "historical_collection_invocation_metadata": "unknown",
+        "note": "Historical approval status preserved from original-evidence.json snapshot (derived from task_evidence_inventory.json verified 2026-09-07T15:14:37Z). Historical 2026-09-06 collection command invocation metadata is unknown."
+      },
+      "post_incident_commit_status_20260910": {
+        "source_file": "support/handoffs/max-dispatch-20260910/archive-evidence/single-path-workflow-and-pr.json",
+        "exact_head_sha": "c1a382416e4423e22f3bf5dfe86a37d93597e583",
+        "collection_command": [
+          "gh",
+          "api",
+          "repos/alfloop-dev/odayplus/commits/c1a382416e4423e22f3bf5dfe86a37d93597e583/status"
+        ],
+        "collection_exit_code": 0,
+        "collection_time": "2026-09-10T23:31:23.053620+00:00",
+        "elapsed_seconds": 0.579,
+        "raw_receipt_source": "support/handoffs/max-dispatch-20260910/archive-evidence/command-receipts.json",
+        "projected_result_in_single_path_workflow_and_pr": {
+          "status_context": "task-review-gate",
+          "status_state": "failure",
+          "description": "Review rejected or reopened. Task status is blocked",
+          "updated_at": "2026-09-08T23:57:09Z"
+        },
+        "note": "This 2026-09-10 collection command read back the post-incident gate status (failure/blocked) resulting from the 2026-09-08 archive incident recovery workflow. It did not produce the 2026-09-06 success approval."
+      }
     },
     "live_runtime_readback": {
       "source_runtime_path": "/home/lupin/oday-plus-supervisor-runtime-b66d18130f3b",
-      "collection_command": [
-        "git",
-        "-C",
-        "/home/lupin/oday-plus-supervisor-runtime-b66d18130f3b",
-        "rev-parse",
-        "HEAD"
-      ],
-      "collection_exit_code": 0,
-      "collection_time": "2026-09-10T23:31:25.855971+00:00",
-      "elapsed_seconds": 0.008,
-      "observed_at": "2026-09-10T23:31:25.855941+00:00",
-      "loaded_code_sha": "b66d18130f3bac78cf5af32b1c7000933e5d931d",
-      "loaded_config_digest": "54110ea0cef280a8",
-      "config_sha256": "54110ea0cef280a822484067185076b35600accf58dbb24d09adc6c64bbb6cd8",
-      "config_digest_matches_loaded": true,
-      "supervisor_pid": 2585616,
-      "last_successful_loop_at": "2026-09-10T23:29:01Z",
-      "last_loop_error": null,
-      "observation_scope_note": "Single observed healthy loop snapshot; not a consecutive-loop audit trail.",
-      "raw_receipt_source": "support/handoffs/max-dispatch-20260910/archive-evidence/role-provider-live-readback.json"
+      "runtime_git_sha_receipt": {
+        "field_proven": "runtime_git_sha",
+        "command": [
+          "git",
+          "-C",
+          "/home/lupin/oday-plus-supervisor-runtime-b66d18130f3b",
+          "rev-parse",
+          "HEAD"
+        ],
+        "exit_code": 0,
+        "collection_time": "2026-09-10T23:31:25.855971+00:00",
+        "elapsed_seconds": 0.008,
+        "raw_receipt_source": "support/handoffs/max-dispatch-20260910/archive-evidence/command-receipts.json",
+        "value": "b66d18130f3bac78cf5af32b1c7000933e5d931d"
+      },
+      "runtime_state_readback": {
+        "source_files": [
+          "/home/lupin/oday-plus-supervisor-runtime-b66d18130f3b/.orchestrator/state.json",
+          "/home/lupin/oday-plus-supervisor-runtime-b66d18130f3b/.orchestrator/config.json",
+          "/proc/2585616/cwd"
+        ],
+        "collector_script": "support/handoffs/max-dispatch-20260910/archive-evidence/collect_readback.py",
+        "collector_invocation_exit_metadata": "unknown",
+        "raw_snapshot_file": "support/handoffs/max-dispatch-20260910/archive-evidence/role-provider-live-readback.json",
+        "observed_at": "2026-09-10T23:31:25.855941+00:00",
+        "supervisor_pid": 2585616,
+        "started_at": "2026-09-10T16:45:28Z",
+        "loaded_code_sha": "b66d18130f3bac78cf5af32b1c7000933e5d931d",
+        "loaded_config_digest": "54110ea0cef280a8",
+        "config_sha256": "54110ea0cef280a822484067185076b35600accf58dbb24d09adc6c64bbb6cd8",
+        "config_digest_matches_loaded": true,
+        "last_successful_loop_at": "2026-09-10T23:29:01Z",
+        "last_loop_error": null,
+        "role_provider_policy": {
+          "enabled": true,
+          "rules": [
+            {
+              "roles": [
+                "reviewer"
+              ],
+              "providers": [
+                "codex"
+              ]
+            },
+            {
+              "roles": [
+                "owner",
+                "helper"
+              ],
+              "providers": [
+                "antigravity",
+                "claude"
+              ]
+            }
+          ],
+          "unclassified_owned_work": [
+            "antigravity",
+            "claude"
+          ]
+        },
+        "codex_model": "gpt-6-astra",
+        "codex_model_reasoning_effort": "ultra",
+        "observation_scope_note": "Single observed healthy loop snapshot; not a consecutive-loop audit trail."
+      }
     },
     "recent_actual_codex_workers": {
       "observed_at": "2026-09-10T23:31:25.855941+00:00",
