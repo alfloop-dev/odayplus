@@ -12,100 +12,185 @@
       "index": 1,
       "title": "Lint and Format Checks",
       "requirement": "lint and format checks pass on the release candidate commit",
-      "status": "blocked",
-      "verdict_reason": "Ruff Python lint and Next.js frontend lint passed (EXIT=0), but delivery_toolchain/governance/check_code_boundaries.py failed (EXIT=1) due to stale boundary inventory on candidate C.",
+      "status": "partial_blocked",
+      "verdict_reason": "Python ruff lint and Next.js frontend lint passed cleanly. Code boundary check passed in clean CI (run 34138969380 job 101796385286, 1137 files) but failed in offline scratch (exit 1), leaving cause unknown pending environment reconciliation. Format check coverage is unproven (no historical receipt for ruff format / prettier).",
       "evidence": [
         {
-          "kind": "offline_command",
-          "argv": ["uv", "run", "ruff", "check", ".orchestrator", "delivery_toolchain", "scripts", "tests", "modules", "apps", "shared", "models", "solver", "pipelines", "infra"],
-          "exit_code": 0,
+          "kind": "ci_job_receipt",
+          "ref": "RCPT-CODE-CI-001",
+          "run_id": 34138969380,
+          "job_id": 101796385286,
+          "timestamp": "2026-09-07T15:35:08.1796384Z",
           "result": "PASSED",
-          "summary": "All checks passed across all Python directories."
+          "summary": "Code boundary checks passed for 1137 files on clean CI runner checkout of C."
         },
         {
-          "kind": "offline_command",
-          "argv": ["uv", "run", "python", "delivery_toolchain/governance/check_code_boundaries.py"],
+          "kind": "offline_diagnostic_observation",
+          "ref": "RCPT-CODE-OBS-001",
           "exit_code": 1,
-          "result": "FAILED",
-          "summary": "Code boundary checks failed: boundary inventory is stale (requires --write-inventory update)."
+          "result": "DISCREPANCY_UNKNOWN",
+          "summary": "Offline scratch observation reported stale inventory; cause left unknown pending environment reconciliation against clean CI."
         },
         {
-          "kind": "offline_command",
-          "argv": ["npm", "run", "lint", "--workspace=@oday-plus/web"],
+          "kind": "offline_isolate_execution",
+          "ref": "RCPT-CODE-LINT-001",
+          "argv": [
+            "uv",
+            "run",
+            "ruff",
+            "check",
+            ".orchestrator",
+            "delivery_toolchain",
+            "scripts",
+            "tests",
+            "modules",
+            "apps",
+            "shared",
+            "models",
+            "solver",
+            "pipelines",
+            "infra"
+          ],
           "exit_code": 0,
           "result": "PASSED",
-          "summary": "No ESLint warnings or errors in apps/web."
+          "summary": "Ruff Python linting clean across repository source directories."
+        },
+        {
+          "kind": "uncovered_missing_evidence",
+          "ref": "RCPT-CODE-FMT-001",
+          "result": "UNKNOWN",
+          "summary": "Dedicated code format check evidence missing (ruff check and next lint do not establish format coverage)."
+        },
+        {
+          "kind": "offline_isolate_execution",
+          "ref": "RCPT-CODE-LINT-002",
+          "argv": [
+            "npm",
+            "run",
+            "lint",
+            "--workspace=@oday-plus/web"
+          ],
+          "exit_code": 0,
+          "result": "PASSED",
+          "summary": "ESLint clean with 0 warnings/errors in apps/web."
         }
       ],
       "verified_items": [
         "Python ruff static lint clean across full repository tree",
-        "Frontend apps/web ESLint rules clean"
+        "Frontend apps/web ESLint rules clean",
+        "CI orchestrator job code boundary validation passed on exact C (1137 files)"
       ],
       "gaps_and_uncovered": [
-        "Boundary inventory at candidate C is stale against code tree, causing make boundary-check / check_code_boundaries.py failure (exit code 1)."
+        "Dedicated code formatting evidence missing (ruff format --check / prettier --check not executed in historical candidate C record).",
+        "Discrepancy between clean CI boundary check (passed, 1137 files) and offline scratch observation (stale inventory) requires environment/tooling input reconciliation."
       ],
-      "follow_up_owner": "Platform / Tooling Owner"
+      "follow_up_owner": "Platform & Tooling Lead"
     },
     {
       "criterion_id": "GATE0-CRIT-2",
       "index": 2,
       "title": "Static and Type Checks",
       "requirement": "static/type checks pass where configured",
-      "status": "passed",
-      "verdict_reason": "TypeScript compiler validation (tsc --noEmit) and all repository governance static verifiers passed on candidate C.",
+      "status": "partial",
+      "verdict_reason": "Web workspace TypeScript compiler validation (tsc --noEmit) and all 5 repository governance static verifiers passed on candidate C. However, configured typechecks across packages workspaces (design-tokens, domain-types, openapi-client, ui-domain, ui) specified in Makefile:90-97 lack historical execution receipts, and web tsc is not equivalent (e.g. ui-domain includes test and enables noUncheckedIndexedAccess).",
       "evidence": [
         {
-          "kind": "offline_command",
-          "argv": ["npm", "run", "typecheck", "--workspace=@oday-plus/web"],
+          "kind": "offline_isolate_execution",
+          "ref": "RCPT-CODE-TSC-001",
+          "argv": [
+            "npm",
+            "run",
+            "typecheck",
+            "--workspace=@oday-plus/web"
+          ],
           "exit_code": 0,
           "result": "PASSED",
           "summary": "tsc --noEmit exited 0 with 0 type errors in web workspace."
         },
         {
-          "kind": "offline_command",
-          "argv": ["uv", "run", "python", "delivery_toolchain/governance/check_measurement_defaults.py"],
+          "kind": "uncovered_missing_evidence",
+          "ref": "RCPT-CODE-TSC-002",
+          "result": "UNKNOWN",
+          "summary": "Typecheck across packages workspaces (packages/design-tokens, domain-types, openapi-client, ui-domain, ui) lacks historical execution receipts."
+        },
+        {
+          "kind": "offline_isolate_execution",
+          "ref": "RCPT-CODE-GOV-001",
+          "argv": [
+            "uv",
+            "run",
+            "python",
+            "delivery_toolchain/governance/check_measurement_defaults.py"
+          ],
           "exit_code": 0,
           "result": "PASSED",
           "summary": "19 known score defaults verified, 19 valid exemptions recorded with owners."
         },
         {
-          "kind": "offline_command",
-          "argv": ["uv", "run", "python", "delivery_toolchain/governance/check_requirement_members.py"],
+          "kind": "offline_isolate_execution",
+          "ref": "RCPT-CODE-GOV-002",
+          "argv": [
+            "uv",
+            "run",
+            "python",
+            "delivery_toolchain/governance/check_requirement_members.py"
+          ],
           "exit_code": 0,
           "result": "PASSED",
           "summary": "9 set-valued requirements verified across 47 members (36 satisfied, 11 noted)."
         },
         {
-          "kind": "offline_command",
-          "argv": ["uv", "run", "python", "delivery_toolchain/governance/generate_vocabularies.py", "--check"],
+          "kind": "offline_isolate_execution",
+          "ref": "RCPT-CODE-GOV-003",
+          "argv": [
+            "uv",
+            "run",
+            "python",
+            "delivery_toolchain/governance/generate_vocabularies.py",
+            "--check"
+          ],
           "exit_code": 0,
           "result": "PASSED",
           "summary": "3 governed vocabularies clean, no unapproved drift or new forks."
         },
         {
-          "kind": "offline_command",
-          "argv": ["uv", "run", "python", "delivery_toolchain/governance/check_orchestrator_config.py"],
+          "kind": "offline_isolate_execution",
+          "ref": "RCPT-CODE-GOV-004",
+          "argv": [
+            "uv",
+            "run",
+            "python",
+            "delivery_toolchain/governance/check_orchestrator_config.py"
+          ],
           "exit_code": 0,
           "result": "PASSED",
           "summary": "3 config documents and merged runtime views validated."
         },
         {
-          "kind": "offline_command",
-          "argv": ["uv", "run", "python", "delivery_toolchain/governance/check_config_wiring.py"],
+          "kind": "offline_isolate_execution",
+          "ref": "RCPT-CODE-GOV-005",
+          "argv": [
+            "uv",
+            "run",
+            "python",
+            "delivery_toolchain/governance/check_config_wiring.py"
+          ],
           "exit_code": 0,
           "result": "PASSED",
           "summary": "All 190 config keys are read by production code."
         }
       ],
       "verified_items": [
-        "Web TypeScript typecheck passed cleanly",
+        "Web TypeScript typecheck passed cleanly (apps/web)",
         "Governance measurement default enforcement passed",
         "Requirement member resolvability passed",
         "Governed vocabulary drift check passed",
         "Config validation and wiring checks passed"
       ],
-      "gaps_and_uncovered": [],
-      "follow_up_owner": null
+      "gaps_and_uncovered": [
+        "Typecheck across packages workspaces (packages/design-tokens, packages/domain-types, packages/openapi-client, packages/ui-domain, packages/ui) has no historical receipt at candidate C."
+      ],
+      "follow_up_owner": "Frontend & TypeScript Domain Owner"
     },
     {
       "criterion_id": "GATE0-CRIT-3",
@@ -113,25 +198,61 @@
       "title": "Unit Tests for Backend and Domain Logic",
       "requirement": "unit tests pass for changed backend and domain logic",
       "status": "passed_scoped",
-      "verdict_reason": "Focused unit and integration suites covering domains modified between review base 04e1572f and candidate 596b9c9a passed on candidate C (936 passed, 127 subtests passed, 0 failures). Full CI suite (make ci) was not run to preserve gate boundary.",
+      "verdict_reason": "Focused unit and integration suites covering modified domains (models, drift, tooling/SBOM, persistence, heatzone API) passed on candidate C (936 passed, 127 subtests passed). CI product and product-e2e test jobs were skipped on candidate commit 596b9c9a in runs 34138969380 and 34138605942.",
       "evidence": [
         {
-          "kind": "offline_command",
-          "argv": ["uv", "run", "pytest", "tests/models/test_heatzone_merge_split.py", "tests/models/test_native_drift.py", "tests/models/test_evidently_monitor_baseline.py", "tests/tooling/test_dependency_audit_boundary.py", "tests/tooling/test_generate_sbom_output_isolation.py", "scripts/test_ai_status.py", "tests/release/test_probe_release_target_absence.py", "tests/release/test_release_environment_precheck.py", "tests/release/test_release_manifest.py", "tests/release/test_release_manifest_cli.py"],
+          "kind": "immutable_ci_job_receipt",
+          "ref": "RCPT-CODE-CI-002",
+          "run_id": 34138969380,
+          "result": "SKIPPED",
+          "summary": "CI jobs product, product-e2e-gate, and performance-gate were skipped on candidate commit 596b9c9a."
+        },
+        {
+          "kind": "offline_isolate_execution",
+          "ref": "RCPT-CODE-UNIT-001",
+          "argv": [
+            "uv",
+            "run",
+            "pytest",
+            "tests/models/test_heatzone_merge_split.py",
+            "tests/models/test_native_drift.py",
+            "tests/models/test_evidently_monitor_baseline.py",
+            "tests/tooling/test_dependency_audit_boundary.py",
+            "tests/tooling/test_generate_sbom_output_isolation.py",
+            "scripts/test_ai_status.py",
+            "tests/release/test_probe_release_target_absence.py",
+            "tests/release/test_release_environment_precheck.py",
+            "tests/release/test_release_manifest.py",
+            "tests/release/test_release_manifest_cli.py"
+          ],
           "exit_code": 0,
           "result": "PASSED",
           "summary": "791 passed, 17 warnings, 101 subtests passed in 331.87s."
         },
         {
-          "kind": "offline_command",
-          "argv": ["uv", "run", "pytest", "tests/unit/persistence/test_sql_decision_policy_repository.py", "tests/ops/test_heatzone_composition_migration.py", "scripts/orchestrator/test_archive_history_recovery.py"],
+          "kind": "offline_isolate_execution",
+          "ref": "RCPT-CODE-UNIT-002",
+          "argv": [
+            "uv",
+            "run",
+            "pytest",
+            "tests/unit/persistence/test_sql_decision_policy_repository.py",
+            "tests/ops/test_heatzone_composition_migration.py",
+            "scripts/orchestrator/test_archive_history_recovery.py"
+          ],
           "exit_code": 0,
           "result": "PASSED",
           "summary": "104 passed, 26 subtests passed in 9.89s."
         },
         {
-          "kind": "offline_command",
-          "argv": ["uv", "run", "pytest", "tests/integration/test_heatzone_composition_api.py"],
+          "kind": "offline_isolate_execution",
+          "ref": "RCPT-CODE-UNIT-003",
+          "argv": [
+            "uv",
+            "run",
+            "pytest",
+            "tests/integration/test_heatzone_composition_api.py"
+          ],
           "exit_code": 0,
           "result": "PASSED",
           "summary": "41 passed, 22 warnings in 222.30s."
@@ -146,10 +267,10 @@
         "Release manifest generation and absence readback verification"
       ],
       "gaps_and_uncovered": [
-        "GitHub Actions CI on candidate commit 596b9c9a skipped the product and product-e2e test jobs.",
-        "Full non-domain regression suites and live environment suites (requires_live_env) are outside Gate 0 offline scope."
+        "GitHub Actions CI on candidate commit 596b9c9a skipped the product and product-e2e test jobs. Full CI product execution is required for candidate admission.",
+        "Gate 1 Contract tests (tests/contract) and Gate 4 Security tests (tests/security) belong to independent gates and are not executed in Gate 0."
       ],
-      "follow_up_owner": "Backend / QA Lead"
+      "follow_up_owner": "Backend / CI Lead"
     },
     {
       "criterion_id": "GATE0-CRIT-4",
@@ -157,28 +278,46 @@
       "title": "Component Tests for Frontend Surfaces",
       "requirement": "component tests pass for changed frontend surfaces",
       "status": "passed",
-      "verdict_reason": "Frontend component tests (vitest), Next.js workspace build, and bundle budget checks passed cleanly on candidate C.",
+      "verdict_reason": "Frontend component tests (Vitest), Next.js workspace build, and bundle budget checks passed cleanly on candidate C.",
       "evidence": [
         {
-          "kind": "offline_command",
-          "argv": ["npm", "run", "test", "--workspace=@oday-plus/web"],
+          "kind": "offline_isolate_execution",
+          "ref": "RCPT-CODE-COMP-001",
+          "argv": [
+            "npm",
+            "run",
+            "test",
+            "--workspace=@oday-plus/web"
+          ],
           "exit_code": 0,
           "result": "PASSED",
           "summary": "57 test files passed, 525 tests passed in 67.64s."
         },
         {
-          "kind": "offline_command",
-          "argv": ["npm", "run", "build", "--workspace=@oday-plus/web"],
+          "kind": "offline_isolate_execution",
+          "ref": "RCPT-CODE-BLD-001",
+          "argv": [
+            "npm",
+            "run",
+            "build",
+            "--workspace=@oday-plus/web"
+          ],
           "exit_code": 0,
           "result": "PASSED",
-          "summary": "Next.js production build succeeded, 4 static pages, 13 routes compiled."
+          "summary": "Next.js production build succeeded: 4 static pages, 13 routes compiled."
         },
         {
-          "kind": "offline_command",
-          "argv": ["npm", "run", "bundle:budget", "--workspace=@oday-plus/web"],
+          "kind": "offline_isolate_execution",
+          "ref": "RCPT-CODE-BLD-002",
+          "argv": [
+            "npm",
+            "run",
+            "bundle:budget",
+            "--workspace=@oday-plus/web"
+          ],
           "exit_code": 0,
           "result": "PASSED",
-          "summary": "All 13 routes within bundle size budget (e.g. /operator at 299.8 kB vs 300.0 kB budget)."
+          "summary": "All 13 routes within First Load JS bundle budget (e.g. /operator at 299.8 kB <= 300.0 kB budget)."
         }
       ],
       "verified_items": [
@@ -200,9 +339,9 @@
       "evidence": [
         {
           "kind": "ci_run_evidence",
+          "ref": "RCPT-CODE-BLD-TRACE-001",
           "run_id": 34179207603,
           "role": "Image producer run (built, pushed, signed, and attested four images)",
-          "timestamp_rekor": "2026-09-08T02:17:01Z - 02:19:42Z",
           "rekor_log_indices": {
             "api": "2754425715",
             "worker": "2754426118",
@@ -211,16 +350,20 @@
           }
         },
         {
-          "kind": "ci_run_evidence",
+          "kind": "reused_immutable_source_receipt",
+          "ref": "RCPT-CODE-BLD-TRACE-002",
           "run_id": 34179791241,
           "role": "Artifact publisher run (reused immutable digests, verified with cosign verify, published 6 artifacts)",
-          "conclusion": "success",
-          "workflow_head_sha": "8c570a56353abdcc8ba70fe0a3fdd9b963902391",
-          "release_sha_checkout": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12"
+          "source_ref": "github://alfloop-dev/odayplus@108249fa921e128f734ebd917a933fa562f4b7e1/docs/evidence/runtime/ODP-DEV-BUILD-ARTIFACT-HANDOFF-003/build-dispatch-evidence.md#L549-L905"
         },
         {
-          "kind": "manifest_validation",
-          "manifest_digest": "sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c",
+          "kind": "offline_isolate_execution",
+          "ref": "RCPT-CODE-MANIFEST-001",
+          "argv": [
+            "python",
+            "delivery_toolchain/release/validate_manifest.py"
+          ],
+          "exit_code": 0,
           "result": "PASSED",
           "summary": "validate_manifest passed cleanly against expected_candidate_sha 596b9c9a."
         }
@@ -238,27 +381,35 @@
   "uncovered_gaps_and_blockers": [
     {
       "gap_id": "GAP-CODE-001",
-      "type": "code_defect",
-      "severity": "high",
-      "description": "Boundary inventory at candidate C is stale, failing delivery_toolchain/governance/check_code_boundaries.py (make boundary-check).",
-      "resolution_required": "Run check_code_boundaries.py --write-inventory in future dev commit to synchronize inventory with codebase.",
-      "owner": "Platform / Tooling"
+      "type": "verification_discrepancy_and_format_gap",
+      "severity": "medium",
+      "description": "Clean CI run 34138969380 passed code boundary checks for 1137 files, whereas offline scratch probe reported stale inventory (exit 1). Cause left unknown pending environment reconciliation. Dedicated format check receipt is also missing.",
+      "resolution_required": "Perform clean checkout boundary check validation and capture dedicated ruff format/prettier check receipts.",
+      "owner": "Platform & Tooling Lead"
     },
     {
       "gap_id": "GAP-CODE-002",
-      "type": "ci_coverage_gap",
+      "type": "static_type_coverage_gap",
       "severity": "medium",
-      "description": "GitHub Actions CI run on candidate commit 596b9c9a skipped the product and product-e2e workflows.",
-      "resolution_required": "Full end-to-end CI execution required for candidate admission; cannot substitute green CI on other commits.",
-      "owner": "CI / Infrastructure"
+      "description": "Makefile:90-97 configures typecheck --workspaces across packages (design-tokens, domain-types, openapi-client, ui-domain, ui). Only apps/web has a verified receipt; packages workspaces lack historical receipts.",
+      "resolution_required": "Capture execution receipts for npm run typecheck across packages workspaces under clean exact-C checkout.",
+      "owner": "Frontend & TypeScript Domain Owner"
     },
     {
       "gap_id": "GAP-CODE-003",
+      "type": "ci_coverage_gap",
+      "severity": "high",
+      "description": "GitHub Actions CI runs on candidate commit 596b9c9a (runs 34138969380 and 34138605942) skipped the product and product-e2e test jobs.",
+      "resolution_required": "Full product and product-e2e test execution receipts required for candidate admission; cannot substitute green CI on other commits.",
+      "owner": "Backend / CI Lead"
+    },
+    {
+      "gap_id": "GAP-CODE-004",
       "type": "historical_dependency",
       "severity": "medium",
-      "description": "ODP-PLAN-ENGINEERING-HARDENING-001 is listed as a blocker in RELEASE_GATE_REGISTRY.json. It is confirmed as historical pending reconciliation (歷史待核對) with no active canonical task in ai-status.json.",
+      "description": "ODP-PLAN-ENGINEERING-HARDENING-001 is listed as a blocker in RELEASE_GATE_REGISTRY.json. It is confirmed as historical pending reconciliation (\u6b77\u53f2\u5f85\u6838\u5c0d) with sidecar packet at d24fd0c4; no active canonical task in ai-status.json.",
       "resolution_required": "Tracked as historical pending reconciliation; not claiming completion or recreating task.",
-      "owner": "Architecture / Governance"
+      "owner": "Architecture & Governance Lead"
     }
   ]
 }

@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "task_id": "ODP-DEV-CANDIDATE-CODE-RECEIPT-001",
-  "generated_at": "2026-09-10T23:55:00Z",
+  "generated_at": "2026-09-11T00:50:00Z",
   "candidate": {
     "sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
     "ref": "refs/heads/dev",
@@ -30,11 +30,11 @@
     },
     {
       "uri": "github://alfloop-dev/odayplus@108249fa921e128f734ebd917a933fa562f4b7e1/docs/evidence/runtime/ODP-DEV-BUILD-ARTIFACT-HANDOFF-003/build-dispatch-evidence.md",
-      "purpose": "Build dispatch evidence §13 confirming complete artifact handoff, raw hashes, and cosign verification."
+      "purpose": "Build dispatch evidence \u00a713 confirming complete artifact handoff, raw hashes, and cosign verification."
     },
     {
       "uri": "github://alfloop-dev/odayplus@596b9c9a1788d952811a2bf8d4bba8a4e4d76b12/docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md",
-      "purpose": "Staged admission model (§6.1) decoupling dev build admission from staging and prod proofs."
+      "purpose": "Staged admission model (\u00a76.1) decoupling dev build admission from staging and prod proofs."
     },
     {
       "uri": "github://alfloop-dev/odayplus@596b9c9a1788d952811a2bf8d4bba8a4e4d76b12/Makefile",
@@ -47,8 +47,74 @@
     {
       "uri": "github://alfloop-dev/odayplus@596b9c9a1788d952811a2bf8d4bba8a4e4d76b12/.github/workflows/ci.yml",
       "purpose": "CI workflow specification detailing test matrix, markers, and scopes."
+    },
+    {
+      "uri": "support/sidecars/ODP-PLAN-ENGINEERING-HARDENING-001/ODP-PLAN-ENGINEERING-HARDENING-001-SIDECAR-ACCEPTANCE.md",
+      "purpose": "Historical sidecar acceptance packet for ODP-PLAN-ENGINEERING-HARDENING-001 recorded at parent HEAD d24fd0c4 (status: blocked pending Human/Ops decision)."
     }
   ],
+  "ci_pipeline_runs": {
+    "push_run_34138969380": {
+      "run_id": 34138969380,
+      "event": "push",
+      "head_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "workflow": "CI (.github/workflows/ci.yml)",
+      "jobs": {
+        "change_scope_orchestrator": {
+          "job_id": 101796385286,
+          "conclusion": "success",
+          "timestamp": "2026-09-07T15:35:08.1796384Z",
+          "log_excerpt": "Code boundary checks passed for 1137 files",
+          "checks_executed": [
+            "check_code_boundaries.py",
+            "check_measurement_defaults.py",
+            "check_requirement_members.py",
+            "generate_vocabularies.py --check",
+            "check_orchestrator_config.py",
+            "check_config_wiring.py"
+          ]
+        },
+        "product": {
+          "conclusion": "skipped",
+          "steps_executed": 0,
+          "note": "Skipped; no product backend/unit steps executed in CI on candidate C."
+        },
+        "product_e2e_gate": {
+          "conclusion": "skipped",
+          "steps_executed": 0,
+          "note": "Skipped; no e2e gate steps executed in CI on candidate C."
+        },
+        "performance_gate": {
+          "conclusion": "skipped",
+          "steps_executed": 0,
+          "note": "Skipped; recorded as contextual coverage."
+        }
+      }
+    },
+    "merge_group_run_34138605942": {
+      "run_id": 34138605942,
+      "event": "merge_group",
+      "head_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "workflow": "CI (.github/workflows/ci.yml)",
+      "jobs": {
+        "change_scope_orchestrator": {
+          "conclusion": "success"
+        },
+        "product": {
+          "conclusion": "skipped",
+          "steps_executed": 0
+        },
+        "product_e2e_gate": {
+          "conclusion": "skipped",
+          "steps_executed": 0
+        },
+        "performance_gate": {
+          "conclusion": "skipped",
+          "steps_executed": 0
+        }
+      }
+    }
+  },
   "build_runs": {
     "image_producer_run": {
       "run_id": 34179207603,
@@ -57,7 +123,13 @@
       "failure_step": "Step 20: Write the build-once artifact handoff (INITIAL_RELEASE_RECOVERY: false)",
       "images_built_and_signed": true,
       "workflow_head_sha": "8c570a56353abdcc8ba70fe0a3fdd9b963902391",
-      "release_sha_input": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12"
+      "release_sha_input": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "rekor_log_indices": {
+        "api": "2754425715",
+        "worker": "2754426118",
+        "scheduler": "2754426482",
+        "web": "2754427686"
+      }
     },
     "artifact_publisher_run": {
       "run_id": 34179791241,
@@ -65,7 +137,10 @@
       "conclusion": "success",
       "role": "Reused image digests, executed cosign verify, published manifest and receipts",
       "workflow_head_sha": "8c570a56353abdcc8ba70fe0a3fdd9b963902391",
-      "release_sha_input": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12"
+      "release_sha_input": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "created_at": "2026-09-08T02:21:49Z",
+      "updated_at": "2026-09-08T02:26:33Z",
+      "source_receipt_ref": "github://alfloop-dev/odayplus@108249fa921e128f734ebd917a933fa562f4b7e1/docs/evidence/runtime/ODP-DEV-BUILD-ARTIFACT-HANDOFF-003/build-dispatch-evidence.md#L549-L905"
     }
   },
   "component_images": {
