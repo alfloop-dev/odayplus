@@ -81,20 +81,20 @@
       "purpose": "Verify clean git diff with no trailing whitespaces or formatting conflicts against origin/dev"
     },
     {
-      "label": "verify_reconciliation_script",
+      "label": "code_boundary_check",
       "argv": [
         "python3",
-        "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-JOB-PARTIAL-DISPOSITION-001/verify_reconciliation.py"
+        "delivery_toolchain/governance/check_code_boundaries.py"
       ],
       "repository": "alfloop-dev/odayplus",
       "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
-      "measured_head_sha": "e08c0af18ea4f7b6b107e387140f80faad12fc33",
-      "started_at": "2026-09-11T12:18:41.100000+00:00",
-      "duration_seconds": 0.4500,
+      "measured_head_sha": "12055e777f1b41c182029f12b06a0da687194ca9",
+      "started_at": "2026-09-11T12:23:49.000000+00:00",
+      "duration_seconds": 9.5000,
       "exit_code": 0,
-      "stdout_snippet": "ALL 7 VERIFICATION CHECKS PASSED (exit code 0)",
+      "stdout_snippet": "Code boundary checks passed for 1157 files.",
       "stderr_snippet": "",
-      "purpose": "Execute focused offline verification script covering all 7 checks (files, handback doc, type separation, historical git commits, governance validator, producer reconciliation, DAG dependencies)"
+      "purpose": "Verify code ownership, lifecycle, artifact, and import boundaries across all repository files"
     },
     {
       "label": "historical_merge_commit_verify",

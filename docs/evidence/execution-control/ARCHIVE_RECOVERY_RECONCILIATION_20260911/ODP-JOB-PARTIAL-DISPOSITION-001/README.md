@@ -91,8 +91,8 @@
 # 1. 格式與空白檢驗 (無越界與格式問題)
 git diff --check origin/dev HEAD
 
-# 2. 執行本任務專屬 7 項離線驗證腳本
-python3 docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-JOB-PARTIAL-DISPOSITION-001/verify_reconciliation.py
+# 2. 執行代碼邊界與全域清單檢查
+python3 delivery_toolchain/governance/check_code_boundaries.py
 
 # 3. 驗證歷史 merge commit 存在
 git rev-parse --verify 9647d673ccf2c0f11ef565e78511099821d85c19
