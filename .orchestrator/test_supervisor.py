@@ -1674,7 +1674,7 @@ class DetectWorkerFailureTests(unittest.TestCase):
             },
         }
 
-        with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+        with mock.patch.object(supervisor, "write_activity_log"):
             changed = supervisor.clear_provider_dispatch_pause(config, state, "codex")
 
         self.assertTrue(changed)
