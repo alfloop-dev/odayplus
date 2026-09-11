@@ -394,12 +394,19 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
     return status_transition.sync_dispatched_task_status(config, event)
 
 
-def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -> bool:
-    return status_transition.sync_preempted_task_status(config, worker)
-
-
 def commit_canonical_task_transition(config: dict[str, Any], status: dict[str, Any]) -> bool:
-    return write_status_snapshot_if_current(config, status) and sync_status_pipeline(config)
+    if not write_status_snapshot_if_current(config, status):
+        return False
+    if not sync_status_pipeline(config):
+        return False
+    try:
+        latest = load_status(config)
+        if latest is not status and isinstance(latest, dict) and "tasks" in latest:
+            status.clear()
+            status.update(latest)
+    except Exception:
+        pass
+    return True
 
 
 def release_dead_helper_claims(

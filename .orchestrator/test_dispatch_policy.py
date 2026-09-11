@@ -4016,3 +4016,303 @@ def test_p0_owned_work_preempts_only_once_its_dependencies_are_done() -> None:
             supervisor.higher_priority_ready_task_exists(cfg, worker, task_map, state)
             is True
         )
+
+
+# --- Diagnostic CAS resilience & review dispatch starvation tests ------------
+
+def test_diagnostic_cas_rejection_does_not_starve_subsequent_green_reviews() -> None:
+    """Advisory diagnostic CAS rejections must not abort the dispatch tick.
+
+    When CI pending/unresolved/drift annotations encounter a stale snapshot or
+    rejected CAS commit, dispatch_ready_tasks must continue evaluating and
+    dispatching subsequent ready tasks on the board rather than early-returning.
+    """
+    import github_bus
+
+    cfg = _base_test_config()
+    cfg["agents"]["antigravity7"]["slot_id"] = "slot-antigravity"
+
+    pending_task_1 = {
+        "id": "PENDING-001",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Antigravity7",
+        "repository": "alfloop-dev/odayplus",
+        "priority": "P1",
+        "depends_on": [],
+        "review_submission": {
+            "pr_number": 101,
+            "branch": "task/PENDING-001",
+            "base_branch": "dev",
+            "remote_sha": "aaaa1111" * 5,
+            "pr_url": "https://github.com/alfloop-dev/odayplus/pull/101",
+        },
+    }
+    pending_task_2 = {
+        "id": "PENDING-002",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Antigravity7",
+        "repository": "alfloop-dev/odayplus",
+        "priority": "P1",
+        "depends_on": [],
+        "review_submission": {
+            "pr_number": 102,
+            "branch": "task/PENDING-002",
+            "base_branch": "dev",
+            "remote_sha": "aaaa2222" * 5,
+            "pr_url": "https://github.com/alfloop-dev/odayplus/pull/102",
+        },
+    }
+    green_task_1 = {
+        "id": "GREEN-001",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Antigravity7",
+        "repository": "alfloop-dev/odayplus",
+        "priority": "P1",
+        "depends_on": [],
+        "review_submission": {
+            "pr_number": 201,
+            "branch": "task/GREEN-001",
+            "base_branch": "dev",
+            "remote_sha": "bbbb1111" * 5,
+            "pr_url": "https://github.com/alfloop-dev/odayplus/pull/201",
+        },
+    }
+    green_task_2 = {
+        "id": "GREEN-002",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Antigravity7",
+        "repository": "alfloop-dev/odayplus",
+        "priority": "P1",
+        "depends_on": [],
+        "review_submission": {
+            "pr_number": 202,
+            "branch": "task/GREEN-002",
+            "base_branch": "dev",
+            "remote_sha": "bbbb2222" * 5,
+            "pr_url": "https://github.com/alfloop-dev/odayplus/pull/202",
+        },
+    }
+
+    status = {
+        "tasks": [pending_task_1, pending_task_2, green_task_1, green_task_2],
+        "handoffs": [],
+    }
+    state = {"workers": {}, "queue": {"events": {}}}
+    queued_events: list[dict] = []
+
+    def fake_resolve_task_sha(task_id: str, **_kwargs) -> str:
+        if task_id == "PENDING-001":
+            return "aaaa1111" * 5
+        if task_id == "PENDING-002":
+            return "aaaa2222" * 5
+        if task_id == "GREEN-001":
+            return "bbbb1111" * 5
+        if task_id == "GREEN-002":
+            return "bbbb2222" * 5
+        return ""
+
+    def fake_pr_ci_status(task_id: str, **_kwargs) -> tuple[str, str]:
+        if task_id in {"PENDING-001", "PENDING-002"}:
+            return "OPEN", "pending"
+        if task_id in {"GREEN-001", "GREEN-002"}:
+            return "OPEN", "success"
+        return "OPEN", "unknown"
+
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", side_effect=fake_resolve_task_sha),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", side_effect=fake_pr_ci_status),
+        mock.patch.object(supervisor, "load_status", return_value=status),
+        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        # Diagnostic commit returns False simulating CAS rejection on advisory note write
+        mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=False),
+        mock.patch.object(supervisor, "write_activity_log"),
+        mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+        mock.patch.object(supervisor, "agent_dispatch_capacity", return_value=10),
+        mock.patch.object(dispatch_engine, "task_reality_reconcile_is_due", return_value=False),
+        mock.patch.object(
+            supervisor,
+            "queue_delivery_event",
+            side_effect=lambda _c, evt: queued_events.append(evt) or True,
+        ),
+    ):
+        changed = supervisor.dispatch_ready_tasks(
+            cfg,
+            state,
+            agent_ids_override=["antigravity7"],
+            max_dispatches_override=10,
+        )
+
+    assert changed is True
+    dispatched_ids = [evt.get("task_id") for evt in queued_events]
+    # Both green tasks must be dispatched despite CAS rejections on pending diagnostic writes
+    assert "GREEN-001" in dispatched_ids
+    assert "GREEN-002" in dispatched_ids
+    assert "PENDING-001" not in dispatched_ids
+    assert "PENDING-002" not in dispatched_ids
+
+
+def test_canonical_sync_advancing_disk_revision_reloads_status_for_subsequent_writes(tmp_path: Path) -> None:
+    """After a transition commit and canonical sync, in-memory status must reload the new disk revision.
+
+    If commit_canonical_task_transition does not reload status from disk after
+    sync_status_pipeline, the in-memory status retains the pre-sync revision, causing
+    subsequent writes in the same tick to fail with stale_status_write_rejected.
+    """
+    import fcntl
+    import uuid
+    import status_transition
+
+    status_file = tmp_path / "ai-status.json"
+    activity_file = tmp_path / "ai-activity.jsonl"
+    cfg = {
+        "paths": {
+            "status_file": str(status_file),
+            "activity_log": str(activity_file),
+        }
+    }
+
+    initial_revision = uuid.uuid4().hex
+    task_1 = {"id": "TASK-1", "status": "todo", "priority": "P2"}
+    task_2 = {"id": "TASK-2", "status": "todo", "priority": "P2"}
+    status = {
+        "_status_write_revision": initial_revision,
+        "tasks": [task_1, task_2],
+    }
+    status_file.write_text(json.dumps(status), encoding="utf-8")
+
+    # Simulate sync_status_pipeline which runs CLI sync and advances disk revision to sync_revision
+    sync_revision = uuid.uuid4().hex
+    def fake_sync_pipeline(config: dict) -> bool:
+        disk_data = json.loads(status_file.read_text(encoding="utf-8"))
+        disk_data["_status_write_revision"] = sync_revision
+        disk_data["synced"] = True
+        status_file.write_text(json.dumps(disk_data), encoding="utf-8")
+        return True
+
+    with mock.patch("status_transition.sync_status_pipeline", side_effect=fake_sync_pipeline):
+        # 1. First commit: transitions TASK-1 to in_progress
+        task_1["status"] = "in_progress"
+        committed_1 = status_transition.commit_canonical_task_transition(cfg, status)
+        assert committed_1 is True
+        # In-memory status must have reloaded the sync_revision
+        assert status.get("_status_write_revision") == sync_revision
+        assert status.get("synced") is True
+
+        # 2. Second commit in the same process tick: transitions TASK-2 to in_progress
+        status["tasks"][1]["status"] = "in_progress"
+        committed_2 = status_transition.commit_canonical_task_transition(cfg, status)
+        assert committed_2 is True
+        # Verification: CAS did not reject, disk holds updated status
+        on_disk = json.loads(status_file.read_text(encoding="utf-8"))
+        assert on_disk["tasks"][0]["status"] == "in_progress"
+        assert on_disk["tasks"][1]["status"] == "in_progress"
+
+
+def test_diagnostic_cas_mismatch_resyncs_and_rebuilds_indices_from_disk(tmp_path: Path) -> None:
+    """When an advisory write experiences a CAS race against an external writer,
+    the dispatcher resyncs from disk and dispatches newly ready tasks."""
+    import uuid
+
+    status_file = tmp_path / "ai-status.json"
+    activity_file = tmp_path / "ai-activity.jsonl"
+    event_queue = tmp_path / "events.jsonl"
+    cfg = _base_test_config()
+    cfg["paths"]["status_file"] = str(status_file)
+    cfg["paths"]["activity_log"] = str(activity_file)
+    cfg["paths"]["event_queue"] = str(event_queue)
+
+    initial_revision = uuid.uuid4().hex
+    external_revision = uuid.uuid4().hex
+
+    pending_task = {
+        "id": "PENDING-RACE-001",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Antigravity7",
+        "repository": "alfloop-dev/odayplus",
+        "priority": "P1",
+        "depends_on": [],
+        "review_submission": {
+            "pr_number": 301,
+            "branch": "task/PENDING-RACE-001",
+            "base_branch": "dev",
+            "remote_sha": "cccc1111" * 5,
+            "pr_url": "https://github.com/alfloop-dev/odayplus/pull/301",
+        },
+    }
+    concurrent_task = {
+        "id": "CONCURRENT-READY-001",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Antigravity7",
+        "repository": "alfloop-dev/odayplus",
+        "priority": "P0",
+        "depends_on": [],
+        "review_submission": {
+            "pr_number": 302,
+            "branch": "task/CONCURRENT-READY-001",
+            "base_branch": "dev",
+            "remote_sha": "dddd2222" * 5,
+            "pr_url": "https://github.com/alfloop-dev/odayplus/pull/302",
+        },
+    }
+
+    # Stale in-memory snapshot with initial_revision
+    initial_status = {
+        "_status_write_revision": initial_revision,
+        "tasks": [pending_task],
+        "handoffs": [],
+    }
+
+    # External writer advances disk to external_revision with concurrent_task added
+    disk_status = {
+        "_status_write_revision": external_revision,
+        "tasks": [pending_task, concurrent_task],
+        "handoffs": [],
+    }
+    status_file.write_text(json.dumps(disk_status), encoding="utf-8")
+
+    state = {"workers": {}, "queue": {"events": {}}}
+    queued_events: list[dict] = []
+
+    def fake_resolve_task_sha(task_id: str, **_kwargs) -> str:
+        if task_id == "PENDING-RACE-001":
+            return "cccc1111" * 5
+        if task_id == "CONCURRENT-READY-001":
+            return "dddd2222" * 5
+        return ""
+
+    def fake_pr_ci_status(task_id: str, **_kwargs) -> tuple[str, str]:
+        if task_id == "PENDING-RACE-001":
+            return "OPEN", "pending"
+        if task_id == "CONCURRENT-READY-001":
+            return "OPEN", "success"
+        return "OPEN", "unknown"
+
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", side_effect=fake_resolve_task_sha),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", side_effect=fake_pr_ci_status),
+        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+        mock.patch.object(supervisor, "agent_dispatch_capacity", return_value=10),
+        mock.patch.object(dispatch_engine, "task_reality_reconcile_is_due", return_value=False),
+        mock.patch.object(
+            supervisor,
+            "queue_delivery_event",
+            side_effect=lambda _c, evt: queued_events.append(evt) or True,
+        ),
+    ):
+        changed = supervisor.dispatch_ready_tasks(
+            cfg,
+            state,
+            agent_ids_override=["antigravity7"],
+        )
+
+    assert changed is True
+    dispatched_ids = [evt.get("task_id") for evt in queued_events]
+    assert "CONCURRENT-READY-001" in dispatched_ids
+    assert "PENDING-RACE-001" not in dispatched_ids

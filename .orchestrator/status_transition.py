@@ -187,7 +187,27 @@ def sync_status_pipeline(config: dict[str, Any]) -> bool:
 def commit_canonical_task_transition(config: dict[str, Any], status: dict[str, Any]) -> bool:
     """Commit a scheduler transition through one canonical write/sync path."""
 
-    return write_status_snapshot_if_current(config, status) and sync_status_pipeline(config)
+    sv = _supervisor_module()
+    if sv is not None:
+        sv_commit = getattr(sv, "commit_canonical_task_transition", None)
+        if sv_commit is not None and getattr(sv_commit, "__code__", None) != commit_canonical_task_transition.__code__:
+            return sv_commit(config, status)
+
+    write_snapshot = getattr(sv, "write_status_snapshot_if_current", write_status_snapshot_if_current)
+    sync_pipeline = getattr(sv, "sync_status_pipeline", sync_status_pipeline)
+    load_status_fn = getattr(sv, "load_status", load_status) if sv is not None else load_status
+    if not write_snapshot(config, status):
+        return False
+    if not sync_pipeline(config):
+        return False
+    try:
+        latest = load_status_fn(config)
+        if latest is not status and isinstance(latest, dict) and "tasks" in latest:
+            status.clear()
+            status.update(latest)
+    except Exception:
+        pass
+    return True
 
 
 def _task_index_from_status(config: dict[str, Any], status: dict[str, Any]) -> dict[str, dict[str, Any]]:
