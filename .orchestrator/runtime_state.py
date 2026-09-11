@@ -62,8 +62,10 @@ def default_state() -> dict[str, Any]:
         "approvals": {
             "last_reconciled_at": None,
         },
+        "account_pool_runtime": {},
         "provider_guardrails": {
             "dispatch_pauses": {},
+            "cleared_pauses": {},
             "task_failure_streaks": {},
         },
         "worker_runtime_metrics": {
@@ -199,8 +201,22 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     )
     state.setdefault("approvals", {})
     state["approvals"].setdefault("last_reconciled_at", None)
+    state.setdefault("account_pool_runtime", {})
+    account_pool_runtime = state.get("account_pool_runtime")
+    state["account_pool_runtime"] = (
+        {key: entry for key, entry in account_pool_runtime.items() if isinstance(entry, dict)}
+        if isinstance(account_pool_runtime, dict)
+        else {}
+    )
     state.setdefault("provider_guardrails", {})
     state["provider_guardrails"].setdefault("dispatch_pauses", {})
+    state["provider_guardrails"].setdefault("cleared_pauses", {})
+    cleared_pauses = state["provider_guardrails"].get("cleared_pauses")
+    state["provider_guardrails"]["cleared_pauses"] = (
+        {key: entry for key, entry in cleared_pauses.items() if isinstance(entry, dict)}
+        if isinstance(cleared_pauses, dict)
+        else {}
+    )
     state["provider_guardrails"].setdefault("task_failure_streaks", {})
     state.setdefault("worker_runtime_metrics", {})
     state["worker_runtime_metrics"].setdefault("version", 1)
@@ -575,6 +591,132 @@ def _merge_queue_record(disk_event: dict[str, Any], mem_event: dict[str, Any]) -
     return merged
 
 
+def _merge_provider_guardrails(
+    disk_guardrails: dict[str, Any], mem_guardrails: dict[str, Any]
+) -> dict[str, Any]:
+    merged_guardrails = deepcopy(mem_guardrails)
+    if not isinstance(disk_guardrails, dict):
+        return merged_guardrails
+
+    # 1. Merge cleared_pauses: keep latest clearance per provider
+    disk_cleared = disk_guardrails.get("cleared_pauses") or {}
+    mem_cleared = mem_guardrails.get("cleared_pauses") or {}
+    merged_cleared: dict[str, Any] = {}
+    for prov in set(disk_cleared.keys()) | set(mem_cleared.keys()):
+        d_entry = disk_cleared.get(prov)
+        m_entry = mem_cleared.get(prov)
+        if isinstance(d_entry, dict) and isinstance(m_entry, dict):
+            d_time = str(d_entry.get("cleared_at") or "")
+            m_time = str(m_entry.get("cleared_at") or "")
+            merged_cleared[prov] = deepcopy(m_entry if m_time >= d_time else d_entry)
+        elif isinstance(d_entry, dict):
+            merged_cleared[prov] = deepcopy(d_entry)
+        elif isinstance(m_entry, dict):
+            merged_cleared[prov] = deepcopy(m_entry)
+    merged_guardrails["cleared_pauses"] = merged_cleared
+
+    # 2. Merge dispatch_pauses: epoch and clearance aware
+    disk_pauses = disk_guardrails.get("dispatch_pauses") or {}
+    mem_pauses = mem_guardrails.get("dispatch_pauses") or {}
+    merged_pauses: dict[str, Any] = {}
+    for prov in set(disk_pauses.keys()) | set(mem_pauses.keys()):
+        d_pause = disk_pauses.get(prov) if isinstance(disk_pauses.get(prov), dict) else None
+        m_pause = mem_pauses.get(prov) if isinstance(mem_pauses.get(prov), dict) else None
+        clearance = merged_cleared.get(prov)
+
+        candidate: dict[str, Any] | None = None
+        if d_pause and m_pause:
+            d_p_at = str(d_pause.get("paused_at") or "")
+            m_p_at = str(m_pause.get("paused_at") or "")
+            candidate = deepcopy(m_pause if m_p_at >= d_p_at else d_pause)
+        elif d_pause:
+            candidate = deepcopy(d_pause)
+        elif m_pause:
+            candidate = deepcopy(m_pause)
+
+        if candidate is None:
+            continue
+
+        if isinstance(clearance, dict):
+            c_at = str(clearance.get("cleared_at") or "")
+            c_p_at = str(clearance.get("cleared_paused_at") or "")
+            p_at = str(candidate.get("paused_at") or "")
+            if (c_p_at and p_at == c_p_at) or (c_at and p_at and p_at <= c_at):
+                continue
+
+        merged_pauses[prov] = candidate
+
+    merged_guardrails["dispatch_pauses"] = merged_pauses
+
+    # 3. Merge task_failure_streaks
+    disk_streaks = disk_guardrails.get("task_failure_streaks") or {}
+    mem_streaks = mem_guardrails.get("task_failure_streaks") or {}
+    merged_streaks = deepcopy(mem_streaks)
+    for k, v in disk_streaks.items():
+        try:
+            d_val = int(v)
+            m_val = int(merged_streaks.get(k, 0) or 0)
+            merged_streaks[k] = max(d_val, m_val)
+        except (TypeError, ValueError):
+            merged_streaks.setdefault(k, v)
+    merged_guardrails["task_failure_streaks"] = merged_streaks
+
+    # 4. Merge processed_model_rotation_failures
+    disk_rot = disk_guardrails.get("processed_model_rotation_failures") or {}
+    mem_rot = mem_guardrails.get("processed_model_rotation_failures") or {}
+    if disk_rot or mem_rot:
+        merged_rot = deepcopy(mem_rot)
+        for k, v in disk_rot.items():
+            if k not in merged_rot:
+                merged_rot[k] = deepcopy(v)
+        merged_guardrails["processed_model_rotation_failures"] = merged_rot
+
+    return merged_guardrails
+
+
+def _merge_account_pool_runtime(
+    disk_pools: dict[str, Any], mem_pools: dict[str, Any]
+) -> dict[str, Any]:
+    disk_p = disk_pools if isinstance(disk_pools, dict) else {}
+    mem_p = mem_pools if isinstance(mem_pools, dict) else {}
+    merged_pools: dict[str, Any] = {}
+    for pool_id in set(disk_p.keys()) | set(mem_p.keys()):
+        d_entry = disk_p.get(pool_id) if isinstance(disk_p.get(pool_id), dict) else None
+        m_entry = mem_p.get(pool_id) if isinstance(mem_p.get(pool_id), dict) else None
+
+        if d_entry and not m_entry:
+            merged_pools[pool_id] = deepcopy(d_entry)
+            continue
+        if m_entry and not d_entry:
+            merged_pools[pool_id] = deepcopy(m_entry)
+            continue
+        if d_entry and m_entry:
+            d_gen = int(d_entry.get("generation", 0) or 0)
+            m_gen = int(m_entry.get("generation", 0) or 0)
+            if d_gen > m_gen:
+                merged_pools[pool_id] = deepcopy(d_entry)
+            elif m_gen > d_gen:
+                merged_pools[pool_id] = deepcopy(m_entry)
+            else:
+                d_state = str(d_entry.get("state") or "").lower()
+                m_state = str(m_entry.get("state") or "").lower()
+                d_probe = str(d_entry.get("last_probe_at") or d_entry.get("last_recovered_at") or "")
+                m_probe = str(m_entry.get("last_probe_at") or m_entry.get("last_recovered_at") or "")
+
+                if d_state in {"recovering", "healthy"} and m_state == "cooldown":
+                    merged_pools[pool_id] = deepcopy(d_entry)
+                elif m_state in {"recovering", "healthy"} and d_state == "cooldown":
+                    merged_pools[pool_id] = deepcopy(m_entry)
+                elif m_probe > d_probe:
+                    merged_pools[pool_id] = deepcopy(m_entry)
+                else:
+                    merged_entry = deepcopy(d_entry)
+                    merged_entry.update(deepcopy(m_entry))
+                    merged_pools[pool_id] = merged_entry
+
+    return merged_pools
+
+
 def merge_runtime_states(disk_state: dict[str, Any], in_mem_state: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(disk_state, dict):
         return migrate_state(in_mem_state)
@@ -632,10 +774,30 @@ def merge_runtime_states(disk_state: dict[str, Any], in_mem_state: dict[str, Any
                     mem_events[evt_id],
                 )
 
+    disk_guardrails = disk_state.get("provider_guardrails", {})
+    mem_guardrails = merged.get("provider_guardrails", {})
+    if isinstance(disk_guardrails, dict) or isinstance(mem_guardrails, dict):
+        merged["provider_guardrails"] = _merge_provider_guardrails(
+            disk_guardrails if isinstance(disk_guardrails, dict) else {},
+            mem_guardrails if isinstance(mem_guardrails, dict) else {},
+        )
+
+    disk_pools = disk_state.get("account_pool_runtime", {})
+    mem_pools = merged.get("account_pool_runtime", {})
+    if isinstance(disk_pools, dict) or isinstance(mem_pools, dict):
+        merged["account_pool_runtime"] = _merge_account_pool_runtime(
+            disk_pools if isinstance(disk_pools, dict) else {},
+            mem_pools if isinstance(mem_pools, dict) else {},
+        )
+
     if "workers" in merged:
         in_mem_state["workers"] = merged["workers"]
     if "queue" in merged:
         in_mem_state["queue"] = merged["queue"]
+    if "provider_guardrails" in merged:
+        in_mem_state["provider_guardrails"] = merged["provider_guardrails"]
+    if "account_pool_runtime" in merged:
+        in_mem_state["account_pool_runtime"] = merged["account_pool_runtime"]
 
     return merged
 

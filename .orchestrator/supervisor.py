@@ -54,11 +54,13 @@ from approval_queue import (
 from branch_drift_alarms import check_branch_drift
 from common import (
     agent_config_for,
+    anchor_config_paths,
     authoritative_status_root,
     classify_reopen_reason,
     cmdline_is_supervisor_process,
     config_path,
     CONFIG_PATH_ENV_VAR,
+    STATUS_ROOT_ENV_VAR,
     display_name_for,
     execution_context_files,
     generate_task_brief_content,
@@ -5410,11 +5412,16 @@ def main() -> int:
         raise RuntimeError(f"Unable to resolve orchestrator config path: {args.config}")
     os.environ[CONFIG_PATH_ENV_VAR] = str(selected_config_path)
     status_root = authoritative_status_root()
-    config = (
-        load_config_for_status_root(status_root)
-        if status_root is not None
-        else load_config(selected_config_path)
-    )
+    if status_root is not None:
+        config = load_config_for_status_root(status_root)
+    else:
+        config_repo_root = (
+            selected_config_path.parent.parent
+            if selected_config_path.parent.name == ".orchestrator"
+            else selected_config_path.parent
+        )
+        config = anchor_config_paths(load_config(selected_config_path), config_repo_root)
+        os.environ[STATUS_ROOT_ENV_VAR] = str(config_repo_root)
     if args.clear_provider_pause:
         state = load_runtime_state(config)
         changed = clear_provider_dispatch_pause(config, state, args.clear_provider_pause)

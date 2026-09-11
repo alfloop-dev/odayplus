@@ -797,3 +797,213 @@ class ActiveWorkerStatusFloorTests(unittest.TestCase):
             if isinstance(node, ast.FunctionDef) and node.lineno <= raw_reads[0] <= node.end_lineno
         ]
         self.assertIn("compute_mode_occupancy", owning)
+
+
+class QuotaRecoveryRuntimeStateTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.root = Path(self.tmpdir.name)
+        self.config = {
+            "paths": {
+                "state_file": str(self.root / "state.json"),
+                "event_queue": str(self.root / "event-queue.jsonl"),
+            }
+        }
+
+    def _write_json(self, path: Path, payload: object) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    def test_merge_runtime_states_drops_stale_dispatch_pause_after_clearance(self) -> None:
+        disk_state = runtime_state.default_state()
+        disk_state["provider_guardrails"]["cleared_pauses"]["codex"] = {
+            "provider": "codex",
+            "cleared_at": "2026-09-11T02:04:50Z",
+            "cleared_paused_at": "2026-09-11T01:37:15Z",
+            "worker_run_id": "run-001",
+        }
+
+        in_mem_state = runtime_state.default_state()
+        in_mem_state["provider_guardrails"]["dispatch_pauses"]["codex"] = {
+            "provider": "codex",
+            "paused_at": "2026-09-11T01:37:15Z",
+            "blocked_until": "2026-09-11T02:37:15Z",
+            "failure_kind": "quota_terminal",
+        }
+
+        merged = runtime_state.merge_runtime_states(disk_state, in_mem_state)
+
+        self.assertNotIn("codex", merged["provider_guardrails"]["dispatch_pauses"])
+        self.assertNotIn("codex", in_mem_state["provider_guardrails"]["dispatch_pauses"])
+        self.assertIn("codex", merged["provider_guardrails"]["cleared_pauses"])
+
+    def test_merge_runtime_states_preserves_new_failure_after_clearance(self) -> None:
+        disk_state = runtime_state.default_state()
+        disk_state["provider_guardrails"]["cleared_pauses"]["codex"] = {
+            "provider": "codex",
+            "cleared_at": "2026-09-11T02:04:50Z",
+            "cleared_paused_at": "2026-09-11T01:37:15Z",
+        }
+
+        in_mem_state = runtime_state.default_state()
+        in_mem_state["provider_guardrails"]["dispatch_pauses"]["codex"] = {
+            "provider": "codex",
+            "paused_at": "2026-09-11T02:10:00Z",
+            "blocked_until": "2026-09-11T02:40:00Z",
+            "failure_kind": "quota_terminal",
+        }
+
+        merged = runtime_state.merge_runtime_states(disk_state, in_mem_state)
+
+        self.assertIn("codex", merged["provider_guardrails"]["dispatch_pauses"])
+        self.assertEqual(
+            merged["provider_guardrails"]["dispatch_pauses"]["codex"]["paused_at"],
+            "2026-09-11T02:10:00Z",
+        )
+
+    def test_merge_runtime_states_preserves_concurrent_new_pause_on_disk(self) -> None:
+        disk_state = runtime_state.default_state()
+        disk_state["provider_guardrails"]["dispatch_pauses"]["codex"] = {
+            "provider": "codex",
+            "paused_at": "2026-09-11T02:10:00Z",
+            "blocked_until": "2026-09-11T02:40:00Z",
+            "failure_kind": "quota_terminal",
+        }
+
+        in_mem_state = runtime_state.default_state()
+        in_mem_state["provider_guardrails"]["cleared_pauses"]["codex"] = {
+            "provider": "codex",
+            "cleared_at": "2026-09-11T02:04:50Z",
+            "cleared_paused_at": "2026-09-11T01:37:15Z",
+        }
+
+        merged = runtime_state.merge_runtime_states(disk_state, in_mem_state)
+
+        self.assertIn("codex", merged["provider_guardrails"]["dispatch_pauses"])
+        self.assertEqual(
+            merged["provider_guardrails"]["dispatch_pauses"]["codex"]["paused_at"],
+            "2026-09-11T02:10:00Z",
+        )
+
+    def test_merge_runtime_states_account_pool_recovering_wins_over_stale_cooldown(self) -> None:
+        disk_state = runtime_state.default_state()
+        disk_state["account_pool_runtime"]["codex_bjoe"] = {
+            "state": "recovering",
+            "generation": 1,
+            "effective_concurrency": 1,
+            "last_probe_at": "2026-09-11T02:04:50Z",
+        }
+
+        in_mem_state = runtime_state.default_state()
+        in_mem_state["account_pool_runtime"]["codex_bjoe"] = {
+            "state": "cooldown",
+            "generation": 1,
+            "effective_concurrency": 0,
+            "last_failure_at": "2026-09-11T01:37:15Z",
+            "next_probe_at": "2026-09-11T02:37:15Z",
+        }
+
+        merged = runtime_state.merge_runtime_states(disk_state, in_mem_state)
+
+        self.assertEqual(merged["account_pool_runtime"]["codex_bjoe"]["state"], "recovering")
+        self.assertEqual(merged["account_pool_runtime"]["codex_bjoe"]["effective_concurrency"], 1)
+
+    def test_merge_runtime_states_account_pool_new_generation_wins(self) -> None:
+        disk_state = runtime_state.default_state()
+        disk_state["account_pool_runtime"]["codex_bjoe"] = {
+            "state": "recovering",
+            "generation": 1,
+            "effective_concurrency": 1,
+        }
+
+        in_mem_state = runtime_state.default_state()
+        in_mem_state["account_pool_runtime"]["codex_bjoe"] = {
+            "state": "cooldown",
+            "generation": 2,
+            "effective_concurrency": 0,
+            "last_failure_at": "2026-09-11T02:10:00Z",
+        }
+
+        merged = runtime_state.merge_runtime_states(disk_state, in_mem_state)
+
+        self.assertEqual(merged["account_pool_runtime"]["codex_bjoe"]["generation"], 2)
+        self.assertEqual(merged["account_pool_runtime"]["codex_bjoe"]["state"], "cooldown")
+        self.assertEqual(merged["account_pool_runtime"]["codex_bjoe"]["effective_concurrency"], 0)
+
+    def test_interleaved_save_runtime_state_prevents_lost_clear_resurrection(self) -> None:
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        initial = runtime_state.default_state()
+        initial["provider_guardrails"]["dispatch_pauses"]["codex"] = {
+            "provider": "codex",
+            "paused_at": "2026-09-11T01:37:15Z",
+            "blocked_until": "2026-09-11T02:37:15Z",
+            "failure_kind": "quota_terminal",
+        }
+        initial["account_pool_runtime"]["codex_bjoe"] = {
+            "state": "cooldown",
+            "generation": 1,
+            "effective_concurrency": 0,
+            "last_failure_at": "2026-09-11T01:37:15Z",
+            "next_probe_at": "2026-09-11T02:37:15Z",
+        }
+        runtime_state.save_runtime_state(self.config, initial)
+
+        # Writer A loads state with old pause and cooldown
+        writer_a_state = runtime_state.load_runtime_state(self.config)
+
+        # Writer B loads and clears provider pause
+        writer_b_state = runtime_state.load_runtime_state(self.config)
+        writer_b_state["provider_guardrails"]["dispatch_pauses"].pop("codex", None)
+        writer_b_state["provider_guardrails"]["cleared_pauses"]["codex"] = {
+            "provider": "codex",
+            "cleared_at": "2026-09-11T02:04:50Z",
+            "cleared_paused_at": "2026-09-11T01:37:15Z",
+        }
+        writer_b_state["account_pool_runtime"]["codex_bjoe"] = {
+            "state": "recovering",
+            "generation": 1,
+            "effective_concurrency": 1,
+            "last_probe_at": "2026-09-11T02:04:50Z",
+        }
+        runtime_state.save_runtime_state(self.config, writer_b_state)
+
+        # Writer A performs a save from its stale in-memory state
+        runtime_state.save_runtime_state(self.config, writer_a_state)
+
+        # The cleared state on disk must not have been resurrected
+        reloaded = runtime_state.load_runtime_state(self.config)
+        self.assertNotIn("codex", reloaded["provider_guardrails"]["dispatch_pauses"])
+        self.assertEqual(reloaded["account_pool_runtime"]["codex_bjoe"]["state"], "recovering")
+        self.assertEqual(reloaded["account_pool_runtime"]["codex_bjoe"]["effective_concurrency"], 1)
+
+        # Writer A subsequently observes a new quota failure at 02:10:00Z and saves
+        writer_a_state["provider_guardrails"]["dispatch_pauses"]["codex"] = {
+            "provider": "codex",
+            "paused_at": "2026-09-11T02:10:00Z",
+            "blocked_until": "2026-09-11T02:40:00Z",
+            "failure_kind": "quota_terminal",
+        }
+        writer_a_state["account_pool_runtime"]["codex_bjoe"] = {
+            "state": "cooldown",
+            "generation": 2,
+            "effective_concurrency": 0,
+            "last_failure_at": "2026-09-11T02:10:00Z",
+        }
+        runtime_state.save_runtime_state(self.config, writer_a_state)
+
+        # The new failure must be preserved on disk
+        reloaded_after_failure = runtime_state.load_runtime_state(self.config)
+        self.assertIn("codex", reloaded_after_failure["provider_guardrails"]["dispatch_pauses"])
+        self.assertEqual(
+            reloaded_after_failure["provider_guardrails"]["dispatch_pauses"]["codex"]["paused_at"],
+            "2026-09-11T02:10:00Z",
+        )
+        self.assertEqual(
+            reloaded_after_failure["account_pool_runtime"]["codex_bjoe"]["generation"],
+            2,
+        )
+        self.assertEqual(
+            reloaded_after_failure["account_pool_runtime"]["codex_bjoe"]["state"],
+            "cooldown",
+        )

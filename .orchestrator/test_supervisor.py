@@ -1637,9 +1637,148 @@ class DetectWorkerFailureTests(unittest.TestCase):
 
         self.assertTrue(changed)
         self.assertEqual(state["provider_guardrails"]["dispatch_pauses"], {})
+        self.assertIn("codex2", state["provider_guardrails"]["cleared_pauses"])
         write_activity_log.assert_called_once()
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "provider_dispatch_resumed")
         self.assertEqual(write_activity_log.call_args.args[1]["provider"], "codex2")
+
+    def test_clear_provider_dispatch_pause_recovers_same_epoch_account_pool_cooldown_to_canary(self) -> None:
+        config = {
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+            "account_pools": {"codex_bjoe": {"max_concurrent": 2, "state": "healthy", "enabled": True}},
+            "agents": {"codex": {"id": "codex", "provider": "codex", "account_pool": "codex_bjoe"}},
+            "providers": {"codex": {"delivery_mode": "codex", "quota_group": "codex"}},
+        }
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex": {
+                        "task_id": "ODP-TASK-001",
+                        "worker_run_id": "codex-run-1",
+                        "paused_at": "2026-09-11T01:37:15Z",
+                        "blocked_until": "2026-09-11T02:37:15Z",
+                        "failure_kind": "quota_terminal",
+                    }
+                },
+                "cleared_pauses": {},
+            },
+            "account_pool_runtime": {
+                "codex_bjoe": {
+                    "state": "cooldown",
+                    "effective_concurrency": 0,
+                    "generation": 1,
+                    "last_failure_at": "2026-09-11T01:37:15Z",
+                    "next_probe_at": "2026-09-11T02:37:15Z",
+                    "last_worker_run_id": "codex-run-1",
+                }
+            },
+        }
+
+        with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+            changed = supervisor.clear_provider_dispatch_pause(config, state, "codex")
+
+        self.assertTrue(changed)
+        self.assertEqual(state["provider_guardrails"]["dispatch_pauses"], {})
+        self.assertIn("codex", state["provider_guardrails"]["cleared_pauses"])
+        self.assertEqual(state["account_pool_runtime"]["codex_bjoe"]["state"], "recovering")
+        self.assertEqual(state["account_pool_runtime"]["codex_bjoe"]["effective_concurrency"], 1)
+        self.assertNotIn("next_probe_at", state["account_pool_runtime"]["codex_bjoe"])
+
+    def test_clear_provider_dispatch_pause_isolates_other_providers_and_auth(self) -> None:
+        config = {
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+            "account_pools": {
+                "codex_bjoe": {"max_concurrent": 2, "state": "healthy", "enabled": True},
+                "claude_main": {"max_concurrent": 2, "state": "healthy", "enabled": True},
+            },
+            "agents": {
+                "codex": {"id": "codex", "provider": "codex", "account_pool": "codex_bjoe"},
+                "claude": {"id": "claude", "provider": "claude", "account_pool": "claude_main"},
+            },
+            "providers": {
+                "codex": {"delivery_mode": "codex", "quota_group": "codex"},
+                "claude": {"delivery_mode": "claude", "quota_group": "claude"},
+            },
+        }
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex": {"paused_at": "2026-09-11T01:37:15Z"},
+                    "claude": {"paused_at": "2026-09-11T01:37:15Z"},
+                },
+                "cleared_pauses": {},
+            },
+            "account_pool_runtime": {
+                "codex_bjoe": {
+                    "state": "cooldown",
+                    "effective_concurrency": 0,
+                    "last_failure_at": "2026-09-11T01:37:15Z",
+                },
+                "claude_main": {
+                    "state": "cooldown",
+                    "effective_concurrency": 0,
+                    "last_failure_at": "2026-09-11T01:37:15Z",
+                },
+            },
+        }
+
+        with mock.patch.object(supervisor, "write_activity_log"):
+            changed = supervisor.clear_provider_dispatch_pause(config, state, "codex")
+
+        self.assertTrue(changed)
+        self.assertNotIn("codex", state["provider_guardrails"]["dispatch_pauses"])
+        self.assertIn("claude", state["provider_guardrails"]["dispatch_pauses"])
+        self.assertEqual(state["account_pool_runtime"]["codex_bjoe"]["state"], "recovering")
+        self.assertEqual(state["account_pool_runtime"]["claude_main"]["state"], "cooldown")
+
+    def test_clear_provider_dispatch_pause_retains_disabled_pools(self) -> None:
+        config = {
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+            "account_pools": {"codex_disabled": {"max_concurrent": 2, "state": "disabled", "enabled": False}},
+            "agents": {"codex": {"id": "codex", "provider": "codex", "account_pool": "codex_disabled"}},
+            "providers": {"codex": {"delivery_mode": "codex", "quota_group": "codex"}},
+        }
+        state = {
+            "provider_guardrails": {"dispatch_pauses": {}, "cleared_pauses": {}},
+            "account_pool_runtime": {
+                "codex_disabled": {
+                    "state": "cooldown",
+                    "effective_concurrency": 0,
+                    "last_failure_at": "2026-09-11T01:37:15Z",
+                }
+            },
+        }
+
+        with mock.patch.object(supervisor, "write_activity_log"):
+            changed = supervisor.clear_provider_dispatch_pause(config, state, "codex")
+
+        self.assertFalse(changed)
+        self.assertEqual(state["account_pool_runtime"]["codex_disabled"]["state"], "cooldown")
+
+    def test_clear_provider_dispatch_pause_recovers_cooldown_even_if_pause_dict_was_already_empty(self) -> None:
+        config = {
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+            "account_pools": {"codex_bjoe": {"max_concurrent": 2, "state": "healthy", "enabled": True}},
+            "agents": {"codex": {"id": "codex", "provider": "codex", "account_pool": "codex_bjoe"}},
+            "providers": {"codex": {"delivery_mode": "codex", "quota_group": "codex"}},
+        }
+        state = {
+            "provider_guardrails": {"dispatch_pauses": {}, "cleared_pauses": {}},
+            "account_pool_runtime": {
+                "codex_bjoe": {
+                    "state": "cooldown",
+                    "effective_concurrency": 0,
+                    "last_failure_at": "2026-09-11T01:37:15Z",
+                }
+            },
+        }
+
+        with mock.patch.object(supervisor, "write_activity_log"):
+            changed = supervisor.clear_provider_dispatch_pause(config, state, "codex")
+
+        self.assertTrue(changed)
+        self.assertEqual(state["account_pool_runtime"]["codex_bjoe"]["state"], "recovering")
+        self.assertEqual(state["account_pool_runtime"]["codex_bjoe"]["effective_concurrency"], 1)
 
 
 class ProcessQueueDispatchGuardTests(unittest.TestCase):
@@ -14465,6 +14604,55 @@ class SupervisorHeartbeatWarningSemanticsTests(unittest.TestCase):
             once=True,
             poll_interval=600.0,
         )
+
+    def test_main_clear_provider_pause_anchors_relative_paths_to_absolute_config_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target_repo = Path(tmpdir) / "repo"
+            target_orch = target_repo / ".orchestrator"
+            target_orch.mkdir(parents=True)
+            cfg_path = target_orch / "config.json"
+            cfg_payload = {
+                "paths": {
+                    "state_file": ".orchestrator/state.json",
+                    "event_queue": ".orchestrator/event-queue.jsonl",
+                    "activity_log": ".orchestrator/ai-activity-log.jsonl",
+                },
+                "providers": {"codex": {"delivery_mode": "codex", "quota_group": "codex"}},
+                "agents": {"codex": {"id": "codex", "provider": "codex"}},
+            }
+            cfg_path.write_text(json.dumps(cfg_payload), encoding="utf-8")
+            (target_orch / "event-queue.jsonl").write_text("", encoding="utf-8")
+            state_path = target_orch / "state.json"
+            initial_state = runtime_state.default_state()
+            initial_state["provider_guardrails"]["dispatch_pauses"]["codex"] = {
+                "provider": "codex",
+                "paused_at": "2026-09-11T01:37:15Z",
+                "blocked_until": "2026-09-11T02:37:15Z",
+                "failure_kind": "quota_terminal",
+            }
+            state_path.write_text(json.dumps(initial_state), encoding="utf-8")
+
+            with (
+                mock.patch.dict(os.environ, {}, clear=True),
+                mock.patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "supervisor.py",
+                        "--config",
+                        str(cfg_path),
+                        "--clear-provider-pause",
+                        "codex",
+                    ],
+                ),
+                mock.patch.object(supervisor, "authoritative_status_root", return_value=None),
+            ):
+                exit_code = supervisor.main()
+
+            self.assertEqual(exit_code, 0)
+            reloaded_state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertNotIn("codex", reloaded_state.get("provider_guardrails", {}).get("dispatch_pauses", {}))
+            self.assertIn("codex", reloaded_state.get("provider_guardrails", {}).get("cleared_pauses", {}))
 
 
 class RunSupervisorShellGuardTests(unittest.TestCase):
