@@ -70,6 +70,21 @@ class LiquidityArtifactEvidence:
         }
 
 
+REQUIRED_DEPRECIATION_EVIDENCE_KEYS: frozenset[str] = frozenset({
+    "basis",
+    "in_service_date",
+    "effective_date",
+    "elapsed_months",
+    "useful_life_months",
+    "residual_value_ratio",
+    "residual",
+    "accumulated_depreciation",
+    "equipment_value_after_depreciation",
+    "method",
+    "version",
+})
+
+
 @dataclass(frozen=True)
 class DepreciationCutoverEvidence:
     approved_by: str
@@ -77,26 +92,59 @@ class DepreciationCutoverEvidence:
     thresholds_reference: str
     model_version: str
     numerical_threshold_asset_delta_ratio: float
+    numerical_threshold_unexplained_cohort_ratio: float
+    structural_completeness_required: bool
+    calibration_coverage_degradation_threshold: float
 
     def __post_init__(self) -> None:
-        if not self.approved_by or not self.approved_by.strip():
+        if not self.approved_by or not str(self.approved_by).strip():
             raise AVMProductionExecutionError("depreciation cutover approved_by must be specified")
         if not isinstance(self.approved_at, datetime):
             raise AVMProductionExecutionError("depreciation cutover approved_at must be a valid datetime")
-        if not self.thresholds_reference or not self.thresholds_reference.strip():
+        if not self.thresholds_reference or not str(self.thresholds_reference).strip():
             raise AVMProductionExecutionError("depreciation cutover thresholds_reference must be specified")
-        if not self.model_version or not self.model_version.strip():
+        if not self.model_version or not str(self.model_version).strip():
             raise AVMProductionExecutionError("depreciation cutover model_version must be specified")
+
         try:
             ratio = float(self.numerical_threshold_asset_delta_ratio)
         except (TypeError, ValueError) as exc:
             raise AVMProductionExecutionError("depreciation cutover delta threshold must be numeric") from exc
         if not math.isfinite(ratio) or ratio <= 0.0:
             raise AVMProductionExecutionError("depreciation cutover delta threshold must be a finite positive number")
+
+        try:
+            unexplained_ratio = float(self.numerical_threshold_unexplained_cohort_ratio)
+        except (TypeError, ValueError) as exc:
+            raise AVMProductionExecutionError("depreciation cutover unexplained cohort threshold must be numeric") from exc
+        if not math.isfinite(unexplained_ratio) or not (0.0 < unexplained_ratio <= 1.0):
+            raise AVMProductionExecutionError(
+                "depreciation cutover unexplained cohort threshold must be a finite number between 0.0 and 1.0"
+            )
+
+        if self.structural_completeness_required is not True:
+            raise AVMProductionExecutionError(
+                "depreciation cutover structural completeness must be required (structural_completeness_required=True)"
+            )
+
+        try:
+            calib_degradation = float(self.calibration_coverage_degradation_threshold)
+        except (TypeError, ValueError) as exc:
+            raise AVMProductionExecutionError(
+                "depreciation cutover calibration degradation threshold must be numeric"
+            ) from exc
+        if not math.isfinite(calib_degradation) or not (0.0 < calib_degradation <= 1.0):
+            raise AVMProductionExecutionError(
+                "depreciation cutover calibration degradation threshold must be a finite positive number <= 1.0"
+            )
+
         object.__setattr__(self, "approved_by", self.approved_by.strip())
         object.__setattr__(self, "thresholds_reference", self.thresholds_reference.strip())
         object.__setattr__(self, "model_version", self.model_version.strip())
         object.__setattr__(self, "numerical_threshold_asset_delta_ratio", ratio)
+        object.__setattr__(self, "numerical_threshold_unexplained_cohort_ratio", unexplained_ratio)
+        object.__setattr__(self, "structural_completeness_required", True)
+        object.__setattr__(self, "calibration_coverage_degradation_threshold", calib_degradation)
 
     def validate_for_policy(self, active_depreciation_version: str) -> None:
         if self.model_version != active_depreciation_version:
@@ -111,6 +159,24 @@ class DepreciationCutoverEvidence:
             raise AVMProductionExecutionError(
                 "depreciation cutover evidence numerical_threshold_asset_delta_ratio is not valid"
             )
+        if (
+            not math.isfinite(self.numerical_threshold_unexplained_cohort_ratio)
+            or not (0.0 < self.numerical_threshold_unexplained_cohort_ratio <= 1.0)
+        ):
+            raise AVMProductionExecutionError(
+                "depreciation cutover evidence numerical_threshold_unexplained_cohort_ratio is not valid"
+            )
+        if self.structural_completeness_required is not True:
+            raise AVMProductionExecutionError(
+                "depreciation cutover evidence structural_completeness_required must be True"
+            )
+        if (
+            not math.isfinite(self.calibration_coverage_degradation_threshold)
+            or not (0.0 < self.calibration_coverage_degradation_threshold <= 1.0)
+        ):
+            raise AVMProductionExecutionError(
+                "depreciation cutover evidence calibration_coverage_degradation_threshold is not valid"
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -123,6 +189,9 @@ class DepreciationCutoverEvidence:
             "thresholds_reference": self.thresholds_reference,
             "model_version": self.model_version,
             "numerical_threshold_asset_delta_ratio": self.numerical_threshold_asset_delta_ratio,
+            "numerical_threshold_unexplained_cohort_ratio": self.numerical_threshold_unexplained_cohort_ratio,
+            "structural_completeness_required": self.structural_completeness_required,
+            "calibration_coverage_degradation_threshold": self.calibration_coverage_degradation_threshold,
         }
 
 
@@ -195,6 +264,16 @@ class AVMProductionExecutor:
                     "production v1 depreciation activation requires authentic Finance approval and threshold evidence"
                 )
             self.depreciation_cutover_evidence.validate_for_policy(dep_calc.depreciation_version)
+            if (
+                self.depreciation_cutover_evidence.structural_completeness_required
+                and (
+                    dep_calc.evidence is None
+                    or not REQUIRED_DEPRECIATION_EVIDENCE_KEYS <= set(dep_calc.evidence)
+                )
+            ):
+                raise AVMProductionExecutionError(
+                    "depreciation evidence is structurally incomplete"
+                )
 
         row = {
             **case.valuation_input.to_dict(),
@@ -289,6 +368,7 @@ class AVMProductionExecutor:
             depreciation_applied=dep_calc.depreciation_applied,
             asset_p50=dep_calc.asset_p50,
             depreciation_evidence=dep_calc.evidence,
+            feature_version=self.expected_feature_schema_version,
         )
 
 
@@ -379,10 +459,23 @@ def _load_depreciation_cutover_evidence_optional() -> DepreciationCutoverEvidenc
     approved_at_raw = os.getenv("ODP_AVM_DEPRECIATION_CUTOVER_APPROVED_AT", "").strip()
     thresholds_ref = os.getenv("ODP_AVM_DEPRECIATION_CUTOVER_THRESHOLDS_REFERENCE", "").strip()
     ratio_raw = os.getenv("ODP_AVM_DEPRECIATION_CUTOVER_DELTA_THRESHOLD", "").strip()
+    unexplained_raw = os.getenv("ODP_AVM_DEPRECIATION_CUTOVER_UNEXPLAINED_COHORT_THRESHOLD", "").strip()
+    structural_raw = os.getenv("ODP_AVM_DEPRECIATION_CUTOVER_STRUCTURAL_COMPLETENESS_REQUIRED", "").strip()
+    calib_raw = os.getenv("ODP_AVM_DEPRECIATION_CUTOVER_CALIBRATION_DEGRADATION_THRESHOLD", "").strip()
     model_ver = os.getenv("ODP_AVM_DEPRECIATION_CUTOVER_MODEL_VERSION", "").strip()
 
     cutover_keys_present = [
-        bool(v) for v in (approved_by, approved_at_raw, thresholds_ref, ratio_raw, model_ver)
+        bool(v)
+        for v in (
+            approved_by,
+            approved_at_raw,
+            thresholds_ref,
+            ratio_raw,
+            unexplained_raw,
+            structural_raw,
+            calib_raw,
+            model_ver,
+        )
     ]
     if not any(cutover_keys_present):
         return None
@@ -395,6 +488,12 @@ def _load_depreciation_cutover_evidence_optional() -> DepreciationCutoverEvidenc
         raise AVMProductionExecutionError("ODP_AVM_DEPRECIATION_CUTOVER_THRESHOLDS_REFERENCE is required for cutover")
     if not ratio_raw:
         raise AVMProductionExecutionError("ODP_AVM_DEPRECIATION_CUTOVER_DELTA_THRESHOLD is required for cutover")
+    if not unexplained_raw:
+        raise AVMProductionExecutionError("ODP_AVM_DEPRECIATION_CUTOVER_UNEXPLAINED_COHORT_THRESHOLD is required for cutover")
+    if not structural_raw:
+        raise AVMProductionExecutionError("ODP_AVM_DEPRECIATION_CUTOVER_STRUCTURAL_COMPLETENESS_REQUIRED is required for cutover")
+    if not calib_raw:
+        raise AVMProductionExecutionError("ODP_AVM_DEPRECIATION_CUTOVER_CALIBRATION_DEGRADATION_THRESHOLD is required for cutover")
     if not model_ver:
         raise AVMProductionExecutionError("ODP_AVM_DEPRECIATION_CUTOVER_MODEL_VERSION is required for cutover")
 
@@ -406,12 +505,33 @@ def _load_depreciation_cutover_evidence_optional() -> DepreciationCutoverEvidenc
     if not math.isfinite(ratio) or ratio <= 0.0:
         raise AVMProductionExecutionError("ODP_AVM_DEPRECIATION_CUTOVER_DELTA_THRESHOLD must be finite and positive")
 
+    try:
+        unexplained = float(unexplained_raw)
+    except ValueError as exc:
+        raise AVMProductionExecutionError("ODP_AVM_DEPRECIATION_CUTOVER_UNEXPLAINED_COHORT_THRESHOLD must be numeric") from exc
+    if not math.isfinite(unexplained) or not (0.0 < unexplained <= 1.0):
+        raise AVMProductionExecutionError("ODP_AVM_DEPRECIATION_CUTOVER_UNEXPLAINED_COHORT_THRESHOLD must be finite between 0.0 and 1.0")
+
+    structural_bool = structural_raw.lower() in {"true", "1", "yes"}
+    if not structural_bool:
+        raise AVMProductionExecutionError("ODP_AVM_DEPRECIATION_CUTOVER_STRUCTURAL_COMPLETENESS_REQUIRED must be true")
+
+    try:
+        calib = float(calib_raw)
+    except ValueError as exc:
+        raise AVMProductionExecutionError("ODP_AVM_DEPRECIATION_CUTOVER_CALIBRATION_DEGRADATION_THRESHOLD must be numeric") from exc
+    if not math.isfinite(calib) or not (0.0 < calib <= 1.0):
+        raise AVMProductionExecutionError("ODP_AVM_DEPRECIATION_CUTOVER_CALIBRATION_DEGRADATION_THRESHOLD must be finite positive <= 1.0")
+
     return DepreciationCutoverEvidence(
         approved_by=approved_by,
         approved_at=approved_at,
         thresholds_reference=thresholds_ref,
         model_version=model_ver,
         numerical_threshold_asset_delta_ratio=ratio,
+        numerical_threshold_unexplained_cohort_ratio=unexplained,
+        structural_completeness_required=structural_bool,
+        calibration_coverage_degradation_threshold=calib,
     )
 
 
@@ -420,4 +540,5 @@ __all__ = [
     "AVMProductionExecutor",
     "DepreciationCutoverEvidence",
     "LiquidityArtifactEvidence",
+    "REQUIRED_DEPRECIATION_EVIDENCE_KEYS",
 ]

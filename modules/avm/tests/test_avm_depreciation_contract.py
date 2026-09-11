@@ -188,7 +188,7 @@ class TestTheDepreciationContract:
         assert serialized["useful_life_months"] == 84
         assert serialized["residual_value_ratio"] == 0.10
         assert serialized["asset_in_service_date"].startswith("2021-03-03")
-        assert serialized["feature_version"] == "valuation-view-v1", (
+        assert serialized["feature_version"] == "valuation-view-v2", (
             "ValuationInput carries active feature version"
         )
 

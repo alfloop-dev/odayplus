@@ -9,9 +9,9 @@ from typing import Any
 from uuid import uuid4
 
 AVM_MODEL_VERSION = "dealroom-avm-baseline-v1"
-AVM_FEATURE_VERSION = "valuation-view-v1"
 AVM_FEATURE_VERSION_V1 = "valuation-view-v1"
 AVM_FEATURE_VERSION_V2 = "valuation-view-v2"
+AVM_FEATURE_VERSION = "valuation-view-v2"
 AVM_POLICY_VERSION = "avm-finance-approval-policy-v1"
 AVM_DEPRECIATION_VERSION = "avm-depreciation-straight-line-v1"
 AVM_DEPRECIATION_LEGACY_VERSION = "avm-depreciation-absent-v0"
@@ -947,6 +947,7 @@ def build_model_valuation_report(
     depreciation_applied: bool | None = None,
     asset_p50: float | None = None,
     depreciation_evidence: Mapping[str, Any] | None = None,
+    feature_version: str | None = None,
 ) -> ValuationReport:
     """Build policy outputs from an already executed approved model interval."""
 
@@ -1021,7 +1022,7 @@ def build_model_valuation_report(
             else None
         ),
         model_version=model_version,
-        feature_version=AVM_FEATURE_VERSION,
+        feature_version=feature_version or AVM_FEATURE_VERSION,
         prediction_origin_time=case.valuation_input.prediction_origin_time,
         valued_at=datetime.now(UTC),
         execution_metadata=meta,

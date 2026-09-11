@@ -101,6 +101,7 @@ def _executor(
     *,
     model: _ModelRuntime | None = None,
     with_cutover_evidence: bool = True,
+    expected_feature_schema_version: str = AVM_FEATURE_VERSION,
 ) -> tuple[AVMProductionExecutor, _ModelRuntime, _LiquidityRuntime]:
     model_rt = model or _ModelRuntime()
     liquidity = _LiquidityRuntime()
@@ -111,6 +112,9 @@ def _executor(
             thresholds_reference="docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md#r-4",
             model_version="avm-depreciation-straight-line-v1",
             numerical_threshold_asset_delta_ratio=0.20,
+            numerical_threshold_unexplained_cohort_ratio=0.05,
+            structural_completeness_required=True,
+            calibration_coverage_degradation_threshold=0.05,
         )
         if with_cutover_evidence
         else None
@@ -128,6 +132,7 @@ def _executor(
                 dataset_snapshot_id="liquidity-training-2026-07",
             ),
             depreciation_cutover_evidence=cutover,
+            expected_feature_schema_version=expected_feature_schema_version,
         ),
         model_rt,
         liquidity,
@@ -294,6 +299,9 @@ def test_production_avm_reloads_and_executes_real_oss_artifacts(
             thresholds_reference="docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md#r-4",
             model_version="avm-depreciation-straight-line-v1",
             numerical_threshold_asset_delta_ratio=0.20,
+            numerical_threshold_unexplained_cohort_ratio=0.05,
+            structural_completeness_required=True,
+            calibration_coverage_degradation_threshold=0.05,
         ),
     )
     service = AVMService(production_executor=executor)
@@ -493,6 +501,9 @@ def test_production_avm_cutover_fails_with_incomplete_or_wrong_version_evidence(
         thresholds_reference="docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md#r-4",
         model_version="avm-depreciation-experimental-v9",
         numerical_threshold_asset_delta_ratio=0.20,
+        numerical_threshold_unexplained_cohort_ratio=0.05,
+        structural_completeness_required=True,
+        calibration_coverage_degradation_threshold=0.05,
     )
     exec_wrong, _model, _liquidity = _executor()
     exec_wrong.depreciation_cutover_evidence = wrong_version_evidence
@@ -529,6 +540,9 @@ def test_production_avm_cutover_fails_with_incomplete_or_wrong_version_evidence(
             thresholds_reference="docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md#r-4",
             model_version="avm-depreciation-straight-line-v1",
             numerical_threshold_asset_delta_ratio=0.0,
+            numerical_threshold_unexplained_cohort_ratio=0.05,
+            structural_completeness_required=True,
+            calibration_coverage_degradation_threshold=0.05,
         )
 
     with pytest.raises(AVMProductionExecutionError, match="finite positive number"):
@@ -538,16 +552,139 @@ def test_production_avm_cutover_fails_with_incomplete_or_wrong_version_evidence(
             thresholds_reference="docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md#r-4",
             model_version="avm-depreciation-straight-line-v1",
             numerical_threshold_asset_delta_ratio=float("nan"),
+            numerical_threshold_unexplained_cohort_ratio=0.05,
+            structural_completeness_required=True,
+            calibration_coverage_degradation_threshold=0.05,
         )
 
-    # 3. Incomplete env vars
+    # 3. Invalid unexplained cohort ratio rejection
+    with pytest.raises(AVMProductionExecutionError, match="unexplained cohort threshold"):
+        DepreciationCutoverEvidence(
+            approved_by="finance-vp",
+            approved_at=datetime(2026, 9, 3, tzinfo=UTC),
+            thresholds_reference="docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md#r-4",
+            model_version="avm-depreciation-straight-line-v1",
+            numerical_threshold_asset_delta_ratio=0.20,
+            numerical_threshold_unexplained_cohort_ratio=1.5,
+            structural_completeness_required=True,
+            calibration_coverage_degradation_threshold=0.05,
+        )
+
+    # 4. Structural completeness required rejection when not True
+    with pytest.raises(AVMProductionExecutionError, match="structural completeness must be required"):
+        DepreciationCutoverEvidence(
+            approved_by="finance-vp",
+            approved_at=datetime(2026, 9, 3, tzinfo=UTC),
+            thresholds_reference="docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md#r-4",
+            model_version="avm-depreciation-straight-line-v1",
+            numerical_threshold_asset_delta_ratio=0.20,
+            numerical_threshold_unexplained_cohort_ratio=0.05,
+            structural_completeness_required=False,
+            calibration_coverage_degradation_threshold=0.05,
+        )
+
+    # 5. Invalid calibration degradation threshold rejection
+    with pytest.raises(AVMProductionExecutionError, match="calibration degradation threshold"):
+        DepreciationCutoverEvidence(
+            approved_by="finance-vp",
+            approved_at=datetime(2026, 9, 3, tzinfo=UTC),
+            thresholds_reference="docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md#r-4",
+            model_version="avm-depreciation-straight-line-v1",
+            numerical_threshold_asset_delta_ratio=0.20,
+            numerical_threshold_unexplained_cohort_ratio=0.05,
+            structural_completeness_required=True,
+            calibration_coverage_degradation_threshold=0.0,
+        )
+
+    # 6. Incomplete env vars
     monkeypatch.setenv("ODP_AVM_DEPRECIATION_CUTOVER_APPROVED_BY", "finance-vp")
-    monkeypatch.delenv("ODP_AVM_DEPRECIATION_CUTOVER_DELTA_THRESHOLD", raising=False)
-    monkeypatch.delenv("ODP_AVM_DEPRECIATION_CUTOVER_APPROVED_AT", raising=False)
-    monkeypatch.delenv("ODP_AVM_DEPRECIATION_CUTOVER_THRESHOLDS_REFERENCE", raising=False)
-    monkeypatch.delenv("ODP_AVM_DEPRECIATION_CUTOVER_MODEL_VERSION", raising=False)
-    with pytest.raises(AVMProductionExecutionError, match="is required for cutover"):
+    monkeypatch.setenv("ODP_AVM_DEPRECIATION_CUTOVER_APPROVED_AT", "2026-09-03T00:00:00Z")
+    monkeypatch.setenv("ODP_AVM_DEPRECIATION_CUTOVER_THRESHOLDS_REFERENCE", "docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md#r-4")
+    monkeypatch.setenv("ODP_AVM_DEPRECIATION_CUTOVER_MODEL_VERSION", "avm-depreciation-straight-line-v1")
+    monkeypatch.setenv("ODP_AVM_DEPRECIATION_CUTOVER_DELTA_THRESHOLD", "0.20")
+    monkeypatch.setenv("ODP_AVM_DEPRECIATION_CUTOVER_UNEXPLAINED_COHORT_THRESHOLD", "0.05")
+    monkeypatch.setenv("ODP_AVM_DEPRECIATION_CUTOVER_STRUCTURAL_COMPLETENESS_REQUIRED", "true")
+    monkeypatch.delenv("ODP_AVM_DEPRECIATION_CUTOVER_CALIBRATION_DEGRADATION_THRESHOLD", raising=False)
+    with pytest.raises(AVMProductionExecutionError, match="ODP_AVM_DEPRECIATION_CUTOVER_CALIBRATION_DEGRADATION_THRESHOLD is required for cutover"):
         AVMProductionExecutor.from_environment()
+
+
+def test_production_avm_feature_schema_versions_and_report_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Finding P2: Support both v2 active input schema and v1 legacy artifact execution with correct provenance."""
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+
+    # 1. Default executor uses AVM_FEATURE_VERSION (v2)
+    exec_v2, model_v2, _ = _executor(expected_feature_schema_version="valuation-view-v2")
+    service_v2 = AVMService(repository=InMemoryAVMRepository(), production_executor=exec_v2)
+    case_v2 = service_v2.create_case(_input(), created_by="finance", correlation_id="corr-v2")
+    report_v2 = service_v2.value(case_v2.case_id, actor="worker", correlation_id="corr-v2")
+
+    assert model_v2.calls[0]["expected_feature_schema_version"] == "valuation-view-v2"
+    assert report_v2.feature_version == "valuation-view-v2"
+
+    # 2. Legacy v1 artifact rollback executor uses valuation-view-v1
+    exec_v1, model_v1, _ = _executor(expected_feature_schema_version="valuation-view-v1")
+    service_v1 = AVMService(repository=InMemoryAVMRepository(), production_executor=exec_v1)
+    case_v1 = service_v1.create_case(_input(), created_by="finance", correlation_id="corr-v1")
+    report_v1 = service_v1.value(case_v1.case_id, actor="worker", correlation_id="corr-v1")
+
+    assert model_v1.calls[0]["expected_feature_schema_version"] == "valuation-view-v1"
+    assert report_v1.feature_version == "valuation-view-v1"
+
+
+def test_production_avm_cutover_fails_when_depreciation_evidence_is_structurally_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R4 / P1: Structural condition requires full depreciation evidence keys when depreciation is applied."""
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+    executor, _model, _liquidity = _executor()
+    repository = InMemoryAVMRepository()
+    service = AVMService(repository=repository, production_executor=executor)
+
+    dep_input = {
+        "store_id": "store-live-dep-struct",
+        "gm_ttm": 400_000,
+        "forecast_gm_next_12m": 450_000,
+        "asset_book_value": 200_000,
+        "equipment_fair_value": 100_000,
+        "equipment_depreciation_basis": "original_cost",
+        "equipment_original_cost": 100_000.0,
+        "useful_life_months": 84,
+        "residual_value_ratio": 0.10,
+        "depreciation_method": "straight_line",
+        "asset_in_service_date": "2023-01-01",
+        "depreciation_effective_date": "2026-07-01",
+        "quality_score": 0.95,
+        "source_snapshot_ids": ["finance-snapshot-live"],
+        "prediction_origin_time": datetime(2026, 7, 24, tzinfo=UTC),
+    }
+
+    from modules.avm.domain import calculate_depreciation as orig_calc_dep
+    from modules.avm.domain.valuation import DepreciationCalculationResult
+
+    def broken_calc_dep(*args: Any, **kwargs: Any) -> DepreciationCalculationResult:
+        res = orig_calc_dep(*args, **kwargs)
+        incomplete_evidence = dict(res.evidence or {})
+        incomplete_evidence.pop("accumulated_depreciation", None)
+        incomplete_evidence.pop("useful_life_months", None)
+        return DepreciationCalculationResult(
+            depreciation_version=res.depreciation_version,
+            depreciation_applied=res.depreciation_applied,
+            equipment_value_after_depreciation=res.equipment_value_after_depreciation,
+            asset_p50=res.asset_p50,
+            evidence=incomplete_evidence,
+            delta_from_undepreciated=res.delta_from_undepreciated,
+            accumulated_depreciation=res.accumulated_depreciation,
+            residual=res.residual,
+            elapsed_months=res.elapsed_months,
+        )
+
+    monkeypatch.setattr("modules.avm.application.production.calculate_depreciation", broken_calc_dep)
+    case = service.create_case(dep_input, created_by="finance", correlation_id="corr-struct")
+    with pytest.raises(valuation_service.AVMError, match="depreciation evidence is structurally incomplete"):
+        service.value(case.case_id, actor="worker", correlation_id="corr-struct")
 
 
 def test_production_avm_operational_rollback_to_v0_with_valid_receipt(
