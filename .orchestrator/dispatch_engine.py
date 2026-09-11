@@ -2592,11 +2592,12 @@ def _commit_advisory_status_transition(
         return True
     try:
         fresh = load_status(config)
-        if fresh is not status and isinstance(fresh, dict) and "tasks" in fresh:
-            status.clear()
-            status.update(fresh)
+        schema = config.get("schema", {}) or {} if isinstance(config, dict) else {}
+        tasks_path = schema.get("tasks_path", "tasks")
+        if fresh is not status and isinstance(fresh, dict) and tasks_path in fresh:
+            sync_status_snapshot_dict(config, status, fresh)
             return True
-        elif isinstance(fresh, dict) and "tasks" in fresh:
+        elif isinstance(fresh, dict) and tasks_path in fresh:
             return True
     except Exception:
         pass
@@ -3333,10 +3334,10 @@ def dispatch_ready_tasks(
                         fresh_loaded = False
                         try:
                             fresh = load_status(config)
-                            if fresh is not status and isinstance(fresh, dict) and "tasks" in fresh:
+                            if fresh is not status and isinstance(fresh, dict) and tasks_path in fresh:
                                 sync_status_snapshot_dict(config, status, fresh)
                                 fresh_loaded = True
-                            elif isinstance(fresh, dict) and "tasks" in fresh:
+                            elif isinstance(fresh, dict) and tasks_path in fresh:
                                 fresh_loaded = True
                         except Exception:
                             fresh_loaded = False

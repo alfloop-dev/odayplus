@@ -4,7 +4,7 @@
 - **Owner**: `Antigravity3`
 - **Reviewer**: `Codex2`
 - **Task Branch**: `task/ODP-ORCH-REVIEW-DISPATCH-CAS-STARVATION-001`
-- **Base Branch**: `dev`
+- **Base Branch**: `dev` (`4499a2993e37b62033926b07de8d8d2e8469a6c7` merged)
 
 ---
 
@@ -39,7 +39,7 @@
    在同一輪派工多個 slot 時，前一筆 helper claim commit 刷新了 canonical snapshot，但剩餘 slot 仍沿用舊 snapshot 計算出的 candidate 列表與 reason，且 helper claim 條件判斷將「其他 agent 持有有效租約」誤判為「可覆寫」，導致在 external writer 於 sync 期間為任務寫入其他 agent 的有效租約（如 Codex generation 17）時，被 dispatcher 覆寫為新租約（如 Antigravity7 generation 18）並誤派發；同樣地，當任務在 sync 期間轉為 blocked 或產生未完成依賴時，舊 candidate 仍被派發。
 
 6. **Root Cause 6（Helper 自身租約同步後未全面重驗候選資格與獨立性）**：
-   在 helper lease commit 成功並完成 canonical sync 刷新狀態後，若僅檢查了 live lease 的 claimant 與過期時間，未重新自 fresh `task_map` 驗證該候選任務的狀態（如 sync 期間轉為 blocked）、相依性（如新增未滿足之 dependency）、非 dispatchable 標記或 reviewer/owner 獨立性（如 reviewer 在 sync 期間被修改為該 helper agent），會導致過期或違規 event 仍被派入佇列。
+   在 helper lease commit 成功並完成 canonical sync 刷新狀態後，若僅檢查了 live lease 的 claimant 與過期時間，未重新自 fresh `task_map` 驗證該候選任務的狀態（如 sync 期間轉為 blocked）、相依性（如新增未滿足之 dependency）、non-dispatchable 標記或 reviewer/owner 獨立性（如 reviewer 在 sync 期間被修改為該 helper agent），會導致過期或違規 event 仍被派入佇列。
 
 7. **Root Cause 7（Advisory Sync / Reload 失敗未向上終止整個 Tick）**：
    當 advisory 寫入或 helper 租約寫入失敗且隨後自 canonical storage 重新載入 snapshot 亦失敗（例如發生持久性讀取異常）時，若僅中斷當前 agent 的評估迴圈，外層 agent 迴圈仍會繼續使用未確認新鮮度的 stale in-memory snapshot 評估後續 agent，導致 stale review / dispatch event 被錯誤派發。
@@ -50,46 +50,65 @@
 9. **Root Cause 9（全域 Snapshot 物件重載破壞 Release Lease 回呼狀態與 Detached Task）**：
    `commit_canonical_task_transition` 在提交成功後透過 `load_status` 自磁碟載入最新 snapshot，並以 `status.clear(); status.update(latest)` 替換了 `status` 內的巢狀 task dict 物件。在 `release_lease_integration.py` (`process_release_lease_issuance`) 中，呼叫者在執行 `issued` 提交後仍持有舊的 task dict 物件引用；隨後的 `_commit_result` 嘗試對該 detached 物件寫入 `dispatched` 或 `dispatch_unknown` 狀態，導致後續的 CAS 寫入所提交的 snapshot 依舊殘留 `issued` 狀態。造成 activity log 記錄了 terminal event，但磁碟 canonical 狀態卻停留在 `issued` 的脫鉤問題。
 
+10. **Root Cause 10（連續 Release 請求第二筆因 Detached Task 遺失 Issuance History 與 Nonce 稽核）**：
+    在 `release_lease_integration.py` 的 release requests 巡歷中，第一筆請求保留成功後 `status` 被重新綁定。第二筆請求若持有既有的 `ISSUANCE_FIELD`，呼叫 `_archive_current_issuance` 時會將既有發行記錄存入 detached task 的 `ISSUANCE_HISTORY_FIELD`。隨後 `_commit_result` 僅鏡像複製了 `ISSUANCE_FIELD`，導致 live task 上的 `ISSUANCE_HISTORY_FIELD` 丟失，連帶破壞了 `_nonce_reuse_errors` 對舊 approval nonce 的重複使用防護判定。
+
+11. **Root Cause 11（自訂 `schema.tasks_path` 在 CAS 提交與 Fallback 檢查中寫死 `'tasks'` 鍵）**：
+    在 `supervisor.py:408`、`status_transition.py:235` 與 `dispatch_engine.py:2595,2599,3336,3339` 中，新鮮度檢查寫死了 `"tasks" in fresh` / `"tasks" in latest`。當專案設定使用自訂 collection（例如 `schema.tasks_path = "items"`）時，寫入與 canonical sync 雖然在磁碟上成功執行，但函式判定資料無效回傳 `False` 並保留 stale revision，導致後續 dispatch tick 崩潰或失敗。
+
 ---
 
 ## 3. 修復方案與實作細節
 
-### 3.1 `commit_canonical_task_transition` 嚴格狀態重載、原地物件更新與 Fail-Closed
+### 3.1 `commit_canonical_task_transition` 支援可配置 `tasks_path`、原地物件更新與 Fail-Closed
 - 在 `.orchestrator/status_transition.py` 與 `.orchestrator/supervisor.py` 中：
   - `commit_canonical_task_transition` 於 `sync_status_pipeline(config)` 成功後，透過 `load_status(config)` 重新載入磁碟上的最新 snapshot。
-  - 引入 `sync_status_snapshot_dict` 函式，在重載 `status` 時比對既有 `tasks` 列表中的 task ID，對已存在的 task dict 執行原地 `target.clear(); target.update(new_t)` 更新，確保持有 task dict 引用的呼叫者（如 release lease bridge、dispatcher 內部）不會與 `status["tasks"]` 脫鉤。
+  - 使用 `schema.get("tasks_path", "tasks")` 讀取配置的任務集合鍵，不再寫死 `"tasks"`。
+  - 引入 `sync_status_snapshot_dict` 函式，在重載 `status` 時比對既有 `tasks_path` 列表中的 task ID，對已存在的 task dict 執行原地 `target.clear(); target.update(new_t)` 更新，確保持有 task dict 引用的呼叫者不會與 `status[tasks_path]` 脫鉤。
   - 若 `load_status` 失敗（拋出例外）或回傳無效資料，不再吞沒錯誤，一律回傳 `False`，嚴守 fail-closed 原則。
 
-### 3.2 `_commit_advisory_status_transition` 與新鮮度缺失嚴格中斷
-- 在 `.orchestrator/dispatch_engine.py` 中引入 `_commit_advisory_status_transition`：
-  - 嘗試執行 `commit_canonical_task_transition(config, status)`。
-  - 若 commit 失敗（CAS 衝突、sync 失敗或 reload 失敗），主動嘗試自 canonical 磁碟重新載入最新狀態。
-  - 若能成功載入新鮮 snapshot 則回傳 `True` 並觸發候選重新評估（`resynced = True; break`）；若無法確認 snapshot 新鮮度（commit 與 reload 皆失敗），回傳 `False` 並立即終止整個派工 tick（`return changed`），防止後續任何 agent 依據 stale snapshot 做出錯誤派工。
+### 3.2 `_commit_advisory_status_transition` 與 `_commit_or_refresh_status` 全面支援 `tasks_path`
+- 在 `.orchestrator/dispatch_engine.py` 中：
+  - `_commit_or_refresh_status` 支援可配置 `tasks_path`，並在重新載入新鮮狀態時透過 `sync_status_snapshot_dict(config, status, fresh)` 原地更新，確保快照一致性。
+  - 若 commit 失敗且無法確認 snapshot 新鮮度（commit 與 reload 皆失敗），回傳 `False` 並立即終止整個派工 tick（`return changed`），防止後續任何 agent 依據 stale snapshot 做出錯誤派工。
 
 ### 3.3 Helper 候選全量重驗與租約隔離保護
 - 在 `.orchestrator/dispatch_engine.py` 中重構 `dispatch_ready_tasks`：
   - 改用 `while queued_for_agent < available_agent_slots and dispatches < max_dispatches_per_tick:` 迴圈，每派發一筆任務或每次 snapshot 變更後，皆基於最新 `status` snapshot 重新執行完整候選評估與排序。
   - 在 helper claim 路徑中，嚴格檢查 `existing_claim_live and existing_claimant != normalize_agent_id(target_agent)`，嚴禁覆寫任何其他 agent 的有效租約。
   - Helper lease commit 成功後，全面重新自 fresh `task_map` 驗證候選任務之狀態（必須為 claimable 且非 blocked/review/done）、相依性完整性（`dependencies_satisfied`）、`non_dispatchable` 守衛、reviewer/owner 獨立性（`norm_target not in {live_owner, live_reviewer}`）與 worktree lease block，確認完全合法後方才加入派工佇列。
+  - `dispatch_helper_tasks` 的 reload fallback 亦全面支援 `tasks_path` 與 `sync_status_snapshot_dict`。
 
-### 3.4 審計其他 commit callers（`advance_approved_prs_to_merge` 與 Recovery Loops）
+### 3.4 Release Lease 跨請求 Live Task 重新獲取與 History 鏡像保存
+- 在 `.orchestrator/release_lease_integration.py` 中：
+  - 在遍歷任務時，每次迭代皆重新自當前 `status` 獲取最新的 live task 物件（`live_task = _task_index(status, task_id, config=config)`），避免沿用前一筆請求提交重載後的 detached 物件。
+  - `_commit_result` 在同步 detached 物件至 live task 時，除 `ISSUANCE_FIELD` 外同步完整鏡像保存 `ISSUANCE_HISTORY_FIELD`。
+  - `_nonce_reuse_errors`、`_task_index` 與 `_record_blocked` 全面支援可配置之 `schema.tasks_path` 與 `schema.task_id_field`。
+
+### 3.5 審計其他 commit callers（`advance_approved_prs_to_merge` 與 Recovery Loops）
 - 審計並重構 `advance_approved_prs_to_merge`、`recover_conflicted_review_prs` 與 `recover_failed_ci_review_prs`：
   - 改用 `while True:` 與 `processed_ids` 遍歷，確保每次 `requeue_task_for_ci_repair` commit 刷新 `status` 後，後續迭代皆自最新 snapshot 取得未處理的 live task 物件，徹底排除 detached object 問題。
 
-### 3.5 Helper 預算隔離與候選遞延推進
+### 3.6 Helper 預算隔離與候選遞延推進
 - 在 `.orchestrator/dispatch_engine.py` 的候選收集與派工階段：
   - 在候選掃描階段預先計算 `can_acquire_new_helper = (helper_dispatches < max_helper and active_claims_for_agent < max_claims_per_agent)`，在預算為零或耗盡時不再將無效 helper 候選標記為 `REASON_HELPER_CLAIM`。
   - 在候選處理階段，若遇 helper 預算受限或條件不符，改以 `agent_deferred_task_ids.add(task_id)` 記錄並 `continue` 繼續後續候選評估，不再 `break` 終止該 agent 迴圈，亦不再無限重試同一首位候選，確保後續合法 review 與 owned 任務可順暢派發。
 
-### 3.6 Release Lease 狀態同步雙重保障
-- 在 `.orchestrator/release_lease_integration.py` 中：
-  - `_commit_result` 在更新傳入之 `task` 物件之餘，同步根據 `task_id` 走訪 `status[tasks_path]` 更新其中的 live task 字典，確保即使在不同的 callback 語意下，terminal receipt（`dispatched` 或 `dispatch_unknown`）皆能精確寫入 canonical storage 並與 activity log 保持一致。
-
 ---
 
-## 4. 驗證記錄（Test Receipts）
+## 4. 驗證記錄與 Red/Green 探針（Verification Receipts & Red/Green Probes）
 
-### 4.1 新增回歸測試
+### 4.1 審查者探針驗證（Reviewer Probes）
+
+1. **`review_schema_probe.py`（自訂 collection 支援與新鮮度探針）**：
+   - **Red 狀態**（HEAD `704e3db4`）：在 `tasks_path = "items"` 且 callback 為 `current` 時，`commit_canonical_task_transition` 寫入並 sync 成功後因寫死 `"tasks"` 判定無效，`committed = False`，探針 exit code `1`（`AssertionError: Valid custom tasks_path snapshot rejected after successful CAS and sync`）。
+   - **Green 狀態**（修復後）：`tasks` 與 `items` 兩種 collection 均通過 baseline 與 current 模式，`committed = True` 且 `fresh = True`，探針 exit code `0`。
+
+2. **`release_history_probe.py`（兩筆 Release 請求歷史與 Nonce 重複使用稽核探針）**：
+   - **Red 狀態**（HEAD `704e3db4`）：第二筆請求發行後，`prior_receipt_preserved = False`、`second_history = []`，且 `prior_nonce_reuse_errors = []`（舊 nonce 重複使用檢查未捕獲錯誤）。
+   - **Green 狀態**（修復後）：`prior_receipt_preserved = True`、`second_history` 包含完整 prior issuance 記錄，且 `prior_nonce_reuse_errors = ['release_lease_request nonce was already used by a different issuance']`，兩筆請求皆能正常派發，歷史與稽核記錄完全保存。
+
+### 4.2 新增回歸測試
 1. `test_diagnostic_cas_two_pending_two_green_revision_changing_dispatch` (`test_dispatch_policy.py`):
    - 2 個 CI pending 任務在前、2 個 CI green 任務在後。真實 temp-file 與 sync 推進 revision，驗證 2 個 green 任務皆正常產生正確 reviewer event。
 2. `test_diagnostic_cas_canonical_sync_advancing_disk_revision_reloads_status_for_subsequent_writes` (`test_dispatch_policy.py`):
@@ -114,10 +133,14 @@
     - 驗證當 helper 預算為 0 或已耗盡時，排在 helper 候選之後的 exact-head green review 仍能順利取得派發，且 helper 租約受限時不中斷該 agent 的後續合法派工。
 12. `test_commit_canonical_task_transition_maintains_task_object_identity` (`test_supervisor.py`):
     - 驗證 `commit_canonical_task_transition` 在 sync 成功並重載最新 snapshot 後，依然維持傳入之 task dict 物件的身份一致性，確保後續原地修改仍可正確提交。
-13. `test_release_terminal_receipt_survives_commit_reload` (`test_release_lease_integration.py`, 6 variants: legacy/current x revision_sync False/True x dispatch_fails False/True):
+13. `test_commit_canonical_task_transition_supports_custom_tasks_path_collection` (`test_supervisor.py`):
+    - 驗證 `commit_canonical_task_transition` 支援自訂 `schema.tasks_path = "items"`，在真實 revision 推進 sync 後正確重載並保持 task 物件身份一致性與磁碟持久化。
+14. `test_release_terminal_receipt_survives_commit_reload` (`test_release_lease_integration.py`, 6 variants: legacy/current x revision_sync False/True x dispatch_fails False/True):
     - 驗證 release lease bridge 在 commit_status 回呼中經歷 revision sync 後，terminal receipt 依然能夠正確持久化至 canonical status 檔案，使磁碟狀態與 activity log 完全一致。
+15. `test_two_release_requests_preserve_history_and_nonce_audit` (`test_release_lease_integration.py`):
+    - 驗證連續處理兩筆 release 請求時，第二筆持有的既有 issuance 正確存入 `ISSUANCE_HISTORY_FIELD` 並持久化至磁碟，且 `_nonce_reuse_errors` 成功拒絕該舊 approval nonce 的重複使用。
 
-### 4.2 測試執行收據（Test Execution Receipts Bound to Head SHA）
+### 4.3 測試執行收據（Test Execution Receipts Bound to Head SHA）
 
 所有驗證命令均以獨立子程序執行，保留原始 terminal exit code 與持續時間，無背景等待迴圈或摘要 grep：
 

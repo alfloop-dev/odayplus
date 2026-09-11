@@ -405,7 +405,9 @@ def commit_canonical_task_transition(config: dict[str, Any], status: dict[str, A
         return False
     try:
         latest = load_status(config)
-        if isinstance(latest, dict) and "tasks" in latest:
+        schema = config.get("schema", {}) or {} if isinstance(config, dict) else {}
+        tasks_path = schema.get("tasks_path", "tasks")
+        if isinstance(latest, dict) and tasks_path in latest:
             sync_status_snapshot_dict(config, status, latest)
         else:
             return False

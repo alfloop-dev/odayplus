@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import json
 import subprocess
 import uuid
@@ -936,3 +937,62 @@ def test_release_terminal_receipt_survives_commit_reload(
         f"canonical state {record['state']!r} disagrees with emitted {event_type!r}; "
         f"callback={callback_kind}, revision_sync={revision_sync}"
     )
+
+
+def test_two_release_requests_preserve_history_and_nonce_audit(
+    harness: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two valid release requests in sequence preserve prior issuance history on the second task."""
+    second_id = "ODP-RELEASE-DEPLOY-002"
+    old_nonce = "synthetic-prior-approval-nonce"
+    old_record = {
+        "state": "dispatched",
+        "request_fingerprint": "synthetic-prior-fingerprint",
+        "approval_id": "synthetic-prior-approval",
+        "approval_nonce_digest": bridge._safe_digest(old_nonce),
+        "receipt": {"lease_id": "lease-" + "1" * 32},
+    }
+
+    status = _read_status(harness)
+    status[supervisor.STATUS_WRITE_REVISION_FIELD] = "initial-revision"
+    second = copy.deepcopy(status["tasks"][1])
+    second["id"] = second_id
+    second[bridge.REQUEST_FIELD].update({
+        "task_id": second_id,
+        "nonce": "synthetic-new-second-approval",
+        "approval_id": "synthetic-new-second-approval-id",
+    })
+    second[bridge.ISSUANCE_FIELD] = copy.deepcopy(old_record)
+    status["tasks"].append(second)
+    harness["status_path"].write_text(json.dumps(status))
+
+    def local_sync(config):
+        snapshot = _read_status(harness)
+        snapshot[supervisor.STATUS_WRITE_REVISION_FIELD] = uuid.uuid4().hex
+        harness["status_path"].write_text(json.dumps(snapshot))
+        return True
+
+    monkeypatch.setattr(supervisor, "sync_status_pipeline", local_sync)
+    harness["commit"] = supervisor.commit_canonical_task_transition
+
+    dispatches = []
+    assert _run(harness, lambda **kwargs: dispatches.append(kwargs["request"]["task_id"]))
+    assert dispatches == ["ODP-RELEASE-DEPLOY-001", second_id]
+
+    snapshot = _read_status(harness)
+    second_live = next(t for t in snapshot["tasks"] if t["id"] == second_id)
+    history = second_live.get(bridge.ISSUANCE_HISTORY_FIELD, [])
+    assert len(history) == 1
+    assert history[0] == old_record
+    assert second_live.get(bridge.ISSUANCE_FIELD, {}).get("state") == "dispatched"
+
+    # Nonce reuse of the old nonce must be rejected
+    reuse_errors = bridge._nonce_reuse_errors(
+        snapshot,
+        "ODP-RELEASE-DEPLOY-003",
+        "different-fingerprint",
+        bridge._safe_digest(old_nonce),
+        archive_dir=harness["root"] / "ai-task-archive/tasks",
+        config=harness["config"],
+    )
+    assert reuse_errors == ["release_lease_request nonce was already used by a different issuance"]

@@ -4995,6 +4995,57 @@ PY
         on_disk = json.loads(self.status_path.read_text(encoding="utf-8"))
         self.assertEqual(on_disk["tasks"][0]["status"], "done")
 
+    def test_commit_canonical_task_transition_supports_custom_tasks_path_collection(self) -> None:
+        custom_status_path = self.root / "custom-status.json"
+        custom_status_path.write_text(
+            json.dumps(
+                {
+                    "_status_write_revision": "initial-rev",
+                    "items": [
+                        {
+                            "task_id": "CUSTOM-TASK-001",
+                            "status": "todo",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        config = {
+            "schema": {
+                "tasks_path": "items",
+                "task_id_field": "task_id",
+                "status_field": "status",
+            },
+            "paths": {
+                "status_file": str(custom_status_path),
+                "activity_log": str(self.root / "activity-log.jsonl"),
+            },
+        }
+        sync_count = 0
+
+        def sync_side_effect(cfg):
+            nonlocal sync_count
+            sync_count += 1
+            disk = json.loads(custom_status_path.read_text(encoding="utf-8"))
+            disk["_status_write_revision"] = f"rev-{sync_count}"
+            disk["sync_marker"] = "synced"
+            custom_status_path.write_text(json.dumps(disk), encoding="utf-8")
+            return True
+
+        with mock.patch.object(supervisor, "sync_status_pipeline", side_effect=sync_side_effect):
+            status = supervisor.load_status(config)
+            task = status["items"][0]
+            task["status"] = "in_progress"
+            committed = supervisor.commit_canonical_task_transition(config, status)
+            self.assertTrue(committed)
+            self.assertEqual(status["_status_write_revision"], "rev-1")
+            self.assertEqual(status["items"][0]["status"], "in_progress")
+            self.assertIs(status["items"][0], task)
+            disk = json.loads(custom_status_path.read_text(encoding="utf-8"))
+            self.assertEqual(disk["items"][0]["status"], "in_progress")
+            self.assertEqual(disk["sync_marker"], "synced")
+
 
 class RunOnceSupervisorStateTests(unittest.TestCase):
     def test_discussion_planning_needs_materialization_for_accepted_approved_session(self) -> None:

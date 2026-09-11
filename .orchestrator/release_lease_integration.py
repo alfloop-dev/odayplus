@@ -215,9 +215,17 @@ def request_fingerprint(task_id: str, request: dict[str, Any]) -> str:
     )
 
 
-def _task_index(status: dict[str, Any], task_id: str) -> dict[str, Any] | None:
-    for task in status.get("tasks") or []:
-        if isinstance(task, dict) and str(task.get("id") or "").strip() == task_id:
+def _task_index(
+    status: dict[str, Any],
+    task_id: str,
+    *,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    schema = (config.get("schema", {}) or {}) if isinstance(config, dict) else {}
+    tasks_path = schema.get("tasks_path", "tasks")
+    task_id_field = schema.get("task_id_field", "id")
+    for task in status.get(tasks_path) or []:
+        if isinstance(task, dict) and str(task.get(task_id_field, task.get("id")) or "").strip() == task_id:
             return task
     return None
 
@@ -291,12 +299,17 @@ def _nonce_reuse_errors(
     status: dict[str, Any],
     task_id: str,
     fingerprint: str,
-    nonce_digest: str | None,
+    nonce_digest: str,
     *,
     archive_dir: Path,
+    config: dict[str, Any] | None = None,
 ) -> list[str]:
     if not nonce_digest:
         return ["release_lease_request nonce is unavailable"]
+
+    schema = (config.get("schema", {}) or {}) if isinstance(config, dict) else {}
+    tasks_path = schema.get("tasks_path", "tasks")
+    task_id_field = schema.get("task_id_field", "id")
 
     def reused(records: list[Any], record_task_id: str) -> bool:
         for record in records:
@@ -306,11 +319,11 @@ def _nonce_reuse_errors(
                 return True
         return False
 
-    for task in status.get("tasks") or []:
+    for task in status.get(tasks_path) or []:
         if not isinstance(task, dict):
             continue
         records = [task.get(ISSUANCE_FIELD), *(task.get(ISSUANCE_HISTORY_FIELD) or [])]
-        if reused(records, str(task.get("id") or "").strip()):
+        if reused(records, str(task.get(task_id_field, task.get("id")) or "").strip()):
             return ["release_lease_request nonce was already used by a different issuance"]
 
     try:
@@ -333,7 +346,7 @@ def _nonce_reuse_errors(
             archived_task.get(ISSUANCE_FIELD),
             *(archived_task.get(ISSUANCE_HISTORY_FIELD) or []),
         ]
-        if reused(records, str(archived_task.get("id") or "").strip()):
+        if reused(records, str(archived_task.get(task_id_field, archived_task.get("id")) or "").strip()):
             return ["release_lease_request nonce was already used by an archived issuance"]
     return []
 
@@ -445,13 +458,18 @@ def _commit_result(
     schema = config.get("schema", {}) or {} if isinstance(config, dict) else {}
     tasks_path = schema.get("tasks_path", "tasks")
     task_id_field = schema.get("task_id_field", "id")
-    target_id = task.get(task_id_field)
+    target_id = str(task.get(task_id_field, task.get("id")) or "").strip()
 
     task[ISSUANCE_FIELD] = record
     if target_id and isinstance(status.get(tasks_path), list):
         for live_task in status[tasks_path]:
-            if isinstance(live_task, dict) and live_task.get(task_id_field) == target_id:
-                live_task[ISSUANCE_FIELD] = record
+            if isinstance(live_task, dict) and str(live_task.get(task_id_field, live_task.get("id")) or "").strip() == target_id:
+                if live_task is not task:
+                    live_task[ISSUANCE_FIELD] = record
+                    if ISSUANCE_HISTORY_FIELD in task:
+                        live_task[ISSUANCE_HISTORY_FIELD] = list(task[ISSUANCE_HISTORY_FIELD])
+                else:
+                    live_task[ISSUANCE_FIELD] = record
                 break
     return bool(commit_status(config, status))
 
@@ -695,7 +713,7 @@ def _status_still_reserved(
     fingerprint: str,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]] | None:
     latest = load_status(config)
-    task = _task_index(latest, task_id)
+    task = _task_index(latest, task_id, config=config)
     if not isinstance(task, dict):
         return None
     request = task.get(REQUEST_FIELD)
@@ -723,9 +741,12 @@ def _record_blocked(
     commit_status: Callable[[dict[str, Any], dict[str, Any]], bool],
     dispatch_ref_sha: str | None = None,
 ) -> bool:
+    schema = (config.get("schema", {}) or {}) if isinstance(config, dict) else {}
+    task_id_field = schema.get("task_id_field", "id")
+    task_id = str(task.get(task_id_field, task.get("id")) or "").strip()
     record = _issuance_record(
         state="blocked",
-        task_id=str(task["id"]),
+        task_id=task_id,
         request=request,
         fingerprint=fingerprint,
         settings=settings,
@@ -783,12 +804,24 @@ def process_release_lease_issuance(
     root = config_path(config, "status_file").parent
     archive_dir = root / "ai-task-archive/tasks"
 
-    for task in status.get("tasks") or []:
-        if not isinstance(task, dict) or REQUEST_FIELD not in task:
+    schema = config.get("schema", {}) or {} if isinstance(config, dict) else {}
+    tasks_path = schema.get("tasks_path", "tasks")
+    task_id_field = schema.get("task_id_field", "id")
+
+    for initial_task in list(status.get(tasks_path) or []):
+        if not isinstance(initial_task, dict) or REQUEST_FIELD not in initial_task:
             continue
-        task_id = str(task.get("id") or "").strip()
+        task_id = str(initial_task.get(task_id_field, initial_task.get("id")) or "").strip()
+        if not task_id:
+            continue
+
+        # Reacquire the full live task before archiving/reserving and after snapshot changes
+        live_task = _task_index(status, task_id, config=config)
+        if not isinstance(live_task, dict) or REQUEST_FIELD not in live_task:
+            continue
+        task = live_task
         request = task.get(REQUEST_FIELD)
-        if not task_id or not isinstance(request, dict):
+        if not isinstance(request, dict):
             continue
         fingerprint = request_fingerprint(task_id, request)
         previous = task.get(ISSUANCE_FIELD)
@@ -803,7 +836,7 @@ def process_release_lease_issuance(
         errors = request_errors(status, task, request, now=timestamp)
         errors.extend(
             _nonce_reuse_errors(
-                status, task_id, fingerprint, _safe_digest(request.get("nonce")), archive_dir=archive_dir
+                status, task_id, fingerprint, _safe_digest(request.get("nonce")), archive_dir=archive_dir, config=config
             )
         )
         if errors:
@@ -844,7 +877,7 @@ def process_release_lease_issuance(
         errors.extend(ref_errors)
         errors.extend(
             _nonce_reuse_errors(
-                status, task_id, fingerprint, _safe_digest(request.get("nonce")), archive_dir=archive_dir
+                status, task_id, fingerprint, _safe_digest(request.get("nonce")), archive_dir=archive_dir, config=config
             )
         )
         errors.extend(
@@ -924,7 +957,7 @@ def process_release_lease_issuance(
         errors.extend(post_ref_errors)
         errors.extend(
             _nonce_reuse_errors(
-                status, task_id, fingerprint, _safe_digest(request.get("nonce")), archive_dir=archive_dir
+                status, task_id, fingerprint, _safe_digest(request.get("nonce")), archive_dir=archive_dir, config=config
             )
         )
         errors.extend(
