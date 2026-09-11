@@ -639,3 +639,17 @@ def test_verify_change_review_scope_for_task_files() -> None:
     result = classify_paths(touched_paths, manifest)
     assert result["scope"] == "development_tooling"
     assert result["non_tooling_paths"] == []
+
+
+def test_verify_change_review_scope_for_contract_test_deliverable() -> None:
+    manifest = load_manifest(ROOT / "config" / "change-review-scopes.json")
+    touched_paths = [
+        ".github/workflows/ci.yml",
+        "delivery_toolchain/governance/verify_ci_product_jobs.py",
+        "tests/tooling/test_ci_product_parallel.py",
+        "docs/evidence/execution-control/ODP-CI-PRODUCT-PARALLEL-JOBS-001/README.md",
+        "tests/contract/test_merge_queue_batch_policy.py",
+    ]
+    result = classify_paths(touched_paths, manifest)
+    assert result["scope"] == "product_or_mixed"
+    assert result["non_tooling_paths"] == ["tests/contract/test_merge_queue_batch_policy.py"]

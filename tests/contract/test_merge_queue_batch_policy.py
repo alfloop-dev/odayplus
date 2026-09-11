@@ -550,7 +550,7 @@ def test_scenario_6_required_jobs_are_eligible_on_merge_group() -> None:
 def test_scenario_6_tooling_skip_stays_bounded_to_tooling_only_changes() -> None:
     """Pin the pre-existing tooling-scope skip (ci.yml:145/:337) to its exact shape.
 
-    `product` and `product-e2e-gate` are skipped when every changed path is
+    `product` lanes and `product-e2e-gate` are skipped when every changed path is
     development tooling. That skip predates this task, and this test does not
     endorse or widen it -- it pins its blast radius so that any later change to
     the condition or to the manifest behind it has to be made deliberately here
@@ -558,11 +558,25 @@ def test_scenario_6_tooling_skip_stays_bounded_to_tooling_only_changes() -> None
     """
     jobs = _load_yaml(CI_WORKFLOW_PATH)["jobs"]
 
-    for context in ("product", "product-e2e-gate"):
+    product_lanes = (
+        "product-lint-unit",
+        "product-db",
+        "product-api-contract",
+        "product-security",
+        "product-node",
+    )
+    for context in (*product_lanes, "product-e2e-gate"):
         assert jobs[context].get("if") == TOOLING_SKIP_IF, (
             f"job {context} carries an unexpected condition: {jobs[context].get('if')!r}"
         )
         assert jobs[context].get("needs") == "change-scope"
+
+    # `product` aggregates the five parallel product lanes and always runs
+    # fail-closed to verify their results.
+    assert jobs["product"].get("if") == "always()", (
+        f"job product carries an unexpected condition: {jobs['product'].get('if')!r}"
+    )
+    assert jobs["product"].get("needs") == ["change-scope", *product_lanes]
 
     assert jobs["orchestrator"].get("if") is None, "orchestrator must never be skipped"
     assert jobs["change-scope"].get("if") is None, "the scope classifier must always run"
