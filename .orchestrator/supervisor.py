@@ -394,6 +394,10 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
     return status_transition.sync_dispatched_task_status(config, event)
 
 
+def sync_status_snapshot_dict(config: dict[str, Any], status: dict[str, Any], latest: dict[str, Any]) -> None:
+    status_transition.sync_status_snapshot_dict(config, status, latest)
+
+
 def commit_canonical_task_transition(config: dict[str, Any], status: dict[str, Any]) -> bool:
     if not write_status_snapshot_if_current(config, status):
         return False
@@ -401,10 +405,9 @@ def commit_canonical_task_transition(config: dict[str, Any], status: dict[str, A
         return False
     try:
         latest = load_status(config)
-        if latest is not status and isinstance(latest, dict) and "tasks" in latest:
-            status.clear()
-            status.update(latest)
-        elif not (isinstance(latest, dict) and "tasks" in latest):
+        if isinstance(latest, dict) and "tasks" in latest:
+            sync_status_snapshot_dict(config, status, latest)
+        else:
             return False
     except Exception:
         return False

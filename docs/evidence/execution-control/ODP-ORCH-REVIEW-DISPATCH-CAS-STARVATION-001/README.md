@@ -44,14 +44,20 @@
 7. **Root Cause 7（Advisory Sync / Reload 失敗未向上終止整個 Tick）**：
    當 advisory 寫入或 helper 租約寫入失敗且隨後自 canonical storage 重新載入 snapshot 亦失敗（例如發生持久性讀取異常）時，若僅中斷當前 agent 的評估迴圈，外層 agent 迴圈仍會繼續使用未確認新鮮度的 stale in-memory snapshot 評估後續 agent，導致 stale review / dispatch event 被錯誤派發。
 
+8. **Root Cause 8（Helper 預算耗盡中斷整輪 Per-Agent 候選迴圈）**：
+   在 `dispatch_ready_tasks` 的 per-agent 候選派工迴圈中，當高優先權（例如 P0）之 helper 候選因 helper claim 預算耗盡（`helper_dispatches >= max_helper` 或 `active_claims_for_agent >= max_claims_per_agent`）無法取得租約時，原實作直接 `break` 中斷了該 agent 的整個候選處理迴圈。這導致排在 helper 候選之後的合法 review（例如 exact-head CI green 的 P1 review）或 owned 候選完全失去派發機會，在 reviewer 仍有可用容量的情況下造成非預期的整輪派工飢餓。
+
+9. **Root Cause 9（全域 Snapshot 物件重載破壞 Release Lease 回呼狀態與 Detached Task）**：
+   `commit_canonical_task_transition` 在提交成功後透過 `load_status` 自磁碟載入最新 snapshot，並以 `status.clear(); status.update(latest)` 替換了 `status` 內的巢狀 task dict 物件。在 `release_lease_integration.py` (`process_release_lease_issuance`) 中，呼叫者在執行 `issued` 提交後仍持有舊的 task dict 物件引用；隨後的 `_commit_result` 嘗試對該 detached 物件寫入 `dispatched` 或 `dispatch_unknown` 狀態，導致後續的 CAS 寫入所提交的 snapshot 依舊殘留 `issued` 狀態。造成 activity log 記錄了 terminal event，但磁碟 canonical 狀態卻停留在 `issued` 的脫鉤問題。
+
 ---
 
 ## 3. 修復方案與實作細節
 
-### 3.1 `commit_canonical_task_transition` 嚴格狀態重載與 Fail-Closed
+### 3.1 `commit_canonical_task_transition` 嚴格狀態重載、原地物件更新與 Fail-Closed
 - 在 `.orchestrator/status_transition.py` 與 `.orchestrator/supervisor.py` 中：
   - `commit_canonical_task_transition` 於 `sync_status_pipeline(config)` 成功後，透過 `load_status(config)` 重新載入磁碟上的最新 snapshot。
-  - 當 `latest is not status and isinstance(latest, dict) and "tasks" in latest` 時，以 `status.clear(); status.update(latest)` 原地更新 `status`。
+  - 引入 `sync_status_snapshot_dict` 函式，在重載 `status` 時比對既有 `tasks` 列表中的 task ID，對已存在的 task dict 執行原地 `target.clear(); target.update(new_t)` 更新，確保持有 task dict 引用的呼叫者（如 release lease bridge、dispatcher 內部）不會與 `status["tasks"]` 脫鉤。
   - 若 `load_status` 失敗（拋出例外）或回傳無效資料，不再吞沒錯誤，一律回傳 `False`，嚴守 fail-closed 原則。
 
 ### 3.2 `_commit_advisory_status_transition` 與新鮮度缺失嚴格中斷
@@ -70,31 +76,46 @@
 - 審計並重構 `advance_approved_prs_to_merge`、`recover_conflicted_review_prs` 與 `recover_failed_ci_review_prs`：
   - 改用 `while True:` 與 `processed_ids` 遍歷，確保每次 `requeue_task_for_ci_repair` commit 刷新 `status` 後，後續迭代皆自最新 snapshot 取得未處理的 live task 物件，徹底排除 detached object 問題。
 
+### 3.5 Helper 預算隔離與候選遞延推進
+- 在 `.orchestrator/dispatch_engine.py` 的候選收集與派工階段：
+  - 在候選掃描階段預先計算 `can_acquire_new_helper = (helper_dispatches < max_helper and active_claims_for_agent < max_claims_per_agent)`，在預算為零或耗盡時不再將無效 helper 候選標記為 `REASON_HELPER_CLAIM`。
+  - 在候選處理階段，若遇 helper 預算受限或條件不符，改以 `agent_deferred_task_ids.add(task_id)` 記錄並 `continue` 繼續後續候選評估，不再 `break` 終止該 agent 迴圈，亦不再無限重試同一首位候選，確保後續合法 review 與 owned 任務可順暢派發。
+
+### 3.6 Release Lease 狀態同步雙重保障
+- 在 `.orchestrator/release_lease_integration.py` 中：
+  - `_commit_result` 在更新傳入之 `task` 物件之餘，同步根據 `task_id` 走訪 `status[tasks_path]` 更新其中的 live task 字典，確保即使在不同的 callback 語意下，terminal receipt（`dispatched` 或 `dispatch_unknown`）皆能精確寫入 canonical storage 並與 activity log 保持一致。
+
 ---
 
 ## 4. 驗證記錄（Test Receipts）
 
-### 4.1 新增回歸測試（`.orchestrator/test_dispatch_policy.py`）
-1. `test_diagnostic_cas_two_pending_two_green_revision_changing_dispatch`:
+### 4.1 新增回歸測試
+1. `test_diagnostic_cas_two_pending_two_green_revision_changing_dispatch` (`test_dispatch_policy.py`):
    - 2 個 CI pending 任務在前、2 個 CI green 任務在後。真實 temp-file 與 sync 推進 revision，驗證 2 個 green 任務皆正常產生正確 reviewer event。
-2. `test_diagnostic_cas_canonical_sync_advancing_disk_revision_reloads_status_for_subsequent_writes`:
+2. `test_diagnostic_cas_canonical_sync_advancing_disk_revision_reloads_status_for_subsequent_writes` (`test_dispatch_policy.py`):
    - 驗證同一個 tick 內連續兩筆 commit 能在 sync 推進 revision 後正確重載並成功寫入。
-3. `test_diagnostic_cas_external_writer_race_preserves_data_and_dispatches_ready_tasks`:
+3. `test_diagnostic_cas_external_writer_race_preserves_data_and_dispatches_ready_tasks` (`test_dispatch_policy.py`):
    - 模擬 external writer 在 advisory 寫入時競態推進 revision 並注入新任務與自訂欄位，驗證 CAS rejection 後 dispatcher 成功重載 snapshot、保留外部更新並派發新任務。
-4. `test_diagnostic_cas_lifecycle_sync_does_not_enqueue_reassigned_reviewer`:
+4. `test_diagnostic_cas_lifecycle_sync_does_not_enqueue_reassigned_reviewer` (`test_dispatch_policy.py`):
    - 驗證 lifecycle 轉移後 external sync 將候選 reviewer 改派，dispatcher 重啟評估且不對舊 reviewer 派發 stale event。
-5. `test_diagnostic_cas_helper_claims_persist_leases_for_all_queued_helpers`:
+5. `test_diagnostic_cas_helper_claims_persist_leases_for_all_queued_helpers` (`test_dispatch_policy.py`):
    - 驗證同一 tick 內多筆 helper lease 派發時，所有 queued events 在磁碟上皆具備對應的持久化 lease。
-6. `test_diagnostic_cas_retry_exhaustion_does_not_enqueue_stale_reviewer`:
+6. `test_diagnostic_cas_retry_exhaustion_does_not_enqueue_stale_reviewer` (`test_dispatch_policy.py`):
    - 驗證 8 次 CAS rejection 耗盡重試時，stale candidate 被乾淨丟棄，不產生 stale reviewer event。
-7. `test_diagnostic_cas_helper_candidate_revalidated_after_real_sync` (4 variants: unchanged, competing_lease, blocked, dependency):
+7. `test_diagnostic_cas_helper_candidate_revalidated_after_real_sync` (`test_dispatch_policy.py`, 4 variants: unchanged, competing_lease, blocked, dependency):
    - 驗證 helper commit 刷新 canonical state 後，剩餘候選重新評估，且永不覆寫其他 agent 的有效租約，亦不派發 blocked 或 unsatisfied dependency 任務。
-8. `test_diagnostic_cas_advisory_resync_failure_never_queues_superseded_reviewer` (3 variants: ok, sync_failure, reload_failure):
+8. `test_diagnostic_cas_advisory_resync_failure_never_queues_superseded_reviewer` (`test_dispatch_policy.py`, 3 variants: ok, sync_failure, reload_failure):
    - 驗證 advisory sync failure 與 reload failure 時壓抑過期派工，不對已被改派的舊 reviewer 派發 stale event。
-9. `test_diagnostic_cas_current_helper_revalidated_after_own_sync` (4 variants: unchanged, blocked, dependency, reviewer):
+9. `test_diagnostic_cas_current_helper_revalidated_after_own_sync` (`test_dispatch_policy.py`, 4 variants: unchanged, blocked, dependency, reviewer):
    - 驗證 helper 候選自身租約提交並經真實 sync 推進 revision 後，若被外部變更為 blocked、新增未完成相依性或改派 reviewer，全量重驗機制正確壓抑派工且不產生 stale event。
-10. `test_diagnostic_cas_cross_agent_after_advisory_snapshot_refresh` (3 variants: unchanged, mutation_readable, mutation_unreadable):
+10. `test_diagnostic_cas_cross_agent_after_advisory_snapshot_refresh` (`test_dispatch_policy.py`, 3 variants: unchanged, mutation_readable, mutation_unreadable):
     - 驗證當 advisory commit 與後續 reload 皆失敗時，新鮮度缺失阻擋機制及時中斷整個 tick，阻止後續 agent 讀取過期狀態派發 stale reviewer。
+11. `test_exhausted_helper_budget_does_not_starve_exact_head_green_review` (`test_dispatch_policy.py`, 3 variants: available, zero, consumed):
+    - 驗證當 helper 預算為 0 或已耗盡時，排在 helper 候選之後的 exact-head green review 仍能順利取得派發，且 helper 租約受限時不中斷該 agent 的後續合法派工。
+12. `test_commit_canonical_task_transition_maintains_task_object_identity` (`test_supervisor.py`):
+    - 驗證 `commit_canonical_task_transition` 在 sync 成功並重載最新 snapshot 後，依然維持傳入之 task dict 物件的身份一致性，確保後續原地修改仍可正確提交。
+13. `test_release_terminal_receipt_survives_commit_reload` (`test_release_lease_integration.py`, 6 variants: legacy/current x revision_sync False/True x dispatch_fails False/True):
+    - 驗證 release lease bridge 在 commit_status 回呼中經歷 revision sync 後，terminal receipt 依然能夠正確持久化至 canonical status 檔案，使磁碟狀態與 activity log 完全一致。
 
 ### 4.2 測試執行收據（Test Execution Receipts Bound to Head SHA）
 
@@ -112,17 +133,22 @@
   - Command: `uv run pytest -q .orchestrator/test_dispatch_policy.py -k 'diagnostic_cas or review_dispatch or stale_wake or cas or release_dead_helper_claims'`
   - Selection: 55 passed (includes candidate refresh, advisory resync, priority rank, lease isolation, and fresh helper revalidation tests)
   - Exit code: `0`
-  - Duration: `12.296356s`
-- **Receipt 4 (Supervisor Concurrency, Lease Escalation & Recovery Tests - 14 passed)**:
+  - Duration: `12.871142s`
+- **Receipt 4 (Supervisor Concurrency, Lease Escalation & Recovery Tests - 15 passed)**:
   - Command: `uv run pytest -q .orchestrator/test_supervisor.py::DispatchStatusSyncTests .orchestrator/test_supervisor.py::AutomaticRecoveryTests::test_ci_failure_requeue_fails_closed_on_stale_status_snapshot`
-  - Selection: 14 passed
+  - Selection: 15 passed (includes commit task identity preservation test)
   - Exit code: `0`
-  - Duration: `3.394062s`
-- **Receipt 5 (Reviewer Scratch Probes - 7 passed)**:
-  - Command: `uv run pytest -q /home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260911T035621Z-3eb93895/test_review_current_helper.py /home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260911T035621Z-3eb93895/test_review_cross_agent_refresh.py`
-  - Selection: 7 passed
+  - Duration: `2.741829s`
+- **Receipt 5 (Helper Budget Cap Regression Test - 3 passed)**:
+  - Command: `uv run pytest -q .orchestrator/test_dispatch_policy.py -k 'test_exhausted_helper_budget_does_not_starve_exact_head_green_review'`
+  - Selection: 3 passed (available, zero, consumed budget variants)
   - Exit code: `0`
-  - Duration: `4.492592s`
+  - Duration: `0.401925s`
+- **Receipt 6 (Release Lease Bridge Integration Tests - 35 passed)**:
+  - Command: `uv run pytest -q .orchestrator/test_release_lease_integration.py`
+  - Selection: 35 passed (includes release terminal receipt survives commit reload test with all 6 variants)
+  - Exit code: `0`
+  - Duration: `1.682140s`
 
 ---
 

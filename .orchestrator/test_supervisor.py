@@ -4976,6 +4976,25 @@ PY
         self.assertEqual(len(failures), 1)
         self.assertIn("timed out", failures[0]["message"])
 
+    def test_commit_canonical_task_transition_maintains_task_object_identity(self) -> None:
+        status = supervisor.load_status(self.config)
+        task = status["tasks"][0]
+        self.assertEqual(task["id"], "APP-002-W1-FRONT-HANDOFF")
+        task["status"] = "in_progress"
+
+        self.assertTrue(supervisor.commit_canonical_task_transition(self.config, status))
+
+        self.assertIs(status["tasks"][0], task)
+        self.assertEqual(task["status"], "in_progress")
+
+        task["status"] = "done"
+        self.assertTrue(supervisor.commit_canonical_task_transition(self.config, status))
+        self.assertIs(status["tasks"][0], task)
+        self.assertEqual(task["status"], "done")
+
+        on_disk = json.loads(self.status_path.read_text(encoding="utf-8"))
+        self.assertEqual(on_disk["tasks"][0]["status"], "done")
+
 
 class RunOnceSupervisorStateTests(unittest.TestCase):
     def test_discussion_planning_needs_materialization_for_accepted_approved_session(self) -> None:

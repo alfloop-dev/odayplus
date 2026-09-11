@@ -5,11 +5,13 @@ from __future__ import annotations
 import base64
 import json
 import subprocess
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 import release_lease_integration as bridge
+import supervisor
 from common import validate_config
 
 from delivery_toolchain.release.release_lease import (
@@ -886,3 +888,51 @@ def test_public_example_stays_disabled_and_workflow_has_no_issuer_secret() -> No
     workflow = (root / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
     assert bridge.DEFAULT_SECRET_REFERENCE not in workflow
     assert "odp-release-lease-private-key" not in workflow
+
+
+@pytest.mark.parametrize("callback_kind,revision_sync", [
+    ("legacy", False),
+    ("current", False),
+    ("current", True),
+])
+@pytest.mark.parametrize("dispatch_fails", [False, True])
+def test_release_terminal_receipt_survives_commit_reload(
+    harness: dict, monkeypatch: pytest.MonkeyPatch, callback_kind: str, revision_sync: bool, dispatch_fails: bool
+) -> None:
+    """Exercise the actual bridge/CAS callback, with local-only fixture lease store."""
+    sync_calls = []
+
+    def local_sync(config):
+        sync_calls.append(config)
+        if revision_sync:
+            snapshot = json.loads(harness["status_path"].read_text())
+            snapshot[supervisor.STATUS_WRITE_REVISION_FIELD] = uuid.uuid4().hex
+            harness["status_path"].write_text(json.dumps(snapshot))
+        return True
+
+    monkeypatch.setattr(supervisor, "sync_status_pipeline", local_sync)
+
+    def legacy_commit(config, status):
+        return supervisor.write_status_snapshot_if_current(config, status) and supervisor.sync_status_pipeline(config)
+
+    harness["commit"] = legacy_commit if callback_kind == "legacy" else supervisor.commit_canonical_task_transition
+    dispatch_attempts = []
+
+    def dispatch(**kwargs):
+        dispatch_attempts.append(True)
+        if dispatch_fails:
+            raise bridge.RuntimeReleaseDispatchError("isolated unconfirmed dispatch")
+
+    assert _run(harness, dispatch)
+    assert len(dispatch_attempts) == 1
+    assert len(sync_calls) == 3
+    expected = "dispatch_unknown" if dispatch_fails else "dispatched"
+    snapshot = json.loads(harness["status_path"].read_text())
+    record = snapshot["tasks"][1][bridge.ISSUANCE_FIELD]
+    activity = harness["activity_path"].read_text()
+    event_type = "release_lease_dispatch_unknown" if dispatch_fails else "release_lease_runtime_release_dispatched"
+    assert event_type in activity
+    assert record["state"] == expected, (
+        f"canonical state {record['state']!r} disagrees with emitted {event_type!r}; "
+        f"callback={callback_kind}, revision_sync={revision_sync}"
+    )

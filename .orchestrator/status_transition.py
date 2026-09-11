@@ -184,6 +184,36 @@ def sync_status_pipeline(config: dict[str, Any]) -> bool:
     return False
 
 
+def sync_status_snapshot_dict(config: dict[str, Any], status: dict[str, Any], latest: dict[str, Any]) -> None:
+    if latest is status or not isinstance(latest, dict):
+        return
+    schema = config.get("schema", {}) or {} if isinstance(config, dict) else {}
+    tasks_path = schema.get("tasks_path", "tasks")
+    task_id_field = schema.get("task_id_field", "id")
+
+    old_tasks_by_id: dict[str, dict[str, Any]] = {}
+    if isinstance(status.get(tasks_path), list):
+        for t in status[tasks_path]:
+            if isinstance(t, dict) and t.get(task_id_field):
+                old_tasks_by_id[str(t.get(task_id_field))] = t
+
+    updated_tasks: list[Any] = []
+    if isinstance(latest.get(tasks_path), list):
+        for new_t in latest[tasks_path]:
+            if isinstance(new_t, dict) and str(new_t.get(task_id_field) or "") in old_tasks_by_id:
+                target = old_tasks_by_id[str(new_t.get(task_id_field))]
+                target.clear()
+                target.update(new_t)
+                updated_tasks.append(target)
+            else:
+                updated_tasks.append(new_t)
+
+    status.clear()
+    status.update(latest)
+    if tasks_path in latest:
+        status[tasks_path] = updated_tasks
+
+
 def commit_canonical_task_transition(config: dict[str, Any], status: dict[str, Any]) -> bool:
     """Commit a scheduler transition through one canonical write/sync path."""
 
@@ -202,10 +232,9 @@ def commit_canonical_task_transition(config: dict[str, Any], status: dict[str, A
         return False
     try:
         latest = load_status_fn(config)
-        if latest is not status and isinstance(latest, dict) and "tasks" in latest:
-            status.clear()
-            status.update(latest)
-        elif not (isinstance(latest, dict) and "tasks" in latest):
+        if isinstance(latest, dict) and "tasks" in latest:
+            sync_status_snapshot_dict(config, status, latest)
+        else:
             return False
     except Exception:
         return False

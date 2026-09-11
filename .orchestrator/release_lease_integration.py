@@ -442,7 +442,17 @@ def _commit_result(
     *,
     commit_status: Callable[[dict[str, Any], dict[str, Any]], bool],
 ) -> bool:
+    schema = config.get("schema", {}) or {} if isinstance(config, dict) else {}
+    tasks_path = schema.get("tasks_path", "tasks")
+    task_id_field = schema.get("task_id_field", "id")
+    target_id = task.get(task_id_field)
+
     task[ISSUANCE_FIELD] = record
+    if target_id and isinstance(status.get(tasks_path), list):
+        for live_task in status[tasks_path]:
+            if isinstance(live_task, dict) and live_task.get(task_id_field) == target_id:
+                live_task[ISSUANCE_FIELD] = record
+                break
     return bool(commit_status(config, status))
 
 

@@ -23,6 +23,7 @@ from dispatch_policy import (
     task_submitted_author,
     worker_logical_dispatch_agent_id,
 )
+from status_transition import sync_status_snapshot_dict
 from worker_failure_policy import (
     auto_dispatch_block_is_temporary_capacity,
     owner_preference_ranks,
@@ -2803,6 +2804,7 @@ def dispatch_ready_tasks(
                 continue
 
         queued_for_agent = 0
+        agent_deferred_task_ids: set[str] = set()
         while (
             queued_for_agent < available_agent_slots
             and dispatches < max_dispatches_per_tick
@@ -2825,7 +2827,7 @@ def dispatch_ready_tasks(
                         continue
                     if task_id in active_task_ids or task_id in pending_task_ids:
                         continue
-                    if task_id in deferred_task_ids:
+                    if task_id in deferred_task_ids or task_id in agent_deferred_task_ids:
                         continue
                     is_sidecar_task = task_is_sidecar(task)
                     task_status = str(task.get("status") or "").lower()
@@ -3148,6 +3150,27 @@ def dispatch_ready_tasks(
                             # every owner look undispatchable to the saturation check.
                             dispatchable_agent_ids=agent_ids_override or None,
                         )
+                        helper_dispatches = int(dispatch_state.get("helper_dispatches_this_tick", 0) or 0)
+                        chair_max = int(
+                            ((state.get("capacity_controller", {}) or {}).get("chair_decision", {}) or {}).get(
+                                "max_helper_claims", helper_settings.get("max_claims_per_tick", 4)
+                            )
+                            or 0
+                        )
+                        max_helper = min(int(helper_settings.get("max_claims_per_tick", 4)), chair_max or 0)
+                        active_claims_for_agent = sum(
+                            1
+                            for candidate in tasks
+                            if helper_claim_is_live(candidate.get("helper_execution_lease") or {})
+                            and normalize_agent_id(
+                                str((candidate.get("helper_execution_lease") or {}).get("claimed_by") or "")
+                            )
+                            == norm_target
+                        )
+                        can_acquire_new_helper = (
+                            helper_dispatches < max_helper
+                            and active_claims_for_agent < int(helper_settings.get("max_claims_per_agent", 2))
+                        )
                         if (
                             task_status in claimable_statuses
                             and task_status not in {"review", "review_approved", "blocked", "done"}
@@ -3161,6 +3184,7 @@ def dispatch_ready_tasks(
                                 (existing_claim_live and claimed_by == norm_target)
                                 or (
                                     (not existing_claim_live)
+                                    and can_acquire_new_helper
                                     and (
                                         owner_saturated
                                         or not helper_settings.get("require_owner_saturated", True)
@@ -3257,29 +3281,37 @@ def dispatch_ready_tasks(
                     )
                     == normalize_agent_id(target_agent)
                 )
-                if active_claims_for_agent >= int(helper_settings.get("max_claims_per_agent", 2)):
-                    break
-                helper_dispatches = int(dispatch_state.get("helper_dispatches_this_tick", 0) or 0)
-                chair_max = int(
-                    ((state.get("capacity_controller", {}) or {}).get("chair_decision", {}) or {}).get(
-                        "max_helper_claims", helper_settings.get("max_claims_per_tick", 4)
-                    )
-                    or 0
-                )
-                max_helper = min(int(helper_settings.get("max_claims_per_tick", 4)), chair_max or 0)
-                if helper_dispatches >= max_helper:
-                    break
                 existing_claim = live_task.get("helper_execution_lease") or {}
                 existing_claim_live = helper_claim_is_live(existing_claim)
                 existing_claimant = normalize_agent_id(str(existing_claim.get("claimed_by") or ""))
+                is_existing_live_for_agent = (
+                    existing_claim_live and existing_claimant == normalize_agent_id(target_agent)
+                )
+
+                if not is_existing_live_for_agent:
+                    if active_claims_for_agent >= int(helper_settings.get("max_claims_per_agent", 2)):
+                        agent_deferred_task_ids.add(task_id)
+                        continue
+                    helper_dispatches = int(dispatch_state.get("helper_dispatches_this_tick", 0) or 0)
+                    chair_max = int(
+                        ((state.get("capacity_controller", {}) or {}).get("chair_decision", {}) or {}).get(
+                            "max_helper_claims", helper_settings.get("max_claims_per_tick", 4)
+                        )
+                        or 0
+                    )
+                    max_helper = min(int(helper_settings.get("max_claims_per_tick", 4)), chair_max or 0)
+                    if helper_dispatches >= max_helper:
+                        agent_deferred_task_ids.add(task_id)
+                        continue
 
                 if existing_claim_live and existing_claimant != normalize_agent_id(target_agent):
                     # Never overwrite another agent's live lease!
+                    agent_deferred_task_ids.add(task_id)
                     continue
 
                 # If this task already has a live claim for this exact agent:
                 # Retain the same generation and validity rather than incrementing generation and re-writing.
-                if not (existing_claim_live and existing_claimant == normalize_agent_id(target_agent)):
+                if not is_existing_live_for_agent:
                     now = datetime.now(UTC)
                     generation = int(existing_claim.get("generation", 0) or 0) + 1
                     live_task["helper_execution_lease"] = {
@@ -3302,8 +3334,7 @@ def dispatch_ready_tasks(
                         try:
                             fresh = load_status(config)
                             if fresh is not status and isinstance(fresh, dict) and "tasks" in fresh:
-                                status.clear()
-                                status.update(fresh)
+                                sync_status_snapshot_dict(config, status, fresh)
                                 fresh_loaded = True
                             elif isinstance(fresh, dict) and "tasks" in fresh:
                                 fresh_loaded = True
@@ -3323,6 +3354,7 @@ def dispatch_ready_tasks(
                         )
                         != normalize_agent_id(target_agent)
                     ):
+                        agent_deferred_task_ids.add(task_id)
                         continue
                     dispatch_state["helper_dispatches_this_tick"] = helper_dispatches + 1
                     write_activity_log(
@@ -3363,6 +3395,7 @@ def dispatch_ready_tasks(
                     or not claim_live
                     or claimed_by != norm_target
                 ):
+                    agent_deferred_task_ids.add(task_id)
                     continue
             else:
                 norm_target = normalize_agent_id(target_agent or "")
@@ -3372,9 +3405,11 @@ def dispatch_ready_tasks(
 
                 if reason == "review_ready_dispatch":
                     if live_status not in review_statuses or live_reviewer != norm_target:
+                        agent_deferred_task_ids.add(task_id)
                         continue
                 elif reason == "owned_finalize_dispatch":
                     if live_status not in finalize_statuses or live_owner != norm_target:
+                        agent_deferred_task_ids.add(task_id)
                         continue
                 elif reason == "owned_in_progress_dispatch":
                     if (
@@ -3382,6 +3417,7 @@ def dispatch_ready_tasks(
                         or live_owner != norm_target
                         or not dependencies_satisfied(live_task, task_map, dependency_done_statuses)
                     ):
+                        agent_deferred_task_ids.add(task_id)
                         continue
                 elif reason == "owned_ready_dispatch":
                     if (
@@ -3389,11 +3425,13 @@ def dispatch_ready_tasks(
                         or live_owner != norm_target
                         or not dependencies_satisfied(live_task, task_map, dependency_done_statuses)
                     ):
+                        agent_deferred_task_ids.add(task_id)
                         continue
 
             if not agent_can_take_task(
                 config, target_agent, live_task, role=dispatch_reason_role(reason)
             ):
+                agent_deferred_task_ids.add(task_id)
                 continue
             if worktree_block_still_matches_dispatch(
                 state,
@@ -3402,6 +3440,7 @@ def dispatch_ready_tasks(
                 task_map,
                 retry_after_seconds=lease_block_retry_after_seconds(config),
             ):
+                agent_deferred_task_ids.add(task_id)
                 continue
 
             event = build_dispatch_event(live_task, target_agent, reason, task_map)
@@ -3417,7 +3456,8 @@ def dispatch_ready_tasks(
                 dispatches += 1
                 queued_for_agent += 1
             else:
-                break
+                agent_deferred_task_ids.add(task_id)
+                continue
 
         if dispatches >= max_dispatches_per_tick:
             break

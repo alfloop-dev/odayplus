@@ -4944,3 +4944,54 @@ def test_diagnostic_cas_cross_agent_after_advisory_snapshot_refresh(tmp_path: Pa
         if mode == "mutation_unreadable":
             assert len(failed_reads) >= 2
         assert not event_records, f"Second agent queued stale reviewer despite failed freshness: {event_records}"
+
+
+@pytest.mark.parametrize("budget", ["available", "zero", "consumed"])
+def test_exhausted_helper_budget_does_not_starve_exact_head_green_review(tmp_path: Path, budget: str) -> None:
+    """Helper budget exhaustion must leave reviewer capacity usable."""
+    cfg = _base_test_config()
+    cfg["paths"] = {
+        "status_file": str(tmp_path / "ai-status.json"),
+        "activity_log": str(tmp_path / "activity.jsonl"),
+        "event_queue": str(tmp_path / "events.jsonl"),
+    }
+    helper_settings = cfg["ready_dispatcher"]["helper_execution_lease"]
+    helper_settings["require_owner_saturated"] = False
+    helper_settings["max_claims_per_tick"] = 0 if budget == "zero" else 1
+    sha = "a" * 40
+    status = {
+        "_status_write_revision": "initial",
+        "tasks": [
+            {"id": "P0-HELPER", "priority": "P0", "status": "todo", "owner": "Claude", "reviewer": "Codex", "depends_on": []},
+            {"id": "P1-GREEN-REVIEW", "priority": "P1", "status": "review", "owner": "Claude", "reviewer": "Antigravity7", "depends_on": [],
+             "review_submission": {"remote_sha": sha, "pr_number": 999, "branch": "task/P1-GREEN-REVIEW", "base_branch": "dev"},
+             "repository": "alfloop-dev/odayplus"},
+        ],
+        "handoffs": [],
+    }
+    canonical = Path(cfg["paths"]["status_file"])
+    canonical.write_text(json.dumps(status))
+    events: list[dict[str, Any]] = []
+    state = {"workers": {}, "queue": {"events": {}}, "ready_dispatcher": {"helper_dispatches_this_tick": 1 if budget == "consumed" else 0}}
+    with ExitStack() as patches:
+        for name in [
+            "repair_open_task_metadata", "repair_unsubmitted_review_tasks", "reassign_tasks_after_review_churn",
+            "normalize_task_assignment_integrity", "normalize_mainline_task_assignment", "reassign_unavailable_reviewers",
+        ]:
+            patches.enter_context(mock.patch.object(supervisor, name, return_value=False))
+        for name in ["advance_approved_prs_to_merge", "recover_conflicted_review_prs", "recover_failed_ci_review_prs"]:
+            patches.enter_context(mock.patch.object(dispatch_engine, name, return_value=False))
+        patches.enter_context(mock.patch.object(dispatch_engine, "task_reality_reconcile_is_due", return_value=False))
+        patches.enter_context(mock.patch.object(supervisor, "load_event_queue", return_value=[]))
+        patches.enter_context(mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None))
+        patches.enter_context(mock.patch.object(supervisor, "agent_dispatch_capacity", return_value=2))
+        patches.enter_context(mock.patch.object(supervisor, "sync_status_pipeline", return_value=True))
+        patches.enter_context(mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value=sha))
+        patches.enter_context(mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success")))
+        patches.enter_context(mock.patch.object(supervisor, "queue_delivery_event", side_effect=lambda c, e: events.append(e) or True))
+        supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["antigravity7"], max_dispatches_override=2)
+    assert [e["task_id"] for e in events if e["reason"] == "review_ready_dispatch"] == ["P1-GREEN-REVIEW"], (budget, events)
+    if budget == "available":
+        assert [e["task_id"] for e in events] == ["P0-HELPER", "P1-GREEN-REVIEW"]
+    else:
+        assert all(e["reason"] != "helper_claim_dispatch" for e in events)
