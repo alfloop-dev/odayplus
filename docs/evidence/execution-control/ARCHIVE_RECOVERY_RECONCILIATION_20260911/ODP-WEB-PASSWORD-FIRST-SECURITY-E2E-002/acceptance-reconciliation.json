@@ -1,0 +1,269 @@
+{
+  "task_id": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+  "reconciliation_phase": "ARCHIVE_RECOVERY_RECONCILIATION_20260911",
+  "reconciliation_timestamp": "2026-09-11T11:00:00Z",
+  "reconciled_by": "Antigravity7",
+  "assigned_reviewer": "Codex2",
+  "target_branch": "task/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002-RECOVERY-20260911",
+  "base_sha": "4499a2993e37b62033926b07de8d8d2e8469a6c7",
+  "historical_delivery": {
+    "repository": "alfloop-dev/odayplus",
+    "pr_number": 1096,
+    "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1096",
+    "pr_title": "[ReviewBus] ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 在登入節流修正合併後驗收帳密預設與可選 OIDC 的安全端對端行為",
+    "head_ref": "task/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+    "head_sha": "69422d71e8d5ac572ade58562c0aeca28d123648",
+    "merge_sha": "2377168c2cc07cd2470dd8f43de0486fe8d8fc08",
+    "created_at": "2026-09-01T08:14:40Z",
+    "merge_commit_created_at": "2026-09-01T08:51:28Z",
+    "merged_at": "2026-09-01T09:10:24Z",
+    "author": "ajoe734",
+    "historical_owner": "Codex",
+    "historical_reviewer": "Codex2",
+    "task_review_gate": {
+      "context": "task-review-gate",
+      "state": "success",
+      "updated_at": "2026-09-01T08:45:28Z",
+      "description": "Approved by assigned reviewer Codex2",
+      "approver": "Codex2"
+    },
+    "exact_head_ci": {
+      "head_sha": "69422d71e8d5ac572ade58562c0aeca28d123648",
+      "total_checks": 7,
+      "success_count": 7,
+      "check_runs": [
+        {
+          "name": "product-e2e-gate",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-01T08:38:11Z"
+        },
+        {
+          "name": "product",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-01T08:49:57Z"
+        },
+        {
+          "name": "performance-gate",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-01T08:33:27Z"
+        },
+        {
+          "name": "boundary",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-01T08:32:22Z"
+        },
+        {
+          "name": "classify",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-01T08:32:20Z"
+        },
+        {
+          "name": "change-scope",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-01T08:32:19Z"
+        },
+        {
+          "name": "orchestrator",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-01T08:34:29Z"
+        }
+      ]
+    },
+    "delivered_files": [
+      "apps/web/tests/login-route.test.ts",
+      "docs/audits/code-boundary-inventory.csv",
+      "docs/deployment/AUTH_MIGRATION_ROLLOUT_CHECKLIST.md",
+      "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md",
+      "tests/e2e/test_password_first_security_e2e.py"
+    ]
+  },
+  "governance_and_decision_alignment": {
+    "decision_id": "D15",
+    "decision_source": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+    "decision_summary": "帳密為預設，Google OIDC 不啟用",
+    "downstream_alignment_task": "ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001 (PR #1253, merge 0af51e04)",
+    "human_standby_task": "HUMAN-GCP-WEB-OAUTH-CLIENTS-001",
+    "policy_ruling": "D15已確定密碼登入為預設且Google OIDC關閉，不再要求使用者建立Google OAuth clients；A3驗收為程式與架構層級之可選登入回歸測試，不得擅自升格為真實provider啟用要求。"
+  },
+  "acceptance_criteria_reconciliation": [
+    {
+      "index": 1,
+      "criterion": "帳密登入成功失敗與 account threshold 的正式 TypeScript route 證據正確",
+      "acceptance_layer": "code_and_test",
+      "verdict": "VERIFIED",
+      "verdict_zh": "已通過驗證",
+      "rationale": "PR #1096 交付了完整的 TypeScript route 測試套件 (apps/web/tests/login-route.test.ts，共 861 行 vitest)，涵蓋：1. 正確帳密回傳 HTTP 200 並建立 opaque session cookie；2. 無效憑證固定回傳 HTTP 401 且無 set-cookie；3. 帳號 15 分鐘閾值與 IP 閾值觸發 HTTP 429 AUTH_RATE_LIMITED；4. Throttle gate 嚴格先於 credential verification 執行；5. 整合 tests/security/test_login_throttle_wiring.py 驗證 identity.login_attempts 持久化。在 PR #1096 精確 head 69422d71e8d5 上，product check-run 執行 node-check (npm run test --workspaces) 並取得 success。",
+      "primary_evidence": [
+        {
+          "kind": "test_suite",
+          "ref": "apps/web/tests/login-route.test.ts @ 2377168c2cc07cd2470dd8f43de0486fe8d8fc08",
+          "description": "861 行 TypeScript vitest 完整覆蓋 login route 各種成功/失敗/節流邊界情境"
+        },
+        {
+          "kind": "wiring_test",
+          "ref": "tests/security/test_login_throttle_wiring.py @ 2377168c2cc07cd2470dd8f43de0486fe8d8fc08",
+          "description": "驗證 throttle gate 與 identity.login_attempts 之持久化"
+        },
+        {
+          "kind": "receipt_document",
+          "ref": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md §2, §4",
+          "description": "記載 474 個 Web tests 通過及 151 個 Python tests 通過之分層驗證收據"
+        },
+        {
+          "kind": "ci_check",
+          "ref": "check-run product @ 69422d71e8d5ac572ade58562c0aeca28d123648",
+          "description": "conclusion=success, completed_at=2026-09-01T08:49:57Z"
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "criterion": "未設定 OIDC 時 deploy validation 可通過且 OIDC 路由 fail closed",
+      "acceptance_layer": "deployment_and_test",
+      "verdict": "VERIFIED",
+      "verdict_zh": "已通過驗證",
+      "rationale": "PR #1096 交付了 tests/e2e/test_password_first_security_e2e.py (test_password_first_preflight_passes_without_oidc, test_local_mode_rejects_oidc_token_and_records_failure) 以及 apps/web/tests/login-route.test.ts (§4 測試)。在無 OIDC 環境變數時，deploy validation preflight 順利通過 (auth-mode='local')；若嘗試調用 OIDC 路由或使用 OIDC token，系統嚴格 fail closed (回傳 503 WEB_AUTH_PROVIDER_DISABLED 或拒絕 token 並記錄 audit failure)。PR #1253 亦跨模組審查了 validator、shared/auth 及 Terraform 配置，確認無 OIDC 時 fail-closed 契約完整成立。",
+      "primary_evidence": [
+        {
+          "kind": "test_cases",
+          "ref": "tests/e2e/test_password_first_security_e2e.py:206-244",
+          "description": "test_password_first_preflight_passes_without_oidc 與 test_local_mode_rejects_oidc_token_and_records_failure"
+        },
+        {
+          "kind": "web_route_tests",
+          "ref": "apps/web/tests/login-route.test.ts:520-553",
+          "description": "預設 local 模式不渲染 OIDC 按鈕、未配置 OIDC 時 GET /login?provider=oidc 回 503 WEB_AUTH_PROVIDER_DISABLED"
+        },
+        {
+          "kind": "ops_test",
+          "ref": "tests/ops/test_conditional_oidc_deployment.py",
+          "description": "驗證 conditional OIDC 部署 preflight 與 fail closed 行為"
+        },
+        {
+          "kind": "ci_check",
+          "ref": "check-run product @ 69422d71e8d5ac572ade58562c0aeca28d123648",
+          "description": "conclusion=success"
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "criterion": "完整 OIDC 設定時可選登入不回歸",
+      "acceptance_layer": "regression_test_matrix",
+      "verdict": "VERIFIED",
+      "verdict_zh": "已通過驗證",
+      "rationale": "依據原始任務 brief、架構契約與 D15 人工決策判讀：本條款之本質為「在系統配置完整 OIDC 設定時，既有的帳密登入與可選 OIDC 路由架構不發生回歸，兩者共存並能正確解析至同一個 authoritative principal」。PR #1096 已由 apps/web/tests/login-route.test.ts (L576-608: '完整 OIDC 配置時 login 頁面顯示 OIDC 按鈕、密碼表單共存'、'OIDC 模式下密碼登入依然可用（不回歸）') 與 tests/e2e/test_password_first_security_e2e.py (L246-269: 'test_complete_oidc_and_local_tokens_resolve_one_principal') 完整實作並在 exact-head CI 中通過。原始收據 §5 載明之 Limitations (未接觸真實 GCP 或外部 live OIDC provider) 係真實反映測試範圍邊界，而非驗收收據缺失。依據 2026-09-08 人工決策 D15 及交接指引，不得將此 regression 條款擅自升格為外部真實 provider 啟用要求；其 live deployment 與 OAuth clients 需求已由 HUMAN-GCP-WEB-OAUTH-CLIENTS-001 與 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 承接（且 D15 已確立不啟用）。因此在原任務所屬之程式與測試回歸層面，本條款已完全滿足。",
+      "primary_evidence": [
+        {
+          "kind": "web_regression_test",
+          "ref": "apps/web/tests/login-route.test.ts:576-608",
+          "description": "驗證完整 OIDC 配置下密碼表單與 OIDC 按鈕並存，且密碼登入依然正常運作不回歸 (HTTP 200 + session cookie)"
+        },
+        {
+          "kind": "e2e_principal_resolution_test",
+          "ref": "tests/e2e/test_password_first_security_e2e.py:246-269",
+          "description": "test_complete_oidc_and_local_tokens_resolve_one_principal 驗證 local password 與 OIDC 憑證解析至相同 account_id、roles、tenant_id 與 scope"
+        },
+        {
+          "kind": "receipt_statement",
+          "ref": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md §2 (complete OIDC optional path), §5 (Limitations)",
+          "description": "收據揭露測試矩陣結果與離線驗證邊界，與 D15 決策一致"
+        },
+        {
+          "kind": "ci_check",
+          "ref": "check-run product @ 69422d71e8d5ac572ade58562c0aeca28d123648",
+          "description": "conclusion=success"
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "criterion": "RBAC tenant isolation audit event 有整合測試",
+      "acceptance_layer": "integration_test",
+      "verdict": "VERIFIED",
+      "verdict_zh": "已通過驗證",
+      "rationale": "PR #1096 在 tests/e2e/test_password_first_security_e2e.py 中交付了完整的 RBAC tenant isolation 整合測試 (test_cross_tenant_read_is_denied_and_audited 及 test_same_tenant_read_is_allowed_and_audited)。跨 tenant API 請求嚴格回傳 HTTP 403，並寫入 operator.tenant_isolation 之 deny audit event；同 tenant 請求正常通過並記錄相應 audit event。在 exact-head CI 中通過 product check-run。",
+      "primary_evidence": [
+        {
+          "kind": "integration_test_cases",
+          "ref": "tests/e2e/test_password_first_security_e2e.py:271-331",
+          "description": "test_cross_tenant_read_is_denied_and_audited 與 test_same_tenant_read_is_allowed_and_audited"
+        },
+        {
+          "kind": "receipt_section",
+          "ref": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md §2 (RBAC tenant isolation)",
+          "description": "記錄跨 tenant 403 與 operator.tenant_isolation deny audit event 驗證結果"
+        },
+        {
+          "kind": "ci_check",
+          "ref": "check-run product @ 69422d71e8d5ac572ade58562c0aeca28d123648",
+          "description": "conclusion=success"
+        }
+      ]
+    },
+    {
+      "index": 5,
+      "criterion": "無 secret value 寫入 logs receipts 或 PR",
+      "acceptance_layer": "security_hygiene",
+      "verdict": "VERIFIED",
+      "verdict_zh": "已通過驗證",
+      "rationale": "PR #1096 交付之收據 docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md 明確標註 secret_values_redacted: true，並在 §3 規範所有部署 secret 僅以變數名稱或 Secret Manager reference 出現，payload 均為 <REDACTED>。docs/deployment/AUTH_MIGRATION_ROLLOUT_CHECKLIST.md 亦包含密鑰遮蔽要求。Head commit 69422d71e8d5 之 commit trailer 記錄 Verified: python3 delivery_toolchain/security/secret_scan.py 通過，且 CI change-scope / boundary 均無機敏資料洩漏。",
+      "primary_evidence": [
+        {
+          "kind": "receipt_frontmatter_and_content",
+          "ref": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md frontmatter & §3",
+          "description": "secret_values_redacted: true 與機敏資訊遮蔽規範"
+        },
+        {
+          "kind": "rollout_checklist",
+          "ref": "docs/deployment/AUTH_MIGRATION_ROLLOUT_CHECKLIST.md §6",
+          "description": "明確聲明 receipt 與 checklist 不含 secret payload"
+        },
+        {
+          "kind": "commit_trailer_and_scan",
+          "ref": "commit 69422d71e8d5ac572ade58562c0aeca28d123648 trailers",
+          "description": "Verified: python3 delivery_toolchain/security/secret_scan.py"
+        }
+      ]
+    },
+    {
+      "index": 6,
+      "criterion": "所有變更完成後只跑一次完整分層 suite且 PR 中文",
+      "acceptance_layer": "process_and_format",
+      "verdict": "VERIFIED",
+      "verdict_zh": "已通過驗證",
+      "rationale": "PR #1096 之標題為繁體中文 ('[ReviewBus] ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 在登入節流修正合併後驗收帳密預設與可選 OIDC 的安全端對端行為')，PR body 亦為標準繁體中文並包含 ReviewBus 區塊與交付摘要。收據 §4 記錄 2026-09-01 UTC 變更完成後執行之最終一次完整 7 層測試結果 (Web test 53 files/474 tests、typecheck、lint、Python pytest 151 passed/22 skipped、ruff、Terraform contract 14 files、Terraform unit 32 tests)，無重複無效重跑，完全符合過程約束與交付格式規範。",
+      "primary_evidence": [
+        {
+          "kind": "pr_metadata",
+          "ref": "PR #1096 title and body @ 2377168c2cc07cd2470dd8f43de0486fe8d8fc08",
+          "description": "繁體中文標題與內文，ReviewBus 格式完整"
+        },
+        {
+          "kind": "receipt_verification_record",
+          "ref": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md §4",
+          "description": "完整 7 層驗證命令、時間與結果記錄"
+        }
+      ]
+    }
+  ],
+  "criteria_summary": {
+    "total": 6,
+    "verified": 6,
+    "unmet": 0,
+    "blocked": 0,
+    "reconciliation_verdict": "ALL_CRITERIA_VERIFIED"
+  },
+  "overall_reconciliation_verdict": {
+    "status": "VERIFIED",
+    "recommendation": "ready_for_review_approval",
+    "summary": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 原交付物 (PR #1096, head 69422d71e8d5, merge 2377168c2cc0) 之 6 項驗收條款均已在程式、測試矩陣、安全掃描、CI 綠燈與繁體中文交付格式層面完整驗證。A3 原驗收屬軟體回歸矩陣層級，已由現有 vitest 與 Python E2E 充分覆蓋，且 D15 已確認 OIDC 保持關閉，無須亦不得升格為真實 GCP provider 啟用要求。全部 6 項條款均為 VERIFIED。"
+  }
+}
