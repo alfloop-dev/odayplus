@@ -6,7 +6,7 @@
   "phase": "History Recovery — executable acceptance reconciliation",
   "owner": "Antigravity4",
   "reviewer": "Codex",
-  "recorded_at": "2026-09-11T11:08:00Z",
+  "recorded_at": "2026-09-11T11:28:00Z",
   "reconciliation_target": {
     "repository": "alfloop-dev/odayplus",
     "continuation_branch": "task/ODP-DEV-STAGED-GATE-RECONCILIATION-001-RECOVERY-20260911",
@@ -58,7 +58,8 @@
       {
         "name": "product",
         "conclusion": "skipped",
-        "completed_at": "2026-09-04T09:11:54Z"
+        "completed_at": "2026-09-04T09:11:54Z",
+        "note": "product job skipped on head 40bb0246 (scope skip); tests/e2e/ was not collected by orchestrator job"
       },
       {
         "name": "performance-gate",
@@ -87,11 +88,17 @@
     }
   },
   "subsequent_tasks_and_candidate_continuity": {
+    "candidate_coordinates": {
+      "candidate_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+      "manifest_digest": "sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c",
+      "source_evidence_sha": "d084f51d4009b7b435416c8b83410a8b4fb4a267"
+    },
     "lockfile_consistency_task": {
       "task_id": "ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001",
       "pr_number": 1183,
       "merge_commit": "5fe790edc453df0efcb7efcbf750dc305b37fe59",
-      "merged_at": "2026-09-04T11:55:45Z"
+      "merged_at": "2026-09-04T11:55:45Z",
+      "ancestry_in_candidate_c": true
     },
     "candidate_gate_reconciliation_task": {
       "task_id": "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
@@ -101,9 +108,68 @@
       "merged_at": "2026-09-10T18:58:07Z",
       "frozen_candidate_base_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
       "candidate_contains_pr1193_and_pr1183": true,
-      "candidate_reconciliation_ci_status": "success",
-      "candidate_all_7_ci_checks_success": true
-    }
+      "exact_ci_execution_receipt": {
+        "run_id": 34489132477,
+        "job_id": 102911032625,
+        "job_name": "product",
+        "job_url": "https://github.com/alfloop-dev/odayplus/actions/runs/34489132477/job/102911032625",
+        "head_sha": "d084f51d4009b7b435416c8b83410a8b4fb4a267",
+        "step_name": "Test product code",
+        "workflow_command": "uv run pytest -m \"not requires_live_env and not performance\" tests modules apps shared models -n auto",
+        "collected_paths": [
+          "tests/",
+          "modules/",
+          "apps/",
+          "shared/",
+          "models/"
+        ],
+        "test_file_collected": "tests/e2e/test_release_gate_registry.py",
+        "step_conclusion": "success",
+        "product_e2e_gate_distinction": "product-e2e-gate runs fixed PYTEST_NODE_IDS and playwright specs which do NOT include test_release_gate_registry.py; execution evidence is strictly bound to product job 102911032625 step 'Test product code'."
+      }
+    },
+    "done_receipt_tasks_reconciliation": [
+      {
+        "task_id": "ODP-DEV-CANDIDATE-CODE-RECEIPT-001",
+        "pr_number": 1301,
+        "head_sha": "11dd0666f7f7e1860ba8522dcd50d51fec65defe",
+        "merge_commit": "b2011870",
+        "gate_evaluated": "gate-0 (Code Gate)",
+        "candidate_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+        "manifest_digest": "sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c",
+        "source_evidence_sha": "d084f51d4009b7b435416c8b83410a8b4fb4a267",
+        "gate_status": "blocked",
+        "release_decision": "no-go",
+        "task_status": "done"
+      },
+      {
+        "task_id": "ODP-DEV-CANDIDATE-CONTRACT-RECEIPT-001",
+        "pr_number": 1299,
+        "head_sha": "aaff8356b9fc68912668a951627131d09bd6308d",
+        "merge_commit": "6277bbf4",
+        "gate_evaluated": "gate-1 (Contract Gate)",
+        "candidate_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+        "manifest_digest": "sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c",
+        "source_evidence_sha": "d084f51d4009b7b435416c8b83410a8b4fb4a267",
+        "gate_status": "blocked",
+        "release_decision": "no-go",
+        "task_status": "done"
+      },
+      {
+        "task_id": "ODP-DEV-CANDIDATE-SECURITY-RECEIPT-001",
+        "pr_number": 1297,
+        "head_sha": "d52e457707b2aebfc885ba0170c4cc8691c3383b",
+        "merge_commit": "267885b5",
+        "gate_evaluated": "gate-4 (Security and Privacy Gate)",
+        "candidate_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+        "manifest_digest": "sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c",
+        "source_evidence_sha": "d084f51d4009b7b435416c8b83410a8b4fb4a267",
+        "gate_status": "blocked",
+        "release_decision": "no-go",
+        "task_status": "done"
+      }
+    ],
+    "governance_note": "Receipt tasks marked 'done' represent completed audit packages and do NOT clear Gate 0, Gate 1, or Gate 4. Gates remain fail-closed blocked (NO-GO)."
   },
   "acceptance_criteria_reconciliation": [
     {
@@ -115,13 +181,13 @@
       "classes_zh": [
         "執行過程約束"
       ],
-      "reconciliation_status": "met",
-      "status_zh": "已滿足",
-      "historical_process_status": "historical_process_unknown_non_blocking",
-      "rationale": "歷史 PR #1193 於 2026-09-04T09:20:44Z 合併（efdfea1a），ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001 (PR #1183) 於同日 11:55:45Z 合併（5fe790ed）。其後在正式候選基準與門禁重整任務 ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002（PR #1292）中，選定之凍結候選基準 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12 經 git ancestry 驗證已同時包含 efdfea1a 與 5fe790ed。候選選定與 supply chain lockfile 依賴關係在候選重整層完整閉環，不構成阻擋。",
+      "reconciliation_status": "process_constraint_unverifiable",
+      "status_zh": "執行過程約束（歷史不可獨立重現，不構成阻塞）",
+      "historical_fact": "歷史 PR #1193 於 2026-09-04T09:47:46Z 合併（efdfea1a），PR #1183 於同日 11:55:45Z 合併（5fe790ed）。其後在正式候選基準與門禁重整任務 ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002（PR #1292）中，選定之凍結候選基準 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12 經 git ancestry 驗證已同時包含 efdfea1a 與 5fe790ed。",
+      "rationale": "條款約束執行過程之等待時序，屬歷史 process constraint。依規範註記 process_constraint_unverifiable，不視為 passed，亦不推斷違規或構成結案阻塞。候選依賴關係於後續候選基準 C 完整閉環。",
       "evidence_refs": [
         "merge_commit:5fe790edc453df0efcb7efcbf750dc305b37fe59 (PR #1183)",
-        "archive_task:ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002.json (frozen_evidence_base_sha: 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12)",
+        "archive_task:ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002.json (frozen_candidate_base_sha: 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12)",
         "git merge-base --is-ancestor 5fe790ed 596b9c9a (exit 0)"
       ]
     },
@@ -132,12 +198,12 @@
         "D"
       ],
       "classes_zh": [
-        "程式或文件交付"
+        "程式交付"
       ],
-      "reconciliation_status": "met",
-      "status_zh": "已滿足",
-      "historical_process_status": "not_applicable",
-      "rationale": "PR #1193 交付之 delivery_toolchain/e2e/check_release_gate_registry.py 與既有 delivery_toolchain/release/check_runtime_admission.py 均存在於 merge commit efdfea1a 及 dev tip，完整遵循單一 STAGE_CONTRACT 與 Runtime Release 准入路徑，未新增第二條 gate/lease/release workflow。實機執行兩者均 exit code 0。",
+      "reconciliation_status": "met_by_delivered_artifact",
+      "status_zh": "程式交付已滿足",
+      "historical_fact": "PR #1193 交付之 delivery_toolchain/e2e/check_release_gate_registry.py 與既有 delivery_toolchain/release/check_runtime_admission.py 均存在於 merge commit efdfea1a 及 dev tip。",
+      "rationale": "檢查器嚴格遵循單一 STAGE_CONTRACT 與 Runtime Release 准入路徑，未新增第二條 gate/lease/release workflow。實機執行兩者均 exit code 0。",
       "evidence_refs": [
         "delivered_file:delivery_toolchain/e2e/check_release_gate_registry.py @ efdfea1a0c31",
         "source_doc:delivery_toolchain/release/check_runtime_admission.py @ efdfea1a0c31",
@@ -152,18 +218,19 @@
         "T"
       ],
       "classes_zh": [
-        "測試證明"
+        "可由測試證明"
       ],
-      "reconciliation_status": "met",
-      "status_zh": "已滿足",
-      "historical_process_status": "not_applicable",
-      "rationale": "PR #1193 在 delivery_toolchain/e2e/check_release_gate_registry.py 與 tests/e2e/test_release_gate_registry.py 實作並交付了 fail-closed 驗證邏輯與具名測試：test_go_decision_with_no_gates_bound_to_admission_target_is_rejected、test_dev_go_decision_requires_dev_boundary_gates_cleared、test_gate_pinned_to_a_different_sha_than_the_candidate_is_rejected、test_passed_gate_with_a_stale_receipt_is_rejected。針對歷史 PR #1193 head product job skipped 的執行缺口，本次在當前 worktree 執行 focused pytest 105 項測試全部 PASS（exit code 0），且後續 ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002 PR #1292 exact head 上 GitHub CI product/product-e2e-gate/orchestrator 全數成功。",
+      "reconciliation_status": "met_by_successor_test_execution",
+      "status_zh": "由後續候選 CI 執行測試證明",
+      "historical_fact": "歷史 PR #1193 exact head 40bb0246 上 product job 為 skipped（test_delivered_not_executed_at_exact_head）。測試檔 tests/e2e/test_release_gate_registry.py 已交付於 merge commit efdfea1a。",
+      "rationale": "PR #1193 在 delivery_toolchain/e2e/check_release_gate_registry.py 與 tests/e2e/test_release_gate_registry.py 交付具名斷言：test_go_decision_with_no_gates_bound_to_admission_target_is_rejected、test_dev_go_decision_requires_dev_boundary_gates_cleared、test_gate_pinned_to_a_different_sha_than_the_candidate_is_rejected、test_passed_gate_with_a_stale_receipt_is_rejected。在後續 ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002（PR #1292，exact head E=d084f51d4009b7b435416c8b83410a8b4fb4a267）之 GitHub CI product job 102911032625（run 34489132477，step 'Test product code'）中，tests/ 目錄被完整收集並執行成功（conclusion: success）。歷史 PR #1193 head skipped 保持獨立客觀記錄；本機未保存 raw terminal 日誌時標記 unknown，不重跑測試。",
       "evidence_refs": [
-        "test_file:tests/e2e/test_release_gate_registry.py @ efdfea1a0c31",
+        "delivered_test:tests/e2e/test_release_gate_registry.py @ efdfea1a0c31",
         "named_test:test_go_decision_with_no_gates_bound_to_admission_target_is_rejected",
         "named_test:test_dev_go_decision_requires_dev_boundary_gates_cleared",
-        "command:uv run --python 3.12 pytest tests/release/test_runtime_admission.py tests/e2e/test_release_gate_registry.py -k \"not test_product_gate and not test_dev_merge_gate\" (105 passed, exit 0)",
-        "ci_check:PR1292 exact head d084f51d product & product-e2e-gate (SUCCESS)"
+        "named_test:test_gate_pinned_to_a_different_sha_than_the_candidate_is_rejected",
+        "named_test:test_passed_gate_with_a_stale_receipt_is_rejected",
+        "ci_execution:PR #1292 exact head d084f51d product job 102911032625 step 'Test product code' (conclusion: success)"
       ]
     },
     {
@@ -173,37 +240,40 @@
         "T"
       ],
       "classes_zh": [
-        "測試證明"
+        "可由測試證明"
       ],
-      "reconciliation_status": "met",
-      "status_zh": "已滿足",
-      "historical_process_status": "not_applicable",
-      "rationale": "PR #1193 實作了分階段准入（staged admission）。具名測試 test_staging_and_prod_gates_do_not_block_dev_go_decision 明確驗證：當 dev boundary gate（gate-0, gate-1, gate-4）cleared 時，即使 staging（gate-2）或 production（gate-3, gate-5, gate-6）仍為 blocked，dev 的 GO 決策依然被接受，不會被反向阻擋。具名測試 test_blocking_gates_filters_by_target 驗證 blocking_gates 過濾邏輯。本次 focused pytest 驗證通過（exit code 0）。",
+      "reconciliation_status": "met_by_successor_test_execution",
+      "status_zh": "由後續候選 CI 執行測試證明",
+      "historical_fact": "歷史 PR #1193 實作分階段准入（staged admission）。exact head 40bb0246 product job 為 skipped。",
+      "rationale": "具名測試 test_staging_and_prod_gates_do_not_block_dev_go_decision 明確驗證：當 dev boundary gate（gate-0, gate-1, gate-4）cleared 時，即使 staging（gate-2）或 production（gate-3, gate-5, gate-6）仍為 blocked，dev 的 GO 決策依然被接受，不會被反向阻擋。具名測試 test_blocking_gates_filters_by_target 驗證 blocking_gates 過濾邏輯。在後續 PR #1292 exact head d084f51d 之 product job 102911032625 執行成功。",
       "evidence_refs": [
-        "test_file:tests/e2e/test_release_gate_registry.py @ efdfea1a0c31",
+        "delivered_test:tests/e2e/test_release_gate_registry.py @ efdfea1a0c31",
         "named_test:test_staging_and_prod_gates_do_not_block_dev_go_decision",
         "named_test:test_blocking_gates_filters_by_target",
-        "command:uv run --python 3.12 pytest tests/e2e/test_release_gate_registry.py -k \"test_staging_and_prod_gates_do_not_block_dev_go_decision or test_blocking_gates_filters_by_target\" (exit 0)"
+        "ci_execution:PR #1292 exact head d084f51d product job 102911032625 step 'Test product code' (conclusion: success)"
       ]
     },
     {
       "index": 5,
       "criterion": "無證據的 gate 保持 blocked",
       "classes": [
-        "T"
+        "T",
+        "D"
       ],
       "classes_zh": [
-        "測試證明"
+        "可由測試證明",
+        "程式交付"
       ],
-      "reconciliation_status": "met",
-      "status_zh": "已滿足",
-      "historical_process_status": "not_applicable",
-      "rationale": "具名測試 test_blocked_baseline_records_no_go_with_zero_receipts、test_open_gate_without_blockers_is_rejected、test_passed_gate_without_evidence_or_receipt_is_rejected、test_blocked_gates_with_unmatched_target_fails_closed_under_require_go 驗證在缺少合法 receipt 時閘門必須保持 blocked 且決策為 NO-GO。實機執行 python3 delivery_toolchain/e2e/check_release_gate_registry.py 輸出 RELEASE STATE: NO-GO 且 exit code 0。",
+      "reconciliation_status": "met_by_successor_test_execution",
+      "status_zh": "由後續候選 CI 執行測試與程式交付證明",
+      "historical_fact": "PR #1193 交付 check_release_gate_registry.py 與 test_release_gate_registry.py 之 fail-closed 驗證邏輯。",
+      "rationale": "具名測試 test_blocked_baseline_records_no_go_with_zero_receipts、test_open_gate_without_blockers_is_rejected、test_passed_gate_without_evidence_or_receipt_is_rejected、test_blocked_gates_with_unmatched_target_fails_closed_under_require_go 驗證缺少合法 receipt 時閘門必須保持 blocked 且決策為 NO-GO。在後續 PR #1292 exact head d084f51d 之 product job 102911032625 執行成功。實機執行 python3 delivery_toolchain/e2e/check_release_gate_registry.py 輸出 RELEASE STATE: NO-GO 且 exit code 0。",
       "evidence_refs": [
-        "test_file:tests/e2e/test_release_gate_registry.py @ efdfea1a0c31",
+        "delivered_test:tests/e2e/test_release_gate_registry.py @ efdfea1a0c31",
         "named_test:test_blocked_baseline_records_no_go_with_zero_receipts",
         "named_test:test_passed_gate_without_evidence_or_receipt_is_rejected",
-        "command:python3 delivery_toolchain/e2e/check_release_gate_registry.py (exit 0, RELEASE STATE: NO-GO)"
+        "command:python3 delivery_toolchain/e2e/check_release_gate_registry.py (exit 0, RELEASE STATE: NO-GO)",
+        "ci_execution:PR #1292 exact head d084f51d product job 102911032625 step 'Test product code' (conclusion: success)"
       ]
     },
     {
@@ -214,17 +284,18 @@
         "H"
       ],
       "classes_zh": [
-        "測試證明",
+        "可由測試證明",
         "人類授權邊界"
       ],
-      "reconciliation_status": "met",
-      "status_zh": "已滿足",
-      "historical_process_status": "not_applicable",
-      "rationale": "條款要求對 release GO 之否定約束（GO 決策必須有真實 human_signoff，否則 fail closed）。具名測試 test_go_decision_requires_human_signoff 驗證未帶 human_signoff 之 GO 決策會被 checker 拒絕。本任務未簽發任何 release GO，未簽發 release lease，未偽造人類簽署，嚴格遵守約束。",
+      "reconciliation_status": "met_by_successor_test_execution",
+      "status_zh": "由後續候選 CI 執行測試與邊界遵守證明",
+      "historical_fact": "條款要求對 release GO 之否定約束（GO 決策必須有真實 human_signoff，否則 fail closed），非要求本任務取得人類簽署。",
+      "rationale": "具名測試 test_go_decision_requires_human_signoff 驗證未帶 human_signoff 之 GO 決策會被 checker 拒絕。在後續 PR #1292 exact head d084f51d 之 product job 102911032625 執行成功。否定約束完全遵守：本任務未簽發任何 release GO，未簽發 release lease，未偽造人類簽署。",
       "evidence_refs": [
-        "test_file:tests/e2e/test_release_gate_registry.py @ efdfea1a0c31",
+        "delivered_test:tests/e2e/test_release_gate_registry.py @ efdfea1a0c31",
         "named_test:test_go_decision_requires_human_signoff",
-        "delivered_file:delivery_toolchain/e2e/check_release_gate_registry.py @ efdfea1a0c31"
+        "delivered_file:delivery_toolchain/e2e/check_release_gate_registry.py @ efdfea1a0c31",
+        "ci_execution:PR #1292 exact head d084f51d product job 102911032625 step 'Test product code' (conclusion: success)"
       ]
     },
     {
@@ -235,17 +306,17 @@
         "R"
       ],
       "classes_zh": [
-        "程式或文件交付",
+        "程式交付",
         "runtime／部署"
       ],
-      "reconciliation_status": "met",
-      "status_zh": "已滿足",
-      "historical_process_status": "not_applicable",
-      "rationale": "契約交付面（D）：.github/workflows/deploy-dev.yml 明載 external_sources_enabled 預設為空值（standing sources-off posture）、ODP_COMPETITOR_MANUAL_SOURCE_STATUS: disabled、ODP_EXTERNAL_PROVIDER_MODE: disabled，且 ODP_CLOUD_RUN_VPC_EGRESS 綁定環境變數。運行態邊界（R）：本 code/gate reconciliation 任務依原驗收「本 task 不簽 lease 不 dispatch deploy」，不執行 live 部署與憑證注入。真正 live posture 屬後續 rollout 任務（ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 / ODP-DEV-ROLLOUT-001）與 runtime gate 範疇，不構成 code/gate 任務缺陷。",
+      "reconciliation_status": "partially_met",
+      "status_zh": "部分滿足（靜態契約已滿足，運行態姿勢保留於下游 rollout 任務）",
+      "historical_fact": "PR #1193 diff 僅含 gate validator 與 tests，不包含 live 部署或第三方來源代碼變更。既有 source document .github/workflows/deploy-dev.yml 包含靜態 sources-off 設定。",
+      "rationale": "靜態契約面（D）：.github/workflows/deploy-dev.yml 明載 external_sources_enabled 預設為空值（standing sources-off posture）、ODP_COMPETITOR_MANUAL_SOURCE_STATUS: disabled、ODP_EXTERNAL_PROVIDER_MODE: disabled，且 ODP_CLOUD_RUN_VPC_EGRESS 綁定環境變數。運行態邊界（R）：本 code/gate reconciliation 任務依原驗收「本 task 不簽 lease 不 dispatch deploy」，不執行 live 部署與憑證注入。真正 live disabled、zero credentials、default-deny egress 屬後續 live rollout 任務（ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 驗收 A6/A7）範疇，本 code/gate 任務不倒灌部署要求，記為 partially_met。",
       "evidence_refs": [
         "source_doc:.github/workflows/deploy-dev.yml @ efdfea1a0c31 (lines 140-141, 948, 955, 1000)",
-        "governance:EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN §6.1",
-        "task_boundary:acceptance_class(runtime_deployment=false, external_enablement=false)"
+        "task_scope:acceptance_class(runtime_deployment=false, external_enablement=false)",
+        "downstream_task:ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 (acceptance criteria A6, A7)"
       ]
     },
     {
@@ -257,10 +328,10 @@
       "classes_zh": [
         "執行過程約束"
       ],
-      "reconciliation_status": "met",
-      "status_zh": "已滿足",
-      "historical_process_status": "not_applicable",
-      "rationale": "歷史 PR #1193 及本次 recovery 過程中均未簽發任何 release lease（未呼叫 .orchestrator/release_lease.py issue），亦未觸發任何 workflow_dispatch 部署命令。否定約束完全遵守。",
+      "reconciliation_status": "process_constraint_unverifiable",
+      "status_zh": "執行過程約束（否定約束查無違規紀錄）",
+      "historical_fact": "歷史 PR #1193 及本次 recovery 過程中均無簽發 release lease 或觸發 workflow_dispatch 部署之記錄。",
+      "rationale": "否定過程約束。查無由本任務簽發 release lease 或 dispatch deploy 之紀錄，記為 process_constraint_unverifiable，不作為獨立 passed 項目，亦不阻擋結案。",
       "evidence_refs": [
         "pr:#1193 (pure gate validator and test diff)",
         "task_scope:no lease files or deployment dispatched"
@@ -275,10 +346,10 @@
       "classes_zh": [
         "執行過程約束"
       ],
-      "reconciliation_status": "met",
-      "status_zh": "已滿足",
-      "historical_process_status": "historical_process_unknown_non_blocking",
-      "rationale": "歷史 PR #1193 標題與內文均為正體中文，commit trailers 具名指定 focused 驗證指令。本次 recovery 交付文件亦嚴格使用正體中文。歷史執行次數記錄依規則註記 unknown，不構成結案阻塞。",
+      "reconciliation_status": "process_constraint_unverifiable",
+      "status_zh": "執行過程約束（歷史執行次數不可考，正體中文文件可查）",
+      "historical_fact": "歷史 PR #1193 標題與內文均為正體中文，commit trailers 具名指定 focused 驗證指令。本次 recovery 交付文件亦嚴格使用正體中文。",
+      "rationale": "PR 語言符合要求。歷史 CI 執行次數為過程約束，無法從唯讀紀錄完整驗證，記為 process_constraint_unverifiable，不構成阻塞。",
       "evidence_refs": [
         "pr:#1193 title: [ReviewBus] ODP-DEV-STAGED-GATE-RECONCILIATION-001 重整 staged dev release gate 與現行 artifact 的 exact reconciliation",
         "commit_trailers:Verified: uv run pytest tests/e2e/test_release_gate_registry.py tests/release/test_runtime_admission.py"
@@ -287,29 +358,88 @@
   ],
   "acceptance_criteria_summary": {
     "total_criteria": 9,
-    "met_criteria": 9,
-    "partially_met_criteria": 0,
+    "met_criteria": 5,
+    "partially_met_criteria": 1,
+    "process_constraint_unverifiable_criteria": 3,
     "not_evidenced_criteria": 0,
     "unmet_criteria": 0,
-    "historical_process_unknown_criteria": [
-      1,
-      9
-    ],
-    "all_criteria_technically_satisfied": true
+    "criteria_by_status": {
+      "met_by_delivered_artifact": [
+        2
+      ],
+      "met_by_successor_test_execution": [
+        3,
+        4,
+        5,
+        6
+      ],
+      "partially_met": [
+        7
+      ],
+      "process_constraint_unverifiable": [
+        1,
+        8,
+        9
+      ]
+    },
+    "all_criteria_technically_satisfied": false,
+    "summary_notes": "5 項程式交付與測試證明條款已透過交付物與後續候選 E CI 完整閉環；1 項（A7）靜態契約已滿足、live runtime posture 留待下游 rollout 任務；3 項（A1, A8, A9）為歷史過程約束，依規範註記 process_constraint_unverifiable 且不構成結案阻塞。"
   },
   "dependent_tasks_mapping": {
     "downstream_tasks": [
       {
         "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
-        "relationship": "Downstream live dev rollout remediation task",
-        "status": "blocked / pending gate reconciliation closeout",
-        "handling_rule": "Retain dependency in ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 until ODP-DEV-STAGED-GATE-RECONCILIATION-001 is finalized. Upstream completion provides durable staged gate admission contract for live rollout remediation."
+        "title": "以真實 artifact 完成 dev live rollout 並取代 false-done 前提",
+        "relationship": "下游 dev live rollout 補救任務（Wave 3 - Dev Live Rollout Remediation）",
+        "current_status": "blocked",
+        "dependencies_count": 10,
+        "dependencies_before": [
+          "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+          "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+          "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+          "DPF-EMGI-LIVE-ROLLOUT-001",
+          "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+          "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+          "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+          "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+          "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+          "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
+        ],
+        "dependencies_after": [
+          "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+          "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+          "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+          "DPF-EMGI-LIVE-ROLLOUT-001",
+          "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+          "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+          "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+          "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+          "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+          "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
+        ],
+        "dependencies_delta": "before == after (dependencies unchanged; no manual mutation to canonical dependencies)",
+        "dependency_cycle_check": "no_cycle_detected (DAG verified: ODP-DEV-STAGED-GATE-RECONCILIATION-001 is a leaf upstream dependency with 0 dependencies)",
+        "criteria_mapping_from_this_task": {
+          "this_task_criterion_7": "A7 (第三方來源保持 disabled 且無 credentials 與 default deny egress)",
+          "mapped_to_downstream_criteria": [
+            "A6: Cloud Run jobs one-shot、API/Web authenticated smoke、contract、provider-off與default-deny egress均通過",
+            "A7: 16個第三方來源保持disabled且provider credentials不存在"
+          ]
+        },
+        "exact_missing_inputs_for_downstream": [
+          "dev 環境變數與密鑰配置（ODP_WEB_BASE_URL 與 ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET 尚未填入）",
+          "Gate 0, Gate 1, Gate 4 正式准入核准（目前維持 blocked / NO-GO，需 Human/Ops 風險決策）",
+          "經授權簽發之 Supervisor release lease",
+          "真實 GCP dev 部署執行日誌與 live readback 數據"
+        ],
+        "next_step": "本任務 ODP-DEV-STAGED-GATE-RECONCILIATION-001 完成補證與 PR 合併後，提供 dev staged gate admission 契約基礎；下游 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 待其餘前置條件具備後接續執行。"
       },
       {
         "task_id": "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
-        "relationship": "Successor task that applied exact candidate gate reconciliation to candidate 596b9c9a",
-        "status": "archived done (PR #1292, merge commit 3613faff582bd1c5a2c9b2ae5b5cd390d8be381f)",
-        "handling_rule": "Reused and composed with ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002 evidence, maintaining immutable candidate base and staged gate registry continuity."
+        "title": "真實 build artifact 與 dev gate registry 的 exact candidate reconciliation",
+        "relationship": "候選基準重整任務（PR #1292, merge commit 3613faff582bd1c5a2c9b2ae5b5cd390d8be381f）",
+        "current_status": "done (archived)",
+        "handling_rule": "復用該任務對 candidate C (596b9c9a) 與 source evidence E (d084f51d) 之 exact binding，維持不可變之候選門禁註冊表。"
       }
     ]
   },
@@ -319,6 +449,11 @@
     "no_unauthorized_runtime_restart": true,
     "no_unauthorized_cloud_deployment": true,
     "no_release_lease_minted": true,
-    "exact_head_verification_preserved": true
+    "exact_head_verification_preserved": true,
+    "candidate_c_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+    "source_evidence_e_sha": "d084f51d4009b7b435416c8b83410a8b4fb4a267",
+    "manifest_digest": "sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c",
+    "gate_0_1_4_status": "blocked",
+    "release_admission_decision": "no-go"
   }
 }
