@@ -120,7 +120,7 @@
       ],
       "timestamp_utc": "2026-09-08T11:46:07Z",
       "target": "github-environment-dev-variables",
-      "total_variables_count": 40,
+      "total_variables_count": 41,
       "exit_code": 0
     },
     {
@@ -139,7 +139,7 @@
       ],
       "timestamp_utc": "2026-09-08T11:46:09Z",
       "target": "github-environment-production-variables",
-      "total_variables_count": 39,
+      "total_variables_count": 42,
       "exit_code": 0
     },
     {
