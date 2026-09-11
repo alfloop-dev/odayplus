@@ -120,5 +120,5 @@ flowchart TD
 
 ```bash
 git diff --check 4499a2993e37b62033926b07de8d8d2e8469a6c7 HEAD -- docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/
-python3 docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/verify_reconciliation.py
+python3 -c "import json; data=json.load(open('docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/acceptance-reconciliation.json')); assert data['summary']['reconciliation_verdict'] == 'reconciled_with_known_gaps'; assert data['summary']['criteria_total'] == 5; assert data['summary']['criteria_met'] == 3; assert data['summary']['criteria_partially_met'] == 2; print('ODP-GITHUB-GCP-ENV-BOOTSTRAP-001 acceptance reconciliation verified successfully.')"
 ```
