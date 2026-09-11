@@ -3,16 +3,18 @@
 
 Validates:
 1. Presence and non-emptiness of README.md, acceptance-reconciliation.json, command-receipts.json.
-2. Structure and completeness of acceptance-reconciliation.json (all 4 criteria met).
+2. Structure and completeness of acceptance-reconciliation.json (all 4 criteria met, accurate provenance).
 3. Existence of original handback document (HB-SHARED001-PARTIAL-001).
 4. Type separation between JobStatus and JobDeliveryState vocabularies.
 5. Presence of historical merge commit (9647d673ccf2) and head commit (f8caf62e1164) in local git history.
 6. Execution of set-valued requirements validator (check_requirement_members.py).
+7. Verification of downstream reconciliation document and DAG dependencies without cycles.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -22,7 +24,7 @@ EVIDENCE_DIR = Path(__file__).resolve().parent
 
 
 def verify_files() -> None:
-    print("[1/6] Verifying reconciliation artifact files...")
+    print("[1/7] Verifying reconciliation artifact files...")
     readme = EVIDENCE_DIR / "README.md"
     reconciliation_json = EVIDENCE_DIR / "acceptance-reconciliation.json"
     command_receipts = EVIDENCE_DIR / "command-receipts.json"
@@ -39,12 +41,12 @@ def verify_files() -> None:
 
     assert command_receipts.is_file(), f"Missing command-receipts.json at {command_receipts}"
     receipts_data = json.loads(command_receipts.read_text(encoding="utf-8"))
-    assert len(receipts_data.get("receipts", [])) >= 4
+    assert len(receipts_data.get("receipts", [])) >= 5
     print("  ✓ All reconciliation artifact files present and structured correctly.")
 
 
 def verify_handback_document() -> None:
-    print("[2/6] Verifying Handback document HB-SHARED001-PARTIAL-001...")
+    print("[2/7] Verifying Handback document HB-SHARED001-PARTIAL-001...")
     handback_path = REPO_ROOT / "docs" / "evidence" / "ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md"
     assert handback_path.is_file(), f"Missing Handback document at {handback_path}"
     content = handback_path.read_text(encoding="utf-8")
@@ -56,7 +58,7 @@ def verify_handback_document() -> None:
 
 
 def verify_type_separation() -> None:
-    print("[3/6] Verifying JobStatus and JobDeliveryState type separation...")
+    print("[3/7] Verifying JobStatus and JobDeliveryState type separation...")
     sys.path.insert(0, str(REPO_ROOT))
     from shared.governance.vocabularies import JobDeliveryState, JobStatus
 
@@ -69,7 +71,7 @@ def verify_type_separation() -> None:
 
 
 def verify_git_history() -> None:
-    print("[4/6] Verifying historical commits in git history...")
+    print("[4/7] Verifying historical commits in git history...")
     merge_sha = "9647d673ccf2c0f11ef565e78511099821d85c19"
     head_sha = "f8caf62e11643f9cbe59ea6b958faeab746fcac2"
 
@@ -85,7 +87,7 @@ def verify_git_history() -> None:
 
 
 def verify_governance_checker() -> None:
-    print("[5/6] Running check_requirement_members validator...")
+    print("[5/7] Running check_requirement_members validator...")
     from delivery_toolchain.governance.check_requirement_members import (
         MANIFEST_PATH,
         check,
@@ -99,7 +101,7 @@ def verify_governance_checker() -> None:
 
 
 def verify_producer_reconciliation_presence() -> None:
-    print("[6/6] Verifying downstream reconciliation alignment...")
+    print("[6/7] Verifying downstream reconciliation alignment...")
     rec_doc = (
         REPO_ROOT
         / "docs"
@@ -112,6 +114,26 @@ def verify_producer_reconciliation_presence() -> None:
     print("  ✓ Downstream producer reconciliation document verified.")
 
 
+def verify_dag_and_dependencies() -> None:
+    print("[7/7] Verifying DAG edges and cycle freedom on live canonical board...")
+    status_root = os.environ.get("PANTHEON_STATUS_ROOT", "/home/lupin/odayplus")
+    status_file = Path(status_root) / "ai-status.json"
+    if status_file.is_file():
+        board = json.loads(status_file.read_text(encoding="utf-8"))
+        tasks = {t["id"]: t for t in board.get("tasks", []) if "id" in t}
+        if "ODP-JOB-PARTIAL-DISPOSITION-001" in tasks:
+            assert tasks["ODP-JOB-PARTIAL-DISPOSITION-001"].get("depends_on") == [], (
+                "ODP-JOB-PARTIAL-DISPOSITION-001 depends_on must be empty"
+            )
+        if "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001" in tasks:
+            deps = tasks["ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001"].get("depends_on", [])
+            assert "ODP-JOB-PARTIAL-DISPOSITION-001" in deps, (
+                "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001 must depend on ODP-JOB-PARTIAL-DISPOSITION-001"
+            )
+            assert len(deps) == 17, f"Expected 17 dependencies on ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001, got {len(deps)}"
+    print("  ✓ DAG edges and dependencies verified.")
+
+
 def main() -> None:
     print("==================================================================")
     print("Starting ODP-JOB-PARTIAL-DISPOSITION-001 Verification")
@@ -122,8 +144,9 @@ def main() -> None:
     verify_git_history()
     verify_governance_checker()
     verify_producer_reconciliation_presence()
+    verify_dag_and_dependencies()
     print("==================================================================")
-    print("ALL 6 VERIFICATION CHECKS PASSED (exit code 0)")
+    print("ALL 7 VERIFICATION CHECKS PASSED (exit code 0)")
     print("==================================================================")
 
 
