@@ -73,6 +73,25 @@ Observational evidence recorded in `/home/lupin/odayplus/support/handoffs/parall
 
 ---
 
+### 6. Review Round 2 Remediation & Regression Handling
+
+Addressed Codex2 review findings:
+1. **P1 — Stale Clear Preserves Concurrent New Failure**:
+   - `_is_pause_entry_cleared()` in `runtime_state.py` and `worker_failure_policy.py`: when `cleared_paused_at` is present, pauses with `paused_at > cleared_paused_at` are recognized as newer failure epochs and preserved even if their creation was before the clear command's wall-clock completion.
+2. **P1 — Same-Second New Failure Survives Later Old Snapshot Save**:
+   - In `_merge_provider_guardrails()`, filter candidate pauses against clearance tombstones *before* resolving equal-timestamp version ties, ensuring valid new failures are not discarded when a stale old failure matches the tombstone.
+3. **P1 — Legacy Cooldown Recovery via Worker Provenance**:
+   - In `clear_provider_dispatch_pause()`, support legacy cooldown records that omit `auth_identity_hash` by verifying provenance against matching `worker_run_id` and the worker registry.
+4. **P1 — Positive Provenance Required for Recovery**:
+   - Require positive evidence of matching provider/auth/failure-epoch; reject recovery when both auth and failure epoch records are absent.
+5. **P1 — Shared-Auth Canary Fencing**:
+   - Enforce account-level canary capacity fences across all pools sharing the same `auth_identity_hash` (or provider auth credential) during canary recovery, ensuring other healthy pools on the same account cannot bypass the canary concurrency cap.
+   - Upon canary success in `record_account_pool_canary_success()`, restore all shared-auth pools to full configured concurrency.
+6. **P2 — Durable Canary Recovery Against Stale Writers**:
+   - `_merge_account_pool_runtime()` orders transitions by generation, `last_recovered_at`, and lifecycle state hierarchy (`healthy` > `recovering` > `cooldown`), preventing stale in-memory snapshots from regressing durable canary success.
+
+---
+
 ## 5. Verification Receipts
 
 ### Command 1: Code Formatting & Whitespace Check
@@ -80,21 +99,21 @@ Observational evidence recorded in `/home/lupin/odayplus/support/handoffs/parall
 git diff --check
 ```
 - **Exit Code**: `0`
-- **Result**: Passed cleanly with no whitespace or EOF defects.
+- **Result**: Passed cleanly with no whitespace or syntax defects.
 
 ### Command 2: Runtime State Unit & Interleaved Concurrency Tests
 ```bash
 uv run pytest -q .orchestrator/test_runtime_state.py
 ```
 - **Exit Code**: `0`
-- **Result**: `47 passed` (including `QuotaRecoveryRuntimeStateTests`, same-second new failure retention, streak reset persistence).
+- **Result**: `50 passed` (including `test_stale_clear_preserves_concurrent_new_failure_saved_before_clear`, `test_same_second_new_failure_survives_later_old_snapshot_save`, `test_disk_canary_success_survives_stale_recovering_writer`).
 
 ### Command 3: Supervisor & Failure Policy Unit Tests
 ```bash
 uv run pytest -q .orchestrator/test_supervisor.py -k "quota or pause or account_pool or config"
 ```
 - **Exit Code**: `0`
-- **Result**: `83 passed, 187 deselected`.
+- **Result**: `87 passed, 187 deselected` (including `QuotaClearAndCooldownRecoveryReviewTests`).
 
 ### Command 4: Orchestrator Common Tests
 ```bash
@@ -103,9 +122,9 @@ uv run pytest -q .orchestrator/test_common.py
 - **Exit Code**: `0`
 - **Result**: `44 passed`.
 
-### Command 5: Isolated Reviewer Regression Fixture
+### Command 5: Isolated Reviewer Regression Fixtures
 ```bash
-uv run pytest -v /home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260911T023504Z-d8c0730f/test_quota_review.py
+uv run pytest -q /home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260911T025754Z-be2716b2/test_merge_review.py /home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260911T025754Z-be2716b2/test_cooldown_review.py --tb=short
 ```
 - **Exit Code**: `0`
 - **Result**: `7 passed` (all 6 reviewer regression assertions and 1 control passed).

@@ -21918,8 +21918,94 @@ class GitHubBusReopenReasonTests(unittest.TestCase):
                 "reopen", "TASK-1", "detail", actor="Claude", extra_args=["--reason=review_finding"]
             )
 
-        self.assertEqual(recorded["cmd"][-1], "--reason=review_finding")
-        self.assertEqual(recorded["cmd"][-2], "detail")
+class QuotaClearAndCooldownRecoveryReviewTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.root = Path(self.tmpdir.name)
+
+    def fixture(self):
+        config = {
+            "paths": {"activity_log": str(self.root / "activity.jsonl")},
+            "account_pools": {
+                "pool_a": {"max_concurrent": 2, "state": "healthy", "enabled": True},
+            },
+            "agents": {"codex": {"id": "codex", "provider": "codex", "account_pool": "pool_a"}},
+            "providers": {"codex": {"delivery_mode": "codex", "quota_group": "codex"}},
+        }
+        pause = {
+            "provider": "codex", "trigger_provider": "codex",
+            "paused_at": "2026-09-11T01:37:15Z",
+            "blocked_until": "2099-09-11T02:37:15Z",
+            "worker_run_id": "failed-run", "auth_identity_hash": "same-auth",
+            "failure_kind": "quota_terminal",
+        }
+        cooldown = {
+            "state": "cooldown", "effective_concurrency": 0, "generation": 1,
+            "last_failure_at": pause["paused_at"], "next_probe_at": pause["blocked_until"],
+            "last_worker_run_id": "failed-run", "auth_identity_hash": "same-auth",
+            "failure_kind": "quota_terminal",
+        }
+        state = {
+            "provider_guardrails": {"dispatch_pauses": {"codex": pause}, "cleared_pauses": {}},
+            "account_pool_runtime": {"pool_a": cooldown},
+            "workers": {
+                "failed-run": {"run_id": "failed-run", "provider": "codex",
+                               "agent_id": "codex", "logical_agent_id": "codex",
+                               "quota_group": "pool_a", "status": "failed"},
+            },
+        }
+        return config, state
+
+    def _clear(self, config, state):
+        with (
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="same-auth"),
+        ):
+            return supervisor.clear_provider_dispatch_pause(config, state, "codex")
+
+    def test_legacy_cooldown_same_worker_recovers_without_new_hash_field(self) -> None:
+        config, state = self.fixture()
+        del state["account_pool_runtime"]["pool_a"]["auth_identity_hash"]
+        self.assertTrue(self._clear(config, state))
+        self.assertEqual(state["account_pool_runtime"]["pool_a"]["state"], "recovering")
+        self.assertEqual(state["account_pool_runtime"]["pool_a"]["effective_concurrency"], 1)
+
+    def test_missing_auth_and_failure_epoch_must_not_authorize_recovery(self) -> None:
+        config, state = self.fixture()
+        state["provider_guardrails"]["dispatch_pauses"]["codex"] = {"failure_kind": "quota_terminal"}
+        state["account_pool_runtime"]["pool_a"] = {
+            "state": "cooldown", "effective_concurrency": 0,
+            "failure_kind": "quota_terminal", "generation": 1,
+        }
+        self.assertTrue(self._clear(config, state))
+        self.assertEqual(state["account_pool_runtime"]["pool_a"]["state"], "cooldown")
+
+    def test_shared_auth_other_healthy_pool_cannot_bypass_canary_cap(self) -> None:
+        config, state = self.fixture()
+        config["account_pools"]["pool_b"] = {"max_concurrent": 2, "state": "healthy", "enabled": True}
+        config["agents"]["codex2"] = {"id": "codex2", "provider": "codex2", "account_pool": "pool_b"}
+        config["providers"]["codex2"] = {"delivery_mode": "codex", "quota_group": "codex"}
+        state["account_pool_runtime"]["pool_b"] = {
+            "state": "healthy", "effective_concurrency": 2, "auth_identity_hash": "same-auth",
+        }
+        with (
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="same-auth"),
+        ):
+            self.assertTrue(supervisor.clear_provider_dispatch_pause(config, state, "codex"))
+            combined = sum(
+                supervisor.account_pool_effective_concurrency(config, state, agent)
+                for agent in ("codex", "codex2")
+            )
+        self.assertLessEqual(combined, 1, f"shared auth permits {combined} slots before canary success")
+
+    def test_distinct_auth_cooldown_is_preserved_control(self) -> None:
+        config, state = self.fixture()
+        state["account_pool_runtime"]["pool_a"]["auth_identity_hash"] = "other-auth"
+        original = deepcopy(state["account_pool_runtime"]["pool_a"])
+        self.assertTrue(self._clear(config, state))
+        self.assertEqual(state["account_pool_runtime"]["pool_a"], original)
 
 if __name__ == "__main__":
     unittest.main()

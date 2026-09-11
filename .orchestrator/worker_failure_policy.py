@@ -807,15 +807,38 @@ def record_account_pool_canary_success(config: dict[str, Any], state: dict[str, 
         configured = max(0, int(pool.get("max_concurrent")))
     except (TypeError, ValueError):
         configured = quota_group_concurrency_limit(config, str(worker.get("logical_agent_id") or worker.get("agent_id") or ""))
+    recovered_at = utc_now()
     entry.update(
         {
             "state": "healthy",
             "effective_concurrency": configured,
-            "last_recovered_at": utc_now(),
+            "last_recovered_at": recovered_at,
             "last_canary_run_id": worker.get("run_id"),
             "reason": None,
         }
     )
+    canary_auth = entry.get("auth_identity_hash") or provider_auth_identity_hash(
+        config, str(worker.get("provider") or worker.get("logical_agent_id") or "")
+    )
+    if canary_auth:
+        for other_id, other_entry in _account_pool_runtime_bucket(state).items():
+            if other_id == pool_id or not isinstance(other_entry, dict):
+                continue
+            if other_entry.get("auth_identity_hash") == canary_auth and str(other_entry.get("state") or "") == "recovering":
+                _, other_pool = account_pool_settings(config, other_id)
+                try:
+                    other_conf = max(0, int(other_pool.get("max_concurrent")))
+                except (TypeError, ValueError):
+                    other_conf = quota_group_concurrency_limit(config, other_id) or 1
+                other_entry.update(
+                    {
+                        "state": "healthy",
+                        "effective_concurrency": other_conf,
+                        "last_recovered_at": recovered_at,
+                        "last_canary_run_id": worker.get("run_id"),
+                        "reason": None,
+                    }
+                )
     write_activity_log(
         config,
         {
@@ -872,29 +895,32 @@ def _is_pause_entry_cleared(
     p_run = str(pause_entry.get("worker_run_id") or "")
     p_auth = str(pause_entry.get("auth_identity_hash") or "")
 
-    # 1. Exact match with the pause that was explicitly cleared
-    if c_p_at and p_at == c_p_at:
-        if c_run and p_run and c_run != p_run:
-            return False
-        if c_auth and p_auth and c_auth != p_auth:
-            return False
-        return True
+    # Check auth identity match if both present
+    if c_auth and p_auth and c_auth != p_auth:
+        return False
 
-    # 2. If paused_at is strictly older than cleared_at, it was created before clearance
-    if c_at and p_at and p_at < c_at:
-        if c_auth and p_auth and c_auth != p_auth:
-            return False
-        return True
-
-    # 3. If paused_at == cleared_at (same second as clearance):
-    if c_at and p_at and p_at == c_at:
-        if c_p_at == p_at:
+    # 1. Clearance targeted a specific pause timestamp
+    if c_p_at:
+        if p_at == c_p_at:
             if c_run and p_run and c_run != p_run:
                 return False
-            if c_auth and p_auth and c_auth != p_auth:
+            return True
+        elif p_at < c_p_at:
+            return True
+        else:
+            # Newer pause saved after the cleared pause epoch must not be cleared
+            return False
+
+    # 2. Clearance did not specify cleared_paused_at (blind clearance by cleared_at)
+    if c_at:
+        if p_at < c_at:
+            return True
+        elif p_at == c_at:
+            if c_run and p_run and c_run != p_run:
                 return False
             return True
-        return False
+        else:
+            return False
 
     return False
 
@@ -1274,8 +1300,12 @@ def clear_provider_dispatch_pause(config: dict[str, Any], state: dict[str, Any],
 
     cleared_at_iso = utc_now()
     pools_recovered: list[str] = []
+    recovered_auth_hashes: set[str] = set()
 
-    for pool_id in target_pools:
+    # Consider all target pools and any pools currently in cooldown in the bucket
+    candidate_pools = list(dict.fromkeys(list(target_pools) + list(account_pools_bucket.keys())))
+
+    for pool_id in candidate_pools:
         pool_entry = account_pools_bucket.get(pool_id)
         if not isinstance(pool_entry, dict):
             continue
@@ -1294,24 +1324,61 @@ def clear_provider_dispatch_pause(config: dict[str, Any], state: dict[str, Any],
         for _, rem_pause in removed:
             rem_auth = rem_pause.get("auth_identity_hash")
             pool_auth = pool_entry.get("auth_identity_hash")
-            # Preserve unmatched or unknown auth
-            if rem_auth or pool_auth:
-                if not rem_auth or not pool_auth or rem_auth != pool_auth:
+            rem_run = str(rem_pause.get("worker_run_id") or "")
+            pool_run = str(pool_entry.get("last_worker_run_id") or "")
+            rem_paused_at = str(rem_pause.get("paused_at") or "")
+            pool_failure_at = str(pool_entry.get("last_failure_at") or "")
+
+            # If pool_auth is missing, attempt provenance resolution
+            if not pool_auth:
+                if pool_run and rem_run and pool_run == rem_run:
+                    if rem_auth:
+                        pool_auth = rem_auth
+                        pool_entry["auth_identity_hash"] = rem_auth
+                elif pool_run and pool_run in state.get("workers", {}):
+                    w = state["workers"][pool_run]
+                    w_prov = w.get("provider") or w.get("logical_agent_id") or w.get("agent_id")
+                    h = provider_auth_identity_hash(config, w_prov)
+                    if h:
+                        pool_auth = h
+                        pool_entry["auth_identity_hash"] = h
+                else:
+                    for aid, acfg in (config.get("agents") or {}).items():
+                        if isinstance(acfg, dict) and normalize_agent_id(str(acfg.get("account_pool") or "")) == normalize_agent_id(pool_id):
+                            h = provider_auth_identity_hash(config, agent_provider_id(config, aid))
+                            if h:
+                                pool_auth = h
+                                pool_entry["auth_identity_hash"] = h
+                                break
+
+            # If rem_auth is missing, attempt provenance resolution
+            if not rem_auth and provider_id:
+                h = provider_auth_identity_hash(config, provider_id)
+                if h:
+                    rem_auth = h
+
+            # Positive auth verification:
+            if rem_auth and pool_auth:
+                if rem_auth != pool_auth:
+                    continue
+            elif not rem_auth and not pool_auth:
+                # If both are absent, must have exact matching worker run ID
+                if not (rem_run and pool_run and rem_run == pool_run):
+                    continue
+            else:
+                # One has auth, one does not, and could not be resolved -> require exact run match
+                if not (rem_run and pool_run and rem_run == pool_run):
                     continue
 
-            rem_run = rem_pause.get("worker_run_id")
-            pool_run = pool_entry.get("last_worker_run_id")
-            rem_paused_at = rem_pause.get("paused_at")
-            pool_failure_at = pool_entry.get("last_failure_at")
+            # Positive failure epoch verification:
+            epoch_matched = False
+            if rem_run and pool_run and rem_run == pool_run:
+                epoch_matched = True
+            elif rem_paused_at and pool_failure_at and rem_paused_at == pool_failure_at:
+                if (rem_auth and pool_auth and rem_auth == pool_auth) or (pool_id in target_pools):
+                    epoch_matched = True
 
-            # Must match failure epoch (run ID or paused timestamp)
-            if rem_run and pool_run:
-                if rem_run != pool_run:
-                    continue
-            elif rem_paused_at and pool_failure_at:
-                if rem_paused_at != pool_failure_at:
-                    continue
-            elif rem_run or pool_run or rem_paused_at or pool_failure_at:
+            if not epoch_matched:
                 continue
 
             matched_clearance = rem_pause
@@ -1336,6 +1403,10 @@ def clear_provider_dispatch_pause(config: dict[str, Any], state: dict[str, Any],
         pool_entry["recovery_reason"] = f"provider pause cleared for {provider_id}"
         pool_entry.pop("next_probe_at", None)
         pools_recovered.append(pool_id)
+        auth_hash = pool_entry.get("auth_identity_hash") or matched_clearance.get("auth_identity_hash")
+        if auth_hash:
+            recovered_auth_hashes.add(auth_hash)
+
         write_activity_log(
             config,
             {
@@ -1351,6 +1422,28 @@ def clear_provider_dispatch_pause(config: dict[str, Any], state: dict[str, Any],
                 ),
             },
         )
+
+    # Shared-auth recovery/admission fence: ensure other pools on the same auth cannot bypass canary limit
+    if recovered_auth_hashes:
+        for p_id, p_entry in account_pools_bucket.items():
+            if not isinstance(p_entry, dict) or p_id in pools_recovered:
+                continue
+            p_auth = p_entry.get("auth_identity_hash")
+            if not p_auth:
+                for aid, acfg in (config.get("agents") or {}).items():
+                    if isinstance(acfg, dict) and normalize_agent_id(str(acfg.get("account_pool") or "")) == normalize_agent_id(p_id):
+                        p_auth = provider_auth_identity_hash(config, agent_provider_id(config, aid))
+                        if p_auth:
+                            p_entry["auth_identity_hash"] = p_auth
+                            break
+            if p_auth in recovered_auth_hashes:
+                p_state = str(p_entry.get("state") or "").lower()
+                if p_state in {"healthy", "recovering", "cooldown"}:
+                    p_entry["state"] = "recovering"
+                    p_entry["effective_concurrency"] = 0
+                    p_entry["last_probe_at"] = cleared_at_iso
+                    p_entry["recovery_reason"] = f"shared auth recovering via canary on {', '.join(pools_recovered)}"
+                    p_entry.pop("next_probe_at", None)
 
     return bool(removed or pools_recovered)
 

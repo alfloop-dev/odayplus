@@ -605,29 +605,32 @@ def _is_pause_entry_cleared(
     p_run = str(pause_entry.get("worker_run_id") or "")
     p_auth = str(pause_entry.get("auth_identity_hash") or "")
 
-    # 1. Exact match with the pause that was explicitly cleared
-    if c_p_at and p_at == c_p_at:
-        if c_run and p_run and c_run != p_run:
-            return False
-        if c_auth and p_auth and c_auth != p_auth:
-            return False
-        return True
+    # Check auth identity match if both present
+    if c_auth and p_auth and c_auth != p_auth:
+        return False
 
-    # 2. If paused_at is strictly older than cleared_at, it was created before clearance
-    if c_at and p_at and p_at < c_at:
-        if c_auth and p_auth and c_auth != p_auth:
-            return False
-        return True
-
-    # 3. If paused_at == cleared_at (same second as clearance):
-    if c_at and p_at and p_at == c_at:
-        if c_p_at == p_at:
+    # 1. Clearance targeted a specific pause timestamp
+    if c_p_at:
+        if p_at == c_p_at:
             if c_run and p_run and c_run != p_run:
                 return False
-            if c_auth and p_auth and c_auth != p_auth:
+            return True
+        elif p_at < c_p_at:
+            return True
+        else:
+            # Newer pause saved after the cleared pause epoch must not be cleared
+            return False
+
+    # 2. Clearance did not specify cleared_paused_at (blind clearance by cleared_at)
+    if c_at:
+        if p_at < c_at:
+            return True
+        elif p_at == c_at:
+            if c_run and p_run and c_run != p_run:
                 return False
             return True
-        return False
+        else:
+            return False
 
     return False
 
@@ -665,23 +668,30 @@ def _merge_provider_guardrails(
         m_pause = mem_pauses.get(prov) if isinstance(mem_pauses.get(prov), dict) else None
         clearance = merged_cleared.get(prov)
 
-        candidate: dict[str, Any] | None = None
-        if d_pause and m_pause:
-            d_p_at = str(d_pause.get("paused_at") or "")
-            m_p_at = str(m_pause.get("paused_at") or "")
-            candidate = deepcopy(m_pause if m_p_at >= d_p_at else d_pause)
-        elif d_pause:
-            candidate = deepcopy(d_pause)
-        elif m_pause:
-            candidate = deepcopy(m_pause)
+        d_valid = (
+            d_pause
+            if (d_pause and not (isinstance(clearance, dict) and _is_pause_entry_cleared(clearance, d_pause)))
+            else None
+        )
+        m_valid = (
+            m_pause
+            if (m_pause and not (isinstance(clearance, dict) and _is_pause_entry_cleared(clearance, m_pause)))
+            else None
+        )
 
-        if candidate is None:
-            continue
-
-        if isinstance(clearance, dict) and _is_pause_entry_cleared(clearance, candidate):
-            continue
-
-        merged_pauses[prov] = candidate
+        if d_valid and m_valid:
+            d_p_at = str(d_valid.get("paused_at") or "")
+            m_p_at = str(m_valid.get("paused_at") or "")
+            if m_p_at > d_p_at:
+                merged_pauses[prov] = deepcopy(m_valid)
+            elif d_p_at > m_p_at:
+                merged_pauses[prov] = deepcopy(d_valid)
+            else:
+                merged_pauses[prov] = deepcopy(m_valid)
+        elif d_valid:
+            merged_pauses[prov] = deepcopy(d_valid)
+        elif m_valid:
+            merged_pauses[prov] = deepcopy(m_valid)
 
     merged_guardrails["dispatch_pauses"] = merged_pauses
 
@@ -730,19 +740,44 @@ def _merge_account_pool_runtime(
             else:
                 d_state = str(d_entry.get("state") or "").lower()
                 m_state = str(m_entry.get("state") or "").lower()
-                d_probe = str(d_entry.get("last_probe_at") or d_entry.get("last_recovered_at") or "")
-                m_probe = str(m_entry.get("last_probe_at") or m_entry.get("last_recovered_at") or "")
+
+                d_rec = str(d_entry.get("last_recovered_at") or "")
+                m_rec = str(m_entry.get("last_recovered_at") or "")
+                if d_rec and not m_rec:
+                    if d_state == "healthy" and m_state in {"recovering", "cooldown"}:
+                        merged_pools[pool_id] = deepcopy(d_entry)
+                        continue
+                elif m_rec and not d_rec:
+                    if m_state == "healthy" and d_state in {"recovering", "cooldown"}:
+                        merged_pools[pool_id] = deepcopy(m_entry)
+                        continue
+                elif d_rec and m_rec:
+                    if d_rec > m_rec:
+                        merged_pools[pool_id] = deepcopy(d_entry)
+                        continue
+                    elif m_rec > d_rec:
+                        merged_pools[pool_id] = deepcopy(m_entry)
+                        continue
 
                 if d_state in {"recovering", "healthy"} and m_state == "cooldown":
                     merged_pools[pool_id] = deepcopy(d_entry)
                 elif m_state in {"recovering", "healthy"} and d_state == "cooldown":
                     merged_pools[pool_id] = deepcopy(m_entry)
-                elif m_probe > d_probe:
+                elif d_state == "healthy" and m_state == "recovering":
+                    merged_pools[pool_id] = deepcopy(d_entry)
+                elif m_state == "healthy" and d_state == "recovering":
                     merged_pools[pool_id] = deepcopy(m_entry)
                 else:
-                    merged_entry = deepcopy(d_entry)
-                    merged_entry.update(deepcopy(m_entry))
-                    merged_pools[pool_id] = merged_entry
+                    d_probe = str(d_entry.get("last_probe_at") or "")
+                    m_probe = str(m_entry.get("last_probe_at") or "")
+                    if d_probe > m_probe:
+                        merged_pools[pool_id] = deepcopy(d_entry)
+                    elif m_probe > d_probe:
+                        merged_pools[pool_id] = deepcopy(m_entry)
+                    else:
+                        merged_entry = deepcopy(d_entry)
+                        merged_entry.update(deepcopy(m_entry))
+                        merged_pools[pool_id] = merged_entry
 
     return merged_pools
 

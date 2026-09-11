@@ -1596,7 +1596,14 @@ def account_pool_runtime_state(
             entry["last_probe_at"] = utc_now()
             entry["probe_attempts"] = int(entry.get("probe_attempts", 0)) + 1
     if lifecycle == "recovering":
-        entry["effective_concurrency"] = min(1, configured_limit or 1)
+        current_eff = entry.get("effective_concurrency")
+        if current_eff is None:
+            entry["effective_concurrency"] = min(1, configured_limit or 1)
+        else:
+            try:
+                entry["effective_concurrency"] = min(int(current_eff), configured_limit or 1)
+            except (TypeError, ValueError):
+                entry["effective_concurrency"] = min(1, configured_limit or 1)
     elif lifecycle == "healthy":
         entry["effective_concurrency"] = configured_limit
     return lifecycle, entry

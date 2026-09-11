@@ -5,10 +5,12 @@ import ast
 import json
 import tempfile
 import unittest
+from copy import deepcopy
 from pathlib import Path
 from unittest import mock
 
 import runtime_state
+import supervisor
 
 
 class LoadRuntimeStateTests(unittest.TestCase):
@@ -808,7 +810,11 @@ class QuotaRecoveryRuntimeStateTests(unittest.TestCase):
             "paths": {
                 "state_file": str(self.root / "state.json"),
                 "event_queue": str(self.root / "event-queue.jsonl"),
-            }
+                "activity_log": str(self.root / "activity.jsonl"),
+            },
+            "account_pools": {"pool_a": {"max_concurrent": 2, "state": "healthy", "enabled": True}},
+            "agents": {"codex": {"id": "codex", "provider": "codex", "account_pool": "pool_a"}},
+            "providers": {"codex": {"delivery_mode": "codex", "quota_group": "codex"}},
         }
 
     def _write_json(self, path: Path, payload: object) -> None:
@@ -1069,3 +1075,138 @@ class QuotaRecoveryRuntimeStateTests(unittest.TestCase):
 
         reloaded = runtime_state.load_runtime_state(self.config)
         self.assertNotIn("TASK-1:codex", reloaded["provider_guardrails"]["task_failure_streaks"])
+
+    def test_stale_clear_preserves_concurrent_new_failure_saved_before_clear(self) -> None:
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        old_time = "2026-09-11T01:37:15Z"
+        new_time = "2026-09-11T02:04:49Z"
+        clear_time = "2026-09-11T02:04:50Z"
+        future_time = "2099-09-11T02:37:15Z"
+
+        initial = runtime_state.default_state()
+        initial["provider_guardrails"]["dispatch_pauses"]["codex"] = {
+            "provider": "codex", "trigger_provider": "codex", "paused_at": old_time,
+            "blocked_until": future_time, "failure_kind": "quota_terminal",
+            "worker_run_id": "old-run", "task_id": "REVIEW-TASK", "auth_identity_hash": "auth-a",
+        }
+        initial["account_pool_runtime"]["pool_a"] = {
+            "state": "cooldown", "effective_concurrency": 0, "generation": 1,
+            "last_failure_at": old_time, "next_probe_at": future_time, "last_worker_run_id": "old-run",
+            "auth_identity_hash": "auth-a", "failure_kind": "quota_terminal",
+        }
+        runtime_state.save_runtime_state(self.config, initial)
+        clearer = runtime_state.load_runtime_state(self.config)
+        failure_writer = runtime_state.load_runtime_state(self.config)
+
+        # A new failure is durable after the CLI read but before its clear/save.
+        failure_writer["provider_guardrails"]["dispatch_pauses"]["codex"].update(
+            paused_at=new_time, worker_run_id="new-run",
+        )
+        failure_writer["account_pool_runtime"]["pool_a"].update(
+            generation=2, last_worker_run_id="new-run", last_failure_at=new_time,
+        )
+        runtime_state.save_runtime_state(self.config, failure_writer)
+
+        with (
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="auth-a"),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "utc_now", return_value=clear_time),
+        ):
+            self.assertTrue(supervisor.clear_provider_dispatch_pause(self.config, clearer, "codex"))
+        runtime_state.save_runtime_state(self.config, clearer)
+
+        loaded = runtime_state.load_runtime_state(self.config)
+        self.assertEqual(loaded["account_pool_runtime"]["pool_a"]["generation"], 2)
+        self.assertEqual(
+            loaded["provider_guardrails"]["dispatch_pauses"].get("codex", {}).get("worker_run_id"),
+            "new-run",
+        )
+
+    def test_same_second_new_failure_survives_later_old_snapshot_save(self) -> None:
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        clear_time = "2026-09-11T02:04:50Z"
+        future_time = "2099-09-11T02:37:15Z"
+        state = runtime_state.default_state()
+        state["provider_guardrails"]["dispatch_pauses"]["codex"] = {
+            "provider": "codex", "trigger_provider": "codex", "paused_at": clear_time,
+            "blocked_until": future_time, "failure_kind": "quota_terminal",
+            "worker_run_id": "old-run", "task_id": "REVIEW-TASK", "auth_identity_hash": "auth-a",
+        }
+        state["account_pool_runtime"]["pool_a"] = {
+            "state": "cooldown", "effective_concurrency": 0, "generation": 1,
+            "last_failure_at": clear_time, "next_probe_at": future_time, "last_worker_run_id": "old-run",
+            "auth_identity_hash": "auth-a", "failure_kind": "quota_terminal",
+        }
+        runtime_state.save_runtime_state(self.config, state)
+        stale_old = runtime_state.load_runtime_state(self.config)
+        clearer = runtime_state.load_runtime_state(self.config)
+        with (
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="auth-a"),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "utc_now", return_value=clear_time),
+        ):
+            self.assertTrue(supervisor.clear_provider_dispatch_pause(self.config, clearer, "codex"))
+        runtime_state.save_runtime_state(self.config, clearer)
+
+        new_writer = runtime_state.load_runtime_state(self.config)
+        new_pause = deepcopy(stale_old["provider_guardrails"]["dispatch_pauses"]["codex"])
+        new_pause["worker_run_id"] = "new-run"
+        new_writer["provider_guardrails"]["dispatch_pauses"]["codex"] = new_pause
+        runtime_state.save_runtime_state(self.config, new_writer)
+        loaded = runtime_state.load_runtime_state(self.config)
+        self.assertEqual(loaded["provider_guardrails"]["dispatch_pauses"]["codex"]["worker_run_id"], "new-run")
+
+        runtime_state.save_runtime_state(self.config, stale_old)
+        loaded = runtime_state.load_runtime_state(self.config)
+        self.assertEqual(
+            loaded["provider_guardrails"]["dispatch_pauses"].get("codex", {}).get("worker_run_id"),
+            "new-run",
+        )
+
+    def test_disk_canary_success_survives_stale_recovering_writer(self) -> None:
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        old_time = "2026-09-11T01:37:15Z"
+        clear_time = "2026-09-11T02:04:50Z"
+        future_time = "2099-09-11T02:37:15Z"
+        state = runtime_state.default_state()
+        state["provider_guardrails"]["dispatch_pauses"]["codex"] = {
+            "provider": "codex", "trigger_provider": "codex", "paused_at": old_time,
+            "blocked_until": future_time, "failure_kind": "quota_terminal",
+            "worker_run_id": "old-run", "task_id": "REVIEW-TASK", "auth_identity_hash": "auth-a",
+        }
+        state["account_pool_runtime"]["pool_a"] = {
+            "state": "cooldown", "effective_concurrency": 0, "generation": 1,
+            "last_failure_at": old_time, "next_probe_at": future_time, "last_worker_run_id": "old-run",
+            "auth_identity_hash": "auth-a", "failure_kind": "quota_terminal",
+        }
+        with (
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="auth-a"),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "utc_now", return_value=clear_time),
+        ):
+            self.assertTrue(supervisor.clear_provider_dispatch_pause(self.config, state, "codex"))
+        runtime_state.save_runtime_state(self.config, state)
+        stale_recovering = runtime_state.load_runtime_state(self.config)
+        successful_writer = runtime_state.load_runtime_state(self.config)
+        with (
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="auth-a"),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-09-11T02:05:30Z"),
+        ):
+            self.assertTrue(
+                supervisor.record_account_pool_canary_success(
+                    self.config,
+                    successful_writer,
+                    {"logical_agent_id": "codex", "run_id": "canary-run", "task_id": "REVIEW-TASK"},
+                )
+            )
+        runtime_state.save_runtime_state(self.config, successful_writer)
+        self.assertEqual(
+            runtime_state.load_runtime_state(self.config)["account_pool_runtime"]["pool_a"]["state"],
+            "healthy",
+        )
+
+        runtime_state.save_runtime_state(self.config, stale_recovering)
+        pool = runtime_state.load_runtime_state(self.config)["account_pool_runtime"]["pool_a"]
+        self.assertEqual(pool["state"], "healthy")
+        self.assertEqual(pool["effective_concurrency"], 2)
