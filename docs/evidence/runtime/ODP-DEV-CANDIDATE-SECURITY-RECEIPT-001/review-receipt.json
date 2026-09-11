@@ -5,7 +5,7 @@
   "task_title": "交固定 C 的 Security Gate 證據與法務待辦邊界",
   "created_at": "2026-09-11T00:50:00Z",
   "owner": "Antigravity4",
-  "reviewer": "Codex2",
+  "reviewer": "Codex",
   "candidate": {
     "candidate_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
     "source_evidence_sha": "d084f51d4009b7b435416c8b83410a8b4fb4a267",
@@ -34,13 +34,13 @@
         "criterion_id": "CRIT-SEC-01",
         "name": "Secret scan passes",
         "status": "pass",
-        "evidence_ref": "Build runs 34140207274 Step 8 and 34179791241 Step 8 (step conclusion: success; raw exit code/stdout/version unknown); manifest sources_off_attestation.zero_credentials_present: true (16 source groups audited in build static contract and dev-build environment; live state unprobed/unknown)"
+        "evidence_ref": "Build runs 34140207274 Step 8 and 34179791241 Step 8 (step conclusion: success; static scanner delivery_toolchain/security/secret_scan.py via ROOT.rglob('*') excluding .git, .venv, .next, node_modules, .pytest_cache, .ruff_cache, dist, build, .odp_data, docs, and files package-lock.json, uv.lock, secret_scan.py, skipping non-UTF-8/binary files; raw exit code/stdout/version unknown); manifest sources_off_attestation.zero_credentials_present: true (16 source groups audited in build static contract and dev-build environment; live state unprobed/unknown)"
       },
       {
         "criterion_id": "CRIT-SEC-02",
         "name": "Dependency and SAST scans pass with no unresolved critical/high findings",
         "status": "pass",
-        "evidence_ref": "Build runs 34140207274 Step 9 and 34179791241 Step 9 Python SAST (step conclusion: success; static scanner script delivery_toolchain/security/sast_scan.py with Bandit -r modules apps shared solver -ll --skip B301,B310,B324,B104 -x .venv,apps/data_platform/.venv; raw execution exit code/version/stdout unknown); artifact 10038492941 (npm audit 0 high/critical); pip-audit 2.10.1 on candidate lockfiles (pyproject.toml 130f024b..., uv.lock ba5c393e..., 215 deps, 0 vulns, 0 banned pkgs, raw hash f32d534e0612b51171bc2b83c5d051acf9ee1e6a5ea44b50a044434962c21cd9)"
+        "evidence_ref": "Build runs 34140207274 Step 9 and 34179791241 Step 9 Python SAST (step conclusion: success; static scanner script delivery_toolchain/security/sast_scan.py with Bandit -r modules apps shared solver -ll --skip B301,B310,B324,B104 -x .venv,apps/data_platform/.venv; severity >= MEDIUM filtered, confidence unfiltered; raw execution exit code/version/stdout unknown); artifact 10038492941 (npm audit 0 high/critical); pip-audit 2.10.1 on candidate lockfiles (pyproject.toml 130f024b..., uv.lock ba5c393e..., 215 deps, 0 vulns, 0 banned pkgs, raw hash f32d534e0612b51171bc2b83c5d051acf9ee1e6a5ea44b50a044434962c21cd9)"
       },
       {
         "criterion_id": "CRIT-SEC-03",

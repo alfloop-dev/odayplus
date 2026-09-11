@@ -53,9 +53,9 @@
           "attestation_date": "2026-09-08",
           "source_policy_digest": "sha256:0a34bb128b5b5b26201b7f014f4b4f8e631e841c8f205f38dfc09c9eb682d824"
         },
-        "static_scanner_script": "delivery_toolchain/security/secret_scan.py (static regex scan of tracked repo files excluding .git, .venv, .odp_data, docs, tests/mock pragmas)"
+        "static_scanner_script": "delivery_toolchain/security/secret_scan.py (filesystem traversal via ROOT.rglob('*') checking 5 high-risk regexes; excludes directories .git, .venv, .next, node_modules, .pytest_cache, .ruff_cache, dist, build, .odp_data, docs; excludes files package-lock.json, uv.lock, secret_scan.py; skips non-UTF-8/binary files; permits matching lines in test/fixture/mock paths only with '# pragma: allowlist-secret')"
       },
-      "scope_and_boundary_limitations": "Repository secret scan checks tracked source files matching high-risk pattern regexes. Manifest sources-off attestation certifies 16 external data source groups disabled and 0 credentials in dev-build configuration. Live runtime secret stores, runtime environments, and staging/prod credential states are not probed at build time and remain unverified (unknown).",
+      "scope_and_boundary_limitations": "Secret scan script operates via ROOT.rglob('*') rather than Git tracked-file enumeration. It excludes directories (.git, .venv, .next, node_modules, .pytest_cache, .ruff_cache, dist, build, .odp_data, docs), excludes specific files (package-lock.json, uv.lock, secret_scan.py), skips binary/non-UTF-8 files, and permits test/fixture/mock lines with explicit '# pragma: allowlist-secret'. Observed CI step success (run 34140207274 Step 8 / run 34179791241 Step 8) is proof of this exact scoped execution and does not prove uninspected tracked files (e.g. docs, lockfiles). Manifest sources-off attestation certifies 16 external data source groups disabled and 0 credentials in dev-build configuration. Live runtime secret stores, runtime environments, and staging/prod credential states are not probed at build time and remain unverified (unknown).",
       "source_refs": [
         "SRC-02",
         "SRC-03",
@@ -98,7 +98,7 @@
             "tests",
             "tools"
           ],
-          "severity_confidence_filter": "-ll (MEDIUM and HIGH severity, MEDIUM and HIGH confidence)",
+          "severity_confidence_filter": "-ll (severity >= MEDIUM, filtering for MEDIUM and HIGH severity; no confidence flag is supplied so confidence is unfiltered)",
           "skips_applied": [
             "B301 (pickle usage)",
             "B310 (urllib urlopen usage)",

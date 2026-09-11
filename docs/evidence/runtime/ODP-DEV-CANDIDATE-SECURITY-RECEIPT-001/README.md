@@ -3,7 +3,7 @@
 - **Task ID**: `ODP-DEV-CANDIDATE-SECURITY-RECEIPT-001`
 - **任務名稱**: 交固定 C 的 Security Gate 證據與法務待辦邊界
 - **Owner**: `Antigravity4`
-- **Reviewer**: `Codex2`
+- **Reviewer**: `Codex`
 - **評估日期**: 2026-09-11 UTC
 - **固定候選 SHA (C)**: `596b9c9a1788d952811a2bf8d4bba8a4e4d76b12`
 - **原證據參考 SHA (E)**: `d084f51d4009b7b435416c8b83410a8b4fb4a267`
@@ -28,8 +28,8 @@
 ## 2. 核心結論與門禁邊界 (Core Findings & Gate Boundaries)
 
 1. **技術安全性檢驗與實測範圍**：
-   - **Secret scan (CRIT-SEC-01: PASS)**：Runtime Release build runs（run `34140207274` Step 8 與 run `34179791241` Step 8）執行結論均為 `success`；靜態掃描腳本 `delivery_toolchain/security/secret_scan.py` 掃描 repo 原始碼；`RELEASE_MANIFEST.json` 之 `sources_off_attestation` 證實 16 個外部資料來源群組在 build 靜態契約與 dev-build 環境中 `credentials_present: false`（零憑證）。Live 雲端 secret store 與 runtime 憑證狀態未在 build 階段探測，標示為 unknown。
-   - **SAST 與靜態安全 (CRIT-SEC-02: PASS)**：Build runs（run `34140207274` Step 9 與 run `34179791241` Step 9）Python SAST 執行結論均為 `success`；靜態掃描腳本 `delivery_toolchain/security/sast_scan.py` 定義 Bandit 參數（掃描 `modules`, `apps`, `shared`, `solver`；排除 `.venv`, `apps/data_platform/.venv`；過濾 `-ll`；跳過 `B301, B310, B324, B104`）；CI 摘要未捕捉原始數值 exit code、Bandit 版本或 scan stdout，誠實標示為 unknown。生產環境 npm audit（artifact `10038492941`）0 high / 0 critical；Python `pip-audit` 2.10.1 依賴稽核在候選 C lockfile 基準下證實 215 個依賴 0 漏洞、0 略過，4 禁用套件（`evidently`, `nltk`, `defusedxml`, `regex`）完全排除。
+   - **Secret scan (CRIT-SEC-01: PASS)**：Runtime Release build runs（run `34140207274` Step 8 與 run `34179791241` Step 8）執行結論均為 `success`；靜態掃描腳本 `delivery_toolchain/security/secret_scan.py` 透過 `ROOT.rglob("*")` 遍歷檔案系統（非 Git tracked-file 列舉），排除目錄（`.git`, `.venv`, `.next`, `node_modules`, `.pytest_cache`, `.ruff_cache`, `dist`, `build`, `.odp_data`, `docs`）與特定檔案（`package-lock.json`, `uv.lock`, `secret_scan.py`），跳過非 UTF-8/二進位檔案，僅在 test/fixture/mock 路徑下且具 `# pragma: allowlist-secret` 標註時豁免比對。CI 步驟成功僅證明上述受檢範圍無 high-risk regex 違規，不構成未檢 tracked 檔案（如 docs、lockfiles、二進位檔案）之證明。`RELEASE_MANIFEST.json` 之 `sources_off_attestation` 證實 16 個外部資料來源群組在 build 靜態契約與 dev-build 環境中 `credentials_present: false`（零憑證）。Live 雲端 secret store 與 runtime 憑證狀態未在 build 階段探測，標示為 unknown。
+   - **SAST 與靜態安全 (CRIT-SEC-02: PASS)**：Build runs（run `34140207274` Step 9 與 run `34179791241` Step 9）Python SAST 執行結論均為 `success`；靜態掃描腳本 `delivery_toolchain/security/sast_scan.py` 定義 Bandit 參數（掃描 `modules`, `apps`, `shared`, `solver`；排除 `.venv`, `apps/data_platform/.venv`；過濾 `-ll` 代表嚴重度 >= MEDIUM，未配置 confidence 旗標故信心度不過濾；跳過 `B301, B310, B324, B104`）；CI 摘要未捕捉原始數值 exit code、Bandit 版本或 scan stdout，誠實標示為 unknown。生產環境 npm audit（artifact `10038492941`）0 high / 0 critical；Python `pip-audit` 2.10.1 依賴稽核在候選 C lockfile 基準下證實 215 個依賴 0 漏洞、0 略過，4 禁用套件（`evidently`, `nltk`, `defusedxml`, `regex`）完全排除。
    - **RBAC / ABAC 授權 (CRIT-SEC-03: BLOCKED)**：靜態授權模型存在於 candidate C；但 build run 未採集 candidate C 專屬之 pytest 執行收據，CI run `34252508138` 係於 `95646a5c` 執行故不能代替 C，降級為 `blocked` 並指派責任給 `Security Engineering / QA / Identity Team` 於 dev 准入前在隔離環境完成離線採集。
    - **敏感匯出與審計 (CRIT-SEC-04: BLOCKED)**：狹義靜態子主張證實：6 檔 egress contract digest（`sha256:a9ab95a0...`）與 checked-in source 完全吻合，16 外部來源 disabled；但動態匯出權限、PII masking 與審計保留之 exact-C 測試執行收據（指派 dev 准入前離線採集）及 live runtime egress readback（指派 dev 部署准入階段採集）尚未完成，降級為 `blocked`。
    - **IAM 與基礎設施 (CRIT-SEC-05: BLOCKED)**：環境變數綁定（11 變數全解析）與初始 Cloud Run 目標不存在（5 資源皆 absent）證實成立；但 candidate C 缺乏具名最小權限 IAM policy / roles / bindings 審查收據，降級為 `blocked` 並指派責任給 `Cloud Ops / Security Engineering` 於 dev 准入前完成審查。
@@ -55,10 +55,15 @@
 - **要求**: secret scan passes。
 - **證據**: 
   - Build run `34140207274` Step 8（2026-09-07）與 build run `34179791241` Step 8（2026-09-08）`Run Secret Scan` 步驟執行結論均為 `success`。
-  - 靜態掃描腳本 `delivery_toolchain/security/secret_scan.py` 針對 repo tracked 程式碼執行正規表示式比對。
+  - 靜態掃描腳本 `delivery_toolchain/security/secret_scan.py` 透過 `ROOT.rglob("*")` 檔案系統遍歷（非 Git tracked-file 列舉）比對 5 項 high-risk pattern regexes（Private Key, Generic API Key/Token, AWS Access Key ID, AWS Secret Access Key, Google OAuth Client Secret）。
+  - 掃描排除目錄：`.git`, `.venv`, `.next`, `node_modules`, `.pytest_cache`, `.ruff_cache`, `dist`, `build`, `.odp_data`, `docs`。
+  - 掃描排除檔案：`package-lock.json`, `uv.lock`, `secret_scan.py`。
+  - 非 UTF-8 / 二進位檔案（UnicodeDecodeError）直接跳過；僅在 test/fixture/mock 路徑下且該行包含 `# pragma: allowlist-secret` 時豁免比對。
   - `RELEASE_MANIFEST.json` 中 `sources_off_attestation.zero_credentials_present: true`，16 個第三方來源在 build 靜態契約與 dev-build 環境中 `credentials_present: false`。
   - `source_policy_digest`: `sha256:0a34bb128b5b5b26201b7f014f4b4f8e631e841c8f205f38dfc09c9eb682d824`。
-- **限制與未知範圍**: 掃描限於 repo 程式碼與 dev-build 環境配置，不探測 live 雲端 secret store 或 runtime 憑證狀態（標示為 unknown）。
+- **限制與未知範圍**:
+  - 掃描腳本依據檔案系統遍歷並排除上述目錄與特定檔案，CI 步驟成功僅證明受檢範圍未發現違規，不構成對未掃描 tracked 檔案（如 docs、lockfiles、二進位檔案等）之證明。
+  - 掃描限於 repo 程式碼與 dev-build 環境配置，不探測 live 雲端 secret store 或 runtime 憑證狀態（標示為 unknown）。
 
 ### 3.2 Criteria 2: Dependency and SAST scans pass with no unresolved critical/high findings (通過 PASS)
 - **要求**: dependency and SAST scans pass with no unresolved critical/high findings。
@@ -68,7 +73,7 @@
     - 靜態腳本 Argv: `bandit -r modules apps shared solver -x .venv,apps/data_platform/.venv -ll --skip B301,B310,B324,B104`。
     - 掃描範圍: `modules/`, `apps/`, `shared/`, `solver/`。
     - 排除目錄: `.venv/`, `apps/data_platform/.venv/`。
-    - 嚴重度/信心過濾: `-ll`（MEDIUM 及 HIGH）。
+    - 嚴重度過濾: `-ll`（僅過濾 severity >= MEDIUM，即包含 MEDIUM 與 HIGH 嚴重度；腳本未傳入 confidence 旗標，信心度不過濾，所有信心等級皆包含）。
     - 明確跳過之規則: `B301`（pickle 序列化）、`B310`（urllib urlopen）、`B324`（md5 mock/non-security hashes）、`B104`（bind 0.0.0.0）。
     - 執行紀錄出處: Build run `34140207274` Step 9（2026-09-07，參照 `SRC-04` §4 第 138 行）與 build run `34179791241` Step 9（2026-09-08，參照 `SRC-04` §13.2 第 570 行），步驟結論均為 `success`；CI 摘要表格未包含原始數值 exit code、Bandit 版本或 scan stdout，誠實標示為 unknown。
   - **生產環境 npm audit**:
@@ -177,4 +182,4 @@ Candidate C 的 release manifest 明確宣告以下 16 個外部資料來源群�
 1. **未清除 Gate 4，未改變 NO-GO 決定**：本交付物為客觀審查證據包，Gate 4 維持 `blocked`，Release Decision 維持 `no-go`。
 2. **未修改禁止路徑**：未修改 `docs/evidence/gates/`、`delivery_toolchain/`、`.github/workflows/`、`.orchestrator/`、`ai-status.json`、`ai-activity-log.jsonl`、產品程式碼、測試程式碼、lockfiles、`NOTICE` 或 `docs/security/`。
 3. **未執行禁止動作**：未重建 container image、未簽署 release lease、未觸發 dev/staging/prod 部署、未啟用任何外部資料來源、未讀取正式 secret、未偽造具名法務或 Human/Ops 簽署。
-4. **獨立審查邊界**：本任務由 `Antigravity4` 交付，交由指定之獨立 Reviewer `Codex2` 進行 receipt binding 與 criteria coverage 審查。Reviewer 核准僅代表證據包交付正確，不代表代行法務或 Human/Ops 簽署。
+4. **獨立審查邊界**：本任務由 `Antigravity4` 交付，交由指定之獨立 Reviewer `Codex` 進行 receipt binding 與 criteria coverage 審查。Reviewer 核准僅代表證據包交付正確，不代表代行法務或 Human/Ops 簽署。
