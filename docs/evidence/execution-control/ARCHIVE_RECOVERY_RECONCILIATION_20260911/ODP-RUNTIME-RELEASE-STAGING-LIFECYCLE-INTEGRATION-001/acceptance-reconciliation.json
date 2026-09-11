@@ -1,0 +1,245 @@
+{
+  "task_id": "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+  "task_title": "歷史驗收續辦：ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+  "task_class": "remediation",
+  "phase": "History Recovery — executable acceptance reconciliation",
+  "owner": "Antigravity5",
+  "reviewer": "Codex2",
+  "recorded_at": "2026-09-11T11:03:00Z",
+  "reconciliation_target": {
+    "repository": "alfloop-dev/odayplus",
+    "continuation_branch": "task/ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001-RECOVERY-20260911",
+    "historical_merge_sha": "462c8cd4ff2569cec0f2c383d9e601c5bdbec715",
+    "historical_head_sha": "fada677569265ed258649b841e5a67fe7bb5dd80"
+  },
+  "historical_delivery": {
+    "pr_number": 1041,
+    "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1041",
+    "head_sha": "fada677569265ed258649b841e5a67fe7bb5dd80",
+    "merge_commit_sha": "462c8cd4ff2569cec0f2c383d9e601c5bdbec715",
+    "merged": true,
+    "merged_at": "2026-08-27T17:50:22Z",
+    "merged_by": "ajoe734",
+    "delivered_artifacts": [
+      ".github/workflows/deploy-dev.yml",
+      "product_ops/deployment/staging_lifecycle.py",
+      "infra/terraform/modules/ephemeral_staging/",
+      "tests/ops/test_deploy_workflow_contract.py",
+      "tests/ops/test_ephemeral_staging_lifecycle.py",
+      "tests/ops/test_cloud_run_job_entrypoint.py",
+      "infra/terraform/tests/test_ephemeral_staging.py",
+      "docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md"
+    ],
+    "ci_checks": [
+      {
+        "name": "product",
+        "conclusion": "success",
+        "completed_at": "2026-08-27T17:31:33Z"
+      },
+      {
+        "name": "product-e2e-gate",
+        "conclusion": "success",
+        "completed_at": "2026-08-27T17:19:33Z"
+      },
+      {
+        "name": "performance-gate",
+        "conclusion": "success",
+        "completed_at": "2026-08-27T17:13:48Z"
+      },
+      {
+        "name": "orchestrator",
+        "conclusion": "success",
+        "completed_at": "2026-08-27T17:14:48Z"
+      },
+      {
+        "name": "change-scope",
+        "conclusion": "success",
+        "completed_at": "2026-08-27T17:12:22Z"
+      },
+      {
+        "name": "classify",
+        "conclusion": "success",
+        "completed_at": "2026-08-27T17:12:28Z"
+      },
+      {
+        "name": "boundary",
+        "conclusion": "success",
+        "completed_at": "2026-08-27T17:13:37Z"
+      }
+    ],
+    "historical_approval": {
+      "approver": "Antigravity3",
+      "state": "success",
+      "updated_at": "2026-08-27T17:30:51Z",
+      "description": "Approved by assigned reviewer Antigravity3 (task-review-gate)"
+    }
+  },
+  "gaps_resolution": {
+    "a3_iac_ci_collection_gap": {
+      "description": "infra/terraform/tests/test_ephemeral_staging.py was delivered in PR #1041 but originally was not collected by CI jobs on dev.",
+      "resolution": "Fully resolved by ODP-STAGING-IAC-CI-COLLECTION-001 (PR #1291). Added infra target to orchestrator job and pyproject.toml, pinned Terraform 1.9.8, added offline provider override and fail-closed harness, and introduced 24 collection and mutation tests in tests/tooling/test_staging_iac_ci_collection.py.",
+      "evidence_ref": "docs/evidence/execution-control/ODP-STAGING-IAC-CI-COLLECTION-001/README.md"
+    },
+    "a5_receipt_generation_capability_gap": {
+      "description": "Historical inventory noted that PR #1041 did not carry generated staging receipt files for A5.",
+      "resolution": "A5 states that API, Web, worker, scheduler, migration, one-shot, backup restore, and rollback rehearsal can all produce secret-free receipts from the same state machine. This capability requirement is verified by tests/ops/test_ephemeral_staging_lifecycle.py covering all 9 rehearsal stages (REHEARSAL_STAGE_NAMES) and secret_values_redacted=True, and locally demonstrated via verify_staging_lifecycle_receipts.py generating sample-secret-free-verify-receipt.json. As a code/workflow integration task, live staging deployment is not part of this task scope and no live cloud writes are inferred.",
+      "evidence_ref": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001/verify_staging_lifecycle_receipts.py"
+    }
+  },
+  "readback_evidence_sources": {
+    "pr_1041_merge_commit": "462c8cd4ff2569cec0f2c383d9e601c5bdbec715",
+    "pr_1041_exact_head": "fada677569265ed258649b841e5a67fe7bb5dd80",
+    "iac_ci_collection_pr": "https://github.com/alfloop-dev/odayplus/pull/1291",
+    "single_path_reconciliation_pr": "https://github.com/alfloop-dev/odayplus/pull/1298",
+    "offline_verification_script": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001/verify_staging_lifecycle_receipts.py",
+    "sample_verify_receipt": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001/sample-secret-free-verify-receipt.json"
+  },
+  "acceptance_criteria_reconciliation": [
+    {
+      "index": 1,
+      "criterion": "既有 Runtime Release staging 分支直接呼叫既有 staging lifecycle create/verify/hold/cleanup 且不新增 workflow 或 wrapper entrypoint",
+      "classes": [
+        "D",
+        "T"
+      ],
+      "classes_zh": [
+        "程式或文件交付",
+        "可由測試證明"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": ".github/workflows/deploy-dev.yml and tests/ops/test_deploy_workflow_contract.py delivered in PR #1041 (merge commit 462c8cd4ff25); verified that deploy-dev.yml invokes staging_lifecycle.py create/verify/hold/cleanup directly without second wrapper entrypoints; exact-head product CI success.",
+      "boundary": "Verified workflow invocation contract and single entrypoint; no secondary deployment workflows introduced."
+    },
+    {
+      "index": 2,
+      "criterion": "release_id candidate SHA manifest digest 與 API Web worker scheduler exact image digests 綁在同一不可變 handoff 且不得 rebuild",
+      "classes": [
+        "T"
+      ],
+      "classes_zh": [
+        "可由測試證明"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "Immutable release identity bundle verified by tests/ops/test_deploy_workflow_contract.py and tests/ops/test_ephemeral_staging_lifecycle.py (e.g. test_rerun_create_rejects_mismatched_candidate_sha_and_preserves_existing_state, test_rerun_create_rejects_mismatched_manifest_digest, test_immutable_release_identity_detects_worker_and_scheduler_image_mismatch); exact-head CI success.",
+      "boundary": "Verified handoff contract and rebuild prohibition in contract tests; no live image rebuild attempted."
+    },
+    {
+      "index": 3,
+      "criterion": "release-scoped lifecycle outputs 成為 staging endpoint database bucket tenant 與 IAM 唯一 authority 靜態 environment vars 只提供長期 foundation inputs",
+      "classes": [
+        "D",
+        "T"
+      ],
+      "classes_zh": [
+        "程式或文件交付",
+        "可由測試證明"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "REQUIRED_STAGING_OUTPUTS in product_ops/deployment/staging_lifecycle.py defines authoritative output mapping; verified by tests/ops/test_ephemeral_staging_lifecycle.py and infra/terraform/tests/test_ephemeral_staging.py (now collected in CI via PR #1291 ODP-STAGING-IAC-CI-COLLECTION-001); exact-head CI success.",
+      "boundary": "Outputs authority contract verified; foundation inputs separated from release-scoped resources."
+    },
+    {
+      "index": 4,
+      "criterion": "staging smoke proof 不得 impersonate dev smoke operator 必須使用 release-scoped least-privilege identity",
+      "classes": [
+        "T"
+      ],
+      "classes_zh": [
+        "可由測試證明"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "tests/ops/test_ephemeral_staging_lifecycle.py::EphemeralStagingVerificationAndHoldTests::test_verify_ephemeral_staging_dev_identity_rejection and test_live_executor_rejects_arbitrary_operator_identity enforce that dev smoke operator or arbitrary identities are rejected; exact-head CI success.",
+      "boundary": "Negative identity enforcement verified; no live IAM credential assumed."
+    },
+    {
+      "index": 5,
+      "criterion": "API Web worker scheduler migration one-shot backup restore rollback rehearsal 均可由同一狀態機產生 secret-free receipts",
+      "classes": [
+        "T"
+      ],
+      "classes_zh": [
+        "可由測試證明"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "REHEARSAL_STAGE_NAMES in staging_lifecycle.py implements all 9 stages (db_expand_migration, data_platform_snapshot, api_web_authenticated_smoke, worker_idempotency, scheduler_oneshot, backup_restore_drill, rollback_rehearsal, public_egress_denied_probe, external_providers_disabled_readback); verify_ephemeral_staging produces StagingLifecycleReceipt with secret_values_redacted=True; verified by 96 tests in test_ephemeral_staging_lifecycle.py and demonstrated offline via verify_staging_lifecycle_receipts.py generating sample-secret-free-verify-receipt.json; exact-head CI success.",
+      "boundary": "Verified state machine receipt generation capability across all 9 rehearsal stages; does not assert executed live staging deployment."
+    },
+    {
+      "index": 6,
+      "criterion": "第三方來源維持 disabled 且 public egress default-deny",
+      "classes": [
+        "D",
+        "T"
+      ],
+      "classes_zh": [
+        "程式或文件交付",
+        "可由測試證明"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "infra/terraform/modules/ephemeral_staging/main.tf and tests/ops/test_ephemeral_staging_lifecycle.py & infra/terraform/tests/test_ephemeral_staging.py verify default-deny egress configuration and sources disabled flags in staging receipts; exact-head CI success.",
+      "boundary": "Verified IaC module and lifecycle metadata default-deny postures; external sources remain disabled."
+    },
+    {
+      "index": 7,
+      "criterion": "失敗環境依 TTL 保留成功環境由 prod closeout 精確清理且 orphan cleanup fail closed",
+      "classes": [
+        "T"
+      ],
+      "classes_zh": [
+        "可由測試證明"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "tests/ops/test_ephemeral_staging_lifecycle.py (test_cleanup_exact_label_matching_and_safety, test_create_failure_triggers_exact_cleanup, test_scan_orphans_detects_expired_and_unmanaged, ReleaseScopedAutoCleanupTests, FailClosedReviewBlockerRegressionTests); exact-head CI success.",
+      "boundary": "Cleanup label-matching and fail-closed policies verified via contract tests; no destructive live cloud cleanup executed."
+    },
+    {
+      "index": 8,
+      "criterion": "focused contract tests 必須在 staging 繞過 lifecycle 或使用 dev identity/靜態 service names 時失敗",
+      "classes": [
+        "T"
+      ],
+      "classes_zh": [
+        "可由測試證明"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "tests/ops/test_deploy_workflow_contract.py, tests/ops/test_workflow_expression_contexts.py, and tests/ops/test_ephemeral_staging_lifecycle.py execute negative tests asserting failure upon lifecycle bypass, static service names, or dev identity reuse; exact-head CI success.",
+      "boundary": "Negative contract assertions verified; failure conditions actively enforced."
+    },
+    {
+      "index": 9,
+      "criterion": "PR 與部署文件使用中文並說明取代關係與 rollback",
+      "classes": [
+        "D",
+        "P"
+      ],
+      "classes_zh": [
+        "程式或文件交付",
+        "執行過程約束"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "PR #1041 title \"[ReviewBus] ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001 把 ephemeral staging lifecycle 接進唯一 Runtime Release\", PR description, and docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md delivered in Chinese with explicit replacement and rollback documentation.",
+      "boundary": "Observable in PR #1041 metadata and deployment documentation."
+    }
+  ],
+  "summary": {
+    "criteria_total": 9,
+    "criteria_met": 9,
+    "criteria_partially_met": 0,
+    "criteria_unmet": 0,
+    "a3_iac_ci_collection_gap_resolved": true,
+    "a5_receipt_generation_capability_verified": true,
+    "human_disposition_required": false,
+    "historical_unknown_retained": true,
+    "current_gate_is_not_original_approval": true,
+    "reconciliation_verdict": "acceptance_fully_reconciled"
+  }
+}
