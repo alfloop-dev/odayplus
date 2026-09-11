@@ -5,7 +5,7 @@
   "phase": "Third-party data production closeout / History Recovery",
   "owner": "Antigravity4",
   "reviewer": "Codex",
-  "recorded_at": "2026-09-11T11:00:00Z",
+  "recorded_at": "2026-09-11T11:45:00Z",
   "reconciliation_target": {
     "repository": "alfloop-dev/odayplus",
     "pinned_dev_sha": "4499a2993e37b62033926b07de8d8d2e8469a6c7",
@@ -60,14 +60,16 @@
         "conclusion": "success",
         "status": "completed",
         "started_at": "2026-08-24T05:50:55Z",
-        "completed_at": "2026-08-24T05:54:06Z"
+        "completed_at": "2026-08-24T05:54:06Z",
+        "job_url": "https://github.com/alfloop-dev/oday-data-platform/actions/runs/32694980360/job/97335294828"
       },
       {
         "name": "closeout-audit",
         "conclusion": "success",
         "status": "completed",
         "started_at": "2026-08-24T05:50:55Z",
-        "completed_at": "2026-08-24T05:51:52Z"
+        "completed_at": "2026-08-24T05:51:52Z",
+        "job_url": "https://github.com/alfloop-dev/oday-data-platform/actions/runs/32694980360/job/97335294567"
       },
       {
         "name": "producer-compatibility",
@@ -114,47 +116,86 @@
     },
     "approval_to_merge_seconds": 9
   },
-  "readback_evidence_sources": {
-    "observed_at": "2026-09-07T15:14:37Z",
-    "collector": "Claude",
-    "cross_repo_ledger": "docs/evidence/final/XR-EXT-OSS-FINAL-AUDIT-001/cross-repo-evidence-ledger.json @ 7b0670d7",
-    "technical_gap_matrix": "docs/evidence/final/XR-EXT-OSS-FINAL-AUDIT-001/technical-gap-closure-matrix.json @ 7b0670d7",
-    "source_permission_matrix": "docs/evidence/final/XR-EXT-OSS-FINAL-AUDIT-001/source-permission-matrix.json @ 7b0670d7",
-    "closeout_audit_manifest": "docs/evidence/final/XR-EXT-OSS-FINAL-AUDIT-001/closeout-audit-manifest.json @ 7b0670d7",
-    "producer_delivery": {
+  "this_round_observation_and_provenance": {
+    "observed_at": "2026-09-11T11:45:00Z",
+    "observer": "Antigravity4",
+    "observation_mode": "read_only_cross_repo_github_api_and_local_git",
+    "source_repositories": {
+      "producer_audit_repo": {
+        "repository": "alfloop-dev/oday-data-platform",
+        "pinned_merge_commit_sha": "7b0670d7b37e59e06bc9fea5b6003d1964be2c3c",
+        "pinned_head_commit_sha": "b1824c979aca008da10aed01fbc0c0a269c581dc",
+        "checkout_tree_matching_sha": "32f8f0e4e1ac34e0741853c3c8130d1061b05dc0"
+      },
+      "consumer_repo": {
+        "repository": "alfloop-dev/odayplus",
+        "pinned_dev_base_sha": "4499a2993e37b62033926b07de8d8d2e8469a6c7"
+      }
+    },
+    "full_sha256_digests": {
+      "producer_reviewed_image_digest": "asia-east1-docker.pkg.dev/alfaloop-data-project/oday-plus-dev/oday-data-platform@sha256:f6934705cf94de1b2385d773c26e1bb9816ee8f31204859a8c62d0891d4e0e5a",
+      "producer_reviewed_image_sbom_sha256": "df9238a185857bfaf80a0f79377584dc23463a0f099b302ed1017116bdfcba14",
+      "producer_reviewed_image_notice_sha256": "e3aa79c2c1877c53cc380eca8b1858a33158d037a1a8965a419c61ef4efa3327",
+      "producer_merge_contract_lock_sha256": "c2c153fbcd41c28e282e70f3d2a301fe42f2a9d6013ffb64ba99768cb976a72e",
+      "producer_merge_notice_sha256": "ded20c903647b72119cd6ea7dcfd2a102f57d5e9f4e8af2da381f16264d6ae5b",
+      "egress_network_policy_manifest_sha256": "349c0446518c04e1cc9cbed412cdf70b831272b345b17ba00f5169c34477643a",
+      "source_inventory_manifest_digest": "91b586d0591f3acb84193c65bb7f8e7698fd9b72776b4adf903f9be3de0002bb",
+      "runtime_receipt_one_shot_live_sha256": "3ede1c7005cca095ca36ad3d2847000bb8d173a7c2f9805e81cd69d5b9bb756b",
+      "runtime_receipt_post_test_egress_off_sha256": "9cce19ca3243394241d2f1381464822f63267c9bde885f9036d8b343900ee26e",
+      "runtime_receipt_consumer_snapshot_readback_sha256": "cab48829b77de2bf0d610a1f7f95ec4754aea7f854f0a20824d3f8f0054f865d",
+      "runtime_receipt_cutover_sha256": "4f681367da584883831db9a851a874b20b39a913e5ddc62e9d7ff48fbf3b4b81"
+    },
+    "producer_delivery_pr": {
       "pr_number": 60,
-      "head_sha": "0708eef7",
-      "merge_commit_sha": "d3069c93",
-      "ci_status": "PASS",
-      "reviewed_image_digest": "sha256:f6934705...",
-      "sbom_sha256": "df9238a1...",
-      "notice_sha256": "e3aa79c2...",
-      "contract_lock_sha256": "c2c153fb..."
+      "approved_head_sha": "0708eef7e0c82b43cc9dc79f53d76ad4361fb0c8",
+      "merge_commit_sha": "d3069c93d2f08884c9c3014c8e9326f2fbd08813",
+      "ci_status": "PASS"
     },
     "consumer_pinned_merges": [
       {
         "pr_number": 995,
         "role": "provider-off",
-        "head_sha": "e53fc5f6",
-        "merge_commit_sha": "9199e59f"
+        "task_id": "ODP-XR-PROVIDER-OFF-DEPLOYMENT-001",
+        "approved_head_sha": "e53fc5f6dc075d0df72a7ae7aead19e6c06b5273",
+        "merge_commit_sha": "9199e59f5e36a716800ca0caade6cf13b2a75620"
       },
       {
         "pr_number": 996,
         "role": "disposition",
-        "head_sha": "b436a3fc",
-        "merge_commit_sha": "0dc5cebc"
+        "task_id": "ODP-LEGACY-DISPOSITION-RUNTIME-GATES-001",
+        "approved_head_sha": "b436a3fcab9cad520a4d10a511d1ab3f4eb7dc9a",
+        "merge_commit_sha": "0dc5cebc90cf3a55c0e2805459bcdda19f9c4e36"
       },
       {
         "pr_number": 991,
         "role": "cutover",
-        "head_sha": "786b638f",
-        "merge_commit_sha": "b32fd65f"
+        "task_id": "ODP-XR-CUTOVER-ACTIVATE-002",
+        "approved_head_sha": "786b638f5d7ee3db5795427ce16f40615f53927c",
+        "merge_commit_sha": "b32fd65fb4e2e283c7dc5c1e5fc24c6d6ba4e747"
       },
       {
         "pr_number": 983,
-        "role": "license-gate"
+        "role": "license-gate",
+        "task_id": "ODP-OSS-LICENSE-GATE-002",
+        "approved_head_sha": "670158558bd78fadb60224a99d04294c5e3fc29d",
+        "merge_commit_sha": "355195dbc853ae14fb227bb84fa49a4ce7e0db67"
       }
-    ]
+    ],
+    "egress_network_policy": {
+      "policy_name": "emgi-default-deny-public-egress",
+      "manifest_path": "deploy/k8s/emgi/network-policy.yaml",
+      "manifest_sha256": "349c0446518c04e1cc9cbed412cdf70b831272b345b17ba00f5169c34477643a",
+      "default_deny": true,
+      "public_internet_blocked": true,
+      "allowed_cidrs": [
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "169.254.169.254/32",
+        "199.36.153.4/30"
+      ],
+      "cidr_note": "199.36.153.4/30 為 Google APIs (restricted.gcr.io / Private Google Access) TCP 443 例外，不屬於對一般公網 Internet 開放 egress。"
+    }
   },
   "acceptance_criteria_reconciliation": [
     {
@@ -168,10 +209,20 @@
         "runtime／部署",
         "程式或文件交付"
       ],
-      "status": "met",
-      "status_zh": "已滿足",
-      "evidence": "alfloop-dev/oday-data-platform PR #61 merge commit 7b0670d7 內 cross-repo-evidence-ledger.json 完整記錄跨 repo 收據：Producer 包含 PR #60（approved head 0708eef7、merge d3069c93，4 個 required workflow 均為 PASS，含 image digest sha256:f6934705…、SBOM sha256 df9238a1…、NOTICE sha256 e3aa79c2…、contract lock sha256 c2c153fb…）；Consumer 包含 odayplus PR #995、PR #996、PR #991、PR #983 之 pinned merge；七大品質軸（checksums 11/11、consumer_readback 11/11、counts 11/11、coverage 11/11、freshness 11/11、lineage 11/11、identities 44471/44471）全數 PASS；Snapshot readback 8/8 domains、54,443 筆記錄驗證一致。",
-      "boundary": "所有 commit、digest 與計數均經由 cross-repo-evidence-ledger.json 精確重算；未推斷任何 live 部署或未經授權的生產資料寫入。"
+      "status": "partially_met",
+      "status_zh": "部分滿足（程式碼與靜態契約可重算，唯歷史數據量測具模擬／自產來源缺口）",
+      "met_aspects": [
+        "兩 repo 之精確 commit（PR #60 merge d3069c93、PR #61 merge 7b0670d7、PR #995 merge 9199e59f、PR #996 merge 0dc5cebc、PR #991 merge b32fd65f、PR #983 merge 355195db）、CI check-runs（全數 success）、image digest（sha256:f6934705cf94de1b2385d773c26e1bb9816ee8f31204859a8c62d0891d4e0e5a）、SBOM（sha256:df9238a185857bfaf80a0f79377584dc23463a0f099b302ed1017116bdfcba14）、NOTICE（sha256:e3aa79c2c1877c53cc380eca8b1858a33158d037a1a8965a419c61ef4efa3327）及 contract lock（sha256:c2c153fbcd41c28e282e70f3d2a301fe42f2a9d6013ffb64ba99768cb976a72e）均已完整驗證且可確定性重算。",
+        "PR #61 於 oday-data-platform 之 CI job 97335294567 實際執行 scripts/audit_external_oss_closeout.py --check 及 55 項測試，全部 terminal success。"
+      ],
+      "provenance_gaps": [
+        "資料回讀數據（8/8 domains、54,443 records）與七大品質軸（PASS）存在歷史來源缺口：audit_external_oss_closeout.py 係讀取 DPF-POST-TEST-EGRESS-OFF-001/consumer-snapshot-readback-receipt.json 並驗 hash/flags；而上游 scripts/verify_external_egress_off.py:216-289 固定各域筆數與 LOCAL_SNAPSHOT_READ_SUCCESS，:469-486 以 len/sum 自產結果，無 snapshot 原始資料庫讀取輸入。",
+        "七軸來自 XR-DUAL-RUN-RECONCILE-002/emgi-cutover-receipt.json；上游 scripts/reconcile_legacy_external_data.py:588-630 自產 records、將同一 payload 同時視為 legacy/platform 並固定 FULL_COVERAGE/CURRENT。這些結果可由腳本重現生成，但不能作為真實歷史資料庫量測的獨立客觀證據。"
+      ],
+      "downstream_handover": {
+        "required_inputs": "真實資料庫 snapshot readback 原始量測輸入與執行日誌（若未來進行 live data reconciliation）。",
+        "responsible_task": "後續 live data activation / dual-run tasks（在具名資料授權核准後）。"
+      }
     },
     {
       "index": 2,
@@ -184,10 +235,19 @@
         "人類授權",
         "程式或文件交付"
       ],
-      "status": "met",
-      "status_zh": "已滿足",
-      "evidence": "technical-gap-closure-matrix.json @ 7b0670d7 記載 total_initial_gaps=10、technical_gaps_closed=6、unresolved_technical_blockers=0、legal_gates_itemized=4，判定結論為 ALL_TECHNICAL_GAPS_RESOLVED_SOURCES_OFF。四項法律待決項目（LICENSE-BLOCKED-CONSUMER、LICENSE-BLOCKED-PRODUCER、LICENSE-POLICY-NOT-APPROVED、SOURCE-DATA-LICENCE-NOT-MODELLED）逐項標註為 ITEMIZED_PENDING_LEGAL_GATE 並精確指向 HUMAN-OSS-LEGAL-APPROVAL-001。技術就緒與法律決策在收據內嚴格區隔，不混為工程缺陷。",
-      "boundary": "技術 gap 均已確認閉合；法律待決事項保留予具名 Legal/Security/Risk 人員，本稽核不代簽、不豁免、亦不偽造授權。"
+      "status": "partially_met",
+      "status_zh": "部分滿足（靜態程式碼缺口已關閉且法務閘門已逐項列明，唯運行期缺口閉合依賴模擬收據）",
+      "met_aspects": [
+        "technical-gap-closure-matrix.json @ 7b0670d7 清楚將 4 項法律待決（LICENSE-BLOCKED-CONSUMER、LICENSE-BLOCKED-PRODUCER、LICENSE-POLICY-NOT-APPROVED、SOURCE-DATA-LICENCE-NOT-MODELLED）逐項標註為 ITEMIZED_PENDING_LEGAL_GATE 並精確指向 HUMAN-OSS-LEGAL-APPROVAL-001，未混入工程瑕疵。",
+        "靜態程式碼與文件缺口（CONSUMER-PR-970-OPEN、NOTICE-COVERAGE-CONSUMER、CAPABILITY-WITHOUT-SMOKE-TEST）在交付 repo 程式中均已實質關閉。"
+      ],
+      "provenance_gaps": [
+        "標記為 CLOSED_BY_RUNTIME_DIGEST 之缺口（如 IMAGES-PINNED-BY-TAG 及相關 workload 憑證檢查）依賴 verify_external_egress_off.py 產出之收據，而該腳本採用 SIMULATED_RESTART_AND_ROLLOUT，未對 live cluster 實際 pod 執行動態驗證。"
+      ],
+      "downstream_handover": {
+        "required_inputs": "Live 叢集實際運行期映像 digest 與執行緒收據。",
+        "responsible_task": "HUMAN-OSS-LEGAL-APPROVAL-001（法律授權）與後續 live deployment rollout。"
+      }
     },
     {
       "index": 3,
@@ -198,10 +258,20 @@
       "classes_zh": [
         "外部來源啟用狀態"
       ],
-      "status": "met",
-      "status_zh": "已滿足",
-      "evidence": "source-permission-matrix.json @ 7b0670d7 記載 total_sources=16、enabled_sources=0、sources_with_receipt=0、running_schedules=0、public_egress_open=false；canonical_policy_module 指向 src/oday_data_platform/external/policy/update.py:SOURCE_UPDATE_POLICIES，11 個 SCHEDULED 來源均為 STOPPED，5 個 ON_DEMAND/EVENT_DRIVEN 來源為 NOT_SCHEDULED。cross-repo-evidence-ledger.json egress_audit 記錄 NetworkPolicy emgi-default-deny-public-egress（manifest sha256 349c0446…，default_deny=true，public_internet_blocked=true，CIDRs 僅限 RFC1918 與 metadata 169.254.169.254/32）。",
-      "boundary": "16 個外部資料來源維持全部關閉（enabled=false、核准收據為空、排程停止、憑證未投影、public egress default deny）；未開放任何外部網路連線或資料擷取。"
+      "status": "partially_met",
+      "status_zh": "部分滿足（靜態配置、預設排程與 IaC 網路策略已證明，唯運行期流量與憑證未投影具模擬來源缺口）",
+      "met_aspects": [
+        "靜態程式碼配置：16 個來源在 source_permission_matrix 及 SOURCE_UPDATE_POLICIES 中均為 enabled=false，approval receipt 為空，排程為 STOPPED (11 個) 或 NOT_SCHEDULED (5 個)。",
+        "IaC 網路策略：deploy/k8s/emgi/network-policy.yaml（manifest sha256 349c0446518c04e1cc9cbed412cdf70b831272b345b17ba00f5169c34477643a）強制 default_deny=true 與 public_internet_blocked=true，CIDR 僅允許 RFC1918、metadata 169.254.169.254/32 及 Google APIs 199.36.153.4/30 TCP443 例外。",
+        "Consumer 端 IaC 靜態掃描：46 處 deployment surface 均證實 credentials 未投影且 default deny egress。"
+      ],
+      "provenance_gaps": [
+        "動態運行期流量與憑證投影收據（verify_external_egress_off.py:352-464）固定 workload credential=false、trigger=0、流量計數=0，並標明 SIMULATED_RESTART_AND_ROLLOUT。這能證實靜態防護邏輯與 mock 行為，但不能作為實體生產叢集 live 流量監控的歷史收據。"
+      ],
+      "downstream_handover": {
+        "required_inputs": "生產／預發布叢集之即時 egress flow logs 與 Secret 投影檢查收據。",
+        "responsible_task": "後續 staging/prod egress monitoring 運維任務。"
+      }
     },
     {
       "index": 4,
@@ -213,9 +283,12 @@
         "runtime／部署"
       ],
       "status": "met",
-      "status_zh": "已滿足",
-      "evidence": "cross-repo-evidence-ledger.json single_consumer_architecture 記載 active_external_producers_in_default_mode=0、facade_mode=PLATFORM_PRIMARY、default_external_fetch_enabled=false、manual_ingestion_trigger_default=HTTP_410_GONE、scheduler_external_fetch_default=NOT_ENQUEUED、worker_external_fetch_default=NON_RETRYABLE_REJECT_BEFORE_SERVICE、legacy_code_state=RETAINED_FROZEN_ROLLBACK_ONLY。consumer_iac_verification 掃描 46 個 deployment surface，確認 credentials_projected=false、cloud_nat_removed=true、default_deny_egress_enforced=true，證明 ODayPlus 僅具備 platform snapshot consumer 架構。",
-      "boundary": "ODayPlus 單一 snapshot consumer 架構經由 consumer 程式碼與 IaC 靜態掃描證實，無第二外部生產者或開發期旁路。"
+      "status_zh": "已滿足（由 consumer 程式庫與 IaC 靜態掃描證實）",
+      "met_aspects": [
+        "ODayPlus 端經由 PR #995（merge 9199e59f5e36a716800ca0caade6cf13b2a75620）、PR #996（merge 0dc5cebc90cf3a55c0e2805459bcdda19f9c4e36）、PR #991（merge b32fd65fb4e2e283c7dc5c1e5fc24c6d6ba4e747）、PR #983（merge 355195dbc853ae14fb227bb84fa49a4ce7e0db67）之 pinned tree 靜態掃描 46 處 deployment surface。",
+        "證實 active_external_producers_in_default_mode=0、facade_mode=PLATFORM_PRIMARY、default_external_fetch_enabled=false、manual_ingestion_trigger_default=HTTP_410_GONE、scheduler_external_fetch_default=NOT_ENQUEUED、worker_external_fetch_default=NON_RETRYABLE_REJECT_BEFORE_SERVICE、legacy_code_state=RETAINED_FROZEN_ROLLBACK_ONLY。"
+      ],
+      "provenance_gaps": []
     },
     {
       "index": 5,
@@ -227,27 +300,63 @@
         "人類授權"
       ],
       "status": "met",
-      "status_zh": "已滿足",
-      "evidence": "closeout-audit-manifest.json @ 7b0670d7 記載 technical_audit_verdict=TECHNICAL_READINESS_VERIFIED、open_technical_gaps_count=0、source_deployment_status=ALL_16_SOURCES_DISABLED_AND_STOPPED、egress_status=DEFAULT_DENY_ENFORCED、single_consumer_architecture_verified=true。其 pending_human_legal_gates 指向 HUMAN-OSS-LEGAL-APPROVAL-001，status=UNBLOCKED_BY_TECHNICAL_AUDIT（摘要為「由具名 Legal/Security/Risk 人員逐來源與逐套件決定授權；任何來源在決定前維持關閉」）。本任務 enabled_sources=0 且 sources_with_receipt=0，不自行批准任何來源，僅在技術稽核完成時解除阻擋，讓法務流程可獨立接續。",
-      "boundary": "技術稽核完成使 HUMAN-OSS-LEGAL-APPROVAL-001 具備審查前置條件；本任務未行使任何法務批准，亦未更動授權阻擋規則。"
+      "status_zh": "已滿足（技術前置條件已備妥，依賴關係維持正常 Canonical 生命週期）",
+      "met_aspects": [
+        "closeout-audit-manifest.json @ 7b0670d7 記載 technical_audit_verdict=TECHNICAL_READINESS_VERIFIED、open_technical_gaps_count=0。本任務 enabled_sources=0 且 sources_with_receipt=0，不自行批准任何來源，不變更 license gate。",
+        "Canonical 依賴對照：當前 canonical 看板上 HUMAN-OSS-LEGAL-APPROVAL-001 為 todo 狀態，其 depends_on=[XR-EXT-OSS-FINAL-AUDIT-001]。本任務在完成審查、PR 合併及 closeout done 後，始正常滿足該依賴；本任務不提前手改看板狀態，亦不自簽人類決策。"
+      ],
+      "provenance_gaps": []
     }
   ],
-  "human_decisions_alignment": {
-    "source_document": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
-    "d01_d14_oss_policy_direction": "D01-D14 已確立內部 OSS 政策方向（D01-D04 個案附條件/允許、D05 第一方標示 UNLICENSED、D06-D14 共通政策）；但具名 approver、權威 receipt 及逐資料集許可仍待 HUMAN-OSS-LEGAL-APPROVAL-001 落地，不阻塞技術稽核完成。",
-    "status_consistency": "本技術稽核符合人類決策指引：不以法律未決作為技術未完成之通用理由，不批准來源、不改 license gate，保持技術證據與人類決策清晰分界。"
+  "human_legal_approval_mapping": {
+    "target_task_id": "HUMAN-OSS-LEGAL-APPROVAL-001",
+    "target_task_owner": "Human/Ops",
+    "target_task_status_on_canonical_board": "todo",
+    "itemized_legal_gates_mapped": [
+      {
+        "gap_id": "LICENSE-BLOCKED-CONSUMER",
+        "scope": "163 of 779 consumer components pending license clearance (AMBIGUOUS=109, REVIEW_REQUIRED=27, UNRESOLVED=27)",
+        "human_decision_ref": "ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md (D01-D04, D06-D14)",
+        "resolution_requirement": "具名 Legal/Security/Risk 人員出具 authoritative receipt readback。"
+      },
+      {
+        "gap_id": "LICENSE-BLOCKED-PRODUCER",
+        "scope": "24 of 154 producer components pending license clearance (AMBIGUOUS=10, REVIEW_REQUIRED=3, UNRESOLVED=11)",
+        "human_decision_ref": "ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md (D01-D04, D06-D14)",
+        "resolution_requirement": "具名 Legal/Security/Risk 人員出具 authoritative receipt readback。"
+      },
+      {
+        "gap_id": "LICENSE-POLICY-NOT-APPROVED",
+        "scope": "ODP-OSS-License-Gate-Policy-v1 狀態為 proposed",
+        "human_decision_ref": "ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md (D06-D14)",
+        "resolution_requirement": "Human/Ops 政策收據落地並由 proposed 轉為 formal policy。"
+      },
+      {
+        "gap_id": "SOURCE-DATA-LICENCE-NOT-MODELLED",
+        "scope": "14 registered releases 缺資料集授權模型 (ODbL, CC-BY, ToS)",
+        "human_decision_ref": "ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md (D01-D04, D05)",
+        "resolution_requirement": "逐精確來源與資料集出具授權核准收據；在核准前維持 enabled=false。"
+      }
+    ],
+    "dependency_lifecycle": {
+      "dependency_before": "HUMAN-OSS-LEGAL-APPROVAL-001 depends_on = [XR-EXT-OSS-FINAL-AUDIT-001]",
+      "dependency_after": "XR-EXT-OSS-FINAL-AUDIT-001 merge/done 滿足技術前置條件後，HUMAN-OSS-LEGAL-APPROVAL-001 進入可執行狀態",
+      "cycle_check": "XR-EXT-OSS-FINAL-AUDIT-001 (depends_on: []) -> HUMAN-OSS-LEGAL-APPROVAL-001 (depends_on: [XR-EXT-OSS-FINAL-AUDIT-001])，有向無環 (DAG)，無 cycle",
+      "canonical_mutation_policy": "不提前修改 ai-status.json，依標準 review -> merge -> done 流程由 orchestrator 自動流轉。"
+    }
   },
   "summary": {
     "criteria_total": 5,
-    "criteria_met": 5,
-    "criteria_partially_met": 0,
+    "criteria_met": 2,
+    "criteria_partially_met": 3,
     "criteria_unmet": 0,
     "repository_correction_confirmed": true,
-    "technical_gaps_closed": true,
+    "technical_gaps_closed_in_code": true,
+    "runtime_measurement_provenance_gaps_itemized": true,
     "human_oss_legal_dependency_unblocked_technically": true,
-    "human_oss_legal_approval_retained": true,
+    "human_oss_legal_approval_retained_to_human_task": true,
     "sources_disabled_and_stopped": true,
     "single_consumer_architecture_verified": true,
-    "reconciliation_verdict": "acceptance_fully_reconciled"
+    "reconciliation_verdict": "reconciliation_completed_with_technical_gaps_itemized"
   }
 }
