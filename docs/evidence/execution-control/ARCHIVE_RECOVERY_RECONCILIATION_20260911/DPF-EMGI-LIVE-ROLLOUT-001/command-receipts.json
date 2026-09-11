@@ -1,0 +1,62 @@
+{
+  "task_id": "DPF-EMGI-LIVE-ROLLOUT-001",
+  "collected_at": "2026-09-11T11:20:00Z",
+  "collector": "Antigravity7",
+  "receipts": [
+    {
+      "command": "gh api repos/alfloop-dev/oday-data-platform/pulls/62",
+      "exit_code": 0,
+      "summary": "Verified PR #62 state MERGED, merge commit e3ecd2f199fe051aba8d3d33005c217036a9c88e, head sha 71ecbe0d982f3f93c976fa0104a82903d2a071cf"
+    },
+    {
+      "command": "gh api repos/alfloop-dev/oday-data-platform/commits/71ecbe0d982f3f93c976fa0104a82903d2a071cf/check-runs",
+      "exit_code": 0,
+      "summary": "Verified 7/7 success CI checks at exact head 71ecbe0d"
+    },
+    {
+      "command": "gh api repos/alfloop-dev/oday-data-platform/commits/71ecbe0d982f3f93c976fa0104a82903d2a071cf/status",
+      "exit_code": 0,
+      "summary": "Verified task-review-gate state success approved by Codex2"
+    },
+    {
+      "command": "gh api repos/alfloop-dev/oday-data-platform/contents/docs/evidence/runtime/DPF-EMGI-LIVE-ROLLOUT-001/rollout-binding.json?ref=e3ecd2f199fe051aba8d3d33005c217036a9c88e",
+      "exit_code": 0,
+      "summary": "Read immutable rollout-binding.json: candidate_sha 571fd34e, image_digest sha256:4f603e3a..., deploy_receipt outcome DEPLOYED, rollback_receipt null"
+    },
+    {
+      "command": "gh api repos/alfloop-dev/oday-data-platform/contents/docs/evidence/runtime/DPF-EMGI-LIVE-ROLLOUT-001/sources-off-readback.json?ref=e3ecd2f199fe051aba8d3d33005c217036a9c88e",
+      "exit_code": 0,
+      "summary": "Read immutable sources-off-readback.json: 16/16 disabled, 16/16 approval receipts empty"
+    },
+    {
+      "command": "gh api repos/alfloop-dev/oday-data-platform/contents/docs/evidence/runtime/DPF-EMGI-LIVE-ROLLOUT-001/egress-posture-audit.json?ref=e3ecd2f199fe051aba8d3d33005c217036a9c88e",
+      "exit_code": 0,
+      "summary": "Read immutable egress-posture-audit.json: public_egress_default=DENY in both namespaces"
+    },
+    {
+      "command": "gh api repos/alfloop-dev/oday-data-platform/contents/docs/evidence/runtime/DPF-EMGI-LIVE-ROLLOUT-001/environment-bootstrap-receipt.json?ref=e3ecd2f199fe051aba8d3d33005c217036a9c88e",
+      "exit_code": 0,
+      "summary": "Read immutable environment-bootstrap-receipt.json: WI KSA->GSA, secrets references only"
+    },
+    {
+      "command": "gh api repos/alfloop-dev/oday-data-platform/actions/runs/32854804252",
+      "exit_code": 0,
+      "summary": "Verified Image Publish workflow run completed with success"
+    },
+    {
+      "command": "gh api repos/alfloop-dev/oday-data-platform/actions/runs/32855155057",
+      "exit_code": 0,
+      "summary": "Verified EMGI Runtime Deploy workflow run completed with success"
+    },
+    {
+      "command": "gh api repos/alfloop-dev/oday-data-platform/actions/runs/32855155057/artifacts",
+      "exit_code": 0,
+      "summary": "Verified run 32855155057 produced artifact emgi-rollout-32855155057 containing deploy-receipt.json"
+    },
+    {
+      "command": "gh api repos/alfloop-dev/oday-data-platform/actions/runs/32848521116/artifacts",
+      "exit_code": 0,
+      "summary": "Verified test run 32848521116 produced artifact emgi-rollout-32848521116 containing rollback-receipt.json"
+    }
+  ]
+}
