@@ -1574,14 +1574,38 @@ def account_pool_runtime_state(
         return "healthy", {"state": "healthy", "effective_concurrency": configured_limit}
 
     bucket = _account_pool_runtime_bucket(state)
-    entry = bucket.setdefault(
-        pool_id,
-        {
-            "state": "healthy",
-            "effective_concurrency": configured_limit,
-            "generation": 0,
-        },
-    )
+    entry = bucket.get(pool_id)
+    if not isinstance(entry, dict):
+        pool_auth = provider_auth_identity_hash(config, agent_id)
+        if not pool_auth:
+            for aid, acfg in (config.get("agents") or {}).items():
+                if isinstance(acfg, dict) and normalize_agent_id(str(acfg.get("account_pool") or "")) == normalize_agent_id(pool_id):
+                    pool_auth = provider_auth_identity_hash(config, agent_provider_id(config, aid))
+                    if pool_auth:
+                        break
+        is_fenced_by_shared_canary = False
+        if pool_auth:
+            for other_id, other_entry in bucket.items():
+                if isinstance(other_entry, dict) and other_entry.get("auth_identity_hash") == pool_auth:
+                    if str(other_entry.get("state") or "").lower() == "recovering":
+                        is_fenced_by_shared_canary = True
+                        break
+        if is_fenced_by_shared_canary:
+            entry = {
+                "state": "recovering",
+                "effective_concurrency": 0,
+                "generation": 1,
+                "auth_identity_hash": pool_auth,
+                "recovery_reason": "shared auth canary active",
+            }
+        else:
+            entry = {
+                "state": "healthy",
+                "effective_concurrency": configured_limit,
+                "generation": 0,
+                "auth_identity_hash": pool_auth,
+            }
+        bucket[pool_id] = entry
     lifecycle = str(entry.get("state") or "healthy").strip().lower()
     current_time = now or datetime.now(UTC)
     if lifecycle == "cooldown":

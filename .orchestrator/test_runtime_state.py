@@ -1210,3 +1210,107 @@ class QuotaRecoveryRuntimeStateTests(unittest.TestCase):
         pool = runtime_state.load_runtime_state(self.config)["account_pool_runtime"]["pool_a"]
         self.assertEqual(pool["state"], "healthy")
         self.assertEqual(pool["effective_concurrency"], 2)
+
+    def test_multi_clear_earlier_clear_survives_later_clear_and_stale_writer(self) -> None:
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        def pause(at, run, auth="auth-a"):
+            return {
+                "provider": "codex", "trigger_provider": "codex", "paused_at": at,
+                "blocked_until": "2099-09-11T02:37:15Z", "worker_run_id": run,
+                "auth_identity_hash": auth, "failure_kind": "quota_terminal",
+            }
+        def clear_pause(state, at):
+            with (
+                mock.patch.object(supervisor, "utc_now", return_value=at),
+                mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="auth-a"),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                self.assertTrue(supervisor.clear_provider_dispatch_pause(self.config, state, "codex"))
+            runtime_state.save_runtime_state(self.config, state)
+
+        state = runtime_state.default_state()
+        state["provider_guardrails"]["dispatch_pauses"]["codex"] = pause("2026-09-11T01:37:15Z", "run-a")
+        runtime_state.save_runtime_state(self.config, state)
+        stale_a = runtime_state.load_runtime_state(self.config)
+        clear_pause(state, "2026-09-11T02:04:50Z")
+        self.assertNotIn("codex", runtime_state.load_runtime_state(self.config)["provider_guardrails"]["dispatch_pauses"])
+
+        state["provider_guardrails"]["dispatch_pauses"]["codex"] = pause("2026-09-11T02:05:00Z", "run-b", "auth-b")
+        runtime_state.save_runtime_state(self.config, state)
+        clear_pause(state, "2026-09-11T02:06:00Z")
+        self.assertNotIn("codex", runtime_state.load_runtime_state(self.config)["provider_guardrails"]["dispatch_pauses"])
+
+        runtime_state.save_runtime_state(self.config, stale_a)
+        self.assertNotIn("codex", runtime_state.load_runtime_state(self.config)["provider_guardrails"]["dispatch_pauses"])
+
+    def test_delayed_old_clear_does_not_replace_newer_failure_clear(self) -> None:
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        def pause(at, run, auth="auth-a"):
+            return {
+                "provider": "codex", "trigger_provider": "codex", "paused_at": at,
+                "blocked_until": "2099-09-11T02:37:15Z", "worker_run_id": run,
+                "auth_identity_hash": auth, "failure_kind": "quota_terminal",
+            }
+        def clear_pause(state, at):
+            with (
+                mock.patch.object(supervisor, "utc_now", return_value=at),
+                mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="auth-a"),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                self.assertTrue(supervisor.clear_provider_dispatch_pause(self.config, state, "codex"))
+            runtime_state.save_runtime_state(self.config, state)
+
+        state = runtime_state.default_state()
+        state["provider_guardrails"]["dispatch_pauses"]["codex"] = pause("2026-09-11T01:37:15Z", "run-a")
+        runtime_state.save_runtime_state(self.config, state)
+        delayed_clearer_a = runtime_state.load_runtime_state(self.config)
+        clear_pause(state, "2026-09-11T02:04:50Z")
+        state["provider_guardrails"]["dispatch_pauses"]["codex"] = pause("2026-09-11T02:05:00Z", "run-b")
+        runtime_state.save_runtime_state(self.config, state)
+        stale_b = deepcopy(state)
+        clear_pause(state, "2026-09-11T02:06:00Z")
+        clear_pause(delayed_clearer_a, "2026-09-11T02:07:00Z")
+        runtime_state.save_runtime_state(self.config, stale_b)
+        self.assertNotIn("codex", runtime_state.load_runtime_state(self.config)["provider_guardrails"]["dispatch_pauses"])
+
+    def test_disk_clear_preserves_shared_auth_canary_fence(self) -> None:
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        config = deepcopy(self.config)
+        config["account_pools"]["pool_b"] = {"max_concurrent": 2, "state": "healthy", "enabled": True}
+        config["agents"]["codex2"] = {"id": "codex2", "provider": "codex2", "account_pool": "pool_b"}
+        config["providers"]["codex2"] = {"delivery_mode": "codex", "quota_group": "codex"}
+
+        initial = runtime_state.default_state()
+        initial["provider_guardrails"]["dispatch_pauses"]["codex"] = {
+            "provider": "codex", "trigger_provider": "codex", "paused_at": "2026-09-11T01:37:15Z",
+            "blocked_until": "2099-09-11T02:37:15Z", "worker_run_id": "failed-run",
+            "auth_identity_hash": "same-auth", "failure_kind": "quota_terminal",
+        }
+        initial["account_pool_runtime"]["pool_a"] = {
+            "state": "cooldown", "effective_concurrency": 0, "generation": 1,
+            "last_failure_at": "2026-09-11T01:37:15Z", "next_probe_at": "2099-09-11T02:37:15Z",
+            "last_worker_run_id": "failed-run", "auth_identity_hash": "same-auth",
+            "failure_kind": "quota_terminal",
+        }
+        initial["account_pool_runtime"]["pool_b"] = {
+            "state": "healthy", "effective_concurrency": 2,
+            "auth_identity_hash": "same-auth", "generation": 0,
+        }
+        runtime_state.save_runtime_state(config, initial)
+
+        clearer = runtime_state.load_runtime_state(config)
+        with (
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="same-auth"),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-09-11T02:04:50Z"),
+        ):
+            self.assertTrue(supervisor.clear_provider_dispatch_pause(config, clearer, "codex"))
+        self.assertEqual(clearer["account_pool_runtime"]["pool_b"]["state"], "recovering")
+        self.assertEqual(clearer["account_pool_runtime"]["pool_b"]["effective_concurrency"], 0)
+        runtime_state.save_runtime_state(config, clearer)
+
+        restored = runtime_state.load_runtime_state(config)
+        self.assertNotIn("codex", restored["provider_guardrails"]["dispatch_pauses"])
+        with mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="same-auth"):
+            slots = [supervisor.account_pool_effective_concurrency(config, restored, a) for a in ("codex", "codex2")]
+        self.assertLessEqual(sum(slots), 1, f"first clear/save restored shared-auth slots {slots} before any success")

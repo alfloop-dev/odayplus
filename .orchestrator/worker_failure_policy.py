@@ -3,6 +3,7 @@ from __future__ import annotations
 """Worker failure policy helpers extracted from legacy supervisor."""
 # ruff: noqa: F401,F821,F841,I001
 
+from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
 
@@ -825,6 +826,12 @@ def record_account_pool_canary_success(config: dict[str, Any], state: dict[str, 
             if other_id == pool_id or not isinstance(other_entry, dict):
                 continue
             if other_entry.get("auth_identity_hash") == canary_auth and str(other_entry.get("state") or "") == "recovering":
+                other_fk = str(other_entry.get("failure_kind") or "").strip().lower()
+                if other_fk and not (
+                    is_terminal_quota_failure_kind(other_fk)
+                    or is_retryable_capacity_failure_kind(other_fk)
+                ):
+                    continue
                 _, other_pool = account_pool_settings(config, other_id)
                 try:
                     other_conf = max(0, int(other_pool.get("max_concurrent")))
@@ -834,6 +841,7 @@ def record_account_pool_canary_success(config: dict[str, Any], state: dict[str, 
                     {
                         "state": "healthy",
                         "effective_concurrency": other_conf,
+                        "generation": int(other_entry.get("generation", 0) or 0) + 1,
                         "last_recovered_at": recovered_at,
                         "last_canary_run_id": worker.get("run_id"),
                         "reason": None,
@@ -886,6 +894,11 @@ def _is_pause_entry_cleared(
 ) -> bool:
     if not isinstance(clearance, dict) or not isinstance(pause_entry, dict):
         return False
+    c_prov = normalize_agent_id(str(clearance.get("provider") or clearance.get("trigger_provider") or ""))
+    p_prov = normalize_agent_id(str(pause_entry.get("provider") or pause_entry.get("trigger_provider") or ""))
+    if c_prov and p_prov and c_prov != p_prov:
+        return False
+
     c_at = str(clearance.get("cleared_at") or "")
     c_p_at = str(clearance.get("cleared_paused_at") or "")
     c_run = str(clearance.get("worker_run_id") or "")
@@ -925,6 +938,44 @@ def _is_pause_entry_cleared(
     return False
 
 
+def _record_clearance_tombstone(
+    cleared_bucket: dict[str, Any],
+    pause_id: str,
+    entry: dict[str, Any] | None,
+    auth_hash: str | None,
+    cleared_at: str,
+    *,
+    trigger_provider: str | None = None,
+    task_id: str | None = None,
+    worker_run_id: str | None = None,
+    clear_reason: str | None = None,
+) -> dict[str, Any]:
+    p_at = entry.get("paused_at") if isinstance(entry, dict) else None
+    run_id = (entry.get("worker_run_id") if isinstance(entry, dict) else None) or worker_run_id
+    t_id = (entry.get("task_id") if isinstance(entry, dict) else None) or task_id
+    auth = (
+        entry.get("auth_identity_hash")
+        if isinstance(entry, dict) and entry.get("auth_identity_hash")
+        else auth_hash
+    )
+    clearance: dict[str, Any] = {
+        "provider": pause_id,
+        "trigger_provider": trigger_provider or pause_id,
+        "cleared_at": cleared_at,
+        "cleared_paused_at": p_at,
+        "auth_identity_hash": auth,
+        "worker_run_id": run_id,
+        "task_id": t_id,
+    }
+    if clear_reason:
+        clearance["clear_reason"] = clear_reason
+
+    cleared_bucket[pause_id] = deepcopy(clearance)
+    epoch_key = f"{pause_id}::{auth or '*'}::{run_id or '*'}::{p_at or '*'}::{cleared_at}"
+    cleared_bucket[epoch_key] = deepcopy(clearance)
+    return clearance
+
+
 @_entrypoint
 def current_provider_dispatch_pause(
     state: dict[str, Any],
@@ -941,8 +992,11 @@ def current_provider_dispatch_pause(
         entry = bucket.get(pause_id)
         if not isinstance(entry, dict):
             continue
-        clearance = cleared_bucket.get(pause_id)
-        if isinstance(clearance, dict) and _is_pause_entry_cleared(clearance, entry):
+        if any(
+            _is_pause_entry_cleared(c, entry)
+            for c in cleared_bucket.values()
+            if isinstance(c, dict)
+        ):
             bucket.pop(pause_id, None)
             continue
         if config is not None:
@@ -953,16 +1007,15 @@ def current_provider_dispatch_pause(
             )
             if recorded_identity and current_identity and recorded_identity != current_identity:
                 cleared_b = _provider_guardrail_bucket(state).setdefault("cleared_pauses", {})
-                cleared_b[pause_id] = {
-                    "provider": pause_id,
-                    "trigger_provider": str(entry.get("trigger_provider") or pause_id),
-                    "cleared_at": utc_now(),
-                    "cleared_paused_at": entry.get("paused_at"),
-                    "auth_identity_hash": entry.get("auth_identity_hash"),
-                    "worker_run_id": entry.get("worker_run_id"),
-                    "task_id": entry.get("task_id"),
-                    "clear_reason": "provider account identity changed",
-                }
+                _record_clearance_tombstone(
+                    cleared_b,
+                    pause_id,
+                    entry,
+                    entry.get("auth_identity_hash"),
+                    utc_now(),
+                    trigger_provider=str(entry.get("trigger_provider") or pause_id),
+                    clear_reason="provider account identity changed",
+                )
                 bucket.pop(pause_id, None)
                 continue
         blocked_until = _parse_iso_utc(str(entry.get("blocked_until") or ""))
@@ -1243,23 +1296,24 @@ def clear_provider_dispatch_pause(config: dict[str, Any], state: dict[str, Any],
     bucket = _dispatch_pause_bucket(state)
     cleared_bucket = _provider_guardrail_bucket(state).setdefault("cleared_pauses", {})
     removed: list[tuple[str, dict[str, Any]]] = []
+    cleared_at_iso = utc_now()
     for pause_id in dict.fromkeys([pause_provider_id, provider_id]):
         entry = bucket.pop(pause_id, None)
         if isinstance(entry, dict):
             removed.append((pause_id, entry))
-        cleared_bucket[pause_id] = {
-            "provider": pause_id,
-            "trigger_provider": provider_id,
-            "cleared_at": utc_now(),
-            "cleared_paused_at": entry.get("paused_at") if isinstance(entry, dict) else None,
-            "auth_identity_hash": (
-                entry.get("auth_identity_hash")
-                if isinstance(entry, dict) and entry.get("auth_identity_hash")
-                else provider_auth_identity_hash(config, pause_id)
-            ),
-            "worker_run_id": entry.get("worker_run_id") if isinstance(entry, dict) else None,
-            "task_id": entry.get("task_id") if isinstance(entry, dict) else None,
-        }
+        auth_hash = (
+            entry.get("auth_identity_hash")
+            if isinstance(entry, dict) and entry.get("auth_identity_hash")
+            else provider_auth_identity_hash(config, pause_id)
+        )
+        _record_clearance_tombstone(
+            cleared_bucket,
+            pause_id,
+            entry,
+            auth_hash,
+            cleared_at_iso,
+            trigger_provider=provider_id,
+        )
     for pause_id, entry in removed:
         write_activity_log(
             config,
@@ -1298,7 +1352,6 @@ def clear_provider_dispatch_pause(config: dict[str, Any], state: dict[str, Any],
             if quota_group:
                 target_pools.add(quota_group)
 
-    cleared_at_iso = utc_now()
     pools_recovered: list[str] = []
     recovered_auth_hashes: set[str] = set()
 
@@ -1398,6 +1451,7 @@ def clear_provider_dispatch_pause(config: dict[str, Any], state: dict[str, Any],
         canary_limit = min(1, configured_limit)
         pool_entry["state"] = "recovering"
         pool_entry["effective_concurrency"] = canary_limit
+        pool_entry["generation"] = int(pool_entry.get("generation", 0) or 0) + 1
         pool_entry["last_probe_at"] = cleared_at_iso
         pool_entry["probe_attempts"] = int(pool_entry.get("probe_attempts", 0)) + 1
         pool_entry["recovery_reason"] = f"provider pause cleared for {provider_id}"
@@ -1423,29 +1477,60 @@ def clear_provider_dispatch_pause(config: dict[str, Any], state: dict[str, Any],
             },
         )
 
-    # Shared-auth recovery/admission fence: ensure other pools on the same auth cannot bypass canary limit
+    # Shared-auth recovery/admission fence: ensure sibling pools on the same auth cannot bypass canary limit
     if recovered_auth_hashes:
-        for p_id, p_entry in account_pools_bucket.items():
-            if not isinstance(p_entry, dict) or p_id in pools_recovered:
+        all_pool_ids = set(account_pools_bucket.keys()) | set((config.get("account_pools") or {}).keys())
+        for aid, acfg in (config.get("agents") or {}).items():
+            if isinstance(acfg, dict):
+                ap = str(acfg.get("account_pool") or "").strip()
+                if ap:
+                    all_pool_ids.add(ap)
+
+        for p_id in all_pool_ids:
+            if p_id in pools_recovered:
                 continue
-            p_auth = p_entry.get("auth_identity_hash")
+            p_auth = None
+            p_entry = account_pools_bucket.get(p_id)
+            if isinstance(p_entry, dict):
+                p_auth = p_entry.get("auth_identity_hash")
             if not p_auth:
                 for aid, acfg in (config.get("agents") or {}).items():
                     if isinstance(acfg, dict) and normalize_agent_id(str(acfg.get("account_pool") or "")) == normalize_agent_id(p_id):
                         p_auth = provider_auth_identity_hash(config, agent_provider_id(config, aid))
                         if p_auth:
-                            p_entry["auth_identity_hash"] = p_auth
                             break
+            if not p_auth:
+                for p_name in (config.get("account_pools") or {}).keys():
+                    if normalize_agent_id(p_name) == normalize_agent_id(p_id):
+                        p_auth = provider_auth_identity_hash(config, p_name)
+                        if p_auth:
+                            break
+
             if p_auth in recovered_auth_hashes:
-                p_state = str(p_entry.get("state") or "").lower()
-                if p_state in {"healthy", "recovering", "cooldown"}:
-                    p_entry["state"] = "recovering"
-                    p_entry["effective_concurrency"] = 0
-                    p_entry["last_probe_at"] = cleared_at_iso
-                    p_entry["recovery_reason"] = f"shared auth recovering via canary on {', '.join(pools_recovered)}"
-                    p_entry.pop("next_probe_at", None)
+                if isinstance(p_entry, dict):
+                    p_state = str(p_entry.get("state") or "").lower()
+                    # Do NOT modify cooldown pools (which belong to a distinct newer failure or auth failure)
+                    if p_state in {"healthy", "recovering"}:
+                        p_entry["state"] = "recovering"
+                        p_entry["effective_concurrency"] = 0
+                        p_entry["generation"] = int(p_entry.get("generation", 0) or 0) + 1
+                        p_entry["last_probe_at"] = cleared_at_iso
+                        p_entry["recovery_reason"] = f"shared auth recovering via canary on {', '.join(pools_recovered)}"
+                        p_entry["auth_identity_hash"] = p_auth
+                else:
+                    _, p_cfg = account_pool_settings(config, p_id)
+                    if p_cfg.get("enabled") is not False and str(p_cfg.get("state") or "").lower() != "disabled":
+                        account_pools_bucket[p_id] = {
+                            "state": "recovering",
+                            "effective_concurrency": 0,
+                            "generation": 1,
+                            "auth_identity_hash": p_auth,
+                            "last_probe_at": cleared_at_iso,
+                            "recovery_reason": f"shared auth recovering via canary on {', '.join(pools_recovered)}",
+                        }
 
     return bool(removed or pools_recovered)
+
 
 @_entrypoint
 def expire_provider_dispatch_pauses(config: dict[str, Any], state: dict[str, Any]) -> bool:
@@ -1465,32 +1550,30 @@ def expire_provider_dispatch_pauses(config: dict[str, Any], state: dict[str, Any
         )
         if recorded_identity and current_identity and recorded_identity != current_identity:
             expired.append((provider_id, dict(entry), "provider account identity changed"))
-            cleared_bucket[provider_id] = {
-                "provider": provider_id,
-                "trigger_provider": str(entry.get("trigger_provider") or provider_id),
-                "cleared_at": utc_now(),
-                "cleared_paused_at": entry.get("paused_at"),
-                "auth_identity_hash": entry.get("auth_identity_hash"),
-                "worker_run_id": entry.get("worker_run_id"),
-                "task_id": entry.get("task_id"),
-                "clear_reason": "provider account identity changed",
-            }
+            _record_clearance_tombstone(
+                cleared_bucket,
+                provider_id,
+                entry,
+                entry.get("auth_identity_hash"),
+                utc_now(),
+                trigger_provider=str(entry.get("trigger_provider") or provider_id),
+                clear_reason="provider account identity changed",
+            )
             bucket.pop(provider_id, None)
             continue
         blocked_until = _parse_iso_utc(str(entry.get("blocked_until") or ""))
         if blocked_until is None or blocked_until > now:
             continue
         expired.append((provider_id, dict(entry), f"pause expired at {entry.get('blocked_until')}"))
-        cleared_bucket[provider_id] = {
-            "provider": provider_id,
-            "trigger_provider": str(entry.get("trigger_provider") or provider_id),
-            "cleared_at": utc_now(),
-            "cleared_paused_at": entry.get("paused_at"),
-            "auth_identity_hash": entry.get("auth_identity_hash"),
-            "worker_run_id": entry.get("worker_run_id"),
-            "task_id": entry.get("task_id"),
-            "clear_reason": f"pause expired at {entry.get('blocked_until')}",
-        }
+        _record_clearance_tombstone(
+            cleared_bucket,
+            provider_id,
+            entry,
+            entry.get("auth_identity_hash"),
+            utc_now(),
+            trigger_provider=str(entry.get("trigger_provider") or provider_id),
+            clear_reason=f"pause expired at {entry.get('blocked_until')}",
+        )
         bucket.pop(provider_id, None)
 
     for provider_id, entry, resume_reason in expired:

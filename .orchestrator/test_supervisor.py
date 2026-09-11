@@ -21917,6 +21917,8 @@ class GitHubBusReopenReasonTests(unittest.TestCase):
             github_bus.run_ai_status(
                 "reopen", "TASK-1", "detail", actor="Claude", extra_args=["--reason=review_finding"]
             )
+        self.assertIn("--reason=review_finding", recorded.get("cmd", []))
+        self.assertIn("detail", recorded.get("cmd", []))
 
 class QuotaClearAndCooldownRecoveryReviewTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -22006,6 +22008,57 @@ class QuotaClearAndCooldownRecoveryReviewTests(unittest.TestCase):
         original = deepcopy(state["account_pool_runtime"]["pool_a"])
         self.assertTrue(self._clear(config, state))
         self.assertEqual(state["account_pool_runtime"]["pool_a"], original)
+
+    def test_shared_auth_pool_without_runtime_entry_respects_canary_budget(self) -> None:
+        config, state = self.fixture()
+        config["account_pools"]["pool_b"] = {"max_concurrent": 2, "state": "healthy", "enabled": True}
+        config["agents"]["codex2"] = {"id": "codex2", "provider": "codex2", "account_pool": "pool_b"}
+        config["providers"]["codex2"] = {"delivery_mode": "codex", "quota_group": "codex"}
+        with (
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="same-auth"),
+        ):
+            self.assertTrue(supervisor.clear_provider_dispatch_pause(config, state, "codex"))
+            combined = sum(
+                supervisor.account_pool_effective_concurrency(config, state, a)
+                for a in ("codex", "codex2")
+            )
+        self.assertLessEqual(combined, 1, f"shared account exposes {combined} slots before success")
+
+    def test_shared_auth_newer_quota_epoch_keeps_cooldown(self) -> None:
+        config, state = self.fixture()
+        config["account_pools"]["pool_b"] = {"max_concurrent": 2, "state": "healthy", "enabled": True}
+        config["agents"]["codex2"] = {"id": "codex2", "provider": "codex2", "account_pool": "pool_b"}
+        config["providers"]["codex2"] = {"delivery_mode": "codex", "quota_group": "codex"}
+        newer = deepcopy(state["account_pool_runtime"]["pool_a"])
+        newer.update(last_failure_at="2026-09-11T02:30:00Z", last_worker_run_id="new-failure", generation=2)
+        state["account_pool_runtime"]["pool_b"] = newer
+        with (
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="same-auth"),
+        ):
+            self.assertTrue(supervisor.clear_provider_dispatch_pause(config, state, "codex"))
+        self.assertEqual(state["account_pool_runtime"]["pool_b"]["state"], "cooldown")
+
+    def test_shared_auth_auth_failure_keeps_cooldown_after_other_pool_success(self) -> None:
+        config, state = self.fixture()
+        config["account_pools"]["pool_b"] = {"max_concurrent": 2, "state": "healthy", "enabled": True}
+        config["agents"]["codex2"] = {"id": "codex2", "provider": "codex2", "account_pool": "pool_b"}
+        config["providers"]["codex2"] = {"delivery_mode": "codex", "quota_group": "codex"}
+        unrelated = deepcopy(state["account_pool_runtime"]["pool_a"])
+        unrelated.update(failure_kind="auth", last_failure_at="2026-09-11T02:30:00Z", last_worker_run_id="auth-failure", generation=2)
+        state["account_pool_runtime"]["pool_b"] = unrelated
+        with (
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="same-auth"),
+        ):
+            self.assertTrue(supervisor.clear_provider_dispatch_pause(config, state, "codex"))
+            self.assertTrue(
+                supervisor.record_account_pool_canary_success(
+                    config, state, {"run_id": "canary-run", "logical_agent_id": "codex", "provider": "codex", "exit_code": 0}
+                )
+            )
+            self.assertEqual(supervisor.account_pool_effective_concurrency(config, state, "codex2"), 0)
 
 if __name__ == "__main__":
     unittest.main()
