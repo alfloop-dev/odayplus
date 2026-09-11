@@ -35,26 +35,33 @@
 4. **Root Cause 4（Retry Exhaustion 仍派發過期候選）**：
    當 advisory CAS 寫入連續遭拒並耗盡有界重試（8 次）時，若未清空當輪候選，過期候選仍會進入 dispatch loop，造成 stale event 派發。
 
+5. **Root Cause 5（Helper Commit 刷新狀態後未重新評估剩餘候選且覆寫他人租約）**：
+   在同一輪派工多個 slot 時，前一筆 helper claim commit 刷新了 canonical snapshot，但剩餘 slot 仍沿用舊 snapshot 計算出的 candidate 列表與 reason，且 helper claim 條件判斷將「其他 agent 持有有效租約」誤判為「可覆寫」，導致在 external writer 於 sync 期間為任務寫入其他 agent 的有效租約（如 Codex generation 17）時，被 dispatcher 覆寫為新租約（如 Antigravity7 generation 18）並誤派發；同樣地，當任務在 sync 期間轉為 blocked 或產生未完成依賴時，舊 candidate 仍被派發。
+
+6. **Root Cause 6（Advisory Sync / Reload 失敗誤標記為成功刷新）**：
+   `commit_canonical_task_transition` 在 `load_status` 拋出例外時使用 `pass` 吞沒錯誤並回傳 `True`；而在 advisory 路徑中無論 commit 成功與否皆設 `resynced = True`，若 `sync_status_pipeline` 回傳 False 或 reload 失敗，記憶體內的 `status` 仍停留在舊 revision，導致後續候選評估讀取過期 reviewer 造成 stale event 派發。
+
 ---
 
 ## 3. 修復方案與實作細節
 
-### 3.1 `commit_canonical_task_transition` 狀態重載
+### 3.1 `commit_canonical_task_transition` 嚴格狀態重載與 Fail-Closed
 - 在 `.orchestrator/status_transition.py` 與 `.orchestrator/supervisor.py` 中：
   - `commit_canonical_task_transition` 於 `sync_status_pipeline(config)` 成功後，透過 `load_status(config)` 重新載入磁碟上的最新 snapshot。
-  - 當 `latest is not status and isinstance(latest, dict) and "tasks" in latest` 時，以 `status.clear(); status.update(latest)` 原地更新 `status`，確保記憶體內的 `_status_write_revision` 與磁碟保持一致。
+  - 當 `latest is not status and isinstance(latest, dict) and "tasks" in latest` 時，以 `status.clear(); status.update(latest)` 原地更新 `status`。
+  - 若 `load_status` 失敗（拋出例外）或回傳無效資料，不再吞沒錯誤，一律回傳 `False`，嚴守 fail-closed 原則。
 
-### 3.2 `dispatch_ready_tasks` 重構候選重試與狀態刷新
-- 在 `.orchestrator/dispatch_engine.py` 中：
-  - 在每次 snapshot 變更（包含 advisory note 寫入、`re-review_required`、`requeue_task_for_ci_repair` 或 CAS rejection）後，立即以 `resynced = True; break` 中斷當前 iterator，並在下一輪 attempt 重新自 `status` 讀取全新 `tasks` 與 `task_map` 重新評估。
-  - 追蹤 `deferred_task_ids`，避免同一 tick 內剛發生 lifecycle 狀態轉移（如轉回 `in_progress` 或 `review`）的任務在同一 tick 被重複派發。
-  - 若 `eval_attempt` 達到上限且仍因 CAS 衝突退出（retry exhaustion），強制清空 `candidates = []`，嚴禁派發未經乾淨驗證的 stale 候選。
+### 3.2 `_commit_advisory_status_transition` 確保新鮮度與隔離失敗
+- 在 `.orchestrator/dispatch_engine.py` 中引入 `_commit_advisory_status_transition`：
+  - 嘗試執行 `commit_canonical_task_transition(config, status)`。
+  - 若 commit 失敗（CAS 衝突、sync 失敗或 reload 失敗），主動嘗試自 canonical 磁碟重新載入最新狀態。
+  - 若能成功載入新鮮 snapshot 則回傳 `True` 並觸發候選重新評估（`resynced = True; break`）；若無法確認 snapshot 新鮮度，回傳 `False` 並立即終止當前評估且清空候選（`candidates = []; break`），防止從 stale/unconfirmed snapshot 派發任何任務。
 
-### 3.3 Candidate Dispatch 重新綁定 Live Task 物件與資格二度驗證
-- 在派發候選佇列時：
-  - 每次迭代皆透過 `task_id` 從最新 `status` 重獲 `live_task`。
-  - 對於 `REASON_HELPER_CLAIM`：在 `live_task` 上施加 lease 變更並 commit，commit 成功後再次自最新 `status` 驗證 lease 是否確實存在於磁碟，確保 event 與磁碟狀態完全一致。
-  - 對於非 helper 派發：在 build event 前二度比對 `live_task` 的狀態、owner 與 reviewer，若外部 writer 已變更指派則自動跳過，杜絕 stale reviewer event。
+### 3.3 候選評估 Per-Slot 重新驗證與 Helper 租約保護
+- 在 `.orchestrator/dispatch_engine.py` 中重構 `dispatch_ready_tasks`：
+  - 改用 `while queued_for_agent < available_agent_slots and dispatches < max_dispatches_per_tick:` 迴圈，每派發一筆任務或每次 snapshot 變更後，皆基於最新 `status` snapshot 重新執行完整候選評估與排序。
+  - 在 helper claim 路徑中，嚴格檢查 `existing_claim_live and existing_claimant != normalize_agent_id(target_agent)`，嚴禁覆寫任何其他 agent 的有效租約。
+  - Helper lease commit 成功後，自動於下一輪 slot 迭代使用最新 snapshot 與更新之 `pending_task_ids`，徹底防禦 external sync 期間任務狀態轉為 blocked、新增依賴或改派租約的情境。
 
 ### 3.4 審計其他 commit callers（`advance_approved_prs_to_merge` 與 Recovery Loops）
 - 審計並重構 `advance_approved_prs_to_merge`、`recover_conflicted_review_prs` 與 `recover_failed_ci_review_prs`：
@@ -77,28 +84,16 @@
    - 驗證同一 tick 內多筆 helper lease 派發時，所有 queued events 在磁碟上皆具備對應的持久化 lease。
 6. `test_diagnostic_cas_retry_exhaustion_does_not_enqueue_stale_reviewer`:
    - 驗證 8 次 CAS rejection 耗盡重試時，stale candidate 被乾淨丟棄，不產生 stale reviewer event。
+7. `test_diagnostic_cas_helper_candidate_revalidated_after_real_sync` (4 variants: unchanged, competing_lease, blocked, dependency):
+   - 驗證 helper commit 刷新 canonical state 後，剩餘候選重新評估，且永不覆寫其他 agent 的有效租約，亦不派發 blocked 或 unsatisfied dependency 任務。
+8. `test_diagnostic_cas_advisory_resync_failure_never_queues_superseded_reviewer` (3 variants: ok, sync_failure, reload_failure):
+   - 驗證 advisory sync failure 與 reload failure 時壓抑過期派工，不對已被改派的舊 reviewer 派發 stale event。
 
 ### 4.2 測試執行收據（Test Execution Receipts）
-```bash
-# 1. Whitespace & diff 檢查
-$ git diff --check
-(exit code 0)
-
-# 2. Focused Dispatch Policy 測試（41 passed）
-$ uv run pytest -q .orchestrator/test_dispatch_policy.py -k 'diagnostic_cas or review_dispatch or stale_wake or cas or release_dead_helper_claims'
-.........................................                                [100%]
-41 passed in 9.35s (exit code 0)
-
-# 3. Supervisor Concurrency & Recovery 測試（14 passed）
-$ uv run pytest -q .orchestrator/test_supervisor.py::DispatchStatusSyncTests .orchestrator/test_supervisor.py::AutomaticRecoveryTests::test_ci_failure_requeue_fails_closed_on_stale_status_snapshot
-..............                                                           [100%]
-14 passed in 3.61s (exit code 0)
-
-# 4. Codex2 Reproduction Probes 測試（4 passed）
-$ uv run pytest -v /home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260911T022943Z-8a15a998/test_review_lifecycle_snapshot.py /home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260911T022943Z-8a15a998/test_reviewer_helper_claims.py /home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260911T022943Z-8a15a998/test_codex2_review_retry_exhaustion.py
-============================== 4 passed in 6.58s ===============================
-(exit code 0)
-```
+- `git diff --check`: exit 0
+- `uv run pytest -q .orchestrator/test_dispatch_policy.py -k 'diagnostic_cas or review_dispatch or stale_wake or cas or release_dead_helper_claims'`: 48 passed, exit 0
+- `uv run pytest -q .orchestrator/test_supervisor.py::DispatchStatusSyncTests .orchestrator/test_supervisor.py::AutomaticRecoveryTests::test_ci_failure_requeue_fails_closed_on_stale_status_snapshot`: 14 passed, exit 0
+- `uv run pytest -q /home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260911T032333Z-3db4e30a/test_review_resync_failure.py /home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260911T032333Z-3db4e30a/test_review_helper_refresh.py`: 7 passed, exit 0
 
 ---
 

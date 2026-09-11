@@ -404,8 +404,10 @@ def commit_canonical_task_transition(config: dict[str, Any], status: dict[str, A
         if latest is not status and isinstance(latest, dict) and "tasks" in latest:
             status.clear()
             status.update(latest)
+        elif not (isinstance(latest, dict) and "tasks" in latest):
+            return False
     except Exception:
-        pass
+        return False
     return True
 
 

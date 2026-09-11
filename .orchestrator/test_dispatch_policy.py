@@ -4590,3 +4590,195 @@ def test_diagnostic_cas_retry_exhaustion_does_not_enqueue_stale_reviewer(tmp_pat
     assert disk["tasks"][0]["reviewer"] == "Codex"
     assert disk["external_writer_counter"] == 8
     assert not stale_events
+
+
+@pytest.mark.parametrize("external_mutation", ["unchanged", "competing_lease", "blocked", "dependency"])
+def test_diagnostic_cas_helper_candidate_revalidated_after_real_sync(tmp_path: Path, external_mutation: str) -> None:
+    """Helper candidates must be revalidated after canonical sync and never overwrite other agent's live lease."""
+    cfg = _base_test_config()
+    cfg["agents"]["gemini"] = {
+        "id": "gemini", "display_name": "Gemini", "provider": "gemini", "slot_id": "slot-gemini",
+    }
+    cfg["providers"]["gemini"] = {"delivery_mode": "gemini"}
+    cfg["paths"] = {
+        "status_file": str(tmp_path / "ai-status.json"),
+        "activity_log": str(tmp_path / "activity.jsonl"),
+        "event_queue": str(tmp_path / "events.jsonl"),
+    }
+    canonical = Path(cfg["paths"]["status_file"])
+    canonical.write_text(json.dumps({
+        "_status_write_revision": "initial-revision",
+        "tasks": [
+            {"id": task_id, "status": "todo", "priority": "P2", "owner": "Claude", "reviewer": "Gemini", "depends_on": []}
+            for task_id in ["HELPER-A", "HELPER-B"]
+        ],
+        "handoffs": [],
+    }), encoding="utf-8")
+    events = []
+    sync_receipts = []
+    now = datetime.now(UTC)
+    competing_lease = {
+        "claimed_by": "Codex",
+        "original_owner": "Claude",
+        "claimed_at": now.isoformat().replace("+00:00", "Z"),
+        "lease_expires_at": (now + timedelta(hours=1)).isoformat().replace("+00:00", "Z"),
+        "reason": "external-writer-claim",
+        "generation": 17,
+    }
+
+    def revision_changing_sync(_cfg):
+        board = json.loads(canonical.read_text(encoding="utf-8"))
+        before = board["_status_write_revision"]
+        if not sync_receipts:
+            victim = next(task for task in board["tasks"] if task["id"] == "HELPER-B")
+            if external_mutation == "competing_lease":
+                victim["helper_execution_lease"] = dict(competing_lease)
+            elif external_mutation == "blocked":
+                victim["status"] = "blocked"
+            elif external_mutation == "dependency":
+                victim["depends_on"] = ["UNFINISHED-DEPENDENCY"]
+            board["external_marker"] = "must-survive"
+        board["_status_write_revision"] = uuid.uuid4().hex
+        canonical.write_text(json.dumps(board), encoding="utf-8")
+        sync_receipts.append((before, board["_status_write_revision"]))
+        return True
+
+    with ExitStack() as patches:
+        for name in [
+            "repair_open_task_metadata", "repair_unsubmitted_review_tasks",
+            "reassign_tasks_after_review_churn", "normalize_task_assignment_integrity",
+            "normalize_mainline_task_assignment", "reassign_unavailable_reviewers",
+        ]:
+            patches.enter_context(mock.patch.object(supervisor, name, return_value=False))
+        patches.enter_context(mock.patch.object(dispatch_engine, "task_reality_reconcile_is_due", return_value=False))
+        patches.enter_context(mock.patch.object(supervisor, "load_event_queue", return_value=[]))
+        patches.enter_context(mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None))
+        patches.enter_context(mock.patch.object(supervisor, "agent_dispatch_capacity", return_value=2))
+        patches.enter_context(mock.patch.object(supervisor, "sync_status_pipeline", side_effect=revision_changing_sync))
+        patches.enter_context(mock.patch.object(supervisor, "queue_delivery_event", side_effect=lambda _c, event: events.append(event) or True))
+        supervisor.dispatch_ready_tasks(
+            cfg, {"workers": {}, "queue": {"events": {}}},
+            agent_ids_override=["antigravity7"], max_dispatches_override=2,
+        )
+
+    board = json.loads(canonical.read_text(encoding="utf-8"))
+    task_map = {task["id"]: task for task in board["tasks"]}
+    queued_ids = [event["task_id"] for event in events]
+    assert sync_receipts and all(before != after for before, after in sync_receipts)
+    assert board["external_marker"] == "must-survive"
+    assert "HELPER-A" in queued_ids, "Positive control: the first eligible helper must dispatch"
+    if external_mutation == "unchanged":
+        assert queued_ids == ["HELPER-A", "HELPER-B"]
+        for event in events:
+            assert task_map[event["task_id"]]["helper_execution_lease"] == event["task"]["helper_execution_lease"]
+    else:
+        if external_mutation == "competing_lease":
+            assert task_map["HELPER-B"].get("helper_execution_lease") == competing_lease, (
+                "Canonical refresh must not authorize overwriting another agent's live lease",
+                task_map["HELPER-B"], queued_ids,
+            )
+        assert "HELPER-B" not in queued_ids, (
+            "Candidate became ineligible during the first helper's canonical sync",
+            external_mutation, task_map["HELPER-B"], queued_ids,
+        )
+
+
+@pytest.mark.parametrize("failure_mode", ["ok", "sync_failure", "reload_failure"])
+def test_diagnostic_cas_advisory_resync_failure_never_queues_superseded_reviewer(tmp_path: Path, failure_mode: str) -> None:
+    """Advisory sync and reload failures must suppress dispatch rather than enqueuing superseded assignments from stale snapshot."""
+    cfg = _base_test_config()
+    cfg["paths"] = {
+        "status_file": str(tmp_path / "ai-status.json"),
+        "activity_log": str(tmp_path / "activity.jsonl"),
+        "event_queue": str(tmp_path / "events.jsonl"),
+    }
+    cfg["ready_dispatcher"]["helper_execution_lease"]["enabled"] = False
+    canonical = Path(cfg["paths"]["status_file"])
+    head = "a" * 40
+    tasks = [
+        {
+            "id": task_id,
+            "status": "review",
+            "owner": "Claude",
+            "reviewer": "Antigravity7",
+            "priority": "P1",
+            "repository": "alfloop-dev/odayplus",
+            "depends_on": [],
+            "review_submission": {
+                "pr_number": pr_number,
+                "branch": "task/" + task_id,
+                "base_branch": "dev",
+                "remote_sha": head,
+                "pr_url": f"https://github.com/alfloop-dev/odayplus/pull/{pr_number}",
+            },
+        }
+        for task_id, pr_number in [("PENDING-RESYNC", 9901), ("GREEN-RESYNC", 9902)]
+    ]
+    canonical.write_text(json.dumps({
+        "_status_write_revision": "initial-revision",
+        "tasks": tasks,
+        "handoffs": [],
+    }), encoding="utf-8")
+
+    real_load = supervisor.load_status
+    sync_receipts = []
+    failed_loads = []
+    queued_events = []
+
+    def revision_changing_sync(config):
+        board = json.loads(canonical.read_text(encoding="utf-8"))
+        before = board["_status_write_revision"]
+        assert before != "initial-revision"
+        board["_status_write_revision"] = uuid.uuid4().hex
+        board["tasks"][1]["reviewer"] = "Codex"
+        board["external_marker"] = "preserve-this-update"
+        canonical.write_text(json.dumps(board), encoding="utf-8")
+        sync_receipts.append((before, board["_status_write_revision"]))
+        return failure_mode != "sync_failure"
+
+    def controlled_load(config):
+        if failure_mode == "reload_failure" and sync_receipts and not failed_loads:
+            failed_loads.append("post-sync read failed once")
+            raise OSError("review repro: transient canonical read failure")
+        return real_load(config)
+
+    def ci_status(task_id, **kwargs):
+        return "OPEN", "pending" if task_id == "PENDING-RESYNC" else "success"
+
+    with ExitStack() as patches:
+        for name in (
+            "repair_open_task_metadata",
+            "repair_unsubmitted_review_tasks",
+            "reassign_tasks_after_review_churn",
+            "normalize_task_assignment_integrity",
+            "normalize_mainline_task_assignment",
+            "reassign_unavailable_reviewers",
+        ):
+            patches.enter_context(mock.patch.object(supervisor, name, return_value=False))
+        for name in ("recover_conflicted_review_prs", "recover_failed_ci_review_prs"):
+            patches.enter_context(mock.patch.object(dispatch_engine, name, return_value=False))
+        patches.enter_context(mock.patch.object(dispatch_engine, "task_reality_reconcile_is_due", return_value=False))
+        patches.enter_context(mock.patch.object(supervisor, "load_status", side_effect=controlled_load))
+        patches.enter_context(mock.patch.object(supervisor, "sync_status_pipeline", side_effect=revision_changing_sync))
+        patches.enter_context(mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value=head))
+        patches.enter_context(mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", side_effect=ci_status))
+        patches.enter_context(mock.patch.object(supervisor, "load_event_queue", return_value=[]))
+        patches.enter_context(mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None))
+        patches.enter_context(mock.patch.object(supervisor, "agent_dispatch_capacity", return_value=2))
+        patches.enter_context(mock.patch.object(supervisor, "queue_delivery_event", side_effect=lambda _cfg, event: queued_events.append(event) or True))
+        supervisor.dispatch_ready_tasks(
+            cfg,
+            {"workers": {}, "queue": {"events": {}}},
+            agent_ids_override=["antigravity7"],
+            max_dispatches_override=2,
+        )
+
+    board = json.loads(canonical.read_text(encoding="utf-8"))
+    assert sync_receipts and all(before != after for before, after in sync_receipts)
+    assert bool(failed_loads) == (failure_mode == "reload_failure")
+    assert board["external_marker"] == "preserve-this-update"
+    assert board["tasks"][1]["reviewer"] == "Codex"
+    assert not queued_events, (
+        f"{failure_mode}: queued stale events after canonical reviewer changed to Codex: "
+        f"{[(event['task_id'], event['target_agent'], event['task'].get('reviewer')) for event in queued_events]}"
+    )
