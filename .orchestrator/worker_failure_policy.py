@@ -1109,6 +1109,32 @@ def _lookup_worker_record(state: dict[str, Any], worker_run_id: str | None) -> d
     worker = (state.get("workers") or {}).get(run_id)
     return worker if isinstance(worker, dict) else None
 
+def _current_utc_now() -> datetime:
+    sup = sys.modules.get("supervisor")
+    if sup is not None:
+        dt = getattr(sup, "datetime", datetime)
+        if dt is not datetime and hasattr(dt, "now"):
+            try:
+                res = dt.now(UTC)
+                if isinstance(res, datetime):
+                    return res
+            except Exception:
+                pass
+        un = getattr(sup, "utc_now", None)
+        if un is not None:
+            try:
+                import common as _c
+                if un != getattr(_c, "utc_now", None):
+                    val = un()
+                    if isinstance(val, str) and val:
+                        parsed = _parse_iso_utc(val)
+                        if parsed is not None:
+                            return parsed
+            except Exception:
+                pass
+    return datetime.now(UTC)
+
+
 @_entrypoint
 def mark_provider_dispatch_paused(
     config: dict[str, Any],
@@ -1131,7 +1157,7 @@ def mark_provider_dispatch_paused(
     if not provider_id:
         return False
     pause_provider_id = provider_dispatch_group_id(config, provider) or provider_id
-    now = datetime.now(UTC)
+    now = _current_utc_now()
     effective_pause_kind = str(pause_kind or failure_kind or "").strip().lower()
     if not should_pause_dispatch_for_failure_kind(effective_pause_kind):
         return False
