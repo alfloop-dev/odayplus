@@ -22207,5 +22207,152 @@ class QuotaClearAndCooldownRecoveryReviewTests(unittest.TestCase):
             expected_identity = hashlib.sha256(b"chatgpt:inherited-account").hexdigest()
             self.assertEqual((seen, identity), ([expected_path], expected_identity))
 
+    def test_canary_failure_cooldown_expiry_reassigns_single_canary_slot_without_deadlock(self) -> None:
+        config = {
+            "account_pools": {
+                "pool_a": {"max_concurrent": 2, "enabled": True, "state": "healthy"},
+                "pool_b": {"max_concurrent": 2, "enabled": True, "state": "healthy"},
+            },
+            "agents": {
+                "codex": {"id": "codex", "provider": "codex", "account_pool": "pool_a"},
+                "codex2": {"id": "codex2", "provider": "codex2", "account_pool": "pool_b"},
+            },
+            "providers": {
+                "codex": {"delivery_mode": "codex", "quota_group": "codex"},
+                "codex2": {"delivery_mode": "codex", "quota_group": "codex"},
+            },
+        }
+        state = {
+            "provider_guardrails": {"dispatch_pauses": {"codex": {
+                "provider": "codex", "trigger_provider": "codex",
+                "paused_at": "2026-09-11T01:37:15Z", "worker_run_id": "original-failure",
+                "failure_kind": "quota_terminal", "auth_identity_hash": "fixture-auth",
+            }}},
+            "account_pool_runtime": {
+                "pool_a": {
+                    "state": "cooldown", "effective_concurrency": 0, "generation": 1,
+                    "last_failure_at": "2026-09-11T01:37:15Z",
+                    "last_worker_run_id": "original-failure", "failure_kind": "quota_terminal",
+                    "next_probe_at": "2026-09-11T02:37:15Z", "auth_identity_hash": "fixture-auth",
+                },
+                "pool_b": {"state": "healthy", "effective_concurrency": 2, "auth_identity_hash": "fixture-auth"},
+            },
+        }
+
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 9, 11, 4, 0, tzinfo=UTC)
+
+        with (
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="fixture-auth"),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "datetime", Clock),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-09-11T02:04:50Z"),
+        ):
+            self.assertTrue(supervisor.clear_provider_dispatch_pause(config, state, "codex"))
+            supervisor.mark_account_pool_cooldown(
+                config, state,
+                {"run_id": "failed-canary", "logical_agent_id": "codex", "provider": "codex"},
+                "quota exhausted", failure_kind="quota_terminal",
+                blocked_until=datetime(2026, 9, 11, 3, 0, tzinfo=UTC),
+            )
+            limits = {aid: supervisor.account_pool_effective_concurrency(config, state, aid)
+                      for aid in ("codex", "codex2")}
+            self.assertEqual(sum(limits.values()), 1)
+
+    def test_real_dispatched_worker_records_provenance_and_validates_canary_timing_and_auth(self) -> None:
+        from adapters.base import DeliveryRequest, DeliveryResult
+
+        config = {
+            "paths": {"activity_log": "/tmp/unused-activity.jsonl"},
+            "account_pools": {
+                "pool_a": {"max_concurrent": 2, "enabled": True},
+                "pool_b": {"max_concurrent": 2, "enabled": True},
+            },
+            "agents": {
+                "codex": {"id": "codex", "provider": "codex", "adapter": "codex", "account_pool": "pool_a"},
+                "codex2": {"id": "codex2", "provider": "codex2", "adapter": "codex", "account_pool": "pool_b"},
+            },
+            "providers": {
+                "codex": {"delivery_mode": "codex", "quota_group": "codex"},
+                "codex2": {"delivery_mode": "codex", "quota_group": "codex"},
+            },
+        }
+        state: dict[str, Any] = {"workers": {}, "account_pool_runtime": {}}
+
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 9, 11, 1, 0, tzinfo=UTC)
+
+        request = DeliveryRequest(
+            agent_id="codex2", provider="codex2", delivery_mode="codex",
+            message="fixture", task_id="fixture-task", reason="review_ready_dispatch",
+        )
+        result = DeliveryResult(
+            ok=True, adapter="codex", mode="codex", target="fixture",
+            auto_delivered=True, manual_confirmation_required=False, run_id="old-success",
+        )
+        with (
+            mock.patch.object(supervisor, "build_adapter") as adapter,
+            mock.patch.object(supervisor, "datetime", Clock),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "record_worker_runtime_measurement"),
+            mock.patch.object(supervisor, "save_runtime_state"),
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="auth-a"),
+        ):
+            adapter.return_value.deliver.return_value = result
+            ok, run_id, _ = supervisor.start_worker_for_request(
+                config, state, {}, request, queue_event_id="fixture-event",
+                attempt_count=1, event_id_for_log="fixture-event",
+            )
+        self.assertTrue(ok)
+        worker = state["workers"][run_id]
+        self.assertEqual(worker["lease_acquired_at"], "2026-09-11T01:00:00Z")
+        self.assertEqual(worker["started_at"], "2026-09-11T01:00:00Z")
+        self.assertEqual(worker["auth_identity_hash"], "auth-a")
+        worker.update(status="completed", exit_code=0)
+
+        pause = {
+            "provider": "codex", "trigger_provider": "codex", "paused_at": "2026-09-11T01:37:15Z",
+            "blocked_until": "2099-09-11T02:37:15Z", "worker_run_id": "failed-a",
+            "auth_identity_hash": "auth-a", "failure_kind": "quota_terminal",
+        }
+        state["provider_guardrails"] = {"dispatch_pauses": {"codex": pause}}
+        state["account_pool_runtime"] = {
+            "pool_a": {
+                "state": "cooldown", "effective_concurrency": 0, "generation": 1,
+                "last_failure_at": pause["paused_at"], "last_worker_run_id": "failed-a",
+                "auth_identity_hash": "auth-a", "failure_kind": "quota_terminal",
+            },
+            "pool_b": {"state": "healthy", "effective_concurrency": 2, "auth_identity_hash": "auth-a"},
+        }
+        with (
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="auth-a"),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-09-11T02:04:50Z"),
+        ):
+            self.assertTrue(supervisor.clear_provider_dispatch_pause(config, state, "codex"))
+            self.assertEqual(state["account_pool_runtime"]["pool_b"]["effective_concurrency"], 0)
+            res = supervisor.record_account_pool_canary_success(config, state, worker)
+        self.assertFalse(res)
+        self.assertEqual(state["account_pool_runtime"]["pool_a"]["state"], "recovering")
+
+        # Test auth B sibling is not certified by auth A worker after credential rotation
+        worker_a = dict(worker)
+        worker_a.update({"agent_id": "codex", "logical_agent_id": "codex", "provider": "codex"})
+        state["account_pool_runtime"] = {
+            "pool_a": {"state": "recovering", "effective_concurrency": 1, "auth_identity_hash": "auth-a", "last_probe_at": "2026-09-11T00:59:00Z"},
+            "pool_b": {"state": "recovering", "effective_concurrency": 0, "auth_identity_hash": "auth-b", "last_probe_at": "2026-09-11T00:59:00Z", "failure_kind": "quota_terminal"},
+        }
+        with (
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="auth-b"),
+        ):
+            supervisor.record_account_pool_canary_success(config, state, worker_a)
+        self.assertEqual(state["account_pool_runtime"]["pool_a"]["state"], "healthy")
+        self.assertEqual(state["account_pool_runtime"]["pool_b"]["state"], "recovering")
+
 if __name__ == "__main__":
     unittest.main()

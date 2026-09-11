@@ -779,6 +779,25 @@ def mark_account_pool_cooldown(
     )
     if auth_identity_hash:
         entry["auth_identity_hash"] = auth_identity_hash
+        # Fence any sibling pools sharing the same auth identity
+        for other_id, other_entry in bucket.items():
+            if other_id == pool_id or not isinstance(other_entry, dict):
+                continue
+            if other_entry.get("auth_identity_hash") == auth_identity_hash:
+                other_state = str(other_entry.get("state") or "").lower()
+                if other_state in {"recovering", "healthy"}:
+                    other_entry.update(
+                        {
+                            "state": "cooldown",
+                            "effective_concurrency": 0,
+                            "reason": entry.get("reason") or failure_kind,
+                            "failure_kind": failure_kind,
+                            "last_failure_at": entry["last_failure_at"],
+                            "next_probe_at": chosen_until.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                            "last_worker_run_id": worker_run_id or None,
+                            "generation": entry["generation"],
+                        }
+                    )
     bucket[pool_id] = entry
     if not same_failure:
         write_activity_log(
@@ -806,20 +825,25 @@ def record_account_pool_canary_success(config: dict[str, Any], state: dict[str, 
         return False
 
     # Validate timing: worker must have started at or after recovery / probe initiation
-    worker_started = _parse_iso_utc(str(worker.get("started_at") or worker.get("created_at") or ""))
+    worker_started = _parse_iso_utc(
+        str(worker.get("started_at") or worker.get("lease_acquired_at") or worker.get("created_at") or "")
+    )
     probe_started = _parse_iso_utc(str(entry.get("last_probe_at") or entry.get("last_failure_at") or ""))
     if worker_started is not None and probe_started is not None and worker_started < probe_started:
         return False
 
-    # Validate auth identity
-    worker_auth = str(
-        worker.get("auth_identity_hash")
-        or provider_auth_identity_hash(
-            config,
-            str(worker.get("provider") or worker.get("logical_agent_id") or worker.get("agent_id") or ""),
+    # Validate auth identity: use persisted dispatch auth provenance if available
+    worker_auth = str(worker.get("auth_identity_hash") or "")
+    if not worker_auth and isinstance(state.get("workers"), dict):
+        worker_auth = str(state["workers"].get(str(worker.get("run_id") or ""), {}).get("auth_identity_hash") or "")
+    if not worker_auth:
+        worker_auth = str(
+            provider_auth_identity_hash(
+                config,
+                str(worker.get("provider") or worker.get("logical_agent_id") or worker.get("agent_id") or ""),
+            )
+            or ""
         )
-        or ""
-    )
     pool_auth = str(entry.get("auth_identity_hash") or "")
 
     try:
@@ -848,6 +872,9 @@ def record_account_pool_canary_success(config: dict[str, Any], state: dict[str, 
                     is_terminal_quota_failure_kind(other_fk)
                     or is_retryable_capacity_failure_kind(other_fk)
                 ):
+                    continue
+                other_probe = _parse_iso_utc(str(other_entry.get("last_probe_at") or other_entry.get("last_failure_at") or ""))
+                if other_probe is not None and worker_started is not None and worker_started < other_probe:
                     continue
                 _, other_pool = account_pool_settings(config, other_id)
                 try:

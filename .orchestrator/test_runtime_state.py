@@ -1505,3 +1505,58 @@ class QuotaRecoveryRuntimeStateTests(unittest.TestCase):
 
         restored = runtime_state.load_runtime_state(config)
         self.assertEqual(restored["provider_guardrails"]["dispatch_pauses"].get("codex", {}).get("worker_run_id"), "new-run")
+
+    def test_distinct_failure_run_survives_stale_clear_same_second(self) -> None:
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        old_time = "2099-09-11T02:04:50Z"
+        new_time = "2099-09-11T02:04:50Z"
+        config = deepcopy(self.config)
+
+        for failure_saved_first in (True, False):
+            Path(config["paths"]["state_file"]).write_text("{}", encoding="utf-8")
+            state = runtime_state.default_state()
+            state["provider_guardrails"]["dispatch_pauses"]["codex"] = {
+                "provider": "codex", "trigger_provider": "codex", "paused_at": old_time,
+                "blocked_until": "2099-09-11T03:37:15Z", "failure_kind": "quota_terminal",
+                "worker_run_id": "old-run", "auth_identity_hash": "auth-a",
+            }
+            state["account_pool_runtime"]["pool_a"] = {
+                "state": "cooldown", "effective_concurrency": 0, "generation": 1,
+                "last_failure_at": old_time, "next_probe_at": "2099-09-11T03:37:15Z",
+                "last_worker_run_id": "old-run", "auth_identity_hash": "auth-a",
+                "failure_kind": "quota_terminal",
+            }
+            runtime_state.save_runtime_state(config, state)
+            clearer = runtime_state.load_runtime_state(config)
+            failure_writer = runtime_state.load_runtime_state(config)
+
+            with (
+                mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="auth-a"),
+                mock.patch.object(supervisor, "write_activity_log"),
+                mock.patch.object(supervisor, "utc_now", return_value=new_time),
+                mock.patch.object(supervisor.model_rotation, "rotation_enabled", return_value=False),
+            ):
+                supervisor.mark_provider_dispatch_paused(
+                    config, failure_writer, "codex", "usage limit reached", worker_run_id="new-run",
+                    worker={"run_id": "new-run", "logical_agent_id": "codex", "provider": "codex"},
+                    failure_kind="quota_terminal",
+                )
+            with (
+                mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="auth-a"),
+                mock.patch.object(supervisor, "write_activity_log"),
+                mock.patch.object(supervisor, "utc_now", return_value="2099-09-11T02:04:52Z"),
+            ):
+                self.assertTrue(supervisor.clear_provider_dispatch_pause(config, clearer, "codex"))
+
+            snapshots = (failure_writer, clearer) if failure_saved_first else (clearer, failure_writer)
+            for snapshot in snapshots:
+                runtime_state.save_runtime_state(config, snapshot)
+            restored = runtime_state.load_runtime_state(config)
+            self.assertEqual(restored["provider_guardrails"]["dispatch_pauses"]["codex"]["worker_run_id"], "new-run")
+            pool = restored["account_pool_runtime"]["pool_a"]
+            self.assertEqual(
+                (pool["state"], pool["last_worker_run_id"], pool["effective_concurrency"]),
+                ("cooldown", "new-run", 0),
+            )
+            self.assertEqual(pool["last_failure_at"], new_time)
+            self.assertEqual(pool["next_probe_at"], "2099-09-11T03:37:15Z")

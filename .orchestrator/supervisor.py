@@ -1587,7 +1587,10 @@ def account_pool_runtime_state(
         if pool_auth:
             for other_entry in bucket.values():
                 if isinstance(other_entry, dict) and other_entry.get("auth_identity_hash") == pool_auth:
-                    if str(other_entry.get("state") or "").lower() == "recovering":
+                    if (
+                        str(other_entry.get("state") or "").lower() == "recovering"
+                        and int(other_entry.get("effective_concurrency", 0) or 0) > 0
+                    ):
                         is_fenced_by_shared_canary = True
                         break
         if is_fenced_by_shared_canary:
@@ -1616,7 +1619,10 @@ def account_pool_runtime_state(
             if pool_auth:
                 for other_id, other_entry in bucket.items():
                     if other_id != pool_id and isinstance(other_entry, dict) and other_entry.get("auth_identity_hash") == pool_auth:
-                        if str(other_entry.get("state") or "").lower() == "recovering":
+                        if (
+                            str(other_entry.get("state") or "").lower() == "recovering"
+                            and int(other_entry.get("effective_concurrency", 0) or 0) > 0
+                        ):
                             is_fenced_by_shared_canary = True
                             break
             if not is_fenced_by_shared_canary:
@@ -1630,13 +1636,27 @@ def account_pool_runtime_state(
                 entry["probe_attempts"] = int(entry.get("probe_attempts", 0)) + 1
     if lifecycle == "recovering":
         current_eff = entry.get("effective_concurrency")
-        if current_eff is None:
-            entry["effective_concurrency"] = min(1, configured_limit or 1)
+        pool_auth = entry.get("auth_identity_hash")
+        has_active_canary_sibling = False
+        if pool_auth:
+            for other_id, other_entry in bucket.items():
+                if other_id != pool_id and isinstance(other_entry, dict) and other_entry.get("auth_identity_hash") == pool_auth:
+                    if (
+                        str(other_entry.get("state") or "").lower() == "recovering"
+                        and int(other_entry.get("effective_concurrency", 0) or 0) > 0
+                    ):
+                        has_active_canary_sibling = True
+                        break
+        if has_active_canary_sibling:
+            entry["effective_concurrency"] = 0
         else:
-            try:
-                entry["effective_concurrency"] = min(int(current_eff), configured_limit or 1)
-            except (TypeError, ValueError):
+            if current_eff is None or int(current_eff or 0) == 0:
                 entry["effective_concurrency"] = min(1, configured_limit or 1)
+            else:
+                try:
+                    entry["effective_concurrency"] = min(int(current_eff), configured_limit or 1)
+                except (TypeError, ValueError):
+                    entry["effective_concurrency"] = min(1, configured_limit or 1)
     elif lifecycle == "healthy":
         entry["effective_concurrency"] = configured_limit
     return lifecycle, entry
@@ -2295,6 +2315,10 @@ def start_worker_for_request(
     now_dt = datetime.now(UTC)
     now = isoformat_utc(now_dt)
     result_metadata = result.metadata if isinstance(result.metadata, dict) else {}
+    auth_hash = (
+        provider_auth_identity_hash(config, agent["id"])
+        or provider_auth_identity_hash(config, request.provider)
+    )
     state.setdefault("workers", {})[worker_run_id] = {
         "run_id": worker_run_id,
         "provider": request.provider,
@@ -2302,6 +2326,9 @@ def start_worker_for_request(
         "logical_agent_id": logical_agent_id,
         "dispatch_slot_id": dispatch_slot_id or None,
         "dispatch_slot": request.metadata.get("dispatch_slot"),
+        "auth_identity_hash": auth_hash or None,
+        "started_at": now,
+        "created_at": now,
         # Keep the credential/account pool captured at dispatch time.  Looking
         # it up from `request.provider` here used to split one real account
         # across aliases and let each alias consume a separate quota budget.

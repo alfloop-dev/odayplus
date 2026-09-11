@@ -751,6 +751,11 @@ def _merge_account_pool_runtime(
             d_latest_rec = max(d_rec, d_probe)
             m_latest_rec = max(m_rec, m_probe)
 
+            d_run = str(d_entry.get("last_worker_run_id") or "")
+            m_run = str(m_entry.get("last_worker_run_id") or "")
+            d_auth = str(d_entry.get("auth_identity_hash") or "")
+            m_auth = str(m_entry.get("auth_identity_hash") or "")
+
             # 1. Compare failure epochs: a newer genuine failure must always survive stale recovery / older cooldown
             if d_fail and m_fail and d_fail != m_fail:
                 if d_fail > m_fail:
@@ -800,17 +805,39 @@ def _merge_account_pool_runtime(
                     merged_pools[pool_id] = deepcopy(m_entry)
                     continue
 
-            # 3. Same failure epoch (d_fail == m_fail)
-            # If one is cooldown and the other is recovering/healthy for this epoch:
+            # 3. Same failure timestamp / epoch (d_fail == m_fail)
+            # Distinct failure runs must remain distinct even if timestamps match
             if d_fail == m_fail and d_fail:
-                if d_state == "cooldown" and m_state in {"recovering", "healthy"}:
-                    if m_latest_rec >= d_fail:
-                        merged_pools[pool_id] = deepcopy(m_entry)
-                        continue
-                elif m_state == "cooldown" and d_state in {"recovering", "healthy"}:
-                    if d_latest_rec >= m_fail:
+                distinct_failures = (
+                    (bool(d_run) and bool(m_run) and d_run != m_run)
+                    or (bool(d_auth) and bool(m_auth) and d_auth != m_auth)
+                )
+                if distinct_failures:
+                    if d_state == "cooldown" and m_state != "cooldown":
                         merged_pools[pool_id] = deepcopy(d_entry)
                         continue
+                    elif m_state == "cooldown" and d_state != "cooldown":
+                        merged_pools[pool_id] = deepcopy(m_entry)
+                        continue
+                    elif d_state == "cooldown" and m_state == "cooldown":
+                        if d_gen > m_gen:
+                            merged_pools[pool_id] = deepcopy(d_entry)
+                            continue
+                        elif m_gen > d_gen:
+                            merged_pools[pool_id] = deepcopy(m_entry)
+                            continue
+                        else:
+                            merged_pools[pool_id] = deepcopy(m_entry)
+                            continue
+                else:
+                    if d_state == "cooldown" and m_state in {"recovering", "healthy"}:
+                        if m_latest_rec >= d_fail:
+                            merged_pools[pool_id] = deepcopy(m_entry)
+                            continue
+                    elif m_state == "cooldown" and d_state in {"recovering", "healthy"}:
+                        if d_latest_rec >= m_fail:
+                            merged_pools[pool_id] = deepcopy(d_entry)
+                            continue
 
             # 4. Compare generation / recovery / probe
             if d_gen > m_gen:
