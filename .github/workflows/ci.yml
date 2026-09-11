@@ -146,36 +146,13 @@ jobs:
       - name: Test orchestrator and infrastructure code
         run: uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling infra
 
-  product:
+  product-lint-unit:
     needs: change-scope
     if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
-    # Recent product runs reached 35 minutes. Keep a finite ceiling with
-    # enough headroom for the Postgres and dependency-audit setup.
-    timeout-minutes: 60
-    services:
-      postgres:
-        image: postgis/postgis:16-3.5
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: oday_product_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    env:
-      INTAKE_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/oday_product_test
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
-        with:
-          # Full history: the API contract gate diffs the OpenAPI artifact
-          # against its merge base with the target branch. The default shallow
-          # clone has no merge base, which would make the breaking-change check
-          # silently skip rather than fail.
-          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -185,15 +162,8 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
       - name: Install dependencies
-        run: |
-          uv sync
-          npm ci
+        run: uv sync
 
       - name: Prepare local config
         run: make bootstrap
@@ -222,6 +192,43 @@ jobs:
       - name: Test product code
         run: uv run pytest -m "not requires_live_env and not performance" tests modules apps shared models -n auto
 
+  product-db:
+    needs: change-scope
+    if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgis/postgis:16-3.5
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: oday_product_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      INTAKE_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/oday_product_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Prepare local config
+        run: make bootstrap
+
       - name: Test official real-estate outcomes on PostgreSQL 16
         run: uv run pytest tests/integration/test_official_real_estate_postgresql.py
 
@@ -243,6 +250,34 @@ jobs:
           uv run pytest -m "requires_live_env and not requires_postgis" \
             tests/contract tests/ops tests/integration
 
+  product-api-contract:
+    needs: change-scope
+    if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: the API contract gate diffs the OpenAPI artifact
+          # against its merge base with the target branch. The default shallow
+          # clone has no merge base, which would make the breaking-change check
+          # silently skip rather than fail.
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Prepare local config
+        run: make bootstrap
+
       # Blocks: an API change that never reached the checked-in OpenAPI
       # artifact, an artifact change that never reached the generated client,
       # and any breaking change not listed in
@@ -252,11 +287,71 @@ jobs:
         env:
           ODP_API_BASE_REF: ${{ github.base_ref && format('origin/{0}', github.base_ref) || 'origin/dev' }}
 
+  product-security:
+    needs: change-scope
+    if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Prepare local config
+        run: make bootstrap
+
       - name: Run security checks
         run: make security
 
+  product-node:
+    needs: change-scope
+    if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Run Node workspace checks
         run: make node-check
+
+  # product is the required status check context. It aggregates the parallel
+  # product verification lanes (lint/unit, db, api-contract, security, node).
+  # It always runs, inspecting `needs` to ensure all required lanes succeeded
+  # when change scope requires them, failing closed on any error or missing lane.
+  product:
+    needs:
+      - change-scope
+      - product-lint-unit
+      - product-db
+      - product-api-contract
+      - product-security
+      - product-node
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify parallel product lanes
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          python3 delivery_toolchain/governance/verify_ci_product_jobs.py
+
 
   # ODP-CI-PERFORMANCE-GATE-ISOLATION-001.
   #
