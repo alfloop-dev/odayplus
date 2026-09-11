@@ -5,7 +5,7 @@
   "reconciled_by": "Antigravity7",
   "assigned_reviewer": "Codex2",
   "target_branch": "task/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002-RECOVERY-20260911",
-  "base_sha": "4499a2993e37b62033926b07de8d8d2e8469a6c7",
+  "base_sha": "b42b1f82321825ad2c34486418fe2aebab58ef0e",
   "historical_delivery": {
     "repository": "alfloop-dev/odayplus",
     "pr_number": 1096,
@@ -322,18 +322,25 @@
   },
   "raw_command_receipts": [
     {
-      "command": "git diff --check 4499a2993e37b62033926b07de8d8d2e8469a6c7..HEAD",
+      "command": "git diff --check",
       "exit_code": 0,
-      "executed_at": "2026-09-11T11:50:22Z",
+      "executed_at": "2026-09-11T12:05:32Z",
       "executor": "Antigravity7",
       "output_reference": "clean diff formatting across all changed files"
     },
     {
-      "command": "python3 docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002/verify_reconciliation.py",
+      "command": "python3 delivery_toolchain/governance/check_code_boundaries.py",
       "exit_code": 0,
-      "executed_at": "2026-09-11T11:55:00Z",
+      "executed_at": "2026-09-11T12:05:06Z",
       "executor": "Antigravity7",
-      "output_reference": "OK: All criteria and provenance validated successfully"
+      "output_reference": "Code boundary checks passed for 1157 files"
+    },
+    {
+      "command": "python3 delivery_toolchain/git/check_task_delivery_identity.py --repo . --task-id ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 --base origin/dev --head HEAD --expected-branch task/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002-RECOVERY-20260911 --actual-branch task/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002-RECOVERY-20260911",
+      "exit_code": 0,
+      "executed_at": "2026-09-11T12:05:08Z",
+      "executor": "Antigravity7",
+      "output_reference": "Delivery range identity verified (no extraneous commits)"
     },
     {
       "command": "uv run pytest tests/tooling/test_dependency_audit_boundary.py",
