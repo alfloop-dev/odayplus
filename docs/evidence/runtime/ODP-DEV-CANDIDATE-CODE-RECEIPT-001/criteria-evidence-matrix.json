@@ -1,0 +1,291 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "ODP-DEV-CANDIDATE-CODE-RECEIPT-001",
+  "candidate_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+  "gate_id": "gate-0",
+  "gate_name": "Code Gate",
+  "overall_gate_status": "blocked",
+  "release_decision": "no-go",
+  "criteria": [
+    {
+      "criterion_id": "GATE0-CRIT-1",
+      "index": 1,
+      "title": "Lint and Format Checks",
+      "requirement": "lint and format checks pass on the release candidate commit",
+      "status": "partial_blocked",
+      "verdict_reason": "CI orchestrator job (101796385286) passed code boundary validation (1137 files) and orchestrator ruff lint on exact C. Full repository Python ruff lint and frontend ESLint were skipped in CI and offline scratch observations lack preserved terminal logs (unverified). Diagnostic scratch boundary probe observed stale inventory (exit 1), leaving cause unknown pending environment reconciliation against clean CI. Dedicated code format check evidence (ruff format / prettier) is missing.",
+      "evidence": [
+        {
+          "kind": "immutable_ci_job_receipt",
+          "ref": "RCPT-CODE-CI-001",
+          "run_id": 34138969380,
+          "job_id": 101796385286,
+          "timestamp": "2026-09-07T15:35:08Z",
+          "result": "PASSED",
+          "summary": "Code boundary checks passed for 1137 files on clean CI runner checkout of C (step duration 5s)."
+        },
+        {
+          "kind": "offline_diagnostic_observation",
+          "ref": "RCPT-CODE-OBS-001",
+          "result": "DISCREPANCY_UNVERIFIED",
+          "summary": "Offline scratch probe reported stale inventory; cause left unknown pending environment reconciliation against clean CI."
+        },
+        {
+          "kind": "unverified_offline_observation",
+          "ref": "RCPT-CODE-LINT-001",
+          "result": "UNVERIFIED",
+          "summary": "Full repository Python ruff lint was not run in CI; offline scratch observation lacks preserved terminal logs."
+        },
+        {
+          "kind": "uncovered_missing_evidence",
+          "ref": "RCPT-CODE-FMT-001",
+          "result": "UNKNOWN",
+          "summary": "Dedicated code format check evidence missing (ruff format --check / prettier --check not executed in historical candidate C record)."
+        },
+        {
+          "kind": "unverified_offline_observation",
+          "ref": "RCPT-CODE-LINT-002",
+          "result": "UNVERIFIED",
+          "summary": "Frontend ESLint was skipped in CI on candidate C; offline scratch observation lacks preserved terminal logs."
+        }
+      ],
+      "verified_items": [
+        "CI orchestrator job code boundary validation passed on exact C (1137 files, run 34138969380 job 101796385286)",
+        "CI orchestrator ruff lint passed for .orchestrator, delivery_toolchain, scripts"
+      ],
+      "gaps_and_uncovered": [
+        "Dedicated code formatting evidence missing (ruff format --check / prettier --check not executed in historical candidate C record).",
+        "Full repository Python ruff lint and frontend ESLint were skipped in CI; offline scratch observations lack immutable terminal logs (unverified).",
+        "Discrepancy between clean CI boundary check (passed, 1137 files) and offline scratch observation (stale inventory) requires environment/tooling input reconciliation."
+      ],
+      "follow_up_owner": "pending_supervisor_routing: tooling_execution_lane"
+    },
+    {
+      "criterion_id": "GATE0-CRIT-2",
+      "index": 2,
+      "title": "Static and Type Checks",
+      "requirement": "static/type checks pass where configured",
+      "status": "partial",
+      "verdict_reason": "All five repository governance static verifiers (measurement defaults, requirement members, vocabularies, orchestrator config, config wiring) passed cleanly in CI on candidate C (run 34138969380 job 101796385286). Web workspace typecheck (tsc --noEmit) was skipped in CI and is an unverified offline observation. Configured typechecks across packages workspaces (design-tokens, domain-types, openapi-client, ui-domain, ui) specified in Makefile:90-97 lack historical execution receipts, and web tsc is not equivalent (ui-domain enables noUncheckedIndexedAccess and includes tests).",
+      "evidence": [
+        {
+          "kind": "immutable_ci_job_receipt",
+          "ref": "RCPT-CODE-CI-GOV-001",
+          "run_id": 34138969380,
+          "job_id": 101796385286,
+          "result": "PASSED",
+          "summary": "19 known score defaults verified in CI, 19 valid exemptions recorded with owners."
+        },
+        {
+          "kind": "immutable_ci_job_receipt",
+          "ref": "RCPT-CODE-CI-GOV-002",
+          "run_id": 34138969380,
+          "job_id": 101796385286,
+          "result": "PASSED",
+          "summary": "9 set-valued requirements verified across 47 members in CI (36 satisfied, 11 noted)."
+        },
+        {
+          "kind": "immutable_ci_job_receipt",
+          "ref": "RCPT-CODE-CI-GOV-003",
+          "run_id": 34138969380,
+          "job_id": 101796385286,
+          "result": "PASSED",
+          "summary": "3 governed vocabularies clean in CI, no unapproved drift or new forks."
+        },
+        {
+          "kind": "immutable_ci_job_receipt",
+          "ref": "RCPT-CODE-CI-GOV-004",
+          "run_id": 34138969380,
+          "job_id": 101796385286,
+          "result": "PASSED",
+          "summary": "3 config documents and 190 production config keys verified in CI."
+        },
+        {
+          "kind": "unverified_offline_observation",
+          "ref": "RCPT-CODE-TSC-001",
+          "result": "UNVERIFIED",
+          "summary": "tsc --noEmit in web workspace was skipped in CI on candidate C; offline observation lacks preserved terminal logs."
+        },
+        {
+          "kind": "uncovered_missing_evidence",
+          "ref": "RCPT-CODE-TSC-002",
+          "result": "UNKNOWN",
+          "summary": "Typecheck across packages workspaces (packages/design-tokens, domain-types, openapi-client, ui-domain, ui) lacks historical execution receipts."
+        }
+      ],
+      "verified_items": [
+        "Governance measurement default enforcement passed in CI (job 101796385286)",
+        "Requirement member resolvability passed in CI (job 101796385286)",
+        "Governed vocabulary drift check passed in CI (job 101796385286)",
+        "Config validation and production wiring checks passed in CI (job 101796385286)"
+      ],
+      "gaps_and_uncovered": [
+        "Typecheck across packages workspaces (packages/design-tokens, packages/domain-types, packages/openapi-client, packages/ui-domain, packages/ui) has no historical receipt at candidate C.",
+        "Web workspace TypeScript check (tsc --noEmit) was skipped in CI on candidate C; offline observation is unverified."
+      ],
+      "follow_up_owner": "pending_supervisor_routing: frontend_execution_lane"
+    },
+    {
+      "criterion_id": "GATE0-CRIT-3",
+      "index": 3,
+      "title": "Unit Tests for Backend and Domain Logic",
+      "requirement": "unit tests pass for changed backend and domain logic",
+      "status": "blocked",
+      "verdict_reason": "CI orchestrator and delivery tooling tests passed cleanly in CI on candidate C (run 34138969380 job 101796385286). However, GitHub Actions CI product and product-e2e test jobs were skipped on candidate commit 596b9c9a in runs 34138969380 and 34138605942. Offline backend domain/persistence/API unit test observations (936 passed) lack preserved terminal logs or verifiable isolate proofs at C and cannot be claimed as verified passes.",
+      "evidence": [
+        {
+          "kind": "immutable_ci_job_receipt",
+          "ref": "RCPT-CODE-CI-002",
+          "run_id": 34138969380,
+          "result": "SKIPPED",
+          "summary": "CI jobs product, product-e2e-gate, and performance-gate were skipped on candidate commit 596b9c9a."
+        },
+        {
+          "kind": "immutable_ci_job_receipt",
+          "ref": "RCPT-CODE-CI-TOOL-001",
+          "run_id": 34138969380,
+          "job_id": 101796385286,
+          "result": "PASSED",
+          "summary": "Orchestrator code and delivery tooling tests passed cleanly in CI (step 14)."
+        },
+        {
+          "kind": "unverified_offline_observation",
+          "ref": "RCPT-CODE-UNIT-001",
+          "result": "UNVERIFIED",
+          "summary": "Domain models/drift unit tests were skipped in CI on candidate C; offline scratch observation lacks preserved terminal logs."
+        },
+        {
+          "kind": "unverified_offline_observation",
+          "ref": "RCPT-CODE-UNIT-002",
+          "result": "UNVERIFIED",
+          "summary": "Persistence and migration tests were skipped in CI on candidate C; offline scratch observation lacks preserved terminal logs."
+        },
+        {
+          "kind": "unverified_offline_observation",
+          "ref": "RCPT-CODE-UNIT-003",
+          "result": "UNVERIFIED",
+          "summary": "HeatZone API integration tests were skipped in CI on candidate C; offline scratch observation lacks preserved terminal logs."
+        }
+      ],
+      "verified_items": [
+        "Orchestrator code and delivery tooling tests passed in clean CI (run 34138969380 job 101796385286 step 14)"
+      ],
+      "gaps_and_uncovered": [
+        "GitHub Actions CI on candidate commit 596b9c9a skipped the product and product-e2e test jobs. Full CI product backend test execution is required for candidate admission; offline scratch observations are unverified.",
+        "Gate 1 Contract tests (tests/contract) and Gate 4 Security tests (tests/security) belong to independent gates and are not executed in Gate 0."
+      ],
+      "follow_up_owner": "pending_supervisor_routing: backend_ci_execution_lane"
+    },
+    {
+      "criterion_id": "GATE0-CRIT-4",
+      "index": 4,
+      "title": "Component Tests for Frontend Surfaces",
+      "requirement": "component tests pass for changed frontend surfaces",
+      "status": "unverified",
+      "verdict_reason": "Frontend component tests (Vitest 525 tests), Next.js workspace build, and bundle budget checks were skipped in CI on candidate C. Offline scratch runs reported passing observations but lack preserved terminal logs or verifiable isolate bindings at C.",
+      "evidence": [
+        {
+          "kind": "unverified_offline_observation",
+          "ref": "RCPT-CODE-COMP-001",
+          "result": "UNVERIFIED",
+          "summary": "Vitest component suite was skipped in CI on candidate C; offline scratch observation lacks preserved terminal logs."
+        },
+        {
+          "kind": "unverified_offline_observation",
+          "ref": "RCPT-CODE-BLD-001",
+          "result": "UNVERIFIED",
+          "summary": "Next.js production build was skipped in CI on candidate C; offline scratch observation lacks preserved terminal logs."
+        },
+        {
+          "kind": "unverified_offline_observation",
+          "ref": "RCPT-CODE-BLD-002",
+          "result": "UNVERIFIED",
+          "summary": "Bundle budget check was skipped in CI on candidate C; offline scratch observation lacks preserved terminal logs."
+        }
+      ],
+      "verified_items": [],
+      "gaps_and_uncovered": [
+        "Frontend Vitest component tests, Next.js build, and bundle budget checks were skipped in CI on candidate C; offline observations lack preserved terminal logs and remain unverified."
+      ],
+      "follow_up_owner": "pending_supervisor_routing: frontend_execution_lane"
+    },
+    {
+      "criterion_id": "GATE0-CRIT-5",
+      "index": 5,
+      "title": "Immutable Build Traceability",
+      "requirement": "build artifacts are immutable and traceable to the release candidate SHA",
+      "status": "passed",
+      "verdict_reason": "Four component container images (api, web, worker, scheduler) and migration job were built and signed with Cosign in producer run 34179207603, verified with cosign verify and published with 6 immutable raw artifacts in publisher run 34179791241, bound to candidate SHA 596b9c9a, with manifest self-consistency verified via C release_manifest validator in pinned handoff \u00a713.5.",
+      "evidence": [
+        {
+          "kind": "immutable_ci_run_receipt",
+          "ref": "RCPT-CODE-BLD-TRACE-001",
+          "run_id": 34179207603,
+          "role": "Image producer run (built, pushed, signed, and attested four images; failure at step 20)",
+          "rekor_log_indices": {
+            "api": "2754425715",
+            "worker": "2754426118",
+            "scheduler": "2754426482",
+            "web": "2754427686"
+          }
+        },
+        {
+          "kind": "reused_immutable_source_receipt",
+          "ref": "RCPT-CODE-BLD-TRACE-002",
+          "run_id": 34179791241,
+          "role": "Artifact publisher run (reused immutable digests, verified with cosign verify, published 6 artifacts)",
+          "source_ref": "github://alfloop-dev/odayplus@108249fa921e128f734ebd917a933fa562f4b7e1/docs/evidence/runtime/ODP-DEV-BUILD-ARTIFACT-HANDOFF-003/build-dispatch-evidence.md#L549-L905"
+        },
+        {
+          "kind": "reused_immutable_source_receipt",
+          "ref": "RCPT-CODE-MANIFEST-001",
+          "source_ref": "github://alfloop-dev/odayplus@108249fa921e128f734ebd917a933fa562f4b7e1/docs/evidence/runtime/ODP-DEV-BUILD-ARTIFACT-HANDOFF-003/build-dispatch-evidence.md#L652-L689",
+          "result": "PASSED",
+          "summary": "Manifest self-consistency and candidate SHA binding verified via C release_manifest validator in pinned handoff \u00a713.5."
+        }
+      ],
+      "verified_items": [
+        "Four immutable container images in Artifact Registry pinned by exact digest",
+        "Cosign signatures with Fulcio certificate claims and offline Rekor timestamp bundles",
+        "Release manifest digest self-consistency and candidate SHA binding verified via C release_manifest validator",
+        "Six raw release artifacts byte-compared and verified"
+      ],
+      "gaps_and_uncovered": [],
+      "follow_up_owner": null
+    }
+  ],
+  "uncovered_gaps_and_blockers": [
+    {
+      "gap_id": "GAP-CODE-001",
+      "type": "verification_discrepancy_and_format_gap",
+      "severity": "medium",
+      "description": "Clean CI run 34138969380 passed code boundary checks for 1137 files, whereas offline scratch probe reported stale inventory (exit 1). Cause left unknown pending environment reconciliation against clean CI. Dedicated format check receipt (ruff format / prettier) is also missing.",
+      "resolution_required": "Reconcile offline boundary inventory environment difference against clean CI runner behavior, and capture dedicated code format check receipts under clean candidate C checkout.",
+      "owner": "pending_supervisor_routing: tooling_execution_lane"
+    },
+    {
+      "gap_id": "GAP-CODE-002",
+      "type": "static_type_coverage_gap",
+      "severity": "medium",
+      "description": "Makefile:90-97 configures typecheck --workspaces across packages (design-tokens, domain-types, openapi-client, ui-domain, ui). Only apps/web has a web-specific typecheck run; packages workspaces lack historical receipts on candidate C (and ui-domain includes tests and noUncheckedIndexedAccess).",
+      "resolution_required": "Capture execution receipts for npm run typecheck --workspaces across packages under clean exact-C checkout.",
+      "owner": "pending_supervisor_routing: frontend_execution_lane"
+    },
+    {
+      "gap_id": "GAP-CODE-003",
+      "type": "ci_coverage_gap",
+      "severity": "high",
+      "description": "GitHub Actions CI runs on candidate commit 596b9c9a (runs 34138969380 and 34138605942) skipped the product job due to change-scope classifying the push as development_tooling. Full CI backend unit/integration test execution on exact candidate C is missing for Gate 0 code verification. (Note: product-e2e-gate and performance-gate are tracked separately as contextual / downstream gate requirements and are not undifferentiated Gate 0 remedies).",
+      "resolution_required": "Capture clean CI product backend unit/integration test execution receipts on exact candidate C (or execute verifiable isolated unit tests for changed backend domains with preserved terminal/job logs).",
+      "owner": "pending_supervisor_routing: backend_ci_execution_lane"
+    },
+    {
+      "gap_id": "GAP-CODE-004",
+      "type": "historical_dependency",
+      "severity": "medium",
+      "description": "ODP-PLAN-ENGINEERING-HARDENING-001 is listed as a blocker in RELEASE_GATE_REGISTRY.json. Investigation confirms it is a historical pending reconciliation (\u6b77\u53f2\u5f85\u6838\u5c0d) with sidecar acceptance packet at immutable commit 42e3b207cd125ef6a2fbc3f3aa092a88853587f2 (parent last approved HEAD d24fd0c4; status: blocked pending Human/Ops risk decision on 13 dev-tool high vulnerabilities); no active canonical task exists in ai-status.json.",
+      "resolution_required": "Release Gate Authority / Supervisor to reconcile RELEASE_GATE_REGISTRY.json blocker entry with historical sidecar evidence at commit 42e3b207cd125ef6a2fbc3f3aa092a88853587f2 (parent HEAD d24fd0c4) during release gate reconciliation cycle; no active canonical task in ai-status.json.",
+      "owner": "pending_supervisor_routing: release_gate_reconciliation_authority"
+    }
+  ]
+}
