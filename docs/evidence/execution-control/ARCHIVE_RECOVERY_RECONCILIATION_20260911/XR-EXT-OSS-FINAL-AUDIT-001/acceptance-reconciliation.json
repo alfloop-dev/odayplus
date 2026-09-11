@@ -1,0 +1,253 @@
+{
+  "task_id": "XR-EXT-OSS-FINAL-AUDIT-001",
+  "task_title": "第三方與 OSS 技術閉合稽核（B14 CI token wiring）",
+  "task_class": "documentation",
+  "phase": "Third-party data production closeout / History Recovery",
+  "owner": "Antigravity4",
+  "reviewer": "Codex",
+  "recorded_at": "2026-09-11T11:00:00Z",
+  "reconciliation_target": {
+    "repository": "alfloop-dev/odayplus",
+    "pinned_dev_sha": "4499a2993e37b62033926b07de8d8d2e8469a6c7",
+    "continuation_branch": "task/XR-EXT-OSS-FINAL-AUDIT-001-RECOVERY-20260911"
+  },
+  "repository_correction": {
+    "inventory_declared_repository": "alfloop-dev/odayplus",
+    "actual_delivery_repository": "alfloop-dev/oday-data-platform",
+    "mismatched_candidate_pr": {
+      "repository": "alfloop-dev/odayplus",
+      "pr_number": 996,
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/996",
+      "head_sha": "b436a3fcab9cad520a4d10a511d1ab3f4eb7dc9a",
+      "merge_commit_sha": "0dc5cebc90cf3a55c0e2805459bcdda19f9c4e36",
+      "head_ref": "task/ODP-LEGACY-DISPOSITION-RUNTIME-GATES-001",
+      "pr_body_task_id": "ODP-LEGACY-DISPOSITION-RUNTIME-GATES-001",
+      "reason_for_mismatch": "PR #996 是 odayplus 端的 consumer disposition 交付 PR（對應任務 ODP-LEGACY-DISPOSITION-RUNTIME-GATES-001，負責人 Codex2，評審人 Codex），其標題提及本任務係因其支援 XR-EXT-OSS-FINAL-AUDIT-001 B10/B11。它屬於跨 repo 證據鏈中的 consumer 錨定節點，非本任務之 primary delivery PR。"
+    },
+    "corrected_primary_delivery_pr": {
+      "repository": "alfloop-dev/oday-data-platform",
+      "pr_number": 61,
+      "pr_url": "https://github.com/alfloop-dev/oday-data-platform/pull/61",
+      "title": "XR-EXT-OSS-FINAL-AUDIT-001: complete external data and OSS final audit",
+      "head_ref": "task/XR-EXT-OSS-FINAL-AUDIT-001",
+      "head_sha": "b1824c979aca008da10aed01fbc0c0a269c581dc",
+      "merge_commit_sha": "7b0670d7b37e59e06bc9fea5b6003d1964be2c3c",
+      "merged_at": "2026-08-24T05:54:54Z",
+      "state": "MERGED",
+      "note": "本任務三個宣告產物（docs/evidence/final/XR-EXT-OSS-FINAL-AUDIT-001/、scripts/audit_external_oss_closeout.py、tests/integration/test_external_oss_closeout.py）皆完整存在於 alfloop-dev/oday-data-platform 之 merge commit 7b0670d7。"
+    }
+  },
+  "historical_delivery": {
+    "repository": "alfloop-dev/oday-data-platform",
+    "pr_number": 61,
+    "pr_url": "https://github.com/alfloop-dev/oday-data-platform/pull/61",
+    "head_sha": "b1824c979aca008da10aed01fbc0c0a269c581dc",
+    "merge_commit_sha": "7b0670d7b37e59e06bc9fea5b6003d1964be2c3c",
+    "merged": true,
+    "merged_at": "2026-08-24T05:54:54Z",
+    "delivered_artifacts": [
+      "docs/evidence/final/XR-EXT-OSS-FINAL-AUDIT-001/README.md",
+      "docs/evidence/final/XR-EXT-OSS-FINAL-AUDIT-001/closeout-audit-manifest.json",
+      "docs/evidence/final/XR-EXT-OSS-FINAL-AUDIT-001/cross-repo-evidence-ledger.json",
+      "docs/evidence/final/XR-EXT-OSS-FINAL-AUDIT-001/source-permission-matrix.json",
+      "docs/evidence/final/XR-EXT-OSS-FINAL-AUDIT-001/technical-gap-closure-matrix.json",
+      "scripts/audit_external_oss_closeout.py",
+      "tests/integration/test_external_oss_closeout.py"
+    ],
+    "ci_checks": [
+      {
+        "name": "source-suite",
+        "conclusion": "success",
+        "status": "completed",
+        "started_at": "2026-08-24T05:50:55Z",
+        "completed_at": "2026-08-24T05:54:06Z"
+      },
+      {
+        "name": "closeout-audit",
+        "conclusion": "success",
+        "status": "completed",
+        "started_at": "2026-08-24T05:50:55Z",
+        "completed_at": "2026-08-24T05:51:52Z"
+      },
+      {
+        "name": "producer-compatibility",
+        "conclusion": "success",
+        "status": "completed",
+        "started_at": "2026-08-24T05:50:56Z",
+        "completed_at": "2026-08-24T05:51:08Z"
+      },
+      {
+        "name": "consumer-readback",
+        "conclusion": "success",
+        "status": "completed",
+        "started_at": "2026-08-24T05:50:57Z",
+        "completed_at": "2026-08-24T05:51:02Z"
+      },
+      {
+        "name": "contract-bundles",
+        "conclusion": "success",
+        "status": "completed",
+        "started_at": "2026-08-24T05:50:55Z",
+        "completed_at": "2026-08-24T05:52:26Z"
+      },
+      {
+        "name": "emgi-task-manifest",
+        "conclusion": "success",
+        "status": "completed",
+        "started_at": "2026-08-24T05:50:55Z",
+        "completed_at": "2026-08-24T05:51:01Z"
+      },
+      {
+        "name": "Build and smoke test images",
+        "conclusion": "success",
+        "status": "completed",
+        "started_at": "2026-08-24T05:50:55Z",
+        "completed_at": "2026-08-24T05:52:23Z"
+      }
+    ],
+    "historical_approval": {
+      "context": "task-review-gate",
+      "approver": "Codex",
+      "state": "success",
+      "updated_at": "2026-08-24T05:54:45Z",
+      "description": "Approved by assigned reviewer Codex"
+    },
+    "approval_to_merge_seconds": 9
+  },
+  "readback_evidence_sources": {
+    "observed_at": "2026-09-07T15:14:37Z",
+    "collector": "Claude",
+    "cross_repo_ledger": "docs/evidence/final/XR-EXT-OSS-FINAL-AUDIT-001/cross-repo-evidence-ledger.json @ 7b0670d7",
+    "technical_gap_matrix": "docs/evidence/final/XR-EXT-OSS-FINAL-AUDIT-001/technical-gap-closure-matrix.json @ 7b0670d7",
+    "source_permission_matrix": "docs/evidence/final/XR-EXT-OSS-FINAL-AUDIT-001/source-permission-matrix.json @ 7b0670d7",
+    "closeout_audit_manifest": "docs/evidence/final/XR-EXT-OSS-FINAL-AUDIT-001/closeout-audit-manifest.json @ 7b0670d7",
+    "producer_delivery": {
+      "pr_number": 60,
+      "head_sha": "0708eef7",
+      "merge_commit_sha": "d3069c93",
+      "ci_status": "PASS",
+      "reviewed_image_digest": "sha256:f6934705...",
+      "sbom_sha256": "df9238a1...",
+      "notice_sha256": "e3aa79c2...",
+      "contract_lock_sha256": "c2c153fb..."
+    },
+    "consumer_pinned_merges": [
+      {
+        "pr_number": 995,
+        "role": "provider-off",
+        "head_sha": "e53fc5f6",
+        "merge_commit_sha": "9199e59f"
+      },
+      {
+        "pr_number": 996,
+        "role": "disposition",
+        "head_sha": "b436a3fc",
+        "merge_commit_sha": "0dc5cebc"
+      },
+      {
+        "pr_number": 991,
+        "role": "cutover",
+        "head_sha": "786b638f",
+        "merge_commit_sha": "b32fd65f"
+      },
+      {
+        "pr_number": 983,
+        "role": "license-gate"
+      }
+    ]
+  },
+  "acceptance_criteria_reconciliation": [
+    {
+      "index": 1,
+      "criterion": "驗證兩個 repo 的精確 commit、PR、CI、image、snapshot readback、資料新鮮度、coverage、lineage、SBOM 與 NOTICE 可重算。",
+      "classes": [
+        "R",
+        "D"
+      ],
+      "classes_zh": [
+        "runtime／部署",
+        "程式或文件交付"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "alfloop-dev/oday-data-platform PR #61 merge commit 7b0670d7 內 cross-repo-evidence-ledger.json 完整記錄跨 repo 收據：Producer 包含 PR #60（approved head 0708eef7、merge d3069c93，4 個 required workflow 均為 PASS，含 image digest sha256:f6934705…、SBOM sha256 df9238a1…、NOTICE sha256 e3aa79c2…、contract lock sha256 c2c153fb…）；Consumer 包含 odayplus PR #995、PR #996、PR #991、PR #983 之 pinned merge；七大品質軸（checksums 11/11、consumer_readback 11/11、counts 11/11、coverage 11/11、freshness 11/11、lineage 11/11、identities 44471/44471）全數 PASS；Snapshot readback 8/8 domains、54,443 筆記錄驗證一致。",
+      "boundary": "所有 commit、digest 與計數均經由 cross-repo-evidence-ledger.json 精確重算；未推斷任何 live 部署或未經授權的生產資料寫入。"
+    },
+    {
+      "index": 2,
+      "criterion": "所有非人為許可的技術 gap 必須關閉；資料授權決定則逐來源列為待具名人員決定，不得混成工程失敗。",
+      "classes": [
+        "H",
+        "D"
+      ],
+      "classes_zh": [
+        "人類授權",
+        "程式或文件交付"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "technical-gap-closure-matrix.json @ 7b0670d7 記載 total_initial_gaps=10、technical_gaps_closed=6、unresolved_technical_blockers=0、legal_gates_itemized=4，判定結論為 ALL_TECHNICAL_GAPS_RESOLVED_SOURCES_OFF。四項法律待決項目（LICENSE-BLOCKED-CONSUMER、LICENSE-BLOCKED-PRODUCER、LICENSE-POLICY-NOT-APPROVED、SOURCE-DATA-LICENCE-NOT-MODELLED）逐項標註為 ITEMIZED_PENDING_LEGAL_GATE 並精確指向 HUMAN-OSS-LEGAL-APPROVAL-001。技術就緒與法律決策在收據內嚴格區隔，不混為工程缺陷。",
+      "boundary": "技術 gap 均已確認閉合；法律待決事項保留予具名 Legal/Security/Risk 人員，本稽核不代簽、不豁免、亦不偽造授權。"
+    },
+    {
+      "index": 3,
+      "criterion": "證明未核准來源的 enabled=false、核准收據欄位為空、schedule STOPPED、provider credential 未投影且 public egress 為 default deny。",
+      "classes": [
+        "X"
+      ],
+      "classes_zh": [
+        "外部來源啟用狀態"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "source-permission-matrix.json @ 7b0670d7 記載 total_sources=16、enabled_sources=0、sources_with_receipt=0、running_schedules=0、public_egress_open=false；canonical_policy_module 指向 src/oday_data_platform/external/policy/update.py:SOURCE_UPDATE_POLICIES，11 個 SCHEDULED 來源均為 STOPPED，5 個 ON_DEMAND/EVENT_DRIVEN 來源為 NOT_SCHEDULED。cross-repo-evidence-ledger.json egress_audit 記錄 NetworkPolicy emgi-default-deny-public-egress（manifest sha256 349c0446…，default_deny=true，public_internet_blocked=true，CIDRs 僅限 RFC1918 與 metadata 169.254.169.254/32）。",
+      "boundary": "16 個外部資料來源維持全部關閉（enabled=false、核准收據為空、排程停止、憑證未投影、public egress default deny）；未開放任何外部網路連線或資料擷取。"
+    },
+    {
+      "index": 4,
+      "criterion": "證明 ODayPlus 只有 platform snapshot consumer，沒有第二個 external producer 或開發期 ingestion 旁路。",
+      "classes": [
+        "R"
+      ],
+      "classes_zh": [
+        "runtime／部署"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "cross-repo-evidence-ledger.json single_consumer_architecture 記載 active_external_producers_in_default_mode=0、facade_mode=PLATFORM_PRIMARY、default_external_fetch_enabled=false、manual_ingestion_trigger_default=HTTP_410_GONE、scheduler_external_fetch_default=NOT_ENQUEUED、worker_external_fetch_default=NON_RETRYABLE_REJECT_BEFORE_SERVICE、legacy_code_state=RETAINED_FROZEN_ROLLBACK_ONLY。consumer_iac_verification 掃描 46 個 deployment surface，確認 credentials_projected=false、cloud_nat_removed=true、default_deny_egress_enforced=true，證明 ODayPlus 僅具備 platform snapshot consumer 架構。",
+      "boundary": "ODayPlus 單一 snapshot consumer 架構經由 consumer 程式碼與 IaC 靜態掃描證實，無第二外部生產者或開發期旁路。"
+    },
+    {
+      "index": 5,
+      "criterion": "技術稽核完成後才解除 HUMAN-OSS-LEGAL-APPROVAL-001 的依賴；本任務不自行批准任何來源。",
+      "classes": [
+        "H"
+      ],
+      "classes_zh": [
+        "人類授權"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "closeout-audit-manifest.json @ 7b0670d7 記載 technical_audit_verdict=TECHNICAL_READINESS_VERIFIED、open_technical_gaps_count=0、source_deployment_status=ALL_16_SOURCES_DISABLED_AND_STOPPED、egress_status=DEFAULT_DENY_ENFORCED、single_consumer_architecture_verified=true。其 pending_human_legal_gates 指向 HUMAN-OSS-LEGAL-APPROVAL-001，status=UNBLOCKED_BY_TECHNICAL_AUDIT（摘要為「由具名 Legal/Security/Risk 人員逐來源與逐套件決定授權；任何來源在決定前維持關閉」）。本任務 enabled_sources=0 且 sources_with_receipt=0，不自行批准任何來源，僅在技術稽核完成時解除阻擋，讓法務流程可獨立接續。",
+      "boundary": "技術稽核完成使 HUMAN-OSS-LEGAL-APPROVAL-001 具備審查前置條件；本任務未行使任何法務批准，亦未更動授權阻擋規則。"
+    }
+  ],
+  "human_decisions_alignment": {
+    "source_document": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+    "d01_d14_oss_policy_direction": "D01-D14 已確立內部 OSS 政策方向（D01-D04 個案附條件/允許、D05 第一方標示 UNLICENSED、D06-D14 共通政策）；但具名 approver、權威 receipt 及逐資料集許可仍待 HUMAN-OSS-LEGAL-APPROVAL-001 落地，不阻塞技術稽核完成。",
+    "status_consistency": "本技術稽核符合人類決策指引：不以法律未決作為技術未完成之通用理由，不批准來源、不改 license gate，保持技術證據與人類決策清晰分界。"
+  },
+  "summary": {
+    "criteria_total": 5,
+    "criteria_met": 5,
+    "criteria_partially_met": 0,
+    "criteria_unmet": 0,
+    "repository_correction_confirmed": true,
+    "technical_gaps_closed": true,
+    "human_oss_legal_dependency_unblocked_technically": true,
+    "human_oss_legal_approval_retained": true,
+    "sources_disabled_and_stopped": true,
+    "single_consumer_architecture_verified": true,
+    "reconciliation_verdict": "acceptance_fully_reconciled"
+  }
+}
