@@ -3242,6 +3242,10 @@ def dispatch_ready_tasks(
                         "generation": generation,
                     }
                     if not commit_canonical_task_transition(config, status):
+                        if existing_claim:
+                            live_task["helper_execution_lease"] = existing_claim
+                        else:
+                            live_task.pop("helper_execution_lease", None)
                         continue
                     tasks = [t for t in status.get(tasks_path, []) if t.get(task_id_field)]
                     task_map = {t.get(task_id_field): t for t in tasks}

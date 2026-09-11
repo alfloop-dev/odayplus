@@ -14573,19 +14573,19 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                 {
                     "id": "FREEZE-TEST-001",
                     "owner": "Antigravity4",
-                    "reviewer": "Claude",
+                    "reviewer": "Codex2",
                     "status": "review",
                     "review_submission": {"remote_sha": "1111111122222222333333334444444455555555"},
                 },
                 {
                     "id": "FREEZE-TEST-002",
-                    "owner": "Claude",
-                    "reviewer": "Claude",
+                    "owner": "Codex2",
+                    "reviewer": "Codex2",
                     "status": "review",
                 },
             ]
         }
-        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"):
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex2"):
             with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
                  unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
                 with unittest.mock.patch("ai_status.sync_all"):
@@ -15003,7 +15003,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                     {
                         "id": "FREEZE-TEST-020A",
                         "owner": "Antigravity4",
-                        "reviewer": "Claude",
+                        "reviewer": "Codex2",
                         "status": "review",
                         "review_submission": {"remote_sha": "1111111122222222333333334444444455555555"},
                     }
@@ -15012,7 +15012,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
 
         # Positive control: a resolvable head still approves and freezes.
         state = _fresh_state()
-        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex2"), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
              unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
              unittest.mock.patch("ai_status.append_log"), \
@@ -15024,7 +15024,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
 
         # Unresolvable head -> abort, and leave no half-applied approval behind.
         state = _fresh_state()
-        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex2"), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value=None), \
              unittest.mock.patch("ai_status.sync_all"):
             with self.assertRaises(SystemExit) as cm:
@@ -15036,7 +15036,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
 
         # A raising probe must fail closed too, not escape as a traceback.
         state = _fresh_state()
-        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex2"), \
              unittest.mock.patch("ai_status.resolve_task_sha", side_effect=RuntimeError("gh down")), \
              unittest.mock.patch("ai_status.sync_all"):
             with self.assertRaises(SystemExit) as cm:
@@ -15060,14 +15060,14 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                 {
                     "id": "FREEZE-TEST-020B",
                     "owner": "Antigravity4",
-                    "reviewer": "Claude",
+                    "reviewer": "Codex2",
                     "status": "review",
                     "approved_head": old_head,
                     "review_submission": {"remote_sha": new_head},
                 }
             ]
         }
-        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex2"), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value=new_head), \
              unittest.mock.patch("ai_status.sync_all"):
             with self.assertRaises(SystemExit) as cm:
@@ -15080,7 +15080,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         # Positive control: re-approving at the *same* head is not a conflict,
         # so the guard cannot be satisfied by rejecting every stale-head task.
         state["tasks"][0]["review_submission"]["remote_sha"] = old_head
-        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex2"), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value=old_head), \
              unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
              unittest.mock.patch("ai_status.append_log"), \
@@ -15946,7 +15946,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                 {
                     "id": "FREEZE-TEST-021A",
                     "owner": "Antigravity4",
-                    "reviewer": "Claude",
+                    "reviewer": "Codex2",
                     "status": "review",
                     "review_notes_zh": "已審核通過",
                     "review_submission": {"remote_sha": approved},
@@ -15956,7 +15956,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         task = ai_status.get_task(state, "FREEZE-TEST-021A")
         ai_status.clear_ai_status_caches()
         with unittest.mock.patch("ai_status.append_log"), unittest.mock.patch("ai_status.sync_all"):
-            with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
+            with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex2"), \
                  unittest.mock.patch("ai_status.resolve_task_sha", return_value=approved), \
                  unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
                 ai_status.command_approve(state, ["FREEZE-TEST-021A", "Approved"])
