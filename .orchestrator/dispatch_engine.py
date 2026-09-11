@@ -2591,9 +2591,11 @@ def _commit_advisory_status_transition(
         return True
     try:
         fresh = load_status(config)
-        if isinstance(fresh, dict) and "tasks" in fresh:
+        if fresh is not status and isinstance(fresh, dict) and "tasks" in fresh:
             status.clear()
             status.update(fresh)
+            return True
+        elif isinstance(fresh, dict) and "tasks" in fresh:
             return True
     except Exception:
         pass
@@ -3207,9 +3209,11 @@ def dispatch_ready_tasks(
                                     config,
                                     status,
                                     activity_event={
-                                        "type": "worktree_lease_blocked",
+                                        "type": "dispatch_stopped_worktree_lease",
                                         "task_id": task_id,
                                         "message": msg,
+                                        "refresh_status": blocked.get("refresh_status"),
+                                        "consecutive_blocks": blocked.get("count"),
                                     },
                                 ):
                                     changed = True
@@ -3296,9 +3300,14 @@ def dispatch_ready_tasks(
                         "generation": generation,
                     }
                     if not commit_canonical_task_transition(config, status):
+                        if existing_claim:
+                            live_task["helper_execution_lease"] = existing_claim
+                        else:
+                            live_task.pop("helper_execution_lease", None)
+                        deferred_task_ids.add(task_id)
                         try:
                             fresh = load_status(config)
-                            if isinstance(fresh, dict) and "tasks" in fresh:
+                            if fresh is not status and isinstance(fresh, dict) and "tasks" in fresh:
                                 status.clear()
                                 status.update(fresh)
                         except Exception:
