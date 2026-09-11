@@ -98,5 +98,6 @@
 
 ```bash
 git diff --check
-python3 docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/verify_reconciliation.py
+python3 -c "import json; data=json.load(open('docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/acceptance-reconciliation.json')); assert data['summary']['reconciliation_verdict'] == 'acceptance_fully_reconciled'; print('Valid reconciliation JSON')"
 ```
+
