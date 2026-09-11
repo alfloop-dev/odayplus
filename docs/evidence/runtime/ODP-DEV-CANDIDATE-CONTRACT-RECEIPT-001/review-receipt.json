@@ -66,15 +66,15 @@
             "sha256": "d23d4802c92fd96fecf1166e45cd62abec12cf6c8544cf52652ac962aa31eafd"
           }
         },
-        "test_modules_passed": [
-          "tests/contract/test_openapi_artifact_and_client.py (17 passed)"
+        "test_modules_executed": [
+          "tests/contract/test_openapi_artifact_and_client.py (executed via batch EXEC-02, batch 94 passed; static inventory 22 cases)"
         ]
       },
       "domain_breaking_change_plan": {
         "policy": "Expand/contract without destructive drop; client types regenerated deterministically.",
         "migration_path": "N/A for initial dev release; check_drift confirms byte-exact alignment with live FastAPI app routes.",
         "compatibility_window": "N/A on dev target; unverified across historical releases due to baseline absence.",
-        "rollback_plan": "delete-candidate-zero-traffic per RELEASE_MANIFEST.json (\u00a7initial_release_recovery).",
+        "rollback_plan": "delete-candidate-zero-traffic per RELEASE_MANIFEST.json (§initial_release_recovery).",
         "enforcement_status": "freshness_verified_baseline_diff_unknown"
       },
       "finding": "Artifact and generated client are completely fresh and byte-stable against live app on candidate C. Diff against an approved prior release cannot be attested due to initial release baseline absence.",
@@ -92,40 +92,40 @@
         "execution_refs": [
           "EXEC-03-SCHEMA-MODEL-PYTEST"
         ],
-        "test_modules_passed": [
-          "tests/contract/test_canonical_schema.py (12 passed)"
+        "test_modules_executed": [
+          "tests/contract/test_canonical_schema.py (executed via batch EXEC-03, batch 45 passed; static inventory 12 cases)"
         ]
       },
       "skipped_or_uncovered_evidence": [
         {
           "module": "tests/contract/test_assisted_listing_intake_events.py",
-          "reason": "skipped in offline execution batch; requires event bus replay fixture"
+          "reason": "not_selected_in_offline_batch; test constructs in-memory events and does not require external fixture"
         },
         {
           "module": "tests/contract/test_assisted_listing_intake_schema.py",
-          "reason": "skipped in offline execution batch"
+          "reason": "not_selected_in_offline_batch"
         },
         {
           "module": "tests/contract/test_assisted_listing_intake_states.py",
-          "reason": "skipped in offline execution batch"
+          "reason": "not_selected_in_offline_batch"
         },
         {
           "module": "tests/contract/test_ingestion_contracts.py",
-          "reason": "skipped in offline execution batch"
+          "reason": "not_selected_in_offline_batch"
         },
         {
           "module": "tests/contract/test_signal_store_client.py",
-          "reason": "skipped in offline execution batch"
+          "reason": "not_selected_in_offline_batch"
         }
       ],
       "domain_breaking_change_plan": {
-        "policy": "Additive schema fields only; unknown fields ignored by consumers.",
-        "migration_path": "Canonical schema defines core entity types; intake domain schemas support dual-read during ingestion transitions.",
-        "compatibility_window": "Requires multi-version event replay window in staging; unverified in offline candidate C unit suite.",
-        "rollback_plan": "Drain intake queue or roll back consumer worker; delete-candidate-zero-traffic for dev deployment.",
-        "enforcement_status": "canonical_schema_verified_intake_replay_unverified"
+        "policy": "Proposed policy in docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml (status: proposed) specifies consumer ignore-unknown and dual publication; however payload schemas specify additionalProperties: false and shared/domain/events.py:174-175 explicitly rejects extra fields.",
+        "migration_path": "Policy vs implementation gap exists; dual-read and additive migration capabilities are proposed/unverified on candidate C.",
+        "compatibility_window": "Multi-version event replay window requires staging observation; unverified on candidate C.",
+        "rollback_plan": "delete-candidate-zero-traffic for dev deployment.",
+        "enforcement_status": "proposed_policy_with_implementation_gap_unverified"
       },
-      "finding": "Canonical entity schemas pass validation on candidate C (12 passed). Domain intake and ingestion contracts were not executed in the minimal offline plan and remain unverified on candidate C.",
+      "finding": "Canonical entity schemas executed via EXEC-03 batch on candidate C (batch 45 passed; static inventory 12 cases). Domain intake and ingestion contracts were not selected in minimal offline batch (not_selected_in_offline_batch). Event evolution policy is proposed and conflicts with strict additionalProperties:false implementation; dual-read/migration remain unverified.",
       "downstream_responsibility": "Claude / Platform"
     },
     {
@@ -150,15 +150,15 @@
           "source_policy_digest": "sha256:0a34bb128b5b5b26201b7f014f4b4f8e631e841c8f205f38dfc09c9eb682d824",
           "migration_digest": "sha256:17794de9afb84681aabff9ed0966dedde83d950aef132de519fdc193099e620b"
         },
-        "test_modules_passed": [
-          "tests/contract/test_oday_data_contract_pin.py (30 passed)",
-          "tests/contract/test_oday_data_product_contract_pin.py (47 passed)"
+        "test_modules_executed": [
+          "tests/contract/test_oday_data_contract_pin.py (executed via batch EXEC-02, batch 94 passed; static inventory 32 cases)",
+          "tests/contract/test_oday_data_product_contract_pin.py (executed via batch EXEC-02, batch 94 passed; static inventory 40 cases)"
         ]
       },
       "skipped_or_uncovered_evidence": [
         {
           "module": "tests/contract/test_manual_correction_contract.py",
-          "reason": "skipped in offline execution batch; not part of foundation/product pin verification"
+          "reason": "not_selected_in_offline_batch; not part of foundation/product pin verification batch"
         }
       ],
       "domain_breaking_change_plan": {
@@ -168,7 +168,7 @@
         "rollback_plan": "Revert consumer package pins to v0.4.0 if data plane incompatibility is detected; dev recovery: delete-candidate-zero-traffic.",
         "enforcement_status": "package_pins_verified_live_reconciliation_deferred_to_gate2"
       },
-      "finding": "Data contract foundation and product pin suites pass completely on candidate C (77 total tests passed) and digests match RELEASE_MANIFEST.json. Live database schema reconciliation is deferred to Gate 2 (Data Gate).",
+      "finding": "Data contract foundation and product pin suites pass in EXEC-02 batch on candidate C (batch 94 passed; data pin static inventory 72 cases total) and digests match RELEASE_MANIFEST.json. Live database schema reconciliation is deferred to Gate 2 (Data Gate).",
       "downstream_responsibility": "Codex2 / Data Platform"
     },
     {
@@ -183,16 +183,16 @@
         "execution_refs": [
           "EXEC-03-SCHEMA-MODEL-PYTEST"
         ],
-        "test_modules_passed": [
-          "tests/contract/test_pricing_simulation_contract.py (6 passed)",
-          "tests/contract/test_heatzone_composition_schema.py (12 passed)",
-          "tests/contract/test_decision_policy_registry_schema.py (15 passed)"
+        "test_modules_executed": [
+          "tests/contract/test_pricing_simulation_contract.py (executed via batch EXEC-03, batch 45 passed; static inventory 2 cases)",
+          "tests/contract/test_heatzone_composition_schema.py (executed via batch EXEC-03, batch 45 passed; static inventory 8 cases)",
+          "tests/contract/test_decision_policy_registry_schema.py (executed via batch EXEC-03, batch 45 passed; static inventory 23 cases)"
         ]
       },
       "skipped_or_uncovered_evidence": [
         {
           "module": "tests/contract/test_operator_network_scoring_api.py",
-          "reason": "skipped in offline execution batch; requires live scoring endpoint stub"
+          "reason": "not_selected_in_offline_batch; test uses TestClient(create_app()) directly and does not require external live endpoint"
         }
       ],
       "domain_breaking_change_plan": {
@@ -202,7 +202,7 @@
         "rollback_plan": "Revert model alias routing in decision registry; dev recovery: delete-candidate-zero-traffic.",
         "enforcement_status": "interface_schemas_verified_gate3_retains_model_approval"
       },
-      "finding": "Pricing simulation, heatzone composition, and decision policy registry schemas pass on candidate C (33 passed). Scoring API test was skipped. Gate 3 (Model and Solver Gate) retains responsibility for dataset reproducibility, segment metrics, solver feasibility, and Human/Ops ML risk approval.",
+      "finding": "Pricing simulation, heatzone composition, and decision policy registry schemas executed via EXEC-03 batch on candidate C (batch 45 passed; static inventory 33 cases for these 3 modules). Scoring API test was not selected in offline batch. Gate 3 (Model and Solver Gate) retains responsibility for dataset reproducibility, segment metrics, solver feasibility, and Human/Ops ML risk approval.",
       "downstream_responsibility": "Codex2 / Antigravity2"
     },
     {
@@ -215,7 +215,7 @@
       ],
       "status": "verified_initial_release_recovery_posture_plan_enforcement_unknown",
       "executed_evidence": {
-        "rollout_plan_ref": "docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md (\u00a78.4, \u00a78.5)",
+        "rollout_plan_ref": "docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md (§8.4, §8.5)",
         "manifest_recovery_section": {
           "kind": "initial-release-recovery",
           "prior_release_absent": true,
@@ -285,7 +285,7 @@
       "stdout_sha256": "75c6b33225fc0316ea09c194c3e97cffe49d1544ea1082194cf6ad660a547f4c",
       "stderr_ref": "/tmp/pantheon-contract-receipt-audit/EXEC-02-CONTRACT-CORE-PYTEST.stderr",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "scope": "OpenAPI artifact & client contract (17 tests), Data foundation contract pin (30 tests), Data product contract pin (47 tests)",
+      "scope": "OpenAPI artifact & client contract, Data foundation contract pin, Data product contract pin (batch pytest suite; static inventory: OpenAPI 22, Foundation Pin 32, Product Pin 40)",
       "tests_passed": 94,
       "tests_failed": 0,
       "tests_skipped": 0
@@ -313,7 +313,7 @@
       "stdout_sha256": "e4224067d1ce8ae172c7a871f1351f322e4d1ffd43cbd05d1f390cfdd1f61421",
       "stderr_ref": "/tmp/pantheon-contract-receipt-audit/EXEC-03-SCHEMA-MODEL-PYTEST.stderr",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "scope": "Pricing simulation contract (6 tests), Heatzone composition schema (12 tests), Decision policy registry schema (15 tests), Canonical schema (12 tests)",
+      "scope": "Pricing simulation contract, Heatzone composition schema, Decision policy registry schema, Canonical schema (batch pytest suite; static inventory: Pricing 2, Heatzone 8, Decision Policy 23, Canonical Schema 12)",
       "tests_passed": 45,
       "tests_failed": 0,
       "tests_skipped": 0
@@ -334,9 +334,9 @@
     },
     {
       "blocker_id": "BLK-G1-03",
-      "description": "Domain intake events (test_assisted_listing_*) and scoring API contract (test_operator_network_scoring_api) were skipped in offline execution batch and remain unverified on candidate C.",
+      "description": "Domain intake events (test_assisted_listing_*) and scoring API contract (test_operator_network_scoring_api) were not selected in offline execution batch (not_selected_in_offline_batch) and remain unverified on candidate C; multi-version event replay in staging is a distinct gap.",
       "owning_task": "Claude / Platform / Codex2",
-      "status": "unverified_skipped_offline"
+      "status": "unverified_not_selected_offline"
     },
     {
       "blocker_id": "BLK-G1-04",

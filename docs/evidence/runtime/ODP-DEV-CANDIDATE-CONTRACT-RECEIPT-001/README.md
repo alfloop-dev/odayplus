@@ -37,15 +37,19 @@
 - **Approved Breaking Changes**: `delivery_toolchain/openapi/approved_breaking_changes.json` (Raw SHA-256: `d23d4802c92fd96fecf1166e45cd62abec12cf6c8544cf52652ac962aa31eafd`)。
 - **驗證結果與範圍**:
   - `delivery_toolchain/openapi/check_drift.py --skip-diff` 在 candidate C 上執行通過 (EXEC-01, EXIT=0)，證明 `openapi.json` 與 live FastAPI app 路由完全吻合，且 `types.ts` 與 `openapi.json` 位元組一致。
-  - `tests/contract/test_openapi_artifact_and_client.py` 17 項測試全部通過 (EXEC-02, EXIT=0)，驗證了錯誤封套 (ErrorEnvelope)、版本化路徑、輸出確定性與 diff 分類演算法。
+  - `tests/contract/test_openapi_artifact_and_client.py` 於 EXEC-02 批次中執行通過 (EXEC-02, EXIT=0，批次共 94 passed；靜態清單含 22 test cases)，驗證了錯誤封套 (ErrorEnvelope)、版本化路徑、輸出確定性與 diff 分類演算法。
   - *跨版本 Diff 狀態*: 因缺乏已核准前版 baseline，跨版本 breaking diff 未被證明，維持 `unknown/blocked`。
 
 ### 2.2 Event Schema 相容性
 - **範圍**: `packages/schemas/` 內各 domain intake、event 與 canonical schemas。
+- **政策與實作現況（Policy vs Implementation Gap）**:
+  - 政策面：`docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml:3` 明列 `status: proposed`，其第 8–11 行明述「consumers must ignore unknown optional fields」與 dual publication 政策。
+  - 實作面：同 C payload schemas (`docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENT_PAYLOAD_SCHEMAS_V1.yaml`) 明確宣告 `additionalProperties: false`，且 `shared/domain/events.py:174-175` 驗證時明確拒絕額外欄位 (`Additional property not allowed: ...`)。
+  - 因此，新增 optional 欄位無法以此政策宣告相容；dual-read 與 migration 能力在 C 屬於 `proposed / unverified`，不得以 schema 或政策冒充為已實施之相容能力。
 - **驗證結果與範圍**:
-  - `tests/contract/test_canonical_schema.py` 12 項測試在 candidate C 上通過 (EXEC-03, EXIT=0)。
-  - `test_assisted_listing_intake_events.py`、`test_assisted_listing_intake_schema.py`、`test_assisted_listing_intake_states.py`、`test_ingestion_contracts.py`、`test_signal_store_client.py` 等模組在離線 minimal batch 中未執行，誠實標示為 `skipped/unknown`，不冒稱已驗證。
-  - 跨版本多版本 event replay 相容窗口留待 staging live 驗證。
+  - `tests/contract/test_canonical_schema.py` 於 EXEC-03 批次中執行通過 (EXEC-03, EXIT=0，批次共 45 passed；靜態清單 12 test cases)。
+  - 本機單元契約測試 `test_assisted_listing_intake_events.py`（自行建立測試事件與 memory persistence）、`test_assisted_listing_intake_schema.py`、`test_assisted_listing_intake_states.py`、`test_ingestion_contracts.py`、`test_signal_store_client.py` 未選入 minimal offline 批次，誠實標示為 `not_selected_in_offline_batch / unverified`（非工具錯誤、非 skipped fixture）。
+  - 跨版本多版本 event replay 相容窗口留待 staging 演練驗證。
 
 ### 2.3 資料契約 (Data Contract) 相容性與 Pinning
 - **Foundation 契約**: `packages/oday_data_contracts_client` 精確鎖定 `oday-data-foundation-contracts.v0.4.1`。
@@ -55,21 +59,21 @@
   - `source_policy_digest`: `sha256:0a34bb128b5b5b26201b7f014f4b4f8e631e841c8f205f38dfc09c9eb682d824`
   - `migration_digest`: `sha256:17794de9afb84681aabff9ed0966dedde83d950aef132de519fdc193099e620b`
 - **驗證結果與範圍**:
-  - `tests/contract/test_oday_data_contract_pin.py` (30 tests) 與 `test_oday_data_product_contract_pin.py` (47 tests) 全部通過 (EXEC-02, EXIT=0, 77 passed)，證明消費者模式由已發布的 release bundle 生成，完全無直連 producer 內部 DDL/catalog 之依賴。
-  - `test_manual_correction_contract.py` 未在 EXEC-02 中執行，標示為 `skipped/unknown`。
+  - `tests/contract/test_oday_data_contract_pin.py` 與 `tests/contract/test_oday_data_product_contract_pin.py` 於 EXEC-02 批次中執行通過 (EXEC-02, EXIT=0，批次共 94 passed；靜態清單 Foundation 32、Product 40，data pin 靜態小計 72 cases)，證明消費者模式由已發布的 release bundle 生成，完全無直連 producer 內部 DDL/catalog 之依賴。
+  - `test_manual_correction_contract.py` 未選入 EXEC-02 離線批次，標示為 `not_selected_in_offline_batch / unverified`。
   - Deployed data-plane reconciliation against live database 屬於 Gate 2 (Data Gate) 範圍。
 
 ### 2.4 模型與決策介面 I/O 相容性
 - **範圍**: 定價模擬 (Pricing Simulation)、區域分析 (Heatzone Composition)、決策政策登錄 (Decision Policy Registry) 與評分 API。
 - **驗證結果與範圍**:
-  - `tests/contract/test_pricing_simulation_contract.py` (6 tests)、`test_heatzone_composition_schema.py` (12 tests)、`test_decision_policy_registry_schema.py` (15 tests) 在 candidate C 上通過 (EXEC-03, EXIT=0, 33 passed)。
-  - `test_operator_network_scoring_api.py` 未在 EXEC-03 中執行，標示為 `skipped/unknown`。
+  - `tests/contract/test_pricing_simulation_contract.py`、`tests/contract/test_heatzone_composition_schema.py`、`tests/contract/test_decision_policy_registry_schema.py` 於 EXEC-03 批次中執行通過 (EXEC-03, EXIT=0，批次共 45 passed；靜態清單 Pricing 2、Heatzone 8、Decision Policy 23，此三模組靜態小計 33 cases)。
+  - `tests/contract/test_operator_network_scoring_api.py`（使用 `TestClient(create_app())` 執行本機契約測試）未選入 EXEC-03 離線批次，標示為 `not_selected_in_offline_batch / unverified`（非環境依賴或工具錯誤）。
   - *責任邊界說明*: Gate 1 僅負責介面契約格式相容性；ML 模型訓練指標、資料集快照重現性、Solver 可行性與 Human/Ops 模型風險簽核屬於 Gate 3 (Model and Solver Gate) 範圍。
 
 ### 2.5 Breaking Changes、Migration 與 Rollback 語意
 - **各領域變更計畫**:
   - **API Contract**: FastAPI 路由嚴格比對 (freshness verified)；Rollback: `delete-candidate-zero-traffic`。
-  - **Event Schema**: 採用 Additive Schema 演進；多版本相容觀察窗口留待 staging 驗證；Rollback: 隔離 consumer queue。
+  - **Event Schema**: 契約文件 `docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml` 列為 `status: proposed`，payload schemas 包含 `additionalProperties: false` 且 `shared/domain/events.py:174-175` 拒絕額外欄位，政策與實作存在落差；dual-read 與 migration 能力尚未於 C 實施驗證，維持 `unknown`，後續由 Claude / Platform 負責；Rollback: `delete-candidate-zero-traffic`。
   - **Data Contract**: Pinned package client v0.4.1；資料庫 migration 於 Gate 2 驗證；Rollback: 恢復舊版 pin。
   - **Model Interface**: 介面型別封套受 schema 約束；模型卡與風險決策於 Gate 3 簽核；Rollback: 恢復決策 policy 路由。
 - **首次部署 (Initial Release) 復原語意**:
@@ -96,8 +100,8 @@
 | 執行編號 | 驗證命令 | 執行時間 (UTC) | 耗時 (s) | Exit Code | 輸出 Hash (stdout / stderr) | 結果摘要 |
 |---|---|---|---|---|---|---|
 | `EXEC-01-OPENAPI-DRIFT` | `uv run --python 3.12 python3 delivery_toolchain/openapi/check_drift.py --skip-diff` | `2026-09-11T00:23:28Z` | 41.93s | `0` | `cdeb9dcf...` / `63a13d22...` | OpenAPI artifact 與 generated client freshness 通過 (2 checks) |
-| `EXEC-02-CONTRACT-CORE-PYTEST` | `uv run --python 3.12 pytest tests/contract/test_openapi_artifact_and_client.py tests/contract/test_oday_data_contract_pin.py tests/contract/test_oday_data_product_contract_pin.py` | `2026-09-11T00:24:10Z` | 67.21s | `0` | `75c6b332...` / `e3b0c442...` | 94 passed (OpenAPI 17, Data Foundation Pin 30, Data Product Pin 47) |
-| `EXEC-03-SCHEMA-MODEL-PYTEST` | `uv run --python 3.12 pytest tests/contract/test_pricing_simulation_contract.py tests/contract/test_heatzone_composition_schema.py tests/contract/test_decision_policy_registry_schema.py tests/contract/test_canonical_schema.py` | `2026-09-11T00:25:17Z` | 39.46s | `0` | `e4224067...` / `e3b0c442...` | 45 passed (Pricing 6, Heatzone 12, Decision Policy 15, Canonical Schema 12) |
+| `EXEC-02-CONTRACT-CORE-PYTEST` | `uv run --python 3.12 pytest tests/contract/test_openapi_artifact_and_client.py tests/contract/test_oday_data_contract_pin.py tests/contract/test_oday_data_product_contract_pin.py` | `2026-09-11T00:24:10Z` | 67.21s | `0` | `75c6b332...` / `e3b0c442...` | 94 passed in batch (靜態清單: OpenAPI 22, Foundation Pin 32, Product Pin 40) |
+| `EXEC-03-SCHEMA-MODEL-PYTEST` | `uv run --python 3.12 pytest tests/contract/test_pricing_simulation_contract.py tests/contract/test_heatzone_composition_schema.py tests/contract/test_decision_policy_registry_schema.py tests/contract/test_canonical_schema.py` | `2026-09-11T00:25:17Z` | 39.46s | `0` | `e4224067...` / `e3b0c442...` | 45 passed in batch (靜態清單: Pricing 2, Heatzone 8, Decision Policy 23, Canonical Schema 12) |
 
 ---
 
@@ -108,7 +112,7 @@
 1. `README.md`: 本說明文件與綜整審查報告。
 2. `review-receipt.json`: 機器可讀之 Gate 1 Contract Review 收據（含候選 C 綁定、五項檢查詳細狀態、執行完整 provenance 與 blocker 清單）。
 3. `criteria-evidence-matrix.json`: Gate 1 驗收準則與證據對應矩陣（含檔案路徑、SHA-256、測試模組細項、執行/跳過狀態與負責 owner）。
-4. `source-index.json`: 來源文件與原始資料索引（涵蓋 release manifest、gate registry、測試碼與 toolchain 參照）。
+4. `source-index.json`: 來源文件與原始資料索引（涵蓋 release manifest、gate registry、測試碼、event contracts 與 toolchain 參照）。
 
 ---
 
@@ -118,5 +122,5 @@
 |---|---|---|---|
 | `BLK-G1-01` | `ODP-PLAN-ENGINEERING-HARDENING-001` 尚未關閉，OpenAPI 與前端依賴 hardening 尚未完成。 | `ODP-PLAN-ENGINEERING-HARDENING-001` / Codex | Open |
 | `BLK-G1-02` | dev target 缺乏已核准前版 baseline，跨版本相容性無法判定。 | `ODP-DEV-ROLLOUT-001` / Platform | Retained (Initial Release) |
-| `BLK-G1-03` | 非核心/線上 event (test_assisted_listing_*) 與 scoring (test_operator_network_scoring_api) 契約測試在離線批次中跳過，需待 staging 驗證。 | Claude / Platform / Codex2 | Unverified (Skipped Offline) |
+| `BLK-G1-03` | 未選入離線 EXEC 批次之契約測試（test_assisted_listing_* 與 test_operator_network_scoring_api）未在 C 執行驗證（not_selected_in_offline_batch）；另外 staging 多版本 event replay / live scoring 演練為獨立缺口。 | Claude / Platform / Codex2 | Unverified (Not Selected Offline / Staging Replay Needed) |
 | `BLK-G1-04` | `RELEASE_GATE_REGISTRY.json` 中 Gate 1 維持 blocked，fail-closed NO-GO 決定不變。 | Human/Ops | Blocked (Fail-Closed) |
