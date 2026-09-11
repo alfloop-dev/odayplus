@@ -7,7 +7,7 @@
 - **執行身分 (Owner)**: `Antigravity5`
 - **指派審查者 (Reviewer)**: `Codex2`
 - **復原目標分支**: `task/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001-RECOVERY-20260911`
-- **對照基準 (Pinned Dev)**: `4499a2993e37b62033926b07de8d8d2e8469a6c7`
+- **對照基準 (Pinned Dev Base)**: `2889b55fb1febe95c9f8650f24ead18e86015cca`
 - **原始交付記錄**: PR [#1160](https://github.com/alfloop-dev/odayplus/pull/1160)（Head SHA: `ffe02988a1b4def412090c6b422e6efb26081d9f`，Merge Commit: `9f53418df41e558c8f953c801dd8fd1f25f77b5b`，Merged at `2026-09-03T16:51:21Z`）
 
 本任務原始目的為依據 `ODP-SITE001-DATA-READINESS-001` 之資料準備度查證事實，逐 member 判定 `ODP-FR-SITE-001` 中之 `BRAND_TRANSFER` 與 `FORMAT_CONVERSION` 兩項成員之處置狀態。
@@ -55,7 +55,11 @@ PR [#1160](https://github.com/alfloop-dev/odayplus/pull/1160) 於 2026-09-03 交
 | `ODP-FR-SITE-001` | `FORMAT_CONVERSION` | A1, A2, A3 | `BLOCKED_BY_EVIDENCE` (移交單: `HB-SITE001-FORMAT-CONVERSION-001`) | **D17: Option A**（實作／補齊真實資料與流程） | `ODP-FORMAT-CONVERSION-CONTRACT-PREP-001` (PR #1252, Stage 31A, 已合併) | `ODP-FORMAT-CONVERSION-IMPLEMENTATION-001` (Stage 31B, 看板狀態: `blocked`) | **H04**: 真實轉型事件與來源、停業/Capex/殘值/ramp 定義確認；未提供前不可用草案數值冒充業務批准。 |
 | `ODP-FR-SITE-001` | （治理清單與檢查器） | A4 | `BLOCKED_BY_EVIDENCE` (decider: `null`) | 納入持續治理閘門 | 治理清單已合規 | `ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001` (看板狀態: `todo`) | 20 項結構性缺陷於結案時逐一具備 VERIFIED 或有效 formal nonimplementation disposition，且無 OPEN／BLOCKED_BY_EVIDENCE。 |
 
-### 4.2 精確依賴關係 Before / After 核對 (Explicitly Unchanged)
+### 4.2 歷史依賴快照與精確依賴關係 Before / After 核對 (Explicitly Unchanged)
+
+依據 Canonical 歸檔 `/home/lupin/odayplus/ai-task-archive/tasks/` 及看板現狀：
+- `ODP-BRAND-TRANSFER-CONTRACT-PREP-001.json` (SHA256: `572eb22da48f7d367a15fe82a191dcb1379aaca91db3d31fe632c01bac885975`, archived_at: `2026-09-08T16:42:34Z`) 記錄 `task.depends_on: ["ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"]`。
+- `ODP-FORMAT-CONVERSION-CONTRACT-PREP-001.json` (SHA256: `9af75cde28b5507aec4229d74674b3f2abf652d71ababc6dacccae7055324185`, archived_at: `2026-09-08T19:02:57Z`) 記錄 `task.depends_on: ["ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"]`。
 
 本次補證嚴格遵守唯讀治理原則，不手改看板狀態，不變更任何 DAG 依賴邊（Before / After 保持一致）：
 
@@ -63,28 +67,50 @@ PR [#1160](https://github.com/alfloop-dev/odayplus/pull/1160) 於 2026-09-03 交
    - `depends_on_before`: `[]`
    - `depends_on_after`: `[]`
    - **變更**: 無變更 (`dependency_unchanged: true`)。
-2. **品牌轉移實作任務 (`ODP-BRAND-TRANSFER-IMPLEMENTATION-001`)**:
+2. **品牌轉移契約準備任務 (`ODP-BRAND-TRANSFER-CONTRACT-PREP-001`)**:
+   - `depends_on_before`: `["ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"]`
+   - `depends_on_after`: `["ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"]`
+   - **狀態**: `done` (PR #1254 merged).
+   - **變更**: 無變更 (`dependency_unchanged: true`)。
+3. **品牌轉移實作任務 (`ODP-BRAND-TRANSFER-IMPLEMENTATION-001`)**:
    - `depends_on_before`: `["ODP-BRAND-TRANSFER-CONTRACT-PREP-001"]`
    - `depends_on_after`: `["ODP-BRAND-TRANSFER-CONTRACT-PREP-001"]`
    - **狀態**: `blocked` (等待 H03，由 canonical writer 於資料到位後解除)。
    - **變更**: 無變更 (`dependency_unchanged: true`)。
-3. **店型轉換實作任務 (`ODP-FORMAT-CONVERSION-IMPLEMENTATION-001`)**:
+4. **店型轉換契約準備任務 (`ODP-FORMAT-CONVERSION-CONTRACT-PREP-001`)**:
+   - `depends_on_before`: `["ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"]`
+   - `depends_on_after`: `["ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"]`
+   - **狀態**: `done` (PR #1252 merged).
+   - **變更**: 無變更 (`dependency_unchanged: true`)。
+5. **店型轉換實作任務 (`ODP-FORMAT-CONVERSION-IMPLEMENTATION-001`)**:
    - `depends_on_before`: `["ODP-FORMAT-CONVERSION-CONTRACT-PREP-001"]`
    - `depends_on_after`: `["ODP-FORMAT-CONVERSION-CONTRACT-PREP-001"]`
    - **狀態**: `blocked` (等待 H04，由 canonical writer 於資料到位後解除)。
    - **變更**: 無變更 (`dependency_unchanged: true`)。
-4. **全案結構修復結案任務 (`ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001`)**:
+6. **全案結構修復結案任務 (`ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001`)**:
    - `depends_on_before`: 包含 `ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001` 等 17 項任務。
    - `depends_on_after`: 包含 `ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001` 等 17 項任務。
    - **狀態**: `todo`。
    - **變更**: 無變更 (`dependency_unchanged: true`)。
 
-### 4.3 依賴無環檢驗 (Cycle Check)
+### 4.3 依賴閉包無環拓撲計算 (Computed DAG Cycle Check)
 
-- **評估 DAG 邊**:
+針對相關任務閉包（7 個節點、5 條導向邊）進行 Kahn 演算法拓撲排序與 DFS 循環偵測計算：
+- **評估閉包節點**:
+  - `ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001`
+  - `ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001`
+  - `ODP-BRAND-TRANSFER-CONTRACT-PREP-001`
+  - `ODP-FORMAT-CONVERSION-CONTRACT-PREP-001`
+  - `ODP-BRAND-TRANSFER-IMPLEMENTATION-001`
+  - `ODP-FORMAT-CONVERSION-IMPLEMENTATION-001`
+  - `ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001`
+- **評估導向邊 (Dependency Edges)**:
+  - `ODP-BRAND-TRANSFER-CONTRACT-PREP-001 -> ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001`
+  - `ODP-FORMAT-CONVERSION-CONTRACT-PREP-001 -> ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001`
   - `ODP-BRAND-TRANSFER-IMPLEMENTATION-001 -> ODP-BRAND-TRANSFER-CONTRACT-PREP-001`
   - `ODP-FORMAT-CONVERSION-IMPLEMENTATION-001 -> ODP-FORMAT-CONVERSION-CONTRACT-PREP-001`
   - `ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001 -> ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001`
+- **拓撲排序計算結果**: `[ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001, ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001, ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001, ODP-BRAND-TRANSFER-CONTRACT-PREP-001, ODP-FORMAT-CONVERSION-CONTRACT-PREP-001, ODP-BRAND-TRANSFER-IMPLEMENTATION-001, ODP-FORMAT-CONVERSION-IMPLEMENTATION-001]`
 - **循環檢測結果**: `cycle_detected: false`
 - **結構合法性**: `is_valid_dag: true`
 
@@ -98,7 +124,7 @@ PR [#1160](https://github.com/alfloop-dev/odayplus/pull/1160) 於 2026-09-03 交
 
 ## 5. 權限邊界與不變量原則 (Invariants & Governance Declarations)
 
-1. **單一證據 Scope**：所有交付物嚴格限制於 `docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/`，不修改任何產品程式、原 archive、全域 governance manifest、validator、workflow 或 runtime。
+1. **單一證據 Scope**：所有交付物嚴格限制於 `docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/`，不修改任何產品程式、原 archive、全域 governance manifest、validator、workflow 或 runtime。所有程式碼邊界（`docs/audits/code-boundary-inventory.csv`）維持原樣無變更。
 2. **不簽發豁免或假定實作完成**：不刪改 MUST 需求，不自簽 waiver，不將待提供之 H03/H04 假定為已完成。
 3. **保留歷史真實性**：原 PR #1160 (head `ffe02988a1b4`) 的 7 項 CI check-runs、原審查者 Codex 之歷史 approval 原樣記錄，不以當前觀察偽稱過去執行。
 4. **無依賴異動與無重複任務**：不新增重複盤點任務，不修改看板依賴與狀態。
@@ -107,18 +133,22 @@ PR [#1160](https://github.com/alfloop-dev/odayplus/pull/1160) 於 2026-09-03 交
 
 ## 6. 當前驗證收據 (Current Verification Receipts)
 
-本次復原補證交付物經由以下命令完成驗證：
+本次復原補證交付物經由以下實測命令完成驗證：
 
 ```bash
-git diff --check 4499a2993e37b62033926b07de8d8d2e8469a6c7 HEAD
+git diff --check 2889b55fb1febe95c9f8650f24ead18e86015cca HEAD
 cmp -s docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/original-evidence.json /home/lupin/odayplus/support/handoffs/archive-recovery-dispatch-20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/original-evidence.json
-python3 docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/verify_reconciliation.py
+python3 delivery_toolchain/governance/check_requirement_members.py
+uv run pytest tests/governance/test_site001_disposition.py delivery_toolchain/governance/test_check_requirement_members.py -q
+python3 -c "import json; ..."
 ```
 
 ### 驗證執行收據 (Verification Execution Receipts)
 
-| 收據項目 | 執行命令 | 測量基準 / SHA | 終端退出碼 | 執行結果 |
-|---|---|---|---|---|
-| **Git Diff Check** | `git diff --check 4499a2993e37b62033926b07de8d8d2e8469a6c7 HEAD` | Base `4499a299` / Head `task/...-RECOVERY-20260911` | `0` | **PASS**: 無空白行錯誤、無非預期變更。 |
-| **原始證據完整性** | `cmp -s original-evidence.json $CANONICAL_COPY` | Worktree copy vs Canonical dispatch copy | `0` | **PASS**: 檔案內容完全一致 (byte-for-byte match)。 |
-| **結構與 DAG 驗證腳本** | `python3 verify_reconciliation.py` | 4 文件完整性、4 條款核對、依賴無環 (DAG) 檢驗 | `0` | **PASS**: 4/4 條款 satisfied, cycle_detected=false, is_valid_dag=true。 |
+| 收據項目 | 執行命令 | 測量基準 / SHA | 終端退出碼 | 執行時間 / 耗時 | 執行結果與終端輸出摘要 |
+|---|---|---|---|---|---|
+| **Git Diff Check** | `git diff --check 2889b55fb1febe95c9f8650f24ead18e86015cca HEAD` | Base `2889b55fb1febe95c9f8650f24ead18e86015cca` / Measured Head `a1ec768a62372f87c80ee9d4949a215a7cf95e54` | `0` | `2026-09-11T12:08:45Z`<br>(0.012s) | **PASS**: 無空白行錯誤、無非預期變更。 |
+| **原始證據完整性** | `cmp -s original-evidence.json $CANONICAL_COPY` | Worktree copy vs Canonical dispatch copy (`/home/lupin/odayplus/support/.../original-evidence.json`) | `0` | `2026-09-11T12:08:45Z`<br>(0.005s) | **PASS**: 檔案內容完全一致 (byte-for-byte match)。 |
+| **治理清單檢查** | `python3 delivery_toolchain/governance/check_requirement_members.py` | Repository `alfloop-dev/odayplus` @ Measured Head `a1ec768a62372f87c80ee9d4949a215a7cf95e54` | `0` | `2026-09-11T12:08:53Z`<br>(0.312s) | **PASS**: `Requirement member checks passed: 9 set-valued requirements, 47 members (37 satisfied, 10 absent and noted; dispositions: BLOCKED_BY_EVIDENCE=4, DECIDED=1, IMPLEMENTATION_READY=3, OPEN=3, VERIFIED=36).` |
+| **Focused Pytest** | `uv run pytest tests/governance/test_site001_disposition.py delivery_toolchain/governance/test_check_requirement_members.py -q` | Repository `alfloop-dev/odayplus` @ Measured Head `a1ec768a62372f87c80ee9d4949a215a7cf95e54` | `0` | `2026-09-11T12:08:55Z`<br>(7.652s) | **PASS**: 73 passed (100% green). |
+| **Canonical 看板與 DAG 無環計算** | `python3 -c "import json, sys..."` | Canonical Board `/home/lupin/odayplus/ai-status.json` and DAG Closure | `0` | `2026-09-11T12:09:33Z`<br>(0.025s) | **PASS**: 7 節點拓撲排序計算完成，cycle_detected: False, is_valid_dag: True。 |

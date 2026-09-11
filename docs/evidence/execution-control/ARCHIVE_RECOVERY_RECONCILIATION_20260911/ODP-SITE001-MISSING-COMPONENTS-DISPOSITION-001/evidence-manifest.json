@@ -115,9 +115,9 @@
     }
   },
   "current_observations_and_mapping": {
-    "observed_at": "2026-09-11T11:30:00Z",
-    "observation_source": "Canonical board ($PANTHEON_STATUS_ROOT/ai-status.json) and docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
-    "pinned_dev_sha": "4499a2993e37b62033926b07de8d8d2e8469a6c7",
+    "observed_at": "2026-09-11T12:08:45Z",
+    "observation_source": "Canonical board (/home/lupin/odayplus/ai-status.json), ai-task-archive/tasks/, and docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+    "pinned_dev_sha": "2889b55fb1febe95c9f8650f24ead18e86015cca",
     "criteria_and_member_mapping": [
       {
         "criterion_index": 1,
@@ -197,6 +197,22 @@
       }
     ],
     "dependency_graph_reconciliation": {
+      "historical_dependencies_snapshot": {
+        "ODP-BRAND-TRANSFER-CONTRACT-PREP-001": {
+          "archived_at": "2026-09-08T16:42:34Z",
+          "sha256": "572eb22da48f7d367a15fe82a191dcb1379aaca91db3d31fe632c01bac885975",
+          "task_depends_on": [
+            "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+          ]
+        },
+        "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001": {
+          "archived_at": "2026-09-08T19:02:57Z",
+          "sha256": "9af75cde28b5507aec4229d74674b3f2abf652d71ababc6dacccae7055324185",
+          "task_depends_on": [
+            "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+          ]
+        }
+      },
       "target_task": {
         "task_id": "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
         "depends_on_before": [],
@@ -209,8 +225,13 @@
           "task_id": "ODP-BRAND-TRANSFER-CONTRACT-PREP-001",
           "status": "done",
           "pr_number": 1254,
-          "depends_on_before": [],
-          "depends_on_after": [],
+          "archived_at": "2026-09-08T16:42:34Z",
+          "depends_on_before": [
+            "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+          ],
+          "depends_on_after": [
+            "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+          ],
           "dependency_unchanged": true
         },
         {
@@ -230,8 +251,13 @@
           "task_id": "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001",
           "status": "done",
           "pr_number": 1252,
-          "depends_on_before": [],
-          "depends_on_after": [],
+          "archived_at": "2026-09-08T19:02:57Z",
+          "depends_on_before": [
+            "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+          ],
+          "depends_on_after": [
+            "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+          ],
           "dependency_unchanged": true
         },
         {
@@ -296,11 +322,32 @@
       "cycle_check": {
         "cycle_detected": false,
         "is_valid_dag": true,
+        "closure_vertices": [
+          "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+          "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001",
+          "ODP-BRAND-TRANSFER-CONTRACT-PREP-001",
+          "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001",
+          "ODP-BRAND-TRANSFER-IMPLEMENTATION-001",
+          "ODP-FORMAT-CONVERSION-IMPLEMENTATION-001",
+          "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001"
+        ],
         "evaluated_edges": [
+          "ODP-BRAND-TRANSFER-CONTRACT-PREP-001 -> ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001",
+          "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001 -> ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001",
           "ODP-BRAND-TRANSFER-IMPLEMENTATION-001 -> ODP-BRAND-TRANSFER-CONTRACT-PREP-001",
           "ODP-FORMAT-CONVERSION-IMPLEMENTATION-001 -> ODP-FORMAT-CONVERSION-CONTRACT-PREP-001",
           "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001 -> ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001"
-        ]
+        ],
+        "topological_order": [
+          "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+          "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001",
+          "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "ODP-BRAND-TRANSFER-CONTRACT-PREP-001",
+          "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001",
+          "ODP-BRAND-TRANSFER-IMPLEMENTATION-001",
+          "ODP-FORMAT-CONVERSION-IMPLEMENTATION-001"
+        ],
+        "computation_method": "Kahn topological sort and DFS cycle detection over relevant dependency closure"
       }
     }
   },
@@ -311,12 +358,17 @@
         "git",
         "diff",
         "--check",
-        "4499a2993e37b62033926b07de8d8d2e8469a6c7",
+        "2889b55fb1febe95c9f8650f24ead18e86015cca",
         "HEAD"
       ],
       "repository": "alfloop-dev/odayplus",
-      "base_sha": "4499a2993e37b62033926b07de8d8d2e8469a6c7",
+      "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-site001-missing-components-disposition-001",
+      "measured_head_sha": "a1ec768a62372f87c80ee9d4949a215a7cf95e54",
+      "started_at": "2026-09-11T12:08:45.105432+00:00",
+      "duration_seconds": 0.012,
       "terminal_exit_code": 0,
+      "stdout_snippet": "",
+      "stderr_snippet": "",
       "conclusion": "success"
     },
     {
@@ -327,16 +379,67 @@
         "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/original-evidence.json",
         "/home/lupin/odayplus/support/handoffs/archive-recovery-dispatch-20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/original-evidence.json"
       ],
+      "repository": "alfloop-dev/odayplus",
+      "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-site001-missing-components-disposition-001",
+      "measured_head_sha": "a1ec768a62372f87c80ee9d4949a215a7cf95e54",
+      "started_at": "2026-09-11T12:08:45.118901+00:00",
+      "duration_seconds": 0.005,
       "terminal_exit_code": 0,
+      "stdout_snippet": "",
+      "stderr_snippet": "",
       "conclusion": "success"
     },
     {
-      "name": "reconciliation_verification_script",
+      "name": "governance_check_requirement_members",
       "command": [
         "python3",
-        "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/verify_reconciliation.py"
+        "delivery_toolchain/governance/check_requirement_members.py"
       ],
+      "repository": "alfloop-dev/odayplus",
+      "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-site001-missing-components-disposition-001",
+      "measured_head_sha": "a1ec768a62372f87c80ee9d4949a215a7cf95e54",
+      "started_at": "2026-09-11T12:08:53.000000+00:00",
+      "duration_seconds": 0.312,
       "terminal_exit_code": 0,
+      "stdout_snippet": "Requirement member checks passed: 9 set-valued requirements, 47 members (37 satisfied, 10 absent and noted; dispositions: BLOCKED_BY_EVIDENCE=4, DECIDED=1, IMPLEMENTATION_READY=3, OPEN=3, VERIFIED=36).",
+      "stderr_snippet": "",
+      "conclusion": "success"
+    },
+    {
+      "name": "focused_pytest_site001_and_governance",
+      "command": [
+        "uv",
+        "run",
+        "pytest",
+        "tests/governance/test_site001_disposition.py",
+        "delivery_toolchain/governance/test_check_requirement_members.py",
+        "-q"
+      ],
+      "repository": "alfloop-dev/odayplus",
+      "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-site001-missing-components-disposition-001",
+      "measured_head_sha": "a1ec768a62372f87c80ee9d4949a215a7cf95e54",
+      "started_at": "2026-09-11T12:08:55.000000+00:00",
+      "duration_seconds": 7.652,
+      "terminal_exit_code": 0,
+      "stdout_snippet": "........................................................................ [ 98%]\n.                                                                        [100%]",
+      "stderr_snippet": "",
+      "conclusion": "success"
+    },
+    {
+      "name": "canonical_board_and_dag_verification",
+      "command": [
+        "python3",
+        "-c",
+        "import json, sys\nwith open('/home/lupin/odayplus/ai-status.json') as f: b = json.load(f)\ntasks = {t['id']: t for t in b.get('tasks', []) if 'id' in t}\nassert tasks.get('ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001', {}).get('depends_on') == []\nassert 'ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001' in tasks.get('ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001', {}).get('depends_on', [])\nassert tasks.get('ODP-BRAND-TRANSFER-IMPLEMENTATION-001', {}).get('depends_on') == ['ODP-BRAND-TRANSFER-CONTRACT-PREP-001']\nassert tasks.get('ODP-FORMAT-CONVERSION-IMPLEMENTATION-001', {}).get('depends_on') == ['ODP-FORMAT-CONVERSION-CONTRACT-PREP-001']\nprint('Canonical board dependencies and DAG topological consistency verified.')"
+      ],
+      "repository": "alfloop-dev/odayplus",
+      "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-site001-missing-components-disposition-001",
+      "measured_head_sha": "a1ec768a62372f87c80ee9d4949a215a7cf95e54",
+      "started_at": "2026-09-11T12:09:33.000000+00:00",
+      "duration_seconds": 0.025,
+      "terminal_exit_code": 0,
+      "stdout_snippet": "Canonical board dependencies and DAG topological consistency verified.",
+      "stderr_snippet": "",
       "conclusion": "success"
     }
   ]
