@@ -146,7 +146,7 @@
           "run_id": 34138969380,
           "job_id": 101796385286,
           "result": "PASSED",
-          "summary": "Orchestrator code and delivery tooling tests passed cleanly in CI (step 13)."
+          "summary": "Orchestrator code and delivery tooling tests passed cleanly in CI (step 14)."
         },
         {
           "kind": "unverified_offline_observation",
@@ -168,7 +168,7 @@
         }
       ],
       "verified_items": [
-        "Orchestrator code and delivery tooling tests passed in clean CI (run 34138969380 job 101796385286 step 13)"
+        "Orchestrator code and delivery tooling tests passed in clean CI (run 34138969380 job 101796385286 step 14)"
       ],
       "gaps_and_uncovered": [
         "GitHub Actions CI on candidate commit 596b9c9a skipped the product and product-e2e test jobs. Full CI product backend test execution is required for candidate admission; offline scratch observations are unverified.",

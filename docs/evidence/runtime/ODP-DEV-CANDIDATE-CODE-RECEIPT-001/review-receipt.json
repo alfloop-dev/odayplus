@@ -74,7 +74,7 @@
       "kind": "immutable_ci_job_receipt",
       "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
       "source_ref": "github://alfloop-dev/odayplus@596b9c9a1788d952811a2bf8d4bba8a4e4d76b12/actions/runs/34138969380/job/101796385286",
-      "binding": "GitHub Actions CI Runner / clean checkout of C (job 101796385286 step 8)",
+      "binding": "GitHub Actions CI Runner / clean checkout of C (job 101796385286 step 9)",
       "command": "uv run python delivery_toolchain/governance/check_measurement_defaults.py",
       "argv": [
         "uv",
@@ -82,13 +82,16 @@
         "python",
         "delivery_toolchain/governance/check_measurement_defaults.py"
       ],
-      "timestamp_utc": "2026-09-07T15:35:08Z",
-      "duration_seconds": null,
+      "step_start_utc": "2026-09-07T15:35:08Z",
+      "step_completed_utc": "2026-09-07T15:35:10Z",
+      "timestamp_utc": "2026-09-07T15:35:10Z",
+      "step_window": "2026-09-07T15:35:08Z - 2026-09-07T15:35:10Z",
+      "duration_seconds": 2.0,
       "exit_code": null,
       "status": "passed",
       "conclusion": "success",
       "sanitized_output": "19 score defaults verified, 19 valid exemptions recorded with owners.",
-      "summary": "Measurement defaults governance check passed cleanly in CI on candidate C."
+      "summary": "Measurement defaults governance check passed cleanly in CI on candidate C (step duration 2s)."
     },
     {
       "receipt_id": "RCPT-CODE-CI-GOV-002",
@@ -96,7 +99,7 @@
       "kind": "immutable_ci_job_receipt",
       "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
       "source_ref": "github://alfloop-dev/odayplus@596b9c9a1788d952811a2bf8d4bba8a4e4d76b12/actions/runs/34138969380/job/101796385286",
-      "binding": "GitHub Actions CI Runner / clean checkout of C (job 101796385286 step 9)",
+      "binding": "GitHub Actions CI Runner / clean checkout of C (job 101796385286 step 10)",
       "command": "uv run python delivery_toolchain/governance/check_requirement_members.py",
       "argv": [
         "uv",
@@ -104,13 +107,16 @@
         "python",
         "delivery_toolchain/governance/check_requirement_members.py"
       ],
-      "timestamp_utc": "2026-09-07T15:35:08Z",
-      "duration_seconds": null,
+      "step_start_utc": "2026-09-07T15:35:10Z",
+      "step_completed_utc": "2026-09-07T15:35:11Z",
+      "timestamp_utc": "2026-09-07T15:35:11Z",
+      "step_window": "2026-09-07T15:35:10Z - 2026-09-07T15:35:11Z",
+      "duration_seconds": 1.0,
       "exit_code": null,
       "status": "passed",
       "conclusion": "success",
       "sanitized_output": "9 set-valued requirements verified across 47 members (36 satisfied, 11 noted).",
-      "summary": "Requirement member resolvability verified cleanly in CI on candidate C."
+      "summary": "Requirement member resolvability verified cleanly in CI on candidate C (step duration 1s)."
     },
     {
       "receipt_id": "RCPT-CODE-CI-GOV-003",
@@ -118,7 +124,7 @@
       "kind": "immutable_ci_job_receipt",
       "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
       "source_ref": "github://alfloop-dev/odayplus@596b9c9a1788d952811a2bf8d4bba8a4e4d76b12/actions/runs/34138969380/job/101796385286",
-      "binding": "GitHub Actions CI Runner / clean checkout of C (job 101796385286 step 10)",
+      "binding": "GitHub Actions CI Runner / clean checkout of C (job 101796385286 step 11)",
       "command": "uv run python delivery_toolchain/governance/generate_vocabularies.py --check",
       "argv": [
         "uv",
@@ -127,13 +133,16 @@
         "delivery_toolchain/governance/generate_vocabularies.py",
         "--check"
       ],
-      "timestamp_utc": "2026-09-07T15:35:08Z",
-      "duration_seconds": null,
+      "step_start_utc": "2026-09-07T15:35:11Z",
+      "step_completed_utc": "2026-09-07T15:35:12Z",
+      "timestamp_utc": "2026-09-07T15:35:12Z",
+      "step_window": "2026-09-07T15:35:11Z - 2026-09-07T15:35:12Z",
+      "duration_seconds": 1.0,
       "exit_code": null,
       "status": "passed",
       "conclusion": "success",
       "sanitized_output": "3 governed vocabularies clean, no unapproved drift or new forks.",
-      "summary": "Vocabulary governance check passed cleanly in CI on candidate C."
+      "summary": "Vocabulary governance check passed cleanly in CI on candidate C (step duration 1s)."
     },
     {
       "receipt_id": "RCPT-CODE-CI-GOV-004",
@@ -141,21 +150,22 @@
       "kind": "immutable_ci_job_receipt",
       "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
       "source_ref": "github://alfloop-dev/odayplus@596b9c9a1788d952811a2bf8d4bba8a4e4d76b12/actions/runs/34138969380/job/101796385286",
-      "binding": "GitHub Actions CI Runner / clean checkout of C (job 101796385286 step 12)",
-      "command": "uv run python delivery_toolchain/governance/check_orchestrator_config.py && uv run python delivery_toolchain/governance/check_config_wiring.py",
+      "binding": "GitHub Actions CI Runner / clean checkout of C (job 101796385286 step 13)",
+      "command": "uv run python delivery_toolchain/governance/check_orchestrator_config.py\nuv run python delivery_toolchain/governance/check_config_wiring.py",
       "argv": [
-        "uv",
-        "run",
-        "python",
-        "delivery_toolchain/governance/check_orchestrator_config.py"
+        "uv run python delivery_toolchain/governance/check_orchestrator_config.py",
+        "uv run python delivery_toolchain/governance/check_config_wiring.py"
       ],
-      "timestamp_utc": "2026-09-07T15:35:08Z",
-      "duration_seconds": null,
+      "step_start_utc": "2026-09-07T15:35:12Z",
+      "step_completed_utc": "2026-09-07T15:35:14Z",
+      "timestamp_utc": "2026-09-07T15:35:14Z",
+      "step_window": "2026-09-07T15:35:12Z - 2026-09-07T15:35:14Z",
+      "duration_seconds": 2.0,
       "exit_code": null,
       "status": "passed",
       "conclusion": "success",
       "sanitized_output": "3 config documents and 190 production config key wiring links verified.",
-      "summary": "Orchestrator configuration and production config wiring validation passed cleanly in CI on candidate C."
+      "summary": "Orchestrator configuration and production config wiring validation passed cleanly in CI on candidate C (step duration 2s)."
     },
     {
       "receipt_id": "RCPT-CODE-CI-TOOL-001",
@@ -163,7 +173,7 @@
       "kind": "immutable_ci_job_receipt",
       "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
       "source_ref": "github://alfloop-dev/odayplus@596b9c9a1788d952811a2bf8d4bba8a4e4d76b12/actions/runs/34138969380/job/101796385286",
-      "binding": "GitHub Actions CI Runner / clean checkout of C (job 101796385286 step 13)",
+      "binding": "GitHub Actions CI Runner / clean checkout of C (job 101796385286 step 14)",
       "command": "uv run pytest -m \"not requires_live_env\" .orchestrator delivery_toolchain scripts tests/tooling",
       "argv": [
         "uv",
@@ -176,13 +186,16 @@
         "scripts",
         "tests/tooling"
       ],
-      "timestamp_utc": "2026-09-07T15:35:08Z",
-      "duration_seconds": null,
+      "step_start_utc": "2026-09-07T15:35:14Z",
+      "step_completed_utc": "2026-09-07T15:38:10Z",
+      "timestamp_utc": "2026-09-07T15:38:10Z",
+      "step_window": "2026-09-07T15:35:14Z - 2026-09-07T15:38:10Z",
+      "duration_seconds": 176.0,
       "exit_code": null,
       "status": "passed",
       "conclusion": "success",
       "sanitized_output": "Orchestrator and delivery tooling test suite executed cleanly.",
-      "summary": "Tooling and orchestrator tests passed cleanly in CI on candidate C."
+      "summary": "Tooling and orchestrator tests passed cleanly in CI on candidate C (step duration 176s)."
     },
     {
       "receipt_id": "RCPT-CODE-LINT-001",
@@ -505,20 +518,17 @@
       "kind": "reused_immutable_source_receipt",
       "source_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
       "source_ref": "github://alfloop-dev/odayplus@108249fa921e128f734ebd917a933fa562f4b7e1/docs/evidence/runtime/ODP-DEV-BUILD-ARTIFACT-HANDOFF-003/build-dispatch-evidence.md#L652-L689",
-      "binding": "Candidate C extracted read-only via git archive; C release_manifest module validated downloaded RELEASE_MANIFEST.json bytes (artifact 10038569478, raw SHA 8bb6e72ed1306862ddb4c40d48c851b31ecf8c4ab5f361ac5cc7e1856537f56d)",
-      "command": "python3 -c \"from delivery_toolchain.release.release_manifest import compute_manifest_digest, validate_manifest; m=json.load(open(\\\"RELEASE_MANIFEST.json\\\")); compute_manifest_digest(m); validate_manifest(m, expected_candidate_sha=\\\"596b9c9a1788d952811a2bf8d4bba8a4e4d76b12\\\", expected_digest=m[\\\"manifest_digest\\\"])\"",
-      "argv": [
-        "python3",
-        "-c",
-        "from delivery_toolchain.release.release_manifest import compute_manifest_digest, validate_manifest; m=json.load(open(\"RELEASE_MANIFEST.json\")); compute_manifest_digest(m); validate_manifest(m, expected_candidate_sha=\"596b9c9a1788d952811a2bf8d4bba8a4e4d76b12\", expected_digest=m[\"manifest_digest\"])"
-      ],
-      "timestamp_utc": "2026-09-08T02:26:33Z",
+      "binding": "Candidate C extracted read-only via git archive; C release_manifest module applied to downloaded RELEASE_MANIFEST.json bytes (artifact 10038569478, raw SHA 8bb6e72ed1306862ddb4c40d48c851b31ecf8c4ab5f361ac5cc7e1856537f56d)",
+      "command": "reused immutable source receipt reference (validation of downloaded RELEASE_MANIFEST.json bytes with candidate C validator; build-dispatch-evidence.md §13.5)",
+      "argv": null,
+      "reproduction_snippet": "from delivery_toolchain.release.release_manifest import compute_manifest_digest, validate_manifest\nm = json.load(open(\"RELEASE_MANIFEST.json\"))\ncompute_manifest_digest(m)\nvalidate_manifest(m, expected_candidate_sha=\"596b9c9a1788d952811a2bf8d4bba8a4e4d76b12\", expected_digest=m[\"manifest_digest\"])",
+      "timestamp_utc": null,
       "duration_seconds": null,
       "exit_code": null,
       "status": "passed",
       "conclusion": "success",
       "sanitized_output": "compute_manifest_digest returned sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c; validate_manifest returned [] (no errors).",
-      "summary": "Reused immutable manifest validation evidence from build artifact handoff \u00a713.5 confirming candidate C manifest self-consistency and digest matching without local invented execution metadata."
+      "summary": "Reused immutable manifest validation evidence from build artifact handoff §13.5 confirming candidate C manifest self-consistency and digest matching without local invented execution metadata."
     }
   ],
   "hardening_task_tracking": {

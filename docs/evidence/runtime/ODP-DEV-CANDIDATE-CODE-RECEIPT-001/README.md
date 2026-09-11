@@ -2,7 +2,7 @@
 
 - Task ID: `ODP-DEV-CANDIDATE-CODE-RECEIPT-001`
 - Owner: `Antigravity2`
-- Reviewer: `Codex`
+- Reviewer: `Codex2`
 - Candidate SHA (C): `596b9c9a1788d952811a2bf8d4bba8a4e4d76b12`
 - Baseline Evidence SHA (E): `d084f51d4009b7b435416c8b83410a8b4fb4a267`
 - Manifest Digest: `sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c`
@@ -97,11 +97,11 @@
 |---|---|---|---|---|---|---|
 | `RCPT-CODE-CI-001` | CI Boundary Check | 不可變 CI 收據 | `uv run python check_code_boundaries.py` (Run 34138969380 Job 101796385286) | **null** (success) | 2026-09-07T15:35:08Z | **PASSED**：CI 乾淨環境驗證 1137 個檔案全數通過 (step duration 5s)。 |
 | `RCPT-CODE-OBS-001` | Diagnostic Probe | 離線診斷觀察 | `uv run python check_code_boundaries.py` (scratch probe) | **null** | — | **DISCREPANCY_UNVERIFIED**：Scratch 回報 stale inventory，原因待環境核對。 |
-| `RCPT-CODE-CI-GOV-001` | Gov Measurement | 不可變 CI 收據 | `uv run python check_measurement_defaults.py` (Job 101796385286) | **null** (success) | 2026-09-07T15:35:08Z | **PASSED**：CI 執行通過，19 項 defaults 驗證。 |
-| `RCPT-CODE-CI-GOV-002` | Gov Requirements | 不可變 CI 收據 | `uv run python check_requirement_members.py` (Job 101796385286) | **null** (success) | 2026-09-07T15:35:08Z | **PASSED**：CI 執行通過，47 項 requirement members 驗證。 |
-| `RCPT-CODE-CI-GOV-003` | Gov Vocabularies | 不可變 CI 收據 | `uv run python generate_vocabularies.py --check` (Job 101796385286) | **null** (success) | 2026-09-07T15:35:08Z | **PASSED**：CI 執行通過，3 項 vocabularies 驗證。 |
-| `RCPT-CODE-CI-GOV-004` | Gov Config & Wiring | 不可變 CI 收據 | `uv run python check_orchestrator_config.py & check_config_wiring.py` (Job 101796385286) | **null** (success) | 2026-09-07T15:35:08Z | **PASSED**：CI 執行通過，設定檔與 190 項 wiring 驗證。 |
-| `RCPT-CODE-CI-TOOL-001` | Tooling Tests | 不可變 CI 收據 | `uv run pytest -m "not requires_live_env" ... tests/tooling` (Job 101796385286) | **null** (success) | 2026-09-07T15:35:08Z | **PASSED**：CI 執行通過，tooling 與 orchestrator 測試通過。 |
+| `RCPT-CODE-CI-GOV-001` | Gov Measurement | 不可變 CI 收據 | `uv run python check_measurement_defaults.py` (Job 101796385286 Step 9) | **null** (success) | 2026-09-07T15:35:10Z | **PASSED**：CI 執行通過，19 項 defaults 驗證。 |
+| `RCPT-CODE-CI-GOV-002` | Gov Requirements | 不可變 CI 收據 | `uv run python check_requirement_members.py` (Job 101796385286 Step 10) | **null** (success) | 2026-09-07T15:35:11Z | **PASSED**：CI 執行通過，47 項 requirement members 驗證。 |
+| `RCPT-CODE-CI-GOV-003` | Gov Vocabularies | 不可變 CI 收據 | `uv run python generate_vocabularies.py --check` (Job 101796385286 Step 11) | **null** (success) | 2026-09-07T15:35:12Z | **PASSED**：CI 執行通過，3 項 vocabularies 驗證。 |
+| `RCPT-CODE-CI-GOV-004` | Gov Config & Wiring | 不可變 CI 收據 | `uv run python check_orchestrator_config.py & check_config_wiring.py` (Job 101796385286 Step 13) | **null** (success) | 2026-09-07T15:35:14Z | **PASSED**：CI 執行通過，設定檔與 190 項 wiring 驗證。 |
+| `RCPT-CODE-CI-TOOL-001` | Tooling Tests | 不可變 CI 收據 | `uv run pytest -m "not requires_live_env" ... tests/tooling` (Job 101796385286 Step 14) | **null** (success) | 2026-09-07T15:38:10Z | **PASSED**：CI 執行通過，tooling 與 orchestrator 測試通過。 |
 | `RCPT-CODE-LINT-001` | Python Lint (Full) | 離線未驗證觀察 | `uv run ruff check ...` | **null** | — | **UNVERIFIED**：全專案 ruff lint 於 CI 中未執行，離線 scratch 觀察未留存原始 terminal receipt。 |
 | `RCPT-CODE-FMT-001` | Code Format | 缺口清單 | `ruff format --check / prettier --check` | **null** | — | **UNKNOWN**：無歷史排版收據。 |
 | `RCPT-CODE-LINT-002` | Frontend Lint | 離線未驗證觀察 | `npm run lint --workspace=@oday-plus/web` | **null** | — | **UNVERIFIED**：CI skipped；離線 scratch 觀察未留存原始 terminal receipt。 |
@@ -116,7 +116,7 @@
 | `RCPT-CODE-BLD-002` | Bundle Budget | 離線未驗證觀察 | `npm run bundle:budget --workspace=@oday-plus/web` | **null** | — | **UNVERIFIED**：CI skipped；離線 scratch 觀察未留存原始 terminal receipt。 |
 | `RCPT-CODE-BLD-TRACE-001` | Image Producer | 不可變 CI 收據 | Run `34179207603` (4 images built & signed) | **null** (failure) | 2026-09-08T02:11:41Z | **PRODUCER_FAIL**：四映像檔簽章推播完成 (Rekor span 02:17:01Z–02:19:42Z, 161s)，step 20 失敗。 |
 | `RCPT-CODE-BLD-TRACE-002` | Artifact Publisher | 重用不可變收據 | Run `34179791241` (6 artifacts published) | **null** (success) | 2026-09-08T02:21:49Z | **PASSED**：6 份 artifact raw bytes 完全比對吻合。 |
-| `RCPT-CODE-MANIFEST-001` | Manifest Validation | 重用不可變收據 | `python3 -c validate_manifest...` (Handoff §13.5) | **null** (success) | 2026-09-08T02:26:33Z | **PASSED**：重用 build handoff 不可變收據，C 自帶驗證器核驗通過。 |
+| `RCPT-CODE-MANIFEST-001` | Manifest Validation | 重用不可變收據 | `release_manifest` validator (Handoff §13.5) | **null** (success) | — | **PASSED**：重用 build handoff 不可變收據，C 自帶驗證器核驗通過。 |
 
 ---
 
