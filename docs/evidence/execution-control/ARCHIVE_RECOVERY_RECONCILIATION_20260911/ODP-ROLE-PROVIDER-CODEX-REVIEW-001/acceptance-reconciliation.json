@@ -1,0 +1,412 @@
+{
+  "task_id": "ODP-ROLE-PROVIDER-CODEX-REVIEW-001",
+  "task_title": "落實 Agy／Claude 實作、Codex Astra ultra 審查的單一派工政策",
+  "recovery_task_title": "歷史驗收續辦：ODP-ROLE-PROVIDER-CODEX-REVIEW-001",
+  "task_class": "remediation",
+  "phase": "History Recovery — executable acceptance reconciliation",
+  "owner": "Antigravity6",
+  "reviewer": "Codex",
+  "recorded_at": "2026-09-11T10:59:00Z",
+  "reconciliation_target": {
+    "repository": "alfloop-dev/odayplus",
+    "continuation_branch": "task/ODP-ROLE-PROVIDER-CODEX-REVIEW-001-RECOVERY-20260911",
+    "continuation_branch_base_sha": "4499a2993e37b62033926b07de8d8d2e8469a6c7",
+    "canonical_status_root": "/home/lupin/odayplus"
+  },
+  "historical_delivery": {
+    "pr_number": 1221,
+    "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1221",
+    "head_sha": "c1a382416e4423e22f3bf5dfe86a37d93597e583",
+    "merge_commit_sha": "64f3b2399442e8cd7531284d1e7a3e33bcc3ca9a",
+    "merged": true,
+    "merged_at": "2026-09-06T05:56:17Z",
+    "head_ref": "task/ODP-ROLE-PROVIDER-CODEX-REVIEW-001",
+    "pr_title": "[ReviewBus] ODP-ROLE-PROVIDER-CODEX-REVIEW-001 落實 Agy／Claude 實作、Codex Astra ultra 審查的單一派工政策",
+    "delivered_artifacts": [
+      ".orchestrator/dispatch_engine.py",
+      ".orchestrator/adapters/codex.py",
+      ".orchestrator/config.schema.json",
+      ".orchestrator/test_role_provider_policy.py"
+    ],
+    "ci_checks": [
+      {
+        "name": "change-scope",
+        "conclusion": "success",
+        "completed_at": "2026-09-06T05:31:53Z"
+      },
+      {
+        "name": "boundary",
+        "conclusion": "success",
+        "completed_at": "2026-09-06T05:31:58Z"
+      },
+      {
+        "name": "classify",
+        "conclusion": "success",
+        "completed_at": "2026-09-06T05:31:57Z"
+      },
+      {
+        "name": "orchestrator",
+        "conclusion": "success",
+        "completed_at": "2026-09-06T05:35:33Z"
+      },
+      {
+        "name": "product",
+        "conclusion": "skipped",
+        "completed_at": "2026-09-06T05:31:54Z"
+      },
+      {
+        "name": "performance-gate",
+        "conclusion": "skipped",
+        "completed_at": "2026-09-06T05:31:54Z"
+      },
+      {
+        "name": "product-e2e-gate",
+        "conclusion": "skipped",
+        "completed_at": "2026-09-06T05:31:54Z"
+      }
+    ],
+    "historical_approval": {
+      "context": "task-review-gate",
+      "state": "success",
+      "updated_at": "2026-09-06T05:47:35Z",
+      "description": "Approved by assigned reviewer Codex",
+      "approver_named_in_gate": "Codex",
+      "approver_differs_from_owner": true
+    },
+    "commit_trailers_at_head": {
+      "LLM-Agent": "Antigravity2",
+      "Task-ID": "ODP-ROLE-PROVIDER-CODEX-REVIEW-001",
+      "Reviewer": "Codex"
+    }
+  },
+  "readback_evidence_sources": {
+    "observed_at": "2026-09-10T23:31:25.855941+00:00",
+    "runtime_path": "/home/lupin/oday-plus-supervisor-runtime-b66d18130f3b",
+    "runtime_git_sha": "b66d18130f3bac78cf5af32b1c7000933e5d931d",
+    "supervisor": {
+      "pid": 2585616,
+      "started_at": "2026-09-10T16:45:28Z",
+      "loaded_code_sha": "b66d18130f3bac78cf5af32b1c7000933e5d931d",
+      "loaded_config_digest": "54110ea0cef280a8",
+      "last_successful_loop_at": "2026-09-10T23:29:01Z",
+      "last_loop_error": null
+    },
+    "config_sha256": "54110ea0cef280a822484067185076b35600accf58dbb24d09adc6c64bbb6cd8",
+    "config_digest_matches_loaded": true,
+    "role_provider_policy": {
+      "enabled": true,
+      "rules": [
+        {
+          "roles": [
+            "reviewer"
+          ],
+          "providers": [
+            "codex"
+          ]
+        },
+        {
+          "roles": [
+            "owner",
+            "helper"
+          ],
+          "providers": [
+            "antigravity",
+            "claude"
+          ]
+        }
+      ],
+      "unclassified_owned_work": [
+        "antigravity",
+        "claude"
+      ]
+    },
+    "codex_model": "gpt-6-astra",
+    "codex_model_reasoning_effort": "ultra",
+    "recent_actual_codex_workers": [
+      {
+        "task_id": "ODP-AVM-DEPRECIATION-INTEGRATION-001",
+        "provider": "codex",
+        "agent_id": "codex_lupin_slot_1",
+        "logical_agent_id": "codex2",
+        "quota_group": "codex_lupin",
+        "dispatch_slot_id": "codex_lupin_slot_1",
+        "status": "completed",
+        "mode": "codex",
+        "exit_code": 0,
+        "runner_finished_at": "2026-09-10T23:12:07Z",
+        "run_id": "codex-20260910T230855Z-a7ced745",
+        "cli_header": [
+          "model: gpt-6-astra",
+          "provider: openai",
+          "reasoning effort: ultra"
+        ],
+        "log_path": "/home/lupin/oday-plus-supervisor-runtime-b66d18130f3b/.orchestrator/logs/20260910T230855652700Z-codex-codex_lupin_slot_1-938a6a.log"
+      },
+      {
+        "task_id": "ODP-AVM-DEPRECIATION-INTEGRATION-001",
+        "provider": "codex",
+        "agent_id": "codex_lupin_slot_1",
+        "logical_agent_id": "codex2",
+        "quota_group": "codex_lupin",
+        "dispatch_slot_id": "codex_lupin_slot_1",
+        "status": "completed",
+        "mode": "codex",
+        "exit_code": 0,
+        "runner_finished_at": "2026-09-10T21:05:27Z",
+        "run_id": "codex-20260910T210319Z-26b65875",
+        "cli_header": [
+          "model: gpt-6-astra",
+          "provider: openai",
+          "reasoning effort: ultra"
+        ],
+        "log_path": "/home/lupin/oday-plus-supervisor-runtime-b66d18130f3b/.orchestrator/logs/20260910T210319844220Z-codex-codex_lupin_slot_1-ef069a.log"
+      },
+      {
+        "task_id": "ODP-INTV006-ADJUST-WORKFLOW-001",
+        "provider": "codex",
+        "agent_id": "codex_bjoe_slot_1",
+        "logical_agent_id": "codex",
+        "quota_group": "codex_bjoe",
+        "dispatch_slot_id": "codex_bjoe_slot_1",
+        "status": "completed",
+        "mode": "codex",
+        "exit_code": 0,
+        "runner_finished_at": "2026-09-10T19:54:54Z",
+        "run_id": "codex-20260910T195133Z-bc42bafa",
+        "cli_header": [
+          "model: gpt-6-astra",
+          "provider: openai",
+          "reasoning effort: ultra"
+        ],
+        "log_path": "/home/lupin/oday-plus-supervisor-runtime-b66d18130f3b/.orchestrator/logs/20260910T195133237612Z-codex-codex_bjoe_slot_1-0bca28.log"
+      },
+      {
+        "task_id": "ODP-AVM-DEPRECIATION-INTEGRATION-001",
+        "provider": "codex",
+        "agent_id": "codex_lupin_slot_1",
+        "logical_agent_id": "codex2",
+        "quota_group": "codex_lupin",
+        "dispatch_slot_id": "codex_lupin_slot_1",
+        "status": "completed",
+        "mode": "codex",
+        "exit_code": 0,
+        "runner_finished_at": "2026-09-10T19:39:25Z",
+        "run_id": "codex-20260910T193627Z-b5630980",
+        "cli_header": [
+          "model: gpt-6-astra",
+          "provider: openai",
+          "reasoning effort: ultra"
+        ],
+        "log_path": "/home/lupin/oday-plus-supervisor-runtime-b66d18130f3b/.orchestrator/logs/20260910T193627651002Z-codex-codex_lupin_slot_1-28ae67.log"
+      }
+    ]
+  },
+  "acceptance_criteria_reconciliation": [
+    {
+      "index": 1,
+      "criterion": "使用者2026-09-06再次明確釐清：所有實作都交Agy/Claude，Codex只review。實作包括修bug、整合程式碼、IaC、workflow、文件、測試與部署工具修改；不存在『Codex可做整合實作』例外。從最新origin/dev延伸唯一assignment viability/dispatch，不新增scheduler/router/service/輪詢腳本。",
+      "classes": [
+        "P",
+        "D"
+      ],
+      "classes_zh": [
+        "執行過程約束/背景政策",
+        "程式交付"
+      ],
+      "reconciliation_status": "met",
+      "status_zh": "已滿足",
+      "historical_process_status": "historical_process_unknown_non_blocking",
+      "rationale": "條款前半部為使用者政策指示背景。成果要求（實作限 Agy/Claude、Codex 只 review、無整合實作例外、延伸唯一 dispatch 不新增外部排程/輪詢服務）已在 PR #1221 由 .orchestrator 程式變更交付，並於 merge commit 64f3b2399442 落地。2026-09-10T23:31Z live readback 證明 live runtime 運行之 role_provider_policy 完全符合本條款要求。",
+      "evidence_refs": [
+        "merge_commit:64f3b2399442e8cd7531284d1e7a3e33bcc3ca9a",
+        "pr:#1221",
+        "role-provider-live-readback.json:role_provider_policy"
+      ]
+    },
+    {
+      "index": 2,
+      "criterion": "建立單一可配置role/provider eligibility：所有可自動執行的owner/helper工作只允許antigravity/claude，review只允許codex。不得以integration/verification/runtime_release/rollout或缺失/未知task_class繞過Codex禁止實作；純review驗證不屬實作。human_gate/non_dispatchable與既有部署授權保持fail closed，不因owner可用就取得human GO。既有owner_provider_preference僅在合格集合排序，不複製selector。",
+      "classes": [
+        "D",
+        "T"
+      ],
+      "classes_zh": [
+        "程式交付",
+        "測試證明"
+      ],
+      "reconciliation_status": "met",
+      "status_zh": "已滿足",
+      "historical_process_status": "not_applicable",
+      "rationale": "PR #1221 交付之 .orchestrator/dispatch_engine.py 實現了單一 role/provider eligibility 機制，禁止以任何 task_class 繞過 Codex 實作限制；human_gate 與部署授權維持 fail-closed；.orchestrator/test_role_provider_policy.py 包含完整 negative 測試；exact-head orchestrator CI 成功（conclusion=success）；live readback 確認 live 配置已啟用且規則一致。",
+      "evidence_refs": [
+        ".orchestrator/dispatch_engine.py @ 64f3b2399442",
+        ".orchestrator/test_role_provider_policy.py::test_reviewer_selection_never_falls_back_to_an_implementation_lane",
+        "ci_check:orchestrator @ c1a382416e44",
+        "role-provider-live-readback.json:role_provider_policy"
+      ]
+    },
+    {
+      "index": 3,
+      "criterion": "共同eligibility必须覆蓋initial assignment、repair/reconcile、reviewer conflict/failover、owner failure帶入reviewer fallback、review churn rotation、helper claim、logical→physical slot映射及queued pre-launch重新核對。Codex忙/quota/unknown時review等待，不能fallback Agy/Claude；也不能只改canonical reviewer後被舊reconcile改回。未知provider/malformed enabled policy fail closed，無政策維持原行為。",
+      "classes": [
+        "D",
+        "T"
+      ],
+      "classes_zh": [
+        "程式交付",
+        "測試證明"
+      ],
+      "reconciliation_status": "met",
+      "status_zh": "已滿足",
+      "historical_process_status": "not_applicable",
+      "rationale": "單一 eligibility 全面覆蓋 initial assignment、repair、failover、fallback、rotation、helper claim、slot mapping 及 queued pre-launch 重新核對。.orchestrator/test_role_provider_policy.py 具名 negative 測試逐項驗證了 Codex 滿載/quota 時 review 等待且不 fallback 到 Agy/Claude，且未知 provider fail-closed；exact-head orchestrator CI 成功。",
+      "evidence_refs": [
+        ".orchestrator/dispatch_engine.py @ 64f3b2399442",
+        ".orchestrator/test_role_provider_policy.py::test_unmeasurable_codex_capacity_does_not_release_review_to_another_provider",
+        ".orchestrator/test_role_provider_policy.py::test_exhausted_codex_pools_make_review_wait_rather_than_reassign",
+        ".orchestrator/test_role_provider_policy.py::test_queued_event_is_skipped_when_the_policy_stopped_permitting_it",
+        ".orchestrator/test_role_provider_policy.py::test_review_churn_rotation_rotates_owner_without_moving_review_off_codex",
+        ".orchestrator/test_role_provider_policy.py::test_owner_failure_fallback_does_not_drag_the_reviewer_off_codex",
+        "ci_check:orchestrator @ c1a382416e44"
+      ]
+    },
+    {
+      "index": 4,
+      "criterion": "保留owner!=reviewer及account-pool獨立性。新政策前Codex已寫過的提交保留真實作者身份，須另一獨立Codex pool review或明確等待，不洗owner規避自審。Codex在途WIP先保存窄scope checkpoint再handoff Agy/Claude，不再接新實作；已提交review身份/歷史approval/archive/receipt不能被新policy追溯改寫，approved/finalize owner保持凍結。不得清除reopen/cooldown/lease，不雙派。",
+      "classes": [
+        "D",
+        "T"
+      ],
+      "classes_zh": [
+        "程式交付",
+        "測試證明"
+      ],
+      "reconciliation_status": "met",
+      "status_zh": "已滿足",
+      "historical_process_status": "not_applicable",
+      "rationale": "由 PR #1221 交付之政策保證 owner!=reviewer 與 account-pool 獨立性；.orchestrator/test_role_provider_policy.py 包含 test_account_pool_independence_survives_a_single_provider_review_rule；live readback 證實 codex_lupin 與 codex_bjoe 兩獨立 pool 運作正常，無 cross-pool 自審或洗 owner；PR #1221 exact-head CI success。",
+      "evidence_refs": [
+        ".orchestrator/test_role_provider_policy.py::test_account_pool_independence_survives_a_single_provider_review_rule",
+        "ci_check:orchestrator @ c1a382416e44",
+        "role-provider-live-readback.json:recent_actual_codex_workers"
+      ]
+    },
+    {
+      "index": 5,
+      "criterion": "Codex既有adapter新增明確model_reasoning_effort設定並透過-c model_reasoning_effort=\"ultra\"傳給codex exec；保持providers.codex.codex.model=gpt-6-astra為模型唯一配置，兩個Codex pool及其physical slots都須繼承且不能被launch模型偏好覆蓋回Luna。不得另建CLI wrapper、另寫個人config或變更auth/sandbox。schema/example/invalid effort failure與command-array regression一併完成。",
+      "classes": [
+        "D",
+        "T"
+      ],
+      "classes_zh": [
+        "程式交付",
+        "測試證明"
+      ],
+      "reconciliation_status": "met",
+      "status_zh": "已滿足",
+      "historical_process_status": "not_applicable",
+      "rationale": ".orchestrator/adapters/codex.py 與 .orchestrator/config.schema.json 交付了 model_reasoning_effort 設定與 command 傳遞；.orchestrator/test_role_provider_policy.py 測試了 command-array 產生與 invalid effort 失敗；2026-09-10T23:31Z live readback 證實 loaded config 設定了 gpt-6-astra 與 ultra，且兩池 4 筆真實 worker 執行的 CLI header 均為 model: gpt-6-astra, reasoning effort: ultra（exit code 0）；exact-head CI success。",
+      "evidence_refs": [
+        ".orchestrator/adapters/codex.py @ 64f3b2399442",
+        ".orchestrator/config.schema.json @ 64f3b2399442",
+        ".orchestrator/test_role_provider_policy.py::test_codex_command_carries_the_configured_model_and_ultra_effort",
+        ".orchestrator/test_role_provider_policy.py::test_invalid_effort_fails_the_delivery_instead_of_running_at_a_default",
+        "ci_check:orchestrator @ c1a382416e44",
+        "role-provider-live-readback.json:codex_model",
+        "role-provider-live-readback.json:codex_model_reasoning_effort",
+        "role-provider-live-readback.json:recent_actual_codex_workers"
+      ]
+    },
+    {
+      "index": 6,
+      "criterion": "本機codex-cli0.147.0 /home/lupin/.codex/models_cache.json fetched2026-09-06T03:44:11Z列gpt-6-astra支持ultra，且codex -c model_reasoning_effort=\"ultra\" features list已成功。不要以公開API只列max或舊docs只列xhigh擅自換成xhigh/max；本task不啟動假API probe、無權讀auth secrets。",
+      "classes": [
+        "P"
+      ],
+      "classes_zh": [
+        "執行過程約束/背景事實"
+      ],
+      "reconciliation_status": "met",
+      "status_zh": "已滿足",
+      "historical_process_status": "historical_process_unknown_non_blocking",
+      "rationale": "本條款前半段為 2026-09-06 派工當下的本機能力查核背景事實；後半段為邊界要求（不擅自換成 xhigh/max、不啟動假 API probe、不讀 auth secrets）。PR #1221 交付物嚴格鎖定 gpt-6-astra + ultra，未變更 auth/secrets；live readback 證明 ultra 設定在真實 runtime 執行成功；歷史執行 probe 的過程記錄依規則註記 unknown，不構成結案阻塞。",
+      "evidence_refs": [
+        ".orchestrator/adapters/codex.py @ 64f3b2399442",
+        "role-provider-live-readback.json:recent_actual_codex_workers"
+      ]
+    },
+    {
+      "index": 7,
+      "criterion": "整批修改完成只跑影響範圍focused tests一次及exact-head PR CI；必要negative tests涵蓋review不會逃回Agy/Claude、unknown/empty codex capacity、pool independence、queued policy change、helper/rotation、owner fallback、Codex exact model+effort。不要重跑無關完整suite、不要以mock生成的command當live執行證據。",
+      "classes": [
+        "T",
+        "P"
+      ],
+      "classes_zh": [
+        "測試證明",
+        "執行過程約束"
+      ],
+      "reconciliation_status": "met",
+      "status_zh": "已滿足",
+      "historical_process_status": "historical_process_unknown_non_blocking",
+      "rationale": "測試成果面（T）：條款點名的全套 negative tests 具名包含於 .orchestrator/test_role_provider_policy.py，且由精確 head c1a382416e44 結論 success 的 orchestrator check 收集執行；過程約束面（P）：PR #1221 CI 正確跳過了與本修改無關的 product, performance-gate, product-e2e-gate（focused CI），且 live 證據來自真實 worker log 而非 mock。歷史執行次數記錄依規則註記 unknown，不構成結案阻塞。",
+      "evidence_refs": [
+        ".orchestrator/test_role_provider_policy.py @ 64f3b2399442",
+        "ci_check:orchestrator @ c1a382416e44",
+        "role-provider-live-readback.json:recent_actual_codex_workers"
+      ]
+    },
+    {
+      "index": 8,
+      "criterion": "中文PR/收據區分code/test/merge與live。Claude/Agy完成實作，Codex獨立review與CI綁exacthead；合併後live config/既有rollout_supervisor_runtime.py操作交Claude/Agy受治理執行，Codex只做審查與讀取真實loaded digest/command/model/effort/連續健康loops驗證。當前code任務不可提前改canonical runtime；後續操作需明確同一任務phase/授權scope，不能自行啟用來源、簽Human GO或部署GCP。",
+      "classes": [
+        "P",
+        "H"
+      ],
+      "classes_zh": [
+        "執行過程約束",
+        "人類授權邊界"
+      ],
+      "reconciliation_status": "met",
+      "status_zh": "已滿足",
+      "historical_process_status": "not_applicable",
+      "rationale": "PR #1221 為純 code/policy 交付，未越權修改 live runtime、未簽發 Human GO、未啟用來源；實作與獨立審查分別由 Antigravity2 與 Codex 執行；後續 live rollout 依序由 ODP-ROLE-PROVIDER-CODEX-LIVE-ROLLOUT-001 (PR #1223) 承接；2026-09-10T23:31Z live readback 證明 live supervisor 正常運行於 loaded_code_sha b66d1813 與 loaded_config_digest 54110ea0cef280a8，連續健康 loops 正常。邊界約束完全遵守。",
+      "evidence_refs": [
+        "pr:#1221",
+        "task_review_gate:c1a382416e44 (approved by Codex)",
+        "role-provider-live-readback.json:supervisor"
+      ]
+    }
+  ],
+  "acceptance_criteria_summary": {
+    "total_criteria": 8,
+    "met_criteria": 8,
+    "partially_met_criteria": 0,
+    "not_evidenced_criteria": 0,
+    "unmet_criteria": 0,
+    "historical_process_unknown_criteria": [
+      1,
+      6,
+      7
+    ],
+    "all_criteria_technically_satisfied": true
+  },
+  "dependent_tasks_mapping": {
+    "downstream_tasks": [
+      {
+        "task_id": "ODP-ROLE-PROVIDER-CODEX-LIVE-ROLLOUT-001",
+        "pr_number": 1223,
+        "relationship": "Follow-up live deployment and config rollout task",
+        "status": "review / pending upstream closeout",
+        "handling_rule": "Retain dependency in ODP-ROLE-PROVIDER-CODEX-LIVE-ROLLOUT-001 until ODP-ROLE-PROVIDER-CODEX-REVIEW-001 is finalized; upstream completion unblocks PR #1223 to resume canonical governance review and merge."
+      }
+    ]
+  },
+  "governance_and_boundary_assertions": {
+    "no_human_go_forged": true,
+    "no_credentials_read": true,
+    "no_unauthorized_runtime_restart": true,
+    "no_unauthorized_cloud_deployment": true,
+    "exact_head_verification_preserved": true
+  }
+}
