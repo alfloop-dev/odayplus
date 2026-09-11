@@ -224,15 +224,17 @@
       "index": 3,
       "criterion": "依序支援 dev/ephemeral staging/prod blue-green",
       "classes": [
-        "T"
+        "T",
+        "D"
       ],
       "classes_zh": [
-        "可由測試證明"
+        "可由測試證明",
+        "程式或文件交付"
       ],
       "status": "met",
       "status_zh": "已滿足",
-      "evidence": "tests/ops/test_deploy_workflow_contract.py and tests/release/test_runtime_admission.py delivered in merge commit 5ae1e5cee8ef; check-run product at head 5f80756b conclusion=success.",
-      "boundary": "Workflow contract and admission definitions verified; not an assertion of an already-executed live production rollout."
+      "evidence": "Historical PR #1010 (head 5f80756b) tests (tests/ops/test_deploy_workflow_contract.py and tests/release/test_runtime_admission.py; merge commit 5ae1e5cee8ef, product CI success) establish stage admission boundaries across environments; historical workflow @5f80756b:465-478 used static staging and :480-490 used production dry-run capture. Complete ephemeral staging lifecycle (create/verify/proof) and production blue-green state capture are verified via source-only inspection of pinned dev .github/workflows/deploy-dev.yml (025323f36d05:1226-1293 and :1337-1352).",
+      "boundary": "Distinguishes historical admission stage contract tests from pinned dev deploy-dev.yml source inspection of ephemeral staging lifecycle and production blue-green capture; not an assertion of an already-executed live production rollout."
     },
     {
       "index": 4,

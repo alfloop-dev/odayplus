@@ -38,7 +38,7 @@
 |---|---|---|---|---|
 | **A1** | 現有 Runtime Release 成為唯一入口 | 程式交付 (D)<br>測試證明 (T) | **已滿足 (met)** | 經 PR #1010 交付之 `tests/ops/test_deploy_workflow_contract.py` 在 merge commit `5ae1e5ce` 存在，且 7 項 CI 檢查為 success；pinned dev workflow 盤點確認無第二套部署入口。 |
 | **A2** | build job 只執行一次且 deploy-by-digest | 測試證明 (T) | **已滿足 (met)** | `tests/ops/test_deploy_workflow_contract.py` 契約測試完整覆蓋 build 一次與 digest 部署邏輯；PR #1010 exact-head `product` CI 成功。 |
-| **A3** | 依序支援 dev/ephemeral staging/prod blue-green | 測試證明 (T) | **已滿足 (met)** | 由 `tests/ops/test_deploy_workflow_contract.py` 與 `tests/release/test_runtime_admission.py` 界定三階段流程；PR #1010 CI 成功。 |
+| **A3** | 依序支援 dev/ephemeral staging/prod blue-green | 測試證明 (T)<br>程式交付 (D) | **已滿足 (met)** | 歷史 PR #1010 (head `5f80756b`) 之 `test_deploy_workflow_contract.py` 與 `test_runtime_admission.py`（merge commit `5ae1e5ce`，product CI success）界定各階段 admission 邊界；歷史 workflow (@5f80756b:465-478, :480-490) 採用 static staging 與 prod dry-run capture。完整 ephemeral staging lifecycle（create/verify/proof）與 prod blue-green state capture 則經由 pinned dev `deploy-dev.yml` (@025323f3:1226-1293, :1337-1352) 原始碼查核證明。 |
 | **A4** | 各階段使用正確 admission 與 protected environments | 測試證明 (T)<br>部署運行 (R) | **已滿足 (met)** | **缺口已補齊**：2026-09-10T23:31Z 讀回確認 staging/production 具備 `required_reviewers`，三個 build 環境無阻擋，`deploy-dev.yml` 正確綁定環境與 admission 檢核。 |
 | **A5** | 不存在第二套 proof/deploy 狀態機 | 測試證明 (T) | **已滿足 (met)** | 否定要求由 `tests/ops/test_deploy_workflow_contract.py` 覆蓋，並與 pinned dev 之 7 份 workflow 結構一致。 |
 
