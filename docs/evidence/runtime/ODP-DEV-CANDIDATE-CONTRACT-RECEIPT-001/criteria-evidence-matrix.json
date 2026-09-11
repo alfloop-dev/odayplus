@@ -105,14 +105,14 @@
         ]
       },
       "breaking_change_plan": {
-        "policy": "Consumer-side package pinning without producer DDL dependency",
-        "migration_path": "Pinned package version upgrade from v0.4.0 to v0.4.1; schema migration digest tracked in RELEASE_MANIFEST.json",
-        "compatibility_window": "Immutable package release pinning guarantees consumer stability",
-        "rollback_plan": "Revert package pin to v0.4.0; dev recovery: delete-candidate-zero-traffic",
-        "enforcement_status": "package_pins_verified_live_reconciliation_deferred_to_gate2"
+        "policy": "Consumer-side package pinning (v0.4.1) without producer DDL dependency; pin changes require re-vendoring, checksum updates, and client regeneration",
+        "migration_path": "Initial consumer pin at v0.4.1 (no v0.4.0 consumer baseline evaluated on C); producer supported_release_versions [0.4.0, 0.4.1] is declared but consumer cross-version migration is unverified; schema migration digest tracked in RELEASE_MANIFEST.json",
+        "compatibility_window": "N/A for initial dev release; cross-version transition window unverified without prior baseline",
+        "rollback_plan": "delete-candidate-zero-traffic; consumer package pin rollback to v0.4.0 is unverified/not evaluated (requires re-vendoring and client regeneration)",
+        "enforcement_status": "package_pins_v041_verified_migration_window_rollback_unverified_gate2_deferred"
       },
       "evaluation_status": "partially_verified_contract_pins_passed_manual_correction_skipped",
-      "gap_or_blocker_note": "Data contract pin tests pass in EXEC-02 batch on candidate C (batch 94 passed; data pin static inventory 72 cases total) and digests match RELEASE_MANIFEST.json. Deployed data-plane reconciliation against live database requires Gate 2 (Data Gate) post-deployment verification.",
+      "gap_or_blocker_note": "Data contract pin tests pass in EXEC-02 batch on candidate C (batch 94 passed; data pin static inventory 72 cases total) and digests match RELEASE_MANIFEST.json. Candidate C introduces consumer pins directly at v0.4.1 without evaluated v0.4.0 baseline or migration history; cross-version migration, transition window, and rollback to v0.4.0 remain unverified. Deployed data-plane reconciliation against live database requires Gate 2 (Data Gate) post-deployment verification.",
       "remediation_owner": "Codex2 / Data Platform"
     },
     {

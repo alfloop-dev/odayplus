@@ -58,6 +58,9 @@
   - `data_contract_digest`: `sha256:05e2cb05619f1c524b0f9578e4ceba9ec863d143d5e64b0eeac97539ce8e7c73`
   - `source_policy_digest`: `sha256:0a34bb128b5b5b26201b7f014f4b4f8e631e841c8f205f38dfc09c9eb682d824`
   - `migration_digest`: `sha256:17794de9afb84681aabff9ed0966dedde83d950aef132de519fdc193099e620b`
+- **版本歷史與相容性說明（Pin History & Compatibility Scope）**:
+  - Candidate C 的 `config/oday_data_contracts.toml` 與 `config/oday_data_product_contracts.toml` 係初次直接以 `v0.4.1` 新增引入，本專案 consumer pin 並無 `v0.4.0` 至 `v0.4.1` 之遷移歷史。
+  - 設定中 `supported_release_versions` 含 `0.4.0` 僅為 producer 端的支援宣告，且變更 pin 需要重新 vendor、更新 digest 與重新產生 client；因此 EXEC-02 pin 測試僅證明本 consumer 於 C 固定使用 `v0.4.1`，未評估舊版 bundle，跨版遷移 (migration)、相容窗口 (transition window) 與回復至 `v0.4.0` 之可行性均屬 `unverified / unknown`。
 - **驗證結果與範圍**:
   - `tests/contract/test_oday_data_contract_pin.py` 與 `tests/contract/test_oday_data_product_contract_pin.py` 於 EXEC-02 批次中執行通過 (EXEC-02, EXIT=0，批次共 94 passed；靜態清單 Foundation 32、Product 40，data pin 靜態小計 72 cases)，證明消費者模式由已發布的 release bundle 生成，完全無直連 producer 內部 DDL/catalog 之依賴。
   - `test_manual_correction_contract.py` 未選入 EXEC-02 離線批次，標示為 `not_selected_in_offline_batch / unverified`。
@@ -74,7 +77,7 @@
 - **各領域變更計畫**:
   - **API Contract**: FastAPI 路由嚴格比對 (freshness verified)；Rollback: `delete-candidate-zero-traffic`。
   - **Event Schema**: 契約文件 `docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml` 列為 `status: proposed`，payload schemas 包含 `additionalProperties: false` 且 `shared/domain/events.py:174-175` 拒絕額外欄位，政策與實作存在落差；dual-read 與 migration 能力尚未於 C 實施驗證，維持 `unknown`，後續由 Claude / Platform 負責；Rollback: `delete-candidate-zero-traffic`。
-  - **Data Contract**: Pinned package client v0.4.1；資料庫 migration 於 Gate 2 驗證；Rollback: 恢復舊版 pin。
+  - **Data Contract**: Pinned package client 初次固定使用 v0.4.1，無 consumer v0.4.0 baseline/遷移歷史，跨版 migration/window/rollback 列為 unverified/unknown；資料庫 migration 於 Gate 2 驗證；Dev Rollback: `delete-candidate-zero-traffic`。
   - **Model Interface**: 介面型別封套受 schema 約束；模型卡與風險決策於 Gate 3 簽核；Rollback: 恢復決策 policy 路由。
 - **首次部署 (Initial Release) 復原語意**:
   - Candidate C 對 dev 環境屬於首次發布 (`prior_release_absent: true`, `rollback_target_available: false`)。

@@ -162,13 +162,13 @@
         }
       ],
       "domain_breaking_change_plan": {
-        "policy": "Consumer isolation via pinned data contracts packages; zero producer DDL coupling.",
-        "migration_path": "Upgraded from v0.4.0 to v0.4.1; schema migration digest tracked in RELEASE_MANIFEST.json.",
-        "compatibility_window": "Pinned packages provide immutable consumer-side schema guarantees during transition window.",
-        "rollback_plan": "Revert consumer package pins to v0.4.0 if data plane incompatibility is detected; dev recovery: delete-candidate-zero-traffic.",
-        "enforcement_status": "package_pins_verified_live_reconciliation_deferred_to_gate2"
+        "policy": "Consumer isolation via pinned data contracts packages (v0.4.1); zero producer DDL coupling. Changing pins requires re-vendoring, checksum updates, and regenerating client.",
+        "migration_path": "Initial consumer pinning at v0.4.1 (no evaluated consumer-side v0.4.0 baseline or migration history on candidate C); producer supported_release_versions [0.4.0, 0.4.1] is declared on producer contracts, but consumer cross-version migration remains unverified without an immutable prior bundle baseline; schema migration digest tracked in RELEASE_MANIFEST.json.",
+        "compatibility_window": "N/A on dev target; transition window and cross-version compatibility unverified without evaluated prior release baseline; live database schema reconciliation deferred to Gate 2.",
+        "rollback_plan": "delete-candidate-zero-traffic per RELEASE_MANIFEST.json (§initial_release_recovery); consumer package pin rollback to v0.4.0 is unverified/not evaluated (requires re-vendoring and client regeneration).",
+        "enforcement_status": "package_pins_v041_verified_migration_window_rollback_unverified_gate2_deferred"
       },
-      "finding": "Data contract foundation and product pin suites pass in EXEC-02 batch on candidate C (batch 94 passed; data pin static inventory 72 cases total) and digests match RELEASE_MANIFEST.json. Live database schema reconciliation is deferred to Gate 2 (Data Gate).",
+      "finding": "Data contract foundation and product pin suites pass in EXEC-02 batch on candidate C (batch 94 passed; data pin static inventory 72 cases total) and digests match RELEASE_MANIFEST.json. Candidate C introduces consumer pins directly at v0.4.1 without evaluated v0.4.0 consumer baseline or migration history; cross-version migration, transition window, and rollback to v0.4.0 remain unverified. Live database schema reconciliation is deferred to Gate 2 (Data Gate).",
       "downstream_responsibility": "Codex2 / Data Platform"
     },
     {
