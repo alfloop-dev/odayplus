@@ -185,15 +185,30 @@
       "approved_head_sha": "6ee658a0bd65ab79303fdfd75baa09c14410a220",
       "merge_sha": "f21fd2a242d7f1f76d1bb69c0b067730f6576fe6",
       "evidence_path": "docs/evidence/runtime/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003/preflight-results.json",
+      "production_variables_receipt": {
+        "receipt_file": "docs/evidence/runtime/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003/receipts/github-receipts/receipt-gh-env-vars-production.json",
+        "command": "gh api --paginate repos/alfloop-dev/odayplus/environments/production/variables",
+        "exit_code": 0,
+        "timestamp_utc": "2026-09-08T11:46:09Z",
+        "total_variables_count": 42
+      },
       "paginated_variable_counts": {
         "dev": 41,
         "staging": 44,
         "production": 42
       },
+      "declared_production_targets": {
+        "gcp_project_id": "odayplus-prod-20260826",
+        "gcp_region": "asia-east1",
+        "gcp_service_account": "github-deployer@odayplus-prod-20260826.iam.gserviceaccount.com",
+        "gcp_workload_identity_provider": "projects/365886461656/locations/global/workloadIdentityPools/github-actions/providers/odayplus",
+        "gcp_cloud_sql_instance": "odayplus-prod-20260826:asia-east1:oday-prod-sql",
+        "gcp_ar_repo": "oday-plus"
+      },
       "gcp_runtime_readback_established": false,
       "runtime_readback_status": "not_established",
-      "runtime_readback_reason": "Every gcloud probe in this run was issued as oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com, which is not the release identity. Probes returned Cloud Resource Manager disabled, ambiguous not-found/unauthorized, or PERMISSION_DENIED. None of these establish the target's existence, its configuration, or the release identity's access. Target existence and non-existence remain unknown rather than inferred.",
-      "target_policy_status": "dev/staging target variables verified in GitHub; production target fail-closed on dedicated GCP infrastructure"
+      "runtime_readback_reason": "Every gcloud probe in this run was issued as oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com (quota project alfaloop-data-project-2 #323781672261), which is not the release identity. Probes returned Cloud Resource Manager disabled, ambiguous not-found/unauthorized, or PERMISSION_DENIED. None of these establish the target's existence, its configuration, or the release identity's access. Physical resource/IAM state remains unknown pending authorized readback with release identity. References alone do not prove live resources or Human GO; failed probes do not prove nonexistence.",
+      "target_policy_status": "dev/staging/production target variables verified in GitHub; live GCP physical resources and IAM runtime state remain unknown pending authorized readback; production remains fail-closed on human authority (PROD-GCP-01~05)"
     },
     "staging_foundation_refs_mapping": {
       "source_task": "ODP-STAGING-FOUNDATION-REFS-MAPPING-001",
@@ -242,14 +257,14 @@
         "runtime／部署"
       ],
       "status": "partially_met",
-      "status_zh": "部分滿足（dev/staging 引用規範已滿足；production 變數與 GCP 資源/IAM readback 未建立）",
-      "evidence": "gcp-wif-iam-audit.json and github-variables-audit.json at merge commit 8ad3f10dab70 confirm dev/staging WIF pool (projects/767864276141/.../pools/github-actions), provider (odayplus with condition assertion.repository == 'alfloop-dev/odayplus'), deployer SA (github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com), and 4 Secret Manager secret references (ODAY_DATABASE_URL_SECRET, ODP_AUTH_PRINCIPAL_MAP_SECRET, ODP_WEB_SESSION_SECRET_SECRET, ODP_WEB_OIDC_CLIENT_SECRET_SECRET) are fully recorded. All secret values are strictly redacted (secret_values_redacted=true).",
+      "status_zh": "部分滿足（dev/staging/production GitHub 變數與密鑰 reference 規範已記錄，但 production 實體 GCP 資源與 IAM readback 未由 release identity 建立）",
+      "evidence": "Historical PR #1011 (@ 8ad3f10dab70) audit recorded dev (38 vars) and staging (7 vars) references, with production total_variables=0 (status=pending_human_authority). Newer preflight receipt in PR #1245 (@ 6ee658a0bd65, docs/evidence/runtime/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003/receipts/github-receipts/receipt-gh-env-vars-production.json exit 0, timestamp 2026-09-08T11:46:09Z) observes 42 production environment variables containing declared references to project odayplus-prod-20260826, dedicated WIF provider (projects/365886461656/.../providers/odayplus), deployer SA (github-deployer@odayplus-prod-20260826.iam.gserviceaccount.com), Cloud SQL (odayplus-prod-20260826:asia-east1:oday-prod-sql), and Secret Manager secrets (ODAY_DATABASE_URL_SECRET, ODP_AUTH_PRINCIPAL_MAP_SECRET, ODP_WEB_SESSION_SECRET_SECRET, ODP_WEB_OIDC_CLIENT_SECRET_SECRET). All secret values are strictly redacted (secret_values_redacted=true).",
       "gaps": [
-        "Production environment variables in github-variables-audit.json total_variables=0, status=pending_human_authority.",
-        "Preflight PR #1245 (preflight-results.json:223-226,249,272,295) recorded gcp_runtime_readback_established=false / runtime_readback_status=not_established; probe failures cannot establish presence or absence of production GCP resources.",
+        "Preflight PR #1245 (preflight-results.json:279-295) recorded runtime_readback_status=not_established / gcp_runtime_readback_established=false; probes issued under non-release caller oday-dev-runtime@... returned disabled API/permission errors and cannot establish presence, absence, configuration, or release identity access of production GCP resources. Physical resource/IAM state remains unknown pending authorized readback with release identity.",
+        "References alone do not prove live resources or Human GO; failed probes do not prove nonexistence.",
         "Foundation Mapping PR #1296 (foundation-reference-map.json) identifies staging references as candidate pending live reconciliation, recovery bucket as unknown, and Cloud SQL pointing to legacy unmanaged instance."
       ],
-      "boundary": "Verified dev/staging secret references and WIF binding contracts; production references and live runtime state remain unestablished / pending downstream provisioning."
+      "boundary": "Verified dev/staging/production secret references and WIF binding declarations in GitHub; live physical GCP resources and IAM configuration remain unestablished / unknown pending authorized release identity readback."
     },
     {
       "index": 3,
@@ -263,15 +278,14 @@
         "人類授權"
       ],
       "status": "partially_met",
-      "status_zh": "部分滿足（GitHub 側 production 環境與審查保護已達成；GCP 專屬專案/資源/變數與 5 項具名人類決定未達成）",
-      "evidence": "GitHub side: Environment production (id 20574639394) exists and required_reviewers rule (Alien-alfaloop, ajoe734) is active (verified 2026-09-10). Fail-closed behavior on missing authority is documented in production-authority-prerequisites.json (status=blocked_pending_human_authority).",
+      "status_zh": "部分滿足（GitHub 側 production 環境與審查保護已達成且有 42 項變數 reference 宣告；GCP 實體資源與 IAM 運行狀態未建立（unknown），且 5 項具名人類決定未達成）",
+      "evidence": "GitHub side: Environment production (id 20574639394) exists and required_reviewers rule (Alien-alfaloop, ajoe734) is active (verified in 2026-08-25 audit and 2026-09-10 readback). Production environment variables (42 variables observed 2026-09-08 @ PR #1245) declare target references to project odayplus-prod-20260826. Fail-closed behavior on missing human authority is documented in production-authority-prerequisites.json (status=blocked_pending_human_authority).",
       "gaps": [
-        "Dedicated production GCP project, WIF pool/provider, deployer SA, and Secret Manager secrets are not provisioned.",
-        "Production GitHub environment has total_variables=0.",
-        "Human authority checklist items PROD-GCP-01 (Project naming), PROD-GCP-02 (WIF & SA), PROD-GCP-03 (Cloud SQL & Secrets), PROD-GCP-04 (OAuth Client & Domain), and PROD-OPS-05 (Operations/SLO/Rollback governance) are pending human decision.",
+        "Physical production GCP project, WIF pool/provider, deployer SA, Cloud SQL, and Secret Manager resources have not established runtime readback (runtime_readback_status=not_established in PR #1245); state is unknown pending authorized readback with release identity.",
+        "Human authority checklist items PROD-GCP-01 (Project naming), PROD-GCP-02 (WIF & SA), PROD-GCP-03 (Cloud SQL & Secrets), PROD-GCP-04 (OAuth Client & Domain), and PROD-OPS-05 (Operations/SLO/Rollback governance) remain pending human decision / signoff.",
         "HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001 does NOT cover PROD-GCP-01~05 (per plan §8 line 273); PROD-GCP-01~05 remain open governance prerequisites for ODP-PROD-BLUEGREEN-ROLLOUT-001."
       ],
-      "boundary": "Clearly distinguishes GitHub environment protection (which is verified and active) from GCP production infrastructure provisioning and Human GO (which remain unfulfilled and gated)."
+      "boundary": "Clearly distinguishes GitHub environment protection and variable reference declarations (which are verified and active) from live GCP production infrastructure readback (which remains unknown) and Human GO (which remains pending and gated)."
     },
     {
       "index": 4,
@@ -306,6 +320,8 @@
   ],
   "canonical_dependency_graph_reconciliation": {
     "task_id": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+    "canonical_board_source": "ai-status.json",
+    "canonical_board_snapshot_sha256": "03a8c32f4c6956af745bbf5574a423fbea82ceda1dc1a97c902c52d82f0d6ae5",
     "canonical_depends_on_before": [],
     "canonical_depends_on_after": [],
     "depends_on_status": "unchanged",
@@ -361,12 +377,71 @@
         "canonical_depends_on_after": [],
         "depends_on_status": "unchanged",
         "note": "Staging foundation depends_on is empty; it does NOT depend on bootstrap in canonical DAG."
+      },
+      {
+        "task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+        "title": "建立 ephemeral staging 並完成全套 release rehearsal",
+        "canonical_depends_on_before": [
+          "ODP-EPHEMERAL-STAGING-IAC-001",
+          "ODP-DEV-ROLLOUT-001",
+          "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+          "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001"
+        ],
+        "canonical_depends_on_after": [
+          "ODP-EPHEMERAL-STAGING-IAC-001",
+          "ODP-DEV-ROLLOUT-001",
+          "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+          "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001"
+        ],
+        "depends_on_status": "unchanged",
+        "note": "Ephemeral staging rollout depends transitively on bootstrap via ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001."
       }
     ],
+    "scoped_transitive_edge_closure": {
+      "input_nodes": [
+        "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+        "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+        "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+        "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+        "ODP-PROD-BLUEGREEN-ROLLOUT-001"
+      ],
+      "directed_dependency_edges": [
+        {
+          "from": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+          "to": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "type": "direct_canonical_dependency"
+        },
+        {
+          "from": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+          "to": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+          "type": "direct_canonical_dependency"
+        },
+        {
+          "from": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "to": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+          "type": "transitive_canonical_dependency"
+        },
+        {
+          "from": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+          "to": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+          "type": "transitive_canonical_dependency"
+        }
+      ]
+    },
     "dependency_cycle_check": {
       "verified_dag": true,
       "cycle_detected": false,
-      "method": "Topological sort over canonical depends_on edges in ai-status.json snapshot (2026-09-11). Edges: ODP-GITHUB-GCP-ENV-BOOTSTRAP-001 -> ODP-PROD-BLUEGREEN-ROLLOUT-001, ODP-GITHUB-GCP-ENV-BOOTSTRAP-001 -> ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001. No reverse edges exist."
+      "scope": "task_scoped_transitive_closure",
+      "cycle_reasoning": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001 has depends_on: [] (in-degree 0 in execution graph). Directed dependency edges flow strictly downstream: BOOTSTRAP -> DEV_LIVE_ROLLOUT -> EPHEMERAL_STAGING_ROLLOUT -> PROD_BLUEGREEN_ROLLOUT, and BOOTSTRAP -> PROD_BLUEGREEN_ROLLOUT. No backward edge exists to ODP-GITHUB-GCP-ENV-BOOTSTRAP-001 or within the transitive subgraph. The scoped transitive neighborhood is strictly an acyclic directed graph (DAG).",
+      "topological_sort_order": [
+        "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+        "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+        "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+        "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+        "ODP-PROD-BLUEGREEN-ROLLOUT-001"
+      ]
     }
   },
   "downstream_responsibility_mapping": [
