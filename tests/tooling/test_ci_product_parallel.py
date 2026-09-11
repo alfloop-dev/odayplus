@@ -326,24 +326,30 @@ def test_ci_workflow_required_runner_prerequisites(ci_workflow: dict[str, Any]) 
     """Assert required runner dependencies and environment across all parallel lanes."""
     jobs = ci_workflow["jobs"]
 
-    # 1. product-lint-unit: PostgreSQL 16 service, INTAKE_TEST_DATABASE_URL, Node 20, npm ci
+    # 1. product-lint-unit: PostgreSQL 16 service, INTAKE_TEST_DATABASE_URL, Node 20, npm ci, fetch-depth 0
     unit_job = jobs["product-lint-unit"]
     assert "postgres" in unit_job.get("services", {}), "product-lint-unit must have postgres service container"
     assert unit_job["services"]["postgres"].get("image") == "postgis/postgis:16-3.5"
     assert "INTAKE_TEST_DATABASE_URL" in unit_job.get("env", {}), "product-lint-unit must define INTAKE_TEST_DATABASE_URL"
 
     unit_steps = unit_job.get("steps", [])
+    unit_checkout = next((s for s in unit_steps if "actions/checkout" in str(s.get("uses", ""))), None)
+    assert unit_checkout is not None, "product-lint-unit must check out repository"
+    assert unit_checkout.get("with", {}).get("fetch-depth") == 0, "product-lint-unit requires fetch-depth 0 for git ancestry tests"
     unit_node_step = next((s for s in unit_steps if "actions/setup-node" in str(s.get("uses", ""))), None)
     assert unit_node_step is not None, "product-lint-unit must set up Node"
     assert str(unit_node_step.get("with", {}).get("node-version")) == "20"
     unit_install_step = next((s for s in unit_steps if "npm ci" in str(s.get("run", ""))), None)
     assert unit_install_step is not None, "product-lint-unit must install npm dependencies via npm ci"
 
-    # 2. product-db: PostgreSQL 16 service, INTAKE_TEST_DATABASE_URL
+    # 2. product-db: PostgreSQL 16 service, INTAKE_TEST_DATABASE_URL, fetch-depth 0
     db_job = jobs["product-db"]
     assert "postgres" in db_job.get("services", {}), "product-db must have postgres service container"
     assert db_job["services"]["postgres"].get("image") == "postgis/postgis:16-3.5"
     assert "INTAKE_TEST_DATABASE_URL" in db_job.get("env", {}), "product-db must define INTAKE_TEST_DATABASE_URL"
+    db_checkout = next((s for s in db_job.get("steps", []) if "actions/checkout" in str(s.get("uses", ""))), None)
+    assert db_checkout is not None, "product-db must check out repository"
+    assert db_checkout.get("with", {}).get("fetch-depth") == 0, "product-db requires fetch-depth 0"
 
     # 3. product-api-contract: fetch-depth 0 and ODP_API_BASE_REF
     api_job = jobs["product-api-contract"]

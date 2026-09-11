@@ -217,6 +217,23 @@ All checks passed!
   - `product` (Job ID `103108970819`): `01:08:03Z` – `01:08:12Z` (Duration 9s, Conclusion: `success`)
   - `orchestrator` (Job ID `103108930211`): `01:07:51Z` – `01:11:35Z` (Duration 3m44s, Conclusion: `success`)
 
+#### Run C: Head `bc6c4d91461ffcb582ff0fa3b827e8d6fbb544c4` (Run ID `34556566842`) — Product Scope Trigger & Shallow Clone Discovery
+- **Run URL**: `https://github.com/alfloop-dev/odayplus/actions/runs/34556566842`
+- **Head SHA**: `bc6c4d91461ffcb582ff0fa3b827e8d6fbb544c4`
+- **Event**: `pull_request` (Attempt 1)
+- **Change Scope**: `product_or_mixed` (由於納入 `tests/contract/test_merge_queue_batch_policy.py` 調和變更，觸發全量 5 lanes 實體執行)
+- **Parallel Lanes Execution Breakdown**:
+  - `product-db` (Job ID `103130410651`): **SUCCESS** (執行 PostgreSQL 16 整合測試與 DB contracts / schema gates 全部通過)
+  - `product-api-contract` (Job ID `103130410427`): **SUCCESS** (API drift 檢查通過)
+  - `product-security` (Job ID `103130410654`): **SUCCESS** (pip-audit 與安全測試全部通過)
+  - `product-node` (Job ID `103130410884`): **SUCCESS** (Node lint/typecheck/test 通過)
+  - `product-lint-unit` (Job ID `103130410421`): **FAILURE** (5,769 tests passed, 24 skipped, 8 xfailed, 16 subtests passed, 1 failed: `test_receipt_recomputes_aggregate_counts_and_generation_proof`)
+  - `product` (Job ID `103134202248`): **FAILURE** (`verify_ci_product_jobs.py` fail-closed 攔截並正確拒絕未全數通過之狀態)
+- **Root Cause & Fix**:
+  - `test_acceptance_coverage.py` 在執行 acceptance receipt 與 generation proof 驗證時，會複製 repo 並執行 `git merge-base --is-ancestor` 驗證 checked-in receipt 的 tested source 祖先關聯。
+  - GitHub Actions `actions/checkout@v4` 預設為 shallow clone (`fetch-depth: 1`)，導致祖先 commit 缺失而在 ancestry check 時失敗。
+  - **修復**：於 `.github/workflows/ci.yml` 之 `product-lint-unit` 與 `product-db` 步驟中加入 `with: fetch-depth: 0`，確保 Git 歷程完整，與原始 monolithic product job 以及 `product-api-contract` 一致。
+
 > **Note on Tooling Scope vs Product Scope Execution Constraint**:
 > 在僅變更 `development_tooling` 白名單路徑時，GitHub CI 的 change-scope 依既有設計判定為 `development_tooling`，5 個 product runner lanes 依條件直接 skip，並由 `product` 聚合驗收通過。當變更納入 `product_or_mixed` 路徑時（例如包含 `tests/contract/`），`change-scope` 判定為 `product_or_mixed`，所有 5 個 runner lanes 均在獨立 GitHub runner 上平行觸發執行並要求 100% success。
 

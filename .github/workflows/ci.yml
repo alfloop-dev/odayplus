@@ -168,6 +168,10 @@ jobs:
       INTAKE_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/oday_product_test
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: acceptance coverage and contract tests verify git
+          # ancestry and merge bases against the tested source commit.
+          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -236,6 +240,8 @@ jobs:
       INTAKE_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/oday_product_test
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
