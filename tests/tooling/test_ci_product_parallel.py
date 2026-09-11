@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -36,6 +37,96 @@ from delivery_toolchain.governance.verify_ci_product_jobs import (
 ROOT = Path(__file__).resolve().parents[2]
 CI_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "ci.yml"
 VERIFY_SCRIPT_PATH = ROOT / "delivery_toolchain" / "governance" / "verify_ci_product_jobs.py"
+
+
+def tokenize_command_line(line: str) -> list[str]:
+    """Tokenize a shell command line while preserving quotes and separating punctuation operators."""
+    lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = False
+    lexer.commenters = "#"
+    return list(lexer)
+
+
+def parse_executable_commands_from_script(script: str) -> list[list[str]]:
+    """Extract individual executable command argv lists from a GitHub Actions run block.
+
+    Correctly handles:
+    - Multi-line run blocks
+    - Backslash line continuations
+    - Shell comments (# ...)
+    - Sequential and chained commands (;, &&, ||, |, &)
+    """
+    if not script or not script.strip():
+        return []
+
+    lines = script.splitlines()
+    logical_lines: list[str] = []
+    buf: list[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            if buf:
+                logical_lines.append(" ".join(buf))
+                buf = []
+            continue
+        if stripped.endswith("\\"):
+            buf.append(stripped[:-1].strip())
+        else:
+            buf.append(stripped)
+            logical_lines.append(" ".join(buf))
+            buf = []
+    if buf:
+        logical_lines.append(" ".join(buf))
+
+    commands: list[list[str]] = []
+    for log_line in logical_lines:
+        try:
+            tokens = tokenize_command_line(log_line)
+        except ValueError:
+            tokens = log_line.split()
+
+        current_cmd: list[str] = []
+        for token in tokens:
+            if token in (";", "&&", "||", "|", "&"):
+                if current_cmd:
+                    commands.append(current_cmd)
+                    current_cmd = []
+            else:
+                current_cmd.append(token)
+        if current_cmd:
+            commands.append(current_cmd)
+
+    return commands
+
+
+def count_exact_command_occurrences(
+    jobs: dict[str, Any],
+    expected_command_str: str,
+) -> dict[str, int]:
+    """Find exact occurrences of expected_command_str across all jobs.
+
+    Returns a dict mapping job_name -> count of exact matches.
+    """
+    expected_argv = tokenize_command_line(expected_command_str)
+    occurrences: dict[str, int] = {}
+
+    for job_name, job_data in jobs.items():
+        if not isinstance(job_data, dict):
+            continue
+        count = 0
+        for step in job_data.get("steps", []):
+            run_script = step.get("run", "")
+            if not run_script:
+                continue
+            step_commands = parse_executable_commands_from_script(run_script)
+            for cmd_argv in step_commands:
+                if cmd_argv == expected_argv:
+                    count += 1
+        if count > 0:
+            occurrences[job_name] = count
+
+    return occurrences
 
 
 @pytest.fixture(scope="module")
@@ -118,29 +209,117 @@ def test_ci_workflow_command_exact_single_ownership(ci_workflow: dict[str, Any])
         "make node-check": "product-node",
     }
 
-    def normalize_cmd(text: str) -> str:
-        return " ".join(line.strip().rstrip("\\").strip() for line in text.strip().splitlines() if line.strip())
-
     for expected_cmd, expected_lane in expected_command_lanes.items():
-        norm_expected = normalize_cmd(expected_cmd)
-        owning_lanes: list[str] = []
+        occurrences = count_exact_command_occurrences(jobs, expected_cmd)
+        total_count = sum(occurrences.values())
 
-        for lane in REQUIRED_PRODUCT_LANES:
-            job_steps = jobs[lane].get("steps", [])
-            for step in job_steps:
-                run_text = step.get("run", "")
-                if not run_text:
-                    continue
-                norm_run = normalize_cmd(run_text)
-                if norm_expected in norm_run or norm_run == norm_expected:
-                    owning_lanes.append(lane)
+        assert total_count == 1, (
+            f"Command {expected_cmd!r} must have exactly 1 occurrence across the entire workflow, "
+            f"found total {total_count} in lanes: {occurrences}"
+        )
+        assert list(occurrences.keys()) == [expected_lane], (
+            f"Command {expected_cmd!r} expected uniquely in {expected_lane!r}, "
+            f"found in: {list(occurrences.keys())}"
+        )
+        assert occurrences[expected_lane] == 1
 
-        assert len(owning_lanes) == 1, (
-            f"Command {expected_cmd!r} must have exactly one owning lane, found: {owning_lanes}"
-        )
-        assert owning_lanes[0] == expected_lane, (
-            f"Command {expected_cmd!r} expected to belong to {expected_lane!r}, but found in {owning_lanes[0]!r}"
-        )
+
+# ---------------------------------------------------------------------------
+# Command parser and exact argv coverage regression tests
+# ---------------------------------------------------------------------------
+
+
+def test_parse_executable_commands_handles_continuation() -> None:
+    script = (
+        'uv run pytest -m "requires_live_env and not requires_postgis" \\\n'
+        '  tests/contract tests/ops tests/integration\n'
+    )
+    cmds = parse_executable_commands_from_script(script)
+    assert len(cmds) == 1
+    assert cmds[0] == [
+        "uv",
+        "run",
+        "pytest",
+        "-m",
+        "requires_live_env and not requires_postgis",
+        "tests/contract",
+        "tests/ops",
+        "tests/integration",
+    ]
+
+
+def test_parse_executable_commands_handles_chaining_and_comments() -> None:
+    script = (
+        "# Setup step\n"
+        "uv sync && npm ci\n"
+        "make bootstrap; make security\n"
+    )
+    cmds = parse_executable_commands_from_script(script)
+    assert len(cmds) == 4
+    assert cmds[0] == ["uv", "sync"]
+    assert cmds[1] == ["npm", "ci"]
+    assert cmds[2] == ["make", "bootstrap"]
+    assert cmds[3] == ["make", "security"]
+
+
+def test_command_exact_matching_rejects_narrowed_selector() -> None:
+    expected = 'uv run pytest -m "requires_live_env and not requires_postgis" tests/contract tests/ops tests/integration'
+    # Mutated with an additional ignore flag
+    mutated_script = (
+        'uv run pytest -m "requires_live_env and not requires_postgis" \\\n'
+        '  tests/contract tests/ops tests/integration --ignore=tests/contract'
+    )
+    mock_jobs = {
+        "product-db": {"steps": [{"run": mutated_script}]},
+    }
+    occurrences = count_exact_command_occurrences(mock_jobs, expected)
+    assert occurrences == {}, "Narrowed command selector must not match original required command"
+
+
+def test_command_exact_matching_rejects_substring_echo() -> None:
+    expected = "make security"
+    mock_jobs = {
+        "product-security": {"steps": [{"run": 'echo "make security"'}]},
+    }
+    occurrences = count_exact_command_occurrences(mock_jobs, expected)
+    assert occurrences == {}, "echo 'make security' must not match executable make security"
+
+
+def test_command_exact_matching_rejects_same_step_duplication() -> None:
+    expected = "make security"
+    mock_jobs = {
+        "product-security": {
+            "steps": [
+                {
+                    "run": "make security\nmake security\n",
+                }
+            ]
+        }
+    }
+    occurrences = count_exact_command_occurrences(mock_jobs, expected)
+    assert occurrences == {"product-security": 2}
+    assert sum(occurrences.values()) == 2, "Duplication in single step must yield count 2"
+
+
+def test_command_exact_matching_rejects_cross_lane_duplication() -> None:
+    expected = "make security"
+    mock_jobs = {
+        "product-security": {"steps": [{"run": "make security"}]},
+        "product-lint-unit": {"steps": [{"run": "make security"}]},
+    }
+    occurrences = count_exact_command_occurrences(mock_jobs, expected)
+    assert occurrences == {"product-security": 1, "product-lint-unit": 1}
+    assert len(occurrences) == 2, "Cross-lane occurrence must be detected as multiple owning lanes"
+
+
+def test_command_exact_matching_rejects_missing_command() -> None:
+    expected = "make api-contract"
+    mock_jobs = {
+        "product-api-contract": {"steps": [{"run": "uv sync\nmake bootstrap\n"}]},
+    }
+    occurrences = count_exact_command_occurrences(mock_jobs, expected)
+    assert occurrences == {}, "Missing command must yield empty occurrences"
+
 
 
 def test_ci_workflow_required_runner_prerequisites(ci_workflow: dict[str, Any]) -> None:
