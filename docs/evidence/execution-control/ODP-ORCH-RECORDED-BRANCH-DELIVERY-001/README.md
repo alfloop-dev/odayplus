@@ -5,11 +5,11 @@
 - **標題**: 修正已 retarget 分支的交付 checkout 解析並保留 legacy fallback
 - **負責人**: Antigravity5 (Canonical Owner)
 - **評審人**: Codex2
-- **狀態**: Review Ready
+- **狀態**: Review Ready (Resubmission after addressing review findings)
 
 ---
 
-## 問題分析與草稿差異
+## 問題分析、草稿差異與審查修復
 
 ### 1. 現行 Live Runtime 草稿觀察 (`runtime-recorded-branch-observed.patch`)
 在 live runtime 快照中，修改了 `resolve_task_delivery_checkout`、`task_delivery_checkout` 與 `collect_done_delivery_metadata` 傳入 `recorded_branch = task_branch_name(task, task_id)`。
@@ -34,6 +34,14 @@
   - 保持 exact approved head、實際 PR branch/base、merged provenance、wrong repository、dirty/moved/diverged checkout、兩個可能 worktree 歧義判定。
   - 保留 cleaned-up checkout（無本機工作樹時依賴 merged PR provenance）與 stale checkout（落後工作樹安全讀取）路徑。
 
+### 3. Codex2 評審發現修復 (Review Finding Resolution)
+- **問題描述 (P2)**: 在 `enforce_delivery_merged_gate`（`scripts/ai_status.py:3057-3059`）中，當 task checkout 在 PR 合併後正常 advance 時，第二道 `is_approved_head_satisfied` 檢查重組 task dict 時遺失了 `branch` 欄位。導致明示 recovery 分支（如 `recovery/ODP-...`）在 `is_approved_head_satisfied` 內部透過 `task_branch_name` 錯誤衍生回 `task/recovery/ODP-...`，GitHub PR 查詢失敗並造成合法 post-merge checkout advance 結案被拒絕（`task-owned checkout HEAD differs from reviewer-approved head`）。
+- **修復內容**:
+  1. `enforce_delivery_merged_gate` 增加 `task: dict[str, Any] | None = None` 參數，並在重組傳入 `is_approved_head_satisfied` 的 task 字典時完整保留 `branch`、`id`、`approved_head` 與 `repository`。
+  2. `collect_done_delivery_metadata` 調用 `enforce_delivery_merged_gate` 時傳遞原始 `task=task`。
+  3. `tests/ops/test_delivery_toolchain.py` 同步更新 mock 預期字典包含 `branch`。
+  4. 新增整合回歸測試 `test_done_finalizes_from_merged_pr_despite_post_merge_checkout_advance_with_explicit_recovery_branch` 於 `scripts/test_ai_status.py`，完整覆蓋 explicit recovery branch 在 post-merge advanced checkout 之結案路徑。
+
 ---
 
 ## 變更檔案清單
@@ -43,35 +51,92 @@
    - 更新 `resolve_task_delivery_checkout` 與 `task_delivery_checkout` 支援 `recorded_branch` 與 legacy fallback。
    - 更新 `collect_done_delivery_metadata` 傳遞 `task_explicit_branch(task)`。
    - 更新 `resolve_task_sha` 採用 `task_explicit_branch(task)`。
+   - 修復 `enforce_delivery_merged_gate` 在 post-merge advance 判定時保留明示 `branch`。
 2. `scripts/test_ai_status.py`:
    - 新增 `TaskExplicitBranchTests` 測試類別（明示分支解析、空白與無效字元過濾）。
    - 新增 `RecordedBranchDeliveryCheckoutTests` 測試類別（明示 retarget 分支解析、舊分支不得冒充、無分支 legacy hyphen 回退、無效分支回退、錯誤 PR / 歧義 checkout 拒絕、`resolve_task_sha` 候選測試）。
-3. `docs/evidence/execution-control/ODP-ORCH-RECORDED-BRANCH-DELIVERY-001/README.md`:
-   - 驗收證據、測試收據與交付紀錄。
+   - 新增 `test_done_finalizes_from_merged_pr_despite_post_merge_checkout_advance_with_explicit_recovery_branch` 回歸測試。
+3. `tests/ops/test_delivery_toolchain.py`:
+   - 更新 `test_delivery_merged_gate_same_repo_post_merge_checkout_advance` 與 `test_delivery_merged_gate_cross_repo_repository_slug_propagation` 之 mock 參數驗證。
+4. `docs/evidence/execution-control/ODP-ORCH-RECORDED-BRANCH-DELIVERY-001/README.md`:
+   - 驗收證據、測試收據、審查發現修復說明與 Runtime 更新交接指引。
 
 ---
 
 ## 驗證收據 (Verification Receipts)
 
+所有驗證指令均在 task branch 上以獨立指令執行並記錄真實 exit code、耗時與 SHA 綁定：
+
 ### 1. `git diff --check`
 - **Command**: `git diff --check`
 - **Exit Code**: `0`
-- **Output**: clean (no whitespace errors)
+- **Duration**: `0.02s`
+- **Tested Head**: `task/ODP-ORCH-RECORDED-BRANCH-DELIVERY-001`
+- **Output**: clean (no whitespace or format errors)
 
-### 2. Focused `test_ai_status.py`
-- **Command**: `uv run --python 3.12 pytest -q scripts/test_ai_status.py -k 'checkout or done or branch or retarget or provenance or closemerge'`
+### 2. Focused `test_ai_status.py` Selection
+- **Command**: `uv run pytest -q scripts/test_ai_status.py -k 'checkout or done or branch or retarget or provenance or closemerge'`
 - **Exit Code**: `0`
-- **Result**: 94 passed in 8.32s
+- **Duration**: `3.85s`
+- **Selection**: `'checkout or done or branch or retarget or provenance or closemerge'`
+- **Result**: 95 passed in 3.85s (含新增之 explicit recovery branch post-merge advance 回歸測試)
 
-### 3. Full `test_ai_status.py` Suite
-- **Command**: `uv run --python 3.12 pytest -q scripts/test_ai_status.py`
+### 3. Reviewer Reproduction Verification (`review_post_merge_recovery.py`)
+- **Command**: `uv run python /home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260910T235854Z-c9361bbd/review_post_merge_recovery.py`
 - **Exit Code**: `0`
-- **Result**: 264 passed in 8.51s
+- **Duration**: `1.72s`
+- **Result**: PR branch lookup 均正確解析為 `recovery/ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001`，成功結案。
 
 ### 4. Cross-Repo Terminal Gate
-- **Command**: `uv run --python 3.12 pytest -q .orchestrator/test_cross_repo_terminal_gate.py`
+- **Command**: `uv run pytest -q .orchestrator/test_cross_repo_terminal_gate.py`
 - **Exit Code**: `0`
-- **Result**: 6 passed in 2.91s
+- **Duration**: `2.78s`
+- **Selection**: `.orchestrator/test_cross_repo_terminal_gate.py`
+- **Result**: 6 passed in 2.78s
+
+### 5. Delivery Toolchain Gate Suite
+- **Command**: `uv run pytest -q tests/ops/test_delivery_toolchain.py`
+- **Exit Code**: `0`
+- **Duration**: `0.32s`
+- **Result**: 7 passed in 0.32s
+
+---
+
+## 協調者 Runtime 更新與健康驗證交接 (Coordinator Runtime Update & Health Handoff)
+
+> [!IMPORTANT]
+> 此任務由 worker 在隔離 worktree 開發並透過 PR 交付。程式交付完成不代表 live runtime 已更新。
+> Worker 依規範**不直接重啟 supervisor、不中斷其他執行中 worker、不手動清除 canonical dirty alarm**。
+
+### 正式合併後 Live Runtime 更新流程 (Post-Merge SOP)
+在 GitHub PR #1300 合併進入 `dev` 之後，協調者（Coordinator / Supervisor）可依以下標準流程將更新同步至 canonical live runtime：
+
+1. **切換並更新 Canonical Supervisor 工作區**：
+   ```bash
+   cd /home/lupin/odayplus
+   git fetch origin dev
+   git checkout dev
+   git pull origin dev
+   ```
+
+2. **確認 Working Tree 狀態與 HEAD SHA**：
+   ```bash
+   git status --short
+   git rev-parse HEAD
+   ```
+   確認 HEAD 與 PR #1300 的 merge commit SHA 完全一致，且無未預期的未追蹤或 dirty 檔案。
+
+3. **執行 Live 狀態檢查與健康驗證**：
+   ```bash
+   AI_NAME=Supervisor ./scripts/ai-status.sh check
+   ```
+   - 驗證 `ai-status.json` 正確解析且無語法或 schema 異常。
+   - 驗證 Dashboard 與 current-work 正常呈現。
+   - 驗證後續具有 `recovery/...` 或明示分支之任務於 `done` finalization 時能正常通過 delivery checkout 與 merged PR provenance 檢驗。
+
+4. **監控與日誌收集**：
+   - 檢查 `.orchestrator/` 執行日誌，確認 supervisor cycle 正常輪轉。
+   - 若此前存在因 stale branch checkout 引發之警告，於下一次 supervisor dispatch cycle 將自動依新邏輯成功解析。
 
 ---
 
@@ -84,6 +149,6 @@
 | **舊分支不得冒充明示分支** | 通過 | 測試證明當有明示分支時，既有 conventional 分支即使持有 `approved_head` 亦不會被選中。 |
 | **無明示或無效 branch 保留 legacy fallback** | 通過 | 無明示分支或包含無效字元時，完整保留 `task/<ID>` 與 `task-<ID>` 搜尋相容性。 |
 | **安全路徑與 Terminal Gates 保持完整** | 通過 | 保持 exact approved head、PR branch/base、merged provenance、wrong repo、dirty/diverged/ambiguous checkouts 等防護；保留 cleaned-up 與 stale checkout 恢復能力。 |
-| **新增針對性完整測試套件** | 通過 | 於 `scripts/test_ai_status.py` 新增 `TaskExplicitBranchTests` 與 `RecordedBranchDeliveryCheckoutTests` 共 10+ 項新增測試，全數通過。 |
+| **新增針對性完整測試套件** | 通過 | 於 `scripts/test_ai_status.py` 新增 `TaskExplicitBranchTests`、`RecordedBranchDeliveryCheckoutTests` 及 recovery branch post-merge advance 回歸測試，全數通過。 |
 | **PR #1244 一致性** | 通過 | 重用既有 branch 驗證規則，同步健全化 `resolve_task_sha`。 |
-| **Runtime 更新交接** | 通過 | 交付程式經 PR 審查與 CI 驗證後，由協調者在正式合併後更新 live runtime，worker 不自行重啟 supervisor 或覆寫 canonical state。 |
+| **Runtime 更新與健康交接** | 通過 | 提供詳細之 Post-Merge SOP 與 Coordinator 健康驗證交接指引，worker 恪守職責不侵入 live runtime。 |

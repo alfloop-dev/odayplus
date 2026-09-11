@@ -2967,6 +2967,7 @@ def enforce_delivery_merged_gate(
     remote_names: list[str],
     approved_head: str,
     repository_slug_value: str | None,
+    task: dict[str, Any] | None = None,
 ) -> None:
     target_branch = delivery_merge_target_branch(config, repository_id)
     delivery["merge_target_branch"] = target_branch
@@ -3055,8 +3056,17 @@ def enforce_delivery_merged_gate(
         checkout_head = str(delivery.get("verified_head") or "").strip()
         if checkout_head and checkout_head != approved_head:
             task_id = branch.replace("task/", "") if branch.startswith("task/") else branch
+            task_dict: dict[str, Any] = dict(task) if task else {}
+            if "id" not in task_dict or not task_dict["id"]:
+                task_dict["id"] = task_id
+            if "branch" not in task_dict or not task_dict["branch"]:
+                task_dict["branch"] = branch
+            if "approved_head" not in task_dict or not task_dict["approved_head"]:
+                task_dict["approved_head"] = approved_head
+            if "repository" not in task_dict or not task_dict["repository"]:
+                task_dict["repository"] = repository_slug_value
             if is_approved_head_satisfied(
-                {"id": task_id, "approved_head": approved_head, "repository": repository_slug_value},
+                task_dict,
                 checkout_head,
                 approved_head,
                 repository_root=repository_root,
@@ -3665,6 +3675,7 @@ def collect_done_delivery_metadata(
             remote_names=remote_names,
             approved_head=approved_head,
             repository_slug_value=repository_slug_value,
+            task=task,
         )
 
     return delivery

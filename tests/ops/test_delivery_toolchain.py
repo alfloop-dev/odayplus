@@ -143,6 +143,7 @@ def test_delivery_merged_gate_same_repo_post_merge_checkout_advance() -> None:
         mock_satisfied.assert_called_once_with(
             {
                 "id": TASK_ID,
+                "branch": f"task/{TASK_ID}",
                 "approved_head": APPROVED_HEAD,
                 "repository": DEFAULT_REPO_SLUG,
             },
@@ -171,6 +172,7 @@ def test_delivery_merged_gate_cross_repo_repository_slug_propagation() -> None:
         mock_satisfied.assert_called_once_with(
             {
                 "id": TASK_ID,
+                "branch": f"task/{TASK_ID}",
                 "approved_head": APPROVED_HEAD,
                 "repository": CROSS_REPO_SLUG,
             },
