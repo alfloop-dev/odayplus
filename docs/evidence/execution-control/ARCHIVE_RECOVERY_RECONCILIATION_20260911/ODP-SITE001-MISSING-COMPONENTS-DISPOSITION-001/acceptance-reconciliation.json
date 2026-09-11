@@ -1,0 +1,170 @@
+{
+  "task_id": "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+  "task_title": "歷史驗收續辦：ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+  "original_task_title": "依 SITE-001 資料證據實作或正式處置 Brand Transfer／Format Conversion",
+  "task_class": "remediation",
+  "phase": "History Recovery — executable acceptance reconciliation",
+  "owner": "Antigravity5",
+  "reviewer": "Codex",
+  "recorded_at": "2026-09-11T11:10:00Z",
+  "reconciliation_target": {
+    "repository": "alfloop-dev/odayplus",
+    "pinned_dev_sha": "4499a2993e37b62033926b07de8d8d2e8469a6c7",
+    "continuation_branch": "task/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001-RECOVERY-20260911"
+  },
+  "historical_delivery": {
+    "pr_number": 1160,
+    "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1160",
+    "head_sha": "ffe02988a1b4def412090c6b422e6efb26081d9f",
+    "merge_commit_sha": "9f53418df41e558c8f953c801dd8fd1f25f77b5b",
+    "merged": true,
+    "merged_at": "2026-09-03T16:51:21Z",
+    "delivered_artifacts": [
+      "docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md",
+      "delivery_toolchain/governance/set_valued_requirements.json",
+      "tests/governance/test_site001_disposition.py"
+    ],
+    "ci_checks": [
+      {
+        "name": "change-scope",
+        "conclusion": "success",
+        "completed_at": "2026-09-03T16:00:20Z"
+      },
+      {
+        "name": "boundary",
+        "conclusion": "success",
+        "completed_at": "2026-09-03T16:00:20Z"
+      },
+      {
+        "name": "classify",
+        "conclusion": "success",
+        "completed_at": "2026-09-03T16:00:21Z"
+      },
+      {
+        "name": "performance-gate",
+        "conclusion": "success",
+        "completed_at": "2026-09-03T16:01:30Z"
+      },
+      {
+        "name": "orchestrator",
+        "conclusion": "success",
+        "completed_at": "2026-09-03T16:03:02Z"
+      },
+      {
+        "name": "product-e2e-gate",
+        "conclusion": "success",
+        "completed_at": "2026-09-03T16:06:21Z"
+      },
+      {
+        "name": "product",
+        "conclusion": "success",
+        "completed_at": "2026-09-03T16:18:24Z"
+      }
+    ],
+    "historical_approval": {
+      "context": "task-review-gate",
+      "approver": "Codex",
+      "state": "success",
+      "updated_at": "2026-09-03T16:22:20Z",
+      "description": "Approved by assigned reviewer Codex"
+    },
+    "review_bus_block": {
+      "task_id": "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+      "status": "review_approved",
+      "owner": "Antigravity5",
+      "reviewer": "Codex",
+      "present": true,
+      "format": "zh"
+    }
+  },
+  "governance_and_human_decision_context": {
+    "human_decision_plan_ref": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+    "decision_date": "2026-09-08",
+    "decisions": {
+      "D16_BRAND_TRANSFER": {
+        "user_decision": "Option A: 實作／補齊真實資料與契約",
+        "contract_prep_task": "ODP-BRAND-TRANSFER-CONTRACT-PREP-001 (PR #1254, Stage 30A)",
+        "implementation_task": "ODP-BRAND-TRANSFER-IMPLEMENTATION-001 (Stage 30B, pending H03)",
+        "data_request": "H03 (公司已有的跨品牌交易／會員／panel 資料位置、資料負責人與授權範圍)"
+      },
+      "D17_FORMAT_CONVERSION": {
+        "user_decision": "Option A: 實作／補齊真實資料與流程",
+        "contract_prep_task": "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001 (PR #1252, Stage 31A)",
+        "implementation_task": "ODP-FORMAT-CONVERSION-IMPLEMENTATION-001 (Stage 31B, pending H04)",
+        "data_request": "H04 (真實轉型事件、原／新店型、財務與停業規則、資料負責人)"
+      }
+    },
+    "disposition_task_closure_rationale": "原任務條款為逐 member 依資料準備度實作或建立 formal handback，並非要求兩項能力在處置任務中一律完成。PR #1160 正式拒絕以合成 Mock 假資料接入生產模組，建立 BLOCKED_BY_EVIDENCE 狀態與法定 Handback Packages (HB-SITE001-BRAND-TRANSFER-001, HB-SITE001-FORMAT-CONVERSION-001)。後續使用者選定 Option A 啟動之 Stage 30A/30B 與 Stage 31A/31B 承接了功能實作，未滿足之 H03/H04 屬於後續實作任務之資料輸入，本處置任務已完整履約並具備結案條件。"
+  },
+  "acceptance_criteria_reconciliation": [
+    {
+      "index": 1,
+      "criterion": "Brand Transfer 與 Format Conversion 各自有獨立 outcome",
+      "classes": [
+        "D",
+        "T"
+      ],
+      "classes_zh": [
+        "程式或文件交付",
+        "可由測試證明"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "PR #1160 交付 docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md（§2 與 §3）獨立分析 Brand Transfer（無真實生產者、mock 0.15 視圖拒絕接入）與 Format Conversion（靜態 store_format_code、綠地選型非改裝轉型、無轉型事件表與財務停業折減）；tests/governance/test_site001_disposition.py::test_site001_missing_members_independent_disposition_outcomes 通過；PR #1160 exact-head ffe02988a1b4 product CI 綠燈；離線執行 5/5 passed。",
+      "boundary": "驗證兩成員皆具備獨立的資料準備度評估、拒絕接入理由及處置路徑；後續 D16/D17 亦分別獨立啟動 Stage 30 與 Stage 31。"
+    },
+    {
+      "index": 2,
+      "criterion": "實作者以真 source lineage 接到 production consumer 且有反事實測試",
+      "classes": [
+        "D"
+      ],
+      "classes_zh": [
+        "程式或文件交付"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "原任務規範明確定義只有 IMPLEMENTATION_READY 成員才接入生產消費端；本任務依據資料準備度查證事實判定兩成員皆為 BLOCKED_BY_EVIDENCE，拒絕撰寫合成假資料接入程式碼（test_no_synthetic_wiring_in_sitescore_or_simulator 通過）；並於處置報告 §4 完整定義了未來達成準備度時的生產接入契約與反事實驗收測試標準（§4.1 及 §4.2）。",
+      "boundary": "處置任務之處置結論為未達準備度不實作；生產路徑接入要求僅對判定為實作者成立；拒絕假接入即為正確履約。"
+    },
+    {
+      "index": 3,
+      "criterion": "不適用者只建立 human-authority handback 且 AI 不自簽 waiver",
+      "classes": [
+        "D",
+        "H"
+      ],
+      "classes_zh": [
+        "程式或文件交付",
+        "人類授權"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "在 delivery_toolchain/governance/set_valued_requirements.json 與 docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md 中，BRAND_TRANSFER 與 FORMAT_CONVERSION 維持 status: absent 及 disposition.state: BLOCKED_BY_EVIDENCE，decider 維持 null，建立結構化 Handback Packages（HB-SITE001-BRAND-TRANSFER-001 與 HB-SITE001-FORMAT-CONVERSION-001，指定權責單位與複核日 2026-10-01），無任何 AI 自簽 waiver 或偽造 DECIDED 狀態；test_site001_missing_members_independent_disposition_outcomes 與 test_site001_handback_document_and_governance_files_exist 驗證通過。",
+      "boundary": "嚴格遵循治理防線，未簽署任何豁免，未將待決狀態標記為 DECIDED。"
+    },
+    {
+      "index": 4,
+      "criterion": "manifest member 狀態與 formal disposition ref 一致且 checker 綠燈",
+      "classes": [
+        "T"
+      ],
+      "classes_zh": [
+        "可由測試證明"
+      ],
+      "status": "met",
+      "status_zh": "已滿足",
+      "evidence": "執行 delivery_toolchain/governance/check_requirement_members.py 通過（9 set-valued requirements, 47 members 全部合法）；test_overall_governance_checker_passes_with_live_manifest 於 PR #1160 CI 與當前環境均全數通過（exit code 0）。",
+      "boundary": "集合型需求清單語法、成員狀態與處置參照完全一致且可自動化驗證。"
+    }
+  ],
+  "summary": {
+    "criteria_total": 4,
+    "criteria_met": 4,
+    "criteria_partially_met": 0,
+    "criteria_unmet": 0,
+    "human_disposition_required": false,
+    "historical_unknown_retained": true,
+    "reconciliation_verdict": "acceptance_fully_reconciled"
+  }
+}
