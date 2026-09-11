@@ -209,7 +209,7 @@ stateDiagram-v2
 
 #### 成員：`ADJUST`（調整中途狀態）
 - **處置狀態**：`VERIFIED`
-- **Formal Decision Ref**: `docs/plans/ODP_OPEN_DECISIONS_2026-09-03.md#16-intv-006-adjust` 及 `docs/plans/ODP_REMEDIATION_PLAN_2026-09-03.md`
+- **Formal Decision Ref**: `docs/plans/ODP_OPEN_DECISIONS_2026-09-03.md` (項目 16: INTV-006 Adjust) 及 `docs/plans/ODP_REMEDIATION_PLAN_2026-09-03.md`
 - **實作證據 (Evidence)**:
   - `modules/intervention/application/workflow.py::InterventionWorkflow.adjust_case`
   - `modules/intervention/infrastructure/repositories.py::InMemoryInterventionRepository`
@@ -219,7 +219,8 @@ stateDiagram-v2
 - **驗證證據 (Verification Evidence)**:
   - `tests/integration/test_intervention_workflow.py`（涵蓋 production-entry API、storage CAS、concurrent barrier、SQLite commit failure rollback、pre-upgrade relational backfill、explicit rollback plan consistency）
   - `tests/integration/test_official_real_estate_postgresql.py::test_intervention_adjust_lineage_migration_binds_to_production_interventions`
-- **理由 (Rationale)**: 依循現行門市營運實務（stop-plus-recreate）實作具 lineage 之 replacement/adjust action，停止前置介入並建立繼承/調整之新介入案例，具備 predecessor_id、replacement_id 與 adjustment_json 之 durable lineage，保留原介入參數、理由、actor、policy version 與 rollback plan；未誤用 AdLift Change Channel 詞彙；透過 storage-level CAS、row lock、RLock 與引擎級 transaction 提供 API、In-Memory、SQLite 與 PostgreSQL 交易原子性、並行衝突拒絕（STALE_UPDATE_CONFLICT）、回滾一致性與既有 document 資料庫升級 backfill 保證。
+- **理由 (Rationale)**: 依循 ODP Remediation Plan 之工程條件建議實作具 lineage 之 stop-plus-recreate replacement/adjust action，停止前置介入並建立繼承/調整之新介入案例，具備 predecessor_id、replacement_id 與 adjustment_json 之 durable lineage，保留原介入參數、理由、actor、policy version 與 rollback plan；未誤用 AdLift Change Channel 詞彙；透過 storage-level CAS、row lock、RLock 與引擎級 transaction 提供 API、In-Memory、SQLite 與 PostgreSQL 交易原子性、並行衝突拒絕（STALE_UPDATE_CONFLICT）、回滾一致性與既有 document 資料庫升級 backfill 保證。
+- **實務決策缺口說明 (Open Decision Gap)**: 依據 `docs/plans/ODP_OPEN_DECISIONS_2026-09-03.md` 項目 16（「先問實務：現在要調整的介入人是怎麼做的」）與 `docs/plans/ODP_REMEDIATION_PLAN_2026-09-03.md` 第 247 行（「若是『停掉再開一個』，可能只需要把兩者關聯記下來」），目前僅有工程條件建議，尚無可追溯之門市營運實務確認或正式業務決策（缺乏正式決策人、決策日期、適用門市/介入範圍與可追溯來源證據）。在取得正式實務確認前，此實作係作為條件建議之技術準備，誠實記錄 open decision gap，不虛構決策人、日期或來源，亦不將條件建議改述為已獲確認之現行門市營運實務。
 
 ---
 

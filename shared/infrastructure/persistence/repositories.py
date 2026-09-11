@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import pickle
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
@@ -877,8 +878,8 @@ class DurableInterventionRepository:
     def save(self, intervention: Intervention) -> Intervention:
         engine = self._store.engine
         is_pg = str(getattr(engine, "dialect", "")).lower() == "postgresql"
-        if is_pg:
-            with engine.lock:
+        with _atomic_write(engine):
+            if is_pg:
                 engine.query_one(
                     "SELECT doc_id FROM durable_documents WHERE collection = ? AND doc_id = ? FOR UPDATE",
                     (self._C, intervention.intervention_id),
@@ -892,16 +893,16 @@ class DurableInterventionRepository:
                         raise InterventionError(
                             f"stale update: intervention {intervention.intervention_id} is already stopped and replaced by {row.get('replacement_id')}"
                         )
-        self._sync_sql(intervention)
-        # Relational persistence is the production contract.  Write the
-        # document mirror only after it succeeds so a migration/driver/FK
-        # failure cannot leave a seemingly durable but unindexed aggregate.
-        self._store.put(
-            self._C,
-            intervention.intervention_id,
-            intervention,
-            group_key=intervention.store_id,
-        )
+            self._sync_sql(intervention)
+            # Relational persistence is the production contract.  Write the
+            # document mirror only after it succeeds so a migration/driver/FK
+            # failure cannot leave a seemingly durable but unindexed aggregate.
+            self._store.put(
+                self._C,
+                intervention.intervention_id,
+                intervention,
+                group_key=intervention.store_id,
+            )
         return intervention
 
     @contextmanager
@@ -916,8 +917,26 @@ class DurableInterventionRepository:
         with _atomic_write(self._store.engine):
             yield
 
-    def get(self, intervention_id: str) -> Intervention | None:
+    def get(self, intervention_id: str, *, for_update: bool = False) -> Intervention | None:
+        if for_update:
+            engine = self._store.engine
+            is_pg = str(getattr(engine, "dialect", "")).lower() == "postgresql"
+            if is_pg:
+                row = engine.query_one(
+                    "SELECT data FROM durable_documents WHERE collection = ? AND doc_id = ? FOR UPDATE",
+                    (self._C, intervention_id),
+                )
+                if row is not None:
+                    engine.query_one(
+                        "SELECT intervention_id, status, replacement_id FROM operations.interventions WHERE intervention_id = ? FOR UPDATE",
+                        (_to_uuid_if_prefixed(intervention_id),),
+                    )
+                    return pickle.loads(row["data"])
+                return None
         return self._store.get(self._C, intervention_id)
+
+    def get_for_update(self, intervention_id: str) -> Intervention | None:
+        return self.get(intervention_id, for_update=True)
 
     def list_all(self) -> list[Intervention]:
         return self._store.list_all(self._C)

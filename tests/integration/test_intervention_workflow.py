@@ -2488,11 +2488,22 @@ def test_in_memory_adjust_barrier_interleaved_write_safety() -> None:
     workflow = InterventionWorkflow(repository=repo)
     case_a = _open_case(workflow, store_id="store-a")
     _drive_to_approved(workflow, case_a.intervention_id)
-    case_b = _open_case(workflow, store_id="store-b")
 
-    # Thread A begins atomic adjust and fails
     entered_atomic = threading.Event()
-    b_saved = threading.Event()
+    b_attempted = threading.Event()
+    thread_exceptions = []
+
+    case_c_id = str(uuid4())
+    case_c = new_intervention(
+        store_id="store-c",
+        kind=InterventionKind.PRICE_CHANGE,
+        trigger_ref="trigger-c",
+        expected_outcome="outcome c",
+        planned_start=START,
+        planned_end=END,
+        created_by="worker-c",
+        intervention_id=case_c_id,
+    )
 
     def thread_a_worker():
         try:
@@ -2511,17 +2522,25 @@ def test_in_memory_adjust_barrier_interleaved_write_safety() -> None:
                 repo.save(repl_a)
                 entered_atomic.set()
                 # wait until thread b attempts save
-                b_saved.wait(timeout=5)
+                b_attempted.wait(timeout=5)
                 # inject error to trigger rollback in thread a
                 raise RuntimeError("Thread A simulated crash")
-        except RuntimeError:
-            pass
+        except RuntimeError as exc:
+            if str(exc) != "Thread A simulated crash":
+                thread_exceptions.append(("Thread A", exc))
+        except Exception as exc:
+            thread_exceptions.append(("Thread A", exc))
 
     def thread_b_worker():
-        entered_atomic.wait(timeout=5)
-        # Thread B performs save on case_b (blocks on _lock until A finishes, then succeeds)
-        repo.save(case_b)
-        b_saved.set()
+        try:
+            entered_atomic.wait(timeout=5)
+            # Thread B signals it is attempting save, then calls repo.save(case_c).
+            # Because Thread A holds repo._lock, Thread B blocks until Thread A's atomic
+            # block exits (and rolls back). Then Thread B acquires the lock and saves case_c.
+            b_attempted.set()
+            repo.save(case_c)
+        except Exception as exc:
+            thread_exceptions.append(("Thread B", exc))
 
     t_a = threading.Thread(target=thread_a_worker)
     t_b = threading.Thread(target=thread_b_worker)
@@ -2530,11 +2549,84 @@ def test_in_memory_adjust_barrier_interleaved_write_safety() -> None:
     t_a.join()
     t_b.join()
 
-    # Verify that case_b is preserved and not erased by thread A's rollback
-    assert repo.get(case_b.intervention_id) is not None
-    assert case_b.intervention_id in [i.intervention_id for i in repo.list_all()]
+    assert thread_exceptions == [], f"Unexpected thread exceptions: {thread_exceptions}"
+    # Verify that case_c was persisted and not erased by Thread A's rollback
+    assert repo.get(case_c_id) is not None
+    assert case_c_id in [i.intervention_id for i in repo.list_all()]
     # Verify case_a has no half-written replacement
-    assert len(repo.list_all()) == 2  # case_a and case_b only
+    all_ids = [i.intervention_id for i in repo.list_all()]
+    assert case_a.intervention_id in all_ids
+    assert len(all_ids) == 2  # case_a and case_c only
+
+
+def test_api_production_entry_document_write_failure_rolls_back_relational_row(
+    tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ODP-FR-INTV-006: If document write fails after relational write in save(),
+    the entire transaction is rolled back so no relational row or unindexed state is left."""
+    engine = SqliteEngine(tmp_path / "failed_doc_write.db")
+    _seed_store(engine, store_id="store-doc-failure")
+    store = SqliteDocumentStore(engine)
+    repo = DurableInterventionRepository(store)
+
+    real_put = store.put
+
+    def fail_document_put(*args, **kwargs):
+        raise RuntimeError("document store write failed")
+
+    monkeypatch.setattr(store, "put", fail_document_put)
+    app = create_app(intervention_repository=repo)
+    client = TestClient(app, headers=INTERVENTION_HEADERS, raise_server_exceptions=False)
+
+    # 1. Test case creation rollback
+    response = client.post(
+        "/interventions",
+        json={
+            "store_id": "store-doc-failure",
+            "kind": "PRICE_CHANGE",
+            "trigger_ref": "alert-doc-failure",
+            "expected_outcome": "must roll back relational row on doc failure",
+            "planned_start": START.isoformat(),
+            "planned_end": END.isoformat(),
+            "created_by": "ops-hero",
+        },
+    )
+    assert response.status_code == 500
+    assert repo.list_all() == []
+    assert engine.query_one(
+        "SELECT intervention_id FROM interventions WHERE store_id = ?",
+        ("store-doc-failure",),
+    ) is None
+
+    # 2. Test status transition rollback
+    monkeypatch.setattr(store, "put", real_put)
+    res = client.post(
+        "/interventions",
+        json={
+            "store_id": "store-doc-failure",
+            "kind": "PRICE_CHANGE",
+            "trigger_ref": "alert-doc-failure-2",
+            "expected_outcome": "transition rollback test",
+            "planned_start": START.isoformat(),
+            "planned_end": END.isoformat(),
+            "created_by": "ops-hero",
+        },
+    )
+    assert res.status_code == 201
+    iid = res.json()["intervention_id"]
+
+    # Re-enable document failure for next transition
+    monkeypatch.setattr(store, "put", fail_document_put)
+    trans_res = client.post(
+        f"/interventions/{iid}/eligibility",
+        json={"eligible": True, "actor": "ops-admin"},
+    )
+    assert trans_res.status_code == 500
+
+    # Verify relational row remains in original state and was NOT updated
+    row = engine.query_one("SELECT eligibility_status FROM interventions WHERE intervention_id = ?", (iid,))
+    assert row is not None
+    assert row["eligibility_status"] == "eligible"
 
 
 def test_sqlite_engine_commit_failure_rolls_back_transaction(tmp_path: pytest.TempPathFactory) -> None:

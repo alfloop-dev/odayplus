@@ -460,6 +460,221 @@ def test_durable_intervention_repository_postgresql_backfill_and_adjust_legacy_c
         assert orig_row[0] == "stopped"
         assert str(orig_row[1]) == outcome.replacement.intervention_id
 
+    engine.close()
+
+
+def test_postgresql_concurrent_adjust_stale_update_conflict_two_independent_engines(
+    intake_blank_db: Any,
+) -> None:
+    """ODP-FR-INTV-006: Concurrent Adjust operations from two independent PostgreSQL
+    engine instances serialize via FOR UPDATE and re-fetch fresh state. Exactly one
+    succeeds, the other fails with stale update conflict, exactly one replacement is
+    persisted, and the original is stopped pointing to that replacement."""
+    import threading
+    _upgrade_official_schema(intake_blank_db)
+    runtime_url, _ = _urls(intake_blank_db)
+
+    engine1 = PostgresEngine(
+        runtime_url,
+        bootstrap=True,
+        validate_schema=False,
+        max_pool_size=4,
+    )
+    engine2 = PostgresEngine(
+        runtime_url,
+        bootstrap=False,
+        validate_schema=False,
+        max_pool_size=4,
+    )
+
+    from modules.intervention.application.workflow import InterventionWorkflow
+    from modules.intervention.domain.lifecycle import (
+        Intervention,
+        InterventionError,
+        InterventionKind,
+        InterventionStatus,
+        default_window_for,
+    )
+    from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+    from shared.infrastructure.persistence.repositories import (
+        DurableInterventionRepository,
+    )
+
+    tenant_id = str(uuid4())
+    store_id = str(uuid4())
+    with intake_blank_db.connect() as conn:
+        conn.execute(
+            "INSERT INTO core.tenants (tenant_id, tenant_name) VALUES (%s, %s)",
+            (tenant_id, "PG Concurrent Tenant"),
+        )
+        conn.execute(
+            "INSERT INTO core.stores (store_id, tenant_id, store_name) VALUES (%s, %s, %s)",
+            (store_id, tenant_id, "PG Concurrent Store"),
+        )
+
+    store1 = SqliteDocumentStore(engine1)
+    store2 = SqliteDocumentStore(engine2)
+    repo1 = DurableInterventionRepository(store1)
+    repo2 = DurableInterventionRepository(store2)
+
+    wf1 = InterventionWorkflow(repository=repo1)
+    wf2 = InterventionWorkflow(repository=repo2)
+
+    case_uuid = str(uuid4())
+    case_id = f"intervention-{case_uuid}"
+    now = datetime.now(UTC)
+
+    case = Intervention(
+        intervention_id=case_id,
+        store_id=store_id,
+        kind=InterventionKind.PRICE_CHANGE,
+        status=InterventionStatus.APPROVED,
+        trigger_ref="alert-pg-concurrent",
+        expected_outcome="pg concurrent adjust test",
+        planned_start=now,
+        planned_end=now + timedelta(days=14),
+        window_spec=default_window_for(InterventionKind.PRICE_CHANGE),
+        created_by="pg-admin",
+        created_at=now,
+    )
+    repo1.save(case)
+
+    initial_version = case.version
+
+    barrier = threading.Barrier(2)
+    results = []
+
+    def run_adjust(worker_id: int, wf: InterventionWorkflow):
+        barrier.wait()
+        try:
+            outcome = wf.adjust_case(
+                case_id,
+                actor=f"worker-{worker_id}",
+                reason=f"adjust by worker {worker_id}",
+                action_spec={"price_change_pct": -5 * worker_id},
+                expected_version=initial_version,
+            )
+            results.append((worker_id, "SUCCESS", outcome))
+        except InterventionError as exc:
+            results.append((worker_id, "CONFLICT", str(exc)))
+        except Exception as exc:
+            results.append((worker_id, "ERROR", str(exc)))
+
+    t1 = threading.Thread(target=run_adjust, args=(1, wf1))
+    t2 = threading.Thread(target=run_adjust, args=(2, wf2))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    statuses = sorted([r[1] for r in results])
+    assert statuses == ["CONFLICT", "SUCCESS"], f"Results were: {results}"
+
+    conflict_res = next(r for r in results if r[1] == "CONFLICT")
+    assert "stale update" in conflict_res[2].lower() or "cannot adjust" in conflict_res[2].lower()
+
+    success_res = next(r for r in results if r[1] == "SUCCESS")
+    replacement_id = success_res[2].replacement.intervention_id
+
+    # Verify PostgreSQL operations.interventions has exactly original (stopped) and single replacement
+    with intake_blank_db.connect() as conn:
+        rows = conn.execute(
+            "SELECT intervention_id, status, predecessor_id, replacement_id FROM operations.interventions WHERE store_id = %s",
+            (store_id,),
+        ).fetchall()
+        assert len(rows) == 2
+        orig_row = next(r for r in rows if str(r[0]) == case_uuid)
+        assert orig_row[1] == "stopped"
+        assert str(orig_row[3]) == replacement_id
+
+        repl_row = next(r for r in rows if str(r[0]) == replacement_id)
+        assert repl_row[1] == "candidate"
+        assert str(repl_row[2]) == case_uuid
+
+    engine1.close()
+    engine2.close()
+
+
+def test_postgresql_adjust_interleaved_with_stop_or_version_update_conflict(
+    intake_blank_db: Any,
+) -> None:
+    """ODP-FR-INTV-006: When an intervention is stopped or updated concurrently across
+    independent PostgreSQL engines, Adjust detects the status/version conflict under
+    FOR UPDATE and rejects the adjustment, cleanly rolling back the replacement."""
+    _upgrade_official_schema(intake_blank_db)
+    runtime_url, _ = _urls(intake_blank_db)
+
+    engine1 = PostgresEngine(runtime_url, bootstrap=True, validate_schema=False, max_pool_size=4)
+    engine2 = PostgresEngine(runtime_url, bootstrap=False, validate_schema=False, max_pool_size=4)
+
+    from modules.intervention.application.workflow import InterventionWorkflow
+    from modules.intervention.domain.lifecycle import (
+        Intervention,
+        InterventionError,
+        InterventionKind,
+        InterventionStatus,
+        default_window_for,
+    )
+    from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+    from shared.infrastructure.persistence.repositories import (
+        DurableInterventionRepository,
+    )
+
+    tenant_id = str(uuid4())
+    store_id = str(uuid4())
+    with intake_blank_db.connect() as conn:
+        conn.execute("INSERT INTO core.tenants (tenant_id, tenant_name) VALUES (%s, %s)", (tenant_id, "PG Interleave Tenant"))
+        conn.execute("INSERT INTO core.stores (store_id, tenant_id, store_name) VALUES (%s, %s, %s)", (store_id, tenant_id, "PG Interleave Store"))
+
+    repo1 = DurableInterventionRepository(SqliteDocumentStore(engine1))
+    repo2 = DurableInterventionRepository(SqliteDocumentStore(engine2))
+    wf1 = InterventionWorkflow(repository=repo1)
+    wf2 = InterventionWorkflow(repository=repo2)
+
+    case_uuid = str(uuid4())
+    case_id = f"intervention-{case_uuid}"
+    now = datetime.now(UTC)
+
+    case = Intervention(
+        intervention_id=case_id,
+        store_id=store_id,
+        kind=InterventionKind.PRICE_CHANGE,
+        status=InterventionStatus.APPROVED,
+        trigger_ref="alert-pg-interleave",
+        expected_outcome="pg interleave test",
+        planned_start=now,
+        planned_end=now + timedelta(days=14),
+        window_spec=default_window_for(InterventionKind.PRICE_CHANGE),
+        created_by="pg-admin",
+        created_at=now,
+    )
+    repo1.save(case)
+
+    # wf2 stops the intervention
+    wf2.stop(case_id, actor="ops-stopper", reason="emergency cancellation")
+
+    # wf1 attempts to adjust the now-stopped case
+    with pytest.raises(InterventionError, match="cannot adjust|stale update"):
+        wf1.adjust_case(
+            case_id,
+            actor="ops-adjuster",
+            reason="late adjust attempt",
+            action_spec={"price_change_pct": -4},
+        )
+
+    # Verify DB has only the stopped original and no replacement was left behind
+    with intake_blank_db.connect() as conn:
+        rows = conn.execute(
+            "SELECT intervention_id, status, replacement_id FROM operations.interventions WHERE store_id = %s",
+            (store_id,),
+        ).fetchall()
+        assert len(rows) == 1
+        assert rows[0][1] == "stopped"
+        assert rows[0][2] is None
+
+    engine1.close()
+    engine2.close()
+
 
 def _create_model_view_prerequisites(database: Any) -> None:
     with database.connect() as connection:

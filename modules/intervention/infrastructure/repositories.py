@@ -53,9 +53,12 @@ class InMemoryInterventionRepository:
                 self._by_store = by_store
                 raise
 
-    def get(self, intervention_id: str) -> Intervention | None:
+    def get(self, intervention_id: str, *, for_update: bool = False) -> Intervention | None:
         with self._lock:
             return self._by_id.get(intervention_id)
+
+    def get_for_update(self, intervention_id: str) -> Intervention | None:
+        return self.get(intervention_id, for_update=True)
 
     def list_all(self) -> list[Intervention]:
         with self._lock:

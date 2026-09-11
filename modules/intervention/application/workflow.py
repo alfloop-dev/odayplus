@@ -970,10 +970,14 @@ class InterventionWorkflow:
             # Inside the transaction / atomic lock, re-fetch and re-validate the original
             # state to guarantee storage-level CAS and prevent concurrent stale revisions
             # from creating duplicate replacements or broken one-way lineages.
-            fresh_original = self._require(intervention_id)
+            fresh_original = self._require(intervention_id, for_update=True)
             if fresh_original.replacement_id is not None:
                 raise InterventionError(
                     f"stale update: intervention {intervention_id} is already stopped and replaced by {fresh_original.replacement_id}"
+                )
+            if fresh_original.status not in ACTIVE_INTERVENTION_STATUSES:
+                raise InterventionError(
+                    f"cannot adjust on intervention in status {fresh_original.status.value}"
                 )
             expected = expected_version if expected_version is not None else original.version
             self._check_version(fresh_original, expected)
@@ -1171,8 +1175,18 @@ class InterventionWorkflow:
                 f"stale update: expected version {expected_version}, current is {intervention.version}"
             )
 
-    def _require(self, intervention_id: str) -> Intervention:
-        intervention = self.repository.get(intervention_id)
+    def _require(self, intervention_id: str, *, for_update: bool = False) -> Intervention:
+        if for_update:
+            get_fn = getattr(self.repository, "get_for_update", None)
+            if callable(get_fn):
+                intervention = get_fn(intervention_id)
+            else:
+                try:
+                    intervention = self.repository.get(intervention_id, for_update=True)
+                except TypeError:
+                    intervention = self.repository.get(intervention_id)
+        else:
+            intervention = self.repository.get(intervention_id)
         if intervention is None:
             raise InterventionError(f"unknown intervention {intervention_id}")
         return intervention
