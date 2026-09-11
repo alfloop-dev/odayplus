@@ -1007,3 +1007,65 @@ class QuotaRecoveryRuntimeStateTests(unittest.TestCase):
             reloaded_after_failure["account_pool_runtime"]["codex_bjoe"]["state"],
             "cooldown",
         )
+
+    def test_same_second_new_run_failure_survives_clear(self) -> None:
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        old_time = "2026-09-11T01:37:15Z"
+        clear_time = "2026-09-11T02:04:50Z"
+        initial = runtime_state.default_state()
+        initial["provider_guardrails"]["dispatch_pauses"]["codex"] = {
+            "provider": "codex",
+            "paused_at": old_time,
+            "blocked_until": "2026-09-11T02:37:15Z",
+            "worker_run_id": "old-run",
+            "failure_kind": "quota_terminal",
+        }
+        runtime_state.save_runtime_state(self.config, initial)
+
+        stale = runtime_state.load_runtime_state(self.config)
+        fresh = runtime_state.load_runtime_state(self.config)
+        fresh["provider_guardrails"]["dispatch_pauses"].pop("codex", None)
+        fresh["provider_guardrails"]["cleared_pauses"]["codex"] = {
+            "provider": "codex",
+            "cleared_at": clear_time,
+            "cleared_paused_at": old_time,
+            "worker_run_id": "old-run",
+        }
+        runtime_state.save_runtime_state(self.config, fresh)
+
+        # Stale writer records a NEW failure in the same second with a new run ID
+        stale["provider_guardrails"]["dispatch_pauses"]["codex"] = {
+            "provider": "codex",
+            "paused_at": clear_time,
+            "blocked_until": "2026-09-11T02:34:50Z",
+            "worker_run_id": "new-run",
+            "failure_kind": "quota_terminal",
+        }
+        runtime_state.save_runtime_state(self.config, stale)
+
+        reloaded = runtime_state.load_runtime_state(self.config)
+        pauses = reloaded["provider_guardrails"]["dispatch_pauses"]
+        self.assertIn("codex", pauses)
+        self.assertEqual(pauses["codex"]["worker_run_id"], "new-run")
+        self.assertEqual(pauses["codex"]["paused_at"], clear_time)
+
+    def test_task_failure_streak_reset_survives_save(self) -> None:
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        initial = runtime_state.default_state()
+        initial["provider_guardrails"]["task_failure_streaks"]["TASK-1:codex"] = {
+            "task_id": "TASK-1",
+            "provider": "codex",
+            "count": 2,
+            "last_reason": "Failure streak",
+        }
+        runtime_state.save_runtime_state(self.config, initial)
+
+        current = runtime_state.load_runtime_state(self.config)
+        self.assertIn("TASK-1:codex", current["provider_guardrails"]["task_failure_streaks"])
+
+        # Reset the streak (e.g. after successful task completion)
+        current["provider_guardrails"]["task_failure_streaks"].pop("TASK-1:codex", None)
+        runtime_state.save_runtime_state(self.config, current)
+
+        reloaded = runtime_state.load_runtime_state(self.config)
+        self.assertNotIn("TASK-1:codex", reloaded["provider_guardrails"]["task_failure_streaks"])

@@ -591,6 +591,47 @@ def _merge_queue_record(disk_event: dict[str, Any], mem_event: dict[str, Any]) -
     return merged
 
 
+def _is_pause_entry_cleared(
+    clearance: dict[str, Any] | None, pause_entry: dict[str, Any]
+) -> bool:
+    if not isinstance(clearance, dict) or not isinstance(pause_entry, dict):
+        return False
+    c_at = str(clearance.get("cleared_at") or "")
+    c_p_at = str(clearance.get("cleared_paused_at") or "")
+    c_run = str(clearance.get("worker_run_id") or "")
+    c_auth = str(clearance.get("auth_identity_hash") or "")
+
+    p_at = str(pause_entry.get("paused_at") or "")
+    p_run = str(pause_entry.get("worker_run_id") or "")
+    p_auth = str(pause_entry.get("auth_identity_hash") or "")
+
+    # 1. Exact match with the pause that was explicitly cleared
+    if c_p_at and p_at == c_p_at:
+        if c_run and p_run and c_run != p_run:
+            return False
+        if c_auth and p_auth and c_auth != p_auth:
+            return False
+        return True
+
+    # 2. If paused_at is strictly older than cleared_at, it was created before clearance
+    if c_at and p_at and p_at < c_at:
+        if c_auth and p_auth and c_auth != p_auth:
+            return False
+        return True
+
+    # 3. If paused_at == cleared_at (same second as clearance):
+    if c_at and p_at and p_at == c_at:
+        if c_p_at == p_at:
+            if c_run and p_run and c_run != p_run:
+                return False
+            if c_auth and p_auth and c_auth != p_auth:
+                return False
+            return True
+        return False
+
+    return False
+
+
 def _merge_provider_guardrails(
     disk_guardrails: dict[str, Any], mem_guardrails: dict[str, Any]
 ) -> dict[str, Any]:
@@ -637,29 +678,18 @@ def _merge_provider_guardrails(
         if candidate is None:
             continue
 
-        if isinstance(clearance, dict):
-            c_at = str(clearance.get("cleared_at") or "")
-            c_p_at = str(clearance.get("cleared_paused_at") or "")
-            p_at = str(candidate.get("paused_at") or "")
-            if (c_p_at and p_at == c_p_at) or (c_at and p_at and p_at <= c_at):
-                continue
+        if isinstance(clearance, dict) and _is_pause_entry_cleared(clearance, candidate):
+            continue
 
         merged_pauses[prov] = candidate
 
     merged_guardrails["dispatch_pauses"] = merged_pauses
 
-    # 3. Merge task_failure_streaks
-    disk_streaks = disk_guardrails.get("task_failure_streaks") or {}
-    mem_streaks = mem_guardrails.get("task_failure_streaks") or {}
-    merged_streaks = deepcopy(mem_streaks)
-    for k, v in disk_streaks.items():
-        try:
-            d_val = int(v)
-            m_val = int(merged_streaks.get(k, 0) or 0)
-            merged_streaks[k] = max(d_val, m_val)
-        except (TypeError, ValueError):
-            merged_streaks.setdefault(k, v)
-    merged_guardrails["task_failure_streaks"] = merged_streaks
+    # 3. Merge task_failure_streaks: memory takes precedence to preserve resets
+    mem_streaks = mem_guardrails.get("task_failure_streaks")
+    merged_guardrails["task_failure_streaks"] = deepcopy(
+        mem_streaks if isinstance(mem_streaks, dict) else {}
+    )
 
     # 4. Merge processed_model_rotation_failures
     disk_rot = disk_guardrails.get("processed_model_rotation_failures") or {}

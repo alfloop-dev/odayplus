@@ -858,6 +858,47 @@ def provider_auth_identity_hash(config: dict[str, Any], provider: str | None) ->
 def _failure_streak_key(task_id: str, provider: str) -> str:
     return f"{task_id}:{provider}"
 
+def _is_pause_entry_cleared(
+    clearance: dict[str, Any] | None, pause_entry: dict[str, Any]
+) -> bool:
+    if not isinstance(clearance, dict) or not isinstance(pause_entry, dict):
+        return False
+    c_at = str(clearance.get("cleared_at") or "")
+    c_p_at = str(clearance.get("cleared_paused_at") or "")
+    c_run = str(clearance.get("worker_run_id") or "")
+    c_auth = str(clearance.get("auth_identity_hash") or "")
+
+    p_at = str(pause_entry.get("paused_at") or "")
+    p_run = str(pause_entry.get("worker_run_id") or "")
+    p_auth = str(pause_entry.get("auth_identity_hash") or "")
+
+    # 1. Exact match with the pause that was explicitly cleared
+    if c_p_at and p_at == c_p_at:
+        if c_run and p_run and c_run != p_run:
+            return False
+        if c_auth and p_auth and c_auth != p_auth:
+            return False
+        return True
+
+    # 2. If paused_at is strictly older than cleared_at, it was created before clearance
+    if c_at and p_at and p_at < c_at:
+        if c_auth and p_auth and c_auth != p_auth:
+            return False
+        return True
+
+    # 3. If paused_at == cleared_at (same second as clearance):
+    if c_at and p_at and p_at == c_at:
+        if c_p_at == p_at:
+            if c_run and p_run and c_run != p_run:
+                return False
+            if c_auth and p_auth and c_auth != p_auth:
+                return False
+            return True
+        return False
+
+    return False
+
+
 @_entrypoint
 def current_provider_dispatch_pause(
     state: dict[str, Any],
@@ -875,12 +916,27 @@ def current_provider_dispatch_pause(
         if not isinstance(entry, dict):
             continue
         clearance = cleared_bucket.get(pause_id)
-        if isinstance(clearance, dict):
-            c_at = _parse_iso_utc(str(clearance.get("cleared_at") or ""))
-            c_p_at = str(clearance.get("cleared_paused_at") or "")
-            p_at_str = str(entry.get("paused_at") or "")
-            p_at = _parse_iso_utc(p_at_str)
-            if (c_p_at and p_at_str == c_p_at) or (c_at and p_at and p_at <= c_at):
+        if isinstance(clearance, dict) and _is_pause_entry_cleared(clearance, entry):
+            bucket.pop(pause_id, None)
+            continue
+        if config is not None:
+            recorded_identity = str(entry.get("auth_identity_hash") or "")
+            current_identity = provider_auth_identity_hash(
+                config,
+                str(entry.get("trigger_provider") or pause_id),
+            )
+            if recorded_identity and current_identity and recorded_identity != current_identity:
+                cleared_b = _provider_guardrail_bucket(state).setdefault("cleared_pauses", {})
+                cleared_b[pause_id] = {
+                    "provider": pause_id,
+                    "trigger_provider": str(entry.get("trigger_provider") or pause_id),
+                    "cleared_at": utc_now(),
+                    "cleared_paused_at": entry.get("paused_at"),
+                    "auth_identity_hash": entry.get("auth_identity_hash"),
+                    "worker_run_id": entry.get("worker_run_id"),
+                    "task_id": entry.get("task_id"),
+                    "clear_reason": "provider account identity changed",
+                }
                 bucket.pop(pause_id, None)
                 continue
         blocked_until = _parse_iso_utc(str(entry.get("blocked_until") or ""))
@@ -1216,14 +1272,9 @@ def clear_provider_dispatch_pause(config: dict[str, Any], state: dict[str, Any],
             if quota_group:
                 target_pools.add(quota_group)
 
-    current_auth = (
-        provider_auth_identity_hash(config, provider_id)
-        or provider_auth_identity_hash(config, pause_provider_id)
-    )
     cleared_at_iso = utc_now()
-    cleared_at_dt = _parse_iso_utc(cleared_at_iso)
-
     pools_recovered: list[str] = []
+
     for pool_id in target_pools:
         pool_entry = account_pools_bucket.get(pool_id)
         if not isinstance(pool_entry, dict):
@@ -1231,12 +1282,42 @@ def clear_provider_dispatch_pause(config: dict[str, Any], state: dict[str, Any],
         if str(pool_entry.get("state") or "").strip().lower() != "cooldown":
             continue
 
-        pool_auth = pool_entry.get("auth_identity_hash")
-        if pool_auth and current_auth and pool_auth != current_auth:
+        # Preserve non-quota failures (e.g. auth failures, task errors)
+        pool_failure_kind = str(pool_entry.get("failure_kind") or "").strip().lower()
+        if pool_failure_kind and not (
+            is_terminal_quota_failure_kind(pool_failure_kind)
+            or is_retryable_capacity_failure_kind(pool_failure_kind)
+        ):
             continue
 
-        last_failure_at = _parse_iso_utc(str(pool_entry.get("last_failure_at") or ""))
-        if last_failure_at and cleared_at_dt and last_failure_at > cleared_at_dt:
+        matched_clearance: dict[str, Any] | None = None
+        for _, rem_pause in removed:
+            rem_auth = rem_pause.get("auth_identity_hash")
+            pool_auth = pool_entry.get("auth_identity_hash")
+            # Preserve unmatched or unknown auth
+            if rem_auth or pool_auth:
+                if not rem_auth or not pool_auth or rem_auth != pool_auth:
+                    continue
+
+            rem_run = rem_pause.get("worker_run_id")
+            pool_run = pool_entry.get("last_worker_run_id")
+            rem_paused_at = rem_pause.get("paused_at")
+            pool_failure_at = pool_entry.get("last_failure_at")
+
+            # Must match failure epoch (run ID or paused timestamp)
+            if rem_run and pool_run:
+                if rem_run != pool_run:
+                    continue
+            elif rem_paused_at and pool_failure_at:
+                if rem_paused_at != pool_failure_at:
+                    continue
+            elif rem_run or pool_run or rem_paused_at or pool_failure_at:
+                continue
+
+            matched_clearance = rem_pause
+            break
+
+        if matched_clearance is None:
             continue
 
         _, pool_cfg = account_pool_settings(config, pool_id)
@@ -1278,6 +1359,7 @@ def expire_provider_dispatch_pauses(config: dict[str, Any], state: dict[str, Any
     bucket = _dispatch_pause_bucket(state)
     if not bucket:
         return False
+    cleared_bucket = _provider_guardrail_bucket(state).setdefault("cleared_pauses", {})
     now = datetime.now(UTC)
     expired: list[tuple[str, dict[str, Any], str]] = []
     for provider_id, entry in list(bucket.items()):
@@ -1290,12 +1372,32 @@ def expire_provider_dispatch_pauses(config: dict[str, Any], state: dict[str, Any
         )
         if recorded_identity and current_identity and recorded_identity != current_identity:
             expired.append((provider_id, dict(entry), "provider account identity changed"))
+            cleared_bucket[provider_id] = {
+                "provider": provider_id,
+                "trigger_provider": str(entry.get("trigger_provider") or provider_id),
+                "cleared_at": utc_now(),
+                "cleared_paused_at": entry.get("paused_at"),
+                "auth_identity_hash": entry.get("auth_identity_hash"),
+                "worker_run_id": entry.get("worker_run_id"),
+                "task_id": entry.get("task_id"),
+                "clear_reason": "provider account identity changed",
+            }
             bucket.pop(provider_id, None)
             continue
         blocked_until = _parse_iso_utc(str(entry.get("blocked_until") or ""))
         if blocked_until is None or blocked_until > now:
             continue
         expired.append((provider_id, dict(entry), f"pause expired at {entry.get('blocked_until')}"))
+        cleared_bucket[provider_id] = {
+            "provider": provider_id,
+            "trigger_provider": str(entry.get("trigger_provider") or provider_id),
+            "cleared_at": utc_now(),
+            "cleared_paused_at": entry.get("paused_at"),
+            "auth_identity_hash": entry.get("auth_identity_hash"),
+            "worker_run_id": entry.get("worker_run_id"),
+            "task_id": entry.get("task_id"),
+            "clear_reason": f"pause expired at {entry.get('blocked_until')}",
+        }
         bucket.pop(provider_id, None)
 
     for provider_id, entry, resume_reason in expired:

@@ -1703,8 +1703,8 @@ class DetectWorkerFailureTests(unittest.TestCase):
         state = {
             "provider_guardrails": {
                 "dispatch_pauses": {
-                    "codex": {"paused_at": "2026-09-11T01:37:15Z"},
-                    "claude": {"paused_at": "2026-09-11T01:37:15Z"},
+                    "codex": {"paused_at": "2026-09-11T01:37:15Z", "failure_kind": "quota_terminal", "worker_run_id": "run-c1"},
+                    "claude": {"paused_at": "2026-09-11T01:37:15Z", "failure_kind": "quota_terminal", "worker_run_id": "run-cl1"},
                 },
                 "cleared_pauses": {},
             },
@@ -1713,11 +1713,15 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     "state": "cooldown",
                     "effective_concurrency": 0,
                     "last_failure_at": "2026-09-11T01:37:15Z",
+                    "last_worker_run_id": "run-c1",
+                    "failure_kind": "quota_terminal",
                 },
                 "claude_main": {
                     "state": "cooldown",
                     "effective_concurrency": 0,
                     "last_failure_at": "2026-09-11T01:37:15Z",
+                    "last_worker_run_id": "run-cl1",
+                    "failure_kind": "quota_terminal",
                 },
             },
         }
@@ -1755,7 +1759,7 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertFalse(changed)
         self.assertEqual(state["account_pool_runtime"]["codex_disabled"]["state"], "cooldown")
 
-    def test_clear_provider_dispatch_pause_recovers_cooldown_even_if_pause_dict_was_already_empty(self) -> None:
+    def test_clear_provider_dispatch_pause_preserves_cooldown_when_no_matching_cleared_pause(self) -> None:
         config = {
             "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
             "account_pools": {"codex_bjoe": {"max_concurrent": 2, "state": "healthy", "enabled": True}},
@@ -1769,6 +1773,45 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     "state": "cooldown",
                     "effective_concurrency": 0,
                     "last_failure_at": "2026-09-11T01:37:15Z",
+                    "last_worker_run_id": "old-run",
+                }
+            },
+        }
+
+        with mock.patch.object(supervisor, "write_activity_log"):
+            changed = supervisor.clear_provider_dispatch_pause(config, state, "codex")
+
+        self.assertFalse(changed)
+        self.assertEqual(state["account_pool_runtime"]["codex_bjoe"]["state"], "cooldown")
+
+    def test_clear_provider_dispatch_pause_preserves_unrelated_newer_quota_cooldown(self) -> None:
+        config = {
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+            "account_pools": {"codex_bjoe": {"max_concurrent": 2, "state": "healthy", "enabled": True}},
+            "agents": {"codex": {"id": "codex", "provider": "codex", "account_pool": "codex_bjoe"}},
+            "providers": {"codex": {"delivery_mode": "codex", "quota_group": "codex"}},
+        }
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex": {
+                        "paused_at": "2026-09-11T01:37:15Z",
+                        "worker_run_id": "old-run",
+                        "auth_identity_hash": "auth-a",
+                        "failure_kind": "quota_terminal",
+                    }
+                },
+                "cleared_pauses": {},
+            },
+            "account_pool_runtime": {
+                "codex_bjoe": {
+                    "state": "cooldown",
+                    "effective_concurrency": 0,
+                    "generation": 2,
+                    "last_failure_at": "2026-09-11T02:00:00Z",
+                    "last_worker_run_id": "unrelated-new-run",
+                    "auth_identity_hash": "auth-a",
+                    "failure_kind": "quota_terminal",
                 }
             },
         }
@@ -1777,8 +1820,89 @@ class DetectWorkerFailureTests(unittest.TestCase):
             changed = supervisor.clear_provider_dispatch_pause(config, state, "codex")
 
         self.assertTrue(changed)
-        self.assertEqual(state["account_pool_runtime"]["codex_bjoe"]["state"], "recovering")
-        self.assertEqual(state["account_pool_runtime"]["codex_bjoe"]["effective_concurrency"], 1)
+        self.assertEqual(state["provider_guardrails"]["dispatch_pauses"], {})
+        self.assertEqual(state["account_pool_runtime"]["codex_bjoe"]["state"], "cooldown")
+
+    def test_clear_provider_dispatch_pause_preserves_auth_failure_cooldown(self) -> None:
+        config = {
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+            "account_pools": {"codex_bjoe": {"max_concurrent": 2, "state": "healthy", "enabled": True}},
+            "agents": {"codex": {"id": "codex", "provider": "codex", "account_pool": "codex_bjoe"}},
+            "providers": {"codex": {"delivery_mode": "codex", "quota_group": "codex"}},
+        }
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex": {
+                        "paused_at": "2026-09-11T01:37:15Z",
+                        "worker_run_id": "old-run",
+                        "auth_identity_hash": "auth-a",
+                        "failure_kind": "quota_terminal",
+                    }
+                },
+                "cleared_pauses": {},
+            },
+            "account_pool_runtime": {
+                "codex_bjoe": {
+                    "state": "cooldown",
+                    "effective_concurrency": 0,
+                    "generation": 1,
+                    "last_failure_at": "2026-09-11T01:37:15Z",
+                    "last_worker_run_id": "old-run",
+                    "auth_identity_hash": "auth-a",
+                    "failure_kind": "auth",
+                }
+            },
+        }
+
+        with mock.patch.object(supervisor, "write_activity_log"):
+            changed = supervisor.clear_provider_dispatch_pause(config, state, "codex")
+
+        self.assertTrue(changed)
+        self.assertEqual(state["provider_guardrails"]["dispatch_pauses"], {})
+        self.assertEqual(state["account_pool_runtime"]["codex_bjoe"]["state"], "cooldown")
+
+    def test_clear_old_account_pause_preserves_new_account_cooldown(self) -> None:
+        config = {
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+            "account_pools": {"codex_bjoe": {"max_concurrent": 2, "state": "healthy", "enabled": True}},
+            "agents": {"codex": {"id": "codex", "provider": "codex", "account_pool": "codex_bjoe"}},
+            "providers": {"codex": {"delivery_mode": "codex", "quota_group": "codex"}},
+        }
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex": {
+                        "paused_at": "2026-09-11T01:37:15Z",
+                        "worker_run_id": "old-run",
+                        "auth_identity_hash": "auth-a",
+                        "failure_kind": "quota_terminal",
+                    }
+                },
+                "cleared_pauses": {},
+            },
+            "account_pool_runtime": {
+                "codex_bjoe": {
+                    "state": "cooldown",
+                    "effective_concurrency": 0,
+                    "generation": 1,
+                    "last_failure_at": "2026-09-11T01:37:15Z",
+                    "last_worker_run_id": "auth-b-run",
+                    "auth_identity_hash": "auth-b",
+                    "failure_kind": "quota_terminal",
+                }
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="auth-b"),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.clear_provider_dispatch_pause(config, state, "codex")
+
+        self.assertTrue(changed)
+        self.assertEqual(state["provider_guardrails"]["dispatch_pauses"], {})
+        self.assertEqual(state["account_pool_runtime"]["codex_bjoe"]["state"], "cooldown")
 
 
 class ProcessQueueDispatchGuardTests(unittest.TestCase):
