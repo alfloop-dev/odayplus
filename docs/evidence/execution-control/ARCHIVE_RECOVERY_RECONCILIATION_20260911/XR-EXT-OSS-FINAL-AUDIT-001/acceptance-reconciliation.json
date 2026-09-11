@@ -5,7 +5,7 @@
   "phase": "Third-party data production closeout / History Recovery",
   "owner": "Antigravity4",
   "reviewer": "Codex",
-  "recorded_at": "2026-09-11T11:45:00Z",
+  "recorded_at": "2026-09-11T11:58:00Z",
   "reconciliation_target": {
     "repository": "alfloop-dev/odayplus",
     "pinned_dev_sha": "4499a2993e37b62033926b07de8d8d2e8469a6c7",
@@ -61,7 +61,8 @@
         "status": "completed",
         "started_at": "2026-08-24T05:50:55Z",
         "completed_at": "2026-08-24T05:54:06Z",
-        "job_url": "https://github.com/alfloop-dev/oday-data-platform/actions/runs/32694980360/job/97335294828"
+        "job_url": "https://github.com/alfloop-dev/oday-data-platform/actions/runs/32694980360/job/97335294828",
+        "terminal_receipt": "CI step completed with conclusion=success; numeric exit code not provided by GitHub check-run API"
       },
       {
         "name": "closeout-audit",
@@ -69,7 +70,8 @@
         "status": "completed",
         "started_at": "2026-08-24T05:50:55Z",
         "completed_at": "2026-08-24T05:51:52Z",
-        "job_url": "https://github.com/alfloop-dev/oday-data-platform/actions/runs/32694980360/job/97335294567"
+        "job_url": "https://github.com/alfloop-dev/oday-data-platform/actions/runs/32694980360/job/97335294567",
+        "terminal_receipt": "CI step completed with conclusion=success; executed scripts/audit_external_oss_closeout.py --check and 55 unit/integration tests"
       },
       {
         "name": "producer-compatibility",
@@ -117,9 +119,11 @@
     "approval_to_merge_seconds": 9
   },
   "this_round_observation_and_provenance": {
-    "observed_at": "2026-09-11T11:45:00Z",
+    "observed_at": "2026-09-11T11:58:00Z",
     "observer": "Antigravity4",
     "observation_mode": "read_only_cross_repo_github_api_and_local_git",
+    "provenance_receipts_file": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/raw-command-receipts.json",
+    "offline_verification_script": "inline_python_assertion_and_scratch_verification_script",
     "source_repositories": {
       "producer_audit_repo": {
         "repository": "alfloop-dev/oday-data-platform",
@@ -171,7 +175,8 @@
         "role": "cutover",
         "task_id": "ODP-XR-CUTOVER-ACTIVATE-002",
         "approved_head_sha": "786b638f5d7ee3db5795427ce16f40615f53927c",
-        "merge_commit_sha": "b32fd65fb4e2e283c7dc5c1e5fc24c6d6ba4e747"
+        "merge_commit_sha": "b32fd65f4e60e4814b6b96bf074c5dc34dec12d4",
+        "sha_correction_note": "Corrected exact full SHA from previously miscopied string b32fd65fb4e2e283c7dc5c1e5fc24c6d6ba4e747 to canonical b32fd65f4e60e4814b6b96bf074c5dc34dec12d4."
       },
       {
         "pr_number": 983,
@@ -210,9 +215,9 @@
         "程式或文件交付"
       ],
       "status": "partially_met",
-      "status_zh": "部分滿足（程式碼與靜態契約可重算，唯歷史數據量測具模擬／自產來源缺口）",
+      "status_zh": "部分滿足（程式碼與靜態契約可確定性重算，唯運行期 snapshot readback 數據為腳本合成產物）",
       "met_aspects": [
-        "兩 repo 之精確 commit（PR #60 merge d3069c93、PR #61 merge 7b0670d7、PR #995 merge 9199e59f、PR #996 merge 0dc5cebc、PR #991 merge b32fd65f、PR #983 merge 355195db）、CI check-runs（全數 success）、image digest（sha256:f6934705cf94de1b2385d773c26e1bb9816ee8f31204859a8c62d0891d4e0e5a）、SBOM（sha256:df9238a185857bfaf80a0f79377584dc23463a0f099b302ed1017116bdfcba14）、NOTICE（sha256:e3aa79c2c1877c53cc380eca8b1858a33158d037a1a8965a419c61ef4efa3327）及 contract lock（sha256:c2c153fbcd41c28e282e70f3d2a301fe42f2a9d6013ffb64ba99768cb976a72e）均已完整驗證且可確定性重算。",
+        "兩 repo 之精確 commit（PR #60 merge d3069c93d2f08884c9c3014c8e9326f2fbd08813、PR #61 merge 7b0670d7b37e59e06bc9fea5b6003d1964be2c3c、PR #995 merge 9199e59f5e36a716800ca0caade6cf13b2a75620、PR #996 merge 0dc5cebc90cf3a55c0e2805459bcdda19f9c4e36、PR #991 merge b32fd65f4e60e4814b6b96bf074c5dc34dec12d4、PR #983 merge 355195dbc853ae14fb227bb84fa49a4ce7e0db67）、7 項 CI check-runs（全數 success）、image digest（sha256:f6934705cf94de1b2385d773c26e1bb9816ee8f31204859a8c62d0891d4e0e5a）、SBOM（sha256:df9238a185857bfaf80a0f79377584dc23463a0f099b302ed1017116bdfcba14）、NOTICE（sha256:e3aa79c2c1877c53cc380eca8b1858a33158d037a1a8965a419c61ef4efa3327）及 contract lock（sha256:c2c153fbcd41c28e282e70f3d2a301fe42f2a9d6013ffb64ba99768cb976a72e）均已完整驗證且可確定性重算。",
         "PR #61 於 oday-data-platform 之 CI job 97335294567 實際執行 scripts/audit_external_oss_closeout.py --check 及 55 項測試，全部 terminal success。"
       ],
       "provenance_gaps": [
@@ -220,8 +225,44 @@
         "七軸來自 XR-DUAL-RUN-RECONCILE-002/emgi-cutover-receipt.json；上游 scripts/reconcile_legacy_external_data.py:588-630 自產 records、將同一 payload 同時視為 legacy/platform 並固定 FULL_COVERAGE/CURRENT。這些結果可由腳本重現生成，但不能作為真實歷史資料庫量測的獨立客觀證據。"
       ],
       "downstream_handover": {
-        "required_inputs": "真實資料庫 snapshot readback 原始量測輸入與執行日誌（若未來進行 live data reconciliation）。",
-        "responsible_task": "後續 live data activation / dual-run tasks（在具名資料授權核准後）。"
+        "unproven_sub_items": [
+          "8/8 domains 真實資料庫 snapshot readback 數據與執行日誌",
+          "11/11 品質軸與 44,471 筆真實歷史資料庫比對量測"
+        ],
+        "precise_missing_inputs": "真實生產/預發布資料庫 PostgreSQL snapshot readback raw terminal receipt 與 query execution logs（非合成數據生成）。",
+        "responsible_canonical_tasks": [
+          {
+            "task_id": "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+            "title": "產生可驗證的 EMGI masked release snapshot artifact",
+            "owner": "Antigravity",
+            "status": "blocked",
+            "depends_on": [
+              "DPF-EMGI-LIVE-ROLLOUT-001",
+              "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001"
+            ]
+          },
+          {
+            "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+            "title": "以真實 artifact 完成 dev live rollout 並取代 false-done 前提",
+            "owner": "Antigravity2",
+            "status": "blocked",
+            "depends_on": [
+              "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+              "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+              "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+              "DPF-EMGI-LIVE-ROLLOUT-001",
+              "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+              "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+              "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+              "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+              "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+              "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
+            ]
+          }
+        ],
+        "next_step": "待 DPF-EMGI-LIVE-ROLLOUT-001 審查通過後，解鎖 DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001 產出具備實體 digest 之 masked snapshot artifact。",
+        "dependency_before_after": "依現行 Canonical 看板依賴鏈正常流轉，不更動未經授權之相依關係。",
+        "no_cycle_evidence": "XR-EXT-OSS-FINAL-AUDIT-001 不在 DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001 之相依集合內，維持單向 DAG。"
       }
     },
     {
@@ -236,17 +277,50 @@
         "程式或文件交付"
       ],
       "status": "partially_met",
-      "status_zh": "部分滿足（靜態程式碼缺口已關閉且法務閘門已逐項列明，唯運行期缺口閉合依賴模擬收據）",
+      "status_zh": "部分滿足（靜態程式碼缺口已關閉且法務待決逐項列明，唯運行期缺口閉合依賴模擬收據）",
       "met_aspects": [
         "technical-gap-closure-matrix.json @ 7b0670d7 清楚將 4 項法律待決（LICENSE-BLOCKED-CONSUMER、LICENSE-BLOCKED-PRODUCER、LICENSE-POLICY-NOT-APPROVED、SOURCE-DATA-LICENCE-NOT-MODELLED）逐項標註為 ITEMIZED_PENDING_LEGAL_GATE 並精確指向 HUMAN-OSS-LEGAL-APPROVAL-001，未混入工程瑕疵。",
         "靜態程式碼與文件缺口（CONSUMER-PR-970-OPEN、NOTICE-COVERAGE-CONSUMER、CAPABILITY-WITHOUT-SMOKE-TEST）在交付 repo 程式中均已實質關閉。"
       ],
       "provenance_gaps": [
-        "標記為 CLOSED_BY_RUNTIME_DIGEST 之缺口（如 IMAGES-PINNED-BY-TAG 及相關 workload 憑證檢查）依賴 verify_external_egress_off.py 產出之收據，而該腳本採用 SIMULATED_RESTART_AND_ROLLOUT，未對 live cluster 實際 pod 執行動態驗證。"
+        "標記為 CLOSED_BY_RUNTIME_DIGEST 之缺口（IMAGES-PINNED-BY-TAG 及相關 workload 憑證檢查）依賴 verify_external_egress_off.py 產出之收據，而該腳本採用 SIMULATED_RESTART_AND_ROLLOUT，未對 live cluster 實際 pod 執行動態驗證。"
       ],
       "downstream_handover": {
-        "required_inputs": "Live 叢集實際運行期映像 digest 與執行緒收據。",
-        "responsible_task": "HUMAN-OSS-LEGAL-APPROVAL-001（法律授權）與後續 live deployment rollout。"
+        "unproven_sub_items": [
+          "實體叢集運行期 Pod container image digest 採集 (IMAGES-PINNED-BY-TAG)",
+          "實體叢集 workload Secret volume 投影檢查"
+        ],
+        "precise_missing_inputs": "實體 Kubernetes / GCP 運行期 Pod 之 live container image digest 與 Secret 投影檢查日誌。",
+        "responsible_technical_tasks": [
+          {
+            "task_id": "DPF-EMGI-LIVE-ROLLOUT-001",
+            "title": "歷史驗收續辦：DPF-EMGI-LIVE-ROLLOUT-001",
+            "owner": "Antigravity7",
+            "status": "review",
+            "depends_on": []
+          },
+          {
+            "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+            "title": "以真實 artifact 完成 dev live rollout 並取代 false-done 前提",
+            "owner": "Antigravity2",
+            "status": "blocked",
+            "depends_on": [
+              "DPF-EMGI-LIVE-ROLLOUT-001"
+            ]
+          }
+        ],
+        "responsible_legal_task": {
+          "task_id": "HUMAN-OSS-LEGAL-APPROVAL-001",
+          "title": "逐一決定每個資料來源與 OSS 的許可及義務",
+          "owner": "Human/Ops",
+          "status": "todo",
+          "depends_on": [
+            "XR-EXT-OSS-FINAL-AUDIT-001"
+          ]
+        },
+        "next_step": "DPF-EMGI-LIVE-ROLLOUT-001 審查通過並執行 live rollout，產出實體 workload runtime digest 收據；HUMAN-OSS-LEGAL-APPROVAL-001 由具名人員審查法務決策。",
+        "dependency_before_after": "技術運行期驗證由 DPF-EMGI-LIVE-ROLLOUT-001 承接，法律授權由 HUMAN-OSS-LEGAL-APPROVAL-001 承接，兩者職責分明。",
+        "no_cycle_evidence": "單向 DAG，無循環依賴。"
       }
     },
     {
@@ -269,8 +343,24 @@
         "動態運行期流量與憑證投影收據（verify_external_egress_off.py:352-464）固定 workload credential=false、trigger=0、流量計數=0，並標明 SIMULATED_RESTART_AND_ROLLOUT。這能證實靜態防護邏輯與 mock 行為，但不能作為實體生產叢集 live 流量監控的歷史收據。"
       ],
       "downstream_handover": {
-        "required_inputs": "生產／預發布叢集之即時 egress flow logs 與 Secret 投影檢查收據。",
-        "responsible_task": "後續 staging/prod egress monitoring 運維任務。"
+        "unproven_sub_items": [
+          "部署環境 GCP VPC / K8s NetworkPolicy 運行期 Egress flow logs 與連線拒絕日誌"
+        ],
+        "precise_missing_inputs": "實體 GCP VPC Flow Logs 與 Kubernetes NetworkPolicy 阻斷連線之 live 稽核日誌。",
+        "responsible_canonical_tasks": [
+          {
+            "task_id": "ODP-NFR-RUNTIME-EVIDENCE-001",
+            "title": "在可信 live rollout 後驗證 SHARED-008 與 PERF／BATCH／AVAIL／RPO",
+            "owner": "Antigravity3",
+            "status": "todo",
+            "depends_on": [
+              "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001"
+            ]
+          }
+        ],
+        "next_step": "在 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 於 dev live 部署完成後，由 ODP-NFR-RUNTIME-EVIDENCE-001 採集真實流量與 NFR 證據。",
+        "dependency_before_after": "待 dev live rollout 完成後執行 NFR 流量驗證。",
+        "no_cycle_evidence": "單向 DAG，無循環依賴。"
       }
     },
     {
@@ -285,7 +375,7 @@
       "status": "met",
       "status_zh": "已滿足（由 consumer 程式庫與 IaC 靜態掃描證實）",
       "met_aspects": [
-        "ODayPlus 端經由 PR #995（merge 9199e59f5e36a716800ca0caade6cf13b2a75620）、PR #996（merge 0dc5cebc90cf3a55c0e2805459bcdda19f9c4e36）、PR #991（merge b32fd65fb4e2e283c7dc5c1e5fc24c6d6ba4e747）、PR #983（merge 355195dbc853ae14fb227bb84fa49a4ce7e0db67）之 pinned tree 靜態掃描 46 處 deployment surface。",
+        "ODayPlus 端經由 PR #995（merge 9199e59f5e36a716800ca0caade6cf13b2a75620）、PR #996（merge 0dc5cebc90cf3a55c0e2805459bcdda19f9c4e36）、PR #991（merge b32fd65f4e60e4814b6b96bf074c5dc34dec12d4）、PR #983（merge 355195dbc853ae14fb227bb84fa49a4ce7e0db67）之 pinned tree 靜態掃描 46 處 deployment surface。",
         "證實 active_external_producers_in_default_mode=0、facade_mode=PLATFORM_PRIMARY、default_external_fetch_enabled=false、manual_ingestion_trigger_default=HTTP_410_GONE、scheduler_external_fetch_default=NOT_ENQUEUED、worker_external_fetch_default=NON_RETRYABLE_REJECT_BEFORE_SERVICE、legacy_code_state=RETAINED_FROZEN_ROLLBACK_ONLY。"
       ],
       "provenance_gaps": []
@@ -300,12 +390,34 @@
         "人類授權"
       ],
       "status": "met",
-      "status_zh": "已滿足（技術前置條件已備妥，依賴關係維持正常 Canonical 生命週期）",
+      "status_zh": "已滿足（技術核對完成且程式/契約缺口已釐清，本任務未批准任何來源，依賴關係維持正常 Canonical 生命週期）",
       "met_aspects": [
-        "closeout-audit-manifest.json @ 7b0670d7 記載 technical_audit_verdict=TECHNICAL_READINESS_VERIFIED、open_technical_gaps_count=0。本任務 enabled_sources=0 且 sources_with_receipt=0，不自行批准任何來源，不變更 license gate。",
-        "Canonical 依賴對照：當前 canonical 看板上 HUMAN-OSS-LEGAL-APPROVAL-001 為 todo 狀態，其 depends_on=[XR-EXT-OSS-FINAL-AUDIT-001]。本任務在完成審查、PR 合併及 closeout done 後，始正常滿足該依賴；本任務不提前手改看板狀態，亦不自簽人類決策。"
+        "本任務 enabled_sources=0 且 sources_with_receipt=0，不自行批准任何來源，不變更 license gate。",
+        "歷史收據與本輪解鎖結論釐清：歷史 PR #61 manifest (closeout-audit-manifest.json @ 7b0670d7) 記載 technical_audit_verdict=TECHNICAL_READINESS_VERIFIED 與 status=UNBLOCKED_BY_TECHNICAL_AUDIT 屬歷史作者自述。本輪復原驗收將 A1-A3 標記為 partially_met（代碼與靜態契約就緒，運行期量測具模擬缺口並已映射至現存 Canonical 責任任務），本任務不自行宣告技術已完全解鎖法務依賴。",
+        "Canonical 依賴對照：當前 canonical 看板上 HUMAN-OSS-LEGAL-APPROVAL-001 為 todo 狀態，其 depends_on=[XR-EXT-OSS-FINAL-AUDIT-001]。本任務在完成審查、PR 合併及 closeout done 後，始由 orchestrator 依正常生命週期解除依賴；本任務不提前手改看板狀態，亦不自簽人類決策。"
       ],
-      "provenance_gaps": []
+      "provenance_gaps": [],
+      "downstream_handover": {
+        "responsible_legal_task": {
+          "task_id": "HUMAN-OSS-LEGAL-APPROVAL-001",
+          "title": "逐一決定每個資料來源與 OSS 的許可及義務",
+          "owner": "Human/Ops",
+          "status": "todo",
+          "depends_on": [
+            "XR-EXT-OSS-FINAL-AUDIT-001"
+          ]
+        },
+        "responsible_activation_task": {
+          "task_id": "XR-SOURCE-APPROVAL-ACTIVATION-001",
+          "title": "依逐來源許可決定啟用自動更新，未核准來源保持關閉",
+          "owner": "Antigravity",
+          "status": "todo",
+          "depends_on": [
+            "HUMAN-OSS-LEGAL-APPROVAL-001"
+          ]
+        },
+        "next_step": "待本任務 review/merge/done 結案後，HUMAN-OSS-LEGAL-APPROVAL-001 依正常流程啟動，由具名人類出具法務授權收據；隨後由 XR-SOURCE-APPROVAL-ACTIVATION-001 依授權啟用相應來源。"
+      }
     }
   ],
   "human_legal_approval_mapping": {
@@ -340,9 +452,13 @@
     ],
     "dependency_lifecycle": {
       "dependency_before": "HUMAN-OSS-LEGAL-APPROVAL-001 depends_on = [XR-EXT-OSS-FINAL-AUDIT-001]",
-      "dependency_after": "XR-EXT-OSS-FINAL-AUDIT-001 merge/done 滿足技術前置條件後，HUMAN-OSS-LEGAL-APPROVAL-001 進入可執行狀態",
-      "cycle_check": "XR-EXT-OSS-FINAL-AUDIT-001 (depends_on: []) -> HUMAN-OSS-LEGAL-APPROVAL-001 (depends_on: [XR-EXT-OSS-FINAL-AUDIT-001])，有向無環 (DAG)，無 cycle",
-      "canonical_mutation_policy": "不提前修改 ai-status.json，依標準 review -> merge -> done 流程由 orchestrator 自動流轉。"
+      "dependency_after": "XR-EXT-OSS-FINAL-AUDIT-001 完成技術核對結案後，HUMAN-OSS-LEGAL-APPROVAL-001 進入可執行狀態",
+      "cycle_check": {
+        "is_acyclic": true,
+        "chain": "XR-EXT-OSS-FINAL-AUDIT-001 (depends_on: []) -> HUMAN-OSS-LEGAL-APPROVAL-001 (depends_on: [XR-EXT-OSS-FINAL-AUDIT-001]) -> XR-SOURCE-APPROVAL-ACTIVATION-001 (depends_on: [HUMAN-OSS-LEGAL-APPROVAL-001])",
+        "evidence": "單向有向無環圖 (DAG)，無循環依賴。"
+      },
+      "canonical_mutation_policy": "不提前手改 ai-status.json，依標準 review -> merge -> done 流程由 orchestrator 自動流轉。"
     }
   },
   "summary": {
@@ -353,10 +469,13 @@
     "repository_correction_confirmed": true,
     "technical_gaps_closed_in_code": true,
     "runtime_measurement_provenance_gaps_itemized": true,
-    "human_oss_legal_dependency_unblocked_technically": true,
+    "historical_manifest_declared_verdict": "TECHNICAL_READINESS_VERIFIED",
+    "historical_manifest_declared_unblocked": true,
+    "audit_reconciliation_conclusion": "PARTIALLY_MET_CODE_READY_RUNTIME_GAPS_MAPPED",
+    "human_oss_legal_dependency_unblocked_technically": false,
     "human_oss_legal_approval_retained_to_human_task": true,
     "sources_disabled_and_stopped": true,
     "single_consumer_architecture_verified": true,
-    "reconciliation_verdict": "reconciliation_completed_with_technical_gaps_itemized"
+    "reconciliation_verdict": "reconciliation_completed_with_technical_gaps_itemized_and_canonical_tasks_mapped"
   }
 }

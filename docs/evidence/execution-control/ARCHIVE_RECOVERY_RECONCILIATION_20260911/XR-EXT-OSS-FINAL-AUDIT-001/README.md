@@ -107,7 +107,7 @@ assert data['task_id'] == 'XR-EXT-OSS-FINAL-AUDIT-001'
 assert len(data['acceptance_criteria_reconciliation']) == 5
 assert data['summary']['criteria_met'] == 2
 assert data['summary']['criteria_partially_met'] == 3
-assert data['summary']['reconciliation_verdict'] == 'reconciliation_completed_with_technical_gaps_itemized'
+assert data['summary']['reconciliation_verdict'] == 'reconciliation_completed_with_technical_gaps_itemized_and_canonical_tasks_mapped'
 digests = data['this_round_observation_and_provenance']['full_sha256_digests']
 for k, v in digests.items():
     assert len(v.split('sha256:')[-1]) == 64, f'Truncated digest found in {k}: {v}'
