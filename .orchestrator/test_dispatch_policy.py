@@ -4027,8 +4027,6 @@ def test_diagnostic_cas_rejection_does_not_starve_subsequent_green_reviews() -> 
     rejected CAS commit, dispatch_ready_tasks must continue evaluating and
     dispatching subsequent ready tasks on the board rather than early-returning.
     """
-    import github_bus
-
     cfg = _base_test_config()
     cfg["agents"]["antigravity7"]["slot_id"] = "slot-antigravity"
 
@@ -4162,8 +4160,8 @@ def test_canonical_sync_advancing_disk_revision_reloads_status_for_subsequent_wr
     sync_status_pipeline, the in-memory status retains the pre-sync revision, causing
     subsequent writes in the same tick to fail with stale_status_write_rejected.
     """
-    import fcntl
     import uuid
+
     import status_transition
 
     status_file = tmp_path / "ai-status.json"
@@ -4225,7 +4223,6 @@ def test_diagnostic_cas_mismatch_resyncs_and_rebuilds_indices_from_disk(tmp_path
     cfg["paths"]["activity_log"] = str(activity_file)
     cfg["paths"]["event_queue"] = str(event_queue)
 
-    initial_revision = uuid.uuid4().hex
     external_revision = uuid.uuid4().hex
 
     pending_task = {
@@ -4261,19 +4258,13 @@ def test_diagnostic_cas_mismatch_resyncs_and_rebuilds_indices_from_disk(tmp_path
         },
     }
 
-    # Stale in-memory snapshot with initial_revision
-    initial_status = {
-        "_status_write_revision": initial_revision,
-        "tasks": [pending_task],
-        "handoffs": [],
-    }
-
     # External writer advances disk to external_revision with concurrent_task added
     disk_status = {
         "_status_write_revision": external_revision,
         "tasks": [pending_task, concurrent_task],
         "handoffs": [],
     }
+
     status_file.write_text(json.dumps(disk_status), encoding="utf-8")
 
     state = {"workers": {}, "queue": {"events": {}}}
