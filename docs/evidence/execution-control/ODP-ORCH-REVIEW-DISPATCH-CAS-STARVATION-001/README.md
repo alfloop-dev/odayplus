@@ -49,9 +49,10 @@
     - 不將純 advisory 訊息標記為 `changed = True`，避免在無實質派工或狀態變更時誤報變更。
   - 將候選評估限制為動態有界的 `max_agent_eval_attempts = max(8, len(tasks) + 1)`，防止無限迴圈。
 
-### 3.3 嚴格保留關鍵生命週期 Fail-Closed 語義
+### 3.3 嚴格保留關鍵生命週期 Fail-Closed 與 單一 Tick 轉移語義
 - 對於必須保證原子性的實質生命週期狀態變更（`requeue_task_for_ci_repair`、`re-review_required` 狀態轉移、`release_dead_helper_claims`）：
   - 嚴格保留 fail-closed 行為：若 CAS commit 失敗立即終止操作並返回，確保不可在過時狀態上派發 worker。
+  - 狀態轉移成功後使用 `continue` 繼續當前派工輪次評估，不在同一 tick 內重新將剛轉移至 `in_progress` 的任務重複加入候選派工佇列，確保生命週期狀態轉移與派發 worker 的週期界線分明。
 
 ---
 
@@ -68,17 +69,23 @@
 
 ### 4.2 測試執行結果
 ```bash
-# 1. 執行新加入與現有 dispatch policy 測試 (180/180 PASSED)
-PYTHONPATH=.orchestrator:scripts:delivery_toolchain/git uv run --python 3.12 pytest -q .orchestrator/test_dispatch_policy.py
-........................................................................ [ 40%]
-........................................................................ [ 80%]
-....................................                                     [100%]
-180 passed in 23.45s
+# 1. 執行新加入與現有 dispatch policy 測試
+uv run pytest -q .orchestrator/test_dispatch_policy.py -k 'diagnostic_cas or review_dispatch or stale_wake or cas or release_dead_helper_claims'
+.....................................                                    [100%]
+37 passed in 9.20s
 
-# 2. 執行 Supervisor Concurrency & Sync 測試 (17/17 PASSED)
-PYTHONPATH=.orchestrator:scripts:delivery_toolchain/git uv run --python 3.12 pytest -q   .orchestrator/test_supervisor.py::DispatchStatusSyncTests   .orchestrator/test_supervisor.py::AutomaticRecoveryTests::test_ci_failure_requeue_fails_closed_on_stale_status_snapshot   .orchestrator/test_supervisor.py::StatusWriteConcurrencyTests
-.................                                                        [100%]
-17 passed in 3.12s
+# 2. 執行 Supervisor Concurrency & Sync 測試
+uv run pytest -q .orchestrator/test_supervisor.py::DispatchStatusSyncTests .orchestrator/test_supervisor.py::AutomaticRecoveryTests::test_ci_failure_requeue_fails_closed_on_stale_status_snapshot
+..............                                                           [100%]
+14 passed in 3.63s
+
+# 3. 執行 ReviewHeadFreezeTests 完整測試套件 (33/33 PASSED)
+uv run pytest -v .orchestrator/test_supervisor.py::ReviewHeadFreezeTests
+============================= 33 passed in 17.58s ==============================
+
+# 4. 執行 Orchestrator 完整 CI 測試套件 (2794/2794 PASSED)
+uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling infra
+2794 passed, 6 skipped, 10 deselected, 3 warnings, 618 subtests passed in 476.64s (0:07:56)
 ```
 
 ---

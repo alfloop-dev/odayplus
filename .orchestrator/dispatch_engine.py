@@ -2907,8 +2907,7 @@ def dispatch_ready_tasks(
                                     "message": task["next"],
                                 },
                             )
-                            resynced = True
-                            break
+                            continue
                         else:
                             # B20: head unresolvable. Suppressing finalize here
                             # is correct, but doing it silently leaves the task
@@ -2985,8 +2984,7 @@ def dispatch_ready_tasks(
                                 changed = True
                                 tasks = [t for t in status.get(tasks_path, []) if t.get(task_id_field)]
                                 task_map = {t.get(task_id_field): t for t in tasks}
-                                resynced = True
-                                break
+                                continue
                         if status_dirty:
                             committed = commit_canonical_task_transition(config, status)
                             tasks = [t for t in status.get(tasks_path, []) if t.get(task_id_field)]
@@ -3008,8 +3006,7 @@ def dispatch_ready_tasks(
                         changed = True
                         tasks = [t for t in status.get(tasks_path, []) if t.get(task_id_field)]
                         task_map = {t.get(task_id_field): t for t in tasks}
-                        resynced = True
-                        break
+                        continue
                     elif ci_status not in {"success", "none"}:
                         # B20: catch-all for probe states that are neither pending,
                         # failure, nor green (e.g. "unknown" when `gh` is
