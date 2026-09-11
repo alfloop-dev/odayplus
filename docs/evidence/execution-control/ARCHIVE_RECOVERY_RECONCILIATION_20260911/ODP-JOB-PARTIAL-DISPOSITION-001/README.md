@@ -8,7 +8,7 @@
 - **執行身分 (Owner)**：`Antigravity7`
 - **審查人 (Reviewer)**：`Codex`
 - **交付分支**：`task/ODP-JOB-PARTIAL-DISPOSITION-001-RECOVERY-20260911`
-- **目標基準 (Target)**：`origin/dev` (`2889b55fb1febe95c9f8650f24ead18e86015cca`)
+- **目標基準 (Target)**：`origin/dev` (`4b35121031d0738ff7c529810cf1b2e267161083`)
 - **關聯需求**：`ODP-FR-SHARED-001`（所有長時間任務都能查詢 QUEUED/RUNNING/SUCCEEDED/FAILED/CANCELLED/PARTIAL）
 
 ### 1.1 歷史交付與條件分支背景
@@ -31,9 +31,9 @@
 2. **Stage 33B (`ODP-DURABLE-PARTIAL-IMPL-001` / PR #1285)**：於 `apps/worker` 實作真實批次處理器 `handle_batch_listing_intake`、三階段 checkpoint、`derive_batch_status_and_summary` 及差異化重試，經 `tests/reliability/test_durable_partial_batch.py` 完整測試後合併。
 3. **治理對齊 (`ODP-JOB-PARTIAL-PRODUCER-RECONCILIATION-001` / PR #1302)**：將 `set_valued_requirements.json` 成員狀態對齊為 `satisfied`（指向 `handle_batch_listing_intake`），同時嚴格保留 `disposition.state: "BLOCKED_BY_EVIDENCE"`，保留 H06 人類簽署與 Live production queue 審計收據之邊界。
 
-**職責邊界**：
-- `ODP-JOB-PARTIAL-DISPOSITION-001`（本任務）之職責是**歷史條件式處置與 Handback 契約交付**。其在無生產者之歷史時點已完整履約。
-- 後續新增之具體批次生產者實作與 H06 人類簽署，屬於後續演進任務之能力交付與治理追蹤，不應逆向擴張為本歷史處置任務之缺陷。
+**職責邊界與狀態分列**：
+- **歷史時點（PR #1172）**：`PARTIAL` 狀態為 `absent` / `BLOCKED_BY_EVIDENCE`。本任務之職責是**歷史條件式處置與 Handback 契約交付**。其在無生產者之歷史時點已完整履約。
+- **目前時點（PR #1302 後基準）**：`PARTIAL` 狀態為 `satisfied` / `BLOCKED_BY_EVIDENCE`（程式碼生產者已交付）。後續新增之具體批次生產者實作與 H06 人類簽署，屬於後續演進任務之能力交付與治理追蹤，不應逆向擴張為本歷史處置任務之缺陷。
 
 ---
 
@@ -56,11 +56,11 @@
    - `ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001`：已於歷史 W6 完成並封存（`done`），建立乾淨 CI 基底。
 
 2. **目前看板任務狀態 (Live Canonical Board)**：
-   - 本任務 `ODP-JOB-PARTIAL-DISPOSITION-001` 在 live canonical board（`/home/lupin/odayplus/ai-status.json`）上之 `depends_on: []`（前置任務均已封存為 `done`，入度為 0，維持不變）。
+   - 本任務 `ODP-JOB-PARTIAL-DISPOSITION-001` 在 live canonical board（`/home/lupin/odayplus/ai-status.json`）上之 `depends_on: []`（前置任務均已封存為 `done`，入度為 0，維持不變，`dependency_mutation: false`）。
 
 3. **下游承接與結案總帳 (Downstream Dependents)**：
    - `ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001`：目前處於 `todo`，其 `depends_on` 共有 17 項任務（包含本任務 `ODP-JOB-PARTIAL-DISPOSITION-001` 與 `ODP-REQ-DISPOSITION-GOVERNANCE-001` 等）。該任務負責最終 20 項 findings 之結案總核驗。
-   - DAG 有向邊核對無環（`cycles_detected: false`）。
+   - DAG 有向邊核對：全看板 32 個任務節點經 DFS 遞迴檢查無環（`cycles_detected: false`），本任務與下游之間任務關聯邊 `["ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001", "ODP-JOB-PARTIAL-DISPOSITION-001"]` 維持前後一致（`unchanged`）。
 
 4. **後續實作與治理門禁 (Followup Lanes & Gates)**：
    - Stage 33A/33B 已由 PR #1257 / PR #1285 交付批次生產者與測試。
@@ -85,7 +85,7 @@
 
 ## 6. 驗證方式 (Verification)
 
-本任務交付物由以下 7 項命令進行完整離線驗證（收據見 `command-receipts.json`）：
+本任務交付物由以下 8 項命令於目前工作樹執行聚焦驗證（收據見 `command-receipts.json`）。歷史 PR #1172 之 7 項 CI 檢查與 PR #1285 之可靠性測試套件結論直接由既有 GitHub CI 及已歸檔快照記錄復用，不為統計重跑歷史成功套件：
 
 ```bash
 # 1. 格式與空白檢驗 (無越界與格式問題)
@@ -108,4 +108,18 @@ python3 delivery_toolchain/governance/check_requirement_members.py
 
 # 7. 執行治理測試套件
 UV_PYTHON=/usr/bin/python3.12 uv run pytest tests/governance/test_job_partial_disposition.py -q
+
+# 8. 執行 Canonical 看板與依賴圖拓撲無環檢驗
+python3 -c "import json; b = json.load(open('/home/lupin/odayplus/ai-status.json')); tasks = {t['id']: t for t in b.get('tasks', []) if 'id' in t}; graph = {t_id: t.get('depends_on', []) for t_id, t in tasks.items()}; assert tasks.get('ODP-JOB-PARTIAL-DISPOSITION-001', {}).get('depends_on') == []; assert 'ODP-JOB-PARTIAL-DISPOSITION-001' in tasks.get('ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001', {}).get('depends_on', []); assert len(tasks.get('ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001', {}).get('depends_on', [])) == 17; visited = {};
+def check_cycle(n, p):
+ visited[n] = 1
+ for m in graph.get(n, []):
+  if m in graph:
+   if visited.get(m) == 1: return True, p + [m]
+   if visited.get(m) != 2:
+    c, cp = check_cycle(m, p + [m])
+    if c: return True, cp
+ visited[n] = 2
+ return False, []
+cycles = [cp for n in graph if n not in visited for c, cp in [check_cycle(n, [n])] if c]; assert len(cycles) == 0; print(f'Canonical board DAG cycle check OK: nodes={len(graph)}, cycles={len(cycles)} (cycles_detected=False)')"
 ```
