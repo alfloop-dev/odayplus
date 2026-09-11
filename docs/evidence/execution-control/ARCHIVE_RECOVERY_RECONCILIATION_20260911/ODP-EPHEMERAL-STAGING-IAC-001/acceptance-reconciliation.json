@@ -6,10 +6,11 @@
   "phase": "Wave 1 - Staging IaC / History Recovery — executable acceptance reconciliation",
   "owner": "Antigravity2",
   "reviewer": "Codex2",
-  "recorded_at": "2026-09-11T11:00:00Z",
+  "recorded_at": "2026-09-11T12:35:00Z",
   "reconciliation_target": {
     "repository": "alfloop-dev/odayplus",
-    "pinned_dev_sha": "4499a2993e37b62033926b07de8d8d2e8469a6c7",
+    "pinned_dev_sha": "2889b55fb1febe95c9f8650f24ead18e86015cca",
+    "previous_pinned_dev_sha": "4499a2993e37b62033926b07de8d8d2e8469a6c7",
     "continuation_branch": "task/ODP-EPHEMERAL-STAGING-IAC-001-RECOVERY-20260911"
   },
   "historical_delivery": {
@@ -32,6 +33,16 @@
       "product_ops/deployment/staging_lifecycle.py",
       "tests/ops/test_ephemeral_staging_lifecycle.py"
     ],
+    "delivered_functions_and_constants": {
+      "file": "product_ops/deployment/staging_lifecycle.py",
+      "symbols": [
+        "cleanup_ephemeral_staging (L1511)",
+        "scan_orphans (L1790)",
+        "extend_staging_ttl (L1864)",
+        "DEFAULT_TTL_HOURS = 24 (L54)",
+        "MAX_TTL_HOURS = 168 (L55)"
+      ]
+    },
     "ci_checks": [
       {
         "name": "boundary",
@@ -76,6 +87,13 @@
       "updated_at": "2026-08-24T19:36:58Z",
       "description": "Approved by assigned reviewer Codex2"
     },
+    "historical_test_suite_details": {
+      "exact_head_test_methods_count": 86,
+      "test_file": "tests/ops/test_ephemeral_staging_lifecycle.py",
+      "exact_head_verified_via": "PR #1002 exact-head product CI job (conclusion=success)",
+      "current_baseline_test_methods_count": 96,
+      "current_baseline_note": "dev baseline (@2889b55f) has 96 test methods after subsequent additions; 86 was the exact method count at PR1002 merge 82ed6a05cf67"
+    },
     "commit_trailers": {
       "LLM-Agent": "Claude2",
       "Task-ID": "ODP-EPHEMERAL-STAGING-IAC-001",
@@ -88,39 +106,45 @@
     "pr_number": 1291,
     "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1291",
     "pr_title": "ODP-STAGING-IAC-CI-COLLECTION-001: 讓 ephemeral staging Terraform 契約測試真正進入 CI",
+    "head_sha": "726065c3aec57147f37902b94d754234dd55e25f",
     "merge_commit_sha": "025323f36d05c81f40085ba80c87f370d7c49c83",
-    "merged_at": "2026-09-10",
-    "ci_collection_evidence": {
+    "merged_at": "2026-09-10T19:29:51Z",
+    "ci_execution_reference": {
+      "run_id": 34514563856,
+      "job_id": 102996659589,
       "workflow_job": "orchestrator",
+      "conclusion": "success",
+      "completed_at": "2026-09-10T18:32:29Z",
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/34514563856/job/102996659589",
+      "exact_command_selection": "uv run pytest -m \"not requires_live_env\" .orchestrator delivery_toolchain scripts tests/tooling infra",
+      "execution_summary": "2791 passed, 6 skipped, 10 deselected, 618 subtests passed in 184.91s",
+      "collection_breakdown": {
+        "ephemeral_staging_tests_collected": 18,
+        "ephemeral_staging_test_file": "infra/terraform/tests/test_ephemeral_staging.py",
+        "contract_tests_collected": 14,
+        "contract_test_file": "infra/terraform/tests/test_contract.py",
+        "total_infra_tests_collected": 32,
+        "tooling_gating_tests_collected": 24,
+        "tooling_gating_test_file": "tests/tooling/test_staging_iac_ci_collection.py"
+      },
       "terraform_pinned_version": "1.9.8",
-      "pytest_command": "uv run pytest -m \"not requires_live_env\" .orchestrator delivery_toolchain scripts tests/tooling infra",
       "infra_testpaths_in_pyproject": true,
-      "ephemeral_staging_tests_collected": 18,
-      "total_infra_tests_collected": 32,
-      "tooling_gating_tests_collected": 24,
       "offline_harness_behavior": "Fail-closed in CI, offline access_token shim, mock HOME and stripped GCP credentials, forbids apply/destroy/import"
     }
   },
   "readback_and_verification_sources": {
-    "verified_at": "2026-09-11T11:00:00Z",
+    "verified_at": "2026-09-11T12:35:00Z",
     "verifier": "Antigravity2",
-    "local_execution_receipts": [
-      {
-        "target": "tests/ops/test_ephemeral_staging_lifecycle.py",
-        "command": "uv run pytest tests/ops/test_ephemeral_staging_lifecycle.py",
-        "exit_code": 0,
-        "tests_passed": 96,
-        "subtests_passed": 16,
-        "duration_seconds": 0.57
-      },
-      {
-        "target": "infra/terraform/tests/test_ephemeral_staging.py + infra/terraform/tests/test_contract.py",
-        "command": "uv run pytest infra/terraform/tests/test_ephemeral_staging.py infra/terraform/tests/test_contract.py",
-        "exit_code": 0,
-        "tests_passed": 32,
-        "duration_seconds": 28.58
-      }
-    ]
+    "command_receipt_provenance": {
+      "historical_local_raw_terminal_output_status": "unknown",
+      "historical_local_raw_terminal_output_note": "Historical local execution terminal output metadata is unpreserved and marked unknown; exact-head CI execution runs #34514563856 (PR #1291) and #1002 CI check-runs serve as durable remote receipts."
+    },
+    "base_advance_composition": {
+      "base_sha": "2889b55fb1febe95c9f8650f24ead18e86015cca",
+      "composed_at": "2026-09-11T12:35:42Z",
+      "merge_strategy": "ort",
+      "conflicts": "none"
+    }
   },
   "acceptance_criteria_reconciliation": [
     {
@@ -136,7 +160,7 @@
       ],
       "status": "met",
       "status_zh": "已滿足",
-      "evidence": "經由 PR #1002 (merge 82ed6a05cf67) 交付之 Terraform 模組 infra/terraform/modules/ephemeral_staging/main.tf 與生命週期程式 product_ops/deployment/staging_lifecycle.py 定義並實作了所有 release-scoped 資源（Cloud Run service、Cloud Run job、專屬 database/schema、GCS bucket、tenant namespace、IAM service accounts 與 invoker 綁定）的可重跑建立契約。離線 Terraform plan 測試（infra/terraform/tests/test_ephemeral_staging.py 內 5 項 plan 測試）與 tests/ops/test_ephemeral_staging_lifecycle.py（96 項測試）完整驗證建立之可重跑性與確定性。後續 ODP-STAGING-IAC-CI-COLLECTION-001 (PR #1291, merge 025323f36d05) 已完成 CI 收集接線，於 CI orchestrator job 實跑通過。依本任務定位（Wave 1 - Staging IaC），本條款驗證 IaC 可重跑建立能力；實際雲端部署由下游 ODP-EPHEMERAL-STAGING-ROLLOUT-001 負責，禁止以本任務授權執行 live apply。",
+      "evidence": "經由 PR #1002 (merge 82ed6a05cf67) 交付之 Terraform 模組 infra/terraform/modules/ephemeral_staging/main.tf 與生命週期程式 product_ops/deployment/staging_lifecycle.py 定義並實作了所有 release-scoped 資源（Cloud Run service、Cloud Run job、專屬 database/schema、GCS bucket、tenant namespace、IAM service accounts 與 invoker 綁定）的可重跑建立契約。離線 Terraform plan 測試（infra/terraform/tests/test_ephemeral_staging.py 內 5 項 plan 測試）與 tests/ops/test_ephemeral_staging_lifecycle.py 完整驗證建立之可重跑性與確定性。歷史 PR #1002 未執行 infra tests 之缺口由 ODP-STAGING-IAC-CI-COLLECTION-001 (PR #1291, head 726065c3aec5, merge 025323f36d05) 補正，於 CI orchestrator job (run 34514563856, job 102996659589) 實跑通過 18 項測試與 24 項 tooling 守門測試。依據 EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md (@c80247fb7d66) §16 之規劃，IaC 程式、定義與離線 plan 可在 Wave 1 交付；真實雲端 apply 精確交由下游 ODP-EPHEMERAL-STAGING-ROLLOUT-001 (Wave 3 - Staging Rollout) 負責，禁止以本任務授權執行 live apply。",
       "boundary": "驗證 IaC 模組契約與離線可重跑 plan 能力；不推斷、亦未執行未授權之 live cloud apply 或基礎設施變更。"
     },
     {
@@ -150,7 +174,7 @@
       ],
       "status": "met",
       "status_zh": "已滿足",
-      "evidence": "缺口已補齊：PR #1002 交付之 infra/terraform/modules/ephemeral_staging/main.tf 強制在所有支援 label 的資源上標註 owner、created_at、expires_at、release_id、ephemeral=true、managed_by=terraform 與 candidate_sha 標籤。對應測試 infra/terraform/tests/test_ephemeral_staging.py（test_mandatory_labels_win_over_additional_labels, test_creation_and_owner_inputs_are_required, test_ephemeral_staging_module_structure_and_tokens, test_module_no_dynamic_timestamp_leak）與 product_ops/deployment/staging_lifecycle.py 均嚴格檢查標籤完整性。歷史 PR #1002 未執行 infra tests 之 CI 缺口已由 PR #1291 (025323f36d05) 補正，並於 CI orchestrator job 實跑 18 項測試全數通過；tests/ops/test_ephemeral_staging_lifecycle.py 亦於 PR #1002 原 exact-head product CI 成功驗證。",
+      "evidence": "缺口已補齊：PR #1002 交付之 infra/terraform/modules/ephemeral_staging/main.tf 強制在所有支援 label 的資源上標註 owner、created_at、expires_at、release_id、ephemeral=true、managed_by=terraform 與 candidate_sha 標籤。對應測試 infra/terraform/tests/test_ephemeral_staging.py（test_mandatory_labels_win_over_additional_labels, test_creation_and_owner_inputs_are_required, test_ephemeral_staging_module_structure_and_tokens, test_module_no_dynamic_timestamp_leak）與 product_ops/deployment/staging_lifecycle.py 均嚴格檢查標籤完整性。歷史 PR #1002 未執行 infra tests 之 CI 缺口已由 PR #1291 (025323f36d05, run 34514563856) 補正，並於 CI orchestrator job 實跑 18 項測試全數通過；tests/ops/test_ephemeral_staging_lifecycle.py 亦於 PR #1002 原 exact-head (ee6eddb6951a) product CI 成功驗證。",
       "boundary": "標籤約束經由 Terraform AST、HCL 靜態結構、離線 plan 與 Python lifecycle 邏輯四重驗證。"
     },
     {
@@ -164,7 +188,7 @@
       ],
       "status": "met",
       "status_zh": "已滿足",
-      "evidence": "PR #1002 (merge 82ed6a05cf67) 交付之 product_ops/deployment/staging_lifecycle.py 實作了嚴格以精確 release_id 與必要標籤為準之清理邏輯（EphemeralStagingLifecycle.cleanup()），禁止廣域萬用字元清理；並實作 scan_orphaned_resources() / OrphanScanResult 孤兒資源掃描器，檢測過期或脫管資源。測試 tests/ops/test_ephemeral_staging_lifecycle.py（96 項測試）在 PR #1002 exact-head product CI job 執行且 conclusion=success。",
+      "evidence": "PR #1002 (merge 82ed6a05cf67) 交付之 product_ops/deployment/staging_lifecycle.py 實作了嚴格以精確 release_id 與必要標籤為準之清理函式 cleanup_ephemeral_staging (L1511)，禁止廣域萬用字元清理；並實作 scan_orphans (L1790) / OrphanScanResult 孤兒資源掃描器，檢測過期或脫管資源。測試 tests/ops/test_ephemeral_staging_lifecycle.py（PR #1002 exact-head 交付 86 項測試）在 PR #1002 exact-head product CI job 執行且 conclusion=success。",
       "boundary": "由 Python 單元測試與生命週期契約測試驗證；查核期間未執行對外雲端掃描或清理。"
     },
     {
@@ -178,7 +202,7 @@
       ],
       "status": "met",
       "status_zh": "已滿足",
-      "evidence": "PR #1002 (merge 82ed6a05cf67) 交付之 product_ops/deployment/staging_lifecycle.py 設定 DEFAULT_TTL_HOURS = 24，正常成功部署完成後立即觸發自動清除，失敗環境保留除錯上限預設不超過 24 小時（DEFAULT_FAILED_TTL_SECONDS = 86400），且延長 TTL 需附帶明確 owner 與原因紀錄（上限 168h）。由 tests/ops/test_ephemeral_staging_lifecycle.py 完整覆蓋，並在 PR #1002 exact-head product CI job 通過。",
+      "evidence": "PR #1002 (merge 82ed6a05cf67) 交付之 product_ops/deployment/staging_lifecycle.py 設定 DEFAULT_TTL_HOURS = 24 (L54)，成功部署後由生命週期觸發清理，失敗環境保留除錯上限預設不超過 24 小時。依據 EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md (@c80247fb7d66) §7.3 之規定，延長 TTL 需附帶明確 owner 與 reason（MAX_TTL_HOURS = 168, L55，由 extend_staging_ttl (L1864) 控制）。由 tests/ops/test_ephemeral_staging_lifecycle.py 完整覆蓋，並在 PR #1002 exact-head product CI job 通過。",
       "boundary": "驗證 TTL 計算、過期策略與失敗保留狀態機邏輯。"
     },
     {
@@ -192,10 +216,58 @@
       ],
       "status": "met",
       "status_zh": "已滿足",
-      "evidence": "PR #1002 (merge 82ed6a05cf67) 交付之 staging lifecycle 模組直接作為既有 deployment 工具鏈之呼叫對象，未新增第二套 workflow entrypoint。經查核 pinned dev .github/workflows/deploy-dev.yml (@4499a2993e37)，deploy-dev.yml 維持全系統唯一之 Runtime Release workflow entrypoint。",
-      "boundary": "盤點 pinned dev 7 份 workflow 定義，確認單一工作流入口無任何旁路或狀態機分歧。"
+      "evidence": "PR #1002 (merge 82ed6a05cf67) 交付之 staging lifecycle 模組直接作為既有 deployment 工具鏈之呼叫對象，未新增第二套 workflow entrypoint。經查核 dev .github/workflows/deploy-dev.yml (@2889b55f)，deploy-dev.yml 維持全系統唯一之 Runtime Release workflow entrypoint。",
+      "boundary": "盤點 dev 7 份 workflow 定義，確認單一工作流入口無任何旁路或狀態機分歧。"
     }
   ],
+  "downstream_responsibilities_and_dependency_mapping": {
+    "downstream_tasks": [
+      {
+        "task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+        "task_title": "建立 ephemeral staging 並完成全套 release rehearsal",
+        "phase": "Wave 3 - Staging Rollout",
+        "status_on_live_board": "blocked",
+        "waiting_for": "Human/Ops",
+        "depends_on": [
+          "ODP-EPHEMERAL-STAGING-IAC-001",
+          "ODP-DEV-ROLLOUT-001",
+          "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+          "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001"
+        ],
+        "acceptance_criteria_mapped": {
+          "A1": "實際雲端 release-scoped 資源之建立、部署與真實 apply 驗證",
+          "A2": "雲端實體資源標籤之 live inspection 與 GCP Console/API 稽核",
+          "A3": "實際雲端清理與真實定時孤兒掃描器之 live rehearsal",
+          "A4": "真實 staging 失敗環境 24h 保留與 TTL 自動回收之 live 運行驗證",
+          "A5": "經由唯一 workflow deploy-dev.yml 執行完整 staging release rehearsal"
+        },
+        "remaining_uncompleted_gates": [
+          "Human GO 與 Release Lease 授權",
+          "真實 GCP staging 專案、WIF 憑證與 service account 授權",
+          "Cloud SQL、Cloud Run、Cloud Scheduler 與 GCS 雲端基礎設施實體到位",
+          "staging Web 自訂網域 console-staging.oday-plus.com.tw 之 DNS、受管憑證與 OAuth callback 驗證",
+          "RELEASE_MANIFEST.json 真實 image digests 替換（非 placeholder digest）"
+        ]
+      }
+    ],
+    "dependency_graph_reconciliation": {
+      "dependencies_before": [
+        "ODP-RELEASE-MANIFEST-GATES-001"
+      ],
+      "dependencies_after": [
+        "ODP-RELEASE-MANIFEST-GATES-001"
+      ],
+      "dependents_before": [
+        "ODP-EPHEMERAL-STAGING-ROLLOUT-001"
+      ],
+      "dependents_after": [
+        "ODP-EPHEMERAL-STAGING-ROLLOUT-001"
+      ],
+      "cycle_detected": false,
+      "topology_description": "ODP-RELEASE-MANIFEST-GATES-001 (done) -> ODP-EPHEMERAL-STAGING-IAC-001 (review) -> ODP-EPHEMERAL-STAGING-ROLLOUT-001 (blocked)"
+    }
+  },
   "summary": {
     "criteria_total": 5,
     "criteria_met": 5,
@@ -210,7 +282,9 @@
     },
     "downstream_handoff": {
       "live_apply_responsibility": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
-      "unauthorized_apply_prohibited": true
+      "rollout_phase": "Wave 3 - Staging Rollout",
+      "unauthorized_apply_prohibited": true,
+      "dependency_integrity_verified": true
     },
     "human_disposition_required": false,
     "historical_unknown_retained": true,
