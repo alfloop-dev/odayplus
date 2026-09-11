@@ -93,26 +93,22 @@
 
 所有驗證命令均以獨立子程序執行，保留原始 terminal exit code 與持續時間，無背景等待迴圈或摘要 grep：
 
-- **Tested Commit**: `f29454c3fbc933d31a70b211ab6101453c465791`
+- **Tested Commit**: `98762e8fa584dfd20dbf002af465a6ecf80ee6c9`
 - **Receipt 1 (Diff & Whitespace Check)**:
   - Command: `git diff --check`
   - Exit code: `0`
-  - Duration: `0.0251s`
-- **Receipt 2 (Focused Dispatch Policy Tests - 48 passed)**:
-  - Command: `uv run pytest -q .orchestrator/test_dispatch_policy.py -k "diagnostic_cas or review_dispatch or stale_wake or cas or release_dead_helper_claims"`
-  - Selection: 48 passed (includes new candidate refresh and advisory resync regression tests)
+- **Receipt 2 (Full Dispatch Policy Test Suite - 190 passed)**:
+  - Command: `uv run pytest -q .orchestrator/test_dispatch_policy.py`
+  - Selection: 190 passed (includes candidate refresh, advisory resync, priority rank, and lease isolation tests)
   - Exit code: `0`
-  - Duration: `12.6422s`
-- **Receipt 3 (Supervisor Concurrency & Recovery Tests - 14 passed)**:
-  - Command: `uv run pytest -q .orchestrator/test_supervisor.py::DispatchStatusSyncTests .orchestrator/test_supervisor.py::AutomaticRecoveryTests::test_ci_failure_requeue_fails_closed_on_stale_status_snapshot`
-  - Selection: 14 passed
+- **Receipt 3 (Supervisor Concurrency, Lease Escalation & Recovery Tests - 16 passed)**:
+  - Command: `uv run pytest -q .orchestrator/test_supervisor.py::DispatchStatusSyncTests .orchestrator/test_supervisor.py::AutomaticRecoveryTests::test_ci_failure_requeue_fails_closed_on_stale_status_snapshot .orchestrator/test_supervisor.py::ProcessQueueDispatchGuardTests::test_an_escalated_lease_block_is_reported_on_the_task_record .orchestrator/test_supervisor.py::PollWorkersRecoveryTests::test_dispatch_rollback_on_commit_failure`
+  - Selection: 16 passed
   - Exit code: `0`
-  - Duration: `3.7747s`
 - **Receipt 4 (Codex2 External Mutation & Resync Failure Probes - 7 passed)**:
   - Command: `uv run pytest -q /home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260911T032333Z-3db4e30a/test_review_resync_failure.py /home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260911T032333Z-3db4e30a/test_review_helper_refresh.py`
   - Selection: 7 passed
   - Exit code: `0`
-  - Duration: `4.1162s`
 
 ---
 
