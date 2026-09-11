@@ -4971,7 +4971,7 @@ def test_exhausted_helper_budget_does_not_starve_exact_head_green_review(tmp_pat
     }
     canonical = Path(cfg["paths"]["status_file"])
     canonical.write_text(json.dumps(status))
-    events: list[dict[str, Any]] = []
+    events: list[dict] = []
     state = {"workers": {}, "queue": {"events": {}}, "ready_dispatcher": {"helper_dispatches_this_tick": 1 if budget == "consumed" else 0}}
     with ExitStack() as patches:
         for name in [
