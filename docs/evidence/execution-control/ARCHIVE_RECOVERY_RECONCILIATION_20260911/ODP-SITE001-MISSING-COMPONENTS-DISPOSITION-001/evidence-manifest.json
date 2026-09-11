@@ -1,0 +1,343 @@
+{
+  "schema_version": 2,
+  "task_id": "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+  "historical_delivery": {
+    "repository": "alfloop-dev/odayplus",
+    "pr_number": 1160,
+    "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1160",
+    "pr_title": "[ReviewBus] ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001 依 SITE-001 資料證據實作或正式處置 Brand Transfer／Format Conversion",
+    "head_ref": "task/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+    "base_ref": "dev",
+    "head_sha": "ffe02988a1b4def412090c6b422e6efb26081d9f",
+    "merge_sha": "9f53418df41e558c8f953c801dd8fd1f25f77b5b",
+    "created_at": "2026-09-03T14:24:26Z",
+    "merged_at": "2026-09-03T16:51:21Z",
+    "author": "ajoe734",
+    "merged_by": "ajoe734",
+    "delivered_files": [
+      {
+        "path": "docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md",
+        "kind": "evidence_and_handback_report",
+        "present_at_merge_commit": true,
+        "present_at_dev_tip": true
+      },
+      {
+        "path": "delivery_toolchain/governance/set_valued_requirements.json",
+        "kind": "governance_manifest",
+        "present_at_merge_commit": true,
+        "present_at_dev_tip": true
+      },
+      {
+        "path": "tests/governance/test_site001_disposition.py",
+        "kind": "test_suite",
+        "present_at_merge_commit": true,
+        "present_at_dev_tip": true
+      }
+    ],
+    "ci_checks_at_exact_head": {
+      "head_sha": "ffe02988a1b4def412090c6b422e6efb26081d9f",
+      "check_runs_total": 7,
+      "conclusions": {
+        "success": 7,
+        "failure": 0,
+        "skipped": 0
+      },
+      "check_runs": [
+        {
+          "name": "change-scope",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-03T16:00:20Z",
+          "collected_scope": "task change boundary verification"
+        },
+        {
+          "name": "boundary",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-03T16:00:20Z",
+          "collected_scope": "architecture boundary check"
+        },
+        {
+          "name": "classify",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-03T16:00:21Z",
+          "collected_scope": "task classification"
+        },
+        {
+          "name": "performance-gate",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-03T16:01:30Z",
+          "collected_scope": "tests/performance/"
+        },
+        {
+          "name": "orchestrator",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-03T16:03:02Z",
+          "collected_scope": ".orchestrator, delivery_toolchain, scripts, tests/tooling"
+        },
+        {
+          "name": "product-e2e-gate",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-03T16:06:21Z",
+          "collected_scope": "product e2e release gate"
+        },
+        {
+          "name": "product",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-03T16:18:24Z",
+          "collected_scope": "tests/, modules/, apps/, shared/, models/ (collects tests/governance/test_site001_disposition.py)"
+        }
+      ]
+    },
+    "historical_approval": {
+      "context": "task-review-gate",
+      "state": "success",
+      "approver": "Codex",
+      "updated_at": "2026-09-03T16:22:20Z",
+      "description": "Approved by assigned reviewer Codex",
+      "commit_status_rollup": "success"
+    },
+    "review_bus_block": {
+      "task_id": "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+      "status": "review_approved",
+      "owner": "Antigravity5",
+      "reviewer": "Codex",
+      "present_in_pr_body": true
+    },
+    "historical_command_metadata_status": {
+      "status": "historical_per_test_terminal_exit_code_unknown",
+      "note": "Historical exact-head CI conclusion is verified success (7/7 check-runs green); individual per-assertion terminal exit codes and raw stdout logs from 2026-09-03 are not preserved in archive, recorded as unknown per evidence inventory rule without inventing counts or rerunning historical suites."
+    }
+  },
+  "current_observations_and_mapping": {
+    "observed_at": "2026-09-11T11:30:00Z",
+    "observation_source": "Canonical board ($PANTHEON_STATUS_ROOT/ai-status.json) and docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+    "pinned_dev_sha": "4499a2993e37b62033926b07de8d8d2e8469a6c7",
+    "criteria_and_member_mapping": [
+      {
+        "criterion_index": 1,
+        "criterion": "Brand Transfer 與 Format Conversion 各自有獨立 outcome",
+        "requirement": "ODP-FR-SITE-001",
+        "members": [
+          "BRAND_TRANSFER",
+          "FORMAT_CONVERSION"
+        ],
+        "historical_disposition": "Independent outcomes documented in docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md §2 (Brand Transfer) and §3 (Format Conversion). Both assessed as BLOCKED_BY_EVIDENCE without synthetic placeholders.",
+        "human_decision": "D16 (Brand Transfer Option A) and D17 (Format Conversion Option A) recorded in ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+        "successor_contract_tasks": [
+          "ODP-BRAND-TRANSFER-CONTRACT-PREP-001 (PR #1254, Stage 30A, merged)"
+        ],
+        "successor_implementation_tasks": [
+          "ODP-BRAND-TRANSFER-IMPLEMENTATION-001 (Stage 30B, status: blocked on H03)"
+        ],
+        "format_conversion_contract_task": "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001 (PR #1252, Stage 31A, merged)",
+        "format_conversion_implementation_task": "ODP-FORMAT-CONVERSION-IMPLEMENTATION-001 (Stage 31B, status: blocked on H04)"
+      },
+      {
+        "criterion_index": 2,
+        "criterion": "實作者以真 source lineage 接到 production consumer 且有反事實測試",
+        "requirement": "ODP-FR-SITE-001",
+        "members": [
+          "BRAND_TRANSFER",
+          "FORMAT_CONVERSION"
+        ],
+        "historical_disposition": "Conditional requirement applicable only if IMPLEMENTATION_READY. Historical investigation confirmed absence of real producers/events, strictly forbidding fake mock wiring. Production contract designs and counterfactual acceptance standards defined in §4.1 and §4.2 for future implementation.",
+        "human_decision": "User chose Option A; implementation responsibilities handed over to Stage 30B (ODP-BRAND-TRANSFER-IMPLEMENTATION-001) and Stage 31B (ODP-FORMAT-CONVERSION-IMPLEMENTATION-001).",
+        "successor_contract_tasks": [
+          "ODP-BRAND-TRANSFER-CONTRACT-PREP-001 (PR #1254, Stage 30A, merged)",
+          "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001 (PR #1252, Stage 31A, merged)"
+        ],
+        "successor_implementation_tasks": [
+          "ODP-BRAND-TRANSFER-IMPLEMENTATION-001 (Stage 30B, status: blocked on H03)",
+          "ODP-FORMAT-CONVERSION-IMPLEMENTATION-001 (Stage 31B, status: blocked on H04)"
+        ]
+      },
+      {
+        "criterion_index": 3,
+        "criterion": "不適用者只建立 human-authority handback 且 AI 不自簽 waiver",
+        "requirement": "ODP-FR-SITE-001",
+        "members": [
+          "BRAND_TRANSFER",
+          "FORMAT_CONVERSION"
+        ],
+        "historical_disposition": "Formally established handback packages HB-SITE001-BRAND-TRANSFER-001 and HB-SITE001-FORMAT-CONVERSION-001. Manifest status: absent, disposition.state: BLOCKED_BY_EVIDENCE, decider: null. No AI self-signed waiver.",
+        "human_decision": "Human decision D16/D17 confirmed implementation intent without waiving MUST requirements.",
+        "successor_contract_tasks": [
+          "ODP-BRAND-TRANSFER-CONTRACT-PREP-001 (PR #1254, Stage 30A, merged)",
+          "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001 (PR #1252, Stage 31A, merged)"
+        ],
+        "successor_implementation_tasks": [
+          "ODP-BRAND-TRANSFER-IMPLEMENTATION-001 (Stage 30B, status: blocked on H03)",
+          "ODP-FORMAT-CONVERSION-IMPLEMENTATION-001 (Stage 31B, status: blocked on H04)"
+        ]
+      },
+      {
+        "criterion_index": 4,
+        "criterion": "manifest member 狀態與 formal disposition ref 一致且 checker 綠燈",
+        "requirement": "ODP-FR-SITE-001",
+        "members": [
+          "BRAND_TRANSFER",
+          "FORMAT_CONVERSION"
+        ],
+        "historical_disposition": "delivery_toolchain/governance/set_valued_requirements.json matches formal handback refs. Verified by tests/governance/test_site001_disposition.py under PR #1160 product CI check.",
+        "human_decision": "Continuous tracking in governance manifests and requirement gates.",
+        "successor_contract_tasks": [
+          "ODP-BRAND-TRANSFER-CONTRACT-PREP-001 (PR #1254, Stage 30A, merged)",
+          "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001 (PR #1252, Stage 31A, merged)"
+        ],
+        "successor_implementation_tasks": [
+          "ODP-BRAND-TRANSFER-IMPLEMENTATION-001 (Stage 30B, status: blocked on H03)",
+          "ODP-FORMAT-CONVERSION-IMPLEMENTATION-001 (Stage 31B, status: blocked on H04)"
+        ]
+      }
+    ],
+    "dependency_graph_reconciliation": {
+      "target_task": {
+        "task_id": "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+        "depends_on_before": [],
+        "depends_on_after": [],
+        "dependency_mutation_requested": false,
+        "dependency_unchanged": true
+      },
+      "successor_tasks": [
+        {
+          "task_id": "ODP-BRAND-TRANSFER-CONTRACT-PREP-001",
+          "status": "done",
+          "pr_number": 1254,
+          "depends_on_before": [],
+          "depends_on_after": [],
+          "dependency_unchanged": true
+        },
+        {
+          "task_id": "ODP-BRAND-TRANSFER-IMPLEMENTATION-001",
+          "status": "blocked",
+          "waiting_for": "Human/Ops",
+          "entry_conditions": "H03：真實跨品牌資料位置、資料 ownership/使用範圍、統計定義與最小樣本已確認；依已交付契約定稿，不再重問是否做品牌轉移。",
+          "depends_on_before": [
+            "ODP-BRAND-TRANSFER-CONTRACT-PREP-001"
+          ],
+          "depends_on_after": [
+            "ODP-BRAND-TRANSFER-CONTRACT-PREP-001"
+          ],
+          "dependency_unchanged": true
+        },
+        {
+          "task_id": "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001",
+          "status": "done",
+          "pr_number": 1252,
+          "depends_on_before": [],
+          "depends_on_after": [],
+          "dependency_unchanged": true
+        },
+        {
+          "task_id": "ODP-FORMAT-CONVERSION-IMPLEMENTATION-001",
+          "status": "blocked",
+          "waiting_for": "Human/Ops",
+          "entry_conditions": "H04：真實轉型事件與來源、停業/Capex/殘值/ramp 定義確認；正式來源整合入場前不可用草案數值冒充業務批准。",
+          "depends_on_before": [
+            "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001"
+          ],
+          "depends_on_after": [
+            "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001"
+          ],
+          "dependency_unchanged": true
+        },
+        {
+          "task_id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "status": "todo",
+          "phase": "ODP Remediation · Final Verification",
+          "acceptance_note": "20 項逐一有 VERIFIED 或有效 formal nonimplementation disposition 且無 OPEN／BLOCKED_BY_EVIDENCE",
+          "depends_on_before": [
+            "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+            "ODP-SPEC-SOURCE-PROVENANCE-001",
+            "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+            "ODP-LH-PREDICTION-DRIFT-001",
+            "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001",
+            "ODP-JOB-PARTIAL-DISPOSITION-001",
+            "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+            "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+            "ODP-NET002-LEASE-DISPOSITION-001",
+            "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+            "ODP-PRICE006-BANDIT-GATED-001",
+            "ODP-INT001-CDC-DISPOSITION-001",
+            "ODP-INTV006-ADJUST-WORKFLOW-001",
+            "ODP-LH003-BACKTEST-RELEASE-GATE-001",
+            "ODP-OPS002-DECISION-COMMENTS-001",
+            "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+            "ODP-NFR-RUNTIME-EVIDENCE-001"
+          ],
+          "depends_on_after": [
+            "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+            "ODP-SPEC-SOURCE-PROVENANCE-001",
+            "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+            "ODP-LH-PREDICTION-DRIFT-001",
+            "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001",
+            "ODP-JOB-PARTIAL-DISPOSITION-001",
+            "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+            "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+            "ODP-NET002-LEASE-DISPOSITION-001",
+            "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+            "ODP-PRICE006-BANDIT-GATED-001",
+            "ODP-INT001-CDC-DISPOSITION-001",
+            "ODP-INTV006-ADJUST-WORKFLOW-001",
+            "ODP-LH003-BACKTEST-RELEASE-GATE-001",
+            "ODP-OPS002-DECISION-COMMENTS-001",
+            "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+            "ODP-NFR-RUNTIME-EVIDENCE-001"
+          ],
+          "dependency_unchanged": true
+        }
+      ],
+      "cycle_check": {
+        "cycle_detected": false,
+        "is_valid_dag": true,
+        "evaluated_edges": [
+          "ODP-BRAND-TRANSFER-IMPLEMENTATION-001 -> ODP-BRAND-TRANSFER-CONTRACT-PREP-001",
+          "ODP-FORMAT-CONVERSION-IMPLEMENTATION-001 -> ODP-FORMAT-CONVERSION-CONTRACT-PREP-001",
+          "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001 -> ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001"
+        ]
+      }
+    }
+  },
+  "current_verification_receipts": [
+    {
+      "name": "git_diff_check",
+      "command": [
+        "git",
+        "diff",
+        "--check",
+        "4499a2993e37b62033926b07de8d8d2e8469a6c7",
+        "HEAD"
+      ],
+      "repository": "alfloop-dev/odayplus",
+      "base_sha": "4499a2993e37b62033926b07de8d8d2e8469a6c7",
+      "terminal_exit_code": 0,
+      "conclusion": "success"
+    },
+    {
+      "name": "original_evidence_integrity",
+      "command": [
+        "cmp",
+        "-s",
+        "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/original-evidence.json",
+        "/home/lupin/odayplus/support/handoffs/archive-recovery-dispatch-20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/original-evidence.json"
+      ],
+      "terminal_exit_code": 0,
+      "conclusion": "success"
+    },
+    {
+      "name": "reconciliation_verification_script",
+      "command": [
+        "python3",
+        "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/verify_reconciliation.py"
+      ],
+      "terminal_exit_code": 0,
+      "conclusion": "success"
+    }
+  ]
+}
