@@ -40,6 +40,9 @@ def parse_needs(raw_payload: str) -> dict[str, Any]:
     return data
 
 
+VALID_TERMINAL_RESULTS = ("success", "failure", "cancelled", "skipped")
+
+
 def verify_product_lanes(
     needs_data: dict[str, Any],
     required_lanes: tuple[str, ...] = REQUIRED_PRODUCT_LANES,
@@ -49,6 +52,10 @@ def verify_product_lanes(
     Returns (is_valid, error_messages).
     """
     errors: list[str] = []
+
+    if not isinstance(needs_data, dict):
+        errors.append(f"Needs context must be a dictionary, got {type(needs_data).__name__}.")
+        return False, errors
 
     change_scope_data = needs_data.get("change-scope")
     if not isinstance(change_scope_data, dict):
@@ -62,49 +69,73 @@ def verify_product_lanes(
         )
         return False, errors
 
-    outputs = change_scope_data.get("outputs") or {}
+    outputs = change_scope_data.get("outputs")
+    if not isinstance(outputs, dict):
+        errors.append("Job 'change-scope' missing valid outputs dictionary.")
+        return False, errors
+
     scope = outputs.get("scope")
-    if not scope:
+    if not scope or not isinstance(scope, str):
         errors.append("Job 'change-scope' did not provide output 'scope'.")
         return False, errors
 
-    if scope == "development_tooling":
-        # Under development_tooling, product lanes are expected to be skipped.
-        # However, if any lane was executed and failed/cancelled, fail closed.
-        for lane in required_lanes:
-            lane_data = needs_data.get(lane)
-            if isinstance(lane_data, dict):
-                lane_result = lane_data.get("result")
-                if lane_result in ("failure", "cancelled"):
-                    errors.append(
-                        f"Lane '{lane}' reported '{lane_result}' during development_tooling scope."
-                    )
-        return len(errors) == 0, errors
+    is_tooling_scope = (scope == "development_tooling")
 
-    # Under product_or_mixed (or any non-tooling scope), ALL required lanes must succeed.
+    # Under both scopes, all required lanes must exist, be well-formed dictionaries,
+    # contain a valid string result key, and report recognized terminal results.
     for lane in required_lanes:
         if lane not in needs_data:
             errors.append(f"Required product lane '{lane}' is missing from needs context.")
             continue
+
         lane_data = needs_data[lane]
         if not isinstance(lane_data, dict):
             errors.append(f"Product lane '{lane}' data is invalid (got {type(lane_data).__name__}).")
             continue
-        lane_result = lane_data.get("result")
-        if lane_result == "success":
+
+        if "result" not in lane_data:
+            errors.append(f"Product lane '{lane}' is missing 'result' key in needs context.")
             continue
-        elif lane_result == "failure":
-            errors.append(f"Product lane '{lane}' failed.")
-        elif lane_result == "cancelled":
-            errors.append(f"Product lane '{lane}' was cancelled.")
-        elif lane_result == "skipped":
-            errors.append(
-                f"Product lane '{lane}' was unexpectedly skipped for change scope '{scope}'."
-            )
+
+        lane_result = lane_data.get("result")
+        if not isinstance(lane_result, str):
+            errors.append(f"Product lane '{lane}' has non-string result: {lane_result!r}.")
+            continue
+
+        if lane_result not in VALID_TERMINAL_RESULTS:
+            errors.append(f"Product lane '{lane}' reported unknown or invalid result: {lane_result!r}.")
+            continue
+
+        if is_tooling_scope:
+            # Under development_tooling, lanes are expected to be 'skipped' or 'success'.
+            if lane_result == "failure":
+                errors.append(
+                    f"Product lane '{lane}' reported 'failure' during development_tooling scope."
+                )
+            elif lane_result == "cancelled":
+                errors.append(
+                    f"Product lane '{lane}' reported 'cancelled' during development_tooling scope."
+                )
+            elif lane_result not in ("skipped", "success"):
+                errors.append(
+                    f"Product lane '{lane}' reported unexpected result: {lane_result!r} during development_tooling scope."
+                )
         else:
-            errors.append(
-                f"Product lane '{lane}' reported unexpected result: {lane_result!r}."
-            )
+            # Under product_or_mixed (or any non-tooling scope), ALL required lanes must succeed.
+            if lane_result == "success":
+                continue
+            elif lane_result == "failure":
+                errors.append(f"Product lane '{lane}' failed.")
+            elif lane_result == "cancelled":
+                errors.append(f"Product lane '{lane}' was cancelled.")
+            elif lane_result == "skipped":
+                errors.append(
+                    f"Product lane '{lane}' was unexpectedly skipped for change scope '{scope}'."
+                )
+            else:
+                errors.append(
+                    f"Product lane '{lane}' reported unexpected result: {lane_result!r}."
+                )
 
     return len(errors) == 0, errors
 

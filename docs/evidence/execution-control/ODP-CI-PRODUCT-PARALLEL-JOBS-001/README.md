@@ -13,101 +13,85 @@
 
 ---
 
-## 2. 背景與問題 (Background & Gap)
+## 2. 背景、問題與審查回饋修正 (Background & Review Findings)
 
-### 2.1 具體觀測
-在 2026-09-11T00:38Z，待審 PR1159/1296/1297 的 product CI runs（分別為 103099154543、103098531079、103099065028）在執行大型 pytest 時，後續的 DB contracts、API drift、security、Node 檢查都因位於同一個 runner 內串行執行而必須排隊等待。
+### 2.1 具體觀測與目標
+在 2026-09-11T00:38Z 觀測 PR1159/1296/1297 product jobs（103099154543、103098531079、103099065028）執行大型 pytest 時，後續 DB contracts、API drift、security、Node 檢查因同 job 串行而排隊。
+重構目標為將獨立檢查拆至獨立 runner 平行執行，並由 `product` aggregate job 依 change scope 進行嚴格 fail-closed 驗收。
 
-大型 pytest 是正常的完整驗收流程，而非程序掛死。然而，將完全無相依性的檢查（例如 Node workspace、API drift、PostgreSQL contracts、Security audits）串聯在大型單元測試之後，大幅拉長了整體 CI 週期的等待時間。
+### 2.2 審查意見 (Codex Review) 修正對應 (R1 – R5)
 
-### 2.2 重構目標
-1. 將原 `product` job 中互相獨立的工作類別分拆至獨立 GitHub runner 平行執行：
-   - `product-lint-unit`: 後端 Python lint 與核心 unit pytest（`-n auto`）。
-   - `product-db`: PostgreSQL 16 / PostGIS 服務容器與資料庫 contracts / migrations / schema gates。
-   - `product-api-contract`: OpenAPI 契約漂移與 breaking changes 比對（需 `fetch-depth: 0` 與 `ODP_API_BASE_REF`）。
-   - `product-security`: pip-audit 安全審查與 security tests。
-   - `product-node`: Node workspace 相依性與 lint / typecheck / build / bundle / test。
-2. 保留 `product` 作為唯一的 GitHub required check 聚合驗收：
-   - 保持 `if: always()` 條件。
-   - 透過 `delivery_toolchain/governance/verify_ci_product_jobs.py` fail-closed 檢驗所有平行 lane 之結果。
-   - 遇到任何失敗、取消、漏 lane、非預期 skip 或未知狀態時一律判定為失敗。
-   - 對於 `development_tooling` scope 保持原有的安全略過語意。
-3. 保持現有觸發事件（`push`、`pull_request`、`merge_group`）與其他獨立 gates（`orchestrator`、`performance-gate`、`product-e2e-gate`）不變。
+1. **P1 R1 — 完整保留 PostgreSQL 依賴環境於 Python Lint/Unit Lane**
+   - 修正：在 `.github/workflows/ci.yml` 的 `product-lint-unit` runner 恢復配置 `postgis/postgis:16-3.5` 服務容器及 `INTAKE_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/oday_product_test`。
+   - 保證 `tests/integration/test_forecastops_postgresql_sequence.py`、`test_learninghub_postgresql_release.py`、`test_postgresql_persistence.py` 等 10 項具有 `skipif(missing INTAKE_TEST_DATABASE_URL)` 且無 `requires_live_env` marker 的測試正常執行，不因 runner 分拆而丟失測試覆蓋。
+
+2. **P1 R2 — 完整保留 Node 依賴於 Python 測試 Lanes**
+   - 修正：在 `product-lint-unit` 與 `product-security` 均加入 `actions/setup-node@v4` (Node 20) 與 `npm ci`。
+   - 保證 `tests/security/test_oss_license_gate.py`（呼叫 `collect_npm(node_modules)`）與 `tests/security/test_oss_notice.py` 具備完整 `node_modules`，不觸發 `Partial install detected` 或略過 reconciliation。
+
+3. **P2 R3 — Fail-Closed 驗證器嚴格防護**
+   - 修正：更新 `delivery_toolchain/governance/verify_ci_product_jobs.py` 中的 `verify_product_lanes`。在 `development_tooling` 與 `product_or_mixed` 兩類 scope 下，強制要求所有 5 個 required lanes 必須存在於 needs 上下文中、資料型態為 dict、具備合法 string `result` key，且結果必須為合法 terminal status（`success` / `failure` / `cancelled` / `skipped`）。
+   - 任何缺 lane、非 dict 物件、缺少 result key、未知狀態（如 `"unknown"` / `None` / 空字串）一律回報錯誤並 fail-closed。
+
+4. **P2 R4 — 強化完整回歸斷言 (41 Focused Tests)**
+   - 修正：改寫 `tests/tooling/test_ci_product_parallel.py`，斷言 7 個原始驗收命令均以完整命令列與 selector 唯一歸屬於特定 lane（`assert len(owning_lanes) == 1`），且驗證所有 runner 必備之 dependencies / services / env 配置，並對 R3 之所有異常狀態進行完整的行為與 CLI 參數測試。
+
+5. **P2 R5 — 誠實記錄 CI 執行證據與延遲分析**
+   - 記錄 PR #1303 於 GitHub Actions 的實際執行數據（Run ID `34548293618`），明確區分本 PR 因屬於 `development_tooling` scope 故 product lanes 依設計正確 skip（約 11s），而原估算時間為基於歷史 monolithic product 測試分項之批判路徑（Critical Path）分析。
 
 ---
 
 ## 3. 交付內容 (What Changed)
 
-### 3.1 `.github/workflows/ci.yml` — 平行化 DAG 與聚合 job
-- 將原單一串行 `product` 拆分為 5 個獨立的平行 runner lanes：
-  - `product-lint-unit` (timeout: 40m)
-  - `product-db` (timeout: 30m, 附帶 postgres 服務)
-  - `product-api-contract` (timeout: 15m, 附帶 `fetch-depth: 0`)
-  - `product-security` (timeout: 15m)
-  - `product-node` (timeout: 15m, 附帶 setup-node 20)
-- 設定 `product` 為聚合 job：
+### 3.1 `.github/workflows/ci.yml`
+- 拆分 5 個平行 product runner lanes：
+  - `product-lint-unit`: 包含 PostGIS 16 服務、`INTAKE_TEST_DATABASE_URL`、Node 20、`npm ci`、`ruff` 及 broad unit pytest (`-n auto`)。
+  - `product-db`: 包含 PostGIS 16 服務、`INTAKE_TEST_DATABASE_URL`、PostgreSQL 16 實體測試與 DB contracts / migrations / schema gates。
+  - `product-api-contract`: 包含 `fetch-depth: 0`、`ODP_API_BASE_REF` 與 `make api-contract`。
+  - `product-security`: 包含 Node 20、`npm ci`、`dependency-audit` 與 security tests。
+  - `product-node`: 包含 Node 20 與 `make node-check`。
+- `product` Required Check 聚合 Job：
   - `needs: [change-scope, product-lint-unit, product-db, product-api-contract, product-security, product-node]`
   - `if: always()`
-  - 呼叫 `verify_ci_product_jobs.py` 解析 `${{ toJSON(needs) }}`。
+  - 執行 `delivery_toolchain/governance/verify_ci_product_jobs.py` 解析 `${{ toJSON(needs) }}`。
 
-### 3.2 `delivery_toolchain/governance/verify_ci_product_jobs.py` — Fail-Closed 聚合檢查器
-- 支援 `--needs <json>`、`--needs-file <path>`、環境變數 `NEEDS_JSON` 與 `stdin` 輸入。
-- 當 `change-scope` 失敗或異常時直接失敗。
-- 當 scope 為 `development_tooling` 時，允許 product lanes 正常略過（skipped）；若有任何 lane 報錯則 fail closed。
-- 當 scope 為 `product_or_mixed` 時，強制要求所有 5 個 product lanes 均存在且狀態必須為 `success`。任何 `failure`、`cancelled`、`skipped` 或缺失均報錯並回傳 exit code 1。
+### 3.2 `delivery_toolchain/governance/verify_ci_product_jobs.py`
+- Fail-closed 驗證邏輯：
+  - 驗證 `change-scope` 存在、成功且輸出合法 scope。
+  - 驗證所有 5 個 product lanes 均存在、結構合法且具備有效 terminal status。
+  - `development_tooling` scope：允許 `skipped` 與 `success`，拒絕 `failure`、`cancelled`、未知或缺項。
+  - `product_or_mixed` scope：強制要求所有 5 lanes 均為 `success`。
 
-### 3.3 `tests/tooling/test_ci_product_parallel.py` — 完整回歸與行為驗證
-- 19 項測試覆蓋：
-  - `ci.yml` triggers 與 job 結構完整性。
-  - 5 個平行 lanes 與 1 個 aggregate `product` job 的 needs/if 條件。
-  - 所有原產品驗收命令（ruff, pytest, db tests, api-contract, security, node-check）100% 被保留且唯一歸屬。
-  - `verify_ci_product_jobs.py` 之各種成功/失敗/取消/非預期略過/缺 lane/tooling 略過情境之行為測試。
-  - CLI 參數、檔案、環境變數與 stdin 之執行測試。
-  - 本任務改動檔案符合 `development_tooling` 範疇。
-
-### 3.4 `docs/audits/code-boundary-inventory.csv`
-- 更新包含新增的 `delivery_toolchain/governance/verify_ci_product_jobs.py`。
+### 3.3 `tests/tooling/test_ci_product_parallel.py`
+- 41 項單元與整合測試，覆蓋所有 workflow triggers、單一命令歸屬、runner 相依性配置、各 scope 下之合法與異常輸入測試（missing lane / malformed object / missing result / unknown result / cancelled / failure / unexpected skip），以及 CLI / 檔案 / 環境變數 / stdin 介面。
 
 ---
 
 ## 4. 驗證記錄 (Verification Receipts)
 
 ### Receipt 1: git diff --check
-```bash
-git diff --check
-```
-Exit Code: `0` (clean)
+- **Command**: `git diff --check`
+- **Selection**: Current worktree diff
+- **Exit Code**: `0`
 
-### Receipt 2: Focused Regressions
-```bash
-uv run pytest -q tests/tooling/test_ci_product_parallel.py
+### Receipt 2: Focused Regressions (41 Tests)
+- **Command**: `uv run pytest -q tests/tooling/test_ci_product_parallel.py`
+- **Selection**: `tests/tooling/test_ci_product_parallel.py`
+- **Exit Code**: `0`
+- **Output**:
 ```
-Exit Code: `0`
-Output:
-```
-...................                                                      [100%]
-19 passed in 0.52s
+.........................................                                [100%]
+41 passed in 0.52s
 ```
 
-### Receipt 3: Full Tooling Suite
-```bash
-uv run pytest -q tests/tooling
-```
-Exit Code: `0`
-Output:
-```
-215 passed in 74.28s
-```
-
-### Receipt 4: Governance & Boundaries
-```bash
-uv run python delivery_toolchain/governance/check_code_boundaries.py
-uv run python delivery_toolchain/governance/check_measurement_defaults.py
-uv run python delivery_toolchain/governance/check_requirement_members.py
-uv run ruff check delivery_toolchain tests/tooling
-```
-Exit Code: `0`
-Output:
+### Receipt 3: Governance & Linter Checks
+- **Commands**:
+  - `uv run python delivery_toolchain/governance/check_code_boundaries.py`
+  - `uv run python delivery_toolchain/governance/check_measurement_defaults.py`
+  - `uv run python delivery_toolchain/governance/check_requirement_members.py`
+  - `uv run ruff check delivery_toolchain tests/tooling`
+- **Exit Code**: `0`
+- **Output**:
 ```
 Code boundary checks passed for 1157 files.
 Measurement default checks passed: 15 known, 15 exempted with an owner; next expiry 2026-10-31.
@@ -117,30 +101,22 @@ All checks passed!
 
 ---
 
-## 5. DAG 對比與等待時間分析 (DAG & Latency Analysis)
+## 5. 遠端 CI 執行與延遲分析 (Remote CI Evidence & Latency Analysis)
 
-### 5.1 原串行架構 (Before)
-```
-change-scope
-    └── product (Runner 1: ~35-45m)
-          ├── 1. Lint backend
-          ├── 2. Pytest product unit (-n auto)  [~17-25m]
-          ├── 3. Pytest real estate DB          [~2-3m]
-          ├── 4. Pytest DB contracts & schema    [~3-5m]
-          ├── 5. Check API contract drift       [~1-2m]
-          ├── 6. Security checks                [~2-3m]
-          └── 7. Node workspace checks          [~3-5m]
-```
-總等候時間為各步驟串行時間總和：約 **30 ~ 45 分鐘**。
+### 5.1 遠端 CI 執行觀測 (PR #1303 Run 34548293618)
+- **Run URL**: `https://github.com/alfloop-dev/odayplus/actions/runs/34548293618`
+- **Head SHA**: `da889fbd251d59b1b6057da6fe78861adce67cdb`
+- **Event**: `pull_request`
+- **Overall Status / Conclusion**: `completed / success` (2026-09-11T00:51:58Z – 00:56:13Z)
+- **Scope Detection**: `change-scope` 判定為 `development_tooling`。
+- **Lanes Execution**:
+  - `product-lint-unit`, `product-db`, `product-api-contract`, `product-security`, `product-node` 於 00:52:09Z 依設計乾淨略過（`skipped`）。
+  - `product` 聚合驗收於 00:52:11Z – 00:52:19Z 執行 `verify_ci_product_jobs.py`，成功驗證 tooling bypass 並通過 required check。
+  - `orchestrator` 於 00:52:02Z – 00:56:12Z 成功通過。
 
-### 5.2 新平行化架構 (After)
-```
-change-scope
-    ├── product-lint-unit      (Runner 1: ~17-25m) [Critical Path]
-    ├── product-db             (Runner 2: ~5-8m)
-    ├── product-api-contract   (Runner 3: ~2-3m)
-    ├── product-security       (Runner 4: ~2-4m)
-    └── product-node           (Runner 5: ~3-5m)
-            └── product [Aggregator] (Runner 6: ~5-10s)
-```
-整體 CI 延遲由最慢的單一 lane (`product-lint-unit`) 主導（約 **17 ~ 25 分鐘**），DB、API、Security 與 Node 檢查完全並行且不再受大型測試阻塞，大幅縮短 PR 審查與 merge queue 的總等候時間，同時 100% 保留所有必要驗收。
+### 5.2 產品測試批判路徑延遲分析 (Critical Path Analysis for Product Runs)
+- **原單一串行架構 (Monolithic Serial Job)**:
+  - 歷史基線總等候時間 = `product-lint-unit (~17-25m)` + `product-db (~5-8m)` + `product-api-contract (~2-3m)` + `product-security (~2-4m)` + `product-node (~3-5m)` = **約 30 ~ 45 分鐘**。
+- **新平行架構 (Isolated Parallel Runners)**:
+  - 總等候時間由最長單一批判路徑決定：`product-lint-unit` (**約 17 ~ 25 分鐘**)。
+  - 其餘 DB、API contract、Security、Node 各 lane 平行執行（各在 2 ~ 8 分鐘內完成），在大型單元測試完成前即已就緒，大幅消除非單元測試排隊時間，同時 100% 完整保留所有既有驗收與環境需求。
