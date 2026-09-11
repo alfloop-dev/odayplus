@@ -4944,4 +4944,3 @@ def test_diagnostic_cas_cross_agent_after_advisory_snapshot_refresh(tmp_path: Pa
         if mode == "mutation_unreadable":
             assert len(failed_reads) >= 2
         assert not event_records, f"Second agent queued stale reviewer despite failed freshness: {event_records}"
-
