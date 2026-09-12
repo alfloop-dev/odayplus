@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-cbbc636dc09cbc41008f03e9a660b775",
+  "serialNumber": "urn:uuid:sha256-47b7f5893ff559f3ba2593ec00ac84f9",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-09-09T01:22:30.486207+00:00",
+    "timestamp": "2026-09-12T15:49:26.728907+00:00",
     "tools": [
       {
         "vendor": "ODay Plus",
@@ -16,21 +16,21 @@
       "name": "oday-plus",
       "version": "0.1.0",
       "type": "application",
-      "purl": "pkg:generic/alfloop-dev/odayplus@0dd3e6e2c23a82751a842d6b33bd30f53e268e43",
-      "bom-ref": "pkg:generic/alfloop-dev/odayplus@0dd3e6e2c23a82751a842d6b33bd30f53e268e43"
+      "purl": "pkg:generic/alfloop-dev/odayplus@67898e8f47b42eddd1572c036ebb9df0ccd20c4d",
+      "bom-ref": "pkg:generic/alfloop-dev/odayplus@67898e8f47b42eddd1572c036ebb9df0ccd20c4d"
     },
     "properties": [
       {
         "name": "git-sha",
-        "value": "0dd3e6e2c23a82751a842d6b33bd30f53e268e43"
+        "value": "67898e8f47b42eddd1572c036ebb9df0ccd20c4d"
       },
       {
         "name": "sbom-hash",
-        "value": "cbbc636dc09cbc41008f03e9a660b7754e6c9bb2eb37c9d0aef9d3a826a92ccf"
+        "value": "47b7f5893ff559f3ba2593ec00ac84f98c9ff1acb08f9a4016d9474c194fb73a"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:d0fc2dc26ebc8e9ef23237724e35df15d1ee11da8445ca50a3743e64d0a6be9b"
+        "value": "sha256:4a5d2269a664961f6396235912e1eed4389398e64234c4e7f4d608dbd9c722ef"
       },
       {
         "name": "container-base-images",
@@ -316,7 +316,7 @@
       "type": "library",
       "purl": "pkg:npm/@emnapi/runtime@1.11.1",
       "bom-ref": "pkg:npm/@emnapi/runtime@1.11.1",
-      "scope": "required",
+      "scope": "optional",
       "licenses": [
         {
           "license": {
@@ -333,6 +333,27 @@
       "supplier": {
         "name": "toyobayashi"
       }
+    },
+    {
+      "name": "@emnapi/runtime",
+      "version": "1.11.3",
+      "type": "library",
+      "purl": "pkg:npm/@emnapi/runtime@1.11.3",
+      "bom-ref": "pkg:npm/@emnapi/runtime@1.11.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "Xz4Tpyki7XyrpbUK1jR1AhdAdaXyhhY4lZ3neLodmhpuWfy2PAQN5B46sAiU4liOXGLkHypn/qU+jvfWSCYYLA=="
+        }
+      ]
     },
     {
       "name": "@emnapi/wasi-threads",
@@ -663,10 +684,10 @@
     },
     {
       "name": "@img/sharp-darwin-arm64",
-      "version": "0.35.3",
+      "version": "0.35.4",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-darwin-arm64@0.35.3",
-      "bom-ref": "pkg:npm/@img/sharp-darwin-arm64@0.35.3",
+      "purl": "pkg:npm/@img/sharp-darwin-arm64@0.35.4",
+      "bom-ref": "pkg:npm/@img/sharp-darwin-arm64@0.35.4",
       "scope": "required",
       "licenses": [
         {
@@ -678,16 +699,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "RMnFX7YQsMoh7lWfcM4NEHHymBX/rLuKNPVM84XE9ONPcaSCDgE7CHIHpSgPcO2xcRthgBy1HfNO319mwhIAkg=="
+          "content": "Uhfl4V4lhP2nbUVF9+hyH1+luj86f1gUFeo8ALYxFoULoU+G87D43BfeMP8XHsk9boxAnCY/bf2EHwhA7MuGsA=="
         }
       ]
     },
     {
       "name": "@img/sharp-darwin-x64",
-      "version": "0.35.3",
+      "version": "0.35.4",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-darwin-x64@0.35.3",
-      "bom-ref": "pkg:npm/@img/sharp-darwin-x64@0.35.3",
+      "purl": "pkg:npm/@img/sharp-darwin-x64@0.35.4",
+      "bom-ref": "pkg:npm/@img/sharp-darwin-x64@0.35.4",
       "scope": "required",
       "licenses": [
         {
@@ -699,16 +720,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "Xo+5uFBtLN0BKqieTxiFzFPQAUlBbbH5iBKyRX/z1JrbnYsHTfKJnUfL8+p2TPXr1pXqao4eeL4Rl144uDpK9w=="
+          "content": "hWniXY3bG5qKpkKrAwPe4y+VTPmf086YQAnkxWh7uA1YrlRouWGa0M0Mxj3ZjnXFkv7/TD1bTy9lGUK26vRvWw=="
         }
       ]
     },
     {
       "name": "@img/sharp-freebsd-wasm32",
-      "version": "0.35.3",
+      "version": "0.35.4",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-freebsd-wasm32@0.35.3",
-      "bom-ref": "pkg:npm/@img/sharp-freebsd-wasm32@0.35.3",
+      "purl": "pkg:npm/@img/sharp-freebsd-wasm32@0.35.4",
+      "bom-ref": "pkg:npm/@img/sharp-freebsd-wasm32@0.35.4",
       "scope": "required",
       "licenses": [
         {
@@ -720,16 +741,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "lUxcqWIj2wMQ9BrwNjngcr1gWUr5xgaGThBRqPPalIC2n67Cqj1uPh8NnA/ZhAg8hUbKl+kVHKwgUIwe6ZYPrg=="
+          "content": "lIsKw/BU+kjB4eZjxrYrZmwOJYi3Ajrv66iAlBmUPyKc3HpnloevB1g3wxGD9P/5BbQ1brBGl65VRRrCvQDEqA=="
         }
       ]
     },
     {
       "name": "@img/sharp-libvips-darwin-arm64",
-      "version": "1.3.2",
+      "version": "1.3.3",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-libvips-darwin-arm64@1.3.2",
-      "bom-ref": "pkg:npm/@img/sharp-libvips-darwin-arm64@1.3.2",
+      "purl": "pkg:npm/@img/sharp-libvips-darwin-arm64@1.3.3",
+      "bom-ref": "pkg:npm/@img/sharp-libvips-darwin-arm64@1.3.3",
       "scope": "required",
       "licenses": [
         {
@@ -741,16 +762,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "9J6ypZFpQBj4YnePGoq/S38w6nz+vqg5WZLrLGY4YuSemdMq47GMLBPO42MzwdGwpg/agZ7xzZcFHa48xlywfg=="
+          "content": "suTBPTDGrI9WodccaDdwZItTSaBYASlBk1NSfElSHrUfzu3szG6lvIF58+WiFvnfzuK8ZBFS5zE00PxqxnRiPg=="
         }
       ]
     },
     {
       "name": "@img/sharp-libvips-darwin-x64",
-      "version": "1.3.2",
+      "version": "1.3.3",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-libvips-darwin-x64@1.3.2",
-      "bom-ref": "pkg:npm/@img/sharp-libvips-darwin-x64@1.3.2",
+      "purl": "pkg:npm/@img/sharp-libvips-darwin-x64@1.3.3",
+      "bom-ref": "pkg:npm/@img/sharp-libvips-darwin-x64@1.3.3",
       "scope": "required",
       "licenses": [
         {
@@ -762,16 +783,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "m2pW1n6cns9VaubNwsZ+c3CRYjxNQWgJ5gPlnL1nbBcpkBvFm6SCFN5o0psFHI8w9n11NKhFkeEDns98tiqbEw=="
+          "content": "FVJZ5mITMobmXIz/hPDTw0EintTW5H3WfrxwLqEqjiIihlu+hVRyGrFQ60xl0Lxn7Bt3zdpevPaQi0HEzqz9fw=="
         }
       ]
     },
     {
       "name": "@img/sharp-libvips-linux-arm",
-      "version": "1.3.2",
+      "version": "1.3.3",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-libvips-linux-arm@1.3.2",
-      "bom-ref": "pkg:npm/@img/sharp-libvips-linux-arm@1.3.2",
+      "purl": "pkg:npm/@img/sharp-libvips-linux-arm@1.3.3",
+      "bom-ref": "pkg:npm/@img/sharp-libvips-linux-arm@1.3.3",
       "scope": "required",
       "licenses": [
         {
@@ -783,16 +804,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "1eMLzy92I4J6rmi4mAT8yC3HxOtniyGELlzGbNMLLeqe052ahFQ0h6LFq+lh5DsDIdYViIDst08abvSbcEdLXQ=="
+          "content": "3rbU4vqXXc3hY/OiXdl52xZvT0F1yEngWfvqudtPJg/KkyiaQw2DRsFrNzpmLvfavbwOq3qXn36GP8obHRULQA=="
         }
       ]
     },
     {
       "name": "@img/sharp-libvips-linux-arm64",
-      "version": "1.3.2",
+      "version": "1.3.3",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-libvips-linux-arm64@1.3.2",
-      "bom-ref": "pkg:npm/@img/sharp-libvips-linux-arm64@1.3.2",
+      "purl": "pkg:npm/@img/sharp-libvips-linux-arm64@1.3.3",
+      "bom-ref": "pkg:npm/@img/sharp-libvips-linux-arm64@1.3.3",
       "scope": "required",
       "licenses": [
         {
@@ -804,16 +825,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "dqVSFynCox4C/J8kT16V7SIFAns0IjgLwkvYT7p8LQVmJ5OS5b6tI9IGflxTeuBS//zXeFIUbwt5dwxyZ17cnA=="
+          "content": "0DaL0A6Xu6sQSQFwe4iVCrKWU2cCTItnRsYsCdxAMm9NF6twAA9BKnoqy4hqz4+azQ0JHuA26qiUKsf1XJ/v5A=="
         }
       ]
     },
     {
       "name": "@img/sharp-libvips-linux-ppc64",
-      "version": "1.3.2",
+      "version": "1.3.3",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-libvips-linux-ppc64@1.3.2",
-      "bom-ref": "pkg:npm/@img/sharp-libvips-linux-ppc64@1.3.2",
+      "purl": "pkg:npm/@img/sharp-libvips-linux-ppc64@1.3.3",
+      "bom-ref": "pkg:npm/@img/sharp-libvips-linux-ppc64@1.3.3",
       "scope": "required",
       "licenses": [
         {
@@ -825,16 +846,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "3z0NHDxD6n5I9gc05U1eW1AyRm+Gznzq3naMrthPNqE6oYykcogW0l/jfpJdjYnuNl8R7yI9pNbE1XiUeyq0Aw=="
+          "content": "cdn1OvUBwsXhbC0zSzJnNzf5MZ/mTrobawDvNXBTxe8VtqKAm0sRuEY2Evzovb/w9JMk4TvRxqt1mekSuJz64w=="
         }
       ]
     },
     {
       "name": "@img/sharp-libvips-linux-riscv64",
-      "version": "1.3.2",
+      "version": "1.3.3",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-libvips-linux-riscv64@1.3.2",
-      "bom-ref": "pkg:npm/@img/sharp-libvips-linux-riscv64@1.3.2",
+      "purl": "pkg:npm/@img/sharp-libvips-linux-riscv64@1.3.3",
+      "bom-ref": "pkg:npm/@img/sharp-libvips-linux-riscv64@1.3.3",
       "scope": "required",
       "licenses": [
         {
@@ -846,16 +867,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "bsb4rI+NldGOsXuej2r8OdSS8+zXDVaCWxyWrcv6kneTOlgAHtZABRzBBCwdsPiD90J4myNJuHpg6kA20ImW/w=="
+          "content": "HjPVx7yKz+0lqdhDlTw1tt90wamBoxhiXpvl1XZpJLiHH4RCJ5yDTqH+VlYPv2fwFs89JFw4c1IexYOcQUi4IQ=="
         }
       ]
     },
     {
       "name": "@img/sharp-libvips-linux-s390x",
-      "version": "1.3.2",
+      "version": "1.3.3",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-libvips-linux-s390x@1.3.2",
-      "bom-ref": "pkg:npm/@img/sharp-libvips-linux-s390x@1.3.2",
+      "purl": "pkg:npm/@img/sharp-libvips-linux-s390x@1.3.3",
+      "bom-ref": "pkg:npm/@img/sharp-libvips-linux-s390x@1.3.3",
       "scope": "required",
       "licenses": [
         {
@@ -867,16 +888,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "/ABshyj8gCpyIrNXnHn4LorDJ0HHm1VhXPBlxZ8zAtfVPAaSafXPGn+sUSIRiwaSBy0mmFjSjiXI5mkcwdChKQ=="
+          "content": "neWLh+3yCNThxnfy3c4BbVBeGgt9aftno+XbT56iK28RgeDs3UOFWviLWlUu0bArYVYJaFDK+RRohbicUNCm8Q=="
         }
       ]
     },
     {
       "name": "@img/sharp-libvips-linux-x64",
-      "version": "1.3.2",
+      "version": "1.3.3",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-libvips-linux-x64@1.3.2",
-      "bom-ref": "pkg:npm/@img/sharp-libvips-linux-x64@1.3.2",
+      "purl": "pkg:npm/@img/sharp-libvips-linux-x64@1.3.3",
+      "bom-ref": "pkg:npm/@img/sharp-libvips-linux-x64@1.3.3",
       "scope": "required",
       "licenses": [
         {
@@ -888,19 +909,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "ITPEtgffGJ0S6G9dRyw/366tJQqFRcHWPHhC+Stpg3Z8AEMrDrTr2lhdz4f/Y/HMbRh//7Z5mBzEpVdi62Oc3w=="
+          "content": "4vKmvAst9nrowcqquKFAyZJUDolUaIp8uRiN0mWFguJ1IplC9/pitXtlnnlU4aa/eJw3J7i67V+pwUL+wZGdsA=="
         }
-      ],
-      "supplier": {
-        "name": "Lovell Fuller <npm@lovell.info>"
-      }
+      ]
     },
     {
       "name": "@img/sharp-libvips-linuxmusl-arm64",
-      "version": "1.3.2",
+      "version": "1.3.3",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-libvips-linuxmusl-arm64@1.3.2",
-      "bom-ref": "pkg:npm/@img/sharp-libvips-linuxmusl-arm64@1.3.2",
+      "purl": "pkg:npm/@img/sharp-libvips-linuxmusl-arm64@1.3.3",
+      "bom-ref": "pkg:npm/@img/sharp-libvips-linuxmusl-arm64@1.3.3",
       "scope": "required",
       "licenses": [
         {
@@ -912,16 +930,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "zE9EdiUzUmg5mDT5a1rk5fYJ6GWPloTwWBYDS14naqHsL+EaMpDj1AWnpLgh3u0YCORv2Tt50wrcrpYqkP97Kw=="
+          "content": "Y9kQaLMuNoB0bPYOOdcZMaseNrFpPodIWWMrx+CZyydf2xn68j9WYc6sWWRrDwNkzCQjKYfc68L7jKjGlHMibw=="
         }
       ]
     },
     {
       "name": "@img/sharp-libvips-linuxmusl-x64",
-      "version": "1.3.2",
+      "version": "1.3.3",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-libvips-linuxmusl-x64@1.3.2",
-      "bom-ref": "pkg:npm/@img/sharp-libvips-linuxmusl-x64@1.3.2",
+      "purl": "pkg:npm/@img/sharp-libvips-linuxmusl-x64@1.3.3",
+      "bom-ref": "pkg:npm/@img/sharp-libvips-linuxmusl-x64@1.3.3",
       "scope": "required",
       "licenses": [
         {
@@ -933,19 +951,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "m0lrLiUt+lBYnCFr8qV/65yMR4E/c7/wf78I5eKTdkEakFAlZ9QlzEM3QIhhAwVeUhLAHLcCq7a7Vszq/oFNZQ=="
+          "content": "fj8Mv0HHfD1Rr+4I68+3agJynxDWtBFgicTbSOb9Bke6pIwzGcJ+RX/yHjmiEGFMCavY/dxvem7MyNaJF+wDiw=="
         }
-      ],
-      "supplier": {
-        "name": "Lovell Fuller <npm@lovell.info>"
-      }
+      ]
     },
     {
       "name": "@img/sharp-linux-arm",
-      "version": "0.35.3",
+      "version": "0.35.4",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-linux-arm@0.35.3",
-      "bom-ref": "pkg:npm/@img/sharp-linux-arm@0.35.3",
+      "purl": "pkg:npm/@img/sharp-linux-arm@0.35.4",
+      "bom-ref": "pkg:npm/@img/sharp-linux-arm@0.35.4",
       "scope": "required",
       "licenses": [
         {
@@ -957,16 +972,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "affVWCTLooy8TSxbDx2qkzuDeaWLNVBA+P//FNBirHsXpP2fuBhk5AuboYUnrDnzoXes8GFjpTx0SBFOCRg+FA=="
+          "content": "7OAS8gI0EReKGVN2HssHlM6umJgxF5VI3xN0p9FA91p/YO+ou5hiNghLdZ5BEHztwaaK5+bLKRf8x/o2L2nk9A=="
         }
       ]
     },
     {
       "name": "@img/sharp-linux-arm64",
-      "version": "0.35.3",
+      "version": "0.35.4",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-linux-arm64@0.35.3",
-      "bom-ref": "pkg:npm/@img/sharp-linux-arm64@0.35.3",
+      "purl": "pkg:npm/@img/sharp-linux-arm64@0.35.4",
+      "bom-ref": "pkg:npm/@img/sharp-linux-arm64@0.35.4",
       "scope": "required",
       "licenses": [
         {
@@ -978,16 +993,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "QgKDspHPnrU+GQ55XPhGwyhC8acLVOOSyAvo1oVfFmrIXLkDNmGWzAfDZ4xK8oSA1qBQrALcHX0G5UZni/SuFQ=="
+          "content": "De4jpEnAU8Hd5oT0j1G3uL4ZvTuipVMn7YC6vPaJhy6/7EwEae0SVAoBrUMYQbkLGDm85taVWwuPc1a44LTzCQ=="
         }
       ]
     },
     {
       "name": "@img/sharp-linux-ppc64",
-      "version": "0.35.3",
+      "version": "0.35.4",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-linux-ppc64@0.35.3",
-      "bom-ref": "pkg:npm/@img/sharp-linux-ppc64@0.35.3",
+      "purl": "pkg:npm/@img/sharp-linux-ppc64@0.35.4",
+      "bom-ref": "pkg:npm/@img/sharp-linux-ppc64@0.35.4",
       "scope": "required",
       "licenses": [
         {
@@ -999,16 +1014,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "sMd8rDxmpLOwv/7N44klFjOD5DUO7FLdjiXDI0hoxYaf7Ar262dQIEkosE98bps+5HPLtp/EvNqeqQtOycP/IA=="
+          "content": "2oYZJeIl4kCcMGk4ouZVjnkCtFrpQFlNEtJ6GbxzhHQchwH0NH/qEb9ykmOl29dqwMq+JhFdZn+1ak2FKhI9fQ=="
         }
       ]
     },
     {
       "name": "@img/sharp-linux-riscv64",
-      "version": "0.35.3",
+      "version": "0.35.4",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-linux-riscv64@0.35.3",
-      "bom-ref": "pkg:npm/@img/sharp-linux-riscv64@0.35.3",
+      "purl": "pkg:npm/@img/sharp-linux-riscv64@0.35.4",
+      "bom-ref": "pkg:npm/@img/sharp-linux-riscv64@0.35.4",
       "scope": "required",
       "licenses": [
         {
@@ -1020,16 +1035,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "0Eob78yjlYPfL5vMNWAW55l3R9Y6BQS/gOfe0ZcP9mEz9ohhKSt4im1hayiknXgf8AWrFqMvJcKIdmLmEe7yeQ=="
+          "content": "cPbNChoRURAWdebDIHSenxRpgEdy7JkPydSnUxRm9VvKD7m0/xVaR/8Fzlu81pk5nHEvHH87UZUA7cTtwnbJSA=="
         }
       ]
     },
     {
       "name": "@img/sharp-linux-s390x",
-      "version": "0.35.3",
+      "version": "0.35.4",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-linux-s390x@0.35.3",
-      "bom-ref": "pkg:npm/@img/sharp-linux-s390x@0.35.3",
+      "purl": "pkg:npm/@img/sharp-linux-s390x@0.35.4",
+      "bom-ref": "pkg:npm/@img/sharp-linux-s390x@0.35.4",
       "scope": "required",
       "licenses": [
         {
@@ -1041,16 +1056,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "KgAxQ0DxpNOq1rG2t5cgTgShJFGSuU7XO45cqC+1NVOuZnP6tlgZRuSYOfNupGkHID0o3cJOsw4DVeJpMovcGw=="
+          "content": "RY0JFY8Fd6RonCBtHz+DvadaPkXDSI1AUn6yWL9TipqkZ1vY8w8evqdgyDFnkm4/K1ve1TvZiaePP5oSd4+WVQ=="
         }
       ]
     },
     {
       "name": "@img/sharp-linux-x64",
-      "version": "0.35.3",
+      "version": "0.35.4",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-linux-x64@0.35.3",
-      "bom-ref": "pkg:npm/@img/sharp-linux-x64@0.35.3",
+      "purl": "pkg:npm/@img/sharp-linux-x64@0.35.4",
+      "bom-ref": "pkg:npm/@img/sharp-linux-x64@0.35.4",
       "scope": "required",
       "licenses": [
         {
@@ -1062,19 +1077,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "8pqvxubL2PGdhlPy6GLqzDYMUjyRmKAwKHYKixpdJYBUK7PJ0C029XdsnpFIdgRZG68fZiGdHVWcKPvtiPB4cA=="
+          "content": "9qvvEAuk8k89TfWUoX2htWjbAMX8p+NxCppjpcg5k6xMsjhBQPTsoIh36h9Qde4WRuGpJeYnOjdosDn/cnv+OA=="
         }
-      ],
-      "supplier": {
-        "name": "Lovell Fuller <npm@lovell.info>"
-      }
+      ]
     },
     {
       "name": "@img/sharp-linuxmusl-arm64",
-      "version": "0.35.3",
+      "version": "0.35.4",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-linuxmusl-arm64@0.35.3",
-      "bom-ref": "pkg:npm/@img/sharp-linuxmusl-arm64@0.35.3",
+      "purl": "pkg:npm/@img/sharp-linuxmusl-arm64@0.35.4",
+      "bom-ref": "pkg:npm/@img/sharp-linuxmusl-arm64@0.35.4",
       "scope": "required",
       "licenses": [
         {
@@ -1086,16 +1098,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "Vz0iQjzzcSX3HCbfwFfCSG/9SCIqyO0mH2sXyiHaAYfBk0cRsCWXRyQYX0ovCK/PAQBbTzQ0dsPQHh5MAFL59w=="
+          "content": "KB5jxpfWQTr0nc3xdHtWChdbifHrBGsd2SM62Eyxrl8afikm+f5qGBU75SJIZBT/S1MC8XyacdlXBMSWq6OURA=="
         }
       ]
     },
     {
       "name": "@img/sharp-linuxmusl-x64",
-      "version": "0.35.3",
+      "version": "0.35.4",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-linuxmusl-x64@0.35.3",
-      "bom-ref": "pkg:npm/@img/sharp-linuxmusl-x64@0.35.3",
+      "purl": "pkg:npm/@img/sharp-linuxmusl-x64@0.35.4",
+      "bom-ref": "pkg:npm/@img/sharp-linuxmusl-x64@0.35.4",
       "scope": "required",
       "licenses": [
         {
@@ -1107,19 +1119,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "6O1NPKcDVj9QEdg7Hx549EX8U0rp6yXQERqru6yRN7fGBn32UvIRJUlWnk+8xDCiG76hXVBbX82NZ/ZKr0euIg=="
+          "content": "f+eZJZIQNEEd26RPSW+76chwOf1XtA2Y/O+5ocVyLliHkeih3e+jhLVBdNTd2rS3IbNXK8+ug93Vf5ZXtF5Lxg=="
         }
-      ],
-      "supplier": {
-        "name": "Lovell Fuller <npm@lovell.info>"
-      }
+      ]
     },
     {
       "name": "@img/sharp-wasm32",
-      "version": "0.35.3",
+      "version": "0.35.4",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-wasm32@0.35.3",
-      "bom-ref": "pkg:npm/@img/sharp-wasm32@0.35.3",
+      "purl": "pkg:npm/@img/sharp-wasm32@0.35.4",
+      "bom-ref": "pkg:npm/@img/sharp-wasm32@0.35.4",
       "scope": "required",
       "licenses": [
         {
@@ -1129,19 +1138,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "cZ0XkcYGpHZkqW6iCkqTcmUC0CD9DhD5d/qeZlZkfRBn6GnHniZXLUo5+9xw8Iv76YE6LQFN9YNBlKREcCG76w=="
+          "content": "zQnl4Kwp7Q6NHsENtU2T/00Zi+w3AQNwz3+UaTyVBy2FpXrzXzGjndpK61onhZjRtRpQXxCTeqw19bVyXOh7jA=="
         }
-      ],
-      "supplier": {
-        "name": "Lovell Fuller <npm@lovell.info>"
-      }
+      ]
     },
     {
       "name": "@img/sharp-webcontainers-wasm32",
-      "version": "0.35.3",
+      "version": "0.35.4",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-webcontainers-wasm32@0.35.3",
-      "bom-ref": "pkg:npm/@img/sharp-webcontainers-wasm32@0.35.3",
+      "purl": "pkg:npm/@img/sharp-webcontainers-wasm32@0.35.4",
+      "bom-ref": "pkg:npm/@img/sharp-webcontainers-wasm32@0.35.4",
       "scope": "required",
       "licenses": [
         {
@@ -1153,16 +1159,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "2rnq7bX3NzeR2T4YWgz8qiG4h3TSdMe+vN1iQXpJleSJ3SM5zQ8Fy2SyyXAWlbxpEZ2Y+Z4u1BePgJEYbSy80Q=="
+          "content": "ESfNkywmCfPNyaZjxooddJQiQ+l/nTpGEOGthxiLnIHXC/CmcBixnfwUleX9mCz9ovrUUvKMap/pm8RYbzfwaA=="
         }
       ]
     },
     {
       "name": "@img/sharp-win32-arm64",
-      "version": "0.35.3",
+      "version": "0.35.4",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-win32-arm64@0.35.3",
-      "bom-ref": "pkg:npm/@img/sharp-win32-arm64@0.35.3",
+      "purl": "pkg:npm/@img/sharp-win32-arm64@0.35.4",
+      "bom-ref": "pkg:npm/@img/sharp-win32-arm64@0.35.4",
       "scope": "required",
       "licenses": [
         {
@@ -1172,16 +1178,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "4bPwFdMbeC4JQ8L8LOyWp6nsHcboP5fxkp6iPOXz2Vg49R42TuMs2whkJ5OAP4/Ul035qOzy0AecOF9VOscn4w=="
+          "content": "iNdlBX9gLVvqe2I3uIJSIKTq6wckP/DYxZtcqxm09x5Gi24DnFBmPAWZmr60ZyYMG0xlzo6goG3670ar+RXvRw=="
         }
       ]
     },
     {
       "name": "@img/sharp-win32-ia32",
-      "version": "0.35.3",
+      "version": "0.35.4",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-win32-ia32@0.35.3",
-      "bom-ref": "pkg:npm/@img/sharp-win32-ia32@0.35.3",
+      "purl": "pkg:npm/@img/sharp-win32-ia32@0.35.4",
+      "bom-ref": "pkg:npm/@img/sharp-win32-ia32@0.35.4",
       "scope": "required",
       "licenses": [
         {
@@ -1191,16 +1197,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "r53mXsBN6lFUDiST764SvgwUdHAqM4rPAiDzAmf4fLoB6X/rkfyTrLCg6+g17wJJiCmB3JYgHuUldCWUIRFSXw=="
+          "content": "kqRsbaa5CS6KHlpxnN7WhE6vAAugXyZButpRdvDWetlv6Qv4N9WTcrWzF7tXfB9T7MsoadqdI8hmwLq6UlLvtw=="
         }
       ]
     },
     {
       "name": "@img/sharp-win32-x64",
-      "version": "0.35.3",
+      "version": "0.35.4",
       "type": "library",
-      "purl": "pkg:npm/@img/sharp-win32-x64@0.35.3",
-      "bom-ref": "pkg:npm/@img/sharp-win32-x64@0.35.3",
+      "purl": "pkg:npm/@img/sharp-win32-x64@0.35.4",
+      "bom-ref": "pkg:npm/@img/sharp-win32-x64@0.35.4",
       "scope": "required",
       "licenses": [
         {
@@ -1210,7 +1216,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "D4y1vNeZrIIJCN+uHaWVtH86B+aCrdMYYjicy9pXHvbGZeGYLLSd3wdVuC37FxVXlU1ARsk84eKWfWMXGYEqvA=="
+          "content": "XtmnYhBcrORsJ4XJngyzr/EWP0hRZLAZRFaApdKuviyqF78+ylxh2y06ZmtULAMOnObJ3ucpN0AcwSWnMowTRg=="
         }
       ]
     },
@@ -1522,27 +1528,6 @@
     },
     {
       "name": "@mapbox/unitbezier",
-      "version": "0.0.1",
-      "type": "library",
-      "purl": "pkg:npm/@mapbox/unitbezier@0.0.1",
-      "bom-ref": "pkg:npm/@mapbox/unitbezier@0.0.1",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "BSD-2-Clause"
-          }
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-512",
-          "content": "nMkuDXFv60aBr9soUG5q+GvZYL+2KZHVvsqFCzqnkGEf46U2fvmytHaEVc1/YZbiLn8X+eR3QzX1+dwDO1lxlw=="
-        }
-      ]
-    },
-    {
-      "name": "@mapbox/unitbezier",
       "version": "1.0.0",
       "type": "library",
       "purl": "pkg:npm/@mapbox/unitbezier@1.0.0",
@@ -1564,10 +1549,10 @@
     },
     {
       "name": "@mapbox/vector-tile",
-      "version": "2.0.5",
+      "version": "3.0.0",
       "type": "library",
-      "purl": "pkg:npm/@mapbox/vector-tile@2.0.5",
-      "bom-ref": "pkg:npm/@mapbox/vector-tile@2.0.5",
+      "purl": "pkg:npm/@mapbox/vector-tile@3.0.0",
+      "bom-ref": "pkg:npm/@mapbox/vector-tile@3.0.0",
       "scope": "required",
       "licenses": [
         {
@@ -1579,33 +1564,9 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "pXj8m7KTsqZt+1jsE0xIpGvqTSbblfkuEJL/NJmNePMtEwxO8V3XMDo9WMSfDeqHvCtBI9Lmt4mGcGR10zecmw=="
+          "content": "Qf10S1uIHMk20ri/IVBnpS+esUEkVaR5Hftmz88jTInrpmWgPGJfPe3LVjjlE77trLx8tH6qjTG7uWH9hIq/0Q=="
         }
       ]
-    },
-    {
-      "name": "@mapbox/whoots-js",
-      "version": "3.1.0",
-      "type": "library",
-      "purl": "pkg:npm/@mapbox/whoots-js@3.1.0",
-      "bom-ref": "pkg:npm/@mapbox/whoots-js@3.1.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "ISC"
-          }
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-512",
-          "content": "Es6WcD0nO5l+2BOQS4uLfNPYQaNDfbot3X1XUoloz+x0mPDS3eeORZJl06HXjwBG1fOGwCRnzK88LMdxKRrd6Q=="
-        }
-      ],
-      "supplier": {
-        "name": "Bryan Housel <bryan@mapbox.com>"
-      }
     },
     {
       "name": "@maplibre/geojson-vt",
@@ -1633,10 +1594,10 @@
     },
     {
       "name": "@maplibre/maplibre-gl-style-spec",
-      "version": "24.10.0",
+      "version": "26.4.2",
       "type": "library",
-      "purl": "pkg:npm/@maplibre/maplibre-gl-style-spec@24.10.0",
-      "bom-ref": "pkg:npm/@maplibre/maplibre-gl-style-spec@24.10.0",
+      "purl": "pkg:npm/@maplibre/maplibre-gl-style-spec@26.4.2",
+      "bom-ref": "pkg:npm/@maplibre/maplibre-gl-style-spec@26.4.2",
       "scope": "required",
       "licenses": [
         {
@@ -1648,19 +1609,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "lichxSiagMEBBrqHF0trtMQH9RKh+9jUlIJl0qW0QHvt2H/tbvUWdE+ZzI2Jd0/pT7j/iavLonlPu7EQ/ixTOw=="
+          "content": "6J0vZqMZvRAJKtdWJdDGHEh1YJ2ZHG08/GOur8gCArYhO8ZkM//OXqtI2AAEz4jc2G+Wq4MfcePg8qNK5TZ4Kg=="
         }
-      ],
-      "supplier": {
-        "name": "MapLibre"
-      }
+      ]
     },
     {
       "name": "@maplibre/mlt",
-      "version": "1.1.12",
+      "version": "1.2.1",
       "type": "library",
-      "purl": "pkg:npm/@maplibre/mlt@1.1.12",
-      "bom-ref": "pkg:npm/@maplibre/mlt@1.1.12",
+      "purl": "pkg:npm/@maplibre/mlt@1.2.1",
+      "bom-ref": "pkg:npm/@maplibre/mlt@1.2.1",
       "scope": "required",
       "licenses": [
         {
@@ -1670,7 +1628,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "ZeK5w2TTeHOajcLaEQs1KZXw2V9wIKo1PmThlxlsHoXsQsYlBqLJzPOd6tJHRtGTChUY3DPPmjXRArYVvAbmZw=="
+          "content": "5n5dgolE2EYxwCKgx8vlwURCB8A+kyfJJyThlYimjlGgOcOe2Bhw9VxxnnHC91OC9PgHg+nVdgVPTYPkIo62vg=="
         }
       ]
     },
@@ -1832,10 +1790,10 @@
     },
     {
       "name": "@next/env",
-      "version": "15.5.21",
+      "version": "15.5.25",
       "type": "library",
-      "purl": "pkg:npm/@next/env@15.5.21",
-      "bom-ref": "pkg:npm/@next/env@15.5.21",
+      "purl": "pkg:npm/@next/env@15.5.25",
+      "bom-ref": "pkg:npm/@next/env@15.5.25",
       "scope": "required",
       "licenses": [
         {
@@ -1847,19 +1805,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "hjJI/GfrjWHgNguRIBzItjRRu0m3Nrz17GhxsjuHfjIvg9hyg3239REd2dpI+bpMTFuVrVprHzEQ19m++cDtbw=="
+          "content": "42h1lLr07vl4gawALP1hsgRZjHB1xYa58JfUfHwr0f7jG/zhPakh5GHkADHXOC9ZxUvlQFOPIrp7s6qX4DezPQ=="
         }
-      ],
-      "supplier": {
-        "name": "Next.js Team <support@vercel.com>"
-      }
+      ]
     },
     {
       "name": "@next/eslint-plugin-next",
-      "version": "15.5.19",
+      "version": "15.5.25",
       "type": "library",
-      "purl": "pkg:npm/@next/eslint-plugin-next@15.5.19",
-      "bom-ref": "pkg:npm/@next/eslint-plugin-next@15.5.19",
+      "purl": "pkg:npm/@next/eslint-plugin-next@15.5.25",
+      "bom-ref": "pkg:npm/@next/eslint-plugin-next@15.5.25",
       "scope": "optional",
       "licenses": [
         {
@@ -1871,16 +1826,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "Ctwb4qYuMbHN/1oXLlTdMchwG8h8Xzwq+wGZZMgF3o6+uwyBKAI2c96bdOsl+C62PaUD0Jkh+QpNkhUeDlam0Q=="
+          "content": "dAzOqZQCAOgIq5yQpsuMBZcwxK0AtzGqHMQpxNWYLQlvf79rsP3SDwdGPNQC4ySaMSihOQXMO/VXubQ3JWW+3A=="
         }
       ]
     },
     {
       "name": "@next/swc-darwin-arm64",
-      "version": "15.5.21",
+      "version": "15.5.25",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-darwin-arm64@15.5.21",
-      "bom-ref": "pkg:npm/@next/swc-darwin-arm64@15.5.21",
+      "purl": "pkg:npm/@next/swc-darwin-arm64@15.5.25",
+      "bom-ref": "pkg:npm/@next/swc-darwin-arm64@15.5.25",
       "scope": "required",
       "licenses": [
         {
@@ -1892,16 +1847,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "ZfjqPEdi6TRC/fWx7UDbwb1fbVgyh2uD5tVTRKIDZDlYM+UNuE/LafDG2fwuAoZilADpABh46OY/F5qf9JjqLQ=="
+          "content": "w+RR0v/QuApnWEjRGm1z6gcObKwGMb5YPA7V3bzBEVSBpMFUXprer0tS27UxjUcEnqbhL7Zuzohej79B6rYmBg=="
         }
       ]
     },
     {
       "name": "@next/swc-darwin-x64",
-      "version": "15.5.21",
+      "version": "15.5.25",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-darwin-x64@15.5.21",
-      "bom-ref": "pkg:npm/@next/swc-darwin-x64@15.5.21",
+      "purl": "pkg:npm/@next/swc-darwin-x64@15.5.25",
+      "bom-ref": "pkg:npm/@next/swc-darwin-x64@15.5.25",
       "scope": "required",
       "licenses": [
         {
@@ -1913,16 +1868,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "TlCf1NpxgQLzTrexuev75xwmNCJMd1/qkJpTVP1GRRcih93hlIBn1P72hkh8T0gnRFr6BmWksQtbyG3jT6jnww=="
+          "content": "QiGGBUSakt8S1H4Lt9Ehsh6Ja87axiBnQQgysOObvCbI7iUfJnRGntF1P64S4/ijuHFnSB8KLsEddkY3nN26uw=="
         }
       ]
     },
     {
       "name": "@next/swc-linux-arm64-gnu",
-      "version": "15.5.21",
+      "version": "15.5.25",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-linux-arm64-gnu@15.5.21",
-      "bom-ref": "pkg:npm/@next/swc-linux-arm64-gnu@15.5.21",
+      "purl": "pkg:npm/@next/swc-linux-arm64-gnu@15.5.25",
+      "bom-ref": "pkg:npm/@next/swc-linux-arm64-gnu@15.5.25",
       "scope": "required",
       "licenses": [
         {
@@ -1934,16 +1889,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "LXRsq1p+HvHSi7ygwNcSEEcK0zuo5jS75ZlqFHtOH+LF7qntXAJVJxah+1Pi/GyBm7EpkwU7m4EgbvIKrMqm9A=="
+          "content": "ehLos/66zo0d/mJCU5u96a/VDcr01aaUrX0o/i16UdInxz8qPTCDSxGtjk/Lps1sIr1RJFdiX3hxc0fxJo+cPA=="
         }
       ]
     },
     {
       "name": "@next/swc-linux-arm64-musl",
-      "version": "15.5.21",
+      "version": "15.5.25",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-linux-arm64-musl@15.5.21",
-      "bom-ref": "pkg:npm/@next/swc-linux-arm64-musl@15.5.21",
+      "purl": "pkg:npm/@next/swc-linux-arm64-musl@15.5.25",
+      "bom-ref": "pkg:npm/@next/swc-linux-arm64-musl@15.5.25",
       "scope": "required",
       "licenses": [
         {
@@ -1955,16 +1910,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "hyGixhFxpDKjqoev6l4KlcRBlt9AXWrGhDZwmwg49sMJM5tnKQPSi+SEj9+e5n+l/bthRGZUdh59GKIs6lQPRw=="
+          "content": "ZVMrqLiJ7DiChgmbkQwFtdhAnUkSH/4p7tB29QY+giATb0Q/XGHNRSKAb/B8XGDHRUaA67NepOW5W8u3ZRJBAA=="
         }
       ]
     },
     {
       "name": "@next/swc-linux-x64-gnu",
-      "version": "15.5.21",
+      "version": "15.5.25",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-linux-x64-gnu@15.5.21",
-      "bom-ref": "pkg:npm/@next/swc-linux-x64-gnu@15.5.21",
+      "purl": "pkg:npm/@next/swc-linux-x64-gnu@15.5.25",
+      "bom-ref": "pkg:npm/@next/swc-linux-x64-gnu@15.5.25",
       "scope": "required",
       "licenses": [
         {
@@ -1976,16 +1931,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "qfE+YfOba6S2+13e8qn1/UozDVNZ2clBlrs8UtDoax4s8ediu6sq93z66OEHUYlb69Tffh5JTNkgtsAKiSuugg=="
+          "content": "UOewtDGkTMJTiODrEdeLZ50yGb59xCZSriNpXkfPMxRRgwDkGc7i8mLWqV5076wEdb+Ca/XN7MhJyM3CupyNyQ=="
         }
       ]
     },
     {
       "name": "@next/swc-linux-x64-musl",
-      "version": "15.5.21",
+      "version": "15.5.25",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-linux-x64-musl@15.5.21",
-      "bom-ref": "pkg:npm/@next/swc-linux-x64-musl@15.5.21",
+      "purl": "pkg:npm/@next/swc-linux-x64-musl@15.5.25",
+      "bom-ref": "pkg:npm/@next/swc-linux-x64-musl@15.5.25",
       "scope": "required",
       "licenses": [
         {
@@ -1997,16 +1952,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "BXLGG+EvIwp/Rrgl6HY8sqvD6BOUOIRz8/naDbeLNX7mlA5H2XRcL6MW/0IGnJISfj5BA9gNhFyJj5yOoiIDJQ=="
+          "content": "UBHwA8AhkCZgtRfU1aJpunuAJe/6gZv6jDESQe4p5MjTb5V0YEeJBWCdNqx15Vj3x+5jmauRfeMJSjfQj9HGFQ=="
         }
       ]
     },
     {
       "name": "@next/swc-win32-arm64-msvc",
-      "version": "15.5.21",
+      "version": "15.5.25",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-win32-arm64-msvc@15.5.21",
-      "bom-ref": "pkg:npm/@next/swc-win32-arm64-msvc@15.5.21",
+      "purl": "pkg:npm/@next/swc-win32-arm64-msvc@15.5.25",
+      "bom-ref": "pkg:npm/@next/swc-win32-arm64-msvc@15.5.25",
       "scope": "required",
       "licenses": [
         {
@@ -2018,16 +1973,16 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "tNGNOlT0Wn7E4IMsSnufjXN/l2L2/AGdLLpa2vzS89SYCBuihgLn3ngLsIrvndAnWo9nAkus+4gZHTI/Ijx9HA=="
+          "content": "QcFcPRr16djk5IqK5+e8O80eZfgWzIvVBXfitIq0tQ/uc+eyfdoZ0NmKc0cnbIJyfVwREapKuG97YcxWA9gcpA=="
         }
       ]
     },
     {
       "name": "@next/swc-win32-x64-msvc",
-      "version": "15.5.21",
+      "version": "15.5.25",
       "type": "library",
-      "purl": "pkg:npm/@next/swc-win32-x64-msvc@15.5.21",
-      "bom-ref": "pkg:npm/@next/swc-win32-x64-msvc@15.5.21",
+      "purl": "pkg:npm/@next/swc-win32-x64-msvc@15.5.25",
+      "bom-ref": "pkg:npm/@next/swc-win32-x64-msvc@15.5.25",
       "scope": "required",
       "licenses": [
         {
@@ -2039,7 +1994,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "DmIdWmC9p4rdNIiQqo8ap0+Cnj6kKtTZnuSCxoYydSc8sgpDgAg9wFhxplunak9imLV0pTvc5WVCOHwm5eHLtQ=="
+          "content": "zREeykps3ndWr9egJgvJKqVkkDuaw6Zrrg23cYBos0ygydFkAWYU4+PaPVwXzP1eAYQJe53ShSK45iDM529BOg=="
         }
       ]
     },
@@ -5119,6 +5074,30 @@
       ]
     },
     {
+      "name": "bidi-js",
+      "version": "1.1.0",
+      "type": "library",
+      "purl": "pkg:npm/bidi-js@1.1.0",
+      "bom-ref": "pkg:npm/bidi-js@1.1.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "fX1Onk0tdVPC7obPWB5EbJ1z7NVhLq4m2xZLq2YXBkxzMXIGRpNMU88n0EPgWseKl12J7zXs7qrDxPK4sRs2fg=="
+        }
+      ],
+      "supplier": {
+        "name": "Jason Johnston"
+      }
+    },
+    {
       "name": "blinker",
       "version": "1.9.0",
       "type": "library",
@@ -6746,10 +6725,7 @@
           "alg": "SHA-512",
           "content": "vnS4AVwp1KHAF13i1vp1/2D5evWy3k5u/iW/B81QVsUZtV8cv2tU0b2VNFlqvh4kYwrFMDdjPCfAmfyJW9y14Q=="
         }
-      ],
-      "supplier": {
-        "name": "Volodymyr Agafonkin"
-      }
+      ]
     },
     {
       "name": "emoji-regex",
@@ -7089,10 +7065,10 @@
     },
     {
       "name": "eslint-config-next",
-      "version": "15.5.19",
+      "version": "15.5.25",
       "type": "library",
-      "purl": "pkg:npm/eslint-config-next@15.5.19",
-      "bom-ref": "pkg:npm/eslint-config-next@15.5.19",
+      "purl": "pkg:npm/eslint-config-next@15.5.25",
+      "bom-ref": "pkg:npm/eslint-config-next@15.5.25",
       "scope": "optional",
       "licenses": [
         {
@@ -7104,7 +7080,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "UZwkuhBCNxVZfo93MSHRDOVNWXooJJGcAUyTAVIp0+9QFhH4SqJxWY0s6Mk9C2kMi777HPMn3dseOrZshWpG9Q=="
+          "content": "hB1oClZzRO3vMAeMmBMch0FHNJ4irH74LvQWDEMHkJtG/Us9+SAsg1f5Pvcw9jz4tc8wSGnvbmF050BRAAIbBg=="
         }
       ]
     },
@@ -11689,10 +11665,10 @@
     },
     {
       "name": "maplibre-gl",
-      "version": "5.24.0",
+      "version": "6.9.0",
       "type": "library",
-      "purl": "pkg:npm/maplibre-gl@5.24.0",
-      "bom-ref": "pkg:npm/maplibre-gl@5.24.0",
+      "purl": "pkg:npm/maplibre-gl@6.9.0",
+      "bom-ref": "pkg:npm/maplibre-gl@6.9.0",
       "scope": "required",
       "licenses": [
         {
@@ -11704,7 +11680,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "ALyFxgtd5R+65UqZ/++lOqwWcC0SNho9c27fYSyLmG7AfnAul2o46F05aDJGPbFU57wos9dgcIySHs0Xe6ia3A=="
+          "content": "vFMwMK0Zs+NM/rOMSdtu8bO30DIexhBEVi5KC6f70/XtI+L/K2wC3LsDCAXFZ4s8ik5gAuDugfCNbpllpdJ9bA=="
         }
       ]
     },
@@ -12365,10 +12341,10 @@
     },
     {
       "name": "next",
-      "version": "15.5.21",
+      "version": "15.5.25",
       "type": "library",
-      "purl": "pkg:npm/next@15.5.21",
-      "bom-ref": "pkg:npm/next@15.5.21",
+      "purl": "pkg:npm/next@15.5.25",
+      "bom-ref": "pkg:npm/next@15.5.25",
       "scope": "required",
       "licenses": [
         {
@@ -12380,7 +12356,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "/TsdBtkWLhkl+NVL3Uqws2UphNd6IPzOtzSk1fHaf+0P7GQKLZDUytyhns/Ykbzdy9+YRjwG7ONvrHaaTDdFqQ=="
+          "content": "OMWNulIIqKM2ykvC2qMjIt0IoavB4UB2SCs4iXJ6z6847FvyH8jBmBWcvrF5iuhTu8Przh20Fo/aoszIdqx4PA=="
         }
       ]
     },
@@ -13410,30 +13386,6 @@
     },
     {
       "name": "pbf",
-      "version": "4.0.2",
-      "type": "library",
-      "purl": "pkg:npm/pbf@4.0.2",
-      "bom-ref": "pkg:npm/pbf@4.0.2",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "BSD-3-Clause"
-          }
-        }
-      ],
-      "hashes": [
-        {
-          "alg": "SHA-512",
-          "content": "J0ajxARhZfpUEebxYs1vhMGMuLSXtBe1e+fFPDrf2uA2hgo+UshKfNUWOz92HJNz6/NFEXseQPddnHkTreWRqg=="
-        }
-      ],
-      "supplier": {
-        "name": "Konstantin Kaefer"
-      }
-    },
-    {
-      "name": "pbf",
       "version": "5.1.2",
       "type": "library",
       "purl": "pkg:npm/pbf@5.1.2",
@@ -13451,10 +13403,7 @@
           "alg": "SHA-512",
           "content": "mnvGdvOrIvJOBGUEdGkrVXjN8E/VkIJCkf2eS1DH2yv82ORUlLttmDt0rWY38yYZmVwciZwBUvHM20qxBZf40w=="
         }
-      ],
-      "supplier": {
-        "name": "Konstantin Kaefer"
-      }
+      ]
     },
     {
       "name": "pendulum",
@@ -13946,27 +13895,24 @@
     },
     {
       "name": "postcss",
-      "version": "8.5.26",
+      "version": "8.5.28",
       "type": "library",
-      "purl": "pkg:npm/postcss@8.5.26",
-      "bom-ref": "pkg:npm/postcss@8.5.26",
+      "purl": "pkg:npm/postcss@8.5.28",
+      "bom-ref": "pkg:npm/postcss@8.5.28",
       "scope": "required",
       "licenses": [
         {
           "license": {
-            "id": "MIT"
+            "name": "UNKNOWN"
           }
         }
       ],
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "u82N74LFzG8ca+dD8puPnplTXoGH4fTPpVGuIbt36G3qvNlkvfD0lEAZSxaly3KX8TS/L1A1gsCEmvKmBcVbkQ=="
+          "content": "RRuzqDtt5Y9h3quz5hWhK+TPnsmVs6WwSU6LkJMeY4HstUEDuYTG8UJSdawMRzmzAtV+KEoG8N3Qg2qLy5vM/A=="
         }
-      ],
-      "supplier": {
-        "name": "Andrey Sitnik <andrey@sitnik.es>"
-      }
+      ]
     },
     {
       "name": "postgres-array",
@@ -15280,6 +15226,30 @@
       }
     },
     {
+      "name": "require-from-string",
+      "version": "2.0.2",
+      "type": "library",
+      "purl": "pkg:npm/require-from-string@2.0.2",
+      "bom-ref": "pkg:npm/require-from-string@2.0.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "Xf0nWe6RseziFMu+Ap9biiUbmplq6S9/p+7w7YXP/JBHhrUDDUhwa+vANyubuqfZWTveU//DYVGsDG7RKL/vEw=="
+        }
+      ],
+      "supplier": {
+        "name": "Vsevolod Strukchinsky"
+      }
+    },
+    {
       "name": "requirements-parser",
       "version": "0.13.1",
       "type": "library",
@@ -16013,10 +15983,10 @@
     },
     {
       "name": "sharp",
-      "version": "0.35.3",
+      "version": "0.35.4",
       "type": "library",
-      "purl": "pkg:npm/sharp@0.35.3",
-      "bom-ref": "pkg:npm/sharp@0.35.3",
+      "purl": "pkg:npm/sharp@0.35.4",
+      "bom-ref": "pkg:npm/sharp@0.35.4",
       "scope": "required",
       "licenses": [
         {
@@ -16028,12 +15998,9 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "ej0zVHuZGHCiABXcNxeYhpRnPNPAcvbG8RMdBAhDAxLKkCRVSpK3Iyu7qbqw3JMzoj0REeM6f3tJLtVwl0023Q=="
+          "content": "n++8XWcj+jCOr2IOl7h8LbKnGBDY4aPbmprMONBNFdn0ImXqpGVv5zliDs0V9HbmbCQLpbuo2ej9rAoOQTvMDA=="
         }
-      ],
-      "supplier": {
-        "name": "Lovell Fuller <npm@lovell.info>"
-      }
+      ]
     },
     {
       "name": "shebang-command",
@@ -18589,7 +18556,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/alfloop-dev/odayplus@0dd3e6e2c23a82751a842d6b33bd30f53e268e43",
+      "ref": "pkg:generic/alfloop-dev/odayplus@67898e8f47b42eddd1572c036ebb9df0ccd20c4d",
       "dependsOn": [
         "pkg:npm/@deck.gl/core@9.3.7",
         "pkg:npm/@deck.gl/layers@9.3.7",
@@ -18598,8 +18565,8 @@
         "pkg:npm/@types/pg@8.23.1",
         "pkg:npm/argon2@0.45.1",
         "pkg:npm/h3-js@4.5.0",
-        "pkg:npm/maplibre-gl@5.24.0",
-        "pkg:npm/next@15.5.21",
+        "pkg:npm/maplibre-gl@6.9.0",
+        "pkg:npm/next@15.5.25",
         "pkg:npm/pg@8.23.0",
         "pkg:npm/react-dom@18.3.1",
         "pkg:npm/react@18.3.1",
@@ -18645,9 +18612,134 @@
       ]
     },
     {
+      "ref": "pkg:npm/@emnapi/runtime@1.11.3",
+      "dependsOn": [
+        "pkg:npm/tslib@2.8.1"
+      ]
+    },
+    {
+      "ref": "pkg:npm/@img/sharp-freebsd-wasm32@0.35.4",
+      "dependsOn": [
+        "pkg:npm/@img/sharp-wasm32@0.35.4"
+      ]
+    },
+    {
+      "ref": "pkg:npm/@img/sharp-wasm32@0.35.4",
+      "dependsOn": [
+        "pkg:npm/@emnapi/runtime@1.11.3"
+      ]
+    },
+    {
+      "ref": "pkg:npm/@img/sharp-webcontainers-wasm32@0.35.4",
+      "dependsOn": [
+        "pkg:npm/@img/sharp-wasm32@0.35.4"
+      ]
+    },
+    {
+      "ref": "pkg:npm/@mapbox/vector-tile@3.0.0",
+      "dependsOn": [
+        "pkg:npm/@mapbox/point-geometry@1.1.0",
+        "pkg:npm/@types/geojson@7946.0.16",
+        "pkg:npm/pbf@5.1.2"
+      ]
+    },
+    {
+      "ref": "pkg:npm/@maplibre/maplibre-gl-style-spec@26.4.2",
+      "dependsOn": [
+        "pkg:npm/@mapbox/jsonlint-lines-primitives@2.0.3",
+        "pkg:npm/@mapbox/unitbezier@1.0.0",
+        "pkg:npm/json-stringify-pretty-compact@4.0.0",
+        "pkg:npm/minimist@1.2.8",
+        "pkg:npm/quickselect@3.0.0",
+        "pkg:npm/tinyqueue@3.0.0"
+      ]
+    },
+    {
+      "ref": "pkg:npm/@maplibre/mlt@1.2.1",
+      "dependsOn": [
+        "pkg:npm/@mapbox/point-geometry@1.1.0"
+      ]
+    },
+    {
+      "ref": "pkg:npm/@next/eslint-plugin-next@15.5.25",
+      "dependsOn": [
+        "pkg:npm/fast-glob@3.3.1"
+      ]
+    },
+    {
       "ref": "pkg:npm/@types/node@20.14.10",
       "dependsOn": [
         "pkg:npm/undici-types@8.3.0"
+      ]
+    },
+    {
+      "ref": "pkg:npm/eslint-config-next@15.5.25",
+      "dependsOn": [
+        "pkg:npm/@next/eslint-plugin-next@15.5.25",
+        "pkg:npm/@rushstack/eslint-patch@1.16.1",
+        "pkg:npm/@typescript-eslint/eslint-plugin@8.65.0",
+        "pkg:npm/@typescript-eslint/parser@8.65.0",
+        "pkg:npm/eslint-import-resolver-node@0.3.10",
+        "pkg:npm/eslint-import-resolver-typescript@3.10.1",
+        "pkg:npm/eslint-plugin-import@2.32.0",
+        "pkg:npm/eslint-plugin-jsx-a11y@6.10.2",
+        "pkg:npm/eslint-plugin-react-hooks@5.2.0",
+        "pkg:npm/eslint-plugin-react@7.37.5"
+      ]
+    },
+    {
+      "ref": "pkg:npm/maplibre-gl@6.9.0",
+      "dependsOn": [
+        "pkg:npm/@mapbox/point-geometry@1.1.0",
+        "pkg:npm/@mapbox/tiny-sdf@2.2.0",
+        "pkg:npm/@mapbox/unitbezier@1.0.0",
+        "pkg:npm/@mapbox/vector-tile@3.0.0",
+        "pkg:npm/@maplibre/geojson-vt@6.1.1",
+        "pkg:npm/@maplibre/maplibre-gl-style-spec@26.4.2",
+        "pkg:npm/@maplibre/mlt@1.2.1",
+        "pkg:npm/@maplibre/vt-pbf@4.3.2",
+        "pkg:npm/@types/geojson@7946.0.16",
+        "pkg:npm/bidi-js@1.1.0",
+        "pkg:npm/earcut@3.2.3",
+        "pkg:npm/gl-matrix@3.4.4",
+        "pkg:npm/kdbush@4.1.0",
+        "pkg:npm/murmurhash-js@1.0.0",
+        "pkg:npm/pbf@5.1.2",
+        "pkg:npm/potpack@2.1.0",
+        "pkg:npm/quickselect@3.0.0",
+        "pkg:npm/tinyqueue@3.0.0"
+      ]
+    },
+    {
+      "ref": "pkg:npm/next@15.5.25",
+      "dependsOn": [
+        "pkg:npm/@next/env@15.5.25",
+        "pkg:npm/@swc/helpers@0.5.15",
+        "pkg:npm/caniuse-lite@1.0.30001806",
+        "pkg:npm/postcss@8.5.28",
+        "pkg:npm/styled-jsx@5.1.6"
+      ]
+    },
+    {
+      "ref": "pkg:npm/pbf@5.1.2",
+      "dependsOn": [
+        "pkg:npm/resolve-protobuf-schema@2.1.0"
+      ]
+    },
+    {
+      "ref": "pkg:npm/postcss@8.5.28",
+      "dependsOn": [
+        "pkg:npm/nanoid@3.3.18",
+        "pkg:npm/picocolors@1.1.1",
+        "pkg:npm/source-map-js@1.2.1"
+      ]
+    },
+    {
+      "ref": "pkg:npm/sharp@0.35.4",
+      "dependsOn": [
+        "pkg:npm/@img/colour@1.1.0",
+        "pkg:npm/detect-libc@2.1.2",
+        "pkg:npm/semver@6.3.1"
       ]
     },
     {
@@ -18696,7 +18788,7 @@
         "pkg:npm/@math.gl/polygon@4.1.0",
         "pkg:npm/@math.gl/web-mercator@4.1.0",
         "pkg:npm/@types/geojson@7946.0.16",
-        "pkg:npm/earcut@2.2.4"
+        "pkg:npm/earcut@3.2.3"
       ]
     },
     {
@@ -18764,24 +18856,6 @@
         "pkg:npm/@humanwhocodes/object-schema@2.0.3",
         "pkg:npm/debug@4.4.3",
         "pkg:npm/minimatch@10.2.5"
-      ]
-    },
-    {
-      "ref": "pkg:npm/@img/sharp-freebsd-wasm32@0.35.3",
-      "dependsOn": [
-        "pkg:npm/@img/sharp-wasm32@0.35.3"
-      ]
-    },
-    {
-      "ref": "pkg:npm/@img/sharp-wasm32@0.35.3",
-      "dependsOn": [
-        "pkg:npm/@emnapi/runtime@1.11.1"
-      ]
-    },
-    {
-      "ref": "pkg:npm/@img/sharp-webcontainers-wasm32@0.35.3",
-      "dependsOn": [
-        "pkg:npm/@img/sharp-wasm32@0.35.3"
       ]
     },
     {
@@ -18858,34 +18932,9 @@
       ]
     },
     {
-      "ref": "pkg:npm/@mapbox/vector-tile@2.0.5",
-      "dependsOn": [
-        "pkg:npm/@mapbox/point-geometry@1.1.0",
-        "pkg:npm/@types/geojson@7946.0.16",
-        "pkg:npm/pbf@5.1.2"
-      ]
-    },
-    {
       "ref": "pkg:npm/@maplibre/geojson-vt@6.1.1",
       "dependsOn": [
         "pkg:npm/kdbush@4.1.0"
-      ]
-    },
-    {
-      "ref": "pkg:npm/@maplibre/maplibre-gl-style-spec@24.10.0",
-      "dependsOn": [
-        "pkg:npm/@mapbox/jsonlint-lines-primitives@2.0.3",
-        "pkg:npm/@mapbox/unitbezier@0.0.1",
-        "pkg:npm/json-stringify-pretty-compact@4.0.0",
-        "pkg:npm/minimist@1.2.8",
-        "pkg:npm/quickselect@3.0.0",
-        "pkg:npm/tinyqueue@3.0.0"
-      ]
-    },
-    {
-      "ref": "pkg:npm/@maplibre/mlt@1.1.12",
-      "dependsOn": [
-        "pkg:npm/@mapbox/point-geometry@1.1.0"
       ]
     },
     {
@@ -18894,12 +18943,6 @@
         "pkg:npm/@mapbox/point-geometry@1.1.0",
         "pkg:npm/@types/geojson@7946.0.16",
         "pkg:npm/pbf@5.1.2"
-      ]
-    },
-    {
-      "ref": "pkg:npm/pbf@5.1.2",
-      "dependsOn": [
-        "pkg:npm/resolve-protobuf-schema@2.1.0"
       ]
     },
     {
@@ -18924,12 +18967,6 @@
       "ref": "pkg:npm/@napi-rs/wasm-runtime@1.1.6",
       "dependsOn": [
         "pkg:npm/@tybys/wasm-util@0.10.3"
-      ]
-    },
-    {
-      "ref": "pkg:npm/@next/eslint-plugin-next@15.5.19",
-      "dependsOn": [
-        "pkg:npm/fast-glob@3.3.1"
       ]
     },
     {
@@ -18962,7 +18999,7 @@
       "ref": "pkg:npm/@rolldown/binding-wasm32-wasi@1.1.5",
       "dependsOn": [
         "pkg:npm/@emnapi/core@1.11.1",
-        "pkg:npm/@emnapi/runtime@1.11.1",
+        "pkg:npm/@emnapi/runtime@1.11.3",
         "pkg:npm/@napi-rs/wasm-runtime@1.1.6"
       ]
     },
@@ -19142,7 +19179,7 @@
       "ref": "pkg:npm/@unrs/resolver-binding-wasm32-wasi@1.12.2",
       "dependsOn": [
         "pkg:npm/@emnapi/core@1.11.1",
-        "pkg:npm/@emnapi/runtime@1.11.1",
+        "pkg:npm/@emnapi/runtime@1.11.3",
         "pkg:npm/@napi-rs/wasm-runtime@1.1.6"
       ]
     },
@@ -19352,6 +19389,12 @@
       "ref": "pkg:npm/available-typed-arrays@1.0.7",
       "dependsOn": [
         "pkg:npm/possible-typed-array-names@1.1.0"
+      ]
+    },
+    {
+      "ref": "pkg:npm/bidi-js@1.1.0",
+      "dependsOn": [
+        "pkg:npm/require-from-string@2.0.2"
       ]
     },
     {
@@ -19646,21 +19689,6 @@
         "pkg:npm/optionator@0.9.4",
         "pkg:npm/strip-ansi@6.0.1",
         "pkg:npm/text-table@0.2.0"
-      ]
-    },
-    {
-      "ref": "pkg:npm/eslint-config-next@15.5.19",
-      "dependsOn": [
-        "pkg:npm/@next/eslint-plugin-next@15.5.19",
-        "pkg:npm/@rushstack/eslint-patch@1.16.1",
-        "pkg:npm/@typescript-eslint/eslint-plugin@8.65.0",
-        "pkg:npm/@typescript-eslint/parser@8.65.0",
-        "pkg:npm/eslint-import-resolver-node@0.3.10",
-        "pkg:npm/eslint-import-resolver-typescript@3.10.1",
-        "pkg:npm/eslint-plugin-import@2.32.0",
-        "pkg:npm/eslint-plugin-jsx-a11y@6.10.2",
-        "pkg:npm/eslint-plugin-react-hooks@5.2.0",
-        "pkg:npm/eslint-plugin-react@7.37.5"
       ]
     },
     {
@@ -20212,30 +20240,6 @@
       ]
     },
     {
-      "ref": "pkg:npm/maplibre-gl@5.24.0",
-      "dependsOn": [
-        "pkg:npm/@mapbox/jsonlint-lines-primitives@2.0.3",
-        "pkg:npm/@mapbox/point-geometry@1.1.0",
-        "pkg:npm/@mapbox/tiny-sdf@2.2.0",
-        "pkg:npm/@mapbox/unitbezier@0.0.1",
-        "pkg:npm/@mapbox/vector-tile@2.0.5",
-        "pkg:npm/@mapbox/whoots-js@3.1.0",
-        "pkg:npm/@maplibre/geojson-vt@6.1.1",
-        "pkg:npm/@maplibre/maplibre-gl-style-spec@24.10.0",
-        "pkg:npm/@maplibre/mlt@1.1.12",
-        "pkg:npm/@maplibre/vt-pbf@4.3.2",
-        "pkg:npm/@types/geojson@7946.0.16",
-        "pkg:npm/earcut@2.2.4",
-        "pkg:npm/gl-matrix@3.4.4",
-        "pkg:npm/kdbush@4.1.0",
-        "pkg:npm/murmurhash-js@1.0.0",
-        "pkg:npm/pbf@5.1.2",
-        "pkg:npm/potpack@2.1.0",
-        "pkg:npm/quickselect@3.0.0",
-        "pkg:npm/tinyqueue@3.0.0"
-      ]
-    },
-    {
       "ref": "pkg:npm/micromatch@4.0.8",
       "dependsOn": [
         "pkg:npm/braces@3.0.3",
@@ -20246,16 +20250,6 @@
       "ref": "pkg:npm/minimatch@3.1.5",
       "dependsOn": [
         "pkg:npm/brace-expansion@5.0.9"
-      ]
-    },
-    {
-      "ref": "pkg:npm/next@15.5.21",
-      "dependsOn": [
-        "pkg:npm/@next/env@15.5.21",
-        "pkg:npm/@swc/helpers@0.5.15",
-        "pkg:npm/caniuse-lite@1.0.30001806",
-        "pkg:npm/postcss@8.5.26",
-        "pkg:npm/styled-jsx@5.1.6"
       ]
     },
     {
@@ -20358,12 +20352,6 @@
       ]
     },
     {
-      "ref": "pkg:npm/pbf@4.0.2",
-      "dependsOn": [
-        "pkg:npm/resolve-protobuf-schema@2.1.0"
-      ]
-    },
-    {
       "ref": "pkg:npm/pg@8.23.0",
       "dependsOn": [
         "pkg:npm/pg-connection-string@2.14.0",
@@ -20393,14 +20381,6 @@
       "ref": "pkg:npm/playwright@1.61.1",
       "dependsOn": [
         "pkg:npm/playwright-core@1.61.1"
-      ]
-    },
-    {
-      "ref": "pkg:npm/postcss@8.5.26",
-      "dependsOn": [
-        "pkg:npm/nanoid@3.3.18",
-        "pkg:npm/picocolors@1.1.1",
-        "pkg:npm/source-map-js@1.2.1"
       ]
     },
     {
@@ -20562,14 +20542,6 @@
         "pkg:npm/dunder-proto@1.0.1",
         "pkg:npm/es-errors@1.3.0",
         "pkg:npm/es-object-atoms@1.1.2"
-      ]
-    },
-    {
-      "ref": "pkg:npm/sharp@0.35.3",
-      "dependsOn": [
-        "pkg:npm/@img/colour@1.1.0",
-        "pkg:npm/detect-libc@2.1.2",
-        "pkg:npm/semver@6.3.1"
       ]
     },
     {
@@ -20803,7 +20775,7 @@
       "dependsOn": [
         "pkg:npm/lightningcss@1.33.0",
         "pkg:npm/picomatch@2.3.2",
-        "pkg:npm/postcss@8.5.26",
+        "pkg:npm/postcss@8.5.28",
         "pkg:npm/rolldown@1.1.5",
         "pkg:npm/tinyglobby@0.2.17"
       ]

@@ -1,0 +1,308 @@
+...FF.                                                                   [100%]
+=================================== FAILURES ===================================
+_ test_postgresql_adjust_interleaved_with_stop_or_version_update_conflict[stop] _
+
+intake_blank_db = IntakeDatabase(server=IntakePgServer(psycopg=<module 'psycopg' from '/tmp/pantheon-worker-worktrees/pantheon/odp-intv0...intake_test_63e1fb07c98c', 'intake_test_93207c232e0b', 'intake_test_9623f0c05d6b']), dbname='intake_test_9623f0c05d6b')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7a6b1a3068d0>
+competitor = 'stop'
+
+    @pytest.mark.parametrize("competitor", ["stop", "version"])
+    def test_postgresql_adjust_interleaved_with_stop_or_version_update_conflict(
+        intake_blank_db: Any, monkeypatch: pytest.MonkeyPatch, competitor: str,
+    ) -> None:
+        """ODP-FR-INTV-006: Controlled interleaving across independent PostgreSQL engines:
+        Worker 1 reads APPROVED vN and prepares adjust; Worker 2 stops the case concurrently
+        under its own engine before Worker 1's lock/CAS write; Worker 1's adjust detects
+        the stale status under FOR UPDATE, returns HTTP 409 STALE_UPDATE_CONFLICT (not 422),
+        and leaves no orphaned replacement in SQL or document store."""
+        _upgrade_official_schema(intake_blank_db)
+        runtime_url, _ = _urls(intake_blank_db)
+    
+        engine1 = PostgresEngine(runtime_url, bootstrap=True, validate_schema=False, max_pool_size=4)
+        engine2 = PostgresEngine(runtime_url, bootstrap=False, validate_schema=False, max_pool_size=4)
+    
+        from fastapi.testclient import TestClient
+    
+        from apps.api.oday_api.main import create_app
+        from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+        from shared.infrastructure.persistence.repositories import (
+            DurableInterventionRepository,
+        )
+        from tests.integration._authz import INTERVENTION_HEADERS
+    
+        tenant_id = str(uuid4())
+        store_id = str(uuid4())
+        with intake_blank_db.connect() as conn:
+            conn.execute("INSERT INTO core.tenants (tenant_id, tenant_name) VALUES (%s, %s)", (tenant_id, "PG Interleave Tenant"))
+            conn.execute("INSERT INTO core.stores (store_id, tenant_id, store_name) VALUES (%s, %s, %s)", (store_id, tenant_id, "PG Interleave Store"))
+    
+        repo1 = DurableInterventionRepository(SqliteDocumentStore(engine1))
+        repo2 = DurableInterventionRepository(SqliteDocumentStore(engine2))
+    
+        app1 = create_app(intervention_repository=repo1)
+        app2 = create_app(intervention_repository=repo2)
+    
+        client1 = TestClient(app1, headers=INTERVENTION_HEADERS)
+        client2 = TestClient(app2, headers=INTERVENTION_HEADERS)
+    
+        now = datetime.now(UTC)
+        create_res = client1.post(
+            "/interventions",
+            json={
+                "store_id": store_id,
+                "kind": "PRICE_CHANGE",
+                "trigger_ref": "alert-pg-interleave",
+                "expected_outcome": "pg interleave test",
+                "planned_start": now.isoformat(),
+                "planned_end": (now + timedelta(days=14)).isoformat(),
+                "created_by": "pg-admin",
+                "action_spec": {"price_change_pct": -5},
+            },
+        )
+        assert create_res.status_code == 201
+        case_id = create_res.json()["intervention_id"]
+        case_uuid = case_id.removeprefix("intervention-")
+    
+        client1.post(f"/interventions/{case_id}/eligibility", json={"eligible": True, "actor": "pg-admin"})
+        client1.post(f"/interventions/{case_id}/action", json={"action_spec": {"price_change_pct": -5}, "actor": "pg-admin"})
+        client1.post(f"/interventions/{case_id}/conflict-check", json={"actor": "pg-admin"})
+        client1.post(f"/interventions/{case_id}/submit", json={"actor": "pg-admin"})
+        approve_res = client1.post(f"/interventions/{case_id}/approve", json={"action": "APPROVE", "actor": "sup-admin", "reason": "approved"})
+        assert approve_res.status_code == 200
+        v_approved = approve_res.json()["version"]
+    
+        from dataclasses import replace
+    
+        order = []
+        get_original = repo1.get
+        audit_before = list(app1.state.audit_log.list_events())
+    
+        def controlled_initial_read(intervention_id, *, for_update=False):
+            snapshot = get_original(intervention_id, for_update=for_update)
+            if intervention_id == case_id and not order and not for_update:
+                assert snapshot.version == v_approved
+                order.append("initial")
+                if competitor == "stop":
+                    response = client2.post(f"/interventions/{case_id}/stop", json={"actor": "ops-stopper", "reason": "emergency cancellation"})
+                    assert response.status_code == 200
+                else:
+                    repo2.save(replace(repo2.get(case_id), version=v_approved + 1))
+                order.append("competitor_committed")
+            elif intervention_id == case_id and for_update:
+                order.append("locked_reread")
+                assert snapshot.version == v_approved + 1
+            return snapshot
+    
+        monkeypatch.setattr(repo1, "get", controlled_initial_read)
+        adjust_res = client1.post(
+            f"/interventions/{case_id}/adjust",
+            json={
+                "actor": "ops-adjuster",
+                "reason": "late adjust attempt",
+                "action_spec": {"price_change_pct": -4},
+                "expected_version": v_approved,
+            },
+        )
+        assert order == ["initial", "competitor_committed", "locked_reread"]
+        assert adjust_res.status_code == 409
+        assert adjust_res.json()["detail"]["code"] == "STALE_UPDATE_CONFLICT"
+    
+        # Verify DB has only the stopped original and NO replacement was created
+        with intake_blank_db.connect() as conn:
+            rows = conn.execute(
+                "SELECT intervention_id, status, replacement_id FROM operations.interventions WHERE store_id = %s",
+                (store_id,),
+            ).fetchall()
+            assert len(rows) == 1
+            assert str(rows[0][0]) == case_uuid
+            assert rows[0][1] == ("stopped" if competitor == "stop" else "approved")
+            assert rows[0][2] is None
+    
+        # Verify document store has only the stopped original
+        doc = repo1.get(case_id)
+        assert doc is not None
+        assert doc.status.value == ("STOPPED" if competitor == "stop" else "APPROVED")
+        assert doc.replacement_id is None
+    
+>       assert list(app1.state.audit_log.list_events()) == audit_before
+E       AssertionError: assert [AuditEvent(e...t-worm'), ...] == [AuditEvent(e...t-worm'), ...]
+E         
+E         Left contains 2 more items, first extra item: AuditEvent(event_type='security.authorization', actor='test-operator', action='execute', resource='intervention', outc...n', worm_sink_id='file:///tmp/pantheon-worker-worktrees/pantheon/odp-intv006-adjust-workflow-001/.odp_data/audit-worm')
+E         Use -v to get more diff
+
+tests/integration/test_official_real_estate_postgresql.py:757: AssertionError
+----------------------------- Captured stderr call -----------------------------
+2026/09/11 12:37:58 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/09/11 12:37:58 INFO mlflow.store.db.utils: Updating database tables
+2026/09/11 12:38:04 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/09/11 12:38:04 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-09-11T12:38:10.462204+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "615fd67b-3373-41ae-945e-806020c3087a", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /interventions ok"}
+{"timestamp": "2026-09-11T12:38:10.510445+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "b03551eb-7022-4aaf-b8b7-91f9dc5b3de3", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /interventions/{intervention_id}/eligibility ok"}
+{"timestamp": "2026-09-11T12:38:10.536758+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "3f5ebfbf-0c14-417a-b5f3-c84f4beea5d4", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /interventions/{intervention_id}/action ok"}
+{"timestamp": "2026-09-11T12:38:10.572284+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "ab9082e9-fc31-477b-ac77-b1179ff84ba9", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /interventions/{intervention_id}/conflict-check ok"}
+{"timestamp": "2026-09-11T12:38:10.620011+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "0e42b290-ed7e-4dc1-95b4-c6706f51ee5f", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /interventions/{intervention_id}/submit ok"}
+{"timestamp": "2026-09-11T12:38:10.659225+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "ca946c5d-de04-499d-b84a-5c2f81ea1d9a", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /interventions/{intervention_id}/approve ok"}
+{"timestamp": "2026-09-11T12:38:12.933946+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "bb47e819-bde4-4764-b67e-9c141fb6e955", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /interventions/{intervention_id}/stop ok"}
+{"timestamp": "2026-09-11T12:38:12.941788+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "2426a36e-48d5-44e7-b14d-1f24014eba3b", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /interventions/{intervention_id}/adjust ok"}
+------------------------------ Captured log call -------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+_ test_postgresql_adjust_interleaved_with_stop_or_version_update_conflict[version] _
+
+intake_blank_db = IntakeDatabase(server=IntakePgServer(psycopg=<module 'psycopg' from '/tmp/pantheon-worker-worktrees/pantheon/odp-intv0...intake_test_93207c232e0b', 'intake_test_9623f0c05d6b', 'intake_test_da579db76284']), dbname='intake_test_da579db76284')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7a6b26bbe8d0>
+competitor = 'version'
+
+    @pytest.mark.parametrize("competitor", ["stop", "version"])
+    def test_postgresql_adjust_interleaved_with_stop_or_version_update_conflict(
+        intake_blank_db: Any, monkeypatch: pytest.MonkeyPatch, competitor: str,
+    ) -> None:
+        """ODP-FR-INTV-006: Controlled interleaving across independent PostgreSQL engines:
+        Worker 1 reads APPROVED vN and prepares adjust; Worker 2 stops the case concurrently
+        under its own engine before Worker 1's lock/CAS write; Worker 1's adjust detects
+        the stale status under FOR UPDATE, returns HTTP 409 STALE_UPDATE_CONFLICT (not 422),
+        and leaves no orphaned replacement in SQL or document store."""
+        _upgrade_official_schema(intake_blank_db)
+        runtime_url, _ = _urls(intake_blank_db)
+    
+        engine1 = PostgresEngine(runtime_url, bootstrap=True, validate_schema=False, max_pool_size=4)
+        engine2 = PostgresEngine(runtime_url, bootstrap=False, validate_schema=False, max_pool_size=4)
+    
+        from fastapi.testclient import TestClient
+    
+        from apps.api.oday_api.main import create_app
+        from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+        from shared.infrastructure.persistence.repositories import (
+            DurableInterventionRepository,
+        )
+        from tests.integration._authz import INTERVENTION_HEADERS
+    
+        tenant_id = str(uuid4())
+        store_id = str(uuid4())
+        with intake_blank_db.connect() as conn:
+            conn.execute("INSERT INTO core.tenants (tenant_id, tenant_name) VALUES (%s, %s)", (tenant_id, "PG Interleave Tenant"))
+            conn.execute("INSERT INTO core.stores (store_id, tenant_id, store_name) VALUES (%s, %s, %s)", (store_id, tenant_id, "PG Interleave Store"))
+    
+        repo1 = DurableInterventionRepository(SqliteDocumentStore(engine1))
+        repo2 = DurableInterventionRepository(SqliteDocumentStore(engine2))
+    
+        app1 = create_app(intervention_repository=repo1)
+        app2 = create_app(intervention_repository=repo2)
+    
+        client1 = TestClient(app1, headers=INTERVENTION_HEADERS)
+        client2 = TestClient(app2, headers=INTERVENTION_HEADERS)
+    
+        now = datetime.now(UTC)
+        create_res = client1.post(
+            "/interventions",
+            json={
+                "store_id": store_id,
+                "kind": "PRICE_CHANGE",
+                "trigger_ref": "alert-pg-interleave",
+                "expected_outcome": "pg interleave test",
+                "planned_start": now.isoformat(),
+                "planned_end": (now + timedelta(days=14)).isoformat(),
+                "created_by": "pg-admin",
+                "action_spec": {"price_change_pct": -5},
+            },
+        )
+        assert create_res.status_code == 201
+        case_id = create_res.json()["intervention_id"]
+        case_uuid = case_id.removeprefix("intervention-")
+    
+        client1.post(f"/interventions/{case_id}/eligibility", json={"eligible": True, "actor": "pg-admin"})
+        client1.post(f"/interventions/{case_id}/action", json={"action_spec": {"price_change_pct": -5}, "actor": "pg-admin"})
+        client1.post(f"/interventions/{case_id}/conflict-check", json={"actor": "pg-admin"})
+        client1.post(f"/interventions/{case_id}/submit", json={"actor": "pg-admin"})
+        approve_res = client1.post(f"/interventions/{case_id}/approve", json={"action": "APPROVE", "actor": "sup-admin", "reason": "approved"})
+        assert approve_res.status_code == 200
+        v_approved = approve_res.json()["version"]
+    
+        from dataclasses import replace
+    
+        order = []
+        get_original = repo1.get
+        audit_before = list(app1.state.audit_log.list_events())
+    
+        def controlled_initial_read(intervention_id, *, for_update=False):
+            snapshot = get_original(intervention_id, for_update=for_update)
+            if intervention_id == case_id and not order and not for_update:
+                assert snapshot.version == v_approved
+                order.append("initial")
+                if competitor == "stop":
+                    response = client2.post(f"/interventions/{case_id}/stop", json={"actor": "ops-stopper", "reason": "emergency cancellation"})
+                    assert response.status_code == 200
+                else:
+                    repo2.save(replace(repo2.get(case_id), version=v_approved + 1))
+                order.append("competitor_committed")
+            elif intervention_id == case_id and for_update:
+                order.append("locked_reread")
+                assert snapshot.version == v_approved + 1
+            return snapshot
+    
+        monkeypatch.setattr(repo1, "get", controlled_initial_read)
+        adjust_res = client1.post(
+            f"/interventions/{case_id}/adjust",
+            json={
+                "actor": "ops-adjuster",
+                "reason": "late adjust attempt",
+                "action_spec": {"price_change_pct": -4},
+                "expected_version": v_approved,
+            },
+        )
+        assert order == ["initial", "competitor_committed", "locked_reread"]
+        assert adjust_res.status_code == 409
+        assert adjust_res.json()["detail"]["code"] == "STALE_UPDATE_CONFLICT"
+    
+        # Verify DB has only the stopped original and NO replacement was created
+        with intake_blank_db.connect() as conn:
+            rows = conn.execute(
+                "SELECT intervention_id, status, replacement_id FROM operations.interventions WHERE store_id = %s",
+                (store_id,),
+            ).fetchall()
+            assert len(rows) == 1
+            assert str(rows[0][0]) == case_uuid
+            assert rows[0][1] == ("stopped" if competitor == "stop" else "approved")
+            assert rows[0][2] is None
+    
+        # Verify document store has only the stopped original
+        doc = repo1.get(case_id)
+        assert doc is not None
+        assert doc.status.value == ("STOPPED" if competitor == "stop" else "APPROVED")
+        assert doc.replacement_id is None
+    
+>       assert list(app1.state.audit_log.list_events()) == audit_before
+E       AssertionError: assert [AuditEvent(e...t-worm'), ...] == [AuditEvent(e...t-worm'), ...]
+E         
+E         Left contains 2 more items, first extra item: AuditEvent(event_type='security.authorization', actor='test-operator', action='execute', resource='intervention', outc...n', worm_sink_id='file:///tmp/pantheon-worker-worktrees/pantheon/odp-intv006-adjust-workflow-001/.odp_data/audit-worm')
+E         Use -v to get more diff
+
+tests/integration/test_official_real_estate_postgresql.py:757: AssertionError
+----------------------------- Captured stderr call -----------------------------
+2026/09/11 12:38:14 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/09/11 12:38:14 INFO mlflow.store.db.utils: Updating database tables
+2026/09/11 12:38:18 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/09/11 12:38:18 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-09-11T12:38:24.698719+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "5620a7a0-72a2-4f36-bc20-65a1469b8717", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /interventions ok"}
+{"timestamp": "2026-09-11T12:38:24.724485+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "b0dfe56a-8b9b-47d4-9e75-ef6aacb16044", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /interventions/{intervention_id}/eligibility ok"}
+{"timestamp": "2026-09-11T12:38:24.748103+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "4cb70d08-fa4a-4c69-b1c0-c555f384ba84", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /interventions/{intervention_id}/action ok"}
+{"timestamp": "2026-09-11T12:38:24.775052+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "9321d87a-965f-4ab2-97b4-309244645993", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /interventions/{intervention_id}/conflict-check ok"}
+{"timestamp": "2026-09-11T12:38:24.798862+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "ec65dbca-5a31-4315-a113-01fcceb21457", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /interventions/{intervention_id}/submit ok"}
+{"timestamp": "2026-09-11T12:38:24.824327+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "cabf5d39-4a54-43cb-a62d-e9d8e7fa0c66", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /interventions/{intervention_id}/approve ok"}
+{"timestamp": "2026-09-11T12:38:24.854533+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "5b38d56d-0246-43b0-beb7-3b6a75469011", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /interventions/{intervention_id}/adjust ok"}
+------------------------------ Captured log call -------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+=============================== warnings summary ===============================
+tests/integration/test_official_real_estate_postgresql.py::test_postgresql_adjust_concurrency_creates_single_replacement_and_rejects_collision
+  /tmp/pantheon-worker-worktrees/pantheon/odp-intv006-adjust-workflow-001/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/integration/test_official_real_estate_postgresql.py::test_postgresql_adjust_interleaved_with_stop_or_version_update_conflict[stop]
+FAILED tests/integration/test_official_real_estate_postgresql.py::test_postgresql_adjust_interleaved_with_stop_or_version_update_conflict[version]

@@ -53,10 +53,12 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
       "blocked",
     );
 
-    await page.getByTestId("network-tab-1").click();
-    await expect(page.getByTestId("listing-zone-filter-chip")).toContainText(
-      "HZ-01",
-    );
+    await expect(async () => {
+      await page.getByTestId("network-tab-1").click();
+      await expect(page.getByTestId("listing-zone-filter-chip")).toContainText(
+        "HZ-01",
+      );
+    }).toPass({ timeout: 15_000 });
     await expect(page.getByTestId("network-listing-table")).toContainText(
       "L-2024",
       { timeout: 15_000 },
@@ -417,6 +419,16 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
   test("real HeatZone map stays nonblank and synchronized to selected zone and lens", async ({
     page,
   }) => {
+    const workerResponses: { url: string; status: number }[] = [];
+    const pageErrors: string[] = [];
+
+    page.on("response", (res) => {
+      if (res.url().includes("maplibre-gl-worker") || res.url().includes("maplibre-gl-shared")) {
+        workerResponses.push({ url: res.url(), status: res.status() });
+      }
+    });
+    page.on("pageerror", (err) => pageErrors.push(err.message));
+
     await page.goto("/operator?ws=network");
     await expect(page.getByTestId("network-panel-find-areas")).toBeVisible();
     await expect(page.getByTestId("heat-zone-map")).toHaveAttribute(
@@ -437,6 +449,48 @@ test.describe("ODP-OC-R4-005 Network Listing Radar", () => {
         timeout: 30_000,
       })
       .toBe(true);
+
+    // Verify MapLibre v6 worker script delivery and GeoJSON source/layer processing
+    await expect
+      .poll(
+        async () => {
+          return page.evaluate(() => {
+            const map = window.__odpMaplibreMap;
+            if (!map) return null;
+            const sourceLoaded = map.isSourceLoaded("odp-local-heatzones");
+            const sourceFeatures = map.querySourceFeatures("odp-local-heatzones");
+            const renderedFeatures = map.queryRenderedFeatures(undefined, {
+              layers: ["odp-local-heatzone-fill"],
+            });
+            return {
+              isStyleLoaded: map.isStyleLoaded(),
+              sourceLoaded,
+              sourceFeaturesCount: sourceFeatures.length,
+              sourceFeatureIds: sourceFeatures.map((f: any) => f.properties?.id).filter(Boolean),
+              renderedFeaturesCount: renderedFeatures.length,
+            };
+          });
+        },
+        { timeout: 30_000 },
+      )
+      .toMatchObject({
+        isStyleLoaded: true,
+        sourceLoaded: true,
+      });
+
+    const finalMapState = await page.evaluate(() => {
+      const map = window.__odpMaplibreMap;
+      if (!map) return null;
+      const features = map.querySourceFeatures("odp-local-heatzones");
+      return {
+        featuresCount: features.length,
+        featureIds: Array.from(new Set(features.map((f: any) => f.properties?.id))),
+      };
+    });
+
+    expect(finalMapState?.featuresCount).toBeGreaterThan(0);
+    expect(finalMapState?.featureIds).toContain("HZ-01");
+    expect(pageErrors.filter((msg) => msg.includes("Worker") || msg.includes("maplibre"))).toEqual([]);
 
     await page.getByRole("button", { name: /Fit Brand Fit/ }).click();
     await page.getByRole("button", { name: /HZ-02 ·/ }).click();

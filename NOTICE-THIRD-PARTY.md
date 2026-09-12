@@ -14,8 +14,8 @@ Retain NOTICE; state significant changes if modified.
 
 - `@humanwhocodes/config-array` 0.13.0 (npm)
 - `@humanwhocodes/module-importer` 1.0.1 (npm)
-- `@img/sharp-linux-x64` 0.35.3 (npm)
-- `@img/sharp-linuxmusl-x64` 0.35.3 (npm)
+- `@img/sharp-linux-x64` 0.35.4 (npm)
+- `@img/sharp-linuxmusl-x64` 0.35.4 (npm)
 - `@playwright/test` 1.61.1 (npm)
 - `@swc/helpers` 0.5.15 (npm)
 - `apache-arrow` 21.2.0 (npm)
@@ -32,7 +32,7 @@ Retain NOTICE; state significant changes if modified.
 - `h3-js` 4.5.0 (npm)
 - `playwright` 1.61.1 (npm)
 - `playwright-core` 1.61.1 (npm)
-- `sharp` 0.35.3 (npm)
+- `sharp` 0.35.4 (npm)
 - `typescript` 5.6.3 (npm)
 - `absl-py` 2.5.0 (pypi)
 - `adagio` 0.2.6 (pypi)
@@ -125,8 +125,8 @@ Weak copyleft. Same handling as LGPL-3.0-or-later.
 
 Weak copyleft. Used unmodified as a dynamically loaded library; recipients may obtain the library source from its upstream project.
 
-- `@img/sharp-libvips-linux-x64` 1.3.2 (npm)
-- `@img/sharp-libvips-linuxmusl-x64` 1.3.2 (npm)
+- `@img/sharp-libvips-linux-x64` 1.3.3 (npm)
+- `@img/sharp-libvips-linuxmusl-x64` 1.3.3 (npm)
 
 ### MPL-2.0
 
@@ -143,7 +143,7 @@ File-level copyleft: source of any modified MPL file must be offered.
 
 ### (MIT OR Apache-2.0) (1)
 
-- `@maplibre/mlt` 1.1.12 (npm)
+- `@maplibre/mlt` 1.2.1 (npm)
 
 ### (MIT OR CC0-1.0) (1)
 
@@ -157,8 +157,8 @@ File-level copyleft: source of any modified MPL file must be offered.
 
 - `@humanwhocodes/config-array` 0.13.0 (npm)
 - `@humanwhocodes/module-importer` 1.0.1 (npm)
-- `@img/sharp-linux-x64` 0.35.3 (npm)
-- `@img/sharp-linuxmusl-x64` 0.35.3 (npm)
+- `@img/sharp-linux-x64` 0.35.4 (npm)
+- `@img/sharp-linuxmusl-x64` 0.35.4 (npm)
 - `@playwright/test` 1.61.1 (npm)
 - `@swc/helpers` 0.5.15 (npm)
 - `apache-arrow` 21.2.0 (npm)
@@ -175,7 +175,7 @@ File-level copyleft: source of any modified MPL file must be offered.
 - `h3-js` 4.5.0 (npm)
 - `playwright` 1.61.1 (npm)
 - `playwright-core` 1.61.1 (npm)
-- `sharp` 0.35.3 (npm)
+- `sharp` 0.35.4 (npm)
 - `typescript` 5.6.3 (npm)
 - `absl-py` 2.5.0 (pypi)
 - `adagio` 0.2.6 (pypi)
@@ -240,7 +240,7 @@ File-level copyleft: source of any modified MPL file must be offered.
 
 ### Apache-2.0 AND LGPL-3.0-or-later AND MIT (1)
 
-- `@img/sharp-wasm32` 0.35.3 (npm)
+- `@img/sharp-wasm32` 0.35.4 (npm)
 
 ### Apache-2.0 AND MIT (1)
 
@@ -255,10 +255,9 @@ File-level copyleft: source of any modified MPL file must be offered.
 - `cryptography` 50.0.1 (pypi)
 - `python-dateutil` 2.9.0.post0 (pypi)
 
-### BSD-2-Clause (17)
+### BSD-2-Clause (16)
 
 - `@mapbox/tiny-sdf` 2.2.0 (npm)
-- `@mapbox/unitbezier` 0.0.1 (npm)
 - `@mapbox/unitbezier` 1.0.0 (npm)
 - `damerau-levenshtein` 1.0.8 (npm)
 - `entities` 7.0.1 (npm)
@@ -275,13 +274,12 @@ File-level copyleft: source of any modified MPL file must be offered.
 - `pyasn1_modules` 0.4.2 (pypi)
 - `wrapt` 2.2.2 (pypi)
 
-### BSD-3-Clause (47)
+### BSD-3-Clause (46)
 
 - `@humanwhocodes/object-schema` 2.0.3 (npm)
-- `@mapbox/vector-tile` 2.0.5 (npm)
+- `@mapbox/vector-tile` 3.0.0 (npm)
 - `esquery` 1.7.0 (npm)
-- `maplibre-gl` 5.24.0 (npm)
-- `pbf` 4.0.2 (npm)
+- `maplibre-gl` 6.9.0 (npm)
 - `pbf` 5.1.2 (npm)
 - `source-map-js` 1.2.1 (npm)
 - `Flask` 3.1.3 (pypi)
@@ -341,12 +339,11 @@ File-level copyleft: source of any modified MPL file must be offered.
 
 - `language-subtag-registry` 0.3.23 (npm)
 
-### ISC (32)
+### ISC (31)
 
 - `@mapbox/point-geometry` 1.1.0 (npm)
-- `@mapbox/whoots-js` 3.1.0 (npm)
 - `@maplibre/geojson-vt` 6.1.1 (npm)
-- `@maplibre/maplibre-gl-style-spec` 24.10.0 (npm)
+- `@maplibre/maplibre-gl-style-spec` 26.4.2 (npm)
 - `@ungap/structured-clone` 1.3.3 (npm)
 - `earcut` 2.2.4 (npm)
 - `earcut` 3.2.3 (npm)
@@ -392,10 +389,10 @@ File-level copyleft: source of any modified MPL file must be offered.
 
 ### LGPL-3.0-or-later (2)
 
-- `@img/sharp-libvips-linux-x64` 1.3.2 (npm)
-- `@img/sharp-libvips-linuxmusl-x64` 1.3.2 (npm)
+- `@img/sharp-libvips-linux-x64` 1.3.3 (npm)
+- `@img/sharp-libvips-linuxmusl-x64` 1.3.3 (npm)
 
-### MIT (471)
+### MIT (474)
 
 - `@adobe/css-tools` 4.5.0 (npm)
 - `@babel/code-frame` 7.29.7 (npm)
@@ -407,6 +404,7 @@ File-level copyleft: source of any modified MPL file must be offered.
 - `@deck.gl/widgets` 9.3.7 (npm)
 - `@emnapi/core` 1.11.1 (npm)
 - `@emnapi/runtime` 1.11.1 (npm)
+- `@emnapi/runtime` 1.11.3 (npm)
 - `@emnapi/wasi-threads` 1.2.2 (npm)
 - `@epic-web/invariant` 1.0.0 (npm)
 - `@eslint-community/eslint-utils` 4.10.1 (npm)
@@ -436,10 +434,10 @@ File-level copyleft: source of any modified MPL file must be offered.
 - `@math.gl/types` 4.1.0 (npm)
 - `@math.gl/web-mercator` 4.1.0 (npm)
 - `@napi-rs/wasm-runtime` 1.1.6 (npm)
-- `@next/env` 15.5.21 (npm)
-- `@next/eslint-plugin-next` 15.5.19 (npm)
-- `@next/swc-linux-x64-gnu` 15.5.21 (npm)
-- `@next/swc-linux-x64-musl` 15.5.21 (npm)
+- `@next/env` 15.5.25 (npm)
+- `@next/eslint-plugin-next` 15.5.25 (npm)
+- `@next/swc-linux-x64-gnu` 15.5.25 (npm)
+- `@next/swc-linux-x64-musl` 15.5.25 (npm)
 - `@nodelib/fs.scandir` 2.1.5 (npm)
 - `@nodelib/fs.stat` 2.0.5 (npm)
 - `@nodelib/fs.walk` 1.2.8 (npm)
@@ -516,6 +514,7 @@ File-level copyleft: source of any modified MPL file must be offered.
 - `available-typed-arrays` 1.0.7 (npm)
 - `balanced-match` 1.0.2 (npm)
 - `balanced-match` 4.0.4 (npm)
+- `bidi-js` 1.1.0 (npm)
 - `brace-expansion` 1.1.18 (npm)
 - `brace-expansion` 5.0.9 (npm)
 - `braces` 3.0.3 (npm)
@@ -560,7 +559,7 @@ File-level copyleft: source of any modified MPL file must be offered.
 - `es-to-primitive` 1.3.4 (npm)
 - `escape-string-regexp` 4.0.0 (npm)
 - `eslint` 8.57.1 (npm)
-- `eslint-config-next` 15.5.19 (npm)
+- `eslint-config-next` 15.5.25 (npm)
 - `eslint-import-resolver-node` 0.3.10 (npm)
 - `eslint-module-utils` 2.14.0 (npm)
 - `eslint-plugin-import` 2.32.0 (npm)
@@ -663,7 +662,7 @@ File-level copyleft: source of any modified MPL file must be offered.
 - `nanoid` 3.3.18 (npm)
 - `napi-postinstall` 0.3.4 (npm)
 - `natural-compare` 1.4.0 (npm)
-- `next` 15.5.21 (npm)
+- `next` 15.5.25 (npm)
 - `node-addon-api` 8.9.2 (npm)
 - `node-exports-info` 1.6.2 (npm)
 - `node-gyp-build` 4.8.4 (npm)
@@ -696,7 +695,7 @@ File-level copyleft: source of any modified MPL file must be offered.
 - `picomatch` 2.3.2 (npm)
 - `picomatch` 4.0.5 (npm)
 - `possible-typed-array-names` 1.1.0 (npm)
-- `postcss` 8.5.26 (npm)
+- `postcss` 8.5.28 (npm)
 - `postgres-array` 2.0.0 (npm)
 - `postgres-bytea` 1.0.1 (npm)
 - `postgres-date` 1.0.7 (npm)
@@ -715,6 +714,7 @@ File-level copyleft: source of any modified MPL file must be offered.
 - `redent` 3.0.0 (npm)
 - `reflect.getprototypeof` 1.0.10 (npm)
 - `regexp.prototype.flags` 1.5.4 (npm)
+- `require-from-string` 2.0.2 (npm)
 - `resolve` 2.0.0-next.7 (npm)
 - `resolve-from` 4.0.0 (npm)
 - `resolve-pkg-maps` 1.0.0 (npm)
