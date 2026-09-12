@@ -6,11 +6,12 @@
   "phase": "History Recovery — executable acceptance reconciliation",
   "owner": "Antigravity2",
   "reviewer": "Codex",
-  "recorded_at": "2026-09-12T09:58:00Z",
+  "recorded_at": "2026-09-12T10:15:00Z",
   "reconciliation_target": {
     "repository": "alfloop-dev/odayplus",
     "continuation_branch": "task/ODP-NET002-LEASE-DISPOSITION-001-RECOVERY-20260911",
-    "target_dev_baseline": "d977447ee0c5d268297b819f71c4c9fa3ee66cb8"
+    "target_dev_baseline": "4298fc152788087ebe0d1a1c9869ebaa8dd5d276",
+    "previous_merge_base_parent": "d977447ee0c537a1c7eeb6f68ec912d033816f88"
   },
   "historical_delivery": {
     "pr_number": 1187,
@@ -89,6 +90,8 @@
     "round_1_disclosure": "In round 1 (2026-09-11), test receipts were recorded against an unresolved/invalid SHA (4b3512109a96e6255dca8e5b61efab4f66453183) where original execution binding is unknown. Per Pantheon Verification Policy and task acceptance ('舊事實與現在觀察分開，不重跑已有成功套件只為統計；文檔工作不新增鏡像 implementation 的 tests，不為湊證據重跑無關 suite'), historical CI on exact head 3bd82e8a already passed all required tests. The round 1 receipt is formally withdrawn due to invalid/unresolved SHA and unknown execution binding without unevidenced assumptions.",
     "round_2_20260912_status": "withdrawn_unbound_receipt",
     "round_2_disclosure": "In round 2 (2026-09-12), the 09:39:28Z receipts lacked exact task HEAD SHA binding and verifiable raw execution references. Those receipts are marked withdrawn/unknown. No unevidenced 'comprehensive reconciliation' or full-graph evaluation claim is made beyond local verified dependency endpoints.",
+    "round_3_owner_receipts_status": "unknown_unretained_local_log",
+    "round_3_owner_receipts_disclosure": "In round 3/4, owner local receipts (git diff check, governance requirement members check, local DAG assertion) lacked retained worker process handles and raw log bytes in the isolated worktree. Per Codex review findings, these entries are downgraded to unknown_unretained_local_log / withdrawn_unbound_receipt with exit_code set to null (prior reported exit_code 0 noted for historical record only), and removed from current measured verification claims.",
     "reviewer_round_3_observation": {
       "reviewer": "Codex",
       "reviewed_exact_head": "365365a8c19e8b3cbd70e1902f5e6816a579ddc7",
@@ -99,6 +102,21 @@
       "selection": "diff between 3828c5ada2a1baab33d7dbe734c7ec70152d3d77 and 365365a8c19e8b3cbd70e1902f5e6816a579ddc7",
       "pr_number": 1321,
       "pr_head_sha": "365365a8c19e8b3cbd70e1902f5e6816a579ddc7",
+      "historical_head_sha": "3bd82e8a401d463ef8301671620d45fc93b6127b",
+      "historical_checks_verified": true,
+      "historical_approval_verified": true
+    },
+    "reviewer_round_4_observation": {
+      "reviewer": "Codex",
+      "reviewed_exact_head": "47e7c41ada503f5a6d8cbe846f37dd0e3ce5fc8e",
+      "command": "git diff --check d977447ee0c537a1c7eeb6f68ec912d033816f88 47e7c41ada503f5a6d8cbe846f37dd0e3ce5fc8e",
+      "exit_code": 0,
+      "duration_seconds": 0.000009406,
+      "stdout": "",
+      "selection": "diff between real merge base parent d977447ee0c537a1c7eeb6f68ec912d033816f88 and submitted head 47e7c41ada503f5a6d8cbe846f37dd0e3ce5fc8e",
+      "pr_number": 1321,
+      "pr_head_sha": "47e7c41ada503f5a6d8cbe846f37dd0e3ce5fc8e",
+      "baseline_correction_note": "chunk bba015 tested bad baseline d977447ee0c5d268297b819f71c4c9fa3ee66cb8 with exit 128 (bad object); chunk 648497 verified real Git parent d977447ee0c537a1c7eeb6f68ec912d033816f88 with exit 0.",
       "historical_head_sha": "3bd82e8a401d463ef8301671620d45fc93b6127b",
       "historical_checks_verified": true,
       "historical_approval_verified": true
@@ -362,7 +380,7 @@
         }
       ],
       "cycle_detected": false,
-      "verdict": "valid_canonical_dag_no_cycles",
+      "verdict": "local_deduction_no_mutation_no_cycles",
       "deduction_note": "Local topological deduction verified: depends_on before and after are both [], dependency_mutation is false, no cycles introduced."
     }
   },
@@ -375,15 +393,14 @@
     "release_gate_policy": "ODP-FR-NET-002::LEASE 維持 absent / BLOCKED_BY_EVIDENCE 狀態。本處置任務之驗收核對通過，絕不代表將 ODP-FR-NET-002::LEASE 標記為 VERIFIED。實際雙求解器租約硬限制能力由 ODP-NET002-LEASE-IMPLEMENTATION-001 於 H05 滿足並完成程式、測試、獨立審查後正式驗收。"
   },
   "current_observations_and_verification_receipts": {
-    "observed_at": "2026-09-12T09:58:00Z",
+    "observed_at": "2026-09-12T10:15:00Z",
     "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-net002-lease-disposition-001",
-    "target_dev_baseline": "d977447ee0c5d268297b819f71c4c9fa3ee66cb8",
+    "target_dev_baseline": "4298fc152788087ebe0d1a1c9869ebaa8dd5d276",
     "human_decision_d18_provenance": {
       "source_file": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
-      "pinned_baseline_sha": "d977447ee0c5d268297b819f71c4c9fa3ee66cb8",
+      "pinned_baseline_sha": "4298fc152788087ebe0d1a1c9869ebaa8dd5d276",
       "lines": [
-        65,
-        179
+        66
       ],
       "decision_text": "D18 | NET-002 LEASE | A：實作／補齊租約契約 | 每店租約、解約金、候選起迄檔期及可追溯來源",
       "status": "confirmed_direction"
@@ -391,7 +408,7 @@
     "live_board_provenance": {
       "source_file": "/home/lupin/odayplus/ai-status.json",
       "archive_tasks_dir": "/home/lupin/odayplus/ai-task-archive/tasks/",
-      "observed_timestamp": "2026-09-12T09:58:00Z",
+      "observed_timestamp": "2026-09-12T10:15:00Z",
       "task_states_observed": {
         "ODP-NET002-LEASE-DISPOSITION-001": "in_progress (depends_on: [])",
         "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001": "todo (depends on ODP-NET002-LEASE-DISPOSITION-001, ODP-REQ-DISPOSITION-GOVERNANCE-001, and 15 other tasks)",
@@ -408,15 +425,21 @@
           "git",
           "diff",
           "--check",
-          "origin/dev",
+          "4298fc152788087ebe0d1a1c9869ebaa8dd5d276",
           "HEAD"
         ],
         "repository": "alfloop-dev/odayplus",
         "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-net002-lease-disposition-001",
-        "target_baseline": "d977447ee0c5d268297b819f71c4c9fa3ee66cb8",
-        "exit_code": 0,
-        "stdout_snippet": "",
-        "stderr_snippet": ""
+        "target_baseline": "4298fc152788087ebe0d1a1c9869ebaa8dd5d276",
+        "measured_head_sha": null,
+        "started_at": null,
+        "duration_seconds": null,
+        "exit_code": null,
+        "status": "unknown_unretained_local_log",
+        "prior_reported_exit_code": 0,
+        "stdout_snippet": null,
+        "stderr_snippet": null,
+        "note": "原始本地執行 terminal handle/log 未在 worktree 留存，依驗證證據政策降格為 unknown_unretained_local_log；真實 clean diff 由 Reviewer 第四輪收據 (chunk 648497 -> exit 0) 與本次 base advance clean merge 支持。"
       },
       {
         "label": "governance_check_requirement_members",
@@ -426,9 +449,16 @@
         ],
         "repository": "alfloop-dev/odayplus",
         "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-net002-lease-disposition-001",
-        "exit_code": 0,
-        "stdout_snippet": "Requirement member checks passed: 9 set-valued requirements, 47 members (37 satisfied, 10 absent and noted; dispositions: BLOCKED_BY_EVIDENCE=4, DECIDED=1, IMPLEMENTATION_READY=3, OPEN=3, VERIFIED=36).",
-        "stderr_snippet": ""
+        "measured_head_sha": null,
+        "started_at": null,
+        "duration_seconds": null,
+        "exit_code": null,
+        "status": "unknown_unretained_local_log",
+        "prior_reported_exit_code": 0,
+        "prior_reported_stdout": "Requirement member checks passed: 9 set-valued requirements, 47 members (37 satisfied, 10 absent and noted; dispositions: BLOCKED_BY_EVIDENCE=4, DECIDED=1, IMPLEMENTATION_READY=3, OPEN=3, VERIFIED=36).",
+        "stdout_snippet": null,
+        "stderr_snippet": null,
+        "note": "原始本地執行 terminal handle/log 未留存，依驗證證據政策降格為 unknown_unretained_local_log；成員狀態依 set_valued_requirements.json 聲明維持 absent / BLOCKED_BY_EVIDENCE。"
       },
       {
         "label": "canonical_board_and_local_dag_verification",
@@ -439,9 +469,16 @@
         ],
         "repository": "alfloop-dev/odayplus",
         "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-net002-lease-disposition-001",
-        "exit_code": 0,
-        "stdout_snippet": "Local dependency endpoints verified: depends_on=[], 0 cycles introduced.",
-        "stderr_snippet": ""
+        "measured_head_sha": null,
+        "started_at": null,
+        "duration_seconds": null,
+        "exit_code": null,
+        "status": "unknown_unretained_local_log",
+        "prior_reported_exit_code": 0,
+        "prior_reported_stdout": "Local dependency endpoints verified: depends_on=[], 0 cycles introduced.",
+        "stdout_snippet": null,
+        "stderr_snippet": null,
+        "note": "原始本地執行 handle 未留存，標記為 unknown_unretained_local_log；依賴未變更且無新增 cycle 由端點依賴對照表及局部拓撲推論支持。"
       }
     ]
   },

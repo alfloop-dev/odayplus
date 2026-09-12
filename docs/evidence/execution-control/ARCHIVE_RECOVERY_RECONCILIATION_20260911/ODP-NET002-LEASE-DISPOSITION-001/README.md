@@ -8,7 +8,7 @@
 - **執行身分 (Owner)**: `Antigravity2`
 - **指派審查者 (Reviewer)**: `Codex`
 - **復原交付分支**: `task/ODP-NET002-LEASE-DISPOSITION-001-RECOVERY-20260911`
-- **基準 SHA**: `d977447ee0c5d268297b819f71c4c9fa3ee66cb8`（已完成 `origin/dev` base advance merge）
+- **基準 SHA**: `4298fc152788087ebe0d1a1c9869ebaa8dd5d276`（已完成 `origin/dev` base advance merge，前次 merge parent 為 `d977447ee0c537a1c7eeb6f68ec912d033816f88`）
 - **歷史 PR 交付**: PR [#1187](https://github.com/alfloop-dev/odayplus/pull/1187)（PR head: `3bd82e8a401d463ef8301671620d45fc93b6127b`，merge commit: `c65bb54dd1171c8c878d37282470ada6a18f9ed6`，合併時間: 2026-09-04T12:35:05Z，合併者: `ajoe734`）
 
 ### 歷史事實與審查依據 (Historical Facts)
@@ -71,8 +71,8 @@
    - **局部推論結論**：經端點依賴檢查與局部拓撲分析，本任務在 canonical 看板 `depends_on` 變更前後均為 `[]`（`dependency_mutation: false`），未修改任何依賴關係，亦未引入任何閉環（`cycle_detected: false`）。
 
 ### 決策與看板觀察來源 (Observation Provenance)
-- **決策 D18 依據**：`docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md:65, 179`（基準 SHA `d977447ee0c5d268297b819f71c4c9fa3ee66cb8`），確認方向為「選項 A：實作／補齊租約契約」。
-- **看板狀態依據**：`/home/lupin/odayplus/ai-status.json` 及 `/home/lupin/odayplus/ai-task-archive/tasks/`（觀察時間 `2026-09-12T09:55:00Z`）。
+- **決策 D18 依據**：`docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md:66`（基準 SHA `4298fc152788087ebe0d1a1c9869ebaa8dd5d276`，前次 merge parent 為 `d977447ee0c537a1c7eeb6f68ec912d033816f88`），確認方向為「選項 A：實作／補齊租約契約」。
+- **看板狀態依據**：`/home/lupin/odayplus/ai-status.json` 及 `/home/lupin/odayplus/ai-task-archive/tasks/`（觀察時間 `2026-09-12T10:15:00Z`）。
 
 ---
 
@@ -96,37 +96,52 @@
 2. **2026-09-12 第二輪收據撤回 (`withdrawn_unbound_receipt`)**：
    - 第二輪記錄之 09:39:28Z 收據缺乏當時實測 task HEAD 綁定、未提交輸入快照及可追溯原始執行結果 reference（且時間早於送審 commit 09:40:28Z）。
    - 依 Codex 審查意見，該等未綁定收據正式標記為撤回/未知 (`withdrawn_unbound_receipt` / `execution_binding_unknown`)，移除未經證實之「全面補正」與全圖成功宣稱，保留有端點證據的「depends_on before/after 均 []、未修改依賴、不新增 cycle」局部推論。
-3. **Codex 第三輪獨立審查觀察收據 (Reviewer Round 3 Verification Observation)**：
-   - **Repository**: `alfloop-dev/odayplus`
-   - **Worktree**: `/tmp/pantheon-worker-worktrees/pantheon/odp-net002-lease-disposition-001`
+3. **2026-09-12 第三輪 Owner 收據降格說明 (`unknown_unretained_local_log` / `withdrawn_unbound_receipt`)**：
+   - 第三輪/第四輪修訂中列載之本地命令記錄（diff check、governance check、local DAG check），因原始 worker terminal process handle 及 log bytes 未在隔離 worktree 保存，依 Codex 第四輪審查意見逐項降格標記為 `unknown_unretained_local_log` / `withdrawn_unbound_receipt`。
+   - 前次記載之 exit code 0 與 output 明示為歷史記載（`prior_reported_exit_code: 0` / `prior_reported_output`），自「現行實測成功」用途移出，不作未經審計之現行成功斷言。
+4. **Codex 第三輪獨立審查觀察收據 (Reviewer Round 3 Verification Observation)**：
+   - **Reviewer**: `Codex`
    - **Reviewed Exact Head**: `365365a8c19e8b3cbd70e1902f5e6816a579ddc7`
-   - **Reviewer Command**: `git diff --check 3828c5ada2a1baab33d7dbe734c7ec70152d3d77 365365a8c19e8b3cbd70e1902f5e6816a579ddc7`
+   - **Timestamp**: `2026-09-12T09:51:30Z`
+   - **Command**: `git diff --check 3828c5ada2a1baab33d7dbe734c7ec70152d3d77 365365a8c19e8b3cbd70e1902f5e6816a579ddc7`
    - **Exit Code**: `0`
    - **Wall Time**: `0.000006948s`
    - **Stdout**: `""`（Clean, no whitespace errors）
    - **Selection**: diff between `3828c5ada2a1baab33d7dbe734c7ec70152d3d77` and `365365a8c19e8b3cbd70e1902f5e6816a579ddc7`
    - **PR #1321 CI Status**: exact head 與本地一致，change-scope/boundary/classify/orchestrator/product 為 success（7 product 子項/performance/e2e 為 skipped）。
+5. **Codex 第四輪獨立審查觀察收據 (Reviewer Round 4 Verification Observation)**：
+   - **Reviewer**: `Codex`
+   - **Reviewed Exact Head**: `47e7c41ada503f5a6d8cbe846f37dd0e3ce5fc8e`
+   - **Timestamp**: `2026-09-12T10:09:06Z`
+   - **Command**: `git diff --check d977447ee0c537a1c7eeb6f68ec912d033816f88 47e7c41ada503f5a6d8cbe846f37dd0e3ce5fc8e`
+   - **Exit Code**: `0`
+   - **Wall Time**: `0.000009406s`
+   - **Stdout**: `""`（Clean, no whitespace errors）
+   - **Selection**: diff between real merge base parent `d977447ee0c537a1c7eeb6f68ec912d033816f88` and PR head `47e7c41ada503f5a6d8cbe846f37dd0e3ce5fc8e`
+   - **Baseline Fix Disclosure**: 2026-09-12T10:08:43Z 執行 bad baseline `d977447ee0c5d268297b819f71c4c9fa3ee66cb8` 回傳 exit 128；後續以真實 Git parent `d977447ee0c537a1c7eeb6f68ec912d033816f88` 執行 exit 0。
+   - **PR #1321 CI Status**: exact head 與本地一致，change-scope/boundary/classify/orchestrator/product 為 success（7 product 子項/performance/e2e 為 skipped；task-review-gate PENDING）。
    - **Historical PR #1187 Head `3bd82e8a401d463ef8301671620d45fc93b6127b`**: 經唯讀 API 查證確認 7 項 check-runs 為 success，且 2026-09-04T12:12:18Z Antigravity6 approval 事件屬實。
 
-### 5.2 本輪實測收據 (Current Measured Verification Receipts)
+---
 
-於本任務工作區 `/tmp/pantheon-worker-worktrees/pantheon/odp-net002-lease-disposition-001` 實測收據：
+## 6. 本地收據降格與離線拓撲核對 (Receipts Degradation & Offline Verification)
 
-#### 收據 1：Git Diff Check (Focused Verification)
-- **Command**: `git diff --check origin/dev HEAD`
-- **Worktree**: `/tmp/pantheon-worker-worktrees/pantheon/odp-net002-lease-disposition-001`
-- **Target Baseline**: `d977447ee0c5d268297b819f71c4c9fa3ee66cb8`
-- **Exit Code**: `0`
-- **Output**: *(Clean, no whitespace errors)*
+依 Codex 審查意見與驗證證據政策，前輪未留存原始 terminal handle 與 log bytes 之本地執行記錄逐筆降格標記為 `unknown_unretained_local_log` / `withdrawn_unbound_receipt`，不作未經審計之現行成功斷言：
 
-#### 收據 2：集合型需求成員檢查器
-- **Command**: `python3 delivery_toolchain/governance/check_requirement_members.py`
-- **Worktree**: `/tmp/pantheon-worker-worktrees/pantheon/odp-net002-lease-disposition-001`
-- **Exit Code**: `0`
-- **Output Summary**: `Requirement member checks passed: 9 set-valued requirements, 47 members (37 satisfied, 10 absent and noted; dispositions: BLOCKED_BY_EVIDENCE=4, DECIDED=1, IMPLEMENTATION_READY=3, OPEN=3, VERIFIED=36).`
+### 1. Git Diff Check
+- **Command**: `git diff --check 4298fc152788087ebe0d1a1c9869ebaa8dd5d276 HEAD`
+- **Status**: `unknown_unretained_local_log`
+- **Exit Code**: `null` (prior reported: `0`)
+- **Note**: 原始本地執行 handle 未在 worktree 留存，依驗證證據政策降格為 unknown；真實 clean diff 由 Reviewer 第四輪收據 (`git diff --check d977447ee0c537a1... 47e7c41a...` -> exit 0) 及本次 dev base advance clean merge 支持。
 
-#### 收據 3：局部依賴與無環端點斷言
+### 2. 局部依賴與無環端點斷言 (Local Dependency & DAG Endpoints)
 - **Command**: `python3 -c "import json; b = json.load(open('/home/lupin/odayplus/ai-status.json')); tasks = {t['id']: t.get('depends_on', []) for t in b.get('tasks', [])}; assert tasks.get('ODP-NET002-LEASE-DISPOSITION-001') == []; assert 'ODP-NET002-LEASE-DISPOSITION-001' in tasks.get('ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001', []); assert tasks.get('ODP-NET002-LEASE-IMPLEMENTATION-001') == ['ODP-NET002-LEASE-CONTRACT-PREP-001']; print('Local dependency endpoints verified: depends_on=[], 0 cycles introduced.')"`
-- **Worktree**: `/tmp/pantheon-worker-worktrees/pantheon/odp-net002-lease-disposition-001`
-- **Exit Code**: `0`
-- **Output Summary**: `Local dependency endpoints verified: depends_on=[], 0 cycles introduced.`
+- **Status**: `unknown_unretained_local_log`
+- **Exit Code**: `null` (prior reported: `0`)
+- **Note**: 原始本地執行 handle 未留存，標記為 unknown；依賴未變更且無新增 cycle 由端點依賴對照表及局部拓撲推論支持。
+
+### 3. 集合型需求成員檢查器 (Governance Requirements Check)
+- **Command**: `python3 delivery_toolchain/governance/check_requirement_members.py`
+- **Status**: `unknown_unretained_local_log`
+- **Exit Code**: `null` (prior reported: `0`)
+- **Note**: 原始本地執行 handle 未留存，依驗證證據政策降格為 unknown；成員狀態依 `set_valued_requirements.json` 聲明維持 `absent` / `BLOCKED_BY_EVIDENCE`。
