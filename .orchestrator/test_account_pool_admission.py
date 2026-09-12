@@ -119,7 +119,9 @@ def test_dispatch_auth_snapshot_precedes_adapter_delivery(tmp_path):
         assert state["workers"][run_id]["auth_identity_hash"] == "auth-a"
 
 
-def test_canary_cannot_promote_sibling_recovery_created_after_dispatch(tmp_path):
+@pytest.mark.parametrize("snapshot", ["recorded", "missing", "malformed"])
+@pytest.mark.parametrize("sibling_generation_delta", [0, 1])
+def test_canary_promotes_only_sibling_epoch_recorded_at_dispatch(tmp_path, snapshot, sibling_generation_delta):
     config, state = fixture(tmp_path)
     request = DeliveryRequest(agent_id="codex", provider="codex", delivery_mode="codex", message="fixture", task_id="fixture-task", reason="review_ready_dispatch")
     result = DeliveryResult(ok=True, adapter="codex", mode="codex", target="fixture", auto_delivered=True, manual_confirmation_required=False, run_id="canary-before-new-sibling-epoch")
@@ -139,12 +141,20 @@ def test_canary_cannot_promote_sibling_recovery_created_after_dispatch(tmp_path)
         # A refreshed runtime contains a new same-second sibling recovery.
         # The canary's own pool still belongs to its original admission.
         sibling = state["account_pool_runtime"]["pool_b"]
-        sibling["generation"] += 1
+        sibling["generation"] += sibling_generation_delta
         worker = state["workers"][run_id]
+        # Persisted workers from before the snapshot field existed may still
+        # have valid own-pool admission, but no evidence for sibling epochs.
+        if snapshot == "missing":
+            worker.pop("dispatched_recovery_epochs")
+        elif snapshot == "malformed":
+            worker["dispatched_recovery_epochs"] = []
         worker.update(status="completed", runner_status="completed", exit_code=0)
         assert supervisor.record_account_pool_canary_success(config, state, worker)
         assert state["account_pool_runtime"]["pool_a"]["state"] == "healthy"
-        assert sibling["state"] == "recovering"
+        assert sibling["state"] == (
+            "healthy" if snapshot == "recorded" and sibling_generation_delta == 0 else "recovering"
+        )
 
 
 @pytest.mark.parametrize("worker_auth,admitted,expected", [

@@ -910,7 +910,9 @@ def record_account_pool_canary_success(config: dict[str, Any], state: dict[str, 
             if not other_auth:
                 other_auth = configured_account_pool_auth_hash(config, other_id)
             if other_auth == canary_auth and str(other_entry.get("state") or "") == "recovering":
-                if isinstance(recovery_epochs, dict) and recovery_epochs.get(other_id) != account_pool_recovery_epoch(other_entry):
+                # Legacy own-pool admission cannot attest a sibling epoch.
+                # Promotion requires the sibling snapshot captured at dispatch.
+                if not isinstance(recovery_epochs, dict) or recovery_epochs.get(other_id) != account_pool_recovery_epoch(other_entry):
                     continue
                 other_fk = str(other_entry.get("failure_kind") or "").strip().lower()
                 if other_fk and not (

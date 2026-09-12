@@ -241,3 +241,10 @@ A cleared provider pause alone cannot select an older healthy pool snapshot: the
 ## Final combined verification
 
 Original task-branch head 8562a4951b82 passed the entire CI-equivalent orchestrator suite: 2920 passed, 6 skipped, 10 deselected, 636 subtests, exit 0. The final commit adds only the known-auth/missing-admission parameter (eight admission cases pass) and these receipts. Production sources are byte-identical to that fully tested head. Boundary checks cover 1158 files and ruff passes. See final-continuation-verification.json and original full JUnit/log/receipt. The task remains subject to a new bounded Human/Ops continuation at epoch 8 and independent exact-head review/required CI.
+
+
+## Legacy sibling admission follow-up
+
+An already-running persisted worker from before `dispatched_recovery_epochs` existed could still attest its own recovery generation but had no evidence for sibling epochs. The old conditional skipped sibling validation entirely when the snapshot was missing or malformed. Such workers could promote even a newer same-second sibling recovery. Sibling promotion now always requires an explicit matching dispatch snapshot; legacy own-pool admission remains unchanged.
+
+The expanded actual-dispatch regression crosses recorded/missing/malformed snapshots with unchanged/newer sibling generations. Red: 4 failures and 2 controls; green: 28 admission/postcondition checks and 8 subtests; baseline: 114 quota/pause/pool/config/postcondition checks and 77 subtests. Original receipts and source fingerprints are in `legacy-sibling-verification.json`.
