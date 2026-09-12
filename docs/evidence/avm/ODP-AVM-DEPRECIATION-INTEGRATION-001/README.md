@@ -13,3 +13,8 @@ SQLite and PostgreSQL durable legacy fixtures omit both quality status and featu
 This change does not activate a live service or deploy a model. Existing approval, cutover and independent PR review gates remain in force.
 
 Final verification: **76 passed** (2 real artifact variants and 74 remaining AVM/domain/durable/API composition cases). Source commit: `b50bca51e62c58cf183d3a11076f1bb5a04d7817`. Exact commands and original exit codes are in `bounded-continuation-verification.json`.
+
+
+## Operator rollback composition
+
+Production bootstrap now supplies the same deployment depreciation pin and rollback receipt to the Operator router and its tenant-scoped NetworkRebalanceService. Its AVMService retains receipt validation and canonical tenant persistence. Two real artifact/bootstrap cases verify original-cost writes through both APIs restore v0 even without Finance cutover evidence, refuse expired/mismatched/malformed receipts, preserve existing v1 reports, and isolate tenants. Original failing and passing receipts are retained in operator-rollback-verification.json and sibling logs. Existing AVM/Operator/history/governance regression: 93 passed; real artifact tests: 2 passed; boundary 1157 and ruff passed.

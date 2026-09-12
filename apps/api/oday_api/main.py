@@ -2093,6 +2093,8 @@ else:
                 priceops_repository_for_tenant=priceops_repository_for_tenant,
                 model_runtime=model_runtime,
                 avm_production_executor=avm_production_executor,
+                avm_depreciation_version_pin=avm_dep_pin,
+                avm_rollback_receipt=avm_rollback_receipt,
                 netplan_production_executor=netplan_production_executor,
                 netplan_policy_repository=netplan_policy_repo,
                 netplan_approval_verifier=netplan_approval_verifier,

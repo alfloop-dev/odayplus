@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from modules.avm.application.valuation import AVMError, AVMService
+from modules.avm.application.valuation import AVMError, AVMService, DepreciationRollbackReceipt
 from modules.netplan.application.planning import (
     NetPlanApprovalError,
     NetPlanConstraintDisclosureError,
@@ -308,6 +308,8 @@ class NetworkRebalanceService:
         avm_repository: Any | None = None,
         netplan_repository: Any | None = None,
         avm_production_executor: Any | None = None,
+        avm_depreciation_version_pin: str | None = None,
+        avm_rollback_receipt: DepreciationRollbackReceipt | None = None,
         netplan_production_executor: Any | None = None,
         netplan_policy_repository: DecisionPolicyRepository | None = None,
         netplan_approval_verifier: Any | None = None,
@@ -319,6 +321,8 @@ class NetworkRebalanceService:
         self._avm_repository = avm_repository
         self._netplan_repository = netplan_repository
         self._avm_production_executor = avm_production_executor
+        self._avm_depreciation_version_pin = avm_depreciation_version_pin
+        self._avm_rollback_receipt = avm_rollback_receipt
         self._netplan_production_executor = netplan_production_executor
         # Deliberately not defaulted to the seeded v1 policy. A submit path that
         # falls back to built-in rules when the registry is absent cannot say
@@ -534,6 +538,8 @@ class NetworkRebalanceService:
                 report = AVMService(
                     repository=self._avm_repository,
                     production_executor=self._avm_production_executor,
+                    depreciation_version_pin=self._avm_depreciation_version_pin,
+                    rollback_receipt=self._avm_rollback_receipt,
                     runtime_mode=self._runtime_mode,
                 ).value(
                     case_id,

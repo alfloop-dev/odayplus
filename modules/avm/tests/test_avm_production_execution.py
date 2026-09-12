@@ -346,7 +346,7 @@ def test_production_avm_reloads_and_executes_real_oss_artifacts(
     assert app_module.production_feature_schema_versions()["avm"] == artifact_schema
     monkeypatch.setattr(MlflowProductionModelRuntime, "from_environment", lambda **kwargs: executor.model_runtime)
     monkeypatch.setattr(production_module, "_load_liquidity_artifact", lambda: (liquidity, executor.liquidity_evidence))
-    monkeypatch.setattr(production_module, "_load_depreciation_cutover_evidence_optional", lambda: executor.depreciation_cutover_evidence)
+    monkeypatch.setattr(production_module, "_load_depreciation_cutover_evidence_optional", lambda: None)
     contracts = dict(app_module.PRODUCTION_MODEL_CONTRACTS)
     contracts["avm"] = replace(contracts["avm"], governed_disabled_binding=None)
     monkeypatch.setattr(app_module, "PRODUCTION_MODEL_CONTRACTS", contracts)
@@ -368,7 +368,17 @@ def test_production_avm_reloads_and_executes_real_oss_artifacts(
     repository = bundle.avm_repository
     app = app_module.create_app(avm_repository=repository, persistence=bundle)
     assert app.state.production_model_capabilities["avm"]["available"], app.state.production_model_capabilities["avm"]
-    case = AVMService(repository=repository).create_case(_input(), created_by="fixture-finance", correlation_id="bootstrap-case")
+    original_cost_input = {
+        **_input(),
+        "equipment_depreciation_basis": "original_cost",
+        "equipment_original_cost": 100_000.0,
+        "useful_life_months": 84,
+        "residual_value_ratio": 0.10,
+        "depreciation_method": "straight_line",
+        "asset_in_service_date": "2023-01-01",
+        "depreciation_effective_date": "2026-07-01",
+    }
+    case = AVMService(repository=repository).create_case(original_cost_input, created_by="fixture-finance", correlation_id="bootstrap-case")
     client = TestClient(app, headers=AVM_HEADERS)
     response = client.post(f"/avm/cases/{case.case_id}/value", json={"actor": "fixture-worker"})
     assert response.status_code == 200, response.text
@@ -383,6 +393,71 @@ def test_production_avm_reloads_and_executes_real_oss_artifacts(
     report = fallback.value(case.case_id, actor="fixture-worker", correlation_id="fallback-case")
     assert report.feature_version == artifact_schema
     assert report.depreciation_version == AVM_DEPRECIATION_LEGACY_VERSION
+
+    # The same production deployment controls must reach the tenant-scoped
+    # Operator write path, including when Finance cutover evidence is absent.
+    from shared.infrastructure.persistence import DurableAVMRepository
+    from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
+    from tests.integration.test_operator_canonical_wiring import _headers
+
+    tenant_id = "rollback-tenant"
+    operator_repository = DurableAVMRepository(TenantScopedDocumentStore(app.state.operator_document_store, tenant_id))
+    historical_service = AVMService(repository=operator_repository, production_executor=executor, runtime_mode="production")
+    historical_case = historical_service.create_case(
+        {**original_cost_input, "store_id": "issued-before-rollback"},
+        created_by="finance", correlation_id="historical-v1",
+    )
+    historical_report = historical_service.value(historical_case.case_id, actor="finance", correlation_id="historical-v1")
+    assert historical_report.depreciation_version == AVM_DEPRECIATION_VERSION
+    historical_before = historical_report.to_dict()
+
+    for receipt_mode in ("valid", "expired", "wrong-pin", "malformed"):
+        payload = receipt.to_dict()
+        if receipt_mode == "expired":
+            payload.update(decision_time=(now - timedelta(hours=2)).isoformat(), target_expiry=(now - timedelta(hours=1)).isoformat())
+        elif receipt_mode == "wrong-pin":
+            payload["depreciation_version_pin"] = AVM_DEPRECIATION_VERSION
+        monkeypatch.setenv("ODP_AVM_DEPRECIATION_ROLLBACK_RECEIPT_JSON", "{" if receipt_mode == "malformed" else json.dumps(payload))
+        deployed_app = app_module.create_app(avm_repository=repository, persistence=bundle)
+        store_id = f"operator-rollback-{receipt_mode}"
+        data = {**original_cost_input, "store_id": store_id}
+        api_case = AVMService(repository=repository).create_case(data, created_by="finance", correlation_id=store_id)
+        operator_case = AVMService(repository=operator_repository).create_case(data, created_by="finance", correlation_id=store_id)
+        with TestClient(deployed_app) as deployed_client:
+            requested = deployed_client.post(
+                f"/api/v1/operator/network-rebalance/stores/{store_id}/avm/request",
+                headers=_headers(tenant_id, idempotency_key=f"request-{receipt_mode}"),
+                json={"actorRoleId": "operationsManager"},
+            )
+            assert requested.status_code == 200, requested.text
+            api_response = deployed_client.post(f"/avm/cases/{api_case.case_id}/value", headers=AVM_HEADERS, json={"actor": "fixture-worker"})
+            operator_response = deployed_client.post(
+                f"/api/v1/operator/network-rebalance/stores/{store_id}/avm/complete",
+                headers=_headers(tenant_id, idempotency_key=f"complete-{receipt_mode}"),
+                json={"actorRoleId": "operationsManager"},
+            )
+            if receipt_mode == "valid":
+                assert api_response.status_code == 200, api_response.text
+                assert operator_response.status_code == 200, operator_response.text
+                operator_report_id = operator_response.json()["store"]["avm"]["reportId"]
+                operator_report = operator_repository.latest_report(operator_case.case_id)
+                assert operator_report is not None
+                assert operator_report.case_id == operator_case.case_id
+                assert operator_report.report_id == operator_report_id
+                for rendered in (api_response.json(), operator_report.to_dict()):
+                    assert rendered["depreciation_version"] == AVM_DEPRECIATION_LEGACY_VERSION
+                    assert rendered["execution_metadata"]["depreciation_rollback_receipt"] == receipt.to_dict()
+                other_repository = DurableAVMRepository(TenantScopedDocumentStore(app.state.operator_document_store, "other-tenant"))
+                assert other_repository.get_case(operator_case.case_id) is None
+                assert other_repository.latest_report(operator_case.case_id) is None
+            else:
+                assert 400 <= api_response.status_code < 500, api_response.text
+                assert 400 <= operator_response.status_code < 500, operator_response.text
+                assert "receipt" in api_response.text.lower()
+                assert "receipt" in operator_response.text.lower()
+                assert repository.report_history(api_case.case_id) == []
+                assert operator_repository.report_history(operator_case.case_id) == []
+        assert operator_repository.latest_report(historical_case.case_id).to_dict() == historical_before
 
 
 def test_production_avm_executes_with_straight_line_depreciation_delta(

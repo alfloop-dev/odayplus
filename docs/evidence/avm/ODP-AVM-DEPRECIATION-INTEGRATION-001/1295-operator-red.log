@@ -1,0 +1,563 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_ test_production_avm_reloads_and_executes_real_oss_artifacts[valuation-view-v1] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fb5be3de780>
+tmp_path = PosixPath('/tmp/pytest-of-lupin/pytest-573/test_production_avm_reloads_an0')
+artifact_schema = 'valuation-view-v1'
+intake_blank_db = IntakeDatabase(server=IntakePgServer(psycopg=<module 'psycopg' from '/tmp/pantheon-worker-worktrees/pantheon/odp-avm-d..., 'dbname': 'postgres', 'user': 'postgres'}, _created=['intake_test_a3da5c79ca5a']), dbname='intake_test_a3da5c79ca5a')
+request = <FixtureRequest for <Function test_production_avm_reloads_and_executes_real_oss_artifacts[valuation-view-v1]>>
+
+    @pytest.mark.parametrize("artifact_schema", ["valuation-view-v1", "valuation-view-v2"])
+    def test_production_avm_reloads_and_executes_real_oss_artifacts(
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path, artifact_schema: str, intake_blank_db, request,  # noqa: F811
+    ) -> None:
+        monkeypatch.delenv("ODP_REQUIRE_LIVE_DATA", raising=False)
+        training_rows = [
+            {
+                "normalized_gm": float(300_000 + index * 10_000),
+                "quality_score": float(0.7 + index * 0.01),
+                "liquidity_expected_days": float(80 - index),
+            }
+            for index in range(20)
+        ]
+        labels = [
+            row["normalized_gm"] * 2.2
+            + row["quality_score"] * 100_000
+            - row["liquidity_expected_days"] * 1_000
+            for row in training_rows
+        ]
+        trained = train_oss_estimator(
+            algorithm="lightgbm_regressor",
+            feature_rows=training_rows,
+            labels=labels,
+            feature_names=(
+                "normalized_gm",
+                "quality_score",
+                "liquidity_expected_days",
+            ),
+        )
+        artifact_path = tmp_path / "avm-lightgbm.zip"
+        artifact_path.write_bytes(trained.estimator.to_artifact_bytes())
+        tracking_uri = f"sqlite:///{tmp_path / 'mlflow.db'}"
+        registry = MlflowRegistryAdapter(
+            InMemoryLearningHubRepository(),
+            tracking_uri=tracking_uri,
+            experiment_name="avm-production-execution",
+        )
+        registry.register_model_version(
+            ModelVersion(
+                model_name=PRODUCTION_MODEL_CONTRACTS["avm"].model_name or "",
+                version="2026.07.24",
+                artifact_uri=artifact_path.as_uri(),
+                dataset_snapshot_id="avm-training-live",
+                feature_schema_version=artifact_schema,
+                label_version="avm-sale-price-v2",
+                metrics={"mae": 20_000.0},
+                stage=ModelStage.PRODUCTION,
+                aliases=frozenset({ModelAlias.PRODUCTION}),
+                run_id="avm-training-run",
+                git_sha="test-sha",
+                approved_by="model-risk",
+                approved_at=datetime(2026, 7, 23, tzinfo=UTC),
+            )
+        )
+        monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+        liquidity = LifelinesLiquiditySurvivalAdapter().fit(
+            [
+                LiquidityTrainingRecord(
+                    duration_days=float(20 + index * 4),
+                    sold=index % 3 != 0,
+                    features={
+                        "quality_score": 0.7 + index * 0.015,
+                        "liquidity_discount": 0.05 + index * 0.005,
+                    },
+                )
+                for index in range(12)
+            ]
+        )
+        calls = {"lightgbm": 0, "lifelines": 0}
+        original_estimator_predict = LoadedOSSEstimator.predict
+        original_liquidity_predict = LifelinesLiquiditySurvivalAdapter.predict
+    
+        def estimator_spy(self, rows):
+            calls["lightgbm"] += 1
+            return original_estimator_predict(self, rows)
+    
+        def liquidity_spy(self, features):
+            calls["lifelines"] += 1
+            return original_liquidity_predict(self, features)
+    
+        monkeypatch.setattr(LoadedOSSEstimator, "predict", estimator_spy)
+        monkeypatch.setattr(
+            LifelinesLiquiditySurvivalAdapter,
+            "predict",
+            liquidity_spy,
+        )
+        executor = AVMProductionExecutor(
+            expected_feature_schema_version=artifact_schema,
+            model_runtime=MlflowProductionModelRuntime(
+                tracking_uri="https://mlflow.internal.example",
+                client=registry.client,
+                artifact_loader=lambda _uri, _tracking_uri: artifact_path.read_bytes(),
+                model_names={
+                    "avm": PRODUCTION_MODEL_CONTRACTS["avm"].model_name or "dealroom_avm"
+                },
+            ),
+            liquidity_runtime=liquidity,
+            liquidity_evidence=LiquidityArtifactEvidence(
+                artifact_uri="gs://models/avm-liquidity.json",
+                artifact_sha256="sha256:" + ("c" * 64),
+                model_version=liquidity.model_version,
+                approved_by="model-risk",
+                approved_at=datetime(2026, 7, 23, tzinfo=UTC),
+                dataset_snapshot_id="liquidity-training-live",
+            ),
+            depreciation_cutover_evidence=DepreciationCutoverEvidence(
+                approved_by="finance-vp",
+                approved_at=datetime(2026, 9, 3, tzinfo=UTC),
+                thresholds_reference="docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md#r-4",
+                model_version="avm-depreciation-straight-line-v1",
+                numerical_threshold_asset_delta_ratio=0.20,
+                numerical_threshold_unexplained_cohort_ratio=0.05,
+                structural_completeness_required=True,
+                calibration_coverage_degradation_threshold=0.05,
+            ),
+        )
+        service = AVMService(production_executor=executor)
+        case = service.create_case(
+            _input(),
+            created_by="finance",
+            correlation_id="corr-avm-real",
+        )
+    
+        report = service.value(
+            case.case_id,
+            actor="worker",
+            correlation_id="corr-avm-real",
+        )
+    
+        assert calls == {"lightgbm": 1, "lifelines": 1}
+        assert report.execution_metadata["model"]["model_engine"] == ("lightgbm.LGBMRegressor")
+        assert report.execution_metadata["model"]["model_approved_by"] == "model-risk"
+        assert report.execution_metadata["liquidity"]["engine"] == ("lifelines.CoxPHFitter")
+        assert report.execution_metadata["liquidity"]["library_version"]
+    
+        monkeypatch.delenv("ODP_REQUIRE_LIVE_DATA", raising=False)
+        # Exercise the real bootstrap and environment fallback with the same
+        # registered artifact; no fake runtime may bypass registry schema checks.
+        import json
+        from dataclasses import replace
+    
+        from fastapi.testclient import TestClient
+    
+        import modules.avm.application.production as production_module
+        from apps.api.oday_api import main as app_module
+        from shared.infrastructure.persistence import build_persistence
+        from tests.integration._authz import AVM_HEADERS
+    
+        monkeypatch.delenv("ODP_AVM_ARTIFACT_SCHEMA_VERSION", raising=False)
+        if artifact_schema == "valuation-view-v2":
+            monkeypatch.setenv("ODP_AVM_ARTIFACT_SCHEMA_VERSION", artifact_schema)
+        assert app_module.production_feature_schema_versions()["avm"] == artifact_schema
+        monkeypatch.setattr(MlflowProductionModelRuntime, "from_environment", lambda **kwargs: executor.model_runtime)
+        monkeypatch.setattr(production_module, "_load_liquidity_artifact", lambda: (liquidity, executor.liquidity_evidence))
+        monkeypatch.setattr(production_module, "_load_depreciation_cutover_evidence_optional", lambda: None)
+        contracts = dict(app_module.PRODUCTION_MODEL_CONTRACTS)
+        contracts["avm"] = replace(contracts["avm"], governed_disabled_binding=None)
+        monkeypatch.setattr(app_module, "PRODUCTION_MODEL_CONTRACTS", contracts)
+        monkeypatch.setattr(app_module, "governed_disabled_services", lambda: set(contracts) - {"avm"})
+        now = datetime.now(UTC)
+        receipt = DepreciationRollbackReceipt(decider="fixture-ops", decision_time=now, reason="fixture approved v0 rollback", target_expiry=now + timedelta(hours=1), depreciation_version_pin=AVM_DEPRECIATION_LEGACY_VERSION)
+        monkeypatch.setenv("ODP_AVM_DEPRECIATION_VERSION_PIN", AVM_DEPRECIATION_LEGACY_VERSION)
+        monkeypatch.setenv("ODP_AVM_DEPRECIATION_ROLLBACK_RECEIPT_JSON", json.dumps(receipt.to_dict()))
+        monkeypatch.delenv("ODP_REQUIRE_LIVE_DATA", raising=False)
+        from shared.infrastructure.persistence.assisted_listing_intake import apply_upgrade_to_database
+        from tests.integration.test_avm_valuation import _provision_canonical_schema
+    
+        _provision_canonical_schema(intake_blank_db)
+        monkeypatch.setenv("ODAY_DATABASE_URL", intake_blank_db.url())
+        apply_upgrade_to_database(intake_blank_db.url())
+        bundle = build_persistence(mode="postgresql")
+        request.addfinalizer(bundle.engine.close)
+        monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+        repository = bundle.avm_repository
+        app = app_module.create_app(avm_repository=repository, persistence=bundle)
+        assert app.state.production_model_capabilities["avm"]["available"], app.state.production_model_capabilities["avm"]
+        original_cost_input = {
+            **_input(),
+            "equipment_depreciation_basis": "original_cost",
+            "equipment_original_cost": 100_000.0,
+            "useful_life_months": 84,
+            "residual_value_ratio": 0.10,
+            "depreciation_method": "straight_line",
+            "asset_in_service_date": "2023-01-01",
+            "depreciation_effective_date": "2026-07-01",
+        }
+        case = AVMService(repository=repository).create_case(original_cost_input, created_by="fixture-finance", correlation_id="bootstrap-case")
+        client = TestClient(app, headers=AVM_HEADERS)
+        response = client.post(f"/avm/cases/{case.case_id}/value", json={"actor": "fixture-worker"})
+        assert response.status_code == 200, response.text
+        assert response.json()["feature_version"] == artifact_schema
+        assert response.json()["normalized_margin"]["feature_version"] == "valuation-view-v2"
+        assert case.valuation_input.to_dict()["feature_version"] == "valuation-view-v2"
+        assert response.json()["depreciation_version"] == AVM_DEPRECIATION_LEGACY_VERSION
+        assert response.json()["execution_metadata"]["model"]["feature_schema_version"] == artifact_schema
+    
+        fallback = AVMService(rollback_receipt=receipt, depreciation_version_pin=AVM_DEPRECIATION_LEGACY_VERSION)
+        case = fallback.create_case(_input(), created_by="fixture-finance", correlation_id="fallback-case")
+        report = fallback.value(case.case_id, actor="fixture-worker", correlation_id="fallback-case")
+        assert report.feature_version == artifact_schema
+        assert report.depreciation_version == AVM_DEPRECIATION_LEGACY_VERSION
+    
+        # The same production deployment controls must reach the tenant-scoped
+        # Operator write path, including when Finance cutover evidence is absent.
+        from shared.infrastructure.persistence import DurableAVMRepository
+        from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
+        from tests.integration.test_operator_canonical_wiring import _headers
+    
+        tenant_id = "rollback-tenant"
+        operator_repository = DurableAVMRepository(TenantScopedDocumentStore(app.state.operator_document_store, tenant_id))
+        historical_service = AVMService(repository=operator_repository, production_executor=executor, runtime_mode="production")
+        historical_case = historical_service.create_case(
+            {**original_cost_input, "store_id": "issued-before-rollback"},
+            created_by="finance", correlation_id="historical-v1",
+        )
+        historical_report = historical_service.value(historical_case.case_id, actor="finance", correlation_id="historical-v1")
+        assert historical_report.depreciation_version == AVM_DEPRECIATION_VERSION
+        historical_before = historical_report.to_dict()
+    
+        for receipt_mode in ("valid", "expired", "wrong-pin", "malformed"):
+            payload = receipt.to_dict()
+            if receipt_mode == "expired":
+                payload.update(decision_time=(now - timedelta(hours=2)).isoformat(), target_expiry=(now - timedelta(hours=1)).isoformat())
+            elif receipt_mode == "wrong-pin":
+                payload["depreciation_version_pin"] = AVM_DEPRECIATION_VERSION
+            monkeypatch.setenv("ODP_AVM_DEPRECIATION_ROLLBACK_RECEIPT_JSON", "{" if receipt_mode == "malformed" else json.dumps(payload))
+            deployed_app = app_module.create_app(avm_repository=repository, persistence=bundle)
+            store_id = f"operator-rollback-{receipt_mode}"
+            data = {**original_cost_input, "store_id": store_id}
+            api_case = AVMService(repository=repository).create_case(data, created_by="finance", correlation_id=store_id)
+            operator_case = AVMService(repository=operator_repository).create_case(data, created_by="finance", correlation_id=store_id)
+            with TestClient(deployed_app) as deployed_client:
+                requested = deployed_client.post(
+                    f"/api/v1/operator/network-rebalance/stores/{store_id}/avm/request",
+                    headers=_headers(tenant_id, idempotency_key=f"request-{receipt_mode}"),
+                    json={"actorRoleId": "operationsManager"},
+                )
+                assert requested.status_code == 200, requested.text
+                api_response = deployed_client.post(f"/avm/cases/{api_case.case_id}/value", headers=AVM_HEADERS, json={"actor": "fixture-worker"})
+                operator_response = deployed_client.post(
+                    f"/api/v1/operator/network-rebalance/stores/{store_id}/avm/complete",
+                    headers=_headers(tenant_id, idempotency_key=f"complete-{receipt_mode}"),
+                    json={"actorRoleId": "operationsManager"},
+                )
+                if receipt_mode == "valid":
+                    assert api_response.status_code == 200, api_response.text
+>                   assert operator_response.status_code == 200, operator_response.text
+E                   AssertionError: {"detail":"production v1 depreciation activation requires authentic Finance approval and threshold evidence","error":{"code":"conflict","message":"production v1 depreciation activation requires authentic Finance approval and threshold evidence","next_action":"Resolve the conflicting state and retry.","occurred_at":"2026-09-12T15:52:01.647Z","details":[],"correlation_id":"corr-rollback-tenant"}}
+E                   assert 409 == 200
+E                    +  where 409 = <Response [409 Conflict]>.status_code
+
+modules/avm/tests/test_avm_production_execution.py:441: AssertionError
+----------------------------- Captured stderr call -----------------------------
+2026/09/12 15:51:40 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/09/12 15:51:40 INFO mlflow.store.db.utils: Updating database tables
+2026/09/12 15:51:49 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/09/12 15:51:49 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-09-12T15:51:57.988727+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "40f643b8-6f55-496f-b3d3-b55afae1e25c", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /avm/cases/{case_id}/value ok"}
+{"timestamp": "2026-09-12T15:52:01.511203+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-rollback-tenant", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-rebalance/stores/{store_id}/avm/request ok"}
+{"timestamp": "2026-09-12T15:52:01.596375+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "993b5788-6b22-4d69-bf62-5593c4383613", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /avm/cases/{case_id}/value ok"}
+{"timestamp": "2026-09-12T15:52:01.648159+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-rollback-tenant", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-rebalance/stores/{store_id}/avm/complete ok"}
+------------------------------ Captured log call -------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+_ test_production_avm_reloads_and_executes_real_oss_artifacts[valuation-view-v2] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fb5b0211040>
+tmp_path = PosixPath('/tmp/pytest-of-lupin/pytest-573/test_production_avm_reloads_an1')
+artifact_schema = 'valuation-view-v2'
+intake_blank_db = IntakeDatabase(server=IntakePgServer(psycopg=<module 'psycopg' from '/tmp/pantheon-worker-worktrees/pantheon/odp-avm-d...r': 'postgres'}, _created=['intake_test_a3da5c79ca5a', 'intake_test_95ae5d9b3891']), dbname='intake_test_95ae5d9b3891')
+request = <FixtureRequest for <Function test_production_avm_reloads_and_executes_real_oss_artifacts[valuation-view-v2]>>
+
+    @pytest.mark.parametrize("artifact_schema", ["valuation-view-v1", "valuation-view-v2"])
+    def test_production_avm_reloads_and_executes_real_oss_artifacts(
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path, artifact_schema: str, intake_blank_db, request,  # noqa: F811
+    ) -> None:
+        monkeypatch.delenv("ODP_REQUIRE_LIVE_DATA", raising=False)
+        training_rows = [
+            {
+                "normalized_gm": float(300_000 + index * 10_000),
+                "quality_score": float(0.7 + index * 0.01),
+                "liquidity_expected_days": float(80 - index),
+            }
+            for index in range(20)
+        ]
+        labels = [
+            row["normalized_gm"] * 2.2
+            + row["quality_score"] * 100_000
+            - row["liquidity_expected_days"] * 1_000
+            for row in training_rows
+        ]
+        trained = train_oss_estimator(
+            algorithm="lightgbm_regressor",
+            feature_rows=training_rows,
+            labels=labels,
+            feature_names=(
+                "normalized_gm",
+                "quality_score",
+                "liquidity_expected_days",
+            ),
+        )
+        artifact_path = tmp_path / "avm-lightgbm.zip"
+        artifact_path.write_bytes(trained.estimator.to_artifact_bytes())
+        tracking_uri = f"sqlite:///{tmp_path / 'mlflow.db'}"
+        registry = MlflowRegistryAdapter(
+            InMemoryLearningHubRepository(),
+            tracking_uri=tracking_uri,
+            experiment_name="avm-production-execution",
+        )
+        registry.register_model_version(
+            ModelVersion(
+                model_name=PRODUCTION_MODEL_CONTRACTS["avm"].model_name or "",
+                version="2026.07.24",
+                artifact_uri=artifact_path.as_uri(),
+                dataset_snapshot_id="avm-training-live",
+                feature_schema_version=artifact_schema,
+                label_version="avm-sale-price-v2",
+                metrics={"mae": 20_000.0},
+                stage=ModelStage.PRODUCTION,
+                aliases=frozenset({ModelAlias.PRODUCTION}),
+                run_id="avm-training-run",
+                git_sha="test-sha",
+                approved_by="model-risk",
+                approved_at=datetime(2026, 7, 23, tzinfo=UTC),
+            )
+        )
+        monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+        liquidity = LifelinesLiquiditySurvivalAdapter().fit(
+            [
+                LiquidityTrainingRecord(
+                    duration_days=float(20 + index * 4),
+                    sold=index % 3 != 0,
+                    features={
+                        "quality_score": 0.7 + index * 0.015,
+                        "liquidity_discount": 0.05 + index * 0.005,
+                    },
+                )
+                for index in range(12)
+            ]
+        )
+        calls = {"lightgbm": 0, "lifelines": 0}
+        original_estimator_predict = LoadedOSSEstimator.predict
+        original_liquidity_predict = LifelinesLiquiditySurvivalAdapter.predict
+    
+        def estimator_spy(self, rows):
+            calls["lightgbm"] += 1
+            return original_estimator_predict(self, rows)
+    
+        def liquidity_spy(self, features):
+            calls["lifelines"] += 1
+            return original_liquidity_predict(self, features)
+    
+        monkeypatch.setattr(LoadedOSSEstimator, "predict", estimator_spy)
+        monkeypatch.setattr(
+            LifelinesLiquiditySurvivalAdapter,
+            "predict",
+            liquidity_spy,
+        )
+        executor = AVMProductionExecutor(
+            expected_feature_schema_version=artifact_schema,
+            model_runtime=MlflowProductionModelRuntime(
+                tracking_uri="https://mlflow.internal.example",
+                client=registry.client,
+                artifact_loader=lambda _uri, _tracking_uri: artifact_path.read_bytes(),
+                model_names={
+                    "avm": PRODUCTION_MODEL_CONTRACTS["avm"].model_name or "dealroom_avm"
+                },
+            ),
+            liquidity_runtime=liquidity,
+            liquidity_evidence=LiquidityArtifactEvidence(
+                artifact_uri="gs://models/avm-liquidity.json",
+                artifact_sha256="sha256:" + ("c" * 64),
+                model_version=liquidity.model_version,
+                approved_by="model-risk",
+                approved_at=datetime(2026, 7, 23, tzinfo=UTC),
+                dataset_snapshot_id="liquidity-training-live",
+            ),
+            depreciation_cutover_evidence=DepreciationCutoverEvidence(
+                approved_by="finance-vp",
+                approved_at=datetime(2026, 9, 3, tzinfo=UTC),
+                thresholds_reference="docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md#r-4",
+                model_version="avm-depreciation-straight-line-v1",
+                numerical_threshold_asset_delta_ratio=0.20,
+                numerical_threshold_unexplained_cohort_ratio=0.05,
+                structural_completeness_required=True,
+                calibration_coverage_degradation_threshold=0.05,
+            ),
+        )
+        service = AVMService(production_executor=executor)
+        case = service.create_case(
+            _input(),
+            created_by="finance",
+            correlation_id="corr-avm-real",
+        )
+    
+        report = service.value(
+            case.case_id,
+            actor="worker",
+            correlation_id="corr-avm-real",
+        )
+    
+        assert calls == {"lightgbm": 1, "lifelines": 1}
+        assert report.execution_metadata["model"]["model_engine"] == ("lightgbm.LGBMRegressor")
+        assert report.execution_metadata["model"]["model_approved_by"] == "model-risk"
+        assert report.execution_metadata["liquidity"]["engine"] == ("lifelines.CoxPHFitter")
+        assert report.execution_metadata["liquidity"]["library_version"]
+    
+        monkeypatch.delenv("ODP_REQUIRE_LIVE_DATA", raising=False)
+        # Exercise the real bootstrap and environment fallback with the same
+        # registered artifact; no fake runtime may bypass registry schema checks.
+        import json
+        from dataclasses import replace
+    
+        from fastapi.testclient import TestClient
+    
+        import modules.avm.application.production as production_module
+        from apps.api.oday_api import main as app_module
+        from shared.infrastructure.persistence import build_persistence
+        from tests.integration._authz import AVM_HEADERS
+    
+        monkeypatch.delenv("ODP_AVM_ARTIFACT_SCHEMA_VERSION", raising=False)
+        if artifact_schema == "valuation-view-v2":
+            monkeypatch.setenv("ODP_AVM_ARTIFACT_SCHEMA_VERSION", artifact_schema)
+        assert app_module.production_feature_schema_versions()["avm"] == artifact_schema
+        monkeypatch.setattr(MlflowProductionModelRuntime, "from_environment", lambda **kwargs: executor.model_runtime)
+        monkeypatch.setattr(production_module, "_load_liquidity_artifact", lambda: (liquidity, executor.liquidity_evidence))
+        monkeypatch.setattr(production_module, "_load_depreciation_cutover_evidence_optional", lambda: None)
+        contracts = dict(app_module.PRODUCTION_MODEL_CONTRACTS)
+        contracts["avm"] = replace(contracts["avm"], governed_disabled_binding=None)
+        monkeypatch.setattr(app_module, "PRODUCTION_MODEL_CONTRACTS", contracts)
+        monkeypatch.setattr(app_module, "governed_disabled_services", lambda: set(contracts) - {"avm"})
+        now = datetime.now(UTC)
+        receipt = DepreciationRollbackReceipt(decider="fixture-ops", decision_time=now, reason="fixture approved v0 rollback", target_expiry=now + timedelta(hours=1), depreciation_version_pin=AVM_DEPRECIATION_LEGACY_VERSION)
+        monkeypatch.setenv("ODP_AVM_DEPRECIATION_VERSION_PIN", AVM_DEPRECIATION_LEGACY_VERSION)
+        monkeypatch.setenv("ODP_AVM_DEPRECIATION_ROLLBACK_RECEIPT_JSON", json.dumps(receipt.to_dict()))
+        monkeypatch.delenv("ODP_REQUIRE_LIVE_DATA", raising=False)
+        from shared.infrastructure.persistence.assisted_listing_intake import apply_upgrade_to_database
+        from tests.integration.test_avm_valuation import _provision_canonical_schema
+    
+        _provision_canonical_schema(intake_blank_db)
+        monkeypatch.setenv("ODAY_DATABASE_URL", intake_blank_db.url())
+        apply_upgrade_to_database(intake_blank_db.url())
+        bundle = build_persistence(mode="postgresql")
+        request.addfinalizer(bundle.engine.close)
+        monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+        repository = bundle.avm_repository
+        app = app_module.create_app(avm_repository=repository, persistence=bundle)
+        assert app.state.production_model_capabilities["avm"]["available"], app.state.production_model_capabilities["avm"]
+        original_cost_input = {
+            **_input(),
+            "equipment_depreciation_basis": "original_cost",
+            "equipment_original_cost": 100_000.0,
+            "useful_life_months": 84,
+            "residual_value_ratio": 0.10,
+            "depreciation_method": "straight_line",
+            "asset_in_service_date": "2023-01-01",
+            "depreciation_effective_date": "2026-07-01",
+        }
+        case = AVMService(repository=repository).create_case(original_cost_input, created_by="fixture-finance", correlation_id="bootstrap-case")
+        client = TestClient(app, headers=AVM_HEADERS)
+        response = client.post(f"/avm/cases/{case.case_id}/value", json={"actor": "fixture-worker"})
+        assert response.status_code == 200, response.text
+        assert response.json()["feature_version"] == artifact_schema
+        assert response.json()["normalized_margin"]["feature_version"] == "valuation-view-v2"
+        assert case.valuation_input.to_dict()["feature_version"] == "valuation-view-v2"
+        assert response.json()["depreciation_version"] == AVM_DEPRECIATION_LEGACY_VERSION
+        assert response.json()["execution_metadata"]["model"]["feature_schema_version"] == artifact_schema
+    
+        fallback = AVMService(rollback_receipt=receipt, depreciation_version_pin=AVM_DEPRECIATION_LEGACY_VERSION)
+        case = fallback.create_case(_input(), created_by="fixture-finance", correlation_id="fallback-case")
+        report = fallback.value(case.case_id, actor="fixture-worker", correlation_id="fallback-case")
+        assert report.feature_version == artifact_schema
+        assert report.depreciation_version == AVM_DEPRECIATION_LEGACY_VERSION
+    
+        # The same production deployment controls must reach the tenant-scoped
+        # Operator write path, including when Finance cutover evidence is absent.
+        from shared.infrastructure.persistence import DurableAVMRepository
+        from shared.infrastructure.persistence.operator_domains import TenantScopedDocumentStore
+        from tests.integration.test_operator_canonical_wiring import _headers
+    
+        tenant_id = "rollback-tenant"
+        operator_repository = DurableAVMRepository(TenantScopedDocumentStore(app.state.operator_document_store, tenant_id))
+        historical_service = AVMService(repository=operator_repository, production_executor=executor, runtime_mode="production")
+        historical_case = historical_service.create_case(
+            {**original_cost_input, "store_id": "issued-before-rollback"},
+            created_by="finance", correlation_id="historical-v1",
+        )
+        historical_report = historical_service.value(historical_case.case_id, actor="finance", correlation_id="historical-v1")
+        assert historical_report.depreciation_version == AVM_DEPRECIATION_VERSION
+        historical_before = historical_report.to_dict()
+    
+        for receipt_mode in ("valid", "expired", "wrong-pin", "malformed"):
+            payload = receipt.to_dict()
+            if receipt_mode == "expired":
+                payload.update(decision_time=(now - timedelta(hours=2)).isoformat(), target_expiry=(now - timedelta(hours=1)).isoformat())
+            elif receipt_mode == "wrong-pin":
+                payload["depreciation_version_pin"] = AVM_DEPRECIATION_VERSION
+            monkeypatch.setenv("ODP_AVM_DEPRECIATION_ROLLBACK_RECEIPT_JSON", "{" if receipt_mode == "malformed" else json.dumps(payload))
+            deployed_app = app_module.create_app(avm_repository=repository, persistence=bundle)
+            store_id = f"operator-rollback-{receipt_mode}"
+            data = {**original_cost_input, "store_id": store_id}
+            api_case = AVMService(repository=repository).create_case(data, created_by="finance", correlation_id=store_id)
+            operator_case = AVMService(repository=operator_repository).create_case(data, created_by="finance", correlation_id=store_id)
+            with TestClient(deployed_app) as deployed_client:
+                requested = deployed_client.post(
+                    f"/api/v1/operator/network-rebalance/stores/{store_id}/avm/request",
+                    headers=_headers(tenant_id, idempotency_key=f"request-{receipt_mode}"),
+                    json={"actorRoleId": "operationsManager"},
+                )
+                assert requested.status_code == 200, requested.text
+                api_response = deployed_client.post(f"/avm/cases/{api_case.case_id}/value", headers=AVM_HEADERS, json={"actor": "fixture-worker"})
+                operator_response = deployed_client.post(
+                    f"/api/v1/operator/network-rebalance/stores/{store_id}/avm/complete",
+                    headers=_headers(tenant_id, idempotency_key=f"complete-{receipt_mode}"),
+                    json={"actorRoleId": "operationsManager"},
+                )
+                if receipt_mode == "valid":
+                    assert api_response.status_code == 200, api_response.text
+>                   assert operator_response.status_code == 200, operator_response.text
+E                   AssertionError: {"detail":"production v1 depreciation activation requires authentic Finance approval and threshold evidence","error":{"code":"conflict","message":"production v1 depreciation activation requires authentic Finance approval and threshold evidence","next_action":"Resolve the conflicting state and retry.","occurred_at":"2026-09-12T15:52:18.844Z","details":[],"correlation_id":"corr-rollback-tenant"}}
+E                   assert 409 == 200
+E                    +  where 409 = <Response [409 Conflict]>.status_code
+
+modules/avm/tests/test_avm_production_execution.py:441: AssertionError
+----------------------------- Captured stderr call -----------------------------
+2026/09/12 15:52:02 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/09/12 15:52:02 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-09-12T15:52:13.982578+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "4f79a755-483d-4699-b041-f03c00637dac", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /avm/cases/{case_id}/value ok"}
+{"timestamp": "2026-09-12T15:52:18.603292+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-rollback-tenant", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-rebalance/stores/{store_id}/avm/request ok"}
+{"timestamp": "2026-09-12T15:52:18.721021+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "dec65d5f-2025-4250-9eb2-a8d879766fc6", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /avm/cases/{case_id}/value ok"}
+{"timestamp": "2026-09-12T15:52:18.845662+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "corr-rollback-tenant", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/operator/network-rebalance/stores/{store_id}/avm/complete ok"}
+------------------------------ Captured log call -------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+=============================== warnings summary ===============================
+modules/avm/tests/test_avm_production_execution.py::test_production_avm_reloads_and_executes_real_oss_artifacts[valuation-view-v1]
+modules/avm/tests/test_avm_production_execution.py::test_production_avm_reloads_and_executes_real_oss_artifacts[valuation-view-v2]
+  /tmp/codex-1295-operator-fix/modules/learninghub/infrastructure/mlflow_adapter.py:640: FutureWarning: ``mlflow.tracking.client.MlflowClient.transition_model_version_stage`` is deprecated since 2.9.0. Model registry stages will be removed in a future major release. To learn more about the deprecation of model registry stages, see our migration guide here: https://mlflow.org/docs/latest/model-registry.html#migrating-from-stages
+    self._require_client().transition_model_version_stage(
+
+modules/avm/tests/test_avm_production_execution.py::test_production_avm_reloads_and_executes_real_oss_artifacts[valuation-view-v1]
+  /tmp/pantheon-worker-worktrees/pantheon/odp-avm-depreciation-integration-001/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED modules/avm/tests/test_avm_production_execution.py::test_production_avm_reloads_and_executes_real_oss_artifacts[valuation-view-v1]
+FAILED modules/avm/tests/test_avm_production_execution.py::test_production_avm_reloads_and_executes_real_oss_artifacts[valuation-view-v2]
+2 failed, 10 deselected, 3 warnings in 53.36s
