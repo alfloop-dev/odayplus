@@ -5,10 +5,10 @@
   "phase": "Third-party data production closeout / History Recovery",
   "owner": "Antigravity4",
   "reviewer": "Codex",
-  "recorded_at": "2026-09-11T11:58:00Z",
+  "recorded_at": "2026-09-12T09:05:00Z",
   "reconciliation_target": {
     "repository": "alfloop-dev/odayplus",
-    "pinned_dev_sha": "4499a2993e37b62033926b07de8d8d2e8469a6c7",
+    "pinned_dev_sha": "4b35121031d0738ff7c529810cf1b2e267161083",
     "continuation_branch": "task/XR-EXT-OSS-FINAL-AUDIT-001-RECOVERY-20260911"
   },
   "repository_correction": {
@@ -119,11 +119,11 @@
     "approval_to_merge_seconds": 9
   },
   "this_round_observation_and_provenance": {
-    "observed_at": "2026-09-11T11:58:00Z",
+    "observed_at": "2026-09-12T09:05:00Z",
     "observer": "Antigravity4",
     "observation_mode": "read_only_cross_repo_github_api_and_local_git",
     "provenance_receipts_file": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/raw-command-receipts.json",
-    "offline_verification_script": "inline_python_assertion_and_scratch_verification_script",
+    "offline_verification_method": "python3_focused_offline_verification_suite",
     "source_repositories": {
       "producer_audit_repo": {
         "repository": "alfloop-dev/oday-data-platform",
@@ -133,7 +133,7 @@
       },
       "consumer_repo": {
         "repository": "alfloop-dev/odayplus",
-        "pinned_dev_base_sha": "4499a2993e37b62033926b07de8d8d2e8469a6c7"
+        "pinned_dev_base_sha": "4b35121031d0738ff7c529810cf1b2e267161083"
       }
     },
     "full_sha256_digests": {
@@ -229,7 +229,7 @@
           "8/8 domains 真實資料庫 snapshot readback 數據與執行日誌",
           "11/11 品質軸與 44,471 筆真實歷史資料庫比對量測"
         ],
-        "precise_missing_inputs": "真實生產/預發布資料庫 PostgreSQL snapshot readback raw terminal receipt 與 query execution logs（非合成數據生成）。",
+        "precise_missing_inputs": "真實生產/預發布環境 PostgreSQL database snapshot readback raw terminal receipt 與 query execution logs（非腳本合成產物）。",
         "responsible_canonical_tasks": [
           {
             "task_id": "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
@@ -239,6 +239,12 @@
             "depends_on": [
               "DPF-EMGI-LIVE-ROLLOUT-001",
               "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001"
+            ],
+            "acceptance_coverage_sub_items": [
+              "延伸既有emgi.consumer-snapshot-readback receipt與EMGI runtime不得建立第二套snapshot registry或新workflow",
+              "artifact manifest綁定GCS immutable URI/object generation/content sha256/contract-lock digest/source-policy digest/masking-policy digest與masked=true",
+              "逐domain記錄row count/source snapshot ids/field classification；未分類或敏感欄位無明確mask rule時fail closed",
+              "外部來源在執行前後皆disabled、credentials不存在、public egress default deny並完成artifact download/readback hash驗證"
             ]
           },
           {
@@ -257,12 +263,54 @@
               "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
               "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
               "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
+            ],
+            "acceptance_coverage_sub_items": [
+              "odayplus-runtime-20260825 live readback顯示data platform先部署且oday-api/oday-web/migration/worker/scheduler均存在並綁定manifest exact digests",
+              "所有收據含真實resource identity、Cloud Run URL、revision、execution、timestamp、candidate SHA與manifest digest且不得有placeholder"
             ]
           }
         ],
-        "next_step": "待 DPF-EMGI-LIVE-ROLLOUT-001 審查通過後，解鎖 DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001 產出具備實體 digest 之 masked snapshot artifact。",
-        "dependency_before_after": "依現行 Canonical 看板依賴鏈正常流轉，不更動未經授權之相依關係。",
-        "no_cycle_evidence": "XR-EXT-OSS-FINAL-AUDIT-001 不在 DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001 之相依集合內，維持單向 DAG。"
+        "uncovered_historical_items_note": "原 11 軸 / 44,471 筆 dual-run 歷史比對屬於遷移期過渡驗證，在 canonical backlog 中無獨立 live dual-run 任務，該子項保留於本任務未完成缺口中，不以名稱推定其他任務涵蓋，亦不自行新增 live 需求或虛構完成。",
+        "next_step": "待 DPF-EMGI-LIVE-ROLLOUT-001 審查通過、解鎖 DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001 於授權環境產出具備 GCS URI 與 exact digest 之 masked snapshot artifact。",
+        "dependency_before_after": {
+          "before": {
+            "XR-EXT-OSS-FINAL-AUDIT-001": {
+              "status": "in_progress",
+              "depends_on": []
+            },
+            "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001": {
+              "status": "blocked",
+              "depends_on": [
+                "DPF-EMGI-LIVE-ROLLOUT-001",
+                "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001"
+              ]
+            }
+          },
+          "after": {
+            "XR-EXT-OSS-FINAL-AUDIT-001": {
+              "status": "reconciled",
+              "depends_on": []
+            },
+            "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001": {
+              "status": "blocked",
+              "depends_on": [
+                "DPF-EMGI-LIVE-ROLLOUT-001",
+                "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001"
+              ]
+            }
+          },
+          "exact_edges": [
+            "DPF-EMGI-LIVE-ROLLOUT-001 -> DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+            "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001 -> DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+            "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001 -> ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001"
+          ]
+        },
+        "no_cycle_evidence": "經全圖 topological sort 驗證，全圖無循環依賴（0 cycles）；XR-EXT-OSS-FINAL-AUDIT-001 僅有下游 HUMAN-OSS-LEGAL-APPROVAL-001 -> XR-SOURCE-APPROVAL-ACTIVATION-001，不形成反向邊。",
+        "retained_gates": [
+          "Live snapshot generation gate (DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001)",
+          "Supervisor signed lease gate",
+          "GCS immutable URI and exact digest verification gate"
+        ]
       }
     },
     {
@@ -290,25 +338,35 @@
           "實體叢集運行期 Pod container image digest 採集 (IMAGES-PINNED-BY-TAG)",
           "實體叢集 workload Secret volume 投影檢查"
         ],
-        "precise_missing_inputs": "實體 Kubernetes / GCP 運行期 Pod 之 live container image digest 與 Secret 投影檢查日誌。",
+        "precise_missing_inputs": "實體 Kubernetes / Cloud Run 運行期 Pod 之 live container image digest 與 Secret 投影檢查日誌。",
         "responsible_technical_tasks": [
-          {
-            "task_id": "DPF-EMGI-LIVE-ROLLOUT-001",
-            "title": "歷史驗收續辦：DPF-EMGI-LIVE-ROLLOUT-001",
-            "owner": "Antigravity7",
-            "status": "review",
-            "depends_on": []
-          },
           {
             "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
             "title": "以真實 artifact 完成 dev live rollout 並取代 false-done 前提",
             "owner": "Antigravity2",
             "status": "blocked",
             "depends_on": [
-              "DPF-EMGI-LIVE-ROLLOUT-001"
+              "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+              "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+              "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+              "DPF-EMGI-LIVE-ROLLOUT-001",
+              "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+              "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+              "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+              "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+              "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+              "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
+            ],
+            "acceptance_coverage_sub_items": [
+              "先驗證最新 authoritative manifest 的 candidate SHA、image digests、SBOM、Cosign 與 registry refs均真實可解析",
+              "odayplus-runtime-20260825 live readback顯示data platform先部署且oday-api/oday-web/migration/worker/scheduler均存在並綁定manifest exact digests",
+              "Cloud Run jobs one-shot、API/Web authenticated smoke、contract、provider-off與default-deny egress均通過",
+              "16個第三方來源保持disabled且provider credentials不存在",
+              "所有收據含真實resource identity、Cloud Run URL、revision、execution、timestamp、candidate SHA與manifest digest且不得有placeholder"
             ]
           }
         ],
+        "history_recovery_task_boundary_note": "DPF-EMGI-LIVE-ROLLOUT-001 現為 history recovery 任務（status: review），其 canonical acceptance 明禁本次執行 publish/deploy/rollback/來源啟用；審查通過不會增加部署權限。實體 dev live rollout 由 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 承接。",
         "responsible_legal_task": {
           "task_id": "HUMAN-OSS-LEGAL-APPROVAL-001",
           "title": "逐一決定每個資料來源與 OSS 的許可及義務",
@@ -318,9 +376,72 @@
             "XR-EXT-OSS-FINAL-AUDIT-001"
           ]
         },
-        "next_step": "DPF-EMGI-LIVE-ROLLOUT-001 審查通過並執行 live rollout，產出實體 workload runtime digest 收據；HUMAN-OSS-LEGAL-APPROVAL-001 由具名人員審查法務決策。",
-        "dependency_before_after": "技術運行期驗證由 DPF-EMGI-LIVE-ROLLOUT-001 承接，法律授權由 HUMAN-OSS-LEGAL-APPROVAL-001 承接，兩者職責分明。",
-        "no_cycle_evidence": "單向 DAG，無循環依賴。"
+        "next_step": "待前置任務通過審查並在 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 執行 dev live rollout，產出實體 workload runtime digest 與 secret 檢查收據；HUMAN-OSS-LEGAL-APPROVAL-001 由具名人員審查法務決策。",
+        "dependency_before_after": {
+          "before": {
+            "XR-EXT-OSS-FINAL-AUDIT-001": {
+              "status": "in_progress",
+              "depends_on": []
+            },
+            "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001": {
+              "status": "blocked",
+              "depends_on": [
+                "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+                "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+                "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+                "DPF-EMGI-LIVE-ROLLOUT-001",
+                "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+                "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+                "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+                "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+                "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+                "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
+              ]
+            },
+            "HUMAN-OSS-LEGAL-APPROVAL-001": {
+              "status": "todo",
+              "depends_on": [
+                "XR-EXT-OSS-FINAL-AUDIT-001"
+              ]
+            }
+          },
+          "after": {
+            "XR-EXT-OSS-FINAL-AUDIT-001": {
+              "status": "reconciled",
+              "depends_on": []
+            },
+            "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001": {
+              "status": "blocked",
+              "depends_on": [
+                "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+                "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+                "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+                "DPF-EMGI-LIVE-ROLLOUT-001",
+                "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+                "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+                "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+                "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+                "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+                "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
+              ]
+            },
+            "HUMAN-OSS-LEGAL-APPROVAL-001": {
+              "status": "todo",
+              "depends_on": [
+                "XR-EXT-OSS-FINAL-AUDIT-001"
+              ]
+            }
+          },
+          "exact_edges": [
+            "DPF-EMGI-LIVE-ROLLOUT-001 -> ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+            "XR-EXT-OSS-FINAL-AUDIT-001 -> HUMAN-OSS-LEGAL-APPROVAL-001"
+          ]
+        },
+        "no_cycle_evidence": "全圖經由 topological sort 驗證無循環依賴（0 cycles）。",
+        "retained_gates": [
+          "Live rollout authorization and deployment gate (ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001)",
+          "Named Human GO / Legal approval gate (HUMAN-OSS-LEGAL-APPROVAL-001)"
+        ]
       }
     },
     {
@@ -349,18 +470,98 @@
         "precise_missing_inputs": "實體 GCP VPC Flow Logs 與 Kubernetes NetworkPolicy 阻斷連線之 live 稽核日誌。",
         "responsible_canonical_tasks": [
           {
-            "task_id": "ODP-NFR-RUNTIME-EVIDENCE-001",
-            "title": "在可信 live rollout 後驗證 SHARED-008 與 PERF／BATCH／AVAIL／RPO",
-            "owner": "Antigravity3",
-            "status": "todo",
+            "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+            "title": "以真實 artifact 完成 dev live rollout 並取代 false-done 前提",
+            "owner": "Antigravity2",
+            "status": "blocked",
             "depends_on": [
-              "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001"
+              "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+              "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+              "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+              "DPF-EMGI-LIVE-ROLLOUT-001",
+              "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+              "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+              "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+              "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+              "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+              "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
+            ],
+            "acceptance_coverage_sub_items": [
+              "Cloud Run jobs one-shot、API/Web authenticated smoke、contract、provider-off與default-deny egress均通過",
+              "16個第三方來源保持disabled且provider credentials不存在",
+              "所有收據含真實resource identity、Cloud Run URL、revision、execution、timestamp、candidate SHA與manifest digest且不得有placeholder"
+            ]
+          },
+          {
+            "task_id": "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+            "title": "產生可驗證的 EMGI masked release snapshot artifact",
+            "owner": "Antigravity",
+            "status": "blocked",
+            "depends_on": [
+              "DPF-EMGI-LIVE-ROLLOUT-001",
+              "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001"
+            ],
+            "acceptance_coverage_sub_items": [
+              "外部來源在執行前後皆disabled、credentials不存在、public egress default deny並完成artifact download/readback hash驗證"
             ]
           }
         ],
-        "next_step": "在 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 於 dev live 部署完成後，由 ODP-NFR-RUNTIME-EVIDENCE-001 採集真實流量與 NFR 證據。",
-        "dependency_before_after": "待 dev live rollout 完成後執行 NFR 流量驗證。",
-        "no_cycle_evidence": "單向 DAG，無循環依賴。"
+        "task_mapping_correction_note": "更正前輪誤配：ODP-NFR-RUNTIME-EVIDENCE-001 驗收僅涵蓋 SHARED-008 環境 secret 隔離與 PERF/BATCH/AVAIL/RPO，未涵蓋 sources-off / provider credential 未投影 / 排程 STOPPED / egress default deny。本輪依真實 acceptance 正確映射至 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 與 DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001。",
+        "next_step": "在 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 於 dev live 部署完成後，由該任務採集真實 provider-off、credentials-absent 與 default-deny egress 運行期收據。",
+        "dependency_before_after": {
+          "before": {
+            "XR-EXT-OSS-FINAL-AUDIT-001": {
+              "status": "in_progress",
+              "depends_on": []
+            },
+            "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001": {
+              "status": "blocked",
+              "depends_on": [
+                "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+                "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+                "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+                "DPF-EMGI-LIVE-ROLLOUT-001",
+                "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+                "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+                "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+                "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+                "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+                "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
+              ]
+            }
+          },
+          "after": {
+            "XR-EXT-OSS-FINAL-AUDIT-001": {
+              "status": "reconciled",
+              "depends_on": []
+            },
+            "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001": {
+              "status": "blocked",
+              "depends_on": [
+                "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+                "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+                "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+                "DPF-EMGI-LIVE-ROLLOUT-001",
+                "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+                "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+                "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+                "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+                "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+                "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
+              ]
+            }
+          },
+          "exact_edges": [
+            "DPF-EMGI-LIVE-ROLLOUT-001 -> ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+            "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 -> ODP-NFR-RUNTIME-EVIDENCE-001"
+          ]
+        },
+        "no_cycle_evidence": "全圖經由 topological sort 驗證無循環依賴（0 cycles）。",
+        "retained_gates": [
+          "Egress default-deny live probe verification gate",
+          "Provider credentials absence verification gate",
+          "16 sources disabled verification gate"
+        ]
       }
     },
     {
@@ -456,7 +657,7 @@
       "cycle_check": {
         "is_acyclic": true,
         "chain": "XR-EXT-OSS-FINAL-AUDIT-001 (depends_on: []) -> HUMAN-OSS-LEGAL-APPROVAL-001 (depends_on: [XR-EXT-OSS-FINAL-AUDIT-001]) -> XR-SOURCE-APPROVAL-ACTIVATION-001 (depends_on: [HUMAN-OSS-LEGAL-APPROVAL-001])",
-        "evidence": "單向有向無環圖 (DAG)，無循環依賴。"
+        "evidence": "全圖經 topological sort 驗證，單向有向無環圖 (DAG)，無循環依賴。"
       },
       "canonical_mutation_policy": "不提前手改 ai-status.json，依標準 review -> merge -> done 流程由 orchestrator 自動流轉。"
     }
