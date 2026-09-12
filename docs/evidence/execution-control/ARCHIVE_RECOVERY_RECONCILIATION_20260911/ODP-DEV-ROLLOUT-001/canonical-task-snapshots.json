@@ -8,7 +8,10 @@
     "total_evaluated_nodes": 17,
     "total_derived_edges": 17,
     "edge_set_sha256": "d1db3233c193f7ce93e0895efb227d3314376e68724db0bca7ae0579438fef4d",
-    "extraction_command": "python3 -c 'import json, hashlib; ... extract 17 canonical task nodes and sources'"
+    "extraction_command": "bash docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/verify_reconciliation.sh",
+    "terminal_exit_code": 0,
+    "raw_receipt_reference": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/acceptance-reconciliation.json#rcpt-004-standalone-script-schema-and-dag-validation",
+    "provenance_description": "17 canonical task nodes and their dependency relations extracted and validated from canonical ai-status.json and ai-task-archive/tasks/*.json with verified SHA-256 digests"
   },
   "nodes": {
     "DPF-EMGI-LIVE-ROLLOUT-001": {

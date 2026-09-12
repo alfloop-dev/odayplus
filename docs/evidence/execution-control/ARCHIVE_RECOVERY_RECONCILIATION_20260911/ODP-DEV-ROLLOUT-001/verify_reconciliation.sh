@@ -1,17 +1,27 @@
-#!/usr/bin/env python3
-"""
-ODP-DEV-ROLLOUT-001 Acceptance Reconciliation & Canonical DAG Verification Script
-Verified for target baseline: d977447ee0c537a1c7eeb6f68ec912d033816f88 (origin/dev tip)
-"""
+#!/usr/bin/env bash
+set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../../.." && pwd)"
+
+echo "================================================================================"
+echo "ODP-DEV-ROLLOUT-001 Acceptance Reconciliation & Canonical DAG Verification"
+echo "Evidence Directory: ${SCRIPT_DIR}"
+echo "Repository Root:    ${REPO_ROOT}"
+echo "================================================================================"
+
+python3 - "${SCRIPT_DIR}" "${REPO_ROOT}" << 'PY_EOF'
 import hashlib
 import json
+import subprocess
 import sys
 from pathlib import Path
 
 
 def main() -> int:
-    evidence_dir = Path(__file__).resolve().parent
+    evidence_dir = Path(sys.argv[1]).resolve()
+    repo_root = Path(sys.argv[2]).resolve()
+
     readme_path = evidence_dir / "README.md"
     reconciliation_path = evidence_dir / "acceptance-reconciliation.json"
     snapshots_path = evidence_dir / "canonical-task-snapshots.json"
@@ -26,7 +36,15 @@ def main() -> int:
     # 1. Verify Basic Task Metadata & Baseline
     assert recon_data.get("task_id") == "ODP-DEV-ROLLOUT-001", "Invalid task_id"
     target_base = recon_data.get("reconciliation_target", {}).get("target_dev_baseline")
-    assert target_base == "d977447ee0c537a1c7eeb6f68ec912d033816f88", f"Unexpected target_dev_baseline: {target_base}"
+    assert target_base == "4298fc152788087ebe0d1a1c9869ebaa8dd5d276", f"Unexpected target_dev_baseline: {target_base}"
+
+    # Verify git baseline object type and ancestry
+    cat_res = subprocess.run(["git", "cat-file", "-t", target_base], cwd=repo_root, capture_output=True, text=True)
+    assert cat_res.returncode == 0 and cat_res.stdout.strip() == "commit", f"Git baseline {target_base} is not a valid commit object"
+
+    anc_res = subprocess.run(["git", "merge-base", "--is-ancestor", target_base, "HEAD"], cwd=repo_root)
+    assert anc_res.returncode == 0, f"Git baseline {target_base} is not an ancestor of HEAD"
+
     assert recon_data.get("historical_delivery", {}).get("delivered_files_total") == 9, "Delivered files count mismatch"
 
     # 2. Verify Canonical Scoped Snapshots (17 Nodes)
@@ -94,17 +112,24 @@ def main() -> int:
     assert mapping_section.get("successor_task_id") == "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001"
     assert len(mapping_section.get("mappings", [])) == 5
 
+    # 8. Verify PR #1109 Merge Commit Ancestry
+    pr1109_merge_sha = "640e35415aa33d5d53af21a8a527431b8f751cea"
+    pr1109_res = subprocess.run(["git", "merge-base", "--is-ancestor", pr1109_merge_sha, target_base], cwd=repo_root)
+    assert pr1109_res.returncode == 0, f"PR #1109 merge commit {pr1109_merge_sha} is not an ancestor of {target_base}"
+
     print("================================================================================")
     print("ODP-DEV-ROLLOUT-001 Acceptance Reconciliation Verification: ALL CHECKS PASSED")
-    print(f"- Target Baseline: {target_base}")
+    print(f"- Target Baseline: {target_base} (4298fc152788, verified commit & ancestor)")
     print(f"- Evaluated Nodes: {len(nodes)} canonical task nodes")
     print(f"- Derived DAG Edges: {len(derived_edges)} dependency edges")
     print(f"- Edge Set SHA-256: {computed_edge_hash}")
     print(f"- Cycle Detected: {cycle} (Strict DAG confirmed)")
     print("- Acceptance Criteria: 5/5 reconciled (Disposition: false_done_superseded)")
     print("- Successor Remediation Task: ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001")
+    print(f"- PR #1109 Merge Commit Ancestry: {pr1109_merge_sha} -> {target_base} confirmed")
     print("================================================================================")
     return 0
 
 if __name__ == "__main__":
     sys.exit(main())
+PY_EOF
