@@ -851,7 +851,7 @@ def record_account_pool_canary_success(config: dict[str, Any], state: dict[str, 
     if worker_rec_gen is not None and pool_gen is not None:
         if int(worker_rec_gen) < int(pool_gen):
             return False
-    elif persisted_worker is not None and pool_gen is not None and int(pool_gen) > 0:
+    elif effective_worker.get("dispatched_pool_state") is not None:
         if effective_worker.get("dispatched_pool_state") != "recovering":
             return False
 
@@ -867,6 +867,14 @@ def record_account_pool_canary_success(config: dict[str, Any], state: dict[str, 
     worker_auth = str(effective_worker.get("auth_identity_hash") or "")
     if not worker_auth and isinstance(state.get("workers"), dict):
         worker_auth = str(state["workers"].get(run_id, {}).get("auth_identity_hash") or "")
+    if not worker_auth:
+        worker_auth = str(
+            configured_account_pool_auth_hash(
+                config,
+                pool_id,
+                str(worker.get("logical_agent_id") or worker.get("agent_id") or worker.get("provider") or ""),
+            ) or ""
+        )
     pool_auth = str(entry.get("auth_identity_hash") or "")
     if not pool_auth:
         pool_auth = str(configured_account_pool_auth_hash(config, pool_id, str(worker.get("logical_agent_id") or worker.get("agent_id") or "")) or "")

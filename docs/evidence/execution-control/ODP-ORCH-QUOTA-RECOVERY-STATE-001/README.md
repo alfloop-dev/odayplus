@@ -218,3 +218,22 @@ All verification commands executed on the updated task branch and verified again
   3. `uv run pytest -q .orchestrator/test_supervisor.py -k "quota or pause or account_pool or config"`: Exit code `0` (`99 passed, 608 deselected in 6.78s`)
   4. `uv run pytest -q .orchestrator/test_common.py`: Exit code `0` (`44 passed in 1.84s`)
   5. `uv run ruff check .orchestrator/runtime_state.py .orchestrator/worker_failure_policy.py .orchestrator/supervisor.py .orchestrator/test_runtime_state.py .orchestrator/test_supervisor.py`: Exit code `0` (`All checks passed!`)
+
+## 10. CI Repair — Synthetic & Legacy Worker Canary Admission (`worker_failure_policy.py`)
+
+### Findings & Root Causes Addressed
+
+1. **CI Orchestrator Suite Failure in `SuccessfulWorkerPostconditionTests`**:
+   - *Problem*: `record_account_pool_canary_success()` checked `effective_worker.get("dispatched_pool_state") != "recovering"`, which returned False when `dispatched_pool_state` was `None` (on synthetic test fixtures or legacy workers), preventing postcondition-based pool recovery.
+   - *Fix*: Refined the check to reject only when `dispatched_pool_state` is explicitly recorded and non-recovering (`effective_worker.get("dispatched_pool_state") is not None and effective_worker.get("dispatched_pool_state") != "recovering"`), while allowing unannotated records to fall back to configured auth and generation validation.
+
+### Verification Receipts (CI Repair Exact-Head Verification)
+
+- **Declared Exact-Head Verification Suites**:
+  1. `git diff --check`: Exit code `0`
+  2. `uv run pytest -q .orchestrator/test_runtime_state.py`: Exit code `0` (`69 passed in 2.62s`)
+  3. `uv run pytest -q .orchestrator/test_supervisor.py -k "quota or pause or account_pool or config"`: Exit code `0` (`99 passed, 608 deselected in 3.42s`)
+  4. `uv run pytest -q .orchestrator/test_common.py`: Exit code `0` (`44 passed in 1.95s`)
+  5. `uv run ruff check .orchestrator delivery_toolchain scripts infra`: Exit code `0` (`All checks passed!`)
+  6. `uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling infra`: Exit code `0` (`2907 passed, 6 skipped, 10 deselected, 636 subtests passed in 490.00s`)
+
