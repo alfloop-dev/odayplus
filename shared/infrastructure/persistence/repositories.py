@@ -31,6 +31,7 @@ from models.shared_ml.registry import ModelAlias, ModelRegistryError, ModelVersi
 from models.shared_ml.validation import ValidationRun
 from modules.adlift.domain.incrementality import IncrementalityReport
 from modules.avm.domain import (
+    AVM_FEATURE_VERSION_V1,
     LEGACY_UNKNOWN_QUALITY_STATUS,
     DataRoom,
     DealOutcome,
@@ -306,6 +307,11 @@ class DurableAVMRepository:
         inp = case.valuation_input
         if getattr(inp, "is_pre_status_payload", False):
             legacy_status = inp.effective_quality_score_status
+            feature_version = (
+                inp.__dict__.get("feature_version", AVM_FEATURE_VERSION_V1)
+                if hasattr(inp, "__dict__")
+                else AVM_FEATURE_VERSION_V1
+            )
             new_input = ValuationInput(
                 store_id=inp.store_id,
                 gm_ttm=inp.gm_ttm,
@@ -320,13 +326,17 @@ class DurableAVMRepository:
                 quality_score_status=legacy_status,
                 source_snapshot_ids=getattr(inp, "source_snapshot_ids", ()),
                 prediction_origin_time=getattr(inp, "prediction_origin_time", datetime.now(UTC)),
-                equipment_original_cost=getattr(inp, "equipment_original_cost", None),
-                useful_life_months=getattr(inp, "useful_life_months", None),
                 equipment_depreciation_basis=getattr(inp, "equipment_depreciation_basis", None),
+                equipment_original_cost=getattr(inp, "equipment_original_cost", None),
+                asset_book_value_includes_equipment=getattr(
+                    inp, "asset_book_value_includes_equipment", None
+                ),
+                useful_life_months=getattr(inp, "useful_life_months", None),
                 residual_value_ratio=getattr(inp, "residual_value_ratio", None),
                 depreciation_method=getattr(inp, "depreciation_method", None),
                 depreciation_effective_date=getattr(inp, "depreciation_effective_date", None),
                 asset_in_service_date=getattr(inp, "asset_in_service_date", None),
+                feature_version=feature_version,
             )
             migrated = ValuationCase(
                 case_id=case.case_id,
