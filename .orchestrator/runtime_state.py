@@ -732,6 +732,10 @@ def _merge_account_pool_runtime(
     def cleared_cooldown(entry: dict[str, Any] | None) -> bool:
         if not entry or entry.get("state") != "cooldown":
             return False
+        # Preserve non-quota blocks through merging; a provider tombstone alone must not authorize pool recovery.
+        kind = str(entry.get("failure_kind") or "").strip().lower()
+        if kind and kind not in {"quota_terminal", "capacity", "capacity_retryable"}:
+            return False
         auth = entry.get("auth_identity_hash")
         run = entry.get("last_worker_run_id")
         failed_at = entry.get("last_failure_at")

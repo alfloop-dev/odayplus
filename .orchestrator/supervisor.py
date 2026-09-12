@@ -292,6 +292,7 @@ _FAILURE_HELPER_FUNCTIONS = [
 "substantive_review_reopen_count",
 "is_control_plane_recovery_reason",
 "classify_reopen_reason",
+"configured_account_pool_auth_hash",
 "maybe_trigger_retry_or_fallback",
 "normalized_mapping_values",
 "parse_quota_retry_hint",
@@ -1575,24 +1576,26 @@ def account_pool_runtime_state(
 
     bucket = _account_pool_runtime_bucket(state)
     entry = bucket.get(pool_id)
+    current_auth = configured_account_pool_auth_hash(config, pool_id, agent_id)
+
+    current_time = now or datetime.now(UTC)
+    current_time_iso = isoformat_utc(current_time)
     if not isinstance(entry, dict):
-        pool_auth = provider_auth_identity_hash(config, agent_id)
-        if not pool_auth:
-            for aid, acfg in (config.get("agents") or {}).items():
-                if isinstance(acfg, dict) and normalize_agent_id(str(acfg.get("account_pool") or "")) == normalize_agent_id(pool_id):
-                    pool_auth = provider_auth_identity_hash(config, agent_provider_id(config, aid))
-                    if pool_auth:
-                        break
+        pool_auth = current_auth
         is_fenced_by_shared_canary = False
         if pool_auth:
-            for other_entry in bucket.values():
-                if isinstance(other_entry, dict) and other_entry.get("auth_identity_hash") == pool_auth:
-                    if (
-                        str(other_entry.get("state") or "").lower() == "recovering"
-                        and int(other_entry.get("effective_concurrency", 0) or 0) > 0
-                    ):
-                        is_fenced_by_shared_canary = True
-                        break
+            for other_id, other_entry in bucket.items():
+                if isinstance(other_entry, dict):
+                    other_auth = other_entry.get("auth_identity_hash")
+                    if not other_auth:
+                        other_auth = configured_account_pool_auth_hash(config, other_id)
+                    if other_auth == pool_auth:
+                        if (
+                            str(other_entry.get("state") or "").lower() == "recovering"
+                            and int(other_entry.get("effective_concurrency", 0) or 0) > 0
+                        ):
+                            is_fenced_by_shared_canary = True
+                            break
         if is_fenced_by_shared_canary:
             entry = {
                 "state": "recovering",
@@ -1609,22 +1612,48 @@ def account_pool_runtime_state(
                 "auth_identity_hash": pool_auth,
             }
         bucket[pool_id] = entry
+    else:
+        # Reconcile existing entry's auth provenance
+        pool_auth = entry.get("auth_identity_hash")
+        if not pool_auth and current_auth:
+            entry["auth_identity_hash"] = current_auth
+            pool_auth = current_auth
+        elif current_auth and pool_auth and current_auth != pool_auth:
+            # Auth rotated from pool_auth to current_auth
+            entry_state = str(entry.get("state") or "healthy").strip().lower()
+            if entry_state in {"recovering", "cooldown"}:
+                # Provide a bounded current-auth recovery canary path
+                entry["state"] = "recovering"
+                entry["effective_concurrency"] = min(1, configured_limit or 1)
+                entry["auth_identity_hash"] = current_auth
+                entry["generation"] = int(entry.get("generation", 0) or 0) + 1
+                entry["last_probe_at"] = current_time_iso
+                entry["recovery_reason"] = f"auth identity rotated to {current_auth}; bounded canary active"
+                entry.pop("next_probe_at", None)
+                entry.pop("blocked_until", None)
+            elif entry_state == "healthy":
+                entry["auth_identity_hash"] = current_auth
+                entry["effective_concurrency"] = configured_limit
+
     lifecycle = str(entry.get("state") or "healthy").strip().lower()
-    current_time = now or datetime.now(UTC)
     if lifecycle == "cooldown":
         next_probe = _parse_iso_utc(str(entry.get("next_probe_at") or entry.get("blocked_until") or ""))
         if next_probe is not None and next_probe <= current_time:
-            pool_auth = entry.get("auth_identity_hash")
+            pool_auth = entry.get("auth_identity_hash") or current_auth
             is_fenced_by_shared_canary = False
             if pool_auth:
                 for other_id, other_entry in bucket.items():
-                    if other_id != pool_id and isinstance(other_entry, dict) and other_entry.get("auth_identity_hash") == pool_auth:
-                        if (
-                            str(other_entry.get("state") or "").lower() == "recovering"
-                            and int(other_entry.get("effective_concurrency", 0) or 0) > 0
-                        ):
-                            is_fenced_by_shared_canary = True
-                            break
+                    if other_id != pool_id and isinstance(other_entry, dict):
+                        other_auth = other_entry.get("auth_identity_hash")
+                        if not other_auth:
+                            other_auth = configured_account_pool_auth_hash(config, other_id)
+                        if other_auth == pool_auth:
+                            if (
+                                str(other_entry.get("state") or "").lower() == "recovering"
+                                and int(other_entry.get("effective_concurrency", 0) or 0) > 0
+                            ):
+                                is_fenced_by_shared_canary = True
+                                break
             if not is_fenced_by_shared_canary:
                 # A real task executed on one slot is the authenticated canary
                 # probe.  This avoids a second provider-specific probe protocol
@@ -1632,21 +1661,25 @@ def account_pool_runtime_state(
                 lifecycle = "recovering"
                 entry["state"] = lifecycle
                 entry["effective_concurrency"] = 1
-                entry["last_probe_at"] = utc_now()
+                entry["last_probe_at"] = current_time_iso
                 entry["probe_attempts"] = int(entry.get("probe_attempts", 0)) + 1
     if lifecycle == "recovering":
         current_eff = entry.get("effective_concurrency")
-        pool_auth = entry.get("auth_identity_hash")
+        pool_auth = entry.get("auth_identity_hash") or current_auth
         has_active_canary_sibling = False
         if pool_auth:
             for other_id, other_entry in bucket.items():
-                if other_id != pool_id and isinstance(other_entry, dict) and other_entry.get("auth_identity_hash") == pool_auth:
-                    if (
-                        str(other_entry.get("state") or "").lower() == "recovering"
-                        and int(other_entry.get("effective_concurrency", 0) or 0) > 0
-                    ):
-                        has_active_canary_sibling = True
-                        break
+                if other_id != pool_id and isinstance(other_entry, dict):
+                    other_auth = other_entry.get("auth_identity_hash")
+                    if not other_auth:
+                        other_auth = configured_account_pool_auth_hash(config, other_id)
+                    if other_auth == pool_auth:
+                        if (
+                            str(other_entry.get("state") or "").lower() == "recovering"
+                            and int(other_entry.get("effective_concurrency", 0) or 0) > 0
+                        ):
+                            has_active_canary_sibling = True
+                            break
         if has_active_canary_sibling:
             entry["effective_concurrency"] = 0
         else:
@@ -2319,6 +2352,10 @@ def start_worker_for_request(
         provider_auth_identity_hash(config, agent["id"])
         or provider_auth_identity_hash(config, request.provider)
     )
+    pool_id, _ = account_pool_settings(config, agent["id"])
+    pool_entry = _account_pool_runtime_bucket(state).get(pool_id) if pool_id else None
+    pool_state = str(pool_entry.get("state") or "healthy").lower() if isinstance(pool_entry, dict) else "healthy"
+    pool_gen = int(pool_entry.get("generation", 0) or 0) if isinstance(pool_entry, dict) else 0
     state.setdefault("workers", {})[worker_run_id] = {
         "run_id": worker_run_id,
         "provider": request.provider,
@@ -2327,6 +2364,10 @@ def start_worker_for_request(
         "dispatch_slot_id": dispatch_slot_id or None,
         "dispatch_slot": request.metadata.get("dispatch_slot"),
         "auth_identity_hash": auth_hash or None,
+        "account_pool": pool_id,
+        "dispatched_pool_state": pool_state,
+        "recovery_generation": pool_gen if pool_state == "recovering" else None,
+        "is_canary": True if pool_state == "recovering" else None,
         "started_at": now,
         "created_at": now,
         # Keep the credential/account pool captured at dispatch time.  Looking

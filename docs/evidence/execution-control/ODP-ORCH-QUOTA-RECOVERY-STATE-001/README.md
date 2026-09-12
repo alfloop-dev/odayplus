@@ -183,8 +183,38 @@ All verification commands executed on the updated task branch and verified again
 
 
 
-## Bounded continuation verification (2026-09-12)
+## 9. Review Round 6 Remediation & Multi-Epoch Canary Fencing (2026-09-12)
 
-Merge clearances by the exact auth/run/failure tuple even within one second. Require matching dispatched, pool and current auth for canary success. Attribute delayed failures to dispatched auth and preserve newer-auth pools.
+### Findings & Root Causes Addressed
 
-Current source hashes, exact commands, original exit codes and durations are in `bounded-continuation-verification.json`; raw logs are adjacent. Earlier receipts above describe earlier revisions and are retained as history. All current listed commands passed. Tests ran against the recorded parent HEAD plus the tracked patch; source hashes bind them to this repair. Independent exact-head review and required CI remain mandatory before merge.
+1. **P1 — Stale healthy snapshot removes auth cooldown after provider clear (`runtime_state.py:732-747,761-765`)**:
+   - *Problem*: `_merge_account_pool_runtime()` treated any matching clearance tombstone as authorization to discard a pool cooldown, even when `failure_kind == "auth"`. A stale save from a pre-failure healthy snapshot restored capacity from 0 to 3.
+   - *Fix*: Restricted `cleared_cooldown()` in `_merge_account_pool_runtime()` to quota/capacity failures (`"quota_terminal"`, `"capacity"`, `"capacity_retryable"`). Non-quota cooldowns (e.g. `"auth"`) are preserved through merging.
+
+2. **P1 — Same-second pre-clear work certifying canary recovery (`supervisor.py:2315-2365`, `worker_failure_policy.py:829-865`)**:
+   - *Problem*: Subsecond dispatch occurred before same-second failure and clear, and second-truncated timestamps allowed `worker_started == probe_started`, enabling the pre-clear worker to certify canary recovery.
+   - *Fix*: Bound canary admission and completion to durable `recovery_generation` and `dispatched_pool_state` in `start_worker_for_request()`. `record_account_pool_canary_success()` verifies that the worker was dispatched in the active recovery generation (`recovery_generation >= generation` and `dispatched_pool_state == "recovering"`).
+
+3. **P1 — Legacy healthy sibling entries bypassing shared canary limit (`worker_failure_policy.py:785-805,829-875`, `supervisor.py:1576-1665`)**:
+   - *Problem*: Legacy entries lacking `auth_identity_hash` were not matched during shared cooldown fencing and canary capacity evaluation, allowing same-account capacity 1+2=3.
+   - *Fix*: Introduced `configured_account_pool_auth_hash()` to reconcile missing auth identity against configured provider provenance during admission, cooldown fencing, recovery fencing, and canary success.
+
+4. **P2 — Auth rotation stranding successful current-account workers in recovery (`supervisor.py:1576-1635`, `worker_failure_policy.py:830-875`)**:
+   - *Problem*: After auth rotation (e.g. A -> B), existing pools retained old auth A without a rebind path during admission. The successful B worker was rejected by canary certification (`worker_auth != pool_auth`).
+   - *Fix*: In `account_pool_runtime_state()`, when current auth differs from existing pool auth, rebinds the pool to the new auth with a bounded canary recovery slot (`effective_concurrency = min(1, configured_limit)`). Upon canary success, `record_account_pool_canary_success()` verifies `worker_auth == pool_auth == current_auth == "auth-b"`, restoring configured capacity to pool A while leaving unverified old-auth pools in recovery.
+
+---
+
+### Verification Receipts (Round 6 Exact-Head Verification)
+
+- **Reviewer Invocations (Green Verification)**:
+  1. `uv run pytest -q /home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260912T142938Z-89b134bf/test_review_auth_pool_stale_clear.py`: `4 passed in 2.38s` (Exit code: 0)
+  2. `uv run pytest -q /home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260912T142938Z-89b134bf/test_review_auth_canary_lifecycle.py`: `5 passed in 2.51s` (Exit code: 0)
+  3. `uv run pytest -q /home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260912T142938Z-89b134bf/test_review_auth_canary_lifecycle.py -k "same_second"`: `1 passed, 4 deselected in 1.95s` (Exit code: 0)
+
+- **Declared Exact-Head Verification Suites**:
+  1. `git diff --check`: Exit code `0` (Clean formatting & whitespace)
+  2. `uv run pytest -q .orchestrator/test_runtime_state.py`: Exit code `0` (`69 passed in 2.52s`)
+  3. `uv run pytest -q .orchestrator/test_supervisor.py -k "quota or pause or account_pool or config"`: Exit code `0` (`99 passed, 608 deselected in 6.78s`)
+  4. `uv run pytest -q .orchestrator/test_common.py`: Exit code `0` (`44 passed in 1.84s`)
+  5. `uv run ruff check .orchestrator/runtime_state.py .orchestrator/worker_failure_policy.py .orchestrator/supervisor.py .orchestrator/test_runtime_state.py .orchestrator/test_supervisor.py`: Exit code `0` (`All checks passed!`)

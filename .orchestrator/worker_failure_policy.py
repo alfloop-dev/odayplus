@@ -774,7 +774,7 @@ def mark_account_pool_cooldown(
     if not same_failure:
         entry["generation"] = int(previous.get("generation", 0) or 0) + 1
     persisted_worker = _lookup_worker_record(state, worker_run_id) or {}
-    current_auth = provider_auth_identity_hash(config, execution_id) or provider_auth_identity_hash(config, pool_id)
+    current_auth = configured_account_pool_auth_hash(config, pool_id, execution_id)
     auth_identity_hash = (
         (worker or {}).get("auth_identity_hash")
         or persisted_worker.get("auth_identity_hash")
@@ -786,7 +786,12 @@ def mark_account_pool_cooldown(
         for other_id, other_entry in bucket.items():
             if other_id == pool_id or not isinstance(other_entry, dict):
                 continue
-            if other_entry.get("auth_identity_hash") == auth_identity_hash:
+            other_auth = other_entry.get("auth_identity_hash")
+            if not other_auth:
+                other_auth = configured_account_pool_auth_hash(config, other_id)
+                if other_auth:
+                    other_entry["auth_identity_hash"] = other_auth
+            if other_auth == auth_identity_hash:
                 other_state = str(other_entry.get("state") or "").lower()
                 if other_state in {"recovering", "healthy"}:
                     other_entry.update(
@@ -835,22 +840,40 @@ def record_account_pool_canary_success(config: dict[str, Any], state: dict[str, 
     if not pool_id or not isinstance(entry, dict) or str(entry.get("state") or "") != "recovering":
         return False
 
+    run_id = str(worker.get("run_id") or "")
+    persisted_worker = (state.get("workers") or {}).get(run_id) if run_id and isinstance(state.get("workers"), dict) else None
+    effective_worker = persisted_worker if isinstance(persisted_worker, dict) else worker
+
+    # Validate recovery generation / admission:
+    # A worker dispatched when pool was healthy or in an earlier recovery generation cannot certify current recovery.
+    worker_rec_gen = effective_worker.get("recovery_generation")
+    pool_gen = entry.get("generation")
+    if worker_rec_gen is not None and pool_gen is not None:
+        if int(worker_rec_gen) < int(pool_gen):
+            return False
+    elif persisted_worker is not None and pool_gen is not None and int(pool_gen) > 0:
+        if effective_worker.get("dispatched_pool_state") != "recovering":
+            return False
+
     # Validate timing: worker must have started at or after recovery / probe initiation
     worker_started = _parse_iso_utc(
-        str(worker.get("started_at") or worker.get("lease_acquired_at") or worker.get("created_at") or "")
+        str(effective_worker.get("started_at") or effective_worker.get("lease_acquired_at") or effective_worker.get("created_at") or "")
     )
     probe_started = _parse_iso_utc(str(entry.get("last_probe_at") or entry.get("last_failure_at") or ""))
     if worker_started is not None and probe_started is not None and worker_started < probe_started:
         return False
 
     # Validate auth identity: use persisted dispatch auth provenance if available
-    worker_auth = str(worker.get("auth_identity_hash") or "")
+    worker_auth = str(effective_worker.get("auth_identity_hash") or "")
     if not worker_auth and isinstance(state.get("workers"), dict):
-        worker_auth = str(state["workers"].get(str(worker.get("run_id") or ""), {}).get("auth_identity_hash") or "")
+        worker_auth = str(state["workers"].get(run_id, {}).get("auth_identity_hash") or "")
     pool_auth = str(entry.get("auth_identity_hash") or "")
+    if not pool_auth:
+        pool_auth = str(configured_account_pool_auth_hash(config, pool_id, str(worker.get("logical_agent_id") or worker.get("agent_id") or "")) or "")
     current_auth = str(
-        provider_auth_identity_hash(
+        configured_account_pool_auth_hash(
             config,
+            pool_id,
             str(worker.get("logical_agent_id") or worker.get("agent_id") or worker.get("provider") or ""),
         ) or ""
     )
@@ -879,7 +902,10 @@ def record_account_pool_canary_success(config: dict[str, Any], state: dict[str, 
         for other_id, other_entry in _account_pool_runtime_bucket(state).items():
             if other_id == pool_id or not isinstance(other_entry, dict):
                 continue
-            if str(other_entry.get("auth_identity_hash") or "") == canary_auth and str(other_entry.get("state") or "") == "recovering":
+            other_auth = other_entry.get("auth_identity_hash")
+            if not other_auth:
+                other_auth = configured_account_pool_auth_hash(config, other_id)
+            if other_auth == canary_auth and str(other_entry.get("state") or "") == "recovering":
                 other_fk = str(other_entry.get("failure_kind") or "").strip().lower()
                 if other_fk and not (
                     is_terminal_quota_failure_kind(other_fk)
@@ -901,6 +927,7 @@ def record_account_pool_canary_success(config: dict[str, Any], state: dict[str, 
                         "generation": int(other_entry.get("generation", 0) or 0) + 1,
                         "last_recovered_at": recovered_at,
                         "last_canary_run_id": worker.get("run_id"),
+                        "auth_identity_hash": canary_auth,
                         "reason": None,
                     }
                 )
@@ -946,6 +973,37 @@ def provider_auth_identity_hash(config: dict[str, Any], provider: str | None) ->
     if not account_id:
         return None
     return hashlib.sha256(f"{auth_mode}:{account_id}".encode()).hexdigest()
+
+@_entrypoint
+def configured_account_pool_auth_hash(
+    config: dict[str, Any], pool_id: str | None, agent_id: str | None = None
+) -> str | None:
+    """Resolve configured auth identity hash for an account pool or agent."""
+    if agent_id:
+        h = provider_auth_identity_hash(config, agent_id)
+        if h:
+            return h
+        agent_cfg = (config.get("agents") or {}).get(agent_id)
+        if isinstance(agent_cfg, dict):
+            prov = agent_cfg.get("provider") or agent_cfg.get("adapter")
+            if prov:
+                h = provider_auth_identity_hash(config, prov)
+                if h:
+                    return h
+    if not pool_id:
+        return None
+    norm_pool = normalize_agent_id(pool_id)
+    for aid, acfg in (config.get("agents") or {}).items():
+        if not isinstance(acfg, dict):
+            continue
+        p_name = normalize_agent_id(str(acfg.get("account_pool") or ""))
+        s_name = normalize_agent_id(str(acfg.get("dispatch_slot_for_pool") or ""))
+        if norm_pool in (p_name, s_name):
+            prov = agent_provider_id(config, aid) or aid
+            h = provider_auth_identity_hash(config, prov)
+            if h:
+                return h
+    return provider_auth_identity_hash(config, pool_id)
 
 @_entrypoint
 def _failure_streak_key(task_id: str, provider: str) -> str:

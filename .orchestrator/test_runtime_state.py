@@ -1691,3 +1691,55 @@ def test_late_failure_does_not_fence_new_auth_sibling(current_auth):
         assert state["account_pool_runtime"]["pool_b"]["state"] == "cooldown"
     else:
         assert state["account_pool_runtime"]["pool_b"] == sibling_before
+
+
+@pytest.mark.parametrize("failure_kind", ["auth", "quota_terminal"])
+@pytest.mark.parametrize("stale_save_after_clear", [False, True])
+def test_clear_does_not_restore_auth_cooldown_from_pre_failure_writer(tmp_path, failure_kind, stale_save_after_clear):
+    config = {
+        "paths": {
+            "state_file": str(tmp_path / "state.json"),
+            "event_queue": str(tmp_path / "events.jsonl"),
+            "activity_log": str(tmp_path / "activity.jsonl"),
+        },
+        "account_pools": {"pool_a": {"max_concurrent": 3, "enabled": True, "state": "healthy"}},
+        "agents": {"codex": {"id": "codex", "provider": "codex", "account_pool": "pool_a"}},
+        "providers": {"codex": {"delivery_mode": "codex", "quota_group": "codex"}},
+    }
+    Path(config["paths"]["event_queue"]).write_text("")
+    state = runtime_state.default_state()
+    state["account_pool_runtime"]["pool_a"] = {
+        "state": "healthy", "effective_concurrency": 3, "generation": 0,
+        "auth_identity_hash": "fixture-auth",
+    }
+    runtime_state.save_runtime_state(config, state)
+    old_healthy_writer = runtime_state.load_runtime_state(config)
+    failure_writer = runtime_state.load_runtime_state(config)
+    with (
+        mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="fixture-auth"),
+        mock.patch.object(supervisor, "write_activity_log"),
+        mock.patch.object(supervisor.model_rotation, "rotation_enabled", return_value=False),
+    ):
+        with mock.patch.object(supervisor, "utc_now", return_value="2099-09-11T02:00:00Z"):
+            assert supervisor.mark_provider_dispatch_paused(
+                config, failure_writer, "codex", "authentication failed" if failure_kind == "auth" else "usage limit reached",
+                worker_run_id="failure-run", failure_kind=failure_kind,
+                worker={"run_id": "failure-run", "logical_agent_id": "codex", "provider": "codex", "auth_identity_hash": "fixture-auth"},
+            )
+        runtime_state.save_runtime_state(config, failure_writer)
+        assert runtime_state.load_runtime_state(config)["account_pool_runtime"]["pool_a"]["state"] == "cooldown"
+        clearer = runtime_state.load_runtime_state(config)
+        if not stale_save_after_clear:
+            runtime_state.save_runtime_state(config, old_healthy_writer)
+        with mock.patch.object(supervisor, "utc_now", return_value="2099-09-11T02:01:00Z"):
+            assert supervisor.clear_provider_dispatch_pause(config, clearer, "codex")
+        expected = "cooldown" if failure_kind == "auth" else "recovering"
+        assert clearer["account_pool_runtime"]["pool_a"]["state"] == expected
+        runtime_state.save_runtime_state(config, clearer)
+        assert runtime_state.load_runtime_state(config)["account_pool_runtime"]["pool_a"]["state"] == expected
+        if stale_save_after_clear:
+            runtime_state.save_runtime_state(config, old_healthy_writer)
+        restored = runtime_state.load_runtime_state(config)
+        pool = restored["account_pool_runtime"]["pool_a"]
+        capacity = supervisor.account_pool_effective_concurrency(config, restored, "codex")
+        assert (pool["state"], capacity) == (expected, 0 if failure_kind == "auth" else 1), pool
