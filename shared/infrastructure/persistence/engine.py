@@ -139,7 +139,11 @@ class SqliteEngine:
             else:
                 self._tx_depth -= 1
                 if self._tx_depth == 0:
-                    self._conn.commit()
+                    try:
+                        self._conn.commit()
+                    except BaseException:
+                        self._conn.rollback()
+                        raise
 
     def _maybe_commit(self) -> None:
         if self._tx_depth == 0:

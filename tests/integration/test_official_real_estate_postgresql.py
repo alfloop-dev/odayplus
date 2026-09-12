@@ -3,9 +3,11 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+import json
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from alembic import command
@@ -84,9 +86,15 @@ def _alembic_config(database: Any) -> Config:
 # the later revisions reference, or `upgrade("head")` fails on a table the
 # revision it claims to have applied was supposed to create. Only the
 # referenced shape is needed, which is what keeps this postgis-free.
+#
+# 0017 (INTV-006 adjustment lineage) binds into the baseline the same way: it
+# alters `operations.interventions` from 0001 to add the predecessor /
+# replacement self-references, so the `operations` schema and that table have
+# to exist here too.
 _BASELINE_OBJECTS_LATER_REVISIONS_BIND_TO = """
 CREATE SCHEMA IF NOT EXISTS core;
 CREATE SCHEMA IF NOT EXISTS workflow;
+CREATE SCHEMA IF NOT EXISTS operations;
 
 CREATE TABLE IF NOT EXISTS core.tenants (
     tenant_id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -140,6 +148,22 @@ CREATE TABLE IF NOT EXISTS geo.h3_cells (
 CREATE TABLE IF NOT EXISTS core.work_orders (
     work_order_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     root_cause TEXT
+);
+
+CREATE TABLE IF NOT EXISTS operations.interventions (
+    intervention_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    store_id UUID NOT NULL REFERENCES core.stores(store_id),
+    intervention_type VARCHAR(100) NOT NULL DEFAULT 'price',
+    eligibility_status VARCHAR(100) NOT NULL DEFAULT 'eligible',
+    action_set_json JSONB NOT NULL,
+    approved_action_json JSONB NOT NULL,
+    start_time TIMESTAMP WITH TIME ZONE NOT NULL,
+    end_time TIMESTAMP WITH TIME ZONE NOT NULL,
+    observation_start_time TIMESTAMP WITH TIME ZONE NOT NULL,
+    observation_end_time TIMESTAMP WITH TIME ZONE NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'proposed',
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 """
 
@@ -200,6 +224,676 @@ def test_root_cause_reserved_migration_round_trips_on_postgresql(
     assert comment_after_rollback == (None,)
     assert current_revision == ("0011",)
     assert column_still_exists == (1,)
+
+
+_INTERVENTION_ROW_COLUMNS = (
+    "intervention_id, store_id, intervention_type, eligibility_status, "
+    "action_set_json, approved_action_json, start_time, end_time, "
+    "observation_start_time, observation_end_time, status"
+)
+_INTERVENTION_ROW_VALUES = (
+    "%s, %s, 'price', 'eligible', '{}'::jsonb, '{}'::jsonb, "
+    "now(), now(), now(), now(), %s"
+)
+
+
+def test_intervention_adjust_lineage_migration_binds_to_production_interventions(
+    intake_blank_db: Any,
+) -> None:
+    """ODP-FR-INTV-006: the lineage columns must reach production PostgreSQL.
+
+    The migration alters the baseline `operations.interventions` table rather
+    than creating a table beside it, so the only thing that proves it works is
+    running the real Alembic chain and then writing a stop-plus-recreate pair
+    through the columns it added. The self-referencing foreign key is asserted
+    from both directions: a real predecessor links, and an intervention_id that
+    does not exist is refused instead of being stored as a dangling lineage.
+    """
+    _upgrade_official_schema(intake_blank_db)
+
+    with intake_blank_db.connect() as connection:
+        columns = connection.execute(
+            "SELECT column_name, data_type FROM information_schema.columns "
+            "WHERE table_schema = 'operations' AND table_name = 'interventions' "
+            "AND column_name IN ('predecessor_id', 'replacement_id', "
+            "'adjustment_json') ORDER BY column_name"
+        ).fetchall()
+        assert [tuple(row) for row in columns] == [
+            ("adjustment_json", "jsonb"),
+            ("predecessor_id", "uuid"),
+            ("replacement_id", "uuid"),
+        ]
+
+        foreign_keys = connection.execute(
+            "SELECT kcu.column_name, ccu.table_schema || '.' || ccu.table_name "
+            "FROM information_schema.table_constraints AS tc "
+            "JOIN information_schema.key_column_usage AS kcu "
+            "  ON tc.constraint_name = kcu.constraint_name "
+            "JOIN information_schema.constraint_column_usage AS ccu "
+            "  ON tc.constraint_name = ccu.constraint_name "
+            "WHERE tc.constraint_type = 'FOREIGN KEY' "
+            "AND tc.table_schema = 'operations' "
+            "AND tc.table_name = 'interventions' "
+            "AND kcu.column_name IN ('predecessor_id', 'replacement_id') "
+            "ORDER BY kcu.column_name"
+        ).fetchall()
+        assert [tuple(row) for row in foreign_keys] == [
+            ("predecessor_id", "operations.interventions"),
+            ("replacement_id", "operations.interventions"),
+        ]
+
+        indexes = connection.execute(
+            "SELECT indexname FROM pg_indexes WHERE schemaname = 'operations' "
+            "AND tablename = 'interventions' AND indexname IN "
+            "('idx_interventions_predecessor_id', "
+            "'idx_interventions_replacement_id') ORDER BY indexname"
+        ).fetchall()
+        assert [tuple(row) for row in indexes] == [
+            ("idx_interventions_predecessor_id",),
+            ("idx_interventions_replacement_id",),
+        ]
+
+    tenant_id = str(uuid4())
+    store_id = str(uuid4())
+    stopped_id = str(uuid4())
+    replacement_id = str(uuid4())
+    adjustment = {
+        "reason": "footfall assumption revised after week 1",
+        "actor": "ops-analyst-7",
+        "policy_version": "intervention-policy-v3",
+        "rollback_plan": "restore the stopped price ladder",
+    }
+
+    with intake_blank_db.connect() as connection:
+        connection.execute(
+            "INSERT INTO core.tenants (tenant_id, tenant_name) VALUES (%s, %s)",
+            (tenant_id, "INTV-006 lineage tenant"),
+        )
+        connection.execute(
+            "INSERT INTO core.stores (store_id, tenant_id, store_name) "
+            "VALUES (%s, %s, %s)",
+            (store_id, tenant_id, "INTV-006 lineage store"),
+        )
+        connection.execute(
+            f"INSERT INTO operations.interventions ({_INTERVENTION_ROW_COLUMNS}) "
+            f"VALUES ({_INTERVENTION_ROW_VALUES})",
+            (stopped_id, store_id, "stopped"),
+        )
+        connection.execute(
+            f"INSERT INTO operations.interventions ({_INTERVENTION_ROW_COLUMNS}, "
+            "predecessor_id, adjustment_json) "
+            f"VALUES ({_INTERVENTION_ROW_VALUES}, %s, %s::jsonb)",
+            (
+                replacement_id,
+                store_id,
+                "executing",
+                stopped_id,
+                json.dumps(adjustment),
+            ),
+        )
+        connection.execute(
+            "UPDATE operations.interventions SET replacement_id = %s "
+            "WHERE intervention_id = %s",
+            (replacement_id, stopped_id),
+        )
+
+        lineage = connection.execute(
+            "SELECT stopped.status, stopped.replacement_id, "
+            "replacement.status, replacement.predecessor_id, "
+            "replacement.adjustment_json "
+            "FROM operations.interventions AS stopped "
+            "JOIN operations.interventions AS replacement "
+            "  ON replacement.intervention_id = stopped.replacement_id "
+            "WHERE stopped.intervention_id = %s",
+            (stopped_id,),
+        ).fetchone()
+
+    assert lineage is not None
+    stopped_status, stored_replacement, replacement_status, stored_predecessor, stored_adjustment = lineage
+    assert stopped_status == "stopped"
+    assert replacement_status == "executing"
+    assert str(stored_replacement) == replacement_id
+    assert str(stored_predecessor) == stopped_id
+    # The audit payload survives the round trip in full: an adjustment that
+    # loses its reason, actor, policy version or rollback plan is not an audit
+    # record.
+    assert stored_adjustment == adjustment
+
+    with intake_blank_db.connect() as connection:
+        with pytest.raises(Exception) as dangling:
+            connection.execute(
+                f"INSERT INTO operations.interventions ({_INTERVENTION_ROW_COLUMNS}, "
+                "predecessor_id) "
+                f"VALUES ({_INTERVENTION_ROW_VALUES}, %s)",
+                (str(uuid4()), store_id, "executing", str(uuid4())),
+            )
+    assert "foreign key" in str(dangling.value).lower()
+
+
+def test_durable_intervention_repository_postgresql_backfill_and_adjust_legacy_cases(
+    intake_blank_db: Any,
+) -> None:
+    """ODP-FR-INTV-006: PostgreSQL relational backfill and adjust lifecycle
+    compatibility with legacy intervention IDs and relational persistence."""
+    _upgrade_official_schema(intake_blank_db)
+    runtime_url, _ = _urls(intake_blank_db)
+    engine = PostgresEngine(
+        runtime_url,
+        bootstrap=True,
+        validate_schema=False,
+    )
+
+    from modules.intervention.application.workflow import InterventionWorkflow
+    from modules.intervention.domain.lifecycle import (
+        Intervention,
+        InterventionKind,
+        InterventionStatus,
+        default_window_for,
+    )
+    from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+    from shared.infrastructure.persistence.repositories import (
+        DurableInterventionRepository,
+    )
+
+    tenant_id = str(uuid4())
+    store_id = str(uuid4())
+    with intake_blank_db.connect() as conn:
+        conn.execute(
+            "INSERT INTO core.tenants (tenant_id, tenant_name) VALUES (%s, %s)",
+            (tenant_id, "PG Test Tenant"),
+        )
+        conn.execute(
+            "INSERT INTO core.stores (store_id, tenant_id, store_name) VALUES (%s, %s, %s)",
+            (store_id, tenant_id, "PG Test Store"),
+        )
+
+    doc_store = SqliteDocumentStore(engine)
+    legacy_uuid = str(uuid4())
+    legacy_id = f"intervention-{legacy_uuid}"
+    now = datetime.now(UTC)
+
+    legacy_case = Intervention(
+        intervention_id=legacy_id,
+        store_id=store_id,
+        kind=InterventionKind.PRICE_CHANGE,
+        status=InterventionStatus.APPROVED,
+        trigger_ref="alert-pg-legacy",
+        expected_outcome="pg legacy test",
+        planned_start=now,
+        planned_end=now + timedelta(days=14),
+        window_spec=default_window_for(InterventionKind.PRICE_CHANGE),
+        created_by="pg-admin",
+        created_at=now,
+    )
+    doc_store.put("intervention.interventions", legacy_id, legacy_case, group_key=store_id)
+
+    # Initialize repository on PostgreSQL -> triggers backfill into operations.interventions
+    repo = DurableInterventionRepository(doc_store)
+
+    with intake_blank_db.connect() as conn:
+        row = conn.execute(
+            "SELECT intervention_id, status FROM operations.interventions WHERE intervention_id = %s",
+            (legacy_uuid,),
+        ).fetchone()
+        assert row is not None
+        assert row[1] == "approved"
+
+    workflow = InterventionWorkflow(repository=repo)
+    outcome = workflow.adjust_case(
+        legacy_id,
+        actor="pg-ops",
+        reason="adjust on postgresql",
+        action_spec={"price_change_pct": -6},
+        rollback_plan="revert pg",
+    )
+
+    assert outcome.original.status is InterventionStatus.STOPPED
+    assert outcome.original.replacement_id == outcome.replacement.intervention_id
+    assert outcome.replacement.predecessor_id == legacy_id
+
+    with intake_blank_db.connect() as conn:
+        orig_row = conn.execute(
+            "SELECT status, replacement_id FROM operations.interventions WHERE intervention_id = %s",
+            (legacy_uuid,),
+        ).fetchone()
+        assert orig_row is not None
+        assert orig_row[0] == "stopped"
+        assert str(orig_row[1]) == outcome.replacement.intervention_id
+
+    engine.close()
+
+
+def test_postgresql_adjust_concurrency_creates_single_replacement_and_rejects_collision(
+    intake_blank_db: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ODP-FR-INTV-006: Concurrent Adjust requests via production-entry API across independent
+    PostgreSQL engines enforce row lock and storage CAS, resulting in exactly one 200 SUCCESS
+    and one 409 STALE_UPDATE_CONFLICT, consistent relational/document lineage, audit logging,
+    and no duplicate/orphaned replacement."""
+    _upgrade_official_schema(intake_blank_db)
+    runtime_url, _ = _urls(intake_blank_db)
+
+    engine1 = PostgresEngine(runtime_url, bootstrap=True, validate_schema=False, max_pool_size=8)
+    engine2 = PostgresEngine(runtime_url, bootstrap=False, validate_schema=False, max_pool_size=8)
+
+    import threading
+
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
+    from shared.auth import Role
+    from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+    from shared.infrastructure.persistence.repositories import (
+        DurableInterventionRepository,
+    )
+    from tests.integration._authz import INTERVENTION_HEADERS, auth_headers
+
+    tenant_id = str(uuid4())
+    store_id = str(uuid4())
+    with intake_blank_db.connect() as conn:
+        conn.execute(
+            "INSERT INTO core.tenants (tenant_id, tenant_name) VALUES (%s, %s)",
+            (tenant_id, "PG Concurrent Tenant"),
+        )
+        conn.execute(
+            "INSERT INTO core.stores (store_id, tenant_id, store_name) VALUES (%s, %s, %s)",
+            (store_id, tenant_id, "PG Concurrent Store"),
+        )
+
+    store1 = SqliteDocumentStore(engine1)
+    store2 = SqliteDocumentStore(engine2)
+    repo1 = DurableInterventionRepository(store1)
+    repo2 = DurableInterventionRepository(store2)
+
+    app1 = create_app(intervention_repository=repo1)
+    app2 = create_app(intervention_repository=repo2)
+
+    client1 = TestClient(app1, headers=INTERVENTION_HEADERS)
+    client2 = TestClient(app2, headers=INTERVENTION_HEADERS)
+
+    now = datetime.now(UTC)
+    create_res = client1.post(
+        "/interventions",
+        json={
+            "store_id": store_id,
+            "kind": "PRICE_CHANGE",
+            "trigger_ref": "alert-pg-concurrent",
+            "expected_outcome": "pg concurrent adjust test",
+            "planned_start": now.isoformat(),
+            "planned_end": (now + timedelta(days=14)).isoformat(),
+            "created_by": "pg-admin",
+            "action_spec": {"price_change_pct": -5},
+        },
+    )
+    assert create_res.status_code == 201
+    case_id = create_res.json()["intervention_id"]
+    case_uuid = case_id.removeprefix("intervention-")
+
+    client1.post(f"/interventions/{case_id}/eligibility", json={"eligible": True, "actor": "pg-admin"})
+    client1.post(f"/interventions/{case_id}/action", json={"action_spec": {"price_change_pct": -5}, "actor": "pg-admin"})
+    client1.post(f"/interventions/{case_id}/conflict-check", json={"actor": "pg-admin"})
+    client1.post(f"/interventions/{case_id}/submit", json={"actor": "pg-admin"})
+    approve_res = client1.post(f"/interventions/{case_id}/approve", json={"action": "APPROVE", "actor": "sup-admin", "reason": "approved"})
+    assert approve_res.status_code == 200
+    initial_version = approve_res.json()["version"]
+
+    barrier = threading.Barrier(2, timeout=10)
+    initial_reads = []
+    locked_reads = []
+    audit_before = [len(app.state.audit_log.list_events()) for app in (app1, app2)]
+
+    def intercept(repo, worker_id):
+        original_get = repo.get
+        first_read = True
+
+        def controlled_get(intervention_id, *, for_update=False):
+            nonlocal first_read
+            case = original_get(intervention_id, for_update=for_update)
+            if intervention_id == case_id and for_update:
+                locked_reads.append((worker_id, case.version))
+            elif intervention_id == case_id and first_read:
+                first_read = False
+                initial_reads.append((worker_id, case.version))
+                # Both workers now hold the same original snapshot before
+                # either can enter its locked revalidation/write section.
+                barrier.wait()
+            return case
+
+        monkeypatch.setattr(repo, "get", controlled_get)
+
+    intercept(repo1, 1)
+    intercept(repo2, 2)
+
+    def run_adjust(worker_id: int, client: TestClient):
+        c = TestClient(
+            client.app,
+            headers=auth_headers(
+                Role.OPERATIONS_MANAGER,
+                Role.REGIONAL_SUPERVISOR,
+                subject=f"worker-{worker_id}",
+            ),
+        )
+        res = c.post(
+            f"/interventions/{case_id}/adjust",
+            json={
+                "actor": f"worker-{worker_id}",
+                "reason": f"adjust by worker {worker_id}",
+                "action_spec": {"price_change_pct": -5 * worker_id},
+                "expected_version": initial_version,
+            },
+        )
+        return worker_id, res.status_code, res.json()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(run_adjust, 1, client1), pool.submit(run_adjust, 2, client2)]
+        results = [future.result(timeout=20) for future in futures]
+    assert sorted(initial_reads) == [(1, initial_version), (2, initial_version)]
+    assert len(locked_reads) == 2
+
+    status_codes = sorted([r[1] for r in results])
+    assert status_codes == [200, 409], f"Results were: {results}"
+
+    conflict_res = next(r[2] for r in results if r[1] == 409)
+    assert conflict_res["detail"]["code"] == "STALE_UPDATE_CONFLICT"
+
+    success_res = next(r[2] for r in results if r[1] == 200)
+    replacement_id = success_res["replacement_intervention_id"]
+    replacement_uuid = replacement_id.removeprefix("intervention-")
+
+    # Verify PostgreSQL operations.interventions has exactly original (stopped) and single replacement
+    with intake_blank_db.connect() as conn:
+        rows = conn.execute(
+            "SELECT intervention_id, status, predecessor_id, replacement_id FROM operations.interventions WHERE store_id = %s",
+            (store_id,),
+        ).fetchall()
+        assert len(rows) == 2
+        orig_row = next(r for r in rows if str(r[0]) == case_uuid)
+        assert orig_row[1] == "stopped"
+        assert str(orig_row[3]) == replacement_uuid
+
+        repl_row = next(r for r in rows if str(r[0]) == replacement_uuid)
+        assert repl_row[1] == "candidate"
+        assert str(repl_row[2]) == case_uuid
+
+    # Verify document store mirror consistency
+    doc_orig = store1.get("intervention.interventions", case_id)
+    assert doc_orig is not None
+    assert doc_orig.status.value == "STOPPED"
+    assert doc_orig.replacement_id == replacement_id
+
+    doc_repl = store1.get("intervention.interventions", replacement_id)
+    assert doc_repl is not None
+    assert doc_repl.status.value == "CANDIDATE"
+    assert doc_repl.predecessor_id == case_id
+
+    winner = next(result[0] for result in results if result[1] == 200)
+    for worker_id, app in enumerate((app1, app2), start=1):
+        events = [event for event in app.state.audit_log.list_events()[audit_before[worker_id - 1]:]
+                  if event.event_type == "intervention.lifecycle.v1"]
+        assert [event.action for event in events] == (["adjust", "create"] if worker_id == winner else [])
+
+    engine1.close()
+    engine2.close()
+
+
+@pytest.mark.parametrize("competitor", ["stop", "version"])
+def test_postgresql_adjust_interleaved_with_stop_or_version_update_conflict(
+    intake_blank_db: Any, monkeypatch: pytest.MonkeyPatch, competitor: str,
+) -> None:
+    """ODP-FR-INTV-006: Controlled interleaving across independent PostgreSQL engines:
+    Worker 1 reads APPROVED vN and prepares adjust; Worker 2 stops the case concurrently
+    under its own engine before Worker 1's lock/CAS write; Worker 1's adjust detects
+    the stale status under FOR UPDATE, returns HTTP 409 STALE_UPDATE_CONFLICT (not 422),
+    and leaves no orphaned replacement in SQL or document store."""
+    _upgrade_official_schema(intake_blank_db)
+    runtime_url, _ = _urls(intake_blank_db)
+
+    engine1 = PostgresEngine(runtime_url, bootstrap=True, validate_schema=False, max_pool_size=4)
+    engine2 = PostgresEngine(runtime_url, bootstrap=False, validate_schema=False, max_pool_size=4)
+
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
+    from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+    from shared.infrastructure.persistence.repositories import (
+        DurableInterventionRepository,
+    )
+    from tests.integration._authz import INTERVENTION_HEADERS
+
+    tenant_id = str(uuid4())
+    store_id = str(uuid4())
+    with intake_blank_db.connect() as conn:
+        conn.execute("INSERT INTO core.tenants (tenant_id, tenant_name) VALUES (%s, %s)", (tenant_id, "PG Interleave Tenant"))
+        conn.execute("INSERT INTO core.stores (store_id, tenant_id, store_name) VALUES (%s, %s, %s)", (store_id, tenant_id, "PG Interleave Store"))
+
+    repo1 = DurableInterventionRepository(SqliteDocumentStore(engine1))
+    repo2 = DurableInterventionRepository(SqliteDocumentStore(engine2))
+
+    app1 = create_app(intervention_repository=repo1)
+    app2 = create_app(intervention_repository=repo2)
+
+    client1 = TestClient(app1, headers=INTERVENTION_HEADERS)
+    client2 = TestClient(app2, headers=INTERVENTION_HEADERS)
+
+    now = datetime.now(UTC)
+    create_res = client1.post(
+        "/interventions",
+        json={
+            "store_id": store_id,
+            "kind": "PRICE_CHANGE",
+            "trigger_ref": "alert-pg-interleave",
+            "expected_outcome": "pg interleave test",
+            "planned_start": now.isoformat(),
+            "planned_end": (now + timedelta(days=14)).isoformat(),
+            "created_by": "pg-admin",
+            "action_spec": {"price_change_pct": -5},
+        },
+    )
+    assert create_res.status_code == 201
+    case_id = create_res.json()["intervention_id"]
+    case_uuid = case_id.removeprefix("intervention-")
+
+    client1.post(f"/interventions/{case_id}/eligibility", json={"eligible": True, "actor": "pg-admin"})
+    client1.post(f"/interventions/{case_id}/action", json={"action_spec": {"price_change_pct": -5}, "actor": "pg-admin"})
+    client1.post(f"/interventions/{case_id}/conflict-check", json={"actor": "pg-admin"})
+    client1.post(f"/interventions/{case_id}/submit", json={"actor": "pg-admin"})
+    approve_res = client1.post(f"/interventions/{case_id}/approve", json={"action": "APPROVE", "actor": "sup-admin", "reason": "approved"})
+    assert approve_res.status_code == 200
+    v_approved = approve_res.json()["version"]
+
+    from dataclasses import replace
+
+    order = []
+    get_original = repo1.get
+    audit_before = [event for event in app1.state.audit_log.list_events() if event.event_type == "intervention.lifecycle.v1"]
+
+    def controlled_initial_read(intervention_id, *, for_update=False):
+        snapshot = get_original(intervention_id, for_update=for_update)
+        if intervention_id == case_id and not order and not for_update:
+            assert snapshot.version == v_approved
+            order.append("initial")
+            if competitor == "stop":
+                response = client2.post(f"/interventions/{case_id}/stop", json={"actor": "ops-stopper", "reason": "emergency cancellation"})
+                assert response.status_code == 200
+            else:
+                repo2.save(replace(repo2.get(case_id), version=v_approved + 1))
+            order.append("competitor_committed")
+        elif intervention_id == case_id and for_update:
+            order.append("locked_reread")
+            assert snapshot.version == v_approved + 1
+        return snapshot
+
+    monkeypatch.setattr(repo1, "get", controlled_initial_read)
+    adjust_res = client1.post(
+        f"/interventions/{case_id}/adjust",
+        json={
+            "actor": "ops-adjuster",
+            "reason": "late adjust attempt",
+            "action_spec": {"price_change_pct": -4},
+            "expected_version": v_approved,
+        },
+    )
+    assert order == ["initial", "competitor_committed", "locked_reread"]
+    assert adjust_res.status_code == 409
+    assert adjust_res.json()["detail"]["code"] == "STALE_UPDATE_CONFLICT"
+
+    # Verify DB has only the stopped original and NO replacement was created
+    with intake_blank_db.connect() as conn:
+        rows = conn.execute(
+            "SELECT intervention_id, status, replacement_id FROM operations.interventions WHERE store_id = %s",
+            (store_id,),
+        ).fetchall()
+        assert len(rows) == 1
+        assert str(rows[0][0]) == case_uuid
+        assert rows[0][1] == ("stopped" if competitor == "stop" else "approved")
+        assert rows[0][2] is None
+
+    # Verify document store has only the stopped original
+    doc = repo1.get(case_id)
+    assert doc is not None
+    assert doc.status.value == ("STOPPED" if competitor == "stop" else "APPROVED")
+    assert doc.replacement_id is None
+
+    assert [event for event in app1.state.audit_log.list_events() if event.event_type == "intervention.lifecycle.v1"] == audit_before
+    assert doc.version == v_approved + 1
+    if competitor == "stop":
+        assert [event.action for event in app2.state.audit_log.list_events()
+                if event.event_type == "intervention.lifecycle.v1"] == ["stop"]
+
+    engine1.close()
+    engine2.close()
+
+
+def test_postgresql_adjust_interleaved_with_stale_assign_or_stop_rejected(
+    intake_blank_db: Any,
+) -> None:
+    """ODP-FR-INTV-006 Finding 1 regression: When an intervention is adjusted and replaced,
+    a concurrent/stale assign or update attempt holding a stale snapshot (replacement_id=None)
+    is rejected by repository lock/CAS guard, preventing erasure of established replacement lineage."""
+    _upgrade_official_schema(intake_blank_db)
+    runtime_url, _ = _urls(intake_blank_db)
+
+    engine1 = PostgresEngine(runtime_url, bootstrap=True, validate_schema=False, max_pool_size=4)
+    engine2 = PostgresEngine(runtime_url, bootstrap=False, validate_schema=False, max_pool_size=4)
+
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
+    from modules.intervention.domain.lifecycle import InterventionError
+    from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+    from shared.infrastructure.persistence.repositories import (
+        DurableInterventionRepository,
+    )
+    from tests.integration._authz import INTERVENTION_HEADERS
+
+    tenant_id = str(uuid4())
+    store_id = str(uuid4())
+    with intake_blank_db.connect() as conn:
+        conn.execute("INSERT INTO core.tenants (tenant_id, tenant_name) VALUES (%s, %s)", (tenant_id, "PG Stale Lineage Tenant"))
+        conn.execute("INSERT INTO core.stores (store_id, tenant_id, store_name) VALUES (%s, %s, %s)", (store_id, tenant_id, "PG Stale Lineage Store"))
+
+    repo1 = DurableInterventionRepository(SqliteDocumentStore(engine1))
+    repo2 = DurableInterventionRepository(SqliteDocumentStore(engine2))
+
+    app1 = create_app(intervention_repository=repo1)
+    app2 = create_app(intervention_repository=repo2)
+
+    client1 = TestClient(app1, headers=INTERVENTION_HEADERS)
+    client2 = TestClient(app2, headers=INTERVENTION_HEADERS)
+
+    now = datetime.now(UTC)
+    create_res = client1.post(
+        "/interventions",
+        json={
+            "store_id": store_id,
+            "kind": "PRICE_CHANGE",
+            "trigger_ref": "alert-pg-stale-lineage",
+            "expected_outcome": "pg stale lineage test",
+            "planned_start": now.isoformat(),
+            "planned_end": (now + timedelta(days=14)).isoformat(),
+            "created_by": "pg-admin",
+            "action_spec": {"price_change_pct": -5},
+        },
+    )
+    assert create_res.status_code == 201
+    case_id = create_res.json()["intervention_id"]
+    case_uuid = case_id.removeprefix("intervention-")
+
+    client1.post(f"/interventions/{case_id}/eligibility", json={"eligible": True, "actor": "pg-admin"})
+    client1.post(f"/interventions/{case_id}/action", json={"action_spec": {"price_change_pct": -5}, "actor": "pg-admin"})
+    client1.post(f"/interventions/{case_id}/conflict-check", json={"actor": "pg-admin"})
+    client1.post(f"/interventions/{case_id}/submit", json={"actor": "pg-admin"})
+    approve_res = client1.post(f"/interventions/{case_id}/approve", json={"action": "APPROVE", "actor": "sup-admin", "reason": "approved"})
+    assert approve_res.status_code == 200
+    v_approved = approve_res.json()["version"]
+
+    # Pre-read snapshot at APPROVED v_approved with replacement_id=None
+    stale_snapshot = repo1.get(case_id)
+    assert stale_snapshot is not None
+    assert stale_snapshot.replacement_id is None
+    stale_write = stale_snapshot.with_transition(
+        to_status=stale_snapshot.status,
+        actor="ops-lead",
+        action="assign",
+        reason="assigning stale",
+        assigned_to="ops-manager-1",
+    )
+
+    # 1. client2 adjusts the intervention -> original becomes STOPPED with replacement_id
+    adjust_res = client2.post(
+        f"/interventions/{case_id}/adjust",
+        json={
+            "actor": "ops-adjuster",
+            "reason": "replace with new parameters",
+            "action_spec": {"price_change_pct": -10},
+            "expected_version": v_approved,
+        },
+    )
+    assert adjust_res.status_code == 200
+    replacement_id = adjust_res.json()["replacement_intervention_id"]
+    replacement_uuid = replacement_id.removeprefix("intervention-")
+
+    # 2. Worker 1 attempts to save its stale write holding replacement_id=None
+    # The repository lock/CAS guard intercepts this and rejects it, preserving lineage
+    with pytest.raises(InterventionError, match="already stopped and replaced by"):
+        repo1.save(stale_write)
+
+    # Also test that a stale adjust attempt with expected_version=v_approved gets 409 STALE_UPDATE_CONFLICT
+    stale_adjust_res = client1.post(
+        f"/interventions/{case_id}/adjust",
+        json={
+            "actor": "ops-adjuster-2",
+            "reason": "late adjust",
+            "action_spec": {"price_change_pct": -8},
+            "expected_version": v_approved,
+        },
+    )
+    assert stale_adjust_res.status_code == 409
+    assert stale_adjust_res.json()["detail"]["code"] == "STALE_UPDATE_CONFLICT"
+
+    # 3. Verify PostgreSQL operations.interventions retains STOPPED status and replacement_id
+    with intake_blank_db.connect() as conn:
+        rows = conn.execute(
+            "SELECT intervention_id, status, predecessor_id, replacement_id FROM operations.interventions WHERE store_id = %s",
+            (store_id,),
+        ).fetchall()
+        assert len(rows) == 2
+        orig_row = next(r for r in rows if str(r[0]) == case_uuid)
+        assert orig_row[1] == "stopped"
+        assert str(orig_row[3]) == replacement_uuid
+
+        repl_row = next(r for r in rows if str(r[0]) == replacement_uuid)
+        assert repl_row[1] == "candidate"
+        assert str(repl_row[2]) == case_uuid
+
+    # 4. Verify document mirror retains replacement_id and STOPPED status
+    doc_orig = repo1.get(case_id)
+    assert doc_orig is not None
+    assert doc_orig.status.value == "STOPPED"
+    assert doc_orig.replacement_id == replacement_id
+
+    engine1.close()
+    engine2.close()
 
 
 def _create_model_view_prerequisites(database: Any) -> None:

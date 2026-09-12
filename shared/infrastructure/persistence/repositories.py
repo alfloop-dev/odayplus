@@ -11,14 +11,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import pickle
 from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
 from threading import RLock
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from models.shared_ml.artifact_store import (
     ArtifactRecord,
@@ -68,7 +69,13 @@ from modules.heatzone.domain.composition import (
     validate_composition_record,
 )
 from modules.heatzone.workers import HeatZoneBatchScoreResult
-from modules.intervention.domain.lifecycle import Intervention, LabelRecord
+from modules.intervention.domain.lifecycle import (
+    ACTIVE_INTERVENTION_STATUSES,
+    Intervention,
+    InterventionError,
+    InterventionStatus,
+    LabelRecord,
+)
 from modules.learninghub.domain import (
     BacktestReceipt,
     DatasetSnapshot,
@@ -651,31 +658,360 @@ class DurableAdLiftRepository:
         return self._store.list_by_group(self._C, campaign_id)
 
 
+# ``operations.interventions`` (PostgreSQL) and ``interventions`` (SQLite) are the
+# only relations this repository is allowed to write.  The upsert for each one is
+# held here as a fully literal statement keyed by that identifier, so the table
+# name is never interpolated into SQL and every bound value stays a parameter.
+# An identifier outside this map has no statement and fails closed rather than
+# being composed into a query.
+_INTERVENTION_UPSERT_SQL: dict[str, str] = {
+    "interventions": (
+        "INSERT INTO interventions ("
+        "  intervention_id, store_id, intervention_type, eligibility_status, "
+        "  action_set_json, approved_action_json, start_time, end_time, "
+        "  observation_start_time, observation_end_time, status, "
+        "  predecessor_id, replacement_id, adjustment_json, "
+        "  created_at, updated_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) "
+        "ON CONFLICT(intervention_id) DO UPDATE SET "
+        "  store_id = excluded.store_id, "
+        "  intervention_type = excluded.intervention_type, "
+        "  eligibility_status = excluded.eligibility_status, "
+        "  action_set_json = excluded.action_set_json, "
+        "  approved_action_json = excluded.approved_action_json, "
+        "  start_time = excluded.start_time, "
+        "  end_time = excluded.end_time, "
+        "  observation_start_time = excluded.observation_start_time, "
+        "  observation_end_time = excluded.observation_end_time, "
+        "  status = excluded.status, "
+        "  predecessor_id = excluded.predecessor_id, "
+        "  replacement_id = excluded.replacement_id, "
+        "  adjustment_json = excluded.adjustment_json, "
+        "  updated_at = CURRENT_TIMESTAMP "
+        "WHERE ("
+        "  (excluded.replacement_id IS NULL AND interventions.replacement_id IS NULL) OR "
+        "  (excluded.replacement_id IS NOT NULL AND excluded.status = 'stopped' AND interventions.replacement_id IS NULL AND interventions.status IN ('approved', 'executing', 'observing')) OR "
+        "  (interventions.replacement_id = excluded.replacement_id AND excluded.status = 'stopped')"
+        ")"
+    ),
+    "operations.interventions": (
+        "INSERT INTO operations.interventions ("
+        "  intervention_id, store_id, intervention_type, eligibility_status, "
+        "  action_set_json, approved_action_json, start_time, end_time, "
+        "  observation_start_time, observation_end_time, status, "
+        "  predecessor_id, replacement_id, adjustment_json, "
+        "  created_at, updated_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) "
+        "ON CONFLICT(intervention_id) DO UPDATE SET "
+        "  store_id = excluded.store_id, "
+        "  intervention_type = excluded.intervention_type, "
+        "  eligibility_status = excluded.eligibility_status, "
+        "  action_set_json = excluded.action_set_json, "
+        "  approved_action_json = excluded.approved_action_json, "
+        "  start_time = excluded.start_time, "
+        "  end_time = excluded.end_time, "
+        "  observation_start_time = excluded.observation_start_time, "
+        "  observation_end_time = excluded.observation_end_time, "
+        "  status = excluded.status, "
+        "  predecessor_id = excluded.predecessor_id, "
+        "  replacement_id = excluded.replacement_id, "
+        "  adjustment_json = excluded.adjustment_json, "
+        "  updated_at = CURRENT_TIMESTAMP "
+        "WHERE ("
+        "  (excluded.replacement_id IS NULL AND operations.interventions.replacement_id IS NULL) OR "
+        "  (excluded.replacement_id IS NOT NULL AND excluded.status = 'stopped' AND operations.interventions.replacement_id IS NULL AND operations.interventions.status IN ('approved', 'executing', 'observing')) OR "
+        "  (operations.interventions.replacement_id = excluded.replacement_id AND excluded.status = 'stopped')"
+        ")"
+    ),
+}
+
+
+_INTERVENTION_EXISTS_SQL: dict[str, str] = {
+    "interventions": "SELECT intervention_id FROM interventions WHERE intervention_id = ?",
+    "operations.interventions": "SELECT intervention_id FROM operations.interventions WHERE intervention_id = ?",
+}
+
+
+def _to_uuid_if_prefixed(val: str | None) -> str | None:
+    if val is None:
+        return None
+    cleaned = val.removeprefix("intervention-")
+    try:
+        return str(UUID(cleaned))
+    except (ValueError, AttributeError):
+        return val
+
+
+@contextmanager
+def _atomic_write(engine: Any) -> Iterator[None]:
+    """Run a group of statements as one all-or-nothing unit.
+
+    ``engine.lock`` is a real transaction on PostgreSQL (``_TransactionalLock``
+    opens one on entry) but plain serialization on SQLite, where every
+    ``execute`` commits on its own -- the same code, different durability.
+    Entering ``engine.transaction()`` as well closes that gap: it is a no-op
+    re-entry on PostgreSQL and the actual transaction on SQLite, so on both
+    engines a statement that raises part-way through leaves nothing behind.
+    """
+    with ExitStack() as stack:
+        lock = getattr(engine, "lock", None)
+        if lock is not None:
+            stack.enter_context(lock)
+        begin = getattr(engine, "transaction", None)
+        if callable(begin):
+            stack.enter_context(begin())
+        yield
+
+
 class DurableInterventionRepository:
-    """Durable mirror of ``InMemoryInterventionRepository``."""
+    """Durable mirror of ``InMemoryInterventionRepository`` with migration-backed relational persistence."""
 
     _C = "intervention.interventions"
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
+        self._backfill_relational_if_needed()
+
+    @property
+    def table(self) -> str:
+        if str(getattr(self._store.engine, "dialect", "")).lower() == "postgresql":
+            return "operations.interventions"
+        return "interventions"
+
+    def _backfill_relational_if_needed(self) -> None:
+        engine = self._store.engine
+        table = self.table
+        is_pg = str(getattr(engine, "dialect", "")).lower() == "postgresql"
+        if is_pg:
+            row = engine.query_one("SELECT to_regclass(?) AS regclass", (table,))
+            if not row or not row.get("regclass"):
+                return
+        else:
+            row = engine.query_one(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                (table,),
+            )
+            if not row:
+                return
+
+        exists_statement = _INTERVENTION_EXISTS_SQL.get(table)
+        if not exists_statement:
+            return
+
+        docs = self._store.list_all(self._C)
+        if not docs:
+            return
+
+        with _atomic_write(engine):
+            for doc in docs:
+                if isinstance(doc, Intervention):
+                    lookup_id = _to_uuid_if_prefixed(doc.intervention_id) if is_pg else doc.intervention_id
+                    existing = engine.query_one(exists_statement, (lookup_id,))
+                    if not existing:
+                        self._sync_sql(doc)
+
+    def _sync_sql(self, intervention: Intervention) -> None:
+        engine = self._store.engine
+        table = self.table
+        statement = _INTERVENTION_UPSERT_SQL.get(table)
+        if statement is None:
+            raise RuntimeError(
+                f"intervention relational persistence has no statement for table {table!r}"
+            )
+
+        is_pg = str(getattr(engine, "dialect", "")).lower() == "postgresql"
+        if is_pg:
+            row = engine.query_one("SELECT to_regclass(?) AS regclass", (table,))
+            if not row or not row.get("regclass"):
+                raise RuntimeError(
+                    f"intervention relational persistence schema is missing table {table!r}"
+                )
+        else:
+            row = engine.query_one(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                (table,),
+            )
+            if not row:
+                raise RuntimeError(
+                    f"intervention relational persistence schema is missing table {table!r}"
+                )
+
+        eligibility_status = (
+            "eligible"
+            if intervention.eligibility and intervention.eligibility.eligible
+            else ("ineligible" if intervention.eligibility else "eligible")
+        )
+        action_set_json = json.dumps(intervention.action_spec or {})
+        approved_action_json = json.dumps(
+            intervention.approval.to_dict() if intervention.approval else {}
+        )
+        adjustment_json = (
+            json.dumps(intervention.adjustment.to_dict())
+            if intervention.adjustment
+            else None
+        )
+        obs_start = (
+            intervention.observation_window.opened_at.isoformat()
+            if intervention.observation_window
+            else intervention.planned_start.isoformat()
+        )
+        obs_end = (
+            intervention.observation_window.maturity_time.isoformat()
+            if intervention.observation_window
+            else intervention.effective_window_end().isoformat()
+        )
+
+        iid = _to_uuid_if_prefixed(intervention.intervention_id) if is_pg else intervention.intervention_id
+        pred_id = _to_uuid_if_prefixed(intervention.predecessor_id) if is_pg else intervention.predecessor_id
+        repl_id = _to_uuid_if_prefixed(intervention.replacement_id) if is_pg else intervention.replacement_id
+
+        cursor = engine.execute(
+            statement,
+            (
+                iid,
+                intervention.store_id,
+                intervention.kind.value if hasattr(intervention.kind, "value") else str(intervention.kind),
+                eligibility_status,
+                action_set_json,
+                approved_action_json,
+                intervention.planned_start.isoformat(),
+                intervention.planned_end.isoformat(),
+                obs_start,
+                obs_end,
+                intervention.status.value.lower() if hasattr(intervention.status, "value") else str(intervention.status).lower(),
+                pred_id,
+                repl_id,
+                adjustment_json,
+                intervention.created_at.isoformat() if hasattr(intervention, "created_at") else datetime.now(UTC).isoformat(),
+            ),
+        )
+        if cursor.rowcount == 0:
+            # SQLite / PG earlier guard read does not reserve the writer lock.
+            # Check the lineage and active status in the actual UPSERT, before writing
+            # the document mirror; the enclosing transaction rolls back.
+            raise InterventionError(
+                f"stale update: intervention {intervention.intervention_id} was already stopped and replaced or changed status"
+            )
 
     def save(self, intervention: Intervention) -> Intervention:
-        self._store.put(
-            self._C,
-            intervention.intervention_id,
-            intervention,
-            group_key=intervention.store_id,
-        )
+        engine = self._store.engine
+        is_pg = str(getattr(engine, "dialect", "")).lower() == "postgresql"
+        with _atomic_write(engine):
+            if is_pg:
+                engine.query_one(
+                    "SELECT doc_id FROM durable_documents WHERE collection = ? AND doc_id = ? FOR UPDATE",
+                    (self._C, intervention.intervention_id),
+                )
+                row = engine.query_one(
+                    "SELECT intervention_id, status, replacement_id FROM operations.interventions WHERE intervention_id = ? FOR UPDATE",
+                    (_to_uuid_if_prefixed(intervention.intervention_id),),
+                )
+                if row and row.get("replacement_id"):
+                    existing_repl = str(row.get("replacement_id"))
+                    incoming_repl = _to_uuid_if_prefixed(intervention.replacement_id)
+                    if incoming_repl != existing_repl or intervention.status != InterventionStatus.STOPPED:
+                        raise InterventionError(
+                            f"stale update: intervention {intervention.intervention_id} is already stopped and replaced by {existing_repl}"
+                        )
+                doc = self._store.get(self._C, intervention.intervention_id)
+                if doc is not None:
+                    if intervention.replacement_id is not None and intervention.status == InterventionStatus.STOPPED:
+                        if doc.status not in ACTIVE_INTERVENTION_STATUSES:
+                            raise InterventionError(
+                                f"stale update: intervention {intervention.intervention_id} status is {doc.status.value}, cannot adjust"
+                            )
+                        if doc.version >= intervention.version:
+                            raise InterventionError(
+                                f"stale update: intervention {intervention.intervention_id} was modified concurrently (current version {doc.version}, saving version {intervention.version})"
+                            )
+                    elif doc.version > intervention.version:
+                        raise InterventionError(
+                            f"stale update: intervention {intervention.intervention_id} was modified concurrently (current version {doc.version}, saving version {intervention.version})"
+                        )
+            else:
+                existing_repl = None
+                try:
+                    row = engine.query_one(
+                        "SELECT intervention_id, status, replacement_id FROM interventions WHERE intervention_id = ?",
+                        (intervention.intervention_id,),
+                    )
+                    if row and row.get("replacement_id"):
+                        existing_repl = str(row.get("replacement_id"))
+                except Exception:
+                    pass
+                doc = self._store.get(self._C, intervention.intervention_id)
+                if not existing_repl and doc is not None and getattr(doc, "replacement_id", None):
+                    existing_repl = str(doc.replacement_id)
+                if existing_repl:
+                    if intervention.replacement_id != existing_repl or intervention.status != InterventionStatus.STOPPED:
+                        raise InterventionError(
+                            f"stale update: intervention {intervention.intervention_id} is already stopped and replaced by {existing_repl}"
+                        )
+                if doc is not None:
+                    if intervention.replacement_id is not None and intervention.status == InterventionStatus.STOPPED:
+                        if doc.status not in ACTIVE_INTERVENTION_STATUSES:
+                            raise InterventionError(
+                                f"stale update: intervention {intervention.intervention_id} status is {doc.status.value}, cannot adjust"
+                            )
+                        if doc.version >= intervention.version:
+                            raise InterventionError(
+                                f"stale update: intervention {intervention.intervention_id} was modified concurrently (current version {doc.version}, saving version {intervention.version})"
+                            )
+                    elif doc.version > intervention.version:
+                        raise InterventionError(
+                            f"stale update: intervention {intervention.intervention_id} was modified concurrently (current version {doc.version}, saving version {intervention.version})"
+                        )
+            self._sync_sql(intervention)
+            # Relational persistence is the production contract.  Write the
+            # document mirror only after it succeeds so a migration/driver/FK
+            # failure cannot leave a seemingly durable but unindexed aggregate.
+            self._store.put(
+                self._C,
+                intervention.intervention_id,
+                intervention,
+                group_key=intervention.store_id,
+            )
         return intervention
 
-    def get(self, intervention_id: str) -> Intervention | None:
+    @contextmanager
+    def atomic(self) -> Iterator[None]:
+        """Commit every ``save`` made inside the block together, or none.
+
+        An adjustment is two writes -- stop the original, open the
+        replacement -- that are only meaningful as a pair, so the caller needs
+        a way to say "both or neither" without knowing which engine is behind
+        the store.
+        """
+        with _atomic_write(self._store.engine):
+            yield
+
+    def get(self, intervention_id: str, *, for_update: bool = False) -> Intervention | None:
+        if for_update:
+            engine = self._store.engine
+            is_pg = str(getattr(engine, "dialect", "")).lower() == "postgresql"
+            if is_pg:
+                row = engine.query_one(
+                    "SELECT data FROM durable_documents WHERE collection = ? AND doc_id = ? FOR UPDATE",
+                    (self._C, intervention_id),
+                )
+                if row is not None:
+                    engine.query_one(
+                        "SELECT intervention_id, status, replacement_id FROM operations.interventions WHERE intervention_id = ? FOR UPDATE",
+                        (_to_uuid_if_prefixed(intervention_id),),
+                    )
+                    return pickle.loads(row["data"])
+                return None
         return self._store.get(self._C, intervention_id)
+
+    def get_for_update(self, intervention_id: str) -> Intervention | None:
+        return self.get(intervention_id, for_update=True)
 
     def list_all(self) -> list[Intervention]:
         return self._store.list_all(self._C)
 
     def list_by_store(self, store_id: str) -> list[Intervention]:
         return self._store.list_by_group(self._C, store_id)
+
 
 
 class DurablePriceOpsRepository:
