@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ODP-DEV-ROLLOUT-001 Acceptance Reconciliation & Canonical DAG Verification Script
-Verified for target baseline: 3828c5ada2a1baab33d7dbe734c7ec70152d3d77 (origin/dev tip)
+Verified for target baseline: d977447ee0c537a1c7eeb6f68ec912d033816f88 (origin/dev tip)
 """
 
 import sys
@@ -25,7 +25,7 @@ def main() -> int:
     # 1. Verify Basic Task Metadata & Baseline
     assert recon_data.get("task_id") == "ODP-DEV-ROLLOUT-001", "Invalid task_id"
     target_base = recon_data.get("reconciliation_target", {}).get("target_dev_baseline")
-    assert target_base == "3828c5ada2a1baab33d7dbe734c7ec70152d3d77", f"Unexpected target_dev_baseline: {target_base}"
+    assert target_base == "d977447ee0c537a1c7eeb6f68ec912d033816f88", f"Unexpected target_dev_baseline: {target_base}"
     assert recon_data.get("historical_delivery", {}).get("delivered_files_total") == 9, "Delivered files count mismatch"
 
     # 2. Verify Canonical Scoped Snapshots (17 Nodes)
