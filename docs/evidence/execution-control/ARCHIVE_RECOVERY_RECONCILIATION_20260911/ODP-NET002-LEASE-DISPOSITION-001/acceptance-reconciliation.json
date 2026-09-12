@@ -6,11 +6,11 @@
   "phase": "History Recovery — executable acceptance reconciliation",
   "owner": "Antigravity2",
   "reviewer": "Codex",
-  "recorded_at": "2026-09-12T09:25:00Z",
+  "recorded_at": "2026-09-12T09:40:00Z",
   "reconciliation_target": {
     "repository": "alfloop-dev/odayplus",
     "continuation_branch": "task/ODP-NET002-LEASE-DISPOSITION-001-RECOVERY-20260911",
-    "target_dev_baseline": "ef8345bce29436ce86bd1a70b857d668ac16182a"
+    "target_dev_baseline": "3828c5ada2a1baab33d7dbe734c7ec70152d3d77"
   },
   "historical_delivery": {
     "pr_number": 1187,
@@ -84,6 +84,12 @@
       "disclosure": "The 2026-09-06 archive incident resulted in the loss of raw per-test terminal output logs. Historical verification is evidenced via the 7 GitHub check-runs on exact head 3bd82e8a401d and task-review-gate status. Missing historical execution receipts are disclosed as unknown rather than simulated or re-executed solely for historical counts."
     }
   },
+  "prior_round_receipt_disclosures": {
+    "round_1_20260911_status": "withdrawn_uncommitted_receipt",
+    "round_1_disclosure": "In round 1 (2026-09-11), focused test receipts were recorded against transient uncommitted worktree state (4b3512109a96e6255dca8e5b61efab4f66453183). Per Pantheon Verification Policy and task acceptance ('舊事實與現在觀察分開，不重跑已有成功套件只為統計；文檔工作不新增鏡像 implementation 的 tests，不為湊證據重跑無關 suite'), historical CI on exact head 3bd82e8a already passed all required tests. The round 1 uncommitted test receipt is formally withdrawn.",
+    "round_2_20260912_status": "reconciled_with_exact_measurements",
+    "round_2_disclosure": "In round 2 (2026-09-12), receipts have been updated to bind real measured durations, timestamps, exact baseline SHA 3828c5ada2a1, terminal exit codes, and stdout/stderr references."
+  },
   "acceptance_criteria_reconciliation": [
     {
       "index": 1,
@@ -134,7 +140,7 @@
       ],
       "status": "met_by_test_in_green_ci",
       "status_zh": "已滿足（跨層揭露契約、OpsBoard 投影、UI 審批與收據 E2E 測試＋CI 綠燈）",
-      "historical_evidence": "歷史 exact-head 3bd82e8a401d463ef8301671620d45fc93b6127b 交付並由 CI check-runs（product, product-e2e-gate）執行通過兩項互補之測試證據：1) tests/integration/test_net002_lease_disposition.py:190-195 (test_shared_governance_disclosure_includes_lease) 驗證 shared/governance/netplan_disclosure.py 中 NETPLAN_REQUIRED_CONSTRAINT_CLASSES（8 大必要類別包含 LEASE）與 NETPLAN_ACKNOWLEDGEABLE_CONSTRAINT_CLASSES（{'LEASE', 'SEQUENCING'}）之常數集合定義；2) 同 exact-head 上 tests/integration/test_netplan_disclosure_ui_e2e.py::test_e2e_production_solve_to_operator_projection_and_durable_approval_receipt（281-476 行）完整驗證 CP-SAT 求解分割（343 行：unmodelled_constraint_classes == {LEASE, SEQUENCING}）-> OpsBoard NetworkRebalanceService 投影（362 行：unmodelledConstraintClasses == {'LEASE', 'SEQUENCING'}，379 行：acknowledgeableConstraintClasses == {'LEASE', 'SEQUENCING'}）-> Operator UI 審批與持久化簽核收據（429 行：acknowledgedConstraintClasses == {'LEASE', 'SEQUENCING'}，451 行：帶有密碼學 hash 之持久收據 disclosureAcknowledgementId）-> 最終 ApprovalRecord 綁定驗證（473 行：acknowledged_constraint_classes == (LEASE, SEQUENCING)）。",
+      "historical_evidence": "歷史 exact-head 3bd82e8a401d463ef8301671620d45fc93b6127b 交付並由 CI check-runs（product, product-e2e-gate）執行通過三項互補之測試證據：1) tests/integration/test_net002_lease_disposition.py:190-195 (test_shared_governance_disclosure_includes_lease) 驗證 shared/governance/netplan_disclosure.py 中 NETPLAN_REQUIRED_CONSTRAINT_CLASSES（8 大必要類別包含 LEASE）與 NETPLAN_ACKNOWLEDGEABLE_CONSTRAINT_CLASSES（{'LEASE', 'SEQUENCING'}）之常數集合定義；2) 同 exact-head 上 tests/integration/test_netplan_disclosure_ui_e2e.py::test_e2e_production_solve_to_operator_projection_and_durable_approval_receipt（281-476 行）完整驗證 CP-SAT 求解分割（343 行：unmodelled_constraint_classes == {LEASE, SEQUENCING}）-> OpsBoard NetworkRebalanceService 投影（362 行：unmodelledConstraintClasses == {'LEASE', 'SEQUENCING'}，379 行：acknowledgeableConstraintClasses == {'LEASE', 'SEQUENCING'}）-> Operator UI 審批與持久化簽核收據（429 行：acknowledgedConstraintClasses == {'LEASE', 'SEQUENCING'}，451 行：帶有密碼學 hash 之持久收據 disclosureAcknowledgementId）-> 最終 ApprovalRecord 綁定驗證（473 行：acknowledged_constraint_classes == (LEASE, SEQUENCING)）；3) test_netplan_disclosure_ui_e2e.py::test_e2e_http_disclosure_payload_matches_the_console_test_fixture（1048-1065 行）與 PlanGanttChart.test.tsx（apps/web/ Node 渲染與簽核測試）驗證 HTTP 揭露 payload 與 console fixture 一致。",
       "source_sha": "3bd82e8a401d463ef8301671620d45fc93b6127b",
       "ci_binding": "check-run product @ 3bd82e8a401d (conclusion=success) and check-run product-e2e-gate @ 3bd82e8a401d (conclusion=success)",
       "boundary_and_limitations": "機械式驗證跨層揭露契約與求解器未建模輸出、OpsBoard 投影、UI 審批與簽核收據同步；不代表 LEASE 已由求解器建模或已具備主動硬限制。"
@@ -161,14 +167,14 @@
   "criteria_to_responsibility_task_mapping": {
     "A1_solver_consistency": {
       "disposition_scope_fulfillment": "驗證未建模狀態下 MIP 與 CP-SAT 一致將 LEASE 列入 unmodelled classes (PR #1187)。",
-      "followup_responsibility_task": "由 ODP-NET002-LEASE-CONTRACT-PREP-001 (WP-32A, PR #1256, merge commit 95646a5c2bd5, 已歸檔 done) 產出雙求解器一致驗收方案 -> 轉由 ODP-NET002-LEASE-IMPLEMENTATION-001 (WP-32B, 待 H05 滿足後實作雙求解器真實硬限制)。"
+      "followup_responsibility_task": "由 ODP-NET002-LEASE-CONTRACT-PREP-001 (WP-32A, PR #1256, merge commit 95646a5c2bd5, merged_at 2026-09-08T17:05:57Z, 已歸檔 done) 產出雙求解器一致驗收方案 -> 轉由 ODP-NET002-LEASE-IMPLEMENTATION-001 (WP-32B, 待 H05 滿足後實作雙求解器真實硬限制)。"
     },
     "A2_fail_closed_and_semantics_distinction": {
       "disposition_scope_fulfillment": "於處置報告中定義 Fail-Closed 原則，拒絕將 None 當作 0.0 免費解約，如實揭露 ExistingStoreInput 預設 0.0 缺口並退回 Handback (PR #1187)。",
-      "followup_responsibility_task": "由 ODP-NET002-LEASE-CONTRACT-PREP-001 (WP-32A, PR #1256) 規格化 StoreLeaseContract 與 CandidateSiteLeaseTerms 欄位契約 -> 轉由 ODP-NET002-LEASE-IMPLEMENTATION-001 (WP-32B, 持有 H05) 於資料到位後驗證真實數值之 fail-closed 行為與修復預設值缺口。"
+      "followup_responsibility_task": "由 ODP-NET002-LEASE-CONTRACT-PREP-001 (WP-32A, PR #1256, merge commit 95646a5c2bd5, merged_at 2026-09-08T17:05:57Z) 規格化 StoreLeaseContract 與 CandidateSiteLeaseTerms 欄位契約 -> 轉由 ODP-NET002-LEASE-IMPLEMENTATION-001 (WP-32B, 持有 H05) 於資料到位後驗證真實數值之 fail-closed 行為與修復預設值缺口。"
     },
     "A3_ui_policy_receipt_synchronization": {
-      "disposition_scope_fulfillment": "跨 shared/governance、OpsBoard 與 NetPlan approval 同步宣告 LEASE (PR #1187 及 PR #1187 exact head 之 test_netplan_disclosure_ui_e2e.py)。",
+      "disposition_scope_fulfillment": "跨 shared/governance、OpsBoard 與 NetPlan approval 同步宣告 LEASE (PR #1187 及 PR #1187 exact head 之 test_netplan_disclosure_ui_e2e.py 與 PlanGanttChart.test.tsx)。",
       "followup_responsibility_task": "由 CI 閘門持續監控；待 ODP-NET002-LEASE-IMPLEMENTATION-001 完工後，將 LEASE 從 unmodelled 遷移至 modelled constraint classes 並更新 UI 揭露。"
     },
     "A4_no_decorative_constraints_and_formal_handback": {
@@ -220,7 +226,7 @@
           "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1256",
           "head_sha": "d70563166e344e2d560ea7cac2eb236ddd118892",
           "merge_commit": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
-          "merged_at": "2026-09-08T16:40:29Z",
+          "merged_at": "2026-09-08T17:05:57Z",
           "merged_by": "ajoe734",
           "status": "merged",
           "board_location": "archive",
@@ -354,12 +360,12 @@
     "release_gate_policy": "ODP-FR-NET-002::LEASE 維持 absent / BLOCKED_BY_EVIDENCE 狀態。本處置任務之驗收核對通過，絕不代表將 ODP-FR-NET-002::LEASE 標記為 VERIFIED。實際雙求解器租約硬限制能力由 ODP-NET002-LEASE-IMPLEMENTATION-001 於 H05 滿足並完成程式、測試、獨立審查後正式驗收。"
   },
   "current_observations_and_verification_receipts": {
-    "observed_at": "2026-09-12T09:25:00Z",
+    "observed_at": "2026-09-12T09:40:00Z",
     "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-net002-lease-disposition-001",
-    "measured_base_sha": "ef8345bce29436ce86bd1a70b857d668ac16182a",
+    "target_dev_baseline": "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
     "human_decision_d18_provenance": {
       "source_file": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
-      "pinned_baseline_sha": "ef8345bce29436ce86bd1a70b857d668ac16182a",
+      "pinned_baseline_sha": "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
       "lines": [
         65,
         179
@@ -370,14 +376,14 @@
     "live_board_provenance": {
       "source_file": "/home/lupin/odayplus/ai-status.json",
       "archive_tasks_dir": "/home/lupin/odayplus/ai-task-archive/tasks/",
-      "observed_timestamp": "2026-09-12T09:25:00Z",
+      "observed_timestamp": "2026-09-12T09:40:00Z",
       "task_states_observed": {
         "ODP-NET002-LEASE-DISPOSITION-001": "in_progress (depends_on: [])",
         "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001": "todo (depends on ODP-NET002-LEASE-DISPOSITION-001, ODP-REQ-DISPOSITION-GOVERNANCE-001, and 15 other tasks)",
         "ODP-REQ-DISPOSITION-GOVERNANCE-001": "archived (terminal_status: done, terminal_outcome: completed)",
         "ODP-NETPLAN-DISCLOSURE-UI-E2E-001": "archived (terminal_status: done, terminal_outcome: completed)",
         "ODP-NET002-LEASE-IMPLEMENTATION-001": "blocked (waiting for Human/Ops on H05; depends on ODP-NET002-LEASE-CONTRACT-PREP-001)",
-        "ODP-NET002-LEASE-CONTRACT-PREP-001": "archived (terminal_status: done, terminal_outcome: completed, PR #1256, merge commit 95646a5c2bd5)"
+        "ODP-NET002-LEASE-CONTRACT-PREP-001": "archived (terminal_status: done, terminal_outcome: completed, PR #1256, merge commit 95646a5c2bd5, merged_at 2026-09-08T17:05:57Z)"
       }
     },
     "receipts": [
@@ -392,7 +398,9 @@
         ],
         "repository": "alfloop-dev/odayplus",
         "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-net002-lease-disposition-001",
-        "started_at": "2026-09-12T09:25:00Z",
+        "started_at": "2026-09-12T09:39:28Z",
+        "finished_at": "2026-09-12T09:39:28Z",
+        "duration_seconds": 0.013,
         "exit_code": 0,
         "stdout_snippet": "",
         "stderr_snippet": ""
@@ -405,7 +413,9 @@
         ],
         "repository": "alfloop-dev/odayplus",
         "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-net002-lease-disposition-001",
-        "started_at": "2026-09-12T09:25:00Z",
+        "started_at": "2026-09-12T09:39:28Z",
+        "finished_at": "2026-09-12T09:39:28Z",
+        "duration_seconds": 0.473,
         "exit_code": 0,
         "stdout_snippet": "Requirement member checks passed: 9 set-valued requirements, 47 members (37 satisfied, 10 absent and noted; dispositions: BLOCKED_BY_EVIDENCE=4, DECIDED=1, IMPLEMENTATION_READY=3, OPEN=3, VERIFIED=36).",
         "stderr_snippet": ""
@@ -419,7 +429,9 @@
         ],
         "repository": "alfloop-dev/odayplus",
         "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-net002-lease-disposition-001",
-        "started_at": "2026-09-12T09:25:00Z",
+        "started_at": "2026-09-12T09:39:28Z",
+        "finished_at": "2026-09-12T09:39:28Z",
+        "duration_seconds": 0.094,
         "exit_code": 0,
         "stdout_snippet": "Full canonical task DAG cycle check passed: 0 cycles detected.",
         "stderr_snippet": ""
