@@ -4,8 +4,8 @@
 - 執行身分：`Antigravity7`（Supervisor Auto Worker 續辦）
 - 審查指派：`Codex2`
 - 交付分支：`task/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002-RECOVERY-20260911`
-- 基準 Commit：`2889b55fb1fe76eb9265f49c009d7dfab7621c4b`（已合併 `origin/dev` 最新基準 `2889b55f`）
-- 產出日期：`2026-09-11`
+- 基準 Commit：`4b35121031d0738ff7c529810cf1b2e267161083`（已合併 `origin/dev` 最新基準 `4b351210`）
+- 產出日期：`2026-09-12`
 
 ---
 
@@ -132,10 +132,10 @@
 | **RC-01** | Reviewer 範圍 diff 檢查 | `git diff --check b42b1f82...0ffddb44` | 2026-09-11T12:15:53Z | 0.0116 | `0` | Codex2 review 原始收據；clean diff formatting |
 | **RC-02** | Reviewer 工作樹狀態 | `git status --porcelain` | 2026-09-11T12:15:53Z | 0.0427 | `0` | Codex2 review 原始收據；worktree clean |
 | **RC-03** | PR #1311 CI 狀態查核 | `gh pr view 1311 --json ...` | 2026-09-11T12:15:53Z | 0.7169 | `0` | Codex2 review 原始收據；change-scope/boundary/classify/orchestrator/product SUCCESS |
-| **RC-04** | PR #1096 歷史 exact-head CI | `gh api repos/alfloop-dev/odayplus/commits/69422d71.../check-runs` | 2026-09-11T12:15:54Z | 0.7176 | `0` | Codex2 review 原始收據；7/7 success checks |
-| **RC-05** | PR #1096 歷史審查核准狀態 | `gh api repos/alfloop-dev/odayplus/commits/69422d71.../statuses` | 2026-09-11T12:15:54Z | 0.5265 | `0` | Codex2 review 原始收據；task-review-gate: Codex2 approved at 2026-09-01T08:45:28Z |
-| **RC-06** | PR #1253 決策矩陣交付查核 | `gh pr view 1253 --json ...` | 2026-09-11T12:15:55Z | 0.6602 | `0` | Codex2 review 原始收據；PR 1253 merge 0af51e04, mergedAt 2026-09-08T19:07:27Z |
-| **RC-07** | 上游 PR merge commits 檢查 | `git show --no-patch --format=fuller 595e7501 84008100 47c876b5` | 2026-09-11T12:15:56Z | 0.0207 | `0` | Codex2 review 原始收據；PR 1085, PR 1074, PR 1073 merge details confirmed |
+| **RC-04** | PR #1096 歷史 exact-head CI | `gh api repos/alfloop-dev/odayplus/commits/69422d71.../check-runs` | 2026-09-11T12:15:54Z | 0.7176 | `0` | Codex2 review 原始收據；7/7 success checks 完整 API 回傳 |
+| **RC-05** | PR #1096 歷史審查核准狀態 | `gh api repos/alfloop-dev/odayplus/commits/69422d71.../statuses?per_page=100` | 2026-09-11T12:15:54Z | 0.5265 | `0` | Codex2 review 原始收據；task-review-gate 完整 statuses 回傳，確認 2026-09-01T08:45:28Z Codex2 approval |
+| **RC-06** | PR #1253 決策矩陣交付查核 | `gh pr view 1253 --json number,headRefOid,mergeCommit,mergedAt,files` | 2026-09-11T12:15:55Z | 0.6602 | `0` | Codex2 review 原始收據；PR 1253 完整 PR JSON，merge 0af51e04, mergedAt 2026-09-08T19:07:27Z |
+| **RC-07** | 上游 PR merge commits 檢查 | `git show --no-patch --format=fuller 595e7501 84008100 47c876b5` | 2026-09-11T12:15:56Z | 0.0207 | `0` | Codex2 review 原始收據；git show --format=fuller 完整 commit 資訊，確認 PR 1085, 1074, 1073 |
 | **RC-08** | 看板狀態與依賴投影查詢 | `jq .tasks[] ... ai-status.json` | 2026-09-11T12:15:56Z | 0.0365 | `0` | Codex2 review 原始收據；完整 10 項依賴與 standby task 狀態確認 |
 | **RC-09** | 復用 R31: PR #1096 狀態 | `gh pr view 1096 --json ...` | 2026-09-08T17:14:27Z | null | `0` | `auth-mode-evidence-matrix.json` R31 (PR #1253)；head 69422d71, merge 2377168c |
 | **RC-10** | 復用 R07: PR #1096 merge 父母 | `git log -1 --format=%H %P %cI %s 2377168c...` | 2026-09-08T17:14:24Z | null | `0` | `auth-mode-evidence-matrix.json` R07 (PR #1253)；merge commit parents 35a28741 69422d71 |
@@ -144,7 +144,7 @@
 | **RC-13** | 復用 R01: 歷史 composition base | `git rev-parse --verify d0c81635df8e^{commit}` | 2026-09-08T17:14:24Z | null | `0` | `auth-mode-evidence-matrix.json` R01 (PR #1253)；d0c81635df8e842f7910d40873b3886d4237cee8 |
 | **RC-14** | 復用 R03: 歷史 composition merge | `git rev-parse --verify f3095a0e^{commit}` | 2026-09-08T17:14:24Z | null | `0` | `auth-mode-evidence-matrix.json` R03 (PR #1253)；f3095a0ee3ca3dde63d98f35ae8cfedf090fd529 |
 | **RC-15** | 復用 R27: 歷史看板查無此任務 | `ai-status.sh show ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002` | 2026-09-08T17:14:25Z | null | `1` | `auth-mode-evidence-matrix.json` R27 (PR #1253)；紀錄 archive 遺失之客觀歷史事實 |
-| **RC-16** | 歷史不可變收據聲明記錄 | `cat docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md` | 2026-09-01T00:00:00Z | null | null | 歷史 PR #1096 交付收據；exit_code 標註 unknown_in_rollup_receipt，7 層驗證 pass |
+| **RC-16** | 歷史不可變收據聲明與文件校驗 | `歷史文件宣告: docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md (PR #1096 merge 2377168c2cc0)` | 2026-09-01 (日期精度) | null | `unknown_in_rollup_receipt` | 歷史 PR #1096 交付收據聲明；個別指令退出碼為 unknown_in_rollup_receipt，7 層驗證 pass；符合真實歷史文件記載 |
 
 ---
 
