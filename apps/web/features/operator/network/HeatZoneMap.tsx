@@ -5,7 +5,7 @@ import type { MouseEvent } from "react";
 import { GeoJsonLayer, ScatterplotLayer, TextLayer } from "@deck.gl/layers";
 import DeckGL from "@deck.gl/react";
 import { cellToBoundary } from "h3-js";
-import maplibregl from "maplibre-gl";
+import * as maplibregl from "maplibre-gl";
 import type { CandidateSite, HeatZone, Listing } from "./mapTypes.ts";
 import { isOperatorProductionMode } from "../operatorDataMode.ts";
 import styles from "./heatZoneMap.module.css";
@@ -168,7 +168,7 @@ export function HeatZoneMap({
 
     mapRef.current = map;
     const initialMapData = mapDataRef.current;
-    map.on("error", (event) => {
+    map.on("error", (event: { error?: { message?: string } }) => {
       setRuntimeError(
         `Map tile boundary error · correlation_id ${boundaryConfig.correlationId} · ${
           event.error?.message ?? "unknown tile error"
