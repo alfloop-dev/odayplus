@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import base64
+import copy
 import json
 import subprocess
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 import release_lease_integration as bridge
+import supervisor
 from common import validate_config
 
 from delivery_toolchain.release.release_lease import (
@@ -886,3 +889,187 @@ def test_public_example_stays_disabled_and_workflow_has_no_issuer_secret() -> No
     workflow = (root / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
     assert bridge.DEFAULT_SECRET_REFERENCE not in workflow
     assert "odp-release-lease-private-key" not in workflow
+
+
+@pytest.mark.parametrize("callback_kind,revision_sync", [
+    ("legacy", False),
+    ("current", False),
+    ("current", True),
+])
+@pytest.mark.parametrize("dispatch_fails", [False, True])
+def test_release_terminal_receipt_survives_commit_reload(
+    harness: dict, monkeypatch: pytest.MonkeyPatch, callback_kind: str, revision_sync: bool, dispatch_fails: bool
+) -> None:
+    """Exercise the actual bridge/CAS callback, with local-only fixture lease store."""
+    sync_calls = []
+
+    def local_sync(config):
+        sync_calls.append(config)
+        if revision_sync:
+            snapshot = json.loads(harness["status_path"].read_text())
+            snapshot[supervisor.STATUS_WRITE_REVISION_FIELD] = uuid.uuid4().hex
+            harness["status_path"].write_text(json.dumps(snapshot))
+        return True
+
+    monkeypatch.setattr(supervisor, "sync_status_pipeline", local_sync)
+
+    def legacy_commit(config, status):
+        return supervisor.write_status_snapshot_if_current(config, status) and supervisor.sync_status_pipeline(config)
+
+    harness["commit"] = legacy_commit if callback_kind == "legacy" else supervisor.commit_canonical_task_transition
+    dispatch_attempts = []
+
+    def dispatch(**kwargs):
+        dispatch_attempts.append(True)
+        if dispatch_fails:
+            raise bridge.RuntimeReleaseDispatchError("isolated unconfirmed dispatch")
+
+    assert _run(harness, dispatch)
+    assert len(dispatch_attempts) == 1
+    assert len(sync_calls) == 3
+    expected = "dispatch_unknown" if dispatch_fails else "dispatched"
+    snapshot = json.loads(harness["status_path"].read_text())
+    record = snapshot["tasks"][1][bridge.ISSUANCE_FIELD]
+    activity = harness["activity_path"].read_text()
+    event_type = "release_lease_dispatch_unknown" if dispatch_fails else "release_lease_runtime_release_dispatched"
+    assert event_type in activity
+    assert record["state"] == expected, (
+        f"canonical state {record['state']!r} disagrees with emitted {event_type!r}; "
+        f"callback={callback_kind}, revision_sync={revision_sync}"
+    )
+
+
+def test_two_release_requests_preserve_history_and_nonce_audit(
+    harness: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two valid release requests in sequence preserve prior issuance history on the second task."""
+    second_id = "ODP-RELEASE-DEPLOY-002"
+    old_nonce = "synthetic-prior-approval-nonce"
+    old_record = {
+        "state": "dispatched",
+        "request_fingerprint": "synthetic-prior-fingerprint",
+        "approval_id": "synthetic-prior-approval",
+        "approval_nonce_digest": bridge._safe_digest(old_nonce),
+        "receipt": {"lease_id": "lease-" + "1" * 32},
+    }
+
+    status = _read_status(harness)
+    status[supervisor.STATUS_WRITE_REVISION_FIELD] = "initial-revision"
+    second = copy.deepcopy(status["tasks"][1])
+    second["id"] = second_id
+    second[bridge.REQUEST_FIELD].update({
+        "task_id": second_id,
+        "nonce": "synthetic-new-second-approval",
+        "approval_id": "synthetic-new-second-approval-id",
+    })
+    second[bridge.ISSUANCE_FIELD] = copy.deepcopy(old_record)
+    status["tasks"].append(second)
+    harness["status_path"].write_text(json.dumps(status))
+
+    def local_sync(config):
+        snapshot = _read_status(harness)
+        snapshot[supervisor.STATUS_WRITE_REVISION_FIELD] = uuid.uuid4().hex
+        harness["status_path"].write_text(json.dumps(snapshot))
+        return True
+
+    monkeypatch.setattr(supervisor, "sync_status_pipeline", local_sync)
+    harness["commit"] = supervisor.commit_canonical_task_transition
+
+    dispatches = []
+    assert _run(harness, lambda **kwargs: dispatches.append(kwargs["request"]["task_id"]))
+    assert dispatches == ["ODP-RELEASE-DEPLOY-001", second_id]
+
+    snapshot = _read_status(harness)
+    second_live = next(t for t in snapshot["tasks"] if t["id"] == second_id)
+    history = second_live.get(bridge.ISSUANCE_HISTORY_FIELD, [])
+    assert len(history) == 1
+    assert history[0] == old_record
+    assert second_live.get(bridge.ISSUANCE_FIELD, {}).get("state") == "dispatched"
+
+    # Nonce reuse of the old nonce must be rejected
+    reuse_errors = bridge._nonce_reuse_errors(
+        snapshot,
+        "ODP-RELEASE-DEPLOY-003",
+        "different-fingerprint",
+        bridge._safe_digest(old_nonce),
+        archive_dir=harness["root"] / "ai-task-archive/tasks",
+        config=harness["config"],
+    )
+    assert reuse_errors == ["release_lease_request nonce was already used by a different issuance"]
+
+
+@pytest.mark.parametrize("callback_kind", ["legacy", "current"])
+@pytest.mark.parametrize("dispatch_fails", [False, True])
+@pytest.mark.parametrize("external_change", ["receipt", "replacement_request", "request_only", "removed_task", "history_only"])
+def test_terminal_publication_preserves_external_issuance_after_refresh(
+    harness: dict, monkeypatch: pytest.MonkeyPatch,
+    callback_kind: str, dispatch_fails: bool, external_change: str,
+) -> None:
+    """An actual canonical CAS reload must not authorize a stale release result."""
+    sync_states = []
+    expected_task = None
+    external_history = {"state": "dispatch_unknown", "operator_audit": "concurrent-history"}
+
+    def local_sync(config):
+        nonlocal expected_task
+        snapshot = _read_status(harness)
+        task = next(t for t in snapshot["tasks"] if t["id"] == TASK_ID)
+        sync_states.append(task[bridge.ISSUANCE_FIELD]["state"])
+        if len(sync_states) == 2:
+            assert sync_states[-1] == "issued"
+            task.setdefault(bridge.ISSUANCE_HISTORY_FIELD, []).append(external_history)
+            task["external_writer_marker"] = "must-survive"
+            if external_change in {"receipt", "replacement_request"}:
+                task[bridge.ISSUANCE_FIELD].update(
+                    state="dispatch_unknown", dispatch="not_confirmed",
+                    operator_receipt={"id": "external-writer-reconciliation"},
+                )
+            if external_change in {"replacement_request", "request_only"}:
+                task[bridge.REQUEST_FIELD].update(
+                    approval_id="external-approval", nonce="external-nonce",
+                )
+            if external_change == "replacement_request":
+                task[bridge.ISSUANCE_FIELD].update(
+                    request_fingerprint=bridge.request_fingerprint(TASK_ID, task[bridge.REQUEST_FIELD]),
+                    approval_id="external-approval",
+                    approval_nonce_digest=bridge._safe_digest("external-nonce"),
+                )
+            expected_task = copy.deepcopy(task)
+            if external_change == "removed_task":
+                snapshot["tasks"].remove(task)
+        snapshot[supervisor.STATUS_WRITE_REVISION_FIELD] = uuid.uuid4().hex
+        harness["status_path"].write_text(json.dumps(snapshot))
+        return True
+
+    monkeypatch.setattr(supervisor, "sync_status_pipeline", local_sync)
+
+    def legacy_commit(config, status):
+        return supervisor.write_status_snapshot_if_current(config, status) and supervisor.sync_status_pipeline(config)
+
+    harness["commit"] = legacy_commit if callback_kind == "legacy" else supervisor.commit_canonical_task_transition
+    dispatch_attempts = []
+
+    def dispatch(**kwargs):
+        dispatch_attempts.append(True)
+        if dispatch_fails:
+            raise bridge.RuntimeReleaseDispatchError("fixture dispatch outcome unknown")
+
+    assert _run(harness, dispatch)
+    assert dispatch_attempts == [True]
+    assert expected_task is not None
+    snapshot = _read_status(harness)
+    task = next((t for t in snapshot["tasks"] if t["id"] == TASK_ID), None)
+    if external_change == "removed_task":
+        assert task is None
+    else:
+        assert task[bridge.ISSUANCE_HISTORY_FIELD] == expected_task[bridge.ISSUANCE_HISTORY_FIELD]
+        assert task["external_writer_marker"] == "must-survive"
+        assert task[bridge.REQUEST_FIELD] == expected_task[bridge.REQUEST_FIELD]
+        if external_change == "history_only" and callback_kind == "current":
+            assert task[bridge.ISSUANCE_FIELD]["state"] == ("dispatch_unknown" if dispatch_fails else "dispatched")
+        else:
+            assert task[bridge.ISSUANCE_FIELD] == expected_task[bridge.ISSUANCE_FIELD]
+    if external_change != "history_only" or callback_kind == "legacy":
+        activity = harness["activity_path"].read_text()
+        assert '"type": "release_lease_runtime_release_dispatched"' not in activity
+        assert '"type": "release_lease_dispatch_unknown"' not in activity
