@@ -1,0 +1,26 @@
+{
+  "cwd": "/tmp/codex-1305-admission-fix",
+  "head_sha": "c9c0fb3fc6211161be0bd560caa7befb70dfba66",
+  "tracked_diff_sha256": "3a347cc65b7635ecba49a651b09cfc5f3a1ab7bcacd6000ec05a0eda21a5cb62",
+  "argv": [
+    "/tmp/pantheon-worker-worktrees/pantheon/odp-orch-quota-recovery-state-001/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-o",
+    "addopts=",
+    "-q",
+    "--tb=short",
+    "--junitxml=/home/lupin/odayplus/support/handoffs/four-pr-continuation-20260911/1305-supplement-bootstrapped-full.xml",
+    "-m",
+    "not requires_live_env",
+    ".orchestrator",
+    "delivery_toolchain",
+    "scripts",
+    "tests/tooling",
+    "infra"
+  ],
+  "started_at": "2026-09-12T15:28:36.670714+00:00",
+  "duration_seconds": 407.33005388401216,
+  "exit_code": 0,
+  "output": "1305-supplement-bootstrapped-full.log"
+}

@@ -751,6 +751,19 @@ def _merge_account_pool_runtime(
             for clearance in (cleared_pauses or {}).values()
         )
 
+    def supersedes_auth_epoch(candidate: dict[str, Any], previous: dict[str, Any]) -> bool:
+        epochs = candidate.get("superseded_auth_epochs")
+        if not isinstance(epochs, list) or candidate.get("state") not in {"recovering", "healthy"}:
+            return False
+        if not candidate.get("auth_identity_hash") or candidate.get("auth_identity_hash") == previous.get("auth_identity_hash"):
+            return False
+        if int(candidate.get("generation", 0) or 0) <= int(previous.get("generation", 0) or 0):
+            return False
+        previous_epoch = {key: previous.get(key) for key in (
+            "auth_identity_hash", "generation", "last_probe_at", "last_failure_at", "last_worker_run_id"
+        )}
+        return previous_epoch in epochs
+
     for pool_id in set(disk_p.keys()) | set(mem_p.keys()):
         d_entry = disk_p.get(pool_id) if isinstance(disk_p.get(pool_id), dict) else None
         m_entry = mem_p.get(pool_id) if isinstance(mem_p.get(pool_id), dict) else None
@@ -764,9 +777,26 @@ def _merge_account_pool_runtime(
         if d_entry and m_entry:
             d_cleared = cleared_cooldown(d_entry)
             m_cleared = cleared_cooldown(m_entry)
-            if d_cleared != m_cleared:
-                merged_pools[pool_id] = deepcopy(m_entry if d_cleared else d_entry)
+            if supersedes_auth_epoch(m_entry, d_entry):
+                merged_pools[pool_id] = deepcopy(m_entry)
                 continue
+            if supersedes_auth_epoch(d_entry, m_entry):
+                merged_pools[pool_id] = deepcopy(d_entry)
+                continue
+            if d_cleared != m_cleared:
+                previous, candidate = (d_entry, m_entry) if d_cleared else (m_entry, d_entry)
+                # A pause expiry is not a successful canary. Retiring its
+                # cooldown requires an actual successor incident/recovery,
+                # never a healthy snapshot taken before that failure.
+                candidate_failure = str(candidate.get("last_failure_at") or "")
+                successor_generation = int(candidate.get("generation", 0) or 0) > int(previous.get("generation", 0) or 0)
+                if (
+                    candidate_failure
+                    and candidate_failure >= str(previous.get("last_failure_at") or "")
+                    and (candidate.get("state") == "cooldown" or successor_generation)
+                ):
+                    merged_pools[pool_id] = deepcopy(candidate)
+                    continue
             d_fail = str(d_entry.get("last_failure_at") or "")
             m_fail = str(m_entry.get("last_failure_at") or "")
             d_state = str(d_entry.get("state") or "").lower()

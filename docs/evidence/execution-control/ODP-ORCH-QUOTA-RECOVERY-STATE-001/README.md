@@ -219,21 +219,20 @@ All verification commands executed on the updated task branch and verified again
   4. `uv run pytest -q .orchestrator/test_common.py`: Exit code `0` (`44 passed in 1.84s`)
   5. `uv run ruff check .orchestrator/runtime_state.py .orchestrator/worker_failure_policy.py .orchestrator/supervisor.py .orchestrator/test_runtime_state.py .orchestrator/test_supervisor.py`: Exit code `0` (`All checks passed!`)
 
-## 10. CI Repair — Synthetic & Legacy Worker Canary Admission (`worker_failure_policy.py`)
 
-### Findings & Root Causes Addressed
+## Admission-window supplement
 
-1. **CI Orchestrator Suite Failure in `SuccessfulWorkerPostconditionTests`**:
-   - *Problem*: `record_account_pool_canary_success()` checked `effective_worker.get("dispatched_pool_state") != "recovering"`, which returned False when `dispatched_pool_state` was `None` (on synthetic test fixtures or legacy workers), preventing postcondition-based pool recovery.
-   - *Fix*: Refined the check to reject only when `dispatched_pool_state` is explicitly recorded and non-recovering (`effective_worker.get("dispatched_pool_state") is not None and effective_worker.get("dispatched_pool_state") != "recovering"`), while allowing unannotated records to fall back to configured auth and generation validation.
+Capture auth, start time and per-pool recovery epoch snapshots before adapter delivery. A clear or credential rotation while delivery is running must not relabel the worker that was already dispatched. Completion compares the durable epoch of both its own pool and any sibling it would promote; a later same-second sibling recovery remains unverified. An explicit empty snapshot identifies workers dispatched before recovery. Existing triple-auth and legacy checks remain.
 
-### Verification Receipts (CI Repair Exact-Head Verification)
+Three deterministic real start-worker callback tests cover clear during delivery, auth rotation during delivery and a newer sibling epoch. Final selected suite: 163 passed. Identical production source also passed all 12 reviewer/admission fixtures and 155 previous regressions. Source hashes and original command/exit/duration receipts are in `admission-window-verification.json`; adjacent logs retain the two failing pre-patch cases and subsequent passing runs.
 
-- **Declared Exact-Head Verification Suites**:
-  1. `git diff --check`: Exit code `0`
-  2. `uv run pytest -q .orchestrator/test_runtime_state.py`: Exit code `0` (`69 passed in 2.62s`)
-  3. `uv run pytest -q .orchestrator/test_supervisor.py -k "quota or pause or account_pool or config"`: Exit code `0` (`99 passed, 608 deselected in 3.42s`)
-  4. `uv run pytest -q .orchestrator/test_common.py`: Exit code `0` (`44 passed in 1.95s`)
-  5. `uv run ruff check .orchestrator delivery_toolchain scripts infra`: Exit code `0` (`All checks passed!`)
-  6. `uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling infra`: Exit code `0` (`2907 passed, 6 skipped, 10 deselected, 636 subtests passed in 490.00s`)
 
+The CI completion-flow fixtures now carry the same pool admission state and epoch snapshots as dispatched canaries. Their Codex identity is mocked, so no host credentials are read. Negative no-progress, rejected-seal and historical-terminal cases also receive valid admission provenance, ensuring they still test completion guards. All 15 SuccessfulWorkerPostconditionTests and 3 admission tests pass; see `postcondition-admission-verification.json`. Production guards are unchanged by this fixture correction.
+
+
+Missing worker auth is now covered explicitly: an old worker with no admission record and an admitted worker with no saved auth must both remain unverified, while known A/B identities retain negative/positive controls. The completion-time auth fallback experiment fails the two missing-auth cases; this branch passes all 7 admission cases plus 15 completion-flow cases (22 total). The older three-case auth matrix covers known auth identities only; it was not evidence for missing-auth behavior. See `missing-worker-auth-verification.json`.
+
+
+## Durable recovery continuation
+
+A cleared provider pause alone cannot select an older healthy pool snapshot: the alternative must represent a successor failure/recovery epoch. Auth rotation retains exact superseded pool epochs, so current-auth bounded recovery survives a stale cooldown save without masking newer failure. Real disk tests cover A to B to C rotation, stale writers in both directions, later failure preservation, and expiry with same-second earlier healthy epochs. Focused verification: 97 passed and 26 subtests. Admission baseline full verification after make bootstrap: 2912 passed, 636 subtests. Final combined full verification follows separately; initial failures are retained.

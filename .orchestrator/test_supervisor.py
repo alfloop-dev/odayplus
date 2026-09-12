@@ -16480,6 +16480,12 @@ class SuccessfulWorkerPostconditionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = load_test_config()
         self.config.setdefault("provider_guardrails", {})["generic_exit_reassign_after"] = 2
+        auth_patch = mock.patch.object(
+            supervisor, "provider_auth_identity_hash",
+            side_effect=lambda _config, agent: "fixture-codex-auth" if "codex" in str(agent).lower() else None,
+        )
+        auth_patch.start()
+        self.addCleanup(auth_patch.stop)
 
     @staticmethod
     def _task(*, status: str = "in_progress", next_step: str = "Implement packet") -> dict[str, Any]:
@@ -16705,6 +16711,7 @@ class SuccessfulWorkerPostconditionTests(unittest.TestCase):
                 "probe_attempts": 1,
             },
             "codex_lupin": {
+                "auth_identity_hash": "fixture-codex-auth",
                 "state": "recovering",
                 "effective_concurrency": 1,
                 "generation": 1,
@@ -16712,6 +16719,23 @@ class SuccessfulWorkerPostconditionTests(unittest.TestCase):
                 "probe_attempts": 1,
             },
         }
+
+    def _admit_canary(self, state: dict[str, Any], worker: dict[str, Any]) -> None:
+        """Model the durable admission record consumed by the poll path."""
+        pool_id, _ = supervisor.account_pool_settings(self.config, worker["agent_id"])
+        pools = state["account_pool_runtime"]
+        entry = pools[pool_id]
+        worker.update({
+            "account_pool": pool_id,
+            "auth_identity_hash": entry.get("auth_identity_hash"),
+            "dispatched_pool_state": "recovering",
+            "recovery_generation": entry["generation"],
+            "is_canary": True,
+            "dispatched_recovery_epochs": {
+                pid: supervisor.account_pool_recovery_epoch(pool_entry)
+                for pid, pool_entry in pools.items()
+            },
+        })
 
     def _assert_pool_recovered(self, state: dict[str, Any], pool_id: str, *, configured: int) -> None:
         entry = state["account_pool_runtime"][pool_id]
@@ -16732,6 +16756,7 @@ class SuccessfulWorkerPostconditionTests(unittest.TestCase):
             "workers": {worker["run_id"]: worker},
             "account_pool_runtime": self._recovering_pools(),
         }
+        self._admit_canary(state, worker)
         accepted = supervisor.WorkerHandoffSeal(True, "", "", "a" * 40, None)
         with mock.patch.object(supervisor, "seal_worker_handoff", return_value=accepted) as seal:
             self.assertTrue(self._poll(state, task, current_head="a" * 40))
@@ -16753,6 +16778,7 @@ class SuccessfulWorkerPostconditionTests(unittest.TestCase):
             "workers": {worker["run_id"]: worker},
             "account_pool_runtime": self._recovering_pools(),
         }
+        self._admit_canary(state, worker)
         accepted = supervisor.WorkerHandoffSeal(True, "", "", "b" * 40, None)
         with mock.patch.object(supervisor, "seal_worker_handoff", return_value=accepted):
             self.assertTrue(self._poll(state, task, current_head="b" * 40))
@@ -16772,6 +16798,7 @@ class SuccessfulWorkerPostconditionTests(unittest.TestCase):
             "workers": {worker["run_id"]: worker},
             "account_pool_runtime": self._recovering_pools(),
         }
+        self._admit_canary(state, worker)
         with mock.patch.object(supervisor, "seal_worker_handoff") as seal:
             self.assertTrue(self._poll(state, current_task, current_head="a" * 40))
 
@@ -16791,6 +16818,7 @@ class SuccessfulWorkerPostconditionTests(unittest.TestCase):
             "provider_guardrails": {"task_failure_streaks": {}},
             "account_pool_runtime": self._recovering_pools(),
         }
+        self._admit_canary(state, worker)
         self.assertTrue(self._poll(state, task, current_head="a" * 40))
 
         self.assertEqual(worker["status"], "failed")
@@ -16813,6 +16841,7 @@ class SuccessfulWorkerPostconditionTests(unittest.TestCase):
             "workers": {worker["run_id"]: worker},
             "account_pool_runtime": self._recovering_pools(),
         }
+        self._admit_canary(state, worker)
         rejected = supervisor.WorkerHandoffSeal(
             False,
             "owner_dirty",
@@ -16844,6 +16873,7 @@ class SuccessfulWorkerPostconditionTests(unittest.TestCase):
             "provider_guardrails": {"dispatch_pauses": {}, "task_failure_streaks": {}},
             "account_pool_runtime": self._recovering_pools(),
         }
+        self._admit_canary(state, worker)
         with (
             mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
@@ -16869,6 +16899,7 @@ class SuccessfulWorkerPostconditionTests(unittest.TestCase):
                     "workers": {worker["run_id"]: worker},
                     "account_pool_runtime": self._recovering_pools(),
                 }
+                self._admit_canary(state, worker)
                 with mock.patch.object(
                     supervisor,
                     "seal_worker_handoff",

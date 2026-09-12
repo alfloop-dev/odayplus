@@ -1523,6 +1523,13 @@ def provider_capability_block_reason(
     return None
 
 
+def account_pool_recovery_epoch(entry: dict[str, Any]) -> dict[str, Any]:
+    """Return the durable identity of one pool's recovery, independent of seconds."""
+    return {key: entry.get(key) for key in (
+        "auth_identity_hash", "generation", "last_probe_at", "last_failure_at", "last_worker_run_id"
+    )}
+
+
 def account_pool_runtime_state(
     config: dict[str, Any],
     state: dict[str, Any] | None,
@@ -1622,6 +1629,14 @@ def account_pool_runtime_state(
             # Auth rotated from pool_auth to current_auth
             entry_state = str(entry.get("state") or "healthy").strip().lower()
             if entry_state in {"recovering", "cooldown"}:
+                # Keep exact predecessor epochs so a later disk merge can
+                # distinguish credential rotation from stale cross-auth state.
+                previous_epochs = entry.get("superseded_auth_epochs")
+                epochs = list(previous_epochs) if isinstance(previous_epochs, list) else []
+                previous_epoch = account_pool_recovery_epoch(entry)
+                if previous_epoch not in epochs:
+                    epochs.append(previous_epoch)
+                entry["superseded_auth_epochs"] = epochs
                 # Provide a bounded current-auth recovery canary path
                 entry["state"] = "recovering"
                 entry["effective_concurrency"] = min(1, configured_limit or 1)
@@ -2308,6 +2323,20 @@ def start_worker_for_request(
     activity_message: str | None = None,
 ) -> tuple[bool, str | None, dict[str, Any] | None]:
     agent = agent_config_for(config, request.agent_id)
+    auth_hash = (
+        provider_auth_identity_hash(config, agent["id"])
+        or provider_auth_identity_hash(config, request.provider)
+    )
+    pool_id, _ = account_pool_settings(config, agent["id"])
+    pool_entry = _account_pool_runtime_bucket(state).get(pool_id) if pool_id else None
+    pool_state = str(pool_entry.get("state") or "healthy").lower() if isinstance(pool_entry, dict) else "healthy"
+    pool_gen = int(pool_entry.get("generation", 0) or 0) if isinstance(pool_entry, dict) else 0
+    recovery_epochs = {
+        pid: account_pool_recovery_epoch(entry)
+        for pid, entry in _account_pool_runtime_bucket(state).items()
+        if isinstance(entry, dict) and entry.get("state") == "recovering"
+    }
+    dispatched_at = datetime.now(UTC)
     adapter_name = delivery_mode_override or agent.get("adapter", "file_inbox")
     adapter = build_adapter(adapter_name, config=config, provider_capabilities=provider_report)
     result = adapter.deliver(request)
@@ -2345,17 +2374,9 @@ def start_worker_for_request(
     worker_run_id = result.run_id or new_runtime_id(request.provider)
     logical_agent_id = str(request.metadata.get("logical_agent_id") or agent["id"])
     dispatch_slot_id = str(request.metadata.get("dispatch_slot_id") or "")
-    now_dt = datetime.now(UTC)
+    now_dt = dispatched_at
     now = isoformat_utc(now_dt)
     result_metadata = result.metadata if isinstance(result.metadata, dict) else {}
-    auth_hash = (
-        provider_auth_identity_hash(config, agent["id"])
-        or provider_auth_identity_hash(config, request.provider)
-    )
-    pool_id, _ = account_pool_settings(config, agent["id"])
-    pool_entry = _account_pool_runtime_bucket(state).get(pool_id) if pool_id else None
-    pool_state = str(pool_entry.get("state") or "healthy").lower() if isinstance(pool_entry, dict) else "healthy"
-    pool_gen = int(pool_entry.get("generation", 0) or 0) if isinstance(pool_entry, dict) else 0
     state.setdefault("workers", {})[worker_run_id] = {
         "run_id": worker_run_id,
         "provider": request.provider,
@@ -2364,6 +2385,7 @@ def start_worker_for_request(
         "dispatch_slot_id": dispatch_slot_id or None,
         "dispatch_slot": request.metadata.get("dispatch_slot"),
         "auth_identity_hash": auth_hash or None,
+        "dispatched_recovery_epochs": recovery_epochs,
         "account_pool": pool_id,
         "dispatched_pool_state": pool_state,
         "recovery_generation": pool_gen if pool_state == "recovering" else None,

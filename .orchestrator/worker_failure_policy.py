@@ -844,6 +844,10 @@ def record_account_pool_canary_success(config: dict[str, Any], state: dict[str, 
     persisted_worker = (state.get("workers") or {}).get(run_id) if run_id and isinstance(state.get("workers"), dict) else None
     effective_worker = persisted_worker if isinstance(persisted_worker, dict) else worker
 
+    recovery_epochs = effective_worker.get("dispatched_recovery_epochs")
+    if isinstance(recovery_epochs, dict) and recovery_epochs.get(pool_id) != account_pool_recovery_epoch(entry):
+        return False
+
     # Validate recovery generation / admission:
     # A worker dispatched when pool was healthy or in an earlier recovery generation cannot certify current recovery.
     worker_rec_gen = effective_worker.get("recovery_generation")
@@ -851,7 +855,7 @@ def record_account_pool_canary_success(config: dict[str, Any], state: dict[str, 
     if worker_rec_gen is not None and pool_gen is not None:
         if int(worker_rec_gen) < int(pool_gen):
             return False
-    elif effective_worker.get("dispatched_pool_state") is not None:
+    elif persisted_worker is not None and pool_gen is not None and int(pool_gen) > 0:
         if effective_worker.get("dispatched_pool_state") != "recovering":
             return False
 
@@ -867,14 +871,6 @@ def record_account_pool_canary_success(config: dict[str, Any], state: dict[str, 
     worker_auth = str(effective_worker.get("auth_identity_hash") or "")
     if not worker_auth and isinstance(state.get("workers"), dict):
         worker_auth = str(state["workers"].get(run_id, {}).get("auth_identity_hash") or "")
-    if not worker_auth:
-        worker_auth = str(
-            configured_account_pool_auth_hash(
-                config,
-                pool_id,
-                str(worker.get("logical_agent_id") or worker.get("agent_id") or worker.get("provider") or ""),
-            ) or ""
-        )
     pool_auth = str(entry.get("auth_identity_hash") or "")
     if not pool_auth:
         pool_auth = str(configured_account_pool_auth_hash(config, pool_id, str(worker.get("logical_agent_id") or worker.get("agent_id") or "")) or "")
@@ -914,6 +910,8 @@ def record_account_pool_canary_success(config: dict[str, Any], state: dict[str, 
             if not other_auth:
                 other_auth = configured_account_pool_auth_hash(config, other_id)
             if other_auth == canary_auth and str(other_entry.get("state") or "") == "recovering":
+                if isinstance(recovery_epochs, dict) and recovery_epochs.get(other_id) != account_pool_recovery_epoch(other_entry):
+                    continue
                 other_fk = str(other_entry.get("failure_kind") or "").strip().lower()
                 if other_fk and not (
                     is_terminal_quota_failure_kind(other_fk)

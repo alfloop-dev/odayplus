@@ -1,0 +1,25 @@
+{
+  "base_commit": "27016d60f5e4e5170852df3d9be703bad658a367",
+  "source_sha256": {
+    ".orchestrator/test_supervisor.py": "b0aa2db742d180980c9f11e944feb44574f8dd09bfc345f49257fc3acd92e47f"
+  },
+  "receipt": {
+    "cwd": "/tmp/codex-1305-admission-fix",
+    "head_sha": "27016d60f5e4e5170852df3d9be703bad658a367",
+    "tracked_diff_sha256": "6b9110b11533ecd32fe81fd492bdc49a629ad6c8951e441befc0b77ff29a8e01",
+    "argv": [
+      "/tmp/pantheon-worker-worktrees/pantheon/odp-orch-quota-recovery-state-001/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      ".orchestrator/test_supervisor.py::SuccessfulWorkerPostconditionTests",
+      ".orchestrator/test_account_pool_admission.py",
+      "--junitxml=/tmp/codex-1305-postconditions.xml"
+    ],
+    "started_at": "2026-09-12T15:04:39.092136+00:00",
+    "duration_seconds": 4.228897185006645,
+    "exit_code": 0,
+    "output": "1305-postconditions-green.log"
+  },
+  "result": "All 15 SuccessfulWorkerPostconditionTests and 3 admission tests pass. Positive and negative pool fixtures now model admitted canaries; mock auth isolates real credentials. No production guards were relaxed."
+}

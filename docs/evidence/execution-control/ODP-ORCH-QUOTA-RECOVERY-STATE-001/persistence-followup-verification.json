@@ -1,0 +1,15 @@
+{
+  "base_sha": "c9c0fb3fc6211161be0bd560caa7befb70dfba66",
+  "source_sha256": {
+    ".orchestrator/runtime_state.py": "4c05aab1530c00a3e75627c54e4d51c0c27dfe7544ff03c1fdba164e1b1b9761",
+    ".orchestrator/supervisor.py": "7570298be50c804c113e1193dc270fd64df9fb2a26ac63fa6989b51fdcf5685b",
+    ".orchestrator/worker_failure_policy.py": "8a8804426cfcb276a9102b26a52ddb8e3c1c0ad7dbaef1e969c5296f287ca5c6",
+    ".orchestrator/test_runtime_state.py": "64e9ee8172939e19f6e1b3ac954a013b74cc0bc29208c08c954915f4ba07b129",
+    ".orchestrator/test_supervisor.py": "b0aa2db742d180980c9f11e944feb44574f8dd09bfc345f49257fc3acd92e47f",
+    ".orchestrator/test_account_pool_admission.py": "c56a6e958ac76e38da259f683ed475a2c7d8f78d029e9787a0a14a4c8aaf06b4"
+  },
+  "persistence_red": "2 failed, 2 controls pass",
+  "persistence_final": "97 passed, 26 subtests including repeated auth rotation, later genuine failure, same-second prior recovery controls",
+  "admission_baseline_full": "2912 passed, 8 skipped, 10 deselected, 636 subtests before persistence supplement; initial full attempt lacked make bootstrap and is retained as an environment failure",
+  "full_diff_note": "The initial full test attempt generated local ai-activity-log/dashboard-bundle artifacts and docs-site copies in the isolated admission worktree; production and test sources still match c9c0fb3f. These explain the tracked diff in the bootstrapped full receipt."
+}
