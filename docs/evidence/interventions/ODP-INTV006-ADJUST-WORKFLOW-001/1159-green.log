@@ -1,0 +1,158 @@
+....................................................FFFF                 [100%]
+=================================== FAILURES ===================================
+_ test_adjust_invalid_date_returns_422_without_writes[not-a-date-planned_start] _
+
+field = 'planned_start', value = 'not-a-date'
+
+    @pytest.mark.parametrize("field", ["planned_start", "planned_end"])
+    @pytest.mark.parametrize("value", ["not-a-date", "2026-02-30T12:00:00Z"])
+    def test_adjust_invalid_date_returns_422_without_writes(field, value):
+        app = create_app()
+        workflow = app.state.intervention_workflow
+        case = _open_case(workflow)
+        _drive_to_approved(workflow, case.intervention_id)
+        before = workflow.get(case.intervention_id).to_dict()
+        audit_before = list(app.state.audit_log.list_events())
+        client = TestClient(app, headers=INTERVENTION_HEADERS, raise_server_exceptions=False)
+        response = client.post(f"/interventions/{case.intervention_id}/adjust", json={"actor": "ops", "reason": "invalid time", field: value})
+        assert response.status_code == 422, response.text
+        assert workflow.get(case.intervention_id).to_dict() == before
+>       assert list(app.state.audit_log.list_events()) == audit_before
+E       AssertionError: assert [AuditEvent(e...t-worm'), ...] == [AuditEvent(e.../audit-worm')]
+E         
+E         Left contains 2 more items, first extra item: AuditEvent(event_type='security.authorization', actor='test-operator', action='execute', resource='intervention', outc...n', worm_sink_id='file:///tmp/pantheon-worker-worktrees/pantheon/odp-intv006-adjust-workflow-001/.odp_data/audit-worm')
+E         Use -v to get more diff
+
+tests/integration/test_intervention_workflow.py:2877: AssertionError
+----------------------------- Captured stderr call -----------------------------
+2026/09/11 12:38:53 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/09/11 12:38:53 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-09-11T12:38:57.885355+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "4d5465c8-52ee-4508-8c24-10ad948d9eca", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /interventions/{intervention_id}/adjust ok"}
+------------------------------ Captured log call -------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+_ test_adjust_invalid_date_returns_422_without_writes[not-a-date-planned_end] __
+
+field = 'planned_end', value = 'not-a-date'
+
+    @pytest.mark.parametrize("field", ["planned_start", "planned_end"])
+    @pytest.mark.parametrize("value", ["not-a-date", "2026-02-30T12:00:00Z"])
+    def test_adjust_invalid_date_returns_422_without_writes(field, value):
+        app = create_app()
+        workflow = app.state.intervention_workflow
+        case = _open_case(workflow)
+        _drive_to_approved(workflow, case.intervention_id)
+        before = workflow.get(case.intervention_id).to_dict()
+        audit_before = list(app.state.audit_log.list_events())
+        client = TestClient(app, headers=INTERVENTION_HEADERS, raise_server_exceptions=False)
+        response = client.post(f"/interventions/{case.intervention_id}/adjust", json={"actor": "ops", "reason": "invalid time", field: value})
+        assert response.status_code == 422, response.text
+        assert workflow.get(case.intervention_id).to_dict() == before
+>       assert list(app.state.audit_log.list_events()) == audit_before
+E       AssertionError: assert [AuditEvent(e...t-worm'), ...] == [AuditEvent(e.../audit-worm')]
+E         
+E         Left contains 2 more items, first extra item: AuditEvent(event_type='security.authorization', actor='test-operator', action='execute', resource='intervention', outc...n', worm_sink_id='file:///tmp/pantheon-worker-worktrees/pantheon/odp-intv006-adjust-workflow-001/.odp_data/audit-worm')
+E         Use -v to get more diff
+
+tests/integration/test_intervention_workflow.py:2877: AssertionError
+----------------------------- Captured stderr call -----------------------------
+2026/09/11 12:38:59 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/09/11 12:38:59 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-09-11T12:39:05.099714+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "07be0f70-e4f3-4229-8eef-b439d0ac11f5", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /interventions/{intervention_id}/adjust ok"}
+------------------------------ Captured log call -------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+_ test_adjust_invalid_date_returns_422_without_writes[2026-02-30T12:00:00Z-planned_start] _
+
+field = 'planned_start', value = '2026-02-30T12:00:00Z'
+
+    @pytest.mark.parametrize("field", ["planned_start", "planned_end"])
+    @pytest.mark.parametrize("value", ["not-a-date", "2026-02-30T12:00:00Z"])
+    def test_adjust_invalid_date_returns_422_without_writes(field, value):
+        app = create_app()
+        workflow = app.state.intervention_workflow
+        case = _open_case(workflow)
+        _drive_to_approved(workflow, case.intervention_id)
+        before = workflow.get(case.intervention_id).to_dict()
+        audit_before = list(app.state.audit_log.list_events())
+        client = TestClient(app, headers=INTERVENTION_HEADERS, raise_server_exceptions=False)
+        response = client.post(f"/interventions/{case.intervention_id}/adjust", json={"actor": "ops", "reason": "invalid time", field: value})
+        assert response.status_code == 422, response.text
+        assert workflow.get(case.intervention_id).to_dict() == before
+>       assert list(app.state.audit_log.list_events()) == audit_before
+E       AssertionError: assert [AuditEvent(e...t-worm'), ...] == [AuditEvent(e.../audit-worm')]
+E         
+E         Left contains 2 more items, first extra item: AuditEvent(event_type='security.authorization', actor='test-operator', action='execute', resource='intervention', outc...n', worm_sink_id='file:///tmp/pantheon-worker-worktrees/pantheon/odp-intv006-adjust-workflow-001/.odp_data/audit-worm')
+E         Use -v to get more diff
+
+tests/integration/test_intervention_workflow.py:2877: AssertionError
+----------------------------- Captured stderr call -----------------------------
+2026/09/11 12:39:05 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/09/11 12:39:05 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-09-11T12:39:11.755171+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "9dcc36ab-25b4-415f-bcab-de86948234e8", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /interventions/{intervention_id}/adjust ok"}
+------------------------------ Captured log call -------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+_ test_adjust_invalid_date_returns_422_without_writes[2026-02-30T12:00:00Z-planned_end] _
+
+field = 'planned_end', value = '2026-02-30T12:00:00Z'
+
+    @pytest.mark.parametrize("field", ["planned_start", "planned_end"])
+    @pytest.mark.parametrize("value", ["not-a-date", "2026-02-30T12:00:00Z"])
+    def test_adjust_invalid_date_returns_422_without_writes(field, value):
+        app = create_app()
+        workflow = app.state.intervention_workflow
+        case = _open_case(workflow)
+        _drive_to_approved(workflow, case.intervention_id)
+        before = workflow.get(case.intervention_id).to_dict()
+        audit_before = list(app.state.audit_log.list_events())
+        client = TestClient(app, headers=INTERVENTION_HEADERS, raise_server_exceptions=False)
+        response = client.post(f"/interventions/{case.intervention_id}/adjust", json={"actor": "ops", "reason": "invalid time", field: value})
+        assert response.status_code == 422, response.text
+        assert workflow.get(case.intervention_id).to_dict() == before
+>       assert list(app.state.audit_log.list_events()) == audit_before
+E       AssertionError: assert [AuditEvent(e...t-worm'), ...] == [AuditEvent(e.../audit-worm')]
+E         
+E         Left contains 2 more items, first extra item: AuditEvent(event_type='security.authorization', actor='test-operator', action='execute', resource='intervention', outc...n', worm_sink_id='file:///tmp/pantheon-worker-worktrees/pantheon/odp-intv006-adjust-workflow-001/.odp_data/audit-worm')
+E         Use -v to get more diff
+
+tests/integration/test_intervention_workflow.py:2877: AssertionError
+----------------------------- Captured stderr call -----------------------------
+2026/09/11 12:39:12 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/09/11 12:39:12 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-09-11T12:39:17.532816+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "ffcb7896-02cf-4f93-a0fa-00986b2eae2c", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /interventions/{intervention_id}/adjust ok"}
+------------------------------ Captured log call -------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /tmp/pantheon-worker-worktrees/pantheon/odp-intv006-adjust-workflow-001/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+tests/integration/test_intervention_workflow.py::test_api_drives_full_lifecycle_with_conflict_and_label
+  /tmp/pantheon-worker-worktrees/pantheon/odp-intv006-adjust-workflow-001/apps/api/app/routes/interventions.py:492: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    operation=lambda: _run(
+
+tests/integration/test_intervention_workflow.py::test_api_drives_full_lifecycle_with_conflict_and_label
+  /tmp/pantheon-worker-worktrees/pantheon/odp-intv006-adjust-workflow-001/apps/api/app/routes/interventions.py:518: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    operation=lambda: _run(
+
+tests/integration/test_intervention_workflow.py::test_api_conflict_blocks_submit
+  /tmp/pantheon-worker-worktrees/pantheon/odp-intv006-adjust-workflow-001/apps/api/app/routes/interventions.py:461: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    operation=lambda: _run(
+
+tests/integration/test_intervention_workflow.py::test_api_close_case_with_follow_up_and_audit
+  /tmp/pantheon-worker-worktrees/pantheon/odp-intv006-adjust-workflow-001/apps/api/app/routes/interventions.py:615: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    operation=lambda: _run(
+
+tests/integration/test_intervention_workflow.py::test_api_adjust_production_entry_success_and_rejections
+tests/integration/test_intervention_workflow.py::test_api_adjust_production_entry_rejects_pre_activation_and_evaluation_states_without_lineage
+  /tmp/pantheon-worker-worktrees/pantheon/odp-intv006-adjust-workflow-001/apps/api/app/routes/interventions.py:651: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.
+    operation=lambda: _run(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/integration/test_intervention_workflow.py::test_adjust_invalid_date_returns_422_without_writes[not-a-date-planned_start]
+FAILED tests/integration/test_intervention_workflow.py::test_adjust_invalid_date_returns_422_without_writes[not-a-date-planned_end]
+FAILED tests/integration/test_intervention_workflow.py::test_adjust_invalid_date_returns_422_without_writes[2026-02-30T12:00:00Z-planned_start]
+FAILED tests/integration/test_intervention_workflow.py::test_adjust_invalid_date_returns_422_without_writes[2026-02-30T12:00:00Z-planned_end]
