@@ -33,11 +33,13 @@ recorded_at: 2026-09-12T15:11:24Z
   - `apps/web/package.json`：`next: 15.5.25`, `eslint-config-next: 15.5.25`。
   - `package.json`：`overrides.sharp: 0.35.4`, `overrides.postcss: 8.5.28`。
   - `package-lock.json` 已依 npm resolver 與 overrides 完整同步鎖定。
-- **A3 MapLibre 升至 6.4.1 或較新修補版本且 web typecheck 及 map/unit tests 成功**:
-  - `apps/web/package.json` 升級為 `maplibre-gl: ^6.4.1`。
-  - `apps/web/features/operator/network/HeatZoneMap.tsx` 已完成 v6 模組導入與事件型別相容性調整。
+- **A3 MapLibre 升至 6.4.1 或較新修補版本且 web typecheck、map/unit tests 及瀏覽器 GeoJSON Worker 渲染成功**:
+  - `apps/web/package.json` 升級為 `maplibre-gl: ^6.4.1` (resolved 6.9.0)。
+  - `apps/web/scripts/sync-maplibre-worker.mjs` 與 `package.json` prebuild/postbuild hook：同步 MapLibre v6 獨立 worker 模組（`maplibre-gl-worker.mjs`, `maplibre-gl-shared.mjs` 等）至 `apps/web/public/` 及 Next.js `standalone` 打包目錄。
+  - `apps/web/features/operator/network/HeatZoneMap.tsx`：於 Map 實例化前配置 `maplibregl.setWorkerUrl(MAPLIBRE_WORKER_URL)`，並在 `zoneToFeature` 中增加 `isValidCell(zone.h3)` 防護確保 centroid delta polygon 正確生成。
   - `npm run typecheck` 通過 (Exit code: 0)。
   - `npm run test` (Vitest 58 test files, 528 tests) 全數通過 (Exit code: 0)。
+  - Playwright E2E 瀏覽器回歸測試（`tests/e2e/test_maplibre_v6_browser_regression.spec.ts` 與 `tests/e2e/operator-network-listings.spec.ts`）全數通過，驗證 Worker 腳本 HTTP 200 下載、GeoJSON Source 載入、特徵索引與渲染查詢無誤，收據已保存至 `docs/evidence/runtime/ODP-RUNTIME-BUILD-DEPENDENCY-REMEDIATION-001/receipts/maplibre-v6-browser-regression-receipt.json`。
 - **A4 production web build 與必要 CI 成功且獨立審查**:
   - `npm run lint` 通過 (Exit code: 0)。
   - `npm run build` (Next.js production build) 成功編譯且靜態/動態頁面優化完成 (Exit code: 0)。
@@ -70,23 +72,32 @@ recorded_at: 2026-09-12T15:11:24Z
    # Exit code: 0
    ```
 
-4. **Linting**:
+4. **MapLibre v6 Web Worker & GeoJSON Browser Regression Suite**:
+   ```bash
+   npx playwright test tests/e2e/test_maplibre_v6_browser_regression.spec.ts
+   npx playwright test tests/e2e/operator-network-listings.spec.ts
+   # Output: All tests passed
+   # Receipt: docs/evidence/runtime/ODP-RUNTIME-BUILD-DEPENDENCY-REMEDIATION-001/receipts/maplibre-v6-browser-regression-receipt.json
+   # Exit code: 0
+   ```
+
+5. **Linting**:
    ```bash
    npm run lint
    # Output: No ESLint warnings or errors
    # Exit code: 0
    ```
 
-5. **Production Build & Bundle Budget**:
+6. **Production Build & Bundle Budget**:
    ```bash
    npm run build
    # Output: Compiled successfully
    npm run bundle:budget
-   # Output: All routes ok
+   # Output: All routes ok (/operator: 288.0 kB / budget 300.0 kB)
    # Exit code: 0
    ```
 
-6. **SBOM & OSS Notice Consistency and Security Test Suite**:
+7. **SBOM & OSS Notice Consistency and Security Test Suite**:
    ```bash
    uv run python delivery_toolchain/security/generate_sbom.py --check
    # Output: SBOM at docs/evidence/sbom.json is valid and up to date.

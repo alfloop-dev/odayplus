@@ -4,8 +4,10 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/sync-maplibre-worker.mjs && next dev",
+    "prebuild": "node scripts/sync-maplibre-worker.mjs --pre",
     "build": "next build",
+    "postbuild": "node scripts/sync-maplibre-worker.mjs --post",
     "bundle:budget": "node scripts/check-bundle-budget.mjs",
     "start": "next start",
     "lint": "next lint",
