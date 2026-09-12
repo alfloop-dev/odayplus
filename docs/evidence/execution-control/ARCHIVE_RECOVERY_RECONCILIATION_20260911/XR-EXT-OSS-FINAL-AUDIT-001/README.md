@@ -9,14 +9,14 @@
 - **原始負責人 / 審查者**: `Codex2` / `Codex`
 - **階段 (Phase)**: `Third-party data production closeout / History Recovery`
 - **復原目標分支**: `task/XR-EXT-OSS-FINAL-AUDIT-001-RECOVERY-20260911`
-- **對照基準 (Pinned Dev Base)**: `ef8345bce29436ce86bd1a70b857d668ac16182a`
+- **對照基準 (Pinned Dev Base)**: `3828c5ada2a1baab33d7dbe734c7ec70152d3d77`（前基準 `ef8345bce29436ce86bd1a70b857d668ac16182a`）
 
 本任務核心目標為在 Producer readiness（`DPF-EXTERNAL-SOURCE-PRODUCTION-READINESS-001`）與 ODayPlus snapshot consumer（`ODP-XR-CUTOVER-ACTIVATE-002`、`ODP-XR-PROVIDER-OFF-DEPLOYMENT-001`）完成後，重算並驗證跨 repo 之技術證據鏈。
 
 **重要結論與依賴邊界**：
 - 本任務經由跨 repo 核正，確認 primary delivery 在 `alfloop-dev/oday-data-platform` PR #61 (merge `7b0670d7`)。
 - 靜態程式碼與契約缺口已在代碼中實質閉合。
-- 但原驗收 A1–A3 包含真實資料庫 snapshot readback、實體叢集 runtime pod digest / secret volume 投影量測、GCP VPC Flow Logs / egress live 阻斷日誌，以及 11 軸 / 44,471 筆歷史比對等運行期量測缺口。
+- 但原驗收 A1–A3 包含真實資料庫 snapshot readback、實體叢集 runtime pod digest / secret volume 投影量測、GCP VPC Flow Logs / egress live 阻斷日誌，以及七大品質軸（每軸 11/11 比對，含 44,471 筆歷史比對）等運行期量測缺口。
 - 因此本 ID 原驗收**尚未完成**，目前**不可 closeout 為 done**，`HUMAN-OSS-LEGAL-APPROVAL-001` 的技術前置依賴**不得視為已滿足**。
 - 未承接之歷史比對原子項保留於本 ID，並列明精確缺失輸入與下一步。
 - 本 PR 僅提交歷史盤點與技術缺口收據，不手動修改控制平面，不豁免原條款，不解除依賴。
@@ -79,7 +79,7 @@
 
 | 項次 | 原驗收條款 | 類別 | 判定結果 | 核對依據、已滿足層面與缺口說明 |
 |---|---|---|---|---|
-| **A1** | 驗證兩個 repo 的精確 commit、PR、CI、image、snapshot readback、資料新鮮度、coverage、lineage、SBOM 與 NOTICE 可重算。 | runtime／部署 (R)<br>程式或文件交付 (D) | **部分滿足 (partially_met)** | **已滿足**：兩 repo 精確 commit、PR、7 項 CI check-runs、image digest、SBOM、NOTICE 與 contract lock 均已驗證可確定性重算，且 audit 腳本與 55 項測試在 CI 成功執行。<br>**缺口說明**：8/8 domains、54,443 records 與七軸 PASS 之底層數據來自 generator 腳本之合成數據，非真實資料庫 snapshot readback 之量測收據。原 11 軸 / 44,471 筆比對屬於歷史過渡驗證，保留為本 ID 未完成缺口；真 snapshot readback 產出由 `DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001` 與 `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 承接。<br>**不可結案**：因尚有未承接與未完成之歷史量測子項，本任務原技術驗收未完成，**目前不可 closeout 為 done**，`HUMAN-OSS-LEGAL-APPROVAL-001` 之技術依賴不得視為已滿足。 |
+| **A1** | 驗證兩個 repo 的精確 commit、PR、CI、image、snapshot readback、資料新鮮度、coverage、lineage、SBOM 與 NOTICE 可重算。 | runtime／部署 (R)<br>程式或文件交付 (D) | **部分滿足 (partially_met)** | **已滿足**：兩 repo 精確 commit、PR、7 項 CI check-runs、image digest、SBOM、NOTICE 與 contract lock 均已驗證可確定性重算，且 audit 腳本與 55 項測試在 CI 成功執行。<br>**缺口說明**：8/8 domains、54,443 records 與七軸 PASS 之底層數據來自 generator 腳本之合成數據，非真實資料庫 snapshot readback 之量測收據。原七大品質軸（每項 11/11 比對，含 44,471 筆 dual-run identities 比對）屬於歷史過渡驗證，保留為本 ID 未完成缺口；真 snapshot readback 產出由 `DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001` 與 `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 承接。<br>**不可結案**：因尚有未承接與未完成之歷史量測子項，本任務原技術驗收未完成，**目前不可 closeout 為 done**，`HUMAN-OSS-LEGAL-APPROVAL-001` 之技術依賴不得視為已滿足。 |
 | **A2** | 所有非人為許可的技術 gap 必須關閉；資料授權決定則逐來源列為待具名人員決定，不得混成工程失敗。 | 人類授權 (H)<br>程式或文件交付 (D) | **部分滿足 (partially_met)** | **已滿足**：`technical-gap-closure-matrix.json` 將 4 項法律待決（`LICENSE-BLOCKED-CONSUMER`、`LICENSE-BLOCKED-PRODUCER`、`LICENSE-POLICY-NOT-APPROVED`、`SOURCE-DATA-LICENCE-NOT-MODELLED`）逐項列為 `ITEMIZED_PENDING_LEGAL_GATE` 並精確指向 `HUMAN-OSS-LEGAL-APPROVAL-001`，靜態程式碼缺口均已關閉。<br>**缺口說明**：標記為 `CLOSED_BY_RUNTIME_DIGEST` 之運行期缺口閉合依賴 `SIMULATED_RESTART_AND_ROLLOUT` 模擬收據。`DPF-EMGI-LIVE-ROLLOUT-001` 現為 history recovery（無 live 部署權限），真 live rollout 驗證由 `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 承接。<br>**不可結案**：運行期缺口尚未完成實體量測，不得據此解除法務依賴。 |
 | **A3** | 證明未核准來源的 enabled=false、核准收據欄位為空、schedule STOPPED、provider credential 未投影且 public egress 為 default deny。 | 外部來源啟用狀態 (X) | **部分滿足 (partially_met)** | **已滿足**：`SOURCE_UPDATE_POLICIES` 靜態定義 16 來源全關、核准收據全空、排程停止；NetworkPolicy manifest 證實 `default_deny=true`，CIDR 僅允許 RFC1918、metadata 與 Google APIs `199.36.153.4/30` TCP443 例外；Consumer 46 處 IaC 掃描證實憑證未投影。<br>**缺口說明**：動態運行期流量收據係固定值與模擬重啟，未採集實體生產叢集之即時 flow logs。來源關閉與 egress default deny 運行期收據由 `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 與 `DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001` 承接。<br>**不可結案**：運行期流量收據具模擬缺口，不得據此解除依賴。 |
 | **A4** | 證明 ODayPlus 只有 platform snapshot consumer，沒有第二個 external producer 或開發期 ingestion 旁路。 | runtime／部署 (R) | **已滿足 (met)** | **已滿足**：ODayPlus 端經由 PR #995、#996、#991、#983 之 pinned tree 靜態掃描 46 處 deployment surface，證實 `active_external_producers_in_default_mode=0`、手動觸發為 `HTTP_410_GONE`、排程與背景工作拒絕外部擷取，無第二外部 producer 亦無開發期旁路。 |
@@ -93,7 +93,7 @@
    - 人類決策 D01–D14 已選定內部 OSS 政策方向（D01–D04 個案附條件/允許、D05 第一方標示 `UNLICENSED`、D06–D14 共通政策）。
    - 4 項法務待決事項（`LICENSE-BLOCKED-CONSUMER` 163 項、`LICENSE-BLOCKED-PRODUCER` 24 項、`LICENSE-POLICY-NOT-APPROVED`、`SOURCE-DATA-LICENCE-NOT-MODELLED` 14 來源）完整對映至 `HUMAN-OSS-LEGAL-APPROVAL-001`。
 2. **依賴關係與無環檢查 (DAG No-Cycle Check)**:
-   - 全圖經由完整 DFS Topological Sort 驗證，當前 Canonical 圖與提案更新圖均為 0 cycles。
+   - 全圖經由 hash-bound 任務拓撲快照（SHA256: `592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390`）與完整 DFS Topological Sort 驗證，當前 Canonical 圖與提案更新圖均為 0 cycles。
    - 當前 Canonical 鏈條：`XR-EXT-OSS-FINAL-AUDIT-001` (depends_on: `[]`) -> `HUMAN-OSS-LEGAL-APPROVAL-001` (depends_on: `["XR-EXT-OSS-FINAL-AUDIT-001"]`) -> `XR-SOURCE-APPROVAL-ACTIVATION-001` (depends_on: `["HUMAN-OSS-LEGAL-APPROVAL-001"]`)。
    - 因本任務不 done，`HUMAN-OSS-LEGAL-APPROVAL-001` 持續受阻擋。
    - 提案依賴更新（若未來由 canonical 治理流程正式承接未完成技術驗收）：`HUMAN-OSS-LEGAL-APPROVAL-001` depends_on 增加 `["DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001", "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001"]`，經 topological sort 驗證亦為 0 cycles。
@@ -109,9 +109,9 @@
 本任務交付物由以下宣告命令驗證（包含代碼邊界、JSON 結構完整性、完整 SHA 雜湊、網路策略 CIDR 及完整 DAG 無環檢查）：
 
 ```bash
-git diff --check ef8345bce29436ce86bd1a70b857d668ac16182a HEAD
+git diff --check 3828c5ada2a1baab33d7dbe734c7ec70152d3d77 HEAD
 python3 -c "
-import json, pathlib
+import json, pathlib, hashlib
 
 p = pathlib.Path('docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/acceptance-reconciliation.json')
 data = json.loads(p.read_text())
@@ -129,8 +129,10 @@ assert len(digests) == 11 and all(len(v.split('sha256:')[-1]) == 64 for v in dig
 cidrs = data['this_round_observation_and_provenance']['egress_network_policy']['allowed_cidrs']
 assert '199.36.153.4/30' in cidrs and data['this_round_observation_and_provenance']['egress_network_policy']['default_deny'] is True
 
-board = json.loads(pathlib.Path('/home/lupin/odayplus/ai-status.json').read_text())
-canonical_tasks = {t['id']: list(t.get('depends_on', [])) for t in board.get('tasks', [])}
+snapshot = data['canonical_task_dag_snapshot']
+canonical_tasks = snapshot['tasks']
+computed_adj_sha = hashlib.sha256(json.dumps(canonical_tasks, sort_keys=True, indent=2).encode('utf-8')).hexdigest()
+assert computed_adj_sha == snapshot['adjacency_sha256'] == '592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390'
 
 def check_dag_acyclic(adj):
     nodes = set(adj.keys())
@@ -159,6 +161,6 @@ proposed_tasks['HUMAN-OSS-LEGAL-APPROVAL-001'] = [
 ]
 assert check_dag_acyclic(proposed_tasks), 'Proposed task graph must be acyclic'
 
-print('All focused checks (boundary, digests, CIDR, task DAG acyclicity, criteria verdicts, cannot_done status) verified successfully.')
+print('All focused checks (digests, CIDR, snapshot DAG acyclicity, criteria verdicts, cannot_done status) verified successfully.')
 "
 ```
