@@ -1,17 +1,16 @@
 {
   "extraction_metadata": {
-    "extracted_at": "2026-09-12T09:46:00Z",
+    "historical_extraction_time": "2026-09-12T09:46:00Z",
     "canonical_status_root": "/home/lupin/odayplus",
     "ai_status_source_file": "ai-status.json",
-    "ai_status_sha256": "f27def223705e51764ba2c557c39cdc2ac4ff2298af466a765d8c5d12d1a738d",
+    "ai_status_sha256_at_extraction": "f27def223705e51764ba2c557c39cdc2ac4ff2298af466a765d8c5d12d1a738d",
     "archive_tasks_directory": "ai-task-archive/tasks/",
     "total_evaluated_nodes": 17,
     "total_derived_edges": 17,
     "edge_set_sha256": "d1db3233c193f7ce93e0895efb227d3314376e68724db0bca7ae0579438fef4d",
-    "extraction_command": "bash docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/verify_reconciliation.sh",
-    "terminal_exit_code": 0,
-    "raw_receipt_reference": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/acceptance-reconciliation.json#rcpt-004-standalone-script-schema-and-dag-validation",
-    "provenance_description": "17 canonical task nodes and their dependency relations extracted and validated from canonical ai-status.json and ai-task-archive/tasks/*.json with verified SHA-256 digests"
+    "extraction_status": "historical_snapshot_preserved",
+    "raw_receipt_status": "unknown_unretained_local_log",
+    "provenance_description": "17 canonical task nodes and their dependency relations extracted from canonical ai-status.json (board state at 09:46:00Z) and ai-task-archive/tasks/*.json with verified SHA-256 digests. 09:46 原始擷取之 terminal output/handle 未於 worktree 留存，依驗證證據政策標記為 unknown_unretained_local_log；節點與依賴拓撲依 canonical 來源忠實保留，邊集與無環性由獨立驗證腳本 verify_reconciliation.sh 覆核。"
   },
   "nodes": {
     "DPF-EMGI-LIVE-ROLLOUT-001": {

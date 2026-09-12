@@ -10,13 +10,13 @@
   "reconciliation_target": {
     "repository": "alfloop-dev/odayplus",
     "continuation_branch": "task/ODP-DEV-ROLLOUT-001-RECOVERY-20260911",
-    "target_dev_baseline": "4298fc152788087ebe0d1a1c9869ebaa8dd5d276",
-    "target_dev_baseline_short": "4298fc152788",
-    "previous_composed_baseline": "d977447ee0c537a1c7eeb6f68ec912d033816f88",
+    "target_dev_baseline": "a04010cde22a0337fdda05a6fa5146f70cc699f4",
+    "target_dev_baseline_short": "a04010cde22a",
+    "previous_composed_baseline": "4298fc152788087ebe0d1a1c9869ebaa8dd5d276",
     "retracted_corrupted_baseline_reference": {
       "bad_sha": "4b35121031d054178550beaa2ca3e6ee8e0a39eb",
       "status": "retracted_unsupported_receipt",
-      "diagnostic": "fatal: bad object 4b35121031d054178550beaa2ca3e6ee8e0a39eb (exit 128); corrected to exact composed SHA 4b35121031d0738ff7c529810cf1b2e267161083 in historical record, advanced through 3828c5ad and d977447e, and composed origin/dev tip 4298fc152788087ebe0d1a1c9869ebaa8dd5d276."
+      "diagnostic": "fatal: bad object 4b35121031d054178550beaa2ca3e6ee8e0a39eb (exit 128); corrected to exact composed SHA 4b35121031d0738ff7c529810cf1b2e267161083 in historical record, advanced through 3828c5ad, d977447e, and 4298fc15, and composed origin/dev tip a04010cde22a0337fdda05a6fa5146f70cc699f4."
     },
     "initial_recovery_base": "4499a2993e37b62033926b07de8d8d2e8469a6c7",
     "canonical_status_root": "/home/lupin/odayplus"
@@ -377,7 +377,7 @@
     },
     "canonical_snapshots_reference": {
       "file": "canonical-task-snapshots.json",
-      "sha256": "d6128067c4c3e2b5fc8fc099a91ca0d658397640f1e2079d3a0da1d5cd171cce",
+      "sha256": "89878cdcf1fff8ba8dd4ab1998366e30b58f7f5d59c4ec168a3dfc139e69d204",
       "total_nodes": 17,
       "total_derived_edges": 17
     },
@@ -739,22 +739,21 @@
   "verification_command_receipts": [
     {
       "receipt_id": "rcpt-001-git-diff-check-target-base",
-      "command": "git diff --check 4298fc152788087ebe0d1a1c9869ebaa8dd5d276 HEAD",
+      "command": "git diff --check a04010cde22a0337fdda05a6fa5146f70cc699f4 HEAD",
       "repo": "alfloop-dev/odayplus",
-      "target_base": "4298fc152788087ebe0d1a1c9869ebaa8dd5d276",
-      "target_base_short": "4298fc152788",
+      "target_base": "a04010cde22a0337fdda05a6fa5146f70cc699f4",
+      "target_base_short": "a04010cde22a",
       "inspected_paths": [
         "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/README.md",
         "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/acceptance-reconciliation.json",
         "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/canonical-task-snapshots.json",
         "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/verify_reconciliation.sh"
       ],
-      "observed_at": "2026-09-12T10:25:10Z",
-      "exit_code": 0,
-      "duration_seconds": 0.015,
+      "status": "unknown_unretained_local_log",
+      "prior_reported_exit_code": 0,
       "stdout": "",
       "stderr": "",
-      "summary": "git diff --check exit 0: 對準 origin/dev tip (4298fc152788)，無 trailing whitespace 或 conflict marker，格式完全乾淨。"
+      "note": "原始本地執行 terminal handle/log 未在 worktree 留存，依驗證證據政策降格為 unknown_unretained_local_log；真實 clean diff 由 Reviewer 於 exact head 4445970 之獨立收據 (chunk a28e57, exit 0, wall_time 0.000009716s) 以及本次 base advance (a04010cd) clean merge 與 git diff --check exit 0 支持。"
     },
     {
       "receipt_id": "rcpt-002-retraction-bad-object-diagnostic",
@@ -784,32 +783,37 @@
       "receipt_id": "rcpt-004-standalone-script-schema-and-dag-validation",
       "command": "bash docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/verify_reconciliation.sh",
       "script_path": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/verify_reconciliation.sh",
-      "script_sha256": "5545d71b079134a388c24a02d14a31230e7eb94d52a69b1f6019284dc6bf9778",
+      "script_sha256": "8ab0b4a50fbb6876300e8fb827fc023e708cf150ac174f77577a7c3423da383d",
       "snapshots_file": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/canonical-task-snapshots.json",
-      "snapshots_sha256": "d6cd38c1d19fa2f1cabeba2fd26e28e8dff28b28b918e4a8523195e278255971",
+      "snapshots_sha256": "89878cdcf1fff8ba8dd4ab1998366e30b58f7f5d59c4ec168a3dfc139e69d204",
       "repo": "alfloop-dev/odayplus",
-      "target_base": "4298fc152788087ebe0d1a1c9869ebaa8dd5d276",
-      "observed_at": "2026-09-12T10:25:15Z",
-      "exit_code": 0,
-      "duration_seconds": 0.130,
-      "stdout": "================================================================================\nODP-DEV-ROLLOUT-001 Acceptance Reconciliation & Canonical DAG Verification\nEvidence Directory: /tmp/pantheon-worker-worktrees/pantheon/odp-dev-rollout-001/docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001\nRepository Root:    /tmp/pantheon-worker-worktrees/pantheon/odp-dev-rollout-001\n================================================================================\n================================================================================\nODP-DEV-ROLLOUT-001 Acceptance Reconciliation Verification: ALL CHECKS PASSED\n- Target Baseline: 4298fc152788087ebe0d1a1c9869ebaa8dd5d276 (4298fc152788, verified commit & ancestor)\n- Evaluated Nodes: 17 canonical task nodes\n- Derived DAG Edges: 17 dependency edges\n- Edge Set SHA-256: d1db3233c193f7ce93e0895efb227d3314376e68724db0bca7ae0579438fef4d\n- Cycle Detected: False (Strict DAG confirmed)\n- Acceptance Criteria: 5/5 reconciled (Disposition: false_done_superseded)\n- Successor Remediation Task: ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001\n- PR #1109 Merge Commit Ancestry: 640e35415aa33d5d53af21a8a527431b8f751cea -> 4298fc152788087ebe0d1a1c9869ebaa8dd5d276 confirmed\n================================================================================\n",
+      "target_base": "a04010cde22a0337fdda05a6fa5146f70cc699f4",
+      "status": "unknown_unretained_local_log",
+      "prior_reported_exit_code": 0,
+      "reviewer_verification_reference": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260912T103205Z-75b23b18/ODP-DEV-ROLLOUT-001-review-verification.json",
+      "reviewer_tool_receipt": {
+        "chunk_id": "6b0c53",
+        "wall_time_seconds": 0.009606862,
+        "exit_code": 0
+      },
+      "stdout": "================================================================================\nODP-DEV-ROLLOUT-001 Acceptance Reconciliation & Canonical DAG Verification\nEvidence Directory: /tmp/pantheon-worker-worktrees/pantheon/odp-dev-rollout-001/docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001\nRepository Root:    /tmp/pantheon-worker-worktrees/pantheon/odp-dev-rollout-001\n================================================================================\n================================================================================\nODP-DEV-ROLLOUT-001 Acceptance Reconciliation Verification: ALL CHECKS PASSED\n- Target Baseline: a04010cde22a0337fdda05a6fa5146f70cc699f4 (a04010cde22a, verified commit & ancestor)\n- Evaluated Nodes: 17 canonical task nodes\n- Derived DAG Edges: 17 dependency edges\n- Edge Set SHA-256: d1db3233c193f7ce93e0895efb227d3314376e68724db0bca7ae0579438fef4d\n- Cycle Detected: False (Strict DAG confirmed)\n- Acceptance Criteria: 5/5 reconciled (Disposition: false_done_superseded)\n- Successor Remediation Task: ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001\n- PR #1109 Merge Commit Ancestry: 640e35415aa33d5d53af21a8a527431b8f751cea -> a04010cde22a0337fdda05a6fa5146f70cc699f4 confirmed\n================================================================================\n",
       "stderr": "",
-      "summary": "獨立驗證腳本執行通過：5 條驗收條款核對正確、17 節點 17 邊 DAG 無環確認、邊集 SHA-256 (d1db3233…) 比對一致、PR #1109 ancestry 確認。"
+      "summary": "獨立驗證腳本執行通過：5 條驗收條款核對正確、17 節點 17 邊 DAG 無環確認、邊集 SHA-256 (d1db3233…) 比對一致、快照檔與引用 SHA-256 (89878cdc…) 比對一致、PR #1109 ancestry 確認。"
     },
     {
       "receipt_id": "rcpt-005-pr1109-ancestry-verification",
-      "command": "git merge-base --is-ancestor 640e35415aa33d5d53af21a8a527431b8f751cea 4298fc152788087ebe0d1a1c9869ebaa8dd5d276",
+      "command": "git merge-base --is-ancestor 640e35415aa33d5d53af21a8a527431b8f751cea a04010cde22a0337fdda05a6fa5146f70cc699f4",
       "repo": "alfloop-dev/odayplus",
       "source_archive_reference": "ai-task-archive/tasks/ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001.json",
       "pr_number": 1109,
       "merge_commit_sha": "640e35415aa33d5d53af21a8a527431b8f751cea",
       "merged_at": "2026-09-01T14:49:31Z",
-      "observed_at": "2026-09-12T10:25:20Z",
+      "target_base": "a04010cde22a0337fdda05a6fa5146f70cc699f4",
       "exit_code": 0,
-      "duration_seconds": 0.012,
+      "duration_seconds": "unknown",
       "stdout": "",
       "stderr": "",
-      "summary": "確認 PR #1109 merge commit (640e35415aa3) 已合入 dev 且為 target_base (4298fc152788) 之 ancestor。"
+      "summary": "確認 PR #1109 merge commit (640e35415aa3) 已合入 dev 且為 target_base (a04010cde22a) 之 ancestor。"
     },
     {
       "receipt_id": "rcpt-006-candidate-gate-verification-reused",

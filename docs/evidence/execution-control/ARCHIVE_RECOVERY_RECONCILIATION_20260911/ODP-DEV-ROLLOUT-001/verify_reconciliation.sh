@@ -36,7 +36,7 @@ def main() -> int:
     # 1. Verify Basic Task Metadata & Baseline
     assert recon_data.get("task_id") == "ODP-DEV-ROLLOUT-001", "Invalid task_id"
     target_base = recon_data.get("reconciliation_target", {}).get("target_dev_baseline")
-    assert target_base == "4298fc152788087ebe0d1a1c9869ebaa8dd5d276", f"Unexpected target_dev_baseline: {target_base}"
+    assert target_base == "a04010cde22a0337fdda05a6fa5146f70cc699f4", f"Unexpected target_dev_baseline: {target_base}"
 
     # Verify git baseline object type and ancestry
     cat_res = subprocess.run(["git", "cat-file", "-t", target_base], cwd=repo_root, capture_output=True, text=True)
@@ -47,9 +47,13 @@ def main() -> int:
 
     assert recon_data.get("historical_delivery", {}).get("delivered_files_total") == 9, "Delivered files count mismatch"
 
-    # 2. Verify Canonical Scoped Snapshots (17 Nodes)
+    # 2. Verify Canonical Scoped Snapshots (17 Nodes) & Hash Consistency
     nodes_dict = snapshots_data.get("nodes", {})
     assert len(nodes_dict) == 17, f"Expected 17 canonical nodes, got {len(nodes_dict)}"
+
+    actual_snapshots_hash = hashlib.sha256(snapshots_path.read_bytes()).hexdigest()
+    expected_snapshots_hash = recon_data.get("dependency_graph_and_cycle_verification", {}).get("canonical_snapshots_reference", {}).get("sha256")
+    assert actual_snapshots_hash == expected_snapshots_hash, f"Snapshots file hash mismatch: actual {actual_snapshots_hash} vs declared {expected_snapshots_hash}"
 
     # 3. Derive 17 DAG Edges directly from Canonical Scoped Snapshots
     derived_edges = []
@@ -119,7 +123,7 @@ def main() -> int:
 
     print("================================================================================")
     print("ODP-DEV-ROLLOUT-001 Acceptance Reconciliation Verification: ALL CHECKS PASSED")
-    print(f"- Target Baseline: {target_base} (4298fc152788, verified commit & ancestor)")
+    print(f"- Target Baseline: {target_base} ({target_base[:12]}, verified commit & ancestor)")
     print(f"- Evaluated Nodes: {len(nodes)} canonical task nodes")
     print(f"- Derived DAG Edges: {len(derived_edges)} dependency edges")
     print(f"- Edge Set SHA-256: {computed_edge_hash}")
