@@ -25,7 +25,7 @@ from shared.jobs.queue import InMemoryJobQueue
 
 try:
     from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-    from pydantic import BaseModel, Field
+    from pydantic import BaseModel, Field, field_validator
 except ModuleNotFoundError:  # pragma: no cover - optional API dependency
     APIRouter = None  # type: ignore[assignment]
 else:
@@ -112,6 +112,13 @@ else:
         expected_outcome: str | None = None
         rollback_plan: str | dict[str, Any] | None = None
         expected_version: int | None = None
+
+        @field_validator("planned_start", "planned_end")
+        @classmethod
+        def validate_planned_time(cls, value: str | None) -> str | None:
+            if value:
+                _parse_time(value)
+            return value
 
     class StopPayload(BaseModel):
         actor: str = Field(min_length=1)

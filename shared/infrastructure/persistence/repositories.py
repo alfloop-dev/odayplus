@@ -686,7 +686,9 @@ _INTERVENTION_UPSERT_SQL: dict[str, str] = {
         "  predecessor_id = excluded.predecessor_id, "
         "  replacement_id = excluded.replacement_id, "
         "  adjustment_json = excluded.adjustment_json, "
-        "  updated_at = CURRENT_TIMESTAMP"
+        "  updated_at = CURRENT_TIMESTAMP "
+        "WHERE interventions.replacement_id IS NULL OR "
+        "(interventions.replacement_id = excluded.replacement_id AND excluded.status = 'stopped')"
     ),
     "operations.interventions": (
         "INSERT INTO operations.interventions ("
@@ -854,7 +856,7 @@ class DurableInterventionRepository:
         pred_id = _to_uuid_if_prefixed(intervention.predecessor_id) if is_pg else intervention.predecessor_id
         repl_id = _to_uuid_if_prefixed(intervention.replacement_id) if is_pg else intervention.replacement_id
 
-        engine.execute(
+        cursor = engine.execute(
             statement,
             (
                 iid,
@@ -874,6 +876,13 @@ class DurableInterventionRepository:
                 intervention.created_at.isoformat() if hasattr(intervention, "created_at") else datetime.now(UTC).isoformat(),
             ),
         )
+        if not is_pg and cursor.rowcount == 0:
+            # SQLite's earlier guard read does not reserve the writer lock.
+            # Check the lineage again in the actual UPSERT, before writing
+            # the document mirror; the enclosing transaction rolls back.
+            raise InterventionError(
+                f"stale update: intervention {intervention.intervention_id} was already stopped and replaced"
+            )
 
     def save(self, intervention: Intervention) -> Intervention:
         engine = self._store.engine

@@ -2807,3 +2807,71 @@ def test_adjust_lineage_cannot_be_erased_by_stale_aggregate_in_memory_and_sqlite
     assert persisted_sql.status == InterventionStatus.STOPPED
     assert persisted_sql.replacement_id == outcome_sql.replacement.intervention_id
     engine.close()
+
+
+def test_sqlite_stale_save_cannot_erase_adjust_after_guard_read(tmp_path, monkeypatch):
+    """Force the old check/write window across two independent connections."""
+    from concurrent.futures import ThreadPoolExecutor
+    from dataclasses import replace
+
+    engine_a = SqliteEngine(tmp_path / "interleaved-lineage.db")
+    _seed_store(engine_a, store_id="lineage-race")
+    engine_b = SqliteEngine(tmp_path / "interleaved-lineage.db")
+    repo_a = DurableInterventionRepository(SqliteDocumentStore(engine_a))
+    repo_b = DurableInterventionRepository(SqliteDocumentStore(engine_b))
+    workflow_a = InterventionWorkflow(repository=repo_a)
+    workflow_b = InterventionWorkflow(repository=repo_b)
+    original = _open_case(workflow_a, store_id="lineage-race")
+    _drive_to_approved(workflow_a, original.intervention_id)
+    stale = replace(repo_a.get(original.intervention_id), assigned_to="stale-writer")
+    read_done = threading.Event()
+    resume_save = threading.Event()
+    sync_sql = repo_a._sync_sql
+
+    def paused_sync(case):
+        if case.intervention_id == original.intervention_id:
+            read_done.set()
+            assert resume_save.wait(10), "test never released stale writer"
+        return sync_sql(case)
+
+    monkeypatch.setattr(repo_a, "_sync_sql", paused_sync)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            stale_save = pool.submit(repo_a.save, stale)
+            try:
+                assert read_done.wait(10), "ordinary save never reached its write"
+                outcome = workflow_b.adjust_case(original.intervention_id, actor="adjuster", reason="concurrent adjust")
+            finally:
+                resume_save.set()
+            with pytest.raises(InterventionError, match="stale update"):
+                stale_save.result(timeout=10)
+        stored = repo_b.get(original.intervention_id)
+        assert stored.status == InterventionStatus.STOPPED
+        assert stored.replacement_id == outcome.replacement.intervention_id
+        row = engine_b.query_one("SELECT status, replacement_id, adjustment_json FROM interventions WHERE intervention_id = ?", (original.intervention_id,))
+        assert row["status"] == "stopped"
+        assert row["replacement_id"] == stored.replacement_id
+        assert json.loads(row["adjustment_json"]) == stored.adjustment.to_dict()
+        replacement = repo_b.get(stored.replacement_id)
+        assert replacement.predecessor_id == original.intervention_id
+        row = engine_b.query_one("SELECT predecessor_id FROM interventions WHERE intervention_id = ?", (stored.replacement_id,))
+        assert row["predecessor_id"] == original.intervention_id
+    finally:
+        engine_a.close()
+        engine_b.close()
+
+
+@pytest.mark.parametrize("field", ["planned_start", "planned_end"])
+@pytest.mark.parametrize("value", ["not-a-date", "2026-02-30T12:00:00Z"])
+def test_adjust_invalid_date_returns_422_without_writes(field, value):
+    app = create_app()
+    workflow = app.state.intervention_workflow
+    case = _open_case(workflow)
+    _drive_to_approved(workflow, case.intervention_id)
+    before = workflow.get(case.intervention_id).to_dict()
+    audit_before = [event for event in app.state.audit_log.list_events() if event.event_type == "intervention.lifecycle.v1"]
+    client = TestClient(app, headers=INTERVENTION_HEADERS, raise_server_exceptions=False)
+    response = client.post(f"/interventions/{case.intervention_id}/adjust", json={"actor": "ops", "reason": "invalid time", field: value})
+    assert response.status_code == 422, response.text
+    assert workflow.get(case.intervention_id).to_dict() == before
+    assert [event for event in app.state.audit_log.list_events() if event.event_type == "intervention.lifecycle.v1"] == audit_before

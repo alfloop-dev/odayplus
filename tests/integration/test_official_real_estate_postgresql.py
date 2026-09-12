@@ -464,7 +464,7 @@ def test_durable_intervention_repository_postgresql_backfill_and_adjust_legacy_c
 
 
 def test_postgresql_adjust_concurrency_creates_single_replacement_and_rejects_collision(
-    intake_blank_db: Any,
+    intake_blank_db: Any, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """ODP-FR-INTV-006: Concurrent Adjust requests via production-entry API across independent
     PostgreSQL engines enforce row lock and storage CAS, resulting in exactly one 200 SUCCESS
@@ -537,8 +537,32 @@ def test_postgresql_adjust_concurrency_creates_single_replacement_and_rejects_co
     assert approve_res.status_code == 200
     initial_version = approve_res.json()["version"]
 
-    barrier = threading.Barrier(2)
-    results = []
+    barrier = threading.Barrier(2, timeout=10)
+    initial_reads = []
+    locked_reads = []
+    audit_before = [len(app.state.audit_log.list_events()) for app in (app1, app2)]
+
+    def intercept(repo, worker_id):
+        original_get = repo.get
+        first_read = True
+
+        def controlled_get(intervention_id, *, for_update=False):
+            nonlocal first_read
+            case = original_get(intervention_id, for_update=for_update)
+            if intervention_id == case_id and for_update:
+                locked_reads.append((worker_id, case.version))
+            elif intervention_id == case_id and first_read:
+                first_read = False
+                initial_reads.append((worker_id, case.version))
+                # Both workers now hold the same original snapshot before
+                # either can enter its locked revalidation/write section.
+                barrier.wait()
+            return case
+
+        monkeypatch.setattr(repo, "get", controlled_get)
+
+    intercept(repo1, 1)
+    intercept(repo2, 2)
 
     def run_adjust(worker_id: int, client: TestClient):
         c = TestClient(
@@ -549,7 +573,6 @@ def test_postgresql_adjust_concurrency_creates_single_replacement_and_rejects_co
                 subject=f"worker-{worker_id}",
             ),
         )
-        barrier.wait()
         res = c.post(
             f"/interventions/{case_id}/adjust",
             json={
@@ -559,14 +582,13 @@ def test_postgresql_adjust_concurrency_creates_single_replacement_and_rejects_co
                 "expected_version": initial_version,
             },
         )
-        results.append((worker_id, res.status_code, res.json()))
+        return worker_id, res.status_code, res.json()
 
-    t1 = threading.Thread(target=run_adjust, args=(1, client1))
-    t2 = threading.Thread(target=run_adjust, args=(2, client2))
-    t1.start()
-    t2.start()
-    t1.join()
-    t2.join()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(run_adjust, 1, client1), pool.submit(run_adjust, 2, client2)]
+        results = [future.result(timeout=20) for future in futures]
+    assert sorted(initial_reads) == [(1, initial_version), (2, initial_version)]
+    assert len(locked_reads) == 2
 
     status_codes = sorted([r[1] for r in results])
     assert status_codes == [200, 409], f"Results were: {results}"
@@ -604,12 +626,19 @@ def test_postgresql_adjust_concurrency_creates_single_replacement_and_rejects_co
     assert doc_repl.status.value == "CANDIDATE"
     assert doc_repl.predecessor_id == case_id
 
+    winner = next(result[0] for result in results if result[1] == 200)
+    for worker_id, app in enumerate((app1, app2), start=1):
+        events = [event for event in app.state.audit_log.list_events()[audit_before[worker_id - 1]:]
+                  if event.event_type == "intervention.lifecycle.v1"]
+        assert [event.action for event in events] == (["adjust", "create"] if worker_id == winner else [])
+
     engine1.close()
     engine2.close()
 
 
+@pytest.mark.parametrize("competitor", ["stop", "version"])
 def test_postgresql_adjust_interleaved_with_stop_or_version_update_conflict(
-    intake_blank_db: Any,
+    intake_blank_db: Any, monkeypatch: pytest.MonkeyPatch, competitor: str,
 ) -> None:
     """ODP-FR-INTV-006: Controlled interleaving across independent PostgreSQL engines:
     Worker 1 reads APPROVED vN and prepares adjust; Worker 2 stops the case concurrently
@@ -672,15 +701,29 @@ def test_postgresql_adjust_interleaved_with_stop_or_version_update_conflict(
     assert approve_res.status_code == 200
     v_approved = approve_res.json()["version"]
 
-    # Controlled interleave:
-    # 1. client2 concurrently stops the intervention (transitioning to STOPPED v_approved+1)
-    stop_res = client2.post(
-        f"/interventions/{case_id}/stop",
-        json={"actor": "ops-stopper", "reason": "emergency cancellation"},
-    )
-    assert stop_res.status_code == 200
+    from dataclasses import replace
 
-    # 2. client1 attempts adjust with expected_version=v_approved (which was valid when read)
+    order = []
+    get_original = repo1.get
+    audit_before = [event for event in app1.state.audit_log.list_events() if event.event_type == "intervention.lifecycle.v1"]
+
+    def controlled_initial_read(intervention_id, *, for_update=False):
+        snapshot = get_original(intervention_id, for_update=for_update)
+        if intervention_id == case_id and not order and not for_update:
+            assert snapshot.version == v_approved
+            order.append("initial")
+            if competitor == "stop":
+                response = client2.post(f"/interventions/{case_id}/stop", json={"actor": "ops-stopper", "reason": "emergency cancellation"})
+                assert response.status_code == 200
+            else:
+                repo2.save(replace(repo2.get(case_id), version=v_approved + 1))
+            order.append("competitor_committed")
+        elif intervention_id == case_id and for_update:
+            order.append("locked_reread")
+            assert snapshot.version == v_approved + 1
+        return snapshot
+
+    monkeypatch.setattr(repo1, "get", controlled_initial_read)
     adjust_res = client1.post(
         f"/interventions/{case_id}/adjust",
         json={
@@ -690,6 +733,7 @@ def test_postgresql_adjust_interleaved_with_stop_or_version_update_conflict(
             "expected_version": v_approved,
         },
     )
+    assert order == ["initial", "competitor_committed", "locked_reread"]
     assert adjust_res.status_code == 409
     assert adjust_res.json()["detail"]["code"] == "STALE_UPDATE_CONFLICT"
 
@@ -701,14 +745,20 @@ def test_postgresql_adjust_interleaved_with_stop_or_version_update_conflict(
         ).fetchall()
         assert len(rows) == 1
         assert str(rows[0][0]) == case_uuid
-        assert rows[0][1] == "stopped"
+        assert rows[0][1] == ("stopped" if competitor == "stop" else "approved")
         assert rows[0][2] is None
 
     # Verify document store has only the stopped original
     doc = repo1.get(case_id)
     assert doc is not None
-    assert doc.status.value == "STOPPED"
+    assert doc.status.value == ("STOPPED" if competitor == "stop" else "APPROVED")
     assert doc.replacement_id is None
+
+    assert [event for event in app1.state.audit_log.list_events() if event.event_type == "intervention.lifecycle.v1"] == audit_before
+    assert doc.version == v_approved + 1
+    if competitor == "stop":
+        assert [event.action for event in app2.state.audit_log.list_events()
+                if event.event_type == "intervention.lifecycle.v1"] == ["stop"]
 
     engine1.close()
     engine2.close()
