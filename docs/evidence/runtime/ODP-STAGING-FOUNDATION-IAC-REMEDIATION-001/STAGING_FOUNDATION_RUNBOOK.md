@@ -61,10 +61,10 @@ cp /secure/path/live/staging_foundation.backend.hcl /secure/path/staging_foundat
 | `--region` | `var.region` | `asia-east1` |
 | `--network-name` | `module.runtime_foundation.network_name` | `oday-staging-runtime` |
 | `--subnetwork-name` | `module.runtime_foundation.subnetwork_name` | `oday-staging-runtime` |
-| `--cloud-sql-instance-name` | `module.runtime_foundation.cloud_sql_instance_name` | `oday-staging-foundation-sql` |
+| `--cloud-sql-instance` | `module.runtime_foundation.cloud_sql_instance_name` | `oday-staging-foundation-sql` |
 | `--cloud-sql-connection-name` | `module.runtime_foundation.cloud_sql_instance_connection_name` | `odayplus-runtime-20260825:asia-east1:oday-staging-foundation-sql` |
 | `--kms-key-id` | `module.runtime_foundation.kms_crypto_key_id` | `projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime` |
-| `--deployer-service-account` | `google_service_account.github_deployer.email` | `github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com` |
+| `--deployer-service-account-email` | `google_service_account.github_deployer.email` | `github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com` |
 
 ---
 
