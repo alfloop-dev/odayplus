@@ -1,0 +1,181 @@
+{
+  "task_id": "DPF-EMGI-LIVE-ROLLOUT-001",
+  "collected_at": "2026-09-12T09:34:00Z",
+  "collector": "Antigravity3",
+  "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/dpf-emgi-live-rollout-001",
+  "provenance_metadata": {
+    "target_dev_baseline": "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
+    "pre_fix_parent_sha": "168a3abb64264303e20aecce517928b2f6896355",
+    "last_reviewed_head_sha": "168a3abb64264303e20aecce517928b2f6896355",
+    "previous_reviewed_head_shas": [
+      "e71669e76e458e2dad835c47d9e83d8865de74da",
+      "168a3abb64264303e20aecce517928b2f6896355"
+    ],
+    "cross_repo_source": "alfloop-dev/oday-data-platform",
+    "cross_repo_pr": 62,
+    "cross_repo_head_sha": "71ecbe0d982f3f93c976fa0104a82903d2a071cf",
+    "cross_repo_merge_sha": "e3ecd2f199fe051aba8d3d33005c217036a9c88e"
+  },
+  "receipts": [
+    {
+      "label": "pr_metadata_readback",
+      "evidence_nature": "reused_historical_evidence",
+      "source_document": "support/handoffs/archive-recovery-dispatch-20260911/DPF-EMGI-LIVE-ROLLOUT-001/original-evidence.json",
+      "reused_from": "support/handoffs/archive-recovery-dispatch-20260911/DPF-EMGI-LIVE-ROLLOUT-001/original-evidence.json#entry.pull_request",
+      "result_reference": "support/handoffs/archive-recovery-dispatch-20260911/DPF-EMGI-LIVE-ROLLOUT-001/original-evidence.json#entry.pull_request",
+      "command": "reused_historical_readback: gh api repos/alfloop-dev/oday-data-platform/pulls/62",
+      "exit_code": 0,
+      "summary": "Reused historical PR #62 metadata: state MERGED at 2026-08-25T14:24:47Z, merge commit e3ecd2f199fe051aba8d3d33005c217036a9c88e, head sha 71ecbe0d982f3f93c976fa0104a82903d2a071cf, author ajoe734"
+    },
+    {
+      "label": "exact_head_check_runs_readback",
+      "evidence_nature": "reused_historical_evidence",
+      "source_document": "support/handoffs/archive-recovery-dispatch-20260911/DPF-EMGI-LIVE-ROLLOUT-001/original-evidence.json",
+      "reused_from": "support/handoffs/archive-recovery-dispatch-20260911/DPF-EMGI-LIVE-ROLLOUT-001/original-evidence.json#entry.ci_at_exact_head",
+      "result_reference": "support/handoffs/archive-recovery-dispatch-20260911/DPF-EMGI-LIVE-ROLLOUT-001/original-evidence.json#entry.ci_at_exact_head",
+      "command": "reused_historical_readback: gh api repos/alfloop-dev/oday-data-platform/commits/71ecbe0d982f3f93c976fa0104a82903d2a071cf/check-runs",
+      "exit_code": 0,
+      "summary": "Reused historical exact-head CI evidence: 7/7 success CI checks at exact head 71ecbe0d (source-suite, closeout-audit, consumer-readback, producer-compatibility, contract-bundles, emgi-task-manifest, Build and smoke test images)"
+    },
+    {
+      "label": "exact_head_review_gate_status_readback",
+      "evidence_nature": "reused_historical_evidence",
+      "source_document": "support/handoffs/archive-recovery-dispatch-20260911/DPF-EMGI-LIVE-ROLLOUT-001/original-evidence.json",
+      "reused_from": "support/handoffs/archive-recovery-dispatch-20260911/DPF-EMGI-LIVE-ROLLOUT-001/original-evidence.json#entry.review_approval_evidence",
+      "result_reference": "support/handoffs/archive-recovery-dispatch-20260911/DPF-EMGI-LIVE-ROLLOUT-001/original-evidence.json#entry.review_approval_evidence",
+      "command": "reused_historical_readback: gh api repos/alfloop-dev/oday-data-platform/commits/71ecbe0d982f3f93c976fa0104a82903d2a071cf/status",
+      "exit_code": 0,
+      "summary": "Reused historical review approval evidence: task-review-gate state success approved by Codex2 at 2026-08-25T14:24:40Z"
+    },
+    {
+      "label": "rollout_binding_readback",
+      "command": "gh api repos/alfloop-dev/oday-data-platform/contents/docs/evidence/runtime/DPF-EMGI-LIVE-ROLLOUT-001/rollout-binding.json?ref=e3ecd2f199fe051aba8d3d33005c217036a9c88e",
+      "exit_code": 0,
+      "executed_at": "2026-09-11T12:06:03Z",
+      "duration_seconds": 0.58,
+      "result_reference": "alfloop-dev/oday-data-platform@e3ecd2f1:docs/evidence/runtime/DPF-EMGI-LIVE-ROLLOUT-001/rollout-binding.json",
+      "summary": "Read immutable rollout-binding.json: candidate_sha 571fd34e, image_digest sha256:4f603e3acff7a35876fd59593e6725ee0b00226e546b0694eb5e80a12b097e9e, deploy_receipt outcome DEPLOYED, rollback_receipt null"
+    },
+    {
+      "label": "sources_off_readback",
+      "command": "gh api repos/alfloop-dev/oday-data-platform/contents/docs/evidence/runtime/DPF-EMGI-LIVE-ROLLOUT-001/sources-off-readback.json?ref=e3ecd2f199fe051aba8d3d33005c217036a9c88e",
+      "exit_code": 0,
+      "executed_at": "2026-09-11T12:06:04Z",
+      "duration_seconds": 0.54,
+      "result_reference": "alfloop-dev/oday-data-platform@e3ecd2f1:docs/evidence/runtime/DPF-EMGI-LIVE-ROLLOUT-001/sources-off-readback.json",
+      "summary": "Read immutable sources-off-readback.json: 16/16 disabled (governed_source_count=16, disabled_source_count=16), 16/16 approval receipts empty, policy_enforcement_enabled=true"
+    },
+    {
+      "label": "egress_posture_readback",
+      "command": "gh api repos/alfloop-dev/oday-data-platform/contents/docs/evidence/runtime/DPF-EMGI-LIVE-ROLLOUT-001/egress-posture-audit.json?ref=e3ecd2f199fe051aba8d3d33005c217036a9c88e",
+      "exit_code": 0,
+      "executed_at": "2026-09-11T12:06:05Z",
+      "duration_seconds": 0.56,
+      "result_reference": "alfloop-dev/oday-data-platform@e3ecd2f1:docs/evidence/runtime/DPF-EMGI-LIVE-ROLLOUT-001/egress-posture-audit.json",
+      "summary": "Read immutable egress-posture-audit.json: public_egress_default=DENY in oday-emgi (manifest sha256 d810b1c6...) and oday-emgi-verify (manifest sha256 08a5ec6e...)"
+    },
+    {
+      "label": "environment_bootstrap_readback",
+      "command": "gh api repos/alfloop-dev/oday-data-platform/contents/docs/evidence/runtime/DPF-EMGI-LIVE-ROLLOUT-001/environment-bootstrap-receipt.json?ref=e3ecd2f199fe051aba8d3d33005c217036a9c88e",
+      "exit_code": 0,
+      "executed_at": "2026-09-11T12:06:06Z",
+      "duration_seconds": 0.55,
+      "result_reference": "alfloop-dev/oday-data-platform@e3ecd2f1:docs/evidence/runtime/DPF-EMGI-LIVE-ROLLOUT-001/environment-bootstrap-receipt.json",
+      "summary": "Read immutable environment-bootstrap-receipt.json: Workload Identity KSA->GSA with exportable_key_material=false, secret references only (mongodb-uri, postgres-password), failures=[]"
+    },
+    {
+      "label": "image_publish_workflow_run_readback",
+      "command": "gh api repos/alfloop-dev/oday-data-platform/actions/runs/32854804252",
+      "exit_code": 0,
+      "executed_at": "2026-09-11T12:06:07Z",
+      "duration_seconds": 0.62,
+      "result_reference": "https://github.com/alfloop-dev/oday-data-platform/actions/runs/32854804252",
+      "summary": "Verified Image Publish workflow run completed with success, publishing immutable image digest sha256:4f603e3acff7a35876fd59593e6725ee0b00226e546b0694eb5e80a12b097e9e and SPDX-JSON SBOM ac299b5fa383..."
+    },
+    {
+      "label": "emgi_deploy_workflow_run_readback",
+      "command": "gh api repos/alfloop-dev/oday-data-platform/actions/runs/32855155057",
+      "exit_code": 0,
+      "executed_at": "2026-09-11T12:06:08Z",
+      "duration_seconds": 0.61,
+      "result_reference": "https://github.com/alfloop-dev/oday-data-platform/actions/runs/32855155057",
+      "summary": "Verified EMGI Runtime Deploy workflow run completed with success, executing live rollout to oday-emgi-gke"
+    },
+    {
+      "label": "deploy_artifact_zip_download_and_hash_audit",
+      "command": "gh api repos/alfloop-dev/oday-data-platform/actions/artifacts/9566074439/zip > deploy-9566074439.zip && sha256sum deploy-9566074439.zip",
+      "exit_code": 0,
+      "executed_at": "2026-09-11T12:06:09Z",
+      "duration_seconds": 1.15,
+      "source_artifact_id": 9566074439,
+      "source_artifact_name": "emgi-rollout-32855155057",
+      "zip_sha256": "a0de8fbf63d5f5c7f756cdde88b161f656a9830aefd7238088c2825b1e965153",
+      "result_reference": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260911T115619Z-b6458e2c/deploy-9566074439.zip",
+      "summary": "Downloaded and verified deploy artifact ZIP 9566074439 SHA256 a0de8fbf63d5f5c7f756cdde88b161f656a9830aefd7238088c2825b1e965153"
+    },
+    {
+      "label": "deploy_artifact_inner_extraction_and_hash",
+      "command": "unzip -p deploy-9566074439.zip deploy-receipt.json | sha256sum",
+      "exit_code": 0,
+      "executed_at": "2026-09-11T12:06:09Z",
+      "duration_seconds": 0.25,
+      "inner_file": "deploy-receipt.json",
+      "inner_file_sha256": "98100b26ce4bff39274538eba87597c1adc307b6f896eb8edf7c187b0cf34700",
+      "result_reference": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260911T115619Z-b6458e2c/deploy-9566074439.zip#deploy-receipt.json",
+      "summary": "Extracted inner deploy-receipt.json; computed SHA256 98100b26ce4bff39274538eba87597c1adc307b6f896eb8edf7c187b0cf34700. Confirms candidate 571fd34e / image digest sha256:4f603e3a... deployed to oday-emgi (revision 4, previous revision 3)"
+    },
+    {
+      "label": "rollback_test_workflow_run_readback",
+      "command": "gh api repos/alfloop-dev/oday-data-platform/actions/runs/32848521116",
+      "exit_code": 0,
+      "executed_at": "2026-09-11T12:06:10Z",
+      "duration_seconds": 0.63,
+      "result_reference": "https://github.com/alfloop-dev/oday-data-platform/actions/runs/32848521116",
+      "summary": "Verified test workflow run 32848521116 completed at 2026-08-25T12:40:57Z with conclusion=failure"
+    },
+    {
+      "label": "rollback_artifact_zip_download_and_hash_audit",
+      "command": "gh api repos/alfloop-dev/oday-data-platform/actions/artifacts/9563435760/zip > rollback-9563435760.zip && sha256sum rollback-9563435760.zip",
+      "exit_code": 0,
+      "executed_at": "2026-09-11T12:06:11Z",
+      "duration_seconds": 1.08,
+      "source_artifact_id": 9563435760,
+      "source_artifact_name": "emgi-rollout-32848521116",
+      "zip_sha256": "4b6054418c28c018b1c8882de7af57e3eb1b2200692a4cad41db317717708117",
+      "result_reference": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260911T115619Z-b6458e2c/rollback-9563435760.zip",
+      "summary": "Downloaded and verified rollback test artifact ZIP 9563435760 SHA256 4b6054418c28c018b1c8882de7af57e3eb1b2200692a4cad41db317717708117"
+    },
+    {
+      "label": "rollback_artifact_inner_extraction_and_hash",
+      "command": "unzip -p rollback-9563435760.zip rollback-receipt.json | sha256sum",
+      "exit_code": 0,
+      "executed_at": "2026-09-11T12:06:11Z",
+      "duration_seconds": 0.24,
+      "inner_file": "rollback-receipt.json",
+      "inner_file_sha256": "684cbe7b48bb43ac75619ecd58331c7a2423f06b5a50068a67af7eca40fea5eb",
+      "result_reference": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260911T115619Z-b6458e2c/rollback-9563435760.zip#rollback-receipt.json",
+      "summary": "Extracted inner rollback-receipt.json; computed SHA256 684cbe7b48bb43ac75619ecd58331c7a2423f06b5a50068a67af7eca40fea5eb. Confirms test candidate 4d694e3b / digest sha256:0c97ba05... with outcome=ROLLED_BACK but fully_restored=false (both webserver and daemon restored=false due to unreadable deployment after undo)"
+    },
+    {
+      "label": "focused_reconciliation_verification",
+      "command": "bash docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/DPF-EMGI-LIVE-ROLLOUT-001/verify_reconciliation.sh",
+      "exit_code": 0,
+      "executed_at": "2026-09-12T09:33:35Z",
+      "duration_seconds": 0.16,
+      "result_reference": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/DPF-EMGI-LIVE-ROLLOUT-001/verification-terminal-output.txt",
+      "execution_context": "pre_commit_working_tree_after_base_advance",
+      "last_reviewed_head_sha": "168a3abb64264303e20aecce517928b2f6896355",
+      "previous_reviewed_heads": [
+        "e71669e76e458e2dad835c47d9e83d8865de74da",
+        "168a3abb64264303e20aecce517928b2f6896355"
+      ],
+      "tested_inputs_manifest": {
+        "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/DPF-EMGI-LIVE-ROLLOUT-001/README.md": "73d299d295ab61b65fe6260c132f562f98b3056bc80fcffe5f0aa1f7c007a492",
+        "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/DPF-EMGI-LIVE-ROLLOUT-001/acceptance-reconciliation.json": "bfd5e47e719121b07c65d91333fbd72ffe01d38a52e90e539bca8d8137305277",
+        "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/DPF-EMGI-LIVE-ROLLOUT-001/verify_reconciliation.sh": "72d343c70f4f8107656e7318c0e50b5266b4cb02117dfe1fd829fbefe1dfb404"
+      },
+      "pre_commit_input_digest": "dd2fae8968d76bff92e7a0ac47ee75d0cea0a4df8dd8f7a5e543530edff1f270",
+      "summary": "Substantive offline reconciliation verification verifying A1-A4 met_by_receipt, A5 unmet_per_own_receipt, dynamic DAG cycle-free status across 14 nodes and 12 derived dependencies (10 remediation + 2 snapshot), raw artifact bytes read and hashed against recorded digests, git baseline resolvable commit and ancestry check, and receipt structure."
+    }
+  ]
+}

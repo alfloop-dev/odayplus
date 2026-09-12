@@ -1,0 +1,32 @@
+=== FOCUSED RECONCILIATION VERIFICATION START ===
+Task ID: DPF-EMGI-LIVE-ROLLOUT-001
+Command: bash docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/DPF-EMGI-LIVE-ROLLOUT-001/verify_reconciliation.sh
+Started At: 2026-09-12T09:33:35Z
+Working Directory: /tmp/pantheon-worker-worktrees/pantheon/dpf-emgi-live-rollout-001
+Target Dev Baseline: 3828c5ada2a1baab33d7dbe734c7ec70152d3d77
+Last Reviewed Head SHA: 168a3abb64264303e20aecce517928b2f6896355
+--- Output ---
+Executing substantive reconciliation verification in: /tmp/pantheon-worker-worktrees/pantheon/dpf-emgi-live-rollout-001/docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/DPF-EMGI-LIVE-ROLLOUT-001
+✓ README.md verified with complete documentation and accurate provenance
+✓ Acceptance criteria text and ordering substantively verified against original-evidence.json
+✓ Criterion A1 is verified as met_by_receipt: build/publish immutable digest 且產生 SBOM/簽章
+✓ Criterion A2 is verified as met_by_receipt: bootstrap EMGI environment與必要 namespace/RBAC/WI/secret references
+✓ Criterion A3 is verified as met_by_receipt: 16 sources false且 receipts 空
+✓ Criterion A4 is verified as met_by_receipt: default-deny public egress
+✓ Criterion A5 is correctly retained as unmet_per_own_receipt: 部署與 rollback receipts 綁定 digest
+✓ Bounded historical task comparisons verified
+✓ Substantive graph cycle detection confirmed across 14 nodes and 12 edges: 0 cycles
+✓ Deploy artifact raw bytes and inner JSON verified: ZIP SHA256 a0de8fbf63d5f5c7..., inner SHA256 98100b26ce4bff39...
+✓ Rollback test artifact raw bytes and inner JSON verified: ZIP SHA256 4b6054418c28c018..., inner SHA256 684cbe7b48bb43ac... (fully_restored=False confirmed)
+✓ Focused reconciliation verification receipt inputs verified against exact file hashes
+✓ command-receipts.json contains 15 receipts with verified raw hashes, commands, and references
+
+========================================================
+✓ ALL SUBSTANTIVE RECONCILIATION CHECKS PASSED SUCCESSFULLY
+========================================================
+--- Execution Summary ---
+Exit Code: 0
+Completed At: 2026-09-12T09:33:36Z
+Duration Seconds: 0.16
+Status: SUCCESS
+=== FOCUSED RECONCILIATION VERIFICATION COMPLETE ===
