@@ -70,6 +70,7 @@ from modules.heatzone.domain.composition import (
 )
 from modules.heatzone.workers import HeatZoneBatchScoreResult
 from modules.intervention.domain.lifecycle import (
+    ACTIVE_INTERVENTION_STATUSES,
     Intervention,
     InterventionError,
     InterventionStatus,
@@ -687,8 +688,11 @@ _INTERVENTION_UPSERT_SQL: dict[str, str] = {
         "  replacement_id = excluded.replacement_id, "
         "  adjustment_json = excluded.adjustment_json, "
         "  updated_at = CURRENT_TIMESTAMP "
-        "WHERE interventions.replacement_id IS NULL OR "
-        "(interventions.replacement_id = excluded.replacement_id AND excluded.status = 'stopped')"
+        "WHERE ("
+        "  (excluded.replacement_id IS NULL AND interventions.replacement_id IS NULL) OR "
+        "  (excluded.replacement_id IS NOT NULL AND excluded.status = 'stopped' AND interventions.replacement_id IS NULL AND interventions.status IN ('approved', 'executing', 'observing')) OR "
+        "  (interventions.replacement_id = excluded.replacement_id AND excluded.status = 'stopped')"
+        ")"
     ),
     "operations.interventions": (
         "INSERT INTO operations.interventions ("
@@ -712,7 +716,12 @@ _INTERVENTION_UPSERT_SQL: dict[str, str] = {
         "  predecessor_id = excluded.predecessor_id, "
         "  replacement_id = excluded.replacement_id, "
         "  adjustment_json = excluded.adjustment_json, "
-        "  updated_at = CURRENT_TIMESTAMP"
+        "  updated_at = CURRENT_TIMESTAMP "
+        "WHERE ("
+        "  (excluded.replacement_id IS NULL AND operations.interventions.replacement_id IS NULL) OR "
+        "  (excluded.replacement_id IS NOT NULL AND excluded.status = 'stopped' AND operations.interventions.replacement_id IS NULL AND operations.interventions.status IN ('approved', 'executing', 'observing')) OR "
+        "  (operations.interventions.replacement_id = excluded.replacement_id AND excluded.status = 'stopped')"
+        ")"
     ),
 }
 
@@ -876,12 +885,12 @@ class DurableInterventionRepository:
                 intervention.created_at.isoformat() if hasattr(intervention, "created_at") else datetime.now(UTC).isoformat(),
             ),
         )
-        if not is_pg and cursor.rowcount == 0:
-            # SQLite's earlier guard read does not reserve the writer lock.
-            # Check the lineage again in the actual UPSERT, before writing
+        if cursor.rowcount == 0:
+            # SQLite / PG earlier guard read does not reserve the writer lock.
+            # Check the lineage and active status in the actual UPSERT, before writing
             # the document mirror; the enclosing transaction rolls back.
             raise InterventionError(
-                f"stale update: intervention {intervention.intervention_id} was already stopped and replaced"
+                f"stale update: intervention {intervention.intervention_id} was already stopped and replaced or changed status"
             )
 
     def save(self, intervention: Intervention) -> Intervention:
@@ -904,6 +913,21 @@ class DurableInterventionRepository:
                         raise InterventionError(
                             f"stale update: intervention {intervention.intervention_id} is already stopped and replaced by {existing_repl}"
                         )
+                doc = self._store.get(self._C, intervention.intervention_id)
+                if doc is not None:
+                    if intervention.replacement_id is not None and intervention.status == InterventionStatus.STOPPED:
+                        if doc.status not in ACTIVE_INTERVENTION_STATUSES:
+                            raise InterventionError(
+                                f"stale update: intervention {intervention.intervention_id} status is {doc.status.value}, cannot adjust"
+                            )
+                        if doc.version >= intervention.version:
+                            raise InterventionError(
+                                f"stale update: intervention {intervention.intervention_id} was modified concurrently (current version {doc.version}, saving version {intervention.version})"
+                            )
+                    elif doc.version > intervention.version:
+                        raise InterventionError(
+                            f"stale update: intervention {intervention.intervention_id} was modified concurrently (current version {doc.version}, saving version {intervention.version})"
+                        )
             else:
                 existing_repl = None
                 try:
@@ -915,14 +939,27 @@ class DurableInterventionRepository:
                         existing_repl = str(row.get("replacement_id"))
                 except Exception:
                     pass
-                if not existing_repl:
-                    doc = self._store.get(self._C, intervention.intervention_id)
-                    if doc is not None and getattr(doc, "replacement_id", None):
-                        existing_repl = str(doc.replacement_id)
+                doc = self._store.get(self._C, intervention.intervention_id)
+                if not existing_repl and doc is not None and getattr(doc, "replacement_id", None):
+                    existing_repl = str(doc.replacement_id)
                 if existing_repl:
                     if intervention.replacement_id != existing_repl or intervention.status != InterventionStatus.STOPPED:
                         raise InterventionError(
                             f"stale update: intervention {intervention.intervention_id} is already stopped and replaced by {existing_repl}"
+                        )
+                if doc is not None:
+                    if intervention.replacement_id is not None and intervention.status == InterventionStatus.STOPPED:
+                        if doc.status not in ACTIVE_INTERVENTION_STATUSES:
+                            raise InterventionError(
+                                f"stale update: intervention {intervention.intervention_id} status is {doc.status.value}, cannot adjust"
+                            )
+                        if doc.version >= intervention.version:
+                            raise InterventionError(
+                                f"stale update: intervention {intervention.intervention_id} was modified concurrently (current version {doc.version}, saving version {intervention.version})"
+                            )
+                    elif doc.version > intervention.version:
+                        raise InterventionError(
+                            f"stale update: intervention {intervention.intervention_id} was modified concurrently (current version {doc.version}, saving version {intervention.version})"
                         )
             self._sync_sql(intervention)
             # Relational persistence is the production contract.  Write the

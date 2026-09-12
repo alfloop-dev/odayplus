@@ -1705,7 +1705,8 @@ def test_adjust_workflow_allowed_active_states() -> None:
     wf_exec = InterventionWorkflow(repository=repo_exec)
     case_exec = _open_case(wf_exec, store_id="s-exec")
     _drive_to_approved(wf_exec, case_exec.intervention_id)
-    case_exec_inst = case_exec.with_transition(
+    approved_exec = wf_exec.get(case_exec.intervention_id)
+    case_exec_inst = approved_exec.with_transition(
         to_status=InterventionStatus.EXECUTING,
         actor="ops",
         action="execute",
@@ -2872,6 +2873,192 @@ def test_adjust_invalid_date_returns_422_without_writes(field, value):
     audit_before = [event for event in app.state.audit_log.list_events() if event.event_type == "intervention.lifecycle.v1"]
     client = TestClient(app, headers=INTERVENTION_HEADERS, raise_server_exceptions=False)
     response = client.post(f"/interventions/{case.intervention_id}/adjust", json={"actor": "ops", "reason": "invalid time", field: value})
+    assert response.status_code == 422, response.text
+    assert workflow.get(case.intervention_id).to_dict() == before
+    assert [event for event in app.state.audit_log.list_events() if event.event_type == "intervention.lifecycle.v1"] == audit_before
+
+
+def test_sqlite_adjust_revalidation_stale_window_rejected_against_competitor_stop(tmp_path, monkeypatch):
+    """ODP-FR-INTV-006: SQLite Adjust revalidation window against competitor Stop.
+
+    If Connection A reads an active case (vN, APPROVED) during adjust_case but is paused before
+    writes, and Connection B concurrently commits a Stop (vN+1, STOPPED, replacement_id=NULL),
+    Connection A must be rejected with 409 STALE_UPDATE_CONFLICT upon resumption.
+    No replacement intervention or Adjust success audit is created, and Connection B's STOPPED
+    state and history are fully preserved in SQL and document persistence.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    engine_a = SqliteEngine(tmp_path / "sqlite-adjust-race-stop.db")
+    _seed_store(engine_a, store_id="lineage-race-stop")
+    engine_b = SqliteEngine(tmp_path / "sqlite-adjust-race-stop.db")
+    repo_a = DurableInterventionRepository(SqliteDocumentStore(engine_a))
+    repo_b = DurableInterventionRepository(SqliteDocumentStore(engine_b))
+    app_a = create_app(intervention_repository=repo_a)
+    app_b = create_app(intervention_repository=repo_b)
+    workflow_a = app_a.state.intervention_workflow
+
+    original = _open_case(workflow_a, store_id="lineage-race-stop")
+    _drive_to_approved(workflow_a, original.intervention_id)
+    case_id = original.intervention_id
+
+    revalidation_done = threading.Event()
+    resume_adjust = threading.Event()
+    real_save = repo_a.save
+
+    def paused_save(case):
+        if case.predecessor_id == case_id or case.intervention_id == case_id:
+            revalidation_done.set()
+            assert resume_adjust.wait(10), "test never released adjust worker"
+        return real_save(case)
+
+    monkeypatch.setattr(repo_a, "save", paused_save)
+
+    client_a = TestClient(app_a, headers=INTERVENTION_HEADERS, raise_server_exceptions=False)
+    client_b = TestClient(app_b, headers=INTERVENTION_HEADERS, raise_server_exceptions=False)
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future_a = pool.submit(
+                client_a.post,
+                f"/interventions/{case_id}/adjust",
+                json={"actor": "adjuster-a", "reason": "adjust in race", "action_spec": {"price_change_pct": -5}},
+            )
+            try:
+                assert revalidation_done.wait(10), "adjust never reached its save window"
+                res_b = client_b.post(
+                    f"/interventions/{case_id}/stop",
+                    json={"actor": "stopper-b", "reason": "competitor stop"},
+                )
+                assert res_b.status_code == 200, res_b.text
+            finally:
+                resume_adjust.set()
+
+            res_a = future_a.result(timeout=10)
+            assert res_a.status_code == 409, res_a.text
+            assert res_a.json()["detail"]["code"] == "STALE_UPDATE_CONFLICT"
+
+        persisted = repo_b.get(case_id)
+        assert persisted.status == InterventionStatus.STOPPED
+        assert persisted.replacement_id is None
+
+        row = engine_b.query_one("SELECT status, replacement_id FROM interventions WHERE intervention_id = ?", (case_id,))
+        assert row["status"] == "stopped"
+        assert row["replacement_id"] is None
+
+        all_cases = repo_b.list_all()
+        assert len(all_cases) == 1
+        assert all_cases[0].intervention_id == case_id
+
+        sql_rows = engine_b.query("SELECT intervention_id FROM interventions")
+        assert len(sql_rows) == 1
+        assert sql_rows[0]["intervention_id"] == case_id
+
+        audit_events = [e for e in app_a.state.audit_log.list_events() if e.resource == f"intervention/{case_id}"]
+        adjust_success_events = [e for e in audit_events if e.action == "adjust" and e.outcome == "stopped"]
+        assert len(adjust_success_events) == 0
+    finally:
+        engine_a.close()
+        engine_b.close()
+
+
+def test_sqlite_adjust_revalidation_stale_window_rejected_against_competitor_assignment(tmp_path, monkeypatch):
+    """ODP-FR-INTV-006: SQLite Adjust revalidation window against competitor Assignment.
+
+    If Connection A reads an active case (vN, APPROVED) during adjust_case but is paused before
+    writes, and Connection B concurrently commits an assignment (vN+1, assigned_to='worker-b'),
+    Connection A must be rejected with 409 STALE_UPDATE_CONFLICT upon resumption due to version CAS.
+    Connection B's assignment and history are fully preserved.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    engine_a = SqliteEngine(tmp_path / "sqlite-adjust-race-assign.db")
+    _seed_store(engine_a, store_id="lineage-race-assign")
+    engine_b = SqliteEngine(tmp_path / "sqlite-adjust-race-assign.db")
+    repo_a = DurableInterventionRepository(SqliteDocumentStore(engine_a))
+    repo_b = DurableInterventionRepository(SqliteDocumentStore(engine_b))
+    app_a = create_app(intervention_repository=repo_a)
+    app_b = create_app(intervention_repository=repo_b)
+    workflow_a = app_a.state.intervention_workflow
+
+    original = _open_case(workflow_a, store_id="lineage-race-assign")
+    _drive_to_approved(workflow_a, original.intervention_id)
+    case_id = original.intervention_id
+    initial_version = workflow_a.get(case_id).version
+
+    revalidation_done = threading.Event()
+    resume_adjust = threading.Event()
+    real_save = repo_a.save
+
+    def paused_save(case):
+        if case.predecessor_id == case_id or case.intervention_id == case_id:
+            revalidation_done.set()
+            assert resume_adjust.wait(10), "test never released adjust worker"
+        return real_save(case)
+
+    monkeypatch.setattr(repo_a, "save", paused_save)
+
+    client_a = TestClient(app_a, headers=INTERVENTION_HEADERS, raise_server_exceptions=False)
+    client_b = TestClient(app_b, headers=INTERVENTION_HEADERS, raise_server_exceptions=False)
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future_a = pool.submit(
+                client_a.post,
+                f"/interventions/{case_id}/adjust",
+                json={"actor": "adjuster-a", "reason": "adjust in race", "action_spec": {"price_change_pct": -5}},
+            )
+            try:
+                assert revalidation_done.wait(10), "adjust never reached its save window"
+                res_b = client_b.post(
+                    f"/interventions/{case_id}/assign",
+                    json={"actor": "lead-b", "assignee": "worker-b", "expected_version": initial_version},
+                )
+                assert res_b.status_code == 200, res_b.text
+            finally:
+                resume_adjust.set()
+
+            res_a = future_a.result(timeout=10)
+            assert res_a.status_code == 409, res_a.text
+            assert res_a.json()["detail"]["code"] == "STALE_UPDATE_CONFLICT"
+
+        persisted = repo_b.get(case_id)
+        assert persisted.assigned_to == "worker-b"
+        assert persisted.version == initial_version + 1
+        assert persisted.replacement_id is None
+
+        all_cases = repo_b.list_all()
+        assert len(all_cases) == 1
+        assert all_cases[0].intervention_id == case_id
+
+        audit_events = [e for e in app_a.state.audit_log.list_events() if e.resource == f"intervention/{case_id}"]
+        adjust_success_events = [e for e in audit_events if e.action == "adjust" and e.outcome == "stopped"]
+        assert len(adjust_success_events) == 0
+    finally:
+        engine_a.close()
+        engine_b.close()
+
+
+def test_adjust_date_overflow_year_9999_returns_422_without_writes():
+    """ODP-FR-INTV-006: Adjust with planned_start at max timestamp without planned_end
+    derives an overflowing planned_end and returns 422 UNPROCESSABLE_ENTITY without mutating data or writing audit.
+    """
+    app = create_app()
+    workflow = app.state.intervention_workflow
+    case = _open_case(workflow)
+    _drive_to_approved(workflow, case.intervention_id)
+    before = workflow.get(case.intervention_id).to_dict()
+    audit_before = [event for event in app.state.audit_log.list_events() if event.event_type == "intervention.lifecycle.v1"]
+    client = TestClient(app, headers=INTERVENTION_HEADERS, raise_server_exceptions=False)
+
+    response = client.post(
+        f"/interventions/{case.intervention_id}/adjust",
+        json={
+            "actor": "ops",
+            "reason": "extreme date test",
+            "planned_start": "9999-12-31T23:59:59.999999Z",
+        },
+    )
     assert response.status_code == 422, response.text
     assert workflow.get(case.intervention_id).to_dict() == before
     assert [event for event in app.state.audit_log.list_events() if event.event_type == "intervention.lifecycle.v1"] == audit_before

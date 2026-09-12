@@ -117,7 +117,10 @@ else:
         @classmethod
         def validate_planned_time(cls, value: str | None) -> str | None:
             if value:
-                _parse_time(value)
+                try:
+                    _parse_time(value)
+                except (OverflowError, ValueError) as exc:
+                    raise ValueError(f"invalid date format or range: {exc}") from exc
             return value
 
     class StopPayload(BaseModel):
@@ -641,8 +644,14 @@ else:
                 alias="Idempotency-Key",
             ),
         ) -> dict[str, Any]:
-            planned_start = _parse_time(body.planned_start) if body.planned_start else None
-            planned_end = _parse_time(body.planned_end) if body.planned_end else None
+            try:
+                planned_start = _parse_time(body.planned_start) if body.planned_start else None
+                planned_end = _parse_time(body.planned_end) if body.planned_end else None
+            except (OverflowError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"invalid date format or range: {exc}",
+                ) from exc
             return run_command(
                 request=request,
                 scope=f"interventions:{intervention_id}:adjust",
@@ -727,7 +736,7 @@ else:
         def _run(action: Any) -> dict[str, Any]:
             try:
                 return action().to_dict()
-            except (InterventionError, ValueError) as exc:
+            except (InterventionError, ValueError, OverflowError) as exc:
                 msg = str(exc)
                 if "stale update" in msg:
                     raise HTTPException(

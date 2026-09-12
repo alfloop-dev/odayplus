@@ -946,8 +946,13 @@ class InterventionWorkflow:
         )
 
         new_start = planned_start or now
-        duration = original.planned_end - original.planned_start
-        new_end = planned_end or (new_start + duration)
+        try:
+            duration = original.planned_end - original.planned_start
+            new_end = planned_end or (new_start + duration)
+        except (OverflowError, ValueError) as exc:
+            raise InterventionError(
+                f"adjusted planned dates exceed valid range: {exc}"
+            ) from exc
 
         replacement = new_intervention(
             store_id=original.store_id,

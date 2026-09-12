@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 from modules.intervention.domain.lifecycle import (
+    ACTIVE_INTERVENTION_STATUSES,
     Intervention,
     InterventionError,
     InterventionStatus,
@@ -32,13 +33,27 @@ class InMemoryInterventionRepository:
         """Upsert an intervention, keeping the per-store index in sync."""
         with self._lock:
             existing = self._by_id.get(intervention.intervention_id)
-            if existing is not None and existing.replacement_id:
-                if (
-                    intervention.replacement_id != existing.replacement_id
-                    or intervention.status != InterventionStatus.STOPPED
-                ):
+            if existing is not None:
+                if existing.replacement_id:
+                    if (
+                        intervention.replacement_id != existing.replacement_id
+                        or intervention.status != InterventionStatus.STOPPED
+                    ):
+                        raise InterventionError(
+                            f"stale update: intervention {intervention.intervention_id} is already stopped and replaced by {existing.replacement_id}"
+                        )
+                if intervention.replacement_id is not None and intervention.status == InterventionStatus.STOPPED:
+                    if existing.status not in ACTIVE_INTERVENTION_STATUSES:
+                        raise InterventionError(
+                            f"stale update: intervention {intervention.intervention_id} status is {existing.status.value}, cannot adjust"
+                        )
+                    if existing.version >= intervention.version:
+                        raise InterventionError(
+                            f"stale update: intervention {intervention.intervention_id} was modified concurrently (current version {existing.version}, saving version {intervention.version})"
+                        )
+                elif existing.version > intervention.version:
                     raise InterventionError(
-                        f"stale update: intervention {intervention.intervention_id} is already stopped and replaced by {existing.replacement_id}"
+                        f"stale update: intervention {intervention.intervention_id} was modified concurrently (current version {existing.version}, saving version {intervention.version})"
                     )
             if intervention.intervention_id not in self._by_id:
                 self._by_store.setdefault(intervention.store_id, []).append(
