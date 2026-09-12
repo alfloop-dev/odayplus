@@ -3584,8 +3584,8 @@ def test_ci_failure_lane_adds_no_canonical_read_on_a_quiet_tick() -> None:
 
     Every reconciliation lane in `dispatch_ready_tasks` reloads only when its own
     step reports a change. The CI-failure lane briefly re-synced unconditionally,
-    so every tick paid one extra `load_status` (3 reads on this shape instead of
-    2). That surfaced as `StopIteration` in the callers that drive the dispatcher
+    so every tick paid one extra `load_status` (2 reads on this shape instead of
+    1). That surfaced as `StopIteration` in the callers that drive the dispatcher
     with a bounded `side_effect` sequence -- `ProcessQueueDispatchGuardTests` in
     test_supervisor.py supplies exactly two snapshots, which is the same
     invariant pinned numerically here.
@@ -3598,8 +3598,9 @@ def test_ci_failure_lane_adds_no_canonical_read_on_a_quiet_tick() -> None:
             {
                 "id": "QUIET-001",
                 "status": "in_progress",
-                "owner": "Antigravity",
-                "reviewer": "Codex2",
+                "owner": "Antigravity7",
+                "reviewer": "Codex",
+                "priority": "P2",
                 "depends_on": [],
             }
         ],
@@ -3621,7 +3622,7 @@ def test_ci_failure_lane_adds_no_canonical_read_on_a_quiet_tick() -> None:
     ):
         supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["antigravity7"])
 
-    assert load_status_mock.call_count == 2
+    assert load_status_mock.call_count == 1
 
 
 def test_ci_failure_rejected_cas_rebuilds_indices_from_the_resynced_snapshot() -> None:
