@@ -11,6 +11,8 @@
 
 本次沒有部署 API/Web，沒有新增 live rehearsal 證據。#1046 仍需獨立審查、必要 CI、真實 successor build artifact 與 release-scoped API/Web Direct VPC ALL_TRAFFIC readback。舊 immutable manifest 不會手動改寫。
 
-SQL connection string 會被誤當 bare instance 的程式缺陷，已分拆為 `ODP-STAGING-SQL-BINDING-REMEDIATION-001`；該任務有實作與 125 項通過測試，待獨立審查。Next/MapLibre/sharp 修復由既有 `ODP-RUNTIME-BUILD-DEPENDENCY-REMEDIATION-001` / #1322 接續，沒有重複派工。
+SQL connection string 會被誤當 bare instance 的程式缺陷，已分拆為 `ODP-STAGING-SQL-BINDING-REMEDIATION-001`；該任務有實作與 125 項通過測試，待獨立審查。Next/MapLibre/sharp 修復 `ODP-RUNTIME-BUILD-DEPENDENCY-REMEDIATION-001` / #1322 已通過全部必要 CI 與 task-review-gate，並合併至 dev，沒有重複派工。
 
 受 retention 約束的舊 plan 清理仍是獨立延後任務，不構成本次 foundation IAM/recovery 阻擋。
+
+已整合 dev `36a102b7b39d1fe2e58939ee6e454e20c6d72dbd`，包含已審查合併的依賴與 Adjust 修復。整合後 Ruff、code boundary 檢查通過；foundation egress 與 Terraform 回歸 **66 passed / 0 failures**。尚未重新產生 successor build artifact，歷史 manifest 的四項不一致不因上述 focused suite 通過而認列解決。
