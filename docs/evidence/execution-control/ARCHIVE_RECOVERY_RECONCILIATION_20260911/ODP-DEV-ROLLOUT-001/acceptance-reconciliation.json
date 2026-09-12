@@ -6,11 +6,12 @@
   "phase": "History Recovery — executable acceptance reconciliation",
   "owner": "Antigravity2",
   "reviewer": "Codex",
-  "recorded_at": "2026-09-11T12:35:00Z",
+  "recorded_at": "2026-09-12T09:12:00Z",
   "reconciliation_target": {
     "repository": "alfloop-dev/odayplus",
     "continuation_branch": "task/ODP-DEV-ROLLOUT-001-RECOVERY-20260911",
-    "target_dev_baseline": "4499a2993e37b62033926b07de8d8d2e8469a6c7",
+    "target_dev_baseline": "4b35121031d054178550beaa2ca3e6ee8e0a39eb",
+    "initial_recovery_base": "4499a2993e37b62033926b07de8d8d2e8469a6c7",
     "canonical_status_root": "/home/lupin/odayplus"
   },
   "historical_delivery": {
@@ -23,6 +24,7 @@
     "merged_at": "2026-08-25T17:31:52Z",
     "merged_by": "ajoe734",
     "head_ref": "task/ODP-DEV-ROLLOUT-001",
+    "delivered_files_total": 9,
     "delivered_artifacts": [
       "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/README.md",
       "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/data-platform-dev-deployment.json",
@@ -31,6 +33,10 @@
       "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/external-sources-provider-off-audit.json",
       "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/odayplus-dev-deployment.json",
       "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/release-receipts-index.json"
+    ],
+    "other_delivered_files": [
+      "docs/audits/code-boundary-inventory.csv",
+      "tests/ops/test_dev_rollout.py"
     ],
     "declared_artifacts": [
       "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/"
@@ -88,8 +94,60 @@
     },
     "historical_execution_receipts": {
       "status": "placeholder_receipts_disclosed",
-      "disclosure": "PR #1013 在 docs/evidence/runtime/ODP-DEV-ROLLOUT-001/ 交付了 7 份運行收據與說明文件。經獨立查核，所有元件映像 digest 均為重複位元佔位符（sha256:1111…、sha256:2222… 等），且讀回報告參照本機未追蹤之 .odp_data/ 路徑。歷史結案屬 false-done，歷史檔案完整保留於原位置作為審計依據，不重做程式閘門、不手動竄改歷史收據，由後續補救任務 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 正式承接。"
+      "disclosure": "PR #1013 在 docs/evidence/runtime/ODP-DEV-ROLLOUT-001/ 交付了 7 份運行收據與說明文件（全 PR 共 9 檔，含 tests/ops/test_dev_rollout.py 與 docs/audits/code-boundary-inventory.csv）。經查核，所有元件映像 digest 均為重複位元佔位符（sha256:1111…、sha256:2222… 等），且讀回報告參照本機未追蹤之 .odp_data/ 路徑。歷史結案屬 false-done，歷史檔案完整保留於原位置作為審計依據，不重做程式閘門、不手動竄改歷史收據，由後續補救任務 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 正式承接。"
     }
+  },
+  "candidate_and_build_evidence": {
+    "candidate_task_id": "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+    "candidate_pr_number": 1292,
+    "candidate_pr_url": "https://github.com/alfloop-dev/odayplus/pull/1292",
+    "candidate_pr_head": "d084f51d4009b7b435416c8b83410a8b4fb4a267",
+    "candidate_pr_merge": "3613faff582bd1c5a2c9b2ae5b5cd390d8be381f",
+    "candidate_pr_merged_at": "2026-09-10T18:58:07Z",
+    "frozen_candidate_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+    "authoritative_manifest_digest": "sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c",
+    "workflow_run": {
+      "run_id": 34179791241,
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/34179791241",
+      "workflow_head_sha": "8c570a56353abdcc8ba70fe0a3fdd9b963902391",
+      "conclusion": "success",
+      "created_at": "2026-09-08T02:21:49Z",
+      "updated_at": "2026-09-08T02:26:33Z",
+      "jobs": [
+        {
+          "name": "Validate release phase inputs",
+          "database_id": 101916378520,
+          "conclusion": "success"
+        },
+        {
+          "name": "Build once and publish the immutable artifact handoff",
+          "database_id": 101916404681,
+          "conclusion": "success",
+          "built_immutable_images": {
+            "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:5e1a152e839cbfa7a2bf422b924928b56fad89f35e44243619a3f2fe98802cee",
+            "web": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:38c716462b569b7420fe95788a84f8a1b3778e2e7c938d535a1dc13288a78971",
+            "worker": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:b2c0e4473ad529ad71f215b76fc125115d8ba0b4e845a87e532d10ebdb8ddba3",
+            "scheduler": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:f3fd22c00478d730273494c23c512a87c807de645a8b759d0af4908d82cd4cc9"
+          }
+        },
+        {
+          "name": "Deploy the admitted artifact by immutable digest",
+          "database_id": 101917162318,
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Verify the Supervisor lease authorises this deploy",
+          "database_id": 101917162346,
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Verify production watch and clean up ephemeral staging",
+          "database_id": 101917162350,
+          "conclusion": "skipped"
+        }
+      ]
+    },
+    "evidence_nature_note": "本項收據證明真實 build-once 映像已完成建置、簽名並發布至 Artifact Registry（Build Success）；然而後續 Deploy/Lease/Watch 階段依准入控制保持 skipped。此為可稽核之真實建置證據，不代表 live rollout 已執行完畢。"
   },
   "acceptance_criteria_reconciliation": [
     {
@@ -101,12 +159,14 @@
       "classes_zh": [
         "runtime／部署"
       ],
+      "historical_inventory_status": "met_by_receipt",
+      "runtime_execution_status": "not_evidenced",
       "status": "met_by_receipt",
-      "status_zh": "已滿足（交付物內既有收據直接記載部署順序符合）",
-      "historical_evidence": "由 PR #1013 交付之 docs/evidence/runtime/ODP-DEV-ROLLOUT-001/dev-rollout-manifest-binding.json (merge commit b8262d911c95887767877e7cee23bded0ef7dd61)，其 deployment_order 欄位記載 sequence 1 = data_platform (GKE oday-dev)，sequence 2 = oday_plus (Cloud Run dev)，順序符合發布規劃 §4.3 與 §7.1 條款。",
+      "status_zh": "歷史收據已滿足（交付物內記載 sequence 1=data_platform, 2=oday_plus_migration, 3=oday_plus_services；實質 live 部署未具運行證據）",
+      "historical_evidence": "由 PR #1013 交付之 docs/evidence/runtime/ODP-DEV-ROLLOUT-001/dev-rollout-manifest-binding.json (merge commit b8262d911c95887767877e7cee23bded0ef7dd61)，其 deployment_order 欄位記載 sequence 1 = data_platform (GKE namespace: oday-dev)、sequence 2 = oday_plus_migration (Cloud Run Job: oday-plus-dev-migration)、sequence 3 = oday_plus_services (Cloud Run Services & Jobs: api, web, worker, scheduler)，時序規劃符合規範。",
       "source_sha": "b8262d911c95887767877e7cee23bded0ef7dd61",
       "ci_binding": "Delivered in PR #1013 merge commit b8262d911c95; change-scope check-run success (2026-08-25T16:53:20Z).",
-      "boundary_and_limitations": "收據記載之部署順序在文件結構層面符合條款；但實質部署因映像 digest 均為佔位符而未以真實生產映像落地。"
+      "boundary_and_limitations": "收據記載之部署順序在文件結構層面符合條款（保留 inventory 歷史判定）；但實質部署因映像 digest 均為佔位符而未在 GCP dev 環境落地，本輪 runtime 執行未具真實證據，不以 placeholder sequence 充作已部署。實質時序由 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 (A4) 於 live 部署時讀回驗證。"
     },
     {
       "index": 2,
@@ -117,12 +177,14 @@
       "classes_zh": [
         "runtime／部署"
       ],
+      "historical_inventory_status": "unmet_per_own_receipt",
+      "runtime_execution_status": "unmet_per_own_receipt",
       "status": "unmet_per_own_receipt",
       "status_zh": "未滿足（該任務自身收據記載之 digest 均為重複位元佔位符，構成 false-done）",
       "historical_evidence": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/dev-rollout-manifest-binding.json 及 odayplus-dev-deployment.json / data-platform-dev-deployment.json 中，全數 6 個元件之 image digest 均為重複位元佔位字串（api@sha256:1111…、web@sha256:2222…、data_platform@sha256:3333…、migration@sha256:4444…、worker@sha256:5555…、scheduler@sha256:6666…；cloud_sql_proxy 為 sha256:0000…；migration_digest 為 sha256:aaaa…；data_contract_digest 為 sha256:bbbb…；source_policy_digest 為 sha256:cccc…）。收據比對的兩邊皆為同一組佔位字串，因此 digest_match=true 為恆真之自我斷言，不構成真實 digest 一致性證據。",
       "source_sha": "b8262d911c95887767877e7cee23bded0ef7dd61",
       "ci_binding": "PR #1013 exact head 83944bb50c56 check-runs passed, but CI only validated structural schema/test files without connecting to live GCP container registries.",
-      "boundary_and_limitations": "本條款客觀未達成，原 PR #1013 交付物構成 false-done。實質映像建置與真實 digest 比對由後續補救任務 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 (A1/A2) 承接。"
+      "boundary_and_limitations": "本條款客觀未達成，原 PR #1013 交付物構成 false-done。實質映像建置與真實 digest 比對由後續補救任務 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 (A1/A2/A4) 承接。"
     },
     {
       "index": 3,
@@ -133,6 +195,8 @@
       "classes_zh": [
         "runtime／部署"
       ],
+      "historical_inventory_status": "not_evidenced",
+      "runtime_execution_status": "not_evidenced",
       "status": "not_evidenced",
       "status_zh": "未具證據（引用本機未追蹤之 .odp_data/ 路徑，原始報告在倉庫中不存在）",
       "historical_evidence": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/dev-integration-readback.json 記載 readback_status=PASSED，但其引用的 5 份報告（.odp_data/deployment/cloud-run-preflight.json、.odp_data/deployment/cloud-run-smoke.json、.odp_data/deployment/cloud-run-migration-compatibility.json、.odp_data/deployment/live-e2e-gate.json 與 jobs_validation）均位於未被 git 追蹤之本機暫存目錄，倉庫內不存在，無法獨立審計。",
@@ -149,6 +213,8 @@
       "classes_zh": [
         "外部來源啟用狀態"
       ],
+      "historical_inventory_status": "partially_met",
+      "runtime_execution_status": "partially_met",
       "status": "partially_met",
       "status_zh": "部分滿足（靜態模型清單宣告 disabled，但非資料平台第三方 provider 母體，且缺現場 live 驗證）",
       "historical_evidence": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/external-sources-provider-off-audit.json 記載 16 項 ODayPlus 內部快照模型（store_master_snapshot, machine_master_snapshot, machine_cycle_event, machine_status_event, transaction_event, price_schedule_snapshot, maintenance_work_order_event, customer_service_case_event, poi_snapshot, geocode_result_snapshot, admin_boundary_snapshot, listing_raw_snapshot, competitor_store_snapshot, demographics_snapshot, weather_daily_snapshot, store_opening_authority_snapshot），並標註 all_sources_disabled=true, zero_credentials_present=true, default_deny_egress_enforced=true。然而，此 16 項與 Data Platform 側 XR/DPF 收據所稽核的 16 個第三方外部資料 provider（cwa, tdx, market_events, mof_business, osm, moi_rental, ris_population, nlsc_boundary, overture, foursquare, brand_locators, tgos, google_places_verifier, listings, mobility, survey）並非同一母體。",
@@ -165,6 +231,8 @@
       "classes_zh": [
         "runtime／部署"
       ],
+      "historical_inventory_status": "unmet_per_own_receipt",
+      "runtime_execution_status": "unmet_per_own_receipt",
       "status": "unmet_per_own_receipt",
       "status_zh": "未滿足（候選 SHA 與 manifest digest 雖具名，但元件 image digest 全為佔位符致綁定無效）",
       "historical_evidence": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/release-receipts-index.json 及 dev-rollout-manifest-binding.json 中，receipts 綁定的 candidate_sha e496be62c47c45d758681b8a4d3abfae16f1c96d 確實在 origin/dev 歷史中，manifest_digest sha256:23a6d45acc00d10540bd536574a2f0da85bce1bb583f55d997c03b597411b271 為具體字串；但其所綁定的全部 component image digest 均為重複位元佔位符（如 A2 所述），導致 SHA 與真實映像之綁定關係破裂。",
@@ -175,10 +243,16 @@
   ],
   "acceptance_criteria_summary": {
     "total_criteria": 5,
-    "by_status": {
+    "by_historical_inventory_status": {
       "met_by_receipt": 1,
       "unmet_per_own_receipt": 2,
       "not_evidenced": 1,
+      "partially_met": 1
+    },
+    "by_runtime_execution_status": {
+      "met_by_receipt": 0,
+      "unmet_per_own_receipt": 2,
+      "not_evidenced": 2,
       "partially_met": 1
     },
     "has_unmet_per_own_receipt": true,
@@ -191,42 +265,82 @@
     "successor_task_title": "以真實 artifact 完成 dev live rollout 並取代 false-done 前提",
     "successor_phase": "Wave 3 - Dev Live Rollout Remediation",
     "successor_status": "blocked",
-    "successor_waiting_for": "Human/Ops, Data Platform Upstream",
-    "mapping": [
+    "successor_waiting_for": "Human/Ops, Release Lease, GitHub Environment Secrets",
+    "mappings": [
       {
         "original_criterion_index": 1,
         "original_criterion": "data platform 先於 ODay Plus",
-        "successor_criterion_index": 4,
-        "successor_criterion": "odayplus-runtime-20260825 live readback 顯示 data platform 先部署且 oday-api/oday-web/migration/worker/scheduler 均存在並綁定 exact digests",
-        "transfer_nature": "時序規則已於歷史收據滿足，實質執行由補救任務之 live readback 驗證。"
+        "successor_criteria": [
+          {
+            "successor_criterion_index": 4,
+            "successor_criterion": "odayplus-runtime-20260825 live readback 顯示 data platform 先部署且 oday-api/oday-web/migration/worker/scheduler 均存在並綁定 exact digests",
+            "transfer_nature": "時序規則已於歷史文件收據規劃，實質時序執行由補救任務之現場 live readback 驗證。"
+          }
+        ]
       },
       {
         "original_criterion_index": 2,
         "original_criterion": "所有 components符合 release manifest digests",
-        "successor_criterion_index": 1,
-        "successor_criterion": "驗證最新 authoritative manifest 之 candidate SHA、image digests、SBOM、Cosign 與 registry refs 均真實可解析",
-        "transfer_nature": "佔位符 digest 由補救任務之真實 build-once image digests 與 cosign 簽章取代。"
+        "successor_criteria": [
+          {
+            "successor_criterion_index": 1,
+            "successor_criterion": "驗證最新 authoritative manifest 之 candidate SHA、image digests、SBOM、Cosign 與 registry refs 均真實可解析",
+            "transfer_nature": "佔位符 digest 由補救任務之真實 build-once image digests、SBOM 與 cosign 簽章驗證取代。"
+          },
+          {
+            "successor_criterion_index": 2,
+            "successor_criterion": "若 candidate 到 origin/dev 間含任何變更則建新 release 並重新 build once",
+            "transfer_nature": "確保 build-once 狀態機嚴格執行，不沿用破裂 digest。"
+          },
+          {
+            "successor_criterion_index": 4,
+            "successor_criterion": "odayplus-runtime-20260825 live readback 顯示 data platform 先部署且 oday-api/oday-web/migration/worker/scheduler 均存在並綁定 manifest exact digests",
+            "transfer_nature": "實質部署之 live readback 與 authoritative manifest exact digests 對帳驗證。"
+          }
+        ]
       },
       {
         "original_criterion_index": 3,
         "original_criterion": "dev integration/contract/provider-off readback通過",
-        "successor_criterion_index": 6,
-        "successor_criterion": "Cloud Run jobs one-shot、API/Web authenticated smoke、contract、provider-off 與 default-deny egress 均通過",
-        "transfer_nature": "未追蹤之 .odp_data 假報告由補救任務之現場 live smoke 與 contract readback 取代。"
+        "successor_criteria": [
+          {
+            "successor_criterion_index": 6,
+            "successor_criterion": "Cloud Run jobs one-shot、API/Web authenticated smoke、contract、provider-off 與 default-deny egress 均通過",
+            "transfer_nature": "未追蹤之 .odp_data 假報告由補救任務之現場 live smoke 與 contract readback 取代。"
+          }
+        ]
       },
       {
         "original_criterion_index": 4,
         "original_criterion": "16 sources disabled且無 credentials/egress",
-        "successor_criterion_index": 7,
-        "successor_criterion": "16 個第三方來源保持 disabled 且 provider credentials 不存在",
-        "transfer_nature": "靜態模型 disabled 狀態保留，現場 16 個第三方 provider 關閉與 default-deny egress 由補救任務現場驗證。"
+        "successor_criteria": [
+          {
+            "successor_criterion_index": 7,
+            "successor_criterion": "16 個第三方來源保持 disabled 且 provider credentials 不存在",
+            "transfer_nature": "靜態模型 disabled 狀態保留，現場 16 個第三方 provider 關閉與零憑證由補救任務現場驗證。"
+          },
+          {
+            "successor_criterion_index": 6,
+            "successor_criterion": "Cloud Run jobs one-shot、API/Web authenticated smoke、contract、provider-off 與 default-deny egress 均通過 (default-deny egress)",
+            "transfer_nature": "現場 Cloud Run VPC default-deny egress 限制由補救任務現場讀回驗證。"
+          }
+        ]
       },
       {
         "original_criterion_index": 5,
         "original_criterion": "receipts綁定 exact SHA與 manifest",
-        "successor_criterion_index": 8,
-        "successor_criterion": "所有收據含真實 resource identity、Cloud Run URL、revision、execution、timestamp、candidate SHA 與 manifest digest，無 placeholder",
-        "transfer_nature": "佔位符收據由補救任務產生之真實、secret-redacted live receipts 正式取代。"
+        "successor_criteria": [
+          {
+            "successor_criterion_index": 8,
+            "successor_criterion": "所有收據含真實 resource identity、Cloud Run URL、revision、execution、timestamp、candidate SHA 與 manifest digest，無 placeholder",
+            "transfer_nature": "佔位符收據由補救任務產生之真實、secret-redacted live receipts 正式取代。"
+          },
+          {
+            "successor_criterion_index": 9,
+            "successor_criterion": "歷史 ODP-DEV-ROLLOUT-001 收據保持不變，由新 evidence 明確標示已被 live reconciliation 推翻",
+            "transfer_nature": "歷史收據保持唯讀留存作為審計依據，由新 evidence 明確標示其被 live reconciliation 替代。"
+          }
+        ]
       }
     ]
   },
@@ -251,6 +365,11 @@
     "proposed_dependents_after": [
       "ODP-EPHEMERAL-STAGING-ROLLOUT-001"
     ],
+    "staging_lifecycle_disposition": {
+      "dependent_task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+      "current_status": "in_progress (blocked on dev live digests)",
+      "disposition_note": "ODP-EPHEMERAL-STAGING-ROLLOUT-001 在 canonical 看板依賴 ODP-DEV-ROLLOUT-001。因本任務判定為 false_done_superseded，實質 dev rollout 由 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 承接。後續 staging 演練需引用真實 live digests 時，由其自身生命週期與准入閘門依賴 live remediation 產出，不在此任務手動變更看板依賴邊。"
+    },
     "remediation_lane": {
       "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
       "status": "blocked",
@@ -267,20 +386,86 @@
         "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
       ],
       "missing_inputs": [
-        "1. alfloop-dev/oday-data-platform 上游 DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001 產出真實 GCS masked snapshot object。",
-        "2. ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001 (PR #1109) 修正 workflow handoff 參數傳遞並合併至 dev。",
-        "3. GitHub environment dev 環境變數與密鑰配置（ODP_WEB_BASE_URL, ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET）。",
-        "4. Supervisor 簽發之 target=dev / action=deploy Ed25519 release lease。",
-        "5. 透過 deploy-dev.yml 執行實質 live 部署並產出 secret-free live readback 收據。"
+        "1. GitHub environment dev 環境變數與密鑰配置（ODP_WEB_BASE_URL, ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET 於 dev environment 齊備）。",
+        "2. Dev release boundary gates (Gate 0 Code, Gate 1 Contract, Gate 4 Security) 經 Human/Ops 風險評估後獲得准入核准。",
+        "3. Supervisor 簽發之 target=dev / action=deploy Ed25519 release lease（綁定 candidate SHA 596b9c9a1788 與 manifest digest sha256:1b5348d9…）。",
+        "4. 透過 deploy-dev.yml 執行單一路徑 Cloud Run / GKE 部署工作流程。",
+        "5. 產出 secret-free GCP live readback 原始收據（含 Cloud Run smoke、one-shot jobs 執行、VPC default-deny egress 驗證）。"
+      ],
+      "code_gate_clarifications": [
+        "PR #1109 (ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001) 已於 2026-09-01T14:49:31Z 合併至 dev (merge SHA: 640e35415aa33d5d53af21a8a527431b8f751cea)，archive 狀態為 done，不再列為缺口。",
+        "在 sources-off 部署姿態下（16 external sources disabled），DPF masked snapshot 非強制通用前置阻塞條件，其適用範圍局限於資料平台外部資料攝取啟用任務。"
       ]
     },
     "dag_cycle_check": {
       "evaluated_nodes": [
-        "ODP-DEV-ROLLOUT-001",
+        "DPF-EMGI-LIVE-ROLLOUT-001",
+        "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
         "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+        "ODP-DEV-ROLLOUT-001",
+        "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+        "ODP-EPHEMERAL-STAGING-IAC-001",
         "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
-        "ODP-DEV-STAGED-GATE-RECONCILIATION-001"
+        "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+        "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+        "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+        "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+        "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+        "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+        "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002"
       ],
+      "edge_set": [
+        {
+          "from": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "to": "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001"
+        },
+        {
+          "from": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "to": "ODP-RUNTIME-RELEASE-SINGLE-PATH-001"
+        },
+        {
+          "from": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "to": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001"
+        },
+        {
+          "from": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "to": "DPF-EMGI-LIVE-ROLLOUT-001"
+        },
+        {
+          "from": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "to": "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001"
+        },
+        {
+          "from": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "to": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002"
+        },
+        {
+          "from": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "to": "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001"
+        },
+        {
+          "from": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "to": "ODP-DEV-STAGED-GATE-RECONCILIATION-001"
+        },
+        {
+          "from": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "to": "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002"
+        },
+        {
+          "from": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "to": "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
+        },
+        {
+          "from": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+          "to": "ODP-EPHEMERAL-STAGING-IAC-001"
+        },
+        {
+          "from": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+          "to": "ODP-DEV-ROLLOUT-001"
+        }
+      ],
+      "edge_count": 12,
+      "edge_set_sha256": "239a5050ae31ca80bb424c3c9a88a3c74c5c7b35eb5edefc5a1fc22aff229f10",
       "cycle_detected": false,
       "conclusion": "有向無環圖 (DAG) 確認，無循環相依。"
     }
