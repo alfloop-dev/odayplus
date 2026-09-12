@@ -15,4 +15,4 @@ SQL connection string 會被誤當 bare instance 的程式缺陷，已分拆為 
 
 受 retention 約束的舊 plan 清理仍是獨立延後任務，不構成本次 foundation IAM/recovery 阻擋。
 
-已整合 dev `36a102b7b39d1fe2e58939ee6e454e20c6d72dbd`，包含已審查合併的依賴與 Adjust 修復。整合後 Ruff、code boundary 檢查通過；foundation egress 與 Terraform 回歸 **66 passed / 0 failures**。尚未重新產生 successor build artifact，歷史 manifest 的四項不一致不因上述 focused suite 通過而認列解決。
+已整合 dev `36a102b7b39d1fe2e58939ee6e454e20c6d72dbd`，包含已審查合併的依賴與 Adjust 修復。整合後 Ruff、code boundary 檢查通過；foundation egress 與 Terraform 回歸 **66 passed / 0 failures**。真正 successor build run `34726258529` 已成功，六份原始 artifact digest 與 manifest 綁定驗證通過，詳見 `SUCCESSOR_BUILD_20260912.md`。舊 canonical manifest 的四項不一致尚待正式 reconciliation，不能因新 artifact 或 focused suite 通過而認列全部 gate 解決。
