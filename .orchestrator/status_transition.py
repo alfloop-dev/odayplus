@@ -229,6 +229,14 @@ def commit_canonical_task_transition(config: dict[str, Any], status: dict[str, A
     if not write_snapshot(config, status):
         return False
     if not sync_pipeline(config):
+        try:
+            latest = load_status_fn(config)
+            schema = config.get("schema", {}) or {} if isinstance(config, dict) else {}
+            tasks_path = schema.get("tasks_path", "tasks")
+            if isinstance(latest, dict) and tasks_path in latest:
+                sync_status_snapshot_dict(config, status, latest)
+        except Exception:
+            pass
         return False
     try:
         latest = load_status_fn(config)

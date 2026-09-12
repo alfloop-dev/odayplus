@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import ai_status as runtime_ai_status
 import worker_workspace
 from common import (
     normalize_agent_id,
@@ -23,7 +24,7 @@ from dispatch_policy import (
     task_submitted_author,
     worker_logical_dispatch_agent_id,
 )
-from status_transition import sync_status_snapshot_dict
+from status_transition import commit_canonical_task_transition, sync_status_snapshot_dict
 from worker_failure_policy import (
     auto_dispatch_block_is_temporary_capacity,
     owner_preference_ranks,
@@ -943,8 +944,9 @@ def advance_approved_prs_to_merge(
             continue
 
     if advisory_changed:
-        if commit_canonical_task_transition(config, status):
-            changed = True
+        if not _commit_advisory_status_transition(config, status):
+            return None
+        changed = True
     return changed
 
 
@@ -2718,9 +2720,19 @@ def dispatch_ready_tasks(
             tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
             task_map = {task.get(task_id_field): task for task in tasks}
 
-    if advance_approved_prs_to_merge(config, status, finalize_statuses):
+    advance_res = advance_approved_prs_to_merge(config, status, finalize_statuses)
+    if advance_res is None:
+        return changed
+    elif advance_res:
         changed = True
-        status = load_status(config)
+        try:
+            status = load_status(config)
+        except Exception:
+            if not isinstance(status, dict) or tasks_path not in status:
+                return changed
+        tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
+        task_map = {task.get(task_id_field): task for task in tasks}
+    else:
         tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
         task_map = {task.get(task_id_field): task for task in tasks}
 

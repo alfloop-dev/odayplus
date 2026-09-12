@@ -56,13 +56,16 @@
 11. **Root Cause 11（自訂 `schema.tasks_path` 在 CAS 提交與 Fallback 檢查中寫死 `'tasks'` 鍵）**：
     在 `supervisor.py:408`、`status_transition.py:235` 與 `dispatch_engine.py:2595,2599,3336,3339` 中，新鮮度檢查寫死了 `"tasks" in fresh` / `"tasks" in latest`。當專案設定使用自訂 collection（例如 `schema.tasks_path = "items"`）時，寫入與 canonical sync 雖然在磁碟上成功執行，但函式判定資料無效回傳 `False` 並保留 stale revision，導致後續 dispatch tick 崩潰或失敗。
 
+12. **Root Cause 12（`advance_approved_prs_to_merge` 診斷提交失敗跳過狀態重載與索引重建）**：
+    `advance_approved_prs_to_merge` 在寫入 merge-route 等候診斷（如 `awaiting merge queue`）遭遇 canonical sync 失敗或重載失敗時回傳 `False`。呼叫端 `dispatch_ready_tasks` 原先僅在函式回傳 `True` 時執行 `load_status` 與 `tasks`/`task_map` 重建；在 sync 期間外部 writer 將其他任務改派（例如 `GREEN-VICTIM` reviewer Antigravity7 -> Codex）時，若 sync 失敗，記憶體內的 `status` 與 `tasks` 未獲更新且派工繼續執行，導致過期 reviewer Antigravity7 仍被放入派工佇列。
+
 ---
 
 ## 3. 修復方案與實作細節
 
 ### 3.1 `commit_canonical_task_transition` 支援可配置 `tasks_path`、原地物件更新與 Fail-Closed
 - 在 `.orchestrator/status_transition.py` 與 `.orchestrator/supervisor.py` 中：
-  - `commit_canonical_task_transition` 於 `sync_status_pipeline(config)` 成功後，透過 `load_status(config)` 重新載入磁碟上的最新 snapshot。
+  - `commit_canonical_task_transition` 於 `sync_status_pipeline(config)` 成功或失敗後，皆嘗試透過 `load_status(config)` / `load_status_fn(config)` 重新載入磁碟上的最新 snapshot 並同步至記憶體 `status` dict。
   - 使用 `schema.get("tasks_path", "tasks")` 讀取配置的任務集合鍵，不再寫死 `"tasks"`。
   - 引入 `sync_status_snapshot_dict` 函式，在重載 `status` 時比對既有 `tasks_path` 列表中的 task ID，對已存在的 task dict 執行原地 `target.clear(); target.update(new_t)` 更新，確保持有 task dict 引用的呼叫者不會與 `status[tasks_path]` 脫鉤。
   - 若 `load_status` 失敗（拋出例外）或回傳無效資料，不再吞沒錯誤，一律回傳 `False`，嚴守 fail-closed 原則。
@@ -94,6 +97,11 @@
   - 在候選掃描階段預先計算 `can_acquire_new_helper = (helper_dispatches < max_helper and active_claims_for_agent < max_claims_per_agent)`，在預算為零或耗盡時不再將無效 helper 候選標記為 `REASON_HELPER_CLAIM`。
   - 在候選處理階段，若遇 helper 預算受限或條件不符，改以 `agent_deferred_task_ids.add(task_id)` 記錄並 `continue` 繼續後續候選評估，不再 `break` 終止該 agent 迴圈，亦不再無限重試同一首位候選，確保後續合法 review 與 owned 任務可順暢派發。
 
+### 3.7 `advance_approved_prs_to_merge` 新鮮度明確化與 Fail-Closed 守衛
+- 在 `.orchestrator/dispatch_engine.py` 中：
+  - `advance_approved_prs_to_merge` 的 advisory 變更透過 `_commit_advisory_status_transition(config, status)` 提交；若提交失敗且自磁碟重載亦失敗（無法確認狀態新鮮度），回傳 `None`。
+  - `dispatch_ready_tasks` 呼叫 `advance_approved_prs_to_merge` 後，若回傳 `None`，立即終止當前 tick（`return changed`）；若回傳 `True` 或 `False`，皆確保 `tasks` 與 `task_map` 索引自已同步之最新 `status` 重建，嚴禁沿用未確認新鮮度之記憶體狀態。
+
 ---
 
 ## 4. 驗證記錄與 Red/Green 探針（Verification Receipts & Red/Green Probes）
@@ -107,6 +115,10 @@
 2. **`release_history_probe.py`（兩筆 Release 請求歷史與 Nonce 重複使用稽核探針）**：
    - **Red 狀態**（HEAD `704e3db4`）：第二筆請求發行後，`prior_receipt_preserved = False`、`second_history = []`，且 `prior_nonce_reuse_errors = []`（舊 nonce 重複使用檢查未捕獲錯誤）。
    - **Green 狀態**（修復後）：`prior_receipt_preserved = True`、`second_history` 包含完整 prior issuance 記錄，且 `prior_nonce_reuse_errors = ['release_lease_request nonce was already used by a different issuance']`，兩筆請求皆能正常派發，歷史與稽核記錄完全保存。
+
+3. **`test_advance_advisory_review_probe.py`（Advance 階段 Advisory 失敗與 Canonical 新鮮度探針）**：
+   - **Red 狀態**（HEAD `447ebeab`）：在 `sync_failure` 與 `reload_failure` 模式下，`advance_approved_prs_to_merge` 因 advisory 提交失敗回傳 `False`，caller 跳過重載並沿用記憶體舊物件派發舊 reviewer，exit code `1`（2 failed / 4 passed, `AssertionError: Stale reviewer queued after advance advisory failure`）。
+   - **Green 狀態**（修復後）：6 個測試案例全數通過（exit code `0`, 6 passed）。在 sync 失敗或重載失敗時，狀態正確同步或壓抑派工，不再派發 stale reviewer。
 
 ### 4.2 新增回歸測試
 1. `test_diagnostic_cas_two_pending_two_green_revision_changing_dispatch` (`test_dispatch_policy.py`):
@@ -139,6 +151,8 @@
     - 驗證 release lease bridge 在 commit_status 回呼中經歷 revision sync 後，terminal receipt 依然能夠正確持久化至 canonical status 檔案，使磁碟狀態與 activity log 完全一致。
 15. `test_two_release_requests_preserve_history_and_nonce_audit` (`test_release_lease_integration.py`):
     - 驗證連續處理兩筆 release 請求時，第二筆持有的既有 issuance 正確存入 `ISSUANCE_HISTORY_FIELD` 並持久化至磁碟，且 `_nonce_reuse_errors` 成功拒絕該舊 approval nonce 的重複使用。
+16. `test_diagnostic_cas_advance_advisory_failure_preserves_canonical_freshness` (`test_dispatch_policy.py`, 4 variants: success, sync_failure, transient_reload_failure, persistent_reload_failure):
+    - 驗證在 `advance_approved_prs_to_merge` advisory 提交經歷 sync 失敗或重載失敗時，dispatcher 能夠確認狀態新鮮度或壓抑整輪派工，絕不派發 stale reviewer。
 
 ### 4.3 測試執行收據（Test Execution Receipts Bound to Head SHA）
 
@@ -147,31 +161,29 @@
 - **Receipt 1 (Diff & Whitespace Check)**:
   - Command: `git diff --check`
   - Exit code: `0`
-  - Duration: `0.013310s`
 - **Receipt 2 (Scoped Committed-Diff Whitespace Check against Base)**:
   - Command: `git diff --check origin/dev...HEAD`
   - Exit code: `0`
-  - Duration: `0.015240s`
-- **Receipt 3 (Focused Dispatch Policy Test Suite - 55 passed)**:
+- **Receipt 3 (Focused Dispatch Policy Test Suite - 59 passed)**:
   - Command: `uv run pytest -q .orchestrator/test_dispatch_policy.py -k 'diagnostic_cas or review_dispatch or stale_wake or cas or release_dead_helper_claims'`
-  - Selection: 55 passed (includes candidate refresh, advisory resync, priority rank, lease isolation, and fresh helper revalidation tests)
+  - Selection: 59 passed (includes advance advisory freshness, candidate refresh, advisory resync, priority rank, lease isolation, and fresh helper revalidation tests)
   - Exit code: `0`
-  - Duration: `12.871142s`
-- **Receipt 4 (Supervisor Concurrency, Lease Escalation & Recovery Tests - 15 passed)**:
+- **Receipt 4 (Supervisor Concurrency, Lease Escalation & Recovery Tests - 16 passed)**:
   - Command: `uv run pytest -q .orchestrator/test_supervisor.py::DispatchStatusSyncTests .orchestrator/test_supervisor.py::AutomaticRecoveryTests::test_ci_failure_requeue_fails_closed_on_stale_status_snapshot`
-  - Selection: 15 passed (includes commit task identity preservation test)
+  - Selection: 16 passed (includes commit task identity preservation and custom tasks_path tests)
   - Exit code: `0`
-  - Duration: `2.741829s`
 - **Receipt 5 (Helper Budget Cap Regression Test - 3 passed)**:
   - Command: `uv run pytest -q .orchestrator/test_dispatch_policy.py -k 'test_exhausted_helper_budget_does_not_starve_exact_head_green_review'`
   - Selection: 3 passed (available, zero, consumed budget variants)
   - Exit code: `0`
-  - Duration: `0.401925s`
-- **Receipt 6 (Release Lease Bridge Integration Tests - 35 passed)**:
+- **Receipt 6 (Release Lease Bridge Integration Tests - 56 passed)**:
   - Command: `uv run pytest -q .orchestrator/test_release_lease_integration.py`
-  - Selection: 35 passed (includes release terminal receipt survives commit reload test with all 6 variants)
+  - Selection: 56 passed (includes release terminal receipt survives commit reload test with all 6 variants)
   - Exit code: `0`
-  - Duration: `1.682140s`
+- **Receipt 7 (Advance Approved PRs Merge Route Tests - 4 passed)**:
+  - Command: `uv run pytest -q .orchestrator/test_supervisor.py::ApprovedPrMergeAdvanceTests`
+  - Selection: 4 passed
+  - Exit code: `0`
 
 ---
 
