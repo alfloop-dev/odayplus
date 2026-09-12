@@ -130,4 +130,3 @@
 - **Worktree**: `/tmp/pantheon-worker-worktrees/pantheon/odp-net002-lease-disposition-001`
 - **Exit Code**: `0`
 - **Output Summary**: `Local dependency endpoints verified: depends_on=[], 0 cycles introduced.`
-
