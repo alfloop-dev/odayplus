@@ -5,10 +5,10 @@
   "phase": "Third-party data production closeout / History Recovery",
   "owner": "Antigravity4",
   "reviewer": "Codex",
-  "recorded_at": "2026-09-12T09:05:00Z",
+  "recorded_at": "2026-09-12T09:28:00Z",
   "reconciliation_target": {
     "repository": "alfloop-dev/odayplus",
-    "pinned_dev_sha": "4b35121031d0738ff7c529810cf1b2e267161083",
+    "pinned_dev_sha": "ef8345bce29436ce86bd1a70b857d668ac16182a",
     "continuation_branch": "task/XR-EXT-OSS-FINAL-AUDIT-001-RECOVERY-20260911"
   },
   "repository_correction": {
@@ -119,7 +119,7 @@
     "approval_to_merge_seconds": 9
   },
   "this_round_observation_and_provenance": {
-    "observed_at": "2026-09-12T09:05:00Z",
+    "observed_at": "2026-09-12T09:28:00Z",
     "observer": "Antigravity4",
     "observation_mode": "read_only_cross_repo_github_api_and_local_git",
     "provenance_receipts_file": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/raw-command-receipts.json",
@@ -133,7 +133,7 @@
       },
       "consumer_repo": {
         "repository": "alfloop-dev/odayplus",
-        "pinned_dev_base_sha": "4b35121031d0738ff7c529810cf1b2e267161083"
+        "pinned_dev_base_sha": "ef8345bce29436ce86bd1a70b857d668ac16182a"
       }
     },
     "full_sha256_digests": {
@@ -271,12 +271,19 @@
           }
         ],
         "uncovered_historical_items_note": "原 11 軸 / 44,471 筆 dual-run 歷史比對屬於遷移期過渡驗證，在 canonical backlog 中無獨立 live dual-run 任務，該子項保留於本任務未完成缺口中，不以名稱推定其他任務涵蓋，亦不自行新增 live 需求或虛構完成。",
-        "next_step": "待 DPF-EMGI-LIVE-ROLLOUT-001 審查通過、解鎖 DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001 於授權環境產出具備 GCS URI 與 exact digest 之 masked snapshot artifact。",
+        "closeout_blocker_note": "因 A1 尚有未承接與未完成之歷史量測子項，本任務 XR-EXT-OSS-FINAL-AUDIT-001 原技術驗收尚未完成，目前不可 closeout 為 done，HUMAN-OSS-LEGAL-APPROVAL-001 之技術依賴不得視為已滿足。",
+        "next_step": "本 ID 維持原驗收未完成狀態；待 DPF-EMGI-LIVE-ROLLOUT-001 審查通過、解鎖 DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001 於授權環境產出具備 GCS URI 與 exact digest 之 masked snapshot artifact，並經由正常 canonical 治理流程進行後續驗收或依賴調整。",
         "dependency_before_after": {
-          "before": {
+          "current_canonical": {
             "XR-EXT-OSS-FINAL-AUDIT-001": {
               "status": "in_progress",
               "depends_on": []
+            },
+            "HUMAN-OSS-LEGAL-APPROVAL-001": {
+              "status": "todo",
+              "depends_on": [
+                "XR-EXT-OSS-FINAL-AUDIT-001"
+              ]
             },
             "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001": {
               "status": "blocked",
@@ -286,26 +293,31 @@
               ]
             }
           },
-          "after": {
-            "XR-EXT-OSS-FINAL-AUDIT-001": {
-              "status": "reconciled",
-              "depends_on": []
-            },
-            "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001": {
-              "status": "blocked",
-              "depends_on": [
-                "DPF-EMGI-LIVE-ROLLOUT-001",
-                "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001"
-              ]
+          "proposed_dependency_update_if_formally_adopted": {
+            "proposal_note": "若未來由 Canonical 治理流程正式承接未完成技術驗收，HUMAN-OSS-LEGAL-APPROVAL-001 應增加對 DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001 與 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 之 depends_on 以持續維持技術阻擋；在治理核准前，控制平面維持現狀（XR-EXT-OSS-FINAL-AUDIT-001 維持未完成），不手動修改 ai-status.json。",
+            "proposed_structure": {
+              "XR-EXT-OSS-FINAL-AUDIT-001": {
+                "status": "in_progress",
+                "depends_on": []
+              },
+              "HUMAN-OSS-LEGAL-APPROVAL-001": {
+                "status": "todo",
+                "depends_on": [
+                  "XR-EXT-OSS-FINAL-AUDIT-001",
+                  "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+                  "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001"
+                ]
+              }
             }
           },
           "exact_edges": [
             "DPF-EMGI-LIVE-ROLLOUT-001 -> DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
             "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001 -> DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
-            "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001 -> ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001"
+            "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001 -> ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+            "XR-EXT-OSS-FINAL-AUDIT-001 -> HUMAN-OSS-LEGAL-APPROVAL-001"
           ]
         },
-        "no_cycle_evidence": "經全圖 topological sort 驗證，全圖無循環依賴（0 cycles）；XR-EXT-OSS-FINAL-AUDIT-001 僅有下游 HUMAN-OSS-LEGAL-APPROVAL-001 -> XR-SOURCE-APPROVAL-ACTIVATION-001，不形成反向邊。",
+        "no_cycle_evidence": "經全圖 topological sort 驗證，當前 Canonical 圖與提案更新圖均為 0 cycles。",
         "retained_gates": [
           "Live snapshot generation gate (DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001)",
           "Supervisor signed lease gate",
@@ -376,9 +388,10 @@
             "XR-EXT-OSS-FINAL-AUDIT-001"
           ]
         },
-        "next_step": "待前置任務通過審查並在 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 執行 dev live rollout，產出實體 workload runtime digest 與 secret 檢查收據；HUMAN-OSS-LEGAL-APPROVAL-001 由具名人員審查法務決策。",
+        "closeout_blocker_note": "因運行期 pod digest 與 secret 投影量測依賴模擬收據，技術驗收未完全閉合，本 ID 目前不可 done，不得據此解除 HUMAN-OSS-LEGAL-APPROVAL-001 依賴。",
+        "next_step": "待前置任務通過審查並在 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 執行 dev live rollout，產出實體 workload runtime digest 與 secret 檢查收據；HUMAN-OSS-LEGAL-APPROVAL-001 保持 blocked 直至技術前置真正完成。",
         "dependency_before_after": {
-          "before": {
+          "current_canonical": {
             "XR-EXT-OSS-FINAL-AUDIT-001": {
               "status": "in_progress",
               "depends_on": []
@@ -405,31 +418,20 @@
               ]
             }
           },
-          "after": {
-            "XR-EXT-OSS-FINAL-AUDIT-001": {
-              "status": "reconciled",
-              "depends_on": []
-            },
-            "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001": {
-              "status": "blocked",
-              "depends_on": [
-                "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
-                "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
-                "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
-                "DPF-EMGI-LIVE-ROLLOUT-001",
-                "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
-                "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
-                "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
-                "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
-                "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
-                "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
-              ]
-            },
-            "HUMAN-OSS-LEGAL-APPROVAL-001": {
-              "status": "todo",
-              "depends_on": [
-                "XR-EXT-OSS-FINAL-AUDIT-001"
-              ]
+          "proposed_dependency_update_if_formally_adopted": {
+            "proposal_note": "若未來由 Canonical 治理流程正式承接未完成技術驗收，HUMAN-OSS-LEGAL-APPROVAL-001 應增加對 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 之 depends_on 以持續維持技術阻擋；在治理核准前，控制平面維持現狀（XR-EXT-OSS-FINAL-AUDIT-001 維持未完成），不手動修改 ai-status.json。",
+            "proposed_structure": {
+              "XR-EXT-OSS-FINAL-AUDIT-001": {
+                "status": "in_progress",
+                "depends_on": []
+              },
+              "HUMAN-OSS-LEGAL-APPROVAL-001": {
+                "status": "todo",
+                "depends_on": [
+                  "XR-EXT-OSS-FINAL-AUDIT-001",
+                  "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001"
+                ]
+              }
             }
           },
           "exact_edges": [
@@ -437,7 +439,7 @@
             "XR-EXT-OSS-FINAL-AUDIT-001 -> HUMAN-OSS-LEGAL-APPROVAL-001"
           ]
         },
-        "no_cycle_evidence": "全圖經由 topological sort 驗證無循環依賴（0 cycles）。",
+        "no_cycle_evidence": "經全圖 topological sort 驗證，當前 Canonical 圖與提案更新圖均為 0 cycles。",
         "retained_gates": [
           "Live rollout authorization and deployment gate (ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001)",
           "Named Human GO / Legal approval gate (HUMAN-OSS-LEGAL-APPROVAL-001)"
@@ -507,9 +509,10 @@
           }
         ],
         "task_mapping_correction_note": "更正前輪誤配：ODP-NFR-RUNTIME-EVIDENCE-001 驗收僅涵蓋 SHARED-008 環境 secret 隔離與 PERF/BATCH/AVAIL/RPO，未涵蓋 sources-off / provider credential 未投影 / 排程 STOPPED / egress default deny。本輪依真實 acceptance 正確映射至 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 與 DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001。",
+        "closeout_blocker_note": "因運行期 egress 阻斷流量與 credentials 未投影依賴模擬收據，技術驗收未完全閉合，本 ID 目前不可 done，不得據此解除依賴。",
         "next_step": "在 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 於 dev live 部署完成後，由該任務採集真實 provider-off、credentials-absent 與 default-deny egress 運行期收據。",
         "dependency_before_after": {
-          "before": {
+          "current_canonical": {
             "XR-EXT-OSS-FINAL-AUDIT-001": {
               "status": "in_progress",
               "depends_on": []
@@ -530,25 +533,20 @@
               ]
             }
           },
-          "after": {
-            "XR-EXT-OSS-FINAL-AUDIT-001": {
-              "status": "reconciled",
-              "depends_on": []
-            },
-            "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001": {
-              "status": "blocked",
-              "depends_on": [
-                "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
-                "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
-                "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
-                "DPF-EMGI-LIVE-ROLLOUT-001",
-                "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
-                "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
-                "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
-                "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
-                "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
-                "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
-              ]
+          "proposed_dependency_update_if_formally_adopted": {
+            "proposal_note": "若未來由 Canonical 治理流程正式承接未完成技術驗收，HUMAN-OSS-LEGAL-APPROVAL-001 應增加對 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 之 depends_on 以持續維持技術阻擋；在治理核准前，控制平面維持現狀（XR-EXT-OSS-FINAL-AUDIT-001 維持未完成），不手動修改 ai-status.json。",
+            "proposed_structure": {
+              "XR-EXT-OSS-FINAL-AUDIT-001": {
+                "status": "in_progress",
+                "depends_on": []
+              },
+              "HUMAN-OSS-LEGAL-APPROVAL-001": {
+                "status": "todo",
+                "depends_on": [
+                  "XR-EXT-OSS-FINAL-AUDIT-001",
+                  "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001"
+                ]
+              }
             }
           },
           "exact_edges": [
@@ -556,7 +554,7 @@
             "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 -> ODP-NFR-RUNTIME-EVIDENCE-001"
           ]
         },
-        "no_cycle_evidence": "全圖經由 topological sort 驗證無循環依賴（0 cycles）。",
+        "no_cycle_evidence": "經全圖 topological sort 驗證，當前 Canonical 圖與提案更新圖均為 0 cycles。",
         "retained_gates": [
           "Egress default-deny live probe verification gate",
           "Provider credentials absence verification gate",
@@ -591,11 +589,11 @@
         "人類授權"
       ],
       "status": "met",
-      "status_zh": "已滿足（技術核對完成且程式/契約缺口已釐清，本任務未批准任何來源，依賴關係維持正常 Canonical 生命週期）",
+      "status_zh": "已滿足（條款明訂技術完成後才解除依賴；因技術稽核尚未完全完成，故持續維持阻擋，本任務不得 done，不解除依賴，且未批准任何來源）",
       "met_aspects": [
         "本任務 enabled_sources=0 且 sources_with_receipt=0，不自行批准任何來源，不變更 license gate。",
-        "歷史收據與本輪解鎖結論釐清：歷史 PR #61 manifest (closeout-audit-manifest.json @ 7b0670d7) 記載 technical_audit_verdict=TECHNICAL_READINESS_VERIFIED 與 status=UNBLOCKED_BY_TECHNICAL_AUDIT 屬歷史作者自述。本輪復原驗收將 A1-A3 標記為 partially_met（代碼與靜態契約就緒，運行期量測具模擬缺口並已映射至現存 Canonical 責任任務），本任務不自行宣告技術已完全解鎖法務依賴。",
-        "Canonical 依賴對照：當前 canonical 看板上 HUMAN-OSS-LEGAL-APPROVAL-001 為 todo 狀態，其 depends_on=[XR-EXT-OSS-FINAL-AUDIT-001]。本任務在完成審查、PR 合併及 closeout done 後，始由 orchestrator 依正常生命週期解除依賴；本任務不提前手改看板狀態，亦不自簽人類決策。"
+        "歷史收據與本輪解鎖結論釐清：歷史 PR #61 manifest (closeout-audit-manifest.json @ 7b0670d7) 記載 technical_audit_verdict=TECHNICAL_READINESS_VERIFIED 與 status=UNBLOCKED_BY_TECHNICAL_AUDIT 屬歷史作者自述。因本輪復原驗收確認 A1-A3 仍為 partially_met（運行期量測具模擬缺口且尚有未承接歷史比對子項），本任務明記技術驗收尚未完成，本任務目前不可 closeout 為 done，HUMAN-OSS-LEGAL-APPROVAL-001 的技術依賴絕對不得視為已滿足。",
+        "Canonical 依賴對照：當前 canonical 看板上 HUMAN-OSS-LEGAL-APPROVAL-001 為 todo 狀態，其唯一 depends_on=[XR-EXT-OSS-FINAL-AUDIT-001]。因本任務不 closeout 為 done，HUMAN-OSS-LEGAL-APPROVAL-001 持續保持 blocked 狀態，完全符合『技術完成後才解除依賴』之核心不變量；本任務不提前手改看板狀態，亦不自簽人類決策。"
       ],
       "provenance_gaps": [],
       "downstream_handover": {
@@ -617,7 +615,7 @@
             "HUMAN-OSS-LEGAL-APPROVAL-001"
           ]
         },
-        "next_step": "待本任務 review/merge/done 結案後，HUMAN-OSS-LEGAL-APPROVAL-001 依正常流程啟動，由具名人類出具法務授權收據；隨後由 XR-SOURCE-APPROVAL-ACTIVATION-001 依授權啟用相應來源。"
+        "next_step": "本 ID 保持未完成狀態以持續阻擋 HUMAN-OSS-LEGAL-APPROVAL-001；待相關技術任務由 canonical 流程完成或正式承接並經審查核准後，始可調整依賴並啟動法務審查。"
       }
     }
   ],
@@ -652,14 +650,16 @@
       }
     ],
     "dependency_lifecycle": {
-      "dependency_before": "HUMAN-OSS-LEGAL-APPROVAL-001 depends_on = [XR-EXT-OSS-FINAL-AUDIT-001]",
-      "dependency_after": "XR-EXT-OSS-FINAL-AUDIT-001 完成技術核對結案後，HUMAN-OSS-LEGAL-APPROVAL-001 進入可執行狀態",
+      "dependency_current_canonical": "HUMAN-OSS-LEGAL-APPROVAL-001 depends_on = [XR-EXT-OSS-FINAL-AUDIT-001]",
+      "dependency_unblocked": false,
+      "closeout_eligibility": "本 ID 原技術驗收尚未完成，目前不可 done；HUMAN-OSS-LEGAL-APPROVAL-001 之技術依賴不得視為已滿足。本 PR 僅作歷史交付核正與技術缺口盤點，不觸發 closeout done，不解除下游依賴。",
+      "proposed_canonical_dependency_update": "若後續透過正式治理流程由現存 Canonical 任務（DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001、ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001）承接未完成之技術驗收，則 HUMAN-OSS-LEGAL-APPROVAL-001 之 depends_on 應在控制平面正式調整為相應技術任務以持續阻擋，待該等技術任務完成後始得啟動法務審查。在治理核准前，控制平面不作手動修改。",
       "cycle_check": {
         "is_acyclic": true,
         "chain": "XR-EXT-OSS-FINAL-AUDIT-001 (depends_on: []) -> HUMAN-OSS-LEGAL-APPROVAL-001 (depends_on: [XR-EXT-OSS-FINAL-AUDIT-001]) -> XR-SOURCE-APPROVAL-ACTIVATION-001 (depends_on: [HUMAN-OSS-LEGAL-APPROVAL-001])",
-        "evidence": "全圖經 topological sort 驗證，單向有向無環圖 (DAG)，無循環依賴。"
+        "evidence": "經完整 DFS topological sort 驗證，當前 Canonical 圖與提案更新圖均為單向有向無環圖 (DAG)，0 cycles。"
       },
-      "canonical_mutation_policy": "不提前手改 ai-status.json，依標準 review -> merge -> done 流程由 orchestrator 自動流轉。"
+      "canonical_mutation_policy": "不手改 ai-status.json，不豁免原條款，依循 Canonical 治理與生命週期規則。"
     }
   },
   "summary": {
@@ -672,7 +672,8 @@
     "runtime_measurement_provenance_gaps_itemized": true,
     "historical_manifest_declared_verdict": "TECHNICAL_READINESS_VERIFIED",
     "historical_manifest_declared_unblocked": true,
-    "audit_reconciliation_conclusion": "PARTIALLY_MET_CODE_READY_RUNTIME_GAPS_MAPPED",
+    "audit_reconciliation_conclusion": "PARTIALLY_MET_CODE_READY_RUNTIME_GAPS_ITEMIZED_CANNOT_DONE",
+    "can_closeout_as_done": false,
     "human_oss_legal_dependency_unblocked_technically": false,
     "human_oss_legal_approval_retained_to_human_task": true,
     "sources_disabled_and_stopped": true,
