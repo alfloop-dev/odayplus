@@ -8,7 +8,7 @@
 - **執行身分 (Owner)**：`Antigravity7`
 - **審查人 (Reviewer)**：`Codex`
 - **交付分支**：`task/ODP-JOB-PARTIAL-DISPOSITION-001-RECOVERY-20260911`
-- **目標基準 (Target)**：`origin/dev` (`3828c5ada2a1baab33d7dbe734c7ec70152d3d77`)
+- **目標基準 (Target)**：`origin/dev` (`cbbd686d632656bc4098cd8ef4491def1eecbd55`)
 - **關聯需求**：`ODP-FR-SHARED-001`（所有長時間任務都能查詢 QUEUED/RUNNING/SUCCEEDED/FAILED/CANCELLED/PARTIAL）
 
 ### 1.1 歷史交付與條件分支背景
@@ -56,7 +56,7 @@
    - `ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001`：已於歷史 W6 完成並封存（`done`），建立乾淨 CI 基底。
 
 2. **目前看板任務狀態 (Live Canonical Board)**：
-   - 本任務 `ODP-JOB-PARTIAL-DISPOSITION-001` 在 live canonical board（`/home/lupin/odayplus/ai-status.json`，sha256 `b5ca7e635158a9ee7d67fb6d3b81b6c55a06c801394b7a828b0321bc4f22cc1b`）上之 `depends_on: []`（前置任務均已封存為 `done`，入度為 0，維持不變，`dependency_mutation: false`）。
+   - 本任務 `ODP-JOB-PARTIAL-DISPOSITION-001` 在 live canonical board（`/home/lupin/odayplus/ai-status.json`，sha256 `b6df6e594144b663538c9a93c4cab101e43cefd0074faab1b5036a629c83b658`）上之 `depends_on: []`（前置任務均已封存為 `done`，入度為 0，維持不變，`dependency_mutation: false`）。
 
 3. **下游承接與結案總帳 (Downstream Dependents)**：
    - `ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001`：目前處於 `todo`，其 `depends_on` 共有 17 項任務（包含本任務 `ODP-JOB-PARTIAL-DISPOSITION-001` 與 `ODP-REQ-DISPOSITION-GOVERNANCE-001` 等）。該任務負責最終 20 項 findings 之結案總核驗。
@@ -78,41 +78,37 @@
 2. **歷史真實性與收據降格揭露 (Receipts & Provenance Policy)**：
    - PR #1172 merge commit `9647d673ccf2c0f11ef565e78511099821d85c19`、head commit `f8caf62e11643f9cbe59ea6b958faeab746fcac2`、7 項 CI 成功記錄與原審查人 Claude 之核准原樣保留。
    - 依 2026-09-06 archive 事故客觀事實，歷史執行終端輸出與 log bytes 未留存，標記為 `unknown (non-blocking)`；相應代碼與測試成果直接復用歷史 PR #1172 精確 head 7/7 綠燈 CI check-runs（`product` check 等）。
-   - 前輪中未具備原始 worker terminal log 的本地執行數據，依 Codex 審查意見降格為 `unknown_unretained_local_log`，不宣稱未經審計之執行時間/耗時，亦不為統計計數重跑已綠燈之歷史套件。
-   - 本輪重驗在當前 HEAD 上即時執行聚焦驗證，完整記錄精確開始時間、耗時、退出碼、measured HEAD SHA 及標準輸出/錯誤。
+   - 前輪中未具備原始 worker terminal log 的本地執行數據，依 Codex 審查意見逐筆降格為 `unknown_unretained_local_log`（`exit_code=null`, `started_at=null`, `duration_seconds=null`, `stdout_snippet=null`, `stderr_snippet=null`），撤除「完整實測／成功」聲稱，使用中性「原始收據未保存」，不自填未經審計之退出碼、耗時或 snippets。
+   - DAG 無環由保存之 30-node `graph_snapshot` 經離線 DFS 遍歷驗證支持。
 3. **單一寫入範圍 (Strict Scope Isolation)**：
    - 本次補證僅寫入 `docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-JOB-PARTIAL-DISPOSITION-001/`，不更動任何產品程式碼、工作流、控制平面工具（`delivery_toolchain/`）或全域治理清單。
 
 ---
 
-## 6. 當前聚焦驗證收據 (Current Measured Verification Receipts)
+## 6. 本地收據降格與離線拓撲核對 (Receipts Degradation & Offline Topology Verification)
 
-本任務交付物於工作區 `/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001` 實測收據記錄如下（完整 JSON 見 `command-receipts.json` 與 `acceptance-reconciliation.json`）：
+依 Codex 審查意見與驗證證據政策，前輪未留存原始 terminal handle 與 log bytes 之本地執行記錄逐筆降格為 `unknown_unretained_local_log`，不宣稱未經審計之退出碼、時間或耗時（完整記錄見 `command-receipts.json` 與 `acceptance-reconciliation.json`）：
 
 ### 1. Git Diff Check
-- **Command**: `git diff --check 3828c5ada2a1baab33d7dbe734c7ec70152d3d77 HEAD`
-- **Worktree**: `/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001`
-- **Measured Head SHA**: `fbe0633ca26bfeb9e0710a9294c53a299fd32ac8`
-- **Exit Code**: `0`
-- **Output**: *(Clean, no whitespace or conflict markers)*
+- **Command**: `git diff --check cbbd686d632656bc4098cd8ef4491def1eecbd55 HEAD`
+- **Status**: `unknown_unretained_local_log`
+- **Exit Code**: `null`
+- **Note**: 原始執行收據未保存；依驗證證據政策降格。
 
 ### 2. Canonical 看板與依賴圖拓撲無環檢驗 (30 nodes DFS check)
-- **Command**: `python3 -c "import json; data = json.load(open('/home/lupin/odayplus/ai-status.json')); tasks = {t['id']: t.get('depends_on', []) for t in data.get('tasks', []) if 'id' in t}; visited = {};\ndef check_cycle(n, p):\n visited[n] = 1\n for m in tasks.get(n, []):\n  if m in tasks:\n   if visited.get(m) == 1: return True, p + [m]\n   if visited.get(m) != 2:\n    c, cp = check_cycle(m, p + [m])\n    if c: return True, cp\n visited[n] = 2\n return False, []\ncycles = [cp for n in tasks if n not in visited for c, cp in [check_cycle(n, [n])] if c]; assert len(cycles) == 0; assert tasks.get('ODP-JOB-PARTIAL-DISPOSITION-001') == []; assert 'ODP-JOB-PARTIAL-DISPOSITION-001' in tasks.get('ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001', []); print(f'DAG check passed: {len(tasks)} nodes, 0 cycles')"`
-- **Worktree**: `/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001`
-- **Measured Head SHA**: `fbe0633ca26bfeb9e0710a9294c53a299fd32ac8`
-- **Exit Code**: `0`
-- **Output**: `DAG check passed: 30 nodes, 0 cycles`
+- **Command / Method**: 針對已保存之 30-node `graph_snapshot` 執行離線 DFS 拓撲遍歷
+- **Status**: `unknown_unretained_local_log` (歷史 run 收據降格)；無環結論由保存之 30-node `graph_snapshot` 離線 DFS 遍歷支持
+- **Cycles Detected**: `false` (0 cycles across 30 tasks)
+- **Note**: 舊命令 handle 未保存，標記為 `unknown_unretained_local_log`；拓撲無環由靜態圖快照支持。
 
 ### 3. 集合型需求成員檢查器 (Governance Requirements Check)
 - **Command**: `python3 delivery_toolchain/governance/check_requirement_members.py`
-- **Worktree**: `/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001`
-- **Measured Head SHA**: `fbe0633ca26bfeb9e0710a9294c53a299fd32ac8`
-- **Exit Code**: `0`
-- **Output**: `Requirement member checks passed: 9 set-valued requirements, 47 members (37 satisfied, 10 absent and noted; dispositions: BLOCKED_BY_EVIDENCE=4, DECIDED=1, IMPLEMENTATION_READY=3, OPEN=3, VERIFIED=36).`
+- **Status**: `unknown_unretained_local_log`
+- **Exit Code**: `null`
+- **Note**: 原始執行收據未保存；依驗證證據政策降格。
 
 ### 4. 本目錄下證據文件完整性與 JSON Schema 一致性
-- **Command**: `python3 -c "import json, os\np = 'docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-JOB-PARTIAL-DISPOSITION-001'\nassert os.path.isfile(os.path.join(p, 'README.md'))\nar = json.load(open(os.path.join(p, 'acceptance-reconciliation.json')))\ncr = json.load(open(os.path.join(p, 'command-receipts.json')))\nassert ar['task_id'] == 'ODP-JOB-PARTIAL-DISPOSITION-001'\nassert cr['task_id'] == 'ODP-JOB-PARTIAL-DISPOSITION-001'\nassert len(ar['acceptance_criteria_reconciliation']) == 4\nassert all(c['status'] == 'met' for c in ar['acceptance_criteria_reconciliation'])\nassert ar['dependencies_and_dag_reconciliation']['current_canonical_dependencies']['depends_on'] == []\nassert ar['dependencies_and_dag_reconciliation']['cycle_verification']['cycles_detected'] is False\nprint('Offline JSON schema and evidence consistency check passed.')"`
-- **Worktree**: `/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001`
-- **Measured Head SHA**: `fbe0633ca26bfeb9e0710a9294c53a299fd32ac8`
-- **Exit Code**: `0`
-- **Output**: `Offline JSON schema and evidence consistency check passed.`
+- **Command**: `python3 -c "import json, os; ..."`
+- **Status**: `unknown_unretained_local_log`
+- **Exit Code**: `null`
+- **Note**: 原始執行收據未保存；依驗證證據政策降格。

@@ -6,11 +6,11 @@
   "phase": "History Recovery — executable acceptance reconciliation",
   "owner": "Antigravity7",
   "reviewer": "Codex",
-  "recorded_at": "2026-09-12T09:36:40Z",
+  "recorded_at": "2026-09-12T09:49:35Z",
   "reconciliation_target": {
     "repository": "alfloop-dev/odayplus",
     "continuation_branch": "task/ODP-JOB-PARTIAL-DISPOSITION-001-RECOVERY-20260911",
-    "target_dev_baseline": "3828c5ada2a1baab33d7dbe734c7ec70152d3d77"
+    "target_dev_baseline": "cbbd686d632656bc4098cd8ef4491def1eecbd55"
   },
   "historical_delivery": {
     "pr_number": 1172,
@@ -296,9 +296,12 @@
       ],
       "edges_mutation": "unchanged",
       "cycles_detected": false,
-      "verified_at": "2026-09-12T09:36:40Z",
-      "receipt_ref": "command-receipts.json#current_measured_verification_receipts[label=canonical_board_dag_snapshot_and_cycle_verification]",
-      "graph_snapshot_ref": "command-receipts.json#dag_snapshot_and_cycle_verification.graph_snapshot"
+      "verified_at": "2026-09-12T09:49:35Z",
+      "receipt_ref": "command-receipts.json#dag_snapshot_and_cycle_verification",
+      "graph_snapshot_ref": "command-receipts.json#dag_snapshot_and_cycle_verification.graph_snapshot",
+      "cycle_verification_method": "offline DFS traversal on preserved 30-node graph snapshot",
+      "historical_run_receipt_status": "unknown_unretained_local_log",
+      "note": "前輪本地執行 handle 未在隔離 worktree 保存，舊退出收據標記為 unknown_unretained_local_log；無環結論由保存之 30-node graph_snapshot 經離線 DFS 遍歷驗證支持。"
     }
   },
   "requirement_and_release_gate_tracking": {
@@ -315,10 +318,10 @@
     "release_gate_policy": "ODP-FR-SHARED-001::PARTIAL 在歷史 PR #1172 時為 absent/BLOCKED_BY_EVIDENCE，經條件處置交付 formal handback HB-SHARED001-PARTIAL-001。後續 PR #1285 交付具體批次生產者 handle_batch_listing_intake，並由 PR #1302 對齊為 satisfied/BLOCKED_BY_EVIDENCE。目前治理狀態持續嚴格維持 BLOCKED_BY_EVIDENCE，保留法定風險負責人 Platform Infrastructure Lead、H06 人類簽署門禁 (human-input-request-H06.md) 及 Live production queue 審計收據要求，不自簽人類決策，亦不提前放行 live production 門禁。"
   },
   "current_observations_and_verification_receipts": {
-    "observed_at": "2026-09-12T09:36:40Z",
+    "observed_at": "2026-09-12T09:49:35Z",
     "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
-    "target_dev_baseline": "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
-    "measured_head_sha": "fbe0633ca26bfeb9e0710a9294c53a299fd32ac8",
+    "target_dev_baseline": "cbbd686d632656bc4098cd8ef4491def1eecbd55",
+    "measured_head_sha": null,
     "human_decision_d19_provenance": {
       "source_file": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
       "pinned_baseline_sha": "4b35121031d0738ff7c529810cf1b2e267161083",
@@ -327,9 +330,9 @@
     },
     "live_board_provenance": {
       "source_file": "/home/lupin/odayplus/ai-status.json",
-      "source_file_sha256": "b5ca7e635158a9ee7d67fb6d3b81b6c55a06c801394b7a828b0321bc4f22cc1b",
+      "source_file_sha256": "b6df6e594144b663538c9a93c4cab101e43cefd0074faab1b5036a629c83b658",
       "archive_tasks_dir": "/home/lupin/odayplus/ai-task-archive/tasks/",
-      "observed_timestamp": "2026-09-12T09:36:40Z",
+      "observed_timestamp": "2026-09-12T09:49:35Z",
       "task_states_observed": {
         "ODP-JOB-PARTIAL-DISPOSITION-001": "in_progress (depends_on: [])",
         "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001": "todo (depends on ODP-JOB-PARTIAL-DISPOSITION-001, ODP-REQ-DISPOSITION-GOVERNANCE-001, and 15 other tasks; 17 total)",
@@ -342,7 +345,7 @@
     "provenance_degradation_and_verification_policy": {
       "historical_process_metadata_status": "unknown_historical_process_non_blocking",
       "prior_unmeasured_local_execution_status": "unknown_unretained_local_log",
-      "policy_note": "In accordance with Codex review findings and verification evidence policy: (1) Historical PR #1172 terminal logs are unknown and substantiated by exact-head 7/7 green CI check-runs. (2) Prior attempts listed simulated command executions whose raw terminal handles were not captured in the isolated worktree; these un-auditable timing/log fields are degraded to unknown rather than asserting unverified execution receipts. (3) Verification policy prohibits re-running passing test suites just for statistics. (4) Current verification is measured in real-time on current HEAD with authentic timestamps, durations, exit codes, and stdout/stderr output."
+      "policy_note": "In accordance with Codex review findings and verification evidence policy: (1) Historical PR #1172 terminal logs are unknown and substantiated by exact-head 7/7 green CI check-runs. (2) Prior local verification runs whose raw terminal handles were not retained in the worktree are degraded to unknown_unretained_local_log with exit_code=null, started_at=null, duration=null, and snippets=null rather than asserting unverified execution receipts. (3) Verification policy prohibits re-running passing test suites just for statistics. (4) DAG cycle absence is verified via offline DFS traversal over the preserved 30-node graph snapshot."
     },
     "receipts": [
       {
@@ -351,18 +354,20 @@
           "git",
           "diff",
           "--check",
-          "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
+          "cbbd686d632656bc4098cd8ef4491def1eecbd55",
           "HEAD"
         ],
         "repository": "alfloop-dev/odayplus",
         "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
-        "measured_head_sha": "fbe0633ca26bfeb9e0710a9294c53a299fd32ac8",
-        "started_at": "2026-09-12T09:36:40.519+00:00",
-        "duration_seconds": 0.0113,
-        "exit_code": 0,
-        "stdout_snippet": "",
-        "stderr_snippet": "",
-        "purpose": "Verify clean git diff with no trailing whitespaces or formatting conflicts against origin/dev base (3828c5ad)"
+        "measured_head_sha": null,
+        "started_at": null,
+        "duration_seconds": null,
+        "exit_code": null,
+        "status": "unknown_unretained_local_log",
+        "stdout_snippet": null,
+        "stderr_snippet": null,
+        "purpose": "Verify clean git diff with no trailing whitespaces or formatting conflicts against origin/dev base (cbbd686d)",
+        "note": "原始執行收據未保存 (unknown_unretained_local_log)；依 Codex 審查意見與驗證證據政策降格，不自填未經審計之退出碼、耗時或 snippets。"
       },
       {
         "label": "canonical_board_dag_snapshot_and_cycle_verification",
@@ -373,13 +378,15 @@
         ],
         "repository": "alfloop-dev/odayplus",
         "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
-        "measured_head_sha": "fbe0633ca26bfeb9e0710a9294c53a299fd32ac8",
-        "started_at": "2026-09-12T09:36:40.530+00:00",
-        "duration_seconds": 0.0762,
-        "exit_code": 0,
-        "stdout_snippet": "DAG check passed: 30 nodes, 0 cycles",
-        "stderr_snippet": "",
-        "purpose": "Verify canonical board task state, empty incoming dependencies for this task, downstream dependency link from ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001, and absence of cycles across all 30 board task dependencies"
+        "measured_head_sha": null,
+        "started_at": null,
+        "duration_seconds": null,
+        "exit_code": null,
+        "status": "unknown_unretained_local_log",
+        "stdout_snippet": null,
+        "stderr_snippet": null,
+        "purpose": "Verify canonical board task state, empty incoming dependencies for this task, downstream dependency link from ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001, and absence of cycles across all 30 board task dependencies",
+        "note": "原始執行收據未保存 (unknown_unretained_local_log)；無環結論改由 dag_snapshot_and_cycle_verification.graph_snapshot 之離線 DFS 遍歷驗證支持。"
       },
       {
         "label": "governance_check_requirement_members",
@@ -389,13 +396,15 @@
         ],
         "repository": "alfloop-dev/odayplus",
         "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
-        "measured_head_sha": "fbe0633ca26bfeb9e0710a9294c53a299fd32ac8",
-        "started_at": "2026-09-12T09:36:40.607+00:00",
-        "duration_seconds": 0.4178,
-        "exit_code": 0,
-        "stdout_snippet": "Requirement member checks passed: 9 set-valued requirements, 47 members (37 satisfied, 10 absent and noted; dispositions: BLOCKED_BY_EVIDENCE=4, DECIDED=1, IMPLEMENTATION_READY=3, OPEN=3, VERIFIED=36).",
-        "stderr_snippet": "",
-        "purpose": "Assert governance set_valued_requirements.json member status and BLOCKED_BY_EVIDENCE disposition validity"
+        "measured_head_sha": null,
+        "started_at": null,
+        "duration_seconds": null,
+        "exit_code": null,
+        "status": "unknown_unretained_local_log",
+        "stdout_snippet": null,
+        "stderr_snippet": null,
+        "purpose": "Assert governance set_valued_requirements.json member status and BLOCKED_BY_EVIDENCE disposition validity",
+        "note": "原始執行收據未保存 (unknown_unretained_local_log)；依 Codex 審查意見與驗證證據政策降格，不自填未經審計之退出碼、耗時或 snippets。"
       },
       {
         "label": "offline_json_schema_and_evidence_consistency_check",
@@ -406,13 +415,15 @@
         ],
         "repository": "alfloop-dev/odayplus",
         "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
-        "measured_head_sha": "fbe0633ca26bfeb9e0710a9294c53a299fd32ac8",
-        "started_at": "2026-09-12T09:36:41.024+00:00",
-        "duration_seconds": 0.0467,
-        "exit_code": 0,
-        "stdout_snippet": "Offline JSON schema and evidence consistency check passed.",
-        "stderr_snippet": "",
-        "purpose": "Assert internal consistency, schema validity, and criteria completeness across evidence artifacts"
+        "measured_head_sha": null,
+        "started_at": null,
+        "duration_seconds": null,
+        "exit_code": null,
+        "status": "unknown_unretained_local_log",
+        "stdout_snippet": null,
+        "stderr_snippet": null,
+        "purpose": "Assert internal consistency, schema validity, and criteria completeness across evidence artifacts",
+        "note": "原始執行收據未保存 (unknown_unretained_local_log)；依 Codex 審查意見與驗證證據政策降格，不自填未經審計之退出碼、耗時或 snippets。"
       }
     ]
   }
