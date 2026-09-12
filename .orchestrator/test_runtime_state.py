@@ -6,8 +6,11 @@ import json
 import tempfile
 import unittest
 from copy import deepcopy
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest import mock
+
+import pytest
 
 import runtime_state
 import supervisor
@@ -1197,7 +1200,7 @@ class QuotaRecoveryRuntimeStateTests(unittest.TestCase):
                 supervisor.record_account_pool_canary_success(
                     self.config,
                     successful_writer,
-                    {"logical_agent_id": "codex", "run_id": "canary-run", "task_id": "REVIEW-TASK"},
+                    {"logical_agent_id": "codex", "run_id": "canary-run", "task_id": "REVIEW-TASK", "auth_identity_hash": "auth-a"},
                 )
             )
         runtime_state.save_runtime_state(self.config, successful_writer)
@@ -1407,7 +1410,7 @@ class QuotaRecoveryRuntimeStateTests(unittest.TestCase):
             mock.patch.object(supervisor, "write_activity_log"),
         ):
             self.assertTrue(supervisor.record_account_pool_canary_success(
-                self.config, clearer, {"logical_agent_id": "codex", "run_id": "canary-run", "started_at": canary_time}
+                self.config, clearer, {"logical_agent_id": "codex", "run_id": "canary-run", "started_at": canary_time, "auth_identity_hash": "auth-a"}
             ))
         runtime_state.save_runtime_state(self.config, clearer)
 
@@ -1560,3 +1563,132 @@ class QuotaRecoveryRuntimeStateTests(unittest.TestCase):
             )
             self.assertEqual(pool["last_failure_at"], new_time)
             self.assertEqual(pool["next_probe_at"], "2099-09-11T03:37:15Z")
+
+
+@pytest.mark.parametrize("stale_on_disk", [False, True])
+def test_cleared_old_run_cooldown_cannot_resurrect_after_new_run_also_cleared(tmp_path, stale_on_disk):
+    config = {
+        "paths": {
+            "state_file": str(tmp_path / "state.json"),
+            "event_queue": str(tmp_path / "events.jsonl"),
+            "activity_log": str(tmp_path / "activity.jsonl"),
+        },
+        "account_pools": {"pool_a": {"max_concurrent": 2, "state": "healthy", "enabled": True}},
+        "agents": {"codex": {"id": "codex", "provider": "codex", "account_pool": "pool_a"}},
+        "providers": {"codex": {"delivery_mode": "codex", "quota_group": "codex"}},
+    }
+    Path(config["paths"]["event_queue"]).write_text("")
+    state = runtime_state.default_state()
+    failure_time = "2099-09-11T02:04:50Z"
+    with (
+        mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="fixture-auth"),
+        mock.patch.object(supervisor, "write_activity_log"),
+        mock.patch.object(supervisor.model_rotation, "rotation_enabled", return_value=False),
+    ):
+        with mock.patch.object(supervisor, "utc_now", return_value=failure_time):
+            supervisor.mark_provider_dispatch_paused(
+                config, state, "codex", "usage limit reached", worker_run_id="run-a",
+                worker={"run_id": "run-a", "logical_agent_id": "codex", "provider": "codex"},
+                failure_kind="quota_terminal",
+            )
+        runtime_state.save_runtime_state(config, state)
+        stale_run_a = runtime_state.load_runtime_state(config)
+
+        with mock.patch.object(supervisor, "utc_now", return_value=failure_time):
+            assert supervisor.clear_provider_dispatch_pause(config, state, "codex")
+        runtime_state.save_runtime_state(config, state)
+
+        with mock.patch.object(supervisor, "utc_now", return_value=failure_time):
+            supervisor.mark_provider_dispatch_paused(
+                config, state, "codex", "usage limit reached", worker_run_id="run-b",
+                worker={"run_id": "run-b", "logical_agent_id": "codex", "provider": "codex"},
+                failure_kind="quota_terminal",
+            )
+        runtime_state.save_runtime_state(config, state)
+        assert state["account_pool_runtime"]["pool_a"]["last_worker_run_id"] == "run-b"
+
+        with mock.patch.object(supervisor, "utc_now", return_value="2099-09-11T02:04:52Z"):
+            assert supervisor.clear_provider_dispatch_pause(config, state, "codex")
+        runtime_state.save_runtime_state(config, state)
+        before_stale_save = deepcopy(state["account_pool_runtime"]["pool_a"])
+        assert before_stale_save["state"] == "recovering"
+        assert before_stale_save["last_worker_run_id"] == "run-b"
+
+        if stale_on_disk:
+            Path(config["paths"]["state_file"]).write_text(json.dumps(stale_run_a))
+            runtime_state.save_runtime_state(config, state)
+        else:
+            runtime_state.save_runtime_state(config, stale_run_a)
+        restored = runtime_state.load_runtime_state(config)
+        assert not restored["provider_guardrails"]["dispatch_pauses"]
+        assert restored["account_pool_runtime"]["pool_a"] == before_stale_save
+
+
+def _quota_auth_config():
+    return {
+        "account_pools": {
+            "pool_a": {"max_concurrent": 3, "enabled": True},
+            "pool_b": {"max_concurrent": 3, "enabled": True},
+        },
+        "agents": {
+            "codex": {"id": "codex", "provider": "codex", "account_pool": "pool_a"},
+            "codex2": {"id": "codex2", "provider": "codex2", "account_pool": "pool_b"},
+        },
+        "providers": {
+            "codex": {"delivery_mode": "codex", "quota_group": "codex"},
+            "codex2": {"delivery_mode": "codex", "quota_group": "codex"},
+        },
+    }
+
+
+@pytest.mark.parametrize("current_auth,pool_auth", [("auth-a", "auth-a"), ("auth-b", "auth-a"), ("auth-b", "auth-b")])
+def test_own_pool_success_requires_current_dispatch_auth(current_auth, pool_auth):
+    config = _quota_auth_config()
+    state = {"account_pool_runtime": {
+        "pool_a": {
+            "state": "recovering", "effective_concurrency": 1,
+            "auth_identity_hash": pool_auth, "last_probe_at": "2026-09-11T02:05:00Z",
+        },
+    }}
+    worker = {
+        "run_id": "canary-on-a", "logical_agent_id": "codex", "provider": "codex",
+        "started_at": "2026-09-11T02:05:00Z", "auth_identity_hash": "auth-a",
+        "status": "completed", "runner_status": "completed", "exit_code": 0,
+    }
+    with (
+        mock.patch.object(supervisor, "provider_auth_identity_hash", return_value=current_auth),
+        mock.patch.object(supervisor, "write_activity_log"),
+    ):
+        supervisor.record_account_pool_canary_success(config, state, worker)
+        capacity = supervisor.account_pool_effective_concurrency(config, state, "codex")
+    if current_auth == "auth-a":
+        assert capacity == 3
+    else:
+        assert capacity <= 1, "Auth A success restored full capacity for current, unverified auth B"
+
+
+@pytest.mark.parametrize("current_auth", ["auth-a", "auth-b"])
+def test_late_failure_does_not_fence_new_auth_sibling(current_auth):
+    config = _quota_auth_config()
+    state = {"account_pool_runtime": {
+        "pool_a": {"state": "healthy", "effective_concurrency": 3, "auth_identity_hash": current_auth},
+        "pool_b": {"state": "healthy", "effective_concurrency": 3, "auth_identity_hash": current_auth},
+    }}
+    sibling_before = deepcopy(state["account_pool_runtime"]["pool_b"])
+    failed_worker = {
+        "run_id": "old-worker-on-a", "logical_agent_id": "codex", "provider": "codex",
+        "started_at": "2026-09-11T02:05:00Z", "auth_identity_hash": "auth-a",
+    }
+    with (
+        mock.patch.object(supervisor, "provider_auth_identity_hash", return_value=current_auth),
+        mock.patch.object(supervisor, "write_activity_log"),
+        mock.patch.object(supervisor, "utc_now", return_value="2026-09-11T02:06:00Z"),
+    ):
+        supervisor.mark_account_pool_cooldown(
+            config, state, failed_worker, "quota exhausted", failure_kind="quota_terminal",
+            blocked_until=datetime(2026, 9, 11, 3, 0, tzinfo=UTC),
+        )
+    if current_auth == "auth-a":
+        assert state["account_pool_runtime"]["pool_b"]["state"] == "cooldown"
+    else:
+        assert state["account_pool_runtime"]["pool_b"] == sibling_before

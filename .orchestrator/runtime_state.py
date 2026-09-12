@@ -722,11 +722,31 @@ def _merge_provider_guardrails(
 
 
 def _merge_account_pool_runtime(
-    disk_pools: dict[str, Any], mem_pools: dict[str, Any]
+    disk_pools: dict[str, Any], mem_pools: dict[str, Any],
+    cleared_pauses: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     disk_p = disk_pools if isinstance(disk_pools, dict) else {}
     mem_p = mem_pools if isinstance(mem_pools, dict) else {}
     merged_pools: dict[str, Any] = {}
+
+    def cleared_cooldown(entry: dict[str, Any] | None) -> bool:
+        if not entry or entry.get("state") != "cooldown":
+            return False
+        auth = entry.get("auth_identity_hash")
+        run = entry.get("last_worker_run_id")
+        failed_at = entry.get("last_failure_at")
+        # A timestamp or generation alone is not an incident identity. Only
+        # an exact durable clearance can retire this old account/run failure.
+        if not auth or not run or not failed_at:
+            return False
+        return any(
+            isinstance(clearance, dict)
+            and clearance.get("auth_identity_hash") == auth
+            and clearance.get("worker_run_id") == run
+            and clearance.get("cleared_paused_at") == failed_at
+            for clearance in (cleared_pauses or {}).values()
+        )
+
     for pool_id in set(disk_p.keys()) | set(mem_p.keys()):
         d_entry = disk_p.get(pool_id) if isinstance(disk_p.get(pool_id), dict) else None
         m_entry = mem_p.get(pool_id) if isinstance(mem_p.get(pool_id), dict) else None
@@ -738,6 +758,11 @@ def _merge_account_pool_runtime(
             merged_pools[pool_id] = deepcopy(m_entry)
             continue
         if d_entry and m_entry:
+            d_cleared = cleared_cooldown(d_entry)
+            m_cleared = cleared_cooldown(m_entry)
+            if d_cleared != m_cleared:
+                merged_pools[pool_id] = deepcopy(m_entry if d_cleared else d_entry)
+                continue
             d_fail = str(d_entry.get("last_failure_at") or "")
             m_fail = str(m_entry.get("last_failure_at") or "")
             d_state = str(d_entry.get("state") or "").lower()
@@ -952,6 +977,7 @@ def merge_runtime_states(disk_state: dict[str, Any], in_mem_state: dict[str, Any
         merged["account_pool_runtime"] = _merge_account_pool_runtime(
             disk_pools if isinstance(disk_pools, dict) else {},
             mem_pools if isinstance(mem_pools, dict) else {},
+            (merged.get("provider_guardrails") or {}).get("cleared_pauses"),
         )
 
     if "workers" in merged:

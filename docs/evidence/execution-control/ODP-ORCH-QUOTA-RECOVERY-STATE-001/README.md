@@ -181,3 +181,10 @@ All verification commands executed on the updated task branch and verified again
 - **Duration**: `94.61s`
 - **Result**: `691 passed in 94.61s`
 
+
+
+## Bounded continuation verification (2026-09-12)
+
+Merge clearances by the exact auth/run/failure tuple even within one second. Require matching dispatched, pool and current auth for canary success. Attribute delayed failures to dispatched auth and preserve newer-auth pools.
+
+Current source hashes, exact commands, original exit codes and durations are in `bounded-continuation-verification.json`; raw logs are adjacent. Earlier receipts above describe earlier revisions and are retained as history. All current listed commands passed. Tests ran against the recorded parent HEAD plus the tracked patch; source hashes bind them to this repair. Independent exact-head review and required CI remain mandatory before merge.

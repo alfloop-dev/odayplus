@@ -22074,7 +22074,7 @@ class QuotaClearAndCooldownRecoveryReviewTests(unittest.TestCase):
             self.assertTrue(supervisor.clear_provider_dispatch_pause(config, state, "codex"))
             self.assertTrue(
                 supervisor.record_account_pool_canary_success(
-                    config, state, {"run_id": "canary-run", "logical_agent_id": "codex", "provider": "codex", "exit_code": 0}
+                    config, state, {"run_id": "canary-run", "logical_agent_id": "codex", "provider": "codex", "exit_code": 0, "auth_identity_hash": "same-auth"}
                 )
             )
             self.assertEqual(supervisor.account_pool_effective_concurrency(config, state, "codex2"), 0)
@@ -22181,6 +22181,10 @@ class QuotaClearAndCooldownRecoveryReviewTests(unittest.TestCase):
             mock.patch.object(supervisor, "write_activity_log"),
             mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="auth-b"),
         ):
+            self.assertFalse(supervisor.record_account_pool_canary_success(config, state, rotated_worker))
+            self.assertEqual(state["account_pool_runtime"]["pool_a"]["state"], "recovering")
+            # Only a recovery explicitly belonging to B may be certified by B.
+            state["account_pool_runtime"]["pool_a"]["auth_identity_hash"] = "auth-b"
             self.assertTrue(supervisor.record_account_pool_canary_success(config, state, rotated_worker))
         self.assertEqual(state["account_pool_runtime"]["pool_b"]["state"], "recovering")
 
@@ -22350,8 +22354,8 @@ class QuotaClearAndCooldownRecoveryReviewTests(unittest.TestCase):
             mock.patch.object(supervisor, "write_activity_log"),
             mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="auth-b"),
         ):
-            supervisor.record_account_pool_canary_success(config, state, worker_a)
-        self.assertEqual(state["account_pool_runtime"]["pool_a"]["state"], "healthy")
+            self.assertFalse(supervisor.record_account_pool_canary_success(config, state, worker_a))
+        self.assertEqual(state["account_pool_runtime"]["pool_a"]["state"], "recovering")
         self.assertEqual(state["account_pool_runtime"]["pool_b"]["state"], "recovering")
 
 if __name__ == "__main__":

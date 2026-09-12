@@ -773,9 +773,12 @@ def mark_account_pool_cooldown(
     )
     if not same_failure:
         entry["generation"] = int(previous.get("generation", 0) or 0) + 1
+    persisted_worker = _lookup_worker_record(state, worker_run_id) or {}
+    current_auth = provider_auth_identity_hash(config, execution_id) or provider_auth_identity_hash(config, pool_id)
     auth_identity_hash = (
-        provider_auth_identity_hash(config, execution_id)
-        or provider_auth_identity_hash(config, pool_id)
+        (worker or {}).get("auth_identity_hash")
+        or persisted_worker.get("auth_identity_hash")
+        or current_auth
     )
     if auth_identity_hash:
         entry["auth_identity_hash"] = auth_identity_hash
@@ -798,7 +801,15 @@ def mark_account_pool_cooldown(
                             "generation": entry["generation"],
                         }
                     )
-    bucket[pool_id] = entry
+    # A late failure belongs to its dispatched identity. Preserve a pool
+    # already rebound to another account; matching old-account siblings above
+    # still receive the failure fence.
+    if (
+        not current_auth
+        or not auth_identity_hash
+        or current_auth == auth_identity_hash
+    ):
+        bucket[pool_id] = entry
     if not same_failure:
         write_activity_log(
             config,
@@ -836,15 +847,17 @@ def record_account_pool_canary_success(config: dict[str, Any], state: dict[str, 
     worker_auth = str(worker.get("auth_identity_hash") or "")
     if not worker_auth and isinstance(state.get("workers"), dict):
         worker_auth = str(state["workers"].get(str(worker.get("run_id") or ""), {}).get("auth_identity_hash") or "")
-    if not worker_auth:
-        worker_auth = str(
-            provider_auth_identity_hash(
-                config,
-                str(worker.get("provider") or worker.get("logical_agent_id") or worker.get("agent_id") or ""),
-            )
-            or ""
-        )
     pool_auth = str(entry.get("auth_identity_hash") or "")
+    current_auth = str(
+        provider_auth_identity_hash(
+            config,
+            str(worker.get("logical_agent_id") or worker.get("agent_id") or worker.get("provider") or ""),
+        ) or ""
+    )
+    if (worker_auth or pool_auth or current_auth) and not (
+        worker_auth and worker_auth == pool_auth == current_auth
+    ):
+        return False
 
     try:
         configured = max(0, int(pool.get("max_concurrent")))
@@ -1314,7 +1327,8 @@ def mark_provider_dispatch_paused(
         "task_id": task_id,
         "worker_run_id": worker_run_id,
     }
-    auth_identity_hash = provider_auth_identity_hash(config, provider_id)
+    failure_worker = worker if isinstance(worker, dict) else (_lookup_worker_record(state, worker_run_id) or {})
+    auth_identity_hash = failure_worker.get("auth_identity_hash") or provider_auth_identity_hash(config, provider_id)
     if auth_identity_hash:
         bucket[pause_provider_id]["auth_identity_hash"] = auth_identity_hash
     if hinted_blocked_until:
