@@ -6,11 +6,18 @@
   "phase": "History Recovery — executable acceptance reconciliation",
   "owner": "Antigravity2",
   "reviewer": "Codex",
-  "recorded_at": "2026-09-12T09:12:00Z",
+  "recorded_at": "2026-09-12T09:27:00Z",
   "reconciliation_target": {
     "repository": "alfloop-dev/odayplus",
     "continuation_branch": "task/ODP-DEV-ROLLOUT-001-RECOVERY-20260911",
-    "target_dev_baseline": "4b35121031d054178550beaa2ca3e6ee8e0a39eb",
+    "target_dev_baseline": "ef8345bce29436ce86bd1a70b857d668ac16182a",
+    "target_dev_baseline_short": "ef8345bce294",
+    "previous_composed_baseline": "4b35121031d0738ff7c529810cf1b2e267161083",
+    "retracted_corrupted_baseline_reference": {
+      "bad_sha": "4b35121031d054178550beaa2ca3e6ee8e0a39eb",
+      "status": "retracted_unsupported_receipt",
+      "diagnostic": "fatal: bad object 4b35121031d054178550beaa2ca3e6ee8e0a39eb (exit 128); corrected to exact composed SHA 4b35121031d0738ff7c529810cf1b2e267161083 in historical record and advanced to ef8345bce29436ce86bd1a70b857d668ac16182a on origin/dev tip."
+    },
     "initial_recovery_base": "4499a2993e37b62033926b07de8d8d2e8469a6c7",
     "canonical_status_root": "/home/lupin/odayplus"
   },
@@ -94,7 +101,7 @@
     },
     "historical_execution_receipts": {
       "status": "placeholder_receipts_disclosed",
-      "disclosure": "PR #1013 在 docs/evidence/runtime/ODP-DEV-ROLLOUT-001/ 交付了 7 份運行收據與說明文件（全 PR 共 9 檔，含 tests/ops/test_dev_rollout.py 與 docs/audits/code-boundary-inventory.csv）。經查核，所有元件映像 digest 均為重複位元佔位符（sha256:1111…、sha256:2222… 等），且讀回報告參照本機未追蹤之 .odp_data/ 路徑。歷史結案屬 false-done，歷史檔案完整保留於原位置作為審計依據，不重做程式閘門、不手動竄改歷史收據，由後續補救任務 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 正式承接。"
+      "disclosure": "PR #1013 在 docs/evidence/runtime/ODP-DEV-ROLLOUT-001/ 交付了 7 份運行收據與說明文件（全 PR 共 9 檔，含 tests/ops/test_dev_rollout.py 與 docs/audits/code-boundary-inventory.csv）。經查核，所有元件映像 digest 均為重複位元佔位符（sha256:1111…、sha256:2222… 等），且讀回報告參照本機未追蹤之 .odp_data/ 路徑，無法證明實質部署。歷史結案屬 false-done，歷史檔案完整保留於原位置作為審計依據，不重做程式閘門、不手動竄改歷史收據，由後續補救任務 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 正式承接。"
     }
   },
   "candidate_and_build_evidence": {
@@ -106,13 +113,31 @@
     "candidate_pr_merged_at": "2026-09-10T18:58:07Z",
     "frozen_candidate_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
     "authoritative_manifest_digest": "sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c",
-    "workflow_run": {
+    "producer_workflow_run": {
+      "run_id": 34179207603,
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/34179207603",
+      "workflow_head_sha": "8c570a56353abdcc8ba70fe0a3fdd9b963902391",
+      "job_id": 101914686431,
+      "time_window": "2026-09-08T02:11:41Z – 2026-09-08T02:20:27Z",
+      "conclusion": "failure",
+      "role": "image_build_push_and_sign_producer",
+      "execution_facts": "Step 19 Build, publish, sign, and attest immutable container images 成功建置、push、cosign sign（Pushing signature to: …）與 attest 四個映像；隨後 step 20 Write the build-once artifact handoff 以 exit code 1 失敗，steps 21-23 未執行，未產出 manifest/handoff artifacts。",
+      "built_immutable_images": {
+        "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:5e1a152e839cbfa7a2bf422b924928b56fad89f35e44243619a3f2fe98802cee",
+        "web": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:38c716462b569b7420fe95788a84f8a1b3778e2e7c938d535a1dc13288a78971",
+        "worker": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:b2c0e4473ad529ad71f215b76fc125115d8ba0b4e845a87e532d10ebdb8ddba3",
+        "scheduler": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:f3fd22c00478d730273494c23c512a87c807de645a8b759d0af4908d82cd4cc9"
+      }
+    },
+    "handoff_workflow_run": {
       "run_id": 34179791241,
       "url": "https://github.com/alfloop-dev/odayplus/actions/runs/34179791241",
       "workflow_head_sha": "8c570a56353abdcc8ba70fe0a3fdd9b963902391",
+      "job_id": 101916404681,
+      "time_window": "2026-09-08T02:21:49Z – 2026-09-08T02:26:33Z",
       "conclusion": "success",
-      "created_at": "2026-09-08T02:21:49Z",
-      "updated_at": "2026-09-08T02:26:33Z",
+      "role": "digest_reuse_verification_and_artifact_publisher",
+      "execution_facts": "Step 19 記錄 Immutable images already exist for 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12; reusing their digests，未重新建置、未重新 push、未重新簽章，對四個既有 digest 執行 cosign verify 離線驗章；隨後執行 steps 20-23 發布 6 份不可變 release artifacts（RELEASE_MANIFEST.json, runtime-release-images.json, initial-release-absence-readback.json, release-environment-receipt.json, npm-audit-receipt.json, release-phase-receipt.json）；Deploy/Lease/Watch jobs 依准入控制保持 skipped。",
       "jobs": [
         {
           "name": "Validate release phase inputs",
@@ -122,13 +147,7 @@
         {
           "name": "Build once and publish the immutable artifact handoff",
           "database_id": 101916404681,
-          "conclusion": "success",
-          "built_immutable_images": {
-            "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:5e1a152e839cbfa7a2bf422b924928b56fad89f35e44243619a3f2fe98802cee",
-            "web": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:38c716462b569b7420fe95788a84f8a1b3778e2e7c938d535a1dc13288a78971",
-            "worker": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:b2c0e4473ad529ad71f215b76fc125115d8ba0b4e845a87e532d10ebdb8ddba3",
-            "scheduler": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:f3fd22c00478d730273494c23c512a87c807de645a8b759d0af4908d82cd4cc9"
-          }
+          "conclusion": "success"
         },
         {
           "name": "Deploy the admitted artifact by immutable digest",
@@ -147,7 +166,7 @@
         }
       ]
     },
-    "evidence_nature_note": "本項收據證明真實 build-once 映像已完成建置、簽名並發布至 Artifact Registry（Build Success）；然而後續 Deploy/Lease/Watch 階段依准入控制保持 skipped。此為可稽核之真實建置證據，不代表 live rollout 已執行完畢。"
+    "evidence_nature_note": "本項收據證明真實 build-once 映像之建置與簽章由 run 34179207603 產生，而 6 份 release artifacts 由 run 34179791241 發布；兩 run 各司其職，後續 Deploy/Lease/Watch 階段依准入控制保持 skipped。此為可稽核之真實候選與建置證據，不代表 live rollout 已在 GCP 執行完畢。"
   },
   "acceptance_criteria_reconciliation": [
     {
@@ -162,11 +181,11 @@
       "historical_inventory_status": "met_by_receipt",
       "runtime_execution_status": "not_evidenced",
       "status": "met_by_receipt",
-      "status_zh": "歷史收據已滿足（交付物內記載 sequence 1=data_platform, 2=oday_plus_migration, 3=oday_plus_services；實質 live 部署未具運行證據）",
+      "status_zh": "歷史收據已滿足（交付物內記載 sequence 1=data_platform, 2=oday_plus_migration, 3=oday_plus_services；實質 live 部署無法證明）",
       "historical_evidence": "由 PR #1013 交付之 docs/evidence/runtime/ODP-DEV-ROLLOUT-001/dev-rollout-manifest-binding.json (merge commit b8262d911c95887767877e7cee23bded0ef7dd61)，其 deployment_order 欄位記載 sequence 1 = data_platform (GKE namespace: oday-dev)、sequence 2 = oday_plus_migration (Cloud Run Job: oday-plus-dev-migration)、sequence 3 = oday_plus_services (Cloud Run Services & Jobs: api, web, worker, scheduler)，時序規劃符合規範。",
       "source_sha": "b8262d911c95887767877e7cee23bded0ef7dd61",
       "ci_binding": "Delivered in PR #1013 merge commit b8262d911c95; change-scope check-run success (2026-08-25T16:53:20Z).",
-      "boundary_and_limitations": "收據記載之部署順序在文件結構層面符合條款（保留 inventory 歷史判定）；但實質部署因映像 digest 均為佔位符而未在 GCP dev 環境落地，本輪 runtime 執行未具真實證據，不以 placeholder sequence 充作已部署。實質時序由 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 (A4) 於 live 部署時讀回驗證。"
+      "boundary_and_limitations": "收據記載之部署順序在文件結構層面符合條款（保留 inventory 歷史判定）；但因映像 digest 均為佔位符致無法證明實質部署，本輪 runtime 執行記為 not_evidenced，不以 placeholder sequence 充作已部署。實質時序由 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 (A4) 於 live 部署時讀回驗證。"
     },
     {
       "index": 2,
@@ -289,8 +308,8 @@
           },
           {
             "successor_criterion_index": 2,
-            "successor_criterion": "若 candidate 到 origin/dev 間含任何變更則建新 release 並重新 build once",
-            "transfer_nature": "確保 build-once 狀態機嚴格執行，不沿用破裂 digest。"
+            "successor_criterion": "若 candidate 到 origin/dev 之間含任何 product 或 build input 變更則建立新 release 並重新 build once不得沿用舊 digest",
+            "transfer_nature": "保留 product 或 build input 變更限定，確保 build-once 狀態機嚴格執行，且純文件/恢復證據變更不觸發非必要重建。"
           },
           {
             "successor_criterion_index": 4,
@@ -356,6 +375,58 @@
         "ODP-EPHEMERAL-STAGING-ROLLOUT-001"
       ]
     },
+    "canonical_snapshots": {
+      "ODP-EPHEMERAL-STAGING-ROLLOUT-001": {
+        "source": "ai-status.json:527-570",
+        "last_update": "2026-09-11T12:30:34Z",
+        "status": "blocked",
+        "depends_on": [
+          "ODP-EPHEMERAL-STAGING-IAC-001",
+          "ODP-DEV-ROLLOUT-001",
+          "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+          "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001"
+        ]
+      },
+      "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001": {
+        "source": "ai-status.json",
+        "last_update": "2026-09-11T03:37:40Z",
+        "status": "blocked",
+        "depends_on": [
+          "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+          "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+          "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+          "DPF-EMGI-LIVE-ROLLOUT-001",
+          "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+          "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+          "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+          "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+          "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+          "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
+        ]
+      },
+      "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002": {
+        "source": "ai-task-archive/tasks/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002.json:1-18",
+        "archived_at": "2026-09-10T19:01:36Z",
+        "terminal_status": "done",
+        "depends_on": [
+          "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+          "ODP-RELEASE-GATE-FIXTURE-STAGING-002"
+        ]
+      },
+      "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001": {
+        "source": "ai-task-archive/tasks/ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001.json",
+        "archived_at": "2026-09-11T12:43:07Z",
+        "terminal_status": "done",
+        "depends_on": []
+      },
+      "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001": {
+        "source": "ai-task-archive/tasks/ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001.json",
+        "archived_at": "2026-09-10T13:46:12Z",
+        "terminal_status": "done",
+        "depends_on": []
+      }
+    },
     "canonical_dependencies_before": [],
     "proposed_dependencies_after": [],
     "dependency_mutation": false,
@@ -367,8 +438,8 @@
     ],
     "staging_lifecycle_disposition": {
       "dependent_task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
-      "current_status": "in_progress (blocked on dev live digests)",
-      "disposition_note": "ODP-EPHEMERAL-STAGING-ROLLOUT-001 在 canonical 看板依賴 ODP-DEV-ROLLOUT-001。因本任務判定為 false_done_superseded，實質 dev rollout 由 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 承接。後續 staging 演練需引用真實 live digests 時，由其自身生命週期與准入閘門依賴 live remediation 產出，不在此任務手動變更看板依賴邊。"
+      "current_status": "blocked (on dev live digests & staging prerequisites)",
+      "disposition_note": "ODP-EPHEMERAL-STAGING-ROLLOUT-001 在 canonical 看板已包含 5 項依賴（包含 ODP-DEV-ROLLOUT-001 與 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001）。因既有 staging -> live remediation 閘門已在看板存在，本任務處置使用擬議生命週期語意（false_done_superseded），不在此任務手動變更看板依賴邊，亦不宣稱 canonical supersede 已在控制平面執行完畢。"
     },
     "remediation_lane": {
       "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
@@ -409,23 +480,22 @@
         "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
         "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
         "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+        "ODP-RELEASE-GATE-FIXTURE-STAGING-002",
         "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
         "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
         "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+        "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+        "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
         "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002"
       ],
       "edge_set": [
         {
-          "from": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
-          "to": "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001"
+          "from": "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+          "to": "ODP-RELEASE-GATE-FIXTURE-STAGING-002"
         },
         {
-          "from": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
-          "to": "ODP-RUNTIME-RELEASE-SINGLE-PATH-001"
-        },
-        {
-          "from": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
-          "to": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001"
+          "from": "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+          "to": "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
         },
         {
           "from": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
@@ -433,15 +503,7 @@
         },
         {
           "from": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
-          "to": "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001"
-        },
-        {
-          "from": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
-          "to": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002"
-        },
-        {
-          "from": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
-          "to": "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001"
+          "to": "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002"
         },
         {
           "from": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
@@ -449,11 +511,39 @@
         },
         {
           "from": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
-          "to": "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002"
+          "to": "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001"
+        },
+        {
+          "from": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "to": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001"
+        },
+        {
+          "from": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "to": "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001"
+        },
+        {
+          "from": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "to": "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001"
         },
         {
           "from": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
           "to": "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
+        },
+        {
+          "from": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "to": "ODP-RUNTIME-RELEASE-SINGLE-PATH-001"
+        },
+        {
+          "from": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "to": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002"
+        },
+        {
+          "from": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+          "to": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001"
+        },
+        {
+          "from": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+          "to": "ODP-DEV-ROLLOUT-001"
         },
         {
           "from": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
@@ -461,13 +551,17 @@
         },
         {
           "from": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
-          "to": "ODP-DEV-ROLLOUT-001"
+          "to": "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001"
+        },
+        {
+          "from": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+          "to": "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001"
         }
       ],
-      "edge_count": 12,
-      "edge_set_sha256": "239a5050ae31ca80bb424c3c9a88a3c74c5c7b35eb5edefc5a1fc22aff229f10",
+      "edge_count": 17,
+      "edge_set_sha256": "d1db3233c193f7ce93e0895efb227d3314376e68724db0bca7ae0579438fef4d",
       "cycle_detected": false,
-      "conclusion": "有向無環圖 (DAG) 確認，無循環相依。"
+      "conclusion": "完整 17 節點與 17 條邊之有向無環圖 (DAG) 確認，無循環相依。"
     }
   },
   "governance_invariants": {
@@ -478,5 +572,55 @@
     "credentials_inspected": false,
     "historical_receipts_modified": false,
     "single_write_directory_enforced": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/"
-  }
+  },
+  "verification_command_receipts": [
+    {
+      "receipt_id": "rcpt-001-git-diff-check-target-base",
+      "command": "git diff --check ef8345bce29436ce86bd1a70b857d668ac16182a HEAD",
+      "repo": "alfloop-dev/odayplus",
+      "target_base": "ef8345bce29436ce86bd1a70b857d668ac16182a",
+      "observed_at": "2026-09-12T09:27:10Z",
+      "exit_code": 0,
+      "duration_seconds": 0.015,
+      "stdout": "",
+      "stderr": "",
+      "summary": "git diff --check exit 0: 無 trailing whitespace 或 conflict marker，格式完全乾淨。"
+    },
+    {
+      "receipt_id": "rcpt-002-retraction-bad-object-diagnostic",
+      "command": "git diff --check 4b35121031d054178550beaa2ca3e6ee8e0a39eb HEAD",
+      "repo": "alfloop-dev/odayplus",
+      "target_base": "4b35121031d054178550beaa2ca3e6ee8e0a39eb (non-existent bad object)",
+      "observed_at": "2026-09-12T09:23:08Z",
+      "exit_code": 128,
+      "duration_seconds": 0.000007358,
+      "stdout": "",
+      "stderr": "fatal: bad object 4b35121031d054178550beaa2ca3e6ee8e0a39eb",
+      "summary": "診斷確認先前引用之 4b35121031d054178550beaa2ca3e6ee8e0a39eb 為筆誤，執行必然 exit 128；已正式撤回該不實成功記錄。"
+    },
+    {
+      "receipt_id": "rcpt-003-historical-exact-head-check-reused",
+      "command": "git diff --check 4b35121031d0738ff7c529810cf1b2e267161083 cfe569e1b4692af4c5c5c80d87c881f64d510593",
+      "repo": "alfloop-dev/odayplus",
+      "target_base": "4b35121031d0738ff7c529810cf1b2e267161083",
+      "observed_at": "2026-09-12T09:23:08Z",
+      "exit_code": 0,
+      "duration_seconds": 0.000012862,
+      "stdout": "",
+      "stderr": "",
+      "summary": "Codex reviewer 於 PR #1320 exact head cfe569e1 獨立實測 exit 0，已修正為真實 exact baseline SHA。"
+    },
+    {
+      "receipt_id": "rcpt-004-schema-and-dag-validation",
+      "command": "python3 -c '<acceptance reconciliation & DAG verification snippet>'",
+      "repo": "alfloop-dev/odayplus",
+      "target_base": "HEAD",
+      "observed_at": "2026-09-12T09:27:15Z",
+      "exit_code": 0,
+      "duration_seconds": 0.045,
+      "stdout": "ODP-DEV-ROLLOUT-001 acceptance reconciliation validation: PASSED\n",
+      "stderr": "",
+      "summary": "結構化 JSON 與 17 節點 17 邊 DAG 無環檢查通過，edge_set_sha256 d1db3233… 比對一致。"
+    }
+  ]
 }
