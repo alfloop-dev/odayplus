@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,7 @@ from delivery_toolchain.release.release_manifest import (
     INITIAL_RELEASE_RECOVERY_METHOD,
     INITIAL_RELEASE_TARGET_INVENTORY,
     SOURCES_OFF_CLOUD_RUN_EGRESS,
+    SOURCES_OFF_EGRESS_CONTRACT_FILES,
     SOURCES_OFF_EGRESS_POSTURE,
     SOURCES_OFF_PROVIDER_MODE,
     SOURCES_OFF_RUNTIME_PROBE_REASON,
@@ -1422,7 +1424,28 @@ def test_sources_off_egress_contract_evaluates_real_candidate_content() -> None:
     assert evidence["contract_digest"] == expected_digest
 
 
-def test_sources_off_egress_contract_fails_explicitly_on_missing_candidate_blob_or_object() -> None:
+def _create_egress_candidate(tmp_path: Path, *, missing_file: str | None = None) -> tuple[Path, str]:
+    """Create a real candidate commit with controlled contract contents."""
+    repo = tmp_path / "candidate"
+    repo.mkdir()
+    subprocess.run(["git", "init", "--quiet", str(repo)], check=True, capture_output=True)
+    for relative in SOURCES_OFF_EGRESS_CONTRACT_FILES:
+        if relative == missing_file:
+            continue
+        destination = repo / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes((ROOT / relative).read_bytes())
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-c", "user.name=ODP Test Fixture", "-c", "user.email=fixture@example.invalid",
+         "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "Contract fixture"],
+        cwd=repo, check=True, capture_output=True,
+    )
+    sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    return repo, sha
+
+
+def test_sources_off_egress_contract_fails_explicitly_on_missing_candidate_blob_or_object(tmp_path: Path) -> None:
     """Reading contract blobs from missing candidate object/blob must fail explicitly."""
     with pytest.raises(RuntimeError) as exc_info:
         compute_sources_off_egress_contract_digest(root=ROOT, candidate_sha="0" * 40)
@@ -1432,15 +1455,23 @@ def test_sources_off_egress_contract_fails_explicitly_on_missing_candidate_blob_
     assert errors
     assert any("cannot be read for candidate" in err for err in errors)
 
-    # Missing blob in an existing commit (e.g. ccb7c34d9659f81640a3dd9ec2b100cb595f87b3 lacking deploy-dev.yml)
-    old_sha = "ccb7c34d9659f81640a3dd9ec2b100cb595f87b3"
-    with pytest.raises(RuntimeError) as exc_info:
-        compute_sources_off_egress_contract_digest(root=ROOT, candidate_sha=old_sha)
-    assert ".github/workflows/deploy-dev.yml" in str(exc_info.value)
-
-    old_errors = _sources_off_egress_contract_errors(root=ROOT, candidate_sha=old_sha)
-    assert old_errors
-    assert any(".github/workflows/deploy-dev.yml" in err for err in old_errors)
+    # The candidate really exists; only the required workflow blob is missing.
+    missing_file = ".github/workflows/deploy-dev.yml"
+    repo, incomplete_sha = _create_egress_candidate(tmp_path, missing_file=missing_file)
+    subprocess.run(
+        ["git", "cat-file", "-e", f"{incomplete_sha}^{{commit}}"],
+        cwd=repo, check=True, capture_output=True,
+    )
+    # A healthy checkout must not rescue the incomplete committed candidate.
+    restored_workflow = repo / missing_file
+    restored_workflow.parent.mkdir(parents=True, exist_ok=True)
+    restored_workflow.write_bytes((ROOT / missing_file).read_bytes())
+    assert _sources_off_egress_contract_errors(root=repo) == []
+    with pytest.raises(RuntimeError, match="deploy-dev.yml"):
+        compute_sources_off_egress_contract_digest(root=repo, candidate_sha=incomplete_sha)
+    errors = _sources_off_egress_contract_errors(root=repo, candidate_sha=incomplete_sha)
+    assert errors
+    assert any(missing_file in error for error in errors)
 
     # sources_off_attestation_errors must also fail closed without falling back to worktree
     manifest = load_manifest()
@@ -1456,20 +1487,39 @@ def test_sources_off_egress_contract_fails_explicitly_on_missing_candidate_blob_
     assert any("egress_evidence cannot be verified" in err or "cannot be read for candidate" in err for err in att_errors)
 
 
-def test_sources_off_egress_contract_differs_between_candidate_and_worktree() -> None:
-    """Candidate digest remains bound to candidate SHA regardless of worktree modifications."""
+def test_sources_off_egress_contract_differs_between_candidate_and_worktree(tmp_path: Path) -> None:
+    """Dirty worktree contents cannot replace the exact candidate contract."""
+    repo, candidate_sha = _create_egress_candidate(tmp_path)
     candidate_digest = compute_sources_off_egress_contract_digest(
-        root=ROOT,
-        candidate_sha=REAL_CANDIDATE_SHA,
+        root=repo, candidate_sha=candidate_sha,
     )
-    worktree_digest = compute_sources_off_egress_contract_digest(
-        root=ROOT,
-        candidate_sha=None,
-    )
-    assert candidate_digest == "sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09"
-    assert worktree_digest.startswith("sha256:")
-    # When worktree files (e.g. staging_lifecycle.py) are modified, worktree_digest differs
-    # but validate_manifest succeeds because it validates candidate_sha against git object
-    manifest = load_manifest()
-    assert validate_manifest(manifest) == []
+    assert candidate_digest == compute_sources_off_egress_contract_digest(root=repo)
+    assert _sources_off_egress_contract_errors(root=repo, candidate_sha=candidate_sha) == []
 
+    workflow = repo / ".github/workflows/deploy-dev.yml"
+    workflow.write_text("ODP_EXTERNAL_PROVIDER_MODE: enabled\n", encoding="utf-8")
+    assert compute_sources_off_egress_contract_digest(root=repo) != candidate_digest
+    assert _sources_off_egress_contract_errors(root=repo)
+    assert compute_sources_off_egress_contract_digest(
+        root=repo, candidate_sha=candidate_sha,
+    ) == candidate_digest
+    assert _sources_off_egress_contract_errors(root=repo, candidate_sha=candidate_sha) == []
+    evidence = build_sources_off_egress_evidence(root=repo, candidate_sha=candidate_sha)
+    assert evidence["contract_digest"] == candidate_digest
+
+    policy_digest = "sha256:" + "a" * 64
+    attestation = build_sources_off_attestation(
+        candidate_sha=candidate_sha,
+        components=SOURCES_OFF_COMPONENTS,
+        source_policy_digest=policy_digest,
+        provider_mode=SOURCES_OFF_PROVIDER_MODE,
+        sources_inventory=clean_sources_inventory(),
+        root=repo,
+    )
+    assert sources_off_attestation_errors(
+        attestation,
+        candidate_sha=candidate_sha,
+        components=SOURCES_OFF_COMPONENTS,
+        source_policy_digest=policy_digest,
+        root=repo,
+    ) == []
