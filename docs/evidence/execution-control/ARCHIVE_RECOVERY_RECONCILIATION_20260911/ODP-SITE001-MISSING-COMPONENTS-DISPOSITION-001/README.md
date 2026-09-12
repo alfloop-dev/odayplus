@@ -1,4 +1,4 @@
-# ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001 驗收核對與補證記錄 (2026-09-11)
+# ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001 驗收核對與補證記錄 (2026-09-12)
 
 ## 1. 任務背景與復原目標
 
@@ -7,7 +7,7 @@
 - **執行身分 (Owner)**: `Antigravity5`
 - **指派審查者 (Reviewer)**: `Codex2`
 - **復原目標分支**: `task/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001-RECOVERY-20260911`
-- **對照基準 (Pinned Dev Base)**: `2889b55fb1febe95c9f8650f24ead18e86015cca`
+- **對照基準 (Dev Baseline)**: `4b35121031d0738ff7c529810cf1b2e267161083`（經 base advance 整合 PR #1313 合併之 `origin/dev` 最新狀態；歷史曾對照 `2889b55fb1febe95c9f8650f24ead18e86015cca`）
 - **原始交付記錄**: PR [#1160](https://github.com/alfloop-dev/odayplus/pull/1160)（Head SHA: `ffe02988a1b4def412090c6b422e6efb26081d9f`，Merge Commit: `9f53418df41e558c8f953c801dd8fd1f25f77b5b`，Merged at `2026-09-03T16:51:21Z`）
 
 本任務原始目的為依據 `ODP-SITE001-DATA-READINESS-001` 之資料準備度查證事實，逐 member 判定 `ODP-FR-SITE-001` 中之 `BRAND_TRANSFER` 與 `FORMAT_CONVERSION` 兩項成員之處置狀態。
@@ -57,10 +57,10 @@ PR [#1160](https://github.com/alfloop-dev/odayplus/pull/1160) 於 2026-09-03 交
 
 ### 4.2 歷史依賴快照與精確依賴關係 Before / After 核對 (Explicitly Unchanged)
 
-依據 Canonical 歸檔 `/home/lupin/odayplus/ai-task-archive/tasks/` 及看板現狀：
-- `ODP-BRAND-TRANSFER-CONTRACT-PREP-001.json` (SHA256: `572eb22da48f7d367a15fe82a191dcb1379aaca91db3d31fe632c01bac885975`, archived_at: `2026-09-08T16:42:34Z`) 記錄 `task_depends_on: ["ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"]`。
-- `ODP-FORMAT-CONVERSION-CONTRACT-PREP-001.json` (SHA256: `9af75cde28b5507aec4229d74674b3f2abf652d71ababc6dacccae7055324185`, archived_at: `2026-09-08T19:02:57Z`) 記錄 `task_depends_on: ["ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"]`。
-- `ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001.json` (SHA256: `9dfeedca3ca9301a167b8c153e946aee5f08c6c0e5d5b60538a5e02fadf1fcbf`, archived_at: `2026-09-08T14:54:58Z`) 記錄 `task_depends_on: []`。
+依據 Canonical 歸檔 `/home/lupin/odayplus/ai-task-archive/tasks/` 及看板現狀（正規化 archive envelope 讀取 `task.depends_on`）：
+- `ODP-BRAND-TRANSFER-CONTRACT-PREP-001.json` (SHA256: `572eb22da48f7d367a15fe82a191dcb1379aaca91db3d31fe632c01bac885975`, archived_at: `2026-09-08T16:42:34Z`) 依正規化 task envelope 記錄 `task.depends_on: ["ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"]`。
+- `ODP-FORMAT-CONVERSION-CONTRACT-PREP-001.json` (SHA256: `9af75cde28b5507aec4229d74674b3f2abf652d71ababc6dacccae7055324185`, archived_at: `2026-09-08T19:02:57Z`) 依正規化 task envelope 記錄 `task.depends_on: ["ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"]`。
+- `ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001.json` (SHA256: `9dfeedca3ca9301a167b8c153e946aee5f08c6c0e5d5b60538a5e02fadf1fcbf`, archived_at: `2026-09-08T14:54:58Z`) 依正規化 task envelope 記錄 `task.depends_on: []`。
 
 本次補證嚴格遵守唯讀治理原則，不手改看板狀態，不變更任何 DAG 依賴邊（Before / After 保持一致）：
 
@@ -96,56 +96,62 @@ PR [#1160](https://github.com/alfloop-dev/odayplus/pull/1160) 於 2026-09-03 交
 
 ### 4.3 依賴閉包無環拓撲計算 (Computed Transitive DAG Cycle Check)
 
-針對本任務及全案結構修復結案任務 (`ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001`) 之完整依賴傳遞閉包（涵蓋看板任務與歸檔任務，共 43 個頂點、41 條導向邊）進行 Kahn 演算法拓撲排序與 DFS 循環偵測計算：
-- **閉包節點規模**: 43 個任務節點（含 `ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001`、`ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001` 及其全部 17 項前置任務與其上游依賴任務、Stage 30/31 任務群）。
+針對本任務及全案結構修復結案任務 (`ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001`) 之完整依賴傳遞閉包（正規化載入看板任務與歸檔任務之 `task.depends_on`，共 49 個頂點、51 條導向邊）進行 Kahn 演算法拓撲排序與 DFS 循環偵測計算：
+- **閉包節點規模**: 49 個任務節點（含 `ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001`、`ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001` 及其全部 17 項前置任務與其完整上游依賴任務、Stage 30/31 任務群、Archive 復原執行群等）。
 - **未解析頂點 (Unresolved Vertices)**: 0 個（`unresolved_vertices: []`，全數節點均於 Canonical 看板或歸檔中精確解析）。
-- **評估導向邊數 (Evaluated Edges)**: 41 條有向依賴邊。
+- **評估導向邊數 (Evaluated Edges)**: 51 條有向依賴邊。
 - **循環檢測結果**: `cycle_detected: false`（無任何環狀依賴）。
 - **結構合法性**: `is_valid_dag: true`（完全符合有向無環圖定義）。
 - **拓撲排序序列 (Topological Order)**:
   1. `DPF-EMGI-LIVE-ROLLOUT-001`
   2. `ODP-AVM-DEPRECIATION-CONTRACT-001`
-  3. `ODP-AVM-QUALITY-NULLABLE-001`
-  4. `ODP-AVM-DEPRECIATION-INTEGRATION-001`
-  5. `ODP-BRAND-TRANSFER-CONTRACT-PREP-001`
-  6. `ODP-BRAND-TRANSFER-IMPLEMENTATION-001`
-  7. `ODP-CANONICAL-LEGACY-LINEAGE-001`
-  8. `ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002`
-  9. `ODP-DEV-STAGED-GATE-RECONCILIATION-001`
-  10. `ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001`
-  11. `ODP-FORMAT-CONVERSION-CONTRACT-PREP-001`
-  12. `ODP-FORMAT-CONVERSION-IMPLEMENTATION-001`
-  13. `ODP-GITHUB-GCP-ENV-BOOTSTRAP-001`
-  14. `ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001`
-  15. `ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001`
-  16. `ODP-INT-MANUAL-CORRECTION-AUDIT-001`
-  17. `ODP-INT001-CDC-DISPOSITION-001`
-  18. `ODP-INTV006-ADJUST-WORKFLOW-001`
-  19. `ODP-JOB-PARTIAL-DISPOSITION-001`
-  20. `ODP-LH-PREDICTION-DRIFT-001`
-  21. `ODP-LH003-BACKTEST-RELEASE-GATE-001`
-  22. `ODP-MEASUREMENT-CROSSLAYER-GATE-001`
-  23. `ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001`
-  24. `ODP-MODELREADY-A4-REMEDIATION-001`
-  25. `ODP-NET002-LEASE-DISPOSITION-001`
-  26. `ODP-NETPLAN-DISCLOSURE-UI-E2E-001`
-  27. `ODP-OPS002-DECISION-COMMENTS-001`
-  28. `ODP-PRICE006-BANDIT-GATED-001`
-  29. `ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001`
+  3. `ODP-CANONICAL-LEGACY-LINEAGE-001`
+  4. `ODP-DEV-STAGED-GATE-RECONCILIATION-001`
+  5. `ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001`
+  6. `ODP-GITHUB-GCP-ENV-BOOTSTRAP-001`
+  7. `ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001`
+  8. `ODP-BRAND-TRANSFER-CONTRACT-PREP-001`
+  9. `ODP-BRAND-TRANSFER-IMPLEMENTATION-001`
+  10. `ODP-FORMAT-CONVERSION-CONTRACT-PREP-001`
+  11. `ODP-FORMAT-CONVERSION-IMPLEMENTATION-001`
+  12. `ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001`
+  13. `ODP-AVM-QUALITY-NULLABLE-001`
+  14. `ODP-AVM-DEPRECIATION-INTEGRATION-001`
+  15. `ODP-INT-MANUAL-CORRECTION-AUDIT-001`
+  16. `ODP-INT001-CDC-DISPOSITION-001`
+  17. `ODP-INTV006-ADJUST-WORKFLOW-001`
+  18. `ODP-JOB-PARTIAL-DISPOSITION-001`
+  19. `ODP-LH-PREDICTION-DRIFT-001`
+  20. `ODP-LH003-BACKTEST-RELEASE-GATE-001`
+  21. `ODP-MEASUREMENT-CROSSLAYER-GATE-001`
+  22. `ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001`
+  23. `ODP-MODELREADY-A4-REMEDIATION-001`
+  24. `ODP-NET002-LEASE-DISPOSITION-001`
+  25. `ODP-NETPLAN-DISCLOSURE-UI-E2E-001`
+  26. `ODP-OPS002-DECISION-COMMENTS-001`
+  27. `ODP-PRICE006-BANDIT-GATED-001`
+  28. `ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001`
+  29. `ODP-RELEASE-GATE-FIXTURE-STAGING-002`
   30. `ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001`
   31. `ODP-REQ-DISPOSITION-GOVERNANCE-001`
   32. `ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001`
-  33. `ODP-RUNTIME-RELEASE-SINGLE-PATH-001`
-  34. `ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001`
-  35. `ODP-SITESCORE-QUALITY-NULLABLE-001`
-  36. `ODP-SPEC-SOURCE-PROVENANCE-001`
-  37. `ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001`
-  38. `ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002`
-  39. `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001`
-  40. `ODP-NFR-RUNTIME-EVIDENCE-001`
-  41. `ORCH-ARCHIVE-HISTORY-EXECUTE-003`
-  42. `ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001`
-  43. `ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001`
+  33. `ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002`
+  34. `ODP-RUNTIME-RELEASE-SINGLE-PATH-001`
+  35. `ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001`
+  36. `ODP-SITESCORE-QUALITY-NULLABLE-001`
+  37. `ODP-SPEC-SOURCE-PROVENANCE-001`
+  38. `ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001`
+  39. `ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002`
+  40. `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001`
+  41. `ODP-NFR-RUNTIME-EVIDENCE-001`
+  42. `ORCH-ARCHIVE-HISTORY-RECOVERY-001`
+  43. `ORCH-ARCHIVE-RECOVERY-EVIDENCE-001`
+  44. `ORCH-ARCHIVE-HISTORY-APPLY-001`
+  45. `ORCH-ARCHIVE-HISTORY-RESTORE-002`
+  46. `ORCH-ARCHIVE-RECOVERY-INVALIDATION-001`
+  47. `ORCH-ARCHIVE-HISTORY-EXECUTE-003`
+  48. `ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001`
+  49. `ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001`
 
 ### 4.4 處置任務結案性分析
 
@@ -169,18 +175,18 @@ PR [#1160](https://github.com/alfloop-dev/odayplus/pull/1160) 於 2026-09-03 交
 本次復原補證交付物經由以下實測命令完成驗證：
 
 ```bash
-git diff --check 2889b55fb1febe95c9f8650f24ead18e86015cca HEAD
+git diff --check 4b35121031d0738ff7c529810cf1b2e267161083 HEAD
 cmp -s docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/original-evidence.json /home/lupin/odayplus/support/handoffs/archive-recovery-dispatch-20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/original-evidence.json
 python3 -c "import json, os, glob, heapq; ..."
 ```
 
 ### 驗證執行收據 (Verification Execution Receipts)
 
-| 收據項目 | 執行命令 | 測量基準 / 範圍 | 終端退出碼 | 執行結果與終端輸出摘要 |
-|---|---|---|---|---|
-| **Git Diff Check** | `git diff --check 2889b55fb1febe95c9f8650f24ead18e86015cca HEAD` | Base `2889b55fb1febe95c9f8650f24ead18e86015cca` / HEAD | `0` | **PASS**: 無空白行錯誤、無非預期變更。 |
-| **原始證據完整性** | `cmp -s original-evidence.json $CANONICAL_COPY` | Worktree copy vs Canonical dispatch copy | `0` | **PASS**: 檔案內容完全一致 (byte-for-byte match)。 |
-| **Canonical 看板與傳遞依賴閉包 DAG 拓撲無環計算** | `python3 -c "import json, os, glob, heapq; ..."` | Canonical Board `/home/lupin/odayplus/ai-status.json` and task archives | `0` | **PASS**: `Dependency closure verified: 43 vertices, 41 edges, 0 cycles, valid DAG.` |
+| 收據項目 | 執行命令 (Argv) | 測量基準 / 範圍 | 執行時間與耗時 | 終端退出碼 | 執行結果與終端輸出摘要 |
+|---|---|---|---|---|---|
+| **Git Diff Check** | `git diff --check 4b35121031d0738ff7c529810cf1b2e267161083 HEAD` | Base `4b35121031d0` / HEAD `513d39086e80` | `2026-09-12T09:17:44Z` (~0.009s) | `0` | **PASS**: 無空白行錯誤、無非預期變更。 |
+| **原始證據完整性** | `cmp -s docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/original-evidence.json /home/lupin/odayplus/support/handoffs/archive-recovery-dispatch-20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/original-evidence.json` | Worktree copy vs Canonical dispatch copy | `2026-09-12T09:17:44Z` (~0.005s) | `0` | **PASS**: 檔案內容完全一致 (byte-for-byte match)。 |
+| **Canonical 看板與傳遞依賴閉包 DAG 拓撲無環計算** | `python3 -c "import json, os, glob, heapq; ..."` | Canonical Board `/home/lupin/odayplus/ai-status.json` and task archives (`task.depends_on`) | `2026-09-12T09:17:44Z` (~0.100s) | `0` | **PASS**: `Dependency closure verified: 49 vertices, 51 edges, 0 cycles, valid DAG.` |
 
 ### 歷史治理測試套件驗證政策說明 (Historical Test Suite Policy)
 - 原 PR [#1160](https://github.com/alfloop-dev/odayplus/pull/1160) exact-head `ffe02988a1b4` 之 7 項 GitHub CI check-runs 全數綠燈（`product` check-run completed 2026-09-03T16:18:24Z 收集執行了 `tests/governance/test_site001_disposition.py` 及治理成員檢查）。
