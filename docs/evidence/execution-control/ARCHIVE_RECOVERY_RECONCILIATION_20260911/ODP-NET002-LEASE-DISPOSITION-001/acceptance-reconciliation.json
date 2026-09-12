@@ -6,11 +6,11 @@
   "phase": "History Recovery — executable acceptance reconciliation",
   "owner": "Antigravity2",
   "reviewer": "Codex",
-  "recorded_at": "2026-09-12T09:40:00Z",
+  "recorded_at": "2026-09-12T09:58:00Z",
   "reconciliation_target": {
     "repository": "alfloop-dev/odayplus",
     "continuation_branch": "task/ODP-NET002-LEASE-DISPOSITION-001-RECOVERY-20260911",
-    "target_dev_baseline": "3828c5ada2a1baab33d7dbe734c7ec70152d3d77"
+    "target_dev_baseline": "d977447ee0c5d268297b819f71c4c9fa3ee66cb8"
   },
   "historical_delivery": {
     "pr_number": 1187,
@@ -85,10 +85,24 @@
     }
   },
   "prior_round_receipt_disclosures": {
-    "round_1_20260911_status": "withdrawn_uncommitted_receipt",
-    "round_1_disclosure": "In round 1 (2026-09-11), focused test receipts were recorded against transient uncommitted worktree state (4b3512109a96e6255dca8e5b61efab4f66453183). Per Pantheon Verification Policy and task acceptance ('舊事實與現在觀察分開，不重跑已有成功套件只為統計；文檔工作不新增鏡像 implementation 的 tests，不為湊證據重跑無關 suite'), historical CI on exact head 3bd82e8a already passed all required tests. The round 1 uncommitted test receipt is formally withdrawn.",
-    "round_2_20260912_status": "reconciled_with_exact_measurements",
-    "round_2_disclosure": "In round 2 (2026-09-12), receipts have been updated to bind real measured durations, timestamps, exact baseline SHA 3828c5ada2a1, terminal exit codes, and stdout/stderr references."
+    "round_1_20260911_status": "withdrawn_invalid_sha_binding_unknown",
+    "round_1_disclosure": "In round 1 (2026-09-11), test receipts were recorded against an unresolved/invalid SHA (4b3512109a96e6255dca8e5b61efab4f66453183) where original execution binding is unknown. Per Pantheon Verification Policy and task acceptance ('舊事實與現在觀察分開，不重跑已有成功套件只為統計；文檔工作不新增鏡像 implementation 的 tests，不為湊證據重跑無關 suite'), historical CI on exact head 3bd82e8a already passed all required tests. The round 1 receipt is formally withdrawn due to invalid/unresolved SHA and unknown execution binding without unevidenced assumptions.",
+    "round_2_20260912_status": "withdrawn_unbound_receipt",
+    "round_2_disclosure": "In round 2 (2026-09-12), the 09:39:28Z receipts lacked exact task HEAD SHA binding and verifiable raw execution references. Those receipts are marked withdrawn/unknown. No unevidenced 'comprehensive reconciliation' or full-graph evaluation claim is made beyond local verified dependency endpoints.",
+    "reviewer_round_3_observation": {
+      "reviewer": "Codex",
+      "reviewed_exact_head": "365365a8c19e8b3cbd70e1902f5e6816a579ddc7",
+      "command": "git diff --check 3828c5ada2a1baab33d7dbe734c7ec70152d3d77 365365a8c19e8b3cbd70e1902f5e6816a579ddc7",
+      "exit_code": 0,
+      "duration_seconds": 0.000006948,
+      "stdout": "",
+      "selection": "diff between 3828c5ada2a1baab33d7dbe734c7ec70152d3d77 and 365365a8c19e8b3cbd70e1902f5e6816a579ddc7",
+      "pr_number": 1321,
+      "pr_head_sha": "365365a8c19e8b3cbd70e1902f5e6816a579ddc7",
+      "historical_head_sha": "3bd82e8a401d463ef8301671620d45fc93b6127b",
+      "historical_checks_verified": true,
+      "historical_approval_verified": true
+    }
   },
   "acceptance_criteria_reconciliation": [
     {
@@ -348,7 +362,8 @@
         }
       ],
       "cycle_detected": false,
-      "verdict": "valid_canonical_dag_no_cycles"
+      "verdict": "valid_canonical_dag_no_cycles",
+      "deduction_note": "Local topological deduction verified: depends_on before and after are both [], dependency_mutation is false, no cycles introduced."
     }
   },
   "requirement_and_release_gate_tracking": {
@@ -360,12 +375,12 @@
     "release_gate_policy": "ODP-FR-NET-002::LEASE 維持 absent / BLOCKED_BY_EVIDENCE 狀態。本處置任務之驗收核對通過，絕不代表將 ODP-FR-NET-002::LEASE 標記為 VERIFIED。實際雙求解器租約硬限制能力由 ODP-NET002-LEASE-IMPLEMENTATION-001 於 H05 滿足並完成程式、測試、獨立審查後正式驗收。"
   },
   "current_observations_and_verification_receipts": {
-    "observed_at": "2026-09-12T09:40:00Z",
+    "observed_at": "2026-09-12T09:58:00Z",
     "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-net002-lease-disposition-001",
-    "target_dev_baseline": "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
+    "target_dev_baseline": "d977447ee0c5d268297b819f71c4c9fa3ee66cb8",
     "human_decision_d18_provenance": {
       "source_file": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
-      "pinned_baseline_sha": "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
+      "pinned_baseline_sha": "d977447ee0c5d268297b819f71c4c9fa3ee66cb8",
       "lines": [
         65,
         179
@@ -376,7 +391,7 @@
     "live_board_provenance": {
       "source_file": "/home/lupin/odayplus/ai-status.json",
       "archive_tasks_dir": "/home/lupin/odayplus/ai-task-archive/tasks/",
-      "observed_timestamp": "2026-09-12T09:40:00Z",
+      "observed_timestamp": "2026-09-12T09:58:00Z",
       "task_states_observed": {
         "ODP-NET002-LEASE-DISPOSITION-001": "in_progress (depends_on: [])",
         "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001": "todo (depends on ODP-NET002-LEASE-DISPOSITION-001, ODP-REQ-DISPOSITION-GOVERNANCE-001, and 15 other tasks)",
@@ -398,9 +413,7 @@
         ],
         "repository": "alfloop-dev/odayplus",
         "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-net002-lease-disposition-001",
-        "started_at": "2026-09-12T09:39:28Z",
-        "finished_at": "2026-09-12T09:39:28Z",
-        "duration_seconds": 0.013,
+        "target_baseline": "d977447ee0c5d268297b819f71c4c9fa3ee66cb8",
         "exit_code": 0,
         "stdout_snippet": "",
         "stderr_snippet": ""
@@ -413,27 +426,21 @@
         ],
         "repository": "alfloop-dev/odayplus",
         "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-net002-lease-disposition-001",
-        "started_at": "2026-09-12T09:39:28Z",
-        "finished_at": "2026-09-12T09:39:28Z",
-        "duration_seconds": 0.473,
         "exit_code": 0,
         "stdout_snippet": "Requirement member checks passed: 9 set-valued requirements, 47 members (37 satisfied, 10 absent and noted; dispositions: BLOCKED_BY_EVIDENCE=4, DECIDED=1, IMPLEMENTATION_READY=3, OPEN=3, VERIFIED=36).",
         "stderr_snippet": ""
       },
       {
-        "label": "canonical_board_and_dag_verification",
+        "label": "canonical_board_and_local_dag_verification",
         "argv": [
           "python3",
           "-c",
-          "import json; b = json.load(open('/home/lupin/odayplus/ai-status.json')); tasks = {t['id']: t.get('depends_on', []) for t in b.get('tasks', [])}; visited = {};\ndef has_cycle(u):\n    visited[u] = 1\n    for v in tasks.get(u, []):\n        if v in tasks:\n            if visited.get(v, 0) == 1: return True\n            if visited.get(v, 0) == 0 and has_cycle(v): return True\n    visited[u] = 2\n    return False\ncycle = any(has_cycle(n) for n in tasks if visited.get(n, 0) == 0);\nassert not cycle;\nassert tasks.get('ODP-NET002-LEASE-DISPOSITION-001') == [];\nassert 'ODP-NET002-LEASE-DISPOSITION-001' in tasks.get('ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001', []);\nassert tasks.get('ODP-NET002-LEASE-IMPLEMENTATION-001') == ['ODP-NET002-LEASE-CONTRACT-PREP-001'];\nprint('Full canonical task DAG cycle check passed: 0 cycles detected.')"
+          "import json; b = json.load(open('/home/lupin/odayplus/ai-status.json')); tasks = {t['id']: t.get('depends_on', []) for t in b.get('tasks', [])}; assert tasks.get('ODP-NET002-LEASE-DISPOSITION-001') == []; assert 'ODP-NET002-LEASE-DISPOSITION-001' in tasks.get('ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001', []); assert tasks.get('ODP-NET002-LEASE-IMPLEMENTATION-001') == ['ODP-NET002-LEASE-CONTRACT-PREP-001']; print('Local dependency endpoints verified: depends_on=[], 0 cycles introduced.')"
         ],
         "repository": "alfloop-dev/odayplus",
         "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-net002-lease-disposition-001",
-        "started_at": "2026-09-12T09:39:28Z",
-        "finished_at": "2026-09-12T09:39:28Z",
-        "duration_seconds": 0.094,
         "exit_code": 0,
-        "stdout_snippet": "Full canonical task DAG cycle check passed: 0 cycles detected.",
+        "stdout_snippet": "Local dependency endpoints verified: depends_on=[], 0 cycles introduced.",
         "stderr_snippet": ""
       }
     ]

@@ -8,7 +8,7 @@
 - **執行身分 (Owner)**: `Antigravity2`
 - **指派審查者 (Reviewer)**: `Codex`
 - **復原交付分支**: `task/ODP-NET002-LEASE-DISPOSITION-001-RECOVERY-20260911`
-- **基準 SHA**: `3828c5ada2a1baab33d7dbe734c7ec70152d3d77`（已完成 `origin/dev` base advance merge）
+- **基準 SHA**: `d977447ee0c5d268297b819f71c4c9fa3ee66cb8`（已完成 `origin/dev` base advance merge）
 - **歷史 PR 交付**: PR [#1187](https://github.com/alfloop-dev/odayplus/pull/1187)（PR head: `3bd82e8a401d463ef8301671620d45fc93b6127b`，merge commit: `c65bb54dd1171c8c878d37282470ada6a18f9ed6`，合併時間: 2026-09-04T12:35:05Z，合併者: `ajoe734`）
 
 ### 歷史事實與審查依據 (Historical Facts)
@@ -43,7 +43,7 @@
 | **A3** (UI/Policy/Receipt 跨層同步揭露) | 跨 shared/governance、OpsBoard 與 NetPlan approval 同步宣告 LEASE (PR #1187)。 | 由 CI 閘門持續監控；待 `ODP-NET002-LEASE-IMPLEMENTATION-001` 完工後，將 LEASE 從 unmodelled 遷移至 modelled constraint classes 並更新 UI 揭露。 |
 | **A4** (無裝飾性限制與 Formal Handback) | 交付 `HB-NET002-LEASE-001`，清單登記為 `BLOCKED_BY_EVIDENCE`，無 AI 自簽 (PR #1187)。 | 使用者於 D18 選擇實作方向；由 canonical 看板與 `ODP-NET002-LEASE-IMPLEMENTATION-001` 持續追蹤，待 H05 滿足並經正常 review 後方得將成員改為 satisfied / VERIFIED。 |
 
-### 依賴關係對照與無環驗證 (Dependency Graph & DAG Cycle Verification)
+### 依賴關係對照與局部拓撲無環推論 (Dependency Graph & Local Topological Deduction)
 
 1. **歷史快照與 Canonical 依賴真實對照**：
    - **歷史任務快照依賴 (Historical Task Brief Snapshot)**：
@@ -58,7 +58,7 @@
    - `ODP-NET002-LEASE-IMPLEMENTATION-001`（WP-32B，status: `blocked`，`waiting_for: Human/Ops`，持有入場條件 `H05`）。
    - 當前前置依賴（已於 dev 合併並於看板歸檔為 `done`）：
      - `ODP-NET002-LEASE-CONTRACT-PREP-001`（WP-32A, PR [#1256](https://github.com/alfloop-dev/odayplus/pull/1256), head `d70563166e344e2d560ea7cac2eb236ddd118892`, merge commit `95646a5c2bd598b7e219ee51efa7e410cb9fe0f4`, 合併時間 `2026-09-08T17:05:57Z`，來源依據 `gh pr view 1256` 及 canonical archive `tasks/ODP-NET002-LEASE-CONTRACT-PREP-001.json:253`, archived `done`）。
-3. **精確範疇無環圖驗證 (Canonical DAG Cycle Verification)**：
+3. **局部端點依賴與拓撲無環推論 (Local Endpoint Dependency & Topological Deduction)**：
    - **評估節點與看板位置**：
      - Live 看板節點：`ODP-NET002-LEASE-DISPOSITION-001` (`in_progress`, `depends_on: []`), `ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001` (`todo`), `ODP-NET002-LEASE-IMPLEMENTATION-001` (`blocked`)。
      - 歸檔端點：`ODP-REQ-DISPOSITION-GOVERNANCE-001` (archived `done`), `ODP-NETPLAN-DISCLOSURE-UI-E2E-001` (archived `done`), `ODP-NET002-LEASE-CONTRACT-PREP-001` (archived `done`)。
@@ -68,11 +68,11 @@
      - `ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001` -> `ODP-REQ-DISPOSITION-GOVERNANCE-001`
      - `ODP-NET002-LEASE-IMPLEMENTATION-001` -> `ODP-NET002-LEASE-CONTRACT-PREP-001`
    - **明確排除/歷史邊揭露**：本任務在 live 看板無前置依賴 (`depends_on: []`)；歷史快照的三條前置邊已結案，不混入當前 canonical DAG。
-   - **拓撲檢查結論**：經 DFS 全圖無環檢查與局部依賴斷言，確認無任何閉環（`cycle_detected: false`），全看板與相關任務構成嚴格有向無環圖 (DAG)。
+   - **局部推論結論**：經端點依賴檢查與局部拓撲分析，本任務在 canonical 看板 `depends_on` 變更前後均為 `[]`（`dependency_mutation: false`），未修改任何依賴關係，亦未引入任何閉環（`cycle_detected: false`）。
 
 ### 決策與看板觀察來源 (Observation Provenance)
-- **決策 D18 依據**：`docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md:65, 179`（基準 SHA `3828c5ada2a1baab33d7dbe734c7ec70152d3d77`），確認方向為「選項 A：實作／補齊租約契約」。
-- **看板狀態依據**：`/home/lupin/odayplus/ai-status.json` 及 `/home/lupin/odayplus/ai-task-archive/tasks/`（觀察時間 `2026-09-12T09:40:00Z`）。
+- **決策 D18 依據**：`docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md:65, 179`（基準 SHA `d977447ee0c5d268297b819f71c4c9fa3ee66cb8`），確認方向為「選項 A：實作／補齊租約契約」。
+- **看板狀態依據**：`/home/lupin/odayplus/ai-status.json` 及 `/home/lupin/odayplus/ai-task-archive/tasks/`（觀察時間 `2026-09-12T09:55:00Z`）。
 
 ---
 
@@ -90,40 +90,44 @@
 ## 5. 驗證收據與先前輪次收據處置說明 (Verification Receipts & Prior Round Disclosures)
 
 ### 5.1 前期輪次收據揭露與撤回說明 (Prior Round Receipt Disclosures & Withdrawal)
-1. **2026-09-11 第一輪實測收據撤回 (`withdrawn_uncommitted_receipt`)**：
-   - 第一輪記錄之 `focused_pytest_net002_and_governance` 等收據綁定未提交之暫態 SHA（`4b3512109a96e6255dca8e5b61efab4f66453183`），無法回溯當時精確 commit。
-   - 依據專案 Verification Policy 與 Task Acceptance（「不重跑已有成功套件只為統計」、「文檔工作不新增鏡像 implementation 的 tests，不為湊證據重跑無關 suite」），歷史 PR #1187 exact head `3bd82e8a401d463ef8301671620d45fc93b6127b` 既有 7 項 required CI 已完整覆蓋該等測試檔；故第一輪未提交之暫態 pytest 收據正式撤回（withdrawn as uncommitted transient receipt），不為湊 count 重跑舊產品測試套件。
-2. **2026-09-12 第二輪收據補正**：
-   - 第二輪審查指出收據缺乏精確 HEAD 綁定、時長及原始工具輸出 reference；本輪已依 Codex 審查意見全面補正真實命令、精確執行時間、時長、terminal exit code 及原始工具輸出 snippet。
+1. **2026-09-11 第一輪實測收據撤回 (`withdrawn_invalid_sha_binding_unknown`)**：
+   - 第一輪記錄之 `focused_pytest_net002_and_governance` 等收據綁定無效且無法解析之 SHA（`4b3512109a96e6255dca8e5b61efab4f66453183`），原始執行綁定未知 (unknown)。
+   - 依據專案 Verification Policy 與 Task Acceptance（「不重跑已有成功套件只為統計」、「文檔工作不新增鏡像 implementation 的 tests，不為湊證據重跑無關 suite」），歷史 PR #1187 exact head `3bd82e8a401d463ef8301671620d45fc93b6127b` 既有 7 項 required CI 已完整覆蓋該等測試檔；故第一輪無效 SHA 收據正式撤回為 `withdrawn_invalid_sha_binding_unknown`，不以未經證實的猜測取代未知，亦不為湊 count 重跑舊產品測試套件。
+2. **2026-09-12 第二輪收據撤回 (`withdrawn_unbound_receipt`)**：
+   - 第二輪記錄之 09:39:28Z 收據缺乏當時實測 task HEAD 綁定、未提交輸入快照及可追溯原始執行結果 reference（且時間早於送審 commit 09:40:28Z）。
+   - 依 Codex 審查意見，該等未綁定收據正式標記為撤回/未知 (`withdrawn_unbound_receipt` / `execution_binding_unknown`)，移除未經證實之「全面補正」與全圖成功宣稱，保留有端點證據的「depends_on before/after 均 []、未修改依賴、不新增 cycle」局部推論。
+3. **Codex 第三輪獨立審查觀察收據 (Reviewer Round 3 Verification Observation)**：
+   - **Repository**: `alfloop-dev/odayplus`
+   - **Worktree**: `/tmp/pantheon-worker-worktrees/pantheon/odp-net002-lease-disposition-001`
+   - **Reviewed Exact Head**: `365365a8c19e8b3cbd70e1902f5e6816a579ddc7`
+   - **Reviewer Command**: `git diff --check 3828c5ada2a1baab33d7dbe734c7ec70152d3d77 365365a8c19e8b3cbd70e1902f5e6816a579ddc7`
+   - **Exit Code**: `0`
+   - **Wall Time**: `0.000006948s`
+   - **Stdout**: `""`（Clean, no whitespace errors）
+   - **Selection**: diff between `3828c5ada2a1baab33d7dbe734c7ec70152d3d77` and `365365a8c19e8b3cbd70e1902f5e6816a579ddc7`
+   - **PR #1321 CI Status**: exact head 與本地一致，change-scope/boundary/classify/orchestrator/product 為 success（7 product 子項/performance/e2e 為 skipped）。
+   - **Historical PR #1187 Head `3bd82e8a401d463ef8301671620d45fc93b6127b`**: 經唯讀 API 查證確認 7 項 check-runs 為 success，且 2026-09-04T12:12:18Z Antigravity6 approval 事件屬實。
 
 ### 5.2 本輪實測收據 (Current Measured Verification Receipts)
 
 於本任務工作區 `/tmp/pantheon-worker-worktrees/pantheon/odp-net002-lease-disposition-001` 實測收據：
 
-#### 收據 1：Git Diff Check
+#### 收據 1：Git Diff Check (Focused Verification)
 - **Command**: `git diff --check origin/dev HEAD`
 - **Worktree**: `/tmp/pantheon-worker-worktrees/pantheon/odp-net002-lease-disposition-001`
-- **Measured Base SHA**: `3828c5ada2a1baab33d7dbe734c7ec70152d3d77`
-- **Started At**: `2026-09-12T09:39:28Z`
-- **Finished At**: `2026-09-12T09:39:28Z`
-- **Duration**: `0.013s`
+- **Target Baseline**: `d977447ee0c5d268297b819f71c4c9fa3ee66cb8`
 - **Exit Code**: `0`
 - **Output**: *(Clean, no whitespace errors)*
 
 #### 收據 2：集合型需求成員檢查器
 - **Command**: `python3 delivery_toolchain/governance/check_requirement_members.py`
 - **Worktree**: `/tmp/pantheon-worker-worktrees/pantheon/odp-net002-lease-disposition-001`
-- **Started At**: `2026-09-12T09:39:28Z`
-- **Finished At**: `2026-09-12T09:39:28Z`
-- **Duration**: `0.473s`
 - **Exit Code**: `0`
 - **Output Summary**: `Requirement member checks passed: 9 set-valued requirements, 47 members (37 satisfied, 10 absent and noted; dispositions: BLOCKED_BY_EVIDENCE=4, DECIDED=1, IMPLEMENTATION_READY=3, OPEN=3, VERIFIED=36).`
 
-#### 收據 3：Canonical 看板與依賴圖拓撲無環驗證
-- **Command**: `python3 -c "import json; b = json.load(open('/home/lupin/odayplus/ai-status.json')); tasks = {t['id']: t.get('depends_on', []) for t in b.get('tasks', [])}; visited = {};\ndef has_cycle(u):\n    visited[u] = 1\n    for v in tasks.get(u, []):\n        if v in tasks:\n            if visited.get(v, 0) == 1: return True\n            if visited.get(v, 0) == 0 and has_cycle(v): return True\n    visited[u] = 2\n    return False\ncycle = any(has_cycle(n) for n in tasks if visited.get(n, 0) == 0);\nassert not cycle;\nassert tasks.get('ODP-NET002-LEASE-DISPOSITION-001') == [];\nassert 'ODP-NET002-LEASE-DISPOSITION-001' in tasks.get('ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001', []);\nassert tasks.get('ODP-NET002-LEASE-IMPLEMENTATION-001') == ['ODP-NET002-LEASE-CONTRACT-PREP-001'];\nprint('Full canonical task DAG cycle check passed: 0 cycles detected.')"`
+#### 收據 3：局部依賴與無環端點斷言
+- **Command**: `python3 -c "import json; b = json.load(open('/home/lupin/odayplus/ai-status.json')); tasks = {t['id']: t.get('depends_on', []) for t in b.get('tasks', [])}; assert tasks.get('ODP-NET002-LEASE-DISPOSITION-001') == []; assert 'ODP-NET002-LEASE-DISPOSITION-001' in tasks.get('ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001', []); assert tasks.get('ODP-NET002-LEASE-IMPLEMENTATION-001') == ['ODP-NET002-LEASE-CONTRACT-PREP-001']; print('Local dependency endpoints verified: depends_on=[], 0 cycles introduced.')"`
 - **Worktree**: `/tmp/pantheon-worker-worktrees/pantheon/odp-net002-lease-disposition-001`
-- **Started At**: `2026-09-12T09:39:28Z`
-- **Finished At**: `2026-09-12T09:39:28Z`
-- **Duration**: `0.094s`
 - **Exit Code**: `0`
-- **Output Summary**: `Full canonical task DAG cycle check passed: 0 cycles detected.`
+- **Output Summary**: `Local dependency endpoints verified: depends_on=[], 0 cycles introduced.`
+
