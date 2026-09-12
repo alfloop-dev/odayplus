@@ -6,11 +6,11 @@
   "phase": "Wave 1 - Staging IaC / History Recovery — executable acceptance reconciliation",
   "owner": "Antigravity2",
   "reviewer": "Codex2",
-  "recorded_at": "2026-09-11T12:35:00Z",
+  "recorded_at": "2026-09-12T09:12:00Z",
   "reconciliation_target": {
     "repository": "alfloop-dev/odayplus",
-    "pinned_dev_sha": "2889b55fb1febe95c9f8650f24ead18e86015cca",
-    "previous_pinned_dev_sha": "4499a2993e37b62033926b07de8d8d2e8469a6c7",
+    "pinned_dev_sha": "4b35121031d0738ff7c529810cf1b2e267161083",
+    "previous_pinned_dev_sha": "2889b55fb1febe95c9f8650f24ead18e86015cca",
     "continuation_branch": "task/ODP-EPHEMERAL-STAGING-IAC-001-RECOVERY-20260911"
   },
   "historical_delivery": {
@@ -23,6 +23,9 @@
     "merged_at": "2026-08-24T19:59:40Z",
     "author": "ajoe734",
     "merged_by": "ajoe734",
+    "historical_depends_on": [
+      "ODP-RELEASE-MANIFEST-GATES-001"
+    ],
     "delivered_artifacts": [
       "infra/terraform/modules/ephemeral_staging/main.tf",
       "infra/terraform/modules/ephemeral_staging/variables.tf",
@@ -38,7 +41,7 @@
       "symbols": [
         "cleanup_ephemeral_staging (L1511)",
         "scan_orphans (L1790)",
-        "extend_staging_ttl (L1864)",
+        "extend_staging_ttl (L2152)",
         "DEFAULT_TTL_HOURS = 24 (L54)",
         "MAX_TTL_HOURS = 168 (L55)"
       ]
@@ -92,7 +95,7 @@
       "test_file": "tests/ops/test_ephemeral_staging_lifecycle.py",
       "exact_head_verified_via": "PR #1002 exact-head product CI job (conclusion=success)",
       "current_baseline_test_methods_count": 96,
-      "current_baseline_note": "dev baseline (@2889b55f) has 96 test methods after subsequent additions; 86 was the exact method count at PR1002 merge 82ed6a05cf67"
+      "current_baseline_note": "dev baseline (@4b351210) has 96 test methods after subsequent additions; 86 was the exact method count at PR1002 merge 82ed6a05cf67"
     },
     "commit_trailers": {
       "LLM-Agent": "Claude2",
@@ -120,6 +123,7 @@
       "execution_summary": "2791 passed, 6 skipped, 10 deselected, 618 subtests passed in 184.91s",
       "collection_breakdown": {
         "ephemeral_staging_tests_collected": 18,
+        "ephemeral_staging_test_composition": "13 non-plan contract & structure tests + 5 offline plan tests",
         "ephemeral_staging_test_file": "infra/terraform/tests/test_ephemeral_staging.py",
         "contract_tests_collected": 14,
         "contract_test_file": "infra/terraform/tests/test_contract.py",
@@ -133,15 +137,25 @@
     }
   },
   "readback_and_verification_sources": {
-    "verified_at": "2026-09-11T12:35:00Z",
+    "verified_at": "2026-09-12T09:12:00Z",
     "verifier": "Antigravity2",
+    "canonical_board_snapshot": {
+      "source": "/home/lupin/odayplus/ai-status.json",
+      "readback_timestamp": "2026-09-12T09:10:06Z",
+      "sha256_digest": "bd2651a1d4e4f5ed5b856f64e1906272d977038b308ee41548d20a7ac4a7ba93",
+      "command": "python3 -c 'import json; print(json.load(open(\"/home/lupin/odayplus/ai-status.json\"))[\"tasks\"])'",
+      "exit_code": 0,
+      "task_entry_status": "in_progress",
+      "task_entry_depends_on": []
+    },
     "command_receipt_provenance": {
       "historical_local_raw_terminal_output_status": "unknown",
       "historical_local_raw_terminal_output_note": "Historical local execution terminal output metadata is unpreserved and marked unknown; exact-head CI execution runs #34514563856 (PR #1291) and #1002 CI check-runs serve as durable remote receipts."
     },
     "base_advance_composition": {
-      "base_sha": "2889b55fb1febe95c9f8650f24ead18e86015cca",
-      "composed_at": "2026-09-11T12:35:42Z",
+      "base_sha": "4b35121031d0738ff7c529810cf1b2e267161083",
+      "previous_base_sha": "2889b55fb1febe95c9f8650f24ead18e86015cca",
+      "composed_at": "2026-09-12T09:11:29Z",
       "merge_strategy": "ort",
       "conflicts": "none"
     }
@@ -160,7 +174,7 @@
       ],
       "status": "met",
       "status_zh": "已滿足",
-      "evidence": "經由 PR #1002 (merge 82ed6a05cf67) 交付之 Terraform 模組 infra/terraform/modules/ephemeral_staging/main.tf 與生命週期程式 product_ops/deployment/staging_lifecycle.py 定義並實作了所有 release-scoped 資源（Cloud Run service、Cloud Run job、專屬 database/schema、GCS bucket、tenant namespace、IAM service accounts 與 invoker 綁定）的可重跑建立契約。離線 Terraform plan 測試（infra/terraform/tests/test_ephemeral_staging.py 內 5 項 plan 測試）與 tests/ops/test_ephemeral_staging_lifecycle.py 完整驗證建立之可重跑性與確定性。歷史 PR #1002 未執行 infra tests 之缺口由 ODP-STAGING-IAC-CI-COLLECTION-001 (PR #1291, head 726065c3aec5, merge 025323f36d05) 補正，於 CI orchestrator job (run 34514563856, job 102996659589) 實跑通過 18 項測試與 24 項 tooling 守門測試。依據 EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md (@c80247fb7d66) §16 之規劃，IaC 程式、定義與離線 plan 可在 Wave 1 交付；真實雲端 apply 精確交由下游 ODP-EPHEMERAL-STAGING-ROLLOUT-001 (Wave 3 - Staging Rollout) 負責，禁止以本任務授權執行 live apply。",
+      "evidence": "經由 PR #1002 (merge 82ed6a05cf67) 交付之 Terraform 模組 infra/terraform/modules/ephemeral_staging/main.tf 與生命週期程式 product_ops/deployment/staging_lifecycle.py 定義並實作了所有 release-scoped 資源（Cloud Run service、Cloud Run job、專屬 database/schema、GCS bucket、tenant namespace、IAM service accounts 與 invoker 綁定）的可重跑建立契約。離線 Terraform plan 測試（infra/terraform/tests/test_ephemeral_staging.py 內 5 項 plan 測試 + 13 項非 plan 契約與結構測試，共 18 項）與 tests/ops/test_ephemeral_staging_lifecycle.py 完整驗證建立之可重跑性與確定性。歷史 PR #1002 未執行 infra tests 之缺口由 ODP-STAGING-IAC-CI-COLLECTION-001 (PR #1291, head 726065c3aec5, merge 025323f36d05) 補正，於 CI orchestrator job (run 34514563856, job 102996659589) 實跑通過 18 項測試與 24 項 tooling 守門測試。依據 EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md (@c80247fb7d66) §12 及 §16 之規劃，IaC 模組與離線 plan 驗收在 Wave 1 交付，真實雲端 apply 精確交由下游 ODP-EPHEMERAL-STAGING-ROLLOUT-001 (Wave 3 - Staging Rollout) 負責，禁止以本任務授權執行 live apply。",
       "boundary": "驗證 IaC 模組契約與離線可重跑 plan 能力；不推斷、亦未執行未授權之 live cloud apply 或基礎設施變更。"
     },
     {
@@ -174,8 +188,8 @@
       ],
       "status": "met",
       "status_zh": "已滿足",
-      "evidence": "缺口已補齊：PR #1002 交付之 infra/terraform/modules/ephemeral_staging/main.tf 強制在所有支援 label 的資源上標註 owner、created_at、expires_at、release_id、ephemeral=true、managed_by=terraform 與 candidate_sha 標籤。對應測試 infra/terraform/tests/test_ephemeral_staging.py（test_mandatory_labels_win_over_additional_labels, test_creation_and_owner_inputs_are_required, test_ephemeral_staging_module_structure_and_tokens, test_module_no_dynamic_timestamp_leak）與 product_ops/deployment/staging_lifecycle.py 均嚴格檢查標籤完整性。歷史 PR #1002 未執行 infra tests 之 CI 缺口已由 PR #1291 (025323f36d05, run 34514563856) 補正，並於 CI orchestrator job 實跑 18 項測試全數通過；tests/ops/test_ephemeral_staging_lifecycle.py 亦於 PR #1002 原 exact-head (ee6eddb6951a) product CI 成功驗證。",
-      "boundary": "標籤約束經由 Terraform AST、HCL 靜態結構、離線 plan 與 Python lifecycle 邏輯四重驗證。"
+      "evidence": "缺口已補齊：PR #1002 交付之 infra/terraform/modules/ephemeral_staging/main.tf 強制在所有支援 label 的資源上標註 owner_task、created_at、expires_at、release_id、ephemeral=true、managed_by=terraform 與 candidate_sha 標籤。其中原驗收條款提及之 owner 依模組契約精確對應至 owner_task 標籤（由 var.owner_task_id 經過正規化生成 local.owner_label），created_at 來自 var.created_at，expires_at 來自 var.expires_at。對應測試 infra/terraform/tests/test_ephemeral_staging.py（test_mandatory_labels_win_over_additional_labels, test_creation_and_owner_inputs_are_required, test_ephemeral_staging_module_structure_and_tokens, test_module_no_dynamic_timestamp_leak）與 product_ops/deployment/staging_lifecycle.py 均嚴格檢查標籤完整性。歷史 PR #1002 未執行 infra tests 之 CI 缺口已由 PR #1291 (025323f36d05, run 34514563856) 補正，並於 CI orchestrator job 實跑 18 項測試全數通過；tests/ops/test_ephemeral_staging_lifecycle.py 亦於 PR #1002 原 exact-head (ee6eddb6951a) product CI 成功驗證。",
+      "boundary": "標籤約束經由 Terraform AST、HCL 靜態結構、離線 plan 與 Python lifecycle 邏輯四重驗證，明示原 acceptance owner -> owner_task 標籤映射。"
     },
     {
       "index": 3,
@@ -202,8 +216,8 @@
       ],
       "status": "met",
       "status_zh": "已滿足",
-      "evidence": "PR #1002 (merge 82ed6a05cf67) 交付之 product_ops/deployment/staging_lifecycle.py 設定 DEFAULT_TTL_HOURS = 24 (L54)，成功部署後由生命週期觸發清理，失敗環境保留除錯上限預設不超過 24 小時。依據 EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md (@c80247fb7d66) §7.3 之規定，延長 TTL 需附帶明確 owner 與 reason（MAX_TTL_HOURS = 168, L55，由 extend_staging_ttl (L1864) 控制）。由 tests/ops/test_ephemeral_staging_lifecycle.py 完整覆蓋，並在 PR #1002 exact-head product CI job 通過。",
-      "boundary": "驗證 TTL 計算、過期策略與失敗保留狀態機邏輯。"
+      "evidence": "PR #1002 (merge 82ed6a05cf67) 交付之 product_ops/deployment/staging_lifecycle.py 實作了清理 primitive（cleanup_ephemeral_staging）與 TTL 狀態機契約：常數 DEFAULT_TTL_HOURS = 24 (L54)，失敗環境保留除錯上限預設不超過 24 小時（由 scan_orphans 掃描與回收）。依據 EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md (@c80247fb7d66) §7.3 L253 之規範，成功 release 係於 production watch window 結束後清理（canonical rollout 原驗收亦對應「成功時等待prod closeout清理」）；延長 TTL 需附帶明確 owner 與 reason（MAX_TTL_HOURS = 168, L55，由 extend_staging_ttl (L2152) 控制）。本 task 證據限於 cleanup primitive 與 TTL 契約交付；成功發布後之 staging 清理執行由下游 ODP-EPHEMERAL-STAGING-ROLLOUT-001 (Wave 3) 與 ODP-POSTDEPLOY-WATCH-CLOSEOUT-001 (Wave 4) 承接。由 tests/ops/test_ephemeral_staging_lifecycle.py 完整覆蓋並在 PR #1002 exact-head product CI job 通過。",
+      "boundary": "驗證 cleanup primitive、TTL 計算、過期策略與失敗保留狀態機邏輯；成功 release 在 watch window 後之實體清理精確交接下游責任。"
     },
     {
       "index": 5,
@@ -216,12 +230,40 @@
       ],
       "status": "met",
       "status_zh": "已滿足",
-      "evidence": "PR #1002 (merge 82ed6a05cf67) 交付之 staging lifecycle 模組直接作為既有 deployment 工具鏈之呼叫對象，未新增第二套 workflow entrypoint。經查核 dev .github/workflows/deploy-dev.yml (@2889b55f)，deploy-dev.yml 維持全系統唯一之 Runtime Release workflow entrypoint。",
+      "evidence": "PR #1002 (merge 82ed6a05cf67) 交付之 staging lifecycle 模組直接作為既有 deployment 工具鏈之呼叫對象，未新增第二套 workflow entrypoint。經查核 dev .github/workflows/deploy-dev.yml (@4b351210)，deploy-dev.yml 維持全系統唯一之 Runtime Release workflow entrypoint。",
       "boundary": "盤點 dev 7 份 workflow 定義，確認單一工作流入口無任何旁路或狀態機分歧。"
     }
   ],
   "downstream_responsibilities_and_dependency_mapping": {
-    "downstream_tasks": [
+    "downstream_and_foundation_tasks": [
+      {
+        "task_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+        "task_title": "補齊 ephemeral staging 的受治理 foundation 與 durable state",
+        "phase": "Wave 1 remediation - staging foundation",
+        "status_on_live_board": "blocked",
+        "depends_on": [],
+        "responsibilities_and_acceptance": [
+          "盤點並抽取既有 root network KMS Cloud SQL foundation 成唯一可重用 module；不得複製第二份 resource graph或改變 dev prod 行為",
+          "以 moved blocks 或明確 import/migration plan 保留既有 Terraform resource identity；不得造成已部署資源替換",
+          "staging 建立獨立 network subnet KMS private Cloud SQL 與最小權限 deployer authority；資源命名與 lifecycle foundation inputs一致",
+          "Cloud Run 必須以 ALL_TRAFFIC 導入受控 VPC；firewall 預設拒絕 public egress且只允許 private ranges與 restricted Google APIs並有 live readback receipt",
+          "建立受治理 GCS Terraform state backend bootstrap：CMEK versioning retention public-access-prevention least-privilege；每個 release 使用隔離 prefix且state不得上傳一般 artifact",
+          "bootstrap 與 root Terraform 共用同一 backend contract；不得用 RUNNER_TEMP 假裝 durable hold也不得留下手動 gcloud 長期資源",
+          "只有 live resources readback存在後才設定 staging environment 的 network subnet KMS deployer與state backend refs；不得填 placeholder或記錄secret value",
+          "不得修改 Runtime Release workflow或 ephemeral_staging module；PR與runbook使用中文並說明 migration rollback與destroy guard",
+          "focused Terraform contract與migration tests通過；live apply plan與metadata receipts綁定 exact origin dev SHA且不含secret value"
+        ],
+        "acceptance_criteria_mapped": {
+          "A1": "提供受治理獨立 network、subnet、KMS 與 private Cloud SQL 基礎設施模組",
+          "A2": "ALL_TRAFFIC 受控 VPC、default-deny egress 與 durable CMEK state backend bootstrap",
+          "A5": "維護單一 backend contract 與不修改 Runtime Release workflow 及 ephemeral_staging 模組"
+        },
+        "remaining_uncompleted_gates": [
+          "Foundation 模組遷移與 state migration plan 審查",
+          "GCP 獨立 VPC、Subnet、KMS、private Cloud SQL 實體資源建立與 live readback",
+          "GCS CMEK 狀態後端 bootstrap 與權限設定"
+        ]
+      },
       {
         "task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
         "task_title": "建立 ephemeral staging 並完成全套 release rehearsal",
@@ -235,11 +277,19 @@
           "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
           "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001"
         ],
+        "responsibilities_and_acceptance": [
+          "建立隔離staging並部署同一digests",
+          "migration/E2E/worker/scheduler/backup/restore/rollback rehearsal全部通過",
+          "staging Web自訂網域只使用console-staging.oday-plus.com.tw，並驗證DNS、受管憑證與OAuth callback",
+          "第三方來源保持關閉",
+          "失敗時保留至TTL成功時等待prod closeout清理",
+          "產生staging-verified receipts"
+        ],
         "acceptance_criteria_mapped": {
           "A1": "實際雲端 release-scoped 資源之建立、部署與真實 apply 驗證",
           "A2": "雲端實體資源標籤之 live inspection 與 GCP Console/API 稽核",
           "A3": "實際雲端清理與真實定時孤兒掃描器之 live rehearsal",
-          "A4": "真實 staging 失敗環境 24h 保留與 TTL 自動回收之 live 運行驗證",
+          "A4": "真實 staging 失敗環境 24h 保留與 TTL 自動回收之 live 運行驗證；成功 release 等待 prod closeout 清理",
           "A5": "經由唯一 workflow deploy-dev.yml 執行完整 staging release rehearsal"
         },
         "remaining_uncompleted_gates": [
@@ -249,15 +299,42 @@
           "staging Web 自訂網域 console-staging.oday-plus.com.tw 之 DNS、受管憑證與 OAuth callback 驗證",
           "RELEASE_MANIFEST.json 真實 image digests 替換（非 placeholder digest）"
         ]
+      },
+      {
+        "task_id": "ODP-POSTDEPLOY-WATCH-CLOSEOUT-001",
+        "task_title": "完成 production watch、staging cleanup 與 release archive",
+        "phase": "Wave 4 - Release Closeout",
+        "status_on_live_board": "todo",
+        "depends_on": [
+          "ODP-PROD-BLUEGREEN-ROLLOUT-001"
+        ],
+        "responsibilities_and_acceptance": [
+          "watch window SLO/data quality/job/audit皆通過或已回滾",
+          "worker/scheduler無舊 digest執行",
+          "staging成功清理或有未逾期 owner/TTL",
+          "release evidence manifest封存",
+          "Supervisor只在實際 deployment/watch完成後 archive tasks"
+        ],
+        "acceptance_criteria_mapped": {
+          "A3": "watch window 結束後執行 staging 成功清理或確認未逾期 owner/TTL",
+          "A4": "成功 release 在 watch window 結束後之終態清理執行與驗證",
+          "A5": "完成 deployment 與 watch window 後之 release evidence manifest 封存與 closeout"
+        },
+        "remaining_uncompleted_gates": [
+          "上游 ODP-PROD-BLUEGREEN-ROLLOUT-001 完成 100% blue-green 切換",
+          "Production watch window 監控與 SLO 指標全部通過",
+          "Staging 實體環境安全清理收據與 release evidence manifest 封存"
+        ]
       }
     ],
     "dependency_graph_reconciliation": {
-      "dependencies_before": [
+      "historical_task_dependencies": [
         "ODP-RELEASE-MANIFEST-GATES-001"
       ],
-      "dependencies_after": [
-        "ODP-RELEASE-MANIFEST-GATES-001"
-      ],
+      "historical_dependencies_note": "Historical dependency at PR1002 merge delivery was ODP-RELEASE-MANIFEST-GATES-001; on canonical board it is now [] as an independent Wave 1 recovery task.",
+      "current_round_task_dependencies_before": [],
+      "current_round_task_dependencies_after": [],
+      "current_round_dependency_delta": "[] -> [] (unchanged)",
       "dependents_before": [
         "ODP-EPHEMERAL-STAGING-ROLLOUT-001"
       ],
@@ -265,7 +342,29 @@
         "ODP-EPHEMERAL-STAGING-ROLLOUT-001"
       ],
       "cycle_detected": false,
-      "topology_description": "ODP-RELEASE-MANIFEST-GATES-001 (done) -> ODP-EPHEMERAL-STAGING-IAC-001 (review) -> ODP-EPHEMERAL-STAGING-ROLLOUT-001 (blocked)"
+      "cycle_check_algorithm": "Depth-first search (DFS) cycle detection across all 32 canonical tasks and staging/rollout/closeout subgraphs",
+      "subgraph_topology_nodes": {
+        "ODP-EPHEMERAL-STAGING-IAC-001": [],
+        "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001": [],
+        "ODP-DEV-ROLLOUT-001": [],
+        "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001": [],
+        "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001": [],
+        "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001": [],
+        "ODP-EPHEMERAL-STAGING-ROLLOUT-001": [
+          "ODP-EPHEMERAL-STAGING-IAC-001",
+          "ODP-DEV-ROLLOUT-001",
+          "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+          "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001"
+        ],
+        "ODP-PROD-BLUEGREEN-ROLLOUT-001": [
+          "ODP-EPHEMERAL-STAGING-ROLLOUT-001"
+        ],
+        "ODP-POSTDEPLOY-WATCH-CLOSEOUT-001": [
+          "ODP-PROD-BLUEGREEN-ROLLOUT-001"
+        ]
+      },
+      "subgraph_path_description": "ODP-EPHEMERAL-STAGING-IAC-001 (review, depends_on: []) -> ODP-EPHEMERAL-STAGING-ROLLOUT-001 (blocked, depends_on: 5 tasks) -> ODP-PROD-BLUEGREEN-ROLLOUT-001 (todo) -> ODP-POSTDEPLOY-WATCH-CLOSEOUT-001 (todo)"
     }
   },
   "summary": {
@@ -275,13 +374,15 @@
     "criteria_unmet": 0,
     "gap_resolution": {
       "a1_iac_reproducible_capability_clarified": true,
-      "a2_ci_collection_gap_resolved_by_pr1291": true,
+      "a2_ci_collection_gap_resolved_by_pr1291_and_owner_task_label_mapped": true,
       "a3_orphan_scanner_verified": true,
-      "a4_ttl_retention_verified": true,
+      "a4_ttl_retention_and_closeout_timing_clarified": true,
       "a5_single_workflow_entrypoint_verified": true
     },
     "downstream_handoff": {
       "live_apply_responsibility": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+      "foundation_responsibility": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+      "closeout_cleanup_responsibility": "ODP-POSTDEPLOY-WATCH-CLOSEOUT-001",
       "rollout_phase": "Wave 3 - Staging Rollout",
       "unauthorized_apply_prohibited": true,
       "dependency_integrity_verified": true
