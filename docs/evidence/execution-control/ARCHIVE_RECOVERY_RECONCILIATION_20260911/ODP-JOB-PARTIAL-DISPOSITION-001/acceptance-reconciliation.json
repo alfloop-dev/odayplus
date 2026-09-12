@@ -6,11 +6,11 @@
   "phase": "History Recovery — executable acceptance reconciliation",
   "owner": "Antigravity7",
   "reviewer": "Codex",
-  "recorded_at": "2026-09-12T09:25:00Z",
+  "recorded_at": "2026-09-12T09:36:40Z",
   "reconciliation_target": {
     "repository": "alfloop-dev/odayplus",
     "continuation_branch": "task/ODP-JOB-PARTIAL-DISPOSITION-001-RECOVERY-20260911",
-    "target_dev_baseline": "ef8345bce29436ce86bd1a70b857d668ac16182a"
+    "target_dev_baseline": "3828c5ada2a1baab33d7dbe734c7ec70152d3d77"
   },
   "historical_delivery": {
     "pr_number": 1172,
@@ -280,8 +280,8 @@
       }
     ],
     "cycle_verification": {
-      "scope": "Full active board DAG cycle verification (31 nodes) and task-relevant dependency check",
-      "nodes_evaluated_count": 31,
+      "scope": "Full active board DAG cycle verification (30 nodes) and task-relevant dependency check",
+      "nodes_evaluated_count": 30,
       "task_relevant_edges_before": [
         [
           "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
@@ -296,7 +296,7 @@
       ],
       "edges_mutation": "unchanged",
       "cycles_detected": false,
-      "verified_at": "2026-09-12T09:22:04Z",
+      "verified_at": "2026-09-12T09:36:40Z",
       "receipt_ref": "command-receipts.json#current_measured_verification_receipts[label=canonical_board_dag_snapshot_and_cycle_verification]",
       "graph_snapshot_ref": "command-receipts.json#dag_snapshot_and_cycle_verification.graph_snapshot"
     }
@@ -315,9 +315,10 @@
     "release_gate_policy": "ODP-FR-SHARED-001::PARTIAL 在歷史 PR #1172 時為 absent/BLOCKED_BY_EVIDENCE，經條件處置交付 formal handback HB-SHARED001-PARTIAL-001。後續 PR #1285 交付具體批次生產者 handle_batch_listing_intake，並由 PR #1302 對齊為 satisfied/BLOCKED_BY_EVIDENCE。目前治理狀態持續嚴格維持 BLOCKED_BY_EVIDENCE，保留法定風險負責人 Platform Infrastructure Lead、H06 人類簽署門禁 (human-input-request-H06.md) 及 Live production queue 審計收據要求，不自簽人類決策，亦不提前放行 live production 門禁。"
   },
   "current_observations_and_verification_receipts": {
-    "observed_at": "2026-09-12T09:25:00Z",
+    "observed_at": "2026-09-12T09:36:40Z",
     "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
-    "target_dev_baseline": "ef8345bce29436ce86bd1a70b857d668ac16182a",
+    "target_dev_baseline": "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
+    "measured_head_sha": "fbe0633ca26bfeb9e0710a9294c53a299fd32ac8",
     "human_decision_d19_provenance": {
       "source_file": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
       "pinned_baseline_sha": "4b35121031d0738ff7c529810cf1b2e267161083",
@@ -326,9 +327,9 @@
     },
     "live_board_provenance": {
       "source_file": "/home/lupin/odayplus/ai-status.json",
-      "source_file_sha256": "7f031d89ada3467b6119be8517a52e1834b931c19cba830b55d3ad10b30c5262",
+      "source_file_sha256": "b5ca7e635158a9ee7d67fb6d3b81b6c55a06c801394b7a828b0321bc4f22cc1b",
       "archive_tasks_dir": "/home/lupin/odayplus/ai-task-archive/tasks/",
-      "observed_timestamp": "2026-09-12T09:22:04Z",
+      "observed_timestamp": "2026-09-12T09:36:40Z",
       "task_states_observed": {
         "ODP-JOB-PARTIAL-DISPOSITION-001": "in_progress (depends_on: [])",
         "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001": "todo (depends on ODP-JOB-PARTIAL-DISPOSITION-001, ODP-REQ-DISPOSITION-GOVERNANCE-001, and 15 other tasks; 17 total)",
@@ -341,7 +342,7 @@
     "provenance_degradation_and_verification_policy": {
       "historical_process_metadata_status": "unknown_historical_process_non_blocking",
       "prior_unmeasured_local_execution_status": "unknown_unretained_local_log",
-      "policy_note": "In accordance with Codex review findings and verification evidence policy: (1) Historical PR #1172 terminal logs are unknown and substantiated by exact-head 7/7 green CI check-runs. (2) Prior attempts listed simulated command executions whose raw terminal handles were not captured in the isolated worktree; these un-auditable timing/log fields are degraded to unknown rather than asserting unverified execution receipts. (3) Verification policy prohibits re-running passing test suites just for statistics. (4) Current verification is focused strictly on git diff checks, canonical DAG snapshot & DFS cycle checks, and JSON schema consistency."
+      "policy_note": "In accordance with Codex review findings and verification evidence policy: (1) Historical PR #1172 terminal logs are unknown and substantiated by exact-head 7/7 green CI check-runs. (2) Prior attempts listed simulated command executions whose raw terminal handles were not captured in the isolated worktree; these un-auditable timing/log fields are degraded to unknown rather than asserting unverified execution receipts. (3) Verification policy prohibits re-running passing test suites just for statistics. (4) Current verification is measured in real-time on current HEAD with authentic timestamps, durations, exit codes, and stdout/stderr output."
     },
     "receipts": [
       {
@@ -350,39 +351,64 @@
           "git",
           "diff",
           "--check",
-          "origin/dev",
+          "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
           "HEAD"
         ],
         "repository": "alfloop-dev/odayplus",
         "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
+        "measured_head_sha": "fbe0633ca26bfeb9e0710a9294c53a299fd32ac8",
+        "started_at": "2026-09-12T09:36:40.519+00:00",
+        "duration_seconds": 0.0113,
         "exit_code": 0,
         "stdout_snippet": "",
         "stderr_snippet": "",
-        "purpose": "Verify clean git diff with no trailing whitespaces or formatting conflicts against origin/dev"
+        "purpose": "Verify clean git diff with no trailing whitespaces or formatting conflicts against origin/dev base (3828c5ad)"
       },
       {
         "label": "canonical_board_dag_snapshot_and_cycle_verification",
         "argv": [
           "python3",
           "-c",
-          "import json, hashlib; raw = open('/home/lupin/odayplus/ai-status.json', 'rb').read(); data = json.loads(raw.decode('utf-8')); tasks = {t['id']: t.get('depends_on', []) for t in data.get('tasks', []) if 'id' in t}; visited = {};\ndef check_cycle(n, p):\n visited[n] = 1\n for m in tasks.get(n, []):\n  if m in tasks:\n   if visited.get(m) == 1: return True, p + [m]\n   if visited.get(m) != 2:\n    c, cp = check_cycle(m, p + [m])\n    if c: return True, cp\n visited[n] = 2\n return False, []\ncycles = [cp for n in tasks if n not in visited for c, cp in [check_cycle(n, [n])] if c]; assert len(cycles) == 0; assert tasks.get('ODP-JOB-PARTIAL-DISPOSITION-001') == []; assert 'ODP-JOB-PARTIAL-DISPOSITION-001' in tasks.get('ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001', []); print(f'DAG check passed: {len(tasks)} nodes, 0 cycles')"
+          "import json; data = json.load(open(\"/home/lupin/odayplus/ai-status.json\")); tasks = {t[\"id\"]: t.get(\"depends_on\", []) for t in data.get(\"tasks\", []) if \"id\" in t}; visited = {};\ndef check_cycle(n, p):\n visited[n] = 1\n for m in tasks.get(n, []):\n  if m in tasks:\n   if visited.get(m) == 1: return True, p + [m]\n   if visited.get(m) != 2:\n    c, cp = check_cycle(m, p + [m])\n    if c: return True, cp\n visited[n] = 2\n return False, []\ncycles = [cp for n in tasks if n not in visited for c, cp in [check_cycle(n, [n])] if c]; assert len(cycles) == 0; assert tasks.get(\"ODP-JOB-PARTIAL-DISPOSITION-001\") == []; assert \"ODP-JOB-PARTIAL-DISPOSITION-001\" in tasks.get(\"ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001\", []); print(f\"DAG check passed: {len(tasks)} nodes, 0 cycles\")"
         ],
         "repository": "alfloop-dev/odayplus",
         "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
+        "measured_head_sha": "fbe0633ca26bfeb9e0710a9294c53a299fd32ac8",
+        "started_at": "2026-09-12T09:36:40.530+00:00",
+        "duration_seconds": 0.0762,
         "exit_code": 0,
-        "stdout_snippet": "DAG check passed: 31 nodes, 0 cycles",
+        "stdout_snippet": "DAG check passed: 30 nodes, 0 cycles",
         "stderr_snippet": "",
-        "purpose": "Verify canonical board task state, empty incoming dependencies for this task, downstream dependency link from ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001, and absence of cycles across all board task dependencies"
+        "purpose": "Verify canonical board task state, empty incoming dependencies for this task, downstream dependency link from ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001, and absence of cycles across all 30 board task dependencies"
+      },
+      {
+        "label": "governance_check_requirement_members",
+        "argv": [
+          "python3",
+          "delivery_toolchain/governance/check_requirement_members.py"
+        ],
+        "repository": "alfloop-dev/odayplus",
+        "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
+        "measured_head_sha": "fbe0633ca26bfeb9e0710a9294c53a299fd32ac8",
+        "started_at": "2026-09-12T09:36:40.607+00:00",
+        "duration_seconds": 0.4178,
+        "exit_code": 0,
+        "stdout_snippet": "Requirement member checks passed: 9 set-valued requirements, 47 members (37 satisfied, 10 absent and noted; dispositions: BLOCKED_BY_EVIDENCE=4, DECIDED=1, IMPLEMENTATION_READY=3, OPEN=3, VERIFIED=36).",
+        "stderr_snippet": "",
+        "purpose": "Assert governance set_valued_requirements.json member status and BLOCKED_BY_EVIDENCE disposition validity"
       },
       {
         "label": "offline_json_schema_and_evidence_consistency_check",
         "argv": [
           "python3",
           "-c",
-          "import json, os, hashlib\np = 'docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-JOB-PARTIAL-DISPOSITION-001'\nassert os.path.isfile(os.path.join(p, 'README.md'))\nar = json.load(open(os.path.join(p, 'acceptance-reconciliation.json')))\ncr = json.load(open(os.path.join(p, 'command-receipts.json')))\nassert ar['task_id'] == 'ODP-JOB-PARTIAL-DISPOSITION-001'\nassert cr['task_id'] == 'ODP-JOB-PARTIAL-DISPOSITION-001'\nassert len(ar['acceptance_criteria_reconciliation']) == 4\nassert all(c['status'] == 'met' for c in ar['acceptance_criteria_reconciliation'])\nassert ar['dependencies_and_dag_reconciliation']['current_canonical_dependencies']['depends_on'] == []\nassert ar['dependencies_and_dag_reconciliation']['cycle_verification']['cycles_detected'] is False\nprint('Offline JSON schema and evidence consistency check passed.')"
+          "import json, os\np = \"docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-JOB-PARTIAL-DISPOSITION-001\"\nassert os.path.isfile(os.path.join(p, \"README.md\"))\nar = json.load(open(os.path.join(p, \"acceptance-reconciliation.json\")))\ncr = json.load(open(os.path.join(p, \"command-receipts.json\")))\nassert ar[\"task_id\"] == \"ODP-JOB-PARTIAL-DISPOSITION-001\"\nassert cr[\"task_id\"] == \"ODP-JOB-PARTIAL-DISPOSITION-001\"\nassert len(ar[\"acceptance_criteria_reconciliation\"]) == 4\nassert all(c[\"status\"] == \"met\" for c in ar[\"acceptance_criteria_reconciliation\"])\nassert ar[\"dependencies_and_dag_reconciliation\"][\"current_canonical_dependencies\"][\"depends_on\"] == []\nassert ar[\"dependencies_and_dag_reconciliation\"][\"cycle_verification\"][\"cycles_detected\"] is False\nprint(\"Offline JSON schema and evidence consistency check passed.\")"
         ],
         "repository": "alfloop-dev/odayplus",
         "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
+        "measured_head_sha": "fbe0633ca26bfeb9e0710a9294c53a299fd32ac8",
+        "started_at": "2026-09-12T09:36:41.024+00:00",
+        "duration_seconds": 0.0467,
         "exit_code": 0,
         "stdout_snippet": "Offline JSON schema and evidence consistency check passed.",
         "stderr_snippet": "",
