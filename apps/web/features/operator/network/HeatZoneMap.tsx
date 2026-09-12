@@ -4,11 +4,18 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { GeoJsonLayer, ScatterplotLayer, TextLayer } from "@deck.gl/layers";
 import DeckGL from "@deck.gl/react";
-import { cellToBoundary } from "h3-js";
-import maplibregl from "maplibre-gl";
+import { cellToBoundary, isValidCell } from "h3-js";
+import * as maplibregl from "maplibre-gl";
 import type { CandidateSite, HeatZone, Listing } from "./mapTypes.ts";
 import { isOperatorProductionMode } from "../operatorDataMode.ts";
 import styles from "./heatZoneMap.module.css";
+
+const MAPLIBRE_WORKER_URL =
+  process.env.NEXT_PUBLIC_MAPLIBRE_WORKER_URL || "/maplibre-gl-worker.mjs";
+
+if (typeof window !== "undefined") {
+  maplibregl.setWorkerUrl(MAPLIBRE_WORKER_URL);
+}
 
 type Freshness = {
   status: string;
@@ -153,6 +160,7 @@ export function HeatZoneMap({
     if (productionMode && !productionMapReady) return;
     if (!mapContainerRef.current || mapRef.current) return;
 
+    maplibregl.setWorkerUrl(MAPLIBRE_WORKER_URL);
     const map = new maplibregl.Map({
       container: mapContainerRef.current,
       style: mapStyleForBoundary(boundaryConfig),
@@ -168,7 +176,7 @@ export function HeatZoneMap({
 
     mapRef.current = map;
     const initialMapData = mapDataRef.current;
-    map.on("error", (event) => {
+    map.on("error", (event: { error?: { message?: string } }) => {
       setRuntimeError(
         `Map tile boundary error · correlation_id ${boundaryConfig.correlationId} · ${
           event.error?.message ?? "unknown tile error"
@@ -182,6 +190,7 @@ export function HeatZoneMap({
     const markMapReady = () => {
       if (mapRef.current !== map) return;
       window.__odpHeatZoneMapProject = projectMapCoordinate;
+      window.__odpMaplibreMap = map;
       setMapReady(true);
     };
     map.once("idle", markMapReady);
@@ -259,6 +268,9 @@ export function HeatZoneMap({
       setMapReady(false);
       if (window.__odpHeatZoneMapProject === projectMapCoordinate) {
         delete window.__odpHeatZoneMapProject;
+      }
+      if (window.__odpMaplibreMap === map) {
+        delete window.__odpMaplibreMap;
       }
       map.remove();
       mapRef.current = null;
@@ -859,35 +871,42 @@ function nearestProjected<T>(
 declare global {
   interface Window {
     __odpHeatZoneMapProject?: (coordinates: [number, number]) => { x: number; y: number };
+    __odpMaplibreMap?: maplibregl.Map;
   }
 }
 
 function zoneToFeature(zone: HeatZone): ZoneFeature {
-  try {
-    const ring = cellToBoundary(zone.h3, true);
-    return {
-      type: "Feature",
-      geometry: { type: "Polygon", coordinates: [[...ring, ring[0]]] },
-      properties: zone,
-    };
-  } catch {
-    const [lng, lat] = zone.centroid;
-    const delta = 0.012;
-    return {
-      type: "Feature",
-      geometry: {
-        type: "Polygon",
-        coordinates: [[
-          [lng - delta, lat - delta],
-          [lng + delta, lat - delta],
-          [lng + delta, lat + delta],
-          [lng - delta, lat + delta],
-          [lng - delta, lat - delta],
-        ]],
-      },
-      properties: zone,
-    };
+  if (zone.h3 && isValidCell(zone.h3)) {
+    try {
+      const ring = cellToBoundary(zone.h3, true);
+      if (ring && ring.length > 0) {
+        return {
+          type: "Feature",
+          geometry: { type: "Polygon", coordinates: [[...ring, ring[0]]] },
+          properties: zone,
+        };
+      }
+    } catch {
+      // Fall through to centroid delta polygon
+    }
   }
+
+  const [lng, lat] = zone.centroid;
+  const delta = 0.012;
+  return {
+    type: "Feature",
+    geometry: {
+      type: "Polygon",
+      coordinates: [[
+        [lng - delta, lat - delta],
+        [lng + delta, lat - delta],
+        [lng + delta, lat + delta],
+        [lng - delta, lat + delta],
+        [lng - delta, lat - delta],
+      ]],
+    },
+    properties: zone,
+  };
 }
 
 function confidenceBand(confidence: number): "high" | "medium" | "low" {
