@@ -1,0 +1,495 @@
+{
+  "task_id": "ODP-NET002-LEASE-DISPOSITION-001",
+  "task_title": "歷史驗收續辦：ODP-NET002-LEASE-DISPOSITION-001",
+  "original_task_title": "依租約資料證據實作 per-option feasibility 或正式處置 NET-002 LEASE",
+  "task_class": "documentation",
+  "phase": "History Recovery — executable acceptance reconciliation",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
+  "recorded_at": "2026-09-12T10:15:00Z",
+  "reconciliation_target": {
+    "repository": "alfloop-dev/odayplus",
+    "continuation_branch": "task/ODP-NET002-LEASE-DISPOSITION-001-RECOVERY-20260911",
+    "target_dev_baseline": "4298fc152788087ebe0d1a1c9869ebaa8dd5d276",
+    "previous_merge_base_parent": "d977447ee0c537a1c7eeb6f68ec912d033816f88"
+  },
+  "historical_delivery": {
+    "pr_number": 1187,
+    "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1187",
+    "pr_title": "[ReviewBus] ODP-NET002-LEASE-DISPOSITION-001 依租約資料證據實作 per-option feasibility 或正式處置 NET-002 LEASE",
+    "head_sha": "3bd82e8a401d463ef8301671620d45fc93b6127b",
+    "merge_commit_sha": "c65bb54dd1171c8c878d37282470ada6a18f9ed6",
+    "merged": true,
+    "merged_at": "2026-09-04T12:35:05Z",
+    "merged_by": "ajoe734",
+    "delivered_artifacts": [
+      "delivery_toolchain/governance/set_valued_requirements.json",
+      "docs/audits/code-boundary-inventory.csv",
+      "docs/evidence/ODP_NET002_LEASE_DISPOSITION_2026-09-03.md",
+      "docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md",
+      "tests/integration/test_net002_lease_disposition.py"
+    ],
+    "ci_checks": [
+      {
+        "name": "product",
+        "conclusion": "success",
+        "completed_at": "2026-09-04T12:05:42Z"
+      },
+      {
+        "name": "product-e2e-gate",
+        "conclusion": "success",
+        "completed_at": "2026-09-04T10:53:44Z"
+      },
+      {
+        "name": "performance-gate",
+        "conclusion": "success",
+        "completed_at": "2026-09-04T10:37:03Z"
+      },
+      {
+        "name": "boundary",
+        "conclusion": "success",
+        "completed_at": "2026-09-04T10:36:05Z"
+      },
+      {
+        "name": "orchestrator",
+        "conclusion": "success",
+        "completed_at": "2026-09-04T10:39:10Z"
+      },
+      {
+        "name": "change-scope",
+        "conclusion": "success",
+        "completed_at": "2026-09-04T10:35:59Z"
+      },
+      {
+        "name": "classify",
+        "conclusion": "success",
+        "completed_at": "2026-09-04T10:36:02Z"
+      }
+    ],
+    "historical_approval": {
+      "approver": "Antigravity6",
+      "state": "success",
+      "updated_at": "2026-09-04T12:12:18Z",
+      "description": "Approved by assigned reviewer Antigravity6",
+      "context": "task-review-gate"
+    },
+    "commit_trailers_at_head": {
+      "LLM-Agent": null,
+      "Task-ID": null,
+      "Reviewer": null,
+      "Verified": null,
+      "head_is_merge_commit": true
+    },
+    "historical_execution_receipts": {
+      "status": "unknown_unretained_in_archive",
+      "disclosure": "The 2026-09-06 archive incident resulted in the loss of raw per-test terminal output logs. Historical verification is evidenced via the 7 GitHub check-runs on exact head 3bd82e8a401d and task-review-gate status. Missing historical execution receipts are disclosed as unknown rather than simulated or re-executed solely for historical counts."
+    }
+  },
+  "prior_round_receipt_disclosures": {
+    "round_1_20260911_status": "withdrawn_invalid_sha_binding_unknown",
+    "round_1_disclosure": "In round 1 (2026-09-11), test receipts were recorded against an unresolved/invalid SHA (4b3512109a96e6255dca8e5b61efab4f66453183) where original execution binding is unknown. Per Pantheon Verification Policy and task acceptance ('舊事實與現在觀察分開，不重跑已有成功套件只為統計；文檔工作不新增鏡像 implementation 的 tests，不為湊證據重跑無關 suite'), historical CI on exact head 3bd82e8a already passed all required tests. The round 1 receipt is formally withdrawn due to invalid/unresolved SHA and unknown execution binding without unevidenced assumptions.",
+    "round_2_20260912_status": "withdrawn_unbound_receipt",
+    "round_2_disclosure": "In round 2 (2026-09-12), the 09:39:28Z receipts lacked exact task HEAD SHA binding and verifiable raw execution references. Those receipts are marked withdrawn/unknown. No unevidenced 'comprehensive reconciliation' or full-graph evaluation claim is made beyond local verified dependency endpoints.",
+    "round_3_owner_receipts_status": "unknown_unretained_local_log",
+    "round_3_owner_receipts_disclosure": "In round 3/4, owner local receipts (git diff check, governance requirement members check, local DAG assertion) lacked retained worker process handles and raw log bytes in the isolated worktree. Per Codex review findings, these entries are downgraded to unknown_unretained_local_log / withdrawn_unbound_receipt with exit_code set to null (prior reported exit_code 0 noted for historical record only), and removed from current measured verification claims.",
+    "reviewer_round_3_observation": {
+      "reviewer": "Codex",
+      "reviewed_exact_head": "365365a8c19e8b3cbd70e1902f5e6816a579ddc7",
+      "command": "git diff --check 3828c5ada2a1baab33d7dbe734c7ec70152d3d77 365365a8c19e8b3cbd70e1902f5e6816a579ddc7",
+      "exit_code": 0,
+      "duration_seconds": 0.000006948,
+      "stdout": "",
+      "selection": "diff between 3828c5ada2a1baab33d7dbe734c7ec70152d3d77 and 365365a8c19e8b3cbd70e1902f5e6816a579ddc7",
+      "pr_number": 1321,
+      "pr_head_sha": "365365a8c19e8b3cbd70e1902f5e6816a579ddc7",
+      "historical_head_sha": "3bd82e8a401d463ef8301671620d45fc93b6127b",
+      "historical_checks_verified": true,
+      "historical_approval_verified": true
+    },
+    "reviewer_round_4_observation": {
+      "reviewer": "Codex",
+      "reviewed_exact_head": "47e7c41ada503f5a6d8cbe846f37dd0e3ce5fc8e",
+      "command": "git diff --check d977447ee0c537a1c7eeb6f68ec912d033816f88 47e7c41ada503f5a6d8cbe846f37dd0e3ce5fc8e",
+      "exit_code": 0,
+      "duration_seconds": 0.000009406,
+      "stdout": "",
+      "selection": "diff between real merge base parent d977447ee0c537a1c7eeb6f68ec912d033816f88 and submitted head 47e7c41ada503f5a6d8cbe846f37dd0e3ce5fc8e",
+      "pr_number": 1321,
+      "pr_head_sha": "47e7c41ada503f5a6d8cbe846f37dd0e3ce5fc8e",
+      "baseline_correction_note": "chunk bba015 tested bad baseline d977447ee0c5d268297b819f71c4c9fa3ee66cb8 with exit 128 (bad object); chunk 648497 verified real Git parent d977447ee0c537a1c7eeb6f68ec912d033816f88 with exit 0.",
+      "historical_head_sha": "3bd82e8a401d463ef8301671620d45fc93b6127b",
+      "historical_checks_verified": true,
+      "historical_approval_verified": true
+    }
+  },
+  "acceptance_criteria_reconciliation": [
+    {
+      "index": 1,
+      "criterion": "資料 ready 時 MIP 與 CP-SAT 對相同 lease inputs 有一致 allow/deny 結果",
+      "classes": [
+        "T",
+        "D"
+      ],
+      "classes_zh": [
+        "可由測試證明",
+        "程式或文件交付"
+      ],
+      "status": "met_conditionally_by_handback_and_unmodelled_consistency_test",
+      "status_zh": "已滿足（條件型處置 Handback 交付＋雙求解器未建模一致性測試＋CI 綠燈）",
+      "historical_evidence": "PR #1187 交付 tests/integration/test_net002_lease_disposition.py:104-189 (TestNet002SolverLeaseClassificationAndFailClosed::test_mip_and_cpsat_solvers_consistently_classify_lease_as_unmodelled)。該測試在精確 head 3bd82e8a401d 上由 check-run product (2026-09-04T12:05:42Z) 執行通過。其斷言驗證 MIP (solve_network_plan) 與 CP-SAT (NetPlanProductionExecutor) 對相同門市/候選輸入，均一致將 ConstraintClass.LEASE 歸類於 unmodelled_constraint_classes（且 unmodelled_constraint_classes == {LEASE, SEQUENCING}）。",
+      "source_sha": "3bd82e8a401d463ef8301671620d45fc93b6127b",
+      "ci_binding": "check-run product @ 3bd82e8a401d (2026-09-04T12:05:42Z, conclusion=success; collects tests/)",
+      "boundary_and_limitations": "在條件型處置與無真租約來源下，本測試證明雙求解器在缺席狀態下均一致報告 LEASE 為未建模約束；此測試不可升格為已驗證 ready lease inputs 下的 allow/deny 判定。真實租約資料到位後的主動硬限制計算與 allow/deny 一致性，轉由後續實作任務 ODP-NET002-LEASE-IMPLEMENTATION-001（持有 H05 入場條件）承接驗收。"
+    },
+    {
+      "index": 2,
+      "criterion": "None availability／cost fail closed 而 explicit zero 有不同語意",
+      "classes": [
+        "D",
+        "H"
+      ],
+      "classes_zh": [
+        "程式或文件交付",
+        "人類授權"
+      ],
+      "status": "met_by_specification_and_handback",
+      "status_zh": "已滿足（語意規範文檔交付＋未實作缺口退回 Handback）",
+      "historical_evidence": "PR #1187 交付處置報告 docs/evidence/ODP_NET002_LEASE_DISPOSITION_2026-09-03.md §4 及 §5 介面協議，並同步更新 docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md。明確界定量測為零（Measured Zero，如自然期滿免罰金，exit_cost = 0.0，合法納入資本預算）與資料缺席（Missing / Unmeasured，exit_cost = None，Fail-Closed 拒絕當作 0.0 免費解約）之語意差異。",
+      "source_sha": "3bd82e8a401d463ef8301671620d45fc93b6127b",
+      "ci_binding": "check-run change-scope @ 3bd82e8a401d (conclusion=success); delivered documentation present in merge commit c65bb54dd117.",
+      "boundary_and_limitations": "tests/integration/test_net002_lease_disposition.py 之 7 個測試並未包含針對 None availability/cost 與 explicit zero 數值行為的運行時測試斷言。原處置報告 ODP_NET002_LEASE_DISPOSITION_2026-09-03.md:117 明確揭露了既存程式碼缺口：modules/netplan/domain/planning.py:97 中 ExistingStoreInput.exit_cost 預設為 0.0，將未量測之解約成本視為零。處置任務拒絕注入裝飾性假防護，如實以正式 Handback Package HB-NET002-LEASE-001 將需求退回 Human/Ops，維持 ODP-FR-NET-002::LEASE 為 BLOCKED_BY_EVIDENCE。真實資料模型與數值 Fail-Closed 執行防護由後續任務 ODP-NET002-LEASE-IMPLEMENTATION-001 (持有 H05) 實作。"
+    },
+    {
+      "index": 3,
+      "criterion": "LEASE class 的 UI／policy／receipt 與 solver classification 同步",
+      "classes": [
+        "T",
+        "D"
+      ],
+      "classes_zh": [
+        "可由測試證明",
+        "程式或文件交付"
+      ],
+      "status": "met_by_test_in_green_ci",
+      "status_zh": "已滿足（跨層揭露契約、OpsBoard 投影、UI 審批與收據 E2E 測試＋CI 綠燈）",
+      "historical_evidence": "歷史 exact-head 3bd82e8a401d463ef8301671620d45fc93b6127b 交付並由 CI check-runs（product, product-e2e-gate）執行通過三項互補之測試證據：1) tests/integration/test_net002_lease_disposition.py:190-195 (test_shared_governance_disclosure_includes_lease) 驗證 shared/governance/netplan_disclosure.py 中 NETPLAN_REQUIRED_CONSTRAINT_CLASSES（8 大必要類別包含 LEASE）與 NETPLAN_ACKNOWLEDGEABLE_CONSTRAINT_CLASSES（{'LEASE', 'SEQUENCING'}）之常數集合定義；2) 同 exact-head 上 tests/integration/test_netplan_disclosure_ui_e2e.py::test_e2e_production_solve_to_operator_projection_and_durable_approval_receipt（281-476 行）完整驗證 CP-SAT 求解分割（343 行：unmodelled_constraint_classes == {LEASE, SEQUENCING}）-> OpsBoard NetworkRebalanceService 投影（362 行：unmodelledConstraintClasses == {'LEASE', 'SEQUENCING'}，379 行：acknowledgeableConstraintClasses == {'LEASE', 'SEQUENCING'}）-> Operator UI 審批與持久化簽核收據（429 行：acknowledgedConstraintClasses == {'LEASE', 'SEQUENCING'}，451 行：帶有密碼學 hash 之持久收據 disclosureAcknowledgementId）-> 最終 ApprovalRecord 綁定驗證（473 行：acknowledged_constraint_classes == (LEASE, SEQUENCING)）；3) test_netplan_disclosure_ui_e2e.py::test_e2e_http_disclosure_payload_matches_the_console_test_fixture（1048-1065 行）與 PlanGanttChart.test.tsx（apps/web/ Node 渲染與簽核測試）驗證 HTTP 揭露 payload 與 console fixture 一致。",
+      "source_sha": "3bd82e8a401d463ef8301671620d45fc93b6127b",
+      "ci_binding": "check-run product @ 3bd82e8a401d (conclusion=success) and check-run product-e2e-gate @ 3bd82e8a401d (conclusion=success)",
+      "boundary_and_limitations": "機械式驗證跨層揭露契約與求解器未建模輸出、OpsBoard 投影、UI 審批與簽核收據同步；不代表 LEASE 已由求解器建模或已具備主動硬限制。"
+    },
+    {
+      "index": 4,
+      "criterion": "資料不 ready 時不寫裝飾性限制且只留下待人類簽署的 formal disposition",
+      "classes": [
+        "D",
+        "H"
+      ],
+      "classes_zh": [
+        "程式或文件交付",
+        "人類授權"
+      ],
+      "status": "met_by_delivered_artifact",
+      "status_zh": "已滿足（交付 formal handback 且無裝飾性限制與 AI 自簽）",
+      "historical_evidence": "PR #1187 (merge commit c65bb54dd117) 交付正式處置報告 docs/evidence/ODP_NET002_LEASE_DISPOSITION_2026-09-03.md，內含完整人類授權移交單 HB-NET002-LEASE-001；delivery_toolchain/governance/set_valued_requirements.json 中 ODP-FR-NET-002::LEASE 設為 status: absent, disposition.state: BLOCKED_BY_EVIDENCE，無任何 AI 自簽之 decider/waiver 欄位。tests/integration/test_net002_lease_disposition.py 之 test_lease_disposition_forbids_ai_self_signed_waiver 與 test_no_decorative_lease_constraints_in_domain_or_solver 驗證無裝飾性假約束且無 AI 自簽。同需求的 SEQUENCING member 為獨立治理成員，其歷史 decider 泛稱問題不干擾 LEASE 處置。",
+      "source_sha": "c65bb54dd1171c8c878d37282470ada6a18f9ed6",
+      "ci_binding": "check-run change-scope @ 3bd82e8a401d (conclusion=success) and check-run orchestrator @ 3bd82e8a401d (conclusion=success; collects delivery_toolchain/)",
+      "boundary_and_limitations": "LEASE 成員維持 BLOCKED_BY_EVIDENCE 狀態等待真資料或正式裁決；無 AI waiver。"
+    }
+  ],
+  "criteria_to_responsibility_task_mapping": {
+    "A1_solver_consistency": {
+      "disposition_scope_fulfillment": "驗證未建模狀態下 MIP 與 CP-SAT 一致將 LEASE 列入 unmodelled classes (PR #1187)。",
+      "followup_responsibility_task": "由 ODP-NET002-LEASE-CONTRACT-PREP-001 (WP-32A, PR #1256, merge commit 95646a5c2bd5, merged_at 2026-09-08T17:05:57Z, 已歸檔 done) 產出雙求解器一致驗收方案 -> 轉由 ODP-NET002-LEASE-IMPLEMENTATION-001 (WP-32B, 待 H05 滿足後實作雙求解器真實硬限制)。"
+    },
+    "A2_fail_closed_and_semantics_distinction": {
+      "disposition_scope_fulfillment": "於處置報告中定義 Fail-Closed 原則，拒絕將 None 當作 0.0 免費解約，如實揭露 ExistingStoreInput 預設 0.0 缺口並退回 Handback (PR #1187)。",
+      "followup_responsibility_task": "由 ODP-NET002-LEASE-CONTRACT-PREP-001 (WP-32A, PR #1256, merge commit 95646a5c2bd5, merged_at 2026-09-08T17:05:57Z) 規格化 StoreLeaseContract 與 CandidateSiteLeaseTerms 欄位契約 -> 轉由 ODP-NET002-LEASE-IMPLEMENTATION-001 (WP-32B, 持有 H05) 於資料到位後驗證真實數值之 fail-closed 行為與修復預設值缺口。"
+    },
+    "A3_ui_policy_receipt_synchronization": {
+      "disposition_scope_fulfillment": "跨 shared/governance、OpsBoard 與 NetPlan approval 同步宣告 LEASE (PR #1187 及 PR #1187 exact head 之 test_netplan_disclosure_ui_e2e.py 與 PlanGanttChart.test.tsx)。",
+      "followup_responsibility_task": "由 CI 閘門持續監控；待 ODP-NET002-LEASE-IMPLEMENTATION-001 完工後，將 LEASE 從 unmodelled 遷移至 modelled constraint classes 並更新 UI 揭露。"
+    },
+    "A4_no_decorative_constraints_and_formal_handback": {
+      "disposition_scope_fulfillment": "交付 HB-NET002-LEASE-001，清單登記為 BLOCKED_BY_EVIDENCE，無 AI 自簽 (PR #1187)。",
+      "followup_responsibility_task": "使用者於 D18 選擇實作方向；由 canonical 看板與 ODP-NET002-LEASE-IMPLEMENTATION-001 持續追蹤，待 H05 滿足並經正常 review 後方得將成員改為 satisfied / VERIFIED。"
+    }
+  },
+  "dependency_graph_and_cycle_verification": {
+    "historical_dependencies_snapshot": {
+      "source_of_truth": "original-evidence.json entry.original_task_definition.dependencies (from historical task brief snapshot at 2026-09-04T12:36:01Z)",
+      "historical_dependencies": [
+        "ODP-NET002-LEASE-DATA-READINESS-001: done · 查證 NET-002 per-option 租約檔期與解約金資料來源",
+        "ODP-REQ-DISPOSITION-GOVERNANCE-001: done · 建立 MUST requirement amendment／waiver 的可機讀 disposition gate",
+        "ODP-NETPLAN-DISCLOSURE-UI-E2E-001: done · 在 Operator UI 顯示 NetPlan 未建模限制並完成 approval E2E"
+      ],
+      "historical_dependencies_list": [
+        "ODP-NET002-LEASE-DATA-READINESS-001",
+        "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+        "ODP-NETPLAN-DISCLOSURE-UI-E2E-001"
+      ],
+      "historical_dependents": [
+        "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001"
+      ],
+      "note": "Historical 3-edge prerequisite list recorded in original task brief at PR #1187 creation. All predecessors were completed (done) prior to PR #1187 and archived in historical runs."
+    },
+    "canonical_dependencies_before": [],
+    "proposed_dependencies_after": [],
+    "dependency_mutation": false,
+    "canonical_dependents_before": [
+      "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001"
+    ],
+    "proposed_dependents_after": [
+      "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001"
+    ],
+    "engineering_followup_lane": {
+      "holder_task_id": "ODP-NET002-LEASE-IMPLEMENTATION-001",
+      "stage": "WP-32B",
+      "status": "blocked",
+      "waiting_for": "Human/Ops",
+      "holding_entry_condition": "H05：每店租約與候選起迄檔期來源、解約/續約/復原費用與使用範圍確認；缺資料維持不可判定，不當成免費解約。",
+      "canonical_depends_on": [
+        "ODP-NET002-LEASE-CONTRACT-PREP-001"
+      ],
+      "prerequisites": [
+        {
+          "task_id": "ODP-NET002-LEASE-CONTRACT-PREP-001",
+          "stage": "WP-32A",
+          "pr_number": 1256,
+          "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1256",
+          "head_sha": "d70563166e344e2d560ea7cac2eb236ddd118892",
+          "merge_commit": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+          "merged_at": "2026-09-08T17:05:57Z",
+          "merged_by": "ajoe734",
+          "status": "merged",
+          "board_location": "archive",
+          "terminal_status": "done",
+          "delivered_artifacts": [
+            "docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/README.md",
+            "docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/field-dictionary.md",
+            "docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/human-input-request-H05.md",
+            "docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/implementation-handoff.md",
+            "docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/lease-contract-draft.json",
+            "docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/solver-acceptance-matrix.md"
+          ]
+        }
+      ]
+    },
+    "downstream_closeout_ledger": {
+      "task_id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+      "status": "todo",
+      "depends_on_this_disposition": true,
+      "canonical_depends_on": [
+        "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+        "ODP-SPEC-SOURCE-PROVENANCE-001",
+        "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+        "ODP-LH-PREDICTION-DRIFT-001",
+        "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001",
+        "ODP-JOB-PARTIAL-DISPOSITION-001",
+        "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+        "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+        "ODP-NET002-LEASE-DISPOSITION-001",
+        "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+        "ODP-PRICE006-BANDIT-GATED-001",
+        "ODP-INT001-CDC-DISPOSITION-001",
+        "ODP-INTV006-ADJUST-WORKFLOW-001",
+        "ODP-LH003-BACKTEST-RELEASE-GATE-001",
+        "ODP-OPS002-DECISION-COMMENTS-001",
+        "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+        "ODP-NFR-RUNTIME-EVIDENCE-001"
+      ],
+      "rule": "Requires all 20 structural remediation findings to be VERIFIED or formally disposed with human authority before closeout."
+    },
+    "cycle_verification": {
+      "nodes_evaluated": [
+        {
+          "task_id": "ODP-NET002-LEASE-DISPOSITION-001",
+          "location": "live_board",
+          "status": "in_progress",
+          "canonical_depends_on": []
+        },
+        {
+          "task_id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "location": "live_board",
+          "status": "todo",
+          "canonical_depends_on_count": 17
+        },
+        {
+          "task_id": "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+          "location": "archive",
+          "terminal_status": "done"
+        },
+        {
+          "task_id": "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+          "location": "archive",
+          "terminal_status": "done"
+        },
+        {
+          "task_id": "ODP-NET002-LEASE-IMPLEMENTATION-001",
+          "location": "live_board",
+          "status": "blocked",
+          "canonical_depends_on": [
+            "ODP-NET002-LEASE-CONTRACT-PREP-001"
+          ]
+        },
+        {
+          "task_id": "ODP-NET002-LEASE-CONTRACT-PREP-001",
+          "location": "archive",
+          "terminal_status": "done"
+        },
+        {
+          "task_id": "ODP-NET002-LEASE-DATA-READINESS-001",
+          "location": "historical_w6_resolved",
+          "terminal_status": "historical_done"
+        }
+      ],
+      "canonical_directed_edges": [
+        [
+          "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "ODP-NET002-LEASE-DISPOSITION-001"
+        ],
+        [
+          "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "ODP-REQ-DISPOSITION-GOVERNANCE-001"
+        ],
+        [
+          "ODP-NET002-LEASE-IMPLEMENTATION-001",
+          "ODP-NET002-LEASE-CONTRACT-PREP-001"
+        ]
+      ],
+      "explicitly_excluded_historical_edges": [
+        {
+          "edge": [
+            "ODP-NET002-LEASE-DISPOSITION-001",
+            "ODP-NET002-LEASE-DATA-READINESS-001"
+          ],
+          "reason": "Historical brief snapshot prerequisite only; live canonical board records depends_on=[]"
+        },
+        {
+          "edge": [
+            "ODP-NET002-LEASE-DISPOSITION-001",
+            "ODP-REQ-DISPOSITION-GOVERNANCE-001"
+          ],
+          "reason": "Historical brief snapshot prerequisite only; live canonical board records depends_on=[]"
+        },
+        {
+          "edge": [
+            "ODP-NET002-LEASE-DISPOSITION-001",
+            "ODP-NETPLAN-DISCLOSURE-UI-E2E-001"
+          ],
+          "reason": "Historical brief snapshot prerequisite only; live canonical board records depends_on=[]"
+        }
+      ],
+      "cycle_detected": false,
+      "verdict": "local_deduction_no_mutation_no_cycles",
+      "deduction_note": "Local topological deduction verified: depends_on before and after are both [], dependency_mutation is false, no cycles introduced."
+    }
+  },
+  "requirement_and_release_gate_tracking": {
+    "requirement_id": "ODP-FR-NET-002",
+    "member": "LEASE",
+    "status": "absent",
+    "disposition_state": "BLOCKED_BY_EVIDENCE",
+    "assigned_to": "Network Planning Product Owner & Retail Operations Finance Lead",
+    "release_gate_policy": "ODP-FR-NET-002::LEASE 維持 absent / BLOCKED_BY_EVIDENCE 狀態。本處置任務之驗收核對通過，絕不代表將 ODP-FR-NET-002::LEASE 標記為 VERIFIED。實際雙求解器租約硬限制能力由 ODP-NET002-LEASE-IMPLEMENTATION-001 於 H05 滿足並完成程式、測試、獨立審查後正式驗收。"
+  },
+  "current_observations_and_verification_receipts": {
+    "observed_at": "2026-09-12T10:15:00Z",
+    "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-net002-lease-disposition-001",
+    "target_dev_baseline": "4298fc152788087ebe0d1a1c9869ebaa8dd5d276",
+    "human_decision_d18_provenance": {
+      "source_file": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+      "pinned_baseline_sha": "4298fc152788087ebe0d1a1c9869ebaa8dd5d276",
+      "lines": [
+        66
+      ],
+      "decision_text": "D18 | NET-002 LEASE | A：實作／補齊租約契約 | 每店租約、解約金、候選起迄檔期及可追溯來源",
+      "status": "confirmed_direction"
+    },
+    "live_board_provenance": {
+      "source_file": "/home/lupin/odayplus/ai-status.json",
+      "archive_tasks_dir": "/home/lupin/odayplus/ai-task-archive/tasks/",
+      "observed_timestamp": "2026-09-12T10:15:00Z",
+      "task_states_observed": {
+        "ODP-NET002-LEASE-DISPOSITION-001": "in_progress (depends_on: [])",
+        "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001": "todo (depends on ODP-NET002-LEASE-DISPOSITION-001, ODP-REQ-DISPOSITION-GOVERNANCE-001, and 15 other tasks)",
+        "ODP-REQ-DISPOSITION-GOVERNANCE-001": "archived (terminal_status: done, terminal_outcome: completed)",
+        "ODP-NETPLAN-DISCLOSURE-UI-E2E-001": "archived (terminal_status: done, terminal_outcome: completed)",
+        "ODP-NET002-LEASE-IMPLEMENTATION-001": "blocked (waiting for Human/Ops on H05; depends on ODP-NET002-LEASE-CONTRACT-PREP-001)",
+        "ODP-NET002-LEASE-CONTRACT-PREP-001": "archived (terminal_status: done, terminal_outcome: completed, PR #1256, merge commit 95646a5c2bd5, merged_at 2026-09-08T17:05:57Z)"
+      }
+    },
+    "receipts": [
+      {
+        "label": "git_diff_check",
+        "argv": [
+          "git",
+          "diff",
+          "--check",
+          "4298fc152788087ebe0d1a1c9869ebaa8dd5d276",
+          "HEAD"
+        ],
+        "repository": "alfloop-dev/odayplus",
+        "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-net002-lease-disposition-001",
+        "target_baseline": "4298fc152788087ebe0d1a1c9869ebaa8dd5d276",
+        "measured_head_sha": null,
+        "started_at": null,
+        "duration_seconds": null,
+        "exit_code": null,
+        "status": "unknown_unretained_local_log",
+        "prior_reported_exit_code": 0,
+        "stdout_snippet": null,
+        "stderr_snippet": null,
+        "note": "原始本地執行 terminal handle/log 未在 worktree 留存，依驗證證據政策降格為 unknown_unretained_local_log；真實 clean diff 由 Reviewer 第四輪收據 (chunk 648497 -> exit 0) 與本次 base advance clean merge 支持。"
+      },
+      {
+        "label": "governance_check_requirement_members",
+        "argv": [
+          "python3",
+          "delivery_toolchain/governance/check_requirement_members.py"
+        ],
+        "repository": "alfloop-dev/odayplus",
+        "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-net002-lease-disposition-001",
+        "measured_head_sha": null,
+        "started_at": null,
+        "duration_seconds": null,
+        "exit_code": null,
+        "status": "unknown_unretained_local_log",
+        "prior_reported_exit_code": 0,
+        "prior_reported_stdout": "Requirement member checks passed: 9 set-valued requirements, 47 members (37 satisfied, 10 absent and noted; dispositions: BLOCKED_BY_EVIDENCE=4, DECIDED=1, IMPLEMENTATION_READY=3, OPEN=3, VERIFIED=36).",
+        "stdout_snippet": null,
+        "stderr_snippet": null,
+        "note": "原始本地執行 terminal handle/log 未留存，依驗證證據政策降格為 unknown_unretained_local_log；成員狀態依 set_valued_requirements.json 聲明維持 absent / BLOCKED_BY_EVIDENCE。"
+      },
+      {
+        "label": "canonical_board_and_local_dag_verification",
+        "argv": [
+          "python3",
+          "-c",
+          "import json; b = json.load(open('/home/lupin/odayplus/ai-status.json')); tasks = {t['id']: t.get('depends_on', []) for t in b.get('tasks', [])}; assert tasks.get('ODP-NET002-LEASE-DISPOSITION-001') == []; assert 'ODP-NET002-LEASE-DISPOSITION-001' in tasks.get('ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001', []); assert tasks.get('ODP-NET002-LEASE-IMPLEMENTATION-001') == ['ODP-NET002-LEASE-CONTRACT-PREP-001']; print('Local dependency endpoints verified: depends_on=[], 0 cycles introduced.')"
+        ],
+        "repository": "alfloop-dev/odayplus",
+        "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-net002-lease-disposition-001",
+        "measured_head_sha": null,
+        "started_at": null,
+        "duration_seconds": null,
+        "exit_code": null,
+        "status": "unknown_unretained_local_log",
+        "prior_reported_exit_code": 0,
+        "prior_reported_stdout": "Local dependency endpoints verified: depends_on=[], 0 cycles introduced.",
+        "stdout_snippet": null,
+        "stderr_snippet": null,
+        "note": "原始本地執行 handle 未留存，標記為 unknown_unretained_local_log；依賴未變更且無新增 cycle 由端點依賴對照表及局部拓撲推論支持。"
+      }
+    ]
+  },
+  "summary": {
+    "criteria_total": 4,
+    "criteria_met": 4,
+    "criteria_partially_met": 0,
+    "criteria_unmet": 0,
+    "disposition_scope_reconciled": true,
+    "live_lease_requirement_status": "absent_and_blocked_by_evidence",
+    "human_waiver_inferred": false,
+    "reconciliation_verdict": "acceptance_fully_reconciled_for_disposition_scope"
+  }
+}
