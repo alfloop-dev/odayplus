@@ -777,7 +777,7 @@
       "receipt_id": "rcpt-004-standalone-script-schema-and-dag-validation",
       "command": "python3 docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/verify_reconciliation.py",
       "script_path": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/verify_reconciliation.py",
-      "script_sha256": "3ee2c75734dee949689f4571c55150c1108c2f313d17de487fa7d34a5ddc8b56",
+      "script_sha256": "b46676bc57131bc6c318f315d236b742d6d224cc65dc64aa2d87f10bd95ea133",
       "snapshots_file": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/canonical-task-snapshots.json",
       "snapshots_sha256": "d6128067c4c3e2b5fc8fc099a91ca0d658397640f1e2079d3a0da1d5cd171cce",
       "repo": "alfloop-dev/odayplus",

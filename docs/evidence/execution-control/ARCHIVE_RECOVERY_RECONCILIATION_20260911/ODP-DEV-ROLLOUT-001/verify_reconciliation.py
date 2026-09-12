@@ -4,10 +4,11 @@ ODP-DEV-ROLLOUT-001 Acceptance Reconciliation & Canonical DAG Verification Scrip
 Verified for target baseline: d977447ee0c537a1c7eeb6f68ec912d033816f88 (origin/dev tip)
 """
 
-import sys
-import json
 import hashlib
+import json
+import sys
 from pathlib import Path
+
 
 def main() -> int:
     evidence_dir = Path(__file__).resolve().parent
@@ -100,8 +101,8 @@ def main() -> int:
     print(f"- Derived DAG Edges: {len(derived_edges)} dependency edges")
     print(f"- Edge Set SHA-256: {computed_edge_hash}")
     print(f"- Cycle Detected: {cycle} (Strict DAG confirmed)")
-    print(f"- Acceptance Criteria: 5/5 reconciled (Disposition: false_done_superseded)")
-    print(f"- Successor Remediation Task: ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001")
+    print("- Acceptance Criteria: 5/5 reconciled (Disposition: false_done_superseded)")
+    print("- Successor Remediation Task: ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001")
     print("================================================================================")
     return 0
 
