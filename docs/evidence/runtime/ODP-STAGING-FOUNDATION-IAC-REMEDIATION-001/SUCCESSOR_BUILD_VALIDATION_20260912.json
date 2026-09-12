@@ -1,0 +1,92 @@
+{
+  "observed_at": "2026-09-12T23:57:24.486128+00:00",
+  "run_id": 34726258529,
+  "run_conclusion": "success",
+  "candidate_sha": "b1e9b57b0b61bcc692ec16b2d7a0ce03b612fd8e",
+  "manifest_digest": "sha256:5a203c4d215085bfd87219f57bcd3c862025b5531e2aceddeda48a6ab47d8d56",
+  "manifest_raw_sha256": "dc8f1a4730436740be8b35b999c37903b063cf65fed05b705896e6aaf10d5dc7",
+  "manifest_validation_errors": [],
+  "artifact_admissibility_errors": [],
+  "images_match_manifest": true,
+  "components": [
+    "api",
+    "scheduler",
+    "web",
+    "worker"
+  ],
+  "signature_ref_count": 4,
+  "sbom_ref_count": 4,
+  "egress_contract_digest": "sha256:088b8f925cc6e11a2a6da6ca148b43b7bca096bfedc714c0256892fbfb0d98f8",
+  "artifacts": [
+    {
+      "artifact_id": 10308265073,
+      "name": "initial-release-absence-readback-b1e9b57b0b61bcc692ec16b2d7a0ce03b612fd8e",
+      "archive_digest_verified": "sha256:8560e51ce3dbab67fe13d1db11ea122772e00b8192d097a3521e852d62c80522",
+      "files": [
+        {
+          "name": "initial-release-absence-readback.json",
+          "raw_sha256": "4a5dede76a22b21248aeb9ea2e3d2f7339de536db87db22f2de619bf8d3daafa"
+        }
+      ]
+    },
+    {
+      "artifact_id": 10308260047,
+      "name": "runtime-release-images-b1e9b57b0b61bcc692ec16b2d7a0ce03b612fd8e",
+      "archive_digest_verified": "sha256:4787ce629a8196fdb26d932dc748bd25af1ecc2e196de751577100f5b9fc0498",
+      "files": [
+        {
+          "name": "runtime-release-images.json",
+          "raw_sha256": "b15f5a94e50aa2ca60abb2a51fa6bd9f6e210a99d83cb7745984b04c2eb4021f"
+        }
+      ]
+    },
+    {
+      "artifact_id": 10308032511,
+      "name": "release-npm-audit-receipt-dev",
+      "archive_digest_verified": "sha256:e06653bf88efb44bb6868c18d22d2106558d515d52bfbb2a2c18dfb7ea715233",
+      "files": [
+        {
+          "name": "npm-audit-receipt.json",
+          "raw_sha256": "a08cb2b4e6f7c74fe59693f226b8b81b26cb235f9fcf8cb0a53c6fcac44b279e"
+        }
+      ]
+    },
+    {
+      "artifact_id": 10307887895,
+      "name": "release-environment-receipt-dev-build",
+      "archive_digest_verified": "sha256:268bc1918485f42e31e893149c203d40b844fcbca2a29444afa5fde0af66ff7d",
+      "files": [
+        {
+          "name": "release-environment-receipt.json",
+          "raw_sha256": "937f658036c10e8ca8f4a56e8400d45ba25055f386d9d86682382c2d41acfe33"
+        }
+      ]
+    },
+    {
+      "artifact_id": 10307299168,
+      "name": "release-phase-receipt-dev-build",
+      "archive_digest_verified": "sha256:77dafc0dae217a6a6e06592e08a6d838a79f6b1fc1d60f314fff865c4608ff63",
+      "files": [
+        {
+          "name": "release-phase-receipt.json",
+          "raw_sha256": "06672db359d85852f3e8141eb8412c13f2216b6d3ff73b754b6d788cf484ea27"
+        }
+      ]
+    },
+    {
+      "artifact_id": 10307164681,
+      "name": "runtime-release-manifest-b1e9b57b0b61bcc692ec16b2d7a0ce03b612fd8e",
+      "archive_digest_verified": "sha256:cbae3a925c07229b8e717c1720b0e084ac2ef27849c1534c3cbbe71b92bf4947",
+      "files": [
+        {
+          "name": "RELEASE_MANIFEST.json",
+          "raw_sha256": "dc8f1a4730436740be8b35b999c37903b063cf65fed05b705896e6aaf10d5dc7"
+        }
+      ]
+    }
+  ],
+  "canonical_manifest_replaced": false,
+  "release_registry_changed": false,
+  "live_deployment_performed": false,
+  "remaining": "SQL independent review/CI and integration, canonical candidate reconciliation, actual staged admission and live API/Web evidence remain outstanding."
+}

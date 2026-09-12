@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "terraform",
+    "plan",
+    "-input=false",
+    "-no-color",
+    "-var-file=staging.tfvars.example",
+    "-detailed-exitcode"
+  ],
+  "started_at": "2026-09-12T14:40:53.646426+00:00",
+  "finished_at": "2026-09-12T14:40:55.631620+00:00",
+  "exit_code": 2,
+  "stdout": "\nTerraform used the selected providers to generate the following execution\nplan. Resource actions are indicated with the following symbols:\n  + create\n\nTerraform will perform the following actions:\n\n  # google_storage_bucket.recovery will be created\n  + resource \"google_storage_bucket\" \"recovery\" {\n      + effective_labels            = {\n          + \"app\"         = \"oday-plus\"\n          + \"environment\" = \"staging\"\n          + \"managed_by\"  = \"terraform\"\n          + \"purpose\"     = \"release-recovery\"\n        }\n      + force_destroy               = false\n      + id                          = (known after apply)\n      + labels                      = {\n          + \"app\"         = \"oday-plus\"\n          + \"environment\" = \"staging\"\n          + \"managed_by\"  = \"terraform\"\n          + \"purpose\"     = \"release-recovery\"\n        }\n      + location                    = \"ASIA-EAST1\"\n      + name                        = \"oday-staging-recovery-odayplus-runtime-20260825\"\n      + project                     = (known after apply)\n      + project_number              = (known after apply)\n      + public_access_prevention    = \"enforced\"\n      + rpo                         = (known after apply)\n      + self_link                   = (known after apply)\n      + storage_class               = \"STANDARD\"\n      + terraform_labels            = {\n          + \"app\"         = \"oday-plus\"\n          + \"environment\" = \"staging\"\n          + \"managed_by\"  = \"terraform\"\n          + \"purpose\"     = \"release-recovery\"\n        }\n      + uniform_bucket_level_access = true\n      + url                         = (known after apply)\n\n      + encryption {\n          + default_kms_key_name = \"projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime\"\n        }\n\n      + retention_policy {\n          + is_locked        = false\n          + retention_period = 2592000\n        }\n\n      + soft_delete_policy (known after apply)\n\n      + versioning {\n          + enabled = true\n        }\n\n      + website (known after apply)\n    }\n\n  # google_storage_bucket_iam_member.deployer will be created\n  + resource \"google_storage_bucket_iam_member\" \"deployer\" {\n      + bucket = \"oday-staging-recovery-odayplus-runtime-20260825\"\n      + etag   = (known after apply)\n      + id     = (known after apply)\n      + member = \"serviceAccount:github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com\"\n      + role   = \"roles/storage.objectUser\"\n    }\n\nPlan: 2 to add, 0 to change, 0 to destroy.\n\nChanges to Outputs:\n  + recovery_bucket_name = \"oday-staging-recovery-odayplus-runtime-20260825\"\n",
+  "stderr": "",
+  "no_saved_binary_plan": true,
+  "applied": false
+}

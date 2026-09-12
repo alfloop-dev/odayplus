@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "terraform",
+    "init",
+    "-input=false",
+    "-no-color",
+    "-reconfigure",
+    "-backend-config=backend.hcl.example"
+  ],
+  "started_at": "2026-09-12T14:40:51.419109+00:00",
+  "finished_at": "2026-09-12T14:40:53.645820+00:00",
+  "exit_code": 0,
+  "stdout": "Initializing the backend...\n\nSuccessfully configured the backend \"gcs\"! Terraform will automatically\nuse this backend unless the backend configuration changes.\nInitializing provider plugins...\n- Reusing previous version of hashicorp/google from the dependency lock file\n- Using previously-installed hashicorp/google v5.45.2\n\nTerraform has been successfully initialized!\n",
+  "stderr": ""
+}

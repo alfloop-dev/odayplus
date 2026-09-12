@@ -11,7 +11,7 @@ resource "google_storage_bucket" "artifacts" {
   }
 
   encryption {
-    default_kms_key_name = google_kms_crypto_key.runtime.id
+    default_kms_key_name = module.runtime_foundation.kms_crypto_key_id
   }
 
   retention_policy {
@@ -31,7 +31,7 @@ resource "google_storage_bucket" "artifacts" {
     }
   }
 
-  depends_on = [google_kms_crypto_key_iam_member.gcs]
+  depends_on = [module.runtime_foundation]
 }
 
 resource "google_storage_bucket" "source_snapshots" {
@@ -47,7 +47,7 @@ resource "google_storage_bucket" "source_snapshots" {
   }
 
   encryption {
-    default_kms_key_name = google_kms_crypto_key.runtime.id
+    default_kms_key_name = module.runtime_foundation.kms_crypto_key_id
   }
 
   retention_policy {
@@ -66,7 +66,7 @@ resource "google_storage_bucket" "source_snapshots" {
     }
   }
 
-  depends_on = [google_kms_crypto_key_iam_member.gcs]
+  depends_on = [module.runtime_foundation]
 }
 
 module "audit_evidence" {
@@ -78,8 +78,8 @@ module "audit_evidence" {
   labels                                = local.labels
   product_runtime_service_account_email = google_service_account.runtime.email
   retention_period_seconds              = var.audit_retention_period_seconds
-  kms_key_name                          = google_kms_crypto_key.runtime.id
+  kms_key_name                          = module.runtime_foundation.kms_crypto_key_id
   lock_retention_policy                 = local.is_prod
 
-  depends_on = [google_kms_crypto_key_iam_member.gcs]
+  depends_on = [module.runtime_foundation]
 }

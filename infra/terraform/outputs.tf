@@ -54,7 +54,7 @@ output "audit_retention_manager_service_account" {
 }
 
 output "database_instance_connection_name" {
-  value       = google_sql_database_instance.primary.connection_name
+  value       = module.runtime_foundation.cloud_sql_instance_connection_name
   description = "Cloud SQL connection name used by the Cloud Run Cloud SQL volume."
 }
 
@@ -94,11 +94,11 @@ output "jobs_dead_letter_subscription" {
 }
 
 output "runtime_network" {
-  value       = google_compute_network.runtime.name
+  value       = module.runtime_foundation.network_name
   description = "Private runtime VPC."
 }
 
 output "runtime_kms_key" {
-  value       = google_kms_crypto_key.runtime.id
+  value       = module.runtime_foundation.kms_crypto_key_id
   description = "CMEK resource id. No key material is exposed."
 }
