@@ -7,7 +7,7 @@
 - **執行身分 (Owner)**: `Antigravity5`
 - **指派審查者 (Reviewer)**: `Codex2`
 - **復原目標分支**: `task/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001-RECOVERY-20260911`
-- **對照基準 (Dev Baseline)**: `4b35121031d0738ff7c529810cf1b2e267161083`（經 base advance 整合 PR #1313 合併之 `origin/dev` 最新狀態；歷史曾對照 `2889b55fb1febe95c9f8650f24ead18e86015cca`）
+- **對照基準 (Dev Baseline)**: `3828c5ada2a1baab33d7dbe734c7ec70152d3d77`（經 base advance 整合 PR #1311 合併之 `origin/dev` 最新狀態；歷史曾對照 `4b35121031d0738ff7c529810cf1b2e267161083` 與 `2889b55fb1febe95c9f8650f24ead18e86015cca`）
 - **原始交付記錄**: PR [#1160](https://github.com/alfloop-dev/odayplus/pull/1160)（Head SHA: `ffe02988a1b4def412090c6b422e6efb26081d9f`，Merge Commit: `9f53418df41e558c8f953c801dd8fd1f25f77b5b`，Merged at `2026-09-03T16:51:21Z`）
 
 本任務原始目的為依據 `ODP-SITE001-DATA-READINESS-001` 之資料準備度查證事實，逐 member 判定 `ODP-FR-SITE-001` 中之 `BRAND_TRANSFER` 與 `FORMAT_CONVERSION` 兩項成員之處置狀態。
@@ -57,10 +57,9 @@ PR [#1160](https://github.com/alfloop-dev/odayplus/pull/1160) 於 2026-09-03 交
 
 ### 4.2 歷史依賴快照與精確依賴關係 Before / After 核對 (Explicitly Unchanged)
 
-依據 Canonical 歸檔 `/home/lupin/odayplus/ai-task-archive/tasks/` 及看板現狀（正規化 archive envelope 讀取 `task.depends_on`）：
-- `ODP-BRAND-TRANSFER-CONTRACT-PREP-001.json` (SHA256: `572eb22da48f7d367a15fe82a191dcb1379aaca91db3d31fe632c01bac885975`, archived_at: `2026-09-08T16:42:34Z`) 依正規化 task envelope 記錄 `task.depends_on: ["ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"]`。
-- `ODP-FORMAT-CONVERSION-CONTRACT-PREP-001.json` (SHA256: `9af75cde28b5507aec4229d74674b3f2abf652d71ababc6dacccae7055324185`, archived_at: `2026-09-08T19:02:57Z`) 依正規化 task envelope 記錄 `task.depends_on: ["ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"]`。
-- `ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001.json` (SHA256: `9dfeedca3ca9301a167b8c153e946aee5f08c6c0e5d5b60538a5e02fadf1fcbf`, archived_at: `2026-09-08T14:54:58Z`) 依正規化 task envelope 記錄 `task.depends_on: []`。
+依據 Canonical 狀態庫與歸檔記錄，針對全案閉包 49 項任務建立精確執行快照（含來源檔案路徑、SHA256 雜湊、狀態及顯式 `depends_on` 列表，包括已驗證之空列表 `[]`）：
+- **Canonical 看板任務來源** (13 項): `/home/lupin/odayplus/ai-status.json` (SHA256: `52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96`)。
+- **Canonical 歸檔任務來源** (36 項): `/home/lupin/odayplus/ai-task-archive/tasks/*.json`（逐檔精確雜湊，如 `ODP-BRAND-TRANSFER-CONTRACT-PREP-001.json` `572eb22d...`、`ODP-FORMAT-CONVERSION-CONTRACT-PREP-001.json` `9af75cde...`、`ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001.json` `9dfeedca...` 等，完整 49 項快照均持久化於 `acceptance-reconciliation.json` 與 `evidence-manifest.json`）。
 
 本次補證嚴格遵守唯讀治理原則，不手改看板狀態，不變更任何 DAG 依賴邊（Before / After 保持一致）：
 
@@ -172,21 +171,24 @@ PR [#1160](https://github.com/alfloop-dev/odayplus/pull/1160) 於 2026-09-03 交
 
 ## 6. 當前驗證收據 (Current Verification Receipts)
 
-本次復原補證交付物經由以下實測命令完成驗證：
+本次復原補證交付物經由以下實測命令完成驗證（依據審查意見修復終端輸出捕獲、持久化原始結果參照 `raw_result_ref`、保存 49 節點依賴輸入快照，並於 Base Advance 整合 `3828c5ada2a1` 後執行）：
 
 ```bash
-git diff --check 4b35121031d0738ff7c529810cf1b2e267161083 HEAD
+git diff --check 3828c5ada2a1baab33d7dbe734c7ec70152d3d77 HEAD
 cmp -s docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/original-evidence.json /home/lupin/odayplus/support/handoffs/archive-recovery-dispatch-20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/original-evidence.json
-python3 -c "import json, os, glob, heapq; ..."
+python3 -c "import json, os, glob, hashlib, heapq; ..."
 ```
 
 ### 驗證執行收據 (Verification Execution Receipts)
 
-| 收據項目 | 執行命令 (Argv) | 測量基準 / 範圍 | 執行時間與耗時 | 終端退出碼 | 執行結果與終端輸出摘要 |
-|---|---|---|---|---|---|
-| **Git Diff Check** | `git diff --check 4b35121031d0738ff7c529810cf1b2e267161083 HEAD` | Base `4b35121031d0` / HEAD `513d39086e80` | `2026-09-12T09:17:44Z` (~0.009s) | `0` | **PASS**: 無空白行錯誤、無非預期變更。 |
-| **原始證據完整性** | `cmp -s docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/original-evidence.json /home/lupin/odayplus/support/handoffs/archive-recovery-dispatch-20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/original-evidence.json` | Worktree copy vs Canonical dispatch copy | `2026-09-12T09:17:44Z` (~0.005s) | `0` | **PASS**: 檔案內容完全一致 (byte-for-byte match)。 |
-| **Canonical 看板與傳遞依賴閉包 DAG 拓撲無環計算** | `python3 -c "import json, os, glob, heapq; ..."` | Canonical Board `/home/lupin/odayplus/ai-status.json` and task archives (`task.depends_on`) | `2026-09-12T09:17:44Z` (~0.100s) | `0` | **PASS**: `Dependency closure verified: 49 vertices, 51 edges, 0 cycles, valid DAG.` |
+| 收據編號 | 執行命令 (Argv) | 測量基準 / 範圍 | 執行時間與耗時 | 終端退出碼 | 原始結果參照 (raw_result_ref) | 執行結果與終端輸出摘要 |
+|---|---|---|---|---|---|---|
+| **RC-01** | `git diff --check 3828c5ada2a1baab33d7dbe734c7ec70152d3d77 HEAD` | Base `3828c5ada2a1` / HEAD `5bed7b72d0f0` | `2026-09-12T09:37:20.776230+00:00` (0.012959s) | `0` | `RC-01-git-diff-check (tool exit 0, duration 0.012959s, empty output)` | **PASS**: 無空白行錯誤、無非預期變更。 |
+| **RC-02** | `cmp -s docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/original-evidence.json /home/lupin/odayplus/support/handoffs/archive-recovery-dispatch-20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/original-evidence.json` | Worktree copy vs Canonical dispatch copy | `2026-09-12T09:37:20.789176+00:00` (0.003467s) | `0` | `RC-02-original-evidence-integrity (tool exit 0, duration 0.003467s, empty output)` | **PASS**: 檔案內容完全一致 (byte-for-byte match)。 |
+| **RC-03** | `python3 -c "import json, os, glob, hashlib, heapq; ..."` | Canonical Board `/home/lupin/odayplus/ai-status.json` and task archives (`task.depends_on`) | `2026-09-12T09:37:20.792648+00:00` (0.154897s) | `0` | `RC-03-canonical-board-and-transitive-dag-verification (tool exit 0, duration 0.154897s, stdout: Dependency closure verified: 49 vertices, 51 edges, 0 cycles, valid DAG.)` | **PASS**: `Dependency closure verified: 49 vertices, 51 edges, 0 cycles, valid DAG.` |
+
+> **重跑原因與收據血統說明 (Retry Reason & Execution Provenance Note)**:
+> 依據審查者 Codex2 於 PR #1316 之審查意見，先前歷史紀錄中存在終端 chunk/session/log 參照不足、時間標籤與耗時未完全對齊以及 mutable canonical board/archive 未持久化輸入快照之 P2 缺口。本次聚焦重新執行（Retry Reason: *Base advance to origin/dev (3828c5ada2a1) and execution receipt provenance repair addressing Codex2 review findings on PR #1316 (capturing authentic tool exit receipts, durable raw result references, and execution-linked 49-task board/archive dependency input snapshot).*）完整捕獲真實工具終端退出碼、執行精確時間與耗時、提供持久化 `raw_result_ref`，並將 49 項閉包節點之來源路徑、SHA256 雜湊與顯式 `depends_on` 清單寫入 JSON 快照，確保本 `README.md` 與 `acceptance-reconciliation.json`、`evidence-manifest.json` 全數直接衍生自同一次已識別的真實執行。
 
 ### 歷史治理測試套件驗證政策說明 (Historical Test Suite Policy)
 - 原 PR [#1160](https://github.com/alfloop-dev/odayplus/pull/1160) exact-head `ffe02988a1b4` 之 7 項 GitHub CI check-runs 全數綠燈（`product` check-run completed 2026-09-03T16:18:24Z 收集執行了 `tests/governance/test_site001_disposition.py` 及治理成員檢查）。

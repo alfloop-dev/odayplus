@@ -115,9 +115,9 @@
     }
   },
   "current_observations_and_mapping": {
-    "observed_at": "2026-09-12T09:18:00Z",
+    "observed_at": "2026-09-12T09:37:20.776230+00:00",
     "observation_source": "Canonical board (/home/lupin/odayplus/ai-status.json), ai-task-archive/tasks/, and docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
-    "pinned_dev_sha": "4b35121031d0738ff7c529810cf1b2e267161083",
+    "pinned_dev_sha": "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
     "criteria_and_member_mapping": [
       {
         "criterion_index": 1,
@@ -198,31 +198,463 @@
     ],
     "dependency_graph_reconciliation": {
       "historical_dependencies_snapshot": {
+        "DPF-EMGI-LIVE-ROLLOUT-001": {
+          "task_id": "DPF-EMGI-LIVE-ROLLOUT-001",
+          "source": "board",
+          "source_path": "ai-status.json",
+          "status": "review",
+          "depends_on": [],
+          "source_sha256": "52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96"
+        },
+        "ODP-AVM-DEPRECIATION-CONTRACT-001": {
+          "task_id": "ODP-AVM-DEPRECIATION-CONTRACT-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-AVM-DEPRECIATION-CONTRACT-001.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "aac3dcc725f6747123b20054c179bb24db09d6ae8123ef6f7639041cbf89b565"
+        },
+        "ODP-AVM-DEPRECIATION-INTEGRATION-001": {
+          "task_id": "ODP-AVM-DEPRECIATION-INTEGRATION-001",
+          "source": "board",
+          "source_path": "ai-status.json",
+          "status": "blocked",
+          "depends_on": [
+            "ODP-AVM-QUALITY-NULLABLE-001",
+            "ODP-AVM-DEPRECIATION-CONTRACT-001"
+          ],
+          "source_sha256": "52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96"
+        },
+        "ODP-AVM-QUALITY-NULLABLE-001": {
+          "task_id": "ODP-AVM-QUALITY-NULLABLE-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-AVM-QUALITY-NULLABLE-001.json",
+          "status": "done",
+          "depends_on": [
+            "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001"
+          ],
+          "source_sha256": "05dfcf53f2d4353c8b63faa3672978d13a20d5191fc1fd11a02f66375a802819"
+        },
         "ODP-BRAND-TRANSFER-CONTRACT-PREP-001": {
-          "archived_at": "2026-09-08T16:42:34Z",
-          "sha256": "572eb22da48f7d367a15fe82a191dcb1379aaca91db3d31fe632c01bac885975",
-          "task_depends_on": [
+          "task_id": "ODP-BRAND-TRANSFER-CONTRACT-PREP-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-BRAND-TRANSFER-CONTRACT-PREP-001.json",
+          "status": "done",
+          "depends_on": [
             "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
           ],
-          "task_envelope_depends_on": [
-            "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
-          ]
+          "source_sha256": "572eb22da48f7d367a15fe82a191dcb1379aaca91db3d31fe632c01bac885975"
+        },
+        "ODP-BRAND-TRANSFER-IMPLEMENTATION-001": {
+          "task_id": "ODP-BRAND-TRANSFER-IMPLEMENTATION-001",
+          "source": "board",
+          "source_path": "ai-status.json",
+          "status": "blocked",
+          "depends_on": [
+            "ODP-BRAND-TRANSFER-CONTRACT-PREP-001"
+          ],
+          "source_sha256": "52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96"
+        },
+        "ODP-CANONICAL-LEGACY-LINEAGE-001": {
+          "task_id": "ODP-CANONICAL-LEGACY-LINEAGE-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-CANONICAL-LEGACY-LINEAGE-001.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "4f0fbc242345dbe9dc4ffc05c74707907d42be22cdcf5e613d6d5a492a49d48e"
+        },
+        "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001": {
+          "task_id": "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+          "source": "board",
+          "source_path": "ai-status.json",
+          "status": "todo",
+          "depends_on": [
+            "ODP-SPEC-SOURCE-PROVENANCE-001",
+            "ODP-MEASUREMENT-CROSSLAYER-GATE-001",
+            "ODP-CANONICAL-LEGACY-LINEAGE-001",
+            "ODP-AVM-DEPRECIATION-INTEGRATION-001",
+            "ODP-SITESCORE-QUALITY-NULLABLE-001",
+            "ODP-MODELREADY-A4-REMEDIATION-001",
+            "ODP-INT-MANUAL-CORRECTION-AUDIT-001",
+            "ORCH-ARCHIVE-HISTORY-EXECUTE-003"
+          ],
+          "source_sha256": "52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96"
+        },
+        "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002": {
+          "task_id": "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002.json",
+          "status": "done",
+          "depends_on": [
+            "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+            "ODP-RELEASE-GATE-FIXTURE-STAGING-002"
+          ],
+          "source_sha256": "f547ac6c924aa3b0310f2b07293f7feabc3488d966f4623e8d608a187d7bdcf3"
+        },
+        "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001": {
+          "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "source": "board",
+          "source_path": "ai-status.json",
+          "status": "blocked",
+          "depends_on": [
+            "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+            "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+            "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+            "DPF-EMGI-LIVE-ROLLOUT-001",
+            "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+            "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+            "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+            "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+            "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+            "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
+          ],
+          "source_sha256": "52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96"
+        },
+        "ODP-DEV-STAGED-GATE-RECONCILIATION-001": {
+          "task_id": "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-DEV-STAGED-GATE-RECONCILIATION-001.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "19760d7396ad9fa8137eddb9846b58a1c5895ce2d8e5e74054a041840d81d1c4"
+        },
+        "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001": {
+          "task_id": "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "e301e34584b136a9ac2376b4ce65d42e0302b72ed4cc33e29d7b4bd6c3b57863"
         },
         "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001": {
-          "archived_at": "2026-09-08T19:02:57Z",
-          "sha256": "9af75cde28b5507aec4229d74674b3f2abf652d71ababc6dacccae7055324185",
-          "task_depends_on": [
+          "task_id": "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001.json",
+          "status": "done",
+          "depends_on": [
             "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
           ],
-          "task_envelope_depends_on": [
-            "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
-          ]
+          "source_sha256": "9af75cde28b5507aec4229d74674b3f2abf652d71ababc6dacccae7055324185"
+        },
+        "ODP-FORMAT-CONVERSION-IMPLEMENTATION-001": {
+          "task_id": "ODP-FORMAT-CONVERSION-IMPLEMENTATION-001",
+          "source": "board",
+          "source_path": "ai-status.json",
+          "status": "blocked",
+          "depends_on": [
+            "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001"
+          ],
+          "source_sha256": "52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96"
+        },
+        "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001": {
+          "task_id": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+          "source": "board",
+          "source_path": "ai-status.json",
+          "status": "blocked",
+          "depends_on": [],
+          "source_sha256": "52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96"
         },
         "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001": {
-          "archived_at": "2026-09-08T14:54:58Z",
-          "sha256": "9dfeedca3ca9301a167b8c153e946aee5f08c6c0e5d5b60538a5e02fadf1fcbf",
-          "task_depends_on": [],
-          "task_envelope_depends_on": []
+          "task_id": "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "9dfeedca3ca9301a167b8c153e946aee5f08c6c0e5d5b60538a5e02fadf1fcbf"
+        },
+        "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001": {
+          "task_id": "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "b03e462447e3ce6c0270fe2ef9b51cb3c58e94cf8a374924520eed7629de88b6"
+        },
+        "ODP-INT-MANUAL-CORRECTION-AUDIT-001": {
+          "task_id": "ODP-INT-MANUAL-CORRECTION-AUDIT-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-INT-MANUAL-CORRECTION-AUDIT-001.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "1a7335b0b5007237740b034b57397d0cb93319dfc8c5b8a4dc8ffdecda99bd4e"
+        },
+        "ODP-INT001-CDC-DISPOSITION-001": {
+          "task_id": "ODP-INT001-CDC-DISPOSITION-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-INT001-CDC-DISPOSITION-001.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "5773164c0a330f09d0405c8b009d7e33380f317e89280f468c5285684c6c3c82"
+        },
+        "ODP-INTV006-ADJUST-WORKFLOW-001": {
+          "task_id": "ODP-INTV006-ADJUST-WORKFLOW-001",
+          "source": "board",
+          "source_path": "ai-status.json",
+          "status": "blocked",
+          "depends_on": [
+            "ODP-AVM-QUALITY-NULLABLE-001"
+          ],
+          "source_sha256": "52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96"
+        },
+        "ODP-JOB-PARTIAL-DISPOSITION-001": {
+          "task_id": "ODP-JOB-PARTIAL-DISPOSITION-001",
+          "source": "board",
+          "source_path": "ai-status.json",
+          "status": "in_progress",
+          "depends_on": [],
+          "source_sha256": "52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96"
+        },
+        "ODP-LH-PREDICTION-DRIFT-001": {
+          "task_id": "ODP-LH-PREDICTION-DRIFT-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-LH-PREDICTION-DRIFT-001.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "31eee5dfcb14f600670fd5d18bda755ce484aa7d0794657d56e5b2ed46e1ebca"
+        },
+        "ODP-LH003-BACKTEST-RELEASE-GATE-001": {
+          "task_id": "ODP-LH003-BACKTEST-RELEASE-GATE-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-LH003-BACKTEST-RELEASE-GATE-001.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "727303eac509fa586e5ca7afb4162091ebf199480335d3dbede9f74608a04b7c"
+        },
+        "ODP-MEASUREMENT-CROSSLAYER-GATE-001": {
+          "task_id": "ODP-MEASUREMENT-CROSSLAYER-GATE-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-MEASUREMENT-CROSSLAYER-GATE-001.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "bff31e0e24eaf77594b58e05412f5551fa681e5fbbbb0d0f8145c02afbc4c6f5"
+        },
+        "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001": {
+          "task_id": "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "2f1436d107dd1b13111db3550b1b7566c2db69e90bd8a757cf33a085a1237114"
+        },
+        "ODP-MODELREADY-A4-REMEDIATION-001": {
+          "task_id": "ODP-MODELREADY-A4-REMEDIATION-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-MODELREADY-A4-REMEDIATION-001.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "f67d90f9b920ac9641b5cf4d45458b2eed40d52cb89d7b7c43896ff8bc4a89f2"
+        },
+        "ODP-NET002-LEASE-DISPOSITION-001": {
+          "task_id": "ODP-NET002-LEASE-DISPOSITION-001",
+          "source": "board",
+          "source_path": "ai-status.json",
+          "status": "in_progress",
+          "depends_on": [],
+          "source_sha256": "52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96"
+        },
+        "ODP-NETPLAN-DISCLOSURE-UI-E2E-001": {
+          "task_id": "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-NETPLAN-DISCLOSURE-UI-E2E-001.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "d88b30c072338c6c6ae04197cce0133195c378528f9d6cf3ea8c606f74a1bb84"
+        },
+        "ODP-NFR-RUNTIME-EVIDENCE-001": {
+          "task_id": "ODP-NFR-RUNTIME-EVIDENCE-001",
+          "source": "board",
+          "source_path": "ai-status.json",
+          "status": "todo",
+          "depends_on": [
+            "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001"
+          ],
+          "source_sha256": "52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96"
+        },
+        "ODP-OPS002-DECISION-COMMENTS-001": {
+          "task_id": "ODP-OPS002-DECISION-COMMENTS-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-OPS002-DECISION-COMMENTS-001.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "7e2a976dd88a87ba6f6abf3f3301cb06815abb1b753f47a8b27ab51bec14f175"
+        },
+        "ODP-PRICE006-BANDIT-GATED-001": {
+          "task_id": "ODP-PRICE006-BANDIT-GATED-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-PRICE006-BANDIT-GATED-001.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "fa9f70257e250f85049918deaa86a034f3e3f59f8ec69c36fa7a9a2b97afe2eb"
+        },
+        "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001": {
+          "task_id": "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "e6fc92432c3550ab058c2046727a6b7d654f1f97c2ccb4e19214ee9f2bbd6cf2"
+        },
+        "ODP-RELEASE-GATE-FIXTURE-STAGING-002": {
+          "task_id": "ODP-RELEASE-GATE-FIXTURE-STAGING-002",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-RELEASE-GATE-FIXTURE-STAGING-002.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "ae3ecc8ce084e70e4de9e517fe635993ba9eada3ecaa7ee65a6cd39d545b515f"
+        },
+        "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001": {
+          "task_id": "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "1b35059496b0541e59cb9049867ac05ca7f8ef3ef74b632da79fab066fa48340"
+        },
+        "ODP-REQ-DISPOSITION-GOVERNANCE-001": {
+          "task_id": "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-REQ-DISPOSITION-GOVERNANCE-001.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "c306deecf0a9c4b449a23bc970d8a9d3d74773c0847e3c8ac00ba98a36ae067b"
+        },
+        "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001": {
+          "task_id": "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "3cef429545c1ef06ecd6babc4836c1bff8b90c76df663a3b978c9f671e33dcb9"
+        },
+        "ODP-RUNTIME-RELEASE-SINGLE-PATH-001": {
+          "task_id": "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-RUNTIME-RELEASE-SINGLE-PATH-001.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "1a7bf92657780894976417105e5d949d1c5895051c244094219abda31b3b8eaf"
+        },
+        "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001": {
+          "task_id": "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+          "source": "board",
+          "source_path": "ai-status.json",
+          "status": "in_progress",
+          "depends_on": [],
+          "source_sha256": "52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96"
+        },
+        "ODP-SITESCORE-QUALITY-NULLABLE-001": {
+          "task_id": "ODP-SITESCORE-QUALITY-NULLABLE-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-SITESCORE-QUALITY-NULLABLE-001.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "ef6c499e23d4349c5f6b5c624ad3c4f0ae5be921309c5aaf4514337c15699478"
+        },
+        "ODP-SPEC-SOURCE-PROVENANCE-001": {
+          "task_id": "ODP-SPEC-SOURCE-PROVENANCE-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-SPEC-SOURCE-PROVENANCE-001.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "bb63787648120e917021b7d08a093a42df74ccedec722ce15342bdf543e4c83c"
+        },
+        "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001": {
+          "task_id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "source": "board",
+          "source_path": "ai-status.json",
+          "status": "todo",
+          "depends_on": [
+            "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+            "ODP-SPEC-SOURCE-PROVENANCE-001",
+            "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+            "ODP-LH-PREDICTION-DRIFT-001",
+            "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001",
+            "ODP-JOB-PARTIAL-DISPOSITION-001",
+            "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+            "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+            "ODP-NET002-LEASE-DISPOSITION-001",
+            "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+            "ODP-PRICE006-BANDIT-GATED-001",
+            "ODP-INT001-CDC-DISPOSITION-001",
+            "ODP-INTV006-ADJUST-WORKFLOW-001",
+            "ODP-LH003-BACKTEST-RELEASE-GATE-001",
+            "ODP-OPS002-DECISION-COMMENTS-001",
+            "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+            "ODP-NFR-RUNTIME-EVIDENCE-001"
+          ],
+          "source_sha256": "52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96"
+        },
+        "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001": {
+          "task_id": "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "04fb5506932c8c38690b55948e428cfc549efddf4472f62c60e0e35360a3198a"
+        },
+        "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002": {
+          "task_id": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "a28d0ab590dc3e3980e986be00cb79e5be6d3935f960ab0b6c1147b166196a40"
+        },
+        "ORCH-ARCHIVE-HISTORY-APPLY-001": {
+          "task_id": "ORCH-ARCHIVE-HISTORY-APPLY-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ORCH-ARCHIVE-HISTORY-APPLY-001.json",
+          "status": "done",
+          "depends_on": [
+            "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
+            "ORCH-ARCHIVE-RECOVERY-EVIDENCE-001"
+          ],
+          "source_sha256": "8b5978c99be6bf19bd1d6739149f32869cd9fb0ace09156c49a6925beb6fb911"
+        },
+        "ORCH-ARCHIVE-HISTORY-EXECUTE-003": {
+          "task_id": "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ORCH-ARCHIVE-HISTORY-EXECUTE-003.json",
+          "status": "done",
+          "depends_on": [
+            "ORCH-ARCHIVE-HISTORY-RESTORE-002",
+            "ORCH-ARCHIVE-RECOVERY-INVALIDATION-001"
+          ],
+          "source_sha256": "c974d993349bd787851ad678ab65675a03f1626717b1fdcc5592c9e8426df637"
+        },
+        "ORCH-ARCHIVE-HISTORY-RECOVERY-001": {
+          "task_id": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ORCH-ARCHIVE-HISTORY-RECOVERY-001.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "d234dc3e36a27d305df8519f5f8198e49a7193811f1a6fe563faf752a9eb9501"
+        },
+        "ORCH-ARCHIVE-HISTORY-RESTORE-002": {
+          "task_id": "ORCH-ARCHIVE-HISTORY-RESTORE-002",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ORCH-ARCHIVE-HISTORY-RESTORE-002.json",
+          "status": "done",
+          "depends_on": [
+            "ORCH-ARCHIVE-HISTORY-APPLY-001"
+          ],
+          "source_sha256": "a843f418e48118e42e9956f9a9092868821fd4090caebf56c0e0840e7ce62a5a"
+        },
+        "ORCH-ARCHIVE-RECOVERY-EVIDENCE-001": {
+          "task_id": "ORCH-ARCHIVE-RECOVERY-EVIDENCE-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ORCH-ARCHIVE-RECOVERY-EVIDENCE-001.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "e210be1c59ade925da76d69e568e851905054553f2a20a2939a9c8e0daff752d"
+        },
+        "ORCH-ARCHIVE-RECOVERY-INVALIDATION-001": {
+          "task_id": "ORCH-ARCHIVE-RECOVERY-INVALIDATION-001",
+          "source": "archive",
+          "source_path": "ai-task-archive/tasks/ORCH-ARCHIVE-RECOVERY-INVALIDATION-001.json",
+          "status": "done",
+          "depends_on": [],
+          "source_sha256": "2e51e928a60426a59166d9a6220469e50417a794b4f4c5a85220286b7ba57c32"
         }
       },
       "target_task": {
@@ -337,6 +769,15 @@
         "closure_vertices_count": 49,
         "evaluated_edges_count": 51,
         "unresolved_vertices": [],
+        "seed_tasks": [
+          "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+          "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "ODP-BRAND-TRANSFER-CONTRACT-PREP-001",
+          "ODP-BRAND-TRANSFER-IMPLEMENTATION-001",
+          "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001",
+          "ODP-FORMAT-CONVERSION-IMPLEMENTATION-001",
+          "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+        ],
         "closure_vertices": [
           "DPF-EMGI-LIVE-ROLLOUT-001",
           "ODP-AVM-DEPRECIATION-CONTRACT-001",
@@ -492,42 +933,515 @@
           "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
           "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001"
         ],
-        "computation_method": "Kahn topological sort and DFS cycle detection over transitive dependency closure resolved from canonical board and task archives (normalizing task envelope task.depends_on)"
+        "computation_method": "Kahn topological sort and DFS cycle detection over transitive dependency closure resolved from canonical board and task archives (normalizing task envelope task.depends_on)",
+        "sources_summary": {
+          "canonical_board_path": "ai-status.json",
+          "canonical_board_sha256": "52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96",
+          "canonical_board_task_count": 13,
+          "archive_tasks_count": 36,
+          "total_closure_tasks_count": 49
+        },
+        "dependency_input_snapshot": {
+          "DPF-EMGI-LIVE-ROLLOUT-001": {
+            "task_id": "DPF-EMGI-LIVE-ROLLOUT-001",
+            "source": "board",
+            "source_path": "ai-status.json",
+            "status": "review",
+            "depends_on": [],
+            "source_sha256": "52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96"
+          },
+          "ODP-AVM-DEPRECIATION-CONTRACT-001": {
+            "task_id": "ODP-AVM-DEPRECIATION-CONTRACT-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-AVM-DEPRECIATION-CONTRACT-001.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "aac3dcc725f6747123b20054c179bb24db09d6ae8123ef6f7639041cbf89b565"
+          },
+          "ODP-AVM-DEPRECIATION-INTEGRATION-001": {
+            "task_id": "ODP-AVM-DEPRECIATION-INTEGRATION-001",
+            "source": "board",
+            "source_path": "ai-status.json",
+            "status": "blocked",
+            "depends_on": [
+              "ODP-AVM-QUALITY-NULLABLE-001",
+              "ODP-AVM-DEPRECIATION-CONTRACT-001"
+            ],
+            "source_sha256": "52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96"
+          },
+          "ODP-AVM-QUALITY-NULLABLE-001": {
+            "task_id": "ODP-AVM-QUALITY-NULLABLE-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-AVM-QUALITY-NULLABLE-001.json",
+            "status": "done",
+            "depends_on": [
+              "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001"
+            ],
+            "source_sha256": "05dfcf53f2d4353c8b63faa3672978d13a20d5191fc1fd11a02f66375a802819"
+          },
+          "ODP-BRAND-TRANSFER-CONTRACT-PREP-001": {
+            "task_id": "ODP-BRAND-TRANSFER-CONTRACT-PREP-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-BRAND-TRANSFER-CONTRACT-PREP-001.json",
+            "status": "done",
+            "depends_on": [
+              "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+            ],
+            "source_sha256": "572eb22da48f7d367a15fe82a191dcb1379aaca91db3d31fe632c01bac885975"
+          },
+          "ODP-BRAND-TRANSFER-IMPLEMENTATION-001": {
+            "task_id": "ODP-BRAND-TRANSFER-IMPLEMENTATION-001",
+            "source": "board",
+            "source_path": "ai-status.json",
+            "status": "blocked",
+            "depends_on": [
+              "ODP-BRAND-TRANSFER-CONTRACT-PREP-001"
+            ],
+            "source_sha256": "52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96"
+          },
+          "ODP-CANONICAL-LEGACY-LINEAGE-001": {
+            "task_id": "ODP-CANONICAL-LEGACY-LINEAGE-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-CANONICAL-LEGACY-LINEAGE-001.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "4f0fbc242345dbe9dc4ffc05c74707907d42be22cdcf5e613d6d5a492a49d48e"
+          },
+          "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001": {
+            "task_id": "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+            "source": "board",
+            "source_path": "ai-status.json",
+            "status": "todo",
+            "depends_on": [
+              "ODP-SPEC-SOURCE-PROVENANCE-001",
+              "ODP-MEASUREMENT-CROSSLAYER-GATE-001",
+              "ODP-CANONICAL-LEGACY-LINEAGE-001",
+              "ODP-AVM-DEPRECIATION-INTEGRATION-001",
+              "ODP-SITESCORE-QUALITY-NULLABLE-001",
+              "ODP-MODELREADY-A4-REMEDIATION-001",
+              "ODP-INT-MANUAL-CORRECTION-AUDIT-001",
+              "ORCH-ARCHIVE-HISTORY-EXECUTE-003"
+            ],
+            "source_sha256": "52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96"
+          },
+          "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002": {
+            "task_id": "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002.json",
+            "status": "done",
+            "depends_on": [
+              "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+              "ODP-RELEASE-GATE-FIXTURE-STAGING-002"
+            ],
+            "source_sha256": "f547ac6c924aa3b0310f2b07293f7feabc3488d966f4623e8d608a187d7bdcf3"
+          },
+          "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001": {
+            "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+            "source": "board",
+            "source_path": "ai-status.json",
+            "status": "blocked",
+            "depends_on": [
+              "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+              "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+              "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+              "DPF-EMGI-LIVE-ROLLOUT-001",
+              "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+              "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+              "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+              "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+              "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+              "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
+            ],
+            "source_sha256": "52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96"
+          },
+          "ODP-DEV-STAGED-GATE-RECONCILIATION-001": {
+            "task_id": "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-DEV-STAGED-GATE-RECONCILIATION-001.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "19760d7396ad9fa8137eddb9846b58a1c5895ce2d8e5e74054a041840d81d1c4"
+          },
+          "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001": {
+            "task_id": "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "e301e34584b136a9ac2376b4ce65d42e0302b72ed4cc33e29d7b4bd6c3b57863"
+          },
+          "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001": {
+            "task_id": "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001.json",
+            "status": "done",
+            "depends_on": [
+              "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+            ],
+            "source_sha256": "9af75cde28b5507aec4229d74674b3f2abf652d71ababc6dacccae7055324185"
+          },
+          "ODP-FORMAT-CONVERSION-IMPLEMENTATION-001": {
+            "task_id": "ODP-FORMAT-CONVERSION-IMPLEMENTATION-001",
+            "source": "board",
+            "source_path": "ai-status.json",
+            "status": "blocked",
+            "depends_on": [
+              "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001"
+            ],
+            "source_sha256": "52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96"
+          },
+          "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001": {
+            "task_id": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+            "source": "board",
+            "source_path": "ai-status.json",
+            "status": "blocked",
+            "depends_on": [],
+            "source_sha256": "52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96"
+          },
+          "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001": {
+            "task_id": "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "9dfeedca3ca9301a167b8c153e946aee5f08c6c0e5d5b60538a5e02fadf1fcbf"
+          },
+          "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001": {
+            "task_id": "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "b03e462447e3ce6c0270fe2ef9b51cb3c58e94cf8a374924520eed7629de88b6"
+          },
+          "ODP-INT-MANUAL-CORRECTION-AUDIT-001": {
+            "task_id": "ODP-INT-MANUAL-CORRECTION-AUDIT-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-INT-MANUAL-CORRECTION-AUDIT-001.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "1a7335b0b5007237740b034b57397d0cb93319dfc8c5b8a4dc8ffdecda99bd4e"
+          },
+          "ODP-INT001-CDC-DISPOSITION-001": {
+            "task_id": "ODP-INT001-CDC-DISPOSITION-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-INT001-CDC-DISPOSITION-001.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "5773164c0a330f09d0405c8b009d7e33380f317e89280f468c5285684c6c3c82"
+          },
+          "ODP-INTV006-ADJUST-WORKFLOW-001": {
+            "task_id": "ODP-INTV006-ADJUST-WORKFLOW-001",
+            "source": "board",
+            "source_path": "ai-status.json",
+            "status": "blocked",
+            "depends_on": [
+              "ODP-AVM-QUALITY-NULLABLE-001"
+            ],
+            "source_sha256": "52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96"
+          },
+          "ODP-JOB-PARTIAL-DISPOSITION-001": {
+            "task_id": "ODP-JOB-PARTIAL-DISPOSITION-001",
+            "source": "board",
+            "source_path": "ai-status.json",
+            "status": "in_progress",
+            "depends_on": [],
+            "source_sha256": "52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96"
+          },
+          "ODP-LH-PREDICTION-DRIFT-001": {
+            "task_id": "ODP-LH-PREDICTION-DRIFT-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-LH-PREDICTION-DRIFT-001.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "31eee5dfcb14f600670fd5d18bda755ce484aa7d0794657d56e5b2ed46e1ebca"
+          },
+          "ODP-LH003-BACKTEST-RELEASE-GATE-001": {
+            "task_id": "ODP-LH003-BACKTEST-RELEASE-GATE-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-LH003-BACKTEST-RELEASE-GATE-001.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "727303eac509fa586e5ca7afb4162091ebf199480335d3dbede9f74608a04b7c"
+          },
+          "ODP-MEASUREMENT-CROSSLAYER-GATE-001": {
+            "task_id": "ODP-MEASUREMENT-CROSSLAYER-GATE-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-MEASUREMENT-CROSSLAYER-GATE-001.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "bff31e0e24eaf77594b58e05412f5551fa681e5fbbbb0d0f8145c02afbc4c6f5"
+          },
+          "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001": {
+            "task_id": "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "2f1436d107dd1b13111db3550b1b7566c2db69e90bd8a757cf33a085a1237114"
+          },
+          "ODP-MODELREADY-A4-REMEDIATION-001": {
+            "task_id": "ODP-MODELREADY-A4-REMEDIATION-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-MODELREADY-A4-REMEDIATION-001.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "f67d90f9b920ac9641b5cf4d45458b2eed40d52cb89d7b7c43896ff8bc4a89f2"
+          },
+          "ODP-NET002-LEASE-DISPOSITION-001": {
+            "task_id": "ODP-NET002-LEASE-DISPOSITION-001",
+            "source": "board",
+            "source_path": "ai-status.json",
+            "status": "in_progress",
+            "depends_on": [],
+            "source_sha256": "52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96"
+          },
+          "ODP-NETPLAN-DISCLOSURE-UI-E2E-001": {
+            "task_id": "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-NETPLAN-DISCLOSURE-UI-E2E-001.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "d88b30c072338c6c6ae04197cce0133195c378528f9d6cf3ea8c606f74a1bb84"
+          },
+          "ODP-NFR-RUNTIME-EVIDENCE-001": {
+            "task_id": "ODP-NFR-RUNTIME-EVIDENCE-001",
+            "source": "board",
+            "source_path": "ai-status.json",
+            "status": "todo",
+            "depends_on": [
+              "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001"
+            ],
+            "source_sha256": "52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96"
+          },
+          "ODP-OPS002-DECISION-COMMENTS-001": {
+            "task_id": "ODP-OPS002-DECISION-COMMENTS-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-OPS002-DECISION-COMMENTS-001.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "7e2a976dd88a87ba6f6abf3f3301cb06815abb1b753f47a8b27ab51bec14f175"
+          },
+          "ODP-PRICE006-BANDIT-GATED-001": {
+            "task_id": "ODP-PRICE006-BANDIT-GATED-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-PRICE006-BANDIT-GATED-001.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "fa9f70257e250f85049918deaa86a034f3e3f59f8ec69c36fa7a9a2b97afe2eb"
+          },
+          "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001": {
+            "task_id": "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "e6fc92432c3550ab058c2046727a6b7d654f1f97c2ccb4e19214ee9f2bbd6cf2"
+          },
+          "ODP-RELEASE-GATE-FIXTURE-STAGING-002": {
+            "task_id": "ODP-RELEASE-GATE-FIXTURE-STAGING-002",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-RELEASE-GATE-FIXTURE-STAGING-002.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "ae3ecc8ce084e70e4de9e517fe635993ba9eada3ecaa7ee65a6cd39d545b515f"
+          },
+          "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001": {
+            "task_id": "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "1b35059496b0541e59cb9049867ac05ca7f8ef3ef74b632da79fab066fa48340"
+          },
+          "ODP-REQ-DISPOSITION-GOVERNANCE-001": {
+            "task_id": "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-REQ-DISPOSITION-GOVERNANCE-001.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "c306deecf0a9c4b449a23bc970d8a9d3d74773c0847e3c8ac00ba98a36ae067b"
+          },
+          "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001": {
+            "task_id": "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "3cef429545c1ef06ecd6babc4836c1bff8b90c76df663a3b978c9f671e33dcb9"
+          },
+          "ODP-RUNTIME-RELEASE-SINGLE-PATH-001": {
+            "task_id": "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-RUNTIME-RELEASE-SINGLE-PATH-001.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "1a7bf92657780894976417105e5d949d1c5895051c244094219abda31b3b8eaf"
+          },
+          "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001": {
+            "task_id": "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+            "source": "board",
+            "source_path": "ai-status.json",
+            "status": "in_progress",
+            "depends_on": [],
+            "source_sha256": "52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96"
+          },
+          "ODP-SITESCORE-QUALITY-NULLABLE-001": {
+            "task_id": "ODP-SITESCORE-QUALITY-NULLABLE-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-SITESCORE-QUALITY-NULLABLE-001.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "ef6c499e23d4349c5f6b5c624ad3c4f0ae5be921309c5aaf4514337c15699478"
+          },
+          "ODP-SPEC-SOURCE-PROVENANCE-001": {
+            "task_id": "ODP-SPEC-SOURCE-PROVENANCE-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-SPEC-SOURCE-PROVENANCE-001.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "bb63787648120e917021b7d08a093a42df74ccedec722ce15342bdf543e4c83c"
+          },
+          "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001": {
+            "task_id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+            "source": "board",
+            "source_path": "ai-status.json",
+            "status": "todo",
+            "depends_on": [
+              "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+              "ODP-SPEC-SOURCE-PROVENANCE-001",
+              "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+              "ODP-LH-PREDICTION-DRIFT-001",
+              "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001",
+              "ODP-JOB-PARTIAL-DISPOSITION-001",
+              "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+              "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+              "ODP-NET002-LEASE-DISPOSITION-001",
+              "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+              "ODP-PRICE006-BANDIT-GATED-001",
+              "ODP-INT001-CDC-DISPOSITION-001",
+              "ODP-INTV006-ADJUST-WORKFLOW-001",
+              "ODP-LH003-BACKTEST-RELEASE-GATE-001",
+              "ODP-OPS002-DECISION-COMMENTS-001",
+              "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+              "ODP-NFR-RUNTIME-EVIDENCE-001"
+            ],
+            "source_sha256": "52f060f5e9ce3fa16b5936899553970321e8c2eb775a9fd53871ca27e1fafe96"
+          },
+          "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001": {
+            "task_id": "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "04fb5506932c8c38690b55948e428cfc549efddf4472f62c60e0e35360a3198a"
+          },
+          "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002": {
+            "task_id": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "a28d0ab590dc3e3980e986be00cb79e5be6d3935f960ab0b6c1147b166196a40"
+          },
+          "ORCH-ARCHIVE-HISTORY-APPLY-001": {
+            "task_id": "ORCH-ARCHIVE-HISTORY-APPLY-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ORCH-ARCHIVE-HISTORY-APPLY-001.json",
+            "status": "done",
+            "depends_on": [
+              "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
+              "ORCH-ARCHIVE-RECOVERY-EVIDENCE-001"
+            ],
+            "source_sha256": "8b5978c99be6bf19bd1d6739149f32869cd9fb0ace09156c49a6925beb6fb911"
+          },
+          "ORCH-ARCHIVE-HISTORY-EXECUTE-003": {
+            "task_id": "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ORCH-ARCHIVE-HISTORY-EXECUTE-003.json",
+            "status": "done",
+            "depends_on": [
+              "ORCH-ARCHIVE-HISTORY-RESTORE-002",
+              "ORCH-ARCHIVE-RECOVERY-INVALIDATION-001"
+            ],
+            "source_sha256": "c974d993349bd787851ad678ab65675a03f1626717b1fdcc5592c9e8426df637"
+          },
+          "ORCH-ARCHIVE-HISTORY-RECOVERY-001": {
+            "task_id": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ORCH-ARCHIVE-HISTORY-RECOVERY-001.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "d234dc3e36a27d305df8519f5f8198e49a7193811f1a6fe563faf752a9eb9501"
+          },
+          "ORCH-ARCHIVE-HISTORY-RESTORE-002": {
+            "task_id": "ORCH-ARCHIVE-HISTORY-RESTORE-002",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ORCH-ARCHIVE-HISTORY-RESTORE-002.json",
+            "status": "done",
+            "depends_on": [
+              "ORCH-ARCHIVE-HISTORY-APPLY-001"
+            ],
+            "source_sha256": "a843f418e48118e42e9956f9a9092868821fd4090caebf56c0e0840e7ce62a5a"
+          },
+          "ORCH-ARCHIVE-RECOVERY-EVIDENCE-001": {
+            "task_id": "ORCH-ARCHIVE-RECOVERY-EVIDENCE-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ORCH-ARCHIVE-RECOVERY-EVIDENCE-001.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "e210be1c59ade925da76d69e568e851905054553f2a20a2939a9c8e0daff752d"
+          },
+          "ORCH-ARCHIVE-RECOVERY-INVALIDATION-001": {
+            "task_id": "ORCH-ARCHIVE-RECOVERY-INVALIDATION-001",
+            "source": "archive",
+            "source_path": "ai-task-archive/tasks/ORCH-ARCHIVE-RECOVERY-INVALIDATION-001.json",
+            "status": "done",
+            "depends_on": [],
+            "source_sha256": "2e51e928a60426a59166d9a6220469e50417a794b4f4c5a85220286b7ba57c32"
+          }
+        }
       }
     }
   },
   "current_verification_receipts": [
     {
+      "receipt_id": "RC-01",
       "name": "git_diff_check",
       "label": "git_diff_check",
       "command": [
         "git",
         "diff",
         "--check",
-        "4b35121031d0738ff7c529810cf1b2e267161083",
+        "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
         "HEAD"
       ],
       "argv": [
         "git",
         "diff",
         "--check",
-        "4b35121031d0738ff7c529810cf1b2e267161083",
+        "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
         "HEAD"
       ],
       "repository": "alfloop-dev/odayplus",
       "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-site001-missing-components-disposition-001",
-      "measured_head_sha": "513d39086e80ac74417e487a033703ce5e50dd78",
-      "measured_base_sha": "4b35121031d0738ff7c529810cf1b2e267161083",
-      "started_at": "2026-09-12T09:18:12.267977+00:00",
-      "duration_seconds": 0.012039,
+      "measured_head_sha": "5bed7b72d0f0cdb832ca2ce6c5e52dfc3c57a15a",
+      "measured_base_sha": "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
+      "started_at": "2026-09-12T09:37:20.776230+00:00",
+      "duration_seconds": 0.012959,
       "terminal_exit_code": 0,
       "exit_code": 0,
+      "stdout": "",
+      "stderr": "",
       "stdout_snippet": "",
       "stderr_snippet": "",
       "conclusion": "success",
-      "verification_scope": "Whitespace and patch hygiene check across delivered evidence files against dev baseline (4b35121031d0)"
+      "verification_scope": "Whitespace and patch hygiene check across delivered evidence files against dev baseline (3828c5ada2a1)",
+      "retry_reason": "Base advance to origin/dev (3828c5ada2a1) and execution receipt provenance repair addressing Codex2 review findings on PR #1316 (capturing authentic tool exit receipts, durable raw result references, and execution-linked 49-task board/archive dependency input snapshot).",
+      "raw_result_ref": "RC-01-git-diff-check (tool exit 0, duration 0.012959s, empty output)"
     },
     {
+      "receipt_id": "RC-02",
       "name": "original_evidence_integrity",
       "label": "original_evidence_integrity",
       "command": [
@@ -544,42 +1458,51 @@
       ],
       "repository": "alfloop-dev/odayplus",
       "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-site001-missing-components-disposition-001",
-      "measured_head_sha": "513d39086e80ac74417e487a033703ce5e50dd78",
-      "measured_base_sha": "4b35121031d0738ff7c529810cf1b2e267161083",
-      "started_at": "2026-09-12T09:18:12.286574+00:00",
-      "duration_seconds": 0.002864,
+      "measured_head_sha": "5bed7b72d0f0cdb832ca2ce6c5e52dfc3c57a15a",
+      "measured_base_sha": "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
+      "started_at": "2026-09-12T09:37:20.789176+00:00",
+      "duration_seconds": 0.003467,
       "terminal_exit_code": 0,
       "exit_code": 0,
+      "stdout": "",
+      "stderr": "",
       "stdout_snippet": "",
       "stderr_snippet": "",
       "conclusion": "success",
-      "verification_scope": "Byte-for-byte comparison of committed original-evidence.json against canonical dispatch copy"
+      "verification_scope": "Byte-for-byte comparison of committed original-evidence.json against canonical dispatch copy",
+      "retry_reason": "Base advance to origin/dev (3828c5ada2a1) and execution receipt provenance repair addressing Codex2 review findings on PR #1316 (capturing authentic tool exit receipts, durable raw result references, and execution-linked 49-task board/archive dependency input snapshot).",
+      "raw_result_ref": "RC-02-original-evidence-integrity (tool exit 0, duration 0.003467s, empty output)"
     },
     {
+      "receipt_id": "RC-03",
       "name": "canonical_board_and_transitive_dag_verification",
       "label": "canonical_board_and_transitive_dag_verification",
       "command": [
         "python3",
         "-c",
-        "import json, os, glob, heapq\nfrom collections import defaultdict, deque\n\nstatus_root = os.environ.get(\"PANTHEON_STATUS_ROOT\", \"/home/lupin/odayplus\")\nboard = json.load(open(os.path.join(status_root, \"ai-status.json\")))\n\ntasks = {}\nfor t in board.get(\"tasks\", []):\n    tid = t.get(\"id\")\n    if tid:\n        tasks[tid] = {\n            \"source\": \"board\",\n            \"status\": t.get(\"status\"),\n            \"depends_on\": list(t.get(\"depends_on\", []) or []),\n        }\n\nfor p in sorted(glob.glob(os.path.join(status_root, \"ai-task-archive\", \"tasks\", \"*.json\"))):\n    data = json.load(open(p))\n    tid = data.get(\"task_id\") or os.path.splitext(os.path.basename(p))[0]\n    task_obj = data.get(\"task\")\n    if isinstance(task_obj, dict):\n        deps = task_obj.get(\"depends_on\")\n        status = data.get(\"terminal_status\") or task_obj.get(\"status\")\n        actual_tid = task_obj.get(\"id\") or tid\n    else:\n        deps = data.get(\"depends_on\") if data.get(\"depends_on\") is not None else data.get(\"task_depends_on\")\n        status = data.get(\"terminal_status\") or data.get(\"status\")\n        actual_tid = tid\n    \n    if deps is None:\n        deps = []\n    else:\n        deps = list(deps)\n    \n    if actual_tid not in tasks:\n        tasks[actual_tid] = {\n            \"source\": \"archive\",\n            \"source_file\": p,\n            \"status\": status,\n            \"depends_on\": deps,\n        }\n    if tid not in tasks:\n        tasks[tid] = tasks[actual_tid]\n\nseed = [\n    \"ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001\",\n    \"ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001\",\n    \"ODP-BRAND-TRANSFER-CONTRACT-PREP-001\",\n    \"ODP-BRAND-TRANSFER-IMPLEMENTATION-001\",\n    \"ODP-FORMAT-CONVERSION-CONTRACT-PREP-001\",\n    \"ODP-FORMAT-CONVERSION-IMPLEMENTATION-001\",\n    \"ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001\"\n]\n\nvisited = set()\nqueue = deque(seed)\nunresolved = set()\n\nwhile queue:\n    curr = queue.popleft()\n    if curr in visited:\n        continue\n    visited.add(curr)\n    if curr in tasks:\n        for dep in tasks[curr][\"depends_on\"]:\n            if dep not in tasks:\n                unresolved.add(dep)\n            if dep not in visited:\n                queue.append(dep)\n    else:\n        unresolved.add(curr)\n\nin_degree = {v: 0 for v in visited}\nadj = defaultdict(list)\nedges = []\n\nfor u in sorted(visited):\n    for v in sorted(tasks.get(u, {}).get(\"depends_on\", [])):\n        if v in visited:\n            edges.append((u, v))\n            adj[v].append(u)\n            in_degree[u] += 1\n\nheap = [v for v in visited if in_degree[v] == 0]\nheapq.heapify(heap)\ntopo = []\nwhile heap:\n    c = heapq.heappop(heap)\n    topo.append(c)\n    for n in sorted(adj[c]):\n        in_degree[n] -= 1\n        if in_degree[n] == 0:\n            heapq.heappush(heap, n)\n\nvdfs = {}\nhas_cycle = False\ndef dfs(u):\n    global has_cycle\n    vdfs[u] = 1\n    for v in tasks.get(u, {}).get(\"depends_on\", []):\n        if v in visited:\n            if vdfs.get(v, 0) == 1:\n                has_cycle = True\n                return\n            elif vdfs.get(v, 0) == 0:\n                dfs(v)\n    vdfs[u] = 2\n\nfor u in sorted(visited):\n    if vdfs.get(u, 0) == 0:\n        dfs(u)\n\nassert len(unresolved) == 0 and len(topo) == len(visited) and not has_cycle\nprint(f\"Dependency closure verified: {len(visited)} vertices, {len(edges)} edges, 0 cycles, valid DAG.\")\n"
+        "import json, os, glob, hashlib, heapq\nfrom collections import defaultdict, deque\n\nstatus_root = os.environ.get(\"PANTHEON_STATUS_ROOT\", \"/home/lupin/odayplus\")\nboard_path = os.path.join(status_root, \"ai-status.json\")\nboard_bytes = open(board_path, \"rb\").read()\nboard_sha256 = hashlib.sha256(board_bytes).hexdigest()\nboard = json.loads(board_bytes.decode(\"utf-8\"))\n\ntasks = {}\nfor t in board.get(\"tasks\", []):\n    tid = t.get(\"id\")\n    if tid:\n        tasks[tid] = {\n            \"task_id\": tid,\n            \"source\": \"board\",\n            \"source_path\": \"ai-status.json\",\n            \"status\": t.get(\"status\"),\n            \"depends_on\": list(t.get(\"depends_on\", []) or []),\n            \"source_sha256\": board_sha256,\n        }\n\nfor p in sorted(glob.glob(os.path.join(status_root, \"ai-task-archive\", \"tasks\", \"*.json\"))):\n    rel_p = os.path.relpath(p, status_root)\n    content = open(p, \"rb\").read()\n    file_sha256 = hashlib.sha256(content).hexdigest()\n    data = json.loads(content.decode(\"utf-8\"))\n    tid = data.get(\"task_id\") or os.path.splitext(os.path.basename(p))[0]\n    task_obj = data.get(\"task\")\n    if isinstance(task_obj, dict):\n        deps = task_obj.get(\"depends_on\")\n        status = data.get(\"terminal_status\") or task_obj.get(\"status\")\n        actual_tid = task_obj.get(\"id\") or tid\n    else:\n        deps = data.get(\"depends_on\") if data.get(\"depends_on\") is not None else data.get(\"task_depends_on\")\n        status = data.get(\"terminal_status\") or data.get(\"status\")\n        actual_tid = tid\n    \n    if deps is None:\n        deps = []\n    else:\n        deps = list(deps)\n    \n    archive_info = {\n        \"task_id\": actual_tid,\n        \"source\": \"archive\",\n        \"source_path\": rel_p,\n        \"status\": status,\n        \"depends_on\": deps,\n        \"source_sha256\": file_sha256,\n    }\n    if actual_tid not in tasks:\n        tasks[actual_tid] = archive_info\n    if tid not in tasks:\n        tasks[tid] = tasks[actual_tid]\n\nseed = [\n    \"ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001\",\n    \"ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001\",\n    \"ODP-BRAND-TRANSFER-CONTRACT-PREP-001\",\n    \"ODP-BRAND-TRANSFER-IMPLEMENTATION-001\",\n    \"ODP-FORMAT-CONVERSION-CONTRACT-PREP-001\",\n    \"ODP-FORMAT-CONVERSION-IMPLEMENTATION-001\",\n    \"ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001\"\n]\n\nvisited = set()\nqueue = deque(seed)\nunresolved = set()\n\nwhile queue:\n    curr = queue.popleft()\n    if curr in visited:\n        continue\n    visited.add(curr)\n    if curr in tasks:\n        for dep in tasks[curr][\"depends_on\"]:\n            if dep not in tasks:\n                unresolved.add(dep)\n            if dep not in visited:\n                queue.append(dep)\n    else:\n        unresolved.add(curr)\n\nin_degree = {v: 0 for v in visited}\nadj = defaultdict(list)\nedges = []\n\nfor u in sorted(visited):\n    for v in sorted(tasks.get(u, {}).get(\"depends_on\", [])):\n        if v in visited:\n            edges.append(f\"{u} -> {v}\")\n            adj[v].append(u)\n            in_degree[u] += 1\n\nheap = [v for v in visited if in_degree[v] == 0]\nheapq.heapify(heap)\ntopo = []\nwhile heap:\n    c = heapq.heappop(heap)\n    topo.append(c)\n    for n in sorted(adj[c]):\n        in_degree[n] -= 1\n        if in_degree[n] == 0:\n            heapq.heappush(heap, n)\n\nvdfs = {}\nhas_cycle = False\ndef dfs(u):\n    global has_cycle\n    vdfs[u] = 1\n    for v in tasks.get(u, {}).get(\"depends_on\", []):\n        if v in visited:\n            if vdfs.get(v, 0) == 1:\n                has_cycle = True\n                return\n            elif vdfs.get(v, 0) == 0:\n                dfs(v)\n    vdfs[u] = 2\n\nfor u in sorted(visited):\n    if vdfs.get(u, 0) == 0:\n        dfs(u)\n\nassert len(unresolved) == 0 and len(topo) == len(visited) and not has_cycle\nprint(f\"Dependency closure verified: {len(visited)} vertices, {len(edges)} edges, 0 cycles, valid DAG.\")\n"
       ],
       "argv": [
         "python3",
         "-c",
-        "import json, os, glob, heapq\nfrom collections import defaultdict, deque\n\nstatus_root = os.environ.get(\"PANTHEON_STATUS_ROOT\", \"/home/lupin/odayplus\")\nboard = json.load(open(os.path.join(status_root, \"ai-status.json\")))\n\ntasks = {}\nfor t in board.get(\"tasks\", []):\n    tid = t.get(\"id\")\n    if tid:\n        tasks[tid] = {\n            \"source\": \"board\",\n            \"status\": t.get(\"status\"),\n            \"depends_on\": list(t.get(\"depends_on\", []) or []),\n        }\n\nfor p in sorted(glob.glob(os.path.join(status_root, \"ai-task-archive\", \"tasks\", \"*.json\"))):\n    data = json.load(open(p))\n    tid = data.get(\"task_id\") or os.path.splitext(os.path.basename(p))[0]\n    task_obj = data.get(\"task\")\n    if isinstance(task_obj, dict):\n        deps = task_obj.get(\"depends_on\")\n        status = data.get(\"terminal_status\") or task_obj.get(\"status\")\n        actual_tid = task_obj.get(\"id\") or tid\n    else:\n        deps = data.get(\"depends_on\") if data.get(\"depends_on\") is not None else data.get(\"task_depends_on\")\n        status = data.get(\"terminal_status\") or data.get(\"status\")\n        actual_tid = tid\n    \n    if deps is None:\n        deps = []\n    else:\n        deps = list(deps)\n    \n    if actual_tid not in tasks:\n        tasks[actual_tid] = {\n            \"source\": \"archive\",\n            \"source_file\": p,\n            \"status\": status,\n            \"depends_on\": deps,\n        }\n    if tid not in tasks:\n        tasks[tid] = tasks[actual_tid]\n\nseed = [\n    \"ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001\",\n    \"ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001\",\n    \"ODP-BRAND-TRANSFER-CONTRACT-PREP-001\",\n    \"ODP-BRAND-TRANSFER-IMPLEMENTATION-001\",\n    \"ODP-FORMAT-CONVERSION-CONTRACT-PREP-001\",\n    \"ODP-FORMAT-CONVERSION-IMPLEMENTATION-001\",\n    \"ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001\"\n]\n\nvisited = set()\nqueue = deque(seed)\nunresolved = set()\n\nwhile queue:\n    curr = queue.popleft()\n    if curr in visited:\n        continue\n    visited.add(curr)\n    if curr in tasks:\n        for dep in tasks[curr][\"depends_on\"]:\n            if dep not in tasks:\n                unresolved.add(dep)\n            if dep not in visited:\n                queue.append(dep)\n    else:\n        unresolved.add(curr)\n\nin_degree = {v: 0 for v in visited}\nadj = defaultdict(list)\nedges = []\n\nfor u in sorted(visited):\n    for v in sorted(tasks.get(u, {}).get(\"depends_on\", [])):\n        if v in visited:\n            edges.append((u, v))\n            adj[v].append(u)\n            in_degree[u] += 1\n\nheap = [v for v in visited if in_degree[v] == 0]\nheapq.heapify(heap)\ntopo = []\nwhile heap:\n    c = heapq.heappop(heap)\n    topo.append(c)\n    for n in sorted(adj[c]):\n        in_degree[n] -= 1\n        if in_degree[n] == 0:\n            heapq.heappush(heap, n)\n\nvdfs = {}\nhas_cycle = False\ndef dfs(u):\n    global has_cycle\n    vdfs[u] = 1\n    for v in tasks.get(u, {}).get(\"depends_on\", []):\n        if v in visited:\n            if vdfs.get(v, 0) == 1:\n                has_cycle = True\n                return\n            elif vdfs.get(v, 0) == 0:\n                dfs(v)\n    vdfs[u] = 2\n\nfor u in sorted(visited):\n    if vdfs.get(u, 0) == 0:\n        dfs(u)\n\nassert len(unresolved) == 0 and len(topo) == len(visited) and not has_cycle\nprint(f\"Dependency closure verified: {len(visited)} vertices, {len(edges)} edges, 0 cycles, valid DAG.\")\n"
+        "import json, os, glob, hashlib, heapq\nfrom collections import defaultdict, deque\n\nstatus_root = os.environ.get(\"PANTHEON_STATUS_ROOT\", \"/home/lupin/odayplus\")\nboard_path = os.path.join(status_root, \"ai-status.json\")\nboard_bytes = open(board_path, \"rb\").read()\nboard_sha256 = hashlib.sha256(board_bytes).hexdigest()\nboard = json.loads(board_bytes.decode(\"utf-8\"))\n\ntasks = {}\nfor t in board.get(\"tasks\", []):\n    tid = t.get(\"id\")\n    if tid:\n        tasks[tid] = {\n            \"task_id\": tid,\n            \"source\": \"board\",\n            \"source_path\": \"ai-status.json\",\n            \"status\": t.get(\"status\"),\n            \"depends_on\": list(t.get(\"depends_on\", []) or []),\n            \"source_sha256\": board_sha256,\n        }\n\nfor p in sorted(glob.glob(os.path.join(status_root, \"ai-task-archive\", \"tasks\", \"*.json\"))):\n    rel_p = os.path.relpath(p, status_root)\n    content = open(p, \"rb\").read()\n    file_sha256 = hashlib.sha256(content).hexdigest()\n    data = json.loads(content.decode(\"utf-8\"))\n    tid = data.get(\"task_id\") or os.path.splitext(os.path.basename(p))[0]\n    task_obj = data.get(\"task\")\n    if isinstance(task_obj, dict):\n        deps = task_obj.get(\"depends_on\")\n        status = data.get(\"terminal_status\") or task_obj.get(\"status\")\n        actual_tid = task_obj.get(\"id\") or tid\n    else:\n        deps = data.get(\"depends_on\") if data.get(\"depends_on\") is not None else data.get(\"task_depends_on\")\n        status = data.get(\"terminal_status\") or data.get(\"status\")\n        actual_tid = tid\n    \n    if deps is None:\n        deps = []\n    else:\n        deps = list(deps)\n    \n    archive_info = {\n        \"task_id\": actual_tid,\n        \"source\": \"archive\",\n        \"source_path\": rel_p,\n        \"status\": status,\n        \"depends_on\": deps,\n        \"source_sha256\": file_sha256,\n    }\n    if actual_tid not in tasks:\n        tasks[actual_tid] = archive_info\n    if tid not in tasks:\n        tasks[tid] = tasks[actual_tid]\n\nseed = [\n    \"ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001\",\n    \"ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001\",\n    \"ODP-BRAND-TRANSFER-CONTRACT-PREP-001\",\n    \"ODP-BRAND-TRANSFER-IMPLEMENTATION-001\",\n    \"ODP-FORMAT-CONVERSION-CONTRACT-PREP-001\",\n    \"ODP-FORMAT-CONVERSION-IMPLEMENTATION-001\",\n    \"ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001\"\n]\n\nvisited = set()\nqueue = deque(seed)\nunresolved = set()\n\nwhile queue:\n    curr = queue.popleft()\n    if curr in visited:\n        continue\n    visited.add(curr)\n    if curr in tasks:\n        for dep in tasks[curr][\"depends_on\"]:\n            if dep not in tasks:\n                unresolved.add(dep)\n            if dep not in visited:\n                queue.append(dep)\n    else:\n        unresolved.add(curr)\n\nin_degree = {v: 0 for v in visited}\nadj = defaultdict(list)\nedges = []\n\nfor u in sorted(visited):\n    for v in sorted(tasks.get(u, {}).get(\"depends_on\", [])):\n        if v in visited:\n            edges.append(f\"{u} -> {v}\")\n            adj[v].append(u)\n            in_degree[u] += 1\n\nheap = [v for v in visited if in_degree[v] == 0]\nheapq.heapify(heap)\ntopo = []\nwhile heap:\n    c = heapq.heappop(heap)\n    topo.append(c)\n    for n in sorted(adj[c]):\n        in_degree[n] -= 1\n        if in_degree[n] == 0:\n            heapq.heappush(heap, n)\n\nvdfs = {}\nhas_cycle = False\ndef dfs(u):\n    global has_cycle\n    vdfs[u] = 1\n    for v in tasks.get(u, {}).get(\"depends_on\", []):\n        if v in visited:\n            if vdfs.get(v, 0) == 1:\n                has_cycle = True\n                return\n            elif vdfs.get(v, 0) == 0:\n                dfs(v)\n    vdfs[u] = 2\n\nfor u in sorted(visited):\n    if vdfs.get(u, 0) == 0:\n        dfs(u)\n\nassert len(unresolved) == 0 and len(topo) == len(visited) and not has_cycle\nprint(f\"Dependency closure verified: {len(visited)} vertices, {len(edges)} edges, 0 cycles, valid DAG.\")\n"
       ],
       "repository": "alfloop-dev/odayplus",
       "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-site001-missing-components-disposition-001",
-      "measured_head_sha": "513d39086e80ac74417e487a033703ce5e50dd78",
-      "measured_base_sha": "4b35121031d0738ff7c529810cf1b2e267161083",
-      "started_at": "2026-09-12T09:18:12.295900+00:00",
-      "duration_seconds": 0.101186,
+      "measured_head_sha": "5bed7b72d0f0cdb832ca2ce6c5e52dfc3c57a15a",
+      "measured_base_sha": "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
+      "started_at": "2026-09-12T09:37:20.792648+00:00",
+      "duration_seconds": 0.154897,
       "terminal_exit_code": 0,
       "exit_code": 0,
+      "stdout": "Dependency closure verified: 49 vertices, 51 edges, 0 cycles, valid DAG.",
+      "stderr": "",
       "stdout_snippet": "Dependency closure verified: 49 vertices, 51 edges, 0 cycles, valid DAG.",
       "stderr_snippet": "",
       "conclusion": "success",
-      "verification_scope": "Full transitive dependency closure resolution, Kahn topological sort and DFS cycle detection over canonical board and archive (normalizing task.depends_on)"
+      "verification_scope": "Full transitive dependency closure resolution, Kahn topological sort and DFS cycle detection over canonical board and archive with preserved execution-linked input snapshot (normalizing task.depends_on)",
+      "retry_reason": "Base advance to origin/dev (3828c5ada2a1) and execution receipt provenance repair addressing Codex2 review findings on PR #1316 (capturing authentic tool exit receipts, durable raw result references, and execution-linked 49-task board/archive dependency input snapshot).",
+      "raw_result_ref": "RC-03-canonical-board-and-transitive-dag-verification (tool exit 0, duration 0.154897s, stdout: Dependency closure verified: 49 vertices, 51 edges, 0 cycles, valid DAG.)"
     }
   ],
   "historical_test_suite_policy": {
