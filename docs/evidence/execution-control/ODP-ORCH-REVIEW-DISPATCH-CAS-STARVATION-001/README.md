@@ -203,3 +203,10 @@
 Reject terminal publication when refreshed issuance or request differs; preserve the fresh canonical history. Real disk CAS regression covers external receipt, replacement request, request-only change, task removal, and history-only update across successful and unknown dispatch.
 
 Current source hashes, exact commands, original exit codes and durations are in `bounded-continuation-verification.json`; raw logs are adjacent. Earlier receipts above describe earlier revisions and are retained as history. All current listed commands passed. Tests ran against the recorded parent HEAD plus the tracked patch; source hashes bind them to this repair. Independent exact-head review and required CI remain mandatory before merge.
+
+
+
+
+## Ejected merge route continuation
+
+The failed mandatory requeue can leave an old local snapshot after a successful CAS and failed post-sync read. The advance stage now reloads canonical status before further routing, or stops the tick when unavailable. Expanded existing race cases cover waiting/ejected routes with success, sync failure, transient reload failure and persistent reload failure. See ejected-followup-verification.json and original red/green receipts (2 failures before; 64 selected checks passing after).

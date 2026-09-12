@@ -6,5 +6,8 @@
   },
   "red": "2 failures in ejected transient/persistent canonical reload; six controls pass",
   "green": "64 selected dispatch/recovery checks pass",
-  "behavior": "After failed mandatory ejected requeue, reload canonical snapshot before any further routing, or return None to suppress dispatch. Never retry mandatory mutation as advisory."
+  "behavior": "After failed mandatory ejected requeue, reload canonical snapshot before any further routing, or return None to suppress dispatch. Never retry mandatory mutation as advisory.",
+  "additional_supervisor_receipt": "1304-ejected-supervisor.json",
+  "additional_supervisor_result": "16 passed, original exit 0",
+  "adopted_task_head": "2348eb16337a"
 }
