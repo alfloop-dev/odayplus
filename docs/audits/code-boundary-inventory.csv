@@ -1082,6 +1082,7 @@ tests/ops/test_prediction_drift_migration.py,verification,verification_only,fals
 tests/ops/test_price_exploration_gate_migration.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_release_receipts.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_runtime_config_code_closeout.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/ops/test_staging_foundation_sql_binding.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_workflow_expression_contexts.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/performance/assisted_listing_intake/test_capacity.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/performance/test_acceptance_budgets.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
