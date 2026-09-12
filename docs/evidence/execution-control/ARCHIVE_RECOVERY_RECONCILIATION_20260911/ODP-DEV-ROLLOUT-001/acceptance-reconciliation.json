@@ -6,17 +6,17 @@
   "phase": "History Recovery — executable acceptance reconciliation",
   "owner": "Antigravity2",
   "reviewer": "Codex",
-  "recorded_at": "2026-09-12T09:27:00Z",
+  "recorded_at": "2026-09-12T09:47:00Z",
   "reconciliation_target": {
     "repository": "alfloop-dev/odayplus",
     "continuation_branch": "task/ODP-DEV-ROLLOUT-001-RECOVERY-20260911",
-    "target_dev_baseline": "ef8345bce29436ce86bd1a70b857d668ac16182a",
-    "target_dev_baseline_short": "ef8345bce294",
-    "previous_composed_baseline": "4b35121031d0738ff7c529810cf1b2e267161083",
+    "target_dev_baseline": "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
+    "target_dev_baseline_short": "3828c5ada2a1",
+    "previous_composed_baseline": "ef8345bce29436ce86bd1a70b857d668ac16182a",
     "retracted_corrupted_baseline_reference": {
       "bad_sha": "4b35121031d054178550beaa2ca3e6ee8e0a39eb",
       "status": "retracted_unsupported_receipt",
-      "diagnostic": "fatal: bad object 4b35121031d054178550beaa2ca3e6ee8e0a39eb (exit 128); corrected to exact composed SHA 4b35121031d0738ff7c529810cf1b2e267161083 in historical record and advanced to ef8345bce29436ce86bd1a70b857d668ac16182a on origin/dev tip."
+      "diagnostic": "fatal: bad object 4b35121031d054178550beaa2ca3e6ee8e0a39eb (exit 128); corrected to exact composed SHA 4b35121031d0738ff7c529810cf1b2e267161083 in historical record, advanced to ef8345bce29436ce86bd1a70b857d668ac16182a, and composed origin/dev tip 3828c5ada2a1baab33d7dbe734c7ec70152d3d77."
     },
     "initial_recovery_base": "4499a2993e37b62033926b07de8d8d2e8469a6c7",
     "canonical_status_root": "/home/lupin/odayplus"
@@ -375,56 +375,219 @@
         "ODP-EPHEMERAL-STAGING-ROLLOUT-001"
       ]
     },
+    "canonical_snapshots_reference": {
+      "file": "canonical-task-snapshots.json",
+      "sha256": "d6128067c4c3e2b5fc8fc099a91ca0d658397640f1e2079d3a0da1d5cd171cce",
+      "total_nodes": 17,
+      "total_derived_edges": 17
+    },
     "canonical_snapshots": {
-      "ODP-EPHEMERAL-STAGING-ROLLOUT-001": {
-        "source": "ai-status.json:527-570",
-        "last_update": "2026-09-11T12:30:34Z",
-        "status": "blocked",
-        "depends_on": [
-          "ODP-EPHEMERAL-STAGING-IAC-001",
-          "ODP-DEV-ROLLOUT-001",
-          "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
-          "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
-          "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001"
-        ]
-      },
-      "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001": {
-        "source": "ai-status.json",
-        "last_update": "2026-09-11T03:37:40Z",
-        "status": "blocked",
-        "depends_on": [
-          "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
-          "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
-          "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
-          "DPF-EMGI-LIVE-ROLLOUT-001",
-          "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
-          "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
-          "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
-          "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
-          "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
-          "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
-        ]
+      "DPF-EMGI-LIVE-ROLLOUT-001": {
+        "source_type": "ai_status_board",
+        "source_file": "ai-status.json",
+        "source_sha256": "f27def223705e51764ba2c557c39cdc2ac4ff2298af466a765d8c5d12d1a738d",
+        "status": "review",
+        "phase": "Wave 2 - Live Rollout",
+        "owner": "Antigravity",
+        "reviewer": "Codex",
+        "depends_on": [],
+        "is_leaf_node": true
       },
       "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002": {
-        "source": "ai-task-archive/tasks/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002.json:1-18",
-        "archived_at": "2026-09-10T19:01:36Z",
-        "terminal_status": "done",
+        "source_type": "ai_task_archive",
+        "source_file": "ai-task-archive/tasks/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002.json",
+        "source_sha256": "f547ac6c924aa3b0310f2b07293f7feabc3488d966f4623e8d608a187d7bdcf3",
+        "status": "done",
+        "phase": "Dev release candidate governance",
+        "owner": "Antigravity3",
+        "reviewer": "Codex2",
         "depends_on": [
+          "ODP-RELEASE-GATE-FIXTURE-STAGING-002",
+          "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
+        ],
+        "is_leaf_node": false
+      },
+      "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001": {
+        "source_type": "ai_status_board",
+        "source_file": "ai-status.json",
+        "source_sha256": "f27def223705e51764ba2c557c39cdc2ac4ff2298af466a765d8c5d12d1a738d",
+        "status": "blocked",
+        "phase": "Wave 3 - Dev Live Rollout Remediation",
+        "owner": "Antigravity2",
+        "reviewer": "Codex",
+        "depends_on": [
+          "DPF-EMGI-LIVE-ROLLOUT-001",
+          "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+          "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+          "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+          "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+          "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+          "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
           "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
-          "ODP-RELEASE-GATE-FIXTURE-STAGING-002"
-        ]
+          "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+          "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002"
+        ],
+        "is_leaf_node": false
+      },
+      "ODP-DEV-ROLLOUT-001": {
+        "source_type": "ai_status_board",
+        "source_file": "ai-status.json",
+        "source_sha256": "f27def223705e51764ba2c557c39cdc2ac4ff2298af466a765d8c5d12d1a738d",
+        "status": "in_progress",
+        "phase": "History Recovery — executable acceptance reconciliation",
+        "owner": "Antigravity2",
+        "reviewer": "Codex",
+        "depends_on": [],
+        "is_leaf_node": true
+      },
+      "ODP-DEV-STAGED-GATE-RECONCILIATION-001": {
+        "source_type": "ai_task_archive",
+        "source_file": "ai-task-archive/tasks/ODP-DEV-STAGED-GATE-RECONCILIATION-001.json",
+        "source_sha256": "19760d7396ad9fa8137eddb9846b58a1c5895ce2d8e5e74054a041840d81d1c4",
+        "status": "done",
+        "phase": "History Recovery — executable acceptance reconciliation",
+        "owner": "Antigravity4",
+        "reviewer": "Codex",
+        "depends_on": [],
+        "is_leaf_node": true
+      },
+      "ODP-EPHEMERAL-STAGING-IAC-001": {
+        "source_type": "ai_status_board",
+        "source_file": "ai-status.json",
+        "source_sha256": "f27def223705e51764ba2c557c39cdc2ac4ff2298af466a765d8c5d12d1a738d",
+        "status": "review_approved",
+        "phase": "History Recovery — executable acceptance reconciliation",
+        "owner": "Antigravity2",
+        "reviewer": "Codex2",
+        "depends_on": [],
+        "is_leaf_node": true
+      },
+      "ODP-EPHEMERAL-STAGING-ROLLOUT-001": {
+        "source_type": "ai_status_board",
+        "source_file": "ai-status.json",
+        "source_sha256": "f27def223705e51764ba2c557c39cdc2ac4ff2298af466a765d8c5d12d1a738d",
+        "status": "blocked",
+        "phase": "Wave 3 - Staging Rollout",
+        "owner": "Antigravity5",
+        "reviewer": "Codex",
+        "depends_on": [
+          "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "ODP-DEV-ROLLOUT-001",
+          "ODP-EPHEMERAL-STAGING-IAC-001",
+          "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+          "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001"
+        ],
+        "is_leaf_node": false
+      },
+      "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001": {
+        "source_type": "ai_task_archive",
+        "source_file": "ai-task-archive/tasks/ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001.json",
+        "source_sha256": "e301e34584b136a9ac2376b4ce65d42e0302b72ed4cc33e29d7b4bd6c3b57863",
+        "status": "done",
+        "phase": "History Recovery",
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "depends_on": [],
+        "is_leaf_node": true
+      },
+      "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001": {
+        "source_type": "ai_status_board",
+        "source_file": "ai-status.json",
+        "source_sha256": "f27def223705e51764ba2c557c39cdc2ac4ff2298af466a765d8c5d12d1a738d",
+        "status": "blocked",
+        "phase": "History Recovery — executable acceptance reconciliation",
+        "owner": "Antigravity3",
+        "reviewer": "Codex",
+        "depends_on": [],
+        "is_leaf_node": true
+      },
+      "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001": {
+        "source_type": "ai_task_archive",
+        "source_file": "ai-task-archive/tasks/ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001.json",
+        "source_sha256": "e6fc92432c3550ab058c2046727a6b7d654f1f97c2ccb4e19214ee9f2bbd6cf2",
+        "status": "done",
+        "phase": "History Recovery",
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "depends_on": [],
+        "is_leaf_node": true
+      },
+      "ODP-RELEASE-GATE-FIXTURE-STAGING-002": {
+        "source_type": "ai_task_archive",
+        "source_file": "ai-task-archive/tasks/ODP-RELEASE-GATE-FIXTURE-STAGING-002.json",
+        "source_sha256": "ae3ecc8ce084e70e4de9e517fe635993ba9eada3ecaa7ee65a6cd39d545b515f",
+        "status": "done",
+        "phase": "History Recovery",
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "depends_on": [],
+        "is_leaf_node": true
+      },
+      "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001": {
+        "source_type": "ai_task_archive",
+        "source_file": "ai-task-archive/tasks/ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001.json",
+        "source_sha256": "1b35059496b0541e59cb9049867ac05ca7f8ef3ef74b632da79fab066fa48340",
+        "status": "done",
+        "phase": "History Recovery",
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "depends_on": [],
+        "is_leaf_node": true
+      },
+      "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001": {
+        "source_type": "ai_task_archive",
+        "source_file": "ai-task-archive/tasks/ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001.json",
+        "source_sha256": "3cef429545c1ef06ecd6babc4836c1bff8b90c76df663a3b978c9f671e33dcb9",
+        "status": "done",
+        "phase": "History Recovery",
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "depends_on": [],
+        "is_leaf_node": true
+      },
+      "ODP-RUNTIME-RELEASE-SINGLE-PATH-001": {
+        "source_type": "ai_task_archive",
+        "source_file": "ai-task-archive/tasks/ODP-RUNTIME-RELEASE-SINGLE-PATH-001.json",
+        "source_sha256": "1a7bf92657780894976417105e5d949d1c5895051c244094219abda31b3b8eaf",
+        "status": "done",
+        "phase": "History Recovery",
+        "owner": "Antigravity6",
+        "reviewer": "Codex",
+        "depends_on": [],
+        "is_leaf_node": true
       },
       "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001": {
-        "source": "ai-task-archive/tasks/ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001.json",
-        "archived_at": "2026-09-11T12:43:07Z",
-        "terminal_status": "done",
-        "depends_on": []
+        "source_type": "ai_task_archive",
+        "source_file": "ai-task-archive/tasks/ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001.json",
+        "source_sha256": "6b499acbc07f437eef6f50c850d960566470ba733db2adf39be9869f0bebd778",
+        "status": "done",
+        "phase": "History Recovery — executable acceptance reconciliation",
+        "owner": "Antigravity5",
+        "reviewer": "Codex2",
+        "depends_on": [],
+        "is_leaf_node": true
       },
       "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001": {
-        "source": "ai-task-archive/tasks/ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001.json",
-        "archived_at": "2026-09-10T13:46:12Z",
-        "terminal_status": "done",
-        "depends_on": []
+        "source_type": "ai_task_archive",
+        "source_file": "ai-task-archive/tasks/ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001.json",
+        "source_sha256": "f0fc061aab40668fbad2121e41687ef6b753e49586b9132664a4b8a9b44215ee",
+        "status": "done",
+        "phase": "History Recovery",
+        "owner": "Claude2",
+        "reviewer": "Codex",
+        "depends_on": [],
+        "is_leaf_node": true
+      },
+      "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002": {
+        "source_type": "ai_task_archive",
+        "source_file": "ai-task-archive/tasks/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002.json",
+        "source_sha256": "a28d0ab590dc3e3980e986be00cb79e5be6d3935f960ab0b6c1147b166196a40",
+        "status": "done",
+        "phase": "History Recovery — executable acceptance reconciliation",
+        "owner": "Antigravity7",
+        "reviewer": "Codex2",
+        "depends_on": [],
+        "is_leaf_node": true
       }
     },
     "canonical_dependencies_before": [],
@@ -445,16 +608,16 @@
       "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
       "status": "blocked",
       "depends_on": [
-        "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
-        "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
-        "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
         "DPF-EMGI-LIVE-ROLLOUT-001",
-        "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
-        "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
-        "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
-        "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
         "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
-        "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
+        "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+        "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+        "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+        "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+        "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+        "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+        "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+        "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002"
       ],
       "missing_inputs": [
         "1. GitHub environment dev 環境變數與密鑰配置（ODP_WEB_BASE_URL, ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET 於 dev environment 齊備）。",
@@ -576,15 +739,15 @@
   "verification_command_receipts": [
     {
       "receipt_id": "rcpt-001-git-diff-check-target-base",
-      "command": "git diff --check ef8345bce29436ce86bd1a70b857d668ac16182a HEAD",
+      "command": "git diff --check 3828c5ada2a1baab33d7dbe734c7ec70152d3d77 HEAD",
       "repo": "alfloop-dev/odayplus",
-      "target_base": "ef8345bce29436ce86bd1a70b857d668ac16182a",
-      "observed_at": "2026-09-12T09:27:10Z",
+      "target_base": "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
+      "observed_at": "2026-09-12T09:47:10Z",
       "exit_code": 0,
-      "duration_seconds": 0.015,
+      "duration_seconds": 0.018,
       "stdout": "",
       "stderr": "",
-      "summary": "git diff --check exit 0: 無 trailing whitespace 或 conflict marker，格式完全乾淨。"
+      "summary": "git diff --check exit 0: 對準 origin/dev tip (3828c5ada2a1)，無 trailing whitespace 或 conflict marker，格式完全乾淨。"
     },
     {
       "receipt_id": "rcpt-002-retraction-bad-object-diagnostic",
@@ -611,16 +774,50 @@
       "summary": "Codex reviewer 於 PR #1320 exact head cfe569e1 獨立實測 exit 0，已修正為真實 exact baseline SHA。"
     },
     {
-      "receipt_id": "rcpt-004-schema-and-dag-validation",
-      "command": "python3 -c '<acceptance reconciliation & DAG verification snippet>'",
+      "receipt_id": "rcpt-004-standalone-script-schema-and-dag-validation",
+      "command": "python3 docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/verify_reconciliation.py",
+      "script_path": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/verify_reconciliation.py",
+      "script_sha256": "cb27452472acb002577ad623e1f9608265c3732bbc8e120e385515387aab872c",
+      "snapshots_file": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/canonical-task-snapshots.json",
+      "snapshots_sha256": "d6128067c4c3e2b5fc8fc099a91ca0d658397640f1e2079d3a0da1d5cd171cce",
       "repo": "alfloop-dev/odayplus",
-      "target_base": "HEAD",
-      "observed_at": "2026-09-12T09:27:15Z",
+      "target_base": "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
+      "observed_at": "2026-09-12T09:47:15Z",
       "exit_code": 0,
-      "duration_seconds": 0.045,
-      "stdout": "ODP-DEV-ROLLOUT-001 acceptance reconciliation validation: PASSED\n",
+      "duration_seconds": 0.048,
+      "stdout": "================================================================================\nODP-DEV-ROLLOUT-001 Acceptance Reconciliation Verification: ALL CHECKS PASSED\n- Target Baseline: 3828c5ada2a1baab33d7dbe734c7ec70152d3d77\n- Evaluated Nodes: 17 canonical task nodes\n- Derived DAG Edges: 17 dependency edges\n- Edge Set SHA-256: d1db3233c193f7ce93e0895efb227d3314376e68724db0bca7ae0579438fef4d\n- Cycle Detected: False (Strict DAG confirmed)\n- Acceptance Criteria: 5/5 reconciled (Disposition: false_done_superseded)\n- Successor Remediation Task: ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001\n================================================================================\n",
       "stderr": "",
-      "summary": "結構化 JSON 與 17 節點 17 邊 DAG 無環檢查通過，edge_set_sha256 d1db3233… 比對一致。"
+      "summary": "獨立驗證腳本執行通過：5 條驗收條款核對正確、17 節點 17 邊 DAG 無環確認、邊集 SHA-256 (d1db3233…) 比對一致。"
+    },
+    {
+      "receipt_id": "rcpt-005-pr1109-ancestry-verification",
+      "command": "git merge-base --is-ancestor 640e35415aa33d5d53af21a8a527431b8f751cea 3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
+      "repo": "alfloop-dev/odayplus",
+      "source_archive_reference": "ai-task-archive/tasks/ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001.json",
+      "pr_number": 1109,
+      "merge_commit_sha": "640e35415aa33d5d53af21a8a527431b8f751cea",
+      "merged_at": "2026-09-01T14:49:31Z",
+      "observed_at": "2026-09-12T09:47:20Z",
+      "exit_code": 0,
+      "duration_seconds": 0.012,
+      "stdout": "",
+      "stderr": "",
+      "summary": "確認 PR #1109 merge commit (640e35415aa3) 已合入 dev 且為 target_base (3828c5ada2a1) 之 ancestor。"
+    },
+    {
+      "receipt_id": "rcpt-006-candidate-gate-verification-reused",
+      "command": "bash docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/verify_live_artifact_binding.sh /tmp/odp-run-34179791241 /tmp/odp-candidate-c",
+      "repo": "alfloop-dev/odayplus",
+      "source_transcript_reference": "alfloop-dev/odayplus@3613faff582bd1c5a2c9b2ae5b5cd390d8be381f:docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/verification-transcript.txt",
+      "source_readme_reference": "alfloop-dev/odayplus@3613faff582bd1c5a2c9b2ae5b5cd390d8be381f:docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/README.md",
+      "producer_workflow_run": "https://github.com/alfloop-dev/odayplus/actions/runs/34179207603",
+      "handoff_workflow_run": "https://github.com/alfloop-dev/odayplus/actions/runs/34179791241",
+      "observed_at": "2026-09-08T05:05:00Z",
+      "duration_seconds": "unknown",
+      "exit_code": 0,
+      "stdout_summary": "candidate: 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12 build run: 34179791241, 6 cmp byte-exact matches, 4 image digests, 7 gates blocked/no-go",
+      "stderr": "",
+      "summary": "重用 ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002 (PR #1292, merge 3613faff) 之歷史驗證收據。Producer run 34179207603 (build/sign success, step 20 fail exit 1) 與 Handoff run 34179791241 (digest reuse, release artifacts success, deploy skipped) 職責已明確區分。"
     }
   ]
 }
