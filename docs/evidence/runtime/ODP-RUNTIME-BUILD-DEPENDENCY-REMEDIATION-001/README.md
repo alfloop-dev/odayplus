@@ -85,3 +85,18 @@ recorded_at: 2026-09-12T15:11:24Z
    # Output: All routes ok
    # Exit code: 0
    ```
+
+6. **SBOM & OSS Notice Consistency and Security Test Suite**:
+   ```bash
+   uv run python delivery_toolchain/security/generate_sbom.py --check
+   # Output: SBOM at docs/evidence/sbom.json is valid and up to date.
+   # Exit code: 0
+
+   uv run python delivery_toolchain/security/generate_oss_notice.py --check
+   # Output: NOTICE-THIRD-PARTY.md matches the installed dependency trees.
+   # Exit code: 0
+
+   uv run pytest tests/security
+   # Output: 353 passed, 5 warnings in 505.02s
+   # Exit code: 0
+   ```
