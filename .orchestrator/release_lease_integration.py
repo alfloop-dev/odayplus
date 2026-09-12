@@ -25,6 +25,7 @@ import json
 import re
 import subprocess
 from collections.abc import Callable
+from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -454,11 +455,29 @@ def _commit_result(
     record: dict[str, Any],
     *,
     commit_status: Callable[[dict[str, Any], dict[str, Any]], bool],
+    expected_issuance: dict[str, Any] | None = None,
+    expected_request: dict[str, Any] | None = None,
 ) -> bool:
     schema = config.get("schema", {}) or {} if isinstance(config, dict) else {}
     tasks_path = schema.get("tasks_path", "tasks")
     task_id_field = schema.get("task_id_field", "id")
     target_id = str(task.get(task_id_field, task.get("id")) or "").strip()
+
+    if expected_issuance is not None:
+        # The callback may have refreshed the snapshot and its CAS revision.
+        # That revision does not grant this old result ownership of a newer
+        # issuance, even when it belongs to the same request fingerprint.
+        live_task = _task_index(status, target_id, config=config)
+        if (
+            not isinstance(live_task, dict)
+            or live_task.get(ISSUANCE_FIELD) != expected_issuance
+            or live_task.get(REQUEST_FIELD) != expected_request
+        ):
+            return False
+        # Publish only our field on the refreshed task. Concurrent history and
+        # unrelated task updates belong to their writer and must be retained.
+        live_task[ISSUANCE_FIELD] = record
+        return bool(commit_status(config, status))
 
     task[ISSUANCE_FIELD] = record
     if target_id and isinstance(status.get(tasks_path), list):
@@ -1036,6 +1055,8 @@ def process_release_lease_issuance(
             ),
             updated_at=_utc(now),
         )
+        expected_issuance = deepcopy(issued_record)
+        expected_request = deepcopy(request)
         if not _commit_result(config, status, task, issued_record, commit_status=commit_status):
             # GCS has a credential but task CAS is uncertain. Do not dispatch or
             # reissue it: an operator must create a fresh approval after audit.
@@ -1051,7 +1072,10 @@ def process_release_lease_issuance(
             dispatch_record["state"] = "dispatch_unknown"
             dispatch_record["updated_at"] = _utc(now).replace(microsecond=0).isoformat()
             dispatch_record["dispatch"] = "not_confirmed"
-            if _commit_result(config, status, task, dispatch_record, commit_status=commit_status):
+            if _commit_result(
+                config, status, task, dispatch_record, commit_status=commit_status,
+                expected_issuance=expected_issuance, expected_request=expected_request,
+            ):
                 _write_activity(
                     config, "release_lease_dispatch_unknown", task_id=task_id, record=dispatch_record
                 )
@@ -1061,7 +1085,10 @@ def process_release_lease_issuance(
         dispatched_record["state"] = "dispatched"
         dispatched_record["updated_at"] = _utc(now).replace(microsecond=0).isoformat()
         dispatched_record["dispatch"] = "accepted"
-        if _commit_result(config, status, task, dispatched_record, commit_status=commit_status):
+        if _commit_result(
+            config, status, task, dispatched_record, commit_status=commit_status,
+            expected_issuance=expected_issuance, expected_request=expected_request,
+        ):
             _write_activity(
                 config, "release_lease_runtime_release_dispatched", task_id=task_id, record=dispatched_record
             )

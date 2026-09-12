@@ -184,3 +184,10 @@
    - 本變更經獨立 PR 審查與 CI 通過並正式合併入 `dev` 後，由協調者（Coordinator）在維護窗口內統一重啟 Supervisor 載入最新控制平面程式碼。
 3. **資料相容性**：
    - 無需資料庫或狀態遷移，完全向下相容既有 `ai-status.json` 結構。
+
+
+## Bounded continuation verification (2026-09-12)
+
+Reject terminal publication when refreshed issuance or request differs; preserve the fresh canonical history. Real disk CAS regression covers external receipt, replacement request, request-only change, task removal, and history-only update across successful and unknown dispatch.
+
+Current source hashes, exact commands, original exit codes and durations are in `bounded-continuation-verification.json`; raw logs are adjacent. Earlier receipts above describe earlier revisions and are retained as history. All current listed commands passed. Tests ran against the recorded parent HEAD plus the tracked patch; source hashes bind them to this repair. Independent exact-head review and required CI remain mandatory before merge.
