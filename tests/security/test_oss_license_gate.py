@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -29,7 +31,21 @@ POLICY_PATH = ROOT / "docs/security/license_policy.json"
 EXEMPTIONS_PATH = ROOT / "docs/security/license_exemptions.json"
 RELEASE_BINDINGS_PATH = ROOT / "docs/security/release_bindings.json"
 NOTICE_PATH = ROOT / "NOTICE-THIRD-PARTY.md"
-SBOM_PATH = ROOT / "docs/evidence/completion/ODP-PGAP-SUPPLY-001/sbom.json"
+SBOM_PATH = ROOT / "docs/evidence/sbom.json"
+
+# The directory basenames of the eight first-party workspace members named by
+# D05. Each is also a real package name on the public npm registry, which is
+# why deriving a component name from the lockfile path collided with one.
+FIRST_PARTY_WORKSPACE_DIRS = (
+    "ui",
+    "design-tokens",
+    "testkit",
+    "ui-domain",
+    "domain-types",
+    "schemas",
+    "web",
+    "openapi-client",
+)
 
 
 # -----------------------------------------------------------------------------
@@ -71,7 +87,119 @@ def test_sbom_dependency_graph_and_scopes_valid() -> None:
     assert len(deps) > 0, "SBOM must have a dependency graph"
     root_node = next((d for d in deps if "odayplus" in d.get("ref", "")), None)
     assert root_node is not None, "Root application dependency node missing from SBOM"
-    assert len(root_node.get("dependsOn", [])) > 0, "Root node must declare direct dependencies"
+    root_depends_on = root_node.get("dependsOn", [])
+    assert len(root_depends_on) > 0, "Root node must declare direct dependencies"
+
+    # Must contain direct Python dependencies from pyproject.toml
+    assert any(p.startswith("pkg:pypi/fastapi@") for p in root_depends_on), (
+        "Python root dependencies must be present in root dependsOn"
+    )
+
+    # Must contain direct third-party npm dependencies from workspaces (e.g. apps/web)
+    for expected_web_dep in ("next", "react", "argon2", "maplibre-gl", "pg"):
+        assert any(p.startswith(f"pkg:npm/{expected_web_dep}@") for p in root_depends_on), (
+            f"Workspace third-party dependency {expected_web_dep} must be connected to root dependsOn"
+        )
+
+    # First-party workspace packages must NOT appear in root dependsOn or in components
+    assert not any("@oday-plus/" in p for p in root_depends_on), (
+        f"First-party packages must not be in root dependsOn: {root_depends_on}"
+    )
+
+
+def test_sbom_workspace_third_party_dependencies_retained_in_root_synthetic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Synthetic fixture: when first-party workspace components are excluded from
+    the SBOM catalogue, their third-party direct dependencies must still be resolved
+    and connected to the application root node, and transitive edges must be preserved."""
+    import delivery_toolchain.security.generate_sbom as sbom_mod
+
+    synth_lock = tmp_path / "package-lock.json"
+    synth_lock.write_text(
+        json.dumps(
+            {
+                "name": "oday-plus",
+                "version": "0.1.0",
+                "lockfileVersion": 3,
+                "packages": {
+                    "": {
+                        "name": "oday-plus",
+                        "workspaces": ["apps/web", "packages/ui"],
+                    },
+                    "apps/web": {
+                        "name": "@oday-plus/web",
+                        "version": "0.1.0",
+                        "license": "UNLICENSED",
+                        "dependencies": {
+                            "next": "15.5.21",
+                            "@oday-plus/ui": "0.1.0",
+                        },
+                    },
+                    "packages/ui": {
+                        "name": "@oday-plus/ui",
+                        "version": "0.1.0",
+                        "license": "UNLICENSED",
+                        "dependencies": {
+                            "clsx": "2.1.1",
+                        },
+                    },
+                    "node_modules/next": {
+                        "version": "15.5.21",
+                        "license": "MIT",
+                        "dependencies": {
+                            "postcss": "8.4.49",
+                        },
+                    },
+                    "node_modules/postcss": {
+                        "version": "8.4.49",
+                        "license": "MIT",
+                    },
+                    "node_modules/clsx": {
+                        "version": "2.1.1",
+                        "license": "MIT",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    synth_pyproject = tmp_path / "pyproject.toml"
+    synth_pyproject.write_text(
+        '[project]\nname = "odayplus"\nversion = "0.1.0"\ndependencies = []\n',
+        encoding="utf-8",
+    )
+    synth_uv_lock = tmp_path / "uv.lock"
+    synth_uv_lock.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(sbom_mod, "PACKAGE_LOCK", synth_lock)
+    monkeypatch.setattr(sbom_mod, "PYPROJECT", synth_pyproject)
+    monkeypatch.setattr(sbom_mod, "UV_LOCK", synth_uv_lock)
+    monkeypatch.setattr(sbom_mod, "NODE_MODULES", tmp_path / "node_modules_absent")
+
+    result = sbom_mod.generate_sbom()
+
+    # 1. First-party packages are excluded from components catalogue
+    comp_names = {c["name"] for c in result["components"]}
+    assert "@oday-plus/web" not in comp_names
+    assert "@oday-plus/ui" not in comp_names
+    assert "web" not in comp_names
+    assert "ui" not in comp_names
+    assert {"next", "postcss", "clsx"}.issubset(comp_names)
+
+    # 2. Root dependency node retains workspace third-party dependencies
+    deps = result["dependencies"]
+    root_node = next(d for d in deps if "odayplus" in d.get("ref", ""))
+    root_deps = root_node.get("dependsOn", [])
+    assert "pkg:npm/next@15.5.21" in root_deps
+    assert "pkg:npm/clsx@2.1.1" in root_deps
+    assert not any("@oday-plus" in d for d in root_deps)
+
+    # 3. Transitive component edge is preserved
+    next_node = next((d for d in deps if d.get("ref") == "pkg:npm/next@15.5.21"), None)
+    assert next_node is not None
+    assert "pkg:npm/postcss@8.4.49" in next_node.get("dependsOn", [])
 
 
 def test_sbom_container_and_repository_release_digests() -> None:
@@ -138,6 +266,43 @@ def test_no_unidentified_or_unknown_third_party_licenses() -> None:
 
     unknowns = [c for c in all_comps if c.license.strip().upper() == "UNKNOWN"]
     assert len(unknowns) == 0, f"Third party packages with UNKNOWN license: {unknowns}"
+
+
+def test_sbom_catalogues_no_first_party_workspace_package() -> None:
+    """The SBOM keys npm components off lockfile paths. A workspace member is
+    keyed by its directory, so deriving the name from the path renamed
+    `@oday-plus/ui` to `ui` and minted `pkg:npm/ui@0.1.0` -- a purl that
+    belongs to an unrelated public package. That both hid our own packages
+    from the first-party filter and published eight of them as third parties.
+    """
+    components = generate_sbom()["components"]
+
+    first_party = [c for c in components if c["name"].startswith("@oday-plus/")]
+    assert not first_party, (
+        f"first-party packages must not be catalogued as third party: {first_party}"
+    )
+
+    collided = [
+        c
+        for c in components
+        if c["purl"] in {f"pkg:npm/{name}@0.1.0" for name in FIRST_PARTY_WORKSPACE_DIRS}
+    ]
+    assert not collided, (
+        "these purls name unrelated public packages, not our workspace members: "
+        f"{[c['purl'] for c in collided]}"
+    )
+
+
+def test_third_party_unlicensed_is_not_admitted_by_the_first_party_marker() -> None:
+    """D05 marks our own packages UNLICENSED. That marker is a first-party
+    identity claim, so it must not become a licence any third party can declare
+    to walk through the gate."""
+    result = evaluate_policy(
+        components=[Component("npm", "some-third-party-pkg", "1.0.0", "UNLICENSED")]
+    )
+    assert result["status"] == "FAIL"
+    assert result["violations"], "an unrecognised licence string must fail closed"
+    assert not result["allowed"] and not result["allowed_with_obligations"]
 
 
 def test_license_policy_evaluation_fails_on_unadjudicated_cases() -> None:

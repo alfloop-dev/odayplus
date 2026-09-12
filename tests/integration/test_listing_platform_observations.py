@@ -127,6 +127,10 @@ SAMPLE_OBSERVATION_DOCUMENT = PropertyObservationDocument(
             last_seen_at="2026-07-15T08:00:00Z",
         )
     ],
+    # The facade derives ownership from the returned resource envelope.  Keep
+    # this production-shaped fixture tenant-bound instead of relying on the
+    # caller-supplied query tenant.
+    metadata={"tenant_id": "tenant-a"},
 )
 
 

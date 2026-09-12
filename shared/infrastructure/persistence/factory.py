@@ -24,6 +24,12 @@ from pathlib import Path
 from typing import Any
 
 from shared.audit.worm import AuditWormSink, build_audit_worm_sink_from_env
+from shared.governance import (
+    InMemoryDecisionPolicyRepository,
+    default_heatzone_absorption_policy,
+    default_heatzone_merge_policy,
+    default_model_performance_drift_policy,
+)
 
 DEFAULT_DB_PATH = ".odp_data/durable.sqlite3"
 _DURABLE_MODES = {"durable", "sqlite"}
@@ -53,8 +59,9 @@ class PersistenceBundle:
     intervention_repository: Any
     intervention_label_registry: Any
     ingestion_run_store: Any
-    # Expansion decision-flow stores (ODP-FLOW-002): HeatZone ranking, listing
-    # dedup + candidate inbox, SiteScore decisions, and realized sites.
+    # Expansion decision-flow stores (ODP-FLOW-002, ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001):
+    # HeatZone ranking, composition lineage/override, listing dedup + candidate inbox,
+    # SiteScore decisions, and realized sites.
     heatzone_store: Any
     listing_repository: Any
     sitescore_decision_store: Any
@@ -67,6 +74,10 @@ class PersistenceBundle:
     machine_repository: Any
     transaction_repository: Any
     machine_cycle_repository: Any
+    heatzone_composition_repository: Any = None
+    heatzone_evidence_repository: Any = None
+    heatzone_absorption_outcome_writer: Any = None
+    manual_correction_repository: Any = None
     external_fetch_state_store: Any = None
     notification_repository: Any = None
     outbox_repository: Any = None
@@ -79,6 +90,11 @@ class PersistenceBundle:
     # has an identity_store and session_service wired rather than None.
     identity_store: Any = None
     session_service: Any = None
+    # Decision-policy registry binding is supplied by the deployment that
+    # owns workflow.decision_policies. Keeping it optional preserves the
+    # memory/SQLite construction path while allowing API and worker callers to
+    # share one registry repository when it is available.
+    forecastops_policy_repository: Any = None
 
 
     @property
@@ -102,6 +118,21 @@ class PersistenceBundle:
 
     def heatzone_store_for_tenant(self, tenant_id: str) -> Any | None:
         return self._scoped_repository("heatzone_store", tenant_id)
+
+    def heatzone_composition_repository_for_tenant(self, tenant_id: str) -> Any | None:
+        return self._scoped_repository("heatzone_composition_repository", tenant_id)
+
+    def heatzone_absorption_outcome_writer_for_tenant(self, tenant_id: str) -> Any | None:
+        # Like the reader, the writer takes tenant_id on every call and touches
+        # relations that are not document-store backed, so one writer per engine
+        # is correct and a scoped wrapper would only hide the tenant argument.
+        return self.heatzone_absorption_outcome_writer
+
+    def heatzone_evidence_repository_for_tenant(self, tenant_id: str) -> Any | None:
+        # The evidence reader already takes tenant_id on every call and reads
+        # relations that are not document-store backed, so it needs no scoped
+        # wrapper -- returning it unchanged keeps one reader per engine.
+        return self.heatzone_evidence_repository
 
     def _scoped_repository(self, attribute: str, tenant_id: str) -> Any | None:
         if not tenant_id or not tenant_id.strip():
@@ -128,6 +159,39 @@ class PersistenceBundle:
         return None
 
 
+def _default_decision_policy_repository() -> InMemoryDecisionPolicyRepository:
+    from modules.forecastops.domain.forecasting import default_forecast_alert_policy
+    from shared.governance import default_netplan_disclosure_policy
+
+    seeded_tenants = (
+        "tenant-test",
+        "tenant-a",
+        "tenant-b",
+        "tenant-default",
+        "11111111-1111-1111-1111-111111111111",
+        "22222222-2222-2222-2222-222222222222",
+        "00000000-0000-0000-0000-000000000001",
+        "tenant-gate",
+    )
+    return InMemoryDecisionPolicyRepository(
+        [
+            policy
+            for tenant_id in seeded_tenants
+            for policy in (
+                default_forecast_alert_policy(tenant_id),
+                default_model_performance_drift_policy(tenant_id),
+                default_heatzone_merge_policy(tenant_id),
+                default_heatzone_absorption_policy(tenant_id),
+                # One registry, keyed by policy_kind. NetPlan approval refuses
+                # outright when its kind does not resolve, so a bundle that
+                # seeds the other kinds and not this one would leave every
+                # network plan unapprovable rather than merely ungoverned.
+                default_netplan_disclosure_policy(tenant_id),
+            )
+        ]
+    )
+
+
 def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
     from models.shared_ml.artifact_store import InMemoryArtifactStore
     from modules.adlift.infrastructure import InMemoryAdLiftRepository
@@ -137,7 +201,11 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
     )
     from modules.external_data.workers.scheduled_fetch import InMemoryExternalFetchStateStore
     from modules.forecastops.infrastructure import InMemoryForecastOpsRepository
-    from modules.heatzone.infrastructure import HeatZoneResultStore
+    from modules.heatzone.infrastructure import (
+        HeatZoneResultStore,
+        InMemoryHeatZoneCompositionRepository,
+        InMemoryMergeSplitEvidenceRepository,
+    )
     from modules.intervention.infrastructure.repositories import (
         InMemoryInterventionRepository,
         InMemoryLabelRegistry,
@@ -163,6 +231,7 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
         InMemoryBrandRepository,
         InMemoryMachineCycleRepository,
         InMemoryMachineRepository,
+        InMemoryManualCorrectionRepository,
         InMemoryStoreRepository,
         InMemoryTenantRepository,
         InMemoryTransactionRepository,
@@ -170,19 +239,27 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
     from shared.jobs.queue import InMemoryJobQueue
     from shared.workflow.sitescore import InMemoryDecisionStore, InMemoryRealizedSiteStore
 
+    # One object serves as both the evidence reader and the outcome writer here;
+    # the durable bundle keeps them apart, but in memory a second instance would
+    # simply be a second, empty history.
+    _memory_heatzone_evidence = InMemoryMergeSplitEvidenceRepository()
+
     mem_identity_store = InMemoryIdentityStore()
     mem_session_service = SessionService(
         repository=InMemorySessionRepository(),
         config=SessionConfig(),
     )
+    mem_corr_repo = InMemoryManualCorrectionRepository()
+    mem_audit_log = InMemoryAuditLog(worm_sink=worm_sink)
 
     return PersistenceBundle(
         mode="memory",
-        audit_log=InMemoryAuditLog(worm_sink=worm_sink),
+        audit_log=mem_audit_log,
         evidence_store=InMemoryEvidenceBundleStore(worm_sink=worm_sink),
         job_queue=InMemoryJobQueue(),
         avm_repository=InMemoryAVMRepository(),
         forecastops_repository=InMemoryForecastOpsRepository(),
+        forecastops_policy_repository=_default_decision_policy_repository(),
         netplan_repository=InMemoryNetPlanRepository(),
         learninghub_repository=InMemoryLearningHubRepository(),
         artifact_store=InMemoryArtifactStore(),
@@ -194,13 +271,19 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
         intervention_label_registry=InMemoryLabelRegistry(),
         ingestion_run_store=InMemoryIngestionRunStore(),
         heatzone_store=HeatZoneResultStore(),
+        heatzone_composition_repository=InMemoryHeatZoneCompositionRepository(),
+        heatzone_evidence_repository=_memory_heatzone_evidence,
+        heatzone_absorption_outcome_writer=_memory_heatzone_evidence,
         listing_repository=InMemoryListingRepository(),
         sitescore_decision_store=InMemoryDecisionStore(),
         sitescore_realized_store=InMemoryRealizedSiteStore(),
 
         tenant_repository=InMemoryTenantRepository(),
         brand_repository=InMemoryBrandRepository(),
-        address_location_repository=InMemoryAddressLocationRepository(),
+        address_location_repository=InMemoryAddressLocationRepository(
+            _corrections=mem_corr_repo
+        ),
+        manual_correction_repository=mem_corr_repo,
         store_repository=InMemoryStoreRepository(),
         machine_repository=InMemoryMachineRepository(),
         transaction_repository=InMemoryTransactionRepository(),
@@ -230,6 +313,7 @@ def _durable_bundle(
     )
     from shared.infrastructure.persistence.outbox import DurableOutboxRepository
     from shared.infrastructure.persistence.repositories import (
+        DurableAbsorptionOutcomeWriter,
         DurableAddressLocationRepository,
         DurableAdLiftRepository,
         DurableArtifactStore,
@@ -237,6 +321,7 @@ def _durable_bundle(
         DurableBrandRepository,
         DurableDecisionStore,
         DurableForecastOpsRepository,
+        DurableHeatZoneCompositionRepository,
         DurableHeatZoneResultStore,
         DurableInterventionRepository,
         DurableLabelRegistry,
@@ -244,6 +329,8 @@ def _durable_bundle(
         DurableListingRepository,
         DurableMachineCycleRepository,
         DurableMachineRepository,
+        DurableManualCorrectionRepository,
+        DurableMergeSplitEvidenceRepository,
         DurableNetPlanRepository,
         DurablePriceOpsRepository,
         DurableRealizedSiteStore,
@@ -275,13 +362,17 @@ def _durable_bundle(
     resolved_worm_sink = worm_sink or build_audit_worm_sink_from_env(
         default_root=worm_root
     )
+    durable_audit_log = DurableAuditLog(engine, worm_sink=resolved_worm_sink)
+    durable_manual_corr_repo = DurableManualCorrectionRepository(engine)
+
     return PersistenceBundle(
         mode="durable",
-        audit_log=DurableAuditLog(engine, worm_sink=resolved_worm_sink),
+        audit_log=durable_audit_log,
         evidence_store=DurableEvidenceBundleStore(engine, worm_sink=resolved_worm_sink),
         job_queue=DurableJobQueue(engine),
         avm_repository=DurableAVMRepository(store),
         forecastops_repository=DurableForecastOpsRepository(store),
+        forecastops_policy_repository=_default_decision_policy_repository(),
         netplan_repository=DurableNetPlanRepository(store),
         learninghub_repository=DurableLearningHubRepository(store),
         artifact_store=DurableArtifactStore(store),
@@ -293,12 +384,20 @@ def _durable_bundle(
         intervention_label_registry=DurableLabelRegistry(store),
         ingestion_run_store=DurableIngestionRunStore(store),
         heatzone_store=DurableHeatZoneResultStore(store),
+        heatzone_composition_repository=DurableHeatZoneCompositionRepository(engine),
+        heatzone_evidence_repository=DurableMergeSplitEvidenceRepository(engine),
+        heatzone_absorption_outcome_writer=DurableAbsorptionOutcomeWriter(engine),
         listing_repository=DurableListingRepository(store),
         sitescore_decision_store=DurableDecisionStore(store),
         sitescore_realized_store=DurableRealizedSiteStore(store),
         tenant_repository=DurableTenantRepository(engine),
         brand_repository=DurableBrandRepository(engine),
-        address_location_repository=DurableAddressLocationRepository(engine),
+        address_location_repository=DurableAddressLocationRepository(
+            engine,
+            correction_repo=durable_manual_corr_repo,
+            audit_log=durable_audit_log,
+        ),
+        manual_correction_repository=durable_manual_corr_repo,
         store_repository=DurableStoreRepository(engine),
         machine_repository=DurableMachineRepository(engine),
         transaction_repository=DurableTransactionRepository(engine),
@@ -327,6 +426,7 @@ def _postgres_bundle(
         validate_required_tables,
     )
     from shared.infrastructure.persistence.audit_log import DurableAuditLog
+    from shared.infrastructure.persistence.decision_policy import SqlDecisionPolicyRepository
     from shared.infrastructure.persistence.external_data import DurableIngestionRunStore
     from shared.infrastructure.persistence.job_queue import DurableJobQueue
     from shared.infrastructure.persistence.operator_network_listings import (
@@ -338,6 +438,7 @@ def _postgres_bundle(
         PostgresEngine,
     )
     from shared.infrastructure.persistence.repositories import (
+        DurableAbsorptionOutcomeWriter,
         DurableAddressLocationRepository,
         DurableAdLiftRepository,
         DurableArtifactStore,
@@ -345,6 +446,7 @@ def _postgres_bundle(
         DurableBrandRepository,
         DurableDecisionStore,
         DurableForecastOpsRepository,
+        DurableHeatZoneCompositionRepository,
         DurableHeatZoneResultStore,
         DurableInterventionRepository,
         DurableLabelRegistry,
@@ -352,6 +454,8 @@ def _postgres_bundle(
         DurableListingRepository,
         DurableMachineCycleRepository,
         DurableMachineRepository,
+        DurableManualCorrectionRepository,
+        DurableMergeSplitEvidenceRepository,
         DurableNetPlanRepository,
         DurablePriceOpsRepository,
         DurableRealizedSiteStore,
@@ -390,9 +494,12 @@ def _postgres_bundle(
     )
 
     resolved_worm_sink = worm_sink or build_audit_worm_sink_from_env()
+    pg_audit_log = DurableAuditLog(engine, worm_sink=resolved_worm_sink)
+    pg_manual_corr_repo = DurableManualCorrectionRepository(engine)
+
     return PersistenceBundle(
         mode="postgresql",
-        audit_log=DurableAuditLog(engine, worm_sink=resolved_worm_sink),
+        audit_log=pg_audit_log,
         evidence_store=DurableEvidenceBundleStore(
             engine,
             worm_sink=resolved_worm_sink,
@@ -400,6 +507,7 @@ def _postgres_bundle(
         job_queue=DurableJobQueue(engine),
         avm_repository=DurableAVMRepository(store),
         forecastops_repository=DurableForecastOpsRepository(store),
+        forecastops_policy_repository=SqlDecisionPolicyRepository(engine),
         netplan_repository=DurableNetPlanRepository(store),
         learninghub_repository=DurableLearningHubRepository(store),
         artifact_store=DurableArtifactStore(store),
@@ -411,12 +519,20 @@ def _postgres_bundle(
         intervention_label_registry=DurableLabelRegistry(store),
         ingestion_run_store=DurableIngestionRunStore(store),
         heatzone_store=DurableHeatZoneResultStore(store),
+        heatzone_composition_repository=DurableHeatZoneCompositionRepository(engine),
+        heatzone_evidence_repository=DurableMergeSplitEvidenceRepository(engine),
+        heatzone_absorption_outcome_writer=DurableAbsorptionOutcomeWriter(engine),
         listing_repository=DurableListingRepository(store),
         sitescore_decision_store=DurableDecisionStore(store),
         sitescore_realized_store=DurableRealizedSiteStore(store),
         tenant_repository=DurableTenantRepository(engine),
         brand_repository=DurableBrandRepository(engine),
-        address_location_repository=DurableAddressLocationRepository(engine),
+        address_location_repository=DurableAddressLocationRepository(
+            engine,
+            correction_repo=pg_manual_corr_repo,
+            audit_log=pg_audit_log,
+        ),
+        manual_correction_repository=pg_manual_corr_repo,
         store_repository=DurableStoreRepository(engine),
         machine_repository=DurableMachineRepository(engine),
         transaction_repository=DurableTransactionRepository(engine),

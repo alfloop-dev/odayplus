@@ -142,6 +142,14 @@ def test_work_order_instantiation() -> None:
     assert order.severity in ["low", "medium", "high", "critical"]
     assert order.cost_amount == 2500.0
     assert order.closed_at is None
+    assert order.root_cause is None
+
+    order_with_cause = WorkOrder(
+        store_id=str(uuid.uuid4()),
+        issue_type="failure",
+        root_cause="worn_seal",
+    )
+    assert order_with_cause.root_cause == "worn_seal"
 
 
 def test_listing_instantiation_and_utility_flags() -> None:

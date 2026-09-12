@@ -67,4 +67,88 @@ describe("Package 10 Store Ops parity", () => {
     expect(screen.getByRole("tab", { name: "ForecastOps" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText(/28 天門市營運營收預測與異常帶/)).toBeInTheDocument();
   });
+
+  it("aborts in-flight fetch and suppresses console.error and state update on unmount", async () => {
+    let capturedSignal: AbortSignal | undefined;
+    const fetchMock = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      capturedSignal = init?.signal as AbortSignal;
+      return new Promise((_, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          const abortError = new DOMException("The user aborted a request.", "AbortError");
+          reject(abortError);
+        });
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const { unmount } = render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+
+    expect(fetchMock).toHaveBeenCalled();
+    expect(capturedSignal).toBeDefined();
+    expect(capturedSignal?.aborted).toBe(false);
+
+    unmount();
+
+    expect(capturedSignal?.aborted).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+  });
+
+  it("aborts in-flight fetch before pagehide TypeError and suppresses console.error", async () => {
+    let capturedSignal: AbortSignal | undefined;
+    const fetchMock = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      capturedSignal = init?.signal as AbortSignal;
+      return new Promise((_, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new TypeError("Failed to fetch"));
+        });
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+
+    expect(capturedSignal).toBeDefined();
+    window.dispatchEvent(new Event("pagehide"));
+
+    await waitFor(() => expect(capturedSignal?.aborted).toBe(true));
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+  });
+
+  it("logs console.error and exposes error gate on real API failure when mounted", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    vi.stubEnv("ODP_DATA_BINDING_MODE", "live");
+    const fetchMock = vi.fn().mockRejectedValue(new Error("Network connection lost"));
+    vi.stubGlobal("fetch", fetchMock);
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Network connection lost/)).toBeInTheDocument();
+    });
+    expect(consoleErrorSpy).toHaveBeenCalledWith("Error loading Store Ops issues:", expect.any(Error));
+  });
+
+  it("handles HTTP 500 responses with error state and console.error when mounted", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
+    vi.stubEnv("ODP_DATA_BINDING_MODE", "live");
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({ detail: "Internal Server Error" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Store Ops API returned 500/)).toBeInTheDocument();
+    });
+    expect(consoleErrorSpy).toHaveBeenCalledWith("Error loading Store Ops issues:", expect.any(Error));
+  });
 });

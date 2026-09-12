@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
@@ -855,3 +856,412 @@ def test_postgresql_install_validation_failure_rolls_back_ddl_and_registry(
         assert connection.execute(
             "SELECT to_regclass('model_ready.view_contracts')"
         ).fetchone() == (None,)
+
+
+def test_model_ready_views_propagate_null_measurements_and_avoid_fake_defaults(
+    intake_blank_db,
+) -> None:
+    with intake_blank_db.connect() as connection:
+        _install_minimal_authoritative_schema(connection)
+        tenant_a, target_a, tenant_c, target_c, daily_runs = _seed_point_in_time_history(connection)
+        connection.execute(MODEL_READY_SQL)
+
+        # 1. Reverse test: When geocode_confidence is NULL, candidate_site_view confidence must be NULL (not 1.0 or 0.0)
+        connection.execute(
+            """
+            UPDATE data_plane.place_geography
+            SET geocode_confidence = NULL
+            WHERE store_id = %s
+            """,
+            (target_a,),
+        )
+        site_null_row = connection.execute(
+            """
+            SELECT confidence
+            FROM model_ready.candidate_site_view
+            WHERE tenant_id = %s AND store_id = %s
+            """,
+            (tenant_a, target_a),
+        ).fetchone()
+        assert site_null_row is not None
+        assert site_null_row[0] is None, (
+            f"Expected NULL confidence for missing geocode, got {site_null_row[0]}"
+        )
+
+        # 2. Positive test: When geocode_confidence is explicitly measured (e.g. 0.65), confidence must reflect 0.65
+        connection.execute(
+            """
+            UPDATE data_plane.place_geography
+            SET geocode_confidence = 0.65
+            WHERE store_id = %s
+            """,
+            (target_a,),
+        )
+        site_measured_row = connection.execute(
+            """
+            SELECT confidence
+            FROM model_ready.candidate_site_view
+            WHERE tenant_id = %s AND store_id = %s
+            """,
+            (tenant_a, target_a),
+        ).fetchone()
+        assert site_measured_row is not None
+        assert site_measured_row[0] == pytest.approx(0.65)
+
+        # 3. HeatZone: When average geocode confidence is NULL, confidence must be NULL
+        connection.execute(
+            """
+            UPDATE data_plane.place_geography
+            SET geocode_confidence = NULL
+            WHERE tenant_id = %s AND h3_res_9 = %s
+            """,
+            (tenant_a, H3_INDEX),
+        )
+        zone_null_row = connection.execute(
+            """
+            SELECT confidence
+            FROM model_ready.heatzone_training_view
+            WHERE tenant_id = %s AND h3_index = %s AND origin_date = %s
+            """,
+            (tenant_a, H3_INDEX, ORIGIN),
+        ).fetchone()
+        assert zone_null_row is not None
+        assert zone_null_row[0] is None, (
+            f"Expected NULL confidence for heatzone when unmeasured, got {zone_null_row[0]}"
+        )
+
+def _compile_dbt_sql(sql_path: Path) -> str:
+    raw = sql_path.read_text(encoding="utf-8")
+    compiled = re.sub(r"\{\{\s*var\([^)]+\)\s*\}\}", "CURRENT_TIMESTAMP", raw)
+    return compiled
+
+
+def test_dbt_candidate_site_view_runtime_null_propagation_and_single_sided_absence(
+    intake_blank_db,
+) -> None:
+    dbt_dir = Path(__file__).parents[2] / "pipelines/dbt/models/model_ready"
+    candidate_sql = _compile_dbt_sql(dbt_dir / "candidate_site_view.sql")
+
+    with intake_blank_db.connect() as connection:
+        connection.execute(
+            """
+            CREATE SCHEMA IF NOT EXISTS expansion;
+            CREATE SCHEMA IF NOT EXISTS core;
+
+            CREATE TABLE IF NOT EXISTS core.address_locations (
+                address_id UUID PRIMARY KEY,
+                city TEXT,
+                district TEXT,
+                latitude NUMERIC,
+                longitude NUMERIC,
+                geocode_confidence NUMERIC,
+                h3_res_9 TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS expansion.listings (
+                listing_id UUID PRIMARY KEY,
+                address_id UUID,
+                rent_amount NUMERIC,
+                area_ping NUMERIC,
+                frontage_m NUMERIC,
+                floor NUMERIC,
+                utility_electricity_flag BOOLEAN,
+                utility_drainage_flag BOOLEAN,
+                utility_gas_flag BOOLEAN,
+                confidence NUMERIC,
+                listing_status TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS expansion.candidate_sites (
+                candidate_site_id UUID PRIMARY KEY,
+                listing_id UUID,
+                address_id UUID,
+                target_format_code TEXT,
+                created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+        connection.execute(f"CREATE OR REPLACE VIEW expansion.candidate_site_view AS {candidate_sql};")
+
+        # 1. Both measurements present: listing=0.85, geocode=0.65 -> confidence=0.65
+        site_1 = _id("site:both_present")
+        list_1 = _id("listing:both_present")
+        addr_1 = _id("addr:both_present")
+        connection.execute(
+            "INSERT INTO core.address_locations (address_id, geocode_confidence, h3_res_9) VALUES (%s, 0.65, %s)",
+            (addr_1, H3_INDEX),
+        )
+        connection.execute(
+            "INSERT INTO expansion.listings (listing_id, address_id, rent_amount, area_ping, confidence, listing_status) VALUES (%s, %s, 50000, 30, 0.85, 'active')",
+            (list_1, addr_1),
+        )
+        connection.execute(
+            "INSERT INTO expansion.candidate_sites (candidate_site_id, listing_id, address_id, target_format_code) VALUES (%s, %s, %s, 'ODAY_G2')",
+            (site_1, list_1, addr_1),
+        )
+
+        row_1 = connection.execute(
+            "SELECT confidence, data_quality_score, is_training_eligible FROM expansion.candidate_site_view WHERE candidate_site_id = %s",
+            (site_1,),
+        ).fetchone()
+        assert row_1 is not None
+        assert float(row_1[0]) == pytest.approx(0.65)
+        assert float(row_1[1]) == pytest.approx(1.0)
+        assert row_1[2] is True
+
+        # 2. Single-sided NULL (listing confidence NULL): listing=NULL, geocode=0.65 -> confidence=NULL
+        site_2 = _id("site:listing_null")
+        list_2 = _id("listing:null_confidence")
+        addr_2 = _id("addr:listing_null")
+        connection.execute(
+            "INSERT INTO core.address_locations (address_id, geocode_confidence, h3_res_9) VALUES (%s, 0.65, %s)",
+            (addr_2, H3_INDEX),
+        )
+        connection.execute(
+            "INSERT INTO expansion.listings (listing_id, address_id, rent_amount, area_ping, confidence, listing_status) VALUES (%s, %s, 50000, 30, NULL, 'active')",
+            (list_2, addr_2),
+        )
+        connection.execute(
+            "INSERT INTO expansion.candidate_sites (candidate_site_id, listing_id, address_id, target_format_code) VALUES (%s, %s, %s, 'ODAY_G2')",
+            (site_2, list_2, addr_2),
+        )
+
+        row_2 = connection.execute(
+            "SELECT confidence FROM expansion.candidate_site_view WHERE candidate_site_id = %s",
+            (site_2,),
+        ).fetchone()
+        assert row_2 is not None
+        assert row_2[0] is None, f"Expected NULL confidence when listing confidence is NULL, got {row_2[0]}"
+
+        # 3. Single-sided NULL (geocode confidence NULL): listing=0.85, geocode=NULL -> confidence=NULL
+        site_3 = _id("site:geocode_null")
+        list_3 = _id("listing:geocode_null")
+        addr_3 = _id("addr:null_geocode")
+        connection.execute(
+            "INSERT INTO core.address_locations (address_id, geocode_confidence, h3_res_9) VALUES (%s, NULL, %s)",
+            (addr_3, H3_INDEX),
+        )
+        connection.execute(
+            "INSERT INTO expansion.listings (listing_id, address_id, rent_amount, area_ping, confidence, listing_status) VALUES (%s, %s, 50000, 30, 0.85, 'active')",
+            (list_3, addr_3),
+        )
+        connection.execute(
+            "INSERT INTO expansion.candidate_sites (candidate_site_id, listing_id, address_id, target_format_code) VALUES (%s, %s, %s, 'ODAY_G2')",
+            (site_3, list_3, addr_3),
+        )
+
+        row_3 = connection.execute(
+            "SELECT confidence FROM expansion.candidate_site_view WHERE candidate_site_id = %s",
+            (site_3,),
+        ).fetchone()
+        assert row_3 is not None
+        assert row_3[0] is None, f"Expected NULL confidence when geocode confidence is NULL, got {row_3[0]}"
+
+        # 4. Both NULL: listing=NULL, geocode=NULL -> confidence=NULL
+        site_4 = _id("site:both_null")
+        list_4 = _id("listing:both_null")
+        addr_4 = _id("addr:both_null")
+        connection.execute(
+            "INSERT INTO core.address_locations (address_id, geocode_confidence, h3_res_9) VALUES (%s, NULL, %s)",
+            (addr_4, H3_INDEX),
+        )
+        connection.execute(
+            "INSERT INTO expansion.listings (listing_id, address_id, rent_amount, area_ping, confidence, listing_status) VALUES (%s, %s, 50000, 30, NULL, 'active')",
+            (list_4, addr_4),
+        )
+        connection.execute(
+            "INSERT INTO expansion.candidate_sites (candidate_site_id, listing_id, address_id, target_format_code) VALUES (%s, %s, %s, 'ODAY_G2')",
+            (site_4, list_4, addr_4),
+        )
+
+        row_4 = connection.execute(
+            "SELECT confidence FROM expansion.candidate_site_view WHERE candidate_site_id = %s",
+            (site_4,),
+        ).fetchone()
+        assert row_4 is not None
+        assert row_4[0] is None, f"Expected NULL confidence when both are NULL, got {row_4[0]}"
+
+        # 5. Missing / zero rent exclusion check
+        site_5 = _id("site:zero_rent")
+        list_5 = _id("listing:zero_rent")
+        addr_5 = _id("addr:zero_rent")
+        connection.execute(
+            "INSERT INTO core.address_locations (address_id, geocode_confidence, h3_res_9) VALUES (%s, 0.70, %s)",
+            (addr_5, H3_INDEX),
+        )
+        connection.execute(
+            "INSERT INTO expansion.listings (listing_id, address_id, rent_amount, area_ping, confidence, listing_status) VALUES (%s, %s, 0, 30, 0.80, 'active')",
+            (list_5, addr_5),
+        )
+        connection.execute(
+            "INSERT INTO expansion.candidate_sites (candidate_site_id, listing_id, address_id, target_format_code) VALUES (%s, %s, %s, 'ODAY_G2')",
+            (site_5, list_5, addr_5),
+        )
+
+        row_5 = connection.execute(
+            "SELECT is_training_eligible, exclusion_reason, data_quality_score FROM expansion.candidate_site_view WHERE candidate_site_id = %s",
+            (site_5,),
+        ).fetchone()
+        assert row_5 is not None
+        assert row_5[0] is False
+        assert row_5[1] == "missing_rent"
+        assert float(row_5[2]) == pytest.approx(0.0)
+
+
+def test_dbt_geo_grid_view_runtime_null_propagation_and_single_sided_absence(
+    intake_blank_db,
+) -> None:
+    dbt_dir = Path(__file__).parents[2] / "pipelines/dbt/models/model_ready"
+    geo_sql = _compile_dbt_sql(dbt_dir / "geo_grid_view.sql")
+
+    with intake_blank_db.connect() as connection:
+        connection.execute(
+            """
+            CREATE SCHEMA IF NOT EXISTS geo;
+            CREATE SCHEMA IF NOT EXISTS expansion;
+            CREATE SCHEMA IF NOT EXISTS core;
+
+            CREATE TABLE IF NOT EXISTS geo.h3_cells (
+                geo_cell_id UUID PRIMARY KEY,
+                h3_index TEXT NOT NULL UNIQUE,
+                h3_resolution INTEGER NOT NULL,
+                admin_city TEXT,
+                admin_district TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS geo.pois (
+                poi_id UUID PRIMARY KEY,
+                geo_cell_id UUID REFERENCES geo.h3_cells(geo_cell_id),
+                poi_category TEXT NOT NULL,
+                confidence NUMERIC
+            );
+
+            CREATE TABLE IF NOT EXISTS geo.competitor_stores (
+                competitor_id UUID PRIMARY KEY,
+                geo_cell_id UUID REFERENCES geo.h3_cells(geo_cell_id),
+                status TEXT NOT NULL,
+                estimated_capacity NUMERIC,
+                confidence NUMERIC
+            );
+
+            CREATE TABLE IF NOT EXISTS core.address_locations (
+                address_id UUID PRIMARY KEY,
+                h3_res_9 TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS expansion.listings (
+                listing_id UUID PRIMARY KEY,
+                address_id UUID,
+                rent_amount NUMERIC,
+                area_ping NUMERIC,
+                listing_status TEXT
+            );
+            """
+        )
+        connection.execute(f"CREATE OR REPLACE VIEW geo.geo_grid_view AS {geo_sql};")
+
+        cell_1_id = _id("cell:both_present")
+        cell_1_h3 = "89263064c2ff001"
+        connection.execute(
+            "INSERT INTO geo.h3_cells (geo_cell_id, h3_index, h3_resolution, admin_city, admin_district) VALUES (%s, %s, 9, 'Taipei', 'Zhongzheng')",
+            (cell_1_id, cell_1_h3),
+        )
+        # POI with confidence 0.90
+        connection.execute(
+            "INSERT INTO geo.pois (poi_id, geo_cell_id, poi_category, confidence) VALUES (%s, %s, 'school', 0.90)",
+            (_id("poi:1"), cell_1_id),
+        )
+        # Competitor with confidence 0.75
+        connection.execute(
+            "INSERT INTO geo.competitor_stores (competitor_id, geo_cell_id, status, estimated_capacity, confidence) VALUES (%s, %s, 'active', 100, 0.75)",
+            (_id("comp:1"), cell_1_id),
+        )
+
+        row_1 = connection.execute(
+            "SELECT confidence, poi_school_count, competitor_count_500m FROM geo.geo_grid_view WHERE h3_index = %s",
+            (cell_1_h3,),
+        ).fetchone()
+        assert row_1 is not None
+        assert float(row_1[0]) == pytest.approx(0.75)
+        assert row_1[1] == 1
+        assert row_1[2] == 1
+
+        # 2. Single-sided NULL (POI absent, competitor present) -> confidence=NULL
+        cell_2_id = _id("cell:poi_missing")
+        cell_2_h3 = "89263064c2ff002"
+        connection.execute(
+            "INSERT INTO geo.h3_cells (geo_cell_id, h3_index, h3_resolution, admin_city, admin_district) VALUES (%s, %s, 9, 'Taipei', 'Zhongzheng')",
+            (cell_2_id, cell_2_h3),
+        )
+        connection.execute(
+            "INSERT INTO geo.competitor_stores (competitor_id, geo_cell_id, status, estimated_capacity, confidence) VALUES (%s, %s, 'active', 100, 0.75)",
+            (_id("comp:2"), cell_2_id),
+        )
+
+        row_2 = connection.execute(
+            "SELECT confidence, poi_school_count, competitor_count_500m FROM geo.geo_grid_view WHERE h3_index = %s",
+            (cell_2_h3,),
+        ).fetchone()
+        assert row_2 is not None
+        assert row_2[0] is None, f"Expected NULL confidence when POI is absent, got {row_2[0]}"
+        assert row_2[1] == 0
+        assert row_2[2] == 1
+
+        # 3. Single-sided NULL (POI present with NULL confidence, competitor present) -> confidence=NULL
+        cell_3_id = _id("cell:poi_unmeasured")
+        cell_3_h3 = "89263064c2ff003"
+        connection.execute(
+            "INSERT INTO geo.h3_cells (geo_cell_id, h3_index, h3_resolution, admin_city, admin_district) VALUES (%s, %s, 9, 'Taipei', 'Zhongzheng')",
+            (cell_3_id, cell_3_h3),
+        )
+        connection.execute(
+            "INSERT INTO geo.pois (poi_id, geo_cell_id, poi_category, confidence) VALUES (%s, %s, 'market', NULL)",
+            (_id("poi:3"), cell_3_id),
+        )
+        connection.execute(
+            "INSERT INTO geo.competitor_stores (competitor_id, geo_cell_id, status, estimated_capacity, confidence) VALUES (%s, %s, 'active', 100, 0.75)",
+            (_id("comp:3"), cell_3_id),
+        )
+
+        row_3 = connection.execute(
+            "SELECT confidence FROM geo.geo_grid_view WHERE h3_index = %s",
+            (cell_3_h3,),
+        ).fetchone()
+        assert row_3 is not None
+        assert row_3[0] is None, f"Expected NULL confidence when POI confidence is NULL, got {row_3[0]}"
+
+        # 4. Single-sided NULL (POI present, competitor absent) -> confidence=NULL
+        cell_4_id = _id("cell:comp_missing")
+        cell_4_h3 = "89263064c2ff004"
+        connection.execute(
+            "INSERT INTO geo.h3_cells (geo_cell_id, h3_index, h3_resolution, admin_city, admin_district) VALUES (%s, %s, 9, 'Taipei', 'Zhongzheng')",
+            (cell_4_id, cell_4_h3),
+        )
+        connection.execute(
+            "INSERT INTO geo.pois (poi_id, geo_cell_id, poi_category, confidence) VALUES (%s, %s, 'residential', 0.90)",
+            (_id("poi:4"), cell_4_id),
+        )
+
+        row_4 = connection.execute(
+            "SELECT confidence, competitor_count_500m FROM geo.geo_grid_view WHERE h3_index = %s",
+            (cell_4_h3,),
+        ).fetchone()
+        assert row_4 is not None
+        assert row_4[0] is None, f"Expected NULL confidence when competitor is absent, got {row_4[0]}"
+        assert row_4[1] == 0
+
+        # 5. Both absent -> confidence=NULL
+        cell_5_id = _id("cell:both_absent")
+        cell_5_h3 = "89263064c2ff005"
+        connection.execute(
+            "INSERT INTO geo.h3_cells (geo_cell_id, h3_index, h3_resolution, admin_city, admin_district) VALUES (%s, %s, 9, 'Taipei', 'Zhongzheng')",
+            (cell_5_id, cell_5_h3),
+        )
+
+        row_5 = connection.execute(
+            "SELECT confidence, data_quality_score FROM geo.geo_grid_view WHERE h3_index = %s",
+            (cell_5_h3,),
+        ).fetchone()
+        assert row_5 is not None
+        assert row_5[0] is None, f"Expected NULL confidence when both absent, got {row_5[0]}"
+        assert float(row_5[1]) == pytest.approx(1.0)

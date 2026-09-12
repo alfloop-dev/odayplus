@@ -1,0 +1,24 @@
+{
+  "prepared_at": "2026-09-09T16:15:53.087886+00:00",
+  "source": "/tmp/odayplus-invalidation-rollout-source-50581b3b180a",
+  "target_sha": "50581b3b180aedaf76fbe4aaffb3bf7e2d120050",
+  "reviewed_task_head": "88285f59e52845761247d3719eb2953590972903",
+  "args": [
+    "python3",
+    "/tmp/odayplus-invalidation-rollout-source-50581b3b180a/scripts/orchestrator/rollout_supervisor_runtime.py",
+    "--source-root",
+    "/tmp/odayplus-invalidation-rollout-source-50581b3b180a",
+    "--runtime-link",
+    "/home/lupin/oday-plus-supervisor-runtime-current",
+    "--runtime-parent",
+    "/home/lupin",
+    "--status-root",
+    "/home/lupin/odayplus",
+    "--config-path",
+    "/home/lupin/odayplus/.orchestrator/config.json",
+    "--watchdog-pid-file",
+    "/home/lupin/odayplus/.orchestrator/supervisor.pid"
+  ],
+  "dry_run_output": "target=/home/lupin/oday-plus-supervisor-runtime-50581b3b180a sha=50581b3b180aedaf76fbe4aaffb3bf7e2d120050 branch=runtime-live-50581b3b180a\nprevious=/home/lupin/oday-plus-supervisor-runtime-ef76cf6d295c\nstatus_launcher=/home/lupin/odayplus/scripts/ai-status.sh writer=/home/lupin/oday-plus-supervisor-runtime-current/scripts/ai_status.py",
+  "status": "prepared_not_deployed"
+}

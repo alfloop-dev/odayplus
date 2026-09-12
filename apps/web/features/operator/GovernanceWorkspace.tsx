@@ -39,6 +39,7 @@ import {
   type OperatorDataAvailability,
 } from "./operatorDataMode";
 import { ModelReleaseController } from "./governance/ModelReleaseController";
+import { DecisionCommentsPanel } from "./governance/DecisionCommentsPanel";
 
 type GovernanceTab = "approvals" | "decisions" | "audit" | "userManagement" | "evidencePackage" | "statusBoard" | "featureFlags" | "learningHub";
 
@@ -57,6 +58,7 @@ export type GovernanceWorkspaceProps = {
   /** Operator role id used for the X-Operator-Role snapshot header. */
   roleId?: string;
   canDecide?: boolean;
+  canComment?: boolean;
   callbacks?: GovernanceWorkspaceCallbacks;
 };
 
@@ -334,6 +336,7 @@ export function GovernanceWorkspace({
   role = "營運主管",
   roleId,
   canDecide = true,
+  canComment = true,
   callbacks,
 }: GovernanceWorkspaceProps) {
   const fixturesAllowed = operatorFixturesAllowed();
@@ -1103,6 +1106,13 @@ export function GovernanceWorkspace({
                   )}
                   {lastAction ? <p className={styles.lastAction}>{lastAction}</p> : null}
                 </section>
+
+                <DecisionCommentsPanel
+                  canComment={canComment}
+                  roleId={roleId}
+                  targetId={selectedApproval.id}
+                  targetType="approval"
+                />
               </>
             ) : (
               <div className={styles.emptyState}>目前沒有核准請求</div>

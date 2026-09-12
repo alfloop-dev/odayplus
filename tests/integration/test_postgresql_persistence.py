@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import UTC, datetime
 from multiprocessing import get_context
-from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import pytest
+from alembic import command
+from alembic.config import Config
 
 from modules.opsboard.application.operator_live_repository import OperatorLiveRepository
 from modules.opsboard.application.operator_state import OperatorStateService
@@ -35,24 +38,31 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _apply_canonical_schema(database_url: str) -> None:
-    engine = PostgresEngine(
-        database_url,
-        bootstrap=False,
-        validate_schema=False,
+def _provision_canonical_schema(database: Any) -> None:
+    """Provision the canonical schema the way the deployment job does.
+
+    This used to hand-pick one file, the data-domain canonical entities
+    migration. That subset and ``_REQUIRED_RELATIONS`` were two independent
+    lists that had to agree, and they stopped agreeing: ODP-FORECAST-ALERT-
+    POLICY-001 made ``workflow.decision_policies`` a required production
+    relation and created it in Alembic revision 0008, which this path never
+    reached, so the validator demanded a table the test database could not have.
+
+    Running the migration job's own command instead -- ``alembic upgrade head``,
+    the command ``build_migration_plan`` publishes -- removes the second list:
+    the schema the bundle is validated against is the schema deployment
+    produces. It needs a database of its own because revision 0001 is not
+    rerunnable, and re-creating the data-domain tables the shared product
+    database already has is exactly what it would attempt.
+    """
+
+    config = Config("infra/db/migrations/alembic.ini")
+    # set_main_option interpolates %, and percent-encoding in the URL (a socket
+    # path, a password) would otherwise be read as an interpolation token.
+    config.set_main_option(
+        "sqlalchemy.url", database.url(driver="psycopg").replace("%", "%%")
     )
-    try:
-        migration = (
-            Path(__file__).resolve().parents[2]
-            / "infra"
-            / "db"
-            / "migrations"
-            / "000002_data_domain_canonical_entities.sql"
-        )
-        engine.execute(migration.read_text(encoding="utf-8"))
-        engine.apply_runtime_migration()
-    finally:
-        engine.close()
+    command.upgrade(config, "head")
 
 
 def _claim_from_independent_process(
@@ -239,11 +249,33 @@ def test_postgresql_claim_is_atomic_across_worker_processes() -> None:
         engine.close()
 
 
+def test_the_migration_job_provisions_every_relation_the_bundle_requires(
+    intake_blank_db: Any,
+) -> None:
+    """``_REQUIRED_RELATIONS`` and the provisioning path are two lists that must
+    agree, and nothing held them together: ``workflow.decision_policies`` became
+    required while no path the tests exercised created it. Checked here against
+    the migration job's own output, so a relation added to the validator without
+    a revision behind it fails on the schema, not on the first bundle to want
+    the table."""
+    _provision_canonical_schema(intake_blank_db)
+
+    engine = PostgresEngine(
+        intake_blank_db.url(), bootstrap=True, validate_schema=False
+    )
+    try:
+        # Raises PostgreSQLSchemaError naming whatever is missing.
+        engine.validate_schema()
+    finally:
+        engine.close()
+
+
 def test_factory_builds_production_bundle_against_canonical_core_schema(
+    intake_blank_db: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    database_url = os.environ["INTAKE_TEST_DATABASE_URL"]
-    _apply_canonical_schema(database_url)
+    _provision_canonical_schema(intake_blank_db)
+    database_url = intake_blank_db.url()
 
     monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
     monkeypatch.setenv("ODAY_DATABASE_URL", database_url)
@@ -258,18 +290,16 @@ def test_factory_builds_production_bundle_against_canonical_core_schema(
         assert restored is not None
         assert restored.tenant_name == "PostgreSQL integration"
     finally:
-        bundle.engine.execute(
-            "DELETE FROM core.tenants WHERE tenant_id = ?",
-            (tenant.tenant_id,),
-        )
+        # No row cleanup: the database is this test's own and is dropped with it.
         bundle.engine.close()
 
 
 def test_postgresql_address_store_and_transaction_contracts_are_tenant_scoped(
+    intake_blank_db: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    database_url = os.environ["INTAKE_TEST_DATABASE_URL"]
-    _apply_canonical_schema(database_url)
+    _provision_canonical_schema(intake_blank_db)
+    database_url = intake_blank_db.url()
     apply_upgrade_to_database(database_url)
     monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
     monkeypatch.setenv("ODAY_DATABASE_URL", database_url)
@@ -431,24 +461,106 @@ def test_postgresql_address_store_and_transaction_contracts_are_tenant_scoped(
         with pytest.raises(TenantScopeRequiredError):
             bundle.transaction_repository.list_transactions()
     finally:
-        bundle.engine.execute(
-            "DELETE FROM core.transactions WHERE transaction_id IN (?, ?)",
-            (transaction_a.transaction_id, transaction_b.transaction_id),
-        )
-        bundle.engine.execute(
-            "DELETE FROM core.stores WHERE store_id IN (?, ?)",
-            (store_a.store_id, store_b.store_id),
-        )
-        bundle.engine.execute(
-            "DELETE FROM core.address_locations WHERE address_id IN (?, ?)",
-            (address_a.address_id, address_b.address_id),
-        )
-        bundle.engine.execute(
-            "DELETE FROM core.brands WHERE brand_id IN (?, ?)",
-            (brand_a.brand_id, brand_b.brand_id),
-        )
-        bundle.engine.execute(
-            "DELETE FROM core.tenants WHERE tenant_id IN (?, ?)",
-            (tenant_a.tenant_id, tenant_b.tenant_id),
-        )
+        # The row-by-row teardown this had was there to leave the shared product
+        # database as it was found. On a database of this test's own it is not
+        # only redundant, it cannot succeed: onboarding a tenant now seeds its
+        # forecast alert policies, and those rows reference the tenant, so
+        # deleting the tenant is refused -- correctly, since a decision cites
+        # the policy version that produced it.
         bundle.engine.close()
+
+
+def test_postgresql_manual_correction_readback_and_rollback(
+    intake_blank_db: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _provision_canonical_schema(intake_blank_db)
+    database_url = intake_blank_db.url()
+    apply_upgrade_to_database(database_url)
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+    monkeypatch.setenv("ODAY_DATABASE_URL", database_url)
+    bundle = build_persistence(mode="postgresql")
+
+    tenant = Tenant(tenant_name=f"Tenant PG Corr {uuid4()}")
+    addr_id = str(uuid4())
+    address = AddressLocation(
+        address_id=addr_id,
+        raw_address="台北市信義區松仁路 100 號",
+        normalized_address="台北市信義區松仁路 100 號",
+        city="台北市",
+        district="信義區",
+        road="松仁路",
+        latitude=25.0350,
+        longitude=121.5670,
+        geocode_precision="rooftop",
+        geocode_confidence=0.92,
+        manual_override_flag=False,
+        tenant_id=tenant.tenant_id,
+        revision=1,
+    )
+
+    try:
+        bundle.tenant_repository.save_tenant(tenant)
+        bundle.address_location_repository.save_address(address)
+
+        # 1. Verify initial save in PostgreSQL
+        initial_addr = bundle.address_location_repository.get_address(addr_id)
+        assert initial_addr is not None
+        assert initial_addr.manual_override_flag is False
+        assert initial_addr.revision == 1
+
+        # 2. Apply correction
+        updated_addr, corr, dec_card = bundle.address_location_repository.apply_correction(
+            addr_id,
+            updates={
+                "latitude": 25.0365,
+                "longitude": 121.5685,
+                "road": "松仁路二段",
+            },
+            reason="現場勘查修正經緯度與路段資訊",
+            actor_id="pg-site-reviewer-01",
+            tenant_id=tenant.tenant_id,
+            expected_revision=1,
+            correlation_id="corr-pg-001",
+        )
+        assert updated_addr.manual_override_flag is True
+        assert updated_addr.revision == 2
+        assert updated_addr.latitude == 25.0365
+
+        # 3. Verify durable PostgreSQL row and hash contract
+        row = bundle.engine.query_one(
+            "SELECT * FROM odp_runtime.durable_manual_corrections WHERE correction_id = ?",
+            (corr.correction_id,),
+        )
+        assert row is not None
+        assert row["entity_id"] == addr_id
+        assert row["status"] == "applied"
+        assert row["applied_revision"] == 2
+
+        # 4. Verify readback via manual correction repo returns 64-char sha256 hex hash
+        readback_corr = bundle.manual_correction_repository.get_correction(corr.correction_id)
+        assert readback_corr is not None
+        assert readback_corr.status == "applied"
+        assert re.match(r"^[a-f0-9]{64}$", readback_corr.decision_card_hash)
+
+        # 5. Rollback correction
+        restored_addr, rolled_corr, rb_card = bundle.address_location_repository.rollback_correction(
+            addr_id,
+            corr.correction_id,
+            reason="復原人工修正：路段回退至初始定義",
+            actor_id="pg-admin-01",
+            tenant_id=tenant.tenant_id,
+            expected_revision=2,
+            correlation_id="corr-pg-rollback",
+        )
+        assert restored_addr.manual_override_flag is False
+        assert restored_addr.revision == 3
+        assert restored_addr.latitude == 25.0350
+        assert restored_addr.road == "松仁路"
+        assert rolled_corr.status == "rolled_back"
+
+        # 6. Verify audit log integrity
+        assert bundle.audit_log.verify_chain().ok is True
+    finally:
+        bundle.engine.close()
+

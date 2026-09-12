@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from datetime import UTC, date, datetime
 from typing import Any
 
 from modules.heatzone.domain.scoring import HeatZoneFeatureInput
+from modules.heatzone.v3.absorption import AbsorptionResult
 from modules.heatzone.v3.contract import HeatZoneV3Input
 from packages.oday_data_contracts_client.models.machine_capacity import MachineCapacityRecord
+from packages.oday_data_contracts_client.models.operational_start_observation import (
+    OperationalStartObservation,
+)
 from packages.oday_data_contracts_client.models.store_coverage import StoreDayCoverage
+from packages.oday_data_contracts_client.models.store_daily_performance import (
+    StoreDailyPerformance,
+)
 from packages.oday_data_product_contracts_client.models.catchment_profile import (
     CatchmentProfile,
     DomainStatus,
@@ -15,6 +23,7 @@ from packages.oday_data_product_contracts_client.models.market_cell_profile impo
     MarketCellProfile,
     ReadinessLevel,
 )
+from shared.governance import DecisionPolicy
 
 
 def _match_store_capacities_and_coverage(
@@ -45,28 +54,63 @@ def _match_store_capacities_and_coverage(
         cov = getattr(s, "coverage", None)
         matched = False
         if cov is not None:
-            qgeom = getattr(cov, "query_geometry", None)
-            if qgeom is not None:
-                gh3 = getattr(qgeom, "h3_index", None)
-                if gh3 and gh3 in valid_h3s:
+            if isinstance(cov, dict):
+                qgeom = cov.get("query_geometry")
+                if isinstance(qgeom, dict):
+                    gh3 = qgeom.get("h3_index")
+                    if gh3 and gh3 in valid_h3s:
+                        matched = True
+                elif qgeom is not None:
+                    gh3 = getattr(qgeom, "h3_index", None)
+                    if gh3 and gh3 in valid_h3s:
+                        matched = True
+                eid = cov.get("entity_id")
+                if eid and (eid in valid_h3s or eid in valid_ids):
                     matched = True
-            eid = getattr(cov, "entity_id", None)
-            if eid and (eid in valid_h3s or eid in valid_ids):
-                matched = True
-            spid = getattr(cov, "scope_principal_id", None)
-            if spid and spid in valid_ids:
-                matched = True
-            meta = getattr(cov, "metadata", None)
-            if isinstance(meta, dict):
-                if meta.get("h3_index") in valid_h3s or meta.get("cell_id") in valid_ids:
+                spid = cov.get("scope_principal_id")
+                if spid and spid in valid_ids:
                     matched = True
-            subparts = getattr(cov, "sub_partitions", None) or ()
-            for sub in subparts:
-                sub_geom = getattr(sub, "geometry", None)
-                if sub_geom and getattr(sub_geom, "h3_index", None) in valid_h3s:
+                meta = cov.get("metadata")
+                if isinstance(meta, dict):
+                    if meta.get("h3_index") in valid_h3s or meta.get("cell_id") in valid_ids:
+                        matched = True
+                subparts = cov.get("sub_partitions") or ()
+                for sub in subparts:
+                    if isinstance(sub, dict):
+                        sub_geom = sub.get("geometry")
+                        if isinstance(sub_geom, dict) and sub_geom.get("h3_index") in valid_h3s:
+                            matched = True
+                        if sub.get("sub_partition_key") in valid_h3s:
+                            matched = True
+                    else:
+                        sub_geom = getattr(sub, "geometry", None)
+                        if sub_geom and getattr(sub_geom, "h3_index", None) in valid_h3s:
+                            matched = True
+                        if getattr(sub, "sub_partition_key", None) in valid_h3s:
+                            matched = True
+            else:
+                qgeom = getattr(cov, "query_geometry", None)
+                if qgeom is not None:
+                    gh3 = getattr(qgeom, "h3_index", None)
+                    if gh3 and gh3 in valid_h3s:
+                        matched = True
+                eid = getattr(cov, "entity_id", None)
+                if eid and (eid in valid_h3s or eid in valid_ids):
                     matched = True
-                if getattr(sub, "sub_partition_key", None) in valid_h3s:
+                spid = getattr(cov, "scope_principal_id", None)
+                if spid and spid in valid_ids:
                     matched = True
+                meta = getattr(cov, "metadata", None)
+                if isinstance(meta, dict):
+                    if meta.get("h3_index") in valid_h3s or meta.get("cell_id") in valid_ids:
+                        matched = True
+                subparts = getattr(cov, "sub_partitions", None) or ()
+                for sub in subparts:
+                    sub_geom = getattr(sub, "geometry", None)
+                    if sub_geom and getattr(sub_geom, "h3_index", None) in valid_h3s:
+                        matched = True
+                    if getattr(sub, "sub_partition_key", None) in valid_h3s:
+                        matched = True
         if store_id in valid_h3s or store_id in valid_ids:
             matched = True
         if matched:
@@ -122,6 +166,18 @@ def from_market_cell_profile(
     housing_units_override: float | None = None,
     active_listing_count_override: int | None = None,
     median_listing_rent_override: float | None = None,
+    absorption: AbsorptionResult | None = None,
+    store_performances: Sequence[StoreDailyPerformance | Mapping[str, Any]] | None = None,
+    operational_starts: (
+        Mapping[str, OperationalStartObservation | Mapping[str, Any]]
+        | Sequence[OperationalStartObservation | Mapping[str, Any]]
+        | None
+    ) = None,
+    decision_policy: DecisionPolicy | None = None,
+    as_of: date | None = None,
+    original_demand: float | None = None,
+    observation_window_start: date | str | None = None,
+    observation_window_end: date | str | None = None,
 ) -> HeatZoneV3Input:
     """Adapt a canonical emgi.market-cell-profile.v1 cell into a HeatZone v3 input."""
     if isinstance(cell, Mapping):
@@ -218,19 +274,64 @@ def from_market_cell_profile(
         valid_domains = sum(1 for v in domain_cov.values() if str(v).lower() in ("complete", "partial", "fresh", "available"))
         cov_ratio = valid_domains / len(domain_cov)
     else:
-        cov_ratio = 1.0 if not has_gaps else 0.8
+        cov_ratio = None
         
     readiness_str = overall_readiness.value if hasattr(overall_readiness, "value") else str(overall_readiness).lower()
     support_lvl = "supported" if readiness_str in ("ready", "usable_with_gaps") and not is_quar else "unsupported"
 
-    # Confidence calculation
-    conf = 1.0
+    # Confidence calculation: derived only from observed signals; None when unmeasured
+    conf_values: list[float] = []
     if cell_obj.rent.confidence_pct is not None:
-        conf = min(conf, float(cell_obj.rent.confidence_pct) / 100.0)
+        conf_values.append(max(0.0, min(1.0, float(cell_obj.rent.confidence_pct) / 100.0)))
     if cell_obj.demographics.uncertainty_pct is not None:
-        conf = min(conf, max(0.0, 1.0 - float(cell_obj.demographics.uncertainty_pct) / 100.0))
+        conf_values.append(max(0.0, min(1.0, 1.0 - float(cell_obj.demographics.uncertainty_pct) / 100.0)))
+    conf = min(conf_values) if conf_values else None
+
+    effective_absorption = absorption
+    if (
+        effective_absorption is None
+        and store_performances is not None
+        and operational_starts is not None
+        and decision_policy is not None
+        and original_demand is not None
+        and observation_window_start is not None
+        and observation_window_end is not None
+    ):
+        from modules.heatzone.application.absorption_inputs import assemble_zone_absorption
+
+        distinct_store_ids = {
+            getattr(c, "store_id", "") for c in matched_caps if getattr(c, "store_id", "")
+        } | {
+            getattr(s, "store_id", "") for s in matched_store_covs if getattr(s, "store_id", "")
+        }
+
+        effective_as_of = as_of
+        if effective_as_of is None:
+            raw_as_of = getattr(cell_obj, "as_of_date", None)
+            if raw_as_of:
+                if isinstance(raw_as_of, date) and not isinstance(raw_as_of, datetime):
+                    effective_as_of = raw_as_of
+                else:
+                    try:
+                        effective_as_of = date.fromisoformat(str(raw_as_of).split("T")[0])
+                    except (ValueError, TypeError):
+                        effective_as_of = datetime.now(UTC).date()
+            else:
+                effective_as_of = datetime.now(UTC).date()
+
+        effective_absorption = assemble_zone_absorption(
+            store_ids=distinct_store_ids,
+            performances=store_performances,
+            operational_starts=operational_starts,
+            original_demand=original_demand,
+            policy=decision_policy,
+            as_of=effective_as_of,
+            observation_window_start=observation_window_start,
+            observation_window_end=observation_window_end,
+        )
 
     return HeatZoneV3Input(
+        absorption=effective_absorption,
         h3_index=cell_obj.h3_index,
         h3_resolution=cell_obj.h3_resolution,
         cell_id=cell_obj.cell_id,
@@ -284,6 +385,18 @@ def from_catchment_profile(
     poi_count_override: int | None = None,
     housing_units_override: float | None = None,
     active_listing_count_override: int | None = None,
+    absorption: AbsorptionResult | None = None,
+    store_performances: Sequence[StoreDailyPerformance | Mapping[str, Any]] | None = None,
+    operational_starts: (
+        Mapping[str, OperationalStartObservation | Mapping[str, Any]]
+        | Sequence[OperationalStartObservation | Mapping[str, Any]]
+        | None
+    ) = None,
+    decision_policy: DecisionPolicy | None = None,
+    as_of: date | None = None,
+    original_demand: float | None = None,
+    observation_window_start: date | str | None = None,
+    observation_window_end: date | str | None = None,
 ) -> HeatZoneV3Input:
     """Adapt a canonical emgi.catchment-profile.v1 profile into a HeatZone v3 input."""
     if isinstance(profile, Mapping):
@@ -402,20 +515,64 @@ def from_catchment_profile(
         valid_domains = sum(1 for v in domain_cov.values() if str(v).lower() in ("complete", "partial", "fresh", "available"))
         cov_ratio = valid_domains / len(domain_cov)
     else:
-        cov_ratio = 1.0 if not has_gaps else 0.8
+        cov_ratio = None
         
     readiness_str = overall_readiness.value if hasattr(overall_readiness, "value") else str(overall_readiness).lower()
     support_lvl = "supported" if readiness_str in ("ready", "usable_with_gaps") and not is_quar else "unsupported"
 
-    conf = 1.0
-    if prof_obj.demographics.status is not DomainStatus.available:
-        conf *= 0.8
-    if prof_obj.competitors.status is not DomainStatus.available:
-        conf *= 0.8
-    if prof_obj.rent.status is not DomainStatus.available:
-        conf *= 0.8
+    # Confidence calculation: derived only from observed signals; None when
+    # unmeasured. Domain availability is a presence flag, not a confidence
+    # measurement, so it may only discount a figure that was actually observed.
+    # Seeding 1.0 here would let a profile that measured no confidence at all
+    # reach scoring as fully trusted, putting the confidence abstention gate
+    # out of reach through this ingress exactly as it was through
+    # from_market_cell_profile.
+    conf_values: list[float] = []
+    if prof_obj.rent.confidence_pct is not None:
+        conf_values.append(max(0.0, min(1.0, float(prof_obj.rent.confidence_pct) / 100.0)))
+    if prof_obj.demographics.uncertainty_pct is not None:
+        conf_values.append(
+            max(0.0, min(1.0, 1.0 - float(prof_obj.demographics.uncertainty_pct) / 100.0))
+        )
+    if conf_values:
+        conf = min(conf_values)
+        for domain in (prof_obj.demographics, prof_obj.competitors, prof_obj.rent):
+            if domain.status is not DomainStatus.available:
+                conf *= 0.8
+    else:
+        conf = None
+
+    effective_absorption = absorption
+    if (
+        effective_absorption is None
+        and store_performances is not None
+        and operational_starts is not None
+        and decision_policy is not None
+        and original_demand is not None
+        and observation_window_start is not None
+        and observation_window_end is not None
+    ):
+        from modules.heatzone.application.absorption_inputs import assemble_zone_absorption
+
+        distinct_store_ids = {
+            getattr(c, "store_id", "") for c in matched_caps if getattr(c, "store_id", "")
+        } | {
+            getattr(s, "store_id", "") for s in matched_store_covs if getattr(s, "store_id", "")
+        }
+
+        effective_absorption = assemble_zone_absorption(
+            store_ids=distinct_store_ids,
+            performances=store_performances,
+            operational_starts=operational_starts,
+            original_demand=original_demand,
+            policy=decision_policy,
+            as_of=as_of or datetime.now(UTC).date(),
+            observation_window_start=observation_window_start,
+            observation_window_end=observation_window_end,
+        )
 
     return HeatZoneV3Input(
+        absorption=effective_absorption,
         h3_index=h3_idx,
         h3_resolution=h3_res,
         cell_id=f"catchment:{prof_obj.profile_id}",
@@ -467,8 +624,21 @@ def from_legacy_feature_input(
     household_count_override: float | None = None,
     housing_units_override: float | None = None,
     overall_readiness: ReadinessLevel = ReadinessLevel.ready,
-    coverage_ratio: float = 1.0,
+    coverage_ratio: float | None = None,
     tenant_id: str = "default",
+    absorption: AbsorptionResult | None = None,
+    store_ids: Sequence[str] | set[str] | None = None,
+    store_performances: Sequence[StoreDailyPerformance | Mapping[str, Any]] | None = None,
+    operational_starts: (
+        Mapping[str, OperationalStartObservation | Mapping[str, Any]]
+        | Sequence[OperationalStartObservation | Mapping[str, Any]]
+        | None
+    ) = None,
+    decision_policy: DecisionPolicy | None = None,
+    as_of: date | None = None,
+    original_demand: float | None = None,
+    observation_window_start: date | str | None = None,
+    observation_window_end: date | str | None = None,
 ) -> HeatZoneV3Input:
     """Bridge legacy v1 HeatZoneFeatureInput into HeatZoneV3Input."""
     if isinstance(legacy, Mapping):
@@ -481,7 +651,10 @@ def from_legacy_feature_input(
         median_listing_rent = float(data.get("median_listing_rent", 0.0))
         active_listing_count = int(data.get("active_listing_count", 0))
         existing_store_count = int(data.get("existing_store_count", 0))
-        confidence = float(data.get("average_confidence", 1.0))
+        confidence_raw = data.get("average_confidence", data.get("confidence"))
+        confidence = float(confidence_raw) if confidence_raw is not None else None
+        cov_raw = coverage_ratio if coverage_ratio is not None else data.get("coverage_ratio")
+        effective_coverage_ratio = float(cov_raw) if cov_raw is not None else None
         admin_city = str(data.get("admin_city", ""))
         admin_district = str(data.get("admin_district", ""))
         lat = float(data.get("cell_latitude", 0.0)) if data.get("cell_latitude") else None
@@ -496,6 +669,7 @@ def from_legacy_feature_input(
         active_listing_count = legacy.active_listing_count
         existing_store_count = legacy.existing_store_count
         confidence = legacy.average_confidence
+        effective_coverage_ratio = coverage_ratio
         admin_city = legacy.admin_city
         admin_district = legacy.admin_district
         lat = legacy.cell_latitude if legacy.cell_latitude != 0.0 else None
@@ -505,7 +679,32 @@ def from_legacy_feature_input(
     hh = household_count_override if household_count_override is not None else float(pop / 2.6)
     housing = housing_units_override if housing_units_override is not None else hh
 
+    effective_absorption = absorption
+    if (
+        effective_absorption is None
+        and store_performances is not None
+        and operational_starts is not None
+        and decision_policy is not None
+        and original_demand is not None
+        and store_ids
+        and observation_window_start is not None
+        and observation_window_end is not None
+    ):
+        from modules.heatzone.application.absorption_inputs import assemble_zone_absorption
+
+        effective_absorption = assemble_zone_absorption(
+            store_ids=set(store_ids),
+            performances=store_performances,
+            operational_starts=operational_starts,
+            original_demand=original_demand,
+            policy=decision_policy,
+            as_of=as_of or datetime.now(UTC).date(),
+            observation_window_start=observation_window_start,
+            observation_window_end=observation_window_end,
+        )
+
     return HeatZoneV3Input(
+        absorption=effective_absorption,
         h3_index=h3_index,
         h3_resolution=h3_resolution,
         cell_id=f"legacy:{h3_index}",
@@ -525,7 +724,7 @@ def from_legacy_feature_input(
         own_store_count=existing_store_count,
         own_store_machine_capacity=float(existing_store_count * 10),
         overall_readiness=overall_readiness,
-        coverage_ratio=coverage_ratio,
+        coverage_ratio=effective_coverage_ratio,
         confidence=confidence,
         centroid_lat=lat,
         centroid_lng=lng,

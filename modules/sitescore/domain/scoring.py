@@ -89,8 +89,8 @@ class SiteScoreFeatureInput:
     comparable_monthly_revenue_p50: float = 0.0
     buildout_capex: float = 2_500_000.0
     gross_margin_ratio: float = 0.55
-    average_confidence: float = 1.0
-    data_quality_score: float = 1.0
+    average_confidence: float | None = None
+    data_quality_score: float | None = None
     source_snapshot_ids: tuple[str, ...] = ()
 
     @property
@@ -149,11 +149,25 @@ class SiteScoreFeatureInput:
             gross_margin_ratio=_bounded(
                 _first_present(data, "gross_margin_ratio", "gross_margin", default=0.55)
             ),
-            average_confidence=_bounded(
-                _first_present(data, "average_confidence", "confidence", default=1.0)
+            average_confidence=(
+                _bounded(raw_conf)
+                if (
+                    raw_conf := _first_present(
+                        data, "average_confidence", "confidence", default=None
+                    )
+                )
+                is not None
+                else None
             ),
-            data_quality_score=_bounded(
-                _first_present(data, "data_quality_score", "data_quality", default=1.0)
+            data_quality_score=(
+                _bounded(raw_dq)
+                if (
+                    raw_dq := _first_present(
+                        data, "data_quality_score", "data_quality", default=None
+                    )
+                )
+                is not None
+                else None
             ),
             source_snapshot_ids=tuple(str(v) for v in data.get("source_snapshot_ids", ())),
         )
@@ -378,6 +392,7 @@ def _score_feature(
         payback_p50_months=payback_p50,
         comparable_store_count=feature.comparable_store_count,
         confidence=confidence,
+        feature=feature,
     )
     return SiteScoreReport(
         sitescore_run_id=f"sitescore-run-{uuid4()}",
@@ -452,6 +467,12 @@ def _rent_reasonableness(monthly_rent: float, mature_p50: float) -> float:
 
 
 def _confidence(feature: SiteScoreFeatureInput) -> float:
+    # Fail closed on either quality component being unmeasured. Substituting a
+    # 1.0 identity for the missing side reports an unmeasured site as measured, and
+    # scores it strictly above a site whose quality was actually measured at the
+    # same figure.
+    if feature.average_confidence is None or feature.data_quality_score is None:
+        return 0.0
     confidence = _bounded(feature.average_confidence * feature.data_quality_score)
     if feature.comparable_store_count == 0:
         confidence *= 0.5
@@ -494,6 +515,7 @@ def _factors(
     payback_p50_months: float,
     comparable_store_count: int,
     confidence: float,
+    feature: SiteScoreFeatureInput,
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     positives: list[str] = []
     negatives: list[str] = []
@@ -517,6 +539,10 @@ def _factors(
         negatives.append("no_comparable_evidence")
     if confidence < GO_MIN_CONFIDENCE:
         negatives.append("low_confidence")
+    if feature.average_confidence is None:
+        negatives.append("missing_source_confidence")
+    if feature.data_quality_score is None:
+        negatives.append("missing_data_quality_score")
     return tuple(positives), tuple(negatives)
 
 
@@ -530,6 +556,10 @@ def _warnings(
     warnings: list[str] = []
     if confidence < 0.5:
         warnings.append("low_confidence")
+    if feature.average_confidence is None:
+        warnings.append("missing_source_confidence")
+    if feature.data_quality_score is None:
+        warnings.append("missing_data_quality_score")
     if not feature.source_snapshot_ids:
         warnings.append("missing_source_snapshot_ids")
     if snapshot_time_missing:

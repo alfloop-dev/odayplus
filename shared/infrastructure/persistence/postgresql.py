@@ -39,6 +39,8 @@ _PRAGMA_TABLE_INFO = re.compile(
 _REQUIRED_RELATIONS = (
     "odp_runtime.durable_audit_events",
     "odp_runtime.durable_documents",
+    "odp_runtime.operator_comments",
+    "odp_runtime.durable_manual_corrections",
     "odp_runtime.durable_evidence_bundles",
     "odp_runtime.durable_jobs",
     "odp_runtime.durable_outbox_events",
@@ -52,6 +54,7 @@ _REQUIRED_RELATIONS = (
     "core.stores",
     "core.tenants",
     "core.transactions",
+    "workflow.decision_policies",
 )
 
 

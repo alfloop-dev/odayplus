@@ -32,7 +32,14 @@ from shared.infrastructure.persistence.repositories import DurableLearningHubRep
 FEATURE_TIME = datetime(2026, 6, 27, tzinfo=UTC)
 
 
-def _row(entity_id: str, *, quality: float = 1.0, training: bool = True, **extra: object) -> dict:
+def _row(
+    entity_id: str,
+    *,
+    quality: float = 1.0,
+    confidence: float = 1.0,
+    training: bool = True,
+    **extra: object,
+) -> dict:
     row = {
         "view_name": "forecast_training_view",
         "view_version": "v1",
@@ -41,6 +48,7 @@ def _row(entity_id: str, *, quality: float = 1.0, training: bool = True, **extra
         "prediction_origin_time": "2026-06-27T00:00:00Z",
         "source_snapshot_ids": ["txn-20260626", "machine-20260626"],
         "data_quality_score": quality,
+        "confidence": confidence,
         "is_training_eligible": training,
     }
     row.update(extra)
@@ -87,6 +95,8 @@ def test_materialize_persists_snapshot_with_reproducible_id_and_lineage(tmp_path
     assert audit_row["snapshot_type"] == "model_ready"
     assert audit_row["row_count"] == 2
     assert audit_row["created_by_run_id"] == "run-forecast-20260627"
+    assert audit_row["quality_score"] == pytest.approx(0.85)
+    assert audit_row["quality_score_status"] == "measured"
 
 
 def test_materialized_snapshot_survives_process_restart(tmp_path) -> None:
@@ -187,3 +197,23 @@ def test_build_lineage_manifest_counts_excluded_records() -> None:
         materialized_at=result.lineage.materialized_at,
     )
     assert recomputed == result.lineage
+
+
+def test_to_audit_snapshot_row_quality_score_status_mapping() -> None:
+    materializer = DatasetSnapshotMaterializer(InMemoryLearningHubRepository())
+    result = materializer.materialize([_row("store-1", quality=0.95)], run_id="run-measured")
+    measured_row = result.lineage.to_audit_snapshot_row()
+    assert measured_row["quality_score"] == 0.95
+    assert measured_row["quality_score_status"] == "measured"
+
+    # When quality score is absent/None on manifest
+    manifest = result.lineage
+    manifest_unmeasured = build_lineage_manifest(
+        result.snapshot,
+        run_id="run-unmeasured",
+        materialized_at=manifest.materialized_at,
+    )
+    object.__setattr__(manifest_unmeasured, "quality_score", None)
+    unmeasured_row = manifest_unmeasured.to_audit_snapshot_row()
+    assert unmeasured_row["quality_score"] is None
+    assert unmeasured_row["quality_score_status"] == "unmeasured"

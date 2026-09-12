@@ -6,7 +6,22 @@ from __future__ import annotations
 from typing import Any
 
 import worker_workspace
-from dispatch_policy import REASON_HELPER_CLAIM, worker_logical_dispatch_agent_id
+from common import parse_iso_timestamp as parse_runtime_timestamp
+from dispatch_policy import (
+    DEFAULT_HELPER_CLAIMABLE_STATUSES,
+    REASON_HELPER_CLAIM,
+    ROLE_OWNER,
+    dispatch_priority_reason,
+    dispatch_reason_role,
+    role_provider_block_reason,
+    task_priority_rank,
+    task_submitted_author,
+    worker_logical_dispatch_agent_id,
+)
+from worker_failure_policy import (
+    auto_dispatch_block_is_temporary_capacity,
+    owner_preference_ranks,
+)
 
 
 def _supervisor_module():
@@ -22,6 +37,7 @@ def _sync_supervisor_scope() -> None:
         'task_index_from_status', 
         'current_dispatch_event_key', 
         'dispatch_priority_for_task', 
+        'is_task_review_dispatch_eligible',
         'agent_dispatch_loads', 
         'configured_worker_slot_total', 
         'default_max_dispatches_per_tick', 
@@ -39,6 +55,8 @@ def _sync_supervisor_scope() -> None:
         'escalated_lease_block', 
         'build_dispatch_event', 
         'dispatch_discussion_planning', 
+        'recover_conflicted_review_prs',
+        'recover_failed_ci_review_prs',
         'dispatch_ready_tasks'
     }
     # Skip only dunders. The four copies of this function used to disagree --
@@ -71,6 +89,26 @@ MERGE_ROUTE_MAX_ATTEMPTS = 4
 #: Reconciling costs one `gh pr view` per task with a PR, so it runs on its own
 #: cadence rather than every tick. Drift is measured in hours, not seconds.
 TASK_REALITY_RECONCILE_INTERVAL_SECONDS = 900.0
+
+#: Records the exact submitted head a conflicted-review recovery already acted
+#: on. Written by the same canonical commit that moves the status, so repeated
+#: polls and supervisor restarts recover one head exactly once.
+REVIEW_CONFLICT_RECOVERY_HEAD_FIELD = "review_conflict_recovery_head"
+
+#: Records the exact submitted head a review CI failure recovery already acted
+#: on. Written by the same canonical commit that moves the status, so repeated
+#: polls and supervisor restarts recover one head exactly once.
+REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD = "review_ci_failure_recovery_head"
+
+#: GitHub stating outright that a head cannot be merged because it conflicts
+#: with its base. Deliberately not BLOCKED, BEHIND or UNKNOWN: those describe a
+#: PR that later events resolve without an owner touching the branch.
+PR_CONFLICT_MERGE_STATES = frozenset({"DIRTY", "CONFLICTING"})
+
+#: The single PR read the conflicted-review recovery is allowed to act on.
+_REVIEW_CONFLICT_PR_JSON_FIELDS = "state,mergeStateStatus,headRefOid"
+
+_MARKER_UNSET = object()
 
 
 def _pr_changed_paths(pr_number: int) -> list[str] | None:
@@ -114,6 +152,242 @@ def _pr_merge_state(pr_number: int) -> str | None:
     except ValueError:
         return None
     return str(payload.get("mergeStateStatus") or "").strip().upper() or None
+
+
+def _review_pr_facts(slug: str, pr_number: int) -> tuple[str, str, str] | None:
+    """`(state, mergeStateStatus, headRefOid)` for a PR, or None when unreadable.
+
+    Bound to the repository the task declares rather than this checkout's
+    `origin`: `gh pr view 6` run from the wrong checkout answers about an
+    unrelated PR number, and a confident wrong answer is worse here than none.
+
+    The three facts come from one read so they describe one moment. Asked twice
+    around a CI verdict they are also the caller's race check: a head that
+    moved, a PR that closed, or a conflict that was resolved all show up as a
+    changed tuple.
+    """
+    import json as _json
+
+    from github_bus import GitHubBusError, GitHubBusOffline, run_gh
+
+    if not slug or "/" not in slug or pr_number <= 0:
+        return None
+    try:
+        proc = run_gh(
+            [
+                "pr",
+                "view",
+                str(pr_number),
+                "--repo",
+                slug,
+                "--json",
+                _REVIEW_CONFLICT_PR_JSON_FIELDS,
+            ]
+        )
+    except (GitHubBusError, GitHubBusOffline):
+        return None
+    try:
+        payload = _json.loads(proc.stdout or "{}")
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    state = str(payload.get("state") or "").strip().upper()
+    merge_state = str(payload.get("mergeStateStatus") or "").strip().upper()
+    head = str(payload.get("headRefOid") or "").strip().lower()
+    if not state or not merge_state or not head:
+        # A partial answer is an unreadable one. Treating a missing
+        # `mergeStateStatus` as "not conflicting" would be a guess either way.
+        return None
+    return state, merge_state, head
+
+
+_REVIEW_CI_FAILURE_PR_JSON_FIELDS = "state,headRefOid,statusCheckRollup"
+
+
+def _review_pr_failed_ci_facts(
+    slug: str, pr_number: int
+) -> tuple[str, str, list[dict[str, Any]]] | None:
+    """`(state, headRefOid, failed_checks)` for an open review PR with conclusive CI failure.
+
+    Bound to the repository the task declares. Requires:
+    - PR state is OPEN and headRefOid is present,
+    - statusCheckRollup is a non-empty list of checks,
+    - all non-task-review-gate checks have completed without any pending/queued/in-progress/unverifiable runs,
+    - at least one check is in a recognized terminal failure condition (FAILURE, CANCELLED, TIMED_OUT, ACTION_REQUIRED, ERROR).
+
+    Returns None if:
+    - the PR cannot be queried from GitHub,
+    - any check is malformed (e.g. not a dict or unparseable),
+    - any check is pending, in-progress, queued, or waiting,
+    - any check has an unrecognized conclusion or state,
+    - no checks exist or no check failed.
+    """
+    import json as _json
+
+    from github_bus import GitHubBusError, GitHubBusOffline, run_gh
+
+    if not slug or "/" not in slug or pr_number <= 0:
+        return None
+    try:
+        proc = run_gh(
+            [
+                "pr",
+                "view",
+                str(pr_number),
+                "--repo",
+                slug,
+                "--json",
+                _REVIEW_CI_FAILURE_PR_JSON_FIELDS,
+            ]
+        )
+    except (GitHubBusError, GitHubBusOffline):
+        return None
+    try:
+        payload = _json.loads(proc.stdout or "{}")
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    state = str(payload.get("state") or "").strip().upper()
+    head = str(payload.get("headRefOid") or "").strip().lower()
+    raw_rollup = payload.get("statusCheckRollup")
+    if not state or not head or not isinstance(raw_rollup, list) or not raw_rollup:
+        return None
+
+    try:
+        raw_checks, _superseded_checks = runtime_ai_status.latest_status_check_runs(raw_rollup)
+    except Exception:
+        return None
+
+    has_pending = False
+    has_unverifiable = False
+    valid_checks_count = 0
+    failed_checks: list[dict[str, Any]] = []
+
+    terminal_failure_conclusions = {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}
+    terminal_success_conclusions = {"SUCCESS", "NEUTRAL", "SKIPPED"}
+    pending_states = {"PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS", "WAITING"}
+    pending_statuses = {"PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"}
+
+    for index, check in enumerate(raw_checks):
+        if not isinstance(check, dict):
+            has_unverifiable = True
+            break
+
+        check_name = str(check.get("name") or "").strip()
+        check_context = str(check.get("context") or "").strip()
+
+        # Exclude pre-approval reviewer gate
+        if check_context == "task-review-gate" or check_name == "task-review-gate":
+            continue
+
+        valid_checks_count += 1
+
+        check_type = str(check.get("__typename") or "").strip()
+        conclusion = str(check.get("conclusion") or "").upper()
+        state_val = str(check.get("state") or "").upper()
+        status_val = str(check.get("status") or "").upper()
+        workflow_name = str(check.get("workflowName") or "").strip()
+        details_url = str(
+            check.get("detailsUrl") or check.get("targetUrl") or check.get("url") or ""
+        ).strip()
+        display_name = check_name or check_context or f"check-{index}"
+
+        if check_type == "CheckRun":
+            if status_val != "COMPLETED" or not conclusion:
+                has_pending = True
+            elif conclusion in terminal_success_conclusions:
+                pass
+            elif conclusion in terminal_failure_conclusions:
+                failed_checks.append(
+                    {
+                        "name": display_name,
+                        "workflow": workflow_name,
+                        "conclusion": conclusion,
+                        "url": details_url,
+                    }
+                )
+            else:
+                has_unverifiable = True
+        elif check_type == "StatusContext":
+            if state_val in pending_states or not state_val:
+                has_pending = True
+            elif state_val == "SUCCESS":
+                pass
+            elif state_val in {"FAILURE", "ERROR"}:
+                failed_checks.append(
+                    {
+                        "name": display_name,
+                        "workflow": workflow_name,
+                        "conclusion": state_val,
+                        "url": details_url,
+                    }
+                )
+            else:
+                has_unverifiable = True
+        else:
+            if conclusion:
+                if conclusion in terminal_failure_conclusions:
+                    failed_checks.append(
+                        {
+                            "name": display_name,
+                            "workflow": workflow_name,
+                            "conclusion": conclusion,
+                            "url": details_url,
+                        }
+                    )
+                elif conclusion in {"PENDING", "IN_PROGRESS"}:
+                    has_pending = True
+                elif conclusion in terminal_success_conclusions:
+                    pass
+                else:
+                    has_unverifiable = True
+            elif state_val:
+                if state_val in {"FAILURE", "ERROR"}:
+                    failed_checks.append(
+                        {
+                            "name": display_name,
+                            "workflow": workflow_name,
+                            "conclusion": state_val,
+                            "url": details_url,
+                        }
+                    )
+                elif state_val in pending_states:
+                    has_pending = True
+                elif state_val == "SUCCESS":
+                    pass
+                else:
+                    has_unverifiable = True
+            elif status_val:
+                if status_val in pending_statuses:
+                    has_pending = True
+                elif status_val in {"FAILURE", "ERROR"}:
+                    failed_checks.append(
+                        {
+                            "name": display_name,
+                            "workflow": workflow_name,
+                            "conclusion": status_val,
+                            "url": details_url,
+                        }
+                    )
+                elif status_val in {"COMPLETED", "SUCCESS"}:
+                    pass
+                else:
+                    has_unverifiable = True
+            else:
+                has_unverifiable = True
+
+    if (
+        valid_checks_count == 0
+        or has_pending
+        or has_unverifiable
+        or not failed_checks
+        or state != "OPEN"
+    ):
+        return None
+
+    return state, head, failed_checks
 
 
 def _remote_branch_names() -> set[str] | None:
@@ -322,22 +596,60 @@ def approved_pr_change_scope(pr_number: int) -> str | None:
         return None
 
 
+def _is_repository_slug(value: str | None) -> bool:
+    """Whether a value is the `owner/name` GitHub slug `gh --repo` accepts."""
+    owner, sep, name = str(value or "").strip().partition("/")
+    return bool(sep and owner and name and "/" not in name)
+
+
 def _task_repository_slug(config: dict[str, Any], task: dict[str, Any]) -> str:
-    """The task's repository slug, or "" when it cannot be resolved.
+    """The task's repository as an `owner/name` slug, or "" when unresolvable.
 
     Routing used to rely on the supervisor's cwd, which silently answered for
-    ODay Plus whatever repository the task belonged to.
+    ODay Plus whatever repository the task belonged to. Declaring the repository
+    on the task fixed that, but the declared value was then handed to
+    `gh --repo` verbatim -- and `task.repository` is a *registry name*, not a
+    slug. `pantheon` is the registry id of this very checkout (see
+    `multi_repo_registry.LEGACY_SELF_REPO_ID`), written into task records going
+    back months, so an approved PR carrying it was routed with `--repo pantheon`;
+    `gh` rejects that, and the PR was reported `merge_route_blocked` every tick
+    and never enqueued.
+
+    The registry already owns name -> slug for ids, aliases and display names,
+    so this asks it rather than growing a second spelling here. A repository the
+    registry does not carry can still be addressed directly, as long as it was
+    written as `owner/name` in the first place.
     """
     declared = str((task or {}).get("repository") or "").strip()
-    if declared:
-        return declared
     try:
-        from multi_repo_registry import resolve_task_repository
+        from multi_repo_registry import (
+            matching_repo_id,
+            repository_slug,
+            resolve_task_repository,
+        )
+    except ImportError:
+        return declared if _is_repository_slug(declared) else ""
 
+    if declared:
+        try:
+            resolved = repository_slug(config, matching_repo_id(config, declared))
+        except Exception:
+            resolved = None
+        if _is_repository_slug(resolved):
+            return str(resolved).strip()
+        # Unknown to the registry, or registered without a slug. Only a value
+        # that already is a slug can be routed; anything else names a repository
+        # `gh` has no way to reach, and the caller must say so rather than guess.
+        return declared if _is_repository_slug(declared) else ""
+
+    # Nothing declared: the registry's artifact-prefix fallback is the one place
+    # allowed to infer this, and it answers with the configured slug.
+    try:
         binding = resolve_task_repository(config, task)
-        return str(binding.slug or "")
     except Exception:
         return ""
+    slug = str(binding.slug or "").strip()
+    return slug if _is_repository_slug(slug) else ""
 
 
 _MERGE_QUEUE_BY_REPO: dict[str, bool] = {}
@@ -386,6 +698,7 @@ def repository_has_merge_queue(slug: str | None, base: str) -> bool | None:
     return present
 
 
+@_entrypoint
 def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> tuple[str, str]:
     """Enqueue a reviewed, CI-green PR for merge.
 
@@ -451,6 +764,16 @@ def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> 
     # with no strategy has nothing to do there. Ask once per repository and pick
     # the only route that repository actually has.
     slug = _task_repository_slug(config, task)
+    declared_repository = str(task.get("repository") or "").strip()
+    if declared_repository and not slug:
+        # Falling through without `--repo` routes against the supervisor's own
+        # checkout, which is the wrong-repository merge this path exists to
+        # prevent. A declaration the registry cannot place is reported, not
+        # guessed at.
+        return "blocked", (
+            f"declared repository {declared_repository!r} does not resolve to an "
+            "owner/name slug in the repository registry"
+        )
     base = str(task.get("base_branch") or "dev").strip() or "dev"
     queued_repo = repository_has_merge_queue(slug, base)
     if queued_repo is False:
@@ -483,19 +806,20 @@ def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> 
         "at": utc_now(),
         "attempts": previous_attempts + 1,
     }
-    write_activity_log(
-        config,
-        {
-            "type": "merge_route_applied",
-            "task_id": str(task.get("id") or ""),
-            "message": (
-                f"PR #{pr_number} {'merged directly' if route == 'merged' else 'enqueued for merge'} "
-                f"(scope {scope}; repository has no merge queue)."
-                if route == "merged"
-                else f"PR #{pr_number} enqueued for merge (scope {scope})."
-            ),
-        },
-    )
+    if config and (config.get("paths") or {}).get("activity_log"):
+        write_activity_log(
+            config,
+            {
+                "type": "merge_route_applied",
+                "task_id": str(task.get("id") or ""),
+                "message": (
+                    f"PR #{pr_number} {'merged directly' if route == 'merged' else 'enqueued for merge'} "
+                    f"(scope {scope}; repository has no merge queue)."
+                    if route == "merged"
+                    else f"PR #{pr_number} enqueued for merge (scope {scope})."
+                ),
+            },
+        )
     return route, f"scope={scope}"
 
 
@@ -606,6 +930,320 @@ def advance_approved_prs_to_merge(
     return changed
 
 
+def recover_conflicted_review_prs(
+    config: dict[str, Any],
+    status: dict[str, Any],
+    review_statuses: set[str],
+    *,
+    busy_task_ids: set[str],
+) -> bool:
+    """Return a review whose PR GitHub will never check back to its owner.
+
+    A PR that conflicts with its base has no merge commit, so no workflow ever
+    starts on that head: check-runs, check-suites and Actions runs are all zero
+    and `task_pr_ci_status` answers `none` indefinitely. Reviewer dispatch
+    requires terminal CI success on the exact submitted head, so the task waits
+    for a check that cannot arrive. #1170 sat that way at head 847d4984.
+
+    The queue-ejection repair is this same failure one step later in the lane
+    and only accepts `review_approved`, so nothing covered a review. This runs
+    in the reconciliation stage rather than the per-agent loop, because the task
+    is waiting on the reviewer's slot and must not be gated by it.
+
+    Only the owner can advance a base, and a wrong recovery discards a real
+    review, so this repairs only what GitHub states outright: an OPEN PR at
+    exactly the submitted head, called conflicting, with no check on that head.
+    Anything unreadable, drifting, pending, or already closed keeps waiting.
+    """
+    changed = False
+    for task in list(status.get("tasks", []) or []):
+        if not isinstance(task, dict):
+            continue
+        task_id = str(task.get("id") or "").strip()
+        if not task_id or task_id in busy_task_ids:
+            continue
+        if str(task.get("status") or "").strip().lower() not in review_statuses:
+            continue
+        # Human gates and non-dispatchable tasks are never handed to an owner by
+        # the control plane; the transition refuses them too, but asking GitHub
+        # about them first would be a probe with no reachable outcome.
+        if (
+            task_is_human_gate(task)
+            or bool(task.get("non_dispatchable"))
+            or is_human_gate_agent(task.get("owner"))
+            or is_human_gate_agent(task.get("waiting_for"))
+        ):
+            continue
+        # An approved or queued head is frozen, and a live helper lease means
+        # someone already holds this branch.
+        if task.get("approved_head") or task.get("merge_route") is not None:
+            continue
+        if helper_claim_is_live(task.get("helper_execution_lease")):
+            continue
+        # A review with no verified remote PR belongs to
+        # `repair_unsubmitted_review_tasks`; without that provenance there is no
+        # PR number or submitted head worth asking GitHub about.
+        if not review_submission_is_complete(config, task):
+            continue
+        submission = task.get("review_submission") or {}
+        submitted_sha = str(submission.get("remote_sha") or "").strip().lower()
+        try:
+            pr_number = int(submission.get("pr_number") or 0)
+        except (TypeError, ValueError):
+            continue
+        if pr_number <= 0 or not submitted_sha:
+            continue
+        # One recovery per head. Repeated polls and supervisor restarts see the
+        # marker the transition's own commit persisted; an owner who resubmits
+        # the identical conflicting head is not bounced a second time.
+        if str(task.get(REVIEW_CONFLICT_RECOVERY_HEAD_FIELD) or "").strip().lower() == submitted_sha:
+            continue
+        slug = _task_repository_slug(config, task)
+        if not slug:
+            continue
+
+        # Cheapest disqualifier first, and through the canonical CI reader so
+        # there is one spelling of "what is CI saying". Any answer other than
+        # "GitHub has run nothing here" - success, failure, pending, or the
+        # `unknown` that means `gh` could not answer - ends this lane's business.
+        # This first read may be served from the reader's cache: it exists to
+        # drop the many tasks that are obviously not this shape without paying
+        # for a `gh` call each tick, not to authorise the transition.
+        try:
+            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
+        except Exception:
+            continue
+        if ci_status != "none" or str(pr_status or "").strip().upper() != "OPEN":
+            continue
+
+        before = _review_pr_facts(slug, pr_number)
+        if before is None:
+            continue
+        state, merge_state, head = before
+        if state != "OPEN" or merge_state not in PR_CONFLICT_MERGE_STATES:
+            continue
+        if head != submitted_sha:
+            # Head drift: the branch has moved past what was reviewed, and what
+            # GitHub is describing is not the submission this task recorded.
+            continue
+        # "No check has ever run here" is the whole premise of this repair, and
+        # a cached verdict cannot carry it. A conflict resolved a moment ago
+        # starts the checks, and requeueing then would pull a review out from
+        # under a run that is already going. Ask the same canonical reader again
+        # with the cache bypassed, so the fact the transition acts on was true
+        # after the PR facts above were taken, not up to a cache lifetime
+        # earlier. Anything other than a still-open PR with nothing run on it -
+        # including a read that fails - waits for the next tick.
+        try:
+            fresh_pr_status, fresh_ci_status = runtime_ai_status.task_pr_ci_status(
+                task_id, max_age_seconds=0
+            )
+        except Exception:
+            continue
+        if fresh_ci_status != "none" or str(fresh_pr_status or "").strip().upper() != "OPEN":
+            continue
+        # Read the PR again. Between the CI verdict and here the owner may have
+        # pushed, the PR may have closed, or the conflict may have been resolved
+        # and the checks started. Acting on a fact that has already changed is
+        # how a repair becomes a corruption, so an unstable read keeps waiting.
+        if _review_pr_facts(slug, pr_number) != before:
+            continue
+
+        message = (
+            f"Review PR #{pr_number} for task {task_id} conflicts with its base "
+            f"({merge_state.lower()}), so GitHub has run no check on the submitted head "
+            f"{submitted_sha[:8]} and review readiness can never resolve. Returned to the "
+            "owner to advance the base, resolve the conflict, and resubmit the same PR "
+            "for an independent review."
+        )
+        previous_marker = task.get(REVIEW_CONFLICT_RECOVERY_HEAD_FIELD, _MARKER_UNSET)
+        task[REVIEW_CONFLICT_RECOVERY_HEAD_FIELD] = submitted_sha
+        if not requeue_task_for_ci_repair(
+            config,
+            status,
+            task,
+            message=message,
+            clear_approval=False,
+            allow_conflicted_review=True,
+        ):
+            # Refused, or the canonical commit did not land. The marker is only
+            # true once that commit persisted it; leaving it behind would make
+            # this head permanently unrecoverable.
+            if previous_marker is _MARKER_UNSET:
+                task.pop(REVIEW_CONFLICT_RECOVERY_HEAD_FIELD, None)
+            else:
+                task[REVIEW_CONFLICT_RECOVERY_HEAD_FIELD] = previous_marker
+            # CAS mismatch or rejected canonical commit: disk snapshot has diverged.
+            # Abort further recovery on this stale snapshot and reload from disk.
+            status.clear()
+            status.update(load_status(config))
+            return changed
+        changed = True
+        write_activity_log(
+            config,
+            {
+                "type": "review_conflict_ci_recovered",
+                "task_id": task_id,
+                "pr_number": pr_number,
+                "head": submitted_sha,
+                "merge_state": merge_state,
+                "message": message,
+            },
+        )
+    return changed
+
+
+def recover_failed_ci_review_prs(
+    config: dict[str, Any],
+    status: dict[str, Any],
+    review_statuses: set[str],
+    *,
+    busy_task_ids: set[str],
+) -> bool:
+    """Return an unapproved review whose PR CI checks have conclusively failed back to its owner.
+
+    When an unapproved review PR experiences a required CI failure, reviewer
+    dispatch is suppressed, but without recovery the task stalls: the reviewer
+    cannot review a failing PR and the owner is not re-dispatched.
+
+    This repairs the gap by returning the task to its owner under
+    control_plane_recovery so the owner can repair the CI failure and resubmit
+    via task_finalize.sh.
+
+    Only the owner can advance/fix the branch, and a wrong recovery discards a
+    real review, so this repairs only what GitHub confirms: an OPEN PR at exactly
+    the submitted head, with a recognized, verifiable, terminal CI failure (and
+    no pending/in-progress checks). Anything unreadable, drifting, pending,
+    unverifiable, or already closed/approved/queued keeps waiting.
+    """
+    changed = False
+    for task in list(status.get("tasks", []) or []):
+        if not isinstance(task, dict):
+            continue
+        task_id = str(task.get("id") or "").strip()
+        if not task_id or task_id in busy_task_ids:
+            continue
+        if str(task.get("status") or "").strip().lower() not in review_statuses:
+            continue
+        # Human gates, Human-waiting tasks, and non-dispatchable tasks are never handed
+        # to an AI owner by the control plane; the transition refuses them too, but asking
+        # GitHub about them first would be a probe with no reachable outcome.
+        if (
+            task_is_human_gate(task)
+            or bool(task.get("non_dispatchable"))
+            or is_human_gate_agent(task.get("owner"))
+            or is_human_gate_agent(task.get("waiting_for"))
+        ):
+            continue
+        # An approved or queued head is frozen, and a live helper lease means
+        # someone already holds this branch.
+        if task.get("approved_head") or task.get("merge_route") is not None:
+            continue
+        if helper_claim_is_live(task.get("helper_execution_lease")):
+            continue
+        # A review with no verified remote PR belongs to
+        # `repair_unsubmitted_review_tasks`; without that provenance there is no
+        # PR number or submitted head worth asking GitHub about.
+        if not review_submission_is_complete(config, task):
+            continue
+        submission = task.get("review_submission") or {}
+        submitted_sha = str(submission.get("remote_sha") or "").strip().lower()
+        try:
+            pr_number = int(submission.get("pr_number") or 0)
+        except (TypeError, ValueError):
+            continue
+        if pr_number <= 0 or not submitted_sha:
+            continue
+        # One recovery per head. Repeated polls and supervisor restarts see the
+        # marker the transition's own commit persisted; an owner who resubmits
+        # the identical failing head is not bounced a second time.
+        if str(task.get(REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD) or "").strip().lower() == submitted_sha:
+            continue
+        slug = _task_repository_slug(config, task)
+        if not slug:
+            continue
+
+        # Cheapest disqualifier first, through the canonical CI reader.
+        # Any answer other than failure on an open PR ends this lane's business.
+        try:
+            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
+        except Exception:
+            continue
+        if ci_status != "failure" or str(pr_status or "").strip().upper() != "OPEN":
+            continue
+
+        before = _review_pr_failed_ci_facts(slug, pr_number)
+        if before is None:
+            continue
+        state, head, failed_checks = before
+        if state != "OPEN" or head != submitted_sha or not failed_checks:
+            continue
+
+        # Fresh uncached CI read to ensure CI failure is current.
+        try:
+            fresh_pr_status, fresh_ci_status = runtime_ai_status.task_pr_ci_status(
+                task_id, max_age_seconds=0
+            )
+        except Exception:
+            continue
+        if fresh_ci_status != "failure" or str(fresh_pr_status or "").strip().upper() != "OPEN":
+            continue
+
+        # Re-read the PR failed CI facts to ensure nothing changed while probing CI.
+        if _review_pr_failed_ci_facts(slug, pr_number) != before:
+            continue
+
+        check_summaries: list[str] = []
+        for fc in failed_checks:
+            fc_name = fc.get("name") or "unknown"
+            fc_reason = fc.get("conclusion") or "FAILURE"
+            fc_url = fc.get("url")
+            if fc_url:
+                check_summaries.append(f"{fc_name} ({fc_reason}: {fc_url})")
+            else:
+                check_summaries.append(f"{fc_name} ({fc_reason})")
+        failed_summary = ", ".join(check_summaries)
+
+        message = (
+            f"Review PR #{pr_number} for task {task_id} failed required CI check(s) on "
+            f"submitted head {submitted_sha[:8]}: {failed_summary}. "
+            "Returned to owner to repair CI or boundedly retry transient infra failures, "
+            "and resubmit via task_finalize.sh."
+        )
+        previous_marker = task.get(REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD, _MARKER_UNSET)
+        task[REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD] = submitted_sha
+        if not requeue_task_for_ci_repair(
+            config,
+            status,
+            task,
+            message=message,
+            clear_approval=False,
+            allow_failed_ci_review=True,
+        ):
+            if previous_marker is _MARKER_UNSET:
+                task.pop(REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD, None)
+            else:
+                task[REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD] = previous_marker
+            # CAS mismatch or rejected canonical commit: disk snapshot has diverged.
+            # Abort further recovery on this stale snapshot and reload from disk.
+            status.clear()
+            status.update(load_status(config))
+            return changed
+        changed = True
+        write_activity_log(
+            config,
+            {
+                "type": "review_ci_failure_recovered",
+                "task_id": task_id,
+                "pr_number": pr_number,
+                "head": submitted_sha,
+                "failed_checks": failed_checks,
+                "message": message,
+            },
+        )
+    return changed
+
+
 @_entrypoint
 
 def task_index_from_status(config: dict[str, Any], status: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -632,7 +1270,6 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
 
     schema = config.get("schema", {})
     owner_field = schema.get("assignee_field", "owner")
-    reviewer_field = schema.get("reviewer_field", "reviewer")
     target_agent = str(event.get("target_display_name") or display_name_for(config, str(event.get("target_agent") or "")))
     settings = ready_dispatch_settings(config)
     review_statuses = normalized_status_set(settings.get("review_statuses"), ["review"])
@@ -642,7 +1279,13 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
 
     eligible = False
     if reason == REASON_REVIEW_READY:
-        eligible = task_status in review_statuses and task.get(reviewer_field) == target_agent
+        eligible = is_task_review_dispatch_eligible(
+            config,
+            task,
+            target_agent,
+            review_statuses=review_statuses,
+            finalize_statuses=finalize_statuses,
+        )
     elif reason == REASON_OWNED_FINALIZE:
         eligible = task_status in finalize_statuses and task.get(owner_field) == target_agent
     elif reason == REASON_OWNED_IN_PROGRESS:
@@ -651,10 +1294,23 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
         eligible = task_status in {"todo", "in_progress"} and task.get(owner_field) == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses)
     elif reason == REASON_HELPER_CLAIM:
         claim = task.get("helper_execution_lease") or {}
+        dispatched_task = (event.get("metadata") or {}).get("task") or event.get("task") or {}
+        dispatched_claim = dispatched_task.get("helper_execution_lease") or {}
+        try:
+            dispatched_gen = int(dispatched_claim.get("generation")) if "generation" in dispatched_claim else None
+            current_gen = int(claim.get("generation")) if "generation" in claim else None
+        except (TypeError, ValueError):
+            dispatched_gen = None
+            current_gen = None
         eligible = (
             task_status in {"todo", "in_progress"}
             and normalize_agent_id(str(claim.get("claimed_by") or "")) == normalize_agent_id(target_agent)
             and helper_claim_is_live(claim)
+            and (dispatched_gen is None or current_gen is None or dispatched_gen == current_gen)
+            and (
+                not dispatched_claim.get("claimed_by")
+                or normalize_agent_id(str(dispatched_claim.get("claimed_by") or "")) == normalize_agent_id(str(claim.get("claimed_by") or ""))
+            )
             and dependencies_satisfied(task, task_map, dependency_done_statuses)
         )
 
@@ -663,8 +1319,111 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
 
     return str(build_dispatch_event(task, target_agent, reason, task_map).get("key") or "")
 
-@_entrypoint
 
+@_entrypoint
+def is_task_review_dispatch_eligible(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    target_agent: str,
+    *,
+    review_statuses: set[str] | None = None,
+    finalize_statuses: set[str] | None = None,
+    readiness_force_refresh: bool = True,
+) -> bool:
+    """Return whether a task is eligible for reviewer dispatch (review_ready_dispatch).
+
+    A task is review-ready only when in genuine review status, has not been approved
+    (no approved_head, not in finalize statuses), has not been queued/routed to merge
+    (no merge_route), has independent owner/reviewer, the target agent matches the reviewer,
+    the review submission is valid with matching exact remote head, and all required CI
+    checks on that exact head have concluded with terminal success.
+
+    `readiness_force_refresh` controls only how the submitted head is read.
+    Dispatch -- the caller that is about to start a worker on this answer --
+    keeps the forced `git ls-remote`. A caller that only asks whether this work
+    exists, repeatedly and for every running worker of the agent, passes `False`
+    and is served from the resolver's own short-lived cache instead of paying
+    for a network read per question. Both readers already fail closed on an
+    answer they cannot get, so a cache miss or a failed read still refuses
+    rather than assuming readiness.
+    """
+    if not isinstance(task, dict) or not task:
+        return False
+    settings = ready_dispatch_settings(config)
+    rev_statuses = (
+        review_statuses
+        if review_statuses is not None
+        else normalized_status_set(settings.get("review_statuses"), ["review"])
+    )
+    fin_statuses = (
+        finalize_statuses
+        if finalize_statuses is not None
+        else normalized_status_set(settings.get("finalize_statuses"), ["review_approved"])
+    )
+    task_status = str(task.get("status") or "").lower()
+    if task_status not in rev_statuses or task_status in fin_statuses:
+        return False
+    if task.get("approved_head"):
+        return False
+    schema = config.get("schema", {})
+    owner_field = schema.get("assignee_field", "owner")
+    reviewer_field = schema.get("reviewer_field", "reviewer")
+    task_owner = str(task.get(owner_field) or "")
+    task_reviewer = str(task.get(reviewer_field) or "")
+    norm_target = normalize_agent_id(target_agent or "")
+    norm_owner = normalize_agent_id(task_owner)
+    norm_reviewer = normalize_agent_id(task_reviewer)
+    if not norm_target or norm_reviewer != norm_target:
+        return False
+    if norm_owner == norm_reviewer:
+        return False
+    if not review_is_independent(config, task_owner, target_agent):
+        return False
+
+    # Review submission & exact head integrity check
+    submission = task.get("review_submission")
+    if not isinstance(submission, dict):
+        return False
+    submitted_sha = str(submission.get("remote_sha") or "").strip()
+    if not submitted_sha:
+        return False
+
+    # Merge route on current submitted head suppresses redundant review dispatch.
+    # Stale merge route records from prior/repaired heads must not block new head review.
+    # Malformed/unknown route metadata or routes missing an explicit head fail closed.
+    route = task.get("merge_route")
+    if route is not None:
+        if isinstance(route, dict):
+            route_head = str(route.get("head") or "").strip()
+            if not route_head or route_head == submitted_sha:
+                return False
+        else:
+            return False
+
+    task_id = str(task.get(schema.get("task_id_field", "id")) or task.get("id") or "")
+    try:
+        current_head = runtime_ai_status.resolve_task_sha(
+            task_id, force_refresh=readiness_force_refresh
+        )
+    except Exception:
+        return False
+    if not current_head or current_head != submitted_sha:
+        return False
+
+    # Exact head required CI terminal success check
+    try:
+        pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
+    except Exception:
+        return False
+    if ci_status != "success":
+        return False
+    if str(pr_status or "").strip().upper() == "MERGED":
+        return False
+
+    return True
+
+
+@_entrypoint
 def dispatch_priority_for_task(
     config: dict[str, Any],
     task: dict[str, Any],
@@ -672,6 +1431,7 @@ def dispatch_priority_for_task(
     *,
     task_map: dict[str, dict[str, Any]] | None = None,
     dependencies_done_statuses: set[str] | None = None,
+    readiness_force_refresh: bool = True,
 ) -> int | None:
     settings = ready_dispatch_settings(config)
     review_statuses = normalized_status_set(settings.get("review_statuses"), ["review"])
@@ -682,15 +1442,20 @@ def dispatch_priority_for_task(
     )
     schema = config.get("schema", {})
     owner_field = schema.get("assignee_field", "owner")
-    reviewer_field = schema.get("reviewer_field", "reviewer")
     task_status = str(task.get("status") or "").lower()
     tmap = task_map if task_map is not None else {str(task.get("id") or ""): task}
 
     norm_target = normalize_agent_id(agent_name or "")
     task_owner = normalize_agent_id(str(task.get(owner_field) or ""))
-    task_reviewer = normalize_agent_id(str(task.get(reviewer_field) or ""))
 
-    if task_status in review_statuses and task_reviewer == norm_target:
+    if is_task_review_dispatch_eligible(
+        config,
+        task,
+        agent_name,
+        review_statuses=review_statuses,
+        finalize_statuses=finalize_statuses,
+        readiness_force_refresh=readiness_force_refresh,
+    ):
         return 0
     if task_status in finalize_statuses and task_owner == norm_target:
         approved_head = task.get("approved_head")
@@ -701,7 +1466,7 @@ def dispatch_priority_for_task(
             return None
         try:
             curr_head = runtime_ai_status.resolve_task_checkout_sha(
-                task, force_refresh=True
+                task, force_refresh=readiness_force_refresh
             )
             if not curr_head or not runtime_ai_status.is_approved_head_satisfied(task, curr_head, approved_head):
                 return None
@@ -752,16 +1517,72 @@ def helper_owner_is_saturated(
     task: dict[str, Any],
     agent_loads: dict[str, list[int]],
     helper_settings: dict[str, Any],
+    *,
+    state: dict[str, Any] | None = None,
+    provider_report: dict[str, Any] | None = None,
+    active_quota_counts: dict[str, int] | None = None,
+    pending_quota_counts: dict[str, int] | None = None,
+    dispatchable_agent_ids: list[str] | set[str] | None = None,
+    now: datetime | None = None,
 ) -> bool:
+    """Decide whether the owner is genuinely unable to take its own task back.
+
+    A helper lease is a last resort, so this asks the same questions the owner
+    dispatch lane asks -- agent exists, may take this task, is not paused or
+    provider-blocked, has slot and quota headroom -- rather than reading the
+    board's "working" label, which stays set on a task whose runner has died.
+
+    `dispatchable_agent_ids` must be a *complete* set of agents the dispatch
+    loop may use, not this tick's rotation subset: an owner missing from a
+    partial list would be read as undispatchable and lose its task to a helper
+    while perfectly healthy. Pass `None` (the caller default) to have the full
+    set resolved here.
+    """
     owner = str(task.get("owner") or "")
-    owner_load = len(agent_loads.get(owner, []))
-    if owner_load >= agent_dispatch_capacity(config, owner):
-        return True
+    owner_id = normalize_agent_id(owner)
+    dispatchable = (
+        {normalize_agent_id(aid) for aid in dispatchable_agent_ids if normalize_agent_id(aid)}
+        if dispatchable_agent_ids is not None
+        else {normalize_agent_id(aid) for aid in dispatch_loop_agent_ids(config) if normalize_agent_id(aid)}
+    )
+    if not owner_id or owner_id not in (config.get("agents", {}) or {}):
+        owner_undispatchable = True
+    elif not agent_can_take_task(config, owner, task, role=ROLE_OWNER):
+        owner_undispatchable = True
+    elif owner_id not in dispatchable:
+        owner_undispatchable = True
+    elif state is not None and (
+        agent_auto_dispatch_block_reason(config, state, owner_id, provider_report)
+        or agent_dispatch_paused(config, state, owner_id)
+        or account_pool_dispatch_block_reason(config, owner_id, runtime_state=state)
+    ):
+        owner_undispatchable = True
+    else:
+        owner_display = display_name_for(config, owner_id) or owner
+        owner_load = len(agent_loads.get(owner_display, agent_loads.get(owner, [])))
+        owner_capacity = agent_dispatch_capacity(config, owner_id)
+        quota_limit = account_pool_effective_concurrency(config, state, owner_id) if state else None
+        quota_group = agent_quota_group_id(config, owner_id)
+        quota_used = (
+            (active_quota_counts.get(quota_group, 0) + pending_quota_counts.get(quota_group, 0))
+            if (quota_group and active_quota_counts is not None and pending_quota_counts is not None)
+            else 0
+        )
+        owner_saturated = (owner_load >= owner_capacity) or bool(
+            quota_limit and quota_group and quota_used >= quota_limit
+        )
+        owner_undispatchable = owner_saturated
+
+    current_time = now or datetime.now(UTC)
     last_update = parse_iso_timestamp(str(task.get("last_update") or ""))
-    if last_update is None:
-        return not helper_settings.get("require_owner_saturated", True)
-    age = (datetime.now(UTC) - last_update).total_seconds()
-    return age >= float(helper_settings.get("dispatch_sla_seconds", 600))
+    sla_seconds = float(helper_settings.get("dispatch_sla_seconds", 600))
+    sla_exceeded = (
+        last_update is None
+        or (current_time - last_update).total_seconds() >= sla_seconds
+    )
+    if helper_settings.get("require_owner_saturated", True):
+        return owner_undispatchable and sla_exceeded
+    return owner_undispatchable or sla_exceeded
 
 @_entrypoint
 
@@ -862,19 +1683,26 @@ def reassign_unavailable_reviewers(
         else:
             continue
 
+        submitted_author = task_submitted_author(config, task)
+        author_pool_exclusions = (
+            {agent_account_pool_id(config, submitted_author)}
+            if submitted_author and not is_human_gate_agent(submitted_author)
+            else set()
+        )
+
         claimed_agent = str(task.get(claimed_field) or "").strip()
         if not claimed_agent or is_human_gate_agent(claimed_agent):
             continue
         if claimed_role == "owner":
             claimed_id = normalize_agent_id(claimed_agent)
-            if agent_dispatch_paused(config, state, claimed_id):
-                claimed_block_reason = (
-                    f"dispatch is paused or disabled for {display_name_for(config, claimed_id) or claimed_agent}"
-                )
-            elif account_pool_dispatch_block_reason(config, claimed_id, runtime_state=state):
-                claimed_block_reason = account_pool_dispatch_block_reason(
-                    config, claimed_id, runtime_state=state
-                )
+            auto_block_reason = agent_auto_dispatch_block_reason(
+                config,
+                state,
+                claimed_id,
+                provider_report,
+            )
+            if auto_block_reason and not auto_dispatch_block_is_temporary_capacity(auto_block_reason):
+                claimed_block_reason = auto_block_reason
             else:
                 claimed_block_reason = None
             reviewer_same_pool = False
@@ -889,13 +1717,30 @@ def reassign_unavailable_reviewers(
                 counterpart
                 and not is_human_gate_agent(counterpart)
                 and not review_is_independent(config, counterpart, claimed_agent)
+            ) or bool(
+                submitted_author
+                and not is_human_gate_agent(submitted_author)
+                and not review_is_independent(config, submitted_author, claimed_agent)
             )
         if not claimed_block_reason and not reviewer_same_pool:
             continue
 
         replacement = ""
         replacement_id = ""
-        for candidate_id in candidate_agent_ids:
+        # The owner branch picks the first candidate that survives the filters
+        # below, so its ordering *is* its preference. Rank it through the same
+        # policy the reassignment selector uses instead of growing a second one;
+        # the sort is stable, so within a rank the configured dispatch order is
+        # untouched, and the reviewer branch keeps its existing ordering.
+        candidate_sequence = candidate_agent_ids
+        if claimed_role == "owner":
+            owner_ranks = owner_preference_ranks(
+                config, candidate_agent_ids, state=state, task=task, role="owner"
+            )
+            candidate_sequence = sorted(
+                candidate_agent_ids, key=lambda agent_id: owner_ranks.get(agent_id, 1)
+            )
+        for candidate_id in candidate_sequence:
             candidate = display_name_for(config, candidate_id)
             candidate_config = (config.get("agents", {}) or {}).get(candidate_id)
             owner_for_independence = candidate if claimed_role == "owner" else counterpart
@@ -903,14 +1748,24 @@ def reassign_unavailable_reviewers(
             if (
                 not candidate
                 or candidate in {claimed_agent, counterpart}
+                or (claimed_role == "reviewer" and submitted_author and candidate == submitted_author)
                 or candidate_id in reserved_agents
                 or not isinstance(candidate_config, dict)
                 or agent_is_dispatch_slot(candidate_config)
                 or is_human_gate_agent(candidate)
-                or not agent_can_take_task(config, candidate, task)
+                or not agent_can_take_task(config, candidate, task, role=claimed_role)
                 or (
                     bool(counterpart and not is_human_gate_agent(counterpart))
                     and not review_is_independent(config, owner_for_independence, reviewer_for_independence)
+                )
+                or (
+                    claimed_role == "reviewer"
+                    and bool(submitted_author and not is_human_gate_agent(submitted_author))
+                    and not review_is_independent(config, submitted_author, candidate)
+                )
+                or (
+                    claimed_role == "reviewer"
+                    and agent_account_pool_id(config, candidate) in author_pool_exclusions
                 )
                 or agent_auto_dispatch_block_reason(config, state, candidate_id, provider_report)
             ):
@@ -922,9 +1777,14 @@ def reassign_unavailable_reviewers(
             continue
 
         if reviewer_same_pool:
+            violator = (
+                f"owner {counterpart}"
+                if counterpart and not review_is_independent(config, counterpart, claimed_agent)
+                else f"submitted author {submitted_author}"
+            )
             message = (
                 f"Reassigned review to {replacement}: {claimed_agent} shares account pool "
-                f"with owner {counterpart}, so independent review requires a different pool."
+                f"with {violator}, so independent review requires a different pool."
             )
         else:
             message = (
@@ -1007,7 +1867,9 @@ def higher_priority_ready_task_exists(
 ) -> bool:
     if worker_is_discussion_planning(worker) or worker_is_coordination_dispatch(worker):
         return False
-    current_priority = dispatch_reason_priority(worker.get("request_snapshot", {}).get("reason"))
+    current_priority = dispatch_reason_priority(
+        worker.get("request_snapshot", {}).get("reason") or worker.get("reason")
+    )
     if current_priority is None:
         return False
 
@@ -1022,6 +1884,8 @@ def higher_priority_ready_task_exists(
     owner_field = schema.get("assignee_field", "owner")
     reviewer_field = schema.get("reviewer_field", "reviewer")
     current_task = task_map.get(current_task_id)
+    current_task_rank = task_priority_rank(current_task)
+    current_key = (current_task_rank, current_priority)
     higher_priority_task_ids: set[str] = set()
     slot_count = len(logical_worker_slot_ids(config, logical_agent_id))
     urgent_priority_cutoff = dispatch_reason_priority(REASON_OWNED_FINALIZE)
@@ -1031,33 +1895,76 @@ def higher_priority_ready_task_exists(
             continue
         if task_is_sidecar(task) and not task_is_sidecar(current_task or {}):
             continue
+        # Business rank decides first, and decides without reading anything.
+        # `candidate_priority` below is bounded at 0, so a candidate ranked
+        # worse than the running worker's task can never win the (rank, lane)
+        # comparison, and at equal rank nothing outranks a review. Cutting those
+        # here is what keeps the readiness reads further down to the few
+        # candidates whose answer can actually end a worker, rather than one
+        # read per task per poll.
+        candidate_task_rank = task_priority_rank(task)
+        if candidate_task_rank > current_task_rank:
+            continue
+        if candidate_task_rank == current_task_rank and current_priority <= 0:
+            continue
+        # A human gate or a task flagged `non_dispatchable` is never handed to a
+        # worker by any lane, so it can never be the work a freed slot is freed
+        # for. Refusing it here also means GitHub is not asked about a task with
+        # no reachable outcome.
+        if task_is_human_gate(task) or bool(task.get("non_dispatchable")):
+            continue
         task_status = str(task.get("status") or "").lower()
-        candidate_priority = None
-        if task_status in review_statuses and task.get(reviewer_field) == agent_name:
-            if is_sidecar_review_of_current_parent(
+        if (
+            task_status in review_statuses
+            and normalize_agent_id(str(task.get(reviewer_field) or ""))
+            == normalize_agent_id(agent_name)
+            and is_sidecar_review_of_current_parent(
                 task,
                 current_task,
                 agent_name=agent_name,
                 review_statuses=review_statuses,
                 owner_field=owner_field,
                 reviewer_field=reviewer_field,
-            ):
-                continue
-            candidate_priority = 0
-        else:
-            candidate_priority = dispatch_priority_for_task(
-                config,
-                task,
-                agent_name,
-                task_map=task_map,
-                dependencies_done_statuses=dependency_done_statuses,
             )
+        ):
+            continue
 
-        if candidate_priority is not None and candidate_priority < current_priority:
+        # One eligibility judgement, the same one the dispatcher itself makes.
+        # Reviews used to skip it: any task in a review status naming this agent
+        # as reviewer scored 0 on status and role alone. Between 2026-09-06
+        # 11:01Z and 2026-09-07 04:03Z that killed the same Codex2 review worker
+        # 286 consecutive times, because the three P0 reviews that outranked it
+        # -- one `non_dispatchable`, two with failing CI -- could never take the
+        # slot they kept emptying. A candidate that cannot be dispatched is not
+        # a reason to stop work that can.
+        candidate_priority = dispatch_priority_for_task(
+            config,
+            task,
+            agent_name,
+            task_map=task_map,
+            dependencies_done_statuses=dependency_done_statuses,
+            readiness_force_refresh=False,
+        )
+        if candidate_priority is None:
+            continue
+        # The other half of the dispatcher's own gate: role/provider policy,
+        # disabled and sidecar-only agents. `dispatch_priority_for_task` answers
+        # "is this work ready", not "may this agent be given it", and preemption
+        # needs both to be true before it ends a running worker.
+        if not agent_can_take_task(
+            config,
+            agent_name,
+            task,
+            role=dispatch_reason_role(dispatch_priority_reason(candidate_priority)),
+        ):
+            continue
+
+        if (candidate_task_rank, candidate_priority) < current_key:
             if (
                 slot_count
                 and urgent_priority_cutoff is not None
                 and candidate_priority > urgent_priority_cutoff
+                and candidate_task_rank >= current_task_rank
             ):
                 continue
             higher_priority_task_ids.add(str(task_id))
@@ -1084,9 +1991,18 @@ def higher_priority_ready_task_exists(
         event_id = str(other.get("queue_event_id") or "")
         if event_id:
             active_event_ids.add(event_id)
-        other_priority = dispatch_reason_priority(other.get("request_snapshot", {}).get("reason"))
+        other_priority = dispatch_reason_priority(
+            other.get("request_snapshot", {}).get("reason") or other.get("reason")
+        )
         other_task_id = str(other.get("task_id") or "")
-        if str(run_id) != current_run_id and other_priority is not None and other_priority < current_priority and other_task_id:
+        other_task = task_map.get(other_task_id)
+        other_task_rank = task_priority_rank(other_task)
+        if (
+            str(run_id) != current_run_id
+            and other_priority is not None
+            and (other_task_rank, other_priority) < current_key
+            and other_task_id
+        ):
             served_higher_priority_task_ids.add(other_task_id)
 
     queue_records = (effective_state.get("queue", {}) or {}).get("events", {}) or {}
@@ -1107,7 +2023,13 @@ def higher_priority_ready_task_exists(
         occupied_count += 1
         event_priority = dispatch_reason_priority(str(event.get("reason") or ""))
         event_task_id = str(event.get("task_id") or "")
-        if event_priority is not None and event_priority < current_priority and event_task_id:
+        event_task = task_map.get(event_task_id)
+        event_task_rank = task_priority_rank(event_task)
+        if (
+            event_priority is not None
+            and (event_task_rank, event_priority) < current_key
+            and event_task_id
+        ):
             served_higher_priority_task_ids.add(event_task_id)
 
     agent_capacity = agent_dispatch_capacity(config, logical_agent_id)
@@ -1155,6 +2077,54 @@ def worker_matches_current_assignment(
         )
     return False
 
+
+def _owner_status_promotion_is_only_drift(
+    config: dict[str, Any],
+    event: dict[str, Any],
+    task: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+) -> bool:
+    """True when the only drift since queueing is the owner starting the task.
+
+    An orphaned `in_progress` task has to stay wake-able, but the exemption for
+    it must not be written as "re-derive eligibility now". `ready_dispatch_signature`
+    deliberately freezes owner, reviewer, status, `depends_on` and the branch
+    head at queue time; re-deriving eligibility exempts *all* of those
+    components at once, so a reviewer swap or a `depends_on` rewrite would stop
+    invalidating an already queued wake and the worker would run under a stale
+    authority snapshot (R8/R12).
+
+    So only the `status` component is allowed to move, and only forwards:
+    `todo -> in_progress` (the owner picked the task up after the wake was
+    queued). Every other component is proven unchanged by rolling `status` back
+    to what the event carried and requiring the rebuilt key to reproduce the
+    queued key exactly. Anything else -- including a status the snapshot spells
+    differently -- fails closed and stales the wake.
+    """
+    reason = str(event.get("reason") or "")
+    if reason not in {REASON_OWNED_READY, REASON_OWNED_IN_PROGRESS}:
+        return False
+
+    queued_key = str(event.get("event_key") or "")
+    if not queued_key:
+        return False
+
+    queued_task = (event.get("metadata") or {}).get("task") or event.get("task") or {}
+    queued_status = str(queued_task.get("status") or "").strip().lower()
+    if str(task.get("status") or "").strip().lower() != "in_progress":
+        return False
+    if queued_status not in {"todo", "in_progress"}:
+        return False
+
+    target = str(
+        event.get("target_display_name")
+        or display_name_for(config, str(event.get("target_agent") or ""))
+    )
+    probe = dict(task)
+    probe["status"] = queued_status
+    rebuilt_key = str(build_dispatch_event(probe, target, reason, task_map).get("key") or "")
+    return bool(rebuilt_key) and rebuilt_key == queued_key
+
 @_entrypoint
 
 def stale_dispatch_skip_message(config: dict[str, Any], event: dict[str, Any], task_map: dict[str, dict[str, Any]]) -> str | None:
@@ -1198,23 +2168,70 @@ def stale_dispatch_skip_message(config: dict[str, Any], event: dict[str, Any], t
             "dependency gate is not satisfied."
         )
 
+    # A queue event carries the eligibility decision made when it was queued.
+    # If the role/provider policy changed in between -- or the task acquired a
+    # `task_class` that the policy scopes differently -- launching now would run
+    # a lane the current policy excludes, and no later gate re-asks: the worker
+    # would already be executing. Re-checking exactly the policy (rather than the
+    # whole dispatch predicate) keeps this to the one thing that can go stale
+    # here without any other state changing.
+    if task:
+        policy_reason = role_provider_block_reason(
+            config, target, role=dispatch_reason_role(reason), task=task
+        )
+        if policy_reason:
+            return (
+                f"Skipped stale queued wake event for {task_id}: role/provider policy no "
+                f"longer permits this dispatch: {policy_reason}"
+            )
+
+    if reason == REASON_HELPER_CLAIM:
+        dispatched_task = (event.get("metadata") or {}).get("task") or event.get("task") or {}
+        dispatched_claim = dispatched_task.get("helper_execution_lease")
+        if not isinstance(dispatched_claim, dict) or not dispatched_claim:
+            return f"Skipped stale queued wake event for {task_id}: event carries no helper execution lease."
+        current_claim = task.get("helper_execution_lease")
+        if not isinstance(current_claim, dict) or not current_claim:
+            return f"Skipped stale queued wake event for {task_id}: task has no active helper execution lease."
+        if not helper_claim_is_live(current_claim):
+            return f"Skipped stale queued wake event for {task_id}: task helper execution lease has expired."
+        try:
+            dispatched_gen = int(dispatched_claim.get("generation"))
+            current_gen = int(current_claim.get("generation"))
+        except (TypeError, ValueError):
+            return f"Skipped stale queued wake event for {task_id}: invalid helper claim generation."
+        if dispatched_gen != current_gen:
+            return f"Skipped stale queued wake event for {task_id}: helper claim generation mismatch (queued {dispatched_gen}, current {current_gen})."
+        if normalize_agent_id(str(dispatched_claim.get("claimed_by") or "")) != normalize_agent_id(str(current_claim.get("claimed_by") or "")):
+            return f"Skipped stale queued wake event for {task_id}: helper claimant mismatch."
+        if normalize_agent_id(str(current_claim.get("claimed_by") or "")) != normalize_agent_id(target):
+            return f"Skipped stale queued wake event for {task_id}: task is claimed by another helper."
+        if task_status not in {"todo", "in_progress"}:
+            return f"Skipped stale queued wake event for {task_id}: task status {task_status} is not eligible for helper execution."
+
+        if expected_key is None:
+            if task_status in {"todo", "in_progress"} and dependency_ready:
+                return None
+            return f"Skipped stale queued wake event for {task_id}: task is no longer eligible for {reason}."
+
+        queued_key = str(event.get("event_key") or "")
+        if queued_key and queued_key != expected_key:
+            if task_status in {"todo", "in_progress"} and dependency_ready:
+                return None
+            return f"Skipped stale queued wake event for {task_id}: task state changed after the wake-up was queued."
+        return None
+
     if expected_key is None:
-        if (
-            reason == REASON_OWNED_READY
-            and task_status == "in_progress"
-            and owner == target
-            and dependency_ready
+        if owner == target and dependency_ready and _owner_status_promotion_is_only_drift(
+            config, event, task, task_map
         ):
             return None
         return f"Skipped stale queued wake event for {task_id}: task is no longer eligible for {reason}."
 
     queued_key = str(event.get("event_key") or "")
     if queued_key and queued_key != expected_key:
-        if (
-            reason == REASON_OWNED_READY
-            and task_status == "in_progress"
-            and owner == target
-            and dependency_ready
+        if owner == target and dependency_ready and _owner_status_promotion_is_only_drift(
+            config, event, task, task_map
         ):
             return None
         return f"Skipped stale queued wake event for {task_id}: task state changed after the wake-up was queued."
@@ -1253,6 +2270,12 @@ def ready_dispatch_signature(task: dict[str, Any], reason: str, task_map: dict[s
         "reviewer": task.get("reviewer"),
         "branch_head": branch_head,
     }
+    if reason == REASON_HELPER_CLAIM:
+        claim = task.get("helper_execution_lease") or {}
+        signature["helper_claim"] = {
+            "claimed_by": normalize_agent_id(str(claim.get("claimed_by") or "")),
+            "generation": int(claim.get("generation", 0) or 0),
+        }
     if reason != REASON_OWNED_FINALIZE:
         signature.update(
             {
@@ -1450,6 +2473,75 @@ def default_max_dispatches_per_tick(config: dict[str, Any]) -> int:
 
 @_entrypoint
 
+def report_narrowed_helper_claimable_statuses(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    settings: dict[str, Any] | None = None,
+) -> bool:
+    """Name the statuses an explicit runtime config keeps out of helper claims.
+
+    `ready_dispatch_settings` seeds `claimable_statuses` with `setdefault`, so a
+    value already present in the control plane's `config.json` wins outright --
+    and that file is deliberately not in the repository. Widening the default
+    here therefore reaches every test and no production tick, which is exactly
+    the shape of a green suite sitting over a feature that never shipped.
+
+    An explicit operator value is the operator's, so this does not repair the
+    gap. It reports it once per configuration change, so the difference between
+    "helper claims are off for orphaned tasks" and "helper claims are broken"
+    is legible from the activity log instead of from reading two files.
+    """
+    settings = settings if settings is not None else ready_dispatch_settings(config)
+    helper_settings = settings.get("helper_execution_lease", {}) or {}
+    if not helper_settings.get("enabled", True):
+        return False
+
+    configured = {
+        str(value).strip().lower()
+        for value in (helper_settings.get("claimable_statuses") or [])
+    }
+    missing = sorted(
+        {str(value).strip().lower() for value in DEFAULT_HELPER_CLAIMABLE_STATUSES} - configured
+    )
+    signature = ",".join(missing)
+
+    dispatch_state = state.setdefault("ready_dispatcher", {})
+    if dispatch_state.get("helper_claimable_status_gap", "") == signature:
+        return False
+    previous = dispatch_state.get("helper_claimable_status_gap")
+    dispatch_state["helper_claimable_status_gap"] = signature
+
+    if missing:
+        write_activity_log(
+            config,
+            {
+                "type": "helper_claim_statuses_narrowed",
+                "message": (
+                    "Runtime config pins ready_dispatcher.helper_execution_lease."
+                    f"claimable_statuses to {sorted(configured)}, so a helper lease can "
+                    f"never reach a task in {missing}. Add it to the control plane's "
+                    ".orchestrator/config.json to turn on orphaned-task recovery."
+                ),
+                "detail": {"configured": sorted(configured), "missing": missing},
+            },
+        )
+    elif previous:
+        write_activity_log(
+            config,
+            {
+                "type": "helper_claim_statuses_narrowed_cleared",
+                "message": (
+                    "Runtime config now allows every default helper-claimable status: "
+                    f"{sorted(configured)}."
+                ),
+                "detail": {"configured": sorted(configured)},
+            },
+        )
+    return True
+
+
+@_entrypoint
+
 def dispatch_ready_tasks(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -1477,6 +2569,17 @@ def dispatch_ready_tasks(
 
     tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
     task_map = {task.get(task_id_field): task for task in tasks}
+
+    claims_released, claims_committed = release_dead_helper_claims(config, state, status)
+    if not claims_committed:
+        # The leases are already popped out of the in-memory `status`; carrying
+        # that unpersisted view into the dispatch loop would hand out slots
+        # against leases that are still live on disk. Abort the tick instead.
+        return metadata_repaired or review_states_repaired
+    if claims_released:
+        status = load_status(config)
+        tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
+        task_map = {task.get(task_id_field): task for task in tasks}
     review_statuses = {str(value).lower() for value in settings.get("review_statuses", ["review"])}
     finalize_statuses = {str(value).lower() for value in settings.get("finalize_statuses", ["review_approved"])}
     dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
@@ -1498,7 +2601,9 @@ def dispatch_ready_tasks(
     active_quota_counts = active_quota_group_counts(config, state, active_statuses)
     pending_quota_counts = queued_quota_group_counts(config, state)
 
-    changed = metadata_repaired or review_states_repaired
+    changed = metadata_repaired or review_states_repaired or claims_released
+    if report_narrowed_helper_claimable_statuses(config, state, settings):
+        changed = True
     if reassign_tasks_after_review_churn(
         config,
         state,
@@ -1552,6 +2657,39 @@ def dispatch_ready_tasks(
     if advance_approved_prs_to_merge(config, status, finalize_statuses):
         changed = True
         status = load_status(config)
+        tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
+        task_map = {task.get(task_id_field): task for task in tasks}
+
+    # Same stage, and deliberately not the per-agent loop below: the task this
+    # recovers is waiting on its reviewer's slot, so gating it by that slot
+    # would make the wait its own cause.
+    if recover_conflicted_review_prs(
+        config,
+        status,
+        review_statuses,
+        busy_task_ids=active_task_ids | pending_task_ids,
+    ):
+        changed = True
+        status = load_status(config)
+        tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
+        task_map = {task.get(task_id_field): task for task in tasks}
+
+    if recover_failed_ci_review_prs(
+        config,
+        status,
+        review_statuses,
+        busy_task_ids=active_task_ids | pending_task_ids,
+    ):
+        changed = True
+        status = load_status(config)
+        tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
+        task_map = {task.get(task_id_field): task for task in tasks}
+    else:
+        # A rejected canonical CAS resyncs `status` in place and still reports
+        # no recovery, so rebuild the indices from that refreshed snapshot:
+        # candidate selection must never act on the detached pre-CAS task
+        # objects. When no recovery ran this rebuilds identical content from
+        # the snapshot already in hand, without a second canonical read.
         tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
         task_map = {task.get(task_id_field): task for task in tasks}
 
@@ -1622,20 +2760,74 @@ def dispatch_ready_tasks(
 
             reason = None
             priority = None
-            if task_status in review_statuses and norm_task_reviewer == norm_target:
-                # The status CLI rejects identical owner/reviewer assignments,
-                # but dispatch must still fail closed if a stale or externally
-                # edited snapshot reaches the Supervisor. Never spend a worker
-                # slot on an approval that would be an owner self-review.
-                if norm_task_owner == norm_task_reviewer:
-                    continue
-                if not review_is_independent(config, str(task_owner or ""), target_agent):
-                    # The reassignment helper above repairs this when another
-                    # healthy pool is available.  Do not write an event on
-                    # every dispatch tick if all alternate pools are busy.
-                    continue
+            if is_task_review_dispatch_eligible(
+                config,
+                task,
+                target_agent,
+                review_statuses=review_statuses,
+                finalize_statuses=finalize_statuses,
+            ):
                 reason = "review_ready_dispatch"
                 priority = 0
+            elif task_status in review_statuses and norm_task_reviewer == norm_target and norm_task_owner != norm_target:
+                submission = task.get("review_submission")
+                submitted_sha = (
+                    str(submission.get("remote_sha") or "").strip()
+                    if isinstance(submission, dict)
+                    else ""
+                )
+                current_head = None
+                try:
+                    current_head = runtime_ai_status.resolve_task_sha(task_id, force_refresh=True)
+                except Exception:
+                    current_head = None
+
+                pr_status = None
+                ci_status = "unknown"
+                try:
+                    pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
+                except Exception:
+                    pass
+
+                msg = None
+                if not submission or not submitted_sha:
+                    msg = (
+                        f"Task {task_id} is in review but has no verified review submission; "
+                        "review dispatch suppressed until owner publishes via task_finalize.sh."
+                    )
+                elif not current_head:
+                    msg = (
+                        f"Cannot verify branch HEAD for task {task_id}; "
+                        "review dispatch suppressed until remote task branch resolves."
+                    )
+                elif current_head != submitted_sha:
+                    msg = (
+                        f"Task {task_id} remote HEAD ({current_head[:8]}) drifted from submitted review SHA "
+                        f"({submitted_sha[:8]}); re-submission via task_finalize.sh required before review dispatch."
+                    )
+                elif ci_status == "pending":
+                    msg = f"PR for task {task_id} has CI checks pending; review dispatch deferred until required CI succeeds."
+                elif ci_status == "failure":
+                    msg = f"PR for task {task_id} has CI failure ({ci_status}); review dispatch suppressed until CI is repaired."
+                elif ci_status not in {"success"}:
+                    msg = f"PR CI status for task {task_id} is unresolved ({ci_status}); review dispatch deferred until conclusive."
+
+                if msg and task.get("next") != msg and "merge group" not in str(task.get("next") or "").lower():
+                    task["next"] = msg
+                    if not commit_canonical_task_transition(config, status):
+                        return changed
+                    try:
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "review_dispatch_suppressed",
+                                "task_id": task_id,
+                                "message": msg,
+                            },
+                        )
+                    except Exception:
+                        pass
+                continue
             elif task_status in finalize_statuses and norm_task_owner == norm_target:
                 approved_head = task.get("approved_head")
                 current_head = None
@@ -1832,29 +3024,53 @@ def dispatch_ready_tasks(
             if reason is None and helper_settings.get("enabled", True):
                 claimable_statuses = {
                     str(value).lower()
-                    for value in helper_settings.get("claimable_statuses", ["todo"])
+                    for value in helper_settings.get("claimable_statuses", ["todo", "in_progress"])
                 }
                 claim = task.get("helper_execution_lease") or {}
                 claimed_by = normalize_agent_id(str(claim.get("claimed_by") or ""))
                 existing_claim_live = helper_claim_is_live(claim)
                 independent = norm_target not in {norm_task_owner, norm_task_reviewer}
                 owner_saturated = helper_owner_is_saturated(
-                    config, task, agent_loads, helper_settings
+                    config,
+                    task,
+                    agent_loads,
+                    helper_settings,
+                    state=state,
+                    provider_report=provider_report,
+                    active_quota_counts=active_quota_counts,
+                    pending_quota_counts=pending_quota_counts,
+                    # Truthy, matching how `agent_sequence` above resolves the
+                    # override: an empty list means "no subset given", not "no
+                    # agent is dispatchable". Reading it as the latter made
+                    # every owner look undispatchable to the saturation check.
+                    dispatchable_agent_ids=agent_ids_override or None,
                 )
                 if (
                     task_status in claimable_statuses
+                    and task_status not in {"review", "review_approved", "blocked", "done"}
+                    and not task_is_human_gate(task)
+                    and not bool(task.get("non_dispatchable"))
+                    and not is_human_gate_agent(str(task.get("waiting_for") or ""))
+                    and not is_human_gate_agent(str(task_owner or ""))
                     and dependencies_satisfied(task, task_map, dependency_done_statuses)
                     and independent
-                    and (not existing_claim_live or claimed_by == norm_target)
                     and (
-                        owner_saturated
-                        or not helper_settings.get("require_owner_saturated", True)
+                        (existing_claim_live and claimed_by == norm_target)
+                        or (
+                            (not existing_claim_live)
+                            and (
+                                owner_saturated
+                                or not helper_settings.get("require_owner_saturated", True)
+                            )
+                        )
                     )
                 ):
                     reason = REASON_HELPER_CLAIM
                     priority = 4
 
-            if reason is not None and not agent_can_take_task(config, target_agent, task):
+            if reason is not None and not agent_can_take_task(
+                config, target_agent, task, role=dispatch_reason_role(reason)
+            ):
                 continue
             if reason is None or priority is None:
                 continue
@@ -1929,33 +3145,43 @@ def dispatch_ready_tasks(
                 max_helper = min(int(helper_settings.get("max_claims_per_tick", 4)), chair_max or 0)
                 if helper_dispatches >= max_helper:
                     continue
-                now = datetime.now(UTC)
-                generation = int((task.get("helper_execution_lease") or {}).get("generation", 0) or 0) + 1
-                task["helper_execution_lease"] = {
-                    "claimed_by": target_agent,
-                    "original_owner": task.get(owner_field),
-                    "claimed_at": now.isoformat().replace("+00:00", "Z"),
-                    "lease_expires_at": (
-                        now + timedelta(seconds=float(helper_settings.get("lease_seconds", 1800)))
-                    ).isoformat().replace("+00:00", "Z"),
-                    "reason": "owner_capacity_saturated_or_dispatch_sla_exceeded",
-                    "generation": generation,
-                }
-                if not commit_canonical_task_transition(config, status):
-                    task.pop("helper_execution_lease", None)
-                    continue
-                dispatch_state["helper_dispatches_this_tick"] = helper_dispatches + 1
-                write_activity_log(
-                    config,
-                    {
-                        "type": "helper_claim_leased",
-                        "task_id": task.get(task_id_field),
+                existing_claim = task.get("helper_execution_lease") or {}
+                existing_claim_live = helper_claim_is_live(existing_claim)
+                existing_claimant = normalize_agent_id(str(existing_claim.get("claimed_by") or ""))
+
+                # If this task already has a live claim for this exact agent:
+                # Retain the same generation and validity rather than incrementing generation and re-writing.
+                if not (existing_claim_live and existing_claimant == normalize_agent_id(target_agent)):
+                    now = datetime.now(UTC)
+                    generation = int(existing_claim.get("generation", 0) or 0) + 1
+                    task["helper_execution_lease"] = {
                         "claimed_by": target_agent,
-                        "owner": task.get(owner_field),
-                        "lease_expires_at": task["helper_execution_lease"]["lease_expires_at"],
-                        "message": "Idle capacity leased existing canonical work without changing owner.",
-                    },
-                )
+                        "original_owner": task.get(owner_field),
+                        "claimed_at": now.isoformat().replace("+00:00", "Z"),
+                        "lease_expires_at": (
+                            now + timedelta(seconds=float(helper_settings.get("lease_seconds", 1800)))
+                        ).isoformat().replace("+00:00", "Z"),
+                        "reason": "owner_capacity_saturated_or_dispatch_sla_exceeded",
+                        "generation": generation,
+                    }
+                    if not commit_canonical_task_transition(config, status):
+                        if existing_claim:
+                            task["helper_execution_lease"] = existing_claim
+                        else:
+                            task.pop("helper_execution_lease", None)
+                        continue
+                    dispatch_state["helper_dispatches_this_tick"] = helper_dispatches + 1
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "helper_claim_leased",
+                            "task_id": task.get(task_id_field),
+                            "claimed_by": target_agent,
+                            "owner": task.get(owner_field),
+                            "lease_expires_at": task["helper_execution_lease"]["lease_expires_at"],
+                            "message": "Idle capacity leased existing canonical work without changing owner.",
+                        },
+                    )
             event = build_dispatch_event(task, target_agent, reason, task_map)
             if queue_dispatch_event_safely(config, event):
                 pending_event_keys.add(event["key"])

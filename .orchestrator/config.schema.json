@@ -628,6 +628,18 @@
               "model": {
                 "type": "string"
               },
+              "model_reasoning_effort": {
+                "description": "Reasoning effort passed to `codex exec` as -c model_reasoning_effort=\"<level>\". Applies to every account pool and physical dispatch slot that resolves to this provider. Omit the key to send nothing and leave the Codex CLI on its own default.",
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max",
+                  "ultra"
+                ]
+              },
               "sandbox_mode": {
                 "type": "string"
               }
@@ -796,6 +808,104 @@
             "type": "string"
           }
         },
+        "owner_provider_preference": {
+          "description": "Owner-lane provider preference used when a task owner is chosen or re-chosen. Viable agents whose provider/adapter resolves into preferred_providers and that have a free dispatch slot right now sort ahead of other viable agents; inside each group the existing load balancing and fallback ordering are unchanged. An empty preferred_providers keeps the previous selector behaviour.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "preferred_providers": {
+              "description": "Provider or adapter ids, not agent display names. Provider aliases such as antigravity2 resolve through their delivery_mode/adapter, so listing antigravity covers them.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "task_classes": {
+              "description": "task_class values the preference applies to. Deployment/integration classes such as runtime_release, plus review, human_gate and sidecar work, are deliberately absent.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "role_provider_policy": {
+          "description": "Hard role/task_class provider eligibility. owner_provider_preference only orders lanes that are already eligible; this block decides which providers may hold a role at all, and the preference then ranks whatever survives it. Omit the block entirely to keep the previous eligibility behaviour. An enabled but unreadable policy fails closed rather than degrading to no policy.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "rules": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "roles": {
+                    "description": "Which roles the rule constrains. helper covers helper-execution-lease claims.",
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "owner",
+                        "reviewer",
+                        "helper"
+                      ]
+                    }
+                  },
+                  "task_classes": {
+                    "description": "Restrict the rule to these task_class values. Omit the key to constrain the role on every task regardless of class.",
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "providers": {
+                    "description": "Provider or adapter ids, not agent display names. Every id must resolve in this configuration. Two rules matching the same role and task_class intersect, so a lane must satisfy both.",
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                },
+                "required": [
+                  "roles",
+                  "providers"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "unclassified_owned_work": {
+              "description": "Disposition for owner/helper work carrying no task_class, which no class-scoped rule can reach. \"allow\" keeps the previous behaviour, \"deny\" makes such work undispatchable until it is classified, and a provider list restricts it. Required whenever the policy is enabled, so unclassified work is never left to fall back implicitly.",
+              "oneOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "allow",
+                    "deny"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
         "review_statuses": {
           "type": "array",
           "items": {
@@ -887,6 +997,7 @@
           "type": "integer"
         },
         "heartbeat_warn_after_seconds": {
+          "description": "Heartbeat lag threshold in seconds before logging a warning. The effective value is at least the effective supervisor poll interval plus the heartbeat grace period, preventing false warnings during normal polling.",
           "type": "number"
         },
         "max_worker_history": {
@@ -901,6 +1012,34 @@
         "hard_inactivity_seconds": {
           "description": "Terminate a worker that keeps heartbeating but has produced no storage I/O for this long. Counter-based stall detection cannot see a CLI blocked forever on a shell command, because such a process still burns CPU and keeps its sockets warm. Set to 0 to disable.",
           "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "release_lease_issuer": {
+      "type": "object",
+      "description": "Disabled-by-default Supervisor lease issuer. The secret reference is public configuration only; key material is never stored here.",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "secret_reference": {
+          "type": "string"
+        },
+        "state_uri": {
+          "type": "string"
+        },
+        "github_repository": {
+          "type": "string"
+        },
+        "workflow": {
+          "type": "string"
+        },
+        "dispatch_ref": {
+          "type": "string"
+        },
+        "ttl_seconds": {
+          "type": "integer"
         }
       },
       "additionalProperties": false
@@ -1122,6 +1261,12 @@
         "stall_log_interval_seconds": {
           "type": "integer",
           "minimum": 0
+        },
+        "reclaim_settled_unmerged": {
+          "type": "boolean"
+        },
+        "reap_orphan_holders": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false

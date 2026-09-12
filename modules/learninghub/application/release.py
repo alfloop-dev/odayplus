@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from hashlib import sha256
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from shared.governance.decision_policy import DecisionPolicy
 
 from models.shared_ml import (
     ArtifactKind,
@@ -28,6 +31,7 @@ from models.shared_ml.validation import (
     SegmentMetric,
     ValidationRun,
     ValidationStatus,
+    effective_thresholds,
     validate_model_candidate,
 )
 from modules.learninghub.application.monitor import (
@@ -38,6 +42,7 @@ from modules.learninghub.application.monitor import (
     utcnow,
 )
 from modules.learninghub.domain import (
+    BacktestReceipt,
     DatasetSnapshot,
     DqTriageRecord,
     InferenceComparison,
@@ -49,8 +54,10 @@ from modules.learninghub.domain import (
     MonitoringSignalType,
     RetrainingRequest,
     build_dataset_snapshot,
+    evaluate_backtest_run,
 )
 from modules.learninghub.infrastructure import (
+    EvidentlyDriftMonitor,
     InMemoryLearningHubRepository,
     LearningHubRepository,
     MlflowRegistryAdapter,
@@ -133,6 +140,7 @@ class ModelReleaseDecision:
     release_revision: int | None = None
     idempotency_key: str | None = None
     scope: str = "global"
+    backtest_receipt_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -160,6 +168,7 @@ class ModelReleaseDecision:
             "release_revision": self.release_revision,
             "idempotency_key": self.idempotency_key,
             "scope": self.scope,
+            "backtest_receipt_id": self.backtest_receipt_id,
         }
 
 
@@ -191,9 +200,11 @@ class LearningHubService:
         recover_on_startup: bool = True,
         worker_id: str | None = None,
         release_lease_seconds: float = DEFAULT_RELEASE_LEASE_SECONDS,
+        prediction_drift_monitor: EvidentlyDriftMonitor | None = None,
     ) -> None:
         self.worker_id = worker_id or f"learninghub-worker-{uuid4()}"
         self.release_lease_seconds = float(release_lease_seconds)
+        self.prediction_drift_monitor = prediction_drift_monitor or EvidentlyDriftMonitor()
         self.production_required = learninghub_production_required(runtime_mode)
         if self.production_required and (
             repository is None or isinstance(repository, InMemoryLearningHubRepository)
@@ -364,8 +375,10 @@ class LearningHubService:
         thresholds: Sequence[MetricThreshold],
         segment_metrics: Sequence[SegmentMetric] = (),
         segment_thresholds: Sequence[SegmentMetricThreshold] = (),
+        baseline_segment_metrics: Sequence[SegmentMetric] = (),
         calibration_summary: Mapping[str, Any] | None = None,
         min_training_records: int = 1,
+        decision_policy: DecisionPolicy | None = None,
     ) -> ValidationRun:
         snapshot = self.repository.get_dataset_snapshot(dataset_snapshot_id)
         if snapshot is None:
@@ -379,8 +392,10 @@ class LearningHubService:
             thresholds=thresholds,
             segment_metrics=segment_metrics,
             segment_thresholds=segment_thresholds,
+            baseline_segment_metrics=baseline_segment_metrics,
             calibration_summary=calibration_summary,
             min_training_records=min_training_records,
+            decision_policy=decision_policy,
         )
         return self.repository.save_validation_run(validation_run)
 
@@ -429,6 +444,75 @@ class LearningHubService:
                 raise LearningHubError("model card artifact verification failed")
 
         return self.registry.register_model_version(model_version)
+
+    def register_backtest_receipt(
+        self,
+        receipt: BacktestReceipt,
+    ) -> BacktestReceipt:
+        if not receipt.model_name or not receipt.model_version:
+            raise LearningHubError("backtest receipt requires model_name and model_version")
+        if not receipt.dataset_snapshot_id:
+            raise LearningHubError("backtest receipt requires dataset_snapshot_id")
+        if not receipt.code_version:
+            raise LearningHubError("backtest receipt requires code_version")
+        if not receipt.decision_policy_version_id:
+            raise LearningHubError("backtest receipt requires decision_policy_version_id")
+
+        audit_event = self.audit_log.record(
+            AuditEvent(
+                event_type="learninghub.backtest_receipt.v1",
+                actor=receipt.requested_by,
+                action="register_backtest_receipt",
+                resource=f"model/{receipt.model_name}:{receipt.model_version}",
+                outcome=receipt.status.value.lower(),
+                correlation_id=receipt.receipt_id,
+                metadata=receipt.to_dict(),
+            )
+        )
+        persisted = replace(receipt, audit_event_id=audit_event.event_id)
+        return self.repository.save_backtest_receipt(persisted)
+
+    def evaluate_backtest(
+        self,
+        *,
+        model_name: str,
+        model_version: str,
+        dataset_snapshot_id: str,
+        code_version: str,
+        metrics: Mapping[str, float],
+        baseline_metrics: Mapping[str, float] | None = None,
+        thresholds: Sequence[MetricThreshold] = (),
+        decision_policy: DecisionPolicy | None = None,
+        horizon_metrics: Mapping[str | int, Mapping[str, float]] | None = None,
+        calibration_summary: Mapping[str, Any] | None = None,
+        requested_by: str = "system",
+        receipt_id: str | None = None,
+        report_artifact_uri: str | None = None,
+        report_sha256: str | None = None,
+    ) -> BacktestReceipt:
+        snapshot = self.repository.get_dataset_snapshot(dataset_snapshot_id)
+        if snapshot is None:
+            raise LearningHubError(f"unknown dataset snapshot {dataset_snapshot_id}")
+        if decision_policy is None:
+            raise LearningHubError("backtest evaluation requires a resolved DecisionPolicy")
+
+        receipt = evaluate_backtest_run(
+            model_name=model_name,
+            model_version=model_version,
+            dataset_snapshot_id=dataset_snapshot_id,
+            code_version=code_version,
+            metrics=metrics,
+            baseline_metrics=baseline_metrics or {},
+            thresholds=thresholds,
+            decision_policy=decision_policy,
+            horizon_metrics=horizon_metrics,
+            calibration_summary=calibration_summary,
+            requested_by=requested_by,
+            receipt_id=receipt_id,
+            report_artifact_uri=report_artifact_uri,
+            report_sha256=report_sha256,
+        )
+        return self.register_backtest_receipt(receipt)
 
     def request_release(
         self,
@@ -673,6 +757,7 @@ class LearningHubService:
             },
         )
         decision_model = rollback_version if rollback_version is not None else model_version
+        backtest_receipt = self.repository.get_backtest_receipt(model_name, decision_model.version)
         decision = ModelReleaseDecision(
             release_id=release_id,
             model_name=model_name,
@@ -699,6 +784,7 @@ class LearningHubService:
             release_revision=release_revision,
             idempotency_key=idempotency_key,
             scope="global",
+            backtest_receipt_id=backtest_receipt.receipt_id if backtest_receipt is not None else None,
         )
         command = {
             **command,
@@ -984,7 +1070,7 @@ class LearningHubService:
             raise LearningHubError(
                 f"release target {model_name}:{version} requires an approved model card"
             )
-        return {
+        metadata = {
             "release_id": saga.release_id,
             "release_revision": saga.release_revision,
             "approval_id": str(command["approval_id"]),
@@ -995,6 +1081,13 @@ class LearningHubService:
             "validation_run_id": model_card.validation_run_id,
             "validation_status": validation_run.status.value,
         }
+        backtest_receipt = self.repository.get_backtest_receipt(model_name, version)
+        if backtest_receipt is not None:
+            metadata["backtest_receipt_id"] = backtest_receipt.receipt_id
+            metadata["backtest_status"] = backtest_receipt.status.value
+            metadata["backtest_policy_version_id"] = backtest_receipt.decision_policy_version_id
+            metadata["backtest_code_version"] = backtest_receipt.code_version
+        return metadata
 
     def _synchronize_aliases(
         self,
@@ -1515,9 +1608,10 @@ class LearningHubService:
         signal_type: MonitoringSignalType,
         observed_metrics: Mapping[str, float],
         baseline_metrics: Mapping[str, float],
-        thresholds: Sequence[MetricThreshold],
+        thresholds: Sequence[MetricThreshold] = (),
         requested_by: str = "system",
         reason: str | None = None,
+        policy: DecisionPolicy | None = None,
     ) -> RetrainingRequest | None:
         snapshot = self.repository.get_dataset_snapshot(dataset_snapshot_id)
         if snapshot is None:
@@ -1528,8 +1622,14 @@ class LearningHubService:
         if production is None:
             raise LearningHubError(f"no production model registered for {model_name}")
 
+        effective = effective_thresholds(
+            thresholds,
+            policy,
+            model_name=model_name,
+        )
+
         breaches: list[MonitoringBreach] = []
-        for threshold in thresholds:
+        for threshold in effective:
             if threshold.metric_name not in observed_metrics:
                 breaches.append(
                     MonitoringBreach(
@@ -1540,15 +1640,36 @@ class LearningHubService:
                     )
                 )
                 continue
-            status, message = threshold.evaluate(float(observed_metrics[threshold.metric_name]))
+            baseline_value = (
+                float(baseline_metrics[threshold.metric_name])
+                if threshold.metric_name in baseline_metrics
+                else None
+            )
+            status, message = threshold.evaluate(
+                float(observed_metrics[threshold.metric_name]),
+                baseline_value=baseline_value,
+            )
             if status is ValidationStatus.PASSED:
                 continue
+            higher = (
+                threshold.higher_is_better
+                if threshold.higher_is_better is not None
+                else (threshold.min_value is not None or threshold.warning_min_value is not None or threshold.max_value is None)
+            )
+            obs_val = float(observed_metrics[threshold.metric_name])
+            deg = (
+                ((baseline_value - obs_val) if higher else (obs_val - baseline_value))
+                if baseline_value is not None
+                else None
+            )
             breaches.append(
                 MonitoringBreach(
                     metric_name=threshold.metric_name,
-                    observed_value=float(observed_metrics[threshold.metric_name]),
+                    observed_value=obs_val,
                     threshold_message=message or threshold.metric_name,
                     severity=status.value,
+                    baseline_value=baseline_value,
+                    degradation=deg,
                 )
             )
 
@@ -1562,6 +1683,7 @@ class LearningHubService:
             baseline_metrics=dict(baseline_metrics),
             breaches=tuple(breaches),
             requested_by=requested_by,
+            decision_policy_version_id=policy.policy_version_id if policy else None,
         )
         self.repository.save_monitoring_evaluation(evaluation)
         if not evaluation.triggered:
@@ -1579,6 +1701,7 @@ class LearningHubService:
             baseline_metrics=dict(baseline_metrics),
             requested_by=requested_by,
             auto_promotion=False,
+            decision_policy_version_id=policy.policy_version_id if policy else None,
         )
         return self.repository.save_retraining_request(request)
 
@@ -1589,9 +1712,10 @@ class LearningHubService:
         dataset_snapshot_id: str,
         observed_metrics: Mapping[str, float],
         baseline_metrics: Mapping[str, float],
-        thresholds: Sequence[MetricThreshold],
+        thresholds: Sequence[MetricThreshold] = (),
         requested_by: str = "system",
         reason: str | None = None,
+        policy: DecisionPolicy | None = None,
     ) -> RetrainingRequest | None:
         return self.evaluate_monitoring(
             model_name=model_name,
@@ -1602,7 +1726,139 @@ class LearningHubService:
             thresholds=thresholds,
             requested_by=requested_by,
             reason=reason,
+            policy=policy,
         )
+
+    def monitor_prediction_drift(
+        self,
+        *,
+        model_name: str,
+        model_version: str,
+        reference_rows: Sequence[Mapping[str, Any]],
+        current_rows: Sequence[Mapping[str, Any]],
+        reference_snapshot_id: str,
+        current_snapshot_id: str,
+        cohort_key: str,
+        prediction_columns: Sequence[str] | None = None,
+        output_types: Mapping[str, str] | None = None,
+        policy: DecisionPolicy | None = None,
+        decision_policy: DecisionPolicy | None = None,
+        requested_by: str = "system",
+        reason: str | None = None,
+    ) -> MonitoringEvaluation:
+        """Run the production prediction-output drift monitor.
+
+        The model version, population cohort, output schema, and both source
+        snapshots are part of the receipt. A missing policy or an incomplete
+        output schema fails before Evidently runs; no built-in threshold or
+        mixed-version comparison is allowed.
+        """
+
+        policy = policy or decision_policy
+        if policy is None:
+            raise LearningHubError(
+                "prediction drift monitoring requires a resolved DecisionPolicy"
+            )
+        model = self.repository.get_model_version(model_name, model_version)
+        if model is None:
+            raise LearningHubError(f"unknown model version {model_name}:{model_version}")
+        production = self.repository.get_alias(model_name, ModelAlias.PRODUCTION)
+        if production is not None and production.version != model_version:
+            raise LearningHubError(
+                "prediction drift monitoring requires the current production model version"
+            )
+        configured_columns = model.monitoring_config.get("prediction_columns")
+        columns = tuple(prediction_columns or configured_columns or ())
+        configured_types = model.monitoring_config.get("prediction_output_types")
+        types = output_types or (
+            configured_types if isinstance(configured_types, Mapping) else None
+        )
+        if types is None:
+            raise LearningHubError(
+                "prediction drift monitoring requires prediction output types"
+            )
+
+        result = self.prediction_drift_monitor.run_prediction(
+            reference_rows=reference_rows,
+            current_rows=current_rows,
+            model_name=model_name,
+            model_version=model_version,
+            cohort_key=cohort_key,
+            prediction_columns=columns,
+            output_types=types,
+            reference_snapshot_id=reference_snapshot_id,
+            current_snapshot_id=current_snapshot_id,
+            policy=policy,
+        )
+        evaluation_id = f"prediction-drift-{uuid4()}"
+        breaches: tuple[MonitoringBreach, ...] = ()
+        if result.drift_detected:
+            breaches = (
+                MonitoringBreach(
+                    metric_name="prediction_drift_share",
+                    observed_value=result.drift_share,
+                    threshold_message=(
+                        "prediction output distribution drift exceeded the "
+                        f"DecisionPolicy threshold (policy={policy.policy_version_id})"
+                    ),
+                    severity=ValidationStatus.FAILED.value,
+                ),
+            )
+        evaluation = MonitoringEvaluation(
+            evaluation_id=evaluation_id,
+            model_name=model_name,
+            model_version=model_version,
+            # Keep generic repository consumers able to index the current
+            # population while retaining the explicit pair below.
+            dataset_snapshot_id=current_snapshot_id,
+            signal_type=MonitoringSignalType.PREDICTION_DRIFT,
+            observed_metrics={"prediction_drift_share": result.drift_share},
+            baseline_metrics={},
+            breaches=breaches,
+            requested_by=requested_by,
+            decision_policy_version_id=policy.policy_version_id,
+            reference_snapshot_id=result.reference_snapshot_id,
+            current_snapshot_id=result.current_snapshot_id,
+            cohort_key=result.cohort_key,
+            prediction_columns=result.prediction_columns,
+            prediction_output_types=result.prediction_output_types or {},
+            drift_detected=result.drift_detected,
+            drifted_columns=result.drifted_column_names,
+            drift_report_json=result.report_json,
+            drift_engine=result.engine,
+            alert_id=evaluation_id if result.drift_detected else None,
+        )
+        audit_event = self.audit_log.record(
+            AuditEvent(
+                event_type="learninghub.prediction_drift.v1",
+                actor=requested_by,
+                action="monitor_prediction_drift",
+                resource=f"model/{model_name}:{model_version}",
+                outcome="breached" if result.drift_detected else "healthy",
+                correlation_id=evaluation_id,
+                metadata=evaluation.to_dict(),
+            )
+        )
+        evaluation = replace(evaluation, audit_event_id=audit_event.event_id)
+        self.repository.save_monitoring_evaluation(evaluation)
+        if result.drift_detected:
+            self.repository.save_retraining_request(
+                RetrainingRequest(
+                    request_id=f"retrain-{uuid4()}",
+                    model_name=model_name,
+                    source_model_version=model_version,
+                    trigger_evaluation_id=evaluation_id,
+                    trigger_type=MonitoringSignalType.PREDICTION_DRIFT,
+                    reason=reason or "prediction output distribution drift detected",
+                    dataset_snapshot_id=current_snapshot_id,
+                    observed_metrics=dict(evaluation.observed_metrics),
+                    baseline_metrics={},
+                    requested_by=requested_by,
+                    auto_promotion=False,
+                    decision_policy_version_id=policy.policy_version_id,
+                )
+            )
+        return evaluation
 
     def compare_inference(
         self,
@@ -1712,6 +1968,7 @@ class LearningHubService:
         release_id: str,
         observed_metrics: Mapping[str, float],
         guardrails: Sequence[MetricThreshold],
+        baseline_metrics: Mapping[str, float] | None = None,
         evaluated_by: str = "release-monitor",
         correlation_id: str = "learninghub-monitor",
     ) -> ReleaseMonitorAssessment:
@@ -1730,7 +1987,15 @@ class LearningHubService:
         monitoring_window = decision.monitoring_window
         rollback_target = decision.rollback_target
 
-        breaches = evaluate_guardrails(observed_metrics, guardrails)
+        resolved_baseline = baseline_metrics
+        if resolved_baseline is None:
+            model_ver = self.repository.get_model_version(model_name, version)
+            if model_ver is not None and model_ver.metrics:
+                resolved_baseline = model_ver.metrics
+
+        breaches = evaluate_guardrails(
+            observed_metrics, guardrails, baseline_metrics=resolved_baseline
+        )
         status = MonitorStatus.BREACHED if breaches else MonitorStatus.HEALTHY
         recommended_action = (
             RecommendedAction.ROLLBACK if breaches and rollback_target else RecommendedAction.NONE
@@ -1794,14 +2059,88 @@ class LearningHubService:
             raise LearningHubError("release requires complete model card")
         if not model_card.is_approved:
             raise LearningHubError("release requires approved model card")
-        if release_type in {ReleaseType.FULL, ReleaseType.CANARY} and not rollback_target:
-            raise LearningHubError("release requires rollback target")
+        if release_type in {ReleaseType.FULL, ReleaseType.CANARY}:
+            if not rollback_target:
+                raise LearningHubError("release requires rollback target")
+            self._assert_backtest_gate(
+                model_version=model_version,
+                model_card=model_card,
+                validation_run=validation_run,
+                release_type=release_type,
+            )
         if release_type is ReleaseType.ROLLBACK:
             target = rollback_target or model_version.rollback_target
             if not target:
                 raise LearningHubError("rollback requires rollback target")
             if self.repository.get_model_version(model_version.model_name, target) is None:
                 raise LearningHubError(f"unknown rollback target {target}")
+
+    def _assert_backtest_gate(
+        self,
+        *,
+        model_version: ModelVersion,
+        model_card: ModelCard,
+        validation_run: ValidationRun,
+        release_type: ReleaseType,
+    ) -> None:
+        """Enforce versioned backtest release gate for production release admission.
+
+        FULL and CANARY releases fail closed if a backtest receipt is missing,
+        failed, or stale with respect to model version, dataset snapshot,
+        code version, or decision policy version.
+        """
+        receipt = self.repository.get_backtest_receipt(
+            model_version.model_name,
+            model_version.version,
+        )
+        if receipt is None:
+            raise LearningHubError(
+                f"release target {model_version.model_name}:{model_version.version} "
+                f"requires a recorded backtest receipt for {release_type.value} release"
+            )
+        if not receipt.passed:
+            failed_msgs = [f.message for f in receipt.failed_rules] or [f"status={receipt.status.value}"]
+            raise LearningHubError(
+                f"release target {model_version.model_name}:{model_version.version} "
+                f"backtest gate failed ({'; '.join(failed_msgs)})"
+            )
+        if receipt.model_name != model_version.model_name:
+            raise LearningHubError(
+                f"backtest receipt model name {receipt.model_name!r} does not match "
+                f"release model name {model_version.model_name!r}"
+            )
+        if receipt.model_version != model_version.version:
+            raise LearningHubError(
+                f"backtest receipt model version {receipt.model_version!r} does not match "
+                f"release model version {model_version.version!r}"
+            )
+        if receipt.dataset_snapshot_id != model_version.dataset_snapshot_id:
+            raise LearningHubError(
+                f"stale backtest receipt: dataset snapshot {receipt.dataset_snapshot_id!r} "
+                f"does not match model version dataset snapshot {model_version.dataset_snapshot_id!r}"
+            )
+        if model_card.dataset_snapshot_id != receipt.dataset_snapshot_id:
+            raise LearningHubError(
+                f"stale backtest receipt: dataset snapshot {receipt.dataset_snapshot_id!r} "
+                f"does not match model card dataset snapshot {model_card.dataset_snapshot_id!r}"
+            )
+        if model_version.git_sha and receipt.code_version != model_version.git_sha:
+            raise LearningHubError(
+                f"stale backtest receipt: code version {receipt.code_version!r} "
+                f"does not match model version git_sha {model_version.git_sha!r}"
+            )
+        if not receipt.code_version.strip():
+            raise LearningHubError("backtest receipt requires non-empty code_version")
+        if not receipt.decision_policy_version_id.strip():
+            raise LearningHubError("backtest receipt requires non-empty decision_policy_version_id")
+        if (
+            validation_run.decision_policy_version_id
+            and receipt.decision_policy_version_id != validation_run.decision_policy_version_id
+        ):
+            raise LearningHubError(
+                f"stale backtest receipt: decision policy {receipt.decision_policy_version_id!r} "
+                f"does not match validation run decision policy {validation_run.decision_policy_version_id!r}"
+            )
 
     @staticmethod
     def _assert_release_authority(
@@ -1991,10 +2330,12 @@ def _fingerprint_inputs(inputs: Sequence[Mapping[str, Any]]) -> str:
 __all__ = [
     "DEFAULT_RELEASE_LEASE_SECONDS",
     "AliasReconciliationReceipt",
+    "BacktestReceipt",
     "LearningHubConflictError",
     "LearningHubError",
     "LearningHubPreconditionRequiredError",
     "LearningHubService",
     "ModelReleaseDecision",
     "ReleaseType",
+    "evaluate_backtest_run",
 ]

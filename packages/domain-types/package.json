@@ -2,6 +2,7 @@
   "name": "@oday-plus/domain-types",
   "version": "0.1.0",
   "private": true,
+  "license": "UNLICENSED",
   "description": "ODay Plus shared domain TypeScript types: canonical state vocabularies, roles, navigation contracts",
   "type": "module",
   "main": "src/index.ts",

@@ -1,11 +1,30 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import capacity_controller
+import pytest
 import supervisor
+import task_archive
 
 NOW = datetime(2026, 8, 20, 12, 0, tzinfo=UTC)
+
+
+@pytest.fixture(autouse=True)
+def scoped_task_archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    test_status_root = tmp_path / "status_root"
+    archive_dir = test_status_root / "ai-task-archive"
+    tasks_dir = archive_dir / "tasks"
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    index_file = archive_dir / "index.json"
+
+    monkeypatch.setattr(task_archive, "STATUS_ROOT", test_status_root)
+    monkeypatch.setattr(task_archive, "ARCHIVE_DIR", archive_dir)
+    monkeypatch.setattr(task_archive, "ARCHIVE_TASKS_DIR", tasks_dir)
+    monkeypatch.setattr(task_archive, "ARCHIVE_INDEX_FILE", index_file)
+    return test_status_root
+
 
 
 def config(slot_count: int = 8) -> dict:
@@ -117,6 +136,170 @@ def test_expired_helper_execution_leases_are_reported_without_changing_owner() -
         NOW + timedelta(seconds=1)
     )
     assert capacity_controller.expired_helper_claim_task_ids([task], now=NOW) == []
+
+
+def test_bound_helper_claim_release_requires_a_live_matching_run() -> None:
+    def claim(run_id: str | None, generation: int = 1, expires: str = "2026-08-20T11:59:59Z") -> dict:
+        value = {
+            "claimed_by": "Codex",
+            "generation": generation,
+            "lease_expires_at": expires,
+        }
+        if run_id is not None:
+            value["run_id"] = run_id
+        return value
+
+    def worker(run_id: str, heartbeat: str, *, status: str = "running") -> dict:
+        task = {
+            "id": "LIVE-HELPER-001",
+            "status": "in_progress",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "helper_execution_lease": claim(run_id),
+        }
+        return {
+            "run_id": run_id,
+            "task_id": "LIVE-HELPER-001",
+            "logical_agent_id": "Codex",
+            "status": status,
+            "last_heartbeat_at": heartbeat,
+            "request_snapshot": {
+                "reason": "helper_claim_dispatch",
+                "metadata": {"task": task},
+            },
+        }
+
+    tasks = [
+        {
+            "id": "LIVE-HELPER-001",
+            "status": "in_progress",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "helper_execution_lease": claim(
+                "live-run",
+                expires="2026-08-20T11:59:59Z",
+            ),
+        },
+        {
+            "id": "STALE-HELPER-001",
+            "status": "in_progress",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "helper_execution_lease": claim("stale-run"),
+        },
+        {
+            "id": "MISSING-HELPER-001",
+            "status": "in_progress",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "helper_execution_lease": claim("missing-run"),
+        },
+        {
+            "id": "PRELAUNCH-HELPER-001",
+            "status": "in_progress",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "helper_execution_lease": claim(
+                None,
+                expires="2026-08-20T12:05:00Z",
+            ),
+        },
+    ]
+    runtime_state = {
+        "workers": {
+            "live-run": worker("live-run", "2026-08-20T11:59:30Z"),
+            "stale-run": worker("stale-run", "2026-08-20T11:50:00Z"),
+        }
+    }
+    runtime_state["workers"]["stale-run"]["task_id"] = "STALE-HELPER-001"
+    runtime_state["workers"]["stale-run"]["request_snapshot"]["metadata"]["task"]["id"] = "STALE-HELPER-001"
+
+    released = capacity_controller.helper_claim_task_ids_to_release(
+        config(),
+        tasks,
+        runtime_state,
+        now=NOW,
+    )
+
+    assert released == ["STALE-HELPER-001", "MISSING-HELPER-001"]
+
+
+def test_helper_claim_release_clears_terminal_and_unbound_failed_launches() -> None:
+    tasks = [
+        {
+            "id": "TERMINAL-HELPER-001",
+            "status": "review",
+            "helper_execution_lease": {
+                "claimed_by": "Codex",
+                "generation": 1,
+                "run_id": "terminal-run",
+                "lease_expires_at": "2026-09-30T12:00:00Z",
+            },
+        },
+        {
+            "id": "FAILED-LAUNCH-001",
+            "status": "todo",
+            "helper_execution_lease": {
+                "claimed_by": "Codex",
+                "generation": 2,
+                "lease_expires_at": "2026-09-30T12:00:00Z",
+            },
+        },
+    ]
+    runtime_state = {
+        "workers": {
+            "failed-run": {
+                "run_id": "failed-run",
+                "task_id": "FAILED-LAUNCH-001",
+                "status": "failed",
+                "request_snapshot": {"reason": "helper_claim_dispatch"},
+            }
+        }
+    }
+
+    assert capacity_controller.helper_claim_task_ids_to_release(
+        config(), tasks, runtime_state, now=NOW
+    ) == ["TERMINAL-HELPER-001", "FAILED-LAUNCH-001"]
+
+
+def test_older_generation_worker_does_not_release_newer_helper_claim() -> None:
+    tasks = [
+        {
+            "id": "NEW-GEN-001",
+            "status": "todo",
+            "helper_execution_lease": {
+                "claimed_by": "Codex",
+                "generation": 2,
+                "lease_expires_at": "2026-09-30T12:00:00Z",
+            },
+        },
+    ]
+    # An older generation 1 worker is in workers
+    runtime_state = {
+        "workers": {
+            "old-gen1-run": {
+                "run_id": "old-gen1-run",
+                "task_id": "NEW-GEN-001",
+                "status": "completed",
+                "request_snapshot": {
+                    "reason": "helper_claim_dispatch",
+                    "metadata": {
+                        "task": {
+                            "id": "NEW-GEN-001",
+                            "helper_execution_lease": {
+                                "claimed_by": "Codex",
+                                "generation": 1,
+                            },
+                        }
+                    },
+                },
+            }
+        }
+    }
+
+    assert capacity_controller.helper_claim_task_ids_to_release(
+        config(), tasks, runtime_state, now=NOW
+    ) == []
 
 
 def test_capacity_snapshot_excludes_human_gate_non_dispatchable_review_and_blocked() -> None:
@@ -891,4 +1074,192 @@ def test_claude_auth_status_logged_in_but_oauth_inference_expired_regression() -
     assert snapshot["configured_slot_total"] == 8
     assert snapshot["slot_total"] == 6
     assert snapshot["available_slots"] == 6
+
+
+def test_sidecar_candidates_excludes_archived_three_exact_ids_across_multiple_rounds() -> None:
+    """Regression test for the 3 exact sidecar IDs in Acceptance Criteria:
+
+    - ODP-EPHEMERAL-STAGING-ROLLOUT-0-SIDECAR-C1E25549 (parent: ODP-EPHEMERAL-STAGING-ROLLOUT-001)
+    - ODP-DEV-LIVE-ROLLOUT-REMEDIATIO-SIDECAR-7CC5581A (parent: ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001)
+    - ODP-STAGING-FOUNDATION-IAC-REME-SIDECAR-D7ED3693 (parent: ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001)
+
+    When parents are blocked and active tasks contain no sidecars, but the canonical archive has them done,
+    sidecar_candidates must return [] across multiple consecutive rounds without recreating them.
+    """
+    cfg = config(slot_count=8)
+    parents = [
+        {
+            "id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+            "status": "blocked",
+            "blocked_reason": "waiting for staging validation",
+            "owner": "Codex",
+        },
+        {
+            "id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+            "status": "blocked",
+            "blocked_reason": "waiting for remediation patch",
+            "owner": "Claude",
+        },
+        {
+            "id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+            "status": "blocked",
+            "blocked_reason": "waiting for iac review",
+            "owner": "Antigravity2",
+        },
+    ]
+    exact_sidecar_ids = [
+        "ODP-EPHEMERAL-STAGING-ROLLOUT-0-SIDECAR-C1E25549",
+        "ODP-DEV-LIVE-ROLLOUT-REMEDIATIO-SIDECAR-7CC5581A",
+        "ODP-STAGING-FOUNDATION-IAC-REME-SIDECAR-D7ED3693",
+    ]
+    # Archive the 3 exact sidecars as completed
+    for sid, parent in zip(exact_sidecar_ids, parents, strict=True):
+        task_archive.archive_task_snapshot(
+            {
+                "id": sid,
+                "status": "done",
+                "owner": "Claude",
+                "reviewer": "Codex",
+                "title": f"Diagnose and verify blocker for {parent['id']}",
+                "task_class": "sidecar",
+                "helper_parent": parent["id"],
+                "helper_kind": "blocked_task_diagnostics",
+            }
+        )
+
+    runtime_state = {
+        "capacity_controller": {
+            "underutilization_since": "2026-08-20T11:40:00Z",
+            "chair_decision": {
+                "issued_at": "2026-08-20T11:50:00Z",
+                "valid_until": "2026-08-20T12:30:00Z",
+                "sidecar_wave": {"approved": True},
+            },
+        }
+    }
+
+    # Verify across multiple consecutive rounds (5 rounds)
+    for _ in range(5):
+        candidates = capacity_controller.sidecar_candidates(
+            cfg,
+            runtime_state,
+            parents,
+            runnable_tasks=set(),
+            now=NOW,
+        )
+        assert candidates == [], "Archived sidecars must never be recreated"
+
+
+def test_sidecar_candidates_excludes_superseded_archived_sidecars() -> None:
+    """Archived sidecars with terminal_outcome='superseded' must also be excluded."""
+    cfg = config(slot_count=8)
+    parent = {
+        "id": "ODP-BLOCKED-SUPERSEDED-PARENT-001",
+        "status": "blocked",
+        "blocked_reason": "transient dependency issue",
+        "owner": "Claude",
+    }
+    sidecar_id = capacity_controller.build_sidecar_task_id(parent["id"], "blocked_task_diagnostics")
+    task_archive.archive_task_snapshot(
+        {
+            "id": sidecar_id,
+            "status": "done",
+            "terminal_outcome": "superseded",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "title": f"Diagnose and verify blocker for {parent['id']}",
+            "task_class": "sidecar",
+            "helper_parent": parent["id"],
+            "helper_kind": "blocked_task_diagnostics",
+        }
+    )
+
+    runtime_state = {
+        "capacity_controller": {
+            "chair_decision": {
+                "issued_at": "2026-08-20T11:50:00Z",
+                "valid_until": "2026-08-20T12:30:00Z",
+                "sidecar_wave": {"approved": True},
+            },
+        }
+    }
+    candidates = capacity_controller.sidecar_candidates(
+        cfg,
+        runtime_state,
+        [parent],
+        runnable_tasks=set(),
+        now=NOW,
+    )
+    assert candidates == []
+
+
+def test_mixed_archived_and_fresh_candidates_preserves_full_wave_budget_for_fresh() -> None:
+    """When some parents have archived sidecars and others are fresh,
+
+    the archived parents must not consume wave budget, and fresh tasks receive full budget.
+    """
+    cfg = config(slot_count=8)
+    # 8 slots * 0.25 = 2 max sidecars per wave / capacity
+    archived_parent1 = {
+        "id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+        "status": "blocked",
+        "blocked_reason": "waiting for staging validation",
+        "owner": "Codex",
+    }
+    archived_parent2 = {
+        "id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+        "status": "blocked",
+        "blocked_reason": "waiting for remediation patch",
+        "owner": "Claude",
+    }
+    fresh_parent1 = {
+        "id": "FRESH-BLOCKED-PARENT-001",
+        "status": "blocked",
+        "blocked_reason": "network timeout during sync",
+        "owner": "Claude2",
+    }
+    fresh_parent2 = {
+        "id": "FRESH-BLOCKED-PARENT-002",
+        "status": "blocked",
+        "blocked_reason": "storage mount failure",
+        "owner": "Antigravity2",
+    }
+    tasks = [archived_parent1, archived_parent2, fresh_parent1, fresh_parent2]
+
+    # Archive sidecars for the first two parents
+    for parent in (archived_parent1, archived_parent2):
+        sid = capacity_controller.build_sidecar_task_id(parent["id"], "blocked_task_diagnostics")
+        task_archive.archive_task_snapshot(
+            {
+                "id": sid,
+                "status": "done",
+                "owner": "Claude",
+                "reviewer": "Codex",
+                "title": f"Diagnose and verify blocker for {parent['id']}",
+                "task_class": "sidecar",
+                "helper_parent": parent["id"],
+                "helper_kind": "blocked_task_diagnostics",
+            }
+        )
+
+    runtime_state = {
+        "capacity_controller": {
+            "chair_decision": {
+                "issued_at": "2026-08-20T11:50:00Z",
+                "valid_until": "2026-08-20T12:30:00Z",
+                "sidecar_wave": {"approved": True},
+            },
+        }
+    }
+    candidates = capacity_controller.sidecar_candidates(
+        cfg,
+        runtime_state,
+        tasks,
+        runnable_tasks=set(),
+        now=NOW,
+    )
+
+    # Wave budget is 2 (min(3, 4, 2)). Both slots must be given to fresh parents!
+    assert len(candidates) == 2
+    assert {c["helper_parent"] for c in candidates} == {"FRESH-BLOCKED-PARENT-001", "FRESH-BLOCKED-PARENT-002"}
 

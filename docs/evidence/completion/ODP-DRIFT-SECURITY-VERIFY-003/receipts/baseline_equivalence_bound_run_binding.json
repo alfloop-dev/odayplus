@@ -1,0 +1,627 @@
+{
+  "code_tree_matches_commit_throughout": true,
+  "collected_outputs": [
+    {
+      "committed_at": "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_junit.xml",
+      "staged_at": "/tmp/odp-bound-stage/baseline_equivalence_bound_junit.xml"
+    }
+  ],
+  "command": [
+    "uv",
+    "run",
+    "--frozen",
+    "--python",
+    "3.12",
+    "pytest",
+    "tests/models/test_evidently_monitor_baseline.py",
+    "-rA",
+    "--tb=short",
+    "--no-header",
+    "--junitxml=/tmp/odp-bound-stage/baseline_equivalence_bound_junit.xml"
+  ],
+  "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-drift-security-verify-003",
+  "duration_seconds": 158.23,
+  "exit_code": 0,
+  "exit_code_source": "child process returncode",
+  "finished_at_utc": "2026-09-08T02:45:42.391327+00:00",
+  "input_trees": [
+    {
+      "file_count": 77,
+      "files": [
+        {
+          "bytes": 2167,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/categorical_merged_unique_2_ztest.golden.json",
+          "sha256": "d62524aed94dc5f3d20b6930a6783f1308417d2fea294b51128ff6d0b848abde"
+        },
+        {
+          "bytes": 507,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/categorical_merged_unique_2_ztest.raw.json",
+          "sha256": "3e14c93331b07efe2caec0c396408dbd4dc05e5132b9d84945de4aef22787f92"
+        },
+        {
+          "bytes": 2190,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/categorical_merged_unique_3_chisquare.golden.json",
+          "sha256": "81d2338fa7df3d446287b76ff211e0392c80d39451c962b836fcf64bb7558b0d"
+        },
+        {
+          "bytes": 515,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/categorical_merged_unique_3_chisquare.raw.json",
+          "sha256": "a76794fcc16e885a443a9031d11c3802dc05dc94e3515dbaa97b743b7027d508"
+        },
+        {
+          "bytes": 2295,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/categorical_new_label_chisquare.golden.json",
+          "sha256": "07bcfbe3ef598fb66f25470a983787e9d6188e1458f8ced68975fa70474b64be"
+        },
+        {
+          "bytes": 515,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/categorical_new_label_chisquare.raw.json",
+          "sha256": "45f6086d65546ca2892e28a3d8547fc54e76176bded1b6751d426cec39a11203"
+        },
+        {
+          "bytes": 2211,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/categorical_reference_n_1001_jensenshannon.golden.json",
+          "sha256": "ce2983fc215d26f60113e841593ef76db81595b53faa299f251a8fa69c402f6a"
+        },
+        {
+          "bytes": 523,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/categorical_reference_n_1001_jensenshannon.raw.json",
+          "sha256": "1f0dc08aa2fd491c1a5b421d67b0fbeee8ea3fbadbfb14fe58e168aad2768ed4"
+        },
+        {
+          "bytes": 402,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/failure_prediction_duplicate_columns.golden.json",
+          "sha256": "0cc54aee49e1cace275a39fbb0210dd109851bf89878e82e7cf922cef8ebef5e"
+        },
+        {
+          "bytes": 413,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/failure_prediction_identical_snapshot_ids.golden.json",
+          "sha256": "8dc9f0c42a72c5b953de71c308a7cb34fb6100666993ba26d7acf4d93683334b"
+        },
+        {
+          "bytes": 427,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/failure_prediction_missing_output_value.golden.json",
+          "sha256": "f246cc30a79f2ed94bcf330d76a4a0ec093535480bf3d1a14954ef5a4d7c59d3"
+        },
+        {
+          "bytes": 450,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/failure_prediction_no_policy_and_no_threshold.golden.json",
+          "sha256": "5d213d398bd4b1d3a3d2adf0696b9ad0c696c4faaeacfb65039f4100dc83d4f8"
+        },
+        {
+          "bytes": 484,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/failure_prediction_non_finite_output.golden.json",
+          "sha256": "57d9fcd0d17d73f380401c410735c6db9f42fe2dc4961542e3a882d75853e4cf"
+        },
+        {
+          "bytes": 450,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/failure_prediction_output_types_do_not_cover_columns.golden.json",
+          "sha256": "46f269386e53641295d00f1573978e4398ef86e7603911435e1f759e53ceb50d"
+        },
+        {
+          "bytes": 442,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/failure_prediction_reference_cohort_mismatch.golden.json",
+          "sha256": "1c5fd24d4d43e27b48faf7dffa4f4d545bee5c4eb488fdd1658479113f5fe2c6"
+        },
+        {
+          "bytes": 472,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/failure_prediction_requested_threshold_weakens_policy.golden.json",
+          "sha256": "ecd6a327158f1ac0a1291ad6bbf56fe1bae97389fcbe92c722d7faeb8b596910"
+        },
+        {
+          "bytes": 578,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/failure_run_all_values_missing.golden.json",
+          "sha256": "db2dad996e3e415beab22c008843f674e0f646e53d7e3d7b36fd2b1ff3a44590"
+        },
+        {
+          "bytes": 428,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/failure_run_column_set_mismatch.golden.json",
+          "sha256": "219f5ed47d46f9acd31968a617b7b2ac9aae9909535adc3bb95968e253b1a72f"
+        },
+        {
+          "bytes": 452,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/failure_run_empty_reference_rows.golden.json",
+          "sha256": "d87651d45a9795fc234e2f725dfdac3b449c1e7d5ce23e0fec6a899c37fb7690"
+        },
+        {
+          "bytes": 3036,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/mixed_share_below_threshold.golden.json",
+          "sha256": "8bdade5470ab934bbf20ad4faa55703069a6a1af1f9665d835f04491691bcd62"
+        },
+        {
+          "bytes": 771,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/mixed_share_below_threshold.raw.json",
+          "sha256": "8751fc27d44967b3aaab5369e705fafd040a3432a5675f9a39060c3dacaf1e70"
+        },
+        {
+          "bytes": 2925,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/mixed_share_meets_threshold.golden.json",
+          "sha256": "89b68c38700d2619bfad2326ca844bed841ae24062f340baae5db72c08e195f5"
+        },
+        {
+          "bytes": 771,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/mixed_share_meets_threshold.raw.json",
+          "sha256": "4a910eed382d0d4b0eca3ae1918d29df8ea644a550082c3467be89081a623f2c"
+        },
+        {
+          "bytes": 2266,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_constant_shifted_ztest.golden.json",
+          "sha256": "449524a2b3cbbc1209940f6c220ed9c4fa83a0835ab12fb909db8628e7453a60"
+        },
+        {
+          "bytes": 507,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_constant_shifted_ztest.raw.json",
+          "sha256": "3b5cdb9773c591c6eb758d7dbd063730a45ae75aabcfd84c73ad96125507aca7"
+        },
+        {
+          "bytes": 2167,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_constant_stable_ztest.golden.json",
+          "sha256": "f1d965b632759b7671e5b98abc02b66439c52f1d0cfc1108bfe89767cbbaaa40"
+        },
+        {
+          "bytes": 507,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_constant_stable_ztest.raw.json",
+          "sha256": "60c940d08944718df723b0d4688090eb3f15ea44143425b25e9c1169032e8a21"
+        },
+        {
+          "bytes": 2294,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_gaussian_drifted_ks.golden.json",
+          "sha256": "6e05ca1cd2f745ce12b55c3a9a0f718bde4f3cb9738c9b5de0978522a55daf49"
+        },
+        {
+          "bytes": 521,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_gaussian_drifted_ks.raw.json",
+          "sha256": "2a630ef77c7eedd225cc128a17d6cbf3b481bd83b4edd056f4cf2a6711421419"
+        },
+        {
+          "bytes": 2220,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_gaussian_stable_ks.golden.json",
+          "sha256": "7bd47558268e27459688ea336a117ca0e73948d5bdb2a26d0dd0948585af18ac"
+        },
+        {
+          "bytes": 516,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_gaussian_stable_ks.raw.json",
+          "sha256": "412dd8902b45b064d64fc299ae0a91dc34697345c79c53ccd2dad60e638edb6f"
+        },
+        {
+          "bytes": 2345,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_infinity_cleaned_to_1001_wasserstein.golden.json",
+          "sha256": "ab6338fd5b2d88f9be042c8c60171add98772b9419ad625742c31999e82e9b76"
+        },
+        {
+          "bytes": 535,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_infinity_cleaned_to_1001_wasserstein.raw.json",
+          "sha256": "a5592011261fc9c9cf9a785eca656fcc0fb77d8a482b9bf715add165866e80cb"
+        },
+        {
+          "bytes": 2328,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_ks_drifted.golden.json",
+          "sha256": "68a8a9201223b4f07561a058e47a7e53e17e072b9b17ef960c0eb0c16aba6976"
+        },
+        {
+          "bytes": 521,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_ks_drifted.raw.json",
+          "sha256": "14c7195734e81a353cacc88b1d29f5c0100154bebdcb070becbb086472ce9eb1"
+        },
+        {
+          "bytes": 2182,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_ks_stable.golden.json",
+          "sha256": "cba1cb0a8162b9aeef48a4efeb91604ceaf535ebe1cc383bf5f1453fae383b0d"
+        },
+        {
+          "bytes": 501,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_ks_stable.raw.json",
+          "sha256": "040e64abeb4099734bcdc6ca87f6f36a2a554f6a1c986b78b7ea1838211e6d64"
+        },
+        {
+          "bytes": 2195,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_merged_unique_2_ztest.golden.json",
+          "sha256": "60aba94697d1d2944383f94a9635918028ff5bc943a2fceef1ba926fd6f81a65"
+        },
+        {
+          "bytes": 507,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_merged_unique_2_ztest.raw.json",
+          "sha256": "60c940d08944718df723b0d4688090eb3f15ea44143425b25e9c1169032e8a21"
+        },
+        {
+          "bytes": 2220,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_merged_unique_3_chisquare.golden.json",
+          "sha256": "ba17cd658c652760936d6237ef09620cd38c106143de77b09af51e55dfa57ab6"
+        },
+        {
+          "bytes": 515,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_merged_unique_3_chisquare.raw.json",
+          "sha256": "0efc20cfa79d8c47b9b2e83e2f28cef7e86b0976dd8a43eb090dc1896517180c"
+        },
+        {
+          "bytes": 2220,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_merged_unique_5_chisquare.golden.json",
+          "sha256": "9363f45da9b2d2e808922b046df4b43818ae306b826f2d4e096eeae77ccdec55"
+        },
+        {
+          "bytes": 515,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_merged_unique_5_chisquare.raw.json",
+          "sha256": "0efc20cfa79d8c47b9b2e83e2f28cef7e86b0976dd8a43eb090dc1896517180c"
+        },
+        {
+          "bytes": 2172,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_merged_unique_6_ks.golden.json",
+          "sha256": "a1c7d411da835f198a634d5960091c1cf81bafb0c7e674a82528a5309069adf1"
+        },
+        {
+          "bytes": 501,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_merged_unique_6_ks.raw.json",
+          "sha256": "040e64abeb4099734bcdc6ca87f6f36a2a554f6a1c986b78b7ea1838211e6d64"
+        },
+        {
+          "bytes": 2255,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_nan_cleaned_to_1000_ks.golden.json",
+          "sha256": "a1abaff4138a743554d46efade0badff3b9303a792b127a4b5b1c5560eb73fa4"
+        },
+        {
+          "bytes": 501,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_nan_cleaned_to_1000_ks.raw.json",
+          "sha256": "040e64abeb4099734bcdc6ca87f6f36a2a554f6a1c986b78b7ea1838211e6d64"
+        },
+        {
+          "bytes": 2265,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_nan_cleaned_to_1001_wasserstein.golden.json",
+          "sha256": "1c1fbaaf6dea04f0571eaca4229dd8fd2c1e22971ab34328c1fa5aee9f151f36"
+        },
+        {
+          "bytes": 535,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_nan_cleaned_to_1001_wasserstein.raw.json",
+          "sha256": "a5592011261fc9c9cf9a785eca656fcc0fb77d8a482b9bf715add165866e80cb"
+        },
+        {
+          "bytes": 2179,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_reference_n_1000_ks.golden.json",
+          "sha256": "486bb55d0067de8fbfea2754a6be3ea2de1eb36f600572410f6f26903f54a8f6"
+        },
+        {
+          "bytes": 501,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_reference_n_1000_ks.raw.json",
+          "sha256": "040e64abeb4099734bcdc6ca87f6f36a2a554f6a1c986b78b7ea1838211e6d64"
+        },
+        {
+          "bytes": 2235,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_reference_n_1001_jensenshannon.golden.json",
+          "sha256": "113bee3145215adc9b5acfb6295ad1953e49fb5f10d6f3b3f3997db44f7c1668"
+        },
+        {
+          "bytes": 523,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_reference_n_1001_jensenshannon.raw.json",
+          "sha256": "fa5b603f293bc85334f7147d141110fe157a8c29b88d42a844899d59d9f1a876"
+        },
+        {
+          "bytes": 2262,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_reference_n_1001_wasserstein.golden.json",
+          "sha256": "b03e908038e74fe14d1ce7f8e40954fbce122f1e52ee870376e4ee52930e264c"
+        },
+        {
+          "bytes": 535,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/numeric_reference_n_1001_wasserstein.raw.json",
+          "sha256": "a5592011261fc9c9cf9a785eca656fcc0fb77d8a482b9bf715add165866e80cb"
+        },
+        {
+          "bytes": 2932,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/prediction_categorical_new_class_drifted.golden.json",
+          "sha256": "239f27296c1e1d7a0b75cee93a55a171a81f74e052444773f2ff37184c9b0de6"
+        },
+        {
+          "bytes": 523,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/prediction_categorical_new_class_drifted.raw.json",
+          "sha256": "c7017ba5f54fbd2c2ddd44414857d89f6676e2adc5affa142f86583649c11443"
+        },
+        {
+          "bytes": 2812,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/prediction_categorical_stable.golden.json",
+          "sha256": "189aad7d928665456acf6abdf34fdecc08e9765a495f72ec996d44d6036d4ceb"
+        },
+        {
+          "bytes": 515,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/prediction_categorical_stable.raw.json",
+          "sha256": "3079f82d58b0169e0a13a980b49a22c4e3d020876369c0e8208862e6492d9058"
+        },
+        {
+          "bytes": 3560,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/prediction_inferred_output_types.golden.json",
+          "sha256": "b850574140bcb6313f4f5e794eb33d7701c985487296bed87a763787a413b1d2"
+        },
+        {
+          "bytes": 775,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/prediction_inferred_output_types.raw.json",
+          "sha256": "428d994ef715ecd1603039b1f7045121ad209f32b87be921902d5d4bc68058e6"
+        },
+        {
+          "bytes": 3699,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/prediction_mixed_output_types.golden.json",
+          "sha256": "7af269f1e57e0b7b1baf232ab4e1bf96f335cf4439cac2ace2176d48853c1a88"
+        },
+        {
+          "bytes": 794,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/prediction_mixed_output_types.raw.json",
+          "sha256": "5cf802ffed6f82563cf94c6add2d5706ecd77d3b6fe8c0e272a9c1a41c05b650"
+        },
+        {
+          "bytes": 2895,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/prediction_numeric_drifted.golden.json",
+          "sha256": "35bed9241c06b83851677f368fd8ab7107c4fa06abcaaab5f8b934c92bdf2431"
+        },
+        {
+          "bytes": 528,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/prediction_numeric_drifted.raw.json",
+          "sha256": "a35e2108d51b012aa2678b48ea613eedfead3db4939b17944c3ab0d6559b63d6"
+        },
+        {
+          "bytes": 2802,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/prediction_numeric_stable.golden.json",
+          "sha256": "08dbe4a0e891662b4d7dbada9192c8944802ea18dedf625e55711e8bf9bc4fb4"
+        },
+        {
+          "bytes": 509,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/prediction_numeric_stable.raw.json",
+          "sha256": "38ff0ec32e2843a5f35cdeb40ed315f776a40599f0b5319f5ce075887e346e6f"
+        },
+        {
+          "bytes": 3747,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/prediction_policy_threshold_only.golden.json",
+          "sha256": "4b21397b2977750fea3b79c63204648e9296ac41d377af66bccc595fda26adb3"
+        },
+        {
+          "bytes": 790,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/prediction_policy_threshold_only.raw.json",
+          "sha256": "f3d310bef02f053a5da8186c3e35486215d7ff9bfa065c2ad37b9b4b25e85bf8"
+        },
+        {
+          "bytes": 3768,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/prediction_requested_threshold_tightens_policy.golden.json",
+          "sha256": "71fc755b8b91fbb6255aae69d759aebc4f4299eb60b8adaf5872719ce54fe254"
+        },
+        {
+          "bytes": 790,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/prediction_requested_threshold_tightens_policy.raw.json",
+          "sha256": "e2ed4838ffeb3bec1f970a69b99f2e9c3fa87d91d40553c31a35f4673b05ff0f"
+        },
+        {
+          "bytes": 2324,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/text_absolute_drifted.golden.json",
+          "sha256": "611e750efdf845ea36180d066d070285b1a4649003a527176c7fd19eeed2af9e"
+        },
+        {
+          "bytes": 529,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/text_absolute_drifted.raw.json",
+          "sha256": "4c681de706e87f0a81a869512169fa82f80638fd871e01cfeb7a9c07e560c420"
+        },
+        {
+          "bytes": 2317,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/text_percentile_drifted.golden.json",
+          "sha256": "f9a458492e2dbe0beed05bab05379235f55d4e15110de11848633ba36881bc8b"
+        },
+        {
+          "bytes": 533,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/text_percentile_drifted.raw.json",
+          "sha256": "1fc5b9482a744437d218d1b58eb34d37ae698a997b1ae59841d72d7c0838b0f5"
+        },
+        {
+          "bytes": 2342,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/text_percentile_stable.golden.json",
+          "sha256": "ea851787e79dd2e896e610934da31f3130a8b68274e3762a8a1714e1026c070a"
+        },
+        {
+          "bytes": 549,
+          "exists": true,
+          "path": "tests/models/fixtures/evidently_0_7_21/cases/text_percentile_stable.raw.json",
+          "sha256": "f750aa11e7d8442d96946a4de402811b1669b1d22a10ebba6eafef8539bec5e0"
+        }
+      ],
+      "path": "tests/models/fixtures/evidently_0_7_21/cases",
+      "tree_sha256": "d231472e3149ddcb048485986e44b3be552625819ffde7b933a6d790787cbd17"
+    }
+  ],
+  "inputs": [
+    {
+      "bytes": 26960,
+      "exists": true,
+      "path": "tests/models/test_evidently_monitor_baseline.py",
+      "sha256": "e7b7dfaac39d48d8f774cdf92f94b4f3ae0a92d78716fc654a33b1edd357e59c"
+    },
+    {
+      "bytes": 69078,
+      "exists": true,
+      "path": "tests/models/fixtures/evidently_0_7_21/manifest.json",
+      "sha256": "1b818a6760d2a21f7228beea5ad7bd9b6a6a9793c8cad720fe06a490a3b57bcb"
+    },
+    {
+      "bytes": 42099,
+      "exists": true,
+      "path": "tests/models/fixtures/evidently_0_7_21/baseline_cases.py",
+      "sha256": "bb25b08742c4a740af5a4e5a61e31915caaffbb5fda563d61bb2f3c28cf9a910"
+    },
+    {
+      "bytes": 20344,
+      "exists": true,
+      "path": "modules/learninghub/infrastructure/evidently_monitor.py",
+      "sha256": "7f4a6d5f4a4f64cf2bd169ecef1405dde5a757b1795957484ca1a2314faf4e66"
+    },
+    {
+      "bytes": 40829,
+      "exists": true,
+      "path": "modules/learninghub/infrastructure/native_drift.py",
+      "sha256": "88e4c37d6c63683106a4c5fd3f27f5d8b462d25f3f0bcf2c7653221a71cc721d"
+    },
+    {
+      "bytes": 888830,
+      "exists": true,
+      "path": "uv.lock",
+      "sha256": "ba5c393e49538e4da9e59de001cffc28c4cadfab8aebacf6dbf1503eb3a49a5d"
+    }
+  ],
+  "label": "baseline_equivalence_bound",
+  "outputs": [
+    {
+      "bytes": 25604,
+      "exists": true,
+      "path": "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_stdout.txt",
+      "sha256": "ae3d965e514c602f84fe1373b12c892972b889ec68f6e85fefdc91cec3f2181a"
+    },
+    {
+      "bytes": 0,
+      "exists": true,
+      "path": "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 2,
+      "exists": true,
+      "path": "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_exit_code.txt",
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "bytes": 29811,
+      "exists": true,
+      "path": "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_junit.xml",
+      "sha256": "3ff8a29c684031a2a4b25ebb95dc1402c354148ba85ffe190b099c491b09dfac"
+    }
+  ],
+  "purpose": "Replay all 44 recorded Evidently 0.7.21 goldens against the native production path, bound to an exact commit SHA and to the fixture/source bytes consumed (reopen #3 item 2).",
+  "recorded_by": "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/tools/bound_run.py",
+  "repo_state_after": {
+    "code_tree_matches_commit": true,
+    "deviations_outside_receipts": [],
+    "head_sha": "d6514b049996747aba378a9380851f98594c12af",
+    "head_subject": "ODP-DRIFT-SECURITY-VERIFY-003: sharpen provenance tool checks",
+    "porcelain": "?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_exit_code.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_report.json\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_run_binding.json\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_stderr.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_stdout.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_exit_code.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_junit.xml\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_run_binding.json\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_stderr.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_stdout.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_attempt1_stderr.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_attempt1_stdout.json\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_capture.json\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_exit_code.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_run_binding.json\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_stderr.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_stdout.txt\n",
+    "tracked_files_modified": [],
+    "untracked_files": [
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_exit_code.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_report.json",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_run_binding.json",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_stderr.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_stdout.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_exit_code.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_junit.xml",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_run_binding.json",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_stderr.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_stdout.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_attempt1_stderr.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_attempt1_stdout.json",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_capture.json",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_exit_code.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_run_binding.json",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_stderr.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_stdout.txt"
+    ],
+    "worktree_clean": false
+  },
+  "repo_state_before": {
+    "code_tree_matches_commit": true,
+    "deviations_outside_receipts": [],
+    "head_sha": "d6514b049996747aba378a9380851f98594c12af",
+    "head_subject": "ODP-DRIFT-SECURITY-VERIFY-003: sharpen provenance tool checks",
+    "porcelain": "?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_exit_code.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_report.json\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_run_binding.json\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_stderr.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_stdout.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_exit_code.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_junit.xml\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_run_binding.json\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_stderr.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_stdout.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_attempt1_stderr.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_attempt1_stdout.json\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_capture.json\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_exit_code.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_run_binding.json\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_stderr.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_stdout.txt\n",
+    "tracked_files_modified": [],
+    "untracked_files": [
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_exit_code.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_report.json",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_run_binding.json",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_stderr.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_stdout.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_exit_code.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_junit.xml",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_run_binding.json",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_stderr.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_stdout.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_attempt1_stderr.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_attempt1_stdout.json",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_capture.json",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_exit_code.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_run_binding.json",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_stderr.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_stdout.txt"
+    ],
+    "worktree_clean": false
+  },
+  "run_sha": "d6514b049996747aba378a9380851f98594c12af",
+  "run_sha_stable": true,
+  "started_at_utc": "2026-09-08T02:43:04.161329+00:00",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stdout_sha256": "ae3d965e514c602f84fe1373b12c892972b889ec68f6e85fefdc91cec3f2181a",
+  "worktree_clean_throughout": false
+}

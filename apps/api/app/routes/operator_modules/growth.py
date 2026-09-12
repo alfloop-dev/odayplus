@@ -31,6 +31,7 @@ from modules.opsboard.application.growth import (
     GrowthPolicyError,
     GrowthService,
 )
+from shared.governance.vocabularies import EvidenceLevel
 
 # ---------------------------------------------------------------------------
 # Request / response DTOs
@@ -132,7 +133,7 @@ class OutcomePayload(BaseModel):
     outcome: str
     requiredAction: str
     observedLift: float | None = None
-    evidenceLevel: str = "medium"
+    evidenceLevel: EvidenceLevel | None = None
     rationale: str = ""
     actorRoleId: str | None = None
     actorName: str | None = None

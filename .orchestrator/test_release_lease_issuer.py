@@ -176,6 +176,29 @@ def test_an_unresolvable_dependency_is_a_blocker_not_a_pass() -> None:
     assert any("cannot be resolved" in error for error in errors)
 
 
+def test_a_dependency_id_differing_only_by_case_does_not_resolve() -> None:
+    """Dependency identity is case-sensitive, because dispatch is.
+
+    `task_archive.normalize_task_id` only strips whitespace, so the live board
+    index, the archive filename and the dispatcher all treat `odp-a` and
+    `ODP-A` as different tasks. An issuer that folded case would authorise a
+    release against a prerequisite the dispatcher can never resolve -- the one
+    outcome a fail-closed gate must not produce. Reported as unresolvable, it
+    stays a fixable id mismatch instead.
+    """
+
+    status = build_status(depends_on=[DEPENDENCY_ID.lower()])
+    errors = dependency_errors(status, TASK_ID)
+    assert any("cannot be resolved" in error for error in errors)
+
+
+def test_the_requesting_task_id_is_matched_case_sensitively() -> None:
+    errors = dependency_errors(build_status(), TASK_ID.lower())
+    assert errors == [
+        f"task {TASK_ID.lower()} is not present in the Supervisor status document"
+    ]
+
+
 ARCHIVED_ID = "ODP-ARCHIVED-001"
 
 

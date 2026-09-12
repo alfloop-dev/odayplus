@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import threading
 import time
+from dataclasses import replace
 from datetime import date, timedelta
 
 import pytest
@@ -25,9 +26,14 @@ from apps.worker.oday_worker.main import ODayWorker
 from modules.external_data.workers.scheduled_fetch import (
     TenantScopedExternalFetchStateStore,
 )
-from modules.forecastops import ForecastOpsService, StoreDayObservation
+from modules.forecastops import (
+    ForecastOpsService,
+    StoreDayObservation,
+    default_forecast_alert_policy,
+)
 from modules.forecastops.runtime import ForecastOpsRuntimeConfigurationError
 from modules.forecastops.workers import ForecastOpsForecastWorker
+from shared.governance import InMemoryDecisionPolicyRepository
 from shared.infrastructure.persistence.factory import _durable_bundle, build_persistence
 from shared.jobs.queue import JobRequest, JobStatus
 from shared.jobs.registry import JobRegistry
@@ -35,6 +41,12 @@ from shared.jobs.registry import JobRegistry
 PROVIDER_ID = "listing.partner_feed"
 TENANT_ID = "tenant-test"
 OTHER_TENANT_ID = "tenant-other"
+
+
+def _forecast_policy_repository() -> InMemoryDecisionPolicyRepository:
+    return InMemoryDecisionPolicyRepository(
+        [default_forecast_alert_policy(TENANT_ID)]
+    )
 
 
 def _tenant_watermark(bundle, tenant_id: str = TENANT_ID):
@@ -111,6 +123,7 @@ def test_scheduler_enqueue_then_worker_claim_execute_success(legacy_fetch_mode) 
 def test_worker_forecast_job_claims_and_succeeds() -> None:
     """A forecast job is claimed, executed against the repository, and succeeds."""
     bundle = build_persistence()
+    bundle = replace(bundle, forecastops_policy_repository=_forecast_policy_repository())
     _seed_forecast_series(bundle, "store-001")
     job, created = bundle.job_queue.enqueue(
         JobRequest(

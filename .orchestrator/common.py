@@ -1000,6 +1000,172 @@ def agent_config_for(config: dict[str, Any], agent_id: str) -> dict[str, Any]:
     return {"id": normalized, "display_name": agent_id, "provider": normalized, "adapter": "file_inbox"}
 
 
+REOPEN_REASON_REVIEW_FINDING = "review_finding"
+REOPEN_REASON_STALE_REVIEW_SHA = "stale_review_sha"
+REOPEN_REASON_WORKTREE_LEASE_MISMATCH = "worktree_lease_mismatch"
+REOPEN_REASON_CONTROL_PLANE_RECOVERY = "control_plane_recovery"
+REOPEN_REASON_OWNER_RESUME = "owner_resume"
+
+REOPEN_CATEGORY_SUBSTANTIVE_REVIEW = "substantive_review"
+REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY = "control_plane_recovery"
+REOPEN_CATEGORY_OWNER_RESUME = "owner_resume"
+
+CONTROL_PLANE_RECOVERY_REASONS = frozenset({
+    REOPEN_REASON_STALE_REVIEW_SHA,
+    "stale_review",
+    "stale_sha",
+    "head_mismatch",
+    "stale_head",
+    REOPEN_REASON_WORKTREE_LEASE_MISMATCH,
+    "lease_mismatch",
+    "worktree_lease_conflict",
+    "lease_conflict",
+    "lease_expired",
+    "worktree_conflict",
+    REOPEN_REASON_CONTROL_PLANE_RECOVERY,
+    "control_plane",
+    "recovery",
+    "ci_repair",
+    "repair_unsubmitted",
+    "unsealed_handoff",
+    "infra_recovery",
+    "infrastructure_recovery",
+})
+
+SUBSTANTIVE_REVIEW_REASONS = frozenset({
+    REOPEN_REASON_REVIEW_FINDING,
+    "substantive_finding",
+    "reviewer_finding",
+    "changes_requested",
+    "code_defect",
+    "review_rejection",
+    "finding",
+    "rejection",
+})
+
+
+def is_control_plane_recovery_reason(reason: str | None) -> bool:
+    if not reason:
+        return False
+    normalized = str(reason).lower().strip().replace("-", "_").replace(" ", "_")
+    if normalized in CONTROL_PLANE_RECOVERY_REASONS:
+        return True
+    tokens = set(normalized.split("_"))
+    if tokens & {
+        "stale_review_sha",
+        "worktree_lease_mismatch",
+        "control_plane_recovery",
+        "ci_repair",
+        "unsealed_handoff",
+        "infra_recovery",
+        "infrastructure_recovery",
+    }:
+        return True
+    if {"stale", "sha"} <= tokens or {"stale", "review"} <= tokens or {"head", "mismatch"} <= tokens:
+        return True
+    if (
+        {"lease", "mismatch"} <= tokens
+        or {"lease", "conflict"} <= tokens
+        or {"lease", "expired"} <= tokens
+        or {"worktree", "lease"} <= tokens
+    ):
+        return True
+    if {"control", "plane"} <= tokens or {"infra", "recovery"} <= tokens:
+        return True
+    if normalized in {"lease", "stale", "recovery", "unsealed"}:
+        return True
+    return False
+
+
+def classify_reopen_reason(
+    raw_reason: str | None,
+    actor: str,
+    owner: str | None,
+    reviewer: str | None,
+    message: str = "",
+) -> tuple[str, str, bool]:
+    """Classify a reopen action into (normalized_reason, category, is_churn).
+
+    A control-plane recovery can only be declared through an explicit ``raw_reason``
+    (``ai-status.sh reopen <task> <message> --reason=<reason>``).  ``message`` is kept
+    for the audit record but is never parsed for classification -- inferring intent from
+    prose misclassified reopens in both directions, so the reason enum is the only
+    trusted signal.  ``raw_reason`` must match one of CONTROL_PLANE_RECOVERY_REASONS
+    verbatim (modulo case/dash/space normalization) to declare a recovery; free-form text
+    that merely mentions one of those identifiers, and anything unrecognized, is treated
+    as a substantive review finding so the churn failover stays armed.
+
+    Returns:
+        normalized_reason: Canonical reason identifier.
+        category: High-level category (substantive_review, control_plane_recovery, owner_resume).
+        is_churn: True if this reopen counts towards review churn / owner rotation threshold.
+    """
+    norm_actor = normalize_agent_id(actor)
+    norm_owner = normalize_agent_id(owner) if owner else ""
+    norm_reviewer = normalize_agent_id(reviewer) if reviewer else ""
+
+    if raw_reason:
+        normalized = str(raw_reason).lower().strip().replace("-", "_").replace(" ", "_")
+        # Declaring a recovery requires one of the documented identifiers verbatim.
+        # Fuzzy-matching tokens here would re-open the same hole the message-prose
+        # inference had: a free-form reason such as "defect in head mismatch handling"
+        # would be read as a recovery and disarm the churn failover.
+        if normalized in CONTROL_PLANE_RECOVERY_REASONS:
+            tokens = set(normalized.split("_"))
+            if "stale" in tokens or "head" in tokens or "sha" in tokens:
+                reason = REOPEN_REASON_STALE_REVIEW_SHA
+            elif "lease" in tokens or "worktree" in tokens:
+                reason = REOPEN_REASON_WORKTREE_LEASE_MISMATCH
+            else:
+                reason = REOPEN_REASON_CONTROL_PLANE_RECOVERY
+            return reason, REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY, False
+        elif normalized in SUBSTANTIVE_REVIEW_REASONS:
+            is_churn = bool(norm_actor and norm_reviewer and norm_actor == norm_reviewer and norm_owner and norm_owner != norm_reviewer)
+            return REOPEN_REASON_REVIEW_FINDING, REOPEN_CATEGORY_SUBSTANTIVE_REVIEW, is_churn
+        else:
+            is_churn = bool(norm_actor and norm_reviewer and norm_actor == norm_reviewer and norm_owner and norm_owner != norm_reviewer)
+            return normalized, REOPEN_CATEGORY_SUBSTANTIVE_REVIEW, is_churn
+
+    # No structured reason was supplied.  The free-form message is deliberately NOT
+    # inspected here: reviewer prose routinely quotes control-plane vocabulary (e.g.
+    # "the lease mismatch branch never fires", or a review body relayed verbatim by
+    # github_bus), so keyword matching silently downgraded real findings to recovery
+    # and switched the churn failover safety net off.  It was equally unreliable in
+    # the other direction -- genuine recovery notes that did not happen to use the
+    # exact phrasing were still counted as churn.  Declaring a control-plane recovery
+    # therefore requires an explicit --reason; without one we fall back to the actor's
+    # role and fail safe by counting a reviewer reopen as churn.
+    if norm_actor and norm_owner and norm_actor == norm_owner and norm_owner != norm_reviewer:
+        return REOPEN_REASON_OWNER_RESUME, REOPEN_CATEGORY_OWNER_RESUME, False
+    elif norm_actor and norm_reviewer and norm_actor == norm_reviewer and norm_owner and norm_owner != norm_reviewer:
+        return REOPEN_REASON_REVIEW_FINDING, REOPEN_CATEGORY_SUBSTANTIVE_REVIEW, True
+    elif norm_actor and norm_owner and norm_actor == norm_owner:
+        return REOPEN_REASON_OWNER_RESUME, REOPEN_CATEGORY_OWNER_RESUME, False
+    else:
+        return REOPEN_REASON_REVIEW_FINDING, REOPEN_CATEGORY_SUBSTANTIVE_REVIEW, False
+
+
+def substantive_review_reopen_count(snapshot: dict[str, Any]) -> int:
+    """Return the count of substantive reviewer findings (excluding control-plane recovery)."""
+    if "review_reopen_count" in snapshot and snapshot.get("review_reopen_count") is not None:
+        try:
+            return max(0, int(snapshot.get("review_reopen_count", 0) or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    history = snapshot.get("review_reopen_history")
+    if isinstance(history, list) and history:
+        churn_entries = [
+            item for item in history
+            if isinstance(item, dict)
+            and item.get("is_churn", True)
+            and str(item.get("category", "")).lower() != "control_plane_recovery"
+            and not is_control_plane_recovery_reason(item.get("reason"))
+        ]
+        return len(churn_entries)
+    return 0
+
+
 def render_template(path: Path, variables: dict[str, Any]) -> str:
     text = path.read_text(encoding="utf-8")
     for key, value in variables.items():

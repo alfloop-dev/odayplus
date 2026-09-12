@@ -32,6 +32,7 @@ from packages.oday_data_contracts_client import (
 )
 from packages.oday_data_contracts_client.models import (
     EMGIPlatformFoundationConfig,
+    OperationalStartObservation,
     StoreDailyPerformance,
     StoreDayCoverage,
     StoreReference,
@@ -431,6 +432,20 @@ class DataPlatformClient:
             )
         self._transport = transport
 
+    @staticmethod
+    def _preserve_missing_product_tenant(raw: Mapping[str, Any]) -> dict[str, Any]:
+        """Keep an omitted tenant envelope omitted through generated parsing.
+
+        Some released product models use ``"default"`` as the generated
+        dataclass default for their optional ``tenant_id`` field. Treating
+        that code-generation fallback as a real owner would turn an
+        unscoped payload into a cross-tenant decision instead of the required
+        fail-closed missing-tenant decision.
+        """
+        payload = dict(raw)
+        payload.setdefault("tenant_id", None)
+        return payload
+
     @property
     def transport(self) -> DataPlatformTransport:
         return self._transport
@@ -530,7 +545,9 @@ class DataPlatformClient:
                 },
             )
         try:
-            return SiteMarketContextDocument.from_dict(raw)
+            return SiteMarketContextDocument.from_dict(
+                self._preserve_missing_product_tenant(raw)
+            )
         except Exception as err:
             raise DataPlatformValidationError(
                 f"Failed to parse SiteMarketContextDocument: {err}",
@@ -616,7 +633,9 @@ class DataPlatformClient:
                 },
             )
         try:
-            return MarketCellProfileDocument.from_dict(raw)
+            return MarketCellProfileDocument.from_dict(
+                self._preserve_missing_product_tenant(raw)
+            )
         except Exception as err:
             raise DataPlatformValidationError(
                 f"Failed to parse MarketCellProfileDocument: {err}",
@@ -889,6 +908,26 @@ class DataPlatformClient:
         except Exception as err:
             raise DataPlatformValidationError(
                 f"Failed to parse StoreDailyPerformance: {err}"
+            ) from err
+
+    def get_operational_start_observation(self, store_id: str) -> OperationalStartObservation:
+        """Retrieve OperationalStartObservation for store_id."""
+        doc_id = store_id
+        raw = self._transport.fetch_document(
+            "oday.operational-start-observation.v1",
+            document_id=doc_id,
+            params={"store_id": store_id},
+        )
+        if raw is None:
+            raise DataPlatformDocumentNotFoundError(
+                f"OperationalStartObservation not found for store_id={store_id}",
+                details={"store_id": store_id},
+            )
+        try:
+            return OperationalStartObservation.from_dict(raw)
+        except Exception as err:
+            raise DataPlatformValidationError(
+                f"Failed to parse OperationalStartObservation: {err}"
             ) from err
 
 

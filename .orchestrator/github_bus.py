@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from common import (
+    REOPEN_REASON_REVIEW_FINDING,
     ROOT,
     agent_config_for,
     config_path,
@@ -37,6 +38,7 @@ from cross_repo_issue_mapper import (
 )
 from github_cloud_relay import pull_commands, push_status_digest
 from github_command_parser import GitHubCommand, parse_command
+from github_reconciliation import poll_merge_group_runs
 from multi_repo_registry import (
     coordination_enabled,
     repository_slug,
@@ -90,6 +92,7 @@ def default_bus_state() -> dict[str, Any]:
         "last_error": None,
         "processed_review_ids": [],
         "processed_comment_ids": [],
+        "processed_merge_group_run_ids": [],
         "poll_cursors": {
             "pr_reviews": 0,
             "issue_comments": 0,
@@ -108,6 +111,7 @@ def load_bus_state(config: dict[str, Any]) -> dict[str, Any]:
     merged.setdefault("tasks", {})
     merged.setdefault("processed_review_ids", [])
     merged.setdefault("processed_comment_ids", [])
+    merged.setdefault("processed_merge_group_run_ids", [])
     merged.setdefault("poll_cursors", {})
     merged["poll_cursors"].setdefault("pr_reviews", 0)
     merged["poll_cursors"].setdefault("issue_comments", 0)
@@ -125,6 +129,7 @@ def save_bus_state(config: dict[str, Any], state: dict[str, Any]) -> None:
                 entry.get("ops_issue"),
                 entry.get("last_review_hash"),
                 entry.get("last_issue_hash"),
+                entry.get("last_merge_group_failure"),
             )
         ):
             pruned_tasks[task_id] = entry
@@ -138,6 +143,7 @@ def save_bus_state(config: dict[str, Any], state: dict[str, Any]) -> None:
     state["last_sync_at"] = utc_now()
     state["processed_review_ids"] = state.get("processed_review_ids", [])[-MAX_PROCESSED_IDS:]
     state["processed_comment_ids"] = state.get("processed_comment_ids", [])[-MAX_PROCESSED_IDS:]
+    state["processed_merge_group_run_ids"] = state.get("processed_merge_group_run_ids", [])[-MAX_PROCESSED_IDS:]
     write_json(config_path(config, "github_bus_state"), state)
 
 
@@ -1293,12 +1299,128 @@ AUTO_MERGE_PR_FIELDS = (
     "number,state,isDraft,autoMergeRequest,baseRefName,headRefName,url,mergeStateStatus"
 )
 
+PR_MERGE_QUEUE_GRAPHQL_QUERY = """
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      number
+      state
+      merged
+      mergedAt
+      headRefOid
+      isInMergeQueue
+      mergeQueueEntry {
+        position
+        state
+        enqueuedAt
+      }
+    }
+  }
+}
+"""
+
 # Auto-merge cannot be armed on a PR GitHub already knows it cannot merge; the
 # mutation is rejected outright. Every other merge state -- BLOCKED on required
 # checks, BEHIND its base, UNSTABLE while CI runs -- is precisely what
 # auto-merge is for, so only conflicts are treated as blocking here.
 AUTO_MERGE_BLOCKING_MERGE_STATES = frozenset({"DIRTY", "CONFLICTING"})
 ARCHIVE_HOUSEKEEPING_BRANCH_PREFIX = "task/OPS-ARCHIVE-AUTO-COMMIT-"
+
+
+def auto_merge_request_present(pr: Any) -> bool:
+    """Return true only for GitHub's object-shaped auto-merge readback."""
+
+    return isinstance(pr, dict) and isinstance(pr.get("autoMergeRequest"), dict)
+
+
+def fetch_pr_merge_queue_status(repo: str, number: int) -> dict[str, Any] | None:
+    """Query GitHub GraphQL API for the PR's merge queue status and head facts.
+
+    `gh pr view --json` does not support `isInMergeQueue` or `mergeQueueEntry`;
+    GraphQL repository.pullRequest is the canonical source for queue enrollment.
+    The same node also carries `state`, `merged`/`mergedAt` and `headRefOid`, so
+    every consumer that needs "is this PR still open on the reviewed head, and is
+    it queued" reads one node from one reader. A second CLI-side PR reader would
+    answer the same question from a weaker source that cannot see the queue at
+    all, and the two would drift.
+
+    Returns None whenever GitHub's answer is unusable. None means unknown, never
+    "not queued" and never "not open".
+    """
+
+    owner, _, name = repo.partition("/")
+    if not owner or not name:
+        return None
+    data = gh_json(
+        [
+            "api",
+            "graphql",
+            "-F",
+            f"owner={owner}",
+            "-F",
+            f"name={name}",
+            "-F",
+            f"number={number}",
+            "-f",
+            f"query={PR_MERGE_QUEUE_GRAPHQL_QUERY}",
+        ]
+    )
+    if not isinstance(data, dict):
+        return None
+    pr_data = ((data.get("data") or {}).get("repository") or {}).get("pullRequest")
+    return pr_data if isinstance(pr_data, dict) else None
+
+
+def is_in_merge_queue(pr: Any) -> bool:
+    """Return true if GitHub reports the PR is currently enrolled in a merge queue."""
+
+    if not isinstance(pr, dict):
+        return False
+    return bool(pr.get("isInMergeQueue")) or isinstance(pr.get("mergeQueueEntry"), dict)
+
+
+def merge_queue_entry(pr: Any) -> dict[str, Any] | None:
+    """Extract merge queue entry details if present."""
+
+    if not isinstance(pr, dict):
+        return None
+    entry = pr.get("mergeQueueEntry")
+    if isinstance(entry, dict):
+        return entry
+    return None
+
+
+def merge_queue_record(
+    number: int,
+    expected_base: str,
+    url: str | None,
+    pr_or_readback: dict[str, Any],
+) -> dict[str, Any]:
+    """Construct the bus state record for a PR enrolled in GitHub's Merge Queue."""
+
+    mq_entry = merge_queue_entry(pr_or_readback) or {}
+    queue_state = mq_entry.get("state")
+    queue_position = mq_entry.get("position")
+
+    msg_parts = [f"PR #{number} is in the merge queue for `{expected_base}`"]
+    if queue_position is not None:
+        msg_parts.append(f"at position {queue_position}")
+    if queue_state:
+        msg_parts.append(f"({queue_state})")
+    message = " ".join(msg_parts) + "."
+
+    record: dict[str, Any] = {
+        "state": "queued",
+        "number": number,
+        "message": message,
+        "url": url,
+        "is_in_merge_queue": True,
+        "queue_state": queue_state,
+        "queue_position": queue_position,
+    }
+    if mq_entry.get("enqueuedAt"):
+        record["enqueued_at"] = mq_entry.get("enqueuedAt")
+    return record
 
 
 def task_pr_auto_merge_enabled(config: dict[str, Any]) -> bool:
@@ -1349,14 +1471,19 @@ def _record_auto_merge(
         return False
     entry["auto_merge"] = {**record, "updated_at": utc_now()}
     if log_type:
+        log_entry: dict[str, Any] = {
+            "type": log_type,
+            "task_id": task_id,
+            "message": record.get("message") or record.get("state"),
+            "github_url": record.get("url"),
+        }
+        if "queue_state" in record:
+            log_entry["queue_state"] = record.get("queue_state")
+        if "queue_position" in record:
+            log_entry["queue_position"] = record.get("queue_position")
         write_activity_log(
             config,
-            {
-                "type": log_type,
-                "task_id": task_id,
-                "message": record.get("message") or record.get("state"),
-                "github_url": record.get("url"),
-            },
+            log_entry,
         )
     return True
 
@@ -1471,8 +1598,13 @@ def enable_review_pr_auto_merge(config: dict[str, Any], bus_state: dict[str, Any
             "message": f"Auto-merge is enabled on PR #{number} into `{expected_base}`.",
             "url": url,
         }
-        if pr.get("autoMergeRequest"):
+        if auto_merge_request_present(pr):
             return _record_auto_merge(config, entry, task_id, armed, log_type="github_auto_merge_enabled")
+
+        queue_info = pr if is_in_merge_queue(pr) else fetch_pr_merge_queue_status(repo, number)
+        if is_in_merge_queue(queue_info):
+            queued = merge_queue_record(number, expected_base, url, queue_info)
+            return _record_auto_merge(config, entry, task_id, queued, log_type="github_auto_merge_queued")
 
         if merge_state in AUTO_MERGE_BLOCKING_MERGE_STATES:
             return _record_auto_merge(
@@ -1491,6 +1623,42 @@ def enable_review_pr_auto_merge(config: dict[str, Any], bus_state: dict[str, Any
         if pr.get("isDraft"):
             run_gh(["pr", "ready", str(number), "--repo", repo])
         run_gh(["pr", "merge", str(number), "--repo", repo, "--auto", "--merge"])
+
+        # A zero exit from `gh pr merge --auto` is only an acknowledgement that
+        # the mutation was accepted by the CLI.  It is not proof that GitHub
+        # persisted an auto-merge request: queue admission and eventual
+        # consistency can still leave the PR unarmed.  Read back this exact PR
+        # before recording `enabled` or `queued`, otherwise the next poll reports a false
+        # positive and has no reason to retry the mutation.
+        readback = gh_json(["pr", "view", str(number), "--repo", repo, "--json", AUTO_MERGE_PR_FIELDS])
+        readback_number = readback.get("number") if isinstance(readback, dict) else None
+        readback_state = str(readback.get("state") or "").upper() if isinstance(readback, dict) else ""
+        if readback_number == number:
+            if auto_merge_request_present(readback) or readback_state == "MERGED":
+                return _record_auto_merge(config, entry, task_id, armed, log_type="github_auto_merge_enabled")
+            readback_queue_info = readback if is_in_merge_queue(readback) else fetch_pr_merge_queue_status(repo, number)
+            if is_in_merge_queue(readback_queue_info):
+                queued = merge_queue_record(number, expected_base, url, readback_queue_info)
+                return _record_auto_merge(config, entry, task_id, queued, log_type="github_auto_merge_queued")
+
+        return _record_auto_merge(
+            config,
+            entry,
+            task_id,
+            {
+                "state": "failed",
+                "number": number,
+                "message": (
+                    f"Auto-merge command returned success for PR #{number}, but the same-PR "
+                    "readback did not confirm `autoMergeRequest`, merge queue enrollment, "
+                    "or a merged state; retrying."
+                ),
+                "url": url,
+                "retryable": True,
+                "failure_code": "auto_merge_unconfirmed_readback",
+            },
+            log_type="github_auto_merge_failed",
+        )
     except GitHubBusOffline:
         raise
     except GitHubBusError as exc:
@@ -1507,7 +1675,7 @@ def enable_review_pr_auto_merge(config: dict[str, Any], bus_state: dict[str, Any
             log_type="github_auto_merge_failed",
         )
 
-    return _record_auto_merge(config, entry, task_id, armed, log_type="github_auto_merge_enabled")
+    raise AssertionError("auto-merge mutation must return through its verified readback")
 
 
 def archive_housekeeping_prs(config: dict[str, Any], repo: str) -> list[dict[str, Any]]:
@@ -1589,12 +1757,19 @@ def sync_archive_housekeeping_auto_merge(
     return changed
 
 
-def run_ai_status(command: str, target: str, message: str, *, actor: str | None = None) -> None:
+def run_ai_status(
+    command: str,
+    target: str,
+    message: str,
+    *,
+    actor: str | None = None,
+    extra_args: list[str] | None = None,
+) -> None:
     env = os.environ.copy()
     if actor:
         env["AI_NAME"] = actor
     proc = subprocess.run(
-        ["python3", "scripts/ai_status.py", command, target, message],
+        ["python3", "scripts/ai_status.py", command, target, message, *(extra_args or [])],
         cwd=str(ROOT),
         capture_output=True,
         text=True,
@@ -2124,7 +2299,16 @@ def poll_pr_reviews(config: dict[str, Any], bus_state: dict[str, Any], status: d
                     detail = f"GitHub PR requested changes via PR #{number} by @{actor}."
                     if body:
                         detail += f" {body}"
-                    run_ai_status("reopen", task["id"], detail, actor=str(task.get("reviewer") or task.get("owner") or "").strip() or None)
+                    # A CHANGES_REQUESTED review is a substantive finding by definition.
+                    # Tag it explicitly so the relayed review body -- which is arbitrary
+                    # reviewer prose -- can never influence how the reopen is classified.
+                    run_ai_status(
+                        "reopen",
+                        task["id"],
+                        detail,
+                        actor=str(task.get("reviewer") or task.get("owner") or "").strip() or None,
+                        extra_args=[f"--reason={REOPEN_REASON_REVIEW_FINDING}"],
+                    )
                     write_activity_log(config, {"type": "github_review_changes_requested", "task_id": task["id"], "message": detail, "github_pr": number})
                     changed = True
                 elif state_value == "COMMENTED":
@@ -2337,6 +2521,8 @@ def sync_github_bus(config: dict[str, Any], runtime_state: dict[str, Any]) -> bo
         changed = sync_coordination_outbound(config, bus_state, runtime_state) or changed
         status = load_status(config)
         changed = poll_pr_reviews(config, bus_state, status, repo) or changed
+        status = load_status(config)
+        changed = poll_merge_group_runs(config, bus_state, status, repo) or changed
         status = load_status(config)
         changed = poll_issue_comments(config, bus_state, status, repo) or changed
         status = load_status(config)

@@ -30,7 +30,7 @@ def config_paths(extra_paths: list[str]) -> list[Path]:
     return result
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--config",
@@ -38,7 +38,7 @@ def main() -> int:
         default=[],
         help="also validate an explicit runtime config (repeatable)",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     paths = config_paths(args.config)
     try:

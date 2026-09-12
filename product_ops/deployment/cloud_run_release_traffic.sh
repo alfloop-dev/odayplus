@@ -103,6 +103,70 @@ restore_service_traffic() {
     --quiet
 }
 
+# Which recovery this release can actually perform, read from what was captured
+# before any runtime mutation rather than from what the operator expected.
+#
+# ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001: a first release into an empty target
+# has no previous version, so "rolling back" would name a version that does not
+# exist. `restore_service_traffic` has always done the right thing here -- it
+# deletes the bootstrap candidate -- but the failure path announced a traffic
+# restore either way, which is the one moment an operator reads the log to learn
+# whether the old version is back.
+release_recovery_mode() {
+  local api_snapshot="$1"
+  local web_snapshot="$2"
+  local api_exists web_exists
+  if ! api_exists="$(python3 "${ODP_TRAFFIC_HELPER}" exists --description="${api_snapshot}")" \
+    || ! web_exists="$(python3 "${ODP_TRAFFIC_HELPER}" exists --description="${web_snapshot}")"; then
+    echo "Error: cannot determine whether a previous API/Web release exists; recovery mode is unknown." >&2
+    return 1
+  fi
+  if [ "${api_exists}" = "true" ] || [ "${web_exists}" = "true" ]; then
+    printf 'rollback'
+    return
+  fi
+  if [ "${api_exists}" = "false" ] && [ "${web_exists}" = "false" ]; then
+    printf 'initial-release-cleanup'
+    return
+  fi
+  echo "Error: API/Web pre-deploy snapshot has an invalid existence value; recovery mode is unknown." >&2
+  return 1
+}
+
+delete_candidate_job() {
+  local job="$1"
+  local existing
+  if ! existing="$(gcloud run jobs list \
+    --region="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" \
+    --filter="metadata.name=${job}" \
+    --format='value(metadata.name)')"; then
+    echo "Error: cannot read back candidate Cloud Run Job '${job}' for cleanup." >&2
+    return 1
+  fi
+  if [ -z "${existing}" ]; then
+    return 0
+  fi
+  if [ "${existing}" != "${job}" ]; then
+    echo "Error: candidate Cloud Run Job lookup for '${job}' was ambiguous: ${existing}" >&2
+    return 1
+  fi
+  echo "Deleting first-release candidate Cloud Run Job '${job}'..." >&2
+  gcloud run jobs delete "${job}" \
+    --region="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" \
+    --quiet
+}
+
+cleanup_initial_release_candidates() {
+  local failed=0
+  local job
+  for job in "$@"; do
+    delete_candidate_job "${job}" || failed=1
+  done
+  return "${failed}"
+}
+
 rollback_release_traffic() {
   local api_service="$1"
   local api_snapshot="$2"

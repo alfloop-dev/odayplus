@@ -205,6 +205,19 @@ else:
 
         def _handle_error(exc: Exception) -> None:
             if isinstance(exc, MarketIntelligenceAuthorizationError):
+                # An unscoped product envelope is denied by the shared
+                # fail-closed guard, but the public API must preserve the
+                # existing resource-existence privacy contract: callers must
+                # not learn whether a resource exists outside a tenant scope.
+                if exc.code == "missing_tenant":
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail={
+                            "code": "market_intelligence_not_found",
+                            "message": "Market intelligence resource not found",
+                            "details": {},
+                        },
+                    )
                 if "authenticated" in str(exc).lower() or exc.code == "unauthenticated_principal":
                     raise HTTPException(
                         status_code=status.HTTP_401_UNAUTHORIZED,

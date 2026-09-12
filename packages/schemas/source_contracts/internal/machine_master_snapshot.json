@@ -9,6 +9,10 @@
   "mapping_id": "MAP-INT-MACHINE-v1",
   "integration_mode": "batch_snapshot",
   "envelope": "batch",
+  "data_owner": "unconfirmed",
+  "target_latency_sla": "unconfirmed",
+  "contact_channel": "unconfirmed",
+  "runtime_capability": "unverified",
   "fields": [
     {"name": "source_machine_id", "type": "string", "required": true, "description": "Upstream machine id."},
     {"name": "source_store_id", "type": "string", "required": true, "description": "Owning store id."},

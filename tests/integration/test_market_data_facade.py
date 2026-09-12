@@ -31,6 +31,7 @@ from modules.external_data.infrastructure.data_platform_client import (
 )
 from packages.oday_data_contracts_client.models import (
     EMGIPlatformFoundationConfig,
+    OperationalStartObservation,
     StoreDailyPerformance,
     StoreDayCoverage,
     StoreReference,
@@ -61,6 +62,8 @@ from shared.auth import (
     Principal,
     Role,
     Scope,
+    TenantAccessWaiver,
+    TenantAccessWaiverRegistry,
 )
 from shared.auth.engine import AuthorizationEngine
 
@@ -383,6 +386,7 @@ def sample_property_observation_payload() -> dict[str, Any]:
             }
         ],
         "status_histories": [],
+        "metadata": {"tenant_id": "tenant-alpha"},
     }
 
 
@@ -436,6 +440,23 @@ def sample_store_performance_payload() -> dict[str, Any]:
 
 
 @pytest.fixture
+def sample_operational_start_payload() -> dict[str, Any]:
+    return {
+        "contract_id": "oday.operational-start-observation.v1",
+        "contract_version": "1.0.0",
+        "store_id": "store-101",
+        "method": "FIRST_OBSERVED_TRANSACTION",
+        "confidence": "HIGH",
+        "observed_start_business_date": "2026-01-01",
+        "observation_window_start": "2026-01-01T00:00:00+08:00",
+        "observation_window_end": "2026-08-14T23:59:59+08:00",
+        "is_left_censored": False,
+        "is_operator_truth": False,
+        "time_contract": {"knowledge_as_of": "2026-08-14T23:59:59+08:00"},
+    }
+
+
+@pytest.fixture
 def sample_foundation_config_payload() -> dict[str, Any]:
     return {
         "contract_id": "emgi.platform-foundation.v1",
@@ -455,6 +476,7 @@ def seeded_transport(
     sample_store_reference_payload,
     sample_store_coverage_payload,
     sample_store_performance_payload,
+    sample_operational_start_payload,
     sample_foundation_config_payload,
 ) -> InMemoryDataPlatformTransport:
     transport = InMemoryDataPlatformTransport()
@@ -467,6 +489,7 @@ def seeded_transport(
     transport.store_document("oday.store-reference.v1", "store-101", sample_store_reference_payload)
     transport.store_document("oday.store-coverage.v1", "store-101:2026-08-14", sample_store_coverage_payload)
     transport.store_document("oday.store-daily-performance.v1", "store-101:2026-08-14", sample_store_performance_payload)
+    transport.store_document("oday.operational-start-observation.v1", "store-101", sample_operational_start_payload)
     return transport
 
 
@@ -623,6 +646,11 @@ def test_client_foundation_reads(client):
     perf = client.get_store_daily_performance("store-101", "2026-08-14")
     assert isinstance(perf, StoreDailyPerformance)
     assert perf.transaction_count == 350
+
+    op_start = client.get_operational_start_observation("store-101")
+    assert isinstance(op_start, OperationalStartObservation)
+    assert op_start.store_id == "store-101"
+    assert op_start.observed_start_business_date == "2026-01-01"
 
 
 # ===========================================================================
@@ -782,6 +810,10 @@ def test_facade_authorized_foundation_datasets(facade, data_owner_principal):
     assert isinstance(perf, StoreDailyPerformance)
     assert perf.transaction_count == 350
 
+    op_start = facade.get_operational_start_observation("store-101", principal=data_owner_principal)
+    assert isinstance(op_start, OperationalStartObservation)
+    assert op_start.store_id == "store-101"
+
     cfg = facade.get_platform_foundation_config(principal=data_owner_principal)
     assert isinstance(cfg, EMGIPlatformFoundationConfig)
 
@@ -838,14 +870,50 @@ def test_facade_cross_tenant_isolation_denied(facade, foreign_tenant_principal):
     assert exc_info.value.code == "cross_tenant_access_denied"
 
 
-def test_facade_platform_admin_can_bypass_tenant_isolation(facade, platform_admin_principal):
-    ctx = facade.get_site_market_context(
+def test_facade_platform_admin_denied_cross_tenant_without_waiver(
+    facade, platform_admin_principal
+):
+    """PLATFORM_ADMIN must fail closed on cross-tenant access without an approved waiver."""
+    with pytest.raises(MarketDataAuthorizationError) as exc_info:
+        facade.get_site_market_context(
+            "site-taipei-001",
+            tenant_id="tenant-alpha",
+            principal=platform_admin_principal,
+        )
+    assert exc_info.value.code in {"cross_tenant_access_denied", "missing_tenant"}
+
+
+def test_facade_platform_admin_allowed_cross_tenant_with_waiver(
+    facade, platform_admin_principal
+):
+    """PLATFORM_ADMIN with a formal, time-bounded waiver is permitted and audited."""
+    from datetime import UTC, datetime, timedelta
+
+    waiver = TenantAccessWaiver(
+        waiver_id="WAIVER-ADMIN-TEST",
+        principal_id="admin-platform-1",
+        target_tenant_id="tenant-alpha",
+        approved_by="ciso",
+        reason="Security audit",
+        expires_at=datetime.now(UTC) + timedelta(days=1),
+    )
+    registry = TenantAccessWaiverRegistry()
+    registry.register(waiver)
+    authorized_facade = MarketDataFacade(
+        client=facade.client,
+        auth_engine=facade.auth_engine,
+        enforce_auth=True,
+        waiver_registry=registry,
+    )
+    ctx = authorized_facade.get_site_market_context(
         "site-taipei-001",
         tenant_id="tenant-alpha",
         principal=platform_admin_principal,
+        waiver=waiver,
     )
     assert isinstance(ctx, SiteMarketContext)
     assert ctx.identity.site_id == "site-taipei-001"
+
 
 
 def test_facade_insufficient_clearance_denied(facade):
@@ -1022,6 +1090,7 @@ def test_t1_t2_two_tenant_isolation_and_default_scoping(
     prop_beta_payload = {
         "created_at": "2026-08-14T00:00:00Z",
         "contract_id": "emgi.property-observation.v1",
+        "metadata": {"tenant_id": "tenant-beta"},
         "tenant_id": "tenant-beta",
         "properties": [
             {
@@ -1052,6 +1121,7 @@ def test_t1_t2_two_tenant_isolation_and_default_scoping(
 
     prop_alpha_payload = {
         **sample_property_observation_payload,
+        "metadata": {"tenant_id": "tenant-alpha"},
         "tenant_id": "tenant-alpha",
     }
 
@@ -1084,11 +1154,22 @@ def test_t1_t2_two_tenant_isolation_and_default_scoping(
         authenticated=True,
     )
 
-    # T2: Omitting tenant_id defaults to principal.tenant_id
+    # T2: Missing tenant_id fails closed with missing_tenant
+    with pytest.raises(MarketDataAuthorizationError) as exc_info:
+        facade.get_site_market_context(
+            "site-taipei-001",
+            period_grain=PeriodGrain.MONTHLY,
+            period_key="2026-08",
+            principal=principal_alpha,
+        )
+    assert exc_info.value.code == "missing_tenant"
+
+    # T2: Explicit matching tenant_id succeeds
     ctx_alpha = facade.get_site_market_context(
         "site-taipei-001",
         period_grain=PeriodGrain.MONTHLY,
         period_key="2026-08",
+        tenant_id="tenant-alpha",
         principal=principal_alpha,
     )
     assert ctx_alpha.identity.site_id == "site-taipei-001"
@@ -1097,6 +1178,7 @@ def test_t1_t2_two_tenant_isolation_and_default_scoping(
         "site-beta-001",
         period_grain=PeriodGrain.MONTHLY,
         period_key="2026-08",
+        tenant_id="tenant-beta",
         principal=principal_beta,
     )
     assert ctx_beta.identity.site_id == "site-beta-001"
@@ -1112,36 +1194,31 @@ def test_t1_t2_two_tenant_isolation_and_default_scoping(
         )
     assert exc_info.value.code == "cross_tenant_access_denied"
 
-    # T2: Attempting to read foreign site without tenant_id raises NotFound in own tenant (no cross-tenant leak)
-    with pytest.raises(MarketDataNotFoundError):
-        facade.get_site_market_context(
-            "site-beta-001",
-            period_grain=PeriodGrain.MONTHLY,
-            period_key="2026-08",
-            principal=principal_alpha,
-        )
-
     # T1: Property Entity and Listing Observation isolation
-    prop_a = facade.get_property_entity("prop-tw-001", principal=principal_alpha)
+    prop_a = facade.get_property_entity("prop-tw-001", tenant_id="tenant-alpha", principal=principal_alpha)
     assert prop_a.property_id == "prop-tw-001"
 
-    prop_b = facade.get_property_entity("prop-beta-001", principal=principal_beta)
+    prop_b = facade.get_property_entity("prop-beta-001", tenant_id="tenant-beta", principal=principal_beta)
     assert prop_b.property_id == "prop-beta-001"
 
-    # Principal Alpha querying Principal Beta's property entity raises NotFound (does not leak)
-    with pytest.raises(MarketDataNotFoundError):
-        facade.get_property_entity("prop-beta-001", principal=principal_alpha)
+    # Principal Alpha querying Principal Beta's property entity with foreign tenant is denied
+    with pytest.raises(MarketDataAuthorizationError) as exc_info:
+        facade.get_property_entity("prop-beta-001", tenant_id="tenant-beta", principal=principal_alpha)
+    assert exc_info.value.code == "cross_tenant_access_denied"
 
-    # Principal Beta querying Principal Alpha's property entity raises NotFound (does not leak)
-    with pytest.raises(MarketDataNotFoundError):
-        facade.get_property_entity("prop-tw-001", principal=principal_beta)
+    # Principal Beta querying Principal Alpha's property entity with foreign tenant is denied
+    with pytest.raises(MarketDataAuthorizationError) as exc_info:
+        facade.get_property_entity("prop-tw-001", tenant_id="tenant-alpha", principal=principal_beta)
+    assert exc_info.value.code == "cross_tenant_access_denied"
 
     # Listing observation isolation
-    listing_a = facade.get_listing_observation("list-obs-001", principal=principal_alpha)
+    listing_a = facade.get_listing_observation("list-obs-001", tenant_id="tenant-alpha", principal=principal_alpha)
     assert listing_a.listing_obs_id == "list-obs-001"
 
-    with pytest.raises(MarketDataNotFoundError):
-        facade.get_listing_observation("list-beta-001", principal=principal_alpha)
+    with pytest.raises(MarketDataAuthorizationError) as exc_info:
+        facade.get_listing_observation("list-beta-001", tenant_id="tenant-beta", principal=principal_alpha)
+    assert exc_info.value.code == "cross_tenant_access_denied"
+
 
 
 def test_m1_m2_authorization_engine_security_audit_events(facade, foreign_tenant_principal):
@@ -1205,5 +1282,4 @@ def test_t3_transport_explicit_requirement_and_rejection_of_silent_defaults(seed
         principal=expansion_principal,
     )
     assert ctx.identity.site_id == "site-taipei-001"
-
 

@@ -344,3 +344,86 @@ def test_expired_authorization_returns_422_via_api() -> None:
 
     assert response.status_code == 422
     assert "expired" in response.json()["detail"].lower()
+
+
+def test_audit_evidence_export_runtime_error_does_not_leak_raw_message(monkeypatch) -> None:
+    now = _now()
+    audit_log = InMemoryAuditLog()
+    app = create_app(audit_log=audit_log)
+    correlation_id = "corr-audit-runtime-err-test"
+    client = TestClient(app, headers={**AUDIT_HEADERS, "X-Correlation-ID": correlation_id})
+
+    valid_payload = {
+        "program_id": "subsidy-program-2026-q2",
+        "purpose": "model release subsidy audit",
+        "requested_by": "auditor-a",
+        "from_time": (now - timedelta(hours=1)).isoformat(),
+        "to_time": (now + timedelta(hours=1)).isoformat(),
+        "correlation_ids": [correlation_id],
+        "export_scope": "tenant=t1;model=forecast_revenue_interval",
+        "environment": "ci",
+        "build_version": "test-build",
+        "data_classification": "restricted",
+        "decision_cards": [
+            {
+                "decision_id": "decision-001",
+                "decision_type": "MODEL_RELEASE",
+                "module": "Learning Hub",
+                "title": "ForecastOps release",
+                "subject_ref": "model/forecast:1.0",
+                "outcome": "APPROVED",
+                "owner": "auditor",
+                "decided_at": now.isoformat(),
+                "rationale": "ok",
+                "input_snapshot_id": "snap-1",
+            }
+        ],
+    }
+
+    from modules.opsboard.audit import AuditEvidenceExportService
+
+    def _broken_export(self, *args, **kwargs):
+        raise RuntimeError("secret_vault_database_credentials_leak")
+
+    monkeypatch.setattr(AuditEvidenceExportService, "export", _broken_export)
+
+    response = client.post("/audit/evidence/export", json=valid_payload)
+    assert response.status_code == 500
+    assert "secret_vault_database_credentials_leak" not in response.text
+    assert correlation_id in response.text
+    assert "Audit evidence export failed" in response.json()["detail"]
+
+
+def test_audit_evidence_export_missing_card_field_returns_422() -> None:
+    now = _now()
+    audit_log = InMemoryAuditLog()
+    app = create_app(audit_log=audit_log)
+    client = TestClient(app, headers=AUDIT_HEADERS)
+
+    # Missing "decision_id" in decision card
+    invalid_payload = {
+        "program_id": "subsidy-program-2026-q2",
+        "purpose": "model release subsidy audit",
+        "requested_by": "auditor-a",
+        "from_time": (now - timedelta(hours=1)).isoformat(),
+        "to_time": (now + timedelta(hours=1)).isoformat(),
+        "correlation_ids": ["corr-1"],
+        "export_scope": "tenant=t1",
+        "decision_cards": [
+            {
+                "decision_type": "MODEL_RELEASE",
+                "module": "Learning Hub",
+                "title": "ForecastOps release",
+                "subject_ref": "model/forecast:1.0",
+                "outcome": "APPROVED",
+                "owner": "auditor",
+                "decided_at": now.isoformat(),
+                "rationale": "ok",
+                "input_snapshot_id": "snap-1",
+            }
+        ],
+    }
+
+    response = client.post("/audit/evidence/export", json=invalid_payload)
+    assert response.status_code == 422
+    assert "missing required field 'decision_id'" in response.json()["detail"]

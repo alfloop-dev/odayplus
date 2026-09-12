@@ -39,7 +39,15 @@ from modules.learninghub import (
 )
 from pipelines.features import FeaturePipelineRunner
 from pipelines.training import TrainingPipelineRunner
+from shared.governance import (
+    MODEL_PERFORMANCE_DRIFT_POLICY_KIND,
+    MODEL_PERFORMANCE_DRIFT_POLICY_TENANT_ID,
+    DecisionPolicy,
+    DecisionPolicyRepository,
+    resolve_policy,
+)
 from shared.infrastructure.persistence.audit_log import DurableAuditLog
+from shared.infrastructure.persistence.decision_policy import SqlDecisionPolicyRepository
 from shared.infrastructure.persistence.postgresql import (
     PostgresDocumentStore,
     PostgresEngine,
@@ -155,13 +163,27 @@ class BoundedModelTrainingRelease:
         git_sha: str,
         actor: str,
         regression_trainer: RegressionTrainer = train_oss_estimator,
+        decision_policy_repository: DecisionPolicyRepository | None = None,
+        decision_policy: DecisionPolicy | None = None,
+        decision_policy_tenant_id: str = MODEL_PERFORMANCE_DRIFT_POLICY_TENANT_ID,
     ) -> None:
+        if decision_policy is not None and decision_policy_repository is not None:
+            raise ModelTrainingConfigurationError(
+                "provide either decision_policy or decision_policy_repository, not both"
+            )
+        if decision_policy is not None and decision_policy.policy_kind != MODEL_PERFORMANCE_DRIFT_POLICY_KIND:
+            raise ModelTrainingConfigurationError(
+                f"decision policy must be {MODEL_PERFORMANCE_DRIFT_POLICY_KIND}"
+            )
         self.source = source
         self.service = service
         self.artifact_store = artifact_store
         self.git_sha = git_sha
         self.actor = actor
         self.regression_trainer = regression_trainer
+        self.decision_policy_repository = decision_policy_repository
+        self.decision_policy = decision_policy
+        self.decision_policy_tenant_id = decision_policy_tenant_id
 
     def inventory(self, spec: ModelSpec) -> dict[str, Any]:
         inventory = self.source.inventory(spec)
@@ -190,6 +212,7 @@ class BoundedModelTrainingRelease:
     ) -> TrainingReleaseResult:
         if not version.strip():
             raise ModelTrainingConfigurationError("model version is required")
+        decision_policy = self._resolve_performance_policy()
         loaded = self.source.load(spec, bounds)
         prepared = prepare_model_rows(spec, loaded)
         if len(prepared) < spec.minimum_rows:
@@ -253,6 +276,7 @@ class BoundedModelTrainingRelease:
                 temporal=temporal,
                 temporal_artifact_sha256=temporal_record.content_digest,
                 snapshot_artifact_sha256=snapshot_record.content_digest,
+                decision_policy=decision_policy,
             )
         return self._train_survival_candidate(
             spec=spec,
@@ -263,6 +287,21 @@ class BoundedModelTrainingRelease:
             temporal=temporal,
             temporal_artifact_sha256=temporal_record.content_digest,
             snapshot_artifact_sha256=snapshot_record.content_digest,
+            decision_policy=decision_policy,
+        )
+
+    def _resolve_performance_policy(self) -> DecisionPolicy:
+        if self.decision_policy is not None:
+            return self.decision_policy
+        if self.decision_policy_repository is None:
+            raise ModelTrainingConfigurationError(
+                "production model training requires a model performance decision policy repository"
+            )
+        return resolve_policy(
+            self.decision_policy_repository,
+            policy_kind=MODEL_PERFORMANCE_DRIFT_POLICY_KIND,
+            tenant_id=self.decision_policy_tenant_id,
+            at=datetime.now(UTC),
         )
 
     def promote(
@@ -490,6 +529,7 @@ class BoundedModelTrainingRelease:
         temporal: TemporalValidationReport,
         temporal_artifact_sha256: str,
         snapshot_artifact_sha256: str,
+        decision_policy: DecisionPolicy,
     ) -> TrainingReleaseResult:
         run_id = f"training-{spec.model_name}-{version}-{snapshot_id}"
         result = TrainingPipelineRunner(
@@ -517,6 +557,7 @@ class BoundedModelTrainingRelease:
             actor=self.actor,
             run_id=run_id,
             git_sha=self.git_sha,
+            decision_policy=decision_policy,
         )
         if not result.accepted:
             failures = "; ".join(failure.message for failure in result.validation_run.failed_rules)
@@ -573,6 +614,7 @@ class BoundedModelTrainingRelease:
         temporal: TemporalValidationReport,
         temporal_artifact_sha256: str,
         snapshot_artifact_sha256: str,
+        decision_policy: DecisionPolicy,
     ) -> TrainingReleaseResult:
         survival_rows = [
             _liquidity_training_record(row, spec)
@@ -608,6 +650,7 @@ class BoundedModelTrainingRelease:
             ),
             min_training_records=spec.minimum_rows,
             calibration_summary={"temporal_validation": True},
+            decision_policy=decision_policy,
         )
         if not validation.passed:
             raise ModelReadyDataError(f"{spec.key}: survival validation did not pass release gates")
@@ -620,6 +663,40 @@ class BoundedModelTrainingRelease:
             metadata={"validation_run_id": validation.validation_run_id},
         )
         run_id = f"training-{spec.model_name}-{version}-{snapshot_id}"
+        backtest_receipt = self.service.evaluate_backtest(
+            model_name=spec.model_name,
+            model_version=version,
+            dataset_snapshot_id=snapshot_id,
+            code_version=self.git_sha or "unversioned-dev",
+            metrics=metrics,
+            baseline_metrics=temporal.baseline_metrics,
+            thresholds=(
+                MetricThreshold(
+                    "normalized_mae",
+                    max_value=spec.max_normalized_mae,
+                ),
+                MetricThreshold("observed_event_rate", min_value=0.02),
+            ),
+            decision_policy=decision_policy,
+            calibration_summary={"temporal_validation": True},
+            requested_by=self.actor,
+        )
+        backtest_payload = {
+            "artifact_type": "backtest_report",
+            "backtest_receipt": backtest_receipt.to_dict(),
+        }
+        self.artifact_store.put_artifact(
+            model_name=spec.model_name,
+            version=version,
+            kind=ArtifactKind.BACKTEST_REPORT,
+            data=_canonical_json(backtest_payload),
+            content_type="application/json",
+            metadata={
+                "backtest_receipt_id": backtest_receipt.receipt_id,
+                "dataset_snapshot_id": snapshot_id,
+                "run_id": run_id,
+            },
+        )
         model_version = ModelVersion(
             model_name=spec.model_name,
             version=version,
@@ -717,6 +794,7 @@ def build_production_resources(
         artifact_store=artifact_store,
         runtime_mode="production",
     )
+    policy_repository = SqlDecisionPolicyRepository(engine)
     return ProductionResources(
         engine=engine,
         application=BoundedModelTrainingRelease(
@@ -725,6 +803,7 @@ def build_production_resources(
             artifact_store=artifact_store,
             git_sha=settings.git_sha,
             actor=settings.actor,
+            decision_policy_repository=policy_repository,
         ),
     )
 

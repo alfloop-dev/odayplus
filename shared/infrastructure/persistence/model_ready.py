@@ -91,6 +91,7 @@ class LineageManifest:
 
     def to_audit_snapshot_row(self) -> dict[str, Any]:
         """Row shaped for the canonical ``audit.data_snapshots`` registry."""
+        status = "measured" if self.quality_score is not None else "unmeasured"
         return {
             "snapshot_type": self.snapshot_type,
             "source_id": ",".join(self.source_snapshot_ids),
@@ -98,7 +99,8 @@ class LineageManifest:
             "storage_uri": self.storage_uri,
             "schema_version": self.schema_version,
             "row_count": self.row_count,
-            "quality_score": round(self.quality_score, 2),
+            "quality_score": round(self.quality_score, 2) if self.quality_score is not None else None,
+            "quality_score_status": status,
             "created_by_run_id": self.run_id,
         }
 
@@ -174,7 +176,11 @@ def build_lineage_manifest(
 ) -> LineageManifest:
     """Derive the lineage/quality header for a built :class:`DatasetSnapshot`."""
     records = snapshot.records
-    quality_scores = [record.data_quality_score for record in records]
+    quality_scores = [
+        record.data_quality_score
+        for record in records
+        if record.data_quality_score is not None
+    ]
     excluded = sum(1 for record in records if record.exclusion_reason)
     mean_quality = sum(quality_scores) / len(quality_scores) if quality_scores else 1.0
     return LineageManifest(

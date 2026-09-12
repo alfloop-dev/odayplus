@@ -2,9 +2,11 @@ from __future__ import annotations
 # ruff: noqa: F401,F821,F841,I001
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import fcntl
+import os
 import subprocess
 import sys
 import uuid
@@ -21,16 +23,65 @@ CI_UNRESOLVED,
     PR_NOT_MERGED,
     READY,
 )
+from common import (
+    REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY,
+    REOPEN_REASON_CONTROL_PLANE_RECOVERY,
+    REOPEN_REASON_WORKTREE_LEASE_MISMATCH,
+)
 
 
 STATUS_WRITE_REVISION_FIELD = "_status_write_revision"
 AGENT_OPEN_TASK_STATUSES = ("todo", "in_progress", "review", "review_approved", "blocked")
+STATUS_LAUNCHER_NAME = "ai-status.sh"
 
 
 def _supervisor_module():
     import supervisor
 
     return supervisor
+
+
+def _resolve_status_launcher(config: dict[str, Any]) -> tuple[Path, str | None]:
+    """Locate the canonical status launcher under the configured status root.
+
+    ``scripts/ai-status.sh`` is the entry point that routes to the selected
+    runtime code authority. The sibling ``scripts/ai_status.py`` is only
+    whatever revision that checkout happens to hold, so calling it directly can
+    execute an older writer against a newer config. Returns the launcher path
+    plus a diagnostic when it cannot be executed, letting each caller keep its
+    own activity-log event type and fail closed.
+    """
+
+    sv = _supervisor_module()
+    launcher = sv.config_path(config, "status_file").parent / "scripts" / STATUS_LAUNCHER_NAME
+    if not launcher.exists():
+        return launcher, f"launcher not found at {launcher}"
+    if not os.access(launcher, os.X_OK):
+        return launcher, f"launcher at {launcher} is not executable"
+    return launcher, None
+
+
+STATUS_ROOT_ENV_VARS = ("ORCH_STATUS_ROOT", "PANTHEON_STATUS_ROOT")
+
+
+def _status_launcher_env(config: dict[str, Any]) -> dict[str, str]:
+    """Pin the launcher to the status root this config selected.
+
+    The launcher honours an inherited ``PANTHEON_STATUS_ROOT`` before falling
+    back to its own location, but the runtime writer it execs resolves
+    ``ORCH_STATUS_ROOT`` first. Pinning only one of them lets a supervisor that
+    inherited a different root address the launcher at the configured board
+    while the writer behind it commits to the inherited one, splitting CAS and
+    writer authority across two boards. Both names therefore carry the same
+    configured root so every layer of the call resolves to it.
+    """
+
+    sv = _supervisor_module()
+    env = os.environ.copy()
+    status_root = str(sv.config_path(config, "status_file").parent)
+    for name in STATUS_ROOT_ENV_VARS:
+        env[name] = status_root
+    return env
 
 
 def write_status_snapshot_if_current(config: dict[str, Any], status: dict[str, Any]) -> bool:
@@ -91,13 +142,13 @@ def sync_status_pipeline(config: dict[str, Any]) -> bool:
         if not (external_module == "supervisor" and external_name == "sync_status_pipeline"):
             return bool(external_sync(config))
 
-    script = sv.config_path(config, "status_file").parent / "scripts" / "ai_status.py"
-    if not script.exists():
+    launcher, launcher_error = _resolve_status_launcher(config)
+    if launcher_error:
         sv.write_activity_log(
             config,
             {
                 "type": "task_reassignment_sync_failed",
-                "message": f"Status sync script not found at {script}.",
+                "message": f"Status sync {launcher_error}.",
             },
         )
         return False
@@ -105,10 +156,11 @@ def sync_status_pipeline(config: dict[str, Any]) -> bool:
     timeout_seconds = float(config.get("supervisor", {}).get("external_command_timeout_seconds", 30))
     try:
         result = subprocess.run(
-            [sys.executable, str(script), "sync"],
+            [str(launcher), "sync"],
             cwd=str(sv.config_path(config, "status_file").parent),
             capture_output=True,
             text=True,
+            env=_status_launcher_env(config),
             timeout=timeout_seconds,
         )
     except subprocess.TimeoutExpired:
@@ -161,14 +213,14 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
     if not config.get("paths", {}).get("status_file"):
         return False
 
-    script = sv.config_path(config, "status_file").parent / "scripts" / "ai_status.py"
-    if not script.exists():
+    launcher, launcher_error = _resolve_status_launcher(config)
+    if launcher_error:
         sv.write_activity_log(
             config,
             {
                 "type": "task_dispatch_sync_failed",
                 "task_id": event.get("task_id"),
-                "message": f"Dispatch status sync script not found at {script}.",
+                "message": f"Dispatch status sync {launcher_error}.",
             },
         )
         return False
@@ -195,12 +247,12 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
         REASON_OWNED_IN_PROGRESS: f"Supervisor re-dispatched {task_id}; task remains in progress.",
         REASON_HELPER_CLAIM: f"Supervisor started {task_id} under a bounded helper execution lease.",
     }[reason]
-    env = __import__("os").environ.copy()
+    env = _status_launcher_env(config)
     env["AI_NAME"] = target_agent
     timeout_seconds = float(config.get("supervisor", {}).get("external_command_timeout_seconds", 30))
     try:
         result = subprocess.run(
-            [sys.executable, str(script), command_name, task_id, message],
+            [str(launcher), command_name, task_id, message],
             cwd=str(sv.config_path(config, "status_file").parent),
             capture_output=True,
             text=True,
@@ -248,12 +300,17 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
 def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -> bool:
     sv = _supervisor_module()
     from dispatch import worker_logical_dispatch_agent_id
-    from dispatch_policy import REASON_OWNED_FINALIZE, REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY
+    from dispatch_policy import (
+        REASON_OWNED_FINALIZE,
+        REASON_OWNED_IN_PROGRESS,
+        REASON_OWNED_READY,
+        REASON_REVIEW_READY,
+    )
 
     if not config.get("paths", {}).get("status_file"):
         return False
 
-    dispatch_reason = str(worker.get("request_snapshot", {}).get("reason") or "").strip()
+    dispatch_reason = str(worker.get("request_snapshot", {}).get("reason") or worker.get("reason") or "").strip()
     task_id = str(worker.get("task_id") or "").strip()
     target_agent = sv.display_name_for(
         config,
@@ -266,8 +323,17 @@ def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -
     task = _task_index_from_status(config, status).get(task_id)
     if not task:
         return False
-    if str(task.get("owner") or "").strip() != target_agent:
-        return False
+
+    schema = config.get("schema", {})
+    owner_field = schema.get("assignee_field", "owner")
+    reviewer_field = schema.get("reviewer_field", "reviewer")
+
+    if dispatch_reason == REASON_REVIEW_READY:
+        if str(task.get(reviewer_field) or "").strip() != target_agent:
+            return False
+    else:
+        if str(task.get(owner_field) or "").strip() != target_agent:
+            return False
 
     task_status = str(task.get("status") or "").lower()
     timestamp = sv.utc_now()
@@ -278,15 +344,22 @@ def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -
             return False
         task["status"] = "todo"
         message = (
-            f"Supervisor preempted {task_id} to free {target_agent} for higher-priority review/finalize work; "
+            f"Supervisor preempted {task_id} to free {target_agent} for higher-priority work; "
             "task returned to todo until a fresh run restarts it."
         )
     elif dispatch_reason == REASON_OWNED_FINALIZE:
         if task_status != "review_approved":
             return False
         message = (
-            f"Supervisor paused finalize on {task_id} to free {target_agent} for higher-priority review work; "
+            f"Supervisor paused finalize on {task_id} to free {target_agent} for higher-priority work; "
             "task remains review_approved."
+        )
+    elif dispatch_reason == REASON_REVIEW_READY:
+        if task_status != "review":
+            return False
+        message = (
+            f"Supervisor paused review on {task_id} to free {target_agent} for higher-priority work; "
+            "task remains review."
         )
     else:
         return False
@@ -422,11 +495,25 @@ def repair_unsubmitted_review_tasks(config: dict[str, Any], status: dict[str, An
         task["last_update"] = timestamp
         task["next"] = message
         task.pop("approved_head", None)
+        task.pop("merge_route", None)
+        task["last_reopened_by"] = "Supervisor"
+        task["last_reopened_reason"] = REOPEN_REASON_CONTROL_PLANE_RECOVERY
+        task["last_reopen_category"] = REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY
+        task["last_reopened_at"] = timestamp
         for handoff in status.get("handoffs", ()) or []:
             if handoff.get("task_id") == task_id and handoff.get("status") != "done":
                 handoff["status"] = "done"
                 handoff["resolved_at"] = timestamp
-        sv.write_activity_log(config, {"type": "review_submission_repaired", "task_id": task_id, "message": message})
+        sv.write_activity_log(
+            config,
+            {
+                "type": "review_submission_repaired",
+                "task_id": task_id,
+                "message": message,
+                "reason": REOPEN_REASON_CONTROL_PLANE_RECOVERY,
+                "category": REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY,
+            },
+        )
         changed = True
     if changed:
         if not commit_canonical_task_transition(config, status):
@@ -457,6 +544,11 @@ def reject_unsealed_worker_handoff(
     if not task_id or not any(item is task for item in status.get("tasks", []) or []):
         return False
     timestamp = sv.utc_now()
+    reopen_reason = (
+        REOPEN_REASON_WORKTREE_LEASE_MISMATCH
+        if "lease" in str(reason).lower()
+        else REOPEN_REASON_CONTROL_PLANE_RECOVERY
+    )
     message = (
         f"Owner closeout seal rejected ({reason}: {detail}). The task returned to in_progress; "
         "only the same owner may resume the recorded worktree, clean it, and resubmit the existing PR."
@@ -473,6 +565,11 @@ def reject_unsealed_worker_handoff(
     }
     task.pop("waiting_for", None)
     task.pop("approved_head", None)
+    task.pop("merge_route", None)
+    task["last_reopened_by"] = "Supervisor"
+    task["last_reopened_reason"] = reopen_reason
+    task["last_reopen_category"] = REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY
+    task["last_reopened_at"] = timestamp
     for handoff in status.get("handoffs", []) or []:
         if handoff.get("task_id") == task_id and handoff.get("status") != "done":
             handoff["status"] = "done"
@@ -486,6 +583,8 @@ def reject_unsealed_worker_handoff(
             "task_id": task_id,
             "worker_run_id": worker_run_id,
             "reason": reason,
+            "reopen_reason": reopen_reason,
+            "category": REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY,
             "detail": detail,
             "message": message,
         },
@@ -502,6 +601,8 @@ def requeue_task_for_ci_repair(
     clear_approval: bool,
     requeued_head: str | None = None,
     now_ts: float | None = None,
+    allow_conflicted_review: bool = False,
+    allow_failed_ci_review: bool = False,
 ) -> bool:
     sv = _supervisor_module()
     task_id = str(task.get("id") or "")
@@ -511,33 +612,77 @@ def requeue_task_for_ci_repair(
         or not any(item is task for item in status_tasks)
         or sv.task_is_human_gate(task)
         or bool(task.get("non_dispatchable"))
+        or sv.is_human_gate_agent(task.get("owner"))
+        or sv.is_human_gate_agent(task.get("waiting_for"))
     ):
         return False
 
-    if str(task.get("status") or "").lower() != "review_approved":
-        return False
+    task_status = str(task.get("status") or "").lower()
+    from_review = False
+    if task_status != "review_approved":
+        # One canonical CI-repair transition entered from one more place, not a
+        # second status guard. A review PR that conflicts with its base has no
+        # merge commit, so GitHub runs no check on it -- the same "CI cannot
+        # answer and only the owner can" failure as a queue ejection, one step
+        # earlier in the lane. The guard widens for this named entry alone, and
+        # only while the review is still unapproved and unqueued: an approved or
+        # queued head is frozen and may only be moved by an explicit re-review.
+        if not (
+            (allow_conflicted_review or allow_failed_ci_review)
+            and task_status == "review"
+            and sv.review_submission_is_complete(config, task)
+            and not str(task.get("approved_head") or "").strip()
+            and task.get("merge_route") is None
+        ):
+            return False
+        from_review = True
 
     task["status"] = "in_progress"
     task["last_update"] = sv.utc_now()
     task["next"] = message
     task.pop("ci_pending_since_ts", None)
     task.pop("ci_pending_since", None)
+    task["last_reopened_by"] = "Supervisor"
+    task["last_reopened_reason"] = REOPEN_REASON_CONTROL_PLANE_RECOVERY
+    task["last_reopen_category"] = REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY
+    task["last_reopened_at"] = sv.utc_now()
     task["ci_repair_last_requeued_ts"] = (
         datetime.now(UTC).timestamp() if now_ts is None else now_ts
     )
     if requeued_head is not None:
         task["ci_repair_requeued_head"] = requeued_head
+    stale_route = None
     if clear_approval:
         task.pop("approved_head", None)
+        stale_route = task.pop("merge_route", None)
+    if from_review:
+        # `submit_review` opens a pending owner -> reviewer handoff. Returning
+        # the task to its owner without resolving it would leave a reviewer
+        # holding work that is no longer theirs, which is how a reviewer keeps
+        # being woken for a task that is back in implementation.
+        task.pop("waiting_for", None)
+        for handoff in status.get("handoffs", []) or []:
+            if handoff.get("task_id") == task_id and handoff.get("status") != "done":
+                handoff["status"] = "done"
+                handoff["resolved_at"] = task["last_update"]
     if not _supervisor_module().commit_canonical_task_transition(config, status):
         return False
+    entry = (
+        "review_ci_failure"
+        if allow_failed_ci_review
+        else ("conflicted_review" if allow_conflicted_review else "review_approved")
+    )
     sv.write_activity_log(
         config,
         {
             "type": "ci_repair_requeued",
             "task_id": task_id,
             "message": message,
+            "reason": REOPEN_REASON_CONTROL_PLANE_RECOVERY,
+            "category": REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY,
             "approval_cleared": clear_approval,
+            "stale_merge_route_cleared": bool(stale_route),
+            "entry": entry,
         },
     )
     return True

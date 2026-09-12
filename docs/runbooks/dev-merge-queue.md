@@ -38,8 +38,13 @@ applied by `delivery_toolchain/github/apply_branch_protection.py`.
 | `check_response_timeout_minutes` | `60` | CI measures ~25 minutes. 60 leaves 2x headroom, so a slow runner does not eject an otherwise good PR. |
 | `max_entries_to_build` | `5` | Cap on concurrent speculative CI runs. |
 | `max_entries_to_merge` | `5` | Cap on how many PRs land in one group. |
-| `min_entries_to_merge` | `1` | Do not hold a ready PR waiting for company; latency matters more than batching here. |
-| `min_entries_to_merge_wait_minutes` | `5` | Inert while `min_entries_to_merge` is 1; kept explicit so raising the minimum later is a one-value change. |
+| `min_entries_to_merge` | `2` | Minimum PRs to accumulate before merging group when available. Enables batching for concurrent PRs to reduce merge commit churn and base branch rebase races on `dev`. |
+| `min_entries_to_merge_wait_minutes` | `10` | Bounded wait ceiling: holds a solo PR for up to 10 minutes to accumulate companion PRs before merging solo. Official GitHub documentation notes merge limits affect merges after build checks pass; offline configuration tests cannot verify GitHub timer start points or zero-added-latency claims, so real solo-PR timeline behavior is listed as a WP-35C live verification item. |
+
+D21 confirmed the batch requirement; the `min_entries_to_merge = 2` and `min_entries_to_merge_wait_minutes = 10` parameters are an **adjustable engineering default** adopted by Codex per current user instructions to complete the deliverable, and have not received itemized H08 sign-off or live activation approval.
+They transition repository policy from single-entry baseline (`min_entries_to_merge = 1`) to conservative batching.
+Note that repository policy updates in `policy.json` (WP-35B) are distinct from live GitHub ruleset activation (WP-35C), which requires explicit operator authorization via `apply_branch_protection.py` and live solo-PR timeline receipt verification.
+See [`docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/implementation-handoff.md`](../evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/implementation-handoff.md) and [`docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-IMPLEMENTATION-001/README.md`](../evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-IMPLEMENTATION-001/README.md).
 
 ### `strict` must be off on `dev`
 
@@ -63,7 +68,15 @@ contexts have to report against it:
 
 * `orchestrator`, `product`, `product-e2e-gate` — `.github/workflows/ci.yml`
   carries a `merge_group: [checks_requested]` trigger and none of these jobs
-  are gated on the event type.
+  are gated on the event type, so all three are eligible on a merge group.
+  `product` and `product-e2e-gate` are, however, skipped when `change-scope`
+  classifies the whole change as `development_tooling` (`ci.yml:145`,
+  `ci.yml:337`); GitHub counts a skipped required job as satisfied. That skip
+  predates the queue and is bounded by `config/change-review-scopes.json` —
+  note that `.github/workflows/` is itself a tooling prefix, so a
+  workflow-only change is covered by `orchestrator` but not by
+  `tests/contract`. `orchestrator` and `change-scope` carry no condition and
+  always run.
 * `task-review-gate` — normally stamped by the assigned reviewer onto the PR
   head. `.github/workflows/merge-queue-review-gate.yml` re-asserts it on the
   group SHA, and stamps *failure* when the admitted PR does not already carry a

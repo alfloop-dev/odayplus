@@ -303,6 +303,37 @@ Gate 0–6 可以保留為證據分類，但 registry 必須額外記錄 `stage`
 
 不在緊急回滾中執行 destructive down migration。contract migration 必須延後到相容觀察期結束後的獨立任務。
 
+### 8.5 首次 release 的 recovery
+
+上面整節假設 target 上已經有一個可以切回去的已核准版本。**首次部署到某個 target
+時沒有**，而 release manifest schema v2 又無條件要求綁定上一個已核准 release，
+因此那個環境會連第一次部署都做不到。
+
+解法不是放寬要求，而是換一種等價強度的證據：manifest 改綁
+`initial_release_recovery`，且只在下列條件同時成立時成立：
+
+- build 階段對這個 target 逐一讀回 `api`、`web`、`migration`、`worker`、
+  `scheduler` 五個 Cloud Run 資源，**全部不存在**。`gcloud` 讀不到（權限、網路）
+  一律視為無法斷定而拒絕，不會被當成「不存在」；
+- 記錄綁定這次的 candidate SHA、component image digest、target environment 與
+  recovery method，因此不能被搬到另一個 release、另一個環境，或在 rebuild 後沿用；
+- 只適用於 `dev`。staging 每個 release 重建、production 是被 promote 進去的，
+  兩者都不會在沒有已核准前版的情況下走到首次部署；
+- 該 release 不得宣告任何啟用中的外部資料來源。有啟用來源就維持原本的
+  masked snapshot 與 rollback 綁定要求；
+- admission 在消費 lease 之前會**再讀一次** target。build 當下為空不代表 deploy
+  當下仍為空，這一步是整條分支唯一無法從 release SHA 的 tree 推導出來的部分。
+
+首次 release 的 recovery 動作是明確記錄的，且**不是回滾**：
+
+1. 刪除本次建立的候選 Cloud Run service 與 job；
+2. 刪除本次建立的 scheduler trigger；
+3. 維持零流量。
+
+沒有可回滾的既有版本時，deploy 失敗路徑必須照實這樣說明，不得宣稱正在還原流量
+——那會描述一個從未存在過的版本。第二個 release 起，target 上已經有這個首次
+release，因此回到 §8.4 的一般路徑，綁定它作為 rollback target。
+
 ## 9. 第三方資料與 OSS 上線原則
 
 ### 9.1 Connector 可部署，但來源預設關閉

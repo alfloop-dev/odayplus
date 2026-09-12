@@ -31,6 +31,27 @@ export interface AddressLocation {
   h3_res_9: string;
   h3_res_10: string;
   manual_override_flag: boolean;
+  tenant_id?: string;
+  revision?: number;
+}
+
+export interface ManualCorrection {
+  correction_id: string;
+  entity_type: string;
+  entity_id: string;
+  tenant_id: string;
+  field_name: string;
+  old_value: unknown;
+  new_value: unknown;
+  reason: string;
+  actor_id: string;
+  occurred_at: string; // ISO 8601 DateTime
+  source_revision: number;
+  applied_revision: number;
+  status: 'applied' | 'rolled_back';
+  correlation_id?: string | null;
+  decision_card_hash?: string | null;
+  audit_event_id?: string | null;
 }
 
 export interface Store {
@@ -127,6 +148,11 @@ export interface WorkOrder {
   status: 'open' | 'in_progress' | 'resolved' | 'cancelled';
   severity: 'low' | 'medium' | 'high' | 'critical';
   cost_amount: number;
+  /**
+   * @reserved Reserved for future root-cause candidate engine (ODP-FR-FCT-004).
+   * Not populated by any automated backend pipeline in the current release.
+   * Owner: ForecastOps / Platform Ops. Target Milestone: Wave 5+.
+   */
   root_cause: string | null;
 }
 
@@ -351,6 +377,12 @@ export interface Intervention {
 /** ADR-0004: single authority for evidence strength, per ODP-ML-05 §5. */
 export type EvidenceLevel = 'L0' | 'L1' | 'L2' | 'L3' | 'L4' | 'L5';
 
+/** ODP-FR-SHARED-001: terminal and in-flight states of a long-running job. */
+export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'partial';
+
+/** Infrastructure delivery state of a queued job (ODP-FR-SHARED-001). */
+export type JobDeliveryState = 'retrying' | 'dead_letter';
+
 export interface InterventionOutcome {
   outcome_id: string;
   intervention_id: string;
@@ -385,6 +417,16 @@ export interface ValuationRun {
   report_uri: string;
 }
 
+export type ConstraintClass =
+  | 'CAPITAL'
+  | 'LEASE'
+  | 'CONSTRUCTION'
+  | 'EQUIPMENT'
+  | 'LABOUR'
+  | 'COVERAGE'
+  | 'DILUTION'
+  | 'SEQUENCING';
+
 export interface NetworkPlan {
   network_plan_id: string;
   planning_period_start: string;
@@ -393,6 +435,8 @@ export interface NetworkPlan {
   objective_value: number;
   solver_status: string;
   constraint_summary_json: Record<string, any>;
+  modelled_constraint_classes: ConstraintClass[];
+  unmodelled_constraint_classes: ConstraintClass[];
   created_at: string;
 }
 

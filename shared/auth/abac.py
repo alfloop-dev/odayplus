@@ -95,22 +95,6 @@ def require_authenticated(request: AccessRequest) -> Decision | None:
     return None
 
 
-def tenant_isolation(request: AccessRequest) -> Decision | None:
-    """Principal home tenant must match the resource tenant (SD-09 §10 threat:
-    cross-tenant access)."""
-
-    resource_tenant = request.resource.tenant_id
-    if resource_tenant is None:
-        return None
-    principal_tenant = request.principal.tenant_id
-    if principal_tenant is not None and principal_tenant != resource_tenant:
-        return Decision.deny(
-            f"tenant {principal_tenant!r} may not access tenant {resource_tenant!r}",
-            policy_id="tenant_isolation",
-        )
-    return None
-
-
 def scope_containment(request: AccessRequest) -> Decision | None:
     """Brand/region/store scope must contain the resource (SD-09 §4.2).
 
@@ -160,7 +144,6 @@ def franchisee_isolation(request: AccessRequest) -> Decision | None:
 # (any single deny wins) but is arranged cheap-checks-first for readability.
 DEFAULT_POLICIES: tuple[AbacPolicy, ...] = (
     require_authenticated,
-    tenant_isolation,
     scope_containment,
     data_classification_visibility,
     franchisee_isolation,

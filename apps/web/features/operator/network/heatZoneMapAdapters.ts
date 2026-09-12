@@ -93,6 +93,8 @@ export function operatorHeatZoneToMapZone(zone: OperatorHeatZone): MapHeatZone {
     medianListingRent: 0,
     existingStoreCount: 0,
     dataQualityScore: zone.confidence,
+    isMerged: zone.id.startsWith("MZ-"),
+    compositionKind: zone.id.startsWith("MZ-") ? "MERGED" : "ATOMIC",
   };
 }
 

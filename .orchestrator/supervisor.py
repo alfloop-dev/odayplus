@@ -55,12 +55,14 @@ from branch_drift_alarms import check_branch_drift
 from common import (
     agent_config_for,
     authoritative_status_root,
+    classify_reopen_reason,
     cmdline_is_supervisor_process,
     config_path,
     CONFIG_PATH_ENV_VAR,
     display_name_for,
     execution_context_files,
     generate_task_brief_content,
+    is_control_plane_recovery_reason,
     is_github_cli_auth_failure,
     is_task_brief_stale,
     isoformat_utc,
@@ -80,6 +82,7 @@ from common import (
     selected_shared_files,
     shell_quote,
     spawn_background_process,
+    substantive_review_reopen_count,
     summarize_failure_reason,
     supervisor_lock_path,
     supervisor_pid_path,
@@ -91,8 +94,22 @@ from common import (
     write_activity_log,
     write_failure_evidence,
     write_json,
+    REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY,
+    REOPEN_CATEGORY_OWNER_RESUME,
+    REOPEN_CATEGORY_SUBSTANTIVE_REVIEW,
+    REOPEN_REASON_CONTROL_PLANE_RECOVERY,
+    REOPEN_REASON_OWNER_RESUME,
+    REOPEN_REASON_REVIEW_FINDING,
+    REOPEN_REASON_STALE_REVIEW_SHA,
+    REOPEN_REASON_WORKTREE_LEASE_MISMATCH,
 )
 from coordination_file_watcher import sync_coordination_files
+# The account-pool resolver (`agent_account_pool_id` and the three functions it
+# is built from) and `review_is_independent` live in `dispatch_policy` rather
+# than here: the canonical CLI has to answer "are these two names the same real
+# account?" before it writes an assignment, and it must be able to do that
+# without importing the supervisor. They stay bound in this module's namespace,
+# which is the one every existing caller -- and every test patch point -- uses.
 from dispatch_policy import (
     DISPATCH_STATUS_ACTIONS,
     REASON_HELPER_CLAIM,
@@ -100,26 +117,45 @@ from dispatch_policy import (
     REASON_OWNED_IN_PROGRESS,
     REASON_OWNED_READY,
     REASON_REVIEW_READY,
+    ROLE_HELPER,
+    ROLE_OWNER,
+    ROLE_REVIEWER,
+    agent_account_pool_id,
+    agent_provider_id,
+    agent_quota_group_id,
     dispatch_reason_priority,
+    dispatch_reason_role,
     is_execution_dispatch_reason,
     normalized_status_set,
+    provider_dispatch_group_id,
     ready_dispatch_settings,
+    review_is_independent,
+    role_provider_block_reason,
     task_priority_rank,
+    task_submitted_author,
 )
 from github_reconciliation import (
     CI_FAILURE,
     CI_PENDING,
     CI_UNRESOLVED,
+    FAILURE_CONCLUSIONS,
     HEAD_MISMATCH,
     HEAD_UNRESOLVED,
     MISSING_APPROVED_HEAD,
     PR_NOT_MERGED,
     READY,
+    SUCCESS_CONCLUSIONS,
+    correlate_merge_group_task,
     evaluate_finalize_gate,
+    fetch_merge_group_runs,
+    parse_merge_group_pr_number,
+    poll_merge_group_runs,
+    reconcile_merge_group_runs,
 )
 import status_transition
 import dispatch as dispatch_ops
 import worker_lifecycle
+import release_lease_integration
 
 import dispatch_engine
 import worker_workspace
@@ -140,6 +176,7 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "_dirty_worktree_detail",
 "_existing_worktree_for_branch",
 "_file_or_dir_hash",
+"_forget_orphan_reap",
 "_generated_collaboration_guide",
 "_generated_worker_task_brief",
 "_git_commit_oid",
@@ -156,18 +193,24 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "_parse_porcelain_entries",
 "_prune_worktree_lease_blocks",
 "_quarantine_and_preserve_dirty_worktree",
+"_signal_orphan_holders",
 "_quarantine_refused",
 "QuarantineOutcome",
     "_record_worktree_lease_block",
     "_refresh_reused_worker_worktree",
     "_run_git_network_command",
 "_scan_process_paths_in_root",
+"_task_board_settlement_index",
 "_task_brief_context_candidates",
 "_task_id_slug",
+"_task_settlement",
 "_worker_worktree_base_root",
 "_worker_base_cache_key",
 "_worktree_record_branch",
+"_worktree_matches_repo_common_dir",
+"_worktree_task_id",
 "materialize_worker_context_files",
+"observe_worker_worktree_activity",
     "prepare_worker_workspace",
     "prune_orphan_worktrees",
     "_dead_owner_continuation_eligible",
@@ -180,6 +223,7 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "branch_name_is_usable",
 "canonical_task_record",
 "resolve_worker_base",
+"resolve_frozen_evidence_base",
 "worker_task_branch",
 "worker_task_repository_binding",
 "worker_task_repo_root",
@@ -243,6 +287,9 @@ _FAILURE_HELPER_FUNCTIONS = [
 "mark_provider_dispatch_paused",
 "maybe_reassign_task_after_worker_failure",
 "reassign_tasks_after_review_churn",
+"substantive_review_reopen_count",
+"is_control_plane_recovery_reason",
+"classify_reopen_reason",
 "maybe_trigger_retry_or_fallback",
 "normalized_mapping_values",
 "parse_quota_retry_hint",
@@ -355,6 +402,53 @@ def commit_canonical_task_transition(config: dict[str, Any], status: dict[str, A
     return write_status_snapshot_if_current(config, status) and sync_status_pipeline(config)
 
 
+def release_dead_helper_claims(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    status: dict[str, Any] | None = None,
+) -> tuple[bool, bool]:
+    """Release helper execution leases whose launched run is no longer live.
+
+    Returns ``(released, committed)``. One boolean cannot separate "nothing to
+    release" from "the canonical commit failed", and callers must treat the
+    second as fatal for the tick: the leases have already been popped out of
+    the in-memory ``status`` (and out of every ``tasks`` list derived from it),
+    so continuing would compute capacity and dispatch against a lease-free view
+    that was never persisted.
+    """
+    if status is None:
+        status = load_status(config)
+    schema = config.get("schema", {}) or {}
+    tasks_path = schema.get("tasks_path", "tasks")
+    task_id_field = schema.get("task_id_field", "id")
+    tasks = [task for task in status.get(tasks_path, []) if isinstance(task, dict)]
+    released_claim_ids = set(
+        capacity_controller.helper_claim_task_ids_to_release(
+            config,
+            tasks,
+            state,
+            task_id_field=task_id_field,
+        )
+    )
+    if not released_claim_ids:
+        return False, True
+    for task in tasks:
+        if str(task.get(task_id_field) or task.get("id") or "") in released_claim_ids:
+            task.pop("helper_execution_lease", None)
+    if not commit_canonical_task_transition(config, status):
+        return False, False
+    for task_id in sorted(released_claim_ids):
+        write_activity_log(
+            config,
+            {
+                "type": "helper_claim_released",
+                "task_id": task_id,
+                "message": "Helper execution lease released because its launched run is no longer live.",
+            },
+        )
+    return True, True
+
+
 def reconcile_capacity_controller(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -367,25 +461,14 @@ def reconcile_capacity_controller(
     schema = config.get("schema", {}) or {}
     tasks_path = schema.get("tasks_path", "tasks")
     task_id_field = schema.get("task_id_field", "id")
+    _released, claims_committed = release_dead_helper_claims(config, state, status)
+    if not claims_committed:
+        # Pre-refactor behaviour: a rejected CAS or a failed pipeline sync
+        # aborts the reconcile. `status` no longer carries the leases we just
+        # popped, so letting the Chair size capacity from it would be sizing
+        # against a release that never reached disk.
+        return False
     tasks = [task for task in status.get(tasks_path, []) if isinstance(task, dict)]
-    expired_claim_ids = set(
-        capacity_controller.expired_helper_claim_task_ids(tasks, task_id_field=task_id_field)
-    )
-    if expired_claim_ids:
-        for task in tasks:
-            if str(task.get(task_id_field) or task.get("id") or "") in expired_claim_ids:
-                task.pop("helper_execution_lease", None)
-        if not commit_canonical_task_transition(config, status):
-            return False
-        for task_id in sorted(expired_claim_ids):
-            write_activity_log(
-                config,
-                {
-                    "type": "helper_claim_expired",
-                    "task_id": task_id,
-                    "message": "Expired helper execution lease released back to its canonical owner.",
-                },
-            )
     runnable_task_ids = canonical_dispatchable_task_ids(config, tasks)
     controller, state_changed = capacity_controller.evaluate_chair(
         config, state, tasks, runnable_tasks=runnable_task_ids, provider_report=provider_report
@@ -395,7 +478,14 @@ def reconcile_capacity_controller(
     )
     if additions:
         known = {str(task.get(task_id_field) or task.get("id") or "") for task in tasks}
-        additions = [task for task in additions if str(task.get(task_id_field) or task.get("id") or "") not in known]
+        additions = [
+            task
+            for task in additions
+            if (
+                str(task.get(task_id_field) or task.get("id") or "") not in known
+                and load_archived_task(str(task.get(task_id_field) or task.get("id") or "")) is None
+            )
+        ]
     if additions:
         status.setdefault(tasks_path, []).extend(additions)
         if not commit_canonical_task_transition(config, status):
@@ -444,7 +534,7 @@ from runtime_state import (
     replace_event_queue,
     save_runtime_state,
 )
-from task_archive import TaskResolver
+from task_archive import TaskResolver, load_archived_task
 from watch_events import (
     enqueue_runtime_events_enabled,
     queue_delivery_event,
@@ -701,6 +791,7 @@ def parse_args() -> argparse.Namespace:
 
 
 CONFIG_DEFAULT_POLL_INTERVAL_SECONDS = 300.0
+DEFAULT_HEARTBEAT_WARN_GRACE_SECONDS = 60.0
 
 
 class FastPollNotAllowedError(SystemExit):
@@ -731,6 +822,37 @@ def resolve_poll_interval(
             "if this is a steady-state change."
         )
     return cli_value, "cli"
+
+
+def resolve_heartbeat_warn_after_seconds(
+    config: dict[str, Any],
+    *,
+    poll_interval: float | None = None,
+) -> float:
+    """Resolve a heartbeat warning threshold for the effective poll cadence.
+
+    A supervisor can only observe a missed heartbeat on its next poll, so the
+    warning floor is one full effective poll interval plus a small grace period.
+    Keep explicitly configured thresholds that meet that floor, while clamping
+    legacy values below it.  The inclusive boundary is intentional: a value
+    exactly at the floor is already valid and must not jump to a different
+    rule than a value just above it.
+    """
+    base_poll = (
+        float(poll_interval)
+        if poll_interval is not None and poll_interval > 0
+        else float(
+            config.get("supervisor", {}).get(
+                "poll_interval_seconds", CONFIG_DEFAULT_POLL_INTERVAL_SECONDS
+            )
+        )
+    )
+    minimum_warn = base_poll + DEFAULT_HEARTBEAT_WARN_GRACE_SECONDS
+    raw_warn = config.get("supervisor", {}).get("heartbeat_warn_after_seconds")
+    if raw_warn is not None:
+        configured_warn = float(raw_warn)
+        return max(minimum_warn, configured_warn)
+    return minimum_warn
 
 
 def console_log(message: str, *, quiet: bool = False) -> None:
@@ -1213,7 +1335,9 @@ def log_runtime_summary(
     quiet: bool,
     verbose: bool,
     previous_heartbeat: str | None = None,
-    warn_after_seconds: float = 10.0,
+    warn_after_seconds: float = (
+        CONFIG_DEFAULT_POLL_INTERVAL_SECONDS + DEFAULT_HEARTBEAT_WARN_GRACE_SECONDS
+    ),
     once: bool = False,
 ) -> None:
     summary = summarize_runtime(state, approval_state)
@@ -1306,44 +1430,6 @@ def provider_runtime_config_block_reason(config: dict[str, Any], provider: str |
     if health.get("valid", True):
         return None
     return str(health.get("error") or f"{provider_key or provider} provider config is invalid.")
-
-
-def provider_dispatch_group_id(config: dict[str, Any], provider: str | None) -> str:
-    provider_id = normalize_agent_id(provider or "")
-    if not provider_id:
-        return ""
-    provider_cfg = provider_config(config, provider)
-    group = (
-        provider_cfg.get("quota_group")
-        or provider_cfg.get("dispatch_group")
-        or provider_cfg.get("account_group")
-    )
-    return normalize_agent_id(str(group or provider_id))
-
-
-def agent_provider_id(config: dict[str, Any], agent_id: str | None) -> str:
-    normalized = normalize_agent_id(agent_id or "")
-    if not normalized:
-        return ""
-    agent = (config.get("agents", {}) or {}).get(normalized, {}) or {}
-    return normalize_agent_id(str(agent.get("provider") or normalized))
-
-
-def agent_quota_group_id(config: dict[str, Any], agent_id: str | None) -> str:
-    """Return the real account pool for an execution identity.
-
-    `quota_group` was historically provider-scoped, which made aliases such as
-    Antigravity2..7 look like independent accounts.  An explicit agent
-    `account_pool` is authoritative and lets multiple logical roles share one
-    provider account, quota budget, and worker-slot set.
-    """
-    normalized = normalize_agent_id(agent_id or "")
-    agent = (config.get("agents", {}) or {}).get(normalized, {}) or {}
-    explicit_pool = agent.get("account_pool") or agent.get("quota_group")
-    if explicit_pool:
-        return normalize_agent_id(str(explicit_pool))
-    provider_id = agent_provider_id(config, agent_id)
-    return provider_dispatch_group_id(config, provider_id or agent_id)
 
 
 def account_pool_settings(config: dict[str, Any], agent_id: str | None) -> tuple[str, dict[str, Any]]:
@@ -1587,17 +1673,6 @@ def account_pool_dispatch_block_reason(
         detail = str(runtime.get("reason") or "").strip()
         return f"account pool {pool_id} is {lifecycle}" + (f": {detail}" if detail else "")
     return None
-
-
-def agent_account_pool_id(config: dict[str, Any], agent_id: str | None) -> str:
-    """Semantic alias used for independence checks and dashboard reporting."""
-    return agent_quota_group_id(config, agent_id)
-
-
-def review_is_independent(config: dict[str, Any], owner: str | None, reviewer: str | None) -> bool:
-    owner_pool = agent_account_pool_id(config, owner)
-    reviewer_pool = agent_account_pool_id(config, reviewer)
-    return bool(owner_pool and reviewer_pool and owner_pool != reviewer_pool)
 
 
 def active_quota_group_counts(
@@ -1944,6 +2019,87 @@ def worker_workspace_task_id(request: DeliveryRequest) -> str | None:
 
 
 
+def bind_helper_execution_claim(
+    config: dict[str, Any],
+    request: DeliveryRequest,
+    worker_run_id: str,
+) -> bool:
+    """Bind a helper claim to the run that was actually launched.
+
+    Helper claims are allocated before delivery, while the worker run id is
+    minted by the delivery adapter. Bind only the exact claim generation and
+    role snapshot carried by this dispatch event; never replace an existing
+    run binding or mutate the canonical owner/reviewer fields.
+    """
+    if str(request.reason or "").strip() != REASON_HELPER_CLAIM:
+        return True
+    metadata = request.metadata if isinstance(request.metadata, dict) else {}
+    dispatched_task = metadata.get("task")
+    if not isinstance(dispatched_task, dict):
+        return False
+    dispatched_claim = dispatched_task.get("helper_execution_lease")
+    if not isinstance(dispatched_claim, dict) or not dispatched_claim:
+        return False
+    task_id = str(request.task_id or dispatched_task.get("id") or "").strip()
+    run_id = str(worker_run_id or "").strip()
+    claimed_by = normalize_agent_id(str(dispatched_claim.get("claimed_by") or ""))
+    try:
+        generation = int(dispatched_claim.get("generation"))
+    except (TypeError, ValueError):
+        return False
+    if not task_id or not run_id or not claimed_by:
+        return False
+
+    status = load_status(config)
+    task_map = task_index_from_status(config, status)
+    task = task_map.get(task_id)
+    if not isinstance(task, dict):
+        return False
+    schema = config.get("schema", {}) or {}
+    owner_field = schema.get("assignee_field", "owner")
+    reviewer_field = schema.get("reviewer_field", "reviewer")
+    for field in (owner_field, reviewer_field):
+        dispatched_identity = dispatched_task.get(
+            field,
+            dispatched_task.get("owner" if field == owner_field else "reviewer"),
+        )
+        if normalize_agent_id(str(task.get(field) or "")) != normalize_agent_id(str(dispatched_identity or "")):
+            return False
+
+    current_claim = task.get("helper_execution_lease")
+    if not isinstance(current_claim, dict) or not current_claim:
+        return False
+    try:
+        current_generation = int(current_claim.get("generation"))
+    except (TypeError, ValueError):
+        return False
+    if current_generation != generation:
+        return False
+    if normalize_agent_id(str(current_claim.get("claimed_by") or "")) != claimed_by:
+        return False
+    original_owner = str(current_claim.get("original_owner") or "").strip()
+    if original_owner and normalize_agent_id(str(task.get(owner_field) or "")) != normalize_agent_id(original_owner):
+        return False
+    existing_run_id = str(current_claim.get("run_id") or "").strip()
+    if existing_run_id and existing_run_id != run_id:
+        return False
+    expires_at = parse_iso_timestamp(str(current_claim.get("lease_expires_at") or ""))
+    if expires_at is None or expires_at <= datetime.now(UTC):
+        return False
+    if existing_run_id == run_id:
+        dispatched_claim["run_id"] = run_id
+        return True
+
+    current_claim["run_id"] = run_id
+    if not commit_canonical_task_transition(config, status):
+        current_claim.pop("run_id", None)
+        return False
+    # Keep the immutable dispatch snapshot equally specific. The lifecycle
+    # poller uses it to reject a later generation/run handoff.
+    dispatched_claim["run_id"] = run_id
+    return True
+
+
 def _branch_checked_out_in_root(repo_root: Path, branch: str) -> bool:
     for record in _git_worktree_records(repo_root):
         path_value = record.get("worktree")
@@ -2159,6 +2315,33 @@ def start_worker_for_request(
         "next_retry_at": None,
         "last_error": None,
     }
+    if request.reason == REASON_HELPER_CLAIM and not bind_helper_execution_claim(
+        config,
+        request,
+        worker_run_id,
+    ):
+        worker = state["workers"][worker_run_id]
+        worker["status"] = "failed"
+        worker["last_event_at"] = utc_now()
+        worker["last_error"] = (
+            "Helper claim binding failed closed: canonical claim generation, owner, "
+            "or run binding changed before worker launch."
+        )
+        terminate_worker_pid(worker.get("pid"))
+        save_runtime_state(config, state)
+        write_activity_log(
+            config,
+            {
+                "type": "worker_failed",
+                "task_id": request.task_id,
+                "target_agent": display_name_for(config, agent["id"]),
+                "provider": request.provider,
+                "message": worker["last_error"],
+                "queue_event_id": event_id_for_log,
+                "worker_run_id": worker_run_id,
+            },
+        )
+        return False, worker["last_error"], result.as_dict()
     record_worker_runtime_measurement(
         config,
         state,
@@ -2719,6 +2902,8 @@ WORKER_RUNTIME_METRIC_COUNTERS = (
     "queue_leases_started",
     "marker_updates",
     "lease_refreshes",
+    "helper_claim_renewals",
+    "helper_claim_releases",
     "missing_process_workers_failed",
     "expired_lease_workers_failed",
     "supersede_deferrals",
@@ -3574,10 +3759,20 @@ def review_submission_is_complete(config: dict[str, Any], task: dict[str, Any]) 
         pr_number = 0
     task_ref = task_id.lower().replace("_", "-")
     branch_ref = expected_branch.strip("/").lower().replace("_", "-")
+    # A task may need a distinct, auditable replacement branch (for example
+    # ``task/<task-id>-clean``) while an older PR ref remains published. Accept
+    # only the task-id itself or a suffix separated by ``-``/``/``; never treat
+    # an unrelated branch that merely contains the task id as its provenance.
+    branch_task_match = (
+        branch_ref == task_ref
+        or branch_ref.endswith(f"/{task_ref}")
+        or branch_ref.startswith(f"{task_ref}-")
+        or branch_ref.startswith(f"task/{task_ref}-")
+    )
     return bool(
         task_id
         and pr_number > 0
-        and (branch_ref == task_ref or branch_ref.endswith(f"/{task_ref}"))
+        and branch_task_match
         and str(submission.get("branch") or "") == expected_branch
         and str(submission.get("base_branch") or "") == expected_base
         and re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", str(submission.get("remote_sha") or ""))
@@ -3591,12 +3786,19 @@ def task_actor_assignment_block_reason(
     agent_name: str | None,
     *,
     require_dispatch_eligibility: bool = True,
+    role: str | None = None,
 ) -> str | None:
     """Return a stable assignment problem, excluding momentary slot occupancy.
 
     Non-dispatchable and human-gate tasks still need registered actors for
     durable ownership and audit history, but their actors must not be judged
     by the dispatch predicate that deliberately rejects those task classes.
+
+    `role` names which side of the assignment is being audited, so an actor that
+    a role/provider policy excludes is reported here as a stable assignment
+    problem rather than only being skipped later by the selector. That is what
+    makes a reviewer left on an excluded lane get repaired instead of sitting on
+    the board looking assigned while no dispatch will ever reach it.
     """
     name = str(agent_name or "").strip()
     if not name:
@@ -3607,9 +3809,11 @@ def task_actor_assignment_block_reason(
     agent = (config.get("agents", {}) or {}).get(normalized)
     if not isinstance(agent, dict):
         return f"unregistered actor {name}"
+    if agent_is_dispatch_slot(agent):
+        return f"actor {name} is a dispatch slot"
     if not require_dispatch_eligibility:
         return None
-    if not agent_can_take_task(config, name, task):
+    if not agent_can_take_task(config, name, task, role=role):
         return f"actor {name} is disabled or not eligible for this task"
     pool_reason = account_pool_dispatch_block_reason(config, name, runtime_state=state)
     if pool_reason:
@@ -3638,6 +3842,7 @@ def task_assignment_integrity_issues(
         task,
         owner,
         require_dispatch_eligibility=requires_dispatch,
+        role=ROLE_OWNER,
     )
     reviewer_reason = task_actor_assignment_block_reason(
         config,
@@ -3645,6 +3850,7 @@ def task_assignment_integrity_issues(
         task,
         reviewer,
         require_dispatch_eligibility=requires_dispatch,
+        role=ROLE_REVIEWER,
     )
     if owner_reason:
         issues.append(f"owner_unavailable:{owner_reason}")
@@ -3666,7 +3872,18 @@ def task_assignment_integrity_issues(
         and waiting_for
         and not is_human_gate_agent(waiting_for)
     ):
-        waiting_reason = task_actor_assignment_block_reason(config, state, task, waiting_for)
+        # `waiting_for` is not a third role. It names whichever of the two
+        # actors the board is currently waiting on, so it is audited as that
+        # actor's role; a label matching neither is audited without one rather
+        # than being assumed to be owner work.
+        waiting_role = (
+            ROLE_REVIEWER
+            if reviewer and waiting_for == reviewer
+            else (ROLE_OWNER if owner and waiting_for == owner else None)
+        )
+        waiting_reason = task_actor_assignment_block_reason(
+            config, state, task, waiting_for, role=waiting_role
+        )
         if waiting_reason:
             issues.append(f"waiting_for_unavailable:{waiting_reason}")
     elif str(task.get("status") or "").strip().lower() == "blocked" and not waiting_for:
@@ -3727,7 +3944,26 @@ def normalize_task_assignment_integrity(
     new_waiting_for: str | None = None
     changes: list[str] = []
 
-    if "owner_unavailable" in assignment_issues and not is_human_gate_agent(owner):
+    # Once work has been submitted, the owner field is the author of the commits
+    # under review, not a slot the reconciler may re-fill. Replacing it here
+    # would do more than relabel the record: the reviewer search below excludes
+    # the *new* owner's pool, so rewriting a Codex author to Claude would leave
+    # the author's own Codex pool eligible to review its own commits -- exactly
+    # the self-review a provider policy is supposed to prevent, reached by
+    # obeying that policy. The author is therefore pinned for every reason, not
+    # only for policy ones: a disabled or out-of-quota author on a pinned head
+    # is a task that waits, not a task that changes hands.
+    submitted_author = task_submitted_author(config, task)
+    author_pool_exclusions = (
+        {agent_account_pool_id(config, submitted_author)} if submitted_author else set()
+    )
+    author_is_pinned = bool(submitted_author) and submitted_author == owner
+
+    if (
+        "owner_unavailable" in assignment_issues
+        and not is_human_gate_agent(owner)
+        and not author_is_pinned
+    ):
         owner_candidates = get_agent_reassignment_candidates(config, owner, role="owner", task=task)
         replacement = first_viable_agent(
             config,
@@ -3759,12 +3995,17 @@ def normalize_task_assignment_integrity(
         replacement = first_viable_agent(
             config,
             reviewer_candidates,
-            exclude={new_owner, reviewer},
+            exclude={new_owner, reviewer} | ({submitted_author} if submitted_author else set()),
             state=state,
             task=task,
             status=status,
             role="reviewer",
-            exclude_pools={agent_account_pool_id(config, new_owner)},
+            # The submitted author's pool is excluded alongside the current
+            # owner's. They are the same pool while the author is still the
+            # owner; they differ exactly when an earlier pass already moved the
+            # owner, and that is the case where dropping it would hand the
+            # review back to whoever wrote the branch.
+            exclude_pools={agent_account_pool_id(config, new_owner)} | author_pool_exclusions,
         )
         if replacement:
             new_reviewer = replacement
@@ -3990,7 +4231,7 @@ def consume_human_continuation_approvals(
         task.pop("human_continuation_approval", None)
 
         try:
-            reopen_count = max(0, int(task.get("review_reopen_count", 0) or 0))
+            reopen_count = substantive_review_reopen_count(task)
             reassigned_count = max(
                 0,
                 int(task.get("review_churn_reassigned_at_count", 0) or 0),
@@ -4146,14 +4387,14 @@ def normalize_mainline_task_assignment(
     reopen_blocked = blocked_task_auto_recovery_eligible(config, task, task_map)
     owner_allowed = (
         task_status not in {"todo", "in_progress", "review_approved", "blocked"}
-        or agent_can_take_task(config, owner, task)
+        or agent_can_take_task(config, owner, task, role=ROLE_OWNER)
     )
     # A reviewer label is only executable while the task is in review.  Older
     # task records commonly keep a coordinator/placeholder reviewer on todo
     # work; that metadata must not trigger an unnecessary owner reassignment.
     reviewer_allowed = (
         task_status != "review"
-        or agent_can_take_task(config, reviewer, task)
+        or agent_can_take_task(config, reviewer, task, role=ROLE_REVIEWER)
     )
     if owner_allowed and reviewer_allowed and not reopen_blocked:
         return False
@@ -4162,8 +4403,18 @@ def normalize_mainline_task_assignment(
     new_reviewer = reviewer
     changed_fields: list[str] = []
 
+    # A reopen returns the task to `in_progress` -- an eligible status here --
+    # while `review_submission` and `approved_head` stay on the record. So this
+    # path can also reach work whose owner is the author of an already-submitted
+    # branch, and the same rule applies: the author is preserved, and its pool
+    # stays out of the reviewer search.
+    submitted_author = task_submitted_author(config, task)
+    author_pool_exclusions = (
+        {agent_account_pool_id(config, submitted_author)} if submitted_author else set()
+    )
+
     if owner and not owner_allowed:
-        if is_human_gate_agent(owner):
+        if is_human_gate_agent(owner) or submitted_author == owner:
             return False
         owner_candidates = get_agent_reassignment_candidates(config, owner, role="owner", task=task)
         replacement_owner = first_viable_agent(config, owner_candidates, exclude={owner, reviewer}, task=task, role="owner")
@@ -4182,7 +4433,14 @@ def normalize_mainline_task_assignment(
         if owner:
             reviewer_candidates.extend(get_agent_reassignment_candidates(config, owner, role="reviewer", task=task))
             reviewer_candidates.extend(get_agent_reassignment_candidates(config, owner, role="owner", task=task))
-        replacement_reviewer = first_viable_agent(config, reviewer_candidates, exclude={new_owner}, task=task, role="reviewer")
+        replacement_reviewer = first_viable_agent(
+            config,
+            reviewer_candidates,
+            exclude={new_owner} | ({submitted_author} if submitted_author else set()),
+            task=task,
+            role="reviewer",
+            exclude_pools={agent_account_pool_id(config, new_owner)} | author_pool_exclusions,
+        )
         if not replacement_reviewer or is_human_gate_agent(replacement_reviewer):
             return False
         new_reviewer = replacement_reviewer
@@ -4194,8 +4452,8 @@ def normalize_mainline_task_assignment(
 
     blocked_agents = [
         agent_name
-        for agent_name in (owner, reviewer)
-        if agent_name and not agent_can_take_task(config, agent_name, task)
+        for agent_name, agent_role in ((owner, ROLE_OWNER), (reviewer, ROLE_REVIEWER))
+        if agent_name and not agent_can_take_task(config, agent_name, task, role=agent_role)
     ]
     blocked_summary = ", ".join(dict.fromkeys(blocked_agents)) or "disallowed lane"
     if changed_fields:
@@ -4314,7 +4572,7 @@ def _dispatcher_owner_execution_priority(
     if is_human_gate_agent(owner) or is_human_gate_agent(waiting_for):
         return None
 
-    if not owner or not agent_can_take_task(config, owner, task):
+    if not owner or not agent_can_take_task(config, owner, task, role=ROLE_OWNER):
         return None
 
     settings_map = ready_dispatch_settings(config)
@@ -4598,6 +4856,23 @@ def task_index_from_status(config: dict[str, Any], status: dict[str, Any]) -> di
 def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], task_map: dict[str, dict[str, Any]]) -> str | None:
     return dispatch_ops.current_dispatch_event_key(config, event, task_map)
 
+def is_task_review_dispatch_eligible(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    target_agent: str,
+    *,
+    review_statuses: set[str] | None = None,
+    finalize_statuses: set[str] | None = None,
+) -> bool:
+    return dispatch_ops.is_task_review_dispatch_eligible(
+        config,
+        task,
+        target_agent,
+        review_statuses=review_statuses,
+        finalize_statuses=finalize_statuses,
+    )
+
+
 def dispatch_priority_for_task(
     config: dict[str, Any],
     task: dict[str, Any],
@@ -4731,8 +5006,12 @@ def worker_can_be_preempted(
     task = task_map.get(task_id) or {}
     task_status = str(task.get("status") or "").lower()
 
-    # Finalize workers are read-only on repo (immutable approved head)
-    if dispatch_reason == REASON_OWNED_FINALIZE or task_status == "review_approved":
+    # Finalize workers are read-only on repo (immutable approved head),
+    # and review workers are read-only reviewers. Both are safe to preempt when clean.
+    if (
+        dispatch_reason in {REASON_REVIEW_READY, REASON_OWNED_FINALIZE}
+        or task_status in {"review", "review_approved"}
+    ):
         return worker_worktree_is_clean(config, worker)
 
     # Fail closed: healthy active execution workers (owned_ready, owned_in_progress,
@@ -4793,6 +5072,8 @@ def requeue_task_for_ci_repair(
     clear_approval: bool,
     requeued_head: str | None = None,
     now_ts: float | None = None,
+    allow_conflicted_review: bool = False,
+    allow_failed_ci_review: bool = False,
 ) -> bool:
     return status_transition.requeue_task_for_ci_repair(
         config,
@@ -4802,6 +5083,8 @@ def requeue_task_for_ci_repair(
         clear_approval=clear_approval,
         requeued_head=requeued_head,
         now_ts=now_ts,
+        allow_conflicted_review=allow_conflicted_review,
+        allow_failed_ci_review=allow_failed_ci_review,
     )
 
 
@@ -4859,6 +5142,7 @@ def run_once(
     quiet: bool = False,
     verbose: bool = False,
     once: bool = False,
+    poll_interval: float | None = None,
 ) -> bool:
     write_supervisor_pid(config)
     loop_started_at = utc_now()
@@ -4956,6 +5240,14 @@ def run_once(
                 # dispatcher. The dispatcher then re-reads canonical status and
                 # remains the only path that decides whether execution starts.
                 changed = consume_human_continuation_approvals(config, state) or changed
+                # This is intentionally the only release-lease scheduler: the
+                # bridge remains disabled until its public configuration is
+                # explicitly enabled, and it can dispatch only the existing
+                # Runtime Release after signed GCS-CAS issuance and a
+                # secret-free canonical receipt have both committed.
+                changed = release_lease_integration.process_release_lease_issuance(
+                    config, commit_status=commit_canonical_task_transition
+                ) or changed
                 changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
         if not dispatch_suppressed_by_watchdog:
             # An in-memory cycle cache fixes every repository base to exactly
@@ -5004,7 +5296,9 @@ def run_once(
             quiet=quiet,
             verbose=verbose,
             previous_heartbeat=previous_heartbeat,
-            warn_after_seconds=float(config.get("supervisor", {}).get("heartbeat_warn_after_seconds", 10.0)),
+            warn_after_seconds=resolve_heartbeat_warn_after_seconds(
+                config, poll_interval=poll_interval
+            ),
             once=once,
         )
         return changed
@@ -5031,9 +5325,18 @@ def run_supervisor_cycle(
     replay: bool = False,
     quiet: bool = False,
     verbose: bool = False,
+    poll_interval: float | None = None,
 ) -> bool:
     try:
-        return run_once(config, watch=watch, replay=replay, quiet=quiet, verbose=verbose, once=False)
+        return run_once(
+            config,
+            watch=watch,
+            replay=replay,
+            quiet=quiet,
+            verbose=verbose,
+            once=False,
+            poll_interval=poll_interval,
+        )
     except Exception as exc:
         console_log(
             f"supervisor cycle failed: {type(exc).__name__}: {exc}; continuing after next poll",
@@ -5151,6 +5454,7 @@ def main() -> int:
             quiet=args.quiet,
             verbose=args.verbose,
             once=True,
+            poll_interval=poll_interval,
         )
         return 0
     run_supervisor_cycle(
@@ -5159,6 +5463,7 @@ def main() -> int:
         replay=args.replay,
         quiet=args.quiet,
         verbose=args.verbose,
+        poll_interval=poll_interval,
     )
     while True:
         sleep_until_work_or_interval(config, poll_interval)
@@ -5168,6 +5473,7 @@ def main() -> int:
             replay=False,
             quiet=args.quiet,
             verbose=args.verbose,
+            poll_interval=poll_interval,
         )
 
 

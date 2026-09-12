@@ -71,19 +71,144 @@ def _alembic_config(database: Any) -> Config:
     return config
 
 
+# `stamp("0002")` records the baseline and data-domain revisions as applied
+# without running them: both begin `CREATE EXTENSION postgis`, which the bundled
+# pgserver this suite falls back to does not have. Every revision from 0003 to
+# 0007 creates a schema of its own, so the claim cost nothing to back up.
+#
+# 0008 (decision policy registry) is the first revision that binds into the
+# baseline rather than beside it -- it foreign-keys `core.tenants` and
+# constrains `workflow.decisions`, both from 0001. 0013 (the FCT-004 reserved
+# disposition) is another revision that binds to the baseline: it comments on
+# `core.work_orders.root_cause`. So the stamp now has to come with the objects
+# the later revisions reference, or `upgrade("head")` fails on a table the
+# revision it claims to have applied was supposed to create. Only the
+# referenced shape is needed, which is what keeps this postgis-free.
+_BASELINE_OBJECTS_LATER_REVISIONS_BIND_TO = """
+CREATE SCHEMA IF NOT EXISTS core;
+CREATE SCHEMA IF NOT EXISTS workflow;
+
+CREATE TABLE IF NOT EXISTS core.tenants (
+    tenant_id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_name VARCHAR(255) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS core.brands (
+    brand_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id   UUID REFERENCES core.tenants(tenant_id),
+    brand_code  VARCHAR(100) NOT NULL,
+    brand_name  VARCHAR(255) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS core.stores (
+    store_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id   UUID NOT NULL REFERENCES core.tenants(tenant_id),
+    store_name  VARCHAR(255) NOT NULL DEFAULT '',
+    store_format_code TEXT,
+    opened_on DATE,
+    address_id UUID
+);
+
+CREATE TABLE IF NOT EXISTS workflow.decisions (
+    decision_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    entity_type       VARCHAR(100) NOT NULL,
+    entity_id         VARCHAR(255) NOT NULL,
+    policy_version_id VARCHAR(100) NOT NULL,
+    created_by        VARCHAR(255) NOT NULL,
+    created_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS workflow.approvals (
+    approval_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    decision_id     UUID NOT NULL REFERENCES workflow.decisions(decision_id),
+    approver_id     VARCHAR(255) NOT NULL,
+    approval_status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    approved_at     TIMESTAMP WITH TIME ZONE,
+    created_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Only the shape the heat-zone composition and absorption-outcome foreign keys
+-- resolve against; the canonical column set needs postgis for `geom`, which is
+-- the extension this stamped path exists to avoid.
+CREATE SCHEMA IF NOT EXISTS geo;
+
+CREATE TABLE IF NOT EXISTS geo.h3_cells (
+    geo_cell_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    h3_index    VARCHAR(15) NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS core.work_orders (
+    work_order_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    root_cause TEXT
+);
+"""
+
+
+def _stamp_baseline(database: Any) -> None:
+    command.stamp(_alembic_config(database), "0002")
+    with database.connect() as connection:
+        connection.execute(_BASELINE_OBJECTS_LATER_REVISIONS_BIND_TO)
+
+
 def _upgrade_official_schema(database: Any) -> None:
-    config = _alembic_config(database)
-    command.stamp(config, "0002")
+    _stamp_baseline(database)
+    command.upgrade(_alembic_config(database), "head")
+
+
+def test_root_cause_reserved_migration_round_trips_on_postgresql(
+    intake_blank_db: Any,
+) -> None:
+    """Execute the FCT-004 forward migration and its rollback on PostgreSQL.
+
+    The contract is metadata-only, but it still has to be reachable from the
+    real Alembic chain. In particular, the rollback must remove only the
+    reserved comment while preserving the baseline column and table.
+    """
+    _stamp_baseline(intake_blank_db)
+    config = _alembic_config(intake_blank_db)
+
     command.upgrade(config, "head")
+    with intake_blank_db.connect() as connection:
+        comment = connection.execute(
+            "SELECT col_description('core.work_orders'::regclass, "
+            "ordinal_position) FROM information_schema.columns "
+            "WHERE table_schema = 'core' AND table_name = 'work_orders' "
+            "AND column_name = 'root_cause'"
+        ).fetchone()
+        assert comment == (
+            "RESERVED: No automated producer exists in current release "
+            "(ODP-FR-FCT-004). Owner: ForecastOps/Platform; Target: Wave 5+",
+        )
+
+    command.downgrade(config, "0011")
+    with intake_blank_db.connect() as connection:
+        comment_after_rollback = connection.execute(
+            "SELECT col_description('core.work_orders'::regclass, "
+            "ordinal_position) FROM information_schema.columns "
+            "WHERE table_schema = 'core' AND table_name = 'work_orders' "
+            "AND column_name = 'root_cause'"
+        ).fetchone()
+        current_revision = connection.execute(
+            "SELECT version_num FROM alembic_version"
+        ).fetchone()
+        column_still_exists = connection.execute(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_schema = 'core' AND table_name = 'work_orders' "
+            "AND column_name = 'root_cause'"
+        ).fetchone()
+
+    assert comment_after_rollback == (None,)
+    assert current_revision == ("0011",)
+    assert column_still_exists == (1,)
 
 
 def _create_model_view_prerequisites(database: Any) -> None:
     with database.connect() as connection:
         connection.execute(
             """
-            CREATE SCHEMA core;
+            CREATE SCHEMA IF NOT EXISTS core;
             CREATE SCHEMA data_plane;
-            CREATE TABLE core.stores (
+            CREATE TABLE IF NOT EXISTS core.stores (
                 store_id UUID PRIMARY KEY,
                 tenant_id UUID NOT NULL,
                 store_format_code TEXT,
@@ -209,7 +334,7 @@ def test_alembic_head_installs_official_schema_and_both_view_branches(
     intake_blank_db: Any,
 ) -> None:
     runtime_url, _alembic_url = _urls(intake_blank_db)
-    command.stamp(_alembic_config(intake_blank_db), "0002")
+    _stamp_baseline(intake_blank_db)
     _create_model_view_prerequisites(intake_blank_db)
     engine = PostgresEngine(
         runtime_url,

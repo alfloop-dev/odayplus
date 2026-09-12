@@ -15,13 +15,26 @@ from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
-from solver.pricing.constraints import PRICING_POLICY_VERSION, ConstraintViolation, PriceConstraints
+from shared.governance.evidence import coerce_evidence_level
+from shared.governance.vocabularies import EvidenceLevel
+from solver.pricing.constraints import (
+    PRICING_POLICY_ID,
+    PRICING_POLICY_KIND,
+    PRICING_POLICY_SEMVER,
+    PRICING_POLICY_VERSION,
+    ConstraintViolation,
+    PriceConstraints,
+    default_pricing_policy,
+)
 from solver.pricing.demand import SimulationResult, simulate_price
 from solver.pricing.optimizer import SOLVER_VERSION, OptimizationResult, optimize_price
 
 PRICEOPS_MODEL_VERSION = "priceops-elasticity-baseline-v1"
 PRICEOPS_FEATURE_VERSION = "pricing-action-view-v1"
 PRICEOPS_POLICY_VERSION = PRICING_POLICY_VERSION
+PRICEOPS_POLICY_ID = PRICING_POLICY_ID
+PRICEOPS_POLICY_KIND = PRICING_POLICY_KIND
+PRICEOPS_POLICY_SEMVER = PRICING_POLICY_SEMVER
 PRICEOPS_SOLVER_VERSION = SOLVER_VERSION
 
 # Default rollback trigger: a realised gross-margin loss of 5% or worse versus
@@ -116,6 +129,8 @@ class PriceElasticityEstimate:
 
     elasticity_value: float
     confidence: float
+    applicable_min_price: float | None = None
+    applicable_max_price: float | None = None
     horizon: str = "4week"
     model_version: str = PRICEOPS_MODEL_VERSION
     feature_version: str = PRICEOPS_FEATURE_VERSION
@@ -142,6 +157,8 @@ class PriceElasticityEstimate:
         return cls(
             elasticity_value=fit.elasticity,
             confidence=fit.confidence,
+            applicable_min_price=fit.applicable_min_price,
+            applicable_max_price=fit.applicable_max_price,
             horizon=horizon,
             prediction_origin_time=prediction_origin_time or datetime.now(UTC),
         )
@@ -150,11 +167,42 @@ class PriceElasticityEstimate:
         return {
             "elasticity_value": self.elasticity_value,
             "confidence": self.confidence,
+            "applicable_min_price": self.applicable_min_price,
+            "applicable_max_price": self.applicable_max_price,
             "horizon": self.horizon,
             "model_version": self.model_version,
             "feature_version": self.feature_version,
             "prediction_origin_time": self.prediction_origin_time.isoformat(),
         }
+
+
+def _bounded_applicable_range(
+    constraints: PriceConstraints, elasticity: PriceElasticityEstimate
+) -> tuple[float | None, float | None]:
+    """Intersect the constraint applicable range with the elasticity's own range.
+
+    The elasticity estimate declares the price window it is defensible over.
+    Constraints may narrow that window further, but must never widen it: a
+    wider constraint range would let a candidate price sit outside the demand
+    curve's support while still reporting as interpolated and feasible. Where
+    the two windows are disjoint the intersection comes out inverted, which
+    ``validate_pricing_scenario`` and ``diagnose_infeasible`` already reject.
+    """
+    low = constraints.applicable_min_price
+    if elasticity.applicable_min_price is not None:
+        low = (
+            elasticity.applicable_min_price
+            if low is None
+            else max(low, elasticity.applicable_min_price)
+        )
+    high = constraints.applicable_max_price
+    if elasticity.applicable_max_price is not None:
+        high = (
+            elasticity.applicable_max_price
+            if high is None
+            else min(high, elasticity.applicable_max_price)
+        )
+    return low, high
 
 
 @dataclass(frozen=True)
@@ -168,6 +216,13 @@ class PricingPlanItem:
     baseline_demand: float
     elasticity: PriceElasticityEstimate
     source_snapshot_ids: tuple[str, ...] = ()
+    # Exploration gates may be narrower than a tenant.  Keep the attributes
+    # on the plan item so the production optimize and activate paths can
+    # validate the gate against the resource that will actually be repriced,
+    # rather than trusting a caller-supplied scope.
+    brand_id: str | None = None
+    store_group: str | None = None
+    sku_group: str | None = None
 
     @classmethod
     def create(
@@ -180,7 +235,22 @@ class PricingPlanItem:
         elasticity: PriceElasticityEstimate,
         source_snapshot_ids: tuple[str, ...] = (),
         item_id: str | None = None,
+        brand_id: str | None = None,
+        store_group: str | None = None,
+        sku_group: str | None = None,
     ) -> PricingPlanItem:
+        applicable_min, applicable_max = _bounded_applicable_range(
+            constraints, elasticity
+        )
+        if (
+            applicable_min != constraints.applicable_min_price
+            or applicable_max != constraints.applicable_max_price
+        ):
+            constraints = replace(
+                constraints,
+                applicable_min_price=applicable_min,
+                applicable_max_price=applicable_max,
+            )
         return cls(
             item_id=item_id or f"pricing-plan-item-{uuid4()}",
             store_id=store_id,
@@ -189,6 +259,9 @@ class PricingPlanItem:
             baseline_demand=baseline_demand,
             elasticity=elasticity,
             source_snapshot_ids=source_snapshot_ids,
+            brand_id=brand_id,
+            store_group=store_group,
+            sku_group=sku_group,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -200,6 +273,9 @@ class PricingPlanItem:
             "baseline_demand": self.baseline_demand,
             "elasticity": self.elasticity.to_dict(),
             "source_snapshot_ids": list(self.source_snapshot_ids),
+            "brand_id": self.brand_id,
+            "store_group": self.store_group,
+            "sku_group": self.sku_group,
         }
 
 
@@ -432,6 +508,14 @@ def validate_pricing_scenario(
         raise InvalidScenarioError(
             f"invalid bounds: min_price {c.min_price} > max_price {c.max_price}"
         )
+    if (
+        c.applicable_min_price is not None
+        and c.applicable_max_price is not None
+        and c.applicable_min_price > c.applicable_max_price
+    ):
+        raise InvalidScenarioError(
+            f"invalid applicable bounds: applicable_min_price {c.applicable_min_price} > applicable_max_price {c.applicable_max_price}"
+        )
     if not (0.0 <= c.margin_floor_ratio <= 1.0):
         raise InvalidScenarioError(
             f"invalid margin_floor_ratio {c.margin_floor_ratio}: must be in [0, 1]"
@@ -612,7 +696,12 @@ class LabelRegistryEntry:
     label_key: str
     measurement_method: str
     label_maturity_time: datetime
-    evidence_level: str = "pending"
+    # A label is registered before its outcome matures, so it starts unrated.
+    # It used to start at the free string "pending", which is not a rung: any
+    # reader comparing it against the ladder got a value the ladder cannot
+    # place. ADR-0004 D3 spells "not assessed yet" as None (`status` already
+    # carries the lifecycle stage this string was doubling as).
+    evidence_level: EvidenceLevel | None = None
     status: str = "registered"
 
     def to_dict(self) -> dict[str, Any]:
@@ -623,7 +712,9 @@ class LabelRegistryEntry:
             "label_key": self.label_key,
             "measurement_method": self.measurement_method,
             "label_maturity_time": self.label_maturity_time.isoformat(),
-            "evidence_level": self.evidence_level,
+            "evidence_level": (
+                self.evidence_level.value if self.evidence_level is not None else None
+            ),
             "status": self.status,
         }
 
@@ -724,7 +815,7 @@ class PricingEffectEvaluation:
     outcome_window: tuple[datetime, datetime]
     label_maturity_time: datetime
     measurement_method: str
-    evidence_level: str
+    evidence_level: EvidenceLevel | None
     baseline_gross_margin: float
     expected_incremental_gross_margin: float
     actual_incremental_gross_margin: float
@@ -743,7 +834,9 @@ class PricingEffectEvaluation:
             ],
             "label_maturity_time": self.label_maturity_time.isoformat(),
             "measurement_method": self.measurement_method,
-            "evidence_level": self.evidence_level,
+            "evidence_level": (
+                self.evidence_level.value if self.evidence_level is not None else None
+            ),
             "baseline_gross_margin": self.baseline_gross_margin,
             "expected_incremental_gross_margin": self.expected_incremental_gross_margin,
             "actual_incremental_gross_margin": self.actual_incremental_gross_margin,
@@ -905,6 +998,8 @@ def simulate_item(item: PricingPlanItem) -> SimulationResult:
         unit_cost=item.constraints.unit_cost,
         elasticity=item.elasticity.elasticity_value,
         confidence=item.elasticity.confidence,
+        applicable_min_price=item.constraints.applicable_min_price,
+        applicable_max_price=item.constraints.applicable_max_price,
     )
 
 
@@ -939,6 +1034,8 @@ def simulate_candidate_scenario(
             unit_cost=item.constraints.unit_cost,
             elasticity=item.elasticity.elasticity_value,
             confidence=item.elasticity.confidence,
+            applicable_min_price=item.constraints.applicable_min_price,
+            applicable_max_price=item.constraints.applicable_max_price,
         )
 
         demand_change = round(candidate_sim.demand.p50 - baseline_sim.demand.p50, 4)
@@ -1022,12 +1119,19 @@ def evaluate_effect(
     outcome_window: tuple[datetime, datetime],
     label_maturity_time: datetime,
     measurement_method: str = "before_after",
-    evidence_level: str = "medium",
+    evidence_level: EvidenceLevel | str | None = None,
     negative_impact_threshold: float = DEFAULT_NEGATIVE_IMPACT_THRESHOLD,
     generated_at: datetime | None = None,
     evaluation_id: str | None = None,
 ) -> PricingEffectEvaluation:
-    """Attribute realised effect and decide continue/adjust/stop/rollback."""
+    """Attribute realised effect and decide continue/adjust/stop/rollback.
+
+    This is the write boundary for the evaluation record's evidence claim: a
+    string is accepted (callers arrive from JSON) but only as a name for a rung,
+    and an unrecognised one is refused rather than stored. Omitting it stores
+    None -- the evaluation says nothing about evidence, which is what happened.
+    """
+    rated_evidence_level = coerce_evidence_level(evidence_level)
     actual_incremental = round(actual_gross_margin - baseline_gross_margin, 4)
     if baseline_gross_margin > 0:
         impact_ratio = round(actual_incremental / baseline_gross_margin, 6)
@@ -1067,7 +1171,7 @@ def evaluate_effect(
         outcome_window=outcome_window,
         label_maturity_time=label_maturity_time,
         measurement_method=measurement_method,
-        evidence_level=evidence_level,
+        evidence_level=rated_evidence_level,
         baseline_gross_margin=round(baseline_gross_margin, 4),
         expected_incremental_gross_margin=round(expected_incremental_gross_margin, 4),
         actual_incremental_gross_margin=actual_incremental,
@@ -1083,6 +1187,9 @@ __all__ = [
     "DEFAULT_STOP_CONDITIONS",
     "PRICEOPS_FEATURE_VERSION",
     "PRICEOPS_MODEL_VERSION",
+    "PRICEOPS_POLICY_ID",
+    "PRICEOPS_POLICY_KIND",
+    "PRICEOPS_POLICY_SEMVER",
     "PRICEOPS_POLICY_VERSION",
     "PRICEOPS_SOLVER_VERSION",
     "VALID_TRANSITIONS",
@@ -1113,6 +1220,7 @@ __all__ = [
     "build_observation_window",
     "build_rollback_plan",
     "count_hard_violations",
+    "default_pricing_policy",
     "evaluate_effect",
     "optimize_item",
     "recommended_price_violations",

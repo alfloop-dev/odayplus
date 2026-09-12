@@ -1,0 +1,656 @@
+{
+  "_comment": "Requirements that enumerate a set of members. ODP-SA-06 has no per-requirement acceptance criteria -- its Trigger and Acceptance columns are the same boilerplate seventy-one times -- so nothing said whether the eighth constraint class or the fifth release mode was required. This file is the narrow substitute: for requirements that list N things, the N things are written down, each satisfied member names where it lives, and each absent member carries an auditable disposition. Adding a requirement here is cheap; leaving a gap unwritten or claiming an unverified decision is what the check refuses.",
+  "_seeded_from": "docs/evidence/ODP_FR_VERIFICATION_112_AND_ROOT_CAUSES_2026-09-01.md, cause 02",
+  "_source_provenance": {
+    "recorded_at": "2026-09-03",
+    "observed_ref": "75d25f653aa12c21a3f9627f29af2ed4def73153",
+    "policy": "Repo transcriptions and amendments are not canonical sources. A canonical record requires a version, exact location, and SHA-256 of the source bytes; unavailable authority remains BLOCKED_BY_EVIDENCE.",
+    "evidence": "docs/evidence/ODP_SPEC_SOURCE_PROVENANCE_2026-09-03.md",
+    "records": {
+      "ODP-SA-06": {
+        "status": "BLOCKED_BY_EVIDENCE",
+        "canonical_source": {
+          "document_id": "ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md",
+          "version": null,
+          "location": null,
+          "content_sha256": null,
+          "lookup": [
+            "github://alfloop-dev/odayplus@75d25f653aa12c21a3f9627f29af2ed4def73153/ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md",
+            "github://alfloop-dev/odayplus@75d25f653aa12c21a3f9627f29af2ed4def73153/docs/design/ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md"
+          ],
+          "blocked_reason": "Neither expected path exists at the pinned ref; the repository amendment only declares amends and does not contain the original artifact."
+        },
+        "repo_transcription": {
+          "path": "docs/evidence/ODP_FR_VERIFICATION_112_AND_ROOT_CAUSES_2026-09-01.md",
+          "revision": "75d25f653aa12c21a3f9627f29af2ed4def73153",
+          "content_sha256": "a7783faeb11617bb928144ae599d76877f4be6a06140f5f29820495232a9f242",
+          "scope": "Cause 02 and Appendix A summarize ODP-SA-06 but are repo evidence, not the canonical specification."
+        },
+        "evidence_owner": "Product Lead",
+        "next_check_date": "2026-09-10",
+        "recheck": "Obtain the original artifact or immutable source ref from Product/source custodian, then record version, exact location, and SHA-256."
+      },
+      "ODP-FR-AVM-001": {
+        "status": "BLOCKED_BY_EVIDENCE",
+        "canonical_source": {
+          "document_id": "ODP-FR-AVM-001",
+          "version": null,
+          "location": null,
+          "content_sha256": null,
+          "expected_location": "ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md AVM-001 row (inferred, not verified)",
+          "lookup": [
+            "github://alfloop-dev/odayplus@75d25f653aa12c21a3f9627f29af2ed4def73153/ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md",
+            "github://alfloop-dev/odayplus@75d25f653aa12c21a3f9627f29af2ed4def73153/docs/evidence/ODP-FR-AVM-001.md"
+          ],
+          "blocked_reason": "No standalone requirement artifact or source row with verifiable version, location, and bytes was found; the repo contains only an AVM-001 summary in the verification report."
+        },
+        "repo_transcription": {
+          "path": "docs/evidence/ODP_FR_VERIFICATION_112_AND_ROOT_CAUSES_2026-09-01.md",
+          "revision": "75d25f653aa12c21a3f9627f29af2ed4def73153",
+          "content_sha256": "a7783faeb11617bb928144ae599d76877f4be6a06140f5f29820495232a9f242",
+          "scope": "Appendix A AVM-001 row summarizes GM_TTM, GM_FWD, depreciation, asset, lease, and normalization; it is not the full FR text."
+        },
+        "evidence_owner": "Product Lead",
+        "next_check_date": "2026-09-10",
+        "recheck": "Confirm whether AVM-001 belongs to the original ODP-SA-06 artifact or a separate canonical AVM document, then hash the retrieved source bytes."
+      }
+    }
+  },
+  "requirements": [
+    {
+      "id": "ODP-FR-NET-002",
+      "statement": "系統必須考量資本、租約、施工、設備、人力、覆蓋、稀釋與時序硬限制。",
+      "member_count": 8,
+      "members": [
+        {
+          "name": "CAPITAL",
+          "status": "satisfied",
+          "evidence": "solver/netplan/model.py::NetPlanConstraints.max_budget",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "CONSTRUCTION",
+          "status": "satisfied",
+          "evidence": "solver/netplan/model.py::NetPlanConstraints.max_construction_days",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "EQUIPMENT",
+          "status": "satisfied",
+          "evidence": "solver/netplan/model.py::NetPlanConstraints.max_equipment_units",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "LABOUR",
+          "status": "satisfied",
+          "evidence": "solver/netplan/model.py::NetPlanConstraints.max_labour_headcount",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "COVERAGE",
+          "status": "satisfied",
+          "evidence": "solver/netplan/model.py::NetPlanConstraints.min_coverage_delta",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "DILUTION",
+          "status": "satisfied",
+          "evidence": "solver/netplan/model.py::NetPlanConstraints.max_open_per_dilution_zone",
+          "note": "A per-catchment cap on OPEN actions. Cannibalisation is pairwise between sites and the model is linear, so this is the part of the effect a count can carry, not the whole effect. DECIDED 2026-09-02: the full pairwise form is not pursued. Linearising it costs O(n^2) auxiliary variables, but the deciding reason is that the pairwise dilution coefficients are themselves model outputs carrying substantial uncertainty -- optimising precisely against uncertain coefficients manufactures precision the inputs do not support. The better next investment is the measurement: ODP-FR-HZ-004 absorption now produces realised dilution figures, and improving those changes the answer more than improving the optimisation over the current ones.",
+          "disposition": {
+            "state": "VERIFIED",
+            "formal_decision_ref": "docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md#odp-fr-net-002-dilution",
+            "decider": "Human/Ops (Architecture Board)",
+            "decision_date": "2026-09-02",
+            "scope": "NetPlan linear solver optimization in ODP core",
+            "risk_owner": "Optimization & Modeling Lead",
+            "expiry": "2027-09-01",
+            "reopen_trigger": "When pairwise dilution coefficient estimation uncertainty is reduced below optimization sensitivity threshold",
+            "rationale": "Catchment count cap implemented and verified; pairwise form formally amended per ODP_REQUIREMENT_DISPOSITIONS.md"
+          }
+        },
+        {
+          "name": "LEASE",
+          "status": "absent",
+          "note": "Per-option lease availability windows and early termination cost schedules are absent across candidate site feeds and core.stores schemas per ODP_NET002_LEASE_DATA_READINESS_2026-09-03.md. No decorative constraint is wired. ConstraintClass.LEASE is reported in unmodelled_constraint_classes on every solve, displayed in Operator UI, and requires explicit acknowledgement/policy governance. Formal handback HB-NET002-LEASE-001 submitted to Human/Ops and Architecture Board per docs/evidence/ODP_NET002_LEASE_DISPOSITION_2026-09-03.md. User confirmed decision D18 on 2026-09-08 (Option A: implement lease contract). Stage 32A engineering prep delivered in ODP-NET002-LEASE-CONTRACT-PREP-001 (PR #1256); Stage 32B implementation task ODP-NET002-LEASE-IMPLEMENTATION-001 awaits H05 minimal authorized lease export.",
+          "disposition": {
+            "state": "BLOCKED_BY_EVIDENCE",
+            "history": [
+              {
+                "state": "BLOCKED_BY_EVIDENCE",
+                "date": "2026-09-03",
+                "note": "Batch 0 audit confirmed production system lacks per-store lease expiry/penalties; formal handback HB-NET002-LEASE-001 submitted per ODP_NET002_LEASE_DISPOSITION_2026-09-03.md."
+              },
+              {
+                "state": "BLOCKED_BY_EVIDENCE",
+                "date": "2026-09-08",
+                "note": "User confirmed decision D18 (implement lease contract); Stage 32A completed in ODP-NET002-LEASE-CONTRACT-PREP-001 (PR #1256); Stage 32B assigned to ODP-NET002-LEASE-IMPLEMENTATION-001 pending H05 data."
+              }
+            ],
+            "evidence_needed": "Store lease contract master data (lease_expiry_date, break clauses, termination penalties in core.store_leases/CLM) and automated candidate site lease feed with freshness SLA and signing deadlines",
+            "evidence_owner": "Store Operations Lead / Real Estate Finance Lead / Data Platform Lead",
+            "next_review_date": "2026-10-01",
+            "evidence_ref": "docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/README.md",
+            "rationale": "Batch 0 audit confirmed production system lacks per-store lease expiry/penalties and automated candidate listing feed. Wiring fake constraints or treating None as 0.0 violates fail-closed principles. Maintained in unmodelled_constraint_classes; handback package HB-NET002-LEASE-001 submitted to Human/Ops and Architecture Board per ODP_NET002_LEASE_DISPOSITION_2026-09-03.md. User confirmed D18 implementation direction; Stage 32A delivered under ODP-NET002-LEASE-CONTRACT-PREP-001.",
+            "formal_handback_ref": "docs/evidence/ODP_NET002_LEASE_DISPOSITION_2026-09-03.md#2-人類授權移交單human-authority-handback-package",
+            "reopen_trigger": "Store lease contract master table (core.store_leases or CLM) is deployed with per-store lease_expiry_date and early termination penalty formula, and candidate site partner feed is contracted with signing deadline and fitout grace days."
+          }
+        },
+        {
+          "name": "SEQUENCING",
+          "status": "absent",
+          "note": "Needs a time dimension: per-period resource caps and precedence between actions. ActionOption.period_key is carried and reported but never constrained. DECIDED 2026-09-02: not modelled, and not scheduled. A per-period constraint is only worth having if per-period capacity data exists to feed it, and it does not -- construction and labour capacity are supplied to the solver as single totals. A constraint fed by a figure nobody measures is decorative, which is the pattern this work exists to remove. The risk it would have covered (a plan reported feasible while unschedulable) is already handled by ConstraintClass.SEQUENCING appearing in unmodelled_constraint_classes on every solve. Revisit when a planning cycle needs per-period sequencing AND the per-period capacity figures exist.",
+          "disposition": {
+            "state": "DECIDED",
+            "formal_decision_ref": "docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md#odp-fr-net-002-sequencing",
+            "decider": "Human/Ops (Architecture Board)",
+            "decision_date": "2026-09-02",
+            "scope": "NetPlan linear solver optimization in ODP core",
+            "risk_owner": "Platform Architecture Lead",
+            "expiry": "2027-09-01",
+            "reopen_trigger": "When planning cycle needs per-period sequencing AND per-period capacity figures exist",
+            "rationale": "Per-period constraint without per-period capacity data is decorative; reported through unmodelled_constraint_classes"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ODP-FR-LH-003",
+      "statement": "系統必須支援 Backtest、Champion/Challenger、Shadow、Canary、Rollback。",
+      "member_count": 5,
+      "members": [
+        {
+          "name": "SHADOW",
+          "status": "satisfied",
+          "evidence": "modules/learninghub/application/release.py::ReleaseType",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "CANARY",
+          "status": "satisfied",
+          "evidence": "modules/learninghub/application/release.py::ReleaseType",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "ROLLBACK",
+          "status": "satisfied",
+          "evidence": "modules/learninghub/application/release.py::ReleaseType",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "CHAMPION_CHALLENGER",
+          "status": "satisfied",
+          "evidence": "modules/learninghub/domain/inference.py::InferenceComparison",
+          "note": "Compares champion and challenger predictions against a tolerance and recommends rollback. Note this compares prediction agreement, not metrics against a baseline -- see ODP-FR-LH-005.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "BACKTEST",
+          "status": "satisfied",
+          "evidence": "models/shared_ml/backtest.py::BacktestReceipt",
+          "note": "Backtest is connected as a versioned release admission gate for FULL and CANARY releases, binding model version, dataset snapshot, code version (git SHA), and DecisionPolicy thresholds.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ODP-FR-INTV-006",
+      "statement": "系統必須支援 Continue/Adjust/Stop/Rollback。",
+      "member_count": 4,
+      "members": [
+        {
+          "name": "CONTINUE",
+          "status": "satisfied",
+          "evidence": "modules/intervention/domain/lifecycle.py::Recommendation",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "STOP",
+          "status": "satisfied",
+          "evidence": "modules/intervention/domain/lifecycle.py::Recommendation",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "ROLLBACK",
+          "status": "satisfied",
+          "evidence": "modules/intervention/application/workflow.py::InterventionWorkflow.rollback",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "ADJUST",
+          "status": "absent",
+          "note": "Recommendation is CONTINUE/SCALE/STOP/CHANGE_CHANNEL/INCONCLUSIVE -- AdLift's vocabulary, which satisfies ODP-FR-AD-005 exactly and leaves no place for Adjust. InterventionStatus runs EXECUTING to OBSERVING to EVALUATING to COMPLETED with rollback as the only mid-course exit, so there is no state for 'modify and continue' either.",
+          "disposition": {
+            "state": "OPEN",
+            "assigned_to": "Intervention Workflow Lead",
+            "next_review_date": "2026-10-01",
+            "rationale": "AdLift vocabulary uses Continue/Scale/Stop; lifecycle adjusting state pending business requirement clarification (Batch 6)."
+          }
+        }
+      ]
+    },
+    {
+      "id": "ODP-FR-SHARED-001",
+      "statement": "所有長時間任務都能查詢 QUEUED/RUNNING/SUCCEEDED/FAILED/CANCELLED/PARTIAL。",
+      "member_count": 6,
+      "members": [
+        {
+          "name": "QUEUED",
+          "status": "satisfied",
+          "evidence": "shared/governance/vocabularies.py::JobStatus",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "RUNNING",
+          "status": "satisfied",
+          "evidence": "shared/governance/vocabularies.py::JobStatus",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "SUCCEEDED",
+          "status": "satisfied",
+          "evidence": "shared/governance/vocabularies.py::JobStatus",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "FAILED",
+          "status": "satisfied",
+          "evidence": "shared/governance/vocabularies.py::JobStatus",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "CANCELLED",
+          "status": "satisfied",
+          "evidence": "shared/governance/vocabularies.py::JobStatus",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "PARTIAL",
+          "status": "satisfied",
+          "evidence": "apps/worker/oday_worker/handlers.py::handle_batch_listing_intake",
+          "note": "JobStatus in shared/governance/vocabularies.py carries PARTIAL per ODP-FR-SHARED-001. PR #1285 (merged head b19513a1419497dce2ddd5054df5bbe0bd732a69 under ODP-DURABLE-PARTIAL-IMPL-001) delivered handle_batch_listing_intake registered in build_default_registry with 3-phase handler/queue checkpoint writes (apps/worker/oday_worker/handlers.py), itemized receipts, status derivation (shared/jobs/receipts.py::derive_batch_status_and_summary), and FAILED_ONLY scoped retries. The in-tree code path is verified via tests/reliability/test_durable_partial_batch.py. However, in-tree SQLite and synthetic fixture verification does not constitute live production receipts or human sign-off: live production queue/worker audit receipts, live queue policy application, and named human confirmation of actual durable job candidate and business scope (docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/human-input-request-H06.md sections 1 and 4) remain unverified/unresolved. Formal disposition and handback package HB-SHARED001-PARTIAL-001 submitted per docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md remain in BLOCKED_BY_EVIDENCE under Platform Infrastructure Lead until live production evidence and H06 candidate scope confirmation are obtained. Reconciled under ODP-JOB-PARTIAL-PRODUCER-RECONCILIATION-001.",
+          "disposition": {
+            "state": "BLOCKED_BY_EVIDENCE",
+            "previous_state": "BLOCKED_BY_EVIDENCE",
+            "history": [
+              {
+                "state": "OPEN",
+                "date": "2026-09-03",
+                "note": "Gap registered by the disposition registry: the vocabulary carries PARTIAL, no producer was found."
+              },
+              {
+                "state": "BLOCKED_BY_EVIDENCE",
+                "date": "2026-09-03",
+                "note": "ODP-JOB-PARTIAL-PRODUCER-EVIDENCE-001 completed producer trace and ODP-JOB-PARTIAL-DISPOSITION-001 established formal disposition and Human-Authority Handback Package (HB-SHARED001-PARTIAL-001)."
+              },
+              {
+                "state": "BLOCKED_BY_EVIDENCE",
+                "date": "2026-09-08",
+                "note": "User confirmed decision D19 (implement partial/receipt/retry); Stage 33A delivered in ODP-DURABLE-PARTIAL-CONTRACT-PREP-001 (PR #1257); Stage 33B assigned to ODP-DURABLE-PARTIAL-IMPL-001 pending H06."
+              },
+              {
+                "state": "BLOCKED_BY_EVIDENCE",
+                "date": "2026-09-11",
+                "observed_at": "2026-09-11T00:47:47Z",
+                "source_sha": "b19513a1419497dce2ddd5054df5bbe0bd732a69",
+                "note": "Observation at 2026-09-11T00:47:47Z tied to source SHA b19513a1419497dce2ddd5054df5bbe0bd732a69 (PR #1285 under ODP-DURABLE-PARTIAL-IMPL-001): handle_batch_listing_intake is delivered in build_default_registry with 3-phase handler/queue checkpoint writes, durable receipts, and FAILED_ONLY scoped retry. Reconciled in ODP-JOB-PARTIAL-PRODUCER-RECONCILIATION-001: repo producer exists (status: satisfied), while live production queue/worker inventory, live queue policy, and H06 human candidate and business scope confirmation (docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/human-input-request-H06.md) remain BLOCKED_BY_EVIDENCE."
+              }
+            ],
+            "evidence_needed": "Live production queue/scheduler/worker receipt inventory demonstrating deployed production jobs reporting JobStatus.PARTIAL, live production queue policy application, and named human confirmation of actual durable job candidate and business scope per human-input-request-H06.md (docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/human-input-request-H06.md sections 1 and 4).",
+            "evidence_owner": "Platform Infrastructure Lead",
+            "next_review_date": "2026-10-01",
+            "assigned_to": "Platform Infrastructure Lead",
+            "evidence_ref": "docs/evidence/human-decisions/ODP-JOB-PARTIAL-PRODUCER-RECONCILIATION-001/README.md",
+            "formal_handback_ref": "docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md#3-人類授權移交單human-authority-handback-package",
+            "handback_id": "HB-SHARED001-PARTIAL-001",
+            "reopen_trigger": "(1) Live production queue/worker audit receipts demonstrate deployed jobs reporting PARTIAL in production runtime, OR (2) Product Lead, Architecture Board, or Human/Ops formally execute H06 durable job candidate and business scope confirmation per docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/human-input-request-H06.md along with live production queue policy sign-off and requirement closure.",
+            "rationale": "JobStatus vocabulary declares PARTIAL and repo producer is delivered via handle_batch_listing_intake in default registry with 3-phase handler/queue checkpoint writes, durable receipts, and FAILED_ONLY scoped retries (ODP-DURABLE-PARTIAL-IMPL-001, PR #1285 @ b19513a1419497dce2ddd5054df5bbe0bd732a69). However, synthetic fixture/SQLite verification does not elevate to live production receipts or human sign-off; batch-listing-intake is an adjustable engineering default rather than named human sign-off on durable candidate scope. Disposition state remains BLOCKED_BY_EVIDENCE under handback package HB-SHARED001-PARTIAL-001 pending live production environment audit, live queue policy, and H06 candidate scope sign-off (human-input-request-H06.md)."
+          }
+        }
+      ]
+    },
+    {
+      "id": "ODP-FR-SITE-001",
+      "statement": "系統必須組合 External Demand、Brand Transfer、Format Conversion、Ramp、Seasonality。",
+      "member_count": 5,
+      "members": [
+        {
+          "name": "EXTERNAL_DEMAND",
+          "status": "satisfied",
+          "evidence": "modules/sitescore/domain/scoring.py::SiteScoreFeatureInput",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "RAMP",
+          "status": "satisfied",
+          "evidence": "modules/sitescore/domain/scoring.py::SiteScoreFeatureInput",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "SEASONALITY",
+          "status": "satisfied",
+          "evidence": "modules/sitescore/domain/scoring.py::SiteScoreFeatureInput",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "BRAND_TRANSFER",
+          "status": "absent",
+          "note": "core.brands holds static metadata only; brand_transfer_view.sql is a synthetic mock view (cross join with fixed 0.15 transfer_ratio and 1.0 confidence) unconsumed by SiteScore; no producer in repo. Evidence request ER-SITE001-BRAND-TRANSFER-001 and formal handback HB-SITE001-BRAND-TRANSFER-001 submitted to Human/Ops and Architecture Board per docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md. User confirmed decision D16 on 2026-09-08 (Option A: implement brand transfer contract). Stage 30A delivered in ODP-BRAND-TRANSFER-CONTRACT-PREP-001 (PR #1254); Stage 30B assigned to ODP-BRAND-TRANSFER-IMPLEMENTATION-001 pending H03.",
+          "disposition": {
+            "state": "BLOCKED_BY_EVIDENCE",
+            "history": [
+              {
+                "state": "BLOCKED_BY_EVIDENCE",
+                "date": "2026-09-03",
+                "note": "Batch 0 audit confirmed repo lacks real producer; formal handback HB-SITE001-BRAND-TRANSFER-001 submitted per ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md."
+              },
+              {
+                "state": "BLOCKED_BY_EVIDENCE",
+                "date": "2026-09-08",
+                "note": "User confirmed decision D16 (implement brand transfer); Stage 30A delivered in ODP-BRAND-TRANSFER-CONTRACT-PREP-001 (PR #1254); Stage 30B assigned to ODP-BRAND-TRANSFER-IMPLEMENTATION-001 pending H03."
+              }
+            ],
+            "evidence_needed": "External consumer panel feed (e.g. receipt/panel provider) or cross-brand POS loyalty dataset confirmation with versioned schema, producer SLA, and feature specification",
+            "evidence_owner": "Market Intelligence Lead / Commercial Strategy Lead",
+            "next_review_date": "2026-10-01",
+            "evidence_ref": "docs/evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/README.md",
+            "rationale": "Repo contains only static brand metadata and synthetic cross-join mock view; no real producer exists. Handback package HB-SITE001-BRAND-TRANSFER-001 submitted to Human/Ops and Architecture Board for data ingestion contract or formal amendment per ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md. User confirmed D16 implementation direction; Stage 30A delivered under ODP-BRAND-TRANSFER-CONTRACT-PREP-001.",
+            "formal_handback_ref": "docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md#2-member-1brand-transfer既有品牌客群移轉處置",
+            "reopen_trigger": "External consumer panel feed or cross-brand POS loyalty dataset is contracted and ingested into raw data platform with versioned schema, verified producer SLA, and formal feature extraction specification approved by Commercial Strategy Lead."
+          }
+        },
+        {
+          "name": "FORMAT_CONVERSION",
+          "status": "absent",
+          "note": "PostgreSQL (000001) and SQLite (000004) schemas maintain static store_format_code with no format conversion event or renovation history tables; TargetFormatRegistry only selects format by area (new store selection, not conversion); simulator.py only models greenfield new stores. Production-path conversion hits are Listing-to-Candidate conversion or Evidence Level migration notes. Evidence request ER-SITE001-FORMAT-CONVERSION-001 and formal handback HB-SITE001-FORMAT-CONVERSION-001 submitted per docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md. User confirmed decision D17 on 2026-09-08 (Option A: implement format conversion events and financial models). Stage 31A delivered in ODP-FORMAT-CONVERSION-CONTRACT-PREP-001 (PR #1252); Stage 31B assigned to ODP-FORMAT-CONVERSION-IMPLEMENTATION-001 pending H04.",
+          "disposition": {
+            "state": "BLOCKED_BY_EVIDENCE",
+            "history": [
+              {
+                "state": "BLOCKED_BY_EVIDENCE",
+                "date": "2026-09-03",
+                "note": "Batch 0 audit confirmed static schema only; formal handback HB-SITE001-FORMAT-CONVERSION-001 submitted per ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md."
+              },
+              {
+                "state": "BLOCKED_BY_EVIDENCE",
+                "date": "2026-09-08",
+                "note": "User confirmed decision D17 (implement format conversion); Stage 31A delivered in ODP-FORMAT-CONVERSION-CONTRACT-PREP-001 (PR #1252); Stage 31B assigned to ODP-FORMAT-CONVERSION-IMPLEMENTATION-001 pending H04."
+              }
+            ],
+            "evidence_needed": "Active store format conversion operational workflow playbook, brownfield financial simulation parameters (downtime loss, capex schedules), and conversion event schema confirmation",
+            "evidence_owner": "Retail Operations Lead / Site Economics Lead",
+            "next_review_date": "2026-10-01",
+            "evidence_ref": "docs/evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/README.md",
+            "rationale": "Repo contains only static store format codes and greenfield simulation logic; no format conversion event tracking or remodeling financial model exists in repo. Handback package HB-SITE001-FORMAT-CONVERSION-001 submitted to Human/Ops and Architecture Board for operational playbook confirmation or formal amendment per ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md. User confirmed D17 implementation direction; Stage 31A delivered under ODP-FORMAT-CONVERSION-CONTRACT-PREP-001.",
+            "formal_handback_ref": "docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md#3-member-2format-conversion店型轉換業務事件處置",
+            "reopen_trigger": "Store Operations formally approves a brownfield format conversion playbook with remodeling cost schedules and downtime impact parameters; schema migration introduces store format transition event tables and tracking with authoritative owner sign-off."
+          }
+        }
+      ]
+    },
+    {
+      "id": "ODP-FR-LH-005",
+      "statement": "系統必須監控 Data/Feature/Prediction/Performance Drift。",
+      "member_count": 4,
+      "members": [
+        {
+          "name": "DATA_DRIFT",
+          "status": "satisfied",
+          "evidence": "modules/learninghub/infrastructure/evidently_monitor.py::EvidentlyDriftMonitor",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "FEATURE_DRIFT",
+          "status": "satisfied",
+          "evidence": "modules/learninghub/infrastructure/evidently_monitor.py::EvidentlyDriftResult",
+          "note": "Per-column drift from the same Evidently DataDriftPreset run; drifted_columns and drift_share carry it.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "PREDICTION_DRIFT",
+          "status": "absent",
+          "note": "Nothing monitors the distribution of model outputs. DataDriftPreset is the only preset used anywhere in the tree.",
+          "disposition": {
+            "state": "IMPLEMENTATION_READY",
+            "assigned_to": "ML Monitoring Lead",
+            "target_phase": "Batch 4a (ODP Remediation Plan)",
+            "rationale": "Evidently prediction distribution drift monitor scheduled for implementation in Batch 4a."
+          }
+        },
+        {
+          "name": "PERFORMANCE_DRIFT",
+          "status": "satisfied",
+          "evidence": "models/shared_ml/validation.py::MetricThreshold.evaluate",
+          "note": "Performance drift compares observed metrics against baseline_metrics using absolute/relative degradation thresholds and governed decision policies.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ODP-FR-INT-001",
+      "statement": "整合層必須支援 Batch、CDC、API、File 與 Event 來源攝取模式。",
+      "member_count": 5,
+      "members": [
+        {
+          "name": "BATCH",
+          "status": "satisfied",
+          "evidence": "apps/data_platform/source.py::MongoSource",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "API",
+          "status": "satisfied",
+          "evidence": "modules/external_data/connectors/provider_registry.py::PROVIDER_REGISTRY",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "FILE",
+          "status": "satisfied",
+          "evidence": "modules/external_data/application/xlsx_import.py::XlsxCommitReceipt",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "EVENT",
+          "status": "absent",
+          "note": "The machine_status_event schema contract declares integration_mode=event_stream and envelope=event, but in production core.machine_status_events is populated via batch watermark reads of device_log (store.py:394-401). No event broker/stream consumer currently exists in production.",
+          "disposition": {
+            "state": "OPEN",
+            "assigned_to": "Platform Infrastructure Lead",
+            "next_review_date": "2026-10-01",
+            "rationale": "Schema contract declares event_stream mode but production ingestion path executes via device_log batch ingestion; reconcile contract or implement event consumer."
+          }
+        },
+        {
+          "name": "CDC",
+          "status": "absent",
+          "note": "Audited in ODP_INT001_CDC_SOURCE_EVIDENCE_2026-09-03.md and ODP_INT001_CDC_DISPOSITION_2026-09-03.md. User confirmed decision D20 on 2026-09-08 (Option A: implement CDC applicability matrix and contracts). Stage 34A delivered in ODP-CDC-SOURCE-CONTRACT-PREP-001 (PR #1258). Follow-up data-plane delete propagation and schema tasks created; Stage 34B assigned to ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001 pending H07.",
+          "disposition": {
+            "state": "OPEN",
+            "assigned_to": "Data Platform Lead",
+            "next_review_date": "2026-10-01",
+            "history": [
+              {
+                "state": "OPEN",
+                "date": "2026-09-03",
+                "note": "No production upstream requires CDC; handback submitted for formal human requirement amendment / waiver governance."
+              },
+              {
+                "state": "OPEN",
+                "date": "2026-09-08",
+                "note": "User confirmed decision D20 (implement CDC applicability and contract); Stage 34A delivered in ODP-CDC-SOURCE-CONTRACT-PREP-001 (PR #1258); Stage 34B assigned to ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001 pending H07."
+              }
+            ],
+            "rationale": "User confirmed D20 implementation direction; Stage 34A source applicability matrix and event contract draft delivered. Data plane delete propagation and schema follow-up tasks registered; Stage 34B awaiting H07 human decision on candidate streams and SLA.",
+            "evidence_ref": "docs/evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/README.md",
+            "formal_handback_ref": "docs/evidence/ODP_INT001_CDC_DISPOSITION_2026-09-03.md"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ODP-FR-FCT-004",
+      "statement": "系統必須提供成長階段、轉折機率、異常證據與根因候選。",
+      "member_count": 4,
+      "members": [
+        {
+          "name": "TRAJECTORY_CLASS",
+          "status": "satisfied",
+          "evidence": "modules/forecastops/domain/forecasting.py::ForecastOutput.trajectory_class",
+          "note": "ForecastOutput carries trajectory_class ('growing', 'mature', 'declining', 'plateau') per ODP-FR-FCT-004.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "TURNING_POINT_PROBABILITY",
+          "status": "satisfied",
+          "evidence": "modules/forecastops/domain/forecasting.py::ForecastOutput.turning_point_probability",
+          "note": "ForecastOutput carries turning_point_probability per ODP-FR-FCT-004.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "ANOMALY_EVIDENCE",
+          "status": "satisfied",
+          "evidence": "modules/forecastops/domain/forecasting.py::Alert.evidence_json",
+          "note": "Alert carries structured anomaly evidence in evidence_json per ODP-FR-FCT-004.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "ROOT_CAUSE_CANDIDATE",
+          "status": "absent",
+          "note": "No automated root-cause deduction producer exists in the current production tree. Keep the schema field explicitly marked RESERVED (unproduced), with designated Owner (ForecastOps / Platform Ops) and Target Milestone (Wave 5+). Do not synthesize a fake producer.",
+          "disposition": {
+            "state": "IMPLEMENTATION_READY",
+            "assigned_to": "ForecastOps / Platform Ops",
+            "target_phase": "Wave 5+",
+            "rationale": "Full-tree lineage trace confirms no automated root-cause producer exists. The compatible WorkOrder, presentation, and database contracts are explicitly marked RESERVED (unproduced), and the real producer work is assigned to ForecastOps / Platform Ops for Wave 5+; do not manufacture a fake heuristic producer."
+          }
+        }
+      ]
+    },
+    {
+      "id": "ODP-FR-AVM-001",
+      "statement": "估值必須組合 GM_TTM、GM_FWD、折舊、資產、租約與正常化。",
+      "statement_provenance": "_source_provenance.records['ODP-FR-AVM-001'] -- BLOCKED_BY_EVIDENCE. This statement is a repo transcription of the AVM-001 row in docs/evidence/ODP_FR_VERIFICATION_112_AND_ROOT_CAUSES_2026-09-01.md, not canonical bytes. The member list below is therefore asserted 'as transcribed', and no disposition here claims canonical traceability.",
+      "member_count": 6,
+      "members": [
+        {
+          "name": "GM_TTM",
+          "status": "satisfied",
+          "evidence": "modules/avm/domain/valuation.py::ValuationInput.gm_ttm",
+          "note": "Trailing-twelve-month gross margin enters normalize_margin at a 0.45 weight.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "GM_FWD",
+          "status": "satisfied",
+          "evidence": "modules/avm/domain/valuation.py::ValuationInput.forecast_gm_next_12m",
+          "note": "Forward twelve-month gross margin enters normalize_margin at a 0.55 weight.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "DEPRECIATION",
+          "status": "absent",
+          "note": "No depreciation reaches the valuation path. The only depreciation in the tree is modules/site_economics/domain/simulator.py:325-357, where it is a tax shield on a greenfield store's projected cash flow -- a different quantity, on a different clock, for a different consumer -- and modules/avm does not import it. The verdict is AVM-specific and its four pieces of evidence, the input fields, the version fields, the legacy-card rules and the rollback guarantee are in docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md; the disposition is registered at docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md section 4.9 and evidenced at docs/evidence/ODP_AVM001_DEPRECIATION_DISPOSITION_2026-09-04.md. This member stays absent until an implementation lands: the contract is written, the gap is not closed.",
+          "disposition": {
+            "state": "IMPLEMENTATION_READY",
+            "assigned_to": "AVM Domain Lead / Finance Analytics Lead",
+            "target_phase": "Batch 1 (ODP Remediation Plan) -- AVM valuation",
+            "acceptance_criteria": "modules/avm/tests/test_avm_depreciation_contract.py -- eight xfail(strict=True) specs covering C-1 basis discrimination, C-2 input fields, C-3 straight-line calculation, C-4 evidence and version fields, C-5 fail-closed on missing inputs, L-1/L-2 legacy card handling, L-4 calibration version split, and R-1 bit-exact v0 rollback. strict=True means the specs turn red by XPASS the moment an implementation satisfies them, so the contract cannot be met without removing the markers deliberately.",
+            "rationale": "The remediation plan asked first whether AVM asset depreciation and the site_economics store cash-flow depreciation are the same concept. They are not: different measured object (a greenfield format's brand-new machine mix versus a specific store's N-month-old equipment), different destination (a tax shield that never lowers a carrying value versus a direct reduction of the asset lens), opposite clock origins, and a residual that is an exit cash inflow on one side and a carrying-value floor on the other. So the model is AVM-specific, and even the three-line straight-line formula is not extracted into a shared function, because the shared dependency would advertise a policy alignment that does not exist. What is missing is the implementation, not the specification: C-1..C-5, L-1..L-4 and R-1..R-4 are written and executable, an owner and a delivery batch are named. Two preconditions are recorded in the contract and belong to humans, not to this registration: the finance owner must fill in the three R-4 rollback thresholds before cutover, and the canonical requirement bytes remain BLOCKED_BY_EVIDENCE under _source_provenance."
+          }
+        },
+        {
+          "name": "ASSET",
+          "status": "satisfied",
+          "evidence": "modules/avm/domain/valuation.py::ValuationInput.asset_book_value",
+          "note": "Asset book value and equipment_fair_value form the asset lens in value_store. Which of the two carries equipment, and whether it is already net of age, is the ambiguity section C-1 of the depreciation contract resolves.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "LEASE",
+          "status": "satisfied",
+          "evidence": "modules/avm/domain/valuation.py::ValuationInput.lease_liability",
+          "note": "Lease liability is subtracted in the asset lens and published in its evidence block.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "NORMALIZATION",
+          "status": "satisfied",
+          "evidence": "modules/avm/domain/valuation.py::normalize_margin",
+          "note": "Weighted TTM/forward blend with a named quality discount and recorded adjustment_reasons.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        }
+      ]
+    }
+  ],
+  "_governance_policy": "docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md"
+}

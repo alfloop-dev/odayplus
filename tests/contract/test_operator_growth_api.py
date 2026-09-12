@@ -357,3 +357,134 @@ def test_create_action_without_role_is_denied() -> None:
         },
     )
     assert resp.status_code in (401, 403), resp.text
+
+
+def test_growth_action_evidence_level_canonical_alignment() -> None:
+    client = _client()
+    # 1. Newly created draft has unrated evidenceLevel (None), not "low" or "medium"
+    draft = _create_draft(client, kind="offpeak", name="evidence-test-campaign")
+    fetched = client.get(f"{BASE}/actions/{draft['id']}", headers=WRITE_HEADERS).json()
+    assert fetched["evidenceLevel"] is None
+
+    # 2. Transition through lifecycle to OUTCOME_READY
+    _drive_to_outcome_ready(client, draft["id"])
+
+    # 3. Write outcome with canonical EvidenceLevel (e.g. L3)
+    resp = client.post(
+        f"{BASE}/actions/{draft['id']}/outcome",
+        json={
+            "outcome": "EFFECTIVE",
+            "requiredAction": "CLOSE",
+            "observedLift": 2.5,
+            "evidenceLevel": "L3",
+        },
+        headers=_headers(),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "CLOSED"
+
+    fetched_closed = client.get(f"{BASE}/actions/{draft['id']}", headers=WRITE_HEADERS).json()
+    assert fetched_closed["evidenceLevel"] == "L3"
+
+
+def _drive_to_outcome_ready(client: TestClient, action_id: str) -> None:
+    """Advance an approved draft through its lifecycle to OUTCOME_READY."""
+    approval = client.post(
+        f"{BASE}/actions/{action_id}/submit", json={}, headers=_headers()
+    ).json()["approval"]
+    client.post(
+        f"{BASE}/approvals/{approval['id']}/decision",
+        json={"decision": "approved"},
+        headers=_headers(),
+    )
+    for target in ("SCHEDULED", "RUNNING", "OBSERVING", "OUTCOME_READY"):
+        client.post(
+            f"{BASE}/actions/{action_id}/transition",
+            json={"targetStatus": target},
+            headers=_headers(),
+        )
+
+
+def test_outcome_rejects_evidence_that_names_no_rung() -> None:
+    """The pre-ADR-0004 vocabulary is refused at the boundary, not stored.
+
+    "medium" is the value the old default wrote, so a caller still sending it
+    explicitly would reproduce the exact record the ADR removed. The ladder is
+    the request contract now, so this is a 422 rather than a silent write.
+    """
+    client = _client()
+    draft = _create_draft(client, kind="offpeak", name="evidence-reject-campaign")
+    _drive_to_outcome_ready(client, draft["id"])
+
+    for value in ("medium", "high", "low", "L6"):
+        resp = client.post(
+            f"{BASE}/actions/{draft['id']}/outcome",
+            json={
+                "outcome": "EFFECTIVE",
+                "requiredAction": "CLOSE",
+                "observedLift": 2.5,
+                "evidenceLevel": value,
+            },
+            headers=_headers(),
+        )
+        assert resp.status_code == 422, f"{value!r} -> {resp.status_code}: {resp.text}"
+
+    # Nothing was written: the action neither closed nor acquired a claim.
+    fetched = client.get(f"{BASE}/actions/{draft['id']}", headers=WRITE_HEADERS).json()
+    assert fetched["evidenceLevel"] is None
+    assert fetched["status"] == "OUTCOME_READY"
+
+
+def test_unrated_evidence_cannot_close_an_action() -> None:
+    """Unrated is inconclusive, which is the behaviour the "medium" default hid.
+
+    An action that met its target lift with nobody having assessed the evidence
+    used to arrive at the gate carrying a medium claim and close. With the
+    default gone it stays open.
+    """
+    client = _client()
+    draft = _create_draft(client, kind="offpeak", name="evidence-unrated-campaign")
+    _drive_to_outcome_ready(client, draft["id"])
+
+    resp = client.post(
+        f"{BASE}/actions/{draft['id']}/outcome",
+        json={
+            "outcome": "EFFECTIVE",
+            "requiredAction": "CLOSE",
+            "observedLift": 99.0,
+            "evidenceLevel": None,
+        },
+        headers=_headers(),
+    )
+    assert resp.status_code in (200, 409), resp.text
+
+    fetched = client.get(f"{BASE}/actions/{draft['id']}", headers=WRITE_HEADERS).json()
+    assert fetched["status"] != "CLOSED"
+    assert fetched["evidenceLevel"] is None
+
+
+def test_evidence_below_the_causal_threshold_cannot_close_an_action() -> None:
+    """L2 is a real reading, and still not enough to claim the lift was caused.
+
+    ODP-BR-AD-001 puts the causal threshold at L3; the backend gate and the
+    browser gate must agree on it, so the rung one step below must not close.
+    """
+    client = _client()
+    draft = _create_draft(client, kind="offpeak", name="evidence-l2-campaign")
+    _drive_to_outcome_ready(client, draft["id"])
+
+    resp = client.post(
+        f"{BASE}/actions/{draft['id']}/outcome",
+        json={
+            "outcome": "EFFECTIVE",
+            "requiredAction": "CLOSE",
+            "observedLift": 99.0,
+            "evidenceLevel": "L2",
+        },
+        headers=_headers(),
+    )
+    assert resp.status_code in (200, 409), resp.text
+
+    fetched = client.get(f"{BASE}/actions/{draft['id']}", headers=WRITE_HEADERS).json()
+    assert fetched["status"] != "CLOSED"
+    assert fetched["evidenceLevel"] == "L2"

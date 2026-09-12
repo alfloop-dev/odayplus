@@ -94,6 +94,7 @@ from delivery_toolchain.release.release_lease import (  # noqa: E402
 )
 from delivery_toolchain.release.release_manifest import (  # noqa: E402
     component_binding_errors,
+    is_sha256_digest,
     load_manifest,
     validate_release_admission,
 )
@@ -383,27 +384,78 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--action", default=DEFAULT_ACTION)
     parser.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
+    parser.add_argument(
+        "--manifest-digest",
+        default="",
+        metavar="sha256:<64 hex>",
+        help=(
+            "Exact manifest digest this deploy is authorised for. The deploy phase "
+            "transports the build phase's candidate manifest as an artifact, so the "
+            "file handed here is not trusted on its own: it is admitted only when its "
+            "canonical digest equals this value, which is the same digest the "
+            "Supervisor lease was issued against."
+        ),
+    )
+    parser.add_argument(
+        "--require-manifest-digest",
+        action="store_true",
+        help=(
+            "Refuse to admit without --manifest-digest. The hosted deploy phase always "
+            "sets this: without it a transported manifest would be believed on the "
+            "strength of being self-consistent, which any rebuilt manifest also is."
+        ),
+    )
     parser.add_argument("--receipt", type=Path, default=None)
     args = parser.parse_args(argv)
+
+    expected_manifest_digest = str(args.manifest_digest or "").strip()
 
     now = datetime.now(UTC)
     lease, lease_load_errors = load_lease(args.lease_file)
 
+    def manifest_transport() -> dict[str, Any]:
+        # Which manifest file was actually read, and which digest it had to
+        # match. A receipt that omits this cannot distinguish an admission that
+        # verified the build phase's transported artifact from one that fell
+        # back to whatever manifest the deploy checkout carried.
+        return {
+            "manifest_path": str(args.manifest),
+            "expected_manifest_digest": expected_manifest_digest or None,
+            "digest_binding_required": bool(args.require_manifest_digest),
+        }
+
     def fail(errors: list[str]) -> int:
-        return _blocked(
-            errors,
-            build_receipt(
-                lease,
-                errors=errors,
-                admitted=False,
-                verified_at=now,
-                verifier=VERIFIER_NAME,
-            ),
-            args.receipt,
+        receipt = build_receipt(
+            lease,
+            errors=errors,
+            admitted=False,
+            verified_at=now,
+            verifier=VERIFIER_NAME,
         )
+        receipt["manifest_transport"] = manifest_transport()
+        return _blocked(errors, receipt, args.receipt)
 
     if lease_load_errors:
         return fail(lease_load_errors)
+
+    # The transported manifest is checked before anything reaches lease state.
+    # A deploy that cannot say which manifest it is authorised for has no way to
+    # distinguish the build phase's artifact from any other self-consistent one.
+    if expected_manifest_digest and not is_sha256_digest(expected_manifest_digest):
+        return fail(
+            [
+                "--manifest-digest must be a sha256:<64 lowercase hex> digest, got: "
+                f"{expected_manifest_digest!r}"
+            ]
+        )
+    if args.require_manifest_digest and not expected_manifest_digest:
+        return fail(
+            [
+                "--manifest-digest is required: the deploy phase must name the exact "
+                "manifest the Supervisor lease was issued against, not accept whichever "
+                "manifest the checkout happens to carry"
+            ]
+        )
 
     try:
         public_key = load_public_key(key_path=args.public_key_file)
@@ -426,7 +478,9 @@ def main(argv: list[str] | None = None) -> int:
         if isinstance(candidate, str) and SHA_PATTERN.fullmatch(candidate):
             expected_candidate_sha = candidate
     manifest, manifest_errors = load_manifest(
-        args.manifest, expected_candidate_sha=expected_candidate_sha
+        args.manifest,
+        expected_candidate_sha=expected_candidate_sha,
+        expected_digest=expected_manifest_digest or None,
     )
     if manifest is not None:
         admission_errors = validate_release_admission(manifest)
@@ -461,6 +515,7 @@ def main(argv: list[str] | None = None) -> int:
     # Digests are not secrets, and an admission receipt that does not say which
     # artifact was admitted cannot be audited against what actually deployed.
     receipt["component_images"] = dict(sorted(component_images.items()))
+    receipt["manifest_transport"] = manifest_transport()
     if not admitted:
         return _blocked(errors, receipt, args.receipt)
 

@@ -9,9 +9,12 @@ application tests stay compatible. State lives in ``durable_documents`` via
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+import hashlib
+import json
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import UTC, date, datetime
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -27,16 +30,47 @@ from models.shared_ml.model_card import ModelCard
 from models.shared_ml.registry import ModelAlias, ModelRegistryError, ModelVersion
 from models.shared_ml.validation import ValidationRun
 from modules.adlift.domain.incrementality import IncrementalityReport
-from modules.avm.domain import DataRoom, NormalizedMargin, ValuationCase, ValuationReport
+from modules.avm.domain import (
+    LEGACY_UNKNOWN_QUALITY_STATUS,
+    DataRoom,
+    NormalizedMargin,
+    ValuationCase,
+    ValuationInput,
+    ValuationReport,
+)
+from modules.forecastops.domain.feedback import ForecastFeedback
 from modules.forecastops.domain.forecasting import (
     Alert,
     ForecastOutput,
     ForecastSeries,
     InterventionHandoff,
 )
+from modules.heatzone.application.absorption_outcome_recorder import (
+    AbsorptionOutcomeConflictError,
+    AbsorptionOutcomeWriteError,
+    UnregisteredCellError,
+    measurement_differences,
+)
+from modules.heatzone.application.merge_split_evidence import (
+    AbsorptionOutcomeRecord,
+    CellOutcomeSeries,
+)
+from modules.heatzone.domain.composition import (
+    COMPOSITION_MODEL_VERSION,
+    CompositionKind,
+    CompositionValidationError,
+    HeatZoneCompositionRecord,
+    MergeSplitProposalRecord,
+    ProposalStatus,
+    ZoneLineage,
+    approval_zone_assignments,
+    parse_datetime,
+    validate_composition_record,
+)
 from modules.heatzone.workers import HeatZoneBatchScoreResult
 from modules.intervention.domain.lifecycle import Intervention, LabelRecord
 from modules.learninghub.domain import (
+    BacktestReceipt,
     DatasetSnapshot,
     DqTriageRecord,
     InferenceComparison,
@@ -52,6 +86,9 @@ from modules.netplan.domain import (
     ApprovalRecord as NetPlanApprovalRecord,
 )
 from modules.netplan.domain import (
+    ConstraintDisclosureAcknowledgement as NetPlanConstraintDisclosureAcknowledgement,
+)
+from modules.netplan.domain import (
     ExecutionRecord as NetPlanExecutionRecord,
 )
 from modules.netplan.domain import (
@@ -62,6 +99,17 @@ from modules.netplan.domain import (
 )
 from modules.netplan.domain import (
     ScenarioSolveRecord as NetPlanScenarioSolveRecord,
+)
+from modules.netplan.infrastructure.repositories import ImmutableRecordError
+from modules.opsboard.audit.domain.evidence import DecisionCard
+from modules.priceops.domain.exploration import (
+    ActivationReceipt,
+    ExplorationBudgetExceededError,
+    ExplorationDecision,
+    ExplorationGate,
+    ExplorationGateExpiredError,
+    ExplorationGateRevokedError,
+    PriceScope,
 )
 from modules.priceops.domain.pricing import (
     ApprovalRecord,
@@ -76,6 +124,7 @@ from modules.priceops.domain.pricing import (
     RollbackPlan,
 )
 from modules.sitescore.domain.scoring import SiteScoreReport
+from shared.audit.events import AuditEvent
 from shared.domain import ForecastOutput as CanonicalForecastOutput
 from shared.domain import Prediction, PredictionRun, SiteScoreRun
 from shared.domain.models import (
@@ -84,6 +133,7 @@ from shared.domain.models import (
     Listing,
     Machine,
     MachineCycle,
+    ManualCorrection,
     Store,
     Tenant,
     Transaction,
@@ -97,6 +147,14 @@ class TenantScopeRequiredError(ValueError):
     """Raised when a production repository read omits its tenant boundary."""
 
 
+class StaleRevisionError(ValueError):
+    """Raised when a manual correction optimistic concurrency check fails."""
+
+
+class InvalidCorrectionError(ValueError):
+    """Raised when manual correction input validation fails."""
+
+
 def _requires_tenant_scope(engine: Any) -> bool:
     return str(getattr(engine, "dialect", "")).lower() == "postgresql"
 
@@ -105,6 +163,35 @@ def _require_tenant_scope(engine: Any, tenant_id: str | None) -> str | None:
     normalized = str(tenant_id or "").strip()
     if _requires_tenant_scope(engine) and not normalized:
         raise TenantScopeRequiredError("tenant_id is required for PostgreSQL business-data reads")
+    return normalized or None
+
+
+def _assert_tenant_scope(record_tenant: str | None, request_tenant: str | None) -> None:
+    """Fail closed unless record and caller carry the same *non-empty* tenant.
+
+    A blank tenant is not a wildcard on either side. Rows that predate tenant
+    scoping store NULL and read back as ``""``, and a caller that presents no
+    tenant also normalizes to ``""``; deciding scope on equality alone lets an
+    unscoped caller read and modify every unscoped legacy row. Requiring both
+    sides to be non-empty keeps those rows unreachable until they are migrated
+    into a real tenant.
+    """
+    record = str(record_tenant or "").strip()
+    request = str(request_tenant or "").strip()
+    if not record or not request or record != request:
+        raise PermissionError("TENANT_SCOPE_DENIED")
+
+
+def _nullable_tenant_id(tenant_id: str | None) -> str | None:
+    """Bind a blank tenant id as SQL NULL rather than the empty string.
+
+    ``AddressLocation.tenant_id`` defaults to ``""`` for records that predate
+    tenant scoping. SQLite stores that happily, but PostgreSQL's
+    ``tenant_id UUID`` column rejects ``''`` with InvalidTextRepresentation.
+    NULL is the accurate representation of "no tenant" on both backends, and
+    ``_row_to_address`` already reads NULL back as ``""``.
+    """
+    normalized = str(tenant_id or "").strip()
     return normalized or None
 
 
@@ -200,15 +287,100 @@ class DurableAVMRepository:
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
 
+    def _migrate_legacy_case(self, case: ValuationCase | None) -> ValuationCase | None:
+        """Stamp a durable status on cases stored before the field existed.
+
+        Only a payload that predates ``quality_score_status`` is opaque; a case
+        written by the current code carries an explicit status, and a freshly
+        built input that simply omitted it is a measured input, not a legacy
+        one.  Rewriting the latter would apply the legacy discount to current
+        valuations.
+        """
+
+        if case is None:
+            return None
+        inp = case.valuation_input
+        if getattr(inp, "is_pre_status_payload", False):
+            legacy_status = inp.effective_quality_score_status
+            new_input = ValuationInput(
+                store_id=inp.store_id,
+                gm_ttm=inp.gm_ttm,
+                forecast_gm_next_12m=inp.forecast_gm_next_12m,
+                asset_book_value=inp.asset_book_value,
+                equipment_fair_value=inp.equipment_fair_value,
+                lease_liability=getattr(inp, "lease_liability", 0.0),
+                working_capital=getattr(inp, "working_capital", 0.0),
+                comparable_multiples=getattr(inp, "comparable_multiples", ()),
+                liquidity_discount=getattr(inp, "liquidity_discount", 0.1),
+                quality_score=getattr(inp, "quality_score", None),
+                quality_score_status=legacy_status,
+                source_snapshot_ids=getattr(inp, "source_snapshot_ids", ()),
+                prediction_origin_time=getattr(inp, "prediction_origin_time", datetime.now(UTC)),
+            )
+            migrated = ValuationCase(
+                case_id=case.case_id,
+                store_id=case.store_id,
+                status=case.status,
+                valuation_input=new_input,
+                created_by=case.created_by,
+                created_at=case.created_at,
+                status_history=case.status_history,
+            )
+            # Persist the marker so every later reader, including report and
+            # data-room readers, observes the same legacy disposition.
+            self._store.put(self._CASES, migrated.case_id, migrated)
+            return migrated
+        return case
+
+    def _case_has_legacy_quality(self, case_id: str) -> bool:
+        case = self.get_case(case_id)
+        return bool(
+            case is not None
+            and case.valuation_input.effective_quality_score_status
+            == LEGACY_UNKNOWN_QUALITY_STATUS
+        )
+
+    def _dispose_legacy_report(self, report: ValuationReport) -> ValuationReport:
+        if not (
+            self._case_has_legacy_quality(report.case_id)
+            or report.is_legacy_quality_unknown
+        ):
+            return report
+        disposed = report.with_legacy_quality_disposition()
+        if disposed != report:
+            self._store.put(
+                self._REPORTS,
+                report.report_id,
+                disposed,
+                group_key=report.case_id,
+                seq=getattr(report, "valuation_version", 1),
+            )
+        return disposed
+
+    def _dispose_legacy_dataroom(self, dataroom: DataRoom) -> DataRoom:
+        if not (
+            self._case_has_legacy_quality(dataroom.case_id)
+            or dataroom.is_legacy_quality_unknown
+        ):
+            return dataroom
+        disposed = dataroom.with_legacy_quality_disposition()
+        if disposed != dataroom:
+            self._store.put(self._DATAROOMS, dataroom.case_id, disposed)
+        return disposed
+
     def save_case(self, case: ValuationCase) -> ValuationCase:
         self._store.put(self._CASES, case.case_id, case)
         return case
 
     def get_case(self, case_id: str) -> ValuationCase | None:
-        return self._store.get(self._CASES, case_id)
+        return self._migrate_legacy_case(self._store.get(self._CASES, case_id))
 
     def list_cases(self) -> list[ValuationCase]:
-        return self._store.list_all(self._CASES)
+        return [
+            c
+            for item in self._store.list_all(self._CASES)
+            if (c := self._migrate_legacy_case(item)) is not None
+        ]
 
     def save_margin(self, margin: NormalizedMargin) -> NormalizedMargin:
         self._store.put(self._MARGINS, margin.case_id, margin)
@@ -241,17 +413,22 @@ class DurableAVMRepository:
         return report
 
     def latest_report(self, case_id: str) -> ValuationReport | None:
-        return self._store.latest_in_group(self._REPORTS, case_id)
+        report = self._store.latest_in_group(self._REPORTS, case_id)
+        return None if report is None else self._dispose_legacy_report(report)
 
     def report_history(self, case_id: str) -> list[ValuationReport]:
-        return self._store.list_by_group(self._REPORTS, case_id)
+        return [
+            self._dispose_legacy_report(report)
+            for report in self._store.list_by_group(self._REPORTS, case_id)
+        ]
 
     def save_dataroom(self, dataroom: DataRoom) -> DataRoom:
         self._store.put(self._DATAROOMS, dataroom.case_id, dataroom)
         return dataroom
 
     def get_dataroom(self, case_id: str) -> DataRoom | None:
-        return self._store.get(self._DATAROOMS, case_id)
+        dataroom = self._store.get(self._DATAROOMS, case_id)
+        return None if dataroom is None else self._dispose_legacy_dataroom(dataroom)
 
 
 class DurableForecastOpsRepository:
@@ -264,6 +441,7 @@ class DurableForecastOpsRepository:
     _PREDICTION_RUNS = "forecastops.prediction_runs"
     _PREDICTIONS = "forecastops.predictions"
     _CANONICAL_FORECASTS = "forecastops.canonical_forecasts"
+    _FEEDBACK = "forecastops.feedback"
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
@@ -399,6 +577,47 @@ class DurableForecastOpsRepository:
             forecast_output_id,
         )
 
+    def save_feedback(self, feedback: ForecastFeedback) -> ForecastFeedback:
+        self._store.put(
+            self._collection(self._FEEDBACK, feedback.tenant_id),
+            feedback.feedback_id,
+            feedback,
+            group_key=feedback.store_id,
+        )
+        return feedback
+
+    def get_feedback(self, tenant_id: str, feedback_id: str) -> ForecastFeedback | None:
+        return self._store.get(self._collection(self._FEEDBACK, tenant_id), feedback_id)
+
+    def list_feedbacks(
+        self,
+        tenant_id: str,
+        *,
+        store_id: str | None = None,
+        feedback_type: str | None = None,
+        status: str | None = None,
+    ) -> list[ForecastFeedback]:
+        collection = self._collection(self._FEEDBACK, tenant_id)
+        if store_id is not None:
+            items = self._store.list_by_group(collection, store_id)
+        else:
+            items = self._store.list_all(collection)
+        if feedback_type is not None:
+            norm_type = feedback_type.strip().lower()
+            items = [
+                fb
+                for fb in items
+                if getattr(fb.feedback_type, "value", str(fb.feedback_type)).lower() == norm_type
+            ]
+        if status is not None:
+            norm_status = status.strip().lower()
+            items = [
+                fb
+                for fb in items
+                if getattr(fb.status, "value", str(fb.status)).lower() == norm_status
+            ]
+        return sorted(items, key=lambda fb: fb.created_at)
+
 
 class DurableAdLiftRepository:
     """Durable mirror of ``InMemoryAdLiftRepository``."""
@@ -472,6 +691,9 @@ class DurablePriceOpsRepository:
     _HANDOFFS = "priceops.handoffs"
     _LABELS = "priceops.label_entries"
     _EVALUATIONS = "priceops.evaluations"
+    _GATES = "priceops.exploration_gates"
+    _EXPLORATION_DECISIONS = "priceops.exploration_decisions"
+    _ACTIVATION_RECEIPTS = "priceops.activation_receipts"
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
@@ -553,6 +775,132 @@ class DurablePriceOpsRepository:
     def get_evaluation(self, plan_id: str) -> PricingEffectEvaluation | None:
         return self._store.get(self._EVALUATIONS, plan_id)
 
+    # -- exploration gates and receipts ----------------------------------
+    # These records use the same durable document store as the rest of the
+    # PriceOps aggregate.  The Postgres deployment store implements the same
+    # interface, so production API composition cannot silently fall back to
+    # the process-local gate repository.
+    def save_gate(self, gate: ExplorationGate) -> ExplorationGate:
+        self._store.put(self._GATES, gate.gate_id, gate, group_key=gate.tenant_id)
+        return gate
+
+    def get_gate(self, gate_id: str, tenant_id: str | None = None) -> ExplorationGate | None:
+        gate = self._store.get(self._GATES, gate_id)
+        if gate is not None and tenant_id is not None and gate.tenant_id != tenant_id:
+            return None
+        return gate
+
+    def find_active_gate(
+        self, scope: PriceScope, at: datetime | None = None
+    ) -> ExplorationGate | None:
+        now = at or datetime.now(UTC)
+        for gate in self.list_gates(tenant_id=scope.tenant_id):
+            if scope.matches(gate) and gate.is_valid_at(now) and gate.remaining_budget > 0:
+                return gate
+        return None
+
+    def list_gates(self, tenant_id: str | None = None) -> list[ExplorationGate]:
+        if tenant_id is not None:
+            return self._store.list_by_group(self._GATES, tenant_id)
+        return self._store.list_all(self._GATES)
+
+    def revoke_gate(
+        self, gate_id: str, tenant_id: str, revoked_at: datetime | None = None
+    ) -> ExplorationGate:
+        gate = self.get_gate(gate_id, tenant_id=tenant_id)
+        if gate is None:
+            raise LookupError(f"Gate {gate_id} not found for tenant {tenant_id}")
+        if gate.revoked_at is not None:
+            raise ExplorationGateRevokedError(
+                f"Gate {gate_id} is already revoked at {gate.revoked_at}"
+            )
+        revoked = ExplorationGate(
+            gate_id=gate.gate_id,
+            tenant_id=gate.tenant_id,
+            budget_limit=gate.budget_limit,
+            budget_consumed=gate.budget_consumed,
+            effective_from=gate.effective_from,
+            effective_to=gate.effective_to,
+            approved_by=gate.approved_by,
+            approval_decision_id=gate.approval_decision_id,
+            approval_id=gate.approval_id,
+            rollback_condition=gate.rollback_condition,
+            decision_policy_version_id=gate.decision_policy_version_id,
+            scope_brand_id=gate.scope_brand_id,
+            scope_store_group=gate.scope_store_group,
+            scope_sku_group=gate.scope_sku_group,
+            revoked_at=revoked_at or datetime.now(UTC),
+            created_at=gate.created_at,
+        )
+        return self.save_gate(revoked)
+
+    def record_exploration_decision(
+        self, decision: ExplorationDecision
+    ) -> ExplorationDecision:
+        gate = self.get_gate(decision.gate_id, tenant_id=decision.tenant_id)
+        if gate is None:
+            raise LookupError(
+                f"Gate {decision.gate_id} not found for tenant {decision.tenant_id}"
+            )
+        if gate.revoked_at is not None:
+            raise ExplorationGateRevokedError(f"Gate {gate.gate_id} is revoked")
+        if not gate.is_valid_at(decision.created_at):
+            raise ExplorationGateExpiredError(
+                f"Gate {gate.gate_id} is outside active window at {decision.created_at}"
+            )
+        if decision.budget_consumed < 0:
+            raise ExplorationBudgetExceededError(
+                f"Gate {gate.gate_id} cannot consume a negative budget"
+            )
+        new_consumed = round(gate.budget_consumed + decision.budget_consumed, 4)
+        if new_consumed > gate.budget_limit + 1e-6:
+            raise ExplorationBudgetExceededError(
+                f"Gate {gate.gate_id} budget exceeded: consumed {new_consumed} > limit {gate.budget_limit}"
+            )
+        self.save_gate(
+            ExplorationGate(
+                gate_id=gate.gate_id,
+                tenant_id=gate.tenant_id,
+                budget_limit=gate.budget_limit,
+                budget_consumed=new_consumed,
+                effective_from=gate.effective_from,
+                effective_to=gate.effective_to,
+                approved_by=gate.approved_by,
+                approval_decision_id=gate.approval_decision_id,
+                approval_id=gate.approval_id,
+                rollback_condition=gate.rollback_condition,
+                decision_policy_version_id=gate.decision_policy_version_id,
+                scope_brand_id=gate.scope_brand_id,
+                scope_store_group=gate.scope_store_group,
+                scope_sku_group=gate.scope_sku_group,
+                revoked_at=gate.revoked_at,
+                created_at=gate.created_at,
+            )
+        )
+        self._store.put(
+            self._EXPLORATION_DECISIONS,
+            decision.decision_id,
+            decision,
+            group_key=decision.gate_id,
+        )
+        return decision
+
+    def list_exploration_decisions(
+        self, gate_id: str | None = None
+    ) -> list[ExplorationDecision]:
+        if gate_id is not None:
+            return self._store.list_by_group(self._EXPLORATION_DECISIONS, gate_id)
+        return self._store.list_all(self._EXPLORATION_DECISIONS)
+
+    def save_activation_receipt(
+        self, receipt: ActivationReceipt
+    ) -> ActivationReceipt:
+        self._store.put(self._ACTIVATION_RECEIPTS, receipt.plan_id, receipt)
+        return receipt
+
+    def get_activation_receipt(self, plan_id: str) -> ActivationReceipt | None:
+        return self._store.get(self._ACTIVATION_RECEIPTS, plan_id)
+
 
 class DurableLabelRegistry:
     """Durable mirror of ``InMemoryLabelRegistry`` (intervention label hook)."""
@@ -595,6 +943,7 @@ class DurableLearningHubRepository:
     _VERSIONS = "learninghub.model_versions"
     _CARDS = "learninghub.model_cards"
     _VALIDATIONS = "learninghub.validation_runs"
+    _BACKTEST_RECEIPTS = "learninghub.backtest_receipts"
     _ALIASES = "learninghub.aliases"
     _RELEASES = "learninghub.release_decisions"
     _RELEASE_SAGAS = "learninghub.release_sagas"
@@ -681,6 +1030,44 @@ class DurableLearningHubRepository:
 
     def get_validation_run(self, validation_run_id: str) -> ValidationRun | None:
         return self._store.get(self._VALIDATIONS, validation_run_id)
+
+    # -- backtest receipts ------------------------------------------------
+
+    def save_backtest_receipt(self, receipt: BacktestReceipt) -> BacktestReceipt:
+        self._store.put(
+            self._BACKTEST_RECEIPTS,
+            f"{receipt.model_name}:{receipt.model_version}",
+            receipt,
+            group_key=receipt.model_name,
+        )
+        self._store.put(
+            self._BACKTEST_RECEIPTS,
+            receipt.receipt_id,
+            receipt,
+            group_key=receipt.model_name,
+        )
+        return receipt
+
+    def get_backtest_receipt(self, model_name: str, version: str) -> BacktestReceipt | None:
+        return self._store.get(self._BACKTEST_RECEIPTS, f"{model_name}:{version}")
+
+    def get_backtest_receipt_by_id(self, receipt_id: str) -> BacktestReceipt | None:
+        return self._store.get(self._BACKTEST_RECEIPTS, receipt_id)
+
+    def list_backtest_receipts(
+        self, model_name: str | None = None
+    ) -> list[BacktestReceipt]:
+        if model_name is None:
+            records = self._store.list_all(self._BACKTEST_RECEIPTS)
+        else:
+            records = self._store.list_by_group(self._BACKTEST_RECEIPTS, model_name)
+        seen: set[str] = set()
+        unique: list[BacktestReceipt] = []
+        for r in records:
+            if r is not None and isinstance(r, BacktestReceipt) and r.receipt_id not in seen:
+                seen.add(r.receipt_id)
+                unique.append(r)
+        return unique
 
     # -- aliases ----------------------------------------------------------
 
@@ -940,6 +1327,7 @@ class DurableNetPlanRepository:
 
     _SCENARIOS = "netplan.scenarios"
     _SOLVES = "netplan.solves"
+    _DISCLOSURE_ACKNOWLEDGEMENTS = "netplan.disclosure_acknowledgements"
     _APPROVALS = "netplan.approvals"
     _EXECUTIONS = "netplan.executions"
     _OUTCOMES = "netplan.outcomes"
@@ -963,6 +1351,46 @@ class DurableNetPlanRepository:
 
     def get_solve(self, scenario_id: str) -> NetPlanScenarioSolveRecord | None:
         return self._store.get(self._SOLVES, scenario_id)
+
+    def save_disclosure_acknowledgement(
+        self,
+        acknowledgement: NetPlanConstraintDisclosureAcknowledgement,
+    ) -> NetPlanConstraintDisclosureAcknowledgement:
+        """Persist one sealed disclosure receipt without permitting rewrites."""
+        if not acknowledgement.integrity_verified:
+            raise ImmutableRecordError(
+                f"acknowledgement {acknowledgement.acknowledgement_id} does not match "
+                "its own content hash; refusing to store an unverifiable receipt"
+            )
+        with self._store.engine.lock:
+            existing = self._store.get(
+                self._DISCLOSURE_ACKNOWLEDGEMENTS,
+                acknowledgement.acknowledgement_id,
+            )
+            if existing is not None:
+                raise ImmutableRecordError(
+                    f"acknowledgement {acknowledgement.acknowledgement_id} already exists "
+                    "and is immutable; issue a new acknowledgement instead of rewriting it"
+                )
+            self._store.put(
+                self._DISCLOSURE_ACKNOWLEDGEMENTS,
+                acknowledgement.acknowledgement_id,
+                acknowledgement,
+                group_key=acknowledgement.scenario_id,
+            )
+        return acknowledgement
+
+    def get_disclosure_acknowledgement(
+        self,
+        acknowledgement_id: str,
+    ) -> NetPlanConstraintDisclosureAcknowledgement | None:
+        return self._store.get(self._DISCLOSURE_ACKNOWLEDGEMENTS, acknowledgement_id)
+
+    def list_disclosure_acknowledgements(
+        self,
+        scenario_id: str,
+    ) -> list[NetPlanConstraintDisclosureAcknowledgement]:
+        return self._store.list_by_group(self._DISCLOSURE_ACKNOWLEDGEMENTS, scenario_id)
 
     def save_approval(self, approval: NetPlanApprovalRecord) -> NetPlanApprovalRecord:
         self._store.put(
@@ -1200,8 +1628,413 @@ class DurableBrandRepository:
 
 
 @dataclass
+class InMemoryManualCorrectionRepository:
+    _corrections: dict[str, ManualCorrection] = field(default_factory=dict)
+
+    def record_correction(
+        self, correction: ManualCorrection, *, decision_card_json: str | None = None
+    ) -> ManualCorrection:
+        self._corrections[correction.correction_id] = correction
+        return correction
+
+    def delete_correction(self, correction_id: str) -> None:
+        self._corrections.pop(correction_id, None)
+
+    def get_correction(self, correction_id: str) -> ManualCorrection | None:
+        return self._corrections.get(correction_id)
+
+    def list_corrections(
+        self,
+        *,
+        entity_type: str | None = None,
+        entity_id: str | None = None,
+        tenant_id: str | None = None,
+    ) -> list[ManualCorrection]:
+        results = list(self._corrections.values())
+        if entity_type:
+            results = [c for c in results if c.entity_type == entity_type]
+        if entity_id:
+            results = [c for c in results if c.entity_id == entity_id]
+        if tenant_id:
+            results = [c for c in results if c.tenant_id == tenant_id]
+        return sorted(results, key=lambda c: c.occurred_at, reverse=True)
+
+
+class DurableManualCorrectionRepository:
+    def __init__(self, engine: SqliteEngine) -> None:
+        self._engine = engine
+        self._ensure_table()
+
+    def _ensure_table(self) -> None:
+        if _requires_tenant_scope(self._engine):
+            return
+        with self._engine.lock:
+            self._engine.execute(
+                "CREATE TABLE IF NOT EXISTS durable_manual_corrections ("
+                "  correction_id TEXT PRIMARY KEY,"
+                "  entity_type TEXT NOT NULL,"
+                "  entity_id TEXT NOT NULL,"
+                "  tenant_id TEXT NOT NULL,"
+                "  field_name TEXT NOT NULL,"
+                "  old_value_json TEXT NOT NULL,"
+                "  new_value_json TEXT NOT NULL,"
+                "  reason TEXT NOT NULL,"
+                "  actor_id TEXT NOT NULL,"
+                "  occurred_at TEXT NOT NULL,"
+                "  source_revision INTEGER NOT NULL DEFAULT 1,"
+                "  applied_revision INTEGER NOT NULL DEFAULT 2,"
+                "  status TEXT NOT NULL DEFAULT 'applied',"
+                "  correlation_id TEXT,"
+                "  decision_card_json TEXT,"
+                "  audit_event_id TEXT,"
+                "  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+                "  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
+                ")"
+            )
+
+    def record_correction(
+        self, correction: ManualCorrection, *, decision_card_json: str | None = None
+    ) -> ManualCorrection:
+        postgres = _requires_tenant_scope(self._engine)
+        table = "odp_runtime.durable_manual_corrections" if postgres else "durable_manual_corrections"
+        occurred_at_val = (
+            correction.occurred_at.isoformat()
+            if isinstance(correction.occurred_at, datetime)
+            else str(correction.occurred_at)
+        )
+        self._engine.execute(
+            f"INSERT INTO {table} ("
+            "  correction_id, entity_type, entity_id, tenant_id, field_name, "
+            "  old_value_json, new_value_json, reason, actor_id, occurred_at, "
+            "  source_revision, applied_revision, status, correlation_id, "
+            "  decision_card_json, audit_event_id, created_at, updated_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+            "ON CONFLICT (correction_id) DO UPDATE SET "
+            "  status = excluded.status, "
+            "  updated_at = CURRENT_TIMESTAMP",  # nosec B608
+            (
+                correction.correction_id,
+                correction.entity_type,
+                correction.entity_id,
+                correction.tenant_id,
+                correction.field_name,
+                json.dumps(correction.old_value, default=str),
+                json.dumps(correction.new_value, default=str),
+                correction.reason,
+                correction.actor_id,
+                occurred_at_val,
+                correction.source_revision,
+                correction.applied_revision,
+                correction.status,
+                correction.correlation_id,
+                decision_card_json or "",
+                correction.audit_event_id,
+            ),
+        )
+        return correction
+
+    def delete_correction(self, correction_id: str) -> None:
+        postgres = _requires_tenant_scope(self._engine)
+        table = "odp_runtime.durable_manual_corrections" if postgres else "durable_manual_corrections"
+        with self._engine.lock:
+            self._engine.execute(
+                f"DELETE FROM {table} WHERE correction_id = ?",  # nosec B608
+                (correction_id,),
+            )
+
+    def get_correction(self, correction_id: str) -> ManualCorrection | None:
+        postgres = _requires_tenant_scope(self._engine)
+        table = "odp_runtime.durable_manual_corrections" if postgres else "durable_manual_corrections"
+        row = self._engine.query_one(
+            f"SELECT * FROM {table} WHERE correction_id = ?",  # nosec B608
+            (correction_id,),
+        )
+        if not row:
+            return None
+        return self._row_to_correction(row)
+
+    def list_corrections(
+        self,
+        *,
+        entity_type: str | None = None,
+        entity_id: str | None = None,
+        tenant_id: str | None = None,
+    ) -> list[ManualCorrection]:
+        postgres = _requires_tenant_scope(self._engine)
+        table = "odp_runtime.durable_manual_corrections" if postgres else "durable_manual_corrections"
+        query = f"SELECT * FROM {table} WHERE 1=1"  # nosec B608
+        params: list[Any] = []
+        if entity_type:
+            query += " AND entity_type = ?"
+            params.append(entity_type)
+        if entity_id:
+            query += " AND entity_id = ?"
+            params.append(entity_id)
+        if tenant_id:
+            query += " AND tenant_id = ?"
+            params.append(tenant_id)
+        query += " ORDER BY occurred_at DESC, applied_revision DESC"
+        rows = self._engine.query(query, tuple(params))
+        return [self._row_to_correction(row) for row in rows]
+
+    def _row_to_correction(self, row: Any) -> ManualCorrection:
+        occurred_at = row["occurred_at"]
+        if isinstance(occurred_at, str):
+            occurred_at = datetime.fromisoformat(occurred_at.replace("Z", "+00:00"))
+        old_val = json.loads(row["old_value_json"]) if row["old_value_json"] else None
+        new_val = json.loads(row["new_value_json"]) if row["new_value_json"] else None
+        decision_card_json = row["decision_card_json"] or ""
+        card_hash = ""
+        if decision_card_json:
+            try:
+                card_data = json.loads(decision_card_json)
+                if isinstance(card_data, dict) and "card_hash" in card_data:
+                    card_hash = str(card_data["card_hash"])
+                elif isinstance(card_data, dict):
+                    card_data_clean = dict(card_data)
+                    card_data_clean.pop("card_hash", None)
+                    encoded = json.dumps(
+                        card_data_clean, sort_keys=True, separators=(",", ":"), default=str
+                    )
+                    card_hash = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+                else:
+                    card_hash = hashlib.sha256(decision_card_json.encode("utf-8")).hexdigest()
+            except Exception:
+                card_hash = hashlib.sha256(decision_card_json.encode("utf-8")).hexdigest()
+        return ManualCorrection(
+            correction_id=row["correction_id"],
+            entity_type=row["entity_type"],
+            entity_id=row["entity_id"],
+            tenant_id=row["tenant_id"],
+            field_name=row["field_name"],
+            old_value=old_val,
+            new_value=new_val,
+            reason=row["reason"],
+            actor_id=row["actor_id"],
+            occurred_at=occurred_at,
+            source_revision=int(row["source_revision"]),
+            applied_revision=int(row["applied_revision"]),
+            status=row["status"],
+            correlation_id=row["correlation_id"] or "",
+            decision_card_hash=card_hash,
+            audit_event_id=row["audit_event_id"] or "",
+        )
+
+
+# Canonical AddressLocation fields a manual correction can move. The
+# before/after snapshot has to cover all of them rather than only the fields the
+# caller named: applying a correction preserves omitted fields (including
+# geocode_precision and geocode_confidence) and derives h3 cells when coordinates
+# move, so snapshots must capture the full moved state for rollback fidelity.
+_CORRECTABLE_ADDRESS_FIELDS: tuple[str, ...] = (
+    "raw_address",
+    "normalized_address",
+    "city",
+    "district",
+    "village",
+    "road",
+    "latitude",
+    "longitude",
+    "geocode_precision",
+    "geocode_confidence",
+    "h3_res_8",
+    "h3_res_9",
+    "h3_res_10",
+)
+
+
+def _build_corrected_address(
+    existing: AddressLocation, updates: dict[str, Any]
+) -> AddressLocation:
+    """Return ``existing`` with ``updates`` applied and derived fields refreshed.
+
+    Shared by the in-memory and durable repositories so the two write paths
+    cannot drift apart on which fields a correction touches.
+    """
+    if "latitude" in updates:
+        new_lat = float(updates["latitude"]) if updates["latitude"] is not None else None
+    else:
+        new_lat = float(existing.latitude) if existing.latitude is not None else None
+
+    if "longitude" in updates:
+        new_lng = float(updates["longitude"]) if updates["longitude"] is not None else None
+    else:
+        new_lng = float(existing.longitude) if existing.longitude is not None else None
+
+    h3_res_8 = existing.h3_res_8
+    h3_res_9 = existing.h3_res_9
+    h3_res_10 = existing.h3_res_10
+    if "latitude" in updates or "longitude" in updates:
+        if new_lat is not None and new_lng is not None:
+            try:
+                import h3
+
+                h3_res_8 = h3.latlng_to_cell(new_lat, new_lng, 8)
+                h3_res_9 = h3.latlng_to_cell(new_lat, new_lng, 9)
+                h3_res_10 = h3.latlng_to_cell(new_lat, new_lng, 10)
+            except Exception:
+                pass
+        else:
+            h3_res_8 = ""
+            h3_res_9 = ""
+            h3_res_10 = ""
+
+    if "geocode_precision" in updates:
+        new_precision = (
+            str(updates["geocode_precision"])
+            if updates["geocode_precision"] is not None
+            else None
+        )
+    else:
+        new_precision = existing.geocode_precision
+
+    if "geocode_confidence" in updates:
+        new_confidence = (
+            float(updates["geocode_confidence"])
+            if updates["geocode_confidence"] is not None
+            else None
+        )
+    else:
+        new_confidence = (
+            float(existing.geocode_confidence)
+            if existing.geocode_confidence is not None
+            else None
+        )
+
+    return AddressLocation(
+        address_id=existing.address_id,
+        raw_address=updates.get("raw_address", existing.raw_address),
+        normalized_address=updates.get("normalized_address", existing.normalized_address),
+        city=updates.get("city", existing.city),
+        district=updates.get("district", existing.district),
+        village=updates.get("village", existing.village),
+        road=updates.get("road", existing.road),
+        latitude=new_lat,
+        longitude=new_lng,
+        geocode_precision=new_precision,
+        geocode_confidence=new_confidence,
+        h3_res_8=h3_res_8,
+        h3_res_9=h3_res_9,
+        h3_res_10=h3_res_10,
+        manual_override_flag=True,
+        tenant_id=existing.tenant_id,
+        revision=existing.revision + 1,
+    )
+
+
+def _correction_snapshots(
+    before: AddressLocation, after: AddressLocation, updates: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Build the self-contained ``old_value`` / ``new_value`` pair for a write.
+
+    Covers the requested fields plus every other canonical field the write
+    actually moved, so ``old_value`` alone is enough to reconstruct the
+    pre-correction record.
+    """
+    old_value: dict[str, Any] = {
+        "manual_override_flag": before.manual_override_flag,
+        "revision": before.revision,
+    }
+    new_value: dict[str, Any] = {
+        "manual_override_flag": after.manual_override_flag,
+        "revision": after.revision,
+    }
+    for name in _CORRECTABLE_ADDRESS_FIELDS:
+        old = getattr(before, name)
+        new = getattr(after, name)
+        if name in updates or old != new:
+            old_value[name] = old
+            new_value[name] = new
+    return old_value, new_value
+
+
+def _restore_from_snapshot(
+    existing: AddressLocation,
+    old_value: dict[str, Any],
+    *,
+    new_revision: int,
+    manual_override_flag: bool,
+) -> AddressLocation:
+    """Rebuild the pre-correction record from a correction's ``old_value``.
+
+    Snapshots written before ``_correction_snapshots`` may omit fields; those
+    fall back to the current record, and missing h3 cells are recomputed from
+    the restored coordinates so a cell can never disagree with its lat/lng.
+    """
+    restored: dict[str, Any] = {}
+    for name in _CORRECTABLE_ADDRESS_FIELDS:
+        restored[name] = old_value.get(name, getattr(existing, name))
+    restored["latitude"] = (
+        float(restored["latitude"]) if restored["latitude"] is not None else None
+    )
+    restored["longitude"] = (
+        float(restored["longitude"]) if restored["longitude"] is not None else None
+    )
+    restored["geocode_confidence"] = (
+        float(restored["geocode_confidence"])
+        if restored["geocode_confidence"] is not None
+        else None
+    )
+    if restored.get("geocode_precision") is not None:
+        restored["geocode_precision"] = str(restored["geocode_precision"])
+
+    coords_moved = (restored["latitude"], restored["longitude"]) != (
+        existing.latitude,
+        existing.longitude,
+    )
+    missing_cells = [
+        name
+        for name in ("h3_res_8", "h3_res_9", "h3_res_10")
+        if name not in old_value
+    ]
+    if missing_cells and coords_moved:
+        if restored["latitude"] is not None and restored["longitude"] is not None:
+            try:
+                import h3
+
+                for name in missing_cells:
+                    resolution = int(name.rsplit("_", 1)[1])
+                    restored[name] = h3.latlng_to_cell(
+                        restored["latitude"], restored["longitude"], resolution
+                    )
+            except Exception:
+                pass
+        else:
+            for name in missing_cells:
+                restored[name] = ""
+
+    return AddressLocation(
+        address_id=existing.address_id,
+        manual_override_flag=manual_override_flag,
+        tenant_id=existing.tenant_id,
+        revision=new_revision,
+        **restored,
+    )
+
+
+def _rollback_override_flag(
+    old_value: dict[str, Any], other_applied: list[ManualCorrection]
+) -> bool:
+    """Decide the override flag a rollback restores.
+
+    Rollback is top-of-stack only, so ``old_value`` is by construction the state
+    immediately before this correction and is authoritative -- including for a
+    record that was already flagged before any tracked correction existed.
+    Corrections written before snapshots carried the flag fall back to whether
+    any other correction is still applied.
+    """
+    flag = old_value.get("manual_override_flag")
+    if flag is not None:
+        return bool(flag)
+    return len(other_applied) > 0
+
+
+@dataclass
 class InMemoryAddressLocationRepository:
     _addresses: dict[str, AddressLocation] = field(default_factory=dict)
+    _corrections: InMemoryManualCorrectionRepository = field(
+        default_factory=InMemoryManualCorrectionRepository
+    )
 
     def save_address(self, address: AddressLocation) -> AddressLocation:
         self._addresses[address.address_id] = address
@@ -1210,27 +2043,332 @@ class InMemoryAddressLocationRepository:
     def get_address(self, address_id: str) -> AddressLocation | None:
         return self._addresses.get(address_id)
 
-    def list_addresses(self) -> list[AddressLocation]:
-        return list(self._addresses.values())
+    def list_addresses(self, tenant_id: str | None = None) -> list[AddressLocation]:
+        results = list(self._addresses.values())
+        if tenant_id:
+            results = [a for a in results if (a.tenant_id or "") == tenant_id]
+        return results
+
+    def get_corrections(
+        self, address_id: str, *, correction_repo: Any = None
+    ) -> list[ManualCorrection]:
+        repo = correction_repo or self._corrections
+        return repo.list_corrections(entity_type="address_location", entity_id=address_id)
+
+    def apply_correction(
+        self,
+        address_id: str,
+        *,
+        updates: dict[str, Any],
+        reason: str,
+        actor_id: str,
+        tenant_id: str = "",
+        expected_revision: int | None = None,
+        correlation_id: str | None = None,
+        risk_acknowledged: bool = False,
+        audit_log: Any = None,
+        correction_repo: Any = None,
+    ) -> tuple[AddressLocation, ManualCorrection, DecisionCard]:
+        if not actor_id or not actor_id.strip():
+            raise InvalidCorrectionError("Authenticated actor_id is required")
+        if not reason or len(reason.strip()) < 5:
+            raise InvalidCorrectionError(
+                "Correction reason is required and must be at least 5 characters"
+            )
+
+        existing = self.get_address(address_id)
+        if existing is None:
+            raise KeyError(f"AddressLocation {address_id} not found")
+
+        req_tenant = tenant_id or ""
+        _assert_tenant_scope(existing.tenant_id, req_tenant)
+
+        if expected_revision is not None and existing.revision != expected_revision:
+            raise StaleRevisionError(
+                f"STALE_REVISION: expected revision {expected_revision} but current is {existing.revision}"
+            )
+
+        new_address = _build_corrected_address(existing, updates)
+        new_revision = new_address.revision
+        old_value, new_value = _correction_snapshots(existing, new_address, updates)
+
+        correction_id = str(uuid4())
+        audit_event_id = str(uuid4())
+        corr_id = correlation_id or str(uuid4())
+        now_dt = datetime.now(UTC)
+
+        decision_card = DecisionCard(
+            decision_id=f"dec-corr-{correction_id}",
+            decision_type="MANUAL_CORRECTION",
+            module="listing",
+            title=f"Manual correction for address_location {address_id}",
+            subject_ref=f"address_location:{address_id}",
+            outcome="APPLIED",
+            owner=actor_id,
+            decided_at=now_dt,
+            rationale=reason.strip(),
+            input_snapshot_id=f"rev:{existing.revision}",
+            audit_event_ids=(audit_event_id,),
+            policy_refs=("ODP-INT-006:manual_correction",),
+            evidence_refs=(f"correction:{correction_id}",),
+            risk_flags=() if risk_acknowledged else ("MANUAL_OVERRIDE",),
+            metrics={
+                "old_value": old_value,
+                "new_value": new_value,
+                "fields": list(updates.keys()),
+            },
+        )
+
+        correction = ManualCorrection(
+            correction_id=correction_id,
+            entity_type="address_location",
+            entity_id=address_id,
+            tenant_id=existing.tenant_id,
+            field_name=",".join(updates.keys()),
+            old_value=old_value,
+            new_value=new_value,
+            reason=reason.strip(),
+            actor_id=actor_id,
+            occurred_at=now_dt,
+            source_revision=existing.revision,
+            applied_revision=new_revision,
+            status="applied",
+            correlation_id=corr_id,
+            decision_card_hash=decision_card.content_hash(),
+            audit_event_id=audit_event_id,
+        )
+
+        repo = correction_repo or self._corrections
+        try:
+            repo.record_correction(
+                correction, decision_card_json=json.dumps(decision_card.to_dict())
+            )
+
+            if audit_log is not None:
+                audit_event = AuditEvent(
+                    event_id=audit_event_id,
+                    event_type="canonical.manual_correction",
+                    actor=actor_id,
+                    action="manual_override",
+                    resource=f"address_location:{address_id}",
+                    outcome="SUCCESS",
+                    correlation_id=corr_id,
+                    metadata={
+                        "entity_type": "address_location",
+                        "entity_id": address_id,
+                        "tenant_id": existing.tenant_id,
+                        "correction_id": correction_id,
+                        "fields_updated": list(updates.keys()),
+                        "old_value": old_value,
+                        "new_value": new_value,
+                        "reason": reason.strip(),
+                        "source_revision": existing.revision,
+                        "applied_revision": new_revision,
+                        "decision_card": decision_card.to_dict(),
+                    },
+                    occurred_at=now_dt,
+                )
+                audit_log.record(audit_event)
+
+            self.save_address(new_address)
+        except Exception:
+            if hasattr(repo, "delete_correction"):
+                repo.delete_correction(correction_id)
+            raise
+        return new_address, correction, decision_card
+
+    def rollback_correction(
+        self,
+        address_id: str,
+        correction_id: str,
+        *,
+        reason: str,
+        actor_id: str,
+        tenant_id: str = "",
+        expected_revision: int | None = None,
+        correlation_id: str | None = None,
+        audit_log: Any = None,
+        correction_repo: Any = None,
+    ) -> tuple[AddressLocation, ManualCorrection, DecisionCard]:
+        if not actor_id or not actor_id.strip():
+            raise InvalidCorrectionError("Authenticated actor_id is required")
+        if not reason or len(reason.strip()) < 5:
+            raise InvalidCorrectionError(
+                "Rollback reason is required and must be at least 5 characters"
+            )
+
+        existing = self.get_address(address_id)
+        if existing is None:
+            raise KeyError(f"AddressLocation {address_id} not found")
+
+        req_tenant = tenant_id or ""
+        _assert_tenant_scope(existing.tenant_id, req_tenant)
+
+        if expected_revision is not None and existing.revision != expected_revision:
+            raise StaleRevisionError(
+                f"STALE_REVISION: expected revision {expected_revision} but current is {existing.revision}"
+            )
+
+        repo = correction_repo or self._corrections
+        correction = repo.get_correction(correction_id)
+        if correction is None or correction.entity_id != address_id:
+            raise KeyError(f"Correction {correction_id} not found for address {address_id}")
+
+        _assert_tenant_scope(correction.tenant_id, req_tenant)
+
+        if correction.status != "applied":
+            raise ValueError(
+                f"Correction {correction_id} is already in status {correction.status}"
+            )
+
+        all_corrections = repo.list_corrections(
+            entity_type="address_location", entity_id=address_id
+        )
+        applied_corrections = [c for c in all_corrections if c.status == "applied"]
+        if not applied_corrections:
+            raise ValueError(f"No applied corrections found for address {address_id}")
+
+        latest_applied = max(applied_corrections, key=lambda c: c.applied_revision)
+        if correction.correction_id != latest_applied.correction_id:
+            raise ValueError(
+                f"ROLLBACK_ORDER_VIOLATION: Only latest applied correction '{latest_applied.correction_id}' (revision {latest_applied.applied_revision}) can be rolled back; '{correction_id}' is not top-of-stack."
+            )
+
+        old_val = correction.old_value or {}
+        new_revision = existing.revision + 1
+
+        other_applied = [
+            c
+            for c in repo.list_corrections(entity_type="address_location", entity_id=address_id)
+            if c.correction_id != correction_id and c.status == "applied"
+        ]
+        manual_override_flag = _rollback_override_flag(old_val, other_applied)
+
+        restored_address = _restore_from_snapshot(
+            existing,
+            old_val,
+            new_revision=new_revision,
+            manual_override_flag=manual_override_flag,
+        )
+
+        rollback_old_value, rollback_new_value = _correction_snapshots(
+            existing, restored_address, old_val
+        )
+
+        audit_event_id = str(uuid4())
+        corr_id = correlation_id or str(uuid4())
+        now_dt = datetime.now(UTC)
+
+        rollback_card = DecisionCard(
+            decision_id=f"dec-rollback-{correction_id}",
+            decision_type="MANUAL_CORRECTION_ROLLBACK",
+            module="listing",
+            title=f"Rollback manual correction {correction_id} for address_location {address_id}",
+            subject_ref=f"address_location:{address_id}",
+            outcome="ROLLED_BACK",
+            owner=actor_id,
+            decided_at=now_dt,
+            rationale=reason.strip(),
+            input_snapshot_id=f"rev:{existing.revision}",
+            audit_event_ids=(audit_event_id,),
+            policy_refs=("ODP-INT-006:manual_correction_rollback",),
+            evidence_refs=(f"correction:{correction_id}",),
+            metrics={
+                "old_value": rollback_old_value,
+                "new_value": rollback_new_value,
+                "restored_fields": list(old_val.keys()),
+                "manual_override_flag": manual_override_flag,
+            },
+        )
+
+        from dataclasses import replace
+
+        updated_correction = replace(correction, status="rolled_back")
+        try:
+            repo.record_correction(
+                updated_correction, decision_card_json=json.dumps(rollback_card.to_dict())
+            )
+
+            if audit_log is not None:
+                audit_event = AuditEvent(
+                    event_id=audit_event_id,
+                    event_type="canonical.manual_correction_rollback",
+                    actor=actor_id,
+                    action="rollback_manual_override",
+                    resource=f"address_location:{address_id}",
+                    outcome="ROLLED_BACK",
+                    correlation_id=corr_id,
+                    metadata={
+                        "entity_type": "address_location",
+                        "entity_id": address_id,
+                        "tenant_id": existing.tenant_id,
+                        "correction_id": correction_id,
+                        "old_value": rollback_old_value,
+                        "new_value": rollback_new_value,
+                        "restored_values": old_val,
+                        "fields_updated": list(old_val.keys()),
+                        "reason": reason.strip(),
+                        "source_revision": existing.revision,
+                        "applied_revision": new_revision,
+                        "decision_card": rollback_card.to_dict(),
+                    },
+                    occurred_at=now_dt,
+                )
+                audit_log.record(audit_event)
+
+            self.save_address(restored_address)
+        except Exception:
+            repo.record_correction(correction)
+            raise
+        return restored_address, updated_correction, rollback_card
 
 
 class DurableAddressLocationRepository:
-    def __init__(self, engine: SqliteEngine) -> None:
+    def __init__(
+        self,
+        engine: SqliteEngine,
+        *,
+        correction_repo: DurableManualCorrectionRepository | None = None,
+        audit_log: Any = None,
+    ) -> None:
         self._engine = engine
+        self._correction_repo = correction_repo or DurableManualCorrectionRepository(engine)
+        self._audit_log = audit_log
+        self._ensure_columns()
+
+    def _ensure_columns(self) -> None:
+        if _requires_tenant_scope(self._engine):
+            return
+        with self._engine.lock:
+            existing = {
+                row["name"]
+                for row in self._engine.query("PRAGMA table_info(address_locations)")
+            }
+            if "tenant_id" not in existing:
+                self._engine.execute("ALTER TABLE address_locations ADD COLUMN tenant_id TEXT")
+            if "revision" not in existing:
+                self._engine.execute(
+                    "ALTER TABLE address_locations ADD COLUMN revision INTEGER NOT NULL DEFAULT 1"
+                )
 
     def save_address(self, address: AddressLocation) -> AddressLocation:
         postgres = _requires_tenant_scope(self._engine)
-        geom_expression = "ST_SetSRID(ST_MakePoint(?, ?), 4326)" if postgres else "?"
-        geom_params: tuple[Any, ...] = (
-            (address.longitude, address.latitude) if postgres else (address.raw_address,)
-        )
-        # geom_expression is selected from two fixed dialect-specific fragments.
+        if postgres:
+            if address.longitude is not None and address.latitude is not None:
+                geom_expression = "ST_SetSRID(ST_MakePoint(?, ?), 4326)"
+                geom_params: tuple[Any, ...] = (address.longitude, address.latitude)
+            else:
+                geom_expression = "CAST(NULL AS geometry)"
+                geom_params = ()
+        else:
+            geom_expression = "?"
+            geom_params = (address.raw_address,)
         self._engine.execute(
             "INSERT INTO address_locations ("
             "  address_id, raw_address, normalized_address, city, district, village, road, "
             "  latitude, longitude, geom, geocode_precision, geocode_confidence, "
-            "  h3_res_8, h3_res_9, h3_res_10, manual_override_flag, created_at, updated_at"
-            f") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, {geom_expression}, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+            "  h3_res_8, h3_res_9, h3_res_10, manual_override_flag, tenant_id, revision, created_at, updated_at"
+            f") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, {geom_expression}, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
             "ON CONFLICT(address_id) DO UPDATE SET "
             "  raw_address = excluded.raw_address, "
             "  normalized_address = excluded.normalized_address, "
@@ -1247,6 +2385,8 @@ class DurableAddressLocationRepository:
             "  h3_res_9 = excluded.h3_res_9, "
             "  h3_res_10 = excluded.h3_res_10, "
             "  manual_override_flag = excluded.manual_override_flag, "
+            "  tenant_id = excluded.tenant_id, "
+            "  revision = excluded.revision, "
             "  updated_at = CURRENT_TIMESTAMP",  # nosec B608
             (
                 address.address_id,
@@ -1265,9 +2405,128 @@ class DurableAddressLocationRepository:
                 address.h3_res_9,
                 address.h3_res_10,
                 bool(address.manual_override_flag),
+                _nullable_tenant_id(address.tenant_id),
+                address.revision,
             ),
         )
         return address
+
+    def _claim_revision(
+        self, address: AddressLocation, *, from_revision: int, tenant_id: str
+    ) -> bool:
+        """Move the row to ``address`` only while it still sits at ``from_revision``.
+
+        ``engine.lock`` is a handle-local lock: two API processes, or two engines
+        over the same database, each hold their own, so read-check-write is not
+        atomic across writers and both would accept the same
+        ``expected_revision``. Folding the revision bump into one conditional
+        UPDATE pushes the compare-and-set down into the database, where the
+        losing writer matches zero rows instead of silently overwriting the
+        winner. Returns ``True`` only when this writer owns the new revision.
+
+        ``tenant_id`` is matched but never assigned: a correction may move a
+        record's contents, never its tenant.
+        """
+        postgres = _requires_tenant_scope(self._engine)
+        if postgres:
+            if address.longitude is not None and address.latitude is not None:
+                geom_expression = "ST_SetSRID(ST_MakePoint(?, ?), 4326)"
+                geom_params: tuple[Any, ...] = (address.longitude, address.latitude)
+            else:
+                geom_expression = "CAST(NULL AS geometry)"
+                geom_params = ()
+        else:
+            geom_expression = "?"
+            geom_params = (address.raw_address,)
+        result = self._engine.execute(
+            "UPDATE address_locations SET "
+            "  raw_address = ?, normalized_address = ?, city = ?, district = ?, "
+            "  village = ?, road = ?, latitude = ?, longitude = ?, "
+            f"  geom = {geom_expression}, "
+            "  geocode_precision = ?, geocode_confidence = ?, "
+            "  h3_res_8 = ?, h3_res_9 = ?, h3_res_10 = ?, "
+            "  manual_override_flag = ?, revision = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE address_id = ? AND revision = ? AND tenant_id = ?",  # nosec B608
+            (
+                address.raw_address,
+                address.normalized_address,
+                address.city,
+                address.district,
+                address.village,
+                address.road,
+                address.latitude,
+                address.longitude,
+                *geom_params,
+                address.geocode_precision,
+                address.geocode_confidence,
+                address.h3_res_8,
+                address.h3_res_9,
+                address.h3_res_10,
+                bool(address.manual_override_flag),
+                address.revision,
+                address.address_id,
+                from_revision,
+                tenant_id,
+            ),
+        )
+        return int(getattr(result, "rowcount", 0)) == 1
+
+    @contextmanager
+    def _compensate_claim_on_failure(
+        self,
+        previous: AddressLocation,
+        claimed: AddressLocation,
+        *,
+        repo: Any = None,
+        correction_id: str | None = None,
+    ) -> Iterator[None]:
+        """Undo an already-claimed revision if its correction/audit writes fail.
+
+        The revision is claimed before the correction record and audit event so
+        a writer that loses the race leaves nothing behind. If writing the correction
+        or recording the audit event fails, we compensate by restoring the address row
+        to ``previous`` and deleting the un-audited correction record.
+        """
+        try:
+            yield
+        except Exception:
+            self._claim_revision(
+                previous,
+                from_revision=claimed.revision,
+                tenant_id=previous.tenant_id,
+            )
+            if repo is not None and correction_id is not None:
+                try:
+                    if hasattr(repo, "delete_correction"):
+                        repo.delete_correction(correction_id)
+                except Exception:
+                    pass
+            raise
+
+    @contextmanager
+    def _compensate_rollback_on_failure(
+        self,
+        previous: AddressLocation,
+        claimed: AddressLocation,
+        *,
+        repo: Any = None,
+        original_correction: ManualCorrection | None = None,
+    ) -> Iterator[None]:
+        """Undo an already-claimed rollback revision if its correction/audit writes fail."""
+        try:
+            yield
+        except Exception:
+            self._claim_revision(
+                previous,
+                from_revision=claimed.revision,
+                tenant_id=previous.tenant_id,
+            )
+            if repo is not None and original_correction is not None:
+                try:
+                    repo.record_correction(original_correction)
+                except Exception:
+                    pass
+            raise
 
     def get_address(self, address_id: str) -> AddressLocation | None:
         row = self._engine.query_one(
@@ -1275,6 +2534,21 @@ class DurableAddressLocationRepository:
         )
         if not row:
             return None
+        return self._row_to_address(row)
+
+    def list_addresses(self, tenant_id: str | None = None) -> list[AddressLocation]:
+        if tenant_id:
+            rows = self._engine.query(
+                "SELECT * FROM address_locations WHERE tenant_id = ?",
+                (tenant_id,),
+            )
+        else:
+            rows = self._engine.query("SELECT * FROM address_locations")
+        return [self._row_to_address(row) for row in rows]
+
+    def _row_to_address(self, row: Any) -> AddressLocation:
+        tenant_id = str(row["tenant_id"] or "") if "tenant_id" in row.keys() else ""
+        revision = int(row["revision"] or 1) if "revision" in row.keys() else 1
         return AddressLocation(
             address_id=row["address_id"],
             raw_address=row["raw_address"],
@@ -1283,38 +2557,317 @@ class DurableAddressLocationRepository:
             district=row["district"] or "",
             village=row["village"] or "",
             road=row["road"] or "",
-            latitude=row["latitude"] or 0.0,
-            longitude=row["longitude"] or 0.0,
-            geocode_precision=row["geocode_precision"],
-            geocode_confidence=row["geocode_confidence"] or 0.0,
+            latitude=float(row["latitude"]) if row["latitude"] is not None else None,
+            longitude=float(row["longitude"]) if row["longitude"] is not None else None,
+            geocode_precision=row["geocode_precision"] if row["geocode_precision"] is not None else "manual",
+            geocode_confidence=float(row["geocode_confidence"])
+            if row["geocode_confidence"] is not None
+            else None,
             h3_res_8=row["h3_res_8"] or "",
             h3_res_9=row["h3_res_9"] or "",
             h3_res_10=row["h3_res_10"] or "",
             manual_override_flag=bool(row["manual_override_flag"]),
+            tenant_id=tenant_id,
+            revision=revision,
         )
 
-    def list_addresses(self) -> list[AddressLocation]:
-        rows = self._engine.query("SELECT * FROM address_locations")
-        return [
-            AddressLocation(
-                address_id=row["address_id"],
-                raw_address=row["raw_address"],
-                normalized_address=row["normalized_address"] or "",
-                city=row["city"] or "",
-                district=row["district"] or "",
-                village=row["village"] or "",
-                road=row["road"] or "",
-                latitude=row["latitude"] or 0.0,
-                longitude=row["longitude"] or 0.0,
-                geocode_precision=row["geocode_precision"],
-                geocode_confidence=row["geocode_confidence"] or 0.0,
-                h3_res_8=row["h3_res_8"] or "",
-                h3_res_9=row["h3_res_9"] or "",
-                h3_res_10=row["h3_res_10"] or "",
-                manual_override_flag=bool(row["manual_override_flag"]),
+    def get_corrections(
+        self, address_id: str, *, correction_repo: Any = None
+    ) -> list[ManualCorrection]:
+        repo = correction_repo or self._correction_repo
+        return repo.list_corrections(entity_type="address_location", entity_id=address_id)
+
+    def apply_correction(
+        self,
+        address_id: str,
+        *,
+        updates: dict[str, Any],
+        reason: str,
+        actor_id: str,
+        tenant_id: str = "",
+        expected_revision: int | None = None,
+        correlation_id: str | None = None,
+        risk_acknowledged: bool = False,
+        audit_log: Any = None,
+        correction_repo: Any = None,
+    ) -> tuple[AddressLocation, ManualCorrection, DecisionCard]:
+        if not actor_id or not actor_id.strip():
+            raise InvalidCorrectionError("Authenticated actor_id is required")
+        if not reason or len(reason.strip()) < 5:
+            raise InvalidCorrectionError(
+                "Correction reason is required and must be at least 5 characters"
             )
-            for row in rows
-        ]
+
+        with self._engine.lock:
+            existing = self.get_address(address_id)
+            if existing is None:
+                raise KeyError(f"AddressLocation {address_id} not found")
+
+            req_tenant = tenant_id or ""
+            _assert_tenant_scope(existing.tenant_id, req_tenant)
+
+            if expected_revision is not None and existing.revision != expected_revision:
+                raise StaleRevisionError(
+                    f"STALE_REVISION: expected revision {expected_revision} but current is {existing.revision}"
+                )
+
+            new_address = _build_corrected_address(existing, updates)
+            new_revision = new_address.revision
+            old_value, new_value = _correction_snapshots(existing, new_address, updates)
+
+            # Claim the revision in the database before writing any audit or
+            # correction record, so a writer that lost the race leaves no trail
+            # of a correction it never actually applied.
+            if not self._claim_revision(
+                new_address,
+                from_revision=existing.revision,
+                tenant_id=existing.tenant_id,
+            ):
+                raise StaleRevisionError(
+                    f"STALE_REVISION: address_location {address_id} moved past revision "
+                    f"{existing.revision} before this correction could be applied"
+                )
+
+            correction_id = str(uuid4())
+            audit_event_id = str(uuid4())
+            corr_id = correlation_id or str(uuid4())
+            now_dt = datetime.now(UTC)
+
+            decision_card = DecisionCard(
+                decision_id=f"dec-corr-{correction_id}",
+                decision_type="MANUAL_CORRECTION",
+                module="listing",
+                title=f"Manual correction for address_location {address_id}",
+                subject_ref=f"address_location:{address_id}",
+                outcome="APPLIED",
+                owner=actor_id,
+                decided_at=now_dt,
+                rationale=reason.strip(),
+                input_snapshot_id=f"rev:{existing.revision}",
+                audit_event_ids=(audit_event_id,),
+                policy_refs=("ODP-INT-006:manual_correction",),
+                evidence_refs=(f"correction:{correction_id}",),
+                risk_flags=() if risk_acknowledged else ("MANUAL_OVERRIDE",),
+                metrics={
+                    "old_value": old_value,
+                    "new_value": new_value,
+                    "fields": list(updates.keys()),
+                },
+            )
+
+            correction = ManualCorrection(
+                correction_id=correction_id,
+                entity_type="address_location",
+                entity_id=address_id,
+                tenant_id=existing.tenant_id,
+                field_name=",".join(updates.keys()),
+                old_value=old_value,
+                new_value=new_value,
+                reason=reason.strip(),
+                actor_id=actor_id,
+                occurred_at=now_dt,
+                source_revision=existing.revision,
+                applied_revision=new_revision,
+                status="applied",
+                correlation_id=corr_id,
+                decision_card_hash=decision_card.content_hash(),
+                audit_event_id=audit_event_id,
+            )
+
+            repo = correction_repo or self._correction_repo
+            active_audit_log = audit_log or self._audit_log
+            with self._compensate_claim_on_failure(
+                existing, new_address, repo=repo, correction_id=correction_id
+            ):
+                repo.record_correction(
+                    correction, decision_card_json=json.dumps(decision_card.to_dict())
+                )
+
+                if active_audit_log is not None:
+                    audit_event = AuditEvent(
+                        event_id=audit_event_id,
+                        event_type="canonical.manual_correction",
+                        actor=actor_id,
+                        action="manual_override",
+                        resource=f"address_location:{address_id}",
+                        outcome="SUCCESS",
+                        correlation_id=corr_id,
+                        metadata={
+                            "entity_type": "address_location",
+                            "entity_id": address_id,
+                            "tenant_id": existing.tenant_id,
+                            "correction_id": correction_id,
+                            "fields_updated": list(updates.keys()),
+                            "old_value": old_value,
+                            "new_value": new_value,
+                            "reason": reason.strip(),
+                            "source_revision": existing.revision,
+                            "applied_revision": new_revision,
+                            "decision_card": decision_card.to_dict(),
+                        },
+                        occurred_at=now_dt,
+                    )
+                    active_audit_log.record(audit_event)
+
+            return new_address, correction, decision_card
+
+    def rollback_correction(
+        self,
+        address_id: str,
+        correction_id: str,
+        *,
+        reason: str,
+        actor_id: str,
+        tenant_id: str = "",
+        expected_revision: int | None = None,
+        correlation_id: str | None = None,
+        audit_log: Any = None,
+        correction_repo: Any = None,
+    ) -> tuple[AddressLocation, ManualCorrection, DecisionCard]:
+        if not actor_id or not actor_id.strip():
+            raise InvalidCorrectionError("Authenticated actor_id is required")
+        if not reason or len(reason.strip()) < 5:
+            raise InvalidCorrectionError(
+                "Rollback reason is required and must be at least 5 characters"
+            )
+
+        with self._engine.lock:
+            existing = self.get_address(address_id)
+            if existing is None:
+                raise KeyError(f"AddressLocation {address_id} not found")
+
+            req_tenant = tenant_id or ""
+            _assert_tenant_scope(existing.tenant_id, req_tenant)
+
+            if expected_revision is not None and existing.revision != expected_revision:
+                raise StaleRevisionError(
+                    f"STALE_REVISION: expected revision {expected_revision} but current is {existing.revision}"
+                )
+
+            repo = correction_repo or self._correction_repo
+            correction = repo.get_correction(correction_id)
+            if correction is None or correction.entity_id != address_id:
+                raise KeyError(f"Correction {correction_id} not found for address {address_id}")
+
+            _assert_tenant_scope(correction.tenant_id, req_tenant)
+
+            if correction.status != "applied":
+                raise ValueError(
+                    f"Correction {correction_id} is already in status {correction.status}"
+                )
+
+            all_corrections = repo.list_corrections(
+                entity_type="address_location", entity_id=address_id
+            )
+            applied_corrections = [c for c in all_corrections if c.status == "applied"]
+            if not applied_corrections:
+                raise ValueError(f"No applied corrections found for address {address_id}")
+
+            latest_applied = max(applied_corrections, key=lambda c: c.applied_revision)
+            if correction.correction_id != latest_applied.correction_id:
+                raise ValueError(
+                    f"ROLLBACK_ORDER_VIOLATION: Only latest applied correction '{latest_applied.correction_id}' (revision {latest_applied.applied_revision}) can be rolled back; '{correction_id}' is not top-of-stack."
+                )
+
+            old_val = correction.old_value or {}
+            new_revision = existing.revision + 1
+
+            other_applied = [
+                c
+                for c in repo.list_corrections(entity_type="address_location", entity_id=address_id)
+                if c.correction_id != correction_id and c.status == "applied"
+            ]
+            manual_override_flag = _rollback_override_flag(old_val, other_applied)
+
+            restored_address = _restore_from_snapshot(
+                existing,
+                old_val,
+                new_revision=new_revision,
+                manual_override_flag=manual_override_flag,
+            )
+
+            rollback_old_value, rollback_new_value = _correction_snapshots(
+                existing, restored_address, old_val
+            )
+
+            # Same compare-and-set as apply_correction: a rollback that raced a
+            # concurrent write must not rewind the winner's revision.
+            if not self._claim_revision(
+                restored_address,
+                from_revision=existing.revision,
+                tenant_id=existing.tenant_id,
+            ):
+                raise StaleRevisionError(
+                    f"STALE_REVISION: address_location {address_id} moved past revision "
+                    f"{existing.revision} before this rollback could be applied"
+                )
+
+            audit_event_id = str(uuid4())
+            corr_id = correlation_id or str(uuid4())
+            now_dt = datetime.now(UTC)
+
+            rollback_card = DecisionCard(
+                decision_id=f"dec-rollback-{correction_id}",
+                decision_type="MANUAL_CORRECTION_ROLLBACK",
+                module="listing",
+                title=f"Rollback manual correction {correction_id} for address_location {address_id}",
+                subject_ref=f"address_location:{address_id}",
+                outcome="ROLLED_BACK",
+                owner=actor_id,
+                decided_at=now_dt,
+                rationale=reason.strip(),
+                input_snapshot_id=f"rev:{existing.revision}",
+                audit_event_ids=(audit_event_id,),
+                policy_refs=("ODP-INT-006:manual_correction_rollback",),
+                evidence_refs=(f"correction:{correction_id}",),
+                metrics={
+                    "old_value": rollback_old_value,
+                    "new_value": rollback_new_value,
+                    "restored_fields": list(old_val.keys()),
+                    "manual_override_flag": manual_override_flag,
+                },
+            )
+
+            from dataclasses import replace
+
+            updated_correction = replace(correction, status="rolled_back")
+            repo = correction_repo or self._correction_repo
+            active_audit_log = audit_log or self._audit_log
+            with self._compensate_rollback_on_failure(
+                existing, restored_address, repo=repo, original_correction=correction
+            ):
+                repo.record_correction(
+                    updated_correction, decision_card_json=json.dumps(rollback_card.to_dict())
+                )
+
+                if active_audit_log is not None:
+                    audit_event = AuditEvent(
+                        event_id=audit_event_id,
+                        event_type="canonical.manual_correction_rollback",
+                        actor=actor_id,
+                        action="rollback_manual_override",
+                        resource=f"address_location:{address_id}",
+                        outcome="ROLLED_BACK",
+                        correlation_id=corr_id,
+                        metadata={
+                            "entity_type": "address_location",
+                            "entity_id": address_id,
+                            "tenant_id": existing.tenant_id,
+                            "correction_id": correction_id,
+                            "old_value": rollback_old_value,
+                            "new_value": rollback_new_value,
+                            "restored_values": old_val,
+                            "fields_updated": list(old_val.keys()),
+                            "reason": reason.strip(),
+                            "source_revision": existing.revision,
+                            "applied_revision": new_revision,
+                            "decision_card": rollback_card.to_dict(),
+                        },
+                        occurred_at=now_dt,
+                    )
+                    active_audit_log.record(audit_event)
+
+            return restored_address, updated_correction, rollback_card
 
 
 @dataclass
@@ -2008,6 +3561,871 @@ class DurableHeatZoneResultStore:
         return self._store.get(self._JOBS, snapshot_id)
 
 
+class DurableHeatZoneCompositionRepository:
+    """Durable mirror of HeatZoneCompositionRepository executing direct SQL (ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001)."""
+
+    def __init__(self, engine_or_store: Any) -> None:
+        if hasattr(engine_or_store, "engine"):
+            self._engine = engine_or_store.engine
+        elif hasattr(engine_or_store, "_store") and hasattr(engine_or_store._store, "engine"):
+            self._engine = engine_or_store._store.engine
+        else:
+            self._engine = engine_or_store
+        self._is_postgres = _requires_tenant_scope(self._engine)
+        if not self._is_postgres:
+            self._init_sqlite_tables()
+
+    def _init_sqlite_tables(self) -> None:
+        self._engine.execute(
+            """
+            CREATE TABLE IF NOT EXISTS heatzone_composition (
+                composition_id TEXT PRIMARY KEY,
+                zone_id TEXT NOT NULL,
+                tenant_id TEXT NOT NULL,
+                member_cell_id TEXT NOT NULL,
+                composition_kind TEXT NOT NULL,
+                parent_zone_id TEXT,
+                decided_by TEXT NOT NULL,
+                decided_at TEXT NOT NULL,
+                decision_policy_version_id TEXT NOT NULL,
+                model_version TEXT NOT NULL DEFAULT 'heatzone-composition-v1',
+                override_reason TEXT,
+                reverted_at TEXT,
+                created_at TEXT NOT NULL
+            );
+            """
+        )
+        self._engine.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_heatzone_composition_active_member
+                ON heatzone_composition(tenant_id, member_cell_id) WHERE reverted_at IS NULL;
+            """
+        )
+        self._engine.execute(
+            """
+            CREATE TABLE IF NOT EXISTS heatzone_proposals (
+                proposal_id TEXT PRIMARY KEY,
+                zone_id TEXT NOT NULL,
+                tenant_id TEXT NOT NULL,
+                composition_kind TEXT NOT NULL,
+                member_cell_ids TEXT NOT NULL,
+                parent_zone_id TEXT,
+                ndcg_gain REAL NOT NULL DEFAULT 0.0,
+                cannibalization_variance_reduction REAL NOT NULL DEFAULT 0.0,
+                correlation_rho REAL NOT NULL DEFAULT 0.0,
+                disconnect_index REAL NOT NULL DEFAULT 0.0,
+                split_density_ratio REAL,
+                child_partitions TEXT NOT NULL DEFAULT '[]',
+                confidence REAL NOT NULL DEFAULT 0.0,
+                model_version TEXT NOT NULL,
+                policy_version_id TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'PROPOSED',
+                reasons TEXT NOT NULL DEFAULT '[]',
+                warnings TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL,
+                approved_by TEXT,
+                approved_at TEXT,
+                rejection_reason TEXT
+            );
+            """
+        )
+
+    @property
+    def table_composition(self) -> str:
+        return "expansion.heatzone_composition" if self._is_postgres else "heatzone_composition"
+
+    @property
+    def table_proposals(self) -> str:
+        return "expansion.heatzone_proposals" if self._is_postgres else "heatzone_proposals"
+
+    def _row_to_record(self, row: Mapping[str, Any]) -> HeatZoneCompositionRecord:
+        return HeatZoneCompositionRecord.from_dict(dict(row))
+
+    def _row_to_proposal(self, row: Mapping[str, Any]) -> MergeSplitProposalRecord:
+        data = dict(row)
+        if isinstance(data.get("member_cell_ids"), str):
+            try:
+                data["member_cell_ids"] = json.loads(data["member_cell_ids"])
+            except Exception:
+                data["member_cell_ids"] = [data["member_cell_ids"]]
+        if isinstance(data.get("reasons"), str):
+            try:
+                data["reasons"] = json.loads(data["reasons"])
+            except Exception:
+                data["reasons"] = []
+        if isinstance(data.get("warnings"), str):
+            try:
+                data["warnings"] = json.loads(data["warnings"])
+            except Exception:
+                data["warnings"] = []
+        if isinstance(data.get("child_partitions"), str):
+            try:
+                data["child_partitions"] = json.loads(data["child_partitions"])
+            except Exception:
+                data["child_partitions"] = []
+        return MergeSplitProposalRecord.from_dict(data)
+
+    @contextmanager
+    def _transaction(self) -> Iterator[None]:
+        if hasattr(self._engine, "transaction"):
+            with self._engine.transaction():
+                yield
+        elif hasattr(self._engine, "lock"):
+            with self._engine.lock:
+                yield
+        else:
+            yield
+
+    def save_composition(self, record: HeatZoneCompositionRecord) -> HeatZoneCompositionRecord:
+        validate_composition_record(record)
+        if record.is_active:
+            existing_active = self.get_active_for_cell(record.member_cell_id, record.tenant_id)
+            if existing_active is not None and existing_active.composition_id != record.composition_id:
+                raise CompositionValidationError(
+                    f"cell '{record.member_cell_id}' is already an active member of zone '{existing_active.zone_id}'"
+                )
+        self._engine.execute(
+            f"INSERT INTO {self.table_composition} ("  # nosec B608 -- table is a fixed dialect-selected relation; values are bound
+            "composition_id, zone_id, tenant_id, member_cell_id, "
+            "composition_kind, parent_zone_id, decided_by, decided_at, "
+            "decision_policy_version_id, model_version, override_reason, "
+            "reverted_at, created_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                record.composition_id,
+                record.zone_id,
+                record.tenant_id,
+                record.member_cell_id,
+                record.composition_kind.value,
+                record.parent_zone_id,
+                record.decided_by,
+                record.decided_at.isoformat(),
+                record.decision_policy_version_id,
+                record.model_version,
+                record.override_reason,
+                record.reverted_at.isoformat() if record.reverted_at else None,
+                record.created_at.isoformat(),
+            ),
+        )
+        return record
+
+    def save_composition_batch(
+        self, records: Sequence[HeatZoneCompositionRecord]
+    ) -> list[HeatZoneCompositionRecord]:
+        with self._transaction():
+            saved: list[HeatZoneCompositionRecord] = []
+            for record in records:
+                saved.append(self.save_composition(record))
+            return saved
+
+    def get_composition(self, zone_id: str, tenant_id: str) -> list[HeatZoneCompositionRecord]:
+        rows = self._engine.query(
+            f"SELECT * FROM {self.table_composition} WHERE zone_id = ? AND tenant_id = ? ORDER BY decided_at DESC",  # nosec B608
+            (zone_id, tenant_id),
+        )
+        return [self._row_to_record(row) for row in rows]
+
+    def get_active_for_cell(
+        self, cell_id: str, tenant_id: str
+    ) -> HeatZoneCompositionRecord | None:
+        row = self._engine.query_one(
+            f"SELECT * FROM {self.table_composition} WHERE member_cell_id = ? AND tenant_id = ? AND reverted_at IS NULL LIMIT 1",  # nosec B608
+            (cell_id, tenant_id),
+        )
+        if not row:
+            return None
+        return self._row_to_record(row)
+
+    def list_compositions(
+        self, tenant_id: str, active_only: bool = True
+    ) -> list[HeatZoneCompositionRecord]:
+        clause = " AND reverted_at IS NULL" if active_only else ""
+        rows = self._engine.query(
+            f"SELECT * FROM {self.table_composition} WHERE tenant_id = ?{clause} ORDER BY decided_at DESC",  # nosec B608
+            (tenant_id,),
+        )
+        return [self._row_to_record(row) for row in rows]
+
+    def revert_composition(
+        self, zone_id: str, tenant_id: str, reverted_at: datetime | None = None
+    ) -> list[HeatZoneCompositionRecord]:
+        now = reverted_at or datetime.now(UTC)
+        with self._transaction():
+            records = self.get_composition(zone_id, tenant_id)
+            active = [r for r in records if r.is_active]
+            if not active:
+                raise CompositionValidationError(f"no active composition found for zone '{zone_id}'")
+
+            self._engine.execute(
+                f"UPDATE {self.table_composition} SET reverted_at = ? WHERE zone_id = ? AND tenant_id = ? AND reverted_at IS NULL",  # nosec B608
+                (now.isoformat(), zone_id, tenant_id),
+            )
+            return self.get_composition(zone_id, tenant_id)
+
+    def override_composition(
+        self,
+        zone_id: str,
+        tenant_id: str,
+        decided_by: str,
+        override_reason: str,
+        decision_policy_version_id: str,
+        new_kind: CompositionKind | None = None,
+        new_cells: Sequence[str] | None = None,
+        parent_zone_id: str | None = None,
+    ) -> list[HeatZoneCompositionRecord]:
+        now = datetime.now(UTC)
+        with self._transaction():
+            records = self.get_composition(zone_id, tenant_id)
+            active = [r for r in records if r.is_active]
+            if not active:
+                raise CompositionValidationError(f"no active composition found for zone '{zone_id}' to override")
+
+            self.revert_composition(zone_id, tenant_id, reverted_at=now)
+
+            effective_kind = new_kind or active[0].composition_kind
+            effective_cells = new_cells or [r.member_cell_id for r in active]
+            effective_parent = parent_zone_id if parent_zone_id is not None else active[0].parent_zone_id
+
+            created: list[HeatZoneCompositionRecord] = []
+            for cell_id in effective_cells:
+                record = HeatZoneCompositionRecord(
+                    zone_id=zone_id,
+                    tenant_id=tenant_id,
+                    member_cell_id=cell_id,
+                    composition_kind=effective_kind,
+                    parent_zone_id=effective_parent,
+                    decided_by=decided_by,
+                    decided_at=now,
+                    decision_policy_version_id=decision_policy_version_id,
+                    model_version=COMPOSITION_MODEL_VERSION,
+                    override_reason=override_reason,
+                    reverted_at=None,
+                    created_at=now,
+                )
+                created.append(self.save_composition(record))
+            return created
+
+    def get_lineage(self, zone_id: str, tenant_id: str) -> ZoneLineage | None:
+        records = self.get_composition(zone_id, tenant_id)
+        if not records:
+            return None
+
+        sorted_records = sorted(records, key=lambda r: r.decided_at, reverse=True)
+        active_records = [r for r in sorted_records if r.is_active]
+        latest_record = active_records[0] if active_records else sorted_records[0]
+        member_cells = tuple(sorted({r.member_cell_id for r in (active_records or sorted_records)}))
+
+        return ZoneLineage(
+            zone_id=zone_id,
+            tenant_id=tenant_id,
+            composition_kind=latest_record.composition_kind,
+            member_cell_ids=member_cells,
+            parent_zone_id=latest_record.parent_zone_id,
+            decided_by=latest_record.decided_by,
+            decided_at=latest_record.decided_at,
+            decision_policy_version_id=latest_record.decision_policy_version_id,
+            model_version=latest_record.model_version,
+            override_reason=latest_record.override_reason,
+            reverted_at=latest_record.reverted_at,
+            is_active=len(active_records) > 0,
+            records=tuple(sorted_records),
+        )
+
+    def save_proposal(self, proposal: MergeSplitProposalRecord) -> MergeSplitProposalRecord:
+        member_cells_json = json.dumps(list(proposal.member_cell_ids))
+        reasons_json = json.dumps(list(proposal.reasons))
+        warnings_json = json.dumps(list(proposal.warnings))
+        child_partitions_json = json.dumps([list(part) for part in proposal.child_partitions])
+        self._engine.execute(
+            f"INSERT INTO {self.table_proposals} ("  # nosec B608 -- table is a fixed dialect-selected relation; values are bound
+            "proposal_id, zone_id, tenant_id, composition_kind, "
+            "member_cell_ids, parent_zone_id, ndcg_gain, "
+            "cannibalization_variance_reduction, correlation_rho, "
+            "disconnect_index, split_density_ratio, child_partitions, confidence, "
+            "model_version, policy_version_id, status, reasons, "
+            "warnings, created_at, approved_by, approved_at, rejection_reason"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(proposal_id) DO UPDATE SET "
+            "status = excluded.status, "
+            "approved_by = excluded.approved_by, "
+            "approved_at = excluded.approved_at, "
+            "rejection_reason = excluded.rejection_reason",
+            (
+                proposal.proposal_id,
+                proposal.zone_id,
+                proposal.tenant_id,
+                proposal.composition_kind.value,
+                member_cells_json,
+                proposal.parent_zone_id,
+                proposal.ndcg_gain,
+                proposal.cannibalization_variance_reduction,
+                proposal.correlation_rho,
+                proposal.disconnect_index,
+                proposal.split_density_ratio,
+                child_partitions_json,
+                proposal.confidence,
+                proposal.model_version,
+                proposal.policy_version_id,
+                proposal.status.value,
+                reasons_json,
+                warnings_json,
+                proposal.created_at.isoformat(),
+                proposal.approved_by,
+                proposal.approved_at.isoformat() if proposal.approved_at else None,
+                proposal.rejection_reason,
+            ),
+        )
+        return proposal
+
+    def get_proposal(self, proposal_id: str, tenant_id: str) -> MergeSplitProposalRecord | None:
+        row = self._engine.query_one(
+            f"SELECT * FROM {self.table_proposals} WHERE proposal_id = ? AND tenant_id = ?",  # nosec B608
+            (proposal_id, tenant_id),
+        )
+        if not row:
+            return None
+        return self._row_to_proposal(row)
+
+    def list_proposals(
+        self, tenant_id: str, status: ProposalStatus | str | None = None
+    ) -> list[MergeSplitProposalRecord]:
+        status_val = status.value if isinstance(status, ProposalStatus) else str(status) if status else None
+        if status_val:
+            rows = self._engine.query(
+                f"SELECT * FROM {self.table_proposals} WHERE tenant_id = ? AND status = ? ORDER BY created_at DESC",  # nosec B608
+                (tenant_id, status_val),
+            )
+        else:
+            rows = self._engine.query(
+                f"SELECT * FROM {self.table_proposals} WHERE tenant_id = ? ORDER BY created_at DESC",  # nosec B608
+                (tenant_id,),
+            )
+        return [self._row_to_proposal(row) for row in rows]
+
+    def approve_proposal(
+        self,
+        proposal_id: str,
+        tenant_id: str,
+        approved_by: str,
+        notes: str | None = None,
+    ) -> tuple[MergeSplitProposalRecord, list[HeatZoneCompositionRecord]]:
+        with self._transaction():
+            prop = self.get_proposal(proposal_id, tenant_id)
+            if prop is None:
+                raise CompositionValidationError(f"proposal '{proposal_id}' not found for tenant '{tenant_id}'")
+            if prop.status != ProposalStatus.PROPOSED:
+                raise CompositionValidationError(f"proposal '{proposal_id}' is already {prop.status.value}")
+
+            now = datetime.now(UTC)
+            reason = notes or f"Operator approval for proposal {proposal_id}"
+
+            # Identify all active zones touched by the proposal's member cells
+            touched_zones: set[str] = set()
+            for cell_id in prop.member_cell_ids:
+                active_comp = self.get_active_for_cell(cell_id, tenant_id)
+                if active_comp is not None:
+                    touched_zones.add(active_comp.zone_id)
+
+            if prop.composition_kind == CompositionKind.SPLIT_CHILD and prop.parent_zone_id:
+                touched_zones.add(prop.parent_zone_id)
+
+            # Reject partial replacement: every active member cell of every touched zone
+            # must be covered by the proposal.
+            for zone_id in sorted(touched_zones):
+                active_members = {
+                    r.member_cell_id for r in self.get_composition(zone_id, tenant_id) if r.is_active
+                }
+                missing_siblings = active_members - set(prop.member_cell_ids)
+                if missing_siblings:
+                    raise CompositionValidationError(
+                        f"cannot approve {prop.composition_kind.value} proposal '{prop.proposal_id}': "
+                        f"partial replacement of active zone '{zone_id}' would strand "
+                        f"sibling cell(s) {sorted(missing_siblings)}"
+                    )
+
+            # Soft-revert touched active zones
+            for zone_id in sorted(touched_zones):
+                parent_comps = self.get_composition(zone_id, tenant_id)
+                if any(r.is_active for r in parent_comps):
+                    self.revert_composition(zone_id, tenant_id, reverted_at=now)
+
+            # A split lands one zone per child partition, a merge one zone; the
+            # whole assignment happens inside this transaction, so an approval
+            # that cannot create every child creates none of them and leaves the
+            # parent standing.
+            created_records: list[HeatZoneCompositionRecord] = []
+            for zone_id, member_ids in approval_zone_assignments(prop):
+                for cell_id in member_ids:
+                    rec = HeatZoneCompositionRecord(
+                        zone_id=zone_id,
+                        tenant_id=tenant_id,
+                        member_cell_id=cell_id,
+                        composition_kind=prop.composition_kind,
+                        parent_zone_id=prop.parent_zone_id,
+                        decided_by=approved_by,
+                        decided_at=now,
+                        decision_policy_version_id=prop.policy_version_id,
+                        model_version=prop.model_version,
+                        override_reason=reason,
+                        reverted_at=None,
+                        created_at=now,
+                    )
+                    created_records.append(self.save_composition(rec))
+
+            updated_prop = MergeSplitProposalRecord(
+                proposal_id=prop.proposal_id,
+                zone_id=prop.zone_id,
+                tenant_id=prop.tenant_id,
+                composition_kind=prop.composition_kind,
+                member_cell_ids=prop.member_cell_ids,
+                parent_zone_id=prop.parent_zone_id,
+                ndcg_gain=prop.ndcg_gain,
+                cannibalization_variance_reduction=prop.cannibalization_variance_reduction,
+                correlation_rho=prop.correlation_rho,
+                disconnect_index=prop.disconnect_index,
+                confidence=prop.confidence,
+                model_version=prop.model_version,
+                policy_version_id=prop.policy_version_id,
+                status=ProposalStatus.APPROVED,
+                split_density_ratio=prop.split_density_ratio,
+                child_partitions=prop.child_partitions,
+                reasons=prop.reasons,
+                warnings=prop.warnings,
+                created_at=prop.created_at,
+                approved_by=approved_by,
+                approved_at=now,
+                rejection_reason=None,
+            )
+            self.save_proposal(updated_prop)
+            return updated_prop, created_records
+
+    def reject_proposal(
+        self,
+        proposal_id: str,
+        tenant_id: str,
+        rejected_by: str,
+        reason: str,
+    ) -> MergeSplitProposalRecord:
+        with self._transaction():
+            prop = self.get_proposal(proposal_id, tenant_id)
+            if prop is None:
+                raise CompositionValidationError(f"proposal '{proposal_id}' not found for tenant '{tenant_id}'")
+            if prop.status != ProposalStatus.PROPOSED:
+                raise CompositionValidationError(f"proposal '{proposal_id}' is already {prop.status.value}")
+            if not reason or not reason.strip():
+                raise CompositionValidationError("Rejection requires a non-empty reason")
+
+            now = datetime.now(UTC)
+            updated_prop = MergeSplitProposalRecord(
+                proposal_id=prop.proposal_id,
+                zone_id=prop.zone_id,
+                tenant_id=prop.tenant_id,
+                composition_kind=prop.composition_kind,
+                member_cell_ids=prop.member_cell_ids,
+                parent_zone_id=prop.parent_zone_id,
+                ndcg_gain=prop.ndcg_gain,
+                cannibalization_variance_reduction=prop.cannibalization_variance_reduction,
+                correlation_rho=prop.correlation_rho,
+                disconnect_index=prop.disconnect_index,
+                confidence=prop.confidence,
+                model_version=prop.model_version,
+                policy_version_id=prop.policy_version_id,
+                status=ProposalStatus.REJECTED,
+                split_density_ratio=prop.split_density_ratio,
+                child_partitions=prop.child_partitions,
+                reasons=prop.reasons,
+                warnings=prop.warnings,
+                created_at=prop.created_at,
+                approved_by=rejected_by,
+                approved_at=now,
+                rejection_reason=reason,
+            )
+            self.save_proposal(updated_prop)
+            return updated_prop
+
+
+def _as_date(value: Any) -> date:
+    """Coerce a stored period bound to a date, whatever the driver returned."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value).split("T")[0])
+
+
+class DurableMergeSplitEvidenceRepository:
+    """Durable reader for persisted HZ-004 absorption evidence (ODP-FR-HZ-006).
+
+    Read-only by construction. The merge/split API must not be able to write the
+    evidence it is judged against, so the outcome rows arrive from the
+    absorption pipeline and this class only selects them; PostgreSQL enforces
+    the same rule with an append-only trigger on the relation.
+    """
+
+    def __init__(self, engine_or_store: Any) -> None:
+        if hasattr(engine_or_store, "engine"):
+            self._engine = engine_or_store.engine
+        elif hasattr(engine_or_store, "_store") and hasattr(engine_or_store._store, "engine"):
+            self._engine = engine_or_store._store.engine
+        else:
+            self._engine = engine_or_store
+        self._is_postgres = _requires_tenant_scope(self._engine)
+        if not self._is_postgres:
+            self._init_sqlite_tables()
+
+    def _init_sqlite_tables(self) -> None:
+        self._engine.execute(
+            """
+            CREATE TABLE IF NOT EXISTS heatzone_absorption_outcomes (
+                outcome_id TEXT PRIMARY KEY,
+                tenant_id TEXT NOT NULL,
+                geo_cell_id TEXT NOT NULL,
+                period_start TEXT NOT NULL,
+                period_end TEXT NOT NULL,
+                original_demand REAL NOT NULL,
+                absorbed_demand REAL NOT NULL,
+                remaining_demand REAL NOT NULL,
+                absorption_ratio REAL NOT NULL,
+                absorbing_store_count INTEGER NOT NULL,
+                under_realized INTEGER NOT NULL DEFAULT 0,
+                barrier_side TEXT,
+                barrier_description TEXT,
+                basis_source_ids TEXT NOT NULL,
+                basis_at TEXT NOT NULL,
+                absorption_policy_version_id TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            """
+        )
+        # `h3_cells` is not created here: the SQLite engine already bootstraps
+        # the geo tables from 000004, and shadowing that definition with a
+        # narrower one would silently diverge from the relation the geo pipeline
+        # writes.
+        self._engine.execute(
+            """
+            CREATE TABLE IF NOT EXISTS h3_cell_adjacency (
+                adjacency_id TEXT PRIMARY KEY,
+                cell_id TEXT NOT NULL,
+                neighbor_cell_id TEXT NOT NULL,
+                k_ring INTEGER NOT NULL DEFAULT 1,
+                CHECK (cell_id < neighbor_cell_id),
+                UNIQUE (cell_id, neighbor_cell_id)
+            );
+            """
+        )
+
+    @property
+    def table_outcomes(self) -> str:
+        return (
+            "expansion.heatzone_absorption_outcomes"
+            if self._is_postgres
+            else "heatzone_absorption_outcomes"
+        )
+
+    @property
+    def table_cells(self) -> str:
+        return "geo.h3_cells" if self._is_postgres else "h3_cells"
+
+    @property
+    def table_adjacency(self) -> str:
+        return "geo.h3_cell_adjacency" if self._is_postgres else "h3_cell_adjacency"
+
+    def _row_to_outcome(self, row: Mapping[str, Any]) -> AbsorptionOutcomeRecord:
+        data = dict(row)
+        basis = data.get("basis_source_ids")
+        if isinstance(basis, str):
+            try:
+                basis = json.loads(basis)
+            except json.JSONDecodeError:
+                basis = [basis]
+        side = data.get("barrier_side")
+        return AbsorptionOutcomeRecord(
+            cell_id=str(data["geo_cell_id"]),
+            period_start=_as_date(data["period_start"]),
+            period_end=_as_date(data["period_end"]),
+            original_demand=float(data["original_demand"]),
+            absorbed_demand=float(data["absorbed_demand"]),
+            remaining_demand=float(data["remaining_demand"]),
+            absorption_ratio=float(data["absorption_ratio"]),
+            absorbing_store_count=int(data["absorbing_store_count"]),
+            basis_source_ids=tuple(str(item) for item in (basis or ())),
+            absorption_policy_version_id=str(data["absorption_policy_version_id"]),
+            basis_at=parse_datetime(data["basis_at"]),
+            under_realized=bool(data.get("under_realized")),
+            barrier_side=str(side) if side else None,
+            barrier_description=str(data.get("barrier_description") or ""),
+        )
+
+    def list_absorption_outcomes(self, tenant_id: str) -> list[AbsorptionOutcomeRecord]:
+        rows = self._engine.query(
+            f"SELECT * FROM {self.table_outcomes} WHERE tenant_id = ? "  # nosec B608 -- fixed dialect-selected relation; values are bound
+            "ORDER BY geo_cell_id, period_start",
+            (tenant_id,),
+        )
+        return [self._row_to_outcome(row) for row in rows]
+
+    def get_cell(self, tenant_id: str, cell_id: str) -> Any | None:
+        from modules.heatzone.infrastructure.absorption_evidence_repository import CellRegistration
+
+        row = self._engine.query_one(
+            f"SELECT geo_cell_id, h3_index, admin_city, admin_district "  # nosec B608 -- fixed dialect-selected relation; values are bound
+            f"FROM {self.table_cells} WHERE geo_cell_id = ?",
+            (cell_id,),
+        )
+        if not row:
+            return None
+        rec = dict(row)
+        return CellRegistration(
+            cell_id=str(rec["geo_cell_id"]),
+            h3_index=str(rec.get("h3_index") or ""),
+            admin_city=str(rec.get("admin_city") or ""),
+            admin_district=str(rec.get("admin_district") or ""),
+        )
+
+    def _get_tenant_target_cell_ids(self, tenant_id: str) -> set[str]:
+        target_cells: set[str] = set()
+        try:
+            rows = self._engine.query(
+                f"SELECT DISTINCT geo_cell_id FROM {self.table_outcomes} WHERE tenant_id = ?",  # nosec B608
+                (tenant_id,),
+            )
+            for r in rows:
+                target_cells.add(str(r["geo_cell_id"]))
+        except Exception:
+            pass
+
+        comp_table = (
+            "expansion.heatzone_composition"
+            if self._is_postgres
+            else "heatzone_composition"
+        )
+        try:
+            rows = self._engine.query(
+                f"SELECT DISTINCT member_cell_id FROM {comp_table} WHERE tenant_id = ? AND reverted_at IS NULL",  # nosec B608
+                (tenant_id,),
+            )
+            for r in rows:
+                target_cells.add(str(r["member_cell_id"]))
+        except Exception:
+            pass
+
+        scores_table = (
+            "expansion.heatzone_scores"
+            if self._is_postgres
+            else "heatzone_scores"
+        )
+        try:
+            rows = self._engine.query(
+                f"SELECT DISTINCT geo_cell_id FROM {scores_table} WHERE tenant_id = ?",  # nosec B608
+                (tenant_id,),
+            )
+            for r in rows:
+                target_cells.add(str(r["geo_cell_id"]))
+        except Exception:
+            pass
+
+        return target_cells
+
+    def list_cells(self, tenant_id: str) -> list[CellOutcomeSeries]:
+        target_cells = self._get_tenant_target_cell_ids(tenant_id)
+        adjacency_edges = self.list_adjacency(tenant_id)
+        graph_cells = {cell for edge in adjacency_edges for cell in edge}
+        all_cell_ids = sorted(target_cells | graph_cells)
+        if not all_cell_ids:
+            return []
+
+        outcomes = self.list_absorption_outcomes(tenant_id)
+        placeholders = ", ".join("?" for _ in all_cell_ids)
+        rows = self._engine.query(
+            f"SELECT geo_cell_id, h3_index, admin_city, admin_district "  # nosec B608 -- fixed dialect-selected relation; values are bound
+            f"FROM {self.table_cells} WHERE geo_cell_id IN ({placeholders})",
+            tuple(all_cell_ids),
+        )
+        identities = {}
+        for row in rows:
+            # sqlite3.Row has no .get, so normalise before reading optionals.
+            record = dict(row)
+            identities[str(record["geo_cell_id"])] = (
+                str(record.get("h3_index") or ""),
+                str(record.get("admin_city") or ""),
+                str(record.get("admin_district") or ""),
+            )
+
+        whole: dict[str, list[AbsorptionOutcomeRecord]] = {}
+        sided: dict[str, list[AbsorptionOutcomeRecord]] = {}
+        for outcome in outcomes:
+            bucket = sided if outcome.barrier_side else whole
+            bucket.setdefault(outcome.cell_id, []).append(outcome)
+
+        series: list[CellOutcomeSeries] = []
+        for cell_id in all_cell_ids:
+            # A cell the geo registry does not know is dropped rather than
+            # defaulted: without its admin identity the cross-boundary rule
+            # cannot be applied, and merging across it would be a guess.
+            identity = identities.get(cell_id)
+            if identity is None:
+                continue
+            h3_index, admin_city, admin_district = identity
+            series.append(
+                CellOutcomeSeries(
+                    cell_id=cell_id,
+                    h3_index=h3_index,
+                    admin_city=admin_city,
+                    admin_district=admin_district,
+                    outcomes=tuple(
+                        sorted(whole.get(cell_id, []), key=lambda o: o.period_start)
+                    ),
+                    side_outcomes=tuple(
+                        sorted(
+                            sided.get(cell_id, []),
+                            key=lambda o: (o.barrier_side or "", o.period_start),
+                        )
+                    ),
+                )
+            )
+        return series
+
+    def list_adjacency(self, tenant_id: str) -> list[tuple[str, str]]:
+        target_cells = self._get_tenant_target_cell_ids(tenant_id)
+        if not target_cells:
+            return []
+        placeholders = ", ".join("?" for _ in target_cells)
+        rows = self._engine.query(
+            f"SELECT cell_id, neighbor_cell_id FROM {self.table_adjacency} "  # nosec B608
+            f"WHERE cell_id IN ({placeholders}) OR neighbor_cell_id IN ({placeholders})",
+            (*target_cells, *target_cells),
+        )
+        edges: set[tuple[str, str]] = set()
+        for row in rows:
+            left = str(row["cell_id"])
+            right = str(row["neighbor_cell_id"])
+            # Adjacency is geographic and tenant-scoped to target region;
+            # candidate pairs will be filtered when evaluating co-movement.
+            edges.add((left, right) if left <= right else (right, left))
+        return sorted(edges)
+
+
+class DurableAbsorptionOutcomeWriter:
+    """Append-only durable sink for computed HZ-004 outcomes (ODP-FR-HZ-006).
+
+    A separate class from `DurableMergeSplitEvidenceRepository` on purpose. The
+    reader is what the merge/split request path resolves, so keeping the INSERT
+    off that object means no route that evaluates or approves a composition has
+    a writer for the evidence it is judged against, even by accident.
+
+    Re-recording a period is a no-op when the stored row agrees and a refusal
+    when it does not. A pipeline re-run should be safe; a pipeline that now
+    computes a different number for a period a merge was already decided on is
+    a finding, not something to overwrite -- PostgreSQL would reject the UPDATE
+    anyway, and refusing here says why rather than surfacing a trigger error.
+    """
+
+    def __init__(self, engine_or_store: Any) -> None:
+        # Share the reader's engine resolution and its SQLite bootstrap, so the
+        # writer cannot end up pointed at a relation the reader does not see.
+        self._reader = DurableMergeSplitEvidenceRepository(engine_or_store)
+        self._engine = self._reader._engine
+        self._is_postgres = self._reader._is_postgres
+
+    @property
+    def table_outcomes(self) -> str:
+        return self._reader.table_outcomes
+
+    def _find_existing(
+        self, tenant_id: str, outcome: AbsorptionOutcomeRecord
+    ) -> AbsorptionOutcomeRecord | None:
+        side_clause = (
+            "barrier_side IS NULL" if outcome.barrier_side is None else "barrier_side = ?"
+        )
+        params: tuple[Any, ...] = (
+            tenant_id,
+            outcome.cell_id,
+            outcome.period_start.isoformat(),
+            outcome.period_end.isoformat(),
+        )
+        if outcome.barrier_side is not None:
+            params = (*params, outcome.barrier_side)
+        row = self._engine.query_one(
+            f"SELECT * FROM {self.table_outcomes} WHERE tenant_id = ? AND geo_cell_id = ? "  # nosec B608
+            f"AND period_start = ? AND period_end = ? AND {side_clause}",
+            params,
+        )
+        if not row:
+            return None
+        return self._reader._row_to_outcome(row)
+
+    def _cell_is_registered(self, cell_id: str) -> bool:
+        return (
+            self._engine.query_one(
+                f"SELECT 1 FROM {self._reader.table_cells} WHERE geo_cell_id = ?",  # nosec B608
+                (cell_id,),
+            )
+            is not None
+        )
+
+    def append_absorption_outcome(
+        self, tenant_id: str, outcome: AbsorptionOutcomeRecord
+    ) -> AbsorptionOutcomeRecord:
+        if not outcome.basis_source_ids:
+            raise AbsorptionOutcomeWriteError(
+                f"absorption outcome for cell {outcome.cell_id} carries no basis snapshot ids; "
+                "HZ-004 outcomes must be traceable to their source"
+            )
+
+        if not self._cell_is_registered(outcome.cell_id):
+            # PostgreSQL refuses this through the geo.h3_cells foreign key.
+            # Checking it here means SQLite refuses it the same way and says
+            # why, rather than accepting a row the evidence reader's join then
+            # silently drops.
+            raise UnregisteredCellError(
+                f"cell '{outcome.cell_id}' is not a registered geo cell; HZ-004 outcomes "
+                "attach to cells the geo pipeline published, not to identifiers a caller "
+                "invents"
+            )
+
+        existing = self._find_existing(tenant_id, outcome)
+        if existing is not None:
+            differing = measurement_differences(existing, outcome)
+            if differing:
+                raise AbsorptionOutcomeConflictError(
+                    f"cell {outcome.cell_id} already holds a different recorded outcome for "
+                    f"{outcome.period_start.isoformat()}..{outcome.period_end.isoformat()} "
+                    f"(side={outcome.barrier_side}); differing: {sorted(differing)}. HZ-004 "
+                    "history is append-only, so a recomputation that disagrees is a finding, "
+                    "not an update"
+                )
+            return existing
+
+        self._engine.execute(
+            f"INSERT INTO {self.table_outcomes} ("  # nosec B608 -- table is a fixed dialect-selected relation; values are bound
+            "outcome_id, tenant_id, geo_cell_id, period_start, period_end, "
+            "original_demand, absorbed_demand, remaining_demand, absorption_ratio, "
+            "absorbing_store_count, under_realized, barrier_side, barrier_description, "
+            "basis_source_ids, basis_at, absorption_policy_version_id, created_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(uuid4()),
+                tenant_id,
+                outcome.cell_id,
+                outcome.period_start.isoformat(),
+                outcome.period_end.isoformat(),
+                outcome.original_demand,
+                outcome.absorbed_demand,
+                outcome.remaining_demand,
+                outcome.absorption_ratio,
+                outcome.absorbing_store_count,
+                outcome.under_realized,
+                outcome.barrier_side,
+                outcome.barrier_description,
+                json.dumps(list(outcome.basis_source_ids)),
+                outcome.basis_at.isoformat(),
+                outcome.absorption_policy_version_id,
+                datetime.now(UTC).isoformat(),
+            ),
+        )
+        return outcome
+
+
 class DurableListingRepository:
     """Durable mirror of ``InMemoryListingRepository`` (ODP-FLOW-002).
 
@@ -2128,11 +4546,13 @@ __all__ = [
     "DurableArtifactStore",
     "DurableDecisionStore",
     "DurableForecastOpsRepository",
+    "DurableHeatZoneCompositionRepository",
     "DurableHeatZoneResultStore",
     "DurableInterventionRepository",
     "DurableLabelRegistry",
     "DurableLearningHubRepository",
     "DurableListingRepository",
+    "DurableMergeSplitEvidenceRepository",
     "DurableNetPlanRepository",
     "DurablePriceOpsRepository",
     "DurableRealizedSiteStore",

@@ -11,6 +11,9 @@ from uuid import uuid4
 
 import numpy as np
 
+from shared.governance import evidence as governed_evidence
+from shared.governance.vocabularies import EvidenceLevel
+
 # Versions (output-contract principle §5.1 of ODP-MOD-07).
 ADLIFT_MODEL_VERSION = "adlift-statsmodels-matched-did-v2"
 ADLIFT_FEATURE_VERSION = "matched-control-view-v1"
@@ -34,27 +37,21 @@ class AdLiftProductionExecutionError(RuntimeError):
     """Raised when production DiD data or the statsmodels runtime is unavailable."""
 
 
-class EvidenceLevel(StrEnum):
-    """Causal evidence ladder (ODP-ML-05 §5). v1 produces L0–L3 only."""
-
-    L0_ANECDOTAL = "L0"  # anecdotal: treatment observed, nothing to compare against
-    L1_BEFORE_AFTER = "L1"  # before/after, no control group
-    L2_MATCHED_DESCRIPTIVE = "L2"  # matched control but pre-trend/balance not clean
-    L3_DID_VALIDATED = "L3"  # control + pre-trend + balance checks pass
-    L4_RANDOMIZED = "L4"  # experimental / near-random (out of v1 scope)
-    L5_POLICY_READY = "L5"  # replicated, policy ready (out of v1 scope)
-
-
+# The ladder is generated from packages/schemas/canonical/vocabularies.json and
+# re-exported here so `from modules.adlift.domain.incrementality import
+# EvidenceLevel` keeps working. AdLift v1 produces L0-L3; L4 and L5 are defined
+# by the ladder but out of this module's scope to emit.
+#
+# It used to be declared here, with an identical copy in
+# modules/intervention/domain/lifecycle.py. Two identical definitions drift the
+# moment one of them is edited, and nothing was watching for that.
 # Ordering for ladder comparisons; causal claims require >= L3 (ODP-ML-05 §5).
-_EVIDENCE_ORDER: tuple[EvidenceLevel, ...] = (
-    EvidenceLevel.L0_ANECDOTAL,
-    EvidenceLevel.L1_BEFORE_AFTER,
-    EvidenceLevel.L2_MATCHED_DESCRIPTIVE,
-    EvidenceLevel.L3_DID_VALIDATED,
-    EvidenceLevel.L4_RANDOMIZED,
-    EvidenceLevel.L5_POLICY_READY,
-)
-CAUSAL_MIN_EVIDENCE = EvidenceLevel.L3_DID_VALIDATED
+# Both are re-exported from shared.governance.evidence rather than declared
+# again here. PriceOps and Growth gate on the same threshold, and a second copy
+# of L3 is how a threshold change lands in one consumer and not the others --
+# the same failure the ladder itself had before ODP-EVIDENCE-LEVEL-ALIGNMENT-001.
+_EVIDENCE_ORDER: tuple[EvidenceLevel, ...] = governed_evidence.EVIDENCE_ORDER
+CAUSAL_MIN_EVIDENCE: EvidenceLevel = governed_evidence.CAUSAL_MIN_EVIDENCE
 
 
 class EvidenceInsufficiencyReason(StrEnum):
@@ -118,11 +115,9 @@ class EvidenceAssessment:
 
 def is_causal_evidence(assessment: EvidenceAssessment) -> bool:
     """Causal claims need L3+, and need the ladder to apply in the first place."""
-    if not assessment.assessable or assessment.level is None:
+    if not assessment.assessable:
         return False
-    return _EVIDENCE_ORDER.index(assessment.level) >= _EVIDENCE_ORDER.index(
-        CAUSAL_MIN_EVIDENCE
-    )
+    return governed_evidence.meets_causal_threshold(assessment.level)
 
 
 class PreTrendStatus(StrEnum):

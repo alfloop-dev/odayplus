@@ -15,12 +15,22 @@ from modules.forecastops import (
     InMemoryForecastOpsRepository,
     StoreDayObservation,
     build_store_timeseries,
+    default_forecast_alert_policy,
     run_forecastops_batch_forecast,
 )
+from shared.governance import InMemoryDecisionPolicyRepository
 from tests.integration._authz import FORECASTOPS_HEADERS
 
 PREDICTION_TIME = datetime(2026, 6, 27, 9, 0, tzinfo=UTC)
 TENANT_ID = "tenant-test"
+
+
+def _policy_repository() -> InMemoryDecisionPolicyRepository:
+    return InMemoryDecisionPolicyRepository([default_forecast_alert_policy(TENANT_ID)])
+
+
+def _app():
+    return create_app(forecastops_policy_repository=_policy_repository())
 
 
 def _observation(day: int, revenue: float, baseline: float = 100_000.0) -> StoreDayObservation:
@@ -54,7 +64,7 @@ def test_store_timeseries_view_groups_and_orders_observations() -> None:
 
 def test_forecast_job_emits_four_light_alerts_and_handoffs() -> None:
     repository = InMemoryForecastOpsRepository()
-    service = ForecastOpsService(repository=repository)
+    service = ForecastOpsService(repository=repository, policy_repository=_policy_repository())
     observations = tuple(_observation(day, 80_000 - day * 2_000) for day in range(20, 27))
 
     result = service.forecast(
@@ -109,10 +119,16 @@ def test_batch_worker_persists_versions() -> None:
     ]
 
     first = run_forecastops_batch_forecast(
-        inputs=inputs, job_id="forecast-job-1", repository=repository
+        inputs=inputs,
+        job_id="forecast-job-1",
+        repository=repository,
+        policy_repository=_policy_repository(),
     )
     second = run_forecastops_batch_forecast(
-        inputs=inputs, job_id="forecast-job-2", repository=repository
+        inputs=inputs,
+        job_id="forecast-job-2",
+        repository=repository,
+        policy_repository=_policy_repository(),
     )
 
     assert first.job_id == "forecast-job-1"
@@ -123,7 +139,7 @@ def test_batch_worker_persists_versions() -> None:
 
 
 def test_forecastops_api_runs_alert_handoff_loop_and_is_idempotent() -> None:
-    client = TestClient(create_app(), headers=FORECASTOPS_HEADERS)
+    client = TestClient(_app(), headers=FORECASTOPS_HEADERS)
     payload = {
         "prediction_origin_time": PREDICTION_TIME.isoformat(),
         "inputs": [
@@ -187,7 +203,7 @@ def test_forecastops_api_runs_alert_handoff_loop_and_is_idempotent() -> None:
 
 
 def test_forecastops_prediction_run_replay() -> None:
-    client = TestClient(create_app(), headers=FORECASTOPS_HEADERS)
+    client = TestClient(_app(), headers=FORECASTOPS_HEADERS)
     payload = {
         "prediction_origin_time": PREDICTION_TIME.isoformat(),
         "inputs": [
@@ -231,7 +247,7 @@ def test_forecastops_prediction_run_replay() -> None:
 
 
 def _declining_result(repository: InMemoryForecastOpsRepository):
-    service = ForecastOpsService(repository=repository)
+    service = ForecastOpsService(repository=repository, policy_repository=_policy_repository())
     observations = tuple(_observation(day, 80_000 - day * 2_000) for day in range(20, 27))
     return service, service.forecast(
         [
@@ -313,7 +329,7 @@ def test_execute_handoff_links_intervention_and_rejects_reexecute() -> None:
 
 
 def test_api_acknowledge_alert_and_execute_handoff_with_audit() -> None:
-    client = TestClient(create_app(), headers=FORECASTOPS_HEADERS)
+    client = TestClient(_app(), headers=FORECASTOPS_HEADERS)
     corr = {"x-correlation-id": "corr-forecast-ack-exec"}
     payload = {
         "prediction_origin_time": PREDICTION_TIME.isoformat(),
@@ -395,3 +411,81 @@ def test_api_acknowledge_alert_and_execute_handoff_with_audit() -> None:
     event_types = {event["event_type"] for event in events}
     assert "forecastops.alert.acknowledged.v1" in event_types
     assert "forecastops.handoff.executed.v1" in event_types
+
+
+def test_forecast_job_fails_closed_with_named_422_when_policy_cannot_be_resolved() -> None:
+    """When no governing policy is in force for the tenant, the forecast-jobs route fails closed with 422."""
+    empty_policy_repo = InMemoryDecisionPolicyRepository([])
+    app = create_app(forecastops_policy_repository=empty_policy_repo)
+    client = TestClient(app)
+
+    response = client.post(
+        "/forecastops/forecast-jobs",
+        json={
+            "inputs": [
+                {
+                    "store_id": "store-001",
+                    "observations": [
+                        {
+                            "business_date": "2026-06-25",
+                            "actual_revenue": 50_000.0,
+                            "site_score_baseline_p50": 100_000.0,
+                            "source_snapshot_ids": ["pos-20260625"],
+                        }
+                    ],
+                }
+            ],
+            "prediction_origin_time": PREDICTION_TIME.isoformat(),
+        },
+        headers={**FORECASTOPS_HEADERS, "x-correlation-id": "corr-fo-policy-missing"},
+    )
+    assert response.status_code == 422
+    body = response.json()
+    assert body["detail"]["code"] == "POLICY_RESOLUTION_ERROR"
+    assert "refusing to decide" in body["detail"]["message"]
+
+
+def test_forecast_job_fails_closed_with_named_422_when_policy_is_invalid() -> None:
+    """When the policy configuration is malformed or invalid, the forecast-jobs route fails closed with 422."""
+    from shared.governance import DecisionPolicy
+
+    invalid_policy = DecisionPolicy(
+        policy_version_id=f"four-light-policy-v1:{TENANT_ID}",
+        policy_label="four-light-policy-v1",
+        policy_id="four-light-policy",
+        policy_version="1.0.0",
+        policy_kind="forecast_alert",
+        tenant_id=TENANT_ID,
+        effective_from=datetime(1970, 1, 1, tzinfo=UTC),
+        parameters={"thresholds": [{"level": "GREEN", "value": -0.35}]},
+        declared_inputs=("sitescore_gap_ratio",),
+    )
+    invalid_policy_repo = InMemoryDecisionPolicyRepository([invalid_policy])
+    app = create_app(forecastops_policy_repository=invalid_policy_repo)
+    client = TestClient(app)
+
+    response = client.post(
+        "/forecastops/forecast-jobs",
+        json={
+            "inputs": [
+                {
+                    "store_id": "store-001",
+                    "observations": [
+                        {
+                            "business_date": "2026-06-25",
+                            "actual_revenue": 50_000.0,
+                            "site_score_baseline_p50": 100_000.0,
+                            "source_snapshot_ids": ["pos-20260625"],
+                        }
+                    ],
+                }
+            ],
+            "prediction_origin_time": PREDICTION_TIME.isoformat(),
+        },
+        headers={**FORECASTOPS_HEADERS, "x-correlation-id": "corr-fo-policy-invalid"},
+    )
+    assert response.status_code == 422
+    body = response.json()
+    assert body["detail"]["code"] == "FORECAST_ALERT_POLICY_ERROR"
+    assert "cannot define GREEN" in body["detail"]["message"]
+

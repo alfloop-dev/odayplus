@@ -33,7 +33,7 @@ export type AVMCasePayload = {
   lease_liability?: number;
   liquidity_discount?: number;
   prediction_origin_time?: string | null;
-  quality_score?: number;
+  quality_score?: number | null;
   source_snapshot_ids?: string[];
   store_id: string;
   working_capital?: number;
@@ -72,6 +72,35 @@ export type AdLiftIncrementalityJobPayload = {
   campaigns?: Record<string, unknown>[];
   generated_at?: string | null;
   idempotency_key?: string | null;
+};
+
+/** AddressCorrectionPayload */
+export type AddressCorrectionPayload = {
+  actor?: string | null;
+  actorName?: string | null;
+  actorRoleId?: string | null;
+  actor_id?: string | null;
+  city?: string | null;
+  district?: string | null;
+  expected_revision?: number | null;
+  geocode_confidence?: number | null;
+  geocode_precision?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  normalized_address?: string | null;
+  raw_address?: string | null;
+  reason: string;
+  risk_acknowledged?: boolean;
+  road?: string | null;
+  village?: string | null;
+};
+
+/** AddressRollbackPayload */
+export type AddressRollbackPayload = {
+  actor?: string | null;
+  actor_id?: string | null;
+  expected_revision?: number | null;
+  reason: string;
 };
 
 /** ApiError */
@@ -243,6 +272,18 @@ export type ClosePayload = {
   reason?: string;
 };
 
+/** CommentCreateRequest */
+export type CommentCreateRequest = {
+  content: string;
+  targetId: string;
+  targetType: "task" | "decision" | "approval";
+};
+
+/** CommentEditRequest */
+export type CommentEditRequest = {
+  content: string;
+};
+
 /** ComparePayload */
 export type ComparePayload = {
   cell_ids?: string[];
@@ -268,6 +309,19 @@ export type ConflictError = {
   retry_with_etag?: string | null;
   retryable: boolean;
 };
+
+/** The hard-constraint classes a network plan must honour (ODP-FR-NET-002).
+
+The solver does not model all of them. That is not by itself a defect --
+a plan built without a construction-capacity figure cannot honour one --
+but reporting such a plan as simply "feasible" is, because "feasible under
+the constraints we modelled" and "feasible under all eight" are different
+claims that read identically.
+
+``NetPlanConstraints.modelled_classes`` and the matching field on the solve
+result keep those two apart, so a reader can tell which question the answer
+is an answer to. */
+export type ConstraintClass = "CAPITAL" | "LEASE" | "CONSTRUCTION" | "EQUIPMENT" | "LABOUR" | "COVERAGE" | "DILUTION" | "SEQUENCING";
 
 /** CorrectionReceipt */
 export type CorrectionReceipt = {
@@ -340,6 +394,8 @@ export type DataRoomExportPayload = {
 /** DatasetSnapshotPayload */
 export type DatasetSnapshotPayload = {
   dataset_snapshot_id?: string | null;
+  feature_set_id?: string | null;
+  label_set_id?: string | null;
   require_training_eligible?: boolean;
   rows: Record<string, unknown>[];
 };
@@ -461,6 +517,20 @@ export type EvidenceGovernancePayload = {
   role: string;
 };
 
+/** Causal evidence ladder.
+
+ADR-0004 D3: absence is not a tier. A value of ``None`` means the evidence was
+never assessed, and it must stay distinguishable from ``L0``, which is a
+measurement -- anecdotal, but taken. No member of this enum may be used as a
+default for an unassessed claim.
+
+Assessability is orthogonal and travels alongside as a separate boolean; see
+modules/adlift/domain/incrementality.py, where ``assessable`` is a field of its
+own rather than a level.
+
+Authority: ADR-0004 / ODP-ML-05 §5. */
+export type EvidenceLevel = "L0" | "L1" | "L2" | "L3" | "L4" | "L5";
+
 /** POST /operator/governance/evidence-package — export an Evidence Package. */
 export type EvidencePackagePayload = {
   actorName?: string | null;
@@ -560,6 +630,42 @@ export type ForecastOpsAlertAcknowledgePayload = {
   note?: string | null;
 };
 
+/** ForecastOpsAlertBackfillPayload */
+export type ForecastOpsAlertBackfillPayload = {
+  actor?: string | null;
+  as_of?: string | null;
+  evaluation_horizon_days?: number;
+  min_observations?: number | null;
+  store_id?: string | null;
+};
+
+/** ForecastOpsFeedbackApprovePayload */
+export type ForecastOpsFeedbackApprovePayload = {
+  actor?: string | null;
+  note?: string | null;
+};
+
+/** ForecastOpsFeedbackCreatePayload */
+export type ForecastOpsFeedbackCreatePayload = {
+  actor?: string | null;
+  alert_id?: string | null;
+  corrected_revenue?: number | null;
+  disposition?: string | null;
+  feedback_type: string;
+  metadata?: Record<string, unknown>;
+  reason: string;
+  store_id: string;
+  target_date?: string | null;
+  target_date_end?: string | null;
+  target_date_start?: string | null;
+};
+
+/** ForecastOpsFeedbackRejectPayload */
+export type ForecastOpsFeedbackRejectPayload = {
+  actor?: string | null;
+  reason?: string | null;
+};
+
 /** ForecastOpsForecastJobPayload */
 export type ForecastOpsForecastJobPayload = {
   idempotency_key?: string | null;
@@ -594,6 +700,68 @@ export type FranchiseeReportRequest = {
 /** HTTPValidationError */
 export type HTTPValidationError = {
   detail?: ValidationError[];
+};
+
+/** One cell-period of HZ-004 absorption, to be measured and recorded.
+
+The body carries *inputs*, not results. `absorbed_demand`,
+`absorption_ratio`, `absorbing_store_count` and `under_realized` are
+computed here from the published `oday.store-daily-performance.v1` and
+`oday.operational-start-observation.v1` rows, and the basis snapshot ids
+are lifted from each row's `raw_contract_fingerprint`. A caller cannot
+state what a zone absorbed, because merge/split is judged against this
+history and a caller who could write the evidence could decide the
+merge. */
+export type HeatZoneAbsorptionOutcomePayload = {
+  barrier_description?: string;
+  barrier_side?: string | null;
+  cell_id: string;
+  operational_starts?: Record<string, unknown>[] | null;
+  original_demand: number;
+  performances?: Record<string, unknown>[] | null;
+  period_end: string;
+  period_start: string;
+  store_ids: string[];
+};
+
+/** Request to evaluate merge/split for the caller's tenant.
+
+There is nothing to send but the policy to evaluate under. Readiness
+metrics and cell outcomes are read from trusted server-side HZ-004
+evidence; a request that supplies them is refused rather than obeyed,
+because a caller able to name its own maturity could talk the engine
+past a gate the production snapshot fails. */
+export type HeatZoneMergeSplitEvaluatePayload = {
+  policy_version_id?: string | null;
+};
+
+/** Human override of a composition.
+
+The deciding operator is taken from the authenticated principal, so the
+body carries only the reason and the shape of the override. `extra` is
+forbidden so a client that still sends `decided_by` is told its identity
+claim was rejected instead of having it silently dropped. */
+export type HeatZoneOverridePayload = {
+  decision_policy_version_id?: string | null;
+  member_cell_ids?: string[] | null;
+  new_kind?: string | null;
+  override_reason: string;
+  parent_zone_id?: string | null;
+};
+
+/** HeatZoneProposalApprovePayload */
+export type HeatZoneProposalApprovePayload = {
+  notes?: string | null;
+};
+
+/** HeatZoneProposalRejectPayload */
+export type HeatZoneProposalRejectPayload = {
+  reason: string;
+};
+
+/** HeatZoneRollbackPayload */
+export type HeatZoneRollbackPayload = {
+  revert_reason?: string | null;
 };
 
 /** HeatZoneScoreJobPayload */
@@ -758,18 +926,27 @@ export type JobCreatePayload = {
   payload?: Record<string, unknown>;
 };
 
+/** JobDeliveryState */
+export type JobDeliveryState = "RETRYING" | "DEAD_LETTER";
+
 /** JobReceipt */
 export type JobReceipt = {
   attempt: number;
   checkpoint: string;
   correlation_id: string;
+  delivery_state?: JobDeliveryState | null;
   job_id: string;
   status: JobStatus;
   version: number;
 };
 
+/** JobRetryPayload */
+export type JobRetryPayload = {
+  retry_scope?: string;
+};
+
 /** JobStatus */
-export type JobStatus = "QUEUED" | "RUNNING" | "RETRYING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "DEAD_LETTER";
+export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "PARTIAL";
 
 /** ListingImportPayload */
 export type ListingImportPayload = {
@@ -867,9 +1044,14 @@ export type ModelVersionPayload = {
 
 /** MonitorGuardrailPayload */
 export type MonitorGuardrailPayload = {
+  higher_is_better?: boolean | null;
+  max_degradation?: number | null;
+  max_relative_degradation?: number | null;
   max_value?: number | null;
   metric_name: string;
   min_value?: number | null;
+  warning_max_degradation?: number | null;
+  warning_max_relative_degradation?: number | null;
   warning_max_value?: number | null;
   warning_min_value?: number | null;
 };
@@ -950,6 +1132,58 @@ export type NetworkListingMergePayload = {
   targetListingId: string;
 };
 
+/** NetworkRebalanceCounts */
+export type NetworkRebalanceCounts = {
+  pendingApprovals?: number;
+  stores?: number;
+};
+
+/** NetworkRebalanceMetadata */
+export type NetworkRebalanceMetadata = {
+  avm?: Record<string, unknown> | null;
+  canonicalPackage?: string | null;
+  canonicalZipSha256?: string | null;
+  netPlan?: Record<string, unknown> | null;
+  screenLabels?: string[];
+  serviceVersion?: string | null;
+};
+
+/** NetworkRebalanceModels */
+export type NetworkRebalanceModels = {
+  avm?: Record<string, unknown> | null;
+  netPlan?: Record<string, unknown> | null;
+};
+
+/** NetworkRebalanceMutationResponse */
+export type NetworkRebalanceMutationResponse = {
+  auditEvent?: Record<string, unknown> | null;
+  correlationId?: string | null;
+  store: RebalanceStore;
+};
+
+/** NetworkRebalanceReviewResponse */
+export type NetworkRebalanceReviewResponse = {
+  approval?: Record<string, unknown> | null;
+  auditEvent?: Record<string, unknown> | null;
+  correlationId?: string | null;
+  store: RebalanceStore;
+};
+
+/** NetworkRebalanceSnapshotResponse */
+export type NetworkRebalanceSnapshotResponse = {
+  auditEvents?: Record<string, unknown>[];
+  correlationId?: string | null;
+  counts?: NetworkRebalanceCounts;
+  governApprovals?: Record<string, unknown>[];
+  metadata?: NetworkRebalanceMetadata | Record<string, unknown> | null;
+  models?: NetworkRebalanceModels | Record<string, unknown> | null;
+  selectedScenario?: RebalanceScenario | null;
+  selectedStore?: RebalanceStore | null;
+  selectedStoreId?: string | null;
+  source?: string | null;
+  stores: RebalanceStore[];
+};
+
 /** NetworkScoringActorPayload */
 export type NetworkScoringActorPayload = {
   actorName?: string | null;
@@ -1017,6 +1251,10 @@ export type PriceOpsActivationPayload = {
 /** PriceOpsActorPayload */
 export type PriceOpsActorPayload = {
   actor?: string;
+  exploration_algorithm?: string;
+  exploration_gate_id?: string | null;
+  exploration_history?: unknown[][] | null;
+  exploration_seed?: number | null;
   occurred_at?: string | null;
   reason?: string;
 };
@@ -1042,12 +1280,48 @@ export type PriceOpsDecisionWritebackPayload = {
 export type PriceOpsEvaluationPayload = {
   actor?: string;
   actual_gross_margin: number;
-  evidence_level?: string;
+  evidence_level?: EvidenceLevel | null;
   generated_at?: string | null;
   measurement_method?: string;
   negative_impact_threshold?: number;
   outcome_window_end?: string | null;
   outcome_window_start?: string | null;
+};
+
+/** PriceOpsExplorationCandidatesPayload */
+export type PriceOpsExplorationCandidatesPayload = {
+  algorithm?: string;
+  at?: string | null;
+  history?: unknown[][] | null;
+  items: PriceOpsPlanItemPayload[];
+  scope_brand_id?: string | null;
+  scope_sku_group?: string | null;
+  scope_store_group?: string | null;
+  seed?: number | null;
+  tenant_id: string;
+};
+
+/** PriceOpsExplorationGateRegisterPayload */
+export type PriceOpsExplorationGateRegisterPayload = {
+  approval_decision_id: string;
+  approval_id: string;
+  approved_by: string;
+  budget_limit: number;
+  decision_policy_version_id: string;
+  effective_from: string;
+  effective_to: string;
+  gate_id?: string | null;
+  rollback_condition: string;
+  scope_brand_id?: string | null;
+  scope_sku_group?: string | null;
+  scope_store_group?: string | null;
+  tenant_id: string;
+};
+
+/** PriceOpsExplorationGateRevokePayload */
+export type PriceOpsExplorationGateRevokePayload = {
+  reason: string;
+  revoked_at?: string | null;
 };
 
 /** PriceOpsObservationPayload */
@@ -1066,7 +1340,10 @@ export type PriceOpsOptimizerJobPayload = {
 
 /** PriceOpsPlanItemPayload */
 export type PriceOpsPlanItemPayload = {
+  applicable_max_price?: number | null;
+  applicable_min_price?: number | null;
   baseline_demand: number;
+  brand_id?: string | null;
   confidence?: number | null;
   current_price: number;
   elasticity_value?: number | null;
@@ -1081,6 +1358,8 @@ export type PriceOpsPlanItemPayload = {
   prediction_origin_time?: string | null;
   price_demand_observations?: Record<string, number>[] | null;
   price_ladder_step?: number;
+  sku_group?: string | null;
+  store_group?: string | null;
   store_id: string;
   unit_cost: number;
 };
@@ -1088,6 +1367,10 @@ export type PriceOpsPlanItemPayload = {
 /** PriceOpsPlanPayload */
 export type PriceOpsPlanPayload = {
   created_at?: string | null;
+  exploration_algorithm?: string;
+  exploration_gate_id?: string | null;
+  exploration_history?: unknown[][] | null;
+  exploration_seed?: number | null;
   idempotency_key?: string | null;
   items: PriceOpsPlanItemPayload[];
   plan_id?: string | null;
@@ -1156,10 +1439,98 @@ export type RebalanceActorPayload = {
   simulateUnavailable?: boolean;
 };
 
+/** RebalanceScenario */
+export type RebalanceScenario = {
+  acknowledgeableConstraintClasses: ConstraintClass[];
+  actions?: unknown[] | null;
+  bindingConstraints?: string[];
+  blockedConstraintClasses: ConstraintClass[];
+  capacityDelta?: number | null;
+  diagnostics?: unknown[];
+  disclosurePolicyVersionId?: string | null;
+  disclosureUndeclared?: boolean;
+  evidenceIds?: string[];
+  expectedGrossMargin?: number | null;
+  id: string;
+  inv?: string | null;
+  investmentTwd?: number | null;
+  isInfeasible?: boolean;
+  isStale?: boolean;
+  isSystemRecommendation?: boolean;
+  modelledConstraintClasses: ConstraintClass[];
+  modelled_constraint_classes: ConstraintClass[];
+  name: string;
+  payback?: string | null;
+  rationale?: string | null;
+  risk?: number | string | null;
+  roi?: string | null;
+  roiPct?: number | null;
+  score?: number | null;
+  selected?: boolean;
+  solverStatus?: string | null;
+  solverVersion?: string | null;
+  time?: string | null;
+  unmodelledConstraintClasses: ConstraintClass[];
+  unmodelled_constraint_classes: ConstraintClass[];
+};
+
+/** RebalanceStore */
+export type RebalanceStore = {
+  approvalStatus?: string | null;
+  avm?: Record<string, unknown> | null;
+  avmConf?: string | null;
+  avmEvidenceId?: string | null;
+  avmJob?: Record<string, unknown> | null;
+  avmModelVersion?: string | null;
+  avmP10?: number | null;
+  avmP50?: number | null;
+  avmP90?: number | null;
+  avmQualityDisposition?: string | null;
+  avmQualityScoreStatus?: string | null;
+  avmRequestId?: string | null;
+  avmReserve?: string | null;
+  avmSnapshotId?: string | null;
+  canonicalAvmCaseId?: string | null;
+  canonicalNetPlanScenarioIds?: string[] | null;
+  evidence?: Record<string, unknown>[] | null;
+  executionBoundary?: string | null;
+  healthNote?: string | null;
+  id: string;
+  lightHistory?: string[] | null;
+  monthlyRevenueLabel?: string | null;
+  monthlyRevenueTwd?: number | null;
+  netPlanJob?: Record<string, unknown> | null;
+  netPlanModelVersion?: string | null;
+  netPlanOptionId?: string | null;
+  netPlanScenarios?: RebalanceScenario[];
+  netPlanSnapshotId?: string | null;
+  ownerName?: string | null;
+  ownerRoleId?: string | null;
+  relatedApprovalId?: string | null;
+  relocationExecuted?: boolean | null;
+  runtimeState?: Record<string, unknown> | null;
+  selectedScenarioEvidenceId?: string | null;
+  selectedScenarioId?: string | null;
+  selectedScenarioOwner?: Record<string, unknown> | null;
+  sourceIssueId?: string | null;
+  status: string;
+  statusLabel?: string | null;
+  storeId: string;
+  storeName: string;
+  summary?: string | null;
+  trend?: number[] | null;
+  utilizationLabel?: string | null;
+  utilizationPct?: number | null;
+};
+
 /** RebalanceSubmitPayload */
 export type RebalanceSubmitPayload = {
+  acknowledgedClasses?: (ConstraintClass | string)[] | null;
+  acknowledgementActorId?: string | null;
+  acknowledgementReason?: string | null;
   actorName?: string | null;
   actorRoleId?: string;
+  approvalReceiptId?: string | null;
   reason: string;
   simulateUnavailable?: boolean;
 };
@@ -1185,6 +1556,7 @@ export type ReleaseHoldPayload = {
 
 /** ReleaseMonitorPayload */
 export type ReleaseMonitorPayload = {
+  baseline_metrics?: Record<string, number> | null;
   evaluated_by?: string | null;
   guardrails: MonitorGuardrailPayload[];
   observed_metrics: Record<string, number>;
@@ -1410,9 +1782,14 @@ export type TaskAssignRequest = {
 
 /** ThresholdPayload */
 export type ThresholdPayload = {
+  higher_is_better?: boolean | null;
+  max_degradation?: number | null;
+  max_relative_degradation?: number | null;
   max_value?: number | null;
   metric_name: string;
   min_value?: number | null;
+  warning_max_degradation?: number | null;
+  warning_max_relative_degradation?: number | null;
   warning_max_value?: number | null;
   warning_min_value?: number | null;
 };
@@ -1586,7 +1963,7 @@ export type apps__api__app__routes__operator_modules__growth__ConflictCheckPaylo
 export type apps__api__app__routes__operator_modules__growth__OutcomePayload = {
   actorName?: string | null;
   actorRoleId?: string | null;
-  evidenceLevel?: string;
+  evidenceLevel?: EvidenceLevel | null;
   observedLift?: number | null;
   outcome: string;
   rationale?: string;
@@ -1648,7 +2025,13 @@ export const API_PATHS = {
   "/api/v1/external-data/quarantine": ["GET"],
   "/api/v1/feature-flags": ["GET"],
   "/api/v1/forecastops/alerts": ["GET"],
+  "/api/v1/forecastops/alerts/backfill-precision": ["POST"],
+  "/api/v1/forecastops/alerts/precision": ["GET"],
   "/api/v1/forecastops/alerts/{alert_id}/acknowledge": ["POST"],
+  "/api/v1/forecastops/feedbacks": ["GET", "POST"],
+  "/api/v1/forecastops/feedbacks/{feedback_id}": ["GET"],
+  "/api/v1/forecastops/feedbacks/{feedback_id}/approve": ["POST"],
+  "/api/v1/forecastops/feedbacks/{feedback_id}/reject": ["POST"],
   "/api/v1/forecastops/forecast-jobs": ["POST"],
   "/api/v1/forecastops/forecast-jobs/{job_id}": ["GET"],
   "/api/v1/forecastops/forecast-outputs/{forecast_output_id}": ["GET"],
@@ -1658,9 +2041,21 @@ export const API_PATHS = {
   "/api/v1/forecastops/prediction-runs/{prediction_run_id}": ["GET"],
   "/api/v1/forecastops/timeseries": ["GET", "POST"],
   "/api/v1/heatzones": ["GET"],
+  "/api/v1/heatzones/absorption/outcomes": ["POST"],
+  "/api/v1/heatzones/compositions": ["GET"],
   "/api/v1/heatzones/map": ["GET"],
+  "/api/v1/heatzones/merge-split/evaluate": ["POST"],
+  "/api/v1/heatzones/merge-split/proposals": ["GET"],
+  "/api/v1/heatzones/merge-split/proposals/{proposal_id}": ["GET"],
+  "/api/v1/heatzones/merge-split/proposals/{proposal_id}/approve": ["POST"],
+  "/api/v1/heatzones/merge-split/proposals/{proposal_id}/preview": ["POST"],
+  "/api/v1/heatzones/merge-split/proposals/{proposal_id}/reject": ["POST"],
   "/api/v1/heatzones/score-jobs": ["POST"],
   "/api/v1/heatzones/snapshots/{snapshot_id}": ["GET"],
+  "/api/v1/heatzones/zones/{zone_id}/composition": ["GET"],
+  "/api/v1/heatzones/zones/{zone_id}/lineage": ["GET"],
+  "/api/v1/heatzones/zones/{zone_id}/override": ["POST"],
+  "/api/v1/heatzones/zones/{zone_id}/rollback": ["POST"],
   "/api/v1/heatzones/{h3_index}": ["GET"],
   "/api/v1/identity-decisions/{decision_id}": ["GET"],
   "/api/v1/identity-decisions/{decision_id}/actions/reverse": ["POST"],
@@ -1699,6 +2094,7 @@ export const API_PATHS = {
   "/api/v1/jobs": ["POST"],
   "/api/v1/jobs/{job_id}": ["GET"],
   "/api/v1/jobs/{job_id}/receipt": ["GET"],
+  "/api/v1/jobs/{job_id}/retries": ["POST"],
   "/api/v1/jobs/{job_id}/retry": ["POST"],
   "/api/v1/learninghub/dataset-snapshots": ["POST"],
   "/api/v1/learninghub/dataset-snapshots/{dataset_snapshot_id}/triage": ["GET", "POST"],
@@ -1710,6 +2106,9 @@ export const API_PATHS = {
   "/api/v1/learninghub/oss-capabilities": ["GET"],
   "/api/v1/learninghub/releases": ["GET", "POST"],
   "/api/v1/learninghub/releases/{release_id}/monitor": ["POST"],
+  "/api/v1/listings/addresses/{address_id}": ["GET"],
+  "/api/v1/listings/addresses/{address_id}/corrections": ["GET", "POST"],
+  "/api/v1/listings/addresses/{address_id}/corrections/{correction_id}/rollback": ["POST"],
   "/api/v1/listings/candidates": ["GET"],
   "/api/v1/listings/import": ["POST"],
   "/api/v1/listings/import-jobs": ["POST"],
@@ -1739,6 +2138,8 @@ export const API_PATHS = {
   "/api/v1/operator/approvals": ["GET"],
   "/api/v1/operator/approvals/{approval_id}/decision": ["POST"],
   "/api/v1/operator/bootstrap": ["GET"],
+  "/api/v1/operator/comments": ["GET", "POST"],
+  "/api/v1/operator/comments/{comment_id}": ["PATCH"],
   "/api/v1/operator/evidence/{evidence_id}/purpose": ["POST"],
   "/api/v1/operator/governance/decisions": ["POST"],
   "/api/v1/operator/governance/evidence-package": ["POST"],
@@ -1829,11 +2230,15 @@ export const API_PATHS = {
   "/api/v1/platform/dashboards/provisioned": ["GET"],
   "/api/v1/platform/metrics/export": ["GET"],
   "/api/v1/platform/observability": ["GET"],
+  "/api/v1/priceops/exploration-candidates": ["POST"],
+  "/api/v1/priceops/exploration-gates": ["GET", "POST"],
+  "/api/v1/priceops/exploration-gates/{gate_id}/revoke": ["POST"],
   "/api/v1/priceops/optimizer-jobs": ["POST"],
   "/api/v1/priceops/optimizer-jobs/{job_id}": ["GET"],
   "/api/v1/priceops/plans": ["GET", "POST"],
   "/api/v1/priceops/plans/{plan_id}": ["GET"],
   "/api/v1/priceops/plans/{plan_id}/activate": ["POST"],
+  "/api/v1/priceops/plans/{plan_id}/activation-receipt": ["GET"],
   "/api/v1/priceops/plans/{plan_id}/approve": ["POST"],
   "/api/v1/priceops/plans/{plan_id}/comparison": ["GET"],
   "/api/v1/priceops/plans/{plan_id}/decision-writeback": ["POST"],

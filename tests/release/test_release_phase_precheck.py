@@ -28,6 +28,11 @@ from delivery_toolchain.release.check_release_phase import (
 SHA = "a" * 40
 IMAGE = "asia-east1-docker.pkg.dev/p/r/{name}@sha256:" + "1" * 64
 
+# The coordinates that let a deploy fetch the exact manifest its build produced:
+# which build run published it, and which digest the lease was issued against.
+MANIFEST_RUN_ID = "17654321098"
+MANIFEST_DIGEST = "sha256:" + "2" * 64
+
 
 def images(**overrides: str) -> dict[str, str]:
     built = {name: IMAGE.format(name=name) for name in HANDOFF_COMPONENTS}
@@ -36,12 +41,17 @@ def images(**overrides: str) -> dict[str, str]:
 
 
 def errors_for(**overrides) -> list[str]:
+    phase = overrides.get("phase", "deploy")
     kwargs = {
         "phase": "deploy",
         "release_sha": SHA,
         "environment": "dev",
         "images": images(),
         "lease_supplied": True,
+        # A deploy must name the manifest it is authorised for; a build produces
+        # that manifest, so being handed one is a refusal there.
+        "manifest_run_id": MANIFEST_RUN_ID if phase == "deploy" else "",
+        "manifest_digest": MANIFEST_DIGEST if phase == "deploy" else "",
     }
     kwargs.update(overrides)
     return phase_errors(**kwargs)
@@ -228,6 +238,7 @@ def test_an_admitted_build_phase_receipt_names_no_handoff(tmp_path: Path) -> Non
     assert code == 0
     assert receipt["admitted"] is True
     assert receipt["image_handoff"] == dict.fromkeys(HANDOFF_COMPONENTS, None)
+    assert receipt["manifest_handoff"] == {"run_id": None, "manifest_digest": None}
 
 
 def test_an_admitted_deploy_receipt_names_the_exact_artifacts(tmp_path: Path) -> None:
@@ -250,6 +261,115 @@ def test_an_admitted_deploy_receipt_names_the_exact_artifacts(tmp_path: Path) ->
         built["scheduler"],
         "--lease-supplied",
         "true",
+        "--manifest-run-id",
+        MANIFEST_RUN_ID,
+        "--manifest-digest",
+        MANIFEST_DIGEST,
     )
     assert code == 0
     assert receipt["image_handoff"] == built
+    assert receipt["manifest_handoff"] == {
+        "run_id": MANIFEST_RUN_ID,
+        "manifest_digest": MANIFEST_DIGEST,
+    }
+
+
+# --------------------------------------------------------------------------
+# The manifest a deploy is authorised for has to be nameable
+# --------------------------------------------------------------------------
+#
+# ODP-SOURCES-OFF-RELEASE-ADMISSION-REMEDIATION-001: build and deploy are
+# separate dispatches, so the deploy checkout only ever holds the manifest
+# committed at the release SHA. Admission used to fall back to that file, which
+# made a build's sources-off attestation and its `manifest_digest` unverifiable
+# without committing a new manifest onto an immutable SHA. Deploy therefore has
+# to say which build run published its manifest and which digest the lease
+# names, or there is nothing exact to transport.
+
+
+def test_a_deploy_without_a_manifest_run_id_is_refused() -> None:
+    errors = errors_for(manifest_run_id="")
+    assert any("缺少 manifest_run_id" in error for error in errors)
+
+
+def test_a_deploy_without_a_manifest_digest_is_refused() -> None:
+    errors = errors_for(manifest_digest="")
+    assert any("缺少 manifest_digest" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "run_id",
+    ["0", "-1", "17654321098abc", "latest", "1.5", " "],
+)
+def test_a_manifest_run_id_that_is_not_a_run_id_is_refused(run_id: str) -> None:
+    errors = errors_for(manifest_run_id=run_id)
+    assert any("manifest_run_id" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "digest",
+    [
+        "2" * 64,
+        "sha256:" + "2" * 63,
+        "sha256:" + "F" * 64,
+        "sha1:" + "2" * 40,
+        "sha256:not-a-digest",
+    ],
+)
+def test_a_manifest_digest_that_is_not_a_sha256_digest_is_refused(digest: str) -> None:
+    errors = errors_for(manifest_digest=digest)
+    assert any("manifest_digest 必須是 sha256" in error for error in errors)
+
+
+def test_a_deploy_naming_its_manifest_is_admitted() -> None:
+    assert errors_for() == []
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("manifest_run_id", MANIFEST_RUN_ID), ("manifest_digest", MANIFEST_DIGEST)],
+)
+def test_the_build_phase_refuses_pre_supplied_manifest_coordinates(
+    field: str, value: str
+) -> None:
+    """A build that accepts a manifest coordinate is claiming its own output.
+
+    The build phase is what produces the candidate manifest a lease is later
+    issued against. Letting it be handed one would let a dispatch assert that
+    the artifact it is about to build has already been authorised.
+    """
+
+    errors = errors_for(
+        phase="build",
+        images=dict.fromkeys(HANDOFF_COMPONENTS, ""),
+        lease_supplied=False,
+        **{field: value},
+    )
+    assert any("build 階段不得帶入 manifest_run_id" in error for error in errors)
+
+
+def test_a_refused_deploy_receipt_still_names_the_manifest_coordinates(
+    tmp_path: Path,
+) -> None:
+    """Run id and digest are audit values, not secrets: a refusal states them."""
+
+    code, receipt = _run(
+        tmp_path,
+        "--phase",
+        "deploy",
+        "--environment",
+        "dev",
+        "--release-sha",
+        SHA,
+        "--lease-supplied",
+        "false",
+        "--manifest-run-id",
+        MANIFEST_RUN_ID,
+        "--manifest-digest",
+        MANIFEST_DIGEST,
+    )
+    assert code == 1
+    assert receipt["manifest_handoff"] == {
+        "run_id": MANIFEST_RUN_ID,
+        "manifest_digest": MANIFEST_DIGEST,
+    }

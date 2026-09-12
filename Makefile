@@ -5,11 +5,27 @@ PYTEST_MARK_EXPR ?= not requires_live_env
 LOCAL_CONFIG := .orchestrator/config.json
 LOCAL_CONFIG_EXAMPLE := .orchestrator/config.example.json
 
-.PHONY: help bootstrap boundary-check lint test smoke dependency-audit security node-check api-contract api-contract-refresh release-gate-registry task-dependency-check product-e2e-gate product-release-gate ci clean
+# Keep the Python audit's registry calls bounded at the shared security entry
+# point. pip_audit_gate.py still validates these values and fails closed if an
+# override is invalid; exposing them here makes the CI/Make invocation
+# auditable.
+#
+# There is deliberately no npm counterpart here. The live npm audit belongs to
+# Runtime Release only (ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001, dev
+# 5442117e): deploy-dev.yml runs npm_audit_gate.py directly and archives its
+# receipt. Re-adding a `make security` npm entry point would give the repo two
+# npm audit paths and put a registry round trip back on every product PR.
+PIP_AUDIT_SOCKET_TIMEOUT_SECONDS ?= 15
+PIP_AUDIT_PROCESS_TIMEOUT_SECONDS ?= 300
+PIP_AUDIT_ATTEMPTS ?= 3
+PIP_AUDIT_BACKOFF_SECONDS ?= 5
+
+.PHONY: help bootstrap product-e2e-bootstrap boundary-check lint test smoke dependency-audit security node-check api-contract api-contract-refresh release-gate-registry task-dependency-check product-e2e-gate product-release-gate ci clean
 
 help:
 	@printf "ODay Plus developer commands\n\n"
 	@printf "  make bootstrap   Prepare ignored local config needed by tests\n"
+	@printf "  make product-e2e-bootstrap Install Node/Python/Chromium dependencies for E2E\n"
 	@printf "  make boundary-check  Enforce product/development/removal boundaries\n"
 	@printf "  make lint        Run Python lint checks\n"
 	@printf "  make test        Run CI-safe Python tests\n"
@@ -31,6 +47,9 @@ bootstrap:
 		printf "Using existing %s\n" "$(LOCAL_CONFIG)"; \
 	fi
 
+product-e2e-bootstrap: bootstrap
+	delivery_toolchain/e2e/bootstrap_product_e2e.sh
+
 boundary-check:
 	$(UV) run python delivery_toolchain/governance/check_code_boundaries.py
 
@@ -43,13 +62,14 @@ test: bootstrap
 smoke: bootstrap
 	$(UV) run pytest tests/smoke
 
-dependency-audit:
-	@if [[ -f package-lock.json ]]; then \
-		npm run audit:security; \
-	else \
-		printf "Skipping dependency audit: package-lock.json is not present yet.\n"; \
-	fi
-	$(UV) run --with pip-audit pip-audit --local
+# Python-only by design; see the audit variables above for why the live npm
+# audit is not invoked here.
+dependency-audit: bootstrap
+	ODP_PIP_AUDIT_BACKOFF_SECONDS="$(PIP_AUDIT_BACKOFF_SECONDS)" \
+	$(UV) run python delivery_toolchain/security/pip_audit_gate.py \
+		--socket-timeout "$(PIP_AUDIT_SOCKET_TIMEOUT_SECONDS)" \
+		--process-timeout "$(PIP_AUDIT_PROCESS_TIMEOUT_SECONDS)" \
+		--attempts "$(PIP_AUDIT_ATTEMPTS)"
 
 
 security: bootstrap dependency-audit

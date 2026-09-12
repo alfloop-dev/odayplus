@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -14,6 +14,23 @@ from apps.data_platform.contracts import (
     ReconciliationResult,
     SourceEnvelope,
     SourceKind,
+)
+from apps.data_platform.deletion import (
+    RETAINED_CANONICAL_TABLES,
+    DeleteEvent,
+    DeleteOutcome,
+    DeletePropagationMode,
+    DeleteResult,
+    DeleteScope,
+    TenantResolution,
+    TombstoneState,
+    canonical_lock_key,
+    decide_delete,
+    envelope_version,
+    plan_purge,
+    resolve_delete_tenant,
+    scope_lock_key,
+    suppresses_upsert,
 )
 from apps.data_platform.identifiers import (
     brand_id_for_merchant,
@@ -61,6 +78,17 @@ class CanonicalStore(Protocol):
         *,
         partition_key: str,
     ) -> ProjectionBatchResult: ...
+
+    def delete_record(self, event: DeleteEvent) -> DeleteResult: ...
+
+    def tombstone_record(self, event: DeleteEvent) -> DeleteResult: ...
+
+    def get_tombstone(
+        self,
+        tenant_id: UUID,
+        source_kind: SourceKind,
+        source_id: str,
+    ) -> TombstoneState | None: ...
 
     def get_checkpoint(self, source_kind: SourceKind, partition_key: str) -> str | None: ...
 
@@ -206,6 +234,13 @@ class _PostgresLookup(MappingLookup):
         return identity
 
 
+#: How many times a delete may re-key its scope lock while binding an owning
+#: tenant. One pass covers an event that declares its tenant; two cover one that
+#: has to learn the owner from lineage first. The bound exists so a pathological
+#: churn of owners cannot spin here, and the last read still decides.
+_DELETE_SCOPE_LOCK_ATTEMPTS = 3
+
+
 class PsycopgCanonicalStore:
     """Transactional canonical writer and lineage/checkpoint authority."""
 
@@ -294,6 +329,521 @@ class PsycopgCanonicalStore:
                         )
         return ProjectionBatchResult(tuple(valid), reason_counts)
 
+    def _lock_keys(self, connection: Any, keys: Iterable[int]) -> None:
+        """Acquire transaction-scoped advisory locks in sorted order to prevent deadlocks."""
+        for key in sorted(set(keys)):
+            connection.execute("SELECT pg_advisory_xact_lock(%s)", (key,))
+
+    def _lock_delete_scope(
+        self,
+        connection: Any,
+        tenant_id: UUID,
+        source_kind: SourceKind,
+        source_id: str,
+        canonical_targets: Sequence[tuple[str, UUID | str]] = (),
+    ) -> None:
+        """Enter the database-level coordination for one delete scope and its canonical targets.
+
+        Both the delete path and the projection guard take these locks before they
+        read, so neither can decide on a state the other commits away a moment
+        later. It is transaction scoped, so it is held for the rest of the
+        caller's transaction and released by its commit or rollback -- a caller
+        cannot leak it, and cannot drop it while its own writes are still
+        pending.
+
+        Lock hierarchy invariant:
+        Level 1: Scope advisory lock (scope_lock_key)
+        Level 2: Canonical target advisory locks (canonical_lock_key, sorted)
+        All paths strictly acquire Level 1 locks before Level 2 locks.
+        """
+        self._lock_keys(connection, [scope_lock_key(tenant_id, source_kind, source_id)])
+        if canonical_targets:
+            target_keys = [
+                canonical_lock_key(tenant_id, table, target_id)
+                for table, target_id in canonical_targets
+            ]
+            self._lock_keys(connection, target_keys)
+
+    def _guard_deleted(
+        self,
+        connection: Any,
+        tenant_id: UUID,
+        source_kind: SourceKind,
+        envelope: SourceEnvelope,
+        canonical_targets: Sequence[tuple[str, UUID | str]] = (),
+    ) -> None:
+        """Refuse an upsert that would resurrect an already deleted entity for this tenant.
+
+        An envelope with no ``source_updated_at`` has no orderable version, so
+        it is treated as older than the tombstone rather than allowed through.
+
+        The tombstone read alone cannot decide this: a delete committing on
+        another connection just after the read would leave this upsert free to
+        resurrect the entity. Taking the scope lock first makes the read and the
+        upsert that follows it one indivisible step against that delete -- and
+        because the lock outlives this method, a delete that loses the race
+        still sees this upsert's rows and its lineage version when it runs.
+        """
+        self._lock_delete_scope(
+            connection,
+            tenant_id,
+            source_kind,
+            envelope.source_id,
+            canonical_targets=canonical_targets,
+        )
+        row = connection.execute(
+            f"""
+            SELECT source_version
+            FROM {self._schema}.tombstones
+            WHERE tenant_id = %s AND entity_type = %s AND entity_id = %s
+            """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
+            (tenant_id, source_kind.value, envelope.source_id),
+        ).fetchone()
+        if row is None:
+            return
+        recorded = int(row[-1])
+        if not suppresses_upsert(recorded, envelope_version(envelope)):
+            return
+        candidate = envelope_version(envelope)
+        raise SourceContractError(
+            QuarantineReason.SOURCE_DELETED,
+            f"{envelope.source_kind.value}:{envelope.source_id} was deleted upstream at "
+            f"version {recorded}; this record's version "
+            f"({'unknown' if candidate is None else candidate}) cannot resurrect it",
+        )
+
+    def delete_record(self, event: DeleteEvent) -> DeleteResult:
+        """Propagate an upstream delete into the tenant-scoped sink rows."""
+        return self._propagate_delete(event, DeletePropagationMode.SINK_DELETE)
+
+    def tombstone_record(self, event: DeleteEvent) -> DeleteResult:
+        """Record purge evidence and block resurrection without removing rows."""
+        return self._propagate_delete(event, DeletePropagationMode.TOMBSTONE_PURGE)
+
+    def get_tombstone(
+        self,
+        tenant_id: UUID,
+        source_kind: SourceKind,
+        source_id: str,
+    ) -> TombstoneState | None:
+        """Read one tombstone back for audit, after a restart or otherwise."""
+        with self._connect() as connection:
+            return self._read_tombstone(
+                connection,
+                tenant_id,
+                DeleteScope(source_kind, source_id, tenant_id),
+            )
+
+    def _read_lineage(self, connection: Any, scope: DeleteScope) -> list[tuple[Any, ...]]:
+        """Read every tenant, purge target and applied version for one identity."""
+        return connection.execute(
+            f"""
+            SELECT DISTINCT tenant_id, canonical_table, canonical_id, source_version
+            FROM {self._schema}.canonical_lineage
+            WHERE source_kind = %s AND source_id = %s
+            """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
+            (scope.source_kind.value, scope.source_id),
+        ).fetchall()
+
+    def _read_tombstone_tenants(self, connection: Any, scope: DeleteScope) -> list[UUID]:
+        """Read any tenant that has already recorded a tombstone for this identity."""
+        rows = connection.execute(
+            f"""
+            SELECT DISTINCT tenant_id
+            FROM {self._schema}.tombstones
+            WHERE entity_type = %s AND entity_id = %s
+            """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
+            (scope.source_kind.value, scope.source_id),
+        ).fetchall()
+        return [UUID(str(r[0])) for r in rows]
+
+    def _enter_delete_scope(
+        self,
+        connection: Any,
+        scope: DeleteScope,
+    ) -> tuple[list[tuple[Any, ...]], TenantResolution]:
+        """Bind the delete to one tenant and return its lineage read under the lock.
+
+        Which tenant owns a source identity is itself a lineage fact, so when the
+        event does not declare one the first read has to happen before the scope
+        lock can be keyed. That read only chooses the lock; it never feeds the
+        decision. Once a tenant is known its lock is taken and the lineage is
+        read again, so the owner, the purge targets and the currently applied
+        version the caller decides on all come from inside the coordination.
+
+        Lock hierarchy invariant:
+        Level 1: Scope advisory lock (scope_lock_key)
+        Level 2: Canonical target advisory locks (canonical_lock_key, sorted)
+        All paths (upsert and delete, declared and inferred tenant) strictly
+        acquire Level 1 locks before Level 2 locks to prevent deadlocks.
+        """
+        locked_tenants: set[UUID] = set()
+        locked_targets: set[tuple[str, str]] = set()
+        lineage: list[tuple[Any, ...]] = []
+        resolution = TenantResolution(
+            None,
+            DeleteOutcome.REJECTED_UNRESOLVED_TENANT,
+            "no tenant declared and nothing landed downstream for this identity",
+        )
+        for _ in range(_DELETE_SCOPE_LOCK_ATTEMPTS):
+            # Level 1: Scope lock for declared tenant
+            if scope.tenant_id is not None and scope.tenant_id not in locked_tenants:
+                self._lock_keys(
+                    connection,
+                    [scope_lock_key(scope.tenant_id, scope.source_kind, scope.source_id)],
+                )
+                locked_tenants.add(scope.tenant_id)
+
+            # Read lineage and tombstones under held scope lock (or initial discovery)
+            lineage = self._read_lineage(connection, scope)
+            tombstone_tenants = self._read_tombstone_tenants(connection, scope)
+            all_owners = [UUID(str(row[0])) for row in lineage] + tombstone_tenants
+            resolution = resolve_delete_tenant(scope.tenant_id, all_owners)
+            candidate = resolution.tenant_id if resolution.resolved else None
+
+            # Level 1: Scope lock for inferred candidate tenant
+            if candidate is not None and candidate not in locked_tenants:
+                self._lock_keys(
+                    connection,
+                    [scope_lock_key(candidate, scope.source_kind, scope.source_id)],
+                )
+                locked_tenants.add(candidate)
+                # Re-read lineage under candidate's scope lock
+                lineage = self._read_lineage(connection, scope)
+                tombstone_tenants = self._read_tombstone_tenants(connection, scope)
+                all_owners = [UUID(str(row[0])) for row in lineage] + tombstone_tenants
+                resolution = resolve_delete_tenant(scope.tenant_id, all_owners)
+                candidate = resolution.tenant_id if resolution.resolved else None
+
+            # Level 2: Canonical target locks for the candidate tenant
+            new_target_keys: list[int] = []
+            if candidate is not None:
+                for row in lineage:
+                    if UUID(str(row[0])) == candidate:
+                        canonical_table = str(row[1])
+                        canonical_id = str(row[2])
+                        pair = (canonical_table, canonical_id)
+                        if pair not in locked_targets:
+                            new_target_keys.append(
+                                canonical_lock_key(candidate, canonical_table, canonical_id)
+                            )
+                            locked_targets.add(pair)
+
+            if new_target_keys:
+                self._lock_keys(connection, new_target_keys)
+                # Re-read lineage under full lock coverage
+                lineage = self._read_lineage(connection, scope)
+            else:
+                break
+
+        return lineage, resolution
+
+    def _propagate_delete(
+        self,
+        event: DeleteEvent,
+        mode: DeletePropagationMode,
+    ) -> DeleteResult:
+        scope = event.scope
+        with self._connect() as connection:
+            with connection.transaction():
+                lineage, resolution = self._enter_delete_scope(connection, scope)
+                if resolution.resolved and not self._tenant_exists(
+                    connection, resolution.tenant_id
+                ):
+                    resolution = TenantResolution(
+                        None,
+                        DeleteOutcome.REJECTED_UNRESOLVED_TENANT,
+                        f"tenant {scope.tenant_id} is not a known tenant",
+                    )
+                if not resolution.resolved:
+                    return DeleteResult(
+                        resolution.outcome or DeleteOutcome.REJECTED_UNRESOLVED_TENANT,
+                        scope,
+                        mode,
+                        resolution.detail,
+                    )
+                tenant_id = resolution.tenant_id
+                assert tenant_id is not None  # nosec B101 -- narrowed by resolved
+                targets = tuple(
+                    (str(row[1]), row[2])
+                    for row in lineage
+                    if UUID(str(row[0])) == tenant_id
+                )
+                applied_versions = [
+                    int(row[3])
+                    for row in lineage
+                    if UUID(str(row[0])) == tenant_id and len(row) > 3 and row[3] is not None
+                ]
+                latest_applied_version = max(applied_versions) if applied_versions else None
+                recorded = self._read_tombstone(
+                    connection, tenant_id, scope, for_update=True
+                )
+                recorded_version = None if recorded is None else recorded.source_version
+
+                effective_recorded_version = recorded_version
+                if latest_applied_version is not None:
+                    if effective_recorded_version is None or latest_applied_version > effective_recorded_version:
+                        if event.source_version is not None and event.source_version < latest_applied_version:
+                            effective_recorded_version = latest_applied_version
+
+                decision = decide_delete(
+                    requested_version=event.source_version,
+                    recorded_version=effective_recorded_version,
+                    downstream_target_count=len(targets),
+                )
+                if not decision.records_tombstone:
+                    return self._unchanged_result(
+                        decision.outcome, scope, mode, decision.detail, tenant_id, recorded
+                    )
+                purged = 0
+                if mode is DeletePropagationMode.SINK_DELETE and decision.purges_rows:
+                    plan = plan_purge(
+                        targets,
+                        tenant_id=tenant_id,
+                        control_schema=self._schema,
+                        source_kind=scope.source_kind,
+                        source_id=scope.source_id,
+                        source_version=event.source_version,
+                    )
+                    for statement, params in plan.statements:
+                        cursor = connection.execute(statement, params)
+                        purged += max(int(getattr(cursor, "rowcount", 0) or 0), 0)
+
+                    retained_set = set(plan.retained_targets)
+                    retained_pairs: set[tuple[str, str]] = set()
+                    for canonical_table, canonical_id in targets:
+                        if canonical_table in plan.retained_targets:
+                            retained_pairs.add((canonical_table, str(canonical_id)))
+                        else:
+                            if canonical_table == "core.transactions":
+                                exists = connection.execute(
+                                    "SELECT 1 FROM core.transactions WHERE transaction_id = %s",
+                                    (canonical_id,),
+                                ).fetchone()
+                                if exists is not None:
+                                    retained_set.add(canonical_table)
+                                    retained_pairs.add((canonical_table, str(canonical_id)))
+                            elif canonical_table == "core.machine_status_events":
+                                exists = connection.execute(
+                                    "SELECT 1 FROM core.machine_status_events WHERE status_event_id = %s",
+                                    (canonical_id,),
+                                ).fetchone()
+                                if exists is not None:
+                                    retained_set.add(canonical_table)
+                                    retained_pairs.add((canonical_table, str(canonical_id)))
+                            elif canonical_table == f"{self._schema}.store_daily_facts":
+                                exists = connection.execute(
+                                    f"SELECT 1 FROM {self._schema}.store_daily_facts WHERE source_snapshot_id = %s",  # nosec B608 -- DataPlaneConfig validates the schema identifier.
+                                    (canonical_id,),
+                                ).fetchone()
+                                if exists is not None:
+                                    retained_set.add(canonical_table)
+                                    retained_pairs.add((canonical_table, str(canonical_id)))
+                            elif canonical_table == f"{self._schema}.forecast_inputs":
+                                exists = connection.execute(
+                                    f"SELECT 1 FROM {self._schema}.forecast_inputs WHERE source_snapshot_id = %s",  # nosec B608 -- DataPlaneConfig validates the schema identifier.
+                                    (canonical_id,),
+                                ).fetchone()
+                                if exists is not None:
+                                    retained_set.add(canonical_table)
+                                    retained_pairs.add((canonical_table, str(canonical_id)))
+                            elif canonical_table == f"{self._schema}.learning_import_lineage":
+                                exists = connection.execute(
+                                    f"SELECT 1 FROM {self._schema}.learning_import_lineage WHERE source_snapshot_id = %s",  # nosec B608 -- DataPlaneConfig validates the schema identifier.
+                                    (canonical_id,),
+                                ).fetchone()
+                                if exists is not None:
+                                    retained_set.add(canonical_table)
+                                    retained_pairs.add((canonical_table, str(canonical_id)))
+                            elif canonical_table == f"{self._schema}.domain_inputs":
+                                exists = connection.execute(
+                                    f"SELECT 1 FROM {self._schema}.domain_inputs WHERE source_snapshot_id = %s",  # nosec B608 -- DataPlaneConfig validates the schema identifier.
+                                    (canonical_id,),
+                                ).fetchone()
+                                if exists is not None:
+                                    retained_set.add(canonical_table)
+                                    retained_pairs.add((canonical_table, str(canonical_id)))
+                    if not targets and recorded is not None and recorded.retained_targets:
+                        for table in recorded.retained_targets:
+                            if table in RETAINED_CANONICAL_TABLES:
+                                retained_set.add(table)
+                    retained = tuple(sorted(retained_set))
+
+                    # A protected row still needs its source/target identity:
+                    # the next delete must rediscover and lock it, then recheck
+                    # current authority and FK protection. Only discard lineage
+                    # for an exact target that the sink no longer retains.
+                    for canonical_table, canonical_id in targets:
+                        if (canonical_table, str(canonical_id)) in retained_pairs:
+                            continue
+                        connection.execute(
+                            f"""
+                            DELETE FROM {self._schema}.canonical_lineage
+                            WHERE tenant_id = %s AND source_kind = %s AND source_id = %s
+                              AND canonical_table = %s AND canonical_id = %s
+                              AND (source_version IS NULL OR source_version <= %s)
+                            """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
+                            (
+                                tenant_id,
+                                scope.source_kind.value,
+                                scope.source_id,
+                                canonical_table,
+                                canonical_id,
+                                event.source_version,
+                            ),
+                        )
+                else:
+                    retained = tuple(sorted({table for table, _ in targets}))
+                    if not retained and recorded is not None and recorded.retained_targets:
+                        retained = recorded.retained_targets
+
+                row = self._upsert_tombstone(
+                    connection, event, tenant_id, mode, purged, retained
+                )
+                if row is None:
+                    # The database-level version guard refused the write, which
+                    # only happens when a concurrent writer recorded a newer
+                    # delete between the read and the upsert.
+                    return self._unchanged_result(
+                        DeleteOutcome.STALE_IGNORED,
+                        scope,
+                        mode,
+                        "a concurrent delete recorded a newer version first",
+                        tenant_id,
+                        self._read_tombstone(connection, tenant_id, scope),
+                    )
+                return DeleteResult(
+                    decision.outcome,
+                    scope,
+                    mode,
+                    decision.detail,
+                    tenant_id=tenant_id,
+                    source_version=int(row[0]),
+                    purged_row_count=int(row[2]),
+                    retained_targets=tuple(row[3] or ()) if len(row) > 3 else retained,
+                    replay_count=int(row[1]),
+                )
+
+    @staticmethod
+    def _unchanged_result(
+        outcome: DeleteOutcome,
+        scope: DeleteScope,
+        mode: DeletePropagationMode,
+        detail: str,
+        tenant_id: UUID | None,
+        recorded: TombstoneState | None,
+    ) -> DeleteResult:
+        """Report a refused delete using the tombstone that stayed in place."""
+        return DeleteResult(
+            outcome,
+            scope,
+            mode,
+            detail,
+            tenant_id=tenant_id,
+            source_version=None if recorded is None else recorded.source_version,
+            purged_row_count=0 if recorded is None else recorded.purged_row_count,
+            retained_targets=() if recorded is None else recorded.retained_targets,
+            replay_count=0 if recorded is None else recorded.replay_count,
+        )
+
+    @staticmethod
+    def _tenant_exists(connection: Any, tenant_id: UUID | None) -> bool:
+        row = connection.execute(
+            "SELECT 1 FROM core.tenants WHERE tenant_id = %s",
+            (tenant_id,),
+        ).fetchone()
+        return row is not None
+
+    def _read_tombstone(
+        self,
+        connection: Any,
+        tenant_id: UUID,
+        scope: DeleteScope,
+        *,
+        for_update: bool = False,
+    ) -> TombstoneState | None:
+        row = connection.execute(
+            f"""
+            SELECT source_version, purged_at, propagation_mode, tombstone_hash,
+                   source_snapshot_id, run_id, purged_row_count, retained_targets,
+                   replay_count
+            FROM {self._schema}.tombstones
+            WHERE tenant_id = %s AND entity_type = %s AND entity_id = %s
+            {'FOR UPDATE' if for_update else ''}
+            """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
+            (tenant_id, scope.source_kind.value, scope.source_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return TombstoneState(
+            tenant_id=tenant_id,
+            source_kind=scope.source_kind,
+            source_id=scope.source_id,
+            source_version=int(row[0]),
+            purged_at=row[1],
+            propagation_mode=DeletePropagationMode(str(row[2])),
+            tombstone_hash=str(row[3]),
+            source_snapshot_id=str(row[4]),
+            run_id=str(row[5]),
+            purged_row_count=int(row[6]),
+            retained_targets=tuple(row[7] or ()),
+            replay_count=int(row[8]),
+        )
+
+    def _upsert_tombstone(
+        self,
+        connection: Any,
+        event: DeleteEvent,
+        tenant_id: UUID,
+        mode: DeletePropagationMode,
+        purged_row_count: int,
+        retained_targets: Sequence[str],
+    ) -> tuple[Any, ...] | None:
+        """Write the tombstone behind a database-level version guard.
+
+        The ``WHERE EXCLUDED.source_version >= ...`` clause is what makes a late
+        older delete a no-op even under concurrency: the guard lives in the same
+        statement as the write, so no read-then-write window can regress it.
+        """
+        return connection.execute(
+            f"""
+            INSERT INTO {self._schema}.tombstones (
+                tenant_id, entity_type, entity_id, source_version, purged_at,
+                propagation_mode, tombstone_hash, source_snapshot_id, run_id,
+                purged_row_count, retained_targets, context
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+            ON CONFLICT (tenant_id, entity_type, entity_id) DO UPDATE SET
+                source_version = EXCLUDED.source_version,
+                purged_at = EXCLUDED.purged_at,
+                propagation_mode = EXCLUDED.propagation_mode,
+                tombstone_hash = EXCLUDED.tombstone_hash,
+                source_snapshot_id = EXCLUDED.source_snapshot_id,
+                run_id = EXCLUDED.run_id,
+                purged_row_count = {self._schema}.tombstones.purged_row_count
+                    + EXCLUDED.purged_row_count,
+                retained_targets = EXCLUDED.retained_targets,
+                context = EXCLUDED.context,
+                replay_count = {self._schema}.tombstones.replay_count + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE EXCLUDED.source_version >= {self._schema}.tombstones.source_version
+            RETURNING source_version, replay_count, purged_row_count, retained_targets
+            """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
+            (
+                tenant_id,
+                event.scope.source_kind.value,
+                event.scope.source_id,
+                event.source_version,
+                event.purged_at,
+                mode.value,
+                event.tombstone_hash,
+                event.source_snapshot_id,
+                event.run_id,
+                purged_row_count,
+                list(retained_targets),
+                json.dumps(event.context, sort_keys=True, default=str),
+            ),
+        ).fetchone()
+
     def _project_one(
         self,
         connection: Any,
@@ -303,6 +853,16 @@ class PsycopgCanonicalStore:
     ) -> None:
         if source_kind is SourceKind.MERCHANT:
             projection = project_merchant(envelope, self._status_contract)
+            self._guard_deleted(
+                connection,
+                projection.tenant_id,
+                source_kind,
+                envelope,
+                canonical_targets=[
+                    ("core.tenants", projection.tenant_id),
+                    ("core.brands", projection.brand_id),
+                ],
+            )
             self._upsert_merchant(connection, projection)
             self._lineage(
                 connection,
@@ -320,6 +880,13 @@ class PsycopgCanonicalStore:
             )
         elif source_kind is SourceKind.PLACE:
             projection = project_place(envelope, lookup, self._status_contract)
+            self._guard_deleted(
+                connection,
+                projection.tenant_id,
+                source_kind,
+                envelope,
+                canonical_targets=[("core.stores", projection.store_id)],
+            )
             self._upsert_place(connection, projection)
             self._upsert_place_geography(connection, envelope, projection)
             if projection.address_id is not None:
@@ -339,6 +906,13 @@ class PsycopgCanonicalStore:
             )
         elif source_kind is SourceKind.DEVICE:
             projection = project_device(envelope, lookup)
+            self._guard_deleted(
+                connection,
+                projection.tenant_id,
+                source_kind,
+                envelope,
+                canonical_targets=[("core.machines", projection.machine_id)],
+            )
             self._upsert_device(connection, projection)
             self._lineage(
                 connection,
@@ -353,6 +927,13 @@ class PsycopgCanonicalStore:
             SourceKind.TRADE,
         }:
             projection = project_transaction(envelope, lookup, self._status_contract)
+            self._guard_deleted(
+                connection,
+                projection.tenant_id,
+                source_kind,
+                envelope,
+                canonical_targets=[("core.transactions", projection.transaction_id)],
+            )
             self._upsert_transaction(connection, envelope, projection)
             self._lineage(
                 connection,
@@ -363,6 +944,7 @@ class PsycopgCanonicalStore:
             )
         elif source_kind is SourceKind.DEVICE_DAILY_STATISTICS:
             projection = project_daily_statistic(envelope, lookup)
+            self._guard_deleted(connection, projection.tenant_id, source_kind, envelope)
             self._upsert_daily_statistic(connection, envelope, projection)
             self._lineage(
                 connection,
@@ -373,6 +955,7 @@ class PsycopgCanonicalStore:
             )
         elif source_kind is SourceKind.AI_REVENUE_STATS:
             projection = project_forecast_input(envelope, lookup)
+            self._guard_deleted(connection, projection.tenant_id, source_kind, envelope)
             self._upsert_forecast_input(connection, envelope, projection)
             self._lineage(
                 connection,
@@ -383,6 +966,7 @@ class PsycopgCanonicalStore:
             )
         elif source_kind is SourceKind.AI_CONSUMER_KMEANS_V1:
             projection = project_learning_import(envelope, lookup)
+            self._guard_deleted(connection, projection.tenant_id, source_kind, envelope)
             self._upsert_learning_import(connection, envelope, projection)
             self._lineage(
                 connection,
@@ -393,6 +977,13 @@ class PsycopgCanonicalStore:
             )
         elif source_kind is SourceKind.DEVICE_LOG:
             projection = project_machine_status_event(envelope, lookup, self._status_contract)
+            self._guard_deleted(
+                connection,
+                projection.tenant_id,
+                source_kind,
+                envelope,
+                canonical_targets=[("core.machine_status_events", projection.status_event_id)],
+            )
             self._upsert_machine_status_event(connection, envelope, projection)
             self._lineage(
                 connection,
@@ -408,6 +999,7 @@ class PsycopgCanonicalStore:
             SourceKind.PROMOTIONS,
         }:
             projection = project_domain_input(envelope, lookup)
+            self._guard_deleted(connection, projection.tenant_id, source_kind, envelope)
             self._upsert_domain_input(connection, envelope, projection)
             self._lineage(
                 connection,
@@ -1006,12 +1598,13 @@ class PsycopgCanonicalStore:
         canonical_table: str,
         canonical_id: UUID,
     ) -> None:
+        version = envelope_version(envelope)
         connection.execute(
             f"""
             INSERT INTO {self._schema}.canonical_lineage (
                 source_snapshot_id, source_kind, source_id, content_sha256,
-                run_id, tenant_id, canonical_table, canonical_id
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                run_id, tenant_id, canonical_table, canonical_id, source_version
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (source_snapshot_id, canonical_table, canonical_id)
             DO NOTHING
             """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
@@ -1024,6 +1617,7 @@ class PsycopgCanonicalStore:
                 tenant_id,
                 canonical_table,
                 canonical_id,
+                version,
             ),
         )
 
@@ -1118,6 +1712,21 @@ class PsycopgCanonicalStore:
                 """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
                 (run_id, source_kind.value),
             ).fetchall()
+            drift_row = connection.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM {self._schema}.tombstones AS tomb
+                JOIN {self._schema}.canonical_lineage AS lineage
+                  ON lineage.tenant_id = tomb.tenant_id
+                 AND lineage.source_kind = tomb.entity_type
+                 AND lineage.source_id = tomb.entity_id
+                WHERE tomb.entity_type = %s
+                  AND tomb.propagation_mode = 'SINK_DELETE'
+                  AND (lineage.source_version IS NULL OR lineage.source_version <= tomb.source_version)
+                  AND NOT (lineage.canonical_table = ANY(tomb.retained_targets))
+                """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
+                (source_kind.value,),
+            ).fetchone()
         raw_checksum = aggregate_checksum([f"{row[0]}:{row[1]}" for row in raw_rows])
         canonical_checksum = aggregate_checksum([f"{row[0]}:{row[1]}" for row in canonical_rows])
         return ReconciliationResult(
@@ -1131,6 +1740,7 @@ class PsycopgCanonicalStore:
             valid_checksum=valid_checksum,
             canonical_checksum=canonical_checksum,
             quarantine_reason_counts={str(row[0]): int(row[1]) for row in quarantine_rows},
+            sink_delete_drift=0 if drift_row is None else int(drift_row[0]),
         )
 
     def complete_run(

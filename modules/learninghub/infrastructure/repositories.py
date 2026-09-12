@@ -20,6 +20,7 @@ from models.shared_ml import (
 )
 from models.shared_ml.validation import ValidationRun
 from modules.learninghub.domain import (
+    BacktestReceipt,
     DatasetSnapshot,
     DqTriageRecord,
     InferenceComparison,
@@ -201,6 +202,12 @@ class LearningHubRepository(Protocol):
     def list_dq_triages(
         self, dataset_snapshot_id: str | None = None
     ) -> list[DqTriageRecord]: ...
+    def save_backtest_receipt(self, receipt: BacktestReceipt) -> BacktestReceipt: ...
+    def get_backtest_receipt(self, model_name: str, version: str) -> BacktestReceipt | None: ...
+    def get_backtest_receipt_by_id(self, receipt_id: str) -> BacktestReceipt | None: ...
+    def list_backtest_receipts(
+        self, model_name: str | None = None
+    ) -> list[BacktestReceipt]: ...
 
 
 @dataclass
@@ -210,6 +217,8 @@ class InMemoryLearningHubRepository:
     _model_versions: dict[tuple[str, str], ModelVersion] = field(default_factory=dict)
     _model_cards: dict[tuple[str, str], ModelCard] = field(default_factory=dict)
     _validation_runs: dict[str, ValidationRun] = field(default_factory=dict)
+    _backtest_receipts: dict[tuple[str, str], BacktestReceipt] = field(default_factory=dict)
+    _backtest_receipts_by_id: dict[str, BacktestReceipt] = field(default_factory=dict)
     _aliases: dict[str, dict[ModelAlias, str]] = field(default_factory=dict)
     _release_decisions: dict[str, object] = field(default_factory=dict)
     _release_sagas: dict[str, ModelReleaseSaga] = field(default_factory=dict)
@@ -272,6 +281,26 @@ class InMemoryLearningHubRepository:
 
     def get_validation_run(self, validation_run_id: str) -> ValidationRun | None:
         return self._validation_runs.get(validation_run_id)
+
+    def save_backtest_receipt(self, receipt: BacktestReceipt) -> BacktestReceipt:
+        self._backtest_receipts[(receipt.model_name, receipt.model_version)] = receipt
+        self._backtest_receipts_by_id[receipt.receipt_id] = receipt
+        return receipt
+
+    def get_backtest_receipt(self, model_name: str, version: str) -> BacktestReceipt | None:
+        return self._backtest_receipts.get((model_name, version))
+
+    def get_backtest_receipt_by_id(self, receipt_id: str) -> BacktestReceipt | None:
+        return self._backtest_receipts_by_id.get(receipt_id)
+
+    def list_backtest_receipts(
+        self, model_name: str | None = None
+    ) -> list[BacktestReceipt]:
+        if model_name is not None:
+            return [
+                r for r in self._backtest_receipts.values() if r.model_name == model_name
+            ]
+        return list(self._backtest_receipts.values())
 
     def set_alias(self, model_name: str, alias: ModelAlias, version: str) -> ModelVersion:
         model_version = self.get_model_version(model_name, version)

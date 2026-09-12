@@ -1,0 +1,20 @@
+### nltk sweep at origin/dev 596b9c9a (dependency manifests only)
+  pyproject.toml: 0 line(s) mentioning nltk
+  uv.lock: 0 line(s) mentioning nltk
+
+### ODP-DRIFT-SECURITY-VERIFY-003 on the live board
+{
+  "id": "ODP-DRIFT-SECURITY-VERIFY-003",
+  "status": "todo",
+  "owner": "Antigravity4",
+  "reviewer": "Codex",
+  "depends_on": [
+    "ODP-DRIFT-DEP-REMOVE-002",
+    "ODP-CI-DEPENDENCY-AUDIT-BOUNDARY-001"
+  ],
+  "non_dispatchable": false,
+  "blocked_reason": null,
+  "next": "Ownership updated",
+  "waiting_for": null,
+  "last_update": "2026-09-06T15:16:40Z"
+}

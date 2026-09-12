@@ -2,6 +2,7 @@ import type {
   Approval,
   AuditEvent,
   Candidate,
+  ConstraintClass,
   Decision,
   EvidenceItem,
   GrowthItem,
@@ -578,6 +579,21 @@ export const SITE_REVIEW_FIXTURES: SiteReview[] = [
   },
 ];
 
+// NetPlan disclosure defaults mirroring the seeded solve projection: CAPITAL is always
+// modelled because max_budget is required, and every other class stays unmodelled until
+// its ceiling is supplied. The two sets are disjoint and together cover all eight classes,
+// so "not modelled" can never be read as "no constraint of that kind exists".
+const SEED_MODELLED_CONSTRAINT_CLASSES: ConstraintClass[] = ["CAPITAL"];
+const SEED_UNMODELLED_CONSTRAINT_CLASSES: ConstraintClass[] = [
+  "LEASE",
+  "CONSTRUCTION",
+  "EQUIPMENT",
+  "LABOUR",
+  "COVERAGE",
+  "DILUTION",
+  "SEQUENCING",
+];
+
 export const REBALANCE_STORE_FIXTURES: RebalanceStore[] = [
   {
     id: "RB-801",
@@ -600,6 +616,10 @@ export const REBALANCE_STORE_FIXTURES: RebalanceStore[] = [
         payback: "18 個月（增量）",
         risk: "中",
         time: "即刻起 90 天",
+        modelledConstraintClasses: [...SEED_MODELLED_CONSTRAINT_CLASSES],
+        unmodelledConstraintClasses: [...SEED_UNMODELLED_CONSTRAINT_CLASSES],
+        modelled_constraint_classes: [...SEED_MODELLED_CONSTRAINT_CLASSES],
+        unmodelled_constraint_classes: [...SEED_UNMODELLED_CONSTRAINT_CLASSES],
         isSystemRecommendation: false,
         isStale: false,
         isInfeasible: true,
@@ -620,6 +640,10 @@ export const REBALANCE_STORE_FIXTURES: RebalanceStore[] = [
         payback: "26 個月",
         risk: "中高",
         time: "Q3–Q4 執行",
+        modelledConstraintClasses: [...SEED_MODELLED_CONSTRAINT_CLASSES],
+        unmodelledConstraintClasses: [...SEED_UNMODELLED_CONSTRAINT_CLASSES],
+        modelled_constraint_classes: [...SEED_MODELLED_CONSTRAINT_CLASSES],
+        unmodelled_constraint_classes: [...SEED_UNMODELLED_CONSTRAINT_CLASSES],
         isSystemRecommendation: true,
       },
       {
@@ -629,6 +653,10 @@ export const REBALANCE_STORE_FIXTURES: RebalanceStore[] = [
         payback: "—",
         risk: "低",
         time: "60 天內",
+        modelledConstraintClasses: [...SEED_MODELLED_CONSTRAINT_CLASSES],
+        unmodelledConstraintClasses: [...SEED_UNMODELLED_CONSTRAINT_CLASSES],
+        modelled_constraint_classes: [...SEED_MODELLED_CONSTRAINT_CLASSES],
+        unmodelled_constraint_classes: [...SEED_UNMODELLED_CONSTRAINT_CLASSES],
         isSystemRecommendation: false,
       },
     ],

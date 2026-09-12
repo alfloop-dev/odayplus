@@ -1,0 +1,287 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-SOURCES-OFF-RELEASE-ADMISSION-REMEDIATION-001",
+  "title": "sources-off release admission 與 snapshot 需求解耦驗證收據",
+  "agent": "Claude2",
+  "reviewer": "Codex2",
+  "branch": "task/ODP-SOURCES-OFF-RELEASE-ADMISSION-REMEDIATION-001",
+  "head_sha": "2d111ee3a777adf8cc3a6292a19ff61a521ee863",
+  "head_sha_note": "第三次 reviewer reopen 指出 build/deploy 之間的 release manifest 傳遞是斷的：build 只 upload runtime-release-manifest artifact，deploy 沒有 download，admission 也沒傳 --manifest，因此只讀 deploy checkout 內 committed 的 docs/evidence/gates/RELEASE_MANIFEST.json。本收據是補上受控傳遞後，在 code head 2d111ee3a777adf8cc3a6292a19ff61a521ee863 重新量測的完整結果。2d111ee3 是本 branch 最後一個含 code 變更的 commit；其後只有一個 evidence commit（僅動 docs/evidence/），review submission 的 exact head 即該 evidence commit，並由 delivery_toolchain/git/task_verification.py 的 receipt 機器綁定。",
+  "secret_values_redacted": true,
+  "runs": [
+    {
+      "purpose": "task verification selection",
+      "command": "uv run --frozen pytest -q tests/release/test_build_release_handoff.py tests/release/test_release_manifest.py tests/release/test_release_manifest_cli.py tests/release/test_runtime_admission.py tests/ops/test_deploy_workflow_contract.py tests/ops/test_dev_rollout.py",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "2d111ee3a777adf8cc3a6292a19ff61a521ee863",
+      "duration_seconds": 13.592,
+      "selection": {
+        "scope": "targeted",
+        "test_count": 271,
+        "items": [
+          "tests/ops/test_deploy_workflow_contract.py",
+          "tests/ops/test_dev_rollout.py",
+          "tests/release/test_build_release_handoff.py",
+          "tests/release/test_release_manifest.py",
+          "tests/release/test_release_manifest_cli.py",
+          "tests/release/test_runtime_admission.py"
+        ]
+      },
+      "runner": "pytest"
+    },
+    {
+      "purpose": "reopen #3 的 manifest transport 契約：phase 入場條件",
+      "command": "uv run --frozen pytest -q tests/release/test_release_phase_precheck.py",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "2d111ee3a777adf8cc3a6292a19ff61a521ee863",
+      "duration_seconds": 4.687,
+      "selection": {
+        "scope": "Runtime Release phase precheck",
+        "test_count": 36,
+        "items": [
+          "tests/release/test_release_phase_precheck.py"
+        ],
+        "new_coverage": [
+          "deploy 缺少 manifest_run_id 被拒",
+          "deploy 缺少 manifest_digest 被拒",
+          "manifest_run_id 不是正整數 run id 被拒（6 個變體）",
+          "manifest_digest 不是 sha256:<64 hex> 被拒（5 個變體）",
+          "build 階段被預先塞入 manifest 座標被拒（2 個變體）",
+          "完整 deploy 座標被放行",
+          "被拒的 deploy 收據仍記錄 run id 與 digest"
+        ]
+      },
+      "runner": "pytest"
+    },
+    {
+      "purpose": "reopen #3 的 manifest transport 契約：admission 綁定與 workflow 接線",
+      "command": "uv run --frozen pytest -q tests/release/test_runtime_admission.py tests/ops/test_deploy_workflow_contract.py",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "2d111ee3a777adf8cc3a6292a19ff61a521ee863",
+      "duration_seconds": 13.592,
+      "selection": {
+        "scope": "included in the task verification selection above",
+        "items": [
+          "tests/release/test_runtime_admission.py",
+          "tests/ops/test_deploy_workflow_contract.py"
+        ],
+        "new_coverage": [
+          "transported manifest 雜湊等於 lease 指名 digest 時被放行",
+          "換成另一個 build 的 manifest 被拒且 lease 未被消費",
+          "竄改 transported bytes 後 digest 不符被拒",
+          "--require-manifest-digest 下缺 digest 拒絕執行",
+          "expected digest 形狀錯誤在觸碰 lease state 前被拒（4 個變體）",
+          "admission receipt 記錄實際讀取的 manifest 路徑",
+          "deploy 以 run id 下載 build run 的 manifest artifact",
+          "download 的 artifact 名稱與 build upload 的名稱一致",
+          "workflow 只取得 actions: read",
+          "admission 收到 --manifest/--manifest-digest/--require-manifest-digest 且不再指向 committed manifest",
+          "transport binding 步驟排在 admission 之前",
+          "manifest_run_id/manifest_digest 已宣告且 default 為空",
+          "phase gate 收到兩個座標",
+          "沒有任何 manifest 座標來自 vars.*"
+        ]
+      },
+      "runner": "pytest"
+    },
+    {
+      "purpose": "reopen #2 的 6 個 external-data boundary failure（回歸確認）",
+      "command": "uv run --frozen pytest -q tests/architecture/test_external_data_boundary.py",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "2d111ee3a777adf8cc3a6292a19ff61a521ee863",
+      "duration_seconds": 59.067,
+      "selection": {
+        "scope": "external-data boundary gate",
+        "items": [
+          "tests/architecture/test_external_data_boundary.py"
+        ]
+      },
+      "runner": "pytest"
+    },
+    {
+      "purpose": "reopen #2 的 3 個 deploy 契約 failure（回歸確認）",
+      "command": "uv run --frozen pytest -q tests/ops/test_cloud_run_live_deployment.py",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "2d111ee3a777adf8cc3a6292a19ff61a521ee863",
+      "duration_seconds": 51.371,
+      "selection": {
+        "scope": "Runtime Release deploy entrypoint contract",
+        "items": [
+          "tests/ops/test_cloud_run_live_deployment.py"
+        ]
+      },
+      "runner": "pytest"
+    },
+    {
+      "purpose": "runtime probe 與 receipt readback focused tests",
+      "command": "uv run --frozen pytest -q tests/ops/test_cloud_run_job_entrypoint.py tests/ops/test_release_receipts.py",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "2d111ee3a777adf8cc3a6292a19ff61a521ee863",
+      "duration_seconds": 5.227,
+      "selection": {
+        "scope": "runtime probe and receipt allowlist",
+        "items": [
+          "tests/ops/test_cloud_run_job_entrypoint.py",
+          "tests/ops/test_release_receipts.py"
+        ]
+      },
+      "runner": "pytest"
+    },
+    {
+      "purpose": "CI orchestrator job 的測試範圍",
+      "command": "uv run --frozen pytest -q -m \"not requires_live_env\" delivery_toolchain scripts tests/tooling",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "2d111ee3a777adf8cc3a6292a19ff61a521ee863",
+      "duration_seconds": 29.323,
+      "selection": {
+        "scope": "orchestrator CI job test scope",
+        "items": [
+          "delivery_toolchain",
+          "scripts",
+          "tests/tooling"
+        ]
+      },
+      "runner": "pytest"
+    },
+    {
+      "purpose": "CI orchestrator job 的 code boundary gate",
+      "command": "uv run --frozen python delivery_toolchain/governance/check_code_boundaries.py",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "2d111ee3a777adf8cc3a6292a19ff61a521ee863",
+      "duration_seconds": 6.799,
+      "selection": {
+        "scope": "repository code boundary inventory",
+        "items": [
+          "delivery_toolchain/governance/check_code_boundaries.py"
+        ]
+      },
+      "result_line": "Code boundary checks passed for 1045 files."
+    },
+    {
+      "purpose": "CI orchestrator job 的 lint 範圍",
+      "command": "uv run --frozen ruff check .orchestrator delivery_toolchain scripts",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "2d111ee3a777adf8cc3a6292a19ff61a521ee863",
+      "duration_seconds": 0.07,
+      "selection": {
+        "scope": "orchestrator CI job lint scope",
+        "items": [
+          ".orchestrator",
+          "delivery_toolchain",
+          "scripts"
+        ]
+      },
+      "result_line": "All checks passed!"
+    },
+    {
+      "purpose": "CI product job 的 lint 範圍",
+      "command": "uv run --frozen ruff check tests modules apps shared models solver pipelines infra",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "2d111ee3a777adf8cc3a6292a19ff61a521ee863",
+      "duration_seconds": 0.099,
+      "selection": {
+        "scope": "product CI job lint scope",
+        "items": [
+          "tests",
+          "modules",
+          "apps",
+          "shared",
+          "models",
+          "solver",
+          "pipelines",
+          "infra"
+        ]
+      },
+      "result_line": "All checks passed!",
+      "note": "本輪第一次量測在 75181a31 為 exit 1（F541：新測試的 assertion 帶了無 placeholder 的 f-string prefix）。修正後另立 commit 2d111ee3，本列是在 2d111ee3 的量測結果。"
+    },
+    {
+      "purpose": "shell syntax validation",
+      "command": "bash -n product_ops/deployment/deploy_cloud_run_waji.sh",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "2d111ee3a777adf8cc3a6292a19ff61a521ee863",
+      "duration_seconds": 0.008,
+      "selection": {
+        "scope": "Runtime Release deploy entrypoint",
+        "items": [
+          "product_ops/deployment/deploy_cloud_run_waji.sh"
+        ]
+      },
+      "runner": "bash"
+    }
+  ],
+  "evidence_policy_conformance": {
+    "own_exit_code_preserved": true,
+    "no_pipe_without_pipefail": true,
+    "no_or_true_suffix": true,
+    "no_backgrounding": true,
+    "interrupted_runs_reported_as_interrupted": true,
+    "reruns_of_a_measured_head": "task selection 在 75181a31 與 2d111ee3 各量測一次；重跑的理由是 75181a31 的 product-scope ruff 為 exit 1，修正後 head 改變，因此不是同一個 head 的重跑。"
+  },
+  "focused_negative_coverage": [
+    "sources_off_attestation with an enabled source in the inventory",
+    "sources_off_attestation with a provider credential present",
+    "sources_off_attestation with public egress allowed / egress_posture mismatch",
+    "sources_off_attestation with altered VPC/firewall egress evidence",
+    "sources_off_attestation that does not audit all 16 sources",
+    "sources_off_attestation whose verdict fields contradict its own inventory",
+    "binding_digest bound to another candidate SHA",
+    "binding_digest bound to other component image digests",
+    "binding_digest bound to another source_policy_digest",
+    "sources_off_attestation on a manifest with enabled external sources",
+    "sources_off_attestation sitting beside a data_snapshot",
+    "sources_off_attestation replacing a predecessor's data_snapshot binding",
+    "rollback_release with neither data_snapshot nor sources_off_attestation",
+    "rollback_release sources_off_attestation binding that is not a sha256 digest",
+    "enabled sources without the approved masked snapshot",
+    "deploy workflow with ODP_EXTERNAL_PROVIDER_MODE=live",
+    "deploy workflow wiring a provider credential",
+    "deploy workflow wiring a provider endpoint",
+    "deploy workflow declaring no provider mode at all",
+    "deploy workflow missing Cloud Run VPC egress binding",
+    "deploy workflow missing public-egress probe receipt wiring",
+    "snapshot missing object_generation or carrying a negative/non-integer generation",
+    "runtime receipt missing candidate, manifest, resolved egress, or semantic content binding",
+    "runtime probe timeout, DNS failure, or unknown network error treated as denial",
+    "deploy 未指名 build run（manifest_run_id 缺漏或不是 run id）",
+    "deploy 未指名 lease 綁定的 manifest_digest，或 digest 形狀錯誤",
+    "build 階段被塞入 manifest_run_id / manifest_digest",
+    "transported manifest 是別的 build 產出（自洽但 digest 不符）",
+    "transported manifest bytes 被竄改",
+    "admission 在 --require-manifest-digest 下沒有拿到 digest",
+    "manifest 座標來自 vars.*（build 與 deploy 之間可被改動）"
+  ],
+  "inherited_from": {
+    "previous_owner": "Codex",
+    "previous_head_sha": "d586693905bb4ea3b67d2bccad2a616246bdd6c6",
+    "note": "ownership 於 2 次 reviewer reopen 後移交 Claude2；第 3 次 reopen 由 Claude2 處理，只補 reviewer 指出的 build→deploy manifest 傳遞斷鏈，未重寫既有 sources-off admission 設計。"
+  },
+  "not_run_locally": {
+    "command": "uv run --frozen pytest -m \"not requires_live_env and not performance\" tests modules apps shared models -n auto",
+    "reason": "完整 product suite 在這台機器上跑到 8% 就已耗時約 25 分鐘（機器被其他 worker 佔用），估計需數小時，因此中止（SIGTERM，記為 interrupted 而非 pass）。改為直接量測 reopen 指出的 9 個 failure 所在檔案、task 指定 selection、以及兩個 CI job 的 lint／boundary gate。完整 product gate 以 PR CI 的 exact head 結果為準。",
+    "outcome": "interrupted"
+  },
+  "known_unrelated_local_failures": {
+    "command": "uv run --frozen pytest -q -n auto tests/security",
+    "exit_code": 1,
+    "failures": [
+      "tests/security/test_oss_license_gate.py (8 tests)",
+      "tests/security/test_supply_chain_security_gate.py::test_sbom_and_provenance_present_and_valid"
+    ],
+    "assessment": "全部是 SBOM／OSS notice／license attestation 與本機已安裝套件樹的比對。本 branch 對 origin/dev 的 18 個變更檔案不含 sbom.json、package-lock.json、uv.lock 或任何 license artifact，因此這些 failure 與本 task 無關，在 origin/dev 上以相同環境會得到相同結果。CI 會先跑 npm ci 與 uv sync，本機沒有。"
+  },
+  "measured_at": "2026-09-02T07:05:00Z",
+  "code_head_sha": "2d111ee3a777adf8cc3a6292a19ff61a521ee863",
+  "code_head_note": "所有量測都在 2d111ee3 上執行。evidence commit 只更新本收據與 README，不含任何 code、workflow 或測試變更。"
+}

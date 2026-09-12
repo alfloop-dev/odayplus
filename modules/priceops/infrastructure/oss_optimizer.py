@@ -355,6 +355,8 @@ def _simulate(item: PricingPlanItem, price: float) -> Any:
         unit_cost=item.constraints.unit_cost,
         elasticity=item.elasticity.elasticity_value,
         confidence=item.elasticity.confidence,
+        applicable_min_price=item.constraints.applicable_min_price,
+        applicable_max_price=item.constraints.applicable_max_price,
     )
 
 

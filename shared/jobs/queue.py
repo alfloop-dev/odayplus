@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from enum import StrEnum
 from threading import RLock
 from typing import Any
 from uuid import uuid4
@@ -19,16 +18,30 @@ def is_non_executable_receipt_job_type(job_type: str) -> bool:
     return job_type.endswith(NON_EXECUTABLE_RECEIPT_JOB_TYPE_SUFFIXES)
 
 
-class JobStatus(StrEnum):
-    QUEUED = "queued"
-    RUNNING = "running"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
+from shared.governance.vocabularies import JobDeliveryState, JobStatus
+
+# Business outcomes that also settle delivery: once the work itself has reached
+# one of these, no further delivery attempt is owed, so a leftover
+# ``JobDeliveryState.RETRYING`` from an earlier attempt would misreport the job
+# as still being redelivered (ODP-FR-SHARED-001 orthogonality rule).
+#
+# ``JobStatus.FAILED`` is deliberately excluded: a failure that exhausted its
+# retry budget carries ``JobDeliveryState.DEAD_LETTER``, which is delivery
+# information the caller still needs. ``QUEUED`` and ``RUNNING`` are excluded
+# because delivery is still in flight there.
+DELIVERY_SETTLED_JOB_STATUSES: frozenset[JobStatus] = frozenset(
+    {JobStatus.SUCCEEDED, JobStatus.PARTIAL, JobStatus.CANCELLED}
+)
 
 
 class NonRetryableJobError(RuntimeError):
     """Raised when a job should fail permanently without further retries."""
+
+    pass
+
+
+class JobFenceRejectedError(ValueError):
+    """Raised when a job status update or heartbeat is rejected due to version or fence token mismatch."""
 
     pass
 
@@ -90,6 +103,7 @@ class JobRecord:
     correlation_id: str
     idempotency_key: str | None = None
     status: JobStatus = JobStatus.QUEUED
+    delivery_state: JobDeliveryState | None = None
     job_id: str = field(default_factory=lambda: str(uuid4()))
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     attempts: int = 0
@@ -107,6 +121,7 @@ class JobRecord:
             "job_id": self.job_id,
             "job_type": self.job_type,
             "status": self.status.value,
+            "delivery_state": self.delivery_state.value if self.delivery_state else None,
             "correlation_id": self.correlation_id,
             "idempotency_key": self.idempotency_key,
             "payload": self.payload,
@@ -197,7 +212,10 @@ class InMemoryJobQueue:
 
                     # Move to DLQ (failed status)
                     new_record = dataclasses.replace(
-                        record, status=JobStatus.FAILED, leased_until=None
+                        record,
+                        status=JobStatus.FAILED,
+                        delivery_state=JobDeliveryState.DEAD_LETTER,
+                        leased_until=None,
                     )
                     self._jobs[record.job_id] = new_record
                     continue
@@ -206,6 +224,7 @@ class InMemoryJobQueue:
                 new_record = dataclasses.replace(
                     record,
                     status=JobStatus.RUNNING,
+                    delivery_state=record.delivery_state,
                     attempts=record.attempts + 1,
                     leased_until=leased_until,
                 )
@@ -228,7 +247,7 @@ class InMemoryJobQueue:
                 if record.status != JobStatus.RUNNING or current_token_str != token_str:
                     return False
             self._jobs[job_id] = dataclasses.replace(
-                record, status=JobStatus.SUCCEEDED, leased_until=None
+                record, status=JobStatus.SUCCEEDED, delivery_state=None, leased_until=None
             )
             return True
         return False
@@ -249,11 +268,17 @@ class InMemoryJobQueue:
                     return False
             if record.attempts < record.max_retries:
                 self._jobs[job_id] = dataclasses.replace(
-                    record, status=JobStatus.QUEUED, leased_until=None
+                    record,
+                    status=JobStatus.QUEUED,
+                    delivery_state=JobDeliveryState.RETRYING,
+                    leased_until=None,
                 )
             else:
                 self._jobs[job_id] = dataclasses.replace(
-                    record, status=JobStatus.FAILED, leased_until=None
+                    record,
+                    status=JobStatus.FAILED,
+                    delivery_state=JobDeliveryState.DEAD_LETTER,
+                    leased_until=None,
                 )
             return True
         return False
@@ -285,6 +310,7 @@ class InMemoryJobQueue:
                 correlation_id=record.correlation_id,
                 idempotency_key=record.idempotency_key,
                 status=JobStatus.QUEUED,
+                delivery_state=None,
                 job_id=record.job_id,
                 created_at=record.created_at,
                 fence_token=record.fence_token,
@@ -314,6 +340,7 @@ class InMemoryJobQueue:
                         correlation_id=record.correlation_id,
                         idempotency_key=record.idempotency_key,
                         status=JobStatus.RUNNING,
+                        delivery_state=record.delivery_state,
                         job_id=record.job_id,
                         created_at=record.created_at,
                         fence_token=record.fence_token + 1,
@@ -333,36 +360,83 @@ class InMemoryJobQueue:
         status: JobStatus,
         payload: dict[str, Any] | None = None,
         *,
+        delivery_state: JobDeliveryState | None = None,
         expected_version: int | None = None,
         fence_token: int | None = None,
         error_message: str | None = None,
     ) -> None:
+        """Write a job's outcome, and settle its delivery state alongside it.
+
+        ``delivery_state`` keeps its existing three-way meaning for callers:
+
+        - omitted / ``None`` on a non-settled status (``QUEUED``, ``RUNNING``,
+          ``FAILED``) leaves the stored delivery state untouched;
+        - an explicit value writes that value, so the worker's
+          ``FAILED`` + ``DEAD_LETTER`` and ``QUEUED`` + ``RETRYING`` writes in
+          ``apps/worker/oday_worker/main.py`` are unchanged;
+        - any status in :data:`DELIVERY_SETTLED_JOB_STATUSES` clears it to
+          ``None``, because the work is finished and no delivery attempt is
+          still owed.
+
+        The settled-status rule wins over an explicit ``delivery_state``. That
+        is the pre-existing behaviour for ``SUCCEEDED``, now extended to
+        ``PARTIAL`` and ``CANCELLED``; no call site has to change and no
+        signature changes.
+        """
+
         with self._reservation_lock:
             if job_id not in self._jobs:
                 raise ValueError(f"Job {job_id} not found")
             record = self._jobs[job_id]
             if expected_version is not None and record.version != expected_version:
-                raise ValueError(
+                raise JobFenceRejectedError(
                     f"Job version mismatch: expected {expected_version}, got {record.version}"
                 )
             if fence_token is not None and record.fence_token != fence_token:
-                raise ValueError(
+                raise JobFenceRejectedError(
                     f"Job fence token mismatch: expected {fence_token}, got {record.fence_token}"
                 )
 
+            resolved_payload = payload if payload is not None else record.payload
+            resolved_status = status
+            if status == JobStatus.CANCELLED and isinstance(resolved_payload, dict):
+                from shared.jobs.receipts import settle_cancelled_batch_receipt
+
+                resolved_payload = settle_cancelled_batch_receipt(
+                    resolved_payload,
+                    job_id=record.job_id,
+                    job_type=record.job_type,
+                    tenant_id=resolved_payload.get("tenant_id"),
+                    correlation_id=record.correlation_id,
+                    idempotency_key=record.idempotency_key,
+                    created_at=record.created_at.isoformat() if hasattr(record.created_at, "isoformat") else str(record.created_at),
+                )
+                if isinstance(resolved_payload, dict) and "receipt" in resolved_payload:
+                    receipt_status = resolved_payload["receipt"].get("status")
+                    if receipt_status:
+                        resolved_status = JobStatus(receipt_status.lower())
+
+            resolved_delivery = delivery_state if delivery_state is not None else record.delivery_state
+            if resolved_status in DELIVERY_SETTLED_JOB_STATUSES:
+                # Parity with DurableJobQueue.update_status: a settled outcome
+                # clears delivery mechanics rather than inheriting the previous
+                # record's RETRYING.
+                resolved_delivery = None
+
             self._jobs[job_id] = JobRecord(
                 job_type=record.job_type,
-                payload=payload if payload is not None else record.payload,
+                payload=resolved_payload,
                 correlation_id=record.correlation_id,
                 idempotency_key=record.idempotency_key,
-                status=status,
+                status=resolved_status,
+                delivery_state=resolved_delivery,
                 job_id=record.job_id,
                 created_at=record.created_at,
                 fence_token=record.fence_token,
                 version=record.version + 1,
-                locked_by=record.locked_by if status == JobStatus.RUNNING else None,
-                heartbeat_at=record.heartbeat_at if status == JobStatus.RUNNING else None,
-                lease_expires_at=record.lease_expires_at if status == JobStatus.RUNNING else None,
+                locked_by=record.locked_by if resolved_status == JobStatus.RUNNING else None,
+                heartbeat_at=record.heartbeat_at if resolved_status == JobStatus.RUNNING else None,
+                lease_expires_at=record.lease_expires_at if resolved_status == JobStatus.RUNNING else None,
                 attempts=record.attempts,
                 error_message=error_message or record.error_message,
             )
@@ -377,7 +451,7 @@ class InMemoryJobQueue:
                 or record.version != expected_version
                 or record.fence_token != fence_token
             ):
-                raise ValueError("Fence/version mismatch")
+                raise JobFenceRejectedError("Fence/version mismatch")
             new_version = expected_version + 1
             self._jobs[job_id] = JobRecord(
                 job_type=record.job_type,
@@ -385,6 +459,7 @@ class InMemoryJobQueue:
                 correlation_id=record.correlation_id,
                 idempotency_key=record.idempotency_key,
                 status=record.status,
+                delivery_state=record.delivery_state,
                 job_id=record.job_id,
                 created_at=record.created_at,
                 fence_token=record.fence_token,
@@ -396,3 +471,18 @@ class InMemoryJobQueue:
                 error_message=record.error_message,
             )
             return new_version
+
+
+__all__ = [
+    "DELIVERY_SETTLED_JOB_STATUSES",
+    "InMemoryJobQueue",
+    "JobDeliveryState",
+    "JobFenceRejectedError",
+    "JobRecord",
+    "JobRequest",
+    "JobStatus",
+    "NonRetryableJobError",
+    "check_job_feature_flag",
+    "is_non_executable_receipt_job_type",
+    "resolve_job_feature_flag_key",
+]

@@ -11,7 +11,7 @@ from uuid import uuid4
 from apps.worker.oday_worker.handlers import build_default_registry
 from shared.infrastructure.persistence.factory import PersistenceBundle, build_persistence
 from shared.infrastructure.persistence.job_queue import JobFenceRejectedError
-from shared.jobs.queue import JobRecord, JobStatus, NonRetryableJobError
+from shared.jobs.queue import JobDeliveryState, JobRecord, JobStatus, NonRetryableJobError
 from shared.jobs.registry import JobRegistry
 from shared.observability import ProductionMetricsExporter, SpanKind, Telemetry, TraceContext
 
@@ -51,25 +51,78 @@ class _LeaseHeartbeat:
         self._stop.set()
         self._thread.join()
         with self._state_lock:
+            try:
+                latest = self._queue.get(self._job_id)
+                if (
+                    latest is not None
+                    and latest.status == JobStatus.RUNNING
+                    and latest.fence_token == self._fence_token
+                ):
+                    self._version = latest.version
+            except Exception:
+                pass
             return self._version, self._failure
 
     def _run(self) -> None:
         while not self._stop.wait(self._interval_seconds):
-            with self._state_lock:
-                expected_version = self._version
-            try:
-                new_version = self._queue.heartbeat(
-                    self._job_id,
-                    expected_version=expected_version,
-                    fence_token=self._fence_token,
-                )
-            except BaseException as exc:
-                with self._state_lock:
-                    self._failure = exc
-                self._stop.set()
-                return
-            with self._state_lock:
-                self._version = new_version
+            for _ in range(3):
+                try:
+                    latest = self._queue.get(self._job_id)
+                except BaseException as exc:
+                    with self._state_lock:
+                        self._failure = exc
+                    self._stop.set()
+                    return
+
+                if latest is None:
+                    with self._state_lock:
+                        self._failure = ValueError(f"Job {self._job_id} not found")
+                    self._stop.set()
+                    return
+                if latest.status != JobStatus.RUNNING:
+                    with self._state_lock:
+                        self._failure = ValueError(
+                            f"Job {self._job_id} is no longer RUNNING (now {latest.status.value})"
+                        )
+                    self._stop.set()
+                    return
+                if latest.fence_token != self._fence_token:
+                    with self._state_lock:
+                        self._failure = JobFenceRejectedError(
+                            f"Job {self._job_id} fence moved: expected {self._fence_token}, got {latest.fence_token}"
+                        )
+                    self._stop.set()
+                    return
+
+                try:
+                    new_version = self._queue.heartbeat(
+                        self._job_id,
+                        expected_version=latest.version,
+                        fence_token=self._fence_token,
+                    )
+                    with self._state_lock:
+                        self._version = new_version
+                    break
+                except (JobFenceRejectedError, ValueError) as exc:
+                    try:
+                        latest_check = self._queue.get(self._job_id)
+                    except Exception:
+                        latest_check = None
+                    if (
+                        latest_check is not None
+                        and latest_check.status == JobStatus.RUNNING
+                        and latest_check.fence_token == self._fence_token
+                    ):
+                        continue
+                    with self._state_lock:
+                        self._failure = exc
+                    self._stop.set()
+                    return
+                except BaseException as exc:
+                    with self._state_lock:
+                        self._failure = exc
+                    self._stop.set()
+                    return
 
 
 class ODayWorker:
@@ -133,15 +186,46 @@ class ODayWorker:
             try:
                 self.execute_job(job)
                 current_version, heartbeat_failure = heartbeat.stop()
+                duration = time.monotonic() - start_time
+                latest_job = self.job_queue.get(job.job_id)
+                if latest_job and latest_job.status in (
+                    JobStatus.SUCCEEDED,
+                    JobStatus.PARTIAL,
+                    JobStatus.FAILED,
+                    JobStatus.CANCELLED,
+                ):
+                    status_label = latest_job.status.value
+                    self.telemetry.metrics.observe(
+                        "job_duration_seconds",
+                        duration,
+                        labels={"job_type": job.job_type, "status": status_label},
+                    )
+                    self.telemetry.logger.info(
+                        f"Job {job.job_id} completed with status {status_label}",
+                        correlation_id=job.correlation_id,
+                        actor="worker",
+                        resource=f"job/{job.job_type}",
+                        action="execute",
+                        result=status_label,
+                    )
+                    return True
+
+                if (
+                    latest_job is None
+                    or latest_job.status != JobStatus.RUNNING
+                    or latest_job.fence_token != job.fence_token
+                ):
+                    self._record_stale_worker(job, JobFenceRejectedError("Job execution ownership changed"))
+                    return True
                 if heartbeat_failure is not None:
                     self._record_stale_worker(job, heartbeat_failure)
                     return True
-                duration = time.monotonic() - start_time
+
                 try:
                     self.job_queue.update_status(
                         job.job_id,
                         JobStatus.SUCCEEDED,
-                        expected_version=current_version,
+                        expected_version=latest_job.version,
                         fence_token=job.fence_token,
                     )
                 except (JobFenceRejectedError, ValueError) as exc:
@@ -166,14 +250,25 @@ class ODayWorker:
                 current_version, heartbeat_failure = heartbeat.stop()
                 duration = time.monotonic() - start_time
                 latest_job = self.job_queue.get(job.job_id)
-                if latest_job and latest_job.status == JobStatus.CANCELLED:
+                if latest_job and latest_job.status in (
+                    JobStatus.CANCELLED,
+                    JobStatus.SUCCEEDED,
+                    JobStatus.PARTIAL,
+                    JobStatus.FAILED,
+                ):
                     self.telemetry.logger.info(
-                        f"Job {job.job_id} execution aborted because it was CANCELLED",
+                        f"Job {job.job_id} execution stopped (status is {latest_job.status.value})",
                         correlation_id=job.correlation_id,
                         actor="worker",
                         resource=f"job/{job.job_type}",
-                        action="cancel",
+                        action="cancel" if latest_job.status == JobStatus.CANCELLED else "execute",
                     )
+                elif (
+                    latest_job is None
+                    or latest_job.status != JobStatus.RUNNING
+                    or latest_job.fence_token != job.fence_token
+                ):
+                    self._record_stale_worker(job, JobFenceRejectedError("Job execution ownership changed"))
                 elif heartbeat_failure is not None:
                     self._record_stale_worker(job, heartbeat_failure)
                 else:
@@ -199,7 +294,14 @@ class ODayWorker:
 
                     # Retry behavior
                     is_retryable = not isinstance(exc, NonRetryableJobError)
-                    payload = dict(job.payload)
+                    payload = (
+                        dict(latest_job.payload)
+                        if latest_job is not None and isinstance(latest_job.payload, dict)
+                        else dict(job.payload)
+                    )
+                    expected_ver = (
+                        latest_job.version if latest_job is not None else current_version
+                    )
                     retries = payload.get("_retry_count", 0)
                     if is_retryable and retries < 3:
                         payload["_retry_count"] = retries + 1
@@ -211,7 +313,12 @@ class ODayWorker:
                             job.job_id,
                             target_status,
                             payload=payload if target_status == JobStatus.QUEUED else None,
-                            expected_version=current_version,
+                            delivery_state=(
+                                JobDeliveryState.RETRYING
+                                if target_status == JobStatus.QUEUED
+                                else JobDeliveryState.DEAD_LETTER
+                            ),
+                            expected_version=expected_ver,
                             fence_token=job.fence_token,
                             error_message=str(exc),
                         )

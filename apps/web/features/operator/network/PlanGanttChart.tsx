@@ -1,6 +1,10 @@
 "use client";
 
 import React, { useId, useMemo, useState } from "react";
+import {
+  describeDisclosureDefect,
+  readConstraintDisclosure,
+} from "./constraintDisclosure";
 import styles from "./planGanttChart.module.css";
 import type { NetPlanDiagnostic } from "../types";
 
@@ -62,6 +66,15 @@ export interface PlanGanttProps {
   selected_actions?: PlanGanttActionItem[];
   bindingConstraints?: string[];
   binding_constraints?: string[];
+  modelledConstraintClasses?: string[];
+  modelled_constraint_classes?: string[];
+  unmodelledConstraintClasses?: string[];
+  unmodelled_constraint_classes?: string[];
+  // A verdict the class lists cannot carry: the server could not reconcile this
+  // row against the canonical solve. Honoured as a closing signal only -- the
+  // chart never reads its absence as permission, because it partitions the
+  // eight classes itself.
+  disclosureUndeclared?: boolean;
   dependencies?: PlanGanttDependency[];
   diagnostics?: NetPlanDiagnostic[];
   quarters?: string[];
@@ -184,6 +197,11 @@ export function PlanGanttChart({
   selected_actions,
   bindingConstraints,
   binding_constraints,
+  modelledConstraintClasses,
+  modelled_constraint_classes,
+  unmodelledConstraintClasses,
+  unmodelled_constraint_classes,
+  disclosureUndeclared: declaredUndeclared,
   dependencies,
   diagnostics,
   quarters: customQuarters,
@@ -203,6 +221,37 @@ export function PlanGanttChart({
     () => bindingConstraints || binding_constraints || [],
     [bindingConstraints, binding_constraints]
   );
+
+  // A disclosure is read as a whole or not at all. Naming no bound class and no
+  // unbound class is not a clean bill of health -- and neither is naming one of
+  // the eight and going quiet about the other seven, which is the shape this
+  // chart used to render as "無未建模限制 (全部已建模)". Derived here rather than
+  // taken as a prop because this chart also renders alternative plans, which
+  // reach it straight off the scenario row: an alternative whose disclosure
+  // does not partition the eight ODP-FR-NET-002 classes has to read as
+  // unverifiable on the same terms as the primary.
+  const disclosure = useMemo(
+    () =>
+      readConstraintDisclosure({
+        modelledConstraintClasses,
+        modelled_constraint_classes,
+        unmodelledConstraintClasses,
+        unmodelled_constraint_classes,
+        disclosureUndeclared: declaredUndeclared,
+      }),
+    [
+      modelledConstraintClasses,
+      modelled_constraint_classes,
+      unmodelledConstraintClasses,
+      unmodelled_constraint_classes,
+      declaredUndeclared,
+    ]
+  );
+  const effectiveModelled = disclosure.modelled;
+  const effectiveUnmodelled = disclosure.unmodelled;
+  const disclosureUndeclared = disclosure.undeclared;
+  const disclosureDefect = disclosure.defect;
+  const disclosureDefectDescription = describeDisclosureDefect(disclosure);
 
   // Discover and sort all backend-provided quarters
   const quarters = useMemo(() => {
@@ -395,6 +444,105 @@ export function PlanGanttChart({
           </span>
         ))}
       </div>
+
+      {/* ODP-FR-NET-002 Constraint Class Disclosure Section.
+          Rendered unconditionally: hiding it when the plan disclosed nothing
+          showed an undisclosed plan exactly as a plan with nothing to disclose,
+          which is the reading this section exists to prevent. */}
+      <section
+        className={styles.constraintDisclosureSection}
+        data-testid="gantt-constraint-disclosure"
+        data-disclosure-undeclared={disclosureUndeclared ? "true" : "false"}
+        data-disclosure-defect={disclosureDefect ?? "none"}
+        aria-label="ODP-FR-NET-002 硬限制揭露與驗證狀態"
+      >
+        <div className={styles.disclosureHeader}>
+          <span className={styles.disclosureTitle}>
+            🛡️ ODP-FR-NET-002 硬限制揭露 (Constraint Class Disclosure)
+          </span>
+          <span className={styles.disclosureSub}>
+            說出驗證了什麼、未驗證什麼 · 缺席與量測明確區分
+          </span>
+        </div>
+
+        {disclosureUndeclared ? (
+          <div
+            className={styles.disclosureUndeclaredBanner}
+            data-testid="gantt-disclosure-undeclared"
+            role="alert"
+          >
+            <strong>未完整申報硬限制建模範圍 (Disclosure undeclared)</strong>
+            <p>
+              本方案未完整說明 ODP-FR-NET-002 八類硬限制中，哪些已由求解器驗證、哪些未驗證。
+              未申報不等於全部已驗證：此方案的 ODP-FR-NET-002 符合性無法判定，不得送審。
+            </p>
+            <p data-testid="gantt-disclosure-defect">{disclosureDefectDescription}</p>
+          </div>
+        ) : null}
+
+        <div className={styles.disclosureGrid}>
+          <div className={styles.disclosureCard}>
+            <div className={styles.disclosureCardHeader}>
+              <span className={styles.modelledDot}>●</span>
+              <strong>已建模驗證限制 ({effectiveModelled.length})</strong>
+            </div>
+            <div className={styles.classBadgeList} data-testid="gantt-modelled-classes">
+              {effectiveModelled.length > 0 ? (
+                effectiveModelled.map((c) => (
+                  <span
+                    key={c}
+                    className={styles.modelledBadge}
+                    data-testid={`gantt-modelled-${c}`}
+                  >
+                    ✓ {c}
+                  </span>
+                ))
+              ) : disclosureUndeclared ? (
+                <span className={styles.emptyClassText} data-testid="gantt-modelled-undeclared">
+                  未申報 (無法判定)
+                </span>
+              ) : (
+                <span className={styles.emptyClassText}>無已建模限制</span>
+              )}
+            </div>
+          </div>
+
+          <div className={styles.disclosureCard}>
+            <div className={styles.disclosureCardHeader}>
+              <span className={styles.unmodelledDot}>▲</span>
+              <strong>未建模限制 / 待確認風險 ({effectiveUnmodelled.length})</strong>
+            </div>
+            <div className={styles.classBadgeList} data-testid="gantt-unmodelled-classes">
+              {effectiveUnmodelled.length > 0 ? (
+                effectiveUnmodelled.map((c) => (
+                  <span
+                    key={c}
+                    className={styles.unmodelledBadge}
+                    data-testid={`gantt-unmodelled-${c}`}
+                  >
+                    ⚠️ {c}
+                  </span>
+                ))
+              ) : disclosureUndeclared ? (
+                // Not "none outstanding" -- nothing was ever declared. Saying
+                // "全部已建模" here is the sentence that turns a missing
+                // disclosure into a verified one.
+                <span className={styles.emptyClassText} data-testid="gantt-unmodelled-undeclared">
+                  未申報 (無法判定)
+                </span>
+              ) : (
+                <span className={styles.emptyClassText}>無未建模限制 (全部已建模)</span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className={styles.disclosureNotice}>
+          <small>
+            <strong>決策守則：</strong>未建模限制並非已驗證通過；不可豁免之類別 (CONSTRUCTION, EQUIPMENT, LABOUR, COVERAGE, DILUTION) 必須提供約束上限，可豁免類別 (LEASE, SEQUENCING) 須由具權限角色具名確認風險後始得核准。
+          </small>
+        </div>
+      </section>
 
       {/* Binding Constraints & Diagnostics Alert Callout */}
       {(rawBindingConstraints.length > 0 || (diagnostics && diagnostics.length > 0)) && (

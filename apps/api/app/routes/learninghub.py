@@ -42,6 +42,11 @@ else:
         rows: list[dict[str, Any]] = Field(min_length=1)
         dataset_snapshot_id: str | None = None
         require_training_eligible: bool = True
+        # These identifiers bind the snapshot to the governed feature/label
+        # registries.  The service enforces the BLOCKED feature/label gate when
+        # they are supplied, so they must remain part of the HTTP contract.
+        feature_set_id: str | None = None
+        label_set_id: str | None = None
 
 
     class DqTriagePayload(BaseModel):
@@ -56,6 +61,11 @@ else:
         max_value: float | None = None
         warning_min_value: float | None = None
         warning_max_value: float | None = None
+        max_degradation: float | None = None
+        max_relative_degradation: float | None = None
+        warning_max_degradation: float | None = None
+        warning_max_relative_degradation: float | None = None
+        higher_is_better: bool | None = None
 
 
     class SegmentMetricPayload(BaseModel):
@@ -121,10 +131,20 @@ else:
         max_value: float | None = None
         warning_min_value: float | None = None
         warning_max_value: float | None = None
+        max_degradation: float | None = None
+        max_relative_degradation: float | None = None
+        warning_max_degradation: float | None = None
+        warning_max_relative_degradation: float | None = None
+        higher_is_better: bool | None = None
 
 
     class ReleaseMonitorPayload(BaseModel):
         observed_metrics: dict[str, float] = Field(min_length=1)
+        # A monitor run must carry the comparison snapshot when it is not
+        # available from the released model registry record.  ``None`` keeps
+        # the existing fallback to the released model's metrics for callers
+        # that use that durable baseline.
+        baseline_metrics: dict[str, float] | None = None
         guardrails: list[MonitorGuardrailPayload] = Field(min_length=1)
         # Bound from the authenticated principal, like release actors.
         evaluated_by: str | None = None
@@ -214,6 +234,8 @@ else:
                     body.rows,
                     dataset_snapshot_id=body.dataset_snapshot_id,
                     require_training_eligible=body.require_training_eligible,
+                    feature_set_id=body.feature_set_id,
+                    label_set_id=body.label_set_id,
                 )
             except ValueError as exc:
                 raise HTTPException(
@@ -456,6 +478,7 @@ else:
                     release_id=release_id,
                     observed_metrics=body.observed_metrics,
                     guardrails=[_threshold(item) for item in body.guardrails],
+                    baseline_metrics=body.baseline_metrics,
                     evaluated_by=evaluated_by,
                     correlation_id=request.state.correlation_id,
                 )
@@ -592,17 +615,24 @@ else:
             "prediction_origin_time": snapshot.prediction_origin_time.isoformat(),
             "time_range": [value.isoformat() for value in snapshot.time_range],
             "source_snapshot_ids": list(snapshot.source_snapshot_ids),
+            "feature_set_id": snapshot.feature_set_id,
+            "label_set_id": snapshot.label_set_id,
             "created_at": snapshot.created_at.isoformat(),
         }
 
 
-    def _threshold(item: ThresholdPayload) -> MetricThreshold:
+    def _threshold(item: ThresholdPayload | MonitorGuardrailPayload) -> MetricThreshold:
         return MetricThreshold(
             metric_name=item.metric_name,
             min_value=item.min_value,
             max_value=item.max_value,
             warning_min_value=item.warning_min_value,
             warning_max_value=item.warning_max_value,
+            max_degradation=item.max_degradation,
+            max_relative_degradation=item.max_relative_degradation,
+            warning_max_degradation=item.warning_max_degradation,
+            warning_max_relative_degradation=item.warning_max_relative_degradation,
+            higher_is_better=item.higher_is_better,
         )
 
 

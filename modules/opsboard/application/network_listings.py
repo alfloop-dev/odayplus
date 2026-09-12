@@ -55,7 +55,11 @@ class AssistedIntakeRepository(Protocol):
 
     def list_intakes(self) -> list[dict[str, Any]]: ...
 
+    def get_intake(self, intake_id: str) -> dict[str, Any] | None: ...
+
     def save_intake(self, intake: dict[str, Any]) -> None: ...
+
+    def create_intake_if_absent(self, intake: dict[str, Any]) -> tuple[dict[str, Any], bool]: ...
 
     def list_idempotency_records(self) -> list[IntakeIdempotencyRecord]: ...
 
@@ -95,8 +99,18 @@ class InMemoryAssistedIntakeRepository:
     def list_intakes(self) -> list[dict[str, Any]]:
         return [copy.deepcopy(item) for item in self.intakes.values()]
 
+    def get_intake(self, intake_id: str) -> dict[str, Any] | None:
+        item = self.intakes.get(intake_id)
+        return copy.deepcopy(item) if item is not None else None
+
     def save_intake(self, intake: dict[str, Any]) -> None:
         self.intakes[intake["id"]] = copy.deepcopy(intake)
+
+    def create_intake_if_absent(self, intake: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        if intake["id"] in self.intakes:
+            return copy.deepcopy(self.intakes[intake["id"]]), False
+        self.intakes[intake["id"]] = copy.deepcopy(intake)
+        return copy.deepcopy(intake), True
 
     def list_idempotency_records(self) -> list[IntakeIdempotencyRecord]:
         return list(self.idempotency.values())
@@ -210,6 +224,34 @@ def _first_present(data: dict[str, Any], *keys: str) -> Any:
     return None
 
 
+def _missing_assisted_entry_fields(values: dict[str, Any]) -> list[str]:
+    """Which mandatory assisted-entry fields ``values`` still does not supply.
+
+    Matching may only run once every mandatory field carries a real value, so a
+    blank or non-positive ``rent``/``areaPing`` counts as missing rather than
+    being coerced to ``0`` -- a zero rent would otherwise present an incomplete
+    submission as a complete one.
+    """
+
+    from modules.external_data.application.assisted_intake import (
+        ASSISTED_ENTRY_REQUIRED_FIELDS,
+    )
+
+    missing: list[str] = []
+    for field_name in ASSISTED_ENTRY_REQUIRED_FIELDS:
+        value = values.get(field_name)
+        if value in (None, ""):
+            missing.append(field_name)
+            continue
+        if field_name in ("rent", "areaPing"):
+            try:
+                if float(value) <= 0:
+                    missing.append(field_name)
+            except (ValueError, TypeError):
+                missing.append(field_name)
+    return missing
+
+
 def _optional_float(value: Any, *, default: float) -> float:
     if value is None or value == "":
         return default
@@ -238,8 +280,8 @@ def _optional_datetime(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
-def _seed_state() -> dict[str, Any]:
-    return {
+def _seed_state(*, tenant_id: str = "tenant-a") -> dict[str, Any]:
+    state = {
         "heatZones": [
             {
                 "id": "HZ-01",
@@ -298,6 +340,7 @@ def _seed_state() -> dict[str, Any]:
         "listings": [
             {
                 "id": "L-2024",
+                "tenantId": "tenant-a",
                 "sourceId": "SRC-591",
                 "sourceListingId": "s591-2024",
                 "heatZoneId": "HZ-01",
@@ -321,6 +364,7 @@ def _seed_state() -> dict[str, Any]:
             },
             {
                 "id": "L-2025",
+                "tenantId": "tenant-a",
                 "sourceId": "SRC-BROKER",
                 "sourceListingId": "broker-2025",
                 "heatZoneId": "HZ-02",
@@ -340,6 +384,7 @@ def _seed_state() -> dict[str, Any]:
             },
             {
                 "id": "L-2029",
+                "tenantId": "tenant-a",
                 "sourceId": "SRC-591",
                 "sourceListingId": "s591-2029",
                 "heatZoneId": "HZ-02",
@@ -364,6 +409,7 @@ def _seed_state() -> dict[str, Any]:
             },
             {
                 "id": "L-2030",
+                "tenantId": "tenant-a",
                 "sourceId": "SRC-591",
                 "sourceListingId": "s591-2030",
                 "heatZoneId": "HZ-01",
@@ -382,10 +428,14 @@ def _seed_state() -> dict[str, Any]:
                 "sourceUrl": "https://example.invalid/listings/L-2030",
             },
         ],
+
         "candidates": [],
         "siteReviews": [],
         "auditEvents": [],
     }
+    for listing in state["listings"]:
+        listing["tenantId"] = tenant_id
+    return state
 
 
 def _empty_state() -> dict[str, Any]:
@@ -410,8 +460,10 @@ class NetworkListingService:
         *,
         initial_state: dict[str, Any] | None = None,
         seed_fixtures: bool = True,
+        tenant_id: str | None = None,
     ) -> None:
         self._seed_fixtures = seed_fixtures
+        self._tenant_id = tenant_id.strip() if tenant_id and tenant_id.strip() else None
         self._listing_repository = listing_repository
         self._intakes: AssistedIntakeRepository = (
             intake_repository if intake_repository is not None else InMemoryAssistedIntakeRepository()
@@ -419,7 +471,7 @@ class NetworkListingService:
         state = _copy(
             initial_state
             if initial_state is not None
-            else _seed_state()
+            else _seed_state(tenant_id=self._tenant_id or "tenant-a")
             if seed_fixtures
             else _empty_state()
         )
@@ -501,6 +553,8 @@ class NetworkListingService:
             "geocodeConfidence": 0.0,
             "sourceUrl": lst.snapshot_id,
         }
+        if self._tenant_id is not None:
+            res["tenantId"] = self._tenant_id
         # Carry the persisted geocode through the dict layer. Without this the
         # round trip loses latitude/longitude/h3 and _dict_to_listing has to
         # invent them, which is how an ungeocoded listing used to reach the
@@ -520,7 +574,7 @@ class NetworkListingService:
         if meta:
             res.update(meta)
         elif self._seed_fixtures:
-            for item in _seed_state()["listings"]:
+            for item in _seed_state(tenant_id=self._tenant_id or "tenant-a")["listings"]:
                 if item["id"] == lst.listing_id:
                     for k, v in item.items():
                         if k not in res:
@@ -682,6 +736,7 @@ class NetworkListingService:
             self._listing_repository.save_listing(lst_obj, addr_obj, key_obj)
 
             meta = {
+                "tenantId": listing.get("tenantId"),
                 "heatZoneId": listing.get("heatZoneId"),
                 "hardRuleFailures": listing.get("hardRuleFailures"),
                 "hardRuleSummary": listing.get("hardRuleSummary"),
@@ -763,22 +818,36 @@ class NetworkListingService:
             IntakeIdempotencyRecord(action=action, key=key, response=_copy(response))
         )
 
-    def _save_intake(self, intake: dict[str, Any]) -> None:
+    def _save_intake_to_state(self, intake: dict[str, Any]) -> None:
         self._state.setdefault("assistedIntakes", [])
-        found = False
         for idx, item in enumerate(self._state["assistedIntakes"]):
             if item["id"] == intake["id"]:
                 self._state["assistedIntakes"][idx] = intake
-                found = True
-                break
-        if not found:
-            self._state["assistedIntakes"].append(intake)
+                return
+        self._state["assistedIntakes"].append(intake)
 
+    def _save_intake(self, intake: dict[str, Any]) -> None:
+        self._save_intake_to_state(intake)
         self._intakes.save_intake(intake)
+
+    def _create_intake_if_absent(self, intake: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        if hasattr(self._intakes, "create_intake_if_absent"):
+            stored, created = self._intakes.create_intake_if_absent(intake)
+        else:
+            existing = self._intakes.get_intake(intake["id"])
+            if existing is not None:
+                stored, created = existing, False
+            else:
+                self._intakes.save_intake(intake)
+                stored, created = intake, True
+        self._save_intake_to_state(stored)
+        return stored, created
 
     def reset(self) -> dict[str, Any]:
         self._state = (
-            _seed_state() if self._seed_fixtures else _empty_state()
+            _seed_state(tenant_id=self._tenant_id or "tenant-a")
+            if self._seed_fixtures
+            else _empty_state()
         )
         self._idempotency_cache = {}
         self._intakes.clear()
@@ -798,6 +867,7 @@ class NetworkListingService:
         selected_heat_zone_id: str | None = None,
         lens: str | None = None,
         correlation_id: str | None = None,
+        tenant_id: str | None = None,
     ) -> dict[str, Any]:
         selected_id = selected_heat_zone_id or (
             self._state["heatZones"][0]["id"]
@@ -806,14 +876,32 @@ class NetworkListingService:
         )
         active_lens = lens or "demand"
         self._state.setdefault("assistedIntakes", [])
+        visible_tenant = tenant_id.strip() if tenant_id and tenant_id.strip() else self._tenant_id
+        listings = _copy(self._state["listings"])
+        if visible_tenant is not None:
+            listings = [item for item in listings if item.get("tenantId") == visible_tenant]
+        listing_ids = {item.get("id") for item in listings}
+        candidates = _copy(self._state["candidates"])
+        if visible_tenant is not None:
+            candidates = [
+                item
+                for item in candidates
+                if item.get("tenantId") == visible_tenant
+                or item.get("listingId") in listing_ids
+            ]
+        assisted_intakes = _copy(self._state["assistedIntakes"])
+        if visible_tenant is not None:
+            assisted_intakes = [
+                item for item in assisted_intakes if item.get("tenantId") == visible_tenant
+            ]
         return {
             "source": "api",
             "heatZones": _copy(self._state["heatZones"]),
             "listingSources": _copy(self._state["listingSources"]),
-            "listings": _copy(self._state["listings"]),
-            "candidates": _copy(self._state["candidates"]),
+            "listings": listings,
+            "candidates": candidates,
             "siteReviews": _copy(self._state["siteReviews"]),
-            "assistedIntakes": _copy(self._state["assistedIntakes"]),
+            "assistedIntakes": assisted_intakes,
             "expansionSteps": self._expansion_steps(selected_id=selected_id),
             "selectedHeatZoneId": selected_id,
             "selectedLens": active_lens,
@@ -821,10 +909,10 @@ class NetworkListingService:
             "correlationId": correlation_id,
             "counts": {
                 "heatZones": len(self._state["heatZones"]),
-                "listings": len(self._state["listings"]),
-                "candidates": len(self._state["candidates"]),
+                "listings": len(listings),
+                "candidates": len(candidates),
                 "siteReviews": len(self._state["siteReviews"]),
-                "assistedIntakes": len(self._state["assistedIntakes"]),
+                "assistedIntakes": len(assisted_intakes),
             },
         }
 
@@ -1333,10 +1421,18 @@ class NetworkListingService:
             self._save_idempotency("submit_intake", idempotency_key, intake)
         return _copy(intake)
 
-    def list_intakes(self, selected_heat_zone_id: str | None = None) -> list[dict[str, Any]]:
+    def list_intakes(
+        self,
+        selected_heat_zone_id: str | None = None,
+        *,
+        tenant_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         self._load_intakes()
         self._state.setdefault("assistedIntakes", [])
         intakes = self._state["assistedIntakes"]
+        visible_tenant = tenant_id.strip() if tenant_id and tenant_id.strip() else self._tenant_id
+        if visible_tenant is not None:
+            intakes = [item for item in intakes if item.get("tenantId") == visible_tenant]
         if selected_heat_zone_id is not None:
             intakes = [item for item in intakes if item.get("heatZoneId") == selected_heat_zone_id]
         return _copy(intakes)
@@ -1427,23 +1523,7 @@ class NetworkListingService:
 
         effective_vals = effective_fields(intake["parsedFields"])
 
-        from modules.external_data.application.assisted_intake import ASSISTED_ENTRY_REQUIRED_FIELDS
-        has_all_required = True
-        for rf in ASSISTED_ENTRY_REQUIRED_FIELDS:
-            val = effective_vals.get(rf)
-            if val in (None, ""):
-                has_all_required = False
-                break
-            if rf in ("rent", "areaPing"):
-                try:
-                    if float(val) <= 0:
-                        has_all_required = False
-                        break
-                except (ValueError, TypeError):
-                    has_all_required = False
-                    break
-
-        if has_all_required:
+        if not _missing_assisted_entry_fields(effective_vals):
             fingerprint = content_fingerprint(effective_vals)
             match_res = match_listing(
                 values=effective_vals,
@@ -1483,6 +1563,207 @@ class NetworkListingService:
         self._save_intake(intake)
         self._save_idempotency("correct_intake", governed_key, intake)
         return _copy(intake)
+
+    # A batch import row carries operator-supplied values, so it enters the
+    # pipeline through the assisted-entry field table rather than through
+    # retrieval. Each entry maps one assisted-entry field to the column names a
+    # batch row may use for it.
+    BATCH_ROW_FIELD_COLUMNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+        ("address", ("address_raw", "addressRaw", "address")),
+        ("rent", ("rent_per_month", "rentPerMonth", "rent")),
+        ("areaPing", ("area_ping", "areaPing", "area")),
+        ("floor", ("floor",)),
+        ("listingType", ("listing_type", "listingType")),
+        ("providerListingId", ("provider_listing_id", "providerListingId")),
+    )
+
+    def record_batch_assisted_entry(
+        self,
+        *,
+        intake_id: str,
+        tenant_id: str,
+        row: dict[str, Any],
+        source_id: str,
+        correlation_id: str | None = None,
+        idempotency_key: str | None = None,
+        actor_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Land one batch-import row as an assisted-entry intake record.
+
+        The caller owns ``intake_id`` and must derive it from the tenant and the
+        batch member rather than from anything the submitter supplies -- see
+        :func:`apps.worker.oday_worker.handlers.batch_listing_intake_id`. That is
+        what makes this write durably idempotent: replaying a row after a crash
+        addresses the record the interrupted attempt wrote instead of creating a
+        second one, and one tenant cannot address another tenant's record.
+
+        Stage comes from the row's own data under the same rules
+        :meth:`correct_intake` applies -- a row missing a mandatory
+        assisted-entry field stops at ``AWAITING_ASSISTED_ENTRY`` instead of
+        being reported as a complete listing. Nothing is retrieved from a
+        source: a batch row has no URL and no snapshot, and those fields stay
+        ``None`` rather than being filled with a placeholder.
+        """
+
+        from modules.external_data.application.assisted_intake import (
+            IDENTITY_FIELDS,
+            content_fingerprint,
+            effective_fields,
+            match_listing,
+        )
+
+        tenant_id = str(tenant_id or "").strip()
+        if not tenant_id:
+            raise NetworkListingPolicyError(
+                "batch assisted entry requires an authenticated tenant scope"
+            )
+
+        self._load_intakes()
+        try:
+            existing = self._listing_intake(intake_id)
+        except NetworkListingNotFound:
+            existing = None
+        if existing is None and hasattr(self._intakes, "get_intake"):
+            existing = self._intakes.get_intake(intake_id)
+
+        if existing is not None and str(existing.get("tenantId") or "") != tenant_id:
+            # Defence in depth: the id is already tenant-derived, so reaching
+            # here means the id scheme was bypassed. Refuse rather than
+            # overwrite another tenant's record.
+            raise NetworkListingPolicyError(
+                f"assisted intake record {intake_id} belongs to another tenant"
+            )
+
+        if existing is not None:
+            # Crash replay / idempotency: reuse the existing intake without destructive
+            # upsert, preserving any operator corrections and current stage.
+            return _copy(existing)
+
+        def _resolve_scope(camel_key: str, snake_key: str) -> Any:
+            has_camel = camel_key in row and row[camel_key] is not None
+            has_snake = snake_key in row and row[snake_key] is not None
+            val_camel = (
+                str(row[camel_key]).strip()
+                if has_camel and str(row[camel_key]).strip()
+                else None
+            )
+            val_snake = (
+                str(row[snake_key]).strip()
+                if has_snake and str(row[snake_key]).strip()
+                else None
+            )
+            if val_camel is not None and val_snake is not None and val_camel != val_snake:
+                raise NetworkListingPolicyError(
+                    f"Conflicting scope aliases in batch row for {camel_key} ('{val_camel}') and {snake_key} ('{val_snake}')"
+                )
+            return val_camel if val_camel is not None else val_snake
+
+        heat_zone_id = _resolve_scope("heatZoneId", "heat_zone_id")
+        region_id = _resolve_scope("regionId", "region_id")
+        brand_id = _resolve_scope("brandId", "brand_id")
+        assigned_area_id = _resolve_scope("assignedAreaId", "assigned_area_id")
+
+        now = _now()
+        intake: dict[str, Any] = {
+            "id": intake_id,
+            "tenantId": tenant_id,
+            "originalUrl": None,
+            "canonicalUrl": None,
+            "submitter": actor_name or "批次匯入",
+            "owner": actor_name or "批次匯入",
+            "heatZoneId": heat_zone_id,
+            "regionId": region_id,
+            "brandId": brand_id,
+            "assignedAreaId": assigned_area_id,
+            "intakeMethod": "BATCH_ASSISTED_ENTRY",
+            "stage": "SUBMITTED",
+            "sourceId": source_id,
+            "policy": "ASSISTED_ENTRY_ONLY",
+            "policyLabel": "僅限人工協助輸入",
+            "policyReason": "批次匯入的既有房源由營運方提供，未經來源檢索。",
+            "rawSnapshot": None,
+            "snapshotId": None,
+            "capturedAt": None,
+            "parserVersion": None,
+            "correlationId": correlation_id,
+            "parsedFields": {},
+            "matchResult": None,
+            "auditEvents": [],
+            "idempotencyKey": idempotency_key,
+            "createdAt": now,
+            "version": 1,
+        }
+
+        parsed_fields: dict[str, Any] = dict(intake.get("parsedFields") or {})
+        for field_name, columns in self.BATCH_ROW_FIELD_COLUMNS:
+            raw_value = _first_present(row, *columns)
+            if raw_value is None or (isinstance(raw_value, str) and not raw_value.strip()):
+                continue
+            normalized = raw_value.strip() if isinstance(raw_value, str) else raw_value
+            parsed_fields[field_name] = {
+                "key": field_name,
+                "label": field_name,
+                "sourceValue": raw_value,
+                "normalizedValue": normalized,
+                "correctedValue": None,
+                "correctionReason": None,
+                "identity": field_name in IDENTITY_FIELDS,
+                "lowConfidence": False,
+            }
+        intake["parsedFields"] = parsed_fields
+        intake["updatedAt"] = now
+
+        effective_vals = effective_fields(parsed_fields)
+        missing = _missing_assisted_entry_fields(effective_vals)
+        if missing:
+            intake["stage"] = "AWAITING_ASSISTED_ENTRY"
+            intake["matchResult"] = None
+            intake["contentFingerprint"] = None
+            intake["missingRequiredFields"] = missing
+        else:
+            intake.pop("missingRequiredFields", None)
+            fingerprint = content_fingerprint(effective_vals)
+            match_res = match_listing(
+                values=effective_vals,
+                canonical_url="",
+                source_id=source_id,
+                fingerprint=fingerprint,
+                listings=self._get_match_listings(),
+            )
+            intake["contentFingerprint"] = fingerprint
+            intake["matchResult"] = match_res.to_dict()
+            intake["stage"] = (
+                "NEEDS_REVIEW" if match_res.outcome == "POSSIBLE_MATCH" else "READY"
+            )
+
+        # A deterministic audit id keeps a replay from growing a second entry
+        # for the same batch member.
+        audit_evt = {
+            "id": f"AUD-INTAKE-BATCH-{intake_id}",
+            "occurredAt": now,
+            "actorRoleId": "system",
+            "actorName": actor_name or "批次匯入",
+            "action": "intake.batch_assisted_entry",
+            "targetId": intake_id,
+            "message": f"批次匯入建立協助輸入待辦，階段 {intake['stage']}。",
+            "correlationId": correlation_id,
+            "metadata": {
+                "fields": sorted(parsed_fields),
+                "stage": intake["stage"],
+                "missingRequiredFields": missing,
+                "matchOutcome": (
+                    intake["matchResult"]["outcome"] if intake["matchResult"] else None
+                ),
+                "idempotencyKey": idempotency_key,
+            },
+        }
+        intake["auditEvents"] = [
+            evt for evt in intake.get("auditEvents", []) if evt.get("id") != audit_evt["id"]
+        ]
+        intake["auditEvents"].append(audit_evt)
+
+        stored_intake, _ = self._create_intake_if_absent(intake)
+        return _copy(stored_intake)
 
     def decide_intake(
         self,

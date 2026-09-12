@@ -1,0 +1,76 @@
+{
+  "case_id": "categorical_reference_n_1001_jensenshannon",
+  "description": "Categorical column above the 1000-row bound.",
+  "kind": "data_drift",
+  "metrics_index": {
+    "columns": {
+      "region": {
+        "id": "2708ace58123adf42173b117178e45db",
+        "method": "Jensen-Shannon distance",
+        "metric_name": "ValueDrift(column=region,method=Jensen-Shannon distance,threshold=0.1)",
+        "threshold": 0.1,
+        "value": 0.0
+      }
+    },
+    "drifted_columns_count": {
+      "count": 0.0,
+      "drift_share_argument": 0.5,
+      "id": "15e89f895b482f9b84ba7274ed18a106",
+      "metric_name": "DriftedColumnsCount(drift_share=0.5)",
+      "share": 0.0
+    }
+  },
+  "outcome": "completed",
+  "result": {
+    "cohort_key": null,
+    "current_snapshot_id": null,
+    "decision_policy_version_id": null,
+    "drift_detected": false,
+    "drift_share": 0.0,
+    "drifted_column_names": [],
+    "drifted_columns": 0,
+    "engine": "evidently",
+    "model_name": null,
+    "model_version": null,
+    "prediction_columns": [],
+    "prediction_output_types": null,
+    "reference_snapshot_id": null,
+    "snapshot_id": "baseline-cat-1001"
+  },
+  "routing_expectation": "N>1000, Categorical -> jensenshannon_stat_test",
+  "to_dict": {
+    "drift_detected": false,
+    "drift_share": 0.0,
+    "drifted_columns": 0,
+    "engine": "evidently",
+    "report": {
+      "metrics": [
+        {
+          "config": {
+            "drift_share": 0.5,
+            "type": "evidently:metric_v2:DriftedColumnsCount"
+          },
+          "id": "15e89f895b482f9b84ba7274ed18a106",
+          "metric_name": "DriftedColumnsCount(drift_share=0.5)",
+          "value": {
+            "count": 0.0,
+            "share": 0.0
+          }
+        },
+        {
+          "config": {
+            "column": "region",
+            "method": "Jensen-Shannon distance",
+            "threshold": 0.1,
+            "type": "evidently:metric_v2:ValueDrift"
+          },
+          "id": "2708ace58123adf42173b117178e45db",
+          "metric_name": "ValueDrift(column=region,method=Jensen-Shannon distance,threshold=0.1)",
+          "value": 0.0
+        }
+      ],
+      "tests": []
+    },
+    "snapshot_id": "baseline-cat-1001"
+  }
+}

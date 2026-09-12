@@ -250,6 +250,8 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
     task_id = str(event.get("task_id") or "").strip()
     reason = str(event.get("reason") or "wakeup").strip()
     normalized_reason = reason.lower()
+    is_nonmutating = task_payload.get("mutates_canonical") is False or str(task_payload.get("mutates_canonical", "")).strip().lower() == "false"
+    agent_display_name = display_name_for(config, agent["id"])
     if normalized_reason == "owned_finalize_dispatch":
         lifecycle_guardrails = (
             "這次是 immutable finalize dispatch。不得修改 tracked files、merge/rebase dev、"
@@ -267,13 +269,19 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
         "owned_ready_dispatch",
         "owned_in_progress_dispatch",
     }:
-        lifecycle_guardrails = (
-            "這次是 owner dispatch。若工作已可送審，程序退出前必須先用 "
-            "delivery_toolchain/git/task_finalize.sh 推送 task branch、建立 PR 並原子記錄 review submission；"
-            "不得直接 handoff／re_review 製造沒有遠端 PR 證明的 review。只寫『ready/awaiting review』"
-            "但不完成正式提交，會被判定為 "
-            "no-progress failure。若只完成一段增量，至少要留下新的 task branch commit 或實質 next 狀態。"
-        )
+        if is_nonmutating:
+            lifecycle_guardrails = (
+                "這次是 non-mutating owner dispatch。明確禁止建立空 PR、commit、執行 task_finalize.sh 與不必要的測試；"
+                f"完成既有狀態交接後，請使用 `AI_NAME={agent_display_name} \"$PANTHEON_STATUS_ROOT/scripts/ai-status.sh\" supersede {task_id or '<task-id>'} \"<checkpoint message>\"` 封存任務。"
+            )
+        else:
+            lifecycle_guardrails = (
+                "這次是 owner dispatch。若工作已可送審，程序退出前必須先用 "
+                "delivery_toolchain/git/task_finalize.sh 推送 task branch、建立 PR 並原子記錄 review submission；"
+                "不得直接 handoff／re_review 製造沒有遠端 PR 證明的 review。只寫『ready/awaiting review』"
+                "但不完成正式提交，會被判定為 "
+                "no-progress failure。若只完成一段增量，至少要留下新的 task branch commit 或實質 next 狀態。"
+            )
     else:
         lifecycle_guardrails = ""
     branch_workflow = config.get("branch_workflow") if isinstance(config.get("branch_workflow"), dict) else {}
@@ -293,8 +301,17 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
         finalize_guardrails = (
             "依 `.orchestrator/skills/task-closeout-finalization.md` 的 immutable finalize 流程："
             "僅讀取 exact approved head 的 PR、CI 與 receipt 證據，不得重跑測試；確認 exact approved SHA 的 PR 已 merged，再用 "
-            f"`AI_NAME={display_name_for(config, agent['id'])} \"$PANTHEON_STATUS_ROOT/scripts/ai-status.sh\" done` 結案。"
+            f"`AI_NAME={agent_display_name} \"$PANTHEON_STATUS_ROOT/scripts/ai-status.sh\" done` 結案。"
         )
+    elif is_nonmutating and normalized_reason in {"owned_ready_dispatch", "owned_in_progress_dispatch"}:
+        branch_work_guardrails = (
+            "這是 non-mutating recovery / coordination 任務（mutates_canonical=false）：\n"
+            "- 不得切換或建立 task 分支，不執行 `./delivery_toolchain/git/task_start.sh`。\n"
+            "- 禁止修改程式庫檔案、禁止建立 commit、禁止建立空 PR，亦不執行 `task_finalize.sh`。\n"
+            "- 明確禁止執行 pytest、npm test、build、lint、security scan 與 E2E 等不必要的測試或驗證命令。\n"
+            "- 完成既有狀態交接或復原後，使用 `supersede` 封存任務。"
+        )
+        finalize_guardrails = ""
     else:
         branch_work_guardrails = (
             "進入 task 工作前，先確認你在正確的 branch 上：\n"
@@ -317,7 +334,7 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
         "reason": reason,
         "target_files": "\n".join(f"- {path}" for path in target_files) if target_files else "- (none inferred)",
         "sidecar_guardrails": sidecar_guardrails.rstrip(),
-        "target_agent_display_name": display_name_for(config, agent["id"]),
+        "target_agent_display_name": agent_display_name,
         "lifecycle_guardrails": lifecycle_guardrails,
         "branch_work_guardrails": branch_work_guardrails,
         "finalize_guardrails": finalize_guardrails,

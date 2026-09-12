@@ -48,6 +48,8 @@ HANDOFF_COMPONENTS = ("api", "web", "worker", "scheduler")
 
 IMAGE_REF_PATTERN = re.compile(r"^[^\s]+@sha256:[0-9a-f]{64}$")
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+MANIFEST_DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
+RUN_ID_PATTERN = re.compile(r"^[1-9][0-9]*$")
 
 VERIFIER_NAME = "delivery_toolchain/release/check_release_phase.py"
 RECEIPT_KIND = "runtime-release-phase-precheck"
@@ -60,6 +62,8 @@ def phase_errors(
     environment: str,
     images: dict[str, str],
     lease_supplied: bool,
+    manifest_run_id: str = "",
+    manifest_digest: str = "",
 ) -> list[str]:
     """回傳所有阻擋這個階段開始執行的理由（中文）；空 list 代表通過。"""
 
@@ -88,6 +92,12 @@ def phase_errors(
                 "build 階段不得帶入 Supervisor lease；lease 只授權 deploy 階段，"
                 "在 build 階段接受 lease 會讓循環依賴重新出現。"
             )
+        if manifest_run_id.strip() or manifest_digest.strip():
+            errors.append(
+                "build 階段不得帶入 manifest_run_id 或 manifest_digest；"
+                "build 階段的職責是產生 candidate release manifest，"
+                "接受既有 manifest 座標等同讓 build 宣稱自己的產出已被授權。"
+            )
     elif phase == "deploy":
         missing = [name for name in HANDOFF_COMPONENTS if not images.get(name, "").strip()]
         if missing:
@@ -113,6 +123,30 @@ def phase_errors(
                 "deploy 階段缺少簽章 Supervisor lease；沒有 lease 就沒有部署授權，"
                 "一律 fail closed。"
             )
+        # manifest 的傳遞座標。build 與 deploy 是兩次分開的 dispatch，deploy 的
+        # checkout 只有 release SHA 上 committed 的 manifest——那份不是這次 build
+        # 產出的。缺少座標就沒有 exact manifest 可驗，必須擋在入場。
+        run_id = manifest_run_id.strip()
+        if not run_id:
+            errors.append(
+                "deploy 階段缺少 manifest_run_id；必須指名 build 階段那次 workflow run，"
+                "deploy 才能取回該次 build 產出的 candidate release manifest artifact。"
+            )
+        elif not RUN_ID_PATTERN.fullmatch(run_id):
+            errors.append(
+                f"manifest_run_id 必須是正整數的 GitHub Actions run id，實際值為 {run_id!r}。"
+            )
+        digest = manifest_digest.strip()
+        if not digest:
+            errors.append(
+                "deploy 階段缺少 manifest_digest；Supervisor lease 是對某一份 manifest "
+                "簽發的，沒有指名 digest 就無法證明取回的 artifact 正是那一份。"
+            )
+        elif not MANIFEST_DIGEST_PATTERN.fullmatch(digest):
+            errors.append(
+                "manifest_digest 必須是 sha256:<64 位小寫十六進位> digest，"
+                f"實際值為 {digest!r}。"
+            )
 
     return errors
 
@@ -127,6 +161,8 @@ def build_receipt(
     lease_supplied: bool,
     errors: list[str],
     checked_at: datetime,
+    manifest_run_id: str = "",
+    manifest_digest: str = "",
 ) -> dict[str, Any]:
     """組出中文 fail-closed 收據。收據永遠不含 lease 內容或任何 secret 值。"""
 
@@ -155,6 +191,11 @@ def build_receipt(
         "lease_supplied": lease_supplied,
         "image_handoff": {
             name: (images.get(name, "").strip() or None) for name in HANDOFF_COMPONENTS
+        },
+        # manifest 座標不是 secret：run id 與 digest 本來就要能被稽核比對。
+        "manifest_handoff": {
+            "run_id": manifest_run_id.strip() or None,
+            "manifest_digest": manifest_digest.strip() or None,
         },
         "blockers_zh_tw": list(errors),
         "summary_zh_tw": summary,
@@ -188,6 +229,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.add_argument(f"--{name}-image", default="")
     # lease 只以「有沒有帶」的形式傳入，避免把簽章文件放進 argv。
     parser.add_argument("--lease-supplied", default="false")
+    parser.add_argument("--manifest-run-id", default="")
+    parser.add_argument("--manifest-digest", default="")
     parser.add_argument("--receipt", type=Path, default=None)
     args = parser.parse_args(argv)
 
@@ -200,6 +243,8 @@ def main(argv: list[str] | None = None) -> int:
         environment=args.environment,
         images=images,
         lease_supplied=lease_supplied,
+        manifest_run_id=args.manifest_run_id or "",
+        manifest_digest=args.manifest_digest or "",
     )
     receipt = build_receipt(
         phase=args.phase,
@@ -210,6 +255,8 @@ def main(argv: list[str] | None = None) -> int:
         lease_supplied=lease_supplied,
         errors=errors,
         checked_at=datetime.now(UTC),
+        manifest_run_id=args.manifest_run_id or "",
+        manifest_digest=args.manifest_digest or "",
     )
     _write_receipt(receipt, args.receipt)
 

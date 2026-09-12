@@ -35,6 +35,8 @@ def test_simulate_scenario_contract_valid_and_invalid() -> None:
                             "current_price": 100.0,
                             "baseline_demand": 50.0,
                             "elasticity_value": -1.2,
+                            "applicable_min_price": 80.0,
+                            "applicable_max_price": 120.0,
                             "margin_floor_ratio": 0.15,
                             "max_increase_pct": 0.20,
                             "max_decrease_pct": 0.20,
@@ -104,6 +106,8 @@ def test_decision_writeback_contract_idempotency_and_fail_closed() -> None:
                     "current_price": 80.0,
                     "baseline_demand": 40.0,
                     "elasticity_value": -1.0,
+                    "applicable_min_price": 60.0,
+                    "applicable_max_price": 100.0,
                     "margin_floor_ratio": 0.15,
                     "max_increase_pct": 0.15,
                 }

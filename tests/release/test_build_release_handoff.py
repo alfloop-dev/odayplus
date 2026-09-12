@@ -21,15 +21,26 @@ from delivery_toolchain.release.build_release_handoff import (
     HANDOFF_COMPONENTS,
     HandoffError,
     build_handoff,
+    derive_sources_off_posture,
     main,
     resolve_created_at,
 )
 from delivery_toolchain.release.release_manifest import (
+    EXTERNAL_SOURCE_INVENTORY,
+    INITIAL_RELEASE_PROBE_COMMAND,
+    INITIAL_RELEASE_READBACK_KIND,
+    INITIAL_RELEASE_RECOVERY_METHOD,
+    INITIAL_RELEASE_TARGET_INVENTORY,
     build_release_manifest,
+    build_sources_off_attestation,
     compute_data_contract_digest,
     compute_manifest_digest,
+    compute_source_policy_digest,
+    extract_rollback_release_binding,
+    release_candidate_job_name,
     validate_manifest,
     validate_release_admission,
+    validate_rollback_manifest,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -58,6 +69,7 @@ def valid_snapshot() -> dict:
     return {
         "id": "snap-handoff-001",
         "uri": "gs://odayplus-snapshots/masked/snap-handoff-001.tar.gz",
+        "object_generation": 123,
         "content_sha256": "sha256:" + "7" * 64,
         "data_contract_digest": compute_data_contract_digest(root=ROOT),
         "masked": True,
@@ -77,6 +89,7 @@ def valid_rollback_summary(candidate_sha: str) -> dict:
         "data_snapshot": {
             "id": "snap-older-001",
             "uri": "gs://odayplus-snapshots/masked/snap-older-001.tar.gz",
+            "object_generation": 122,
             "content_sha256": "sha256:" + "c" * 64,
             "data_contract_digest": compute_data_contract_digest(root=ROOT),
             "masked": True,
@@ -105,6 +118,7 @@ def valid_rollback(current_sha: str = SHA, release_id: str = "odp-prev-001") -> 
         data_snapshot={
             "id": "snap-prev-001",
             "uri": "gs://odayplus-snapshots/masked/snap-prev-001.tar.gz",
+            "object_generation": 121,
             "content_sha256": "sha256:" + "c" * 64,
             "data_contract_digest": compute_data_contract_digest(root=ROOT),
             "masked": True,
@@ -248,10 +262,26 @@ def _snapshot_and_rollback_args(tmp_path: Path) -> list[str]:
         snap["id"],
         "--data-snapshot-uri",
         snap["uri"],
+        "--data-snapshot-object-generation",
+        str(snap["object_generation"]),
         "--data-snapshot-sha256",
         snap["content_sha256"],
         "--rollback-manifest",
         str(prev_manifest_path),
+    ]
+
+
+def _snapshot_args_only() -> list[str]:
+    snap = valid_snapshot()
+    return [
+        "--data-snapshot-id",
+        snap["id"],
+        "--data-snapshot-uri",
+        snap["uri"],
+        "--data-snapshot-object-generation",
+        str(snap["object_generation"]),
+        "--data-snapshot-sha256",
+        snap["content_sha256"],
     ]
 
 
@@ -341,10 +371,26 @@ def test_the_cli_writes_nothing_when_the_build_was_incomplete(tmp_path: Path) ->
     assert not manifest_path.exists()
 
 
-def test_missing_data_snapshot_refuses_to_write_a_handoff() -> None:
+def test_missing_data_snapshot_with_enabled_sources_refuses_to_write_a_handoff() -> None:
+    """A release that expects enabled sources keeps the strict snapshot path."""
+
+    with pytest.raises(HandoffError) as excinfo:
+        handoff(
+            data_snapshot=None,
+            external_sources_expected_enabled=["listing_raw_snapshot"],
+        )
+    assert any("缺少 masked data snapshot" in err for err in excinfo.value.errors)
+
+
+def test_sources_off_may_not_replace_a_previous_snapshot_binding() -> None:
+    """Anti-downgrade: the predecessor's snapshot binding survives a sources-off build."""
+
     with pytest.raises(HandoffError) as excinfo:
         handoff(data_snapshot=None)
-    assert any("缺少 masked data snapshot" in err for err in excinfo.value.errors)
+    assert any(
+        "不得以 sources-off posture 取代既有 snapshot binding" in err
+        for err in excinfo.value.errors
+    )
 
 
 def test_missing_rollback_release_refuses_to_write_a_handoff() -> None:
@@ -387,6 +433,8 @@ def test_rollback_manifest_cli_option(tmp_path: Path) -> None:
         "snap-current-001",
         "--data-snapshot-uri",
         "gs://odayplus-snapshots/masked/snap-current-001.tar.gz",
+        "--data-snapshot-object-generation",
+        "123",
         "--data-snapshot-sha256",
         "sha256:" + "f" * 64,
         "--rollback-manifest",
@@ -415,6 +463,8 @@ def test_rollback_release_file_option(tmp_path: Path) -> None:
         "snap-current-001",
         "--data-snapshot-uri",
         "gs://odayplus-snapshots/masked/snap-current-001.tar.gz",
+        "--data-snapshot-object-generation",
+        "123",
         "--data-snapshot-sha256",
         "sha256:" + "f" * 64,
         "--rollback-release-file",
@@ -444,6 +494,8 @@ def test_rollback_manifest_legacy_v1_fails_closed_no_synthetic_snapshot(tmp_path
         "snap-current-001",
         "--data-snapshot-uri",
         "gs://odayplus-snapshots/masked/snap-current-001.tar.gz",
+        "--data-snapshot-object-generation",
+        "123",
         "--data-snapshot-sha256",
         "sha256:" + "f" * 64,
         "--rollback-manifest",
@@ -471,6 +523,8 @@ def test_rollback_manifest_forged_digest_fails_closed(tmp_path: Path) -> None:
         "snap-current-001",
         "--data-snapshot-uri",
         "gs://odayplus-snapshots/masked/snap-current-001.tar.gz",
+        "--data-snapshot-object-generation",
+        "123",
         "--data-snapshot-sha256",
         "sha256:" + "f" * 64,
         "--rollback-manifest",
@@ -498,6 +552,8 @@ def test_rollback_manifest_tampered_fields_fails_closed(tmp_path: Path) -> None:
         "snap-current-001",
         "--data-snapshot-uri",
         "gs://odayplus-snapshots/masked/snap-current-001.tar.gz",
+        "--data-snapshot-object-generation",
+        "123",
         "--data-snapshot-sha256",
         "sha256:" + "f" * 64,
         "--rollback-manifest",
@@ -524,6 +580,8 @@ def test_rollback_manifest_same_candidate_sha_fails_closed(tmp_path: Path) -> No
         "snap-current-001",
         "--data-snapshot-uri",
         "gs://odayplus-snapshots/masked/snap-current-001.tar.gz",
+        "--data-snapshot-object-generation",
+        "123",
         "--data-snapshot-sha256",
         "sha256:" + "f" * 64,
         "--rollback-manifest",
@@ -536,3 +594,1208 @@ def test_rollback_manifest_same_candidate_sha_fails_closed(tmp_path: Path) -> No
     assert code != 0
     assert not images_path.exists()
     assert not manifest_path.exists()
+
+
+def test_data_snapshot_file_option(tmp_path: Path) -> None:
+    snap = valid_snapshot()
+    snap_file = tmp_path / "approved_snapshot.json"
+    snap_file.write_text(json.dumps(snap, indent=2), encoding="utf-8")
+
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(snap_file),
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code == 0
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["data_snapshot"]["id"] == snap["id"]
+    assert manifest["data_snapshot"]["uri"] == snap["uri"]
+    assert manifest["data_snapshot"]["content_sha256"] == snap["content_sha256"]
+    assert manifest["data_snapshot"]["masked"] is True
+    assert validate_release_admission(manifest) == []
+
+
+def test_data_snapshot_file_missing_masked_fails_closed(tmp_path: Path) -> None:
+    snap = valid_snapshot()
+    snap.pop("masked")
+    snap_file = tmp_path / "missing_masked_snapshot.json"
+    snap_file.write_text(json.dumps(snap, indent=2), encoding="utf-8")
+
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(snap_file),
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_data_snapshot_file_unmasked_fails_closed(tmp_path: Path) -> None:
+    snap = valid_snapshot()
+    snap["masked"] = False
+    snap_file = tmp_path / "unmasked_snapshot.json"
+    snap_file.write_text(json.dumps(snap, indent=2), encoding="utf-8")
+
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(snap_file),
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_data_snapshot_file_missing_data_contract_digest_fails_closed(tmp_path: Path) -> None:
+    snap = valid_snapshot()
+    snap.pop("data_contract_digest")
+    snap_file = tmp_path / "missing_digest_snapshot.json"
+    snap_file.write_text(json.dumps(snap, indent=2), encoding="utf-8")
+
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(snap_file),
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_data_snapshot_file_mismatched_data_contract_digest_fails_closed(tmp_path: Path) -> None:
+    snap = valid_snapshot()
+    snap["data_contract_digest"] = "sha256:" + "0" * 64
+    snap_file = tmp_path / "mismatched_digest_snapshot.json"
+    snap_file.write_text(json.dumps(snap, indent=2), encoding="utf-8")
+
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(snap_file),
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_data_snapshot_file_non_dict_fails_closed(tmp_path: Path) -> None:
+    snap_file = tmp_path / "list_snapshot.json"
+    snap_file.write_text(json.dumps(["not", "a", "dict"]), encoding="utf-8")
+
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(snap_file),
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_data_snapshot_file_invalid_json_fails_closed(tmp_path: Path) -> None:
+    snap_file = tmp_path / "invalid_json_snapshot.json"
+    snap_file.write_text("{not valid json", encoding="utf-8")
+
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(snap_file),
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_data_snapshot_file_nonexistent_fails_closed(tmp_path: Path) -> None:
+    snap_file = tmp_path / "nonexistent_snapshot.json"
+
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(snap_file),
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_bare_hex_content_sha_is_normalised_not_rejected(tmp_path: Path) -> None:
+    """A bare 64-hex digest is the same value as its ``sha256:`` form.
+
+    Normalising the prefix is a spelling fix, not a backfill: nothing is
+    invented, and a digest that does not match still fails the same way.
+    """
+
+    raw_hex = "e" * 64
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-id",
+        "snap-hex-001",
+        "--data-snapshot-uri",
+        "gs://odayplus-snapshots/masked/snap-hex-001.tar.gz",
+        "--data-snapshot-object-generation",
+        "123",
+        "--data-snapshot-content-sha256",
+        raw_hex,
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code == 0
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["data_snapshot"]["content_sha256"] == f"sha256:{raw_hex}"
+
+
+def test_unmasked_data_snapshot_fails_closed(tmp_path: Path) -> None:
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-id",
+        "snap-unmasked-001",
+        "--data-snapshot-uri",
+        "gs://odayplus-snapshots/unmasked/snap-unmasked-001.tar.gz",
+        "--data-snapshot-object-generation",
+        "123",
+        "--data-snapshot-sha256",
+        "sha256:" + "f" * 64,
+        "--data-snapshot-unmasked",
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_data_snapshot_contract_digest_mismatch_fails_closed(tmp_path: Path) -> None:
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-id",
+        "snap-mismatch-001",
+        "--data-snapshot-uri",
+        "gs://odayplus-snapshots/masked/snap-mismatch-001.tar.gz",
+        "--data-snapshot-object-generation",
+        "123",
+        "--data-snapshot-sha256",
+        "sha256:" + "f" * 64,
+        "--data-snapshot-contract-digest",
+        "sha256:" + "0" * 64,
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_rollback_manifest_inline_json_string(tmp_path: Path) -> None:
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_json = json.dumps(prev_manifest)
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-id",
+        "snap-inline-001",
+        "--data-snapshot-uri",
+        "gs://odayplus-snapshots/masked/snap-inline-001.tar.gz",
+        "--data-snapshot-object-generation",
+        "123",
+        "--data-snapshot-sha256",
+        "sha256:" + "f" * 64,
+        "--rollback-manifest",
+        prev_manifest_json,
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code == 0
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["rollback_release"]["candidate_sha"] == "0" * 40
+    assert manifest["rollback_release"]["manifest_digest"] == prev_manifest["manifest_digest"]
+    assert validate_release_admission(manifest) == []
+
+
+def test_rollback_manifest_missing_component_fails_closed(tmp_path: Path) -> None:
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest["components"].pop("web", None)
+    prev_manifest["manifest_digest"] = compute_manifest_digest(prev_manifest)
+    broken_path = tmp_path / "NO_WEB_MANIFEST.json"
+    broken_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-id",
+        "snap-broken-001",
+        "--data-snapshot-uri",
+        "gs://odayplus-snapshots/masked/snap-broken-001.tar.gz",
+        "--data-snapshot-object-generation",
+        "123",
+        "--data-snapshot-sha256",
+        "sha256:" + "f" * 64,
+        "--rollback-manifest",
+        str(broken_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# Two sources for one approved binding
+#
+# The workflow reads each snapshot channel from a different place -- dispatch
+# inputs for the fields, repository `vars` for the file -- so "whichever one is
+# set wins" is not a tie-break, it is a substitution. A stale `vars` entry would
+# replace the snapshot an operator just approved and the manifest would record
+# the substitute as the approval. The same holds for the two rollback flags.
+# ---------------------------------------------------------------------------
+
+
+def _approved_snapshot_file(tmp_path: Path) -> Path:
+    path = tmp_path / "vars_channel_snapshot.json"
+    path.write_text(json.dumps(valid_snapshot(), indent=2), encoding="utf-8")
+    return path
+
+
+def _prev_manifest_file(tmp_path: Path, name: str = "PREV_RELEASE_MANIFEST.json") -> Path:
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    path = tmp_path / name
+    path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize(
+    ("flag", "value"),
+    [
+        ("--data-snapshot-id", "snap-dispatch-approved"),
+        ("--data-snapshot-uri", "gs://odayplus-snapshots/masked/snap-dispatch.tar.gz"),
+        ("--data-snapshot-object-generation", "123"),
+        ("--data-snapshot-sha256", "sha256:" + "d" * 64),
+        ("--data-snapshot-content-sha256", "sha256:" + "d" * 64),
+        ("--data-snapshot-contract-digest", "sha256:" + "e" * 64),
+    ],
+)
+def test_snapshot_file_alongside_an_inline_field_fails_closed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], flag: str, value: str
+) -> None:
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(_approved_snapshot_file(tmp_path)),
+        flag,
+        value,
+        "--rollback-manifest",
+        str(_prev_manifest_file(tmp_path)),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+
+    assert code == 1
+    assert not manifest_path.exists()
+    assert not images_path.exists()
+    stderr = capsys.readouterr().err
+    assert "--data-snapshot-file" in stderr
+    assert flag in stderr
+
+
+def test_snapshot_file_alongside_unmasked_flag_fails_closed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--data-snapshot-unmasked` would otherwise be dropped without a word."""
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(_approved_snapshot_file(tmp_path)),
+        "--data-snapshot-unmasked",
+        "--rollback-manifest",
+        str(_prev_manifest_file(tmp_path)),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+
+    assert code == 1
+    assert not manifest_path.exists()
+    assert "--data-snapshot-unmasked" in capsys.readouterr().err
+
+
+def test_the_snapshot_file_never_silently_replaces_the_dispatched_snapshot(
+    tmp_path: Path,
+) -> None:
+    """The regression itself: a file channel binding over approved fields."""
+
+    snapshot_file = _approved_snapshot_file(tmp_path)
+    dispatched_id = "snap-dispatch-approved-001"
+    assert json.loads(snapshot_file.read_text(encoding="utf-8"))["id"] != dispatched_id
+
+    code, _images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-id",
+        dispatched_id,
+        "--data-snapshot-uri",
+        "gs://odayplus-snapshots/masked/snap-dispatch-approved-001.tar.gz",
+        "--data-snapshot-content-sha256",
+        "sha256:" + "d" * 64,
+        "--data-snapshot-file",
+        str(snapshot_file),
+        "--rollback-manifest",
+        str(_prev_manifest_file(tmp_path)),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+
+    assert code == 1
+    assert not manifest_path.exists(), (
+        "a manifest bound to the file snapshot would record a substitution "
+        "as the approval"
+    )
+
+
+def test_either_snapshot_channel_alone_still_succeeds(tmp_path: Path) -> None:
+    """Exclusivity refuses ambiguity, not the channels themselves."""
+
+    prev = _prev_manifest_file(tmp_path)
+    snap = valid_snapshot()
+
+    file_code, _, file_manifest = _cli(
+        tmp_path / "file-only",
+        *_component_args(),
+        "--data-snapshot-file",
+        str(_approved_snapshot_file(tmp_path)),
+        "--rollback-manifest",
+        str(prev),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    inline_code, _, inline_manifest = _cli(
+        tmp_path / "inline-only",
+        *_component_args(),
+        "--data-snapshot-id",
+        snap["id"],
+        "--data-snapshot-uri",
+        snap["uri"],
+        "--data-snapshot-object-generation",
+        str(snap["object_generation"]),
+        "--data-snapshot-content-sha256",
+        snap["content_sha256"],
+        "--rollback-manifest",
+        str(prev),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+
+    assert (file_code, inline_code) == (0, 0)
+    # Same approved snapshot either way, so the same admissible manifest.
+    assert json.loads(file_manifest.read_text(encoding="utf-8")) == json.loads(
+        inline_manifest.read_text(encoding="utf-8")
+    )
+
+
+def test_both_rollback_flags_fail_closed_instead_of_one_winning(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--rollback-manifest or --rollback-release-file` discarded the loser."""
+
+    first = _prev_manifest_file(tmp_path, "ROLLBACK_A.json")
+    second = _prev_manifest_file(tmp_path, "ROLLBACK_B.json")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        *_snapshot_args_only(),
+        "--rollback-manifest",
+        str(first),
+        "--rollback-release-file",
+        str(second),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+
+    assert code == 1
+    assert not manifest_path.exists()
+    assert not images_path.exists()
+    assert "--rollback-release-file" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "remote_uri",
+    [
+        "gs://odayplus-releases/manifests/PREV_RELEASE_MANIFEST.json",
+        "https://example.invalid/PREV_RELEASE_MANIFEST.json",
+        "github://alfloop-dev/odayplus/docs/PREV_RELEASE_MANIFEST.json",
+    ],
+)
+def test_a_remote_rollback_uri_is_rejected_by_its_own_name(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], remote_uri: str
+) -> None:
+    """`Path("gs://b/k")` is `gs:/b/k`, so the old error named a path nobody passed."""
+
+    code, _images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        *_snapshot_args_only(),
+        "--rollback-manifest",
+        remote_uri,
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+
+    assert code == 1
+    assert not manifest_path.exists()
+    stderr = capsys.readouterr().err
+    assert remote_uri in stderr, "the rejection has to quote what was passed, unmangled"
+    assert "gs:/o" not in stderr
+
+
+# --------------------------------------------------------------------------
+# Sources-off build handoff
+# (ODP-SOURCES-OFF-RELEASE-ADMISSION-REMEDIATION-001)
+# --------------------------------------------------------------------------
+#
+# The build phase is the only place that may state this release's data-plane
+# posture, and it may only *derive* it. There is no CLI flag, dispatch input, or
+# repository variable that can supply a sources-off binding digest, so these
+# tests exercise the derivation itself: what it reads, and what it refuses.
+
+WORKFLOW_PATH = ROOT / ".github/workflows/deploy-dev.yml"
+
+
+@pytest.fixture(autouse=True)
+def resolved_sources_off_egress(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Model the build environment's non-secret VPC egress resolution."""
+
+    monkeypatch.setenv("ODP_CLOUD_RUN_VPC_EGRESS", "ALL_TRAFFIC")
+
+
+def sources_off_workflow(**wired: str) -> str:
+    lines = [
+        "jobs:",
+        "  deploy:",
+        "    env:",
+        "      ODP_EXTERNAL_PROVIDER_MODE: disabled",
+        "      ODP_CLOUD_RUN_VPC_CONNECTOR: ${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}",
+        "      ODP_CLOUD_RUN_VPC_EGRESS: ${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}",
+        "      PUBLIC_EGRESS_PROBE_REPORT: .odp_data/deployment/public-egress-probe.json",
+    ]
+    for name, value in wired.items():
+        lines.append(f"      {name}: {value}")
+    return "\n".join(lines) + "\n"
+
+
+def sources_off_rollback(current_sha: str = SHA, release_id: str = "odp-prev-off-001") -> dict:
+    """A previous release admitted on posture evidence rather than a snapshot."""
+
+    prev_sha = "0" * 40 if current_sha != "0" * 40 else "9" * 40
+    prev_components = {
+        "api": {"image": ref("api", "a")},
+        "web": {"image": ref("web", "b")},
+        "worker": {"image": ref("worker", "c")},
+        "scheduler": {"image": ref("scheduler", "d")},
+    }
+    prev_rollback = valid_rollback_summary(prev_sha)
+    prev_rollback.pop("data_snapshot")
+    prev_rollback["sources_off_attestation"] = {"binding_digest": "sha256:" + "e" * 64}
+    return build_release_manifest(
+        release_id=release_id,
+        candidate_sha=prev_sha,
+        components=prev_components,
+        sbom_refs=[ref("api", "5")],
+        signature_refs=[ref("api", "6")],
+        created_at="2026-08-25T12:00:00+00:00",
+        created_by_workflow=(
+            "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@" + prev_sha
+        ),
+        sources_off_attestation=build_sources_off_attestation(
+            candidate_sha=prev_sha,
+            components=prev_components,
+            source_policy_digest=compute_source_policy_digest(root=ROOT),
+            provider_mode="disabled",
+            sources_inventory=[
+                {
+                    "source_id": source_id,
+                    "status": "disabled",
+                    "credentials_present": False,
+                    "public_egress": "denied",
+                }
+                for source_id in EXTERNAL_SOURCE_INVENTORY
+            ],
+        ),
+        rollback_release=prev_rollback,
+        release_status="ready",
+        root=ROOT,
+    )
+
+
+def test_a_sources_off_build_produces_an_admissible_manifest_without_a_snapshot() -> None:
+    """The rollout-plan default posture is deployable, and it is evidence-backed."""
+
+    _, manifest = handoff(data_snapshot=None, rollback_release=sources_off_rollback())
+
+    assert "data_snapshot" not in manifest
+    assert manifest["external_sources_expected_enabled"] == []
+    assert validate_manifest(manifest, expected_candidate_sha=SHA) == []
+    assert validate_release_admission(manifest) == []
+
+    attestation = manifest["sources_off_attestation"]
+    assert attestation["provider_mode"] == "disabled"
+    assert attestation["egress_posture"] == "default-deny"
+    assert attestation["all_sources_disabled"] is True
+    assert attestation["zero_credentials_present"] is True
+    assert attestation["total_sources_audited"] == 16
+
+
+def test_the_sources_off_binding_is_reproducible_for_the_same_release_sha() -> None:
+    """A lease is issued against manifest_digest, so posture must not drift."""
+
+    _, first = handoff(data_snapshot=None, rollback_release=sources_off_rollback())
+    _, second = handoff(data_snapshot=None, rollback_release=sources_off_rollback())
+    assert first["manifest_digest"] == second["manifest_digest"]
+    assert (
+        first["sources_off_attestation"]["binding_digest"]
+        == second["sources_off_attestation"]["binding_digest"]
+    )
+
+
+def test_the_committed_deploy_workflow_derives_a_clean_sources_off_posture() -> None:
+    """This is the posture claim itself: it is read, not asserted."""
+
+    posture = derive_sources_off_posture(workflow_path=WORKFLOW_PATH)
+
+    assert posture["provider_mode"] == "disabled"
+    assert [entry["source_id"] for entry in posture["sources_inventory"]] == list(
+        EXTERNAL_SOURCE_INVENTORY
+    )
+    assert all(entry["status"] == "disabled" for entry in posture["sources_inventory"])
+    assert all(
+        entry["credentials_present"] is False for entry in posture["sources_inventory"]
+    )
+    assert all(
+        entry["public_egress"] == "denied" for entry in posture["sources_inventory"]
+    )
+
+
+def test_sources_off_build_refuses_unresolved_runtime_egress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ODP_CLOUD_RUN_VPC_EGRESS")
+
+    with pytest.raises(HandoffError) as excinfo:
+        handoff(data_snapshot=None, rollback_release=sources_off_rollback())
+
+    assert any("resolved_cloud_run_egress" in error for error in excinfo.value.errors)
+
+
+def test_a_live_provider_mode_is_recorded_as_enabled_not_smoothed_over(
+    tmp_path: Path,
+) -> None:
+    workflow = tmp_path / "deploy-dev.yml"
+    workflow.write_text(
+        sources_off_workflow().replace("disabled", "live"), encoding="utf-8"
+    )
+
+    posture = derive_sources_off_posture(workflow_path=workflow)
+    assert posture["provider_mode"] == "live"
+    assert all(entry["status"] == "enabled" for entry in posture["sources_inventory"])
+
+
+def test_a_live_provider_mode_refuses_to_write_a_sources_off_handoff(
+    tmp_path: Path,
+) -> None:
+    workflow = tmp_path / "deploy-dev.yml"
+    workflow.write_text(
+        sources_off_workflow().replace("disabled", "live"), encoding="utf-8"
+    )
+
+    with pytest.raises(HandoffError) as excinfo:
+        handoff(
+            data_snapshot=None,
+            rollback_release=sources_off_rollback(),
+            workflow_path=workflow,
+        )
+    assert any(
+        "provider_mode must be 'disabled'" in err for err in excinfo.value.errors
+    )
+
+
+def test_a_wired_provider_credential_refuses_to_write_a_sources_off_handoff(
+    tmp_path: Path,
+) -> None:
+    workflow = tmp_path / "deploy-dev.yml"
+    workflow.write_text(
+        sources_off_workflow(
+            ODP_POI_PROVIDER_API_KEY="${{ secrets.ODP_POI_PROVIDER_API_KEY }}"
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(HandoffError) as excinfo:
+        handoff(
+            data_snapshot=None,
+            rollback_release=sources_off_rollback(),
+            workflow_path=workflow,
+        )
+    assert any(
+        "credentials_present must be False" in err for err in excinfo.value.errors
+    )
+
+
+def test_a_wired_provider_endpoint_refuses_to_write_a_sources_off_handoff(
+    tmp_path: Path,
+) -> None:
+    workflow = tmp_path / "deploy-dev.yml"
+    workflow.write_text(
+        sources_off_workflow(ODP_GEOCODE_PROVIDER_URL="https://geocode.example.invalid"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(HandoffError) as excinfo:
+        handoff(
+            data_snapshot=None,
+            rollback_release=sources_off_rollback(),
+            workflow_path=workflow,
+        )
+    assert any("public_egress must be 'denied'" in err for err in excinfo.value.errors)
+    assert any("egress_posture must be 'default-deny'" in err for err in excinfo.value.errors)
+
+
+def test_a_workflow_without_a_provider_mode_refuses_to_guess(tmp_path: Path) -> None:
+    workflow = tmp_path / "deploy-dev.yml"
+    workflow.write_text("jobs:\n  deploy:\n    env: {}\n", encoding="utf-8")
+
+    with pytest.raises(HandoffError) as excinfo:
+        handoff(
+            data_snapshot=None,
+            rollback_release=sources_off_rollback(),
+            workflow_path=workflow,
+        )
+    assert any(
+        "沒有設定 ODP_EXTERNAL_PROVIDER_MODE" in err for err in excinfo.value.errors
+    )
+
+
+def test_a_commented_out_credential_is_not_read_as_wired(tmp_path: Path) -> None:
+    """A variable named in a comment is documentation, not an injection."""
+
+    workflow = tmp_path / "deploy-dev.yml"
+    workflow.write_text(
+        "jobs:\n"
+        "  deploy:\n"
+        "    env:\n"
+        "      # ODP_POI_PROVIDER_API_KEY stays unset until a source is approved\n"
+        "      ODP_EXTERNAL_PROVIDER_MODE: disabled\n"
+        "      ODP_CLOUD_RUN_VPC_CONNECTOR: ${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}\n"
+        "      ODP_CLOUD_RUN_VPC_EGRESS: ${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}\n"
+        "      PUBLIC_EGRESS_PROBE_REPORT: .odp_data/deployment/public-egress-probe.json\n",
+        encoding="utf-8",
+    )
+
+    _, manifest = handoff(
+        data_snapshot=None,
+        rollback_release=sources_off_rollback(),
+        workflow_path=workflow,
+    )
+    assert manifest["sources_off_attestation"]["zero_credentials_present"] is True
+
+
+def test_a_sources_off_workflow_without_vpc_binding_fails_closed(tmp_path: Path) -> None:
+    workflow = tmp_path / "deploy-dev.yml"
+    workflow.write_text(
+        sources_off_workflow().replace(
+            "      ODP_CLOUD_RUN_VPC_EGRESS: ${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}\n", ""
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(HandoffError) as excinfo:
+        handoff(
+            data_snapshot=None,
+            rollback_release=sources_off_rollback(),
+            workflow_path=workflow,
+        )
+    assert any("cloud_run_egress" in err for err in excinfo.value.errors)
+
+
+def test_a_sources_off_workflow_with_non_environment_vpc_egress_fails_closed(
+    tmp_path: Path,
+) -> None:
+    workflow = tmp_path / "deploy-dev.yml"
+    workflow.write_text(
+        sources_off_workflow().replace(
+            "${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}", "private-ranges-only"
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(HandoffError) as excinfo:
+        handoff(
+            data_snapshot=None,
+            rollback_release=sources_off_rollback(),
+            workflow_path=workflow,
+        )
+    assert any("cloud_run_egress" in err for err in excinfo.value.errors)
+
+
+def test_a_sources_off_workflow_without_public_egress_probe_fails_closed(
+    tmp_path: Path,
+) -> None:
+    workflow = tmp_path / "deploy-dev.yml"
+    workflow.write_text(
+        sources_off_workflow().replace(
+            "      PUBLIC_EGRESS_PROBE_REPORT: .odp_data/deployment/public-egress-probe.json",
+            "",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(HandoffError) as excinfo:
+        handoff(
+            data_snapshot=None,
+            rollback_release=sources_off_rollback(),
+            workflow_path=workflow,
+        )
+    assert any("runtime_probe_wiring" in err for err in excinfo.value.errors)
+
+
+def test_an_enabled_source_never_gets_a_sources_off_attestation() -> None:
+    _, manifest = handoff(external_sources_expected_enabled=["listing_raw_snapshot"])
+
+    assert "sources_off_attestation" not in manifest
+    assert manifest["external_sources_expected_enabled"] == ["listing_raw_snapshot"]
+    assert validate_release_admission(manifest) == []
+
+
+# --------------------------------------------------------------------------
+# ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001: building the first release.
+#
+# `build_handoff` refuses a schema v2 manifest with no `rollback_release`, and
+# on the first release into a target there is none to bind -- so the build
+# phase could not write a handoff at all, and the target could never receive a
+# first deploy. These cover the one branch that resolves that: what it requires
+# before it opens, and everything it still refuses.
+# --------------------------------------------------------------------------
+
+
+def empty_target_readback(**overrides) -> dict:
+    readback = {
+        "kind": INITIAL_RELEASE_READBACK_KIND,
+        "target_environment": "dev",
+        "project": "odayplus",
+        "region": "asia-east1",
+        "probe_command": INITIAL_RELEASE_PROBE_COMMAND,
+        "targets": [
+            {
+                "component": component,
+                "resource_kind": resource_kind,
+                "resource_name": (
+                    release_candidate_job_name(f"oday-plus-{component}", SHA)
+                    if resource_kind == "cloud-run-job"
+                    else f"oday-plus-{component}"
+                ),
+                "exists": False,
+                "serving_traffic": False,
+            }
+            for component, resource_kind in INITIAL_RELEASE_TARGET_INVENTORY
+        ],
+    }
+    readback.update(overrides)
+    return readback
+
+
+def first_release(**overrides):
+    """A sources-off first release: no snapshot, no predecessor, a readback."""
+
+    release_sha = overrides.get("release_sha", SHA)
+    kwargs = {
+        "release_sha": release_sha,
+        "components": components(),
+        "sbom_refs": [ref("api", "5")],
+        "signature_refs": [ref("api", "6")],
+        "data_snapshot": None,
+        "initial_release_readback": empty_target_readback(),
+        "target_environment": "dev",
+        "created_at": CREATED_AT,
+        "created_by_workflow": (
+            "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@"
+            + release_sha
+        ),
+    }
+    kwargs.update(overrides)
+    return build_handoff(**kwargs)
+
+
+def test_a_first_release_into_an_empty_target_writes_an_admissible_handoff() -> None:
+    """The deadlock: v2 requires a predecessor, and the first release has none."""
+
+    images, manifest = first_release()
+
+    assert sorted(images) == sorted(HANDOFF_COMPONENTS)
+    assert "rollback_release" not in manifest
+    assert validate_manifest(manifest, expected_candidate_sha=SHA) == []
+    assert validate_release_admission(manifest, environment="dev") == []
+
+    recovery = manifest["initial_release_recovery"]
+    assert recovery["target_environment"] == "dev"
+    assert recovery["recovery_method"] == INITIAL_RELEASE_RECOVERY_METHOD
+    assert recovery["rollback_target_available"] is False
+    assert recovery["prior_release_absent"] is True
+    assert {entry["component"] for entry in recovery["absence_readback"]["targets"]} == {
+        component for component, _kind in INITIAL_RELEASE_TARGET_INVENTORY
+    }
+
+
+def test_the_first_release_handoff_is_reproducible_for_the_same_release_sha() -> None:
+    """A lease is issued against manifest_digest; a re-run must reproduce it.
+
+    The readback carries no timestamp and no run id for exactly this reason: if
+    the target is still empty, reading it again yields the same bytes.
+    """
+
+    _, first = first_release()
+    _, second = first_release()
+
+    assert first["manifest_digest"] == second["manifest_digest"]
+    assert (
+        first["initial_release_recovery"]["binding_digest"]
+        == second["initial_release_recovery"]["binding_digest"]
+    )
+
+
+def test_the_first_release_manifest_becomes_the_next_release_rollback_target() -> None:
+    """The branch closes behind itself instead of standing open."""
+
+    _, first = first_release()
+
+    assert (
+        validate_rollback_manifest(
+            first,
+            current_candidate_sha="c" * 40,
+            current_release_id="odp-second-001",
+        )
+        == []
+    )
+    assert extract_rollback_release_binding(first)["candidate_sha"] == SHA
+
+
+@pytest.mark.parametrize("field", ["exists", "serving_traffic"])
+def test_a_target_that_already_holds_a_release_refuses_the_branch(field: str) -> None:
+    """This is the whole precondition, so it is not allowed to be approximate."""
+
+    readback = empty_target_readback()
+    readback["targets"][0][field] = True
+
+    with pytest.raises(HandoffError) as excinfo:
+        first_release(initial_release_readback=readback)
+    assert any(field in error for error in excinfo.value.errors)
+
+
+def test_a_readback_that_skips_a_deploy_target_is_not_proof_of_an_empty_one() -> None:
+    readback = empty_target_readback()
+    readback["targets"] = [
+        entry for entry in readback["targets"] if entry["component"] != "scheduler"
+    ]
+
+    with pytest.raises(HandoffError) as excinfo:
+        first_release(initial_release_readback=readback)
+    assert any("missing: scheduler" in error for error in excinfo.value.errors)
+
+
+@pytest.mark.parametrize("environment", ["staging", "production", None])
+def test_staging_and_production_keep_the_rollback_requirement(environment) -> None:
+    """A bootstrap allowance for dev must not become a way into production."""
+
+    with pytest.raises(HandoffError) as excinfo:
+        first_release(target_environment=environment)
+    assert any(
+        "initial-release recovery 只適用於" in error for error in excinfo.value.errors
+    )
+
+
+def test_an_enabled_source_may_not_bootstrap_through_this_branch() -> None:
+    """Ingested third-party data still owes a masked snapshot and a rollback."""
+
+    with pytest.raises(HandoffError) as excinfo:
+        first_release(external_sources_expected_enabled=["weather_daily_snapshot"])
+    assert any(
+        "不得走 initial-release recovery" in error for error in excinfo.value.errors
+    )
+
+
+def test_a_rollback_manifest_and_a_readback_together_fail_closed() -> None:
+    """Two mutually exclusive stories about whether a predecessor exists.
+
+    Picking one here would let a stale `vars` fallback silently turn a real
+    rollback binding into a first-release claim, or the reverse.
+    """
+
+    with pytest.raises(HandoffError) as excinfo:
+        first_release(rollback_release=valid_rollback(SHA))
+    assert any("不可同時指定" in error for error in excinfo.value.errors)
+
+
+def test_inline_json_is_not_accepted_as_a_target_readback() -> None:
+    """A readback is something a build did, not something an operator typed."""
+
+    with pytest.raises(HandoffError) as excinfo:
+        first_release(
+            initial_release_readback=json.dumps(empty_target_readback()),
+        )
+    assert any("不接受 inline JSON" in error for error in excinfo.value.errors)
+
+
+def test_a_remote_readback_uri_is_rejected_by_its_own_name() -> None:
+    """`Path` would collapse `gs://` into a path nobody passed."""
+
+    with pytest.raises(HandoffError) as excinfo:
+        first_release(
+            initial_release_readback="gs://odayplus-release/absence-readback.json",
+        )
+    assert any("是遠端 URI" in error for error in excinfo.value.errors)
+
+
+def test_a_missing_readback_file_fails_closed(tmp_path: Path) -> None:
+    with pytest.raises(HandoffError) as excinfo:
+        first_release(initial_release_readback=tmp_path / "nope.json")
+    assert any("無法讀取 initial-release readback" in error for error in excinfo.value.errors)
+
+
+def test_a_declared_probe_command_does_not_open_the_branch() -> None:
+    with pytest.raises(HandoffError) as excinfo:
+        first_release(
+            initial_release_readback=empty_target_readback(
+                probe_command="checked the console"
+            )
+        )
+    assert any("probe_command" in error for error in excinfo.value.errors)
+
+
+def test_a_hand_supplied_binding_digest_in_the_readback_is_refused() -> None:
+    """Nothing in the release path accepts a binding digest it did not compute."""
+
+    readback = empty_target_readback()
+    readback["binding_digest"] = "sha256:" + "0" * 64
+
+    with pytest.raises(HandoffError) as excinfo:
+        first_release(initial_release_readback=readback)
+    assert any("binding digest does not cover" in error for error in excinfo.value.errors)
+
+
+def test_the_missing_rollback_refusal_names_the_branch_that_replaces_it() -> None:
+    """A fail-closed message that does not name the way through invites a forgery."""
+
+    with pytest.raises(HandoffError) as excinfo:
+        handoff(rollback_release=None)
+    assert any(
+        "--initial-release-readback" in error for error in excinfo.value.errors
+    )
+
+
+def test_the_cli_builds_a_first_release_handoff_from_a_readback_file(
+    tmp_path: Path,
+) -> None:
+    readback_file = tmp_path / "initial-release-absence-readback.json"
+    readback_file.write_text(
+        json.dumps(empty_target_readback()), encoding="utf-8"
+    )
+    images_output = tmp_path / "runtime-release-images.json"
+    manifest_output = tmp_path / "RELEASE_MANIFEST.json"
+
+    exit_code = main(
+        [
+            "--release-sha",
+            SHA,
+            *[f"--component={name}={components()[name]}" for name in HANDOFF_COMPONENTS],
+            f"--sbom-ref={ref('api', '5')}",
+            f"--signature-ref={ref('api', '6')}",
+            "--created-at",
+            CREATED_AT,
+            "--created-by-workflow",
+            "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@" + SHA,
+            "--target-environment",
+            "dev",
+            "--initial-release-readback",
+            str(readback_file),
+            "--images-output",
+            str(images_output),
+            "--manifest-output",
+            str(manifest_output),
+        ]
+    )
+
+    assert exit_code == 0
+    manifest = json.loads(manifest_output.read_text(encoding="utf-8"))
+    assert "rollback_release" not in manifest
+    assert manifest["initial_release_recovery"]["recovery_method"] == (
+        INITIAL_RELEASE_RECOVERY_METHOD
+    )
+    assert validate_release_admission(manifest, environment="dev") == []
+
+
+def test_the_cli_writes_nothing_when_the_target_is_not_empty(tmp_path: Path) -> None:
+    readback = empty_target_readback()
+    readback["targets"][2]["exists"] = True
+    readback_file = tmp_path / "readback.json"
+    readback_file.write_text(json.dumps(readback), encoding="utf-8")
+    images_output = tmp_path / "runtime-release-images.json"
+    manifest_output = tmp_path / "RELEASE_MANIFEST.json"
+
+    exit_code = main(
+        [
+            "--release-sha",
+            SHA,
+            *[f"--component={name}={components()[name]}" for name in HANDOFF_COMPONENTS],
+            f"--sbom-ref={ref('api', '5')}",
+            f"--signature-ref={ref('api', '6')}",
+            "--created-at",
+            CREATED_AT,
+            "--target-environment",
+            "dev",
+            "--initial-release-readback",
+            str(readback_file),
+            "--images-output",
+            str(images_output),
+            "--manifest-output",
+            str(manifest_output),
+        ]
+    )
+
+    assert exit_code == 1
+    assert not images_output.exists()
+    assert not manifest_output.exists()

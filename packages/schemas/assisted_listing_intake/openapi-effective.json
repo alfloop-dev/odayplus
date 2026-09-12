@@ -2877,6 +2877,24 @@
           }
         }
       },
+      "JobStatus": {
+        "type": "string",
+        "enum": [
+          "QUEUED",
+          "RUNNING",
+          "SUCCEEDED",
+          "FAILED",
+          "CANCELLED",
+          "PARTIAL"
+        ]
+      },
+      "JobDeliveryState": {
+        "type": "string",
+        "enum": [
+          "RETRYING",
+          "DEAD_LETTER"
+        ]
+      },
       "JobReceipt": {
         "type": "object",
         "required": [
@@ -2893,15 +2911,16 @@
             "format": "uuid"
           },
           "status": {
-            "type": "string",
-            "enum": [
-              "QUEUED",
-              "RUNNING",
-              "RETRYING",
-              "SUCCEEDED",
-              "FAILED",
-              "CANCELLED",
-              "DEAD_LETTER"
+            "$ref": "#/components/schemas/JobStatus"
+          },
+          "delivery_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobDeliveryState"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "checkpoint": {

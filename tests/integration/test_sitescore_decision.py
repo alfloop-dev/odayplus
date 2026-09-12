@@ -339,3 +339,179 @@ def test_sitescore_prediction_run_replay() -> None:
     assert pred_run_body["prediction_run"]["prediction_run_id"] == prediction_run_id
     assert len(pred_run_body["predictions"]) == 1
     assert pred_run_body["predictions"][0]["entity_id"] == "CS-REPLAY-001"
+
+
+def test_sitescore_quality_fields_nullable_omitted_and_explicit_null() -> None:
+    # 1. Default on dataclass is None
+    default_input = SiteScoreFeatureInput(candidate_site_id="CS-NULL-001")
+    assert default_input.average_confidence is None
+    assert default_input.data_quality_score is None
+
+    # 2. Omitted fields in mapping remain None (no 1.0 fallback)
+    omitted = SiteScoreFeatureInput.from_mapping({"candidate_site_id": "CS-NULL-002"})
+    assert omitted.average_confidence is None
+    assert omitted.data_quality_score is None
+
+    # 3. Explicit null in mapping remains None
+    explicit_null = SiteScoreFeatureInput.from_mapping(
+        {
+            "candidate_site_id": "CS-NULL-003",
+            "average_confidence": None,
+            "data_quality_score": None,
+        }
+    )
+    assert explicit_null.average_confidence is None
+    assert explicit_null.data_quality_score is None
+
+    # 4. Explicit null for alternate aliases (confidence, data_quality) remains None
+    alias_null = SiteScoreFeatureInput.from_mapping(
+        {
+            "candidate_site_id": "CS-NULL-004",
+            "confidence": None,
+            "data_quality": None,
+        }
+    )
+    assert alias_null.average_confidence is None
+    assert alias_null.data_quality_score is None
+
+    # 5. Measured values are preserved
+    measured = SiteScoreFeatureInput.from_mapping(
+        {
+            "candidate_site_id": "CS-MEAS-005",
+            "average_confidence": 0.88,
+            "data_quality_score": 0.92,
+        }
+    )
+    assert measured.average_confidence == 0.88
+    assert measured.data_quality_score == 0.92
+
+    # 6. Measured values via alternate aliases are preserved
+    alias_measured = SiteScoreFeatureInput.from_mapping(
+        {
+            "candidate_site_id": "CS-MEAS-006",
+            "confidence": 0.88,
+            "data_quality": 0.92,
+        }
+    )
+    assert alias_measured.average_confidence == 0.88
+    assert alias_measured.data_quality_score == 0.92
+
+
+def test_sitescore_unmeasured_quality_fails_closed_to_investigate_with_named_reasons() -> None:
+    base_kwargs = dict(
+        candidate_site_id="CS-FEAS-001",
+        feature_snapshot_time=SNAPSHOT_TIME,
+        heat_zone_id="heatzone:h3r9_go",
+        heat_zone_score=82.0,
+        monthly_rent=60_000.0,
+        area_ping=25.0,
+        comparable_store_count=5,
+        comparable_monthly_revenue_p50=480_000.0,
+        buildout_capex=2_500_000.0,
+        gross_margin_ratio=0.60,
+        source_snapshot_ids=("listing-20260627", "store-20260627"),
+    )
+
+    # 1. Missing average_confidence only
+    missing_conf = SiteScoreFeatureInput(
+        **base_kwargs,
+        average_confidence=None,
+        data_quality_score=0.95,
+    )
+    report_conf = score_sites([missing_conf], scored_at=PREDICTION_TIME)[0]
+    assert report_conf.confidence == 0.0
+    assert report_conf.recommendation is SiteScoreRecommendation.INVESTIGATE
+    assert "missing_source_confidence" in report_conf.key_negative_factors
+    assert "missing_source_confidence" in report_conf.warnings
+    assert "low_confidence" in report_conf.key_negative_factors
+    assert "low_confidence" in report_conf.warnings
+    assert "missing_data_quality_score" not in report_conf.key_negative_factors
+    assert "missing_data_quality_score" not in report_conf.warnings
+
+    # 2. Missing data_quality_score only
+    missing_dq = SiteScoreFeatureInput(
+        **base_kwargs,
+        average_confidence=0.92,
+        data_quality_score=None,
+    )
+    report_dq = score_sites([missing_dq], scored_at=PREDICTION_TIME)[0]
+    assert report_dq.confidence == 0.0
+    assert report_dq.recommendation is SiteScoreRecommendation.INVESTIGATE
+    assert "missing_data_quality_score" in report_dq.key_negative_factors
+    assert "missing_data_quality_score" in report_dq.warnings
+    assert "low_confidence" in report_dq.key_negative_factors
+    assert "low_confidence" in report_dq.warnings
+    assert "missing_source_confidence" not in report_dq.key_negative_factors
+    assert "missing_source_confidence" not in report_dq.warnings
+
+    # 3. Missing both
+    missing_both = SiteScoreFeatureInput(
+        **base_kwargs,
+        average_confidence=None,
+        data_quality_score=None,
+    )
+    report_both = score_sites([missing_both], scored_at=PREDICTION_TIME)[0]
+    assert report_both.confidence == 0.0
+    assert report_both.recommendation is SiteScoreRecommendation.INVESTIGATE
+    assert "missing_source_confidence" in report_both.key_negative_factors
+    assert "missing_data_quality_score" in report_both.key_negative_factors
+    assert "missing_source_confidence" in report_both.warnings
+    assert "missing_data_quality_score" in report_both.warnings
+
+    # 4. Compare with complete measurements (GO_SITE): unmeasured site cannot get GO
+    complete_report = score_sites([GO_SITE], scored_at=PREDICTION_TIME)[0]
+    assert complete_report.recommendation is SiteScoreRecommendation.GO
+    assert complete_report.confidence > 0.8
+    assert report_both.recommendation != complete_report.recommendation
+
+
+def test_sitescore_api_production_entry_fails_closed_on_missing_quality() -> None:
+    client = TestClient(create_app(), headers=SITESCORE_HEADERS)
+
+    # Ingest candidate with missing quality fields into API score job
+    response = client.post(
+        "/sitescore/score-jobs",
+        json={
+            "prediction_origin_time": PREDICTION_TIME.isoformat(),
+            "features": [
+                {
+                    "candidate_site_id": "CS-API-MISSING-001",
+                    "feature_snapshot_time": SNAPSHOT_TIME.isoformat(),
+                    "heat_zone_score": 82,
+                    "monthly_rent": 60_000,
+                    "area_ping": 25,
+                    "comparable_store_count": 5,
+                    "comparable_monthly_revenue_p50": 480_000,
+                    "buildout_capex": 2_500_000,
+                    "gross_margin_ratio": 0.6,
+                    "source_snapshot_ids": ["listing-20260627"],
+                    # average_confidence and data_quality_score omitted
+                },
+                {
+                    "candidate_site_id": "CS-API-NULL-002",
+                    "feature_snapshot_time": SNAPSHOT_TIME.isoformat(),
+                    "heat_zone_score": 82,
+                    "monthly_rent": 60_000,
+                    "area_ping": 25,
+                    "comparable_store_count": 5,
+                    "comparable_monthly_revenue_p50": 480_000,
+                    "buildout_capex": 2_500_000,
+                    "gross_margin_ratio": 0.6,
+                    "average_confidence": None,
+                    "data_quality_score": None,
+                    "source_snapshot_ids": ["listing-20260627"],
+                },
+            ],
+        },
+    )
+    assert response.status_code == 202
+    body = response.json()
+    assert len(body["reports"]) == 2
+
+    for r in body["reports"]:
+        assert r["confidence"] == 0.0
+        assert r["recommendation"] == "INVESTIGATE"
+        assert "missing_source_confidence" in r["warnings"]
+        assert "missing_data_quality_score" in r["warnings"]
+        assert "missing_source_confidence" in r["key_negative_factors"]
+        assert "missing_data_quality_score" in r["key_negative_factors"]

@@ -28,6 +28,10 @@ class PlanRequest:
     correlation_id: str
     items: Sequence[PricingPlanItem]
     plan_id: str | None = None
+    exploration_gate_id: str | None = None
+    exploration_algorithm: str = "THOMPSON_SAMPLING"
+    exploration_seed: int | None = None
+    exploration_history: Sequence[tuple[float, float]] | None = None
 
 
 @dataclass(frozen=True)
@@ -84,7 +88,14 @@ class PriceOpsOptimizerWorker:
                 plan_id=request.plan_id,
             )
             self.service.simulate(plan.plan_id, generated_at=moment)
-            optimization = self.service.optimize(plan.plan_id, optimized_at=moment)
+            optimization = self.service.optimize(
+                plan.plan_id,
+                optimized_at=moment,
+                exploration_gate_id=request.exploration_gate_id,
+                exploration_algorithm=request.exploration_algorithm,
+                exploration_seed=request.exploration_seed,
+                exploration_history=request.exploration_history,
+            )
             total_violations += optimization.hard_constraint_violation_count
             total_incremental += optimization.total_incremental_gross_margin
             plan_results.append(

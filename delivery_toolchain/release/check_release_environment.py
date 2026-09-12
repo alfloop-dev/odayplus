@@ -66,6 +66,7 @@ STAGING_FOUNDATION_VARIABLES = (
     "ODP_STAGING_KMS_KEY_ID",
     "ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT",
     "ODP_STAGING_TERRAFORM_STATE_BUCKET",
+    "ODP_STAGING_RECOVERY_BUNDLE_BUCKET",
 )
 
 REQUIRED_VARIABLES: dict[str, tuple[str, ...]] = {
@@ -78,6 +79,8 @@ REQUIRED_VARIABLES: dict[str, tuple[str, ...]] = {
         "ODP_CLOUD_RUN_WEB_SERVICE",
         "ODP_CLOUD_RUN_WORKER_JOB",
         "ODP_CLOUD_RUN_SCHEDULER_JOB",
+        "ODP_CLOUD_RUN_VPC_CONNECTOR",
+        "ODP_CLOUD_RUN_VPC_EGRESS",
     ),
     # admission 不部署也不 build，它只需要能讀共用 lease 狀態並驗章。
     "admission": (
@@ -94,6 +97,11 @@ REQUIRED_VARIABLES: dict[str, tuple[str, ...]] = {
         "ODP_CLOUD_RUN_MIGRATION_JOB",
         "ODP_CLOUD_RUN_WORKER_JOB",
         "ODP_CLOUD_RUN_SCHEDULER_JOB",
+        # Sources-off is only safe when the actual deploy environment resolves
+        # both halves of the VPC binding; an empty vars.* expression otherwise
+        # silently falls back to public Cloud Run egress.
+        "ODP_CLOUD_RUN_VPC_CONNECTOR",
+        "ODP_CLOUD_RUN_VPC_EGRESS",
     ),
     # Staging release-scoped names, endpoints, tenants, and service accounts
     # come from Terraform outputs. This gate admits only the long-lived
@@ -162,6 +170,20 @@ def binding_errors(
             "而不是變數的值有問題；請到該 environment 補齊後重跑。"
         )
 
+    if scope == "staging":
+        state_bucket = (values.get("ODP_STAGING_TERRAFORM_STATE_BUCKET") or "").strip()
+        recovery_bucket = (values.get("ODP_STAGING_RECOVERY_BUNDLE_BUCKET") or "").strip()
+        if state_bucket and recovery_bucket and state_bucket == recovery_bucket:
+            errors.append(
+                "staging 階段儲存邊界檢查失敗：ODP_STAGING_RECOVERY_BUNDLE_BUCKET "
+                "不得與 ODP_STAGING_TERRAFORM_STATE_BUCKET 相同；"
+                "recovery bundle 必須使用獨立受治理非 state 儲存，嚴禁寫入 Terraform state/lock-only bucket。"
+            )
+        if recovery_bucket.lower() in {"placeholder", "changeme", "dummy", "todo"}:
+            errors.append(
+                "staging 階段儲存邊界檢查失敗：ODP_STAGING_RECOVERY_BUNDLE_BUCKET 不得使用 placeholder 佔位值。"
+            )
+
     return errors
 
 
@@ -194,6 +216,16 @@ def build_receipt(
             f"缺少 {len(missing)} 個必要變數；此階段不得繼續執行。"
         )
 
+    # The egress mode is a non-secret runtime fact. Recording its resolved
+    # value lets the build handoff bind sources-off evidence to what GitHub
+    # actually injected, while all credentials and identity values remain
+    # presence-only.
+    resolved_non_secret_values = {}
+    if "ODP_CLOUD_RUN_VPC_EGRESS" in values:
+        resolved_non_secret_values["ODP_CLOUD_RUN_VPC_EGRESS"] = (
+            values.get("ODP_CLOUD_RUN_VPC_EGRESS") or ""
+        ).strip()
+
     return {
         "receipt_kind": RECEIPT_KIND,
         "schema_version": 1,
@@ -211,6 +243,7 @@ def build_receipt(
         "blockers_zh_tw": list(errors),
         "summary_zh_tw": summary,
         "secret_values_redacted": True,
+        "resolved_non_secret_values": resolved_non_secret_values,
     }
 
 

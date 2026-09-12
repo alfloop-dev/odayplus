@@ -1095,6 +1095,45 @@ def test_release_monitor_breach_recommends_rollback_and_leaves_alias_unchanged()
     )
 
 
+def test_release_monitor_api_forwards_explicit_baseline_metrics() -> None:
+    from shared.auth import Role
+    from tests.integration._authz import auth_headers
+
+    repository = InMemoryLearningHubRepository()
+    registry = MlflowRegistryAdapter(repository)
+    service = LearningHubService(
+        repository=repository,
+        registry=registry,
+        audit_log=InMemoryAuditLog(),
+    )
+    candidate = _prepare_candidate(service, "1.0.0")
+    decision = _release_full(service, version=candidate.version, rollback_target=candidate.version)
+    client = _release_api_client(repository, registry)
+
+    response = client.post(
+        f"/learninghub/releases/{decision.release_id}/monitor",
+        json={
+            "observed_metrics": {"p80_coverage": 0.70},
+            # This differs from the released model's p80_coverage (0.82). If
+            # the route drops this field, the model-record fallback breaches.
+            "baseline_metrics": {"p80_coverage": 0.70},
+            "guardrails": [
+                {
+                    "metric_name": "p80_coverage",
+                    "min_value": 0.50,
+                    "max_degradation": 0.01,
+                    "higher_is_better": True,
+                }
+            ],
+        },
+        headers=auth_headers(Role.MODEL_OWNER, subject="ml-owner"),
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["status"] == MonitorStatus.HEALTHY.value
+    assert response.json()["breaches"] == []
+
+
 def test_release_monitor_rejects_unknown_release() -> None:
     service = LearningHubService()
     with pytest.raises(LearningHubError, match="unknown release"):

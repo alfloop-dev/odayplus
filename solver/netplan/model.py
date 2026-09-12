@@ -27,6 +27,30 @@ class NetworkAction(StrEnum):
     EXIT = "EXIT"
 
 
+class ConstraintClass(StrEnum):
+    """The hard-constraint classes a network plan must honour (ODP-FR-NET-002).
+
+    The solver does not model all of them. That is not by itself a defect --
+    a plan built without a construction-capacity figure cannot honour one --
+    but reporting such a plan as simply "feasible" is, because "feasible under
+    the constraints we modelled" and "feasible under all eight" are different
+    claims that read identically.
+
+    ``NetPlanConstraints.modelled_classes`` and the matching field on the solve
+    result keep those two apart, so a reader can tell which question the answer
+    is an answer to.
+    """
+
+    CAPITAL = "CAPITAL"
+    LEASE = "LEASE"
+    CONSTRUCTION = "CONSTRUCTION"
+    EQUIPMENT = "EQUIPMENT"
+    LABOUR = "LABOUR"
+    COVERAGE = "COVERAGE"
+    DILUTION = "DILUTION"
+    SEQUENCING = "SEQUENCING"
+
+
 @dataclass(frozen=True)
 class ActionOption:
     entity_id: str
@@ -35,6 +59,28 @@ class ActionOption:
     budget_cost: float
     risk_score: float
     capacity_delta: int = 0
+
+    # Per-option consumption of the shared delivery resources. ``None`` means
+    # the caller did not supply the figure -- distinct from 0.0, which is a
+    # measured claim that this option consumes none of that resource. A cap set
+    # against a resource no option declares is refused rather than silently
+    # treated as unconstrained.
+    construction_days: float | None = None
+    equipment_units: float | None = None
+    labour_headcount: float | None = None
+
+    # Aggregate network effects.
+    coverage_delta: float | None = None
+
+    # Cannibalisation is an interaction between selected sites, not a per-option
+    # cost, so it is expressed as the catchment an option lands in; the solver
+    # caps how many openings may share one.
+    dilution_zone_id: str = ""
+
+    # Declared for sequencing. The model has no time dimension yet, so this is
+    # carried and reported, never constrained -- see ConstraintClass.SEQUENCING.
+    period_key: str = ""
+
     source_snapshot_ids: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
 
@@ -47,6 +93,12 @@ class ActionOption:
             budget_cost=float(data.get("budget_cost", data.get("cost", 0.0))),
             risk_score=_bounded(data.get("risk_score", data.get("risk", 0.0))),
             capacity_delta=int(data.get("capacity_delta", 0)),
+            construction_days=_optional_float(data.get("construction_days")),
+            equipment_units=_optional_float(data.get("equipment_units")),
+            labour_headcount=_optional_float(data.get("labour_headcount")),
+            coverage_delta=_optional_float(data.get("coverage_delta")),
+            dilution_zone_id=str(data.get("dilution_zone_id", "")),
+            period_key=str(data.get("period_key", "")),
             source_snapshot_ids=tuple(str(v) for v in data.get("source_snapshot_ids", ())),
             notes=tuple(str(v) for v in data.get("notes", ())),
         )
@@ -59,6 +111,12 @@ class ActionOption:
             "budget_cost": self.budget_cost,
             "risk_score": self.risk_score,
             "capacity_delta": self.capacity_delta,
+            "construction_days": self.construction_days,
+            "equipment_units": self.equipment_units,
+            "labour_headcount": self.labour_headcount,
+            "coverage_delta": self.coverage_delta,
+            "dilution_zone_id": self.dilution_zone_id,
+            "period_key": self.period_key,
             "source_snapshot_ids": list(self.source_snapshot_ids),
             "notes": list(self.notes),
         }
@@ -72,7 +130,50 @@ class NetPlanConstraints:
     max_average_risk: float | None = None
     min_action_counts: Mapping[NetworkAction, int] = field(default_factory=dict)
     max_action_counts: Mapping[NetworkAction, int] = field(default_factory=dict)
+
+    # Shared delivery resources. Each is the same shape as the budget: every
+    # option consumes some, and the plan may not consume more than exists.
+    max_construction_days: float | None = None
+    max_equipment_units: float | None = None
+    max_labour_headcount: float | None = None
+
+    # The network may not be left thinner than this by the plan as a whole.
+    min_coverage_delta: float | None = None
+
+    # At most this many OPEN actions may land in one catchment. A linear stand-in
+    # for cannibalisation: the full effect is pairwise between sites, which this
+    # model cannot express, but "do not open three stores in one catchment" is
+    # the part of it that a count can carry honestly.
+    max_open_per_dilution_zone: int | None = None
+
     policy_version: str = NETPLAN_POLICY_VERSION
+
+    def modelled_classes(self) -> tuple[ConstraintClass, ...]:
+        """Which of the eight classes this constraint set actually binds.
+
+        Capital is always bound: ``max_budget`` is required. The rest appear
+        only when a cap was supplied for them. Lease and sequencing never
+        appear -- the model has no lease admissibility check and no time
+        dimension, so a plan from this solver has never been tested against
+        either, and saying so is the point of this method.
+        """
+        present = [ConstraintClass.CAPITAL]
+        if self.max_construction_days is not None:
+            present.append(ConstraintClass.CONSTRUCTION)
+        if self.max_equipment_units is not None:
+            present.append(ConstraintClass.EQUIPMENT)
+        if self.max_labour_headcount is not None:
+            present.append(ConstraintClass.LABOUR)
+        if self.min_coverage_delta is not None:
+            present.append(ConstraintClass.COVERAGE)
+        if self.max_open_per_dilution_zone is not None:
+            present.append(ConstraintClass.DILUTION)
+        return tuple(present)
+
+    def unmodelled_classes(self) -> tuple[ConstraintClass, ...]:
+        """The complement: classes this solve says nothing about."""
+        modelled = set(self.modelled_classes())
+        return tuple(c for c in ConstraintClass if c not in modelled)
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> NetPlanConstraints:
@@ -83,6 +184,11 @@ class NetPlanConstraints:
             max_average_risk=_optional_float(data.get("max_average_risk", data.get("max_risk"))),
             min_action_counts=_action_count_mapping(data.get("min_action_counts", {})),
             max_action_counts=_action_count_mapping(data.get("max_action_counts", {})),
+            max_construction_days=_optional_float(data.get("max_construction_days")),
+            max_equipment_units=_optional_float(data.get("max_equipment_units")),
+            max_labour_headcount=_optional_float(data.get("max_labour_headcount")),
+            min_coverage_delta=_optional_float(data.get("min_coverage_delta")),
+            max_open_per_dilution_zone=_optional_int(data.get("max_open_per_dilution_zone")),
             policy_version=str(data.get("policy_version", NETPLAN_POLICY_VERSION)),
         )
 
@@ -94,7 +200,14 @@ class NetPlanConstraints:
             "max_average_risk": self.max_average_risk,
             "min_action_counts": {k.value: v for k, v in self.min_action_counts.items()},
             "max_action_counts": {k.value: v for k, v in self.max_action_counts.items()},
+            "max_construction_days": self.max_construction_days,
+            "max_equipment_units": self.max_equipment_units,
+            "max_labour_headcount": self.max_labour_headcount,
+            "min_coverage_delta": self.min_coverage_delta,
+            "max_open_per_dilution_zone": self.max_open_per_dilution_zone,
             "policy_version": self.policy_version,
+            "modelled_constraint_classes": [c.value for c in self.modelled_classes()],
+            "unmodelled_constraint_classes": [c.value for c in self.unmodelled_classes()],
         }
 
 

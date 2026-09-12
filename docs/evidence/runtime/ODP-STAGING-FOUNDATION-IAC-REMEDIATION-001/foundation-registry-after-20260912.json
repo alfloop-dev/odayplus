@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "python3",
+    "delivery_toolchain/e2e/check_release_gate_registry.py",
+    "--json"
+  ],
+  "started_at": "2026-09-12T14:39:33.245832+00:00",
+  "finished_at": "2026-09-12T14:39:33.410480+00:00",
+  "exit_code": 1,
+  "stdout": "{\n  \"registry_id\": \"ODP-RELEASE-GATE-REGISTRY\",\n  \"candidate_sha\": \"596b9c9a1788d952811a2bf8d4bba8a4e4d76b12\",\n  \"manifest_digest\": \"sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c\",\n  \"stage\": \"candidate-built\",\n  \"environment\": \"dev\",\n  \"admission_target\": \"dev\",\n  \"decision\": \"no-go\",\n  \"gate_count\": 7,\n  \"cleared_gates\": [],\n  \"blocking_gates\": [\n    \"gate-0\",\n    \"gate-1\",\n    \"gate-4\"\n  ],\n  \"integrity_errors\": [\n    \"release manifest: manifest.sources_off_attestation.egress_evidence.proof_source is not the checked-in Runtime Release egress contract\",\n    \"release manifest: manifest.sources_off_attestation.egress_evidence.contract_digest is not the checked-in Runtime Release egress contract\"\n  ],\n  \"release_state\": \"NO-GO\"\n}\n",
+  "stderr": "",
+  "base_head": "8f4a78f16ec5021ffd874d9ee4886d76d35e8b5c",
+  "merge_parent": "a04010cde22a0337fdda05a6fa5146f70cc699f4",
+  "source_sha256": {
+    "delivery_toolchain/release/release_manifest.py": "2b237c45a2cbce6f259ad8e9a924019f38f28b3f5a127fdfbe14bb39a359cb80",
+    "tests/release/test_foundation_egress_contract.py": "71434c81a5e0f9bebc5418b84a63473e9b0c2934d04c8b60503558fef19a0784"
+  }
+}

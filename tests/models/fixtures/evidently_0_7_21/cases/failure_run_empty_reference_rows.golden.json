@@ -1,0 +1,12 @@
+{
+  "case_id": "failure_run_empty_reference_rows",
+  "description": "The wrapper refuses an empty reference window before Evidently is imported.",
+  "failure": {
+    "exception_message": "Evidently drift monitoring requires reference and current rows",
+    "exception_module": "builtins",
+    "exception_type": "ValueError"
+  },
+  "kind": "data_drift",
+  "outcome": "raised",
+  "routing_expectation": "first-party guard in EvidentlyDriftMonitor.run"
+}

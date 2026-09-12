@@ -2,6 +2,7 @@
   "name": "@oday-plus/ui-domain",
   "version": "0.1.0",
   "private": true,
+  "license": "UNLICENSED",
   "description": "ODay Plus reusable domain UI contracts and React scaffolds.",
   "type": "module",
   "main": "src/index.ts",
