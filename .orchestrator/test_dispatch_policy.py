@@ -4999,7 +4999,8 @@ def test_exhausted_helper_budget_does_not_starve_exact_head_green_review(tmp_pat
 
 
 @pytest.mark.parametrize("mode", ["success", "sync_failure", "transient_reload_failure", "persistent_reload_failure"])
-def test_diagnostic_cas_advance_advisory_failure_preserves_canonical_freshness(tmp_path: Path, mode: str) -> None:
+@pytest.mark.parametrize("route", ["waiting", "ejected"])
+def test_diagnostic_cas_advance_advisory_failure_preserves_canonical_freshness(tmp_path: Path, mode: str, route: str) -> None:
     """Advance stage advisory commit failures must confirm canonical freshness or suppress dispatch."""
     cfg = _base_test_config()
     cfg["ready_dispatcher"]["helper_execution_lease"]["enabled"] = False
@@ -5046,7 +5047,10 @@ def test_diagnostic_cas_advance_advisory_failure_preserves_canonical_freshness(t
         disk = json.loads(canonical.read_text())
         before = disk["_status_write_revision"]
         assert before != "initial", "Actual CAS write must precede sync"
-        assert "awaiting merge queue" in disk["tasks"][0]["next"]
+        if route == "waiting":
+            assert "awaiting merge queue" in disk["tasks"][0]["next"]
+        else:
+            assert disk["tasks"][0]["status"] == "in_progress"
         disk["_status_write_revision"] = uuid.uuid4().hex
         disk["tasks"][1]["reviewer"] = "Codex"
         disk["external_marker"] = "preserved"
@@ -5074,7 +5078,7 @@ def test_diagnostic_cas_advance_advisory_failure_preserves_canonical_freshness(t
             stack.enter_context(mock.patch.object(supervisor, name, return_value=False))
         for name in ["recover_conflicted_review_prs", "recover_failed_ci_review_prs", "task_reality_reconcile_is_due"]:
             stack.enter_context(mock.patch.object(dispatch_engine, name, return_value=False))
-        stack.enter_context(mock.patch.object(dispatch_engine, "route_approved_pr_to_merge", return_value=("waiting", "")))
+        stack.enter_context(mock.patch.object(dispatch_engine, "route_approved_pr_to_merge", return_value=(route, "")))
         stack.enter_context(mock.patch.object(supervisor, "sync_status_pipeline", side_effect=sync))
         stack.enter_context(mock.patch.object(supervisor, "load_status", side_effect=load))
         stack.enter_context(mock.patch.object(supervisor, "load_event_queue", return_value=[]))

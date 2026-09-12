@@ -1,0 +1,10 @@
+{
+  "base_sha": "1d9a43c367c4f54d6e5dbf67d3cbb6061a94f497",
+  "source_sha256": {
+    ".orchestrator/dispatch_engine.py": "fc0ffcbd461670b35c491c359e3cb2d5234463f760286a8ff70e5a9ef5652491",
+    ".orchestrator/test_dispatch_policy.py": "0d24bc42a245fe956b5fa0358edf88bafecfc804c22e130dcb73048635fb9cce"
+  },
+  "red": "2 failures in ejected transient/persistent canonical reload; six controls pass",
+  "green": "64 selected dispatch/recovery checks pass",
+  "behavior": "After failed mandatory ejected requeue, reload canonical snapshot before any further routing, or return None to suppress dispatch. Never retry mandatory mutation as advisory."
+}

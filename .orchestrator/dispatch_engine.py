@@ -834,7 +834,7 @@ def advance_approved_prs_to_merge(
     config: dict[str, Any],
     status: dict[str, Any],
     finalize_statuses: set[str],
-) -> bool:
+) -> bool | None:
     """Route every reviewed, CI-green PR onto the merge path its scope requires.
 
     This deliberately runs outside the per-agent dispatch loop.  That loop skips
@@ -938,6 +938,18 @@ def advance_approved_prs_to_merge(
                 clear_approval=True,
             ):
                 changed = True
+                advisory_changed = False
+            else:
+                # A failed mandatory requeue may already have committed a CAS
+                # before sync or its reload failed. Do not route from that old
+                # snapshot, and do not retry the mandatory write as advisory.
+                try:
+                    fresh = load_status(config)
+                except Exception:
+                    return None
+                if not isinstance(fresh, dict) or tasks_path not in fresh:
+                    return None
+                sync_status_snapshot_dict(config, status, fresh)
                 advisory_changed = False
             continue
         else:
