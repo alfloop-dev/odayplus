@@ -1,12 +1,12 @@
 {
   "task_id": "DPF-EMGI-LIVE-ROLLOUT-001",
-  "collected_at": "2026-09-11T12:35:00Z",
+  "collected_at": "2026-09-12T09:15:00Z",
   "collector": "Antigravity3",
   "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/dpf-emgi-live-rollout-001",
   "provenance_metadata": {
-    "target_dev_baseline": "2889b55fb1febe95c9f8650f24ead18e86015cca",
-    "pre_fix_parent_sha": "294b67e7b040be26e71cf416df65cbd9f3bf2d8c",
-    "reviewed_head_sha": "40638367bca061d66c474af8fdba9e2a3d51ed0d",
+    "target_dev_baseline": "4b35121031d044ea595d24b7a42bb243c39386d7",
+    "pre_fix_parent_sha": "e71669e76e458e2dad835c47d9e83d8865de74da",
+    "reviewed_head_sha": "e71669e76e458e2dad835c47d9e83d8865de74da",
     "cross_repo_source": "alfloop-dev/oday-data-platform",
     "cross_repo_pr": 62,
     "cross_repo_head_sha": "71ecbe0d982f3f93c976fa0104a82903d2a071cf",
@@ -15,30 +15,33 @@
   "receipts": [
     {
       "label": "pr_metadata_readback",
-      "command": "gh api repos/alfloop-dev/oday-data-platform/pulls/62",
-      "exit_code": 0,
-      "executed_at": "2026-09-11T12:06:00Z",
-      "duration_seconds": 0.85,
+      "evidence_nature": "reused_historical_evidence",
+      "source_document": "support/handoffs/archive-recovery-dispatch-20260911/DPF-EMGI-LIVE-ROLLOUT-001/original-evidence.json",
+      "reused_from": "support/handoffs/archive-recovery-dispatch-20260911/DPF-EMGI-LIVE-ROLLOUT-001/original-evidence.json#entry.pull_request",
       "result_reference": "support/handoffs/archive-recovery-dispatch-20260911/DPF-EMGI-LIVE-ROLLOUT-001/original-evidence.json#entry.pull_request",
-      "summary": "Verified PR #62 state MERGED at 2026-08-25T14:24:47Z, merge commit e3ecd2f199fe051aba8d3d33005c217036a9c88e, head sha 71ecbe0d982f3f93c976fa0104a82903d2a071cf, author ajoe734"
+      "command": "reused_historical_readback: gh api repos/alfloop-dev/oday-data-platform/pulls/62",
+      "exit_code": 0,
+      "summary": "Reused historical PR #62 metadata: state MERGED at 2026-08-25T14:24:47Z, merge commit e3ecd2f199fe051aba8d3d33005c217036a9c88e, head sha 71ecbe0d982f3f93c976fa0104a82903d2a071cf, author ajoe734"
     },
     {
       "label": "exact_head_check_runs_readback",
-      "command": "gh api repos/alfloop-dev/oday-data-platform/commits/71ecbe0d982f3f93c976fa0104a82903d2a071cf/check-runs",
-      "exit_code": 0,
-      "executed_at": "2026-09-11T12:06:01Z",
-      "duration_seconds": 0.72,
+      "evidence_nature": "reused_historical_evidence",
+      "source_document": "support/handoffs/archive-recovery-dispatch-20260911/DPF-EMGI-LIVE-ROLLOUT-001/original-evidence.json",
+      "reused_from": "support/handoffs/archive-recovery-dispatch-20260911/DPF-EMGI-LIVE-ROLLOUT-001/original-evidence.json#entry.ci_at_exact_head",
       "result_reference": "support/handoffs/archive-recovery-dispatch-20260911/DPF-EMGI-LIVE-ROLLOUT-001/original-evidence.json#entry.ci_at_exact_head",
-      "summary": "Verified 7/7 success CI checks at exact head 71ecbe0d (source-suite, closeout-audit, consumer-readback, producer-compatibility, contract-bundles, emgi-task-manifest, Build and smoke test images)"
+      "command": "reused_historical_readback: gh api repos/alfloop-dev/oday-data-platform/commits/71ecbe0d982f3f93c976fa0104a82903d2a071cf/check-runs",
+      "exit_code": 0,
+      "summary": "Reused historical exact-head CI evidence: 7/7 success CI checks at exact head 71ecbe0d (source-suite, closeout-audit, consumer-readback, producer-compatibility, contract-bundles, emgi-task-manifest, Build and smoke test images)"
     },
     {
       "label": "exact_head_review_gate_status_readback",
-      "command": "gh api repos/alfloop-dev/oday-data-platform/commits/71ecbe0d982f3f93c976fa0104a82903d2a071cf/status",
-      "exit_code": 0,
-      "executed_at": "2026-09-11T12:06:02Z",
-      "duration_seconds": 0.65,
+      "evidence_nature": "reused_historical_evidence",
+      "source_document": "support/handoffs/archive-recovery-dispatch-20260911/DPF-EMGI-LIVE-ROLLOUT-001/original-evidence.json",
+      "reused_from": "support/handoffs/archive-recovery-dispatch-20260911/DPF-EMGI-LIVE-ROLLOUT-001/original-evidence.json#entry.review_approval_evidence",
       "result_reference": "support/handoffs/archive-recovery-dispatch-20260911/DPF-EMGI-LIVE-ROLLOUT-001/original-evidence.json#entry.review_approval_evidence",
-      "summary": "Verified task-review-gate state success approved by Codex2 at 2026-08-25T14:24:40Z"
+      "command": "reused_historical_readback: gh api repos/alfloop-dev/oday-data-platform/commits/71ecbe0d982f3f93c976fa0104a82903d2a071cf/status",
+      "exit_code": 0,
+      "summary": "Reused historical review approval evidence: task-review-gate state success approved by Codex2 at 2026-08-25T14:24:40Z"
     },
     {
       "label": "rollout_binding_readback",
@@ -153,10 +156,12 @@
       "label": "focused_reconciliation_verification",
       "command": "bash docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/DPF-EMGI-LIVE-ROLLOUT-001/verify_reconciliation.sh",
       "exit_code": 0,
-      "executed_at": "2026-09-11T12:35:00Z",
-      "duration_seconds": 0.45,
-      "result_reference": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/DPF-EMGI-LIVE-ROLLOUT-001/verify_reconciliation.sh",
-      "summary": "Substantive offline reconciliation verification verifying A1-A4 met_by_receipt, A5 unmet_per_own_receipt, DAG cycle-free status across 10 dependencies of remediation and 2 of snapshot, artifact hashes, git baseline, and receipt structure."
+      "executed_at": "2026-09-12T09:15:00Z",
+      "duration_seconds": 0.35,
+      "result_reference": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/DPF-EMGI-LIVE-ROLLOUT-001/verification-terminal-output.txt",
+      "input_script": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/DPF-EMGI-LIVE-ROLLOUT-001/verify_reconciliation.sh",
+      "input_reconciliation": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/DPF-EMGI-LIVE-ROLLOUT-001/acceptance-reconciliation.json",
+      "summary": "Substantive offline reconciliation verification verifying A1-A4 met_by_receipt, A5 unmet_per_own_receipt, dynamic DAG cycle-free status across 12 derived dependencies (10 remediation + 2 snapshot), raw artifact bytes read and hashed against recorded digests, git baseline, and receipt structure."
     }
   ]
 }

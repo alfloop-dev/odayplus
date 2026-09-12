@@ -8,8 +8,9 @@
 - **執行身分 (Owner)**: `Antigravity3`
 - **指派審查者 (Reviewer)**: `Codex`
 - **復原目標分支**: `task/DPF-EMGI-LIVE-ROLLOUT-001-RECOVERY-20260911`
-- **對照基準 (Target Dev Baseline)**: `2889b55fb1febe95c9f8650f24ead18e86015cca`
-- **Pre-fix Parent Commit**: `294b67e7b040be26e71cf416df65cbd9f3bf2d8c`
+- **對照基準 (Target Dev Baseline)**: `4b35121031d044ea595d24b7a42bb243c39386d7`
+- **Pre-fix Parent Commit**: `e71669e76e458e2dad835c47d9e83d8865de74da`
+- **Reviewed Head SHA**: `e71669e76e458e2dad835c47d9e83d8865de74da`
 - **交付儲存庫**: 原始跨儲存庫交付於 `alfloop-dev/oday-data-platform`（PR #62），本補證記錄交付於 `alfloop-dev/odayplus`。
 
 本任務原始交付物於 2026-08-25 經由跨 repo PR [#62](https://github.com/alfloop-dev/oday-data-platform/pull/62)（標題：`DPF-EMGI-LIVE-ROLLOUT-001: exact-digest publish 與 EMGI sources-off runtime`）合併入 `dev`（PR head: `71ecbe0d982f3f93c976fa0104a82903d2a071cf`，merge commit: `e3ecd2f199fe051aba8d3d33005c217036a9c88e`）。

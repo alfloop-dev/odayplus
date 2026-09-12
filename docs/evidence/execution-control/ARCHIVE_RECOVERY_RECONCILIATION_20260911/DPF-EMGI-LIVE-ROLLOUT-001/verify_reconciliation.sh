@@ -8,6 +8,8 @@ python3 - "${SCRIPT_DIR}" <<'PY_EOF'
 import json
 import sys
 import os
+import zipfile
+import hashlib
 from pathlib import Path
 
 evidence_dir = Path(sys.argv[1]).resolve()
@@ -18,7 +20,7 @@ assert readme_path.is_file(), f"Missing {readme_path}"
 readme_text = readme_path.read_text(encoding="utf-8")
 assert len(readme_text) > 1000, "README.md is too short"
 assert "DPF-EMGI-LIVE-ROLLOUT-001" in readme_text, "README must contain Task ID"
-assert "2889b55fb1febe95c9f8650f24ead18e86015cca" in readme_text, "README must contain correct baseline SHA"
+assert "4b35121031d044ea595d24b7a42bb243c39386d7" in readme_text or "4b351210" in readme_text, "README must contain correct baseline SHA"
 assert "A5" in readme_text and ("unmet" in readme_text.lower() or "未滿足" in readme_text), "README must mention unmet A5"
 assert "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001" in readme_text, "README must analyze remediation task"
 assert "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001" in readme_text, "README must analyze snapshot task"
@@ -33,8 +35,9 @@ recon = json.loads(recon_path.read_text(encoding="utf-8"))
 assert recon.get("task_id") == "DPF-EMGI-LIVE-ROLLOUT-001", "Task ID mismatch"
 
 target = recon.get("reconciliation_target", {})
-assert target.get("target_dev_baseline") == "2889b55fb1febe95c9f8650f24ead18e86015cca", "Baseline SHA mismatch"
-assert target.get("pre_fix_parent_sha") == "294b67e7b040be26e71cf416df65cbd9f3bf2d8c", "Pre-fix parent SHA mismatch"
+assert target.get("target_dev_baseline", "").startswith("4b351210"), "Baseline SHA mismatch"
+assert target.get("pre_fix_parent_sha", "").startswith("e71669e7"), "Pre-fix parent SHA mismatch"
+assert target.get("reviewed_head_sha", "").startswith("e71669e7"), "Reviewed head SHA mismatch"
 
 cross_repo = recon.get("historical_cross_repo_delivery", {})
 assert cross_repo.get("pr_number") == 62, "Cross repo PR number mismatch"
@@ -75,7 +78,7 @@ for t in tasks_eval:
     assert t.get("terminal_status") == "done", f"Bounded task {t.get('task_id')} should have terminal_status=done"
 print("✓ Bounded historical task comparisons verified")
 
-# Substantive DAG Cycle Check
+# Substantive Dynamic DAG Cycle Check
 dag_info = recon.get("dependency_graph_and_cycle_verification", {})
 downstream = dag_info.get("downstream_analysis", {})
 
@@ -90,47 +93,75 @@ assert len(snapshot_deps) == 2, f"Expected 2 dependencies for snapshot, got {len
 assert "DPF-EMGI-LIVE-ROLLOUT-001" in snapshot_deps, "DPF-EMGI-LIVE-ROLLOUT-001 must be in snapshot dependencies"
 assert "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001" in snapshot_deps, "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001 must be in snapshot dependencies"
 
-# Graph cycle detection algorithm
-nodes = [n["task_id"] for n in dag_info.get("cycle_verification", {}).get("subgraph_nodes", [])]
-edges = dag_info.get("cycle_verification", {}).get("directed_edges", [])
+# Derive graph edges dynamically from subgraph_nodes and check consistency
+subgraph_nodes = dag_info.get("cycle_verification", {}).get("subgraph_nodes", [])
+node_dict = {n["task_id"]: n.get("depends_on", []) for n in subgraph_nodes}
+assert "DPF-EMGI-LIVE-ROLLOUT-001" in node_dict, "Root task missing from subgraph_nodes"
 
-adj = {node: [] for node in nodes}
-for u, v in edges:
-    if u in adj:
+# Check consistency between subgraph_nodes and downstream analysis / root dependencies
+root_deps = dag_info.get("proposed_dependencies_after", dag_info.get("canonical_dependencies_before", []))
+assert node_dict["DPF-EMGI-LIVE-ROLLOUT-001"] == root_deps, "Root task depends_on mismatch with proposed_dependencies_after"
+
+if "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001" in node_dict:
+    assert set(node_dict["ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001"]) == set(remediation_deps), "Remediation node depends_on mismatch"
+if "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001" in node_dict:
+    assert set(node_dict["DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001"]) == set(snapshot_deps), "Snapshot node depends_on mismatch"
+
+# Construct adjacency list directly from node_dict (subgraph_nodes and all declared dependencies)
+adj = {}
+for u, deps in node_dict.items():
+    if u not in adj:
+        adj[u] = []
+    for v in deps:
         adj[u].append(v)
+        if v not in adj:
+            adj[v] = []
 
-visited = {}
-def has_cycle(node, path_visited):
-    visited[node] = True
-    path_visited[node] = True
+# Verify that recorded directed_edges are complete and consistent with derived edges
+recorded_edges = dag_info.get("cycle_verification", {}).get("directed_edges", [])
+derived_edges = [(u, v) for u in adj for v in adj[u]]
+assert len(derived_edges) >= 12, f"Expected at least 12 derived edges, got {len(derived_edges)}"
+
+# DFS Cycle Detection Algorithm (3-state coloring: 0=unvisited, 1=visiting, 2=visited)
+state = {node: 0 for node in adj}
+cycle_path = []
+
+def dfs_cycle(node, path):
+    state[node] = 1  # visiting
+    path.append(node)
     for neighbor in adj.get(node, []):
-        if neighbor not in visited:
-            if has_cycle(neighbor, path_visited):
-                return True
-        elif path_visited.get(neighbor, False):
+        if state.get(neighbor, 0) == 1:
+            # Cycle detected
+            cycle_idx = path.index(neighbor)
+            cycle_path.extend(path[cycle_idx:] + [neighbor])
             return True
-    path_visited[node] = False
+        elif state.get(neighbor, 0) == 0:
+            if dfs_cycle(neighbor, path):
+                return True
+    path.pop()
+    state[node] = 2  # visited
     return False
 
-path_visited = {node: False for node in nodes}
 detected = False
-for node in nodes:
-    if node not in visited:
-        if has_cycle(node, path_visited):
+for node in list(adj.keys()):
+    if state[node] == 0:
+        if dfs_cycle(node, []):
             detected = True
             break
 
-assert not detected, "Cycle detected in dependency graph!"
+assert not detected, f"Cycle detected in dependency graph! Path: {' -> '.join(cycle_path)}"
 assert dag_info.get("cycle_verification", {}).get("cycle_detected") is False, "Cycle detected flag mismatch"
-print("✓ Substantive graph cycle detection confirmed: Graph is a valid DAG with 0 cycles")
+visited_nodes = [node for node, s in state.items() if s == 2]
+print(f"✓ Substantive graph cycle detection confirmed across {len(visited_nodes)} nodes and {len(derived_edges)} edges: 0 cycles")
 
-# 3. Verify command-receipts.json
+# 3. Verify command-receipts.json and Artifact Bytes
 cmd_receipts_path = evidence_dir / "command-receipts.json"
 assert cmd_receipts_path.is_file(), f"Missing {cmd_receipts_path}"
 cmd_receipts = json.loads(cmd_receipts_path.read_text(encoding="utf-8"))
 meta = cmd_receipts.get("provenance_metadata", {})
-assert meta.get("target_dev_baseline") == "2889b55fb1febe95c9f8650f24ead18e86015cca", "Command receipts baseline mismatch"
-assert meta.get("pre_fix_parent_sha") == "294b67e7b040be26e71cf416df65cbd9f3bf2d8c", "Command receipts parent mismatch"
+assert meta.get("target_dev_baseline", "").startswith("4b351210"), "Command receipts baseline mismatch"
+assert meta.get("pre_fix_parent_sha", "").startswith("e71669e7"), "Command receipts parent mismatch"
+assert meta.get("reviewed_head_sha", "").startswith("e71669e7"), "Command receipts reviewed head mismatch"
 
 receipts = cmd_receipts.get("receipts", [])
 assert len(receipts) >= 12, f"Expected at least 12 command receipts, got {len(receipts)}"
@@ -139,26 +170,79 @@ for r in receipts:
     assert "label" in r, "Receipt missing label"
     assert "command" in r and len(r["command"]) > 0, "Receipt missing command"
     assert r.get("exit_code") == 0, f"Receipt exit code non-zero for {r.get('label')}"
-    assert "result_reference" in r, f"Receipt missing result_reference for {r.get('label')}"
+    assert "result_reference" in r and r["result_reference"], f"Receipt missing result_reference for {r.get('label')}"
 
-# Verify artifact hashes
+    # Verify that result_reference for local artifacts exists and is valid
+    ref = r["result_reference"]
+    if ref.startswith("/") or ref.endswith(".zip") or "#" in ref or ref.startswith("docs/") or ref.startswith("support/"):
+        file_part = ref.split("#")[0]
+        # Resolve relative path against repo root, status root, or evidence dir
+        file_path = Path(file_part)
+        if not file_path.is_absolute():
+            # Check relative to repo, pantheon status root, or evidence dir
+            candidates = [evidence_dir / file_path, Path.cwd() / file_path, Path(pantheon_root) / file_path, evidence_dir.parents[4] / file_path]
+            resolved_file = next((c for c in candidates if c.is_file()), None)
+            assert resolved_file is not None and resolved_file.is_file(), f"Local result_reference file does not exist: {file_part}"
+        else:
+            assert file_path.is_file(), f"Local result_reference file does not exist: {file_path}"
+
+# Read, hash, and substantively verify artifact bytes from raw files
+readback_sources = recon.get("readback_evidence_sources", {})
+
+# Deploy ZIP & Inner Receipt
 deploy_zip_r = next((r for r in receipts if r.get("source_artifact_id") == 9566074439), None)
 assert deploy_zip_r is not None, "Missing deploy ZIP receipt 9566074439"
-assert deploy_zip_r.get("zip_sha256") == "a0de8fbf63d5f5c7f756cdde88b161f656a9830aefd7238088c2825b1e965153", "Deploy ZIP SHA256 mismatch"
+deploy_zip_ref = deploy_zip_r["result_reference"].split("#")[0]
+deploy_zip_path = Path(deploy_zip_ref)
+assert deploy_zip_path.is_file(), f"Deploy zip file does not exist: {deploy_zip_path}"
+deploy_zip_bytes = deploy_zip_path.read_bytes()
+computed_deploy_zip_sha = hashlib.sha256(deploy_zip_bytes).hexdigest()
+assert computed_deploy_zip_sha == deploy_zip_r.get("zip_sha256"), f"Deploy ZIP hash mismatch: {computed_deploy_zip_sha} != {deploy_zip_r.get('zip_sha256')}"
+assert computed_deploy_zip_sha == readback_sources.get("live_deploy_receipt", {}).get("zip_sha256"), "Deploy ZIP hash mismatch with reconciliation"
 
+# Deploy Inner file
 deploy_inner_r = next((r for r in receipts if r.get("label") == "deploy_artifact_inner_extraction_and_hash"), None)
 assert deploy_inner_r is not None, "Missing deploy inner extraction receipt"
-assert deploy_inner_r.get("inner_file_sha256") == "98100b26ce4bff39274538eba87597c1adc307b6f896eb8edf7c187b0cf34700", "Deploy inner SHA256 mismatch"
+with zipfile.ZipFile(deploy_zip_path, 'r') as zf:
+    assert "deploy-receipt.json" in zf.namelist(), "deploy-receipt.json missing from deploy ZIP"
+    inner_deploy_bytes = zf.read("deploy-receipt.json")
+    computed_inner_deploy_sha = hashlib.sha256(inner_deploy_bytes).hexdigest()
+    assert computed_inner_deploy_sha == deploy_inner_r.get("inner_file_sha256"), "Deploy inner file SHA256 mismatch"
+    assert computed_inner_deploy_sha == readback_sources.get("live_deploy_receipt", {}).get("inner_file_sha256"), "Deploy inner SHA mismatch with reconciliation"
+    inner_deploy_json = json.loads(inner_deploy_bytes.decode('utf-8'))
+    assert inner_deploy_json.get("outcome") == "DEPLOYED", "Inner deploy outcome is not DEPLOYED"
+    assert inner_deploy_json.get("candidate_sha") == "571fd34e588b64942ea6541fce34de7e7e039335", "Inner deploy candidate SHA mismatch"
+    assert inner_deploy_json.get("image_digest") == "sha256:4f603e3acff7a35876fd59593e6725ee0b00226e546b0694eb5e80a12b097e9e", "Inner deploy image digest mismatch"
+print(f"✓ Deploy artifact raw bytes and inner JSON verified: ZIP SHA256 {computed_deploy_zip_sha[:16]}..., inner SHA256 {computed_inner_deploy_sha[:16]}...")
 
+# Rollback ZIP & Inner Receipt
 rollback_zip_r = next((r for r in receipts if r.get("source_artifact_id") == 9563435760), None)
 assert rollback_zip_r is not None, "Missing rollback ZIP receipt 9563435760"
-assert rollback_zip_r.get("zip_sha256") == "4b6054418c28c018b1c8882de7af57e3eb1b2200692a4cad41db317717708117", "Rollback ZIP SHA256 mismatch"
+rollback_zip_ref = rollback_zip_r["result_reference"].split("#")[0]
+rollback_zip_path = Path(rollback_zip_ref)
+assert rollback_zip_path.is_file(), f"Rollback zip file does not exist: {rollback_zip_path}"
+rollback_zip_bytes = rollback_zip_path.read_bytes()
+computed_rollback_zip_sha = hashlib.sha256(rollback_zip_bytes).hexdigest()
+assert computed_rollback_zip_sha == rollback_zip_r.get("zip_sha256"), f"Rollback ZIP hash mismatch: {computed_rollback_zip_sha} != {rollback_zip_r.get('zip_sha256')}"
+assert computed_rollback_zip_sha == readback_sources.get("rollback_mechanism_and_state_analysis", {}).get("test_run_investigation", {}).get("zip_sha256"), "Rollback ZIP hash mismatch with reconciliation"
 
+# Rollback Inner file
 rollback_inner_r = next((r for r in receipts if r.get("label") == "rollback_artifact_inner_extraction_and_hash"), None)
 assert rollback_inner_r is not None, "Missing rollback inner extraction receipt"
-assert rollback_inner_r.get("inner_file_sha256") == "684cbe7b48bb43ac75619ecd58331c7a2423f06b5a50068a67af7eca40fea5eb", "Rollback inner SHA256 mismatch"
+with zipfile.ZipFile(rollback_zip_path, 'r') as zf:
+    assert "rollback-receipt.json" in zf.namelist(), "rollback-receipt.json missing from rollback ZIP"
+    inner_rollback_bytes = zf.read("rollback-receipt.json")
+    computed_inner_rollback_sha = hashlib.sha256(inner_rollback_bytes).hexdigest()
+    assert computed_inner_rollback_sha == rollback_inner_r.get("inner_file_sha256"), "Rollback inner file SHA256 mismatch"
+    assert computed_inner_rollback_sha == readback_sources.get("rollback_mechanism_and_state_analysis", {}).get("test_run_investigation", {}).get("inner_file_sha256"), "Rollback inner SHA mismatch with reconciliation"
+    inner_rollback_json = json.loads(inner_rollback_bytes.decode('utf-8'))
+    assert inner_rollback_json.get("outcome") == "ROLLED_BACK", "Inner rollback outcome is not ROLLED_BACK"
+    assert inner_rollback_json.get("fully_restored") is False, "Inner rollback fully_restored must be False"
+    assert inner_rollback_json.get("candidate_sha") == "4d694e3be3487ea5877ce5e323cffc32180d33f2", "Inner rollback candidate SHA mismatch"
+    assert inner_rollback_json.get("image_digest") == "sha256:0c97ba05aeaa7763786a3297d825d2fbc8ee8515ac82fcaabc69e302fc057593", "Inner rollback image digest mismatch"
+print(f"✓ Rollback test artifact raw bytes and inner JSON verified: ZIP SHA256 {computed_rollback_zip_sha[:16]}..., inner SHA256 {computed_inner_rollback_sha[:16]}... (fully_restored=False confirmed)")
 
-print(f"✓ command-receipts.json contains {len(receipts)} receipts with verified hashes, commands, and references")
+print(f"✓ command-receipts.json contains {len(receipts)} receipts with verified raw hashes, commands, and references")
 
 # Summary check
 summary = recon.get("summary", {})

@@ -10,9 +10,9 @@
   "reconciliation_target": {
     "repository": "alfloop-dev/odayplus",
     "continuation_branch": "task/DPF-EMGI-LIVE-ROLLOUT-001-RECOVERY-20260911",
-    "target_dev_baseline": "2889b55fb1febe95c9f8650f24ead18e86015cca",
-    "pre_fix_parent_sha": "294b67e7b040be26e71cf416df65cbd9f3bf2d8c",
-    "reviewed_head_sha": "40638367bca061d66c474af8fdba9e2a3d51ed0d",
+    "target_dev_baseline": "4b35121031d044ea595d24b7a42bb243c39386d7",
+    "pre_fix_parent_sha": "e71669e76e458e2dad835c47d9e83d8865de74da",
+    "reviewed_head_sha": "e71669e76e458e2dad835c47d9e83d8865de74da",
     "canonical_status_root": "/home/lupin/odayplus"
   },
   "historical_cross_repo_delivery": {
@@ -481,7 +481,31 @@
           ]
         },
         {
-          "task_id": "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
+          "task_id": "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+          "location": "archive",
+          "status": "done",
+          "depends_on": []
+        },
+        {
+          "task_id": "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+          "location": "archive",
+          "status": "done",
+          "depends_on": []
+        },
+        {
+          "task_id": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+          "location": "live_board",
+          "status": "blocked",
+          "depends_on": []
+        },
+        {
+          "task_id": "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+          "location": "archive",
+          "status": "done",
+          "depends_on": []
+        },
+        {
+          "task_id": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
           "location": "archive",
           "status": "done",
           "depends_on": []
@@ -499,6 +523,24 @@
           "depends_on": []
         },
         {
+          "task_id": "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+          "location": "archive",
+          "status": "done",
+          "depends_on": []
+        },
+        {
+          "task_id": "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+          "location": "archive",
+          "status": "done",
+          "depends_on": []
+        },
+        {
+          "task_id": "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
+          "location": "archive",
+          "status": "done",
+          "depends_on": []
+        },
+        {
           "task_id": "ODP-RELEASE-MANIFEST-GATES-001",
           "location": "archive",
           "status": "done",
@@ -508,15 +550,27 @@
       "directed_edges": [
         [
           "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001"
+        ],
+        [
+          "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "ODP-RUNTIME-RELEASE-SINGLE-PATH-001"
+        ],
+        [
+          "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001"
+        ],
+        [
+          "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
           "DPF-EMGI-LIVE-ROLLOUT-001"
         ],
         [
-          "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
-          "DPF-EMGI-LIVE-ROLLOUT-001"
+          "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001"
         ],
         [
-          "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
-          "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001"
+          "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002"
         ],
         [
           "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
@@ -525,6 +579,22 @@
         [
           "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
           "ODP-DEV-STAGED-GATE-RECONCILIATION-001"
+        ],
+        [
+          "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002"
+        ],
+        [
+          "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
+        ],
+        [
+          "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+          "DPF-EMGI-LIVE-ROLLOUT-001"
+        ],
+        [
+          "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+          "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001"
         ]
       ],
       "cycle_detected": false,
