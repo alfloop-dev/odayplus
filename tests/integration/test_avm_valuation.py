@@ -1276,6 +1276,7 @@ def test_durable_avm_repository_legacy_pre_depreciation_stored_payload_read_and_
         reason="legacy dataroom ready",
         correlation_id="corr-legacy-predep",
     )
+    legacy_input.__dict__.pop("feature_version", None)
     store.put(repository._CASES, legacy_case.case_id, legacy_case)
 
     # 2. Construct pre-upgrade ValuationReport omitting depreciation_version/depreciation_applied
@@ -1304,6 +1305,8 @@ def test_durable_avm_repository_legacy_pre_depreciation_stored_payload_read_and_
             correlation_id="corr-legacy-predep",
         ),
     )
+    report = replace(report, feature_version="valuation-view-v1")
+    report.normalized_margin.__dict__.pop("feature_version", None)
     raw_legacy_report = report
     for k in ("depreciation_version", "depreciation_applied"):
         if k in raw_legacy_report.__dict__:
@@ -1329,6 +1332,7 @@ def test_durable_avm_repository_legacy_pre_depreciation_stored_payload_read_and_
     # 4. Read back via repository
     latest = repository.latest_report(legacy_case.case_id)
     assert latest is not None
+    _assert_historical_nested_avm_versions(repository, legacy_case.case_id, raw_legacy_report.report_id)
     assert latest.report_id == raw_legacy_report.report_id
     assert latest.store_id == "store-legacy-predep-01"
     assert latest.fair_price.p50 == raw_legacy_report.fair_price.p50
@@ -1429,6 +1433,7 @@ def test_postgresql_durable_avm_repository_legacy_pre_depreciation_read_and_expo
             reason="legacy dataroom ready",
             correlation_id="corr-pg-legacy-predep",
         )
+        legacy_input.__dict__.pop("feature_version", None)
         store.put(repository._CASES, legacy_case.case_id, legacy_case)
 
         margin = NormalizedMargin(
@@ -1456,6 +1461,8 @@ def test_postgresql_durable_avm_repository_legacy_pre_depreciation_read_and_expo
                 correlation_id="corr-pg-legacy-predep",
             ),
         )
+        report = replace(report, feature_version="valuation-view-v1")
+        report.normalized_margin.__dict__.pop("feature_version", None)
         raw_legacy_report = report
         for k in ("depreciation_version", "depreciation_applied"):
             if k in raw_legacy_report.__dict__:
@@ -1479,6 +1486,7 @@ def test_postgresql_durable_avm_repository_legacy_pre_depreciation_read_and_expo
 
         latest = repository.latest_report(legacy_case.case_id)
         assert latest is not None
+        _assert_historical_nested_avm_versions(repository, legacy_case.case_id, raw_legacy_report.report_id)
         assert latest.report_id == raw_legacy_report.report_id
         assert latest.store_id == "store-pg-legacy-predep-01"
         assert latest.fair_price.p50 == raw_legacy_report.fair_price.p50
@@ -1817,3 +1825,23 @@ def test_api_operational_rollback_with_valid_receipt_preserves_v1_history(tmp_pa
     bundle.engine.close()
 
 
+
+
+def _assert_historical_nested_avm_versions(repository, case_id, report_id):
+    assert repository.get_case(case_id).valuation_input.to_dict()["feature_version"] == "valuation-view-v1"
+    for report in [repository.latest_report(case_id), *repository.report_history(case_id)]:
+        payload = report.to_dict()
+        assert payload["report_id"] == report_id
+        assert payload["feature_version"] == "valuation-view-v1"
+        assert payload["normalized_margin"]["feature_version"] == "valuation-view-v1"
+        assert report.with_legacy_quality_disposition().to_dict()["normalized_margin"]["feature_version"] == "valuation-view-v1"
+        assert report.normalized_margin.with_legacy_quality_disposition().to_dict()["feature_version"] == "valuation-view-v1"
+    client = TestClient(create_app(avm_repository=repository), headers=AVM_HEADERS)
+    response = client.get(f"/avm/cases/{case_id}/report")
+    assert response.status_code == 200, response.text
+    assert response.json()["normalized_margin"]["feature_version"] == "valuation-view-v1"
+    response = client.get(f"/avm/cases/{case_id}/reports")
+    assert response.status_code == 200, response.text
+    assert response.json()["items"][0]["normalized_margin"]["feature_version"] == "valuation-view-v1"
+    raw = repository._store.get(repository._REPORTS, report_id)
+    assert "feature_version" not in raw.normalized_margin.__dict__

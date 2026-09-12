@@ -59,6 +59,8 @@ class ValuationInput:
     depreciation_method: str | None = None
     depreciation_effective_date: str | None = None
     asset_in_service_date: str | None = None
+    # Persist per record; pre-field pickles serialize as v1, not the class default.
+    feature_version: str = AVM_FEATURE_VERSION
 
     @property
     def is_pre_status_payload(self) -> bool:
@@ -191,7 +193,7 @@ class ValuationInput:
             "depreciation_method": self.depreciation_method,
             "depreciation_effective_date": self.depreciation_effective_date,
             "asset_in_service_date": self.asset_in_service_date,
-            "feature_version": AVM_FEATURE_VERSION,
+            "feature_version": self.__dict__.get("feature_version", AVM_FEATURE_VERSION_V1),
         }
 
 
@@ -274,6 +276,8 @@ class NormalizedMargin:
     normalized_gm: float
     adjustment_reasons: tuple[str, ...]
     confidence: str
+    # Persist per record; pre-field pickles serialize as v1, not the class default.
+    feature_version: str = AVM_FEATURE_VERSION
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -284,7 +288,7 @@ class NormalizedMargin:
             "normalized_gm": self.normalized_gm,
             "adjustment_reasons": list(self.adjustment_reasons),
             "confidence": self.confidence,
-            "feature_version": AVM_FEATURE_VERSION,
+            "feature_version": self.__dict__.get("feature_version", AVM_FEATURE_VERSION_V1),
         }
 
     def with_legacy_quality_disposition(self) -> NormalizedMargin:
@@ -305,6 +309,7 @@ class NormalizedMargin:
         return NormalizedMargin(
             **{
                 **self.__dict__,
+                "feature_version": self.__dict__.get("feature_version", AVM_FEATURE_VERSION_V1),
                 "normalized_gm": normalized_gm,
                 "adjustment_reasons": reasons,
                 "confidence": "low",
@@ -431,6 +436,7 @@ class ValuationReport:
         normalized_margin = NormalizedMargin(
             **{
                 **self.normalized_margin.__dict__,
+                "feature_version": self.normalized_margin.__dict__.get("feature_version", AVM_FEATURE_VERSION_V1),
                 "adjustment_reasons": reasons,
                 "confidence": "low",
             }

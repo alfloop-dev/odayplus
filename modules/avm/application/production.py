@@ -12,7 +12,8 @@ from typing import Any, Protocol
 from urllib.parse import unquote, urlparse
 
 from modules.avm.domain import (
-    AVM_FEATURE_VERSION,
+    AVM_FEATURE_VERSION_V1,
+    AVM_FEATURE_VERSION_V2,
     NormalizedMargin,
     ValuationCase,
     ValuationReport,
@@ -27,6 +28,18 @@ from modules.avm.infrastructure.lifelines_survival import (
 
 class AVMProductionExecutionError(RuntimeError):
     """Raised when an approved production AVM cannot execute."""
+
+
+def avm_artifact_schema_from_environment() -> str:
+    """Select the deployed model contract independently of domain input versions.
+
+    Existing approved artifacts use v1. Deployments selecting v2 must still
+    satisfy the registry's exact schema and approval checks.
+    """
+    schema = os.getenv("ODP_AVM_ARTIFACT_SCHEMA_VERSION", AVM_FEATURE_VERSION_V1).strip()
+    if schema not in {AVM_FEATURE_VERSION_V1, AVM_FEATURE_VERSION_V2}:
+        raise AVMProductionExecutionError(f"Unsupported AVM artifact schema: {schema!r}")
+    return schema
 
 
 class ModelRuntime(Protocol):
@@ -205,20 +218,22 @@ class AVMProductionExecutor:
         liquidity_runtime: LiquidityRuntime,
         liquidity_evidence: LiquidityArtifactEvidence,
         depreciation_cutover_evidence: DepreciationCutoverEvidence | None = None,
-        expected_feature_schema_version: str = AVM_FEATURE_VERSION,
+        expected_feature_schema_version: str | None = None,
     ) -> None:
         self.model_runtime = model_runtime
         self.liquidity_runtime = liquidity_runtime
         self.liquidity_evidence = liquidity_evidence
         self.depreciation_cutover_evidence = depreciation_cutover_evidence
-        self.expected_feature_schema_version = expected_feature_schema_version
+        self.expected_feature_schema_version = (
+            expected_feature_schema_version or avm_artifact_schema_from_environment()
+        )
 
     @classmethod
     def from_environment(
         cls,
         *,
         model_runtime: ModelRuntime | None = None,
-        expected_feature_schema_version: str = AVM_FEATURE_VERSION,
+        expected_feature_schema_version: str | None = None,
     ) -> AVMProductionExecutor:
         try:
             cutover_evidence = _load_depreciation_cutover_evidence_optional()

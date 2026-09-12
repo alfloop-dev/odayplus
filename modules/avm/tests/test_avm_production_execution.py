@@ -9,6 +9,8 @@ from typing import Any
 
 import pytest
 
+from tests.conftest import intake_blank_db, intake_pg_server  # noqa: F401
+
 pytest.importorskip("lightgbm")
 pytest.importorskip("mlflow")
 
@@ -189,9 +191,10 @@ def test_production_avm_failure_does_not_persist_fake_report(
     assert repository.get_case(case.case_id).status is ValuationCaseStatus.REVIEW_REQUIRED
 
 
+@pytest.mark.parametrize("artifact_schema", ["valuation-view-v1", "valuation-view-v2"])
 def test_production_avm_reloads_and_executes_real_oss_artifacts(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    tmp_path: Path, artifact_schema: str, intake_blank_db, request,  # noqa: F811
 ) -> None:
     monkeypatch.delenv("ODP_REQUIRE_LIVE_DATA", raising=False)
     training_rows = [
@@ -232,7 +235,7 @@ def test_production_avm_reloads_and_executes_real_oss_artifacts(
             version="2026.07.24",
             artifact_uri=artifact_path.as_uri(),
             dataset_snapshot_id="avm-training-live",
-            feature_schema_version=AVM_FEATURE_VERSION,
+            feature_schema_version=artifact_schema,
             label_version="avm-sale-price-v2",
             metrics={"mae": 20_000.0},
             stage=ModelStage.PRODUCTION,
@@ -276,6 +279,7 @@ def test_production_avm_reloads_and_executes_real_oss_artifacts(
         liquidity_spy,
     )
     executor = AVMProductionExecutor(
+        expected_feature_schema_version=artifact_schema,
         model_runtime=MlflowProductionModelRuntime(
             tracking_uri="https://mlflow.internal.example",
             client=registry.client,
@@ -322,6 +326,63 @@ def test_production_avm_reloads_and_executes_real_oss_artifacts(
     assert report.execution_metadata["model"]["model_approved_by"] == "model-risk"
     assert report.execution_metadata["liquidity"]["engine"] == ("lifelines.CoxPHFitter")
     assert report.execution_metadata["liquidity"]["library_version"]
+
+    monkeypatch.delenv("ODP_REQUIRE_LIVE_DATA", raising=False)
+    # Exercise the real bootstrap and environment fallback with the same
+    # registered artifact; no fake runtime may bypass registry schema checks.
+    import json
+    from dataclasses import replace
+
+    from fastapi.testclient import TestClient
+
+    import modules.avm.application.production as production_module
+    from apps.api.oday_api import main as app_module
+    from shared.infrastructure.persistence import build_persistence
+    from tests.integration._authz import AVM_HEADERS
+
+    monkeypatch.delenv("ODP_AVM_ARTIFACT_SCHEMA_VERSION", raising=False)
+    if artifact_schema == "valuation-view-v2":
+        monkeypatch.setenv("ODP_AVM_ARTIFACT_SCHEMA_VERSION", artifact_schema)
+    assert app_module.production_feature_schema_versions()["avm"] == artifact_schema
+    monkeypatch.setattr(MlflowProductionModelRuntime, "from_environment", lambda **kwargs: executor.model_runtime)
+    monkeypatch.setattr(production_module, "_load_liquidity_artifact", lambda: (liquidity, executor.liquidity_evidence))
+    monkeypatch.setattr(production_module, "_load_depreciation_cutover_evidence_optional", lambda: executor.depreciation_cutover_evidence)
+    contracts = dict(app_module.PRODUCTION_MODEL_CONTRACTS)
+    contracts["avm"] = replace(contracts["avm"], governed_disabled_binding=None)
+    monkeypatch.setattr(app_module, "PRODUCTION_MODEL_CONTRACTS", contracts)
+    monkeypatch.setattr(app_module, "governed_disabled_services", lambda: set(contracts) - {"avm"})
+    now = datetime.now(UTC)
+    receipt = DepreciationRollbackReceipt(decider="fixture-ops", decision_time=now, reason="fixture approved v0 rollback", target_expiry=now + timedelta(hours=1), depreciation_version_pin=AVM_DEPRECIATION_LEGACY_VERSION)
+    monkeypatch.setenv("ODP_AVM_DEPRECIATION_VERSION_PIN", AVM_DEPRECIATION_LEGACY_VERSION)
+    monkeypatch.setenv("ODP_AVM_DEPRECIATION_ROLLBACK_RECEIPT_JSON", json.dumps(receipt.to_dict()))
+    monkeypatch.delenv("ODP_REQUIRE_LIVE_DATA", raising=False)
+    from shared.infrastructure.persistence.assisted_listing_intake import apply_upgrade_to_database
+    from tests.integration.test_avm_valuation import _provision_canonical_schema
+
+    _provision_canonical_schema(intake_blank_db)
+    monkeypatch.setenv("ODAY_DATABASE_URL", intake_blank_db.url())
+    apply_upgrade_to_database(intake_blank_db.url())
+    bundle = build_persistence(mode="postgresql")
+    request.addfinalizer(bundle.engine.close)
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+    repository = bundle.avm_repository
+    app = app_module.create_app(avm_repository=repository, persistence=bundle)
+    assert app.state.production_model_capabilities["avm"]["available"], app.state.production_model_capabilities["avm"]
+    case = AVMService(repository=repository).create_case(_input(), created_by="fixture-finance", correlation_id="bootstrap-case")
+    client = TestClient(app, headers=AVM_HEADERS)
+    response = client.post(f"/avm/cases/{case.case_id}/value", json={"actor": "fixture-worker"})
+    assert response.status_code == 200, response.text
+    assert response.json()["feature_version"] == artifact_schema
+    assert response.json()["normalized_margin"]["feature_version"] == "valuation-view-v2"
+    assert case.valuation_input.to_dict()["feature_version"] == "valuation-view-v2"
+    assert response.json()["depreciation_version"] == AVM_DEPRECIATION_LEGACY_VERSION
+    assert response.json()["execution_metadata"]["model"]["feature_schema_version"] == artifact_schema
+
+    fallback = AVMService(rollback_receipt=receipt, depreciation_version_pin=AVM_DEPRECIATION_LEGACY_VERSION)
+    case = fallback.create_case(_input(), created_by="fixture-finance", correlation_id="fallback-case")
+    report = fallback.value(case.case_id, actor="fixture-worker", correlation_id="fallback-case")
+    assert report.feature_version == artifact_schema
+    assert report.depreciation_version == AVM_DEPRECIATION_LEGACY_VERSION
 
 
 def test_production_avm_executes_with_straight_line_depreciation_delta(

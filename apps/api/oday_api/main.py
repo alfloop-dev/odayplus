@@ -80,13 +80,13 @@ def release_version_payload(*, correlation_id: str) -> dict[str, str]:
 def production_feature_schema_versions() -> dict[str, str]:
     """Return the canonical runtime schema expected by each production model."""
 
-    from modules.avm.domain import AVM_FEATURE_VERSION
+    from modules.avm.application.production import avm_artifact_schema_from_environment
     from modules.forecastops.model_contract import FORECASTOPS_FEATURE_SCHEMA_ID
     from modules.heatzone.domain import HEATZONE_FEATURE_VERSION
     from modules.sitescore.domain import SITESCORE_FEATURE_VERSION
 
     return {
-        "avm": AVM_FEATURE_VERSION,
+        "avm": avm_artifact_schema_from_environment(),
         "forecastops": FORECASTOPS_FEATURE_SCHEMA_ID,
         "heatzone": HEATZONE_FEATURE_VERSION,
         "sitescore": SITESCORE_FEATURE_VERSION,
@@ -1705,7 +1705,7 @@ else:
             scoring_bindings: dict[str, Any] = {}
             production_composition_errors: list[str] = []
             try:
-                from modules.avm.domain import AVM_FEATURE_VERSION
+                from modules.avm.application.production import avm_artifact_schema_from_environment
                 from modules.forecastops.domain import FORECASTOPS_FEATURE_VERSION
                 from modules.heatzone.domain import HEATZONE_FEATURE_VERSION
                 from modules.sitescore.domain import SITESCORE_FEATURE_VERSION
@@ -1723,7 +1723,7 @@ else:
                 model_runtime = None
             if model_runtime is not None:
                 feature_schema_versions = {
-                    "avm": AVM_FEATURE_VERSION,
+                    "avm": avm_artifact_schema_from_environment(),
                     "forecastops": FORECASTOPS_FEATURE_VERSION,
                     "heatzone": HEATZONE_FEATURE_VERSION,
                     "sitescore": SITESCORE_FEATURE_VERSION,
