@@ -7,7 +7,7 @@
 - **執行身分 (Owner)**: `Antigravity2`
 - **指派審查者 (Reviewer)**: `Codex2`
 - **復原目標分支**: `task/ODP-EPHEMERAL-STAGING-IAC-001-RECOVERY-20260911`
-- **當前基準 (Pinned Dev SHA)**: `4b35121031d0738ff7c529810cf1b2e267161083`（PR #1313，循正常流程完成 base advance 合併；前基準 `2889b55fb1febe95c9f8650f24ead18e86015cca`）
+- **當前基準 (Pinned Dev SHA)**: `3828c5ada2a1baab33d7dbe734c7ec70152d3d77`（PR #1311，循正常流程完成 base advance 合併；前基準 `4b35121031d0738ff7c529810cf1b2e267161083`）
 - **所屬階段**: Wave 1 - Staging IaC / History Recovery — executable acceptance reconciliation
 
 ---
@@ -24,7 +24,7 @@
 - **原 CI 檢查**: 7 項 check-runs（`product`, `performance-gate`, `product-e2e-gate`, `boundary`, `change-scope`, `classify`, `orchestrator`）全數為 `success`。
 - **交付程式與真實符號**:
   - `product_ops/deployment/staging_lifecycle.py`（merge @`82ed6a05cf67` 定位）：實作清理函式 `cleanup_ephemeral_staging` (L1511)、孤兒掃描器 `scan_orphans` (L1790)、TTL 延長函式 `extend_staging_ttl` (L2152)，以及常數 `DEFAULT_TTL_HOURS = 24` (L54) 與 `MAX_TTL_HOURS = 168` (L55)。
-  - `tests/ops/test_ephemeral_staging_lifecycle.py`: 原始 PR #1002 exact head 交付並由 product CI 成功驗證 86 個測試方法（`def test_`）；現行 dev 基準（@`4b351210`）為 96 個測試方法。
+  - `tests/ops/test_ephemeral_staging_lifecycle.py`: 原始 PR #1002 exact head 交付並由 product CI 成功驗證 86 個測試方法（`def test_`）；現行 dev 基準（@`3828c5ad`）為 96 個測試方法。
 
 ### 2026-09-06 盤點所識別之缺口 (Gaps Identified in Initial Inventory)
 在 2026-09-06 歷史盤點 (`ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json`) 中：
@@ -61,11 +61,11 @@
 
 | 項次 | 原驗收條款原文 | 驗收層級 | 判定結果 | 核對依據與具體證據 |
 |---|---|---|---|---|
-| **A1** | `release-scoped namespace/service/job/database或schema/bucket/tenant/IAM 可重跑建立` | 程式交付 (D)<br>測試證明 (T) | **已滿足 (met)** | 經 PR #1002 (merge `82ed6a05cf67`) 交付之 `infra/terraform/modules/ephemeral_staging/main.tf` 與 `product_ops/deployment/staging_lifecycle.py` 完整實作了 release-scoped 資源（Cloud Run service/job、schema、bucket、tenant、IAM）的可重跑建立契約。離線 Terraform plan 測試（5 項 plan 測試 + 13 項非 plan 契約與結構測試，共 18 項測試）與 `tests/ops/test_ephemeral_staging_lifecycle.py` 完整驗證建立之可重跑性與確定性。PR #1291 (`025323f36d05`, run `34514563856`) CI `orchestrator` job 實跑通過。依規劃 §12/§16，IaC 模組與離線驗收在 Wave 1 交付，真實雲端 apply 精確交由下游 `ODP-EPHEMERAL-STAGING-ROLLOUT-001`（Wave 3）。 |
-| **A2** | `resources 有 owner/created_at/expires_at labels` | 測試證明 (T) | **已滿足 (met)** | **缺口已由 PR #1291 補正**：`infra/terraform/modules/ephemeral_staging/main.tf` 強制所有可帶標籤資源綁定 `owner_task`、`created_at`、`expires_at`、`release_id`、`ephemeral=true`、`managed_by=terraform`、`candidate_sha`。**標籤映射說明**：原驗收條款提及之 `owner` 依 Terraform 模組規格精確命名為 `owner_task = local.owner_label`（由 `var.owner_task_id` 正規化生成），`created_at` 與 `expires_at` 分別來自 `var.created_at` 與 `var.expires_at`。`infra/terraform/tests/test_ephemeral_staging.py`（4 項標籤專屬斷言測試）與 `staging_lifecycle.py` 嚴格把關，在 PR #1291 CI `orchestrator` job（run `34514563856`）實跑通過；`tests/ops/test_ephemeral_staging_lifecycle.py` 亦於 PR #1002 exact-head product CI 成功驗證。 |
+| **A1** | `release-scoped namespace/service/job/database或schema/bucket/tenant/IAM 可重跑建立` | 程式交付 (D)<br>測試證明 (T) | **已滿足 (met)** | 經 PR #1002 (merge `82ed6a05cf67`) 交付之 `infra/terraform/modules/ephemeral_staging/main.tf` 與 `product_ops/deployment/staging_lifecycle.py` 完整實作了 release-scoped 資源（Cloud Run service `staging_api` / `staging_web`、Cloud Scheduler job `staging_worker_trigger`、Cloud SQL release-scoped database/schema、GCS bucket、tenant namespace、IAM service accounts 與 invoker 綁定）的可重跑建立契約（條款之 generic job 精確對應 PR #1002 原交付之 Cloud Scheduler trigger job `google_cloud_scheduler_job.staging_worker_trigger` L789；後續 Cloud Run migration/worker/scheduler Jobs 則由 `ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001` commit `17c1f83981accd028a6fc050fe3fa5b3798e2033` 擴充）。離線 Terraform plan 測試（5 項 plan 測試 + 13 項非 plan 契約與結構測試，共 18 項測試）與 `tests/ops/test_ephemeral_staging_lifecycle.py` 完整驗證建立之可重跑性與確定性。PR #1291 (`025323f36d05`, run `34514563856`) CI `orchestrator` job 實跑通過。依規劃 §12/§16，IaC 模組與離線驗收在 Wave 1 交付，真實雲端 apply 精確交由下游 `ODP-EPHEMERAL-STAGING-ROLLOUT-001`（Wave 3）。 |
+| **A2** | `resources 有 owner/created_at/expires_at labels` | 測試證明 (T) | **已滿足 (met)** | **缺口已由 PR #1291 補正**：`infra/terraform/modules/ephemeral_staging/main.tf` 強制所有可帶標籤資源綁定 `owner_task`、`created_at`、`expires_at`、`release_id`、`ephemeral=true`、`managed_by=terraform`、`candidate_sha`。**標籤映射與期限來源說明**：原驗收條款提及之 `owner` 依 Terraform 模組規格精確命名為 `owner_task = local.owner_label`（由 `var.owner_task_id` 正規化生成）；`created_at` 來自必要輸入變數 `var.created_at`，而 `expires_at` 則由固定 `created_at` 與 `var.ttl_hours` 經 `timeadd(local.created_at, "${var.ttl_hours}h")` 計算衍生（L92–93），再以 `formatdate("YYYY-MM-DD-hh-mm-ss", ...)` 產生標籤字串（L109–110），確保 Terraform apply 之冪等性而不依賴不存在之外部 `var.expires_at` 輸入。`infra/terraform/tests/test_ephemeral_staging.py`（4 項標籤專屬斷言測試）與 `staging_lifecycle.py` 嚴格把關，在 PR #1291 CI `orchestrator` job（run `34514563856`）實跑通過；`tests/ops/test_ephemeral_staging_lifecycle.py` 亦於 PR #1002 exact-head product CI 成功驗證。 |
 | **A3** | `cleanup 只依精確 labels 且有 orphan scanner` | 測試證明 (T) | **已滿足 (met)** | `product_ops/deployment/staging_lifecycle.py` 實作嚴格以精確 `release_id` 與必要標籤清理之函式 `cleanup_ephemeral_staging` (L1511)，禁止廣域萬用字元；實作 `scan_orphans` (L1790) 孤兒資源掃描器。測試 `tests/ops/test_ephemeral_staging_lifecycle.py`（PR #1002 exact head 86 項測試方法）在 PR #1002 exact-head `product` CI 執行且 conclusion=success。 |
 | **A4** | `成功清除失敗保留不超過 24h` | 測試證明 (T) | **已滿足 (met)** | `staging_lifecycle.py` 實作清理 primitive 與 TTL 狀態機契約：設定 `DEFAULT_TTL_HOURS = 24` (L54)，失敗保留除錯上限預設不超過 24 小時（由 `scan_orphans` 定時回收）。依據架構規劃 `EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md` §7.3 L253 規定，成功 release 係於 **production watch window 結束後**執行清理（canonical rollout 原驗收亦為「成功時等待prod closeout清理」）；延長 TTL 需附帶明確 owner 與 reason（`MAX_TTL_HOURS = 168`, L55，由 `extend_staging_ttl` (L2152) 控制）。本 task 證據限於 cleanup primitive 與 TTL 狀態機契約，成功部署後之 staging 清理執行由下游 `ODP-EPHEMERAL-STAGING-ROLLOUT-001` (Wave 3) 與 `ODP-POSTDEPLOY-WATCH-CLOSEOUT-001` (Wave 4) 承接。由 `tests/ops/test_ephemeral_staging_lifecycle.py` 完整覆蓋並在 PR #1002 exact-head `product` CI 通過。 |
-| **A5** | `不修改唯一 workflow entrypoint` | 程式交付 (D) | **已滿足 (met)** | staging lifecycle 模組作為部署工具鏈子模組，未新增第二個工作流入口。Pinned dev `.github/workflows/deploy-dev.yml` (@`4b351210`) 確認 `deploy-dev.yml` 維持全系統唯一 Runtime Release workflow entrypoint。 |
+| **A5** | `不修改唯一 workflow entrypoint` | 程式交付 (D) | **已滿足 (met)** | staging lifecycle 模組作為部署工具鏈子模組，未新增第二個工作流入口。Pinned dev `.github/workflows/deploy-dev.yml` (@`3828c5ad`) 確認 `deploy-dev.yml` 維持全系統唯一 Runtime Release workflow entrypoint。 |
 
 ---
 
@@ -125,8 +125,8 @@
 2. **本地歷史終端輸出紀錄狀態**:
    - 歷史本機終端輸出原 meta-data 屬未保存（`historical_local_raw_terminal_output_status: unknown`）；以 GitHub Actions exact-head 遠端收據為具體耐久憑證。
 3. **Base Advance 合併收據**:
-   - Merge Base: `4b35121031d0738ff7c529810cf1b2e267161083` (PR #1313)
-   - Previous Base: `2889b55fb1febe95c9f8650f24ead18e86015cca`
+   - Merge Base: `3828c5ada2a1baab33d7dbe734c7ec70152d3d77` (PR #1311)
+   - Previous Base: `4b35121031d0738ff7c529810cf1b2e267161083`
    - 合併策略: `ort`，無衝突。
 
 ---

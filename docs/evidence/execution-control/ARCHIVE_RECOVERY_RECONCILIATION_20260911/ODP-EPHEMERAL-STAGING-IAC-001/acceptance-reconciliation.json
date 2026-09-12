@@ -6,11 +6,11 @@
   "phase": "Wave 1 - Staging IaC / History Recovery — executable acceptance reconciliation",
   "owner": "Antigravity2",
   "reviewer": "Codex2",
-  "recorded_at": "2026-09-12T09:12:00Z",
+  "recorded_at": "2026-09-12T09:35:00Z",
   "reconciliation_target": {
     "repository": "alfloop-dev/odayplus",
-    "pinned_dev_sha": "4b35121031d0738ff7c529810cf1b2e267161083",
-    "previous_pinned_dev_sha": "2889b55fb1febe95c9f8650f24ead18e86015cca",
+    "pinned_dev_sha": "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
+    "previous_pinned_dev_sha": "4b35121031d0738ff7c529810cf1b2e267161083",
     "continuation_branch": "task/ODP-EPHEMERAL-STAGING-IAC-001-RECOVERY-20260911"
   },
   "historical_delivery": {
@@ -95,7 +95,7 @@
       "test_file": "tests/ops/test_ephemeral_staging_lifecycle.py",
       "exact_head_verified_via": "PR #1002 exact-head product CI job (conclusion=success)",
       "current_baseline_test_methods_count": 96,
-      "current_baseline_note": "dev baseline (@4b351210) has 96 test methods after subsequent additions; 86 was the exact method count at PR1002 merge 82ed6a05cf67"
+      "current_baseline_note": "dev baseline (@3828c5ad) has 96 test methods after subsequent additions; 86 was the exact method count at PR1002 merge 82ed6a05cf67"
     },
     "commit_trailers": {
       "LLM-Agent": "Claude2",
@@ -137,7 +137,7 @@
     }
   },
   "readback_and_verification_sources": {
-    "verified_at": "2026-09-12T09:12:00Z",
+    "verified_at": "2026-09-12T09:35:00Z",
     "verifier": "Antigravity2",
     "canonical_board_snapshot": {
       "source": "/home/lupin/odayplus/ai-status.json",
@@ -153,9 +153,9 @@
       "historical_local_raw_terminal_output_note": "Historical local execution terminal output metadata is unpreserved and marked unknown; exact-head CI execution runs #34514563856 (PR #1291) and #1002 CI check-runs serve as durable remote receipts."
     },
     "base_advance_composition": {
-      "base_sha": "4b35121031d0738ff7c529810cf1b2e267161083",
-      "previous_base_sha": "2889b55fb1febe95c9f8650f24ead18e86015cca",
-      "composed_at": "2026-09-12T09:11:29Z",
+      "base_sha": "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
+      "previous_base_sha": "4b35121031d0738ff7c529810cf1b2e267161083",
+      "composed_at": "2026-09-12T09:31:32Z",
       "merge_strategy": "ort",
       "conflicts": "none"
     }
@@ -174,7 +174,7 @@
       ],
       "status": "met",
       "status_zh": "已滿足",
-      "evidence": "經由 PR #1002 (merge 82ed6a05cf67) 交付之 Terraform 模組 infra/terraform/modules/ephemeral_staging/main.tf 與生命週期程式 product_ops/deployment/staging_lifecycle.py 定義並實作了所有 release-scoped 資源（Cloud Run service、Cloud Run job、專屬 database/schema、GCS bucket、tenant namespace、IAM service accounts 與 invoker 綁定）的可重跑建立契約。離線 Terraform plan 測試（infra/terraform/tests/test_ephemeral_staging.py 內 5 項 plan 測試 + 13 項非 plan 契約與結構測試，共 18 項）與 tests/ops/test_ephemeral_staging_lifecycle.py 完整驗證建立之可重跑性與確定性。歷史 PR #1002 未執行 infra tests 之缺口由 ODP-STAGING-IAC-CI-COLLECTION-001 (PR #1291, head 726065c3aec5, merge 025323f36d05) 補正，於 CI orchestrator job (run 34514563856, job 102996659589) 實跑通過 18 項測試與 24 項 tooling 守門測試。依據 EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md (@c80247fb7d66) §12 及 §16 之規劃，IaC 模組與離線 plan 驗收在 Wave 1 交付，真實雲端 apply 精確交由下游 ODP-EPHEMERAL-STAGING-ROLLOUT-001 (Wave 3 - Staging Rollout) 負責，禁止以本任務授權執行 live apply。",
+      "evidence": "經由 PR #1002 (merge 82ed6a05cf67) 交付之 Terraform 模組 infra/terraform/modules/ephemeral_staging/main.tf 與生命週期程式 product_ops/deployment/staging_lifecycle.py 定義並實作了所有 release-scoped 資源（Cloud Run service staging_api / staging_web、Cloud Scheduler job staging_worker_trigger、專屬 database/schema、GCS bucket、tenant namespace、IAM service accounts 與 invoker 綁定）的可重跑建立契約。原條款泛稱 job 精確對應 PR #1002 交付之 Cloud Scheduler trigger job（google_cloud_scheduler_job.staging_worker_trigger，L789）；後續 Cloud Run migration/worker/scheduler Jobs 則由 ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001 (commit 17c1f83981accd028a6fc050fe3fa5b3798e2033) 擴充。離線 Terraform plan 測試（infra/terraform/tests/test_ephemeral_staging.py 內 5 項 plan 測試 + 13 項非 plan 契約與結構測試，共 18 項）與 tests/ops/test_ephemeral_staging_lifecycle.py 完整驗證建立之可重跑性與確定性。歷史 PR #1002 未執行 infra tests 之缺口由 ODP-STAGING-IAC-CI-COLLECTION-001 (PR #1291, head 726065c3aec5, merge 025323f36d05) 補正，於 CI orchestrator job (run 34514563856, job 102996659589) 實跑通過 18 項測試與 24 項 tooling 守門測試。依據 EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md (@c80247fb7d66) §12 及 §16 之規劃，IaC 模組與離線 plan 驗收在 Wave 1 交付，真實雲端 apply 精確交由下游 ODP-EPHEMERAL-STAGING-ROLLOUT-001 (Wave 3 - Staging Rollout) 負責，禁止以本任務授權執行 live apply。",
       "boundary": "驗證 IaC 模組契約與離線可重跑 plan 能力；不推斷、亦未執行未授權之 live cloud apply 或基礎設施變更。"
     },
     {
@@ -188,7 +188,7 @@
       ],
       "status": "met",
       "status_zh": "已滿足",
-      "evidence": "缺口已補齊：PR #1002 交付之 infra/terraform/modules/ephemeral_staging/main.tf 強制在所有支援 label 的資源上標註 owner_task、created_at、expires_at、release_id、ephemeral=true、managed_by=terraform 與 candidate_sha 標籤。其中原驗收條款提及之 owner 依模組契約精確對應至 owner_task 標籤（由 var.owner_task_id 經過正規化生成 local.owner_label），created_at 來自 var.created_at，expires_at 來自 var.expires_at。對應測試 infra/terraform/tests/test_ephemeral_staging.py（test_mandatory_labels_win_over_additional_labels, test_creation_and_owner_inputs_are_required, test_ephemeral_staging_module_structure_and_tokens, test_module_no_dynamic_timestamp_leak）與 product_ops/deployment/staging_lifecycle.py 均嚴格檢查標籤完整性。歷史 PR #1002 未執行 infra tests 之 CI 缺口已由 PR #1291 (025323f36d05, run 34514563856) 補正，並於 CI orchestrator job 實跑 18 項測試全數通過；tests/ops/test_ephemeral_staging_lifecycle.py 亦於 PR #1002 原 exact-head (ee6eddb6951a) product CI 成功驗證。",
+      "evidence": "缺口已補齊：PR #1002 交付之 infra/terraform/modules/ephemeral_staging/main.tf 強制在所有支援 label 的資源上標註 owner_task、created_at、expires_at、release_id、ephemeral=true、managed_by=terraform 與 candidate_sha 標籤。標籤映射與期限來源：原驗收條款提及之 owner 依模組契約精確對應至 owner_task 標籤（由 var.owner_task_id 經過正規化生成 local.owner_label）；created_at 來自必要輸入 var.created_at，而 expires_at 則由固定 created_at 與 var.ttl_hours 經 timeadd(local.created_at, \"${var.ttl_hours}h\") 衍生計算（L92-93），再以 formatdate(\"YYYY-MM-DD-hh-mm-ss\", ...) 產生標籤字串（L109-110），確保 Terraform apply 之冪等性而不依賴不存在之 caller var.expires_at 輸入。對應測試 infra/terraform/tests/test_ephemeral_staging.py（test_mandatory_labels_win_over_additional_labels, test_creation_and_owner_inputs_are_required, test_ephemeral_staging_module_structure_and_tokens, test_module_no_dynamic_timestamp_leak）與 product_ops/deployment/staging_lifecycle.py 均嚴格檢查標籤完整性。歷史 PR #1002 未執行 infra tests 之 CI 缺口已由 PR #1291 (025323f36d05, run 34514563856) 補正，並於 CI orchestrator job 實跑 18 項測試全數通過；tests/ops/test_ephemeral_staging_lifecycle.py 亦於 PR #1002 原 exact-head (ee6eddb6951a) product CI 成功驗證。",
       "boundary": "標籤約束經由 Terraform AST、HCL 靜態結構、離線 plan 與 Python lifecycle 邏輯四重驗證，明示原 acceptance owner -> owner_task 標籤映射。"
     },
     {
@@ -230,7 +230,7 @@
       ],
       "status": "met",
       "status_zh": "已滿足",
-      "evidence": "PR #1002 (merge 82ed6a05cf67) 交付之 staging lifecycle 模組直接作為既有 deployment 工具鏈之呼叫對象，未新增第二套 workflow entrypoint。經查核 dev .github/workflows/deploy-dev.yml (@4b351210)，deploy-dev.yml 維持全系統唯一之 Runtime Release workflow entrypoint。",
+      "evidence": "PR #1002 (merge 82ed6a05cf67) 交付之 staging lifecycle 模組直接作為既有 deployment 工具鏈之呼叫對象，未新增第二套 workflow entrypoint。經查核 dev .github/workflows/deploy-dev.yml (@3828c5ad)，deploy-dev.yml 維持全系統唯一之 Runtime Release workflow entrypoint。",
       "boundary": "盤點 dev 7 份 workflow 定義，確認單一工作流入口無任何旁路或狀態機分歧。"
     }
   ],
