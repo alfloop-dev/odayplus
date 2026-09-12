@@ -5038,7 +5038,7 @@ def test_diagnostic_cas_advance_advisory_failure_preserves_canonical_freshness(t
     canonical.write_text(json.dumps({"_status_write_revision": "initial", "tasks": tasks, "handoffs": []}))
     syncs: list[tuple[str, str]] = []
     failed_reads: list[str] = []
-    events: list[dict[str, Any]] = []
+    events: list[dict] = []
     real_load = supervisor.load_status
 
     def sync(_cfg):
