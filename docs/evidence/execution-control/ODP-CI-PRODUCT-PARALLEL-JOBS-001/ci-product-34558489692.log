@@ -1,0 +1,176 @@
+product	Set up job	﻿2026-09-11T03:46:09.7435163Z Current runner version: '2.337.0'
+product	Set up job	2026-09-11T03:46:09.7461940Z ##[group]Runner Image Provisioner
+product	Set up job	2026-09-11T03:46:09.7462997Z Hosted Compute Agent
+product	Set up job	2026-09-11T03:46:09.7463641Z Version: 20260828.587
+product	Set up job	2026-09-11T03:46:09.7464380Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+product	Set up job	2026-09-11T03:46:09.7465139Z Build Date: 2026-08-28T16:44:25Z
+product	Set up job	2026-09-11T03:46:09.7465847Z Worker ID: {decabb7d-4d63-4118-a959-ad044610a512}
+product	Set up job	2026-09-11T03:46:09.7466627Z Azure Region: westus
+product	Set up job	2026-09-11T03:46:09.7467243Z ##[endgroup]
+product	Set up job	2026-09-11T03:46:09.7468726Z ##[group]Operating System
+product	Set up job	2026-09-11T03:46:09.7469501Z Ubuntu
+product	Set up job	2026-09-11T03:46:09.7470254Z 24.04.5
+product	Set up job	2026-09-11T03:46:09.7470895Z LTS
+product	Set up job	2026-09-11T03:46:09.7471453Z ##[endgroup]
+product	Set up job	2026-09-11T03:46:09.7471995Z ##[group]Runner Image
+product	Set up job	2026-09-11T03:46:09.7472668Z Image: ubuntu-24.04
+product	Set up job	2026-09-11T03:46:09.7473253Z Version: 20260907.300.1
+product	Set up job	2026-09-11T03:46:09.7474341Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260907.300/images/ubuntu/Ubuntu2404-Readme.md
+product	Set up job	2026-09-11T03:46:09.7476155Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260907.300
+product	Set up job	2026-09-11T03:46:09.7477200Z ##[endgroup]
+product	Set up job	2026-09-11T03:46:09.7478435Z ##[group]GITHUB_TOKEN Permissions
+product	Set up job	2026-09-11T03:46:09.7480882Z Contents: read
+product	Set up job	2026-09-11T03:46:09.7481622Z Metadata: read
+product	Set up job	2026-09-11T03:46:09.7482340Z Packages: read
+product	Set up job	2026-09-11T03:46:09.7482920Z ##[endgroup]
+product	Set up job	2026-09-11T03:46:09.7485119Z Secret source: Actions
+product	Set up job	2026-09-11T03:46:09.7486303Z Cache mode: write
+product	Set up job	2026-09-11T03:46:09.7487034Z Prepare workflow directory
+product	Set up job	2026-09-11T03:46:09.7897185Z Prepare all required actions
+product	Set up job	2026-09-11T03:46:09.7952515Z Getting action download info
+product	Set up job	2026-09-11T03:46:10.1705523Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+product	Set up job	2026-09-11T03:46:10.4116605Z Complete job name: product
+product	Run actions/checkout@v4	﻿2026-09-11T03:46:10.4910208Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+product	Run actions/checkout@v4	2026-09-11T03:46:10.4919294Z ##[group]Run actions/checkout@v4
+product	Run actions/checkout@v4	2026-09-11T03:46:10.4920584Z with:
+product	Run actions/checkout@v4	2026-09-11T03:46:10.4921115Z   repository: alfloop-dev/odayplus
+product	Run actions/checkout@v4	2026-09-11T03:46:10.4925183Z   token: ***
+product	Run actions/checkout@v4	2026-09-11T03:46:10.4925644Z   ssh-strict: true
+product	Run actions/checkout@v4	2026-09-11T03:46:10.4926098Z   ssh-user: git
+product	Run actions/checkout@v4	2026-09-11T03:46:10.4926564Z   persist-credentials: true
+product	Run actions/checkout@v4	2026-09-11T03:46:10.4927070Z   clean: true
+product	Run actions/checkout@v4	2026-09-11T03:46:10.4927529Z   sparse-checkout-cone-mode: true
+product	Run actions/checkout@v4	2026-09-11T03:46:10.4928061Z   fetch-depth: 1
+product	Run actions/checkout@v4	2026-09-11T03:46:10.4928507Z   fetch-tags: false
+product	Run actions/checkout@v4	2026-09-11T03:46:10.4928965Z   show-progress: true
+product	Run actions/checkout@v4	2026-09-11T03:46:10.4929419Z   lfs: false
+product	Run actions/checkout@v4	2026-09-11T03:46:10.4929850Z   submodules: false
+product	Run actions/checkout@v4	2026-09-11T03:46:10.4930564Z   set-safe-directory: true
+product	Run actions/checkout@v4	2026-09-11T03:46:10.4931094Z   allow-unsafe-pr-checkout: false
+product	Run actions/checkout@v4	2026-09-11T03:46:10.4931965Z ##[endgroup]
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6015623Z Syncing repository: alfloop-dev/odayplus
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6017864Z ##[group]Getting Git version info
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6018684Z Working directory is '/home/runner/work/odayplus/odayplus'
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6019767Z [command]/usr/bin/git version
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6085945Z git version 2.55.0
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6113213Z ##[endgroup]
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6129263Z Temporarily overriding HOME='/home/runner/work/_temp/c484e718-69ec-49e4-9fc4-fb03f604a63b' before making global git config changes
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6132276Z Adding repository directory to the temporary git global config as a safe directory
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6143675Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/odayplus/odayplus
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6211224Z Deleting the contents of '/home/runner/work/odayplus/odayplus'
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6226541Z ##[group]Initializing the repository
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6232171Z [command]/usr/bin/git init /home/runner/work/odayplus/odayplus
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6341932Z hint: Using 'master' as the name for the initial branch. This default branch name
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6343989Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6346096Z hint: to use in all of your new repositories, which will suppress this warning,
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6347570Z hint: call:
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6348453Z hint:
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6349506Z hint: 	git config --global init.defaultBranch <name>
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6351193Z hint:
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6352403Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6354118Z hint: 'development'. The just-created branch can be renamed via this command:
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6355808Z hint:
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6356809Z hint: 	git branch -m <name>
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6357785Z hint:
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6359037Z hint: Disable this message with "git config set advice.defaultBranchName false"
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6361335Z Initialized empty Git repository in /home/runner/work/odayplus/odayplus/.git/
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6364479Z [command]/usr/bin/git remote add origin https://github.com/alfloop-dev/odayplus
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6411688Z ##[endgroup]
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6413182Z ##[group]Disabling automatic garbage collection
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6417172Z [command]/usr/bin/git config --local gc.auto 0
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6454568Z ##[endgroup]
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6456132Z ##[group]Setting up auth
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6463269Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6503459Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6917913Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+product	Run actions/checkout@v4	2026-09-11T03:46:10.6960348Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+product	Run actions/checkout@v4	2026-09-11T03:46:10.7208339Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+product	Run actions/checkout@v4	2026-09-11T03:46:10.7247425Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+product	Run actions/checkout@v4	2026-09-11T03:46:10.7489330Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+product	Run actions/checkout@v4	2026-09-11T03:46:10.7532476Z ##[endgroup]
+product	Run actions/checkout@v4	2026-09-11T03:46:10.7533583Z ##[group]Fetching the repository
+product	Run actions/checkout@v4	2026-09-11T03:46:10.7543175Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +0d9ff4bbc2b6ab8b37d1452ca9b7ceeeee2ac379:refs/remotes/pull/1303/merge
+product	Run actions/checkout@v4	2026-09-11T03:46:20.1574586Z From https://github.com/alfloop-dev/odayplus
+product	Run actions/checkout@v4	2026-09-11T03:46:20.1575502Z  * [new ref]         0d9ff4bbc2b6ab8b37d1452ca9b7ceeeee2ac379 -> pull/1303/merge
+product	Run actions/checkout@v4	2026-09-11T03:46:20.1577155Z ##[endgroup]
+product	Run actions/checkout@v4	2026-09-11T03:46:20.1577625Z ##[group]Determining the checkout info
+product	Run actions/checkout@v4	2026-09-11T03:46:20.1578147Z ##[endgroup]
+product	Run actions/checkout@v4	2026-09-11T03:46:20.1589575Z [command]/usr/bin/git sparse-checkout disable
+product	Run actions/checkout@v4	2026-09-11T03:46:20.1644136Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+product	Run actions/checkout@v4	2026-09-11T03:46:20.1678270Z ##[group]Checking out the ref
+product	Run actions/checkout@v4	2026-09-11T03:46:20.1682643Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/1303/merge
+product	Run actions/checkout@v4	2026-09-11T03:46:20.6721440Z Note: switching to 'refs/remotes/pull/1303/merge'.
+product	Run actions/checkout@v4	2026-09-11T03:46:20.6721960Z 
+product	Run actions/checkout@v4	2026-09-11T03:46:20.6722240Z You are in 'detached HEAD' state. You can look around, make experimental
+product	Run actions/checkout@v4	2026-09-11T03:46:20.6722808Z changes and commit them, and you can discard any commits you make in this
+product	Run actions/checkout@v4	2026-09-11T03:46:20.6723357Z state without impacting any branches by switching back to a branch.
+product	Run actions/checkout@v4	2026-09-11T03:46:20.6723738Z 
+product	Run actions/checkout@v4	2026-09-11T03:46:20.6724003Z If you want to create a new branch to retain commits you create, you may
+product	Run actions/checkout@v4	2026-09-11T03:46:20.6725470Z do so (now or later) by using -c with the switch command. Example:
+product	Run actions/checkout@v4	2026-09-11T03:46:20.6726056Z 
+product	Run actions/checkout@v4	2026-09-11T03:46:20.6726377Z   git switch -c <new-branch-name>
+product	Run actions/checkout@v4	2026-09-11T03:46:20.6726769Z 
+product	Run actions/checkout@v4	2026-09-11T03:46:20.6727007Z Or undo this operation with:
+product	Run actions/checkout@v4	2026-09-11T03:46:20.6727370Z 
+product	Run actions/checkout@v4	2026-09-11T03:46:20.6727575Z   git switch -
+product	Run actions/checkout@v4	2026-09-11T03:46:20.6727850Z 
+product	Run actions/checkout@v4	2026-09-11T03:46:20.6728266Z Turn off this advice by setting config variable advice.detachedHead to false
+product	Run actions/checkout@v4	2026-09-11T03:46:20.6728871Z 
+product	Run actions/checkout@v4	2026-09-11T03:46:20.6729530Z HEAD is now at 0d9ff4b Merge cc031c6e35c853cf4524c7ef7b86c1fc5f294f3c into 21929049e5c15227419ecf90c707e31870a29844
+product	Run actions/checkout@v4	2026-09-11T03:46:20.6758761Z ##[endgroup]
+product	Run actions/checkout@v4	2026-09-11T03:46:20.6809484Z [command]/usr/bin/git log -1 --format=%H
+product	Run actions/checkout@v4	2026-09-11T03:46:20.6839312Z 0d9ff4bbc2b6ab8b37d1452ca9b7ceeeee2ac379
+product	Verify parallel product lanes	﻿2026-09-11T03:46:20.7120972Z ##[group]Run python3 delivery_toolchain/governance/verify_ci_product_jobs.py
+product	Verify parallel product lanes	2026-09-11T03:46:20.7121740Z ^[[36;1mpython3 delivery_toolchain/governance/verify_ci_product_jobs.py^[[0m
+product	Verify parallel product lanes	2026-09-11T03:46:20.7163086Z shell: /usr/bin/bash -e {0}
+product	Verify parallel product lanes	2026-09-11T03:46:20.7163462Z env:
+product	Verify parallel product lanes	2026-09-11T03:46:20.7164854Z   NEEDS_JSON: {
+product	Verify parallel product lanes	  "change-scope": {
+product	Verify parallel product lanes	    "result": "success",
+product	Verify parallel product lanes	    "outputs": {
+product	Verify parallel product lanes	      "scope": "product_or_mixed"
+product	Verify parallel product lanes	    }
+product	Verify parallel product lanes	  },
+product	Verify parallel product lanes	  "product-lint-unit": {
+product	Verify parallel product lanes	    "result": "success",
+product	Verify parallel product lanes	    "outputs": {}
+product	Verify parallel product lanes	  },
+product	Verify parallel product lanes	  "product-db": {
+product	Verify parallel product lanes	    "result": "success",
+product	Verify parallel product lanes	    "outputs": {}
+product	Verify parallel product lanes	  },
+product	Verify parallel product lanes	  "product-api-contract": {
+product	Verify parallel product lanes	    "result": "success",
+product	Verify parallel product lanes	    "outputs": {}
+product	Verify parallel product lanes	  },
+product	Verify parallel product lanes	  "product-security": {
+product	Verify parallel product lanes	    "result": "success",
+product	Verify parallel product lanes	    "outputs": {}
+product	Verify parallel product lanes	  },
+product	Verify parallel product lanes	  "product-node": {
+product	Verify parallel product lanes	    "result": "success",
+product	Verify parallel product lanes	    "outputs": {}
+product	Verify parallel product lanes	  }
+product	Verify parallel product lanes	}
+product	Verify parallel product lanes	2026-09-11T03:46:20.7166338Z ##[endgroup]
+product	Verify parallel product lanes	2026-09-11T03:46:20.7591363Z === Product CI Parallel Lane Verification ===
+product	Verify parallel product lanes	2026-09-11T03:46:20.7592359Z Detected Change Scope: product_or_mixed
+product	Verify parallel product lanes	2026-09-11T03:46:20.7593335Z Required Product Lanes: product-lint-unit, product-db, product-api-contract, product-security, product-node
+product	Verify parallel product lanes	2026-09-11T03:46:20.7594594Z [PASS] All 5 product lanes succeeded for scope 'product_or_mixed'.
+product	Post Run actions/checkout@v4	﻿2026-09-11T03:46:20.7797640Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+product	Post Run actions/checkout@v4	2026-09-11T03:46:20.7799792Z Post job cleanup.
+product	Post Run actions/checkout@v4	2026-09-11T03:46:20.8779821Z [command]/usr/bin/git version
+product	Post Run actions/checkout@v4	2026-09-11T03:46:20.8823669Z git version 2.55.0
+product	Post Run actions/checkout@v4	2026-09-11T03:46:20.8867221Z Temporarily overriding HOME='/home/runner/work/_temp/118adfa8-5972-4393-becd-65d8ced133f5' before making global git config changes
+product	Post Run actions/checkout@v4	2026-09-11T03:46:20.8868902Z Adding repository directory to the temporary git global config as a safe directory
+product	Post Run actions/checkout@v4	2026-09-11T03:46:20.8872874Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/odayplus/odayplus
+product	Post Run actions/checkout@v4	2026-09-11T03:46:20.8918960Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+product	Post Run actions/checkout@v4	2026-09-11T03:46:20.8958770Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+product	Post Run actions/checkout@v4	2026-09-11T03:46:20.9241393Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+product	Post Run actions/checkout@v4	2026-09-11T03:46:20.9284659Z http.https://github.com/.extraheader
+product	Post Run actions/checkout@v4	2026-09-11T03:46:20.9298932Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+product	Post Run actions/checkout@v4	2026-09-11T03:46:20.9343163Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+product	Post Run actions/checkout@v4	2026-09-11T03:46:20.9627129Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+product	Post Run actions/checkout@v4	2026-09-11T03:46:20.9677354Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+product	Complete job	﻿2026-09-11T03:46:21.0100776Z Cleaning up orphan processes
+product	Complete job	2026-09-11T03:46:21.0568618Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
