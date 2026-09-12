@@ -15,7 +15,6 @@ import copy
 import hashlib
 import json
 import re
-import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -571,7 +570,7 @@ def build_sources_off_attestation(
     ]
     inventory.sort(key=lambda entry: str(entry.get("source_id")))
     if egress_evidence is None:
-        egress_evidence = build_sources_off_egress_evidence(candidate_sha=candidate_sha)
+        egress_evidence = build_sources_off_egress_evidence()
     attestation: dict[str, Any] = {
         "provider_mode": provider_mode,
         "egress_posture": _derived_egress_posture(inventory),
@@ -615,7 +614,6 @@ def sources_off_attestation_errors(
     components: Any = None,
     source_policy_digest: Any = None,
     label: str = "manifest.sources_off_attestation",
-    root: Path = ROOT,
 ) -> list[str]:
     """Return why *attestation* is not admissible sources-off data-plane evidence.
 
@@ -723,10 +721,7 @@ def sources_off_attestation_errors(
     for field in SOURCES_OFF_EGRESS_EVIDENCE_FIELDS:
         if field not in evidence:
             errors.append(f"{label}.egress_evidence missing required field: {field}")
-    expected_evidence = build_sources_off_egress_evidence(
-        root=root,
-        candidate_sha=candidate_sha,
-    )
+    expected_evidence = build_sources_off_egress_evidence()
     for field in SOURCES_OFF_EGRESS_EVIDENCE_FIELDS:
         if evidence.get(field) != expected_evidence.get(field):
             errors.append(
@@ -745,7 +740,7 @@ def sources_off_attestation_errors(
             f"{label}.egress_evidence.runtime_probe_receipt_content_digest must "
             "bind the expected probe receipt content"
         )
-    errors.extend(_sources_off_egress_contract_errors(root=root, candidate_sha=candidate_sha))
+    errors.extend(_sources_off_egress_contract_errors())
 
     recorded_binding = attestation.get("binding_digest")
     if not is_sha256_digest(recorded_binding):
@@ -1608,27 +1603,8 @@ def compute_file_set_digest(paths: Any, *, root: Path = ROOT) -> str:
     return "sha256:" + h.hexdigest()
 
 
-def compute_sources_off_egress_contract_digest(
-    root: Path = ROOT,
-    candidate_sha: str | None = None,
-) -> str:
+def compute_sources_off_egress_contract_digest(root: Path = ROOT) -> str:
     """Hash the checked-in Runtime Release egress contract inputs."""
-    if candidate_sha and is_exact_sha(candidate_sha):
-        try:
-            h = hashlib.sha256()
-            for rel in sorted(SOURCES_OFF_EGRESS_CONTRACT_FILES):
-                content = subprocess.check_output(
-                    ["git", "show", f"{candidate_sha}:{rel}"],
-                    cwd=root,
-                    stderr=subprocess.DEVNULL,
-                )
-                h.update(rel.encode("utf-8"))
-                h.update(b"\x00")
-                h.update(content)
-                h.update(b"\x00")
-            return "sha256:" + h.hexdigest()
-        except Exception:
-            pass
 
     return compute_file_set_digest(
         (root / relative_path for relative_path in SOURCES_OFF_EGRESS_CONTRACT_FILES),
@@ -1644,7 +1620,6 @@ def build_sources_off_egress_evidence(
     resolved_cloud_run_egress: str = SOURCES_OFF_CLOUD_RUN_EGRESS,
     provider_credentials_runtime: str = SOURCES_OFF_PROVIDER_CREDENTIALS,
     root: Path = ROOT,
-    candidate_sha: str | None = None,
 ) -> dict[str, Any]:
     """Derive the secret-free proof attached to a sources-off attestation.
 
@@ -1679,9 +1654,7 @@ def build_sources_off_egress_evidence(
         "runtime_probe_receipt_content_digest": receipt_digest,
         "provider_credentials_runtime": provider_credentials_runtime,
         "proof_source": list(SOURCES_OFF_EGRESS_CONTRACT_FILES),
-        "contract_digest": compute_sources_off_egress_contract_digest(
-            root=root, candidate_sha=candidate_sha
-        ),
+        "contract_digest": compute_sources_off_egress_contract_digest(root=root),
     }
 
 
@@ -1804,37 +1777,18 @@ def validate_sources_off_probe_receipt(
     return errors
 
 
-def _sources_off_egress_contract_errors(
-    root: Path = ROOT,
-    candidate_sha: str | None = None,
-) -> list[str]:
+def _sources_off_egress_contract_errors(root: Path = ROOT) -> list[str]:
     """Check the concrete VPC/firewall contract behind a posture receipt."""
 
     errors: list[str] = []
-    file_contents: dict[str, str] = {}
-    if candidate_sha and is_exact_sha(candidate_sha):
-        try:
-            for relative in SOURCES_OFF_EGRESS_CONTRACT_FILES:
-                content = subprocess.check_output(
-                    ["git", "show", f"{candidate_sha}:{relative}"],
-                    cwd=root,
-                    stderr=subprocess.DEVNULL,
-                ).decode("utf-8")
-                file_contents[relative] = content
-        except Exception:
-            file_contents = {}
+    paths = {relative: root / relative for relative in SOURCES_OFF_EGRESS_CONTRACT_FILES}
+    missing = [relative for relative, path in paths.items() if not path.is_file()]
+    if missing:
+        return [
+            "sources-off egress contract is incomplete; missing: " + ", ".join(missing)
+        ]
 
-    if not file_contents:
-        paths = {relative: root / relative for relative in SOURCES_OFF_EGRESS_CONTRACT_FILES}
-        missing = [relative for relative, path in paths.items() if not path.is_file()]
-        if missing:
-            return [
-                "sources-off egress contract is incomplete; missing: " + ", ".join(missing)
-            ]
-        for relative, path in paths.items():
-            file_contents[relative] = path.read_text(encoding="utf-8")
-
-    workflow = file_contents[".github/workflows/deploy-dev.yml"]
+    workflow = paths[".github/workflows/deploy-dev.yml"].read_text(encoding="utf-8")
     if "ODP_EXTERNAL_PROVIDER_MODE: disabled" not in workflow:
         errors.append("deploy workflow does not fix ODP_EXTERNAL_PROVIDER_MODE to disabled")
     if "ODP_CLOUD_RUN_VPC_CONNECTOR:" not in workflow:
@@ -1847,7 +1801,9 @@ def _sources_off_egress_contract_errors(
     ):
         errors.append("deploy workflow does not retain the public egress probe receipt")
 
-    deploy = file_contents["product_ops/deployment/deploy_cloud_run_waji.sh"]
+    deploy = paths["product_ops/deployment/deploy_cloud_run_waji.sh"].read_text(
+        encoding="utf-8"
+    )
     if '"--vpc-connector=${ODP_CLOUD_RUN_VPC_CONNECTOR}"' not in deploy:
         errors.append("deploy entrypoint does not pass the VPC connector to Cloud Run")
     if '"--vpc-egress=${ODP_CLOUD_RUN_VPC_EGRESS}"' not in deploy:
@@ -1870,19 +1826,23 @@ def _sources_off_egress_contract_errors(
         if probe_pos > promote_pos:
             errors.append("public egress deny probe must run before service traffic promotion")
 
-    lifecycle = file_contents["product_ops/deployment/staging_lifecycle.py"]
+    lifecycle = paths["product_ops/deployment/staging_lifecycle.py"].read_text(
+        encoding="utf-8"
+    )
     if "public_egress_denied_probe" not in lifecycle:
         errors.append("staging lifecycle does not retain the public egress deny probe stage")
 
-    probe_entrypoint = file_contents["product_ops/deployment/cloud_run_job_entrypoint.py"]
+    probe_entrypoint = paths["product_ops/deployment/cloud_run_job_entrypoint.py"].read_text(
+        encoding="utf-8"
+    )
     if "def run_public_egress_probe" not in probe_entrypoint:
         errors.append("Cloud Run Job entrypoint does not expose the public egress deny probe")
 
-    cloud_run = file_contents["infra/terraform/cloud_run.tf"]
+    cloud_run = paths["infra/terraform/cloud_run.tf"].read_text(encoding="utf-8")
     if 'egress = "ALL_TRAFFIC"' not in cloud_run:
         errors.append("cloud_run.tf does not enforce ALL_TRAFFIC VPC egress")
 
-    network = file_contents["infra/terraform/network.tf"]
+    network = paths["infra/terraform/network.tf"].read_text(encoding="utf-8")
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
     try:
