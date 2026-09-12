@@ -27,6 +27,7 @@ from delivery_toolchain.release.release_manifest import (
     SOURCES_OFF_PROVIDER_MODE,
     SOURCES_OFF_RUNTIME_PROBE_REASON,
     SOURCES_OFF_RUNTIME_PROBE_RESULT,
+    _sources_off_egress_contract_errors,
     build_initial_release_recovery,
     build_release_manifest,
     build_sources_off_attestation,
@@ -48,7 +49,6 @@ from delivery_toolchain.release.release_manifest import (
     validate_release_admission,
     validate_rollback_manifest,
     validate_sources_off_probe_receipt,
-    _sources_off_egress_contract_errors,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -1467,6 +1467,7 @@ def test_sources_off_egress_contract_differs_between_candidate_and_worktree() ->
         candidate_sha=None,
     )
     assert candidate_digest == "sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09"
+    assert worktree_digest.startswith("sha256:")
     # When worktree files (e.g. staging_lifecycle.py) are modified, worktree_digest differs
     # but validate_manifest succeeds because it validates candidate_sha against git object
     manifest = load_manifest()
