@@ -55,7 +55,7 @@
 | Loaded Config Digest | `54110ea0cef280a8`（與 Supervisor 內部狀態 `loaded_config_digest` 逐字相符） |
 | 靜態驗證指令 | `python3 -B delivery_toolchain/governance/check_orchestrator_config.py --config /home/lupin/odayplus/.orchestrator/config.json` |
 | 靜態驗證結果 | `Validated 3 config documents and their merged runtime views.`（通過） |
-| 私有備份路徑（歷史操作紀錄與限制說明） | 原始操作時暫存於 `/tmp/odp-role-provider-codex-live-rollout-backup-fswthfki/`（包含 `config.before.json` 與 `launcher.before.sh`，未 commit、未印出 secret）。因 `/tmp` 為本機短暫目錄（ephemeral），後續審查讀回時該實體目錄已隨系統生命週期自然清理（ls exit 2，如實記錄缺證，未事後重建冒充操作前快照）；操作前配置與狀態可透過已記錄之 SHA256（`5e9f4279b14ba6f4595317d4064ccebc952c678693ec2abd2bb243a89be8a12c`）及歷史版本 `ba58ed6723960244d567c5314bfc200ffdf7bae8` 進行精準核驗與還原。 |
+| 私有備份路徑（歷史操作紀錄與限制說明） | 原始操作時暫存於 `/tmp/odp-role-provider-codex-live-rollout-backup-fswthfki/`（包含 `config.before.json` 與 `launcher.before.sh`，未 commit、未印出 secret）。後續審查讀回時該實體快照目錄不存在（原因未確認，實測 `ls` exit 2），如實記錄缺證，嚴禁事後重建冒充操作前快照。由於歷史 commit `ba58ed6723960244d567c5314bfc200ffdf7bae8` 不包含 live `.orchestrator/config.json`（僅有 `config.example.json`），且單憑 SHA256 無法還原缺失之檔案內容，亦無法支持 before/after 精準差異驗證；故已如實揭露缺證與目前在未定位既存私有備份前無法執行完整配置回滾的前置限制。 |
 
 ### 3.2 授權變更精準差異（Exact Authorized Diffs）
 
@@ -185,6 +185,17 @@ Supervisor 重啟後，完成連續 2 次完整健康迴圈，無任何新增錯
 - **啟動 Header 驗證**：CLI `v0.153.4`、model `gpt-6-astra`、reasoning effort `ultra`（真實 worker，非 mock/default；readback 時仍 running，不預先宣稱已完成）
 - **Supervisor 現況讀回**：PID `2957832`，/proc cwd `/home/lupin/oday-plus-supervisor-runtime-b66d18130f3b`，`loaded_code_sha` `b66d18130f3bac78cf5af32b1c7000933e5d931d`，`loaded_config_digest` `54110ea0cef280a8` 與磁碟 SHA256 `54110ea0cef280a822484067185076b35600accf58dbb24d09adc6c64bbb6cd8` 吻合；角色政策、兩 Codex pools 共 4 slots、Agy5/Claude5 設定仍在。（註：此為 09-11 後續 readback，不能替代 09-06 原始 rollout/兩輪 health 證據）。
 
+#### 5.3.4 第三輪獨立審查（2026-09-12）真實 Review 派工收據讀回
+
+- **派工 Run ID**：`codex-20260912T085853Z-eda32189`
+- **派工事件**：`evt-20260912T085846Z-dda7776d`（觸發原因：`review_ready_dispatch`）
+- **指派身份與 Slot**：邏輯 `codex2`、Account Pool `codex_lupin`、實體 Slot `codex_lupin_slot_1`
+- **程序 PID**：Runner PID `3757120`，Child PID `3757125`
+- **啟動日誌路徑**：`/home/lupin/oday-plus-supervisor-runtime-b66d18130f3b/.orchestrator/logs/20260912T085853080110Z-codex-codex_lupin_slot_1-908bbd.log`
+- **啟動 Header 驗證**：CLI `v0.153.4`、model `gpt-6-astra`、reasoning effort `ultra`（真實 worker，非 mock/default；readback 時仍 running，不冒稱完成）
+- **Supervisor 現況讀回**：PID `2957832`，cwd `/home/lupin/oday-plus-supervisor-runtime-b66d18130f3b`，`loaded_code_sha` `b66d18130f3bac78cf5af32b1c7000933e5d931d`；`loaded_config_digest` `54110ea0cef280a8` 與磁碟 SHA256 `54110ea0cef280a822484067185076b35600accf58dbb24d09adc6c64bbb6cd8` 相符，角色政策與 Agy5/Claude5/Codex 兩池共 4 slots 維持。
+- **揭露說明**：此為 09-12 後續讀回，不替代 09-06 原始兩輪健康證據；runtime 仍有 `scripts/ai_status.py` 未提交修改，已由 `state.control_plane_dirty` 與 `git status` 證實，不能只憑 loaded SHA 宣稱 current runtime clean，留控制面 owner 依既有流程處理。
+
 ---
 
 ## 6. Worker 存活與任務狀態保護（Worker Preservation & Task Invariants）
@@ -208,12 +219,13 @@ Supervisor 重啟後，完成連續 2 次完整健康迴圈，無任何新增錯
 
 ### 7.2 控制面授權回滾程序（Authorized Rollback Procedures via Primitive & Snapshot）
 
-若 live 環境因控制面程序或設定故障需要回滾至操作前狀態，必須透過任務授權之唯一原語與歷史基準執行：
+若 live 環境因控制面程序或設定故障需要回滾至操作前狀態，必須透過任務授權之唯一原語與既有基準執行：
 
-1. **配置還原**：
-   - 若歷史私有暫存 `/tmp/odp-role-provider-codex-live-rollout-backup-fswthfki/` 存在，自該處還原 `config.before.json` 與 `launcher.before.sh` 至 `/home/lupin/odayplus/.orchestrator/config.json` 及 `scripts/ai-status.sh`。
-   - 若該 `/tmp` 目錄已隨系統生命週期自然清理，則從前一穩定版本 `ba58ed6723960244d567c5314bfc200ffdf7bae8` 還原操作前配置（SHA256: `5e9f4279b14ba6f4595317d4064ccebc952c678693ec2abd2bb243a89be8a12c`）及 launcher（SHA256: `3660f2423ddf5169c86199d3bf1699ebb34e733ebe9add2182483a9cfb5be9d1`），嚴禁事後偽造快照。
-2. **Runtime 原子切換與程序重啟**：
+1. **配置還原前置限制與處置**：
+   - 若能定位既存私有備份，提供脫敏位置／hash／readback 並自該處還原至 `/home/lupin/odayplus/.orchestrator/config.json` 及 `scripts/ai-status.sh`。
+   - 實測確認原始私有暫存 `/tmp/odp-role-provider-codex-live-rollout-backup-fswthfki/` 目前不存在（原因未確認，`ls` exit 2）；且 git 歷史 commit `ba58ed6723960244d567c5314bfc200ffdf7bae8` 未包含 live `.orchestrator/config.json`（僅有 `config.example.json`，且 `scripts/ai-status.sh` hash 為 `5bc351efdc74813a0dc45d1e3bb2877a92094dee788afd05a4b295b07b32cbe8`，與操作前 launcher `3660f2423ddf5169c86199d3bf1699ebb34e733ebe9add2182483a9cfb5be9d1` 不同），單憑 SHA256 無法還原缺失之檔案內容。
+   - 因此，在未能定位既存私有備份前，如實記錄缺證與目前無法執行操作前完整配置回滾的前置限制；嚴格禁止從 example 檔案或事後重建內容冒充操作前快照。
+2. **Runtime 程式碼原子切換與程序重啟**：
    - 沿用既有唯一 `scripts/orchestrator/rollout_supervisor_runtime.py` 原語，以乾淨的 `ba58ed6723960244d567c5314bfc200ffdf7bae8` 為 `--source-root`，`--tracking-ref` 釘住 `ba58ed6723960244d567c5314bfc200ffdf7bae8`，完成原子切換與 watchdog 程序重啟。
    - 嚴格禁止自行撰寫第二套 restart / watchdog 或臨時腳本。
 3. **還原後唯讀驗證**：
@@ -227,5 +239,5 @@ Supervisor 重啟後，完成連續 2 次完整健康迴圈，無任何新增錯
 2. **未捏造測試任務**：無 ready review 任務時如實記錄，未人工建立 synthetic tasks 搶跑測試。
 3. **未重跑已核准測試**：本任務為執行控制面 live rollout，不重跑無關的完整測試套件或已核准 PR 的測試。
 4. **未外洩密鑰**：私有 config 備份與 auth secrets 均未 commit 或包含於 PR 中。
-5. **如實揭露快照生命週期限制**：操作前私有快照目錄因位於 `/tmp` 隨系統生命週期已自然清理，如實記錄缺證，未於事後重建冒充；還原與驗證依賴記錄之 SHA256 與 commit `ba58ed672396` 歷史基準。
+5. **如實揭露快照缺證與回滾限制**：操作前私有快照目錄 `/tmp/odp-role-provider-codex-live-rollout-backup-fswthfki/` 不存在（原因未確認，實測 `ls` exit 2），如實記錄缺證，禁止以 example 或事後重建內容冒充操作前快照；因 git 歷史 commit 不含 live config 且 hash 無法還原檔案內容，已明確記錄目前無法執行完整配置回滾的前置限制。
 6. **未擅自降級模型**：遵循 ultra 政策，未因相容性疑慮擅自降低 effort 或切回 Luna。
