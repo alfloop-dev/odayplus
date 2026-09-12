@@ -236,3 +236,8 @@ Missing worker auth is now covered explicitly: an old worker with no admission r
 ## Durable recovery continuation
 
 A cleared provider pause alone cannot select an older healthy pool snapshot: the alternative must represent a successor failure/recovery epoch. Auth rotation retains exact superseded pool epochs, so current-auth bounded recovery survives a stale cooldown save without masking newer failure. Real disk tests cover A to B to C rotation, stale writers in both directions, later failure preservation, and expiry with same-second earlier healthy epochs. Focused verification: 97 passed and 26 subtests. Admission baseline full verification after make bootstrap: 2912 passed, 636 subtests. Final combined full verification follows separately; initial failures are retained.
+
+
+## Final combined verification
+
+Original task-branch head 8562a4951b82 passed the entire CI-equivalent orchestrator suite: 2920 passed, 6 skipped, 10 deselected, 636 subtests, exit 0. The final commit adds only the known-auth/missing-admission parameter (eight admission cases pass) and these receipts. Production sources are byte-identical to that fully tested head. Boundary checks cover 1158 files and ruff passes. See final-continuation-verification.json and original full JUnit/log/receipt. The task remains subject to a new bounded Human/Ops continuation at epoch 8 and independent exact-head review/required CI.

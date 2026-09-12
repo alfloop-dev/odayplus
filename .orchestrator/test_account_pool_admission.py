@@ -151,6 +151,7 @@ def test_canary_cannot_promote_sibling_recovery_created_after_dispatch(tmp_path)
     (None, False, False),
     (None, True, False),
     ("auth-a", True, False),
+    ("auth-b", False, False),
     ("auth-b", True, True),
 ])
 def test_missing_worker_auth_cannot_be_inferred_from_current_credentials(tmp_path, worker_auth, admitted, expected):
