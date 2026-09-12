@@ -10,9 +10,13 @@
   "reconciliation_target": {
     "repository": "alfloop-dev/odayplus",
     "continuation_branch": "task/DPF-EMGI-LIVE-ROLLOUT-001-RECOVERY-20260911",
-    "target_dev_baseline": "4b35121031d044ea595d24b7a42bb243c39386d7",
-    "pre_fix_parent_sha": "e71669e76e458e2dad835c47d9e83d8865de74da",
-    "reviewed_head_sha": "e71669e76e458e2dad835c47d9e83d8865de74da",
+    "target_dev_baseline": "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
+    "pre_fix_parent_sha": "168a3abb64264303e20aecce517928b2f6896355",
+    "last_reviewed_head_sha": "168a3abb64264303e20aecce517928b2f6896355",
+    "historical_reviewed_head_shas": [
+      "e71669e76e458e2dad835c47d9e83d8865de74da",
+      "168a3abb64264303e20aecce517928b2f6896355"
+    ],
     "canonical_status_root": "/home/lupin/odayplus"
   },
   "historical_cross_repo_delivery": {

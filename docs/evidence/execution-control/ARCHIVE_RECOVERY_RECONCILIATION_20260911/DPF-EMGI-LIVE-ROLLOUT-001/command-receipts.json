@@ -1,12 +1,16 @@
 {
   "task_id": "DPF-EMGI-LIVE-ROLLOUT-001",
-  "collected_at": "2026-09-12T09:15:00Z",
+  "collected_at": "2026-09-12T09:34:00Z",
   "collector": "Antigravity3",
   "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/dpf-emgi-live-rollout-001",
   "provenance_metadata": {
-    "target_dev_baseline": "4b35121031d044ea595d24b7a42bb243c39386d7",
-    "pre_fix_parent_sha": "e71669e76e458e2dad835c47d9e83d8865de74da",
-    "reviewed_head_sha": "e71669e76e458e2dad835c47d9e83d8865de74da",
+    "target_dev_baseline": "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
+    "pre_fix_parent_sha": "168a3abb64264303e20aecce517928b2f6896355",
+    "last_reviewed_head_sha": "168a3abb64264303e20aecce517928b2f6896355",
+    "previous_reviewed_head_shas": [
+      "e71669e76e458e2dad835c47d9e83d8865de74da",
+      "168a3abb64264303e20aecce517928b2f6896355"
+    ],
     "cross_repo_source": "alfloop-dev/oday-data-platform",
     "cross_repo_pr": 62,
     "cross_repo_head_sha": "71ecbe0d982f3f93c976fa0104a82903d2a071cf",
@@ -156,12 +160,22 @@
       "label": "focused_reconciliation_verification",
       "command": "bash docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/DPF-EMGI-LIVE-ROLLOUT-001/verify_reconciliation.sh",
       "exit_code": 0,
-      "executed_at": "2026-09-12T09:15:00Z",
-      "duration_seconds": 0.35,
+      "executed_at": "2026-09-12T09:33:35Z",
+      "duration_seconds": 0.16,
       "result_reference": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/DPF-EMGI-LIVE-ROLLOUT-001/verification-terminal-output.txt",
-      "input_script": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/DPF-EMGI-LIVE-ROLLOUT-001/verify_reconciliation.sh",
-      "input_reconciliation": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/DPF-EMGI-LIVE-ROLLOUT-001/acceptance-reconciliation.json",
-      "summary": "Substantive offline reconciliation verification verifying A1-A4 met_by_receipt, A5 unmet_per_own_receipt, dynamic DAG cycle-free status across 12 derived dependencies (10 remediation + 2 snapshot), raw artifact bytes read and hashed against recorded digests, git baseline, and receipt structure."
+      "execution_context": "pre_commit_working_tree_after_base_advance",
+      "last_reviewed_head_sha": "168a3abb64264303e20aecce517928b2f6896355",
+      "previous_reviewed_heads": [
+        "e71669e76e458e2dad835c47d9e83d8865de74da",
+        "168a3abb64264303e20aecce517928b2f6896355"
+      ],
+      "tested_inputs_manifest": {
+        "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/DPF-EMGI-LIVE-ROLLOUT-001/README.md": "73d299d295ab61b65fe6260c132f562f98b3056bc80fcffe5f0aa1f7c007a492",
+        "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/DPF-EMGI-LIVE-ROLLOUT-001/acceptance-reconciliation.json": "bfd5e47e719121b07c65d91333fbd72ffe01d38a52e90e539bca8d8137305277",
+        "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/DPF-EMGI-LIVE-ROLLOUT-001/verify_reconciliation.sh": "72d343c70f4f8107656e7318c0e50b5266b4cb02117dfe1fd829fbefe1dfb404"
+      },
+      "pre_commit_input_digest": "dd2fae8968d76bff92e7a0ac47ee75d0cea0a4df8dd8f7a5e543530edff1f270",
+      "summary": "Substantive offline reconciliation verification verifying A1-A4 met_by_receipt, A5 unmet_per_own_receipt, dynamic DAG cycle-free status across 14 nodes and 12 derived dependencies (10 remediation + 2 snapshot), raw artifact bytes read and hashed against recorded digests, git baseline resolvable commit and ancestry check, and receipt structure."
     }
   ]
 }

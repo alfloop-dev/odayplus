@@ -10,9 +10,11 @@ import sys
 import os
 import zipfile
 import hashlib
+import subprocess
 from pathlib import Path
 
 evidence_dir = Path(sys.argv[1]).resolve()
+repo_root = evidence_dir.parents[4]
 
 # 1. Verify README.md
 readme_path = evidence_dir / "README.md"
@@ -20,7 +22,7 @@ assert readme_path.is_file(), f"Missing {readme_path}"
 readme_text = readme_path.read_text(encoding="utf-8")
 assert len(readme_text) > 1000, "README.md is too short"
 assert "DPF-EMGI-LIVE-ROLLOUT-001" in readme_text, "README must contain Task ID"
-assert "4b35121031d044ea595d24b7a42bb243c39386d7" in readme_text or "4b351210" in readme_text, "README must contain correct baseline SHA"
+assert "3828c5ada2a1baab33d7dbe734c7ec70152d3d77" in readme_text, "README must contain correct baseline SHA"
 assert "A5" in readme_text and ("unmet" in readme_text.lower() or "未滿足" in readme_text), "README must mention unmet A5"
 assert "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001" in readme_text, "README must analyze remediation task"
 assert "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001" in readme_text, "README must analyze snapshot task"
@@ -35,9 +37,19 @@ recon = json.loads(recon_path.read_text(encoding="utf-8"))
 assert recon.get("task_id") == "DPF-EMGI-LIVE-ROLLOUT-001", "Task ID mismatch"
 
 target = recon.get("reconciliation_target", {})
-assert target.get("target_dev_baseline", "").startswith("4b351210"), "Baseline SHA mismatch"
-assert target.get("pre_fix_parent_sha", "").startswith("e71669e7"), "Pre-fix parent SHA mismatch"
-assert target.get("reviewed_head_sha", "").startswith("e71669e7"), "Reviewed head SHA mismatch"
+baseline = target.get("target_dev_baseline", "")
+assert baseline == "3828c5ada2a1baab33d7dbe734c7ec70152d3d77", f"Baseline SHA mismatch: {baseline}"
+
+# Verify git baseline object type and ancestry
+cat_baseline_res = subprocess.run(["git", "cat-file", "-t", baseline], cwd=repo_root, capture_output=True, text=True)
+assert cat_baseline_res.returncode == 0 and cat_baseline_res.stdout.strip() == "commit", f"Git baseline {baseline} is not a resolvable commit object"
+ancestor_res = subprocess.run(["git", "merge-base", "--is-ancestor", baseline, "HEAD"], cwd=repo_root)
+assert ancestor_res.returncode == 0, f"Git baseline {baseline} is not an ancestor of HEAD"
+
+last_rev_head = target.get("last_reviewed_head_sha", "")
+assert last_rev_head == "168a3abb64264303e20aecce517928b2f6896355", f"Last reviewed head SHA mismatch: {last_rev_head}"
+cat_rev_res = subprocess.run(["git", "cat-file", "-t", last_rev_head], cwd=repo_root, capture_output=True, text=True)
+assert cat_rev_res.returncode == 0 and cat_rev_res.stdout.strip() == "commit", f"Last reviewed head {last_rev_head} is not a resolvable commit object"
 
 cross_repo = recon.get("historical_cross_repo_delivery", {})
 assert cross_repo.get("pr_number") == 62, "Cross repo PR number mismatch"
@@ -159,9 +171,8 @@ cmd_receipts_path = evidence_dir / "command-receipts.json"
 assert cmd_receipts_path.is_file(), f"Missing {cmd_receipts_path}"
 cmd_receipts = json.loads(cmd_receipts_path.read_text(encoding="utf-8"))
 meta = cmd_receipts.get("provenance_metadata", {})
-assert meta.get("target_dev_baseline", "").startswith("4b351210"), "Command receipts baseline mismatch"
-assert meta.get("pre_fix_parent_sha", "").startswith("e71669e7"), "Command receipts parent mismatch"
-assert meta.get("reviewed_head_sha", "").startswith("e71669e7"), "Command receipts reviewed head mismatch"
+assert meta.get("target_dev_baseline") == "3828c5ada2a1baab33d7dbe734c7ec70152d3d77", "Command receipts baseline mismatch"
+assert meta.get("last_reviewed_head_sha") == "168a3abb64264303e20aecce517928b2f6896355", "Command receipts reviewed head mismatch"
 
 receipts = cmd_receipts.get("receipts", [])
 assert len(receipts) >= 12, f"Expected at least 12 command receipts, got {len(receipts)}"
@@ -176,11 +187,9 @@ for r in receipts:
     ref = r["result_reference"]
     if ref.startswith("/") or ref.endswith(".zip") or "#" in ref or ref.startswith("docs/") or ref.startswith("support/"):
         file_part = ref.split("#")[0]
-        # Resolve relative path against repo root, status root, or evidence dir
         file_path = Path(file_part)
         if not file_path.is_absolute():
-            # Check relative to repo, pantheon status root, or evidence dir
-            candidates = [evidence_dir / file_path, Path.cwd() / file_path, Path(pantheon_root) / file_path, evidence_dir.parents[4] / file_path]
+            candidates = [evidence_dir / file_path, repo_root / file_path, Path(pantheon_root) / file_path]
             resolved_file = next((c for c in candidates if c.is_file()), None)
             assert resolved_file is not None and resolved_file.is_file(), f"Local result_reference file does not exist: {file_part}"
         else:
@@ -241,6 +250,20 @@ with zipfile.ZipFile(rollback_zip_path, 'r') as zf:
     assert inner_rollback_json.get("candidate_sha") == "4d694e3be3487ea5877ce5e323cffc32180d33f2", "Inner rollback candidate SHA mismatch"
     assert inner_rollback_json.get("image_digest") == "sha256:0c97ba05aeaa7763786a3297d825d2fbc8ee8515ac82fcaabc69e302fc057593", "Inner rollback image digest mismatch"
 print(f"✓ Rollback test artifact raw bytes and inner JSON verified: ZIP SHA256 {computed_rollback_zip_sha[:16]}..., inner SHA256 {computed_inner_rollback_sha[:16]}... (fully_restored=False confirmed)")
+
+# Focused verification receipt inputs verification
+focused_r = next((r for r in receipts if r.get("label") == "focused_reconciliation_verification"), None)
+assert focused_r is not None, "Missing focused reconciliation verification receipt"
+assert focused_r.get("last_reviewed_head_sha") == "168a3abb64264303e20aecce517928b2f6896355", "Focused receipt last reviewed head mismatch"
+manifest = focused_r.get("tested_inputs_manifest", {})
+for rel_p, recorded_sha in manifest.items():
+    p = Path(rel_p)
+    if not p.is_absolute():
+        p = repo_root / rel_p
+    assert p.is_file(), f"Manifest file missing: {p}"
+    actual_sha = hashlib.sha256(p.read_bytes()).hexdigest()
+    assert actual_sha == recorded_sha, f"Hash mismatch for {rel_p}: {actual_sha} != {recorded_sha}"
+print("✓ Focused reconciliation verification receipt inputs verified against exact file hashes")
 
 print(f"✓ command-receipts.json contains {len(receipts)} receipts with verified raw hashes, commands, and references")
 
