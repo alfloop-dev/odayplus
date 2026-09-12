@@ -554,6 +554,7 @@ def build_sources_off_attestation(
     provider_mode: str,
     sources_inventory: list[dict[str, Any]],
     egress_evidence: dict[str, Any] | None = None,
+    root: Path = ROOT,
 ) -> dict[str, Any]:
     """Seal an observed sources-off posture into a bound attestation.
 
@@ -571,7 +572,10 @@ def build_sources_off_attestation(
     ]
     inventory.sort(key=lambda entry: str(entry.get("source_id")))
     if egress_evidence is None:
-        egress_evidence = build_sources_off_egress_evidence(candidate_sha=candidate_sha)
+        egress_evidence = build_sources_off_egress_evidence(
+            root=root,
+            candidate_sha=candidate_sha,
+        )
     attestation: dict[str, Any] = {
         "provider_mode": provider_mode,
         "egress_posture": _derived_egress_posture(inventory),
@@ -723,16 +727,23 @@ def sources_off_attestation_errors(
     for field in SOURCES_OFF_EGRESS_EVIDENCE_FIELDS:
         if field not in evidence:
             errors.append(f"{label}.egress_evidence missing required field: {field}")
-    expected_evidence = build_sources_off_egress_evidence(
-        root=root,
-        candidate_sha=candidate_sha,
-    )
-    for field in SOURCES_OFF_EGRESS_EVIDENCE_FIELDS:
-        if evidence.get(field) != expected_evidence.get(field):
-            errors.append(
-                f"{label}.egress_evidence.{field} is not the checked-in Runtime "
-                "Release egress contract"
-            )
+    expected_evidence = None
+    try:
+        expected_evidence = build_sources_off_egress_evidence(
+            root=root,
+            candidate_sha=candidate_sha,
+        )
+    except Exception as exc:
+        errors.append(
+            f"{label}.egress_evidence cannot be verified for candidate {candidate_sha}: {exc}"
+        )
+    if expected_evidence is not None:
+        for field in SOURCES_OFF_EGRESS_EVIDENCE_FIELDS:
+            if evidence.get(field) != expected_evidence.get(field):
+                errors.append(
+                    f"{label}.egress_evidence.{field} is not the checked-in Runtime "
+                    "Release egress contract"
+                )
     if evidence.get("resolved_cloud_run_egress") != evidence.get("cloud_run_egress"):
         errors.append(
             f"{label}.egress_evidence.resolved_cloud_run_egress must match the "
@@ -1123,6 +1134,7 @@ def validate_manifest(
     *,
     expected_candidate_sha: str | None = None,
     expected_digest: str | None = None,
+    root: Path = ROOT,
 ) -> list[str]:
     """Return all manifest integrity errors; an empty list means valid.
 
@@ -1200,6 +1212,7 @@ def validate_manifest(
                 candidate_sha=manifest.get("candidate_sha"),
                 components=manifest.get("components"),
                 source_policy_digest=manifest.get("source_policy_digest"),
+                root=root,
             )
         )
 
@@ -1613,22 +1626,28 @@ def compute_sources_off_egress_contract_digest(
     candidate_sha: str | None = None,
 ) -> str:
     """Hash the checked-in Runtime Release egress contract inputs."""
-    if candidate_sha and is_exact_sha(candidate_sha):
-        try:
-            h = hashlib.sha256()
-            for rel in sorted(SOURCES_OFF_EGRESS_CONTRACT_FILES):
+    if candidate_sha is not None:
+        if not is_exact_sha(candidate_sha):
+            raise ValueError(
+                f"candidate_sha {candidate_sha!r} is not an exact 40-character SHA"
+            )
+        h = hashlib.sha256()
+        for rel in sorted(SOURCES_OFF_EGRESS_CONTRACT_FILES):
+            try:
                 content = subprocess.check_output(
                     ["git", "show", f"{candidate_sha}:{rel}"],
                     cwd=root,
-                    stderr=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
                 )
-                h.update(rel.encode("utf-8"))
-                h.update(b"\x00")
-                h.update(content)
-                h.update(b"\x00")
-            return "sha256:" + h.hexdigest()
-        except Exception:
-            pass
+            except subprocess.CalledProcessError as exc:
+                raise RuntimeError(
+                    f"failed to read {rel} at candidate {candidate_sha}: {exc.stderr.decode('utf-8', errors='replace').strip()}"
+                ) from exc
+            h.update(rel.encode("utf-8"))
+            h.update(b"\x00")
+            h.update(content)
+            h.update(b"\x00")
+        return "sha256:" + h.hexdigest()
 
     return compute_file_set_digest(
         (root / relative_path for relative_path in SOURCES_OFF_EGRESS_CONTRACT_FILES),
@@ -1812,19 +1831,28 @@ def _sources_off_egress_contract_errors(
 
     errors: list[str] = []
     file_contents: dict[str, str] = {}
-    if candidate_sha and is_exact_sha(candidate_sha):
-        try:
-            for relative in SOURCES_OFF_EGRESS_CONTRACT_FILES:
+    if candidate_sha is not None:
+        if not is_exact_sha(candidate_sha):
+            return [
+                f"candidate_sha {candidate_sha!r} is not an exact 40-character SHA"
+            ]
+        for relative in SOURCES_OFF_EGRESS_CONTRACT_FILES:
+            try:
                 content = subprocess.check_output(
                     ["git", "show", f"{candidate_sha}:{relative}"],
                     cwd=root,
-                    stderr=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
                 ).decode("utf-8")
                 file_contents[relative] = content
-        except Exception:
-            file_contents = {}
-
-    if not file_contents:
+            except subprocess.CalledProcessError as exc:
+                return [
+                    f"sources-off egress contract file {relative} cannot be read for candidate {candidate_sha}: {exc.stderr.decode('utf-8', errors='replace').strip()}"
+                ]
+            except UnicodeDecodeError as exc:
+                return [
+                    f"sources-off egress contract file {relative} is not valid UTF-8 for candidate {candidate_sha}: {exc}"
+                ]
+    else:
         paths = {relative: root / relative for relative in SOURCES_OFF_EGRESS_CONTRACT_FILES}
         missing = [relative for relative, path in paths.items() if not path.is_file()]
         if missing:

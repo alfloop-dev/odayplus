@@ -142,6 +142,7 @@ def derive_sources_off_posture(
     workflow_path: Path,
     enabled_sources: list[str] | None = None,
     resolved_egress: str | None = None,
+    candidate_sha: str | None = None,
     root: Path = ROOT,
 ) -> dict[str, Any]:
     """從 release SHA 上的 deploy workflow 推導出實際的 data-plane posture。
@@ -213,7 +214,9 @@ def derive_sources_off_posture(
         "all-traffic": SOURCES_OFF_CLOUD_RUN_EGRESS,
         "all_traffic": SOURCES_OFF_CLOUD_RUN_EGRESS,
     }.get(raw_resolved_egress.lower(), raw_resolved_egress or "unresolved")
-    contract_errors = _sources_off_egress_contract_errors(root=root)
+    contract_errors = _sources_off_egress_contract_errors(
+        root=root, candidate_sha=candidate_sha
+    )
     egress_contract_verified = (
         workflow_vpc_binding
         and deploy_entrypoint_vpc_binding
@@ -275,6 +278,7 @@ def derive_sources_off_posture(
             resolved_cloud_run_egress=resolved_cloud_run_egress,
             provider_credentials_runtime=provider_credentials_runtime,
             root=root,
+            candidate_sha=candidate_sha,
         ),
     }
 
@@ -531,6 +535,7 @@ def build_handoff(
                             else root / DEFAULT_WORKFLOW_PATH
                         ),
                         enabled_sources=enabled_sources,
+                        candidate_sha=release_sha,
                         root=root,
                     )
                 except HandoffError as exc:
@@ -543,12 +548,14 @@ def build_handoff(
                         provider_mode=posture["provider_mode"],
                         sources_inventory=posture["sources_inventory"],
                         egress_evidence=posture["egress_evidence"],
+                        root=root,
                     )
                     posture_errors = sources_off_attestation_errors(
                         candidate,
                         candidate_sha=release_sha,
                         components=manifest_components,
                         source_policy_digest=compute_source_policy_digest(root=root),
+                        root=root,
                     )
                     if posture_errors:
                         errors.extend(
