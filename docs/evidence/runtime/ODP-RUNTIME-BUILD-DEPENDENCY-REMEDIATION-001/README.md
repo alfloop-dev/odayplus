@@ -39,7 +39,7 @@ recorded_at: 2026-09-12T15:11:24Z
   - `apps/web/features/operator/network/HeatZoneMap.tsx`：於 Map 實例化前配置 `maplibregl.setWorkerUrl(MAPLIBRE_WORKER_URL)`，並在 `zoneToFeature` 中增加 `isValidCell(zone.h3)` 防護確保 centroid delta polygon 正確生成。
   - `npm run typecheck` 通過 (Exit code: 0)。
   - `npm run test` (Vitest 58 test files, 528 tests) 全數通過 (Exit code: 0)。
-  - Playwright E2E 瀏覽器回歸測試（`tests/e2e/test_maplibre_v6_browser_regression.spec.ts` 與 `tests/e2e/operator-network-listings.spec.ts`）全數通過，驗證 Worker 腳本 HTTP 200 下載、GeoJSON Source 載入、特徵索引與渲染查詢無誤，收據已保存至 `docs/evidence/runtime/ODP-RUNTIME-BUILD-DEPENDENCY-REMEDIATION-001/receipts/maplibre-v6-browser-regression-receipt.json`。
+  - Playwright E2E 瀏覽器回歸測試（`tests/e2e/operator-network-listings.spec.ts`）全數通過，驗證 Worker 腳本 HTTP 200 下載、GeoJSON Source 載入、特徵索引與渲染查詢無誤，收據已保存至 `docs/evidence/runtime/ODP-RUNTIME-BUILD-DEPENDENCY-REMEDIATION-001/receipts/maplibre-v6-browser-regression-receipt.json`。
 - **A4 production web build 與必要 CI 成功且獨立審查**:
   - `npm run lint` 通過 (Exit code: 0)。
   - `npm run build` (Next.js production build) 成功編譯且靜態/動態頁面優化完成 (Exit code: 0)。
@@ -74,7 +74,6 @@ recorded_at: 2026-09-12T15:11:24Z
 
 4. **MapLibre v6 Web Worker & GeoJSON Browser Regression Suite**:
    ```bash
-   npx playwright test tests/e2e/test_maplibre_v6_browser_regression.spec.ts
    npx playwright test tests/e2e/operator-network-listings.spec.ts
    # Output: All tests passed
    # Receipt: docs/evidence/runtime/ODP-RUNTIME-BUILD-DEPENDENCY-REMEDIATION-001/receipts/maplibre-v6-browser-regression-receipt.json
