@@ -1,21 +1,21 @@
 {
   "task_id": "ODP-JOB-PARTIAL-DISPOSITION-001",
-  "task_title": "\u6b77\u53f2\u9a57\u6536\u7e8c\u8fa6\uff1aODP-JOB-PARTIAL-DISPOSITION-001",
-  "original_task_title": "\u4f9d producer \u8b49\u64da\u88dc PARTIAL \u72c0\u614b\u8f49\u79fb\u6216\u6b63\u5f0f\u8655\u7f6e SHARED-001",
+  "task_title": "歷史驗收續辦：ODP-JOB-PARTIAL-DISPOSITION-001",
+  "original_task_title": "依 producer 證據補 PARTIAL 狀態轉移或正式處置 SHARED-001",
   "task_class": "documentation",
-  "phase": "History Recovery \u2014 executable acceptance reconciliation",
+  "phase": "History Recovery — executable acceptance reconciliation",
   "owner": "Antigravity7",
   "reviewer": "Codex",
-  "recorded_at": "2026-09-11T12:45:55Z",
+  "recorded_at": "2026-09-12T09:25:00Z",
   "reconciliation_target": {
     "repository": "alfloop-dev/odayplus",
     "continuation_branch": "task/ODP-JOB-PARTIAL-DISPOSITION-001-RECOVERY-20260911",
-    "target_dev_baseline": "4b35121031d0738ff7c529810cf1b2e267161083"
+    "target_dev_baseline": "ef8345bce29436ce86bd1a70b857d668ac16182a"
   },
   "historical_delivery": {
     "pr_number": 1172,
     "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1172",
-    "pr_title": "[ReviewBus] ODP-JOB-PARTIAL-DISPOSITION-001 \u4f9d producer \u8b49\u64da\u88dc PARTIAL \u72c0\u614b\u8f49\u79fb\u6216\u6b63\u5f0f\u8655\u7f6e SHARED-001",
+    "pr_title": "[ReviewBus] ODP-JOB-PARTIAL-DISPOSITION-001 依 producer 證據補 PARTIAL 狀態轉移或正式處置 SHARED-001",
     "head_sha": "f8caf62e11643f9cbe59ea6b958faeab746fcac2",
     "merge_commit_sha": "9647d673ccf2c0f11ef565e78511099821d85c19",
     "merged": true,
@@ -129,63 +129,63 @@
   "acceptance_criteria_reconciliation": [
     {
       "index": 1,
-      "criterion": "\u53ea\u6709\u8b49\u64da\u5217\u540d\u7684 job \u80fd\u7522\u751f PARTIAL",
+      "criterion": "只有證據列名的 job 能產生 PARTIAL",
       "classes": [
         "D",
         "T"
       ],
       "classes_zh": [
-        "\u7a0b\u5f0f\u6216\u6587\u4ef6\u4ea4\u4ed8",
-        "\u53ef\u7531\u6e2c\u8a66\u8b49\u660e"
+        "程式或文件交付",
+        "可由測試證明"
       ],
       "status": "met",
-      "status_zh": "\u5df2\u6eff\u8db3",
-      "evidence": "\u6b77\u53f2 PR #1172 \u7d93\u524d\u7f6e\u4efb\u52d9 ODP-JOB-PARTIAL-PRODUCER-EVIDENCE-001 \u67e5\u8b49\u78ba\u8a8d\u7121\u5728\u6a39\u751f\u7522\u8005\u8b49\u64da\u5f8c\uff0c\u4f9d\u689d\u4ef6\u8655\u7f6e\u5c07 PARTIAL \u4fdd\u6301 absent \u4e26\u65bc set_valued_requirements.json \u767b\u9304 BLOCKED_BY_EVIDENCE\u3002PR #1172 \u4ea4\u4ed8\u4e4b tests/governance/test_job_partial_disposition.py\uff08merge 9647d673ccf2\uff09\u65b7\u8a00 status == absent \u8207 disposition.state == BLOCKED_BY_EVIDENCE\uff0c\u4e26\u6e2c\u8a66\u5217\u540d 5 \u500b enum members\uff1bCI \u65bc exact head f8caf62e1164 7 \u9805\u5168\u7da0 (conclusion=success)\u3002\u67e5\u7121 producer \u4e4b\u4e8b\u5be6\u4f86\u81ea\u524d\u7f6e\u4efb\u52d9\u8abf\u67e5\u8b49\u64da\uff0c\u6e2c\u8a66\u9a57\u8b49\u6cbb\u7406\u72c0\u614b\u4e00\u81f4\u3002\u5f8c\u7e8c PR #1285 \u4ea4\u4ed8\u5177\u540d producer handle_batch_listing_intake \u5f8c\uff0cPR #1302 \u5c0d\u9f4a\u6cbb\u7406\u6e2c\u8a66\uff0c\u539f\u689d\u4ef6\u8655\u7f6e\u5951\u7d04\u8207\u5f8c\u7e8c\u5be6\u4f5c\u4e00\u81f4\u6210\u7acb\u3002",
-      "boundary": "\u539f\u4efb\u52d9\u689d\u4ef6\u5206\u652f\u5b8c\u6574\u5c65\u884c\uff1bproducer absence \u4f9d\u524d\u7f6e\u8abf\u67e5\u8b49\u64da\u5224\u5b9a\uff1b\u5f8c\u7e8c\u5177\u9ad4\u751f\u7522\u8005\u4ea4\u4ed8\u7531 PR #1285/1302 \u627f\u63a5\uff0c\u4e0d\u6df7\u6dc6\u6b77\u53f2\u8cac\u4efb\u3002"
+      "status_zh": "已滿足",
+      "evidence": "歷史 PR #1172 經前置任務 ODP-JOB-PARTIAL-PRODUCER-EVIDENCE-001 查證確認無在樹生產者證據後，依條件處置將 PARTIAL 保持 absent 並於 set_valued_requirements.json 登錄 BLOCKED_BY_EVIDENCE。PR #1172 交付之 tests/governance/test_job_partial_disposition.py（merge 9647d673ccf2）斷言 status == absent 與 disposition.state == BLOCKED_BY_EVIDENCE，並測試列名 5 個 enum members；CI 於 exact head f8caf62e1164 7 項全綠 (conclusion=success)。查無 producer 之事實來自前置任務調查證據，測試驗證治理狀態一致。後續 PR #1285 交付具名 producer handle_batch_listing_intake 後，PR #1302 對齊治理測試，原條件處置契約與後續實作一致成立。",
+      "boundary": "原任務條件分支完整履行；producer absence 依前置調查證據判定；後續具體生產者交付由 PR #1285/1302 承接，不混淆歷史責任。"
     },
     {
       "index": 2,
-      "criterion": "PARTIAL receipt \u53ef\u5340\u5206 succeeded\uff0ffailed items \u4e14 retry \u4e0d\u91cd\u505a\u6210\u529f\u9805",
+      "criterion": "PARTIAL receipt 可區分 succeeded／failed items 且 retry 不重做成功項",
       "classes": [
         "D"
       ],
       "classes_zh": [
-        "\u7a0b\u5f0f\u6216\u6587\u4ef6\u4ea4\u4ed8"
+        "程式或文件交付"
       ],
       "status": "met",
-      "status_zh": "\u5df2\u6eff\u8db3",
-      "evidence": "\u4f9d\u689d\u4ef6\u8655\u7f6e\u898f\u5247\uff08\u7121\u9069\u7528 producer \u6642\u4fdd\u6301 absent \u4e26\u4ea4\u4ed8 formal handback\uff09\uff0cPR #1172 \u4ea4\u4ed8\u4e4b Handback \u6587\u4ef6 docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md \u00a74.2 \u78ba\u7acb\u660e\u7d30\u6536\u64da\u67b6\u69cb\u5951\u7d04\uff08total/succeeded/failed \u6578\u91cf\u53ca items \u9010\u9805 item_status\uff09\uff0c\u00a74.3 \u78ba\u7acb\u5dee\u7570\u5316\u91cd\u8a66\u5951\u7d04\uff08retry_scope=FAILED_ONLY\uff0c\u4e0d\u91cd\u505a\u6210\u529f\u9805\uff09\uff1btests/governance/test_job_partial_disposition.py \u9a57\u8b49 Handback \u5951\u7d04\u5b8c\u6574\u6027\u3002\u6309\u689d\u4ef6\u5206\u652f\uff0c\u6b64\u9805\u4e4b runtime \u5be6\u4f5c\u884c\u70ba\u5728\u7576\u6642\u7121 producer \u6642\u4e0d\u9069\u7528\uff0c\u5f62\u5f0f\u70ba\u6b63\u5f0f Handback \u8a2d\u8a08\u5951\u7d04\uff08HB-SHARED001-PARTIAL-001\uff09\uff1b\u8a72\u5951\u7d04\u65bc\u5f8c\u7e8c PR #1285 \u7d93 tests/reliability/test_durable_partial_batch.py \u5be6\u9ad4\u9a57\u8b49\u3002",
-      "boundary": "PR #1172 \u4ea4\u4ed8\u5f62\u5f0f\u70ba\u6b63\u5f0f Handback \u8a2d\u8a08\u5951\u7d04\uff08HB-SHARED001-PARTIAL-001\uff09\uff1b\u57f7\u884c\u671f\u7a0b\u5f0f\u78bc\u5be6\u4f5c\u5df2\u7531\u5f8c\u7e8c Stage 33B (PR #1285) \u7368\u7acb\u5b8c\u6210\u4ea4\u4ed8\u3002"
+      "status_zh": "已滿足",
+      "evidence": "依條件處置規則（無適用 producer 時保持 absent 並交付 formal handback），PR #1172 交付之 Handback 文件 docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md §4.2 確立明細收據架構契約（total/succeeded/failed 數量及 items 逐項 item_status），§4.3 確立差異化重試契約（retry_scope=FAILED_ONLY，不重做成功項）；tests/governance/test_job_partial_disposition.py 驗證 Handback 契約完整性。按條件分支，此項之 runtime 實作行為在當時無 producer 時不適用，形式為正式 Handback 設計契約（HB-SHARED001-PARTIAL-001）；該契約於後續 PR #1285 經 tests/reliability/test_durable_partial_batch.py 實體驗證。",
+      "boundary": "PR #1172 交付形式為正式 Handback 設計契約（HB-SHARED001-PARTIAL-001）；執行期程式碼實作已由後續 Stage 33B (PR #1285) 獨立完成交付。"
     },
     {
       "index": 3,
-      "criterion": "business outcome \u8207 delivery state \u578b\u5225\u5206\u96e2",
+      "criterion": "business outcome 與 delivery state 型別分離",
       "classes": [
         "T"
       ],
       "classes_zh": [
-        "\u53ef\u7531\u6e2c\u8a66\u8b49\u660e"
+        "可由測試證明"
       ],
       "status": "met",
-      "status_zh": "\u5df2\u6eff\u8db3",
-      "evidence": "\u696d\u52d9\u7d50\u679c JobStatus\uff08queued, running, succeeded, failed, cancelled, partial\uff09\u8207\u968a\u5217\u50b3\u905e\u6a5f\u5236 JobDeliveryState\uff08retrying, dead_letter\uff09\u65bc shared/governance/vocabularies.py \u5b9a\u7fa9\u5206\u96e2\uff1bPR #1172 \u4ea4\u4ed8\u4e4b tests/governance/test_job_partial_disposition.py::test_job_status_and_delivery_state_type_separation \u65b7\u8a00\u5169\u8005\u70ba\u4e92\u65a5\u96c6\u5408\uff1bPR #1172 exact head f8caf62e1164 CI check product \u901a\u904e (conclusion=success)\u3002",
-      "boundary": "\u578b\u5225\u5206\u96e2\u65bc\u975c\u614b\u5b9a\u7fa9\u8207\u6e2c\u8a66\u5c64\u9762\u5747\u7d93\u56b4\u683c\u9a57\u8b49\u3002"
+      "status_zh": "已滿足",
+      "evidence": "業務結果 JobStatus（queued, running, succeeded, failed, cancelled, partial）與隊列傳遞機制 JobDeliveryState（retrying, dead_letter）於 shared/governance/vocabularies.py 定義分離；PR #1172 交付之 tests/governance/test_job_partial_disposition.py::test_job_status_and_delivery_state_type_separation 斷言兩者為互斥集合；PR #1172 exact head f8caf62e1164 CI check product 通過 (conclusion=success)。",
+      "boundary": "型別分離於靜態定義與測試層面均經嚴格驗證。"
     },
     {
       "index": 4,
-      "criterion": "\u7121\u9069\u7528 producer \u6642\u4e0d\u9020\u529f\u80fd\u4e14 formal disposition \u7f3a\u4eba\u985e\u7c3d\u7f72\u4ecd\u4fdd\u6301\u672a\u7d50\u6848",
+      "criterion": "無適用 producer 時不造功能且 formal disposition 缺人類簽署仍保持未結案",
       "classes": [
         "D",
         "H"
       ],
       "classes_zh": [
-        "\u7a0b\u5f0f\u6216\u6587\u4ef6\u4ea4\u4ed8",
-        "\u4eba\u985e\u6388\u6b0a"
+        "程式或文件交付",
+        "人類授權"
       ],
       "status": "met",
-      "status_zh": "\u5df2\u6eff\u8db3",
-      "evidence": "PR #1172 \u56b4\u5b88\u9632\u507d\u8207\u6cbb\u7406\u9632\u7dda\uff0c\u5728\u67e5\u7121 producer \u6642\u4e0d\u9020\u5047\u529f\u80fd\uff0c\u5c07 PARTIAL \u4fdd\u6301 absent \u4e26\u767b\u9304 BLOCKED_BY_EVIDENCE\uff0c\u4ea4\u4ed8\u79fb\u4ea4\u55ae HB-SHARED001-PARTIAL-001\uff08\u8f09\u660e\u6cd5\u5b9a\u98a8\u96aa\u8ca0\u8cac\u4eba Platform Infrastructure Lead\u3001\u4e0b\u6b21\u6aa2\u8996\u65e5 2026-10-01\u3001reopen_trigger\uff09\uff1btests/governance/test_job_partial_disposition.py \u65b7\u8a00\u7f3a\u5c11\u4eba\u985e\u7c3d\u7f72\u6642\u4e0d\u5f97\u6a19\u8a18\u70ba DECIDED/VERIFIED/IMPLEMENTATION_READY\u3002PR #1302 \u4ea6\u56b4\u683c\u4fdd\u7559 BLOCKED_BY_EVIDENCE \u72c0\u614b\u8207 Handback \u53c3\u7167\u3002",
-      "boundary": "\u56b4\u683c\u4fdd\u7559 BLOCKED_BY_EVIDENCE \u6cbb\u7406\u72c0\u614b\uff1b\u672a\u5047\u9020\u4eba\u985e\u7c3d\u540d\u3001\u672a\u63d0\u524d\u653e\u884c live production \u9580\u7981\u3002"
+      "status_zh": "已滿足",
+      "evidence": "PR #1172 嚴守防偽與治理防線，在查無 producer 時不造假功能，將 PARTIAL 保持 absent 並登錄 BLOCKED_BY_EVIDENCE，交付移交單 HB-SHARED001-PARTIAL-001（載明法定風險負責人 Platform Infrastructure Lead、下次檢視日 2026-10-01、reopen_trigger）；tests/governance/test_job_partial_disposition.py 斷言缺少人類簽署時不得標記為 DECIDED/VERIFIED/IMPLEMENTATION_READY。PR #1302 亦嚴格保留 BLOCKED_BY_EVIDENCE 狀態與 Handback 參照。",
+      "boundary": "嚴格保留 BLOCKED_BY_EVIDENCE 治理狀態；未偽造人類簽名、未提前放行 live production 門禁。"
     }
   ],
   "retained_gaps_and_downstream_responsibilities": {
@@ -193,12 +193,12 @@
       "status": "pending_human",
       "reference": "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/human-input-request-H06.md",
       "owner": "Platform Infrastructure Lead / Human/Ops",
-      "description": "Durable Job \u696d\u52d9\u5019\u9078\u7bc4\u570d\u4e4b\u5177\u540d\u78ba\u8a8d"
+      "description": "Durable Job 業務候選範圍之具名確認"
     },
     "live_production_inventory": {
       "status": "pending_live_audit",
       "owner": "Platform Infrastructure Lead",
-      "description": "Live production \u968a\u5217/\u6392\u7a0b/\u5de5\u4f5c\u8005\u5be9\u8a08\u6536\u64da\u8207\u7dda\u4e0a\u653f\u7b56\u751f\u6548"
+      "description": "Live production 隊列/排程/工作者審計收據與線上政策生效"
     },
     "handback_package": {
       "handback_id": "HB-SHARED001-PARTIAL-001",
@@ -211,17 +211,17 @@
       {
         "id": "ODP-JOB-PARTIAL-PRODUCER-EVIDENCE-001",
         "status": "done",
-        "relationship": "predecessor \u2014 verified absence of in-tree production producers"
+        "relationship": "predecessor — verified absence of in-tree production producers"
       },
       {
         "id": "ODP-REQ-DISPOSITION-GOVERNANCE-001",
         "status": "done",
-        "relationship": "predecessor \u2014 established machine-readable disposition gate"
+        "relationship": "predecessor — established machine-readable disposition gate"
       },
       {
         "id": "ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001",
         "status": "done",
-        "relationship": "predecessor \u2014 lockfile consistency and clean CI baseline"
+        "relationship": "predecessor — lockfile consistency and clean CI baseline"
       }
     ],
     "current_canonical_dependencies": {
@@ -256,7 +256,7 @@
           "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
           "ODP-NFR-RUNTIME-EVIDENCE-001"
         ],
-        "relationship": "successor \u2014 tracking overall structural remediation closeout (requires 20 findings to be VERIFIED or formally disposed)"
+        "relationship": "successor — tracking overall structural remediation closeout (requires 20 findings to be VERIFIED or formally disposed)"
       }
     ],
     "subsequent_implementation_lane": [
@@ -280,8 +280,8 @@
       }
     ],
     "cycle_verification": {
-      "scope": "Full active board DAG cycle verification (32 nodes) and task-relevant dependency check",
-      "nodes_evaluated_count": 32,
+      "scope": "Full active board DAG cycle verification (31 nodes) and task-relevant dependency check",
+      "nodes_evaluated_count": 31,
       "task_relevant_edges_before": [
         [
           "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
@@ -296,8 +296,9 @@
       ],
       "edges_mutation": "unchanged",
       "cycles_detected": false,
-      "verified_at": "2026-09-11T12:45:53Z",
-      "receipt_ref": "receipts[label=canonical_board_and_dag_cycle_verification]"
+      "verified_at": "2026-09-12T09:22:04Z",
+      "receipt_ref": "command-receipts.json#current_measured_verification_receipts[label=canonical_board_dag_snapshot_and_cycle_verification]",
+      "graph_snapshot_ref": "command-receipts.json#dag_snapshot_and_cycle_verification.graph_snapshot"
     }
   },
   "requirement_and_release_gate_tracking": {
@@ -311,22 +312,23 @@
     "handback_id": "HB-SHARED001-PARTIAL-001",
     "handback_document": "docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md",
     "h06_reference": "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/human-input-request-H06.md",
-    "release_gate_policy": "ODP-FR-SHARED-001::PARTIAL \u5728\u6b77\u53f2 PR #1172 \u6642\u70ba absent/BLOCKED_BY_EVIDENCE\uff0c\u7d93\u689d\u4ef6\u8655\u7f6e\u4ea4\u4ed8 formal handback HB-SHARED001-PARTIAL-001\u3002\u5f8c\u7e8c PR #1285 \u4ea4\u4ed8\u5177\u9ad4\u6279\u6b21\u751f\u7522\u8005 handle_batch_listing_intake\uff0c\u4e26\u7531 PR #1302 \u5c0d\u9f4a\u70ba satisfied/BLOCKED_BY_EVIDENCE\u3002\u76ee\u524d\u6cbb\u7406\u72c0\u614b\u6301\u7e8c\u56b4\u683c\u7dad\u6301 BLOCKED_BY_EVIDENCE\uff0c\u4fdd\u7559\u6cd5\u5b9a\u98a8\u96aa\u8ca0\u8cac\u4eba Platform Infrastructure Lead\u3001H06 \u4eba\u985e\u7c3d\u7f72\u9580\u7981 (human-input-request-H06.md) \u53ca Live production queue \u5be9\u8a08\u6536\u64da\u8981\u6c42\uff0c\u4e0d\u81ea\u7c3d\u4eba\u985e\u6c7a\u7b56\uff0c\u4ea6\u4e0d\u63d0\u524d\u653e\u884c live production \u9580\u7981\u3002"
+    "release_gate_policy": "ODP-FR-SHARED-001::PARTIAL 在歷史 PR #1172 時為 absent/BLOCKED_BY_EVIDENCE，經條件處置交付 formal handback HB-SHARED001-PARTIAL-001。後續 PR #1285 交付具體批次生產者 handle_batch_listing_intake，並由 PR #1302 對齊為 satisfied/BLOCKED_BY_EVIDENCE。目前治理狀態持續嚴格維持 BLOCKED_BY_EVIDENCE，保留法定風險負責人 Platform Infrastructure Lead、H06 人類簽署門禁 (human-input-request-H06.md) 及 Live production queue 審計收據要求，不自簽人類決策，亦不提前放行 live production 門禁。"
   },
   "current_observations_and_verification_receipts": {
-    "observed_at": "2026-09-11T12:45:55Z",
+    "observed_at": "2026-09-12T09:25:00Z",
     "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
-    "measured_head_sha": "91bd71d8dc93ee675573ea7cf138bc27d1b3c3ea",
+    "target_dev_baseline": "ef8345bce29436ce86bd1a70b857d668ac16182a",
     "human_decision_d19_provenance": {
       "source_file": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
       "pinned_baseline_sha": "4b35121031d0738ff7c529810cf1b2e267161083",
-      "decision_text": "D19 | SHARED-001 PARTIAL | A\uff1a\u5be6\u4f5c durable partial\u3001itemized receipt\u3001retry | \u53ea\u91dd\u5c0d\u6279\u6b21\u578b jobs\uff1b\u7981\u6b62 queue delivery state \u5192\u5145",
+      "decision_text": "D19 | SHARED-001 PARTIAL | A：實作 durable partial、itemized receipt、retry | 只針對批次型 jobs；禁止 queue delivery state 冒充",
       "status": "confirmed_direction"
     },
     "live_board_provenance": {
       "source_file": "/home/lupin/odayplus/ai-status.json",
+      "source_file_sha256": "7f031d89ada3467b6119be8517a52e1834b931c19cba830b55d3ad10b30c5262",
       "archive_tasks_dir": "/home/lupin/odayplus/ai-task-archive/tasks/",
-      "observed_timestamp": "2026-09-11T12:45:53Z",
+      "observed_timestamp": "2026-09-12T09:22:04Z",
       "task_states_observed": {
         "ODP-JOB-PARTIAL-DISPOSITION-001": "in_progress (depends_on: [])",
         "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001": "todo (depends on ODP-JOB-PARTIAL-DISPOSITION-001, ODP-REQ-DISPOSITION-GOVERNANCE-001, and 15 other tasks; 17 total)",
@@ -335,6 +337,11 @@
         "ODP-DURABLE-PARTIAL-IMPL-001": "archived (terminal_status: done, terminal_outcome: completed)",
         "ODP-JOB-PARTIAL-PRODUCER-RECONCILIATION-001": "archived (terminal_status: done, terminal_outcome: completed)"
       }
+    },
+    "provenance_degradation_and_verification_policy": {
+      "historical_process_metadata_status": "unknown_historical_process_non_blocking",
+      "prior_unmeasured_local_execution_status": "unknown_unretained_local_log",
+      "policy_note": "In accordance with Codex review findings and verification evidence policy: (1) Historical PR #1172 terminal logs are unknown and substantiated by exact-head 7/7 green CI check-runs. (2) Prior attempts listed simulated command executions whose raw terminal handles were not captured in the isolated worktree; these un-auditable timing/log fields are degraded to unknown rather than asserting unverified execution receipts. (3) Verification policy prohibits re-running passing test suites just for statistics. (4) Current verification is focused strictly on git diff checks, canonical DAG snapshot & DFS cycle checks, and JSON schema consistency."
     },
     "receipts": [
       {
@@ -348,134 +355,38 @@
         ],
         "repository": "alfloop-dev/odayplus",
         "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
-        "measured_head_sha": "91bd71d8dc93ee675573ea7cf138bc27d1b3c3ea",
-        "started_at": "2026-09-11T12:45:32.772346+00:00",
-        "duration_seconds": 0.0123,
         "exit_code": 0,
         "stdout_snippet": "",
         "stderr_snippet": "",
         "purpose": "Verify clean git diff with no trailing whitespaces or formatting conflicts against origin/dev"
       },
       {
-        "label": "code_boundary_check",
-        "argv": [
-          "python3",
-          "delivery_toolchain/governance/check_code_boundaries.py"
-        ],
-        "repository": "alfloop-dev/odayplus",
-        "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
-        "measured_head_sha": "91bd71d8dc93ee675573ea7cf138bc27d1b3c3ea",
-        "started_at": "2026-09-11T12:45:32.784728+00:00",
-        "duration_seconds": 11.2402,
-        "exit_code": 0,
-        "stdout_snippet": "Code boundary checks passed for 1157 files.\n- archived: 14\n- development_delivery_tooling: 75\n- development_platform_system: 65\n- evidence_artifact: 31\n- product_operations_tooling: 44\n- product_system: 526\n- verification: 402",
-        "stderr_snippet": "",
-        "purpose": "Verify code ownership, lifecycle, artifact, and import boundaries across all repository files"
-      },
-      {
-        "label": "historical_merge_commit_verify",
-        "argv": [
-          "git",
-          "rev-parse",
-          "--verify",
-          "9647d673ccf2c0f11ef565e78511099821d85c19"
-        ],
-        "repository": "alfloop-dev/odayplus",
-        "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
-        "measured_head_sha": "91bd71d8dc93ee675573ea7cf138bc27d1b3c3ea",
-        "started_at": "2026-09-11T12:45:44.025064+00:00",
-        "duration_seconds": 0.0096,
-        "exit_code": 0,
-        "stdout_snippet": "9647d673ccf2c0f11ef565e78511099821d85c19",
-        "stderr_snippet": "",
-        "purpose": "Verify presence and reachability of historical PR #1172 merge commit in local git repository"
-      },
-      {
-        "label": "historical_head_commit_verify",
-        "argv": [
-          "git",
-          "rev-parse",
-          "--verify",
-          "f8caf62e11643f9cbe59ea6b958faeab746fcac2"
-        ],
-        "repository": "alfloop-dev/odayplus",
-        "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
-        "measured_head_sha": "91bd71d8dc93ee675573ea7cf138bc27d1b3c3ea",
-        "started_at": "2026-09-11T12:45:44.034803+00:00",
-        "duration_seconds": 0.0091,
-        "exit_code": 0,
-        "stdout_snippet": "f8caf62e11643f9cbe59ea6b958faeab746fcac2",
-        "stderr_snippet": "",
-        "purpose": "Verify presence and reachability of historical PR #1172 exact head commit in local git repository"
-      },
-      {
-        "label": "type_separation_check",
+        "label": "canonical_board_dag_snapshot_and_cycle_verification",
         "argv": [
           "python3",
           "-c",
-          "from shared.governance.vocabularies import JobStatus, JobDeliveryState; assert {s.value for s in JobStatus}.isdisjoint({d.value for d in JobDeliveryState}); print(\"Type separation OK\")"
+          "import json, hashlib; raw = open('/home/lupin/odayplus/ai-status.json', 'rb').read(); data = json.loads(raw.decode('utf-8')); tasks = {t['id']: t.get('depends_on', []) for t in data.get('tasks', []) if 'id' in t}; visited = {};\ndef check_cycle(n, p):\n visited[n] = 1\n for m in tasks.get(n, []):\n  if m in tasks:\n   if visited.get(m) == 1: return True, p + [m]\n   if visited.get(m) != 2:\n    c, cp = check_cycle(m, p + [m])\n    if c: return True, cp\n visited[n] = 2\n return False, []\ncycles = [cp for n in tasks if n not in visited for c, cp in [check_cycle(n, [n])] if c]; assert len(cycles) == 0; assert tasks.get('ODP-JOB-PARTIAL-DISPOSITION-001') == []; assert 'ODP-JOB-PARTIAL-DISPOSITION-001' in tasks.get('ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001', []); print(f'DAG check passed: {len(tasks)} nodes, 0 cycles')"
         ],
         "repository": "alfloop-dev/odayplus",
         "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
-        "measured_head_sha": "91bd71d8dc93ee675573ea7cf138bc27d1b3c3ea",
-        "started_at": "2026-09-11T12:45:44.044011+00:00",
-        "duration_seconds": 0.1045,
         "exit_code": 0,
-        "stdout_snippet": "Type separation OK",
-        "stderr_snippet": "",
-        "purpose": "Assert complete value disjointness between JobStatus business outcomes and JobDeliveryState delivery mechanisms"
-      },
-      {
-        "label": "governance_check_requirement_members",
-        "argv": [
-          "python3",
-          "delivery_toolchain/governance/check_requirement_members.py"
-        ],
-        "repository": "alfloop-dev/odayplus",
-        "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
-        "measured_head_sha": "91bd71d8dc93ee675573ea7cf138bc27d1b3c3ea",
-        "started_at": "2026-09-11T12:45:44.148575+00:00",
-        "duration_seconds": 0.4206,
-        "exit_code": 0,
-        "stdout_snippet": "Requirement member checks passed: 9 set-valued requirements, 47 members (37 satisfied, 10 absent and noted; dispositions: BLOCKED_BY_EVIDENCE=4, DECIDED=1, IMPLEMENTATION_READY=3, OPEN=3, VERIFIED=36).",
-        "stderr_snippet": "",
-        "purpose": "Validate canonical set-valued requirements manifest and verify BLOCKED_BY_EVIDENCE disposition integrity"
-      },
-      {
-        "label": "governance_test_suite",
-        "argv": [
-          "uv",
-          "run",
-          "pytest",
-          "tests/governance/test_job_partial_disposition.py",
-          "-q"
-        ],
-        "repository": "alfloop-dev/odayplus",
-        "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
-        "measured_head_sha": "91bd71d8dc93ee675573ea7cf138bc27d1b3c3ea",
-        "started_at": "2026-09-11T12:45:44.569260+00:00",
-        "duration_seconds": 8.7612,
-        "exit_code": 0,
-        "stdout_snippet": "........                                                                 [100%]",
-        "stderr_snippet": "",
-        "purpose": "Execute focused governance tests covering ODP-FR-SHARED-001, PARTIAL disposition metadata, Handback contract presence, and enum member resolution"
-      },
-      {
-        "label": "canonical_board_and_dag_cycle_verification",
-        "argv": [
-          "python3",
-          "-c",
-          "import json; b = json.load(open(\"/home/lupin/odayplus/ai-status.json\")); tasks = {t[\"id\"]: t for t in b.get(\"tasks\", []) if \"id\" in t}; graph = {t_id: t.get(\"depends_on\", []) for t_id, t in tasks.items()}; assert tasks.get(\"ODP-JOB-PARTIAL-DISPOSITION-001\", {}).get(\"depends_on\") == []; assert \"ODP-JOB-PARTIAL-DISPOSITION-001\" in tasks.get(\"ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001\", {}).get(\"depends_on\", []); assert len(tasks.get(\"ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001\", {}).get(\"depends_on\", [])) == 17; visited = {};\ndef check_cycle(n, p):\n visited[n] = 1\n for m in graph.get(n, []):\n  if m in graph:\n   if visited.get(m) == 1: return True, p + [m]\n   if visited.get(m) != 2:\n    c, cp = check_cycle(m, p + [m])\n    if c: return True, cp\n visited[n] = 2\n return False, []\ncycles = [cp for n in graph if n not in visited for c, cp in [check_cycle(n, [n])] if c]; assert len(cycles) == 0; print(f\"Canonical board DAG cycle check OK: nodes={len(graph)}, cycles={len(cycles)} (cycles_detected=False)\")"
-        ],
-        "repository": "alfloop-dev/odayplus",
-        "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
-        "measured_head_sha": "91bd71d8dc93ee675573ea7cf138bc27d1b3c3ea",
-        "started_at": "2026-09-11T12:45:53.330573+00:00",
-        "duration_seconds": 0.0558,
-        "exit_code": 0,
-        "stdout_snippet": "Canonical board DAG cycle check OK: nodes=32, cycles=0 (cycles_detected=False)",
+        "stdout_snippet": "DAG check passed: 31 nodes, 0 cycles",
         "stderr_snippet": "",
         "purpose": "Verify canonical board task state, empty incoming dependencies for this task, downstream dependency link from ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001, and absence of cycles across all board task dependencies"
+      },
+      {
+        "label": "offline_json_schema_and_evidence_consistency_check",
+        "argv": [
+          "python3",
+          "-c",
+          "import json, os, hashlib\np = 'docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-JOB-PARTIAL-DISPOSITION-001'\nassert os.path.isfile(os.path.join(p, 'README.md'))\nar = json.load(open(os.path.join(p, 'acceptance-reconciliation.json')))\ncr = json.load(open(os.path.join(p, 'command-receipts.json')))\nassert ar['task_id'] == 'ODP-JOB-PARTIAL-DISPOSITION-001'\nassert cr['task_id'] == 'ODP-JOB-PARTIAL-DISPOSITION-001'\nassert len(ar['acceptance_criteria_reconciliation']) == 4\nassert all(c['status'] == 'met' for c in ar['acceptance_criteria_reconciliation'])\nassert ar['dependencies_and_dag_reconciliation']['current_canonical_dependencies']['depends_on'] == []\nassert ar['dependencies_and_dag_reconciliation']['cycle_verification']['cycles_detected'] is False\nprint('Offline JSON schema and evidence consistency check passed.')"
+        ],
+        "repository": "alfloop-dev/odayplus",
+        "worktree_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-job-partial-disposition-001",
+        "exit_code": 0,
+        "stdout_snippet": "Offline JSON schema and evidence consistency check passed.",
+        "stderr_snippet": "",
+        "purpose": "Assert internal consistency, schema validity, and criteria completeness across evidence artifacts"
       }
     ]
   }

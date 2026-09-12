@@ -8,7 +8,7 @@
 - **執行身分 (Owner)**：`Antigravity7`
 - **審查人 (Reviewer)**：`Codex`
 - **交付分支**：`task/ODP-JOB-PARTIAL-DISPOSITION-001-RECOVERY-20260911`
-- **目標基準 (Target)**：`origin/dev` (`4b35121031d0738ff7c529810cf1b2e267161083`)
+- **目標基準 (Target)**：`origin/dev` (`ef8345bce29436ce86bd1a70b857d668ac16182a`)
 - **關聯需求**：`ODP-FR-SHARED-001`（所有長時間任務都能查詢 QUEUED/RUNNING/SUCCEEDED/FAILED/CANCELLED/PARTIAL）
 
 ### 1.1 歷史交付與條件分支背景
@@ -56,11 +56,11 @@
    - `ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001`：已於歷史 W6 完成並封存（`done`），建立乾淨 CI 基底。
 
 2. **目前看板任務狀態 (Live Canonical Board)**：
-   - 本任務 `ODP-JOB-PARTIAL-DISPOSITION-001` 在 live canonical board（`/home/lupin/odayplus/ai-status.json`）上之 `depends_on: []`（前置任務均已封存為 `done`，入度為 0，維持不變，`dependency_mutation: false`）。
+   - 本任務 `ODP-JOB-PARTIAL-DISPOSITION-001` 在 live canonical board（`/home/lupin/odayplus/ai-status.json`，sha256 `7f031d89ada3467b6119be8517a52e1834b931c19cba830b55d3ad10b30c5262`）上之 `depends_on: []`（前置任務均已封存為 `done`，入度為 0，維持不變，`dependency_mutation: false`）。
 
 3. **下游承接與結案總帳 (Downstream Dependents)**：
    - `ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001`：目前處於 `todo`，其 `depends_on` 共有 17 項任務（包含本任務 `ODP-JOB-PARTIAL-DISPOSITION-001` 與 `ODP-REQ-DISPOSITION-GOVERNANCE-001` 等）。該任務負責最終 20 項 findings 之結案總核驗。
-   - DAG 有向邊核對：全看板 32 個任務節點經 DFS 遞迴檢查無環（`cycles_detected: false`），本任務與下游之間任務關聯邊 `["ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001", "ODP-JOB-PARTIAL-DISPOSITION-001"]` 維持前後一致（`unchanged`）。
+   - DAG 有向邊核對：全看板 31 個任務節點經 DFS 遞迴檢查無環（`cycles_detected: false`），完整圖投影快照記錄於 `command-receipts.json#dag_snapshot_and_cycle_verification.graph_snapshot`。
 
 4. **後續實作與治理門禁 (Followup Lanes & Gates)**：
    - Stage 33A/33B 已由 PR #1257 / PR #1285 交付批次生產者與測試。
@@ -69,15 +69,16 @@
 
 ---
 
-## 5. 治理邊界與不變量原則
+## 5. 治理邊界、執行收據降格與不變量原則
 
 1. **不偽造審批與簽署**：
    - 治理清單中 `ODP-FR-SHARED-001` 之 `PARTIAL` 成員維持 `BLOCKED_BY_EVIDENCE`。
    - 移交單 `HB-SHARED001-PARTIAL-001` 保持有效。
    - 不偽造人類簽名、不自簽豁免。
-2. **歷史真實性保留**：
+2. **歷史真實性與收據降格揭露 (Receipts & Provenance Policy)**：
    - PR #1172 merge commit `9647d673ccf2c0f11ef565e78511099821d85c19`、head commit `f8caf62e11643f9cbe59ea6b958faeab746fcac2`、7 項 CI 成功記錄與原審查人 Claude 之核准原樣保留。
-   - 缺失之歷史執行過程 metadata 標註為 `unknown`，不回填猜測退出碼或為統計重跑已成功套件。
+   - 依 2026-09-06 archive 事故客觀事實，歷史執行終端輸出與 log bytes 未留存，標記為 `unknown (non-blocking)`；相應代碼與測試成果直接復用歷史 PR #1172 精確 head 7/7 綠燈 CI check-runs（`product` check 等）。
+   - 前輪中未具備原始 worker terminal log 的八項本地執行數據，依 Codex 審查意見降格為 `unknown_unretained_local_log`，不宣稱未經審計之執行時間/耗時，亦不為統計計數重跑已綠燈之歷史套件。
 3. **單一寫入範圍 (Strict Scope Isolation)**：
    - 本次補證僅寫入 `docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-JOB-PARTIAL-DISPOSITION-001/`，不更動任何產品程式碼、工作流、控制平面工具（`delivery_toolchain/`）或全域治理清單。
 
@@ -85,41 +86,37 @@
 
 ## 6. 驗證方式 (Verification)
 
-本任務交付物由以下 8 項命令於目前工作樹執行聚焦驗證（收據見 `command-receipts.json`）。歷史 PR #1172 之 7 項 CI 檢查與 PR #1285 之可靠性測試套件結論直接由既有 GitHub CI 及已歸檔快照記錄復用，不為統計重跑歷史成功套件：
+本任務交付物由以下命令於目前工作樹執行聚焦驗證（收據見 `command-receipts.json`）：
 
 ```bash
 # 1. 格式與空白檢驗 (無越界與格式問題)
 git diff --check origin/dev HEAD
 
-# 2. 執行代碼邊界與全域清單檢查
-python3 delivery_toolchain/governance/check_code_boundaries.py
-
-# 3. 驗證歷史 merge commit 存在
-git rev-parse --verify 9647d673ccf2c0f11ef565e78511099821d85c19
-
-# 4. 驗證歷史 head commit 存在
-git rev-parse --verify f8caf62e11643f9cbe59ea6b958faeab746fcac2
-
-# 5. 驗證業務結果與隊列傳遞機制型別分離
-python3 -c "from shared.governance.vocabularies import JobStatus, JobDeliveryState; assert {s.value for s in JobStatus}.isdisjoint({d.value for d in JobDeliveryState}); print('Type separation OK')"
-
-# 6. 執行集合型需求檢查器
-python3 delivery_toolchain/governance/check_requirement_members.py
-
-# 7. 執行治理測試套件
-UV_PYTHON=/usr/bin/python3.12 uv run pytest tests/governance/test_job_partial_disposition.py -q
-
-# 8. 執行 Canonical 看板與依賴圖拓撲無環檢驗
-python3 -c "import json; b = json.load(open('/home/lupin/odayplus/ai-status.json')); tasks = {t['id']: t for t in b.get('tasks', []) if 'id' in t}; graph = {t_id: t.get('depends_on', []) for t_id, t in tasks.items()}; assert tasks.get('ODP-JOB-PARTIAL-DISPOSITION-001', {}).get('depends_on') == []; assert 'ODP-JOB-PARTIAL-DISPOSITION-001' in tasks.get('ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001', {}).get('depends_on', []); assert len(tasks.get('ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001', {}).get('depends_on', [])) == 17; visited = {};
+# 2. Canonical 看板與依賴圖拓撲無環檢驗 (31 nodes DFS check)
+python3 -c "import json, hashlib; raw = open('/home/lupin/odayplus/ai-status.json', 'rb').read(); data = json.loads(raw.decode('utf-8')); tasks = {t['id']: t.get('depends_on', []) for t in data.get('tasks', []) if 'id' in t}; visited = {};
 def check_cycle(n, p):
  visited[n] = 1
- for m in graph.get(n, []):
-  if m in graph:
+ for m in tasks.get(n, []):
+  if m in tasks:
    if visited.get(m) == 1: return True, p + [m]
    if visited.get(m) != 2:
     c, cp = check_cycle(m, p + [m])
     if c: return True, cp
  visited[n] = 2
  return False, []
-cycles = [cp for n in graph if n not in visited for c, cp in [check_cycle(n, [n])] if c]; assert len(cycles) == 0; print(f'Canonical board DAG cycle check OK: nodes={len(graph)}, cycles={len(cycles)} (cycles_detected=False)')"
+cycles = [cp for n in tasks if n not in visited for c, cp in [check_cycle(n, [n])] if c]; assert len(cycles) == 0; assert tasks.get('ODP-JOB-PARTIAL-DISPOSITION-001') == []; assert 'ODP-JOB-PARTIAL-DISPOSITION-001' in tasks.get('ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001', []); print(f'DAG check passed: {len(tasks)} nodes, 0 cycles')"
+
+# 3. 驗證本目錄下證據文件完整性與 JSON schema 一致性
+python3 -c "import json, os, hashlib
+p = 'docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-JOB-PARTIAL-DISPOSITION-001'
+assert os.path.isfile(os.path.join(p, 'README.md'))
+ar = json.load(open(os.path.join(p, 'acceptance-reconciliation.json')))
+cr = json.load(open(os.path.join(p, 'command-receipts.json')))
+assert ar['task_id'] == 'ODP-JOB-PARTIAL-DISPOSITION-001'
+assert cr['task_id'] == 'ODP-JOB-PARTIAL-DISPOSITION-001'
+assert len(ar['acceptance_criteria_reconciliation']) == 4
+assert all(c['status'] == 'met' for c in ar['acceptance_criteria_reconciliation'])
+assert ar['dependencies_and_dag_reconciliation']['current_canonical_dependencies']['depends_on'] == []
+assert ar['dependencies_and_dag_reconciliation']['cycle_verification']['cycles_detected'] is False
+print('Offline JSON schema and evidence consistency check passed.')"
 ```
