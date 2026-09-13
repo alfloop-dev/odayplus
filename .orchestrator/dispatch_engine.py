@@ -1614,7 +1614,7 @@ def helper_owner_is_saturated(
             else 0
         )
         owner_saturated = (owner_load >= owner_capacity) or bool(
-            quota_limit and quota_group and quota_used >= quota_limit
+            quota_limit is not None and quota_group and quota_used >= quota_limit
         )
         owner_undispatchable = owner_saturated
 
@@ -2816,14 +2816,14 @@ def dispatch_ready_tasks(
         quota_limit = account_pool_effective_concurrency(config, state, agent_id)
         quota_group = agent_quota_group_id(config, agent_id)
         quota_used = active_quota_counts.get(quota_group, 0) + pending_quota_counts.get(quota_group, 0)
-        if quota_limit and quota_group and quota_used >= quota_limit:
+        if quota_limit is not None and quota_group and quota_used >= quota_limit:
             continue
         agent_capacity = agent_dispatch_capacity(config, agent_id)
         current_agent_load = len(agent_loads.get(target_agent, []))
         if current_agent_load >= agent_capacity:
             continue
         available_agent_slots = agent_capacity - current_agent_load
-        if quota_limit and quota_group:
+        if quota_limit is not None and quota_group:
             available_agent_slots = min(available_agent_slots, max(0, quota_limit - quota_used))
             if available_agent_slots <= 0:
                 continue

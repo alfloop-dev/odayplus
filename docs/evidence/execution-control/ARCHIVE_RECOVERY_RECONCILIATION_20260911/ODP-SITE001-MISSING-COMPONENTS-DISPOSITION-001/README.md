@@ -7,7 +7,7 @@
 - **執行身分 (Owner)**: `Antigravity5`
 - **指派審查者 (Reviewer)**: `Codex2`
 - **復原目標分支**: `task/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001-RECOVERY-20260911`
-- **對照基準 (Dev Baseline)**: `3828c5ada2a1baab33d7dbe734c7ec70152d3d77`（經 base advance 整合 PR #1311 合併之 `origin/dev` 最新狀態；歷史曾對照 `4b35121031d0738ff7c529810cf1b2e267161083` 與 `2889b55fb1febe95c9f8650f24ead18e86015cca`）
+- **對照基準 (Dev Baseline)**: `572415c385d972b4839bbf1632eef14ff63001f3`（經 base advance 整合 PR #1320 合併之 `origin/dev` 最新狀態；歷史曾對照 `3828c5ada2a1baab33d7dbe734c7ec70152d3d77`、`4b35121031d0738ff7c529810cf1b2e267161083` 與 `2889b55fb1febe95c9f8650f24ead18e86015cca`）
 - **原始交付記錄**: PR [#1160](https://github.com/alfloop-dev/odayplus/pull/1160)（Head SHA: `ffe02988a1b4def412090c6b422e6efb26081d9f`，Merge Commit: `9f53418df41e558c8f953c801dd8fd1f25f77b5b`，Merged at `2026-09-03T16:51:21Z`）
 
 本任務原始目的為依據 `ODP-SITE001-DATA-READINESS-001` 之資料準備度查證事實，逐 member 判定 `ODP-FR-SITE-001` 中之 `BRAND_TRANSFER` 與 `FORMAT_CONVERSION` 兩項成員之處置狀態。
@@ -162,7 +162,7 @@ PR [#1160](https://github.com/alfloop-dev/odayplus/pull/1160) 於 2026-09-03 交
 
 ## 5. 權限邊界與不變量原則 (Invariants & Governance Declarations)
 
-1. **單一證據 Scope**：所有交付物嚴格限制於 `docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/`，不修改任何產品程式、原 archive、全域 governance manifest、validator、workflow 或 runtime。所有程式碼邊界（`docs/audits/code-boundary-inventory.csv`）維持原樣無變更。
+1. **單一證據 Scope**：所有交付物嚴格限制於 `docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/` 以及於 `docs/audits/code-boundary-inventory.csv` 登記 `capture_verification.py` 輔助驗證腳本之邊界條目，不修改任何產品程式、原 archive、全域 governance manifest、validator、workflow 或 runtime。
 2. **不簽發豁免或假定實作完成**：不刪改 MUST 需求，不自簽 waiver，不將待提供之 H03/H04 假定為已完成。
 3. **保留歷史真實性**：原 PR #1160 (head `ffe02988a1b4`) 的 7 項 CI check-runs、原審查者 Codex 之歷史 approval 原樣記錄，不以當前觀察偽稱過去執行。
 4. **無依賴異動與無重複任務**：不新增重複盤點任務，不修改看板依賴與狀態。

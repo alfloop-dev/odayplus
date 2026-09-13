@@ -25,12 +25,11 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: delivery_toolchain/git/task_finalize.sh <TASK-ID> [--dry-run] [--base <branch>] [--branch <branch>] [--no-status-submit]
+Usage: delivery_toolchain/git/task_finalize.sh <TASK-ID> [--dry-run] [--base <branch>] [--no-status-submit]
 
   <TASK-ID>        e.g. ODP-EXAMPLE-001 (branch task/ODP-EXAMPLE-001)
   --dry-run        print what would run; touch neither origin nor GitHub
   --base <branch>  PR target (default: $PANTHEON_TASK_PR_BASE or dev)
-  --branch <name>  explicit branch name (default: task/<TASK-ID>)
   --no-status-submit  do not atomically move a tracked task to review (only for
                       supervisor housekeeping PRs which have no board task)
 EOF
@@ -40,14 +39,12 @@ TASK_ID=""
 DRY_RUN=0
 STATUS_SUBMIT=1
 BASE_BRANCH="${PANTHEON_TASK_PR_BASE:-dev}"
-EXPLICIT_BRANCH=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
     --no-status-submit) STATUS_SUBMIT=0; shift ;;
     --base) BASE_BRANCH="${2:-}"; shift 2 ;;
-    --branch) EXPLICIT_BRANCH="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     -*) echo "task_finalize: unknown option $1" >&2; usage; exit 2 ;;
     *)
@@ -62,7 +59,7 @@ ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
 PREFIX="${PANTHEON_TASK_BRANCH_PREFIX:-task/}"
-BRANCH="${EXPLICIT_BRANCH:-${PREFIX}${TASK_ID}}"
+BRANCH="${PREFIX}${TASK_ID}"
 CURRENT="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
 
 if [ "$CURRENT" != "$BRANCH" ]; then
