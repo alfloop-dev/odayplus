@@ -3594,11 +3594,12 @@ def maybe_reassign_task_after_worker_failure(
 
 @_entrypoint
 def worker_writer_pids(worker: dict[str, Any] | None) -> set[int]:
-    """Find all active process IDs associated with a worker and its workspace.
+    """Return all active process IDs associated with writing to worker workspace.
 
-    Includes the runner wrapper PID, direct CLI child PID, all descendant
-    processes in their process tree, and any process whose working directory
-    is inside the worker's workspace.
+    Includes the runner PID, child CLI PID, any known/tracked descendant
+    processes in their process tree, any process whose working directory
+    is inside the worker's workspace, and any process holding open file
+    descriptors inside the worker's workspace.
     """
     if not isinstance(worker, dict):
         return set()
@@ -3611,7 +3612,30 @@ def worker_writer_pids(worker: dict[str, Any] | None) -> set[int]:
                 initial_pids.add(val_int)
         except (TypeError, ValueError):
             pass
+    for tracked in worker.get("tracked_writer_pids") or ():
+        try:
+            t_int = int(tracked)
+            if t_int > 0:
+                initial_pids.add(t_int)
+        except (TypeError, ValueError):
+            pass
+    pending_fence = worker.get("pending_fence")
+    if isinstance(pending_fence, dict):
+        for tracked in pending_fence.get("tracked_writer_pids") or ():
+            try:
+                t_int = int(tracked)
+                if t_int > 0:
+                    initial_pids.add(t_int)
+            except (TypeError, ValueError):
+                pass
     metadata = worker.get("metadata") if isinstance(worker.get("metadata"), dict) else {}
+    for tracked in metadata.get("tracked_writer_pids") or ():
+        try:
+            t_int = int(tracked)
+            if t_int > 0:
+                initial_pids.add(t_int)
+        except (TypeError, ValueError):
+            pass
     status_path = worker.get("runner_status_path") or metadata.get("runner_status_path")
     heartbeat_path = worker.get("heartbeat_path") or metadata.get("heartbeat_path")
     for marker_path in (status_path, heartbeat_path):
@@ -3629,12 +3653,22 @@ def worker_writer_pids(worker: dict[str, Any] | None) -> set[int]:
                                 initial_pids.add(val_int)
                         except (TypeError, ValueError):
                             pass
+                for tracked in marker.get("tracked_writer_pids") or ():
+                    try:
+                        t_int = int(tracked)
+                        if t_int > 0:
+                            initial_pids.add(t_int)
+                    except (TypeError, ValueError):
+                        pass
         except Exception:
             pass
 
     proc = Path("/proc")
     if not proc.exists():
-        return {p for p in initial_pids if pid_is_alive(p)}
+        live = {p for p in initial_pids if pid_is_alive(p)}
+        if live:
+            worker["tracked_writer_pids"] = sorted(live)
+        return live
 
     children_map: dict[int, set[int]] = {}
     all_proc_pids: set[int] = set()
@@ -3672,19 +3706,38 @@ def worker_writer_pids(worker: dict[str, Any] | None) -> set[int]:
     if workspace_path_str:
         try:
             workspace_resolved = Path(workspace_path_str).resolve()
+            workspace_prefix = str(workspace_resolved) + "/"
             for p in all_proc_pids:
                 if p in collected or p <= 1:
                     continue
                 try:
                     cwd = (proc / str(p) / "cwd").resolve()
-                    if cwd == workspace_resolved or str(cwd).startswith(str(workspace_resolved) + "/"):
+                    if cwd == workspace_resolved or str(cwd).startswith(workspace_prefix):
                         collected.add(p)
+                        continue
                 except (OSError, PermissionError):
-                    continue
+                    pass
+                fd_dir = proc / str(p) / "fd"
+                try:
+                    for fd_entry in fd_dir.iterdir():
+                        try:
+                            target = os.readlink(fd_entry)
+                            if target == str(workspace_resolved) or target.startswith(workspace_prefix):
+                                collected.add(p)
+                                break
+                        except (OSError, PermissionError):
+                            continue
+                except (OSError, PermissionError):
+                    pass
         except Exception:
             pass
 
-    return {p for p in collected if pid_is_alive(p)}
+    live = {p for p in collected if pid_is_alive(p)}
+    if live or "tracked_writer_pids" in worker:
+        worker["tracked_writer_pids"] = sorted(live)
+    if isinstance(worker.get("pending_fence"), dict):
+        worker["pending_fence"]["tracked_writer_pids"] = sorted(live)
+    return live
 
 
 @_entrypoint
@@ -4099,6 +4152,8 @@ def retry_due_workers(
 ) -> bool:
     changed = False
     for worker in list(state.get("workers", {}).values()):
+        if worker.get("pending_fence"):
+            continue
         if worker.get("status") != "retry_backoff":
             continue
         next_retry_at = _parse_iso_utc(worker.get("next_retry_at"))

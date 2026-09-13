@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import ctypes
 import json
+import os
+import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -2476,16 +2480,58 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
         self.assertIn("Cannot lease isolated worker worktree", str(lease_err or ""))
 
     def test_sibling_quota_fence_writer_process_tree_descendants_prevent_premature_settlement(self) -> None:
-        """Process tree shutdown: Active descendant writer process prevents settlement until reaped."""
-        readme = self.worktree / "README.md"
-        readme.write_text("original owner unfinished content\n", encoding="utf-8")
-
-        # Spawn a genuine grandchild writer process whose cwd is inside the worktree
-        writer_proc = subprocess.Popen(
-            [sys.executable, "-c", "import time, sys; time.sleep(0.5); sys.exit(0)"],
-            cwd=str(self.worktree.resolve()),
-        )
+        """Process tree shutdown: Active descendant writer process with cwd outside worktree prevents settlement."""
         try:
+            libc = ctypes.CDLL(None, use_errno=True)
+            libc.prctl(36, 1, 0, 0, 0)  # PR_SET_CHILD_SUBREAPER
+        except Exception:
+            pass
+
+        readme = self.worktree / "README.md"
+        readme.write_text("uncommitted original owner work\n", encoding="utf-8")
+
+        parent_sock, child_sock = socket.socketpair()
+        parent_sock.settimeout(8)
+        runner = None
+        writer_pid = None
+        cli_pid = None
+        writer_reaped = False
+
+        runner_source = r'''
+import json, os, signal, socket, sys
+s = socket.socket(fileno=int(sys.argv[1]))
+cli_pid = os.fork()
+if cli_pid == 0:
+    writer_pid = os.fork()
+    if writer_pid == 0:
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        target = os.open(sys.argv[2], os.O_WRONLY | os.O_APPEND)
+        os.chdir(sys.argv[3])
+        s.sendall((json.dumps({'runner': os.getppid(), 'writer_pid': os.getpid(), 'cli_pid': os.getppid()}) + '\n').encode())
+        if s.recv(1) == b'W':
+            os.write(target, b'late original writer change after successor lease\n')
+            os.fsync(target)
+            s.sendall(b'written\n')
+        os.close(target)
+        os._exit(0)
+    while True:
+        signal.pause()
+while True:
+    signal.pause()
+'''
+        try:
+            runner = subprocess.Popen(
+                [sys.executable, "-c", runner_source, str(child_sock.fileno()), str(readme), str(self.root)],
+                cwd=self.worktree,
+                pass_fds=(child_sock.fileno(),),
+                start_new_session=True,
+            )
+            child_sock.close()
+            peer = parent_sock.makefile("rb")
+            ready = json.loads(peer.readline())
+            writer_pid = ready["writer_pid"]
+            cli_pid = ready["cli_pid"]
+
             sibling = {
                 "run_id": "run-sibling",
                 "provider": "antigravity2",
@@ -2496,8 +2542,8 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
                 "workspace_mode": "isolated_worktree",
                 "reason": "owned_ready_dispatch",
                 "status": "running",
-                "pid": 999998,
-                "child_pid": writer_proc.pid,
+                "pid": runner.pid,
+                "child_pid": cli_pid,
                 "queue_event_id": "evt-sibling-1",
             }
             trigger = {
@@ -2513,55 +2559,157 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
                 "worker_worktrees": {"handoff_blocks": {}},
             }
 
-            quota_reason = "ERROR: Free daily quota has been reached."
-            # Sibling runner pid (999998) is dead/exited, but writer grandchild is still running
-            with mock.patch.object(supervisor, "terminate_worker_pid", return_value=True):
-                fenced = worker_failure_policy.fence_account_pool_workers(
-                    self.config, state, trigger, quota_reason
-                )
+            detected_before = sorted(worker_failure_policy.worker_writer_pids(sibling))
+            self.assertIn(writer_pid, detected_before)
 
-            self.assertEqual(fenced, 1)
-            # Pending fence recorded, settlement deferred because writer_proc is alive
-            self.assertIsNotNone(sibling.get("pending_fence"))
-            self.assertEqual(sibling["status"], "running")
-            self.assertNotIn("TASK-SIBLING-001", state.get("worker_worktrees", {}).get("handoff_blocks", {}))
-
-            # Wait for writer grandchild to exit
-            writer_proc.wait(timeout=5)
-
-            # Now poll_workers runs with writer process dead
-            with mock.patch.object(supervisor, "pid_is_alive", return_value=False), \
-                 mock.patch.object(supervisor, "sync_status_pipeline", return_value=True), \
+            with mock.patch.object(supervisor, "sync_status_pipeline", return_value=True), \
                  mock.patch("status_transition.sync_status_pipeline", return_value=True):
-                changed = supervisor.poll_workers(self.config, state)
+                fenced = worker_failure_policy.fence_account_pool_workers(
+                    self.config, state, trigger, "ERROR: Free daily quota has been reached."
+                )
+                self.assertEqual(fenced, 1)
 
+                runner.wait(timeout=5)
+                try:
+                    os.waitpid(cli_pid, 0)
+                except ChildProcessError:
+                    pass
+
+                # Runner and CLI exited, but grandchild writer ignored SIGTERM and is still alive
+                self.assertTrue(supervisor.pid_is_alive(writer_pid))
+                detected_after = sorted(worker_failure_policy.worker_writer_pids(sibling))
+                self.assertIn(writer_pid, detected_after)
+                self.assertTrue(worker_failure_policy.worker_writers_are_alive(sibling))
+
+                # Poll must not settle sibling while writer is alive
+                changed = supervisor.poll_workers(self.config, state)
+                self.assertFalse(changed)
+                self.assertEqual(sibling["status"], "running")
+                self.assertIsNotNone(sibling.get("pending_fence"))
+                self.assertNotIn("TASK-SIBLING-001", state.get("worker_worktrees", {}).get("handoff_blocks", {}))
+
+                # Release writer to complete its write and exit
+                parent_sock.sendall(b"W")
+                self.assertEqual(peer.readline().decode().strip(), "written")
+                waited_pid, _ = os.waitpid(writer_pid, 0)
+                writer_reaped = True
+
+                # Now writer is dead, poll_workers should settle the sibling
+                changed2 = supervisor.poll_workers(self.config, state)
+                self.assertTrue(changed2)
+                self.assertEqual(sibling["status"], "reassigned")
+                self.assertEqual(sibling["reassigned_to"], "Codex")
+                self.assertIsNone(sibling.get("pending_fence"))
+                self.assertIn("TASK-SIBLING-001", state.get("worker_worktrees", {}).get("handoff_blocks", {}))
+
+                # Successor Codex can now lease workspace
+                successor_request = DeliveryRequest(
+                    agent_id="codex",
+                    provider="codex",
+                    delivery_mode="codex",
+                    message="resume after writer stopped",
+                    task_id="TASK-SIBLING-001",
+                    reason="owned_ready_dispatch",
+                )
+                lease_ok, lease_err = worker_workspace.prepare_worker_workspace(
+                    self.config,
+                    state,
+                    successor_request,
+                    queue_event_id="evt-codex-lease",
+                    target_agent="Codex",
+                )
+                self.assertTrue(lease_ok, f"Successor lease must succeed: {lease_err}")
+                self.assertEqual(successor_request.metadata.get("worktree_continuation"), "sealed_owner_dirt")
+
+                content = readme.read_text(encoding="utf-8")
+                self.assertIn("uncommitted original owner work", content)
+                self.assertIn("late original writer change after successor lease", content)
+        finally:
+            if writer_pid and not writer_reaped:
+                try:
+                    os.kill(writer_pid, signal.SIGKILL)
+                    os.waitpid(writer_pid, 0)
+                except (ProcessLookupError, ChildProcessError):
+                    pass
+            if runner and runner.poll() is None:
+                runner.kill()
+                runner.wait(timeout=5)
+            parent_sock.close()
+            child_sock.close()
+
+    def test_sibling_quota_fence_boot_reconciliation_pending_preservation_recovery(self) -> None:
+        """Boot reconciliation: Pending fence survives boot under backup failure and recovers after repair."""
+        dirty = self.worktree / "boot-probe-dirty.txt"
+        dirty.write_text("original owner valuable content\n", encoding="utf-8")
+        backup_root = self.root / ".orchestrator" / "worktree-dirt-backups"
+        backup_root.parent.mkdir(parents=True, exist_ok=True)
+        backup_root.write_text("obstruction: regular file prevents backup directory creation\n")
+
+        sibling = {
+            "run_id": "boot-probe-sibling",
+            "provider": "antigravity2",
+            "agent_id": "antigravity2",
+            "task_id": "TASK-SIBLING-001",
+            "workspace_path": str(self.worktree.resolve()),
+            "workspace_branch": "task/TASK-SIBLING-001",
+            "workspace_mode": "isolated_worktree",
+            "reason": "owned_ready_dispatch",
+            "status": "running",
+            "pid": None,
+            "queue_event_id": "evt-boot-probe-sibling",
+        }
+        trigger = {
+            "run_id": "boot-probe-trigger",
+            "provider": "antigravity",
+            "agent_id": "antigravity",
+            "task_id": "TASK-TRIGGER-001",
+            "status": "failed",
+        }
+        state = {
+            "workers": {sibling["run_id"]: sibling},
+            "queue": {"events": {sibling["queue_event_id"]: {"status": "started", "task_id": sibling["task_id"]}}},
+            "worker_worktrees": {"handoff_blocks": {}},
+        }
+
+        with mock.patch.object(supervisor, "sync_status_pipeline", return_value=True), \
+             mock.patch("status_transition.sync_status_pipeline", return_value=True):
+            fenced = worker_failure_policy.fence_account_pool_workers(
+                self.config, state, trigger, "ERROR: Free daily quota has been reached."
+            )
+            self.assertEqual(fenced, 1)
+            self.assertEqual(sibling["status"], "running")
+            self.assertEqual(sibling["pending_fence"]["preservation_reason"], "backup_write_failed")
+
+            # Persisted/reloaded state simulation
+            state = json.loads(json.dumps(state))
+            sibling = state["workers"]["boot-probe-sibling"]
+            supervisor.reconcile_runtime_on_boot(self.config, state)
+            self.assertEqual(sibling["status"], "running")
+            self.assertTrue(sibling["pending_fence"]["preservation_failed"])
+
+            # Remove obstruction
+            backup_root.unlink()
+
+            # First poll after repair
+            changed = supervisor.poll_workers(self.config, state, provider_report={})
             self.assertTrue(changed)
             self.assertEqual(sibling["status"], "reassigned")
-            self.assertEqual(sibling["reassigned_to"], "Codex")
             self.assertIsNone(sibling.get("pending_fence"))
+            self.assertIsNotNone(state["worker_worktrees"]["handoff_blocks"].get(sibling["task_id"]))
 
-            # Successor Codex can now lease workspace
-            successor_request = DeliveryRequest(
+            owner_request = DeliveryRequest(
                 agent_id="codex",
                 provider="codex",
                 delivery_mode="codex",
-                message="resume after writer stopped",
-                task_id="TASK-SIBLING-001",
+                message="resume preserved task",
+                task_id=sibling["task_id"],
                 reason="owned_ready_dispatch",
             )
-            lease_ok, lease_err = worker_workspace.prepare_worker_workspace(
-                self.config,
-                state,
-                successor_request,
-                queue_event_id="evt-codex-lease",
-                target_agent="Codex",
+            lease_ok, lease_error = worker_workspace.prepare_worker_workspace(
+                self.config, state, owner_request, queue_event_id="evt-boot-probe-owner", target_agent="Codex"
             )
-            self.assertTrue(lease_ok, f"Successor lease must succeed: {lease_err}")
-            self.assertEqual(successor_request.metadata.get("worktree_continuation"), "sealed_owner_dirt")
-        finally:
-            if writer_proc.poll() is None:
-                writer_proc.kill()
-                writer_proc.wait()
+            self.assertTrue(lease_ok, f"Lease failed: {lease_error}")
+            self.assertEqual(owner_request.metadata.get("worktree_continuation"), "sealed_owner_dirt")
 
 
 if __name__ == "__main__":

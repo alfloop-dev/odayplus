@@ -3580,6 +3580,25 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
     workers = state.setdefault("workers", {})
 
     for run_id, worker in list(workers.items()):
+        if not isinstance(worker, dict):
+            continue
+        pending_fence = worker.get("pending_fence")
+        if isinstance(pending_fence, dict):
+            if worker_writers_are_alive(worker):
+                terminate_worker_writers(worker)
+            if not worker_writers_are_alive(worker):
+                settled = _settle_fenced_sibling_worker(
+                    config,
+                    state,
+                    worker,
+                    str(pending_fence.get("pool_id") or ""),
+                    str(pending_fence.get("reason") or ""),
+                )
+                if settled:
+                    changed = True
+                    continue
+            changed = True
+            continue
         if worker.get("status") == "failed":
             task_id = str(worker.get("task_id") or "")
             task = task_map.get(task_id)

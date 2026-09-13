@@ -873,6 +873,24 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
     }
     workers = state.setdefault("workers", {})
     for run_id, worker in list(workers.items()):
+        if not isinstance(worker, dict):
+            continue
+        pending_fence = worker.get("pending_fence")
+        if isinstance(pending_fence, dict):
+            if worker_writers_are_alive(worker):
+                terminate_worker_writers(worker)
+            if not worker_writers_are_alive(worker):
+                settled = _settle_fenced_sibling_worker(
+                    config,
+                    state,
+                    worker,
+                    str(pending_fence.get("pool_id") or ""),
+                    str(pending_fence.get("reason") or ""),
+                )
+                if settled:
+                    changed = True
+                    continue
+            continue
         # These records already have a durable terminal disposition. Re-reading
         # their old marker/log after a later re-review or reviewer reopen must
         # never count the same run again or reassign the current lifecycle.
@@ -968,22 +986,6 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 )
                 changed = True
                 continue
-        pending_fence = worker.get("pending_fence")
-        if isinstance(pending_fence, dict):
-            if worker_writers_are_alive(worker):
-                terminate_worker_writers(worker)
-            if not worker_writers_are_alive(worker):
-                settled = _settle_fenced_sibling_worker(
-                    config,
-                    state,
-                    worker,
-                    str(pending_fence.get("pool_id") or ""),
-                    str(pending_fence.get("reason") or ""),
-                )
-                if settled:
-                    changed = True
-                    continue
-            continue
         if not markers_checked:
             marker_changed = update_worker_runtime_markers(worker)
             if marker_changed:
