@@ -211,7 +211,7 @@ class Poi:
     address_id: str = ""
     geo_cell_id: str = ""
     status: str = "active"  # active/closed/unknown
-    confidence: float = 1.0
+    confidence: float | None = None
     snapshot_id: str = ""
 
 
@@ -226,7 +226,7 @@ class CompetitorStore:
     estimated_capacity: float = 0.0
     distance_to_nearest_oday_m: float = 0.0
     status: str = "active"  # active/closed/unknown
-    confidence: float = 1.0
+    confidence: float | None = None
     last_verified_at: datetime | None = None
 
 
@@ -251,7 +251,7 @@ class Listing:
     utility_gas_flag: bool = False
     available_from: date | None = None
     snapshot_id: str = ""
-    confidence: float = 1.0
+    confidence: float | None = None
     tenant_id: str = ""
 
 
@@ -306,7 +306,7 @@ class Prediction:
     p90_value: float = 0.0
     unit: str = ""
     explanation_json: dict[str, Any] = field(default_factory=dict)
-    confidence: float = 1.0
+    confidence: float | None = None
 
 
 @dataclass(frozen=True)
@@ -348,7 +348,7 @@ class HeatZoneScore:
     cannibalization_risk_score: float = 0.0
     rent_feasibility_score: float = 0.0
     heatzone_state: str = "untouched"  # untouched/partially_absorbed/saturated/under_realized/still_expandable
-    confidence: float = 1.0
+    confidence: float | None = None
 
 
 @dataclass(frozen=True)
@@ -519,7 +519,7 @@ class DataSnapshot:
     storage_uri: str = ""
     schema_version: str = ""
     row_count: int = 0
-    quality_score: float = 1.0
+    quality_score: float | None = None
     created_by_run_id: str = ""
 
 

@@ -302,7 +302,9 @@ class GeoPipeline:
         return result.h3_resolution_map.get(resolution)
 
     def _track_common(self, bucket: dict[str, Any], record: Mapping[str, Any]) -> None:
-        bucket["confidences"].append(_bounded_confidence(record.get("confidence", 1.0)))
+        raw_confidence = record.get("confidence")
+        if raw_confidence is not None:
+            bucket["confidences"].append(_bounded_confidence(raw_confidence))
         if record.get("snapshot_id"):
             bucket["snapshot_ids"].add(str(record["snapshot_id"]))
 

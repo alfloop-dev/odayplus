@@ -41,6 +41,12 @@ WAIT_THRESHOLD = 60
 # Geocode confidence floor for the data-completeness gate.
 GEOCODE_MIN_CONFIDENCE = 0.80
 
+
+def _none_safe_min(*values: float | None) -> float | None:
+    """Return the minimum of non-None values, or None if all are absent."""
+    present = [v for v in values if v is not None]
+    return min(present) if present else None
+
 # The six required data dimensions the gate enforces before scoring.
 REQUIRED_DATA_DIMENSIONS = ("address", "geocode", "rent", "area", "floor", "hardRule")
 
@@ -653,11 +659,11 @@ class NetworkScoringService:
                 monthly_rent=listing.rent_amount,
                 area_ping=listing.area_ping,
                 frontage_m=listing.frontage_m,
-                average_confidence=min(
+                average_confidence=_none_safe_min(
                     listing.confidence,
                     address.geocode_confidence,
                 ),
-                data_quality_score=min(
+                data_quality_score=_none_safe_min(
                     listing.confidence,
                     address.geocode_confidence,
                 ),

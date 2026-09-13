@@ -81,8 +81,8 @@ class LineageManifest:
     training_record_count: int
     scoring_record_count: int
     excluded_record_count: int
-    quality_score: float
-    min_quality_score: float
+    quality_score: float | None
+    min_quality_score: float | None
     feature_snapshot_time: datetime
     prediction_origin_time: datetime
     time_range: tuple[datetime, datetime]
@@ -182,7 +182,7 @@ def build_lineage_manifest(
         if record.data_quality_score is not None
     ]
     excluded = sum(1 for record in records if record.exclusion_reason)
-    mean_quality = sum(quality_scores) / len(quality_scores) if quality_scores else 1.0
+    mean_quality = sum(quality_scores) / len(quality_scores) if quality_scores else None
     return LineageManifest(
         dataset_snapshot_id=snapshot.dataset_snapshot_id,
         snapshot_type=MODEL_READY_SNAPSHOT_TYPE,
@@ -195,8 +195,8 @@ def build_lineage_manifest(
         training_record_count=snapshot.training_record_count,
         scoring_record_count=snapshot.scoring_record_count,
         excluded_record_count=excluded,
-        quality_score=round(mean_quality, 4),
-        min_quality_score=round(min(quality_scores), 4) if quality_scores else 1.0,
+        quality_score=round(mean_quality, 4) if mean_quality is not None else None,
+        min_quality_score=round(min(quality_scores), 4) if quality_scores else None,
         feature_snapshot_time=snapshot.feature_snapshot_time,
         prediction_origin_time=snapshot.prediction_origin_time,
         time_range=snapshot.time_range,

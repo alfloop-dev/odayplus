@@ -323,12 +323,12 @@ class ExternalIngestionService:
             )
             else 0.0
         )
-        q_score = (saved.accepted_count / saved.total_count) if saved.total_count > 0 else 1.0
+        q_score = (saved.accepted_count / saved.total_count) if saved.total_count > 0 else None
         record_data_signal(
             source=saved.provider_id,
             view="ingestion_run",
             freshness_hours=max(0.0, float(freshness_h)),
-            quality_score=min(1.0, max(0.0, float(q_score))),
+            quality_score=min(1.0, max(0.0, float(q_score))) if q_score is not None else None,
             feature_null_rate=0.0,
         )
         audit = self._record_audit(saved, created=True, actor=actor, correlation_id=run.correlation_id)
