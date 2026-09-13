@@ -169,27 +169,12 @@ PR [#1160](https://github.com/alfloop-dev/odayplus/pull/1160) 於 2026-09-03 交
 
 ---
 
-## 6. 當前驗證收據 (Current Verification Receipts)
+## 6. 原始結果與輸入綁定修正（2026-09-13）
 
-本次復原補證交付物經由以下實測命令完成驗證（依據審查意見修復終端輸出捕獲、持久化原始結果參照 `raw_result_ref`、保存 49 節點依賴輸入快照，並於 Base Advance 整合 `3828c5ada2a1` 後執行）：
+RC-01／RC-02／RC-03 的舊 `raw_result_ref` 只是成功摘要，原始 process/tool 回應未留存，故全部撤回 PASS、記為 unknown。[原紀錄](historical-receipts/unverified-owner-claims-9623de0f.json) 保留原命令、時間、聲稱結果；沒有把本次量測回填舊觀察。
 
-```bash
-git diff --check 3828c5ada2a1baab33d7dbe734c7ec70152d3d77 HEAD
-cmp -s docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/original-evidence.json /home/lupin/odayplus/support/handoffs/archive-recovery-dispatch-20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/original-evidence.json
-python3 -c "import json, os, glob, hashlib, heapq; ..."
-```
+已保存的 49 筆依賴記錄與 source hashes 不變，另以 [dependency-input-snapshot.json](dependency-input-snapshot.json) 作不可混淆的實際受驗輸入。新版 [capture_verification.py](capture_verification.py) 的 DAG 子程序只消費此檔，核對兩份 JSON 報告的快照完全一致，再輸出 input hash、49 節點／51 邊、實際 topological order、無環判定。這是對歷史快照的現在驗證，不宣稱當前 canonical 仍與舊狀態一致。
 
-### 驗證執行收據 (Verification Execution Receipts)
+[本次原始收據](verification-20260913/receipt.json) 保存每個實際 subprocess 的完整 argv、repo、實測 git HEAD/tree、受驗 worktree 檔案 hash、開始／完成時間、monotonic duration、退出碼及獨立 stdout/stderr 檔案、bytes/hash。diff check 與 original-evidence byte comparison 亦有獨立原件；歷史產品套件不重跑。
 
-| 收據編號 | 執行命令 (Argv) | 測量基準 / 範圍 | 執行時間與耗時 | 終端退出碼 | 原始結果參照 (raw_result_ref) | 執行結果與終端輸出摘要 |
-|---|---|---|---|---|---|---|
-| **RC-01** | `git diff --check 3828c5ada2a1baab33d7dbe734c7ec70152d3d77 HEAD` | Base `3828c5ada2a1` / HEAD `5bed7b72d0f0` | `2026-09-12T09:37:20.776230+00:00` (0.012959s) | `0` | `RC-01-git-diff-check (tool exit 0, duration 0.012959s, empty output)` | **PASS**: 無空白行錯誤、無非預期變更。 |
-| **RC-02** | `cmp -s docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/original-evidence.json /home/lupin/odayplus/support/handoffs/archive-recovery-dispatch-20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/original-evidence.json` | Worktree copy vs Canonical dispatch copy | `2026-09-12T09:37:20.789176+00:00` (0.003467s) | `0` | `RC-02-original-evidence-integrity (tool exit 0, duration 0.003467s, empty output)` | **PASS**: 檔案內容完全一致 (byte-for-byte match)。 |
-| **RC-03** | `python3 -c "import json, os, glob, hashlib, heapq; ..."` | Canonical Board `/home/lupin/odayplus/ai-status.json` and task archives (`task.depends_on`) | `2026-09-12T09:37:20.792648+00:00` (0.154897s) | `0` | `RC-03-canonical-board-and-transitive-dag-verification (tool exit 0, duration 0.154897s, stdout: Dependency closure verified: 49 vertices, 51 edges, 0 cycles, valid DAG.)` | **PASS**: `Dependency closure verified: 49 vertices, 51 edges, 0 cycles, valid DAG.` |
-
-> **重跑原因與收據血統說明 (Retry Reason & Execution Provenance Note)**:
-> 依據審查者 Codex2 於 PR #1316 之審查意見，先前歷史紀錄中存在終端 chunk/session/log 參照不足、時間標籤與耗時未完全對齊以及 mutable canonical board/archive 未持久化輸入快照之 P2 缺口。本次聚焦重新執行（Retry Reason: *Base advance to origin/dev (3828c5ada2a1) and execution receipt provenance repair addressing Codex2 review findings on PR #1316 (capturing authentic tool exit receipts, durable raw result references, and execution-linked 49-task board/archive dependency input snapshot).*）完整捕獲真實工具終端退出碼、執行精確時間與耗時、提供持久化 `raw_result_ref`，並將 49 項閉包節點之來源路徑、SHA256 雜湊與顯式 `depends_on` 清單寫入 JSON 快照，確保本 `README.md` 與 `acceptance-reconciliation.json`、`evidence-manifest.json` 全數直接衍生自同一次已識別的真實執行。
-
-### 歷史治理測試套件驗證政策說明 (Historical Test Suite Policy)
-- 原 PR [#1160](https://github.com/alfloop-dev/odayplus/pull/1160) exact-head `ffe02988a1b4` 之 7 項 GitHub CI check-runs 全數綠燈（`product` check-run completed 2026-09-03T16:18:24Z 收集執行了 `tests/governance/test_site001_disposition.py` 及治理成員檢查）。
-- 依據證據盤點與復原驗收規範，歷史個別 assertion 終端輸出及退出碼於事故後未保存，顯式記錄為 `historical_per_test_terminal_exit_code_unknown`，直接引用已驗證之 exact-head CI，不憑空捏造執行時間或通過數量，亦不為統計計數重跑已成功之歷史測試套件。
+A1–A4 disposition 判讀、原 PR #1160 的 CI／approval、H03／H04 與兩筆 Stage B 實作 task、MUST 和 structural closeout gates 原樣保留。修復收據後仍由既有 owner／獨立 reviewer 完成同一 PR 的正常生命週期，沒有新增豁免或產品完成宣告。
