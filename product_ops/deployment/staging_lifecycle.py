@@ -131,6 +131,36 @@ class ReleaseStateUnverifiable(ReleaseIdentityConflict):
     """Existing release state exists but its immutable identity cannot be read."""
 
 
+def resolve_cloud_sql_binding(
+    instance: str,
+    *,
+    project_id: str,
+    region: str,
+    connection_name: str = "",
+) -> tuple[str, str]:
+    """Resolve a protected binding to the bare SQL name and connection name.
+
+    Runtime Release passes GCP_CLOUD_SQL_INSTANCE as project:region:instance.
+    Terraform database/user resources and gcloud export/import need the bare
+    instance name. Reject conflicting identities before any state or API write.
+    """
+    parts = instance.strip().split(":")
+    if len(parts) == 3:
+        if parts[:2] != [project_id, region]:
+            raise ValueError("Cloud SQL binding project/region does not match staging")
+        name = parts[2]
+    elif len(parts) == 1:
+        name = parts[0]
+    else:
+        raise ValueError("Cloud SQL binding must be an instance or project:region:instance")
+    if not re.fullmatch(r"[a-z][a-z0-9-]*", name):
+        raise ValueError("Cloud SQL binding has an invalid instance name")
+    resolved = f"{project_id}:{region}:{name}"
+    if connection_name.strip() and connection_name.strip() != resolved:
+        raise ValueError("Cloud SQL instance and explicit connection name disagree")
+    return name, resolved
+
+
 # --- Data Structures ---
 
 
@@ -2610,6 +2640,13 @@ def make_live_rehearsal_executor(
     if output_errors:
         raise ValueError("Cannot create live rehearsal executor: " + "; ".join(output_errors))
 
+    if cloud_sql_instance:
+        cloud_sql_instance, _ = resolve_cloud_sql_binding(
+            cloud_sql_instance, project_id=project_id, region=region
+        )
+        if cloud_sql_instance != outputs["staging_cloud_sql_instance"]:
+            raise ValueError("Cloud SQL binding does not match the Terraform output handoff")
+
     api_uri = str(outputs["staging_api_uri"]).rstrip("/")
     web_uri = str(outputs["staging_web_uri"]).rstrip("/")
     runtime_sa = str(outputs["staging_runtime_service_account"]).strip()
@@ -4318,6 +4355,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
 
     if args.command == "create":
+        try:
+            sql_instance, sql_connection = resolve_cloud_sql_binding(
+                args.cloud_sql_instance,
+                project_id=args.project_id,
+                region=args.region,
+                connection_name=args.cloud_sql_connection_name,
+            )
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
         state_dir_path = Path(args.state_dir).expanduser().resolve()
         if not args.dry_run and not args.outputs_out:
             print(
@@ -4357,11 +4404,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             manifest_digest=args.manifest_digest,
             project_id=args.project_id,
             region=args.region,
-            cloud_sql_instance_name=args.cloud_sql_instance,
-            cloud_sql_connection_name=(
-                args.cloud_sql_connection_name
-                or f"{args.project_id}:{args.region}:{args.cloud_sql_instance}"
-            ),
+            cloud_sql_instance_name=sql_instance,
+            cloud_sql_connection_name=sql_connection,
             network_name=args.network_name,
             subnetwork_name=args.subnetwork_name,
             kms_key_id=args.kms_key_id or StagingConfig.__dataclass_fields__["kms_key_id"].default,
