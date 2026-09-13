@@ -15,28 +15,21 @@ Proves:
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
-
 from modules.external_data.connectors.external import (
-    CompetitorStoreConnector,
-    PoiConnector,
     _parse_optional_float,
 )
-from modules.external_data.geo.pipeline import GeoFeatureSnapshot, GeoPipeline
+from modules.external_data.geo.pipeline import GeoPipeline
 from modules.heatzone.v3.contract import HeatZoneV3ScoreResult
 from modules.integration.application.mapping import SourceToCanonicalMapper
 from modules.opsboard.application.network_listings import (
-    NetworkListingService,
     _optional_number,
 )
 from modules.opsboard.application.network_scoring import _none_safe_min
 from modules.sitescore.domain.scoring import SiteScoreFeatureInput, score_site
 from shared.domain.models import (
-    AddressLocation,
     CompetitorStore,
     DataSnapshot,
     HeatZoneScore,
@@ -396,7 +389,6 @@ class TestAPIListingConfidenceProvenance:
     """Listing route adapter returns null confidence + confidenceProvenance for legacy and unmeasured rows."""
 
     def test_legacy_listing_serializes_as_null_with_legacy_unknown_provenance(self) -> None:
-        from apps.api.app.routes.listings import ListingAdapterWrapper
 
         legacy_listing = Listing(
             listing_id="L-LEGACY-001",
