@@ -184,10 +184,71 @@ def sync_status_pipeline(config: dict[str, Any]) -> bool:
     return False
 
 
+def sync_status_snapshot_dict(config: dict[str, Any], status: dict[str, Any], latest: dict[str, Any]) -> None:
+    if latest is status or not isinstance(latest, dict):
+        return
+    schema = config.get("schema", {}) or {} if isinstance(config, dict) else {}
+    tasks_path = schema.get("tasks_path", "tasks")
+    task_id_field = schema.get("task_id_field", "id")
+
+    old_tasks_by_id: dict[str, dict[str, Any]] = {}
+    if isinstance(status.get(tasks_path), list):
+        for t in status[tasks_path]:
+            if isinstance(t, dict) and t.get(task_id_field):
+                old_tasks_by_id[str(t.get(task_id_field))] = t
+
+    updated_tasks: list[Any] = []
+    if isinstance(latest.get(tasks_path), list):
+        for new_t in latest[tasks_path]:
+            if isinstance(new_t, dict) and str(new_t.get(task_id_field) or "") in old_tasks_by_id:
+                target = old_tasks_by_id[str(new_t.get(task_id_field))]
+                target.clear()
+                target.update(new_t)
+                updated_tasks.append(target)
+            else:
+                updated_tasks.append(new_t)
+
+    status.clear()
+    status.update(latest)
+    if tasks_path in latest:
+        status[tasks_path] = updated_tasks
+
+
 def commit_canonical_task_transition(config: dict[str, Any], status: dict[str, Any]) -> bool:
     """Commit a scheduler transition through one canonical write/sync path."""
 
-    return write_status_snapshot_if_current(config, status) and sync_status_pipeline(config)
+    sv = _supervisor_module()
+    if sv is not None:
+        sv_commit = getattr(sv, "commit_canonical_task_transition", None)
+        if sv_commit is not None and getattr(sv_commit, "__code__", None) != commit_canonical_task_transition.__code__:
+            return sv_commit(config, status)
+
+    write_snapshot = getattr(sv, "write_status_snapshot_if_current", write_status_snapshot_if_current)
+    sync_pipeline = getattr(sv, "sync_status_pipeline", sync_status_pipeline)
+    load_status_fn = getattr(sv, "load_status", load_status) if sv is not None else load_status
+    if not write_snapshot(config, status):
+        return False
+    if not sync_pipeline(config):
+        try:
+            latest = load_status_fn(config)
+            schema = config.get("schema", {}) or {} if isinstance(config, dict) else {}
+            tasks_path = schema.get("tasks_path", "tasks")
+            if isinstance(latest, dict) and tasks_path in latest:
+                sync_status_snapshot_dict(config, status, latest)
+        except Exception:
+            pass
+        return False
+    try:
+        latest = load_status_fn(config)
+        schema = config.get("schema", {}) or {} if isinstance(config, dict) else {}
+        tasks_path = schema.get("tasks_path", "tasks")
+        if isinstance(latest, dict) and tasks_path in latest:
+            sync_status_snapshot_dict(config, status, latest)
+        else:
+            return False
+    except Exception:
+        return False
+    return True
 
 
 def _task_index_from_status(config: dict[str, Any], status: dict[str, Any]) -> dict[str, dict[str, Any]]:
