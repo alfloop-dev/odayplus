@@ -1,0 +1,18 @@
+{
+  "status": "UNREVIEWED_PARTIAL_IMPLEMENTATION",
+  "user_direction": "Root now investigation/SA/SD/task planning only; Supervisor/autoworker implement",
+  "base_commit": "b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb",
+  "worktree": "/tmp/dpf-public-source-repair",
+  "branch": "task/DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001",
+  "tracked_patch_sha256": "dc52e46ece767d303ff7f80c85bc55588d0f1af0e2e8ad80b4cceee077db8b82",
+  "untracked_files": {
+    "scripts/capture_public_source_evidence.py": "a7e6212c399509a99f7a34b9d2154e3931b020713e4b235a094390663f6aad19",
+    "src/oday_data_platform/external/sources/ris/official.py": "bf9b448792b41d1d3087ba3d61b62238ac9e414d7f2100d65ab96a87fe64f89d",
+    "tests/sources/test_public_source_ingestion.py": "c5b0306d1ecad70be7c371dd9a60ff96cdfdf87c16278ed73c53a5f07671fc3b"
+  },
+  "root_writers_stopped": true,
+  "committed": false,
+  "pushed": false,
+  "merged": false,
+  "deployed": false
+}

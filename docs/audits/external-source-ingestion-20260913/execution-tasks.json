@@ -1,0 +1,548 @@
+[
+  {
+    "id": "DPF-SOURCE-SA-SD-BASELINE-001",
+    "title": "納入外部來源調查與SA／SD設計基線",
+    "summary_zh": "把根對話的調查與設計交給worker正式納管及審查；此為所有新接入實作的共同基線。",
+    "repository": "alfloop-dev/oday-data-platform",
+    "base_branch": "dev",
+    "task_class": "implementation",
+    "priority": "P0",
+    "owner": "Antigravity2",
+    "reviewer": "Codex2",
+    "depends_on": [],
+    "owned_paths": [
+      "docs/architecture/external-source-ingestion/",
+      "docs/evidence/completion/DPF-SOURCE-SA-SD-BASELINE-001/"
+    ],
+    "forbidden_paths": [
+      "src/",
+      "scripts/",
+      "tests/",
+      "infra/",
+      "deploy/",
+      ".github/",
+      "contracts/",
+      "ai-status.json"
+    ],
+    "artifacts": [
+      "docs/architecture/external-source-ingestion/",
+      "docs/evidence/completion/DPF-SOURCE-SA-SD-BASELINE-001/"
+    ],
+    "acceptance": [
+      "逐條核对調查E01–E16與官方規格；把INVESTIGATION/SA/SD/EXECUTION_TASKS及traceability納入本repo版本管理。",
+      "僅修改設計文件；根對話已停止產品實作，baseline task不可順手改程式。",
+      "確認八域、來源／raw／normalized／release層級、需求ID、執行依賴及owned_paths一致。",
+      "核對現有任務和PR清單，記錄#63/#1312與activation/gate的reuse；不重建相同task。",
+      "將本次來源規格及引用固定至文件／source index；用逐來源條件描述尚未查明的auth與terms，不偽造授權。",
+      "每條完成宣稱對應固定commit與真實command receipt；mock、local live、GCS、release、runtime層級分開。",
+      "沿用既有模組與控制面，按scope產生anchor及中文PR、獨立審查與合併；遇specific live blocker仍先完成可獨立推進部分。"
+    ],
+    "verification": [
+      "git diff --check",
+      "檢查SA FR01–FR12／SD D01–D08／execution task mapping與來源雜湊"
+    ],
+    "source_docs": [
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/INVESTIGATION.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SA.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SD.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/EXECUTION_TASKS.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/source-index.json",
+      "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/docs/runbooks/external-source-update-policy.md",
+      "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/docs/runbooks/emgi-retained-raw-snapshots.md"
+    ],
+    "catalog_managed": false,
+    "mutates_canonical": false,
+    "non_dispatchable": true,
+    "evidence_path": "docs/evidence/completion/DPF-SOURCE-SA-SD-BASELINE-001/",
+    "phase": "SA/SD execution plan 2026-09-13",
+    "next": "Supervisor 依 dependencies／owned_paths 派工；根對話只調查、SA/SD及驗收追蹤。設計見 source_docs；不得把使用者當成raw檔／雜湊提供者。"
+  },
+  {
+    "id": "DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001",
+    "title": "接手MOF／RIS局部修正並完成公開來源實測",
+    "summary_zh": "沿用同一task ID接手未提交patch，避免重複建MOF/RIS接入任務；root不再實作。",
+    "repository": "alfloop-dev/oday-data-platform",
+    "base_branch": "dev",
+    "task_class": "implementation",
+    "priority": "P0",
+    "owner": "Antigravity",
+    "reviewer": "Codex2",
+    "depends_on": [
+      "DPF-SOURCE-SA-SD-BASELINE-001"
+    ],
+    "owned_paths": [
+      "src/oday_data_platform/defs/external/ris_nlsc.py",
+      "src/oday_data_platform/defs/external/mof_moi.py",
+      "src/oday_data_platform/external/sources/ris/",
+      "src/oday_data_platform/external/sources/mof_business/",
+      "src/oday_data_platform/external/acquisition/kernel.py",
+      "tests/sources/test_public_source_ingestion.py",
+      "tests/sources/test_official_live_acquisition.py",
+      "tests/sources/official_source_fixtures.py",
+      "scripts/capture_public_source_evidence.py",
+      "docs/evidence/completion/DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001/"
+    ],
+    "forbidden_paths": [
+      "deploy/k8s/emgi/configmap.yaml",
+      "src/oday_data_platform/external/policy/",
+      "src/oday_data_platform/release_snapshot.py",
+      "infra/k8s/data-platform/runtime/",
+      ".github/workflows/",
+      "contracts/emgi/",
+      "ai-status.json"
+    ],
+    "artifacts": [
+      "src/oday_data_platform/defs/external/ris_nlsc.py",
+      "src/oday_data_platform/defs/external/mof_moi.py",
+      "src/oday_data_platform/external/sources/ris/",
+      "src/oday_data_platform/external/sources/mof_business/",
+      "src/oday_data_platform/external/acquisition/kernel.py",
+      "tests/sources/test_public_source_ingestion.py",
+      "tests/sources/test_official_live_acquisition.py",
+      "tests/sources/official_source_fixtures.py",
+      "scripts/capture_public_source_evidence.py",
+      "docs/evidence/completion/DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001/"
+    ],
+    "acceptance": [
+      "先驗implementation-handoff/manifest.json、tracked.patch及untracked SHA，於乾淨worker工作樹審查和選擇性匯入；不直接stage根對話隔離工作樹。",
+      "修正MOF官方API/camelCase/limit-offset與RIS官方年月/responseData/行政代碼/分頁；可沿用封存patch但需自行審查。",
+      "多頁原始response與衍生parser input各自hash/URI/parent refs，HTTP200錯誤也有失敗execution；跨process讀回。",
+      "MOF/RIS經既有Dagster真實有界擷取與normalized讀回，局部100/31不得宣稱全國或cloud release。",
+      "增補尚缺的錯誤CLI證據、descriptor持久化、真實schema drift與MOF正式覆蓋範圍策略；禁止verify=False。",
+      "每條完成宣稱對應固定commit與真實command receipt；mock、local live、GCS、release、runtime層級分開。",
+      "沿用既有模組與控制面，按scope產生anchor及中文PR、獨立審查與合併；遇specific live blocker仍先完成可獨立推進部分。"
+    ],
+    "verification": [
+      "uv run --frozen pytest -q tests/sources/test_public_source_ingestion.py tests/sources/test_official_live_acquisition.py tests/external/test_live_acquisition_kernel.py tests/sources/test_mof_moi.py tests/sources/test_ris_nlsc.py",
+      "以既有Dagster入口重跑MOF/RIS有界live capture並readback",
+      "git diff --check"
+    ],
+    "source_docs": [
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/INVESTIGATION.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SA.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SD.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/EXECUTION_TASKS.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/source-index.json",
+      "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/defs/external/ris_nlsc.py",
+      "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/external/sources/mof_business/adapter.py",
+      "support/handoffs/public-source-ingestion-20260913/implementation-handoff/"
+    ],
+    "catalog_managed": false,
+    "mutates_canonical": false,
+    "non_dispatchable": true,
+    "evidence_path": "docs/evidence/completion/DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001/",
+    "phase": "SA/SD execution plan 2026-09-13",
+    "next": "Supervisor 依 dependencies／owned_paths 派工；根對話只調查、SA/SD及驗收追蹤。設計見 source_docs；不得把使用者當成raw檔／雜湊提供者。"
+  },
+  {
+    "id": "DPF-OFFICIAL-SOURCE-ENDPOINT-INTEGRATION-001",
+    "title": "完成CWA／MOI租賃／NLSC真實來源接入",
+    "summary_zh": "完成主線尚未驗證的官方來源接點；與MOF/RIS共用檔案，因此明確序列化。",
+    "repository": "alfloop-dev/oday-data-platform",
+    "base_branch": "dev",
+    "task_class": "implementation",
+    "priority": "P0",
+    "owner": "Antigravity3",
+    "reviewer": "Codex2",
+    "depends_on": [
+      "DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001"
+    ],
+    "owned_paths": [
+      "src/oday_data_platform/defs/external/context_events.py",
+      "src/oday_data_platform/defs/external/mof_moi.py",
+      "src/oday_data_platform/defs/external/ris_nlsc.py",
+      "src/oday_data_platform/external/sources/cwa/",
+      "src/oday_data_platform/external/sources/market_events/",
+      "src/oday_data_platform/external/sources/moi_rental/",
+      "src/oday_data_platform/external/sources/nlsc/",
+      "tests/sources/test_official_live_acquisition.py",
+      "tests/sources/official_source_fixtures.py",
+      "tests/sources/test_official_source_endpoints.py",
+      "docs/evidence/completion/DPF-OFFICIAL-SOURCE-ENDPOINT-INTEGRATION-001/"
+    ],
+    "forbidden_paths": [
+      "deploy/k8s/emgi/configmap.yaml",
+      "src/oday_data_platform/external/policy/",
+      "src/oday_data_platform/release_snapshot.py",
+      "infra/k8s/data-platform/runtime/",
+      ".github/workflows/",
+      "contracts/emgi/",
+      "ai-status.json"
+    ],
+    "artifacts": [
+      "src/oday_data_platform/defs/external/context_events.py",
+      "src/oday_data_platform/defs/external/mof_moi.py",
+      "src/oday_data_platform/defs/external/ris_nlsc.py",
+      "src/oday_data_platform/external/sources/cwa/",
+      "src/oday_data_platform/external/sources/market_events/",
+      "src/oday_data_platform/external/sources/moi_rental/",
+      "src/oday_data_platform/external/sources/nlsc/",
+      "tests/sources/test_official_live_acquisition.py",
+      "tests/sources/official_source_fixtures.py",
+      "tests/sources/test_official_source_endpoints.py",
+      "docs/evidence/completion/DPF-OFFICIAL-SOURCE-ENDPOINT-INTEGRATION-001/"
+    ],
+    "acceptance": [
+      "逐來源核對官方資料catalog與real download object/API；MOI指定實際租賃檔及period，NLSC驗格式與版本，market event來源未核實不得稱已接入。",
+      "查證既有Secret reference是否可用，只記錄名称／狀態；CWA等真正需interactive account才提出精確缺口。",
+      "串接真實bytes到現有adapter/quarantine，NLSC與RIS行政代碼/版本join有證據。",
+      "按來源分開提供可用／不可用、live raw/readback/count/coverage；不以MOI/NLSC一源缺口阻停其他可實作部分。",
+      "每條完成宣稱對應固定commit與真實command receipt；mock、local live、GCS、release、runtime層級分開。",
+      "沿用既有模組與控制面，按scope產生anchor及中文PR、獨立審查與合併；遇specific live blocker仍先完成可獨立推進部分。"
+    ],
+    "verification": [
+      "uv run --frozen pytest -q tests/sources/test_official_live_acquisition.py tests/sources/test_mof_moi.py tests/sources/test_ris_nlsc.py tests/sources/test_official_source_endpoints.py",
+      "逐來源官方live response／原始檔讀回與join驗證",
+      "git diff --check"
+    ],
+    "source_docs": [
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/INVESTIGATION.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SA.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SD.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/EXECUTION_TASKS.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/source-index.json",
+      "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/defs/external/context_events.py",
+      "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/defs/external/ris_nlsc.py"
+    ],
+    "catalog_managed": false,
+    "mutates_canonical": false,
+    "non_dispatchable": true,
+    "evidence_path": "docs/evidence/completion/DPF-OFFICIAL-SOURCE-ENDPOINT-INTEGRATION-001/",
+    "phase": "SA/SD execution plan 2026-09-13",
+    "next": "Supervisor 依 dependencies／owned_paths 派工；根對話只調查、SA/SD及驗收追蹤。設計見 source_docs；不得把使用者當成raw檔／雜湊提供者。"
+  },
+  {
+    "id": "DPF-TRANSPORT-POI-RELEASE-INTEGRATION-001",
+    "title": "完成OSM／TDX與開放POI真實release接入",
+    "summary_zh": "修已存在live transport/POI入口的真實release對接，不重寫來源系統。",
+    "repository": "alfloop-dev/oday-data-platform",
+    "base_branch": "dev",
+    "task_class": "implementation",
+    "priority": "P0",
+    "owner": "Antigravity4",
+    "reviewer": "Codex2",
+    "depends_on": [
+      "DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001"
+    ],
+    "owned_paths": [
+      "src/oday_data_platform/defs/external/transport.py",
+      "src/oday_data_platform/defs/external/poi.py",
+      "src/oday_data_platform/external/sources/osm/",
+      "src/oday_data_platform/external/sources/tdx/",
+      "src/oday_data_platform/external/sources/overture/",
+      "src/oday_data_platform/external/sources/foursquare/",
+      "src/oday_data_platform/external/sources/brand_locator/",
+      "tests/sources/test_transport_poi_live_acquisition.py",
+      "tests/sources/test_real_transport_poi_releases.py",
+      "docs/evidence/completion/DPF-TRANSPORT-POI-RELEASE-INTEGRATION-001/"
+    ],
+    "forbidden_paths": [
+      "deploy/k8s/emgi/configmap.yaml",
+      "src/oday_data_platform/external/policy/",
+      "src/oday_data_platform/release_snapshot.py",
+      "infra/k8s/data-platform/runtime/",
+      ".github/workflows/",
+      "contracts/emgi/",
+      "ai-status.json"
+    ],
+    "artifacts": [
+      "src/oday_data_platform/defs/external/transport.py",
+      "src/oday_data_platform/defs/external/poi.py",
+      "src/oday_data_platform/external/sources/osm/",
+      "src/oday_data_platform/external/sources/tdx/",
+      "src/oday_data_platform/external/sources/overture/",
+      "src/oday_data_platform/external/sources/foursquare/",
+      "src/oday_data_platform/external/sources/brand_locator/",
+      "tests/sources/test_transport_poi_live_acquisition.py",
+      "tests/sources/test_real_transport_poi_releases.py",
+      "docs/evidence/completion/DPF-TRANSPORT-POI-RELEASE-INTEGRATION-001/"
+    ],
+    "acceptance": [
+      "核對OSM實際PBF及POI實際Parquet/object/partition格式；prefix URL與固定日期不得充當可用資料來源。",
+      "逐來源找出official release catalog／真實版本及台灣scope，沿用現有adapter、partition與quarantine。",
+      "TDX auth/quota與Google verifier角色分離，不能將Google verifier代替open POI，也不能宣稱已測未執行的來源。",
+      "至少先完成可用開放來源真實有界raw+parser+readback，再按各source activation條件推进TDX等；每source保存精確狀態。",
+      "每條完成宣稱對應固定commit與真實command receipt；mock、local live、GCS、release、runtime層級分開。",
+      "沿用既有模組與控制面，按scope產生anchor及中文PR、獨立審查與合併；遇specific live blocker仍先完成可獨立推進部分。"
+    ],
+    "verification": [
+      "uv run --frozen pytest -q tests/sources/test_transport_poi_live_acquisition.py tests/sources/test_real_transport_poi_releases.py",
+      "真實binary/object資料解析及地理coverage/readback",
+      "git diff --check"
+    ],
+    "source_docs": [
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/INVESTIGATION.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SA.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SD.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/EXECUTION_TASKS.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/source-index.json",
+      "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/defs/external/transport.py",
+      "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/defs/external/poi.py"
+    ],
+    "catalog_managed": false,
+    "mutates_canonical": false,
+    "non_dispatchable": true,
+    "evidence_path": "docs/evidence/completion/DPF-TRANSPORT-POI-RELEASE-INTEGRATION-001/",
+    "phase": "SA/SD execution plan 2026-09-13",
+    "next": "Supervisor 依 dependencies／owned_paths 派工；根對話只調查、SA/SD及驗收追蹤。設計見 source_docs；不得把使用者當成raw檔／雜湊提供者。"
+  },
+  {
+    "id": "DPF-LISTING-PRODUCTION-ASSET-INTEGRATION-001",
+    "title": "將刊登production asset接到真實來源channel",
+    "summary_zh": "修production asset仍生成fixture的接線缺口；沿用已合併listing服務，無重複平台。",
+    "repository": "alfloop-dev/oday-data-platform",
+    "base_branch": "dev",
+    "task_class": "implementation",
+    "priority": "P0",
+    "owner": "Antigravity5",
+    "reviewer": "Codex2",
+    "depends_on": [
+      "DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001"
+    ],
+    "owned_paths": [
+      "src/oday_data_platform/defs/external/listings.py",
+      "src/oday_data_platform/external/sources/listings/",
+      "tests/sources/test_listing_production_asset.py",
+      "docs/evidence/completion/DPF-LISTING-PRODUCTION-ASSET-INTEGRATION-001/"
+    ],
+    "forbidden_paths": [
+      "deploy/k8s/emgi/configmap.yaml",
+      "src/oday_data_platform/external/policy/",
+      "src/oday_data_platform/release_snapshot.py",
+      "infra/k8s/data-platform/runtime/",
+      ".github/workflows/",
+      "contracts/emgi/",
+      "ai-status.json"
+    ],
+    "artifacts": [
+      "src/oday_data_platform/defs/external/listings.py",
+      "src/oday_data_platform/external/sources/listings/",
+      "tests/sources/test_listing_production_asset.py",
+      "docs/evidence/completion/DPF-LISTING-PRODUCTION-ASSET-INTEGRATION-001/"
+    ],
+    "acceptance": [
+      "production asset移除固定LST-101、example.com與依now產生approval；接既有ListingObservationService及capture pipeline。",
+      "工程調查逐網站/feed正式入口、現有使用權和可用擷取模式；來源未知明示，不要求使用者提供raw檔。",
+      "approved API/feed或合規公開頁經既有kernel取得原始bytes與版本化extractor；未具備實際權限時保持unavailable，不造receipt。",
+      "保留觀測/lifecycle語意、敏感欄位分類、原URL/time/hash与重跑讀回；正反例驗證缺來源不產生假listing。",
+      "每條完成宣稱對應固定commit與真實command receipt；mock、local live、GCS、release、runtime層級分開。",
+      "沿用既有模組與控制面，按scope產生anchor及中文PR、獨立審查與合併；遇specific live blocker仍先完成可獨立推進部分。"
+    ],
+    "verification": [
+      "uv run --frozen pytest -q tests/sources/test_listing_production_asset.py",
+      "已查證來源的一次有界真實capture/readback；否則精確標示live blocker",
+      "git diff --check"
+    ],
+    "source_docs": [
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/INVESTIGATION.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SA.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SD.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/EXECUTION_TASKS.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/source-index.json",
+      "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/defs/external/listings.py"
+    ],
+    "catalog_managed": false,
+    "mutates_canonical": false,
+    "non_dispatchable": true,
+    "evidence_path": "docs/evidence/completion/DPF-LISTING-PRODUCTION-ASSET-INTEGRATION-001/",
+    "phase": "SA/SD execution plan 2026-09-13",
+    "next": "Supervisor 依 dependencies／owned_paths 派工；根對話只調查、SA/SD及驗收追蹤。設計見 source_docs；不得把使用者當成raw檔／雜湊提供者。"
+  },
+  {
+    "id": "DPF-MOBILITY-PRODUCTION-ASSET-INTEGRATION-001",
+    "title": "將observed mobility接到真實聚合資料feed",
+    "summary_zh": "處理observed asset仍用示例數值；原synthetic lane保留獨立語意。",
+    "repository": "alfloop-dev/oday-data-platform",
+    "base_branch": "dev",
+    "task_class": "implementation",
+    "priority": "P0",
+    "owner": "Antigravity6",
+    "reviewer": "Codex2",
+    "depends_on": [
+      "DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001"
+    ],
+    "owned_paths": [
+      "src/oday_data_platform/defs/external/mobility.py",
+      "src/oday_data_platform/external/sources/mobility/",
+      "tests/sources/test_mobility_production_asset.py",
+      "docs/evidence/completion/DPF-MOBILITY-PRODUCTION-ASSET-INTEGRATION-001/"
+    ],
+    "forbidden_paths": [
+      "deploy/k8s/emgi/configmap.yaml",
+      "src/oday_data_platform/external/policy/",
+      "src/oday_data_platform/release_snapshot.py",
+      "infra/k8s/data-platform/runtime/",
+      ".github/workflows/",
+      "contracts/emgi/",
+      "ai-status.json"
+    ],
+    "artifacts": [
+      "src/oday_data_platform/defs/external/mobility.py",
+      "src/oday_data_platform/external/sources/mobility/",
+      "tests/sources/test_mobility_production_asset.py",
+      "docs/evidence/completion/DPF-MOBILITY-PRODUCTION-ASSET-INTEGRATION-001/"
+    ],
+    "acceptance": [
+      "production observed asset移除固定flow_count=1000與now approval；沿用MobilitySourceService/ObservedMobilityFeed。",
+      "工程查證官方聚合運量或既有已授權feed，明示measure/station或area/timegrain及time zone；不將boardings冒充店前footfall。",
+      "真實raw到counted rows可核對、business_date正確、observed/synthetic嚴格分離、缺時段/缺來源不可補造0。",
+      "逐來源保留terms/retention/aggregation義務與可用狀態；未啟用來源仍能完成接線與負例測試。",
+      "每條完成宣稱對應固定commit與真實command receipt；mock、local live、GCS、release、runtime層級分開。",
+      "沿用既有模組與控制面，按scope產生anchor及中文PR、獨立審查與合併；遇specific live blocker仍先完成可獨立推進部分。"
+    ],
+    "verification": [
+      "uv run --frozen pytest -q tests/sources/test_mobility_production_asset.py tests/sources/test_listing_mobility_live_acquisition.py",
+      "真實聚合資料readback、單位/時間/數量核對",
+      "git diff --check"
+    ],
+    "source_docs": [
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/INVESTIGATION.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SA.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SD.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/EXECUTION_TASKS.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/source-index.json",
+      "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/defs/external/mobility.py"
+    ],
+    "catalog_managed": false,
+    "mutates_canonical": false,
+    "non_dispatchable": true,
+    "evidence_path": "docs/evidence/completion/DPF-MOBILITY-PRODUCTION-ASSET-INTEGRATION-001/",
+    "phase": "SA/SD execution plan 2026-09-13",
+    "next": "Supervisor 依 dependencies／owned_paths 派工；根對話只調查、SA/SD及驗收追蹤。設計見 source_docs；不得把使用者當成raw檔／雜湊提供者。"
+  },
+  {
+    "id": "DPF-ACQUISITION-RETENTION-BRIDGE-001",
+    "title": "銜接擷取證據與受治理raw retention",
+    "summary_zh": "補acquisition與retention間的工程接線，保留#63的獨立masked任務及sources-off執行邊界。",
+    "repository": "alfloop-dev/oday-data-platform",
+    "base_branch": "dev",
+    "task_class": "implementation",
+    "priority": "P0",
+    "owner": "Antigravity7",
+    "reviewer": "Codex2",
+    "depends_on": [
+      "DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001"
+    ],
+    "owned_paths": [
+      "src/oday_data_platform/raw_snapshot_retention.py",
+      "scripts/retain_emgi_raw_snapshots.py",
+      "src/oday_data_platform/external/evidence/",
+      "src/oday_data_platform/external/acquisition/retained_import.py",
+      "tests/deploy/test_retained_raw_snapshots.py",
+      "tests/external/test_acquisition_retained_import.py",
+      "docs/runbooks/emgi-retained-raw-snapshots.md",
+      "docs/evidence/completion/DPF-ACQUISITION-RETENTION-BRIDGE-001/"
+    ],
+    "forbidden_paths": [
+      "deploy/k8s/emgi/configmap.yaml",
+      "src/oday_data_platform/external/policy/",
+      "src/oday_data_platform/release_snapshot.py",
+      "infra/k8s/data-platform/runtime/",
+      ".github/workflows/",
+      "contracts/emgi/",
+      "ai-status.json"
+    ],
+    "artifacts": [
+      "src/oday_data_platform/raw_snapshot_retention.py",
+      "scripts/retain_emgi_raw_snapshots.py",
+      "src/oday_data_platform/external/evidence/",
+      "src/oday_data_platform/external/acquisition/retained_import.py",
+      "tests/deploy/test_retained_raw_snapshots.py",
+      "tests/external/test_acquisition_retained_import.py",
+      "docs/runbooks/emgi-retained-raw-snapshots.md",
+      "docs/evidence/completion/DPF-ACQUISITION-RETENTION-BRIDGE-001/"
+    ],
+    "acceptance": [
+      "沿用既有retention primitive建立capture/normalized receipts到受治理匯入的唯一連接，不新增scheduler/registry，不讓retention lane外連provider。",
+      "移除固定歷史54,443及逐域數量作為新release通用標準，改由本次manifest與實際內容/完整性驗證；缺domain／改count／漏頁仍fail closed。",
+      "支持各domain先行準備與驗證原始物件，full masked release仍要求八域齊備；工程驗收不等待其他來源的業務帳號。",
+      "以目前真實可用MOF/RIS證據驗證provenance/分類/讀回；本機結果不得編造GCS generation。雲端由既有runtime identity/lane create-only並exact generation download。",
+      "具名sealed provenance須真實來源，不能自造approved identity；將具体cloud auth/live限制記錄在對應步驟。",
+      "每條完成宣稱對應固定commit與真實command receipt；mock、local live、GCS、release、runtime層級分開。",
+      "沿用既有模組與控制面，按scope產生anchor及中文PR、獨立審查與合併；遇specific live blocker仍先完成可獨立推進部分。"
+    ],
+    "verification": [
+      "uv run --frozen pytest -q tests/deploy/test_retained_raw_snapshots.py tests/external/test_acquisition_retained_import.py",
+      "真實已擷取資料的匯入／分類／持久化讀回，及hash/count/domain篡改負例",
+      "git diff --check"
+    ],
+    "source_docs": [
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/INVESTIGATION.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SA.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SD.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/EXECUTION_TASKS.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/source-index.json",
+      "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/raw_snapshot_retention.py",
+      "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/external/acquisition/kernel.py"
+    ],
+    "catalog_managed": false,
+    "mutates_canonical": false,
+    "non_dispatchable": true,
+    "evidence_path": "docs/evidence/completion/DPF-ACQUISITION-RETENTION-BRIDGE-001/",
+    "phase": "SA/SD execution plan 2026-09-13",
+    "next": "Supervisor 依 dependencies／owned_paths 派工；根對話只調查、SA/SD及驗收追蹤。設計見 source_docs；不得把使用者當成raw檔／雜湊提供者。"
+  },
+  {
+    "id": "DPF-SITE-CONTEXT-REAL-COMPONENTS-001",
+    "title": "將site market context接到真實component manifests",
+    "summary_zh": "接已有組裝服務，讓site context成為實際衍生輸出而非契約metadata。",
+    "repository": "alfloop-dev/oday-data-platform",
+    "base_branch": "dev",
+    "task_class": "implementation",
+    "priority": "P0",
+    "owner": "Antigravity2",
+    "reviewer": "Codex2",
+    "depends_on": [
+      "DPF-ACQUISITION-RETENTION-BRIDGE-001"
+    ],
+    "owned_paths": [
+      "src/oday_data_platform/defs/products/site_context.py",
+      "src/oday_data_platform/products/site_context/",
+      "tests/products/test_site_context_real_components.py",
+      "docs/evidence/completion/DPF-SITE-CONTEXT-REAL-COMPONENTS-001/"
+    ],
+    "forbidden_paths": [
+      "deploy/k8s/emgi/configmap.yaml",
+      "src/oday_data_platform/external/policy/",
+      "src/oday_data_platform/release_snapshot.py",
+      "infra/k8s/data-platform/runtime/",
+      ".github/workflows/",
+      "contracts/emgi/",
+      "ai-status.json"
+    ],
+    "artifacts": [
+      "src/oday_data_platform/defs/products/site_context.py",
+      "src/oday_data_platform/products/site_context/",
+      "tests/products/test_site_context_real_components.py",
+      "docs/evidence/completion/DPF-SITE-CONTEXT-REAL-COMPONENTS-001/"
+    ],
+    "acceptance": [
+      "published_site_market_contexts改調用既有SiteMarketContextService/Builder；單純metadata不算生成資料產品。",
+      "live發布只採可讀回的component content SHA，禁止hash(identifier)替代內容hash。",
+      "依site/as-of/query scope組裝真實上游；尚缺域明示unavailable reason，不補造值。",
+      "用已準備的真實components驗證產物和parents lineage；全八域release完整性由#63與XR最終驗收，不能阻擋本task可先完成的接線。",
+      "每條完成宣稱對應固定commit與真實command receipt；mock、local live、GCS、release、runtime層級分開。",
+      "沿用既有模組與控制面，按scope產生anchor及中文PR、獨立審查與合併；遇specific live blocker仍先完成可獨立推進部分。"
+    ],
+    "verification": [
+      "uv run --frozen pytest -q tests/products/test_site_context_real_components.py tests/products/test_site_context.py",
+      "真實components組裝／derived readback及tampered digest負例",
+      "git diff --check"
+    ],
+    "source_docs": [
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/INVESTIGATION.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SA.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SD.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/EXECUTION_TASKS.md",
+      "support/handoffs/public-source-ingestion-20260913/analysis-plan/source-index.json",
+      "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/defs/products/site_context.py",
+      "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/products/site_context/builder.py"
+    ],
+    "catalog_managed": false,
+    "mutates_canonical": false,
+    "non_dispatchable": true,
+    "evidence_path": "docs/evidence/completion/DPF-SITE-CONTEXT-REAL-COMPONENTS-001/",
+    "phase": "SA/SD execution plan 2026-09-13",
+    "next": "Supervisor 依 dependencies／owned_paths 派工；根對話只調查、SA/SD及驗收追蹤。設計見 source_docs；不得把使用者當成raw檔／雜湊提供者。"
+  }
+]
