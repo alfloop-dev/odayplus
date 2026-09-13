@@ -1,0 +1,86 @@
+{
+  "task_id": "ODP-STAGING-SQL-BINDING-REMEDIATION-001",
+  "base_sha": "ff199e9b75354c1be7870a4bf6d7628b9620c243",
+  "review_findings_fixed": [
+    "Candidate workflow and entrypoint posture read from exact commit; mismatching workflow overrides rejected; admission independently rejects candidate provider credentials/endpoints/enabled status.",
+    "Rollback extraction passes requested root to admission; independent depth-1 checkout acquires exact predecessor from local remote."
+  ],
+  "verification": {
+    "exit_code": 0,
+    "pytest_summary": "314 passed, 16 subtests passed",
+    "junit_summary": {
+      "name": "pytest",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "0",
+      "tests": "330",
+      "time": "222.706"
+    },
+    "junit_cases_by_module": {
+      "tests.release.test_release_manifest": 87,
+      "tests.release.test_build_release_handoff": 99,
+      "tests.release.test_probe_release_target_absence": 19,
+      "tests.ops.test_staging_foundation_sql_binding": 11,
+      "tests.ops.test_ephemeral_staging_lifecycle.EphemeralStagingLifecycleTests": 39,
+      "tests.ops.test_ephemeral_staging_lifecycle.DefaultTenantTfvarsContractTests": 11,
+      "tests.ops.test_ephemeral_staging_lifecycle.UnverifiableReleaseStateTests": 9,
+      "tests.ops.test_ephemeral_staging_lifecycle.ReleaseScopedAutoCleanupTests": 6,
+      "tests.ops.test_ephemeral_staging_lifecycle.FailClosedReviewBlockerRegressionTests": 11,
+      "tests.ops.test_ephemeral_staging_lifecycle.IncompleteReleaseIdentityBundleTests": 10,
+      "tests.ops.test_ephemeral_staging_lifecycle.EphemeralStagingVerificationAndHoldTests": 12
+    },
+    "scoped_test_files": [
+      "tests/release/test_release_manifest.py",
+      "tests/release/test_build_release_handoff.py",
+      "tests/release/test_probe_release_target_absence.py",
+      "tests/ops/test_staging_foundation_sql_binding.py",
+      "tests/ops/test_ephemeral_staging_lifecycle.py"
+    ],
+    "new_real_repository_cases": 11,
+    "baseline_regression": {
+      "base_sha": "ff199e9b75354c1be7870a4bf6d7628b9620c243",
+      "exit_code": 1,
+      "summary": "2 failed, 97 deselected; candidate credential masking and lost root during rollback extraction"
+    },
+    "checks": {
+      "ruff": {
+        "exit_code": 0,
+        "stdout": "All checks passed!\n"
+      },
+      "boundary": {
+        "exit_code": 0,
+        "stdout": "Code boundary checks passed for 1159 files.\n- archived: 14\n- development_delivery_tooling: 75\n- development_platform_system: 65\n- evidence_artifact: 31\n- product_operations_tooling: 45\n- product_system: 526\n- verification: 403\n"
+      },
+      "diff-check": {
+        "exit_code": 0,
+        "stdout": ""
+      }
+    }
+  },
+  "source_sha256": {
+    "delivery_toolchain/release/build_release_handoff.py": "87ceb218a5ee5fa2af36adcb3bd53113c02b149611a5af7657260d6b8cb91182",
+    "delivery_toolchain/release/release_manifest.py": "3e21734bc0a6621d91be23684db287d3cca6f54ed7acbb62a3af4c2caefb14a9",
+    "tests/release/test_build_release_handoff.py": "f2bfc1b1158cfaf38719692669c374c4eefcc6f28c7e4c7d95480b47797e234d",
+    "product_ops/deployment/staging_lifecycle.py": "e521ef9e5387c6f3d1802014647efb86427e83534b03a6f5579cfc8d1e14921b",
+    "tests/ops/test_staging_foundation_sql_binding.py": "b3d5ce960eb9ea9fa9115afc7b035a9131211764326ca2a5e2d121aa836a3fb6",
+    "tests/ops/test_ephemeral_staging_lifecycle.py": "c094d8f1cbce7dc334c50d130020980a6114f414c5fdec6c1d8b7dd817ed9a64"
+  },
+  "original_sql_125_case_source_bytes_unchanged": true,
+  "raw_receipt_sha256": {
+    "checks.json": "3c05f73aac152ae7c5dfe653180f559a8b0addba5149e1535715f6f94842d70a",
+    "ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "scoped-green.xml": "a65d2bf1d7c9ead1e469e197a9c7bcc5492e825e5495324bfe0ed67335167bea",
+    "scoped-green.log": "6034730742f3adbae070e342260ee5d5ad33199ba950b0e9edaa431734529cef",
+    "regression-red.json": "596f7cf5ee513913c6461a6b6a0a33c88ff643817249de48ef84a4147c285916",
+    "regression-red.xml": "9c705dad700b9ee091a972ce65a6805d01f6698d6820bddd1a55c05e42a76f24",
+    "boundary.log": "ead6967eb78ca23900d6be0dcd6b722678b4ea08a0fd7181b9501f0b15261494",
+    "regression-red.log": "78f5f2965642d7639fa3f8c9ae4f35bb3580e9919c5557ad38915c96a788735d",
+    "diff-check.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "scoped-green.json": "7a5b7fe50c70a5abe642ff9e2f8dfd7804375d911e1ec11dd520f8229edf8e29"
+  },
+  "limits": [
+    "Local regression proof only; no live deployment or GCP mutation.",
+    "Commit still requires owner push/exact-head submission and independent Codex2 review.",
+    "No canonical artifact, workflow, provider policy or reviewer gate changed."
+  ]
+}

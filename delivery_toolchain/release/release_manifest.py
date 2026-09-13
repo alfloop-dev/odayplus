@@ -1701,6 +1701,60 @@ def compute_file_set_digest(paths: Any, *, root: Path = ROOT) -> str:
     return "sha256:" + h.hexdigest()
 
 
+def _wired_env_value(workflow_text: str, name: str) -> str | None:
+    """回傳 workflow 實際接到 runtime 的 env 值；未接線時回傳 ``None``。
+
+    只認 YAML 的 ``NAME: value`` 形式，因此註解裡提到變數名稱不會被誤判成接線。
+    """
+
+    pattern = re.compile(rf"^[ \t]*{re.escape(name)}:[ \t]*(.*?)[ \t]*$", re.MULTILINE)
+    values = [match.group(1).strip().strip('"').strip("'") for match in pattern.finditer(workflow_text)]
+    wired = [value for value in values if value]
+    if not wired:
+        return None
+    return wired[0]
+
+
+def _wired_env_names(workflow_text: str) -> tuple[str, ...]:
+    """回傳 workflow 真正接到 runtime 的環境變數名稱（去重、排序）。
+
+    和 :func:`_wired_env_value` 同一個判準：只認 ``NAME: value`` 且值非空，所以
+    註解裡提到的變數名稱不算接線。列舉名稱而不是逐一查已知清單，release
+    toolchain 才不需要自己記住任何 provider 的變數叫什麼。
+    """
+
+    pattern = re.compile(r"^[ \t]*([A-Z][A-Z0-9_]*):[ \t]*(.*?)[ \t]*$", re.MULTILINE)
+    names = {
+        match.group(1)
+        for match in pattern.finditer(workflow_text)
+        if match.group(2).strip().strip('"').strip("'")
+    }
+    return tuple(sorted(names))
+
+
+def read_sources_off_contract_file(
+    relative: str, *, root: Path = ROOT, candidate_sha: str | None = None,
+) -> str:
+    """Read contract posture from one exact candidate, or explicit worktree mode."""
+    if relative not in SOURCES_OFF_EGRESS_CONTRACT_FILES:
+        raise ValueError(f"not a sources-off contract file: {relative}")
+    if candidate_sha is None:
+        return (root / relative).read_text(encoding="utf-8")
+    if not is_exact_sha(candidate_sha):
+        raise ValueError(f"candidate_sha {candidate_sha!r} is not an exact 40-character SHA")
+    ensure_candidate_commit(candidate_sha, root=root)
+    try:
+        return subprocess.check_output(
+            ["git", "show", f"{candidate_sha}:{relative}"],
+            cwd=root, stderr=subprocess.PIPE,
+        ).decode("utf-8")
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"failed to read {relative} at candidate {candidate_sha}: "
+            + exc.stderr.decode("utf-8", errors="replace").strip()
+        ) from exc
+
+
 def compute_sources_off_egress_contract_digest(
     root: Path = ROOT,
     candidate_sha: str | None = None,
@@ -1957,6 +2011,20 @@ def _sources_off_egress_contract_errors(
     ):
         errors.append("deploy workflow does not retain the public egress probe receipt")
 
+    # Re-derive credential, endpoint and status observations independently of
+    # the submitted inventory. A matching digest cannot make a clean inventory
+    # truthful when the exact candidate wires provider access.
+    for env_var in _wired_env_names(workflow):
+        if not any(env_var_belongs_to_source(env_var, sid) for sid in EXTERNAL_SOURCE_INVENTORY):
+            continue
+        kind = classify_source_env_var(env_var)
+        if kind == "credential":
+            errors.append(f"deploy workflow wires provider credential {env_var}")
+        elif kind == "endpoint":
+            errors.append(f"deploy workflow wires provider endpoint {env_var}")
+        elif kind == "status" and _wired_env_value(workflow, env_var) != SOURCE_STATUS_DISABLED:
+            errors.append(f"deploy workflow does not disable source status {env_var}")
+
     deploy = file_contents["product_ops/deployment/deploy_cloud_run_waji.sh"]
     if '"--vpc-connector=${ODP_CLOUD_RUN_VPC_CONNECTOR}"' not in deploy:
         errors.append("deploy entrypoint does not pass the VPC connector to Cloud Run")
@@ -2079,9 +2147,11 @@ def build_release_manifest(
     return manifest
 
 
-def extract_rollback_release_binding(prev_manifest: dict[str, Any]) -> dict[str, Any]:
+def extract_rollback_release_binding(
+    prev_manifest: dict[str, Any], *, root: Path = ROOT,
+) -> dict[str, Any]:
     """Extract verifiable rollback binding from an approved previous manifest."""
-    admission_errors = validate_release_admission(prev_manifest)
+    admission_errors = validate_release_admission(prev_manifest, root=root)
     if admission_errors:
         raise ValueError(
             "Cannot extract rollback binding from a non-admissible manifest: "

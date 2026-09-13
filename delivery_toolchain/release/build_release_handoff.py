@@ -56,6 +56,8 @@ from delivery_toolchain.release.release_manifest import (  # noqa: E402
     SOURCES_OFF_PROVIDER_MODE,
     SOURCES_OFF_RUNTIME_PROBE_RECEIPT,
     _sources_off_egress_contract_errors,
+    _wired_env_names,
+    _wired_env_value,
     build_initial_release_recovery,
     build_release_manifest,
     build_sources_off_attestation,
@@ -69,6 +71,7 @@ from delivery_toolchain.release.release_manifest import (  # noqa: E402
     initial_release_recovery_errors,
     is_exact_sha,
     load_manifest,
+    read_sources_off_contract_file,
     sources_off_attestation_errors,
     validate_manifest,
     validate_release_admission,
@@ -107,37 +110,6 @@ def _parse_assignment(raw: str) -> tuple[str, str]:
 PROVIDER_MODE_ENV_VAR = "ODP_EXTERNAL_PROVIDER_MODE"
 
 
-def _wired_env_value(workflow_text: str, name: str) -> str | None:
-    """回傳 workflow 實際接到 runtime 的 env 值；未接線時回傳 ``None``。
-
-    只認 YAML 的 ``NAME: value`` 形式，因此註解裡提到變數名稱不會被誤判成接線。
-    """
-
-    pattern = re.compile(rf"^[ \t]*{re.escape(name)}:[ \t]*(.*?)[ \t]*$", re.MULTILINE)
-    values = [match.group(1).strip().strip('"').strip("'") for match in pattern.finditer(workflow_text)]
-    wired = [value for value in values if value]
-    if not wired:
-        return None
-    return wired[0]
-
-
-def _wired_env_names(workflow_text: str) -> tuple[str, ...]:
-    """回傳 workflow 真正接到 runtime 的環境變數名稱（去重、排序）。
-
-    和 :func:`_wired_env_value` 同一個判準：只認 ``NAME: value`` 且值非空，所以
-    註解裡提到的變數名稱不算接線。列舉名稱而不是逐一查已知清單，release
-    toolchain 才不需要自己記住任何 provider 的變數叫什麼。
-    """
-
-    pattern = re.compile(r"^[ \t]*([A-Z][A-Z0-9_]*):[ \t]*(.*?)[ \t]*$", re.MULTILINE)
-    names = {
-        match.group(1)
-        for match in pattern.finditer(workflow_text)
-        if match.group(2).strip().strip('"').strip("'")
-    }
-    return tuple(sorted(names))
-
-
 def derive_sources_off_posture(
     *,
     workflow_path: Path,
@@ -161,12 +133,29 @@ def derive_sources_off_posture(
     """
 
     try:
-        workflow_text = workflow_path.read_text(encoding="utf-8")
-    except OSError as exc:
+        if candidate_sha is None:
+            workflow_text = workflow_path.read_text(encoding="utf-8")
+        else:
+            workflow_text = read_sources_off_contract_file(
+                DEFAULT_WORKFLOW_PATH, root=root, candidate_sha=candidate_sha
+            )
+            # A caller may name a separate copy, but cannot substitute a clean
+            # workflow for the workflow deployed by this candidate. The default
+            # checkout path is never read in candidate mode, even when dirty.
+            if workflow_path.resolve() != (root / DEFAULT_WORKFLOW_PATH).resolve():
+                if workflow_path.read_text(encoding="utf-8") != workflow_text:
+                    raise HandoffError([
+                        "workflow override does not match candidate " + candidate_sha
+                    ])
+        deploy_entrypoint_text = read_sources_off_contract_file(
+            "product_ops/deployment/deploy_cloud_run_waji.sh",
+            root=root, candidate_sha=candidate_sha,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
         raise HandoffError(
             [
-                f"無法讀取 deploy workflow {workflow_path}：{exc}；"
-                "sources-off posture 必須由 release SHA 上的 workflow 推導，不接受手填。"
+                f"無法讀取 sources-off workflow/entrypoint：{exc}；"
+                "sources-off posture 必須由 release SHA 上的內容推導，不接受手填。"
             ]
         ) from exc
 
@@ -185,12 +174,6 @@ def derive_sources_off_posture(
         == "${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}"
         and _wired_env_value(workflow_text, "ODP_CLOUD_RUN_VPC_EGRESS")
         == "${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}"
-    )
-    deploy_entrypoint = root / "product_ops/deployment/deploy_cloud_run_waji.sh"
-    deploy_entrypoint_text = (
-        deploy_entrypoint.read_text(encoding="utf-8")
-        if deploy_entrypoint.is_file()
-        else ""
     )
     deploy_entrypoint_vpc_binding = all(
         token in deploy_entrypoint_text
@@ -419,7 +402,7 @@ def build_handoff(
             if rb_errs:
                 errors.extend([f"rollback manifest 無效：{e}" for e in rb_errs])
             else:
-                resolved_rollback_release = extract_rollback_release_binding(previous_manifest)
+                resolved_rollback_release = extract_rollback_release_binding(previous_manifest, root=root)
 
     enabled_sources = [
         str(source).strip()
