@@ -245,6 +245,7 @@ _FAILURE_HELPER_FUNCTIONS = [
 "_parse_iso_utc",
 "_provider_guardrail_bucket",
 "_task_failure_streak_bucket",
+"_settle_fenced_sibling_worker",
 "agent_auto_dispatch_block_reason",
 "agent_can_take_task",
 "agent_dispatch_disabled",

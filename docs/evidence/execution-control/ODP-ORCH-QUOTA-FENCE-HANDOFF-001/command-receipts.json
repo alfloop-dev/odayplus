@@ -1,6 +1,6 @@
 {
   "task_id": "ODP-ORCH-QUOTA-FENCE-HANDOFF-001",
-  "generated_at": "2026-09-13T11:12:50Z",
+  "generated_at": "2026-09-13T11:37:30Z",
   "verified_by": "Antigravity3",
   "reviewer": "Codex2",
   "receipts": [
@@ -8,28 +8,28 @@
       "command": "uv run pytest -q .orchestrator/test_worker_failure_policy.py -k \"fence or handoff or quota\"",
       "exit_code": 0,
       "status": "passed",
-      "summary": "26 passed, 41 deselected in 2.22s",
+      "summary": "28 passed, 41 deselected in 6.46s (8.88s elapsed)",
       "target": ".orchestrator/test_worker_failure_policy.py"
     },
     {
       "command": "uv run pytest -v .orchestrator/test_worker_failure_policy.py -k \"QuotaSiblingFencing\"",
       "exit_code": 0,
       "status": "passed",
-      "summary": "10 passed, 57 deselected in 1.81s",
+      "summary": "12 passed, 57 deselected in 6.56s (8.80s elapsed)",
       "target": ".orchestrator/test_worker_failure_policy.py::QuotaSiblingFencingDirtyHandoffTests"
     },
     {
-      "command": "uv run ruff check .orchestrator/worker_failure_policy.py .orchestrator/worker_lifecycle.py .orchestrator/test_worker_failure_policy.py",
+      "command": "uv run ruff check .orchestrator/worker_failure_policy.py .orchestrator/worker_lifecycle.py .orchestrator/test_worker_failure_policy.py .orchestrator/supervisor.py",
       "exit_code": 0,
       "status": "passed",
-      "summary": "All checks passed!",
+      "summary": "All checks passed! (0.08s elapsed)",
       "target": "lint"
     },
     {
       "command": "git diff --check",
       "exit_code": 0,
       "status": "passed",
-      "summary": "clean whitespace and diff markers",
+      "summary": "clean whitespace and diff markers (0.04s elapsed)",
       "target": "diff_check"
     }
   ]

@@ -968,6 +968,22 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 )
                 changed = True
                 continue
+        pending_fence = worker.get("pending_fence")
+        if isinstance(pending_fence, dict):
+            pid = worker.get("pid")
+            if pid_is_alive(pid):
+                terminate_worker_pid(pid)
+            if not pid_is_alive(pid):
+                _settle_fenced_sibling_worker(
+                    config,
+                    state,
+                    worker,
+                    str(pending_fence.get("pool_id") or ""),
+                    str(pending_fence.get("reason") or ""),
+                )
+                changed = True
+                continue
+            continue
         if not markers_checked:
             marker_changed = update_worker_runtime_markers(worker)
             if marker_changed:

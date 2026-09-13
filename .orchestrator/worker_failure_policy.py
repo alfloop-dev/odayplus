@@ -3574,6 +3574,111 @@ def maybe_reassign_task_after_worker_failure(
     return None
 
 @_entrypoint
+def _settle_fenced_sibling_worker(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    sibling: dict[str, Any],
+    pool_id: str,
+    reason: str,
+) -> bool:
+    """Settle a dead sibling worker after account pool fencing.
+
+    Preserves worktree uncommitted changes before any owner reassignment.
+    If preservation succeeds or worktree was clean, reassigns the task
+    and transfers handoff seal provenance to the authorized successor.
+    If preservation fails on dirty work, preserves retryable/blocker recovery
+    for the original owner and does not transfer responsibility.
+    """
+    task_id = str(sibling.get("task_id") or "")
+    task_record = canonical_task_record(config, task_id) if task_id else None
+    outcome = preserve_dead_worker_worktree(
+        config,
+        state,
+        sibling,
+        task=task_record,
+        trigger="sibling_fenced",
+    )
+    is_clean = getattr(outcome, "reason", "") in {
+        "worktree_clean",
+        "nothing_to_preserve",
+        "worker_had_no_workspace",
+        "no_worktree_path",
+    }
+    preservation_succeeded = bool(outcome) or getattr(outcome, "preserved", False)
+
+    if preservation_succeeded or is_clean:
+        reassigned_to = maybe_reassign_task_after_worker_failure(
+            config,
+            state,
+            sibling,
+            reason,
+            terminal=True,
+            force=True,
+        )
+        sibling["status"] = "reassigned" if reassigned_to else "failed"
+        sibling["reassigned_to"] = reassigned_to
+        sibling["last_event_at"] = utc_now()
+        sibling["last_error"] = (
+            f"Account pool {pool_id} fenced after a sibling quota failure. "
+            f"{reason}"
+        )
+        sibling.pop("pending_fence", None)
+        finalize_queue_event_record(
+            config,
+            state,
+            sibling,
+            "completed" if reassigned_to else "failed",
+            sibling["last_error"],
+        )
+        write_activity_log(
+            config,
+            {
+                "type": "account_pool_worker_fenced",
+                "account_pool": pool_id,
+                "task_id": sibling.get("task_id"),
+                "worker_run_id": sibling.get("run_id"),
+                "reassigned_to": reassigned_to,
+                "message": sibling["last_error"],
+            },
+        )
+        return True
+
+    sibling["status"] = "failed"
+    sibling["reassigned_to"] = None
+    sibling["last_event_at"] = utc_now()
+    preservation_reason = getattr(outcome, "reason", "") or "preservation_failed"
+    preservation_detail = getattr(outcome, "detail", "")
+    detail_str = f" ({preservation_reason}: {preservation_detail})" if preservation_detail else f" ({preservation_reason})"
+    sibling["last_error"] = (
+        f"Account pool {pool_id} fenced after a sibling quota failure. "
+        f"Worktree preservation failed{detail_str}. "
+        f"Responsibility not reassigned. {reason}"
+    )
+    sibling.pop("pending_fence", None)
+    finalize_queue_event_record(
+        config,
+        state,
+        sibling,
+        "failed",
+        sibling["last_error"],
+    )
+    write_activity_log(
+        config,
+        {
+            "type": "account_pool_worker_fenced",
+            "account_pool": pool_id,
+            "task_id": sibling.get("task_id"),
+            "worker_run_id": sibling.get("run_id"),
+            "reassigned_to": None,
+            "preservation_failed": True,
+            "preservation_reason": preservation_reason,
+            "message": sibling["last_error"],
+        },
+    )
+    return True
+
+
+@_entrypoint
 def fence_account_pool_workers(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -3608,49 +3713,18 @@ def fence_account_pool_workers(
         pid = sibling.get("pid")
         if pid_is_alive(pid):
             terminate_worker_pid(pid)
-        if not pid_is_alive(pid):
-            task_id = str(sibling.get("task_id") or "")
-            task_record = canonical_task_record(config, task_id) if task_id else None
-            preserve_dead_worker_worktree(
-                config,
-                state,
-                sibling,
-                task=task_record,
-                trigger="sibling_fenced",
-            )
-        reassigned_to = maybe_reassign_task_after_worker_failure(
-            config,
-            state,
-            sibling,
-            reason,
-            terminal=True,
-            force=True,
-        )
-        sibling["status"] = "reassigned" if reassigned_to else "failed"
-        sibling["reassigned_to"] = reassigned_to
-        sibling["last_event_at"] = utc_now()
-        sibling["last_error"] = (
-            f"Account pool {pool_id} fenced after a sibling quota failure. "
-            f"{reason}"
-        )
-        finalize_queue_event_record(
-            config,
-            state,
-            sibling,
-            "completed" if reassigned_to else "failed",
-            sibling["last_error"],
-        )
-        write_activity_log(
-            config,
-            {
-                "type": "account_pool_worker_fenced",
-                "account_pool": pool_id,
-                "task_id": sibling.get("task_id"),
-                "worker_run_id": sibling.get("run_id"),
-                "reassigned_to": reassigned_to,
-                "message": sibling["last_error"],
-            },
-        )
+        if pid_is_alive(pid):
+            # Process is still alive / shutdown in progress, or termination failed.
+            # Defer actor change and terminal settlement until confirmed death.
+            sibling["pending_fence"] = {
+                "pool_id": pool_id,
+                "reason": reason,
+                "fenced_at": utc_now(),
+            }
+            fenced += 1
+            continue
+
+        _settle_fenced_sibling_worker(config, state, sibling, pool_id, reason)
         fenced += 1
     return fenced
 

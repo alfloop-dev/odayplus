@@ -1309,9 +1309,16 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
         _git_run(self.repo, "commit", "--quiet", "-m", "initial base commit")
         _git_run(self.repo, "branch", "-M", "dev")
 
+        self.remote = self.root / "origin.git"
+        self.remote.mkdir(parents=True, exist_ok=True)
+        _git_run(self.remote, "init", "--bare", "--quiet")
+        _git_run(self.repo, "remote", "add", "origin", str(self.remote))
+        _git_run(self.repo, "push", "--quiet", "-u", "origin", "dev")
+
         self.worktree = self.root / "worktrees" / "pantheon" / "task-sibling-001"
         self.worktree.parent.mkdir(parents=True, exist_ok=True)
         _git_run(self.repo, "worktree", "add", "-b", "task/TASK-SIBLING-001", str(self.worktree), "dev")
+        _git_run(self.repo, "push", "--quiet", "-u", "origin", "task/TASK-SIBLING-001")
         self.head_sha = _git_run(self.worktree, "rev-parse", "HEAD")
 
         self.status_file = self.root / "ai-status.json"
@@ -1358,12 +1365,16 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
             "blockers": [],
         }
         self.status_file.write_text(json.dumps(self.status_data, indent=2), encoding="utf-8")
+        (self.root / "approval_queue.json").write_text(json.dumps({"pending": [], "history": []}), encoding="utf-8")
 
         self.config: dict[str, Any] = {
             "paths": {
                 "status_file": str(self.status_file),
                 "activity_log": str(self.activity_log),
                 "event_queue": str(self.event_queue),
+                "approval_queue": str(self.root / "approval_queue.json"),
+                "approval_history": str(self.root / "approval_history.json"),
+                "delivery_queue": str(self.root / "delivery_queue.jsonl"),
             },
             "schema": {"assignee_field": "owner"},
             "coordination": {
@@ -1468,10 +1479,18 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_sibling_quota_fence_preserves_dirty_worktree_and_authorizes_successor_lease_continuation(self) -> None:
-        """E2E: Sibling worker dirty changes are preserved at fencing, sealed, and handed off to authorized successor."""
-        # Create uncommitted dirty work in the sibling's isolated worktree
-        dirty_file = self.worktree / "task_impl.py"
-        dirty_file.write_text("print('valuable uncommitted work')\n", encoding="utf-8")
+        """E2E: Sibling worker dirty changes (staged, unstaged, untracked) are backed up, sealed, and handed off to authorized successor via prepare_worker_workspace."""
+        # Create uncommitted staged, unstaged, and untracked work in the sibling's isolated worktree
+        staged_file = self.worktree / "staged_impl.py"
+        staged_file.write_text("print('staged work')\n", encoding="utf-8")
+        _git_run(self.worktree, "add", "staged_impl.py")
+
+        unstaged_file = self.worktree / "README.md"
+        unstaged_file.write_text("modified readme unstaged work\n", encoding="utf-8")
+
+        untracked_file = self.worktree / "untracked_impl.py"
+        untracked_file.write_text("print('untracked work')\n", encoding="utf-8")
+
         inspection = inspect_worktree(self.worktree)
         self.assertEqual(inspection.kind, "owner_dirty")
 
@@ -1484,6 +1503,7 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
                     "task_id": "TASK-TRIGGER-001",
                     "status": "running",
                     "pid": 999999,
+                    "queue_event_id": "evt-trigger-1",
                 },
                 "run-sibling": {
                     "run_id": "run-sibling",
@@ -1496,6 +1516,7 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
                     "reason": "owned_ready_dispatch",
                     "status": "running",
                     "pid": 999998,
+                    "queue_event_id": "evt-sibling-1",
                 },
                 "run-independent": {
                     "run_id": "run-independent",
@@ -1504,7 +1525,15 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
                     "task_id": "TASK-INDEPENDENT-001",
                     "status": "running",
                     "pid": 999997,
+                    "queue_event_id": "evt-indep-1",
                 },
+            },
+            "queue": {
+                "events": {
+                    "evt-trigger-1": {"status": "started", "task_id": "TASK-TRIGGER-001"},
+                    "evt-sibling-1": {"status": "started", "task_id": "TASK-SIBLING-001"},
+                    "evt-indep-1": {"status": "started", "task_id": "TASK-INDEPENDENT-001"},
+                }
             },
             "worker_worktrees": {"handoff_blocks": {}},
         }
@@ -1520,6 +1549,33 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
             )
 
         self.assertEqual(fenced, 1)
+
+        # Verify physical backup manifest, patches, and untracked files
+        backup_root = self.root / ".orchestrator" / "worktree-dirt-backups"
+        self.assertTrue(backup_root.exists(), "Backup directory must exist")
+        backup_dirs = list(backup_root.glob("task-sibling-001-*"))
+        self.assertEqual(len(backup_dirs), 1, "Exactly one backup dir created for sibling task")
+        task_backup_dir = backup_dirs[0]
+
+        manifest_data = json.loads((task_backup_dir / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest_data.get("task_id"), "TASK-SIBLING-001")
+        self.assertEqual(manifest_data.get("branch"), "task/TASK-SIBLING-001")
+        self.assertEqual(manifest_data.get("head_sha"), self.head_sha)
+        self.assertEqual(manifest_data.get("trigger"), "sibling_fenced")
+
+        staged_patch = (task_backup_dir / "staged.patch").read_bytes()
+        self.assertIn(b"staged_impl.py", staged_patch)
+        self.assertIn(b"staged work", staged_patch)
+
+        unstaged_patch = (task_backup_dir / "unstaged.patch").read_bytes()
+        self.assertIn(b"modified readme unstaged work", unstaged_patch)
+
+        untracked_backup = task_backup_dir / "untracked" / "untracked_impl.py"
+        self.assertTrue(untracked_backup.exists())
+        self.assertEqual(untracked_backup.read_text(encoding="utf-8"), "print('untracked work')\n")
+
+        checksums_file = task_backup_dir / "backup_checksums.sha256"
+        self.assertTrue(checksums_file.exists())
 
         # Sibling was reassigned to Codex outside antigravity_main pool
         sibling = state["workers"]["run-sibling"]
@@ -1548,7 +1604,7 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
         self.assertEqual(handoff_block.get("workspace_branch"), "task/TASK-SIBLING-001")
         self.assertEqual(handoff_block.get("workspace_path"), str(self.worktree.resolve()))
 
-        # Authorized successor (Codex) requests lease continuation
+        # Authorized successor (Codex) enters actual prepare_worker_workspace lease entry
         successor_request = DeliveryRequest(
             agent_id="codex",
             provider="codex",
@@ -1557,26 +1613,29 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
             task_id="TASK-SIBLING-001",
             reason="owned_ready_dispatch",
         )
-        allowed, detail = worker_workspace.sealed_owner_continuation_allowed(
+        lease_ok, lease_err = worker_workspace.prepare_worker_workspace(
             self.config,
             state,
             successor_request,
-            updated_task,
-            target_agent="codex",
-            worktree_path=self.worktree,
-            branch="task/TASK-SIBLING-001",
+            queue_event_id="evt-sibling-1",
+            target_agent="Codex",
         )
-        self.assertTrue(allowed, f"Authorized successor must be allowed continuation: {detail}")
+        self.assertTrue(lease_ok, f"prepare_worker_workspace must succeed: {lease_err}")
+        self.assertEqual(successor_request.metadata.get("worktree_continuation"), "sealed_owner_dirt")
+        self.assertEqual(successor_request.metadata.get("workspace_mode"), "isolated_worktree")
+        self.assertEqual(successor_request.metadata.get("workspace_path"), str(self.worktree.resolve()))
 
         # Successor completes work, commits, and leaves clean repo
-        _git_run(self.worktree, "add", "task_impl.py")
+        _git_run(self.worktree, "add", "-A")
         _git_run(self.worktree, "commit", "--quiet", "-m", "TASK-SIBLING-001: complete task implementation")
         clean_inspection = inspect_worktree(self.worktree)
         self.assertEqual(clean_inspection.kind, "clean")
 
-    def test_sibling_quota_fence_refuses_preservation_while_writer_is_still_alive(self) -> None:
-        """Active writer guard: Worktree preservation and handoff sealing is refused while process is alive."""
-        (self.worktree / "uncommitted.py").write_text("print('writer active')\n", encoding="utf-8")
+    def test_sibling_quota_fence_alive_terminating_dead_ordering(self) -> None:
+        """Ordering: Alive -> terminating (pending fence) -> dead ordering verifies deferred reassignment and settlement."""
+        dirty_file = self.worktree / "in_progress.py"
+        dirty_file.write_text("print('pending dirty')\n", encoding="utf-8")
+
         state: dict[str, Any] = {
             "workers": {
                 "run-trigger": {
@@ -1586,6 +1645,7 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
                     "task_id": "TASK-TRIGGER-001",
                     "status": "running",
                     "pid": 999999,
+                    "queue_event_id": "evt-trigger-1",
                 },
                 "run-sibling": {
                     "run_id": "run-sibling",
@@ -1598,7 +1658,131 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
                     "reason": "owned_ready_dispatch",
                     "status": "running",
                     "pid": 999998,
+                    "queue_event_id": "evt-sibling-1",
                 },
+            },
+            "queue": {
+                "events": {
+                    "evt-trigger-1": {"status": "started", "task_id": "TASK-TRIGGER-001"},
+                    "evt-sibling-1": {"status": "started", "task_id": "TASK-SIBLING-001"},
+                }
+            },
+            "worker_worktrees": {"handoff_blocks": {}},
+        }
+        quota_reason = "ERROR: Free daily quota has been reached."
+
+        # Step 1: fence_account_pool_workers runs while sibling process is still alive (shutdown in progress)
+        with mock.patch.object(supervisor, "pid_is_alive", return_value=True), \
+             mock.patch.object(supervisor, "terminate_worker_pid", return_value=True) as mock_term:
+            fenced = worker_failure_policy.fence_account_pool_workers(
+                self.config, state, state["workers"]["run-trigger"], quota_reason
+            )
+
+        self.assertEqual(fenced, 1)
+        mock_term.assert_called_once_with(999998)
+
+        sibling = state["workers"]["run-sibling"]
+        # Process is alive: pending fence recorded, but status remains running (active)
+        self.assertIsNotNone(sibling.get("pending_fence"))
+        self.assertEqual(sibling["pending_fence"]["pool_id"], "antigravity_main")
+        self.assertEqual(sibling["status"], "running")
+        self.assertIsNone(sibling.get("reassigned_to"))
+
+        # Task owner in canonical status is UNCHANGED (Antigravity2)
+        task_initial = worker_failure_policy.canonical_task_record(self.config, "TASK-SIBLING-001")
+        self.assertEqual(task_initial.get("owner"), "Antigravity2")
+
+        # Queue event remains started (unfinalized)
+        self.assertEqual(state["queue"]["events"]["evt-sibling-1"]["status"], "started")
+        # No handoff block created yet
+        self.assertNotIn("TASK-SIBLING-001", state.get("worker_worktrees", {}).get("handoff_blocks", {}))
+
+        # Step 2: poll_workers runs while process is STILL alive
+        with mock.patch.object(supervisor, "pid_is_alive", return_value=True), \
+             mock.patch.object(supervisor, "terminate_worker_pid", return_value=True) as mock_term2:
+            supervisor.poll_workers(self.config, state)
+
+        mock_term2.assert_called_once_with(999998)
+        self.assertEqual(sibling["status"], "running")
+        self.assertIsNotNone(sibling.get("pending_fence"))
+        task_still_same = worker_failure_policy.canonical_task_record(self.config, "TASK-SIBLING-001")
+        self.assertEqual(task_still_same.get("owner"), "Antigravity2")
+
+        # Step 3: poll_workers runs after process is confirmed dead
+        with mock.patch.object(supervisor, "pid_is_alive", return_value=False), \
+             mock.patch.object(supervisor, "sync_status_pipeline", return_value=True), \
+             mock.patch("status_transition.sync_status_pipeline", return_value=True):
+            changed = supervisor.poll_workers(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(sibling["status"], "reassigned")
+        self.assertEqual(sibling["reassigned_to"], "Codex")
+        self.assertIsNone(sibling.get("pending_fence"))
+
+        # Task in canonical status now reassigned to Codex
+        task_after_death = worker_failure_policy.canonical_task_record(self.config, "TASK-SIBLING-001")
+        self.assertEqual(task_after_death.get("owner"), "Codex")
+
+        # Handoff block created and transferred to Codex
+        handoff_block = state["worker_worktrees"]["handoff_blocks"].get("TASK-SIBLING-001")
+        self.assertIsNotNone(handoff_block)
+        self.assertEqual(handoff_block.get("owner"), "Codex")
+        self.assertEqual(handoff_block.get("authorized_successor"), "Codex")
+
+        # Queue event finalized
+        self.assertEqual(state["queue"]["events"]["evt-sibling-1"]["status"], "completed")
+
+        # Successor Codex can now lease via prepare_worker_workspace
+        successor_request = DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="resume work",
+            task_id="TASK-SIBLING-001",
+            reason="owned_ready_dispatch",
+        )
+        lease_ok, lease_err = worker_workspace.prepare_worker_workspace(
+            self.config,
+            state,
+            successor_request,
+            queue_event_id="evt-sibling-1",
+            target_agent="Codex",
+        )
+        self.assertTrue(lease_ok, f"prepare_worker_workspace must succeed: {lease_err}")
+
+    def test_sibling_quota_fence_failed_termination_preserves_active_state_without_reassign(self) -> None:
+        """Failed termination: If SIGTERM fails to stop the worker process, status and ownership remain untouched."""
+        (self.worktree / "uncommitted.py").write_text("print('writer active')\n", encoding="utf-8")
+        state: dict[str, Any] = {
+            "workers": {
+                "run-trigger": {
+                    "run_id": "run-trigger",
+                    "provider": "antigravity",
+                    "agent_id": "antigravity",
+                    "task_id": "TASK-TRIGGER-001",
+                    "status": "running",
+                    "pid": 999999,
+                    "queue_event_id": "evt-trigger-1",
+                },
+                "run-sibling": {
+                    "run_id": "run-sibling",
+                    "provider": "antigravity2",
+                    "agent_id": "antigravity2",
+                    "task_id": "TASK-SIBLING-001",
+                    "workspace_path": str(self.worktree.resolve()),
+                    "workspace_branch": "task/TASK-SIBLING-001",
+                    "workspace_mode": "isolated_worktree",
+                    "reason": "owned_ready_dispatch",
+                    "status": "running",
+                    "pid": 999998,
+                    "queue_event_id": "evt-sibling-1",
+                },
+            },
+            "queue": {
+                "events": {
+                    "evt-trigger-1": {"status": "started", "task_id": "TASK-TRIGGER-001"},
+                    "evt-sibling-1": {"status": "started", "task_id": "TASK-SIBLING-001"},
+                }
             },
             "worker_worktrees": {"handoff_blocks": {}},
         }
@@ -1606,13 +1790,120 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
 
         # Process is alive and cannot be terminated
         with mock.patch.object(supervisor, "pid_is_alive", return_value=True), \
-             mock.patch.object(supervisor, "terminate_worker_pid", return_value=True):
-            worker_failure_policy.fence_account_pool_workers(
+             mock.patch.object(supervisor, "terminate_worker_pid", return_value=False):
+            fenced = worker_failure_policy.fence_account_pool_workers(
                 self.config, state, state["workers"]["run-trigger"], quota_reason
             )
 
+        self.assertEqual(fenced, 1)
+
+        sibling = state["workers"]["run-sibling"]
+        # Pending fence recorded, status remains running (active)
+        self.assertEqual(sibling["status"], "running")
+        self.assertIsNotNone(sibling.get("pending_fence"))
+
+        # Canonical task owner is UNCHANGED (Antigravity2)
+        task = worker_failure_policy.canonical_task_record(self.config, "TASK-SIBLING-001")
+        self.assertEqual(task.get("owner"), "Antigravity2")
+
+        # Queue event remains started (active)
+        self.assertEqual(state["queue"]["events"]["evt-sibling-1"]["status"], "started")
+
         # No handoff block created because active writer was present
         self.assertNotIn("TASK-SIBLING-001", state.get("worker_worktrees", {}).get("handoff_blocks", {}))
+
+    def test_sibling_quota_fence_backup_failure_refuses_reassignment_and_leaves_owner_unchanged(self) -> None:
+        """Backup failure guard: If worktree preservation fails on dirty work, owner is NOT reassigned, preventing successor stranding."""
+        (self.worktree / "dirty.py").write_text("print('valuable dirty content')\n", encoding="utf-8")
+
+        state: dict[str, Any] = {
+            "workers": {
+                "run-trigger": {
+                    "run_id": "run-trigger",
+                    "provider": "antigravity",
+                    "agent_id": "antigravity",
+                    "task_id": "TASK-TRIGGER-001",
+                    "status": "running",
+                    "pid": 999999,
+                    "queue_event_id": "evt-trigger-1",
+                },
+                "run-sibling": {
+                    "run_id": "run-sibling",
+                    "provider": "antigravity2",
+                    "agent_id": "antigravity2",
+                    "task_id": "TASK-SIBLING-001",
+                    "workspace_path": str(self.worktree.resolve()),
+                    "workspace_branch": "task/TASK-SIBLING-001",
+                    "workspace_mode": "isolated_worktree",
+                    "reason": "owned_ready_dispatch",
+                    "status": "running",
+                    "pid": 999998,
+                    "queue_event_id": "evt-sibling-1",
+                },
+            },
+            "queue": {
+                "events": {
+                    "evt-trigger-1": {"status": "started", "task_id": "TASK-TRIGGER-001"},
+                    "evt-sibling-1": {"status": "started", "task_id": "TASK-SIBLING-001"},
+                }
+            },
+            "worker_worktrees": {"handoff_blocks": {}},
+        }
+        quota_reason = "ERROR: Free daily quota has been reached."
+
+        # Simulate backup write failure on dead worker
+        with mock.patch.object(supervisor, "pid_is_alive", return_value=False), \
+             mock.patch.object(supervisor, "terminate_worker_pid", return_value=True), \
+             mock.patch.object(
+                 supervisor,
+                 "preserve_dead_worker_worktree",
+                 return_value=worker_workspace.QuarantineOutcome(False, "backup_write_failed", "disk full during copy"),
+             ), \
+             mock.patch.object(
+                 worker_workspace,
+                 "preserve_dead_worker_worktree",
+                 return_value=worker_workspace.QuarantineOutcome(False, "backup_write_failed", "disk full during copy"),
+             ):
+            fenced = worker_failure_policy.fence_account_pool_workers(
+                self.config, state, state["workers"]["run-trigger"], quota_reason
+            )
+
+        self.assertEqual(fenced, 1)
+
+        sibling = state["workers"]["run-sibling"]
+        # Worker marked failed (NOT reassigned)
+        self.assertEqual(sibling["status"], "failed")
+        self.assertIsNone(sibling.get("reassigned_to"))
+        self.assertIn("backup_write_failed", str(sibling.get("last_error") or ""))
+
+        # Canonical task owner is UNCHANGED (Antigravity2)
+        task = worker_failure_policy.canonical_task_record(self.config, "TASK-SIBLING-001")
+        self.assertEqual(task.get("owner"), "Antigravity2")
+
+        # Queue event settled as failed
+        self.assertEqual(state["queue"]["events"]["evt-sibling-1"]["status"], "failed")
+
+        # No handoff block created for successor
+        self.assertNotIn("TASK-SIBLING-001", state.get("worker_worktrees", {}).get("handoff_blocks", {}))
+
+        # Attempted lease entry by successor Codex MUST be blocked
+        successor_request = DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="attempt lease",
+            task_id="TASK-SIBLING-001",
+            reason="owned_ready_dispatch",
+        )
+        lease_ok, lease_err = worker_workspace.prepare_worker_workspace(
+            self.config,
+            state,
+            successor_request,
+            queue_event_id="evt-codex-1",
+            target_agent="Codex",
+        )
+        self.assertFalse(lease_ok, "Successor lease must be refused when dirty worktree preservation failed")
+        self.assertIn("Cannot lease isolated worker worktree", str(lease_err or ""))
 
     def test_authorized_successor_refuses_foreign_agent_or_unauthorized_owner(self) -> None:
         """Negative: Foreign agent cannot claim an authorized successor dirty worktree lease."""
@@ -1655,6 +1946,17 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
         self.assertFalse(allowed)
         self.assertEqual(reason, "not_same_owner")
 
+        # Actual prepare_worker_workspace also refuses lease
+        lease_ok, lease_err = worker_workspace.prepare_worker_workspace(
+            self.config,
+            state,
+            foreign_request,
+            queue_event_id="evt-foreign-1",
+            target_agent="Claude",
+        )
+        self.assertFalse(lease_ok)
+        self.assertIn("Cannot lease isolated worker worktree", str(lease_err or ""))
+
     def test_authorized_successor_refuses_reviewer_guard(self) -> None:
         """Reviewer guard: Reviewers must never inherit uncommitted dirty worktrees."""
         (self.worktree / "uncommitted.py").write_text("print('dirt')\n", encoding="utf-8")
@@ -1695,6 +1997,16 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
         self.assertFalse(allowed)
         self.assertEqual(reason, "not_owner_execution")
 
+        lease_ok, lease_err = worker_workspace.prepare_worker_workspace(
+            self.config,
+            state,
+            reviewer_request,
+            queue_event_id="evt-reviewer-1",
+            target_agent="Codex2",
+        )
+        self.assertFalse(lease_ok)
+        self.assertIn("Cannot lease isolated worker worktree", str(lease_err or ""))
+
     def test_authorized_successor_refuses_helper_guard(self) -> None:
         """Helper guard: Helper claims must never inherit uncommitted dirty worktrees."""
         (self.worktree / "uncommitted.py").write_text("print('dirt')\n", encoding="utf-8")
@@ -1734,6 +2046,16 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
         )
         self.assertFalse(allowed)
         self.assertEqual(reason, "not_owner_execution")
+
+        lease_ok, lease_err = worker_workspace.prepare_worker_workspace(
+            self.config,
+            state,
+            helper_request,
+            queue_event_id="evt-helper-1",
+            target_agent="Codex",
+        )
+        self.assertFalse(lease_ok)
+        self.assertIn("Cannot lease isolated worker worktree", str(lease_err or ""))
 
     def test_authorized_successor_refuses_when_head_sha_drifted(self) -> None:
         """Negative: Lease continuation fails if HEAD SHA drifted since sealing."""
@@ -1779,6 +2101,16 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
         self.assertFalse(allowed)
         self.assertEqual(reason, "head_changed")
 
+        lease_ok, lease_err = worker_workspace.prepare_worker_workspace(
+            self.config,
+            state,
+            successor_request,
+            queue_event_id="evt-codex-1",
+            target_agent="Codex",
+        )
+        self.assertFalse(lease_ok)
+        self.assertIn("Cannot lease isolated worker worktree", str(lease_err or ""))
+
     def test_authorized_successor_refuses_when_dirt_fingerprint_drifted(self) -> None:
         """Negative: Lease continuation fails if dirty bytes or files drifted since sealing."""
         (self.worktree / "uncommitted.py").write_text("print('dirt v1')\n", encoding="utf-8")
@@ -1822,6 +2154,16 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
         )
         self.assertFalse(allowed)
         self.assertEqual(reason, "dirt_changed")
+
+        lease_ok, lease_err = worker_workspace.prepare_worker_workspace(
+            self.config,
+            state,
+            successor_request,
+            queue_event_id="evt-codex-1",
+            target_agent="Codex",
+        )
+        self.assertFalse(lease_ok)
+        self.assertIn("Cannot lease isolated worker worktree", str(lease_err or ""))
 
     def test_authorized_successor_refuses_when_branch_mismatched(self) -> None:
         """Negative: Lease continuation fails if branch does not match sealed workspace branch."""
@@ -1877,6 +2219,7 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
                     "task_id": "TASK-TRIGGER-001",
                     "status": "running",
                     "pid": 999999,
+                    "queue_event_id": "evt-trigger-1",
                 },
                 "run-sibling": {
                     "run_id": "run-sibling",
@@ -1889,7 +2232,14 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
                     "reason": "owned_ready_dispatch",
                     "status": "running",
                     "pid": 999998,
+                    "queue_event_id": "evt-sibling-1",
                 },
+            },
+            "queue": {
+                "events": {
+                    "evt-trigger-1": {"status": "started", "task_id": "TASK-TRIGGER-001"},
+                    "evt-sibling-1": {"status": "started", "task_id": "TASK-SIBLING-001"},
+                }
             },
             "worker_worktrees": {"handoff_blocks": {}},
         }
@@ -1937,6 +2287,15 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
         )
         self.assertTrue(allowed, f"Original owner must be allowed continuation: {detail}")
 
+        lease_ok, lease_err = worker_workspace.prepare_worker_workspace(
+            self.config,
+            state,
+            orig_request,
+            queue_event_id="evt-orig-1",
+            target_agent="Antigravity2",
+        )
+        self.assertTrue(lease_ok, f"Original owner prepare_worker_workspace must succeed: {lease_err}")
+
     def test_sibling_quota_fence_clean_worktree_reassigns_without_handoff_seal(self) -> None:
         """Clean worktree: Sibling worker with clean worktree reassigns normally without creating a handoff seal."""
         clean_inspection = inspect_worktree(self.worktree)
@@ -1951,6 +2310,7 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
                     "task_id": "TASK-TRIGGER-001",
                     "status": "running",
                     "pid": 999999,
+                    "queue_event_id": "evt-trigger-1",
                 },
                 "run-sibling": {
                     "run_id": "run-sibling",
@@ -1963,7 +2323,14 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
                     "reason": "owned_ready_dispatch",
                     "status": "running",
                     "pid": 999998,
+                    "queue_event_id": "evt-sibling-1",
                 },
+            },
+            "queue": {
+                "events": {
+                    "evt-trigger-1": {"status": "started", "task_id": "TASK-TRIGGER-001"},
+                    "evt-sibling-1": {"status": "started", "task_id": "TASK-SIBLING-001"},
+                }
             },
             "worker_worktrees": {"handoff_blocks": {}},
         }
@@ -1984,6 +2351,23 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
 
         # No handoff block created because worktree was clean
         self.assertNotIn("TASK-SIBLING-001", state.get("worker_worktrees", {}).get("handoff_blocks", {}))
+
+        successor_request = DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="resume on clean worktree",
+            task_id="TASK-SIBLING-001",
+            reason="owned_ready_dispatch",
+        )
+        lease_ok, lease_err = worker_workspace.prepare_worker_workspace(
+            self.config,
+            state,
+            successor_request,
+            queue_event_id="evt-clean-1",
+            target_agent="Codex",
+        )
+        self.assertTrue(lease_ok, f"Clean worktree prepare_worker_workspace must succeed: {lease_err}")
 
 
 if __name__ == "__main__":
