@@ -244,10 +244,8 @@ class TestTheDepreciationContract:
     def test_fractional_useful_life_is_rejected_at_mapping_and_calculation_boundaries(self) -> None:
         """C-2 integer-month contract: fractional useful_life_months is rejected without coercion."""
         import pytest
-        from modules.avm.domain.valuation import (
-            ValuationInput,
-            calculate_depreciation,
-        )
+
+        from modules.avm.domain.valuation import calculate_depreciation
 
         invalid_values = (1.9, "1.9", 0.5, "0.5", 12.3, 0, -1, -5.5, True, False)
         for val in invalid_values:
@@ -273,6 +271,7 @@ class TestTheDepreciationContract:
     def test_fractional_useful_life_raw_mapping_service_and_batch_worker_rejected(self) -> None:
         """Raw mapping entry points (AVMService.create_case and AVMValuationWorker.run) reject fractional inputs."""
         import pytest
+
         from modules.avm.application import AVMService
         from modules.avm.infrastructure import InMemoryAVMRepository
         from modules.avm.workers.valuation_worker import AVMValuationWorker
