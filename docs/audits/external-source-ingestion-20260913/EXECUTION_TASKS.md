@@ -1,21 +1,22 @@
 # Execution tasks：去重、依賴與派工計畫
 
-日期：2026-09-13。根對話只調查／SA／SD／驗收；下列implementation由Supervisor派autoworker。
+日期：2026-09-13。快照時間：2026-09-13T14:57:00Z（歷史規劃快照，不可反向覆寫 live canonical）。
+說明：根對話只調查／SA／SD／驗收；下列 implementation 由 Supervisor 依據依賴與 owned_paths 派 autoworker 執行。8 筆任務均標記 `mutates_canonical=true`，人工 hold 已解除（`non_dispatchable=false`）。
 
-## 本次任務
+## 本次任務規劃快照
 
-| Task | 動作 | Owner／Reviewer | 先決任務 | 交付 |
-|---|---|---|---|---|
-| DPF-SOURCE-SA-SD-BASELINE-001 | 新增 | Antigravity2／Codex2 | 無 | 納入外部來源調查與SA／SD設計基線 |
-| DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001 | 沿用既有ID並改派 | Antigravity／Codex2 | DPF-SOURCE-SA-SD-BASELINE-001 | 接手MOF／RIS局部修正並完成公開來源實測 |
-| DPF-OFFICIAL-SOURCE-ENDPOINT-INTEGRATION-001 | 新增 | Antigravity3／Codex2 | DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001 | 完成CWA／MOI租賃／NLSC真實來源接入 |
-| DPF-TRANSPORT-POI-RELEASE-INTEGRATION-001 | 新增 | Antigravity4／Codex2 | DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001 | 完成OSM／TDX與開放POI真實release接入 |
-| DPF-LISTING-PRODUCTION-ASSET-INTEGRATION-001 | 新增 | Antigravity5／Codex2 | DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001 | 將刊登production asset接到真實來源channel |
-| DPF-MOBILITY-PRODUCTION-ASSET-INTEGRATION-001 | 新增 | Antigravity6／Codex2 | DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001 | 將observed mobility接到真實聚合資料feed |
-| DPF-ACQUISITION-RETENTION-BRIDGE-001 | 新增 | Antigravity7／Codex2 | DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001 | 銜接擷取證據與受治理raw retention |
-| DPF-SITE-CONTEXT-REAL-COMPONENTS-001 | 新增 | Antigravity2／Codex2 | DPF-ACQUISITION-RETENTION-BRIDGE-001 | 將site market context接到真實component manifests |
+| Task | Repository | 動作 | Owner／Reviewer | 先決任務 | 交付 |
+|---|---|---|---|---|---|
+| DPF-SOURCE-SA-SD-BASELINE-001 | alfloop-dev/odayplus | 新增 | Antigravity2／Codex2 | 無 | 納入外部來源調查與SA／SD設計基線（owned docs/architecture/） |
+| DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001 | alfloop-dev/oday-data-platform | 沿用既有ID並改派 | Antigravity／Codex2 | DPF-SOURCE-SA-SD-BASELINE-001 | 接手MOF／RIS局部修正並完成公開來源實測 |
+| DPF-OFFICIAL-SOURCE-ENDPOINT-INTEGRATION-001 | alfloop-dev/oday-data-platform | 新增 | Antigravity3／Codex2 | DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001 | 完成CWA／MOI租賃／NLSC真實來源接入 |
+| DPF-TRANSPORT-POI-RELEASE-INTEGRATION-001 | alfloop-dev/oday-data-platform | 新增 | Antigravity4／Codex2 | DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001 | 完成OSM／TDX與開放POI真實release接入 |
+| DPF-LISTING-PRODUCTION-ASSET-INTEGRATION-001 | alfloop-dev/oday-data-platform | 新增 | Antigravity5／Codex2 | DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001 | 將刊登production asset接到真實來源channel |
+| DPF-MOBILITY-PRODUCTION-ASSET-INTEGRATION-001 | alfloop-dev/oday-data-platform | 新增 | Antigravity6／Codex2 | DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001 | 將observed mobility接到真實聚合資料feed |
+| DPF-ACQUISITION-RETENTION-BRIDGE-001 | alfloop-dev/oday-data-platform | 新增 | Antigravity7／Codex2 | DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001 | 銜接擷取證據與受治理raw retention |
+| DPF-SITE-CONTEXT-REAL-COMPONENTS-001 | alfloop-dev/oday-data-platform | 新增 | Antigravity2／Codex2 | DPF-ACQUISITION-RETENTION-BRIDGE-001 | 將site market context接到真實component manifests |
 
-機器可讀完整欄位見execution-tasks.json：每筆包含owned_paths、forbidden_paths、acceptance、verification、source_docs、priority。驗證指令是worker須完成的計畫，未執行的不得回報PASS；新測試檔由對應worker建立。
+機器可讀完整欄位見 execution-tasks.json：每筆包含 repository、owned_paths、forbidden_paths、acceptance、verification、source_docs、priority、mutates_canonical 及 non_dispatchable。source_docs 均已切換為已發布遠端可讀取的固定 refs（`github://alfloop-dev/odayplus@cae4dd7e...` 與 `github://alfloop-dev/oday-data-platform@b690a8df...`）。驗證指令是 worker 須完成的計畫，未執行的不得回報 PASS；新測試檔由對應 worker 建立。
 
 ## 去重與既有任務銜接
 
@@ -32,12 +33,12 @@
 2. MOF/RIS擁有kernel與共用official檔；official後繼task依賴其完成，才能再改mof_moi.py、ris_nlsc.py與official tests。
 3. Transport/POI、listing、mobility及retention在共同底座之後可並行，owned_paths互斥；不得各自改kernel、policy或release_snapshot。
 4. site context在retention連接完成後消費已驗證component；它不擁有masked materializer。
-5. baseline owned docs/architecture/external-source-ingestion/，其他task只讀；各自證據進自己的evidence_path。
+5. baseline 任務交付於 alfloop-dev/odayplus（owned docs/architecture/external-source-ingestion/），其他task只讀；各自證據進自己的evidence_path。
 6. Supervisor不得復用根對話未提交worktree做自動派工；worker讀封存manifest/patch，在自己的乾淨工作樹接手。
 
 ## 當前狀態與完成定義
 
-本檔記錄完整規劃。canonical寫入／派工結果另見dispatch-receipt.json，避免把規劃當已開跑。`todo`是可排程，`in_progress`仍需actual run evidence。PR merged且owner完成closeout才可done。
+本檔記錄完整規劃快照。canonical寫入／派工結果由 Supervisor 透過 live canonical status 維護，避免把規劃當已開跑。本快照不得反向覆寫 live canonical。`todo`是可排程，`in_progress`仍需actual run evidence。PR merged且owner完成closeout才可done。
 
 保留依賴的原因是同檔案順序、可審查設計及consumer接口；不是等待使用者提供raw資料。真正live auth/source條件由worker逐項查證，先完成可獨立推進部分。
 

@@ -3,7 +3,7 @@
     "id": "DPF-SOURCE-SA-SD-BASELINE-001",
     "title": "納入外部來源調查與SA／SD設計基線",
     "summary_zh": "把根對話的調查與設計交給worker正式納管及審查；此為所有新接入實作的共同基線。",
-    "repository": "alfloop-dev/oday-data-platform",
+    "repository": "alfloop-dev/odayplus",
     "base_branch": "dev",
     "task_class": "implementation",
     "priority": "P0",
@@ -42,17 +42,17 @@
       "檢查SA FR01–FR12／SD D01–D08／execution task mapping與來源雜湊"
     ],
     "source_docs": [
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/INVESTIGATION.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SA.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SD.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/EXECUTION_TASKS.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/source-index.json",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/INVESTIGATION.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/SA.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/SD.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/EXECUTION_TASKS.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/source-index.json",
       "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/docs/runbooks/external-source-update-policy.md",
       "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/docs/runbooks/emgi-retained-raw-snapshots.md"
     ],
     "catalog_managed": false,
-    "mutates_canonical": false,
-    "non_dispatchable": true,
+    "mutates_canonical": true,
+    "non_dispatchable": false,
     "evidence_path": "docs/evidence/completion/DPF-SOURCE-SA-SD-BASELINE-001/",
     "phase": "SA/SD execution plan 2026-09-13",
     "next": "Supervisor 依 dependencies／owned_paths 派工；根對話只調查、SA/SD及驗收追蹤。設計見 source_docs；不得把使用者當成raw檔／雜湊提供者。"
@@ -118,18 +118,18 @@
       "git diff --check"
     ],
     "source_docs": [
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/INVESTIGATION.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SA.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SD.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/EXECUTION_TASKS.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/source-index.json",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/INVESTIGATION.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/SA.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/SD.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/EXECUTION_TASKS.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/source-index.json",
       "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/defs/external/ris_nlsc.py",
       "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/external/sources/mof_business/adapter.py",
-      "support/handoffs/public-source-ingestion-20260913/implementation-handoff/"
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/implementation-handoff/manifest.json"
     ],
     "catalog_managed": false,
-    "mutates_canonical": false,
-    "non_dispatchable": true,
+    "mutates_canonical": true,
+    "non_dispatchable": false,
     "evidence_path": "docs/evidence/completion/DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001/",
     "phase": "SA/SD execution plan 2026-09-13",
     "next": "Supervisor 依 dependencies／owned_paths 派工；根對話只調查、SA/SD及驗收追蹤。設計見 source_docs；不得把使用者當成raw檔／雜湊提供者。"
@@ -196,17 +196,17 @@
       "git diff --check"
     ],
     "source_docs": [
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/INVESTIGATION.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SA.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SD.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/EXECUTION_TASKS.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/source-index.json",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/INVESTIGATION.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/SA.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/SD.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/EXECUTION_TASKS.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/source-index.json",
       "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/defs/external/context_events.py",
       "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/defs/external/ris_nlsc.py"
     ],
     "catalog_managed": false,
-    "mutates_canonical": false,
-    "non_dispatchable": true,
+    "mutates_canonical": true,
+    "non_dispatchable": false,
     "evidence_path": "docs/evidence/completion/DPF-OFFICIAL-SOURCE-ENDPOINT-INTEGRATION-001/",
     "phase": "SA/SD execution plan 2026-09-13",
     "next": "Supervisor 依 dependencies／owned_paths 派工；根對話只調查、SA/SD及驗收追蹤。設計見 source_docs；不得把使用者當成raw檔／雜湊提供者。"
@@ -271,17 +271,17 @@
       "git diff --check"
     ],
     "source_docs": [
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/INVESTIGATION.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SA.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SD.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/EXECUTION_TASKS.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/source-index.json",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/INVESTIGATION.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/SA.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/SD.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/EXECUTION_TASKS.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/source-index.json",
       "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/defs/external/transport.py",
       "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/defs/external/poi.py"
     ],
     "catalog_managed": false,
-    "mutates_canonical": false,
-    "non_dispatchable": true,
+    "mutates_canonical": true,
+    "non_dispatchable": false,
     "evidence_path": "docs/evidence/completion/DPF-TRANSPORT-POI-RELEASE-INTEGRATION-001/",
     "phase": "SA/SD execution plan 2026-09-13",
     "next": "Supervisor 依 dependencies／owned_paths 派工；根對話只調查、SA/SD及驗收追蹤。設計見 source_docs；不得把使用者當成raw檔／雜湊提供者。"
@@ -334,16 +334,16 @@
       "git diff --check"
     ],
     "source_docs": [
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/INVESTIGATION.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SA.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SD.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/EXECUTION_TASKS.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/source-index.json",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/INVESTIGATION.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/SA.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/SD.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/EXECUTION_TASKS.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/source-index.json",
       "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/defs/external/listings.py"
     ],
     "catalog_managed": false,
-    "mutates_canonical": false,
-    "non_dispatchable": true,
+    "mutates_canonical": true,
+    "non_dispatchable": false,
     "evidence_path": "docs/evidence/completion/DPF-LISTING-PRODUCTION-ASSET-INTEGRATION-001/",
     "phase": "SA/SD execution plan 2026-09-13",
     "next": "Supervisor 依 dependencies／owned_paths 派工；根對話只調查、SA/SD及驗收追蹤。設計見 source_docs；不得把使用者當成raw檔／雜湊提供者。"
@@ -396,16 +396,16 @@
       "git diff --check"
     ],
     "source_docs": [
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/INVESTIGATION.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SA.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SD.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/EXECUTION_TASKS.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/source-index.json",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/INVESTIGATION.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/SA.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/SD.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/EXECUTION_TASKS.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/source-index.json",
       "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/defs/external/mobility.py"
     ],
     "catalog_managed": false,
-    "mutates_canonical": false,
-    "non_dispatchable": true,
+    "mutates_canonical": true,
+    "non_dispatchable": false,
     "evidence_path": "docs/evidence/completion/DPF-MOBILITY-PRODUCTION-ASSET-INTEGRATION-001/",
     "phase": "SA/SD execution plan 2026-09-13",
     "next": "Supervisor 依 dependencies／owned_paths 派工；根對話只調查、SA/SD及驗收追蹤。設計見 source_docs；不得把使用者當成raw檔／雜湊提供者。"
@@ -467,17 +467,17 @@
       "git diff --check"
     ],
     "source_docs": [
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/INVESTIGATION.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SA.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SD.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/EXECUTION_TASKS.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/source-index.json",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/INVESTIGATION.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/SA.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/SD.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/EXECUTION_TASKS.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/source-index.json",
       "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/raw_snapshot_retention.py",
       "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/external/acquisition/kernel.py"
     ],
     "catalog_managed": false,
-    "mutates_canonical": false,
-    "non_dispatchable": true,
+    "mutates_canonical": true,
+    "non_dispatchable": false,
     "evidence_path": "docs/evidence/completion/DPF-ACQUISITION-RETENTION-BRIDGE-001/",
     "phase": "SA/SD execution plan 2026-09-13",
     "next": "Supervisor 依 dependencies／owned_paths 派工；根對話只調查、SA/SD及驗收追蹤。設計見 source_docs；不得把使用者當成raw檔／雜湊提供者。"
@@ -530,17 +530,17 @@
       "git diff --check"
     ],
     "source_docs": [
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/INVESTIGATION.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SA.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/SD.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/EXECUTION_TASKS.md",
-      "support/handoffs/public-source-ingestion-20260913/analysis-plan/source-index.json",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/INVESTIGATION.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/SA.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/SD.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/EXECUTION_TASKS.md",
+      "github://alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1/docs/audits/external-source-ingestion-20260913/source-index.json",
       "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/defs/products/site_context.py",
       "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/products/site_context/builder.py"
     ],
     "catalog_managed": false,
-    "mutates_canonical": false,
-    "non_dispatchable": true,
+    "mutates_canonical": true,
+    "non_dispatchable": false,
     "evidence_path": "docs/evidence/completion/DPF-SITE-CONTEXT-REAL-COMPONENTS-001/",
     "phase": "SA/SD execution plan 2026-09-13",
     "next": "Supervisor 依 dependencies／owned_paths 派工；根對話只調查、SA/SD及驗收追蹤。設計見 source_docs；不得把使用者當成raw檔／雜湊提供者。"
