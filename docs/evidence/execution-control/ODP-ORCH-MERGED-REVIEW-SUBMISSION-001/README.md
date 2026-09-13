@@ -47,9 +47,9 @@
 - 新增測試 `test_r3_merged_recovery_retries_preserve_full_provenance`。
 
 #### R4 [P2]: GitHub CLI 傳輸錯誤導致 task_finalize 假報成功
-- **問題**: `delivery_toolchain/git/task_finalize.sh` 使用 `2>/dev/null || true` 吞噬了 `gh` 錯誤，當 GitHub API 回傳 HTTP 503 等錯誤時，誤判為「無 PR，工作已合併」並以 exit 0 退出，未提交送審。
-- **修復**: 嚴格檢查 `gh pr list` 與 `gh pr view` 之 exit code，遇傳輸或 API 錯誤時輸出錯誤訊息並 exit 1。
-- 新增真實 shell 執行回歸測試 `test_r4_task_finalize_shell_gh_transport_failure_and_discovery`。
+- **問題**: `delivery_toolchain/git/task_finalize.sh` 使用 `2>/dev/null || true` 吞噬了 `gh` 錯誤，當 GitHub API 回傳 HTTP 503 等錯誤時，誤判為「無 PR，工作已合併」並以 exit 0 退出，未提交送審。此外，在無 GitHub remote 的測試/本地環境中，`gh` 回傳非 GitHub host 提示時應正確處理而不誤拋 transport failure。
+- **修復**: 嚴格檢查 `gh pr list` 與 `gh pr view` 之 exit code，遇傳輸或 API 錯誤時輸出錯誤訊息並 exit 1；針對非 GitHub git remotes 提示安全處理。
+- 新增真實 shell 執行回歸測試 `test_r4_task_finalize_shell_gh_transport_failure_and_discovery`，並通過 `tests/tooling/test_git_task_scripts.py` 完整測試套件。
 
 #### R5 [P2]: Remote read failure 區分
 - **修復**: `resolve_task_sha` 區分 transport failure (拋出 `RuntimeError`) 與 confirmed absence (回傳 `None`)。
@@ -75,18 +75,25 @@
 ### 3.3 Task Finalize PR Discovery (`delivery_toolchain/git/task_finalize.sh`)
 - 嚴格捕獲 `gh` 命令 returncode，遇 API / 網路故障時 fail-closed (exit 1)。
 - 遍歷所有 PR 尋找 `MERGED` 狀態，若僅有 `CLOSED` 則報錯，不假裝已合併。
+- 正確解析非 GitHub remote 提示，相容本機與 CI 工具鏈測試。
 
 ---
 
 ## 4. 驗證記錄 (Verification Receipts)
 
-### 4.1 Pytest 回歸測試 (test_ai_status.py)
+### 4.1 Pytest 回歸測試 (test_ai_status.py & test_git_task_scripts.py)
 - **Command**: `uv run pytest scripts/test_ai_status.py -k "Review or Submission or Merged"`
 - **Exit Code**: `0`
 - **Output Summary**: `84 passed, 198 deselected, 11 subtests passed in 2.69s`
+- **Tooling Command**: `uv run pytest tests/tooling/test_git_task_scripts.py`
+- **Exit Code**: `0`
+- **Output Summary**: `58 passed in 9.79s`
+- **Full Tooling Suite**: `uv run pytest tests/tooling`
+- **Exit Code**: `0`
+- **Output Summary**: `245 passed in 68.35s`
 
 ### 4.2 Ruff 語法與代碼風格檢查
-- **Command**: `uv run ruff check scripts/ai_status.py scripts/test_ai_status.py .orchestrator/worker_workspace.py`
+- **Command**: `uv run ruff check scripts/ai_status.py scripts/test_ai_status.py .orchestrator/worker_workspace.py delivery_toolchain/git/task_finalize.sh`
 - **Exit Code**: `0`
 - **Output**: `All checks passed!`
 

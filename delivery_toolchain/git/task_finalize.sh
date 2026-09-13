@@ -125,8 +125,13 @@ if git merge-base --is-ancestor HEAD "$BASE_REF" 2>/dev/null; then
     LIST_OUT="$("$GH" pr list --head "$BRANCH" --base "$BASE_BRANCH" --state all \
       --json number --jq '.[].number' 2>&1)" || {
       LIST_RC=$?
-      echo "task_finalize: error: gh pr list failed ($LIST_RC): $LIST_OUT" >&2
-      exit 1
+      case "$LIST_OUT" in
+        *[Kk]nown\ GitHub\ host*|*[Nn]o\ git\ remotes*|*[Nn]one\ of\ the\ git\ remotes*|*[Nn]o\ default\ remote*|*[Cc]ould\ not\ determine\ a\ default\ remote*)
+          LIST_OUT="" ;;
+        *)
+          echo "task_finalize: error: gh pr list failed ($LIST_RC): $LIST_OUT" >&2
+          exit 1 ;;
+      esac
     }
     ALL_PR_NUMBERS="$LIST_OUT"
     FOUND_CLOSED=0
@@ -149,7 +154,7 @@ if git merge-base --is-ancestor HEAD "$BASE_REF" 2>/dev/null; then
       VIEW_BRANCH_OUT="$("$GH" pr view "$BRANCH" --json number,state --jq '{number: .number, state: .state}' 2>&1)" || {
         VIEW_BRANCH_RC=$?
         case "$VIEW_BRANCH_OUT" in
-          *"no pull requests found"*|*"no open pull requests"*)
+          *[Nn]o\ pull\ requests\ found*|*[Nn]o\ open\ pull\ requests*|*[Kk]nown\ GitHub\ host*|*[Nn]o\ git\ remotes*|*[Nn]one\ of\ the\ git\ remotes*|*[Nn]o\ default\ remote*|*[Cc]ould\ not\ determine\ a\ default\ remote*)
             VIEW_BRANCH_OUT="" ;;
           *)
             echo "task_finalize: error: gh pr view $BRANCH failed ($VIEW_BRANCH_RC): $VIEW_BRANCH_OUT" >&2
