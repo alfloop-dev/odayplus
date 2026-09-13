@@ -1,0 +1,42 @@
+{
+  "base_commit": "6ef0d6eb0947ab5f5ccfbcdb4718a20abc9a43e3",
+  "source_sha256": {
+    ".orchestrator/test_account_pool_admission.py": "c56a6e958ac76e38da259f683ed475a2c7d8f78d029e9787a0a14a4c8aaf06b4"
+  },
+  "red": {
+    "cwd": "/tmp/codex-1305-followup",
+    "head_sha": "6e502413dbc16b888c8eb9e5b00eb489bc5a9310",
+    "tracked_diff_sha256": "ce9208974669a916e862f6c3e3ad5855e191a4570773fbf39838f42e6d041ff9",
+    "argv": [
+      "uv",
+      "run",
+      "pytest",
+      "-q",
+      ".orchestrator/test_account_pool_admission_probe.py",
+      "-k",
+      "missing_worker_auth"
+    ],
+    "started_at": "2026-09-12T15:11:57.029990+00:00",
+    "duration_seconds": 4.277608870004769,
+    "exit_code": 1,
+    "output": "1305-missing-auth-red.log"
+  },
+  "green": {
+    "cwd": "/tmp/codex-1305-admission-fix",
+    "head_sha": "6ef0d6eb0947ab5f5ccfbcdb4718a20abc9a43e3",
+    "tracked_diff_sha256": "1f95a79496a10d5e02872153bc08a5b2e2f65e42d29b493b438b7761b66b51c7",
+    "argv": [
+      "/tmp/pantheon-worker-worktrees/pantheon/odp-orch-quota-recovery-state-001/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      ".orchestrator/test_account_pool_admission.py",
+      ".orchestrator/test_supervisor.py::SuccessfulWorkerPostconditionTests"
+    ],
+    "started_at": "2026-09-12T15:12:55.335342+00:00",
+    "duration_seconds": 3.440112716052681,
+    "exit_code": 0,
+    "output": "1305-missing-auth-green.log"
+  },
+  "result": "CI experimental completion-time auth fallback fails two missing-worker-auth cases; two known-auth controls pass. Preserved strict guards pass all 7 admission cases and 15 completion-flow cases. Existing three-case own-pool auth regression checks known identities, not missing identity; this new test fills that gap."
+}

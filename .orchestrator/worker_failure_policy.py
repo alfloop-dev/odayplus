@@ -3,6 +3,7 @@ from __future__ import annotations
 """Worker failure policy helpers extracted from legacy supervisor."""
 # ruff: noqa: F401,F821,F841,I001
 
+from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
 
@@ -772,7 +773,48 @@ def mark_account_pool_cooldown(
     )
     if not same_failure:
         entry["generation"] = int(previous.get("generation", 0) or 0) + 1
-    bucket[pool_id] = entry
+    persisted_worker = _lookup_worker_record(state, worker_run_id) or {}
+    current_auth = configured_account_pool_auth_hash(config, pool_id, execution_id)
+    auth_identity_hash = (
+        (worker or {}).get("auth_identity_hash")
+        or persisted_worker.get("auth_identity_hash")
+        or current_auth
+    )
+    if auth_identity_hash:
+        entry["auth_identity_hash"] = auth_identity_hash
+        # Fence any sibling pools sharing the same auth identity
+        for other_id, other_entry in bucket.items():
+            if other_id == pool_id or not isinstance(other_entry, dict):
+                continue
+            other_auth = other_entry.get("auth_identity_hash")
+            if not other_auth:
+                other_auth = configured_account_pool_auth_hash(config, other_id)
+                if other_auth:
+                    other_entry["auth_identity_hash"] = other_auth
+            if other_auth == auth_identity_hash:
+                other_state = str(other_entry.get("state") or "").lower()
+                if other_state in {"recovering", "healthy"}:
+                    other_entry.update(
+                        {
+                            "state": "cooldown",
+                            "effective_concurrency": 0,
+                            "reason": entry.get("reason") or failure_kind,
+                            "failure_kind": failure_kind,
+                            "last_failure_at": entry["last_failure_at"],
+                            "next_probe_at": chosen_until.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                            "last_worker_run_id": worker_run_id or None,
+                            "generation": entry["generation"],
+                        }
+                    )
+    # A late failure belongs to its dispatched identity. Preserve a pool
+    # already rebound to another account; matching old-account siblings above
+    # still receive the failure fence.
+    if (
+        not current_auth
+        or not auth_identity_hash
+        or current_auth == auth_identity_hash
+    ):
+        bucket[pool_id] = entry
     if not same_failure:
         write_activity_log(
             config,
@@ -797,19 +839,106 @@ def record_account_pool_canary_success(config: dict[str, Any], state: dict[str, 
     entry = _account_pool_runtime_bucket(state).get(pool_id)
     if not pool_id or not isinstance(entry, dict) or str(entry.get("state") or "") != "recovering":
         return False
+
+    run_id = str(worker.get("run_id") or "")
+    persisted_worker = (state.get("workers") or {}).get(run_id) if run_id and isinstance(state.get("workers"), dict) else None
+    effective_worker = persisted_worker if isinstance(persisted_worker, dict) else worker
+
+    recovery_epochs = effective_worker.get("dispatched_recovery_epochs")
+    if isinstance(recovery_epochs, dict) and recovery_epochs.get(pool_id) != account_pool_recovery_epoch(entry):
+        return False
+
+    # Validate recovery generation / admission:
+    # A worker dispatched when pool was healthy or in an earlier recovery generation cannot certify current recovery.
+    worker_rec_gen = effective_worker.get("recovery_generation")
+    pool_gen = entry.get("generation")
+    if worker_rec_gen is not None and pool_gen is not None:
+        if int(worker_rec_gen) < int(pool_gen):
+            return False
+    elif persisted_worker is not None and pool_gen is not None and int(pool_gen) > 0:
+        if effective_worker.get("dispatched_pool_state") != "recovering":
+            return False
+
+    # Validate timing: worker must have started at or after recovery / probe initiation
+    worker_started = _parse_iso_utc(
+        str(effective_worker.get("started_at") or effective_worker.get("lease_acquired_at") or effective_worker.get("created_at") or "")
+    )
+    probe_started = _parse_iso_utc(str(entry.get("last_probe_at") or entry.get("last_failure_at") or ""))
+    if worker_started is not None and probe_started is not None and worker_started < probe_started:
+        return False
+
+    # Validate auth identity: use persisted dispatch auth provenance if available
+    worker_auth = str(effective_worker.get("auth_identity_hash") or "")
+    if not worker_auth and isinstance(state.get("workers"), dict):
+        worker_auth = str(state["workers"].get(run_id, {}).get("auth_identity_hash") or "")
+    pool_auth = str(entry.get("auth_identity_hash") or "")
+    if not pool_auth:
+        pool_auth = str(configured_account_pool_auth_hash(config, pool_id, str(worker.get("logical_agent_id") or worker.get("agent_id") or "")) or "")
+    current_auth = str(
+        configured_account_pool_auth_hash(
+            config,
+            pool_id,
+            str(worker.get("logical_agent_id") or worker.get("agent_id") or worker.get("provider") or ""),
+        ) or ""
+    )
+    if (worker_auth or pool_auth or current_auth) and not (
+        worker_auth and worker_auth == pool_auth == current_auth
+    ):
+        return False
+
     try:
         configured = max(0, int(pool.get("max_concurrent")))
     except (TypeError, ValueError):
         configured = quota_group_concurrency_limit(config, str(worker.get("logical_agent_id") or worker.get("agent_id") or ""))
+    recovered_at = utc_now()
     entry.update(
         {
             "state": "healthy",
             "effective_concurrency": configured,
-            "last_recovered_at": utc_now(),
+            "last_recovered_at": recovered_at,
             "last_canary_run_id": worker.get("run_id"),
+            "auth_identity_hash": worker_auth or pool_auth or None,
             "reason": None,
         }
     )
+    canary_auth = worker_auth or pool_auth
+    if canary_auth:
+        for other_id, other_entry in _account_pool_runtime_bucket(state).items():
+            if other_id == pool_id or not isinstance(other_entry, dict):
+                continue
+            other_auth = other_entry.get("auth_identity_hash")
+            if not other_auth:
+                other_auth = configured_account_pool_auth_hash(config, other_id)
+            if other_auth == canary_auth and str(other_entry.get("state") or "") == "recovering":
+                # Legacy own-pool admission cannot attest a sibling epoch.
+                # Promotion requires the sibling snapshot captured at dispatch.
+                if not isinstance(recovery_epochs, dict) or recovery_epochs.get(other_id) != account_pool_recovery_epoch(other_entry):
+                    continue
+                other_fk = str(other_entry.get("failure_kind") or "").strip().lower()
+                if other_fk and not (
+                    is_terminal_quota_failure_kind(other_fk)
+                    or is_retryable_capacity_failure_kind(other_fk)
+                ):
+                    continue
+                other_probe = _parse_iso_utc(str(other_entry.get("last_probe_at") or other_entry.get("last_failure_at") or ""))
+                if other_probe is not None and worker_started is not None and worker_started < other_probe:
+                    continue
+                _, other_pool = account_pool_settings(config, other_id)
+                try:
+                    other_conf = max(0, int(other_pool.get("max_concurrent")))
+                except (TypeError, ValueError):
+                    other_conf = quota_group_concurrency_limit(config, other_id) or 1
+                other_entry.update(
+                    {
+                        "state": "healthy",
+                        "effective_concurrency": other_conf,
+                        "generation": int(other_entry.get("generation", 0) or 0) + 1,
+                        "last_recovered_at": recovered_at,
+                        "last_canary_run_id": worker.get("run_id"),
+                        "auth_identity_hash": canary_auth,
+                        "reason": None,
+                    }
+                )
     write_activity_log(
         config,
         {
@@ -837,7 +966,12 @@ def provider_auth_identity_hash(config: dict[str, Any], provider: str | None) ->
     provider_cfg = provider_config(config, provider_id) or provider_config(config, "codex")
     codex_profile = provider_section(config, provider_id=provider_id, section="codex", default="codex")
     configured_home = str(codex_profile.get("codex_home") or provider_cfg.get("codex_home") or "").strip()
-    codex_home = Path(configured_home).expanduser() if configured_home else Path.home() / ".codex"
+    if configured_home:
+        codex_home = Path(configured_home).expanduser()
+    elif os.environ.get("CODEX_HOME"):
+        codex_home = Path(os.environ["CODEX_HOME"]).expanduser()
+    else:
+        codex_home = Path.home() / ".codex"
     auth = load_json(codex_home / "auth.json", default={})
     if not isinstance(auth, dict):
         return None
@@ -849,8 +983,126 @@ def provider_auth_identity_hash(config: dict[str, Any], provider: str | None) ->
     return hashlib.sha256(f"{auth_mode}:{account_id}".encode()).hexdigest()
 
 @_entrypoint
+def configured_account_pool_auth_hash(
+    config: dict[str, Any], pool_id: str | None, agent_id: str | None = None
+) -> str | None:
+    """Resolve configured auth identity hash for an account pool or agent."""
+    if agent_id:
+        h = provider_auth_identity_hash(config, agent_id)
+        if h:
+            return h
+        agent_cfg = (config.get("agents") or {}).get(agent_id)
+        if isinstance(agent_cfg, dict):
+            prov = agent_cfg.get("provider") or agent_cfg.get("adapter")
+            if prov:
+                h = provider_auth_identity_hash(config, prov)
+                if h:
+                    return h
+    if not pool_id:
+        return None
+    norm_pool = normalize_agent_id(pool_id)
+    for aid, acfg in (config.get("agents") or {}).items():
+        if not isinstance(acfg, dict):
+            continue
+        p_name = normalize_agent_id(str(acfg.get("account_pool") or ""))
+        s_name = normalize_agent_id(str(acfg.get("dispatch_slot_for_pool") or ""))
+        if norm_pool in (p_name, s_name):
+            prov = agent_provider_id(config, aid) or aid
+            h = provider_auth_identity_hash(config, prov)
+            if h:
+                return h
+    return provider_auth_identity_hash(config, pool_id)
+
+@_entrypoint
 def _failure_streak_key(task_id: str, provider: str) -> str:
     return f"{task_id}:{provider}"
+
+def _is_pause_entry_cleared(
+    clearance: dict[str, Any] | None, pause_entry: dict[str, Any]
+) -> bool:
+    if not isinstance(clearance, dict) or not isinstance(pause_entry, dict):
+        return False
+    c_prov = normalize_agent_id(str(clearance.get("provider") or clearance.get("trigger_provider") or ""))
+    p_prov = normalize_agent_id(str(pause_entry.get("provider") or pause_entry.get("trigger_provider") or ""))
+    if c_prov and p_prov and c_prov != p_prov:
+        return False
+
+    c_at = str(clearance.get("cleared_at") or "")
+    c_p_at = str(clearance.get("cleared_paused_at") or "")
+    c_run = str(clearance.get("worker_run_id") or "")
+    c_auth = str(clearance.get("auth_identity_hash") or "")
+
+    p_at = str(pause_entry.get("paused_at") or "")
+    p_run = str(pause_entry.get("worker_run_id") or "")
+    p_auth = str(pause_entry.get("auth_identity_hash") or "")
+
+    # Check auth identity match if both present
+    if c_auth and p_auth and c_auth != p_auth:
+        return False
+
+    # 1. Clearance targeted a specific pause timestamp
+    if c_p_at:
+        if p_at == c_p_at:
+            if c_run and p_run and c_run != p_run:
+                return False
+            return True
+        elif p_at < c_p_at:
+            return True
+        else:
+            # Newer pause saved after the cleared pause epoch must not be cleared
+            return False
+
+    # 2. Clearance did not specify cleared_paused_at (blind clearance by cleared_at)
+    if c_at:
+        if p_at < c_at:
+            return True
+        elif p_at == c_at:
+            if c_run and p_run and c_run == p_run:
+                return True
+            return False
+        else:
+            return False
+
+    return False
+
+
+def _record_clearance_tombstone(
+    cleared_bucket: dict[str, Any],
+    pause_id: str,
+    entry: dict[str, Any] | None,
+    auth_hash: str | None,
+    cleared_at: str,
+    *,
+    trigger_provider: str | None = None,
+    task_id: str | None = None,
+    worker_run_id: str | None = None,
+    clear_reason: str | None = None,
+) -> dict[str, Any]:
+    p_at = entry.get("paused_at") if isinstance(entry, dict) else None
+    run_id = (entry.get("worker_run_id") if isinstance(entry, dict) else None) or worker_run_id
+    t_id = (entry.get("task_id") if isinstance(entry, dict) else None) or task_id
+    auth = (
+        entry.get("auth_identity_hash")
+        if isinstance(entry, dict) and entry.get("auth_identity_hash")
+        else auth_hash
+    )
+    clearance: dict[str, Any] = {
+        "provider": pause_id,
+        "trigger_provider": trigger_provider or pause_id,
+        "cleared_at": cleared_at,
+        "cleared_paused_at": p_at,
+        "auth_identity_hash": auth,
+        "worker_run_id": run_id,
+        "task_id": t_id,
+    }
+    if clear_reason:
+        clearance["clear_reason"] = clear_reason
+
+    cleared_bucket[pause_id] = deepcopy(clearance)
+    epoch_key = f"{pause_id}::{auth or '*'}::{run_id or '*'}::{p_at or '*'}::{cleared_at}"
+    cleared_bucket[epoch_key] = deepcopy(clearance)
+    return clearance
+
 
 @_entrypoint
 def current_provider_dispatch_pause(
@@ -862,11 +1114,38 @@ def current_provider_dispatch_pause(
     if not provider_id:
         return None
     bucket = _dispatch_pause_bucket(state)
+    cleared_bucket = _provider_guardrail_bucket(state).get("cleared_pauses") or {}
     group_id = provider_dispatch_group_id(config, provider) if config is not None else provider_id
     for pause_id in dict.fromkeys([group_id, provider_id]):
         entry = bucket.get(pause_id)
         if not isinstance(entry, dict):
             continue
+        if any(
+            _is_pause_entry_cleared(c, entry)
+            for c in cleared_bucket.values()
+            if isinstance(c, dict)
+        ):
+            bucket.pop(pause_id, None)
+            continue
+        if config is not None:
+            recorded_identity = str(entry.get("auth_identity_hash") or "")
+            current_identity = provider_auth_identity_hash(
+                config,
+                str(entry.get("trigger_provider") or pause_id),
+            )
+            if recorded_identity and current_identity and recorded_identity != current_identity:
+                cleared_b = _provider_guardrail_bucket(state).setdefault("cleared_pauses", {})
+                _record_clearance_tombstone(
+                    cleared_b,
+                    pause_id,
+                    entry,
+                    entry.get("auth_identity_hash"),
+                    utc_now(),
+                    trigger_provider=str(entry.get("trigger_provider") or pause_id),
+                    clear_reason="provider account identity changed",
+                )
+                bucket.pop(pause_id, None)
+                continue
         blocked_until = _parse_iso_utc(str(entry.get("blocked_until") or ""))
         now = datetime.now(UTC)
         if blocked_until is not None and blocked_until <= now:
@@ -936,6 +1215,32 @@ def _lookup_worker_record(state: dict[str, Any], worker_run_id: str | None) -> d
     worker = (state.get("workers") or {}).get(run_id)
     return worker if isinstance(worker, dict) else None
 
+def _current_utc_now() -> datetime:
+    sup = sys.modules.get("supervisor")
+    if sup is not None:
+        dt = getattr(sup, "datetime", datetime)
+        if dt is not datetime and hasattr(dt, "now"):
+            try:
+                res = dt.now(UTC)
+                if isinstance(res, datetime):
+                    return res
+            except Exception:
+                pass
+        un = getattr(sup, "utc_now", None)
+        if un is not None:
+            try:
+                import common as _c
+                if un != getattr(_c, "utc_now", None):
+                    val = un()
+                    if isinstance(val, str) and val:
+                        parsed = _parse_iso_utc(val)
+                        if parsed is not None:
+                            return parsed
+            except Exception:
+                pass
+    return datetime.now(UTC)
+
+
 @_entrypoint
 def mark_provider_dispatch_paused(
     config: dict[str, Any],
@@ -958,7 +1263,7 @@ def mark_provider_dispatch_paused(
     if not provider_id:
         return False
     pause_provider_id = provider_dispatch_group_id(config, provider) or provider_id
-    now = datetime.now(UTC)
+    now = _current_utc_now()
     effective_pause_kind = str(pause_kind or failure_kind or "").strip().lower()
     if not should_pause_dispatch_for_failure_kind(effective_pause_kind):
         return False
@@ -1088,7 +1393,8 @@ def mark_provider_dispatch_paused(
         "task_id": task_id,
         "worker_run_id": worker_run_id,
     }
-    auth_identity_hash = provider_auth_identity_hash(config, provider_id)
+    failure_worker = worker if isinstance(worker, dict) else (_lookup_worker_record(state, worker_run_id) or {})
+    auth_identity_hash = failure_worker.get("auth_identity_hash") or provider_auth_identity_hash(config, provider_id)
     if auth_identity_hash:
         bucket[pause_provider_id]["auth_identity_hash"] = auth_identity_hash
     if hinted_blocked_until:
@@ -1143,11 +1449,26 @@ def clear_provider_dispatch_pause(config: dict[str, Any], state: dict[str, Any],
         return False
     pause_provider_id = provider_dispatch_group_id(config, provider_id) or provider_id
     bucket = _dispatch_pause_bucket(state)
+    cleared_bucket = _provider_guardrail_bucket(state).setdefault("cleared_pauses", {})
     removed: list[tuple[str, dict[str, Any]]] = []
+    cleared_at_iso = utc_now()
     for pause_id in dict.fromkeys([pause_provider_id, provider_id]):
         entry = bucket.pop(pause_id, None)
         if isinstance(entry, dict):
             removed.append((pause_id, entry))
+        auth_hash = (
+            entry.get("auth_identity_hash")
+            if isinstance(entry, dict) and entry.get("auth_identity_hash")
+            else provider_auth_identity_hash(config, pause_id)
+        )
+        _record_clearance_tombstone(
+            cleared_bucket,
+            pause_id,
+            entry,
+            auth_hash,
+            cleared_at_iso,
+            trigger_provider=provider_id,
+        )
     for pause_id, entry in removed:
         write_activity_log(
             config,
@@ -1161,13 +1482,228 @@ def clear_provider_dispatch_pause(config: dict[str, Any], state: dict[str, Any],
                 "cleared_pause": entry,
             },
         )
-    return bool(removed)
+
+    # Recover matching same-epoch cooldown account pools into canary mode
+    target_pause_ids = set([pause_provider_id, provider_id])
+    account_pools_bucket = _account_pool_runtime_bucket(state)
+    target_pools: set[str] = set()
+
+    for pool_name, pool_cfg in (config.get("account_pools") or {}).items():
+        if not isinstance(pool_cfg, dict):
+            continue
+        pool_norm = normalize_agent_id(pool_name)
+        if pool_norm in target_pause_ids or provider_dispatch_group_id(config, pool_norm) in target_pause_ids:
+            target_pools.add(pool_name)
+    for agent_name, agent_cfg in (config.get("agents") or {}).items():
+        if not isinstance(agent_cfg, dict):
+            continue
+        agent_prov = agent_provider_id(config, agent_name)
+        agent_group = provider_dispatch_group_id(config, agent_prov or agent_name)
+        if agent_prov in target_pause_ids or agent_group in target_pause_ids or normalize_agent_id(agent_name) in target_pause_ids:
+            pool_id, _ = account_pool_settings(config, agent_name)
+            if pool_id:
+                target_pools.add(pool_id)
+            quota_group = agent_quota_group_id(config, agent_name)
+            if quota_group:
+                target_pools.add(quota_group)
+
+    pools_recovered: list[str] = []
+    recovered_auth_hashes: set[str] = set()
+    allocated_canary_auths: set[str] = set()
+
+    # Consider all target pools and any pools currently in cooldown in the bucket
+    candidate_pools = list(dict.fromkeys(list(target_pools) + list(account_pools_bucket.keys())))
+
+    for pool_id in candidate_pools:
+        pool_entry = account_pools_bucket.get(pool_id)
+        if not isinstance(pool_entry, dict):
+            continue
+        if str(pool_entry.get("state") or "").strip().lower() != "cooldown":
+            continue
+
+        # Preserve non-quota failures (e.g. auth failures, task errors)
+        pool_failure_kind = str(pool_entry.get("failure_kind") or "").strip().lower()
+        if pool_failure_kind and not (
+            is_terminal_quota_failure_kind(pool_failure_kind)
+            or is_retryable_capacity_failure_kind(pool_failure_kind)
+        ):
+            continue
+
+        matched_clearance: dict[str, Any] | None = None
+        for _, rem_pause in removed:
+            rem_auth = rem_pause.get("auth_identity_hash")
+            pool_auth = pool_entry.get("auth_identity_hash")
+            rem_run = str(rem_pause.get("worker_run_id") or "")
+            pool_run = str(pool_entry.get("last_worker_run_id") or "")
+            rem_paused_at = str(rem_pause.get("paused_at") or "")
+            pool_failure_at = str(pool_entry.get("last_failure_at") or "")
+
+            # If pool_auth is missing, attempt provenance resolution
+            if not pool_auth:
+                if pool_run and rem_run and pool_run == rem_run:
+                    if rem_auth:
+                        pool_auth = rem_auth
+                        pool_entry["auth_identity_hash"] = rem_auth
+                elif pool_run and pool_run in state.get("workers", {}):
+                    w = state["workers"][pool_run]
+                    w_prov = w.get("provider") or w.get("logical_agent_id") or w.get("agent_id")
+                    h = provider_auth_identity_hash(config, w_prov)
+                    if h:
+                        pool_auth = h
+                        pool_entry["auth_identity_hash"] = h
+                else:
+                    for aid, acfg in (config.get("agents") or {}).items():
+                        if isinstance(acfg, dict) and normalize_agent_id(str(acfg.get("account_pool") or "")) == normalize_agent_id(pool_id):
+                            h = provider_auth_identity_hash(config, agent_provider_id(config, aid))
+                            if h:
+                                pool_auth = h
+                                pool_entry["auth_identity_hash"] = h
+                                break
+
+            # If rem_auth is missing, attempt provenance resolution
+            if not rem_auth and provider_id:
+                h = provider_auth_identity_hash(config, provider_id)
+                if h:
+                    rem_auth = h
+
+            # Positive auth verification:
+            if rem_auth and pool_auth:
+                if rem_auth != pool_auth:
+                    continue
+            elif not rem_auth and not pool_auth:
+                # If both are absent, must have exact matching worker run ID
+                if not (rem_run and pool_run and rem_run == pool_run):
+                    continue
+            else:
+                # One has auth, one does not, and could not be resolved -> require exact run match
+                if not (rem_run and pool_run and rem_run == pool_run):
+                    continue
+
+            # Positive failure epoch verification:
+            epoch_matched = False
+            if rem_run and pool_run:
+                if rem_run == pool_run:
+                    epoch_matched = True
+                else:
+                    epoch_matched = False
+            elif rem_paused_at and pool_failure_at and rem_paused_at == pool_failure_at:
+                if (rem_auth and pool_auth and rem_auth == pool_auth) or (pool_id in target_pools):
+                    epoch_matched = True
+
+            if not epoch_matched:
+                continue
+
+            matched_clearance = rem_pause
+            break
+
+        if matched_clearance is None:
+            continue
+
+        _, pool_cfg = account_pool_settings(config, pool_id)
+        try:
+            configured_limit = max(0, int(pool_cfg.get("max_concurrent", 1) or 0))
+        except (TypeError, ValueError):
+            configured_limit = quota_group_concurrency_limit(config, pool_id) or 0
+        if pool_cfg.get("enabled") is False or configured_limit == 0 or str(pool_cfg.get("state") or "").lower() == "disabled":
+            continue
+
+        auth_hash = pool_entry.get("auth_identity_hash") or matched_clearance.get("auth_identity_hash")
+        if auth_hash:
+            recovered_auth_hashes.add(auth_hash)
+
+        if auth_hash and auth_hash in allocated_canary_auths:
+            canary_limit = 0
+        else:
+            canary_limit = min(1, configured_limit)
+            if auth_hash and canary_limit > 0:
+                allocated_canary_auths.add(auth_hash)
+
+        pool_entry["state"] = "recovering"
+        pool_entry["effective_concurrency"] = canary_limit
+        pool_entry["generation"] = int(pool_entry.get("generation", 0) or 0) + 1
+        pool_entry["last_probe_at"] = cleared_at_iso
+        pool_entry["probe_attempts"] = int(pool_entry.get("probe_attempts", 0)) + 1
+        pool_entry["recovery_reason"] = f"provider pause cleared for {provider_id}"
+        pool_entry.pop("next_probe_at", None)
+        pools_recovered.append(pool_id)
+
+        write_activity_log(
+            config,
+            {
+                "type": "account_pool_canary_started",
+                "account_pool": pool_id,
+                "provider": provider_id,
+                "task_id": pool_entry.get("task_id"),
+                "worker_run_id": pool_entry.get("last_worker_run_id"),
+                "effective_concurrency": canary_limit,
+                "message": (
+                    f"Account pool {pool_id} cooldown cleared after provider pause reset; "
+                    f"entering recovering canary state with concurrency {canary_limit}."
+                ),
+            },
+        )
+
+    # Shared-auth recovery/admission fence: ensure sibling pools on the same auth cannot bypass canary limit
+    if recovered_auth_hashes:
+        all_pool_ids = set(account_pools_bucket.keys()) | set((config.get("account_pools") or {}).keys())
+        for acfg in (config.get("agents") or {}).values():
+            if isinstance(acfg, dict):
+                ap = str(acfg.get("account_pool") or "").strip()
+                if ap:
+                    all_pool_ids.add(ap)
+
+        for p_id in all_pool_ids:
+            if p_id in pools_recovered and account_pools_bucket.get(p_id, {}).get("effective_concurrency", 0) > 0:
+                continue
+            p_auth = None
+            p_entry = account_pools_bucket.get(p_id)
+            if isinstance(p_entry, dict):
+                p_auth = p_entry.get("auth_identity_hash")
+            if not p_auth:
+                for aid, acfg in (config.get("agents") or {}).items():
+                    if isinstance(acfg, dict) and normalize_agent_id(str(acfg.get("account_pool") or "")) == normalize_agent_id(p_id):
+                        p_auth = provider_auth_identity_hash(config, agent_provider_id(config, aid))
+                        if p_auth:
+                            break
+            if not p_auth:
+                for p_name in (config.get("account_pools") or {}).keys():
+                    if normalize_agent_id(p_name) == normalize_agent_id(p_id):
+                        p_auth = provider_auth_identity_hash(config, p_name)
+                        if p_auth:
+                            break
+
+            if p_auth in recovered_auth_hashes:
+                if isinstance(p_entry, dict):
+                    p_state = str(p_entry.get("state") or "").lower()
+                    # Do NOT modify cooldown pools (which belong to a distinct newer failure or auth failure)
+                    if p_state in {"healthy", "recovering"}:
+                        p_entry["state"] = "recovering"
+                        p_entry["effective_concurrency"] = 0
+                        p_entry["generation"] = int(p_entry.get("generation", 0) or 0) + 1
+                        p_entry["last_probe_at"] = cleared_at_iso
+                        p_entry["recovery_reason"] = f"shared auth recovering via canary on {', '.join(pools_recovered)}"
+                        p_entry["auth_identity_hash"] = p_auth
+                else:
+                    _, p_cfg = account_pool_settings(config, p_id)
+                    if p_cfg.get("enabled") is not False and str(p_cfg.get("state") or "").lower() != "disabled":
+                        account_pools_bucket[p_id] = {
+                            "state": "recovering",
+                            "effective_concurrency": 0,
+                            "generation": 1,
+                            "auth_identity_hash": p_auth,
+                            "last_probe_at": cleared_at_iso,
+                            "recovery_reason": f"shared auth recovering via canary on {', '.join(pools_recovered)}",
+                        }
+
+    return bool(removed or pools_recovered)
+
 
 @_entrypoint
 def expire_provider_dispatch_pauses(config: dict[str, Any], state: dict[str, Any]) -> bool:
     bucket = _dispatch_pause_bucket(state)
     if not bucket:
         return False
+    cleared_bucket = _provider_guardrail_bucket(state).setdefault("cleared_pauses", {})
     now = datetime.now(UTC)
     expired: list[tuple[str, dict[str, Any], str]] = []
     for provider_id, entry in list(bucket.items()):
@@ -1180,12 +1716,30 @@ def expire_provider_dispatch_pauses(config: dict[str, Any], state: dict[str, Any
         )
         if recorded_identity and current_identity and recorded_identity != current_identity:
             expired.append((provider_id, dict(entry), "provider account identity changed"))
+            _record_clearance_tombstone(
+                cleared_bucket,
+                provider_id,
+                entry,
+                entry.get("auth_identity_hash"),
+                utc_now(),
+                trigger_provider=str(entry.get("trigger_provider") or provider_id),
+                clear_reason="provider account identity changed",
+            )
             bucket.pop(provider_id, None)
             continue
         blocked_until = _parse_iso_utc(str(entry.get("blocked_until") or ""))
         if blocked_until is None or blocked_until > now:
             continue
         expired.append((provider_id, dict(entry), f"pause expired at {entry.get('blocked_until')}"))
+        _record_clearance_tombstone(
+            cleared_bucket,
+            provider_id,
+            entry,
+            entry.get("auth_identity_hash"),
+            utc_now(),
+            trigger_provider=str(entry.get("trigger_provider") or provider_id),
+            clear_reason=f"pause expired at {entry.get('blocked_until')}",
+        )
         bucket.pop(provider_id, None)
 
     for provider_id, entry, resume_reason in expired:

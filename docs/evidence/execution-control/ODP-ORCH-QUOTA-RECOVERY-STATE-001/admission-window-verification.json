@@ -1,0 +1,89 @@
+{
+  "base_commit": "8f848578447b8ae9f648c3841f782d7231fd0404",
+  "source_sha256": {
+    ".orchestrator/supervisor.py": "34e24490c236d933d72261364870722a1b4f4fb37c370affe3103bd7297c07c7",
+    ".orchestrator/worker_failure_policy.py": "8a8804426cfcb276a9102b26a52ddb8e3c1c0ad7dbaef1e969c5296f287ca5c6",
+    ".orchestrator/test_account_pool_admission.py": "035cc77e977aad8c3c89936b54f056a0c046e4cc4db0011c93443ad054f41a9f",
+    "docs/audits/code-boundary-inventory.csv": "eeee0307514069cb5ceabf20382dca9df0a1cd2fa9cd341969ac459806981795"
+  },
+  "receipts": [
+    {
+      "cwd": "/tmp/codex-1305-followup",
+      "head_sha": "6e502413dbc16b888c8eb9e5b00eb489bc5a9310",
+      "tracked_diff_sha256": "c1691f567f14f653652e7f636c522e0eeec3ab6f9ae70290633838f3fea11bf2",
+      "argv": [
+        "uv",
+        "run",
+        "pytest",
+        "-q",
+        ".orchestrator/test_review_auth_canary_lifecycle.py",
+        "-k",
+        "during_adapter_delivery or snapshot_precedes_adapter_delivery"
+      ],
+      "started_at": "2026-09-12T14:43:51.169148+00:00",
+      "duration_seconds": 3.437312125985045,
+      "exit_code": 1,
+      "output": "1305-admission-window-red.log"
+    },
+    {
+      "cwd": "/tmp/codex-1305-followup",
+      "head_sha": "6e502413dbc16b888c8eb9e5b00eb489bc5a9310",
+      "tracked_diff_sha256": "159dcc31d633a70a0adadd3a046d1ef50a8cca1db670d1aa84a65513e7dd656a",
+      "argv": [
+        "uv",
+        "run",
+        "pytest",
+        "-q",
+        ".orchestrator/test_review_auth_canary_lifecycle.py",
+        ".orchestrator/test_review_auth_pool_stale_clear.py"
+      ],
+      "started_at": "2026-09-12T14:45:15.295792+00:00",
+      "duration_seconds": 3.177957268024329,
+      "exit_code": 0,
+      "output": "1305-admission-window-green.log"
+    },
+    {
+      "cwd": "/tmp/codex-1305-followup",
+      "head_sha": "6e502413dbc16b888c8eb9e5b00eb489bc5a9310",
+      "tracked_diff_sha256": "159dcc31d633a70a0adadd3a046d1ef50a8cca1db670d1aa84a65513e7dd656a",
+      "argv": [
+        "uv",
+        "run",
+        "pytest",
+        "-q",
+        ".orchestrator/test_runtime_state.py",
+        ".orchestrator/test_common.py",
+        ".orchestrator/test_supervisor.py",
+        "-k",
+        "quota or pause or account_pool or config or cleared_old_run or own_pool_success or late_failure or LoadRuntimeStateTests or QuotaRecoveryRuntimeStateTests"
+      ],
+      "started_at": "2026-09-12T14:47:25.800026+00:00",
+      "duration_seconds": 6.590988306968939,
+      "exit_code": 0,
+      "output": "1305-admission-baseline.log"
+    },
+    {
+      "cwd": "/tmp/codex-1305-admission-fix",
+      "head_sha": "8f848578447b8ae9f648c3841f782d7231fd0404",
+      "tracked_diff_sha256": "b3fe752562224ad0c421f11ccf7af78665d4b0c6e59644ecf3cb2749af5e6d46",
+      "argv": [
+        "uv",
+        "run",
+        "pytest",
+        "-q",
+        ".orchestrator/test_account_pool_admission.py",
+        ".orchestrator/test_runtime_state.py",
+        ".orchestrator/test_common.py",
+        ".orchestrator/test_supervisor.py",
+        "-k",
+        "quota or pause or account_pool or config or cleared_old_run or own_pool_success or late_failure or LoadRuntimeStateTests or QuotaRecoveryRuntimeStateTests",
+        "--junitxml=/tmp/codex-1305-admission-final.xml"
+      ],
+      "started_at": "2026-09-12T14:51:09.134565+00:00",
+      "duration_seconds": 7.14638999797171,
+      "exit_code": 0,
+      "output": "1305-admission-final.log"
+    }
+  ],
+  "result": "Final 163 selected tests passed on the owner latest source plus this patch; identical production source also passed all 12 reviewer/admission cases and 155 prior cases. Two pre-patch delivery races failed as expected. Ruff and refreshed code-boundary inventory passed."
+}

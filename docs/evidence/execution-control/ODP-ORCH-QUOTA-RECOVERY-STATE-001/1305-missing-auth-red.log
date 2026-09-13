@@ -1,0 +1,89 @@
+FF..                                                                     [100%]
+=================================== FAILURES ===================================
+_ test_missing_worker_auth_cannot_be_inferred_from_current_credentials[None-False-False] _
+
+tmp_path = PosixPath('/tmp/pytest-of-lupin/pytest-537/test_missing_worker_auth_canno0')
+worker_auth = None, admitted = False, expected = False
+
+    @pytest.mark.parametrize("worker_auth,admitted,expected", [
+        (None, False, False),
+        (None, True, False),
+        ("auth-a", True, False),
+        ("auth-b", True, True),
+    ])
+    def test_missing_worker_auth_cannot_be_inferred_from_current_credentials(tmp_path, worker_auth, admitted, expected):
+        config, _ = fixture(tmp_path)
+        entry = {
+            "state": "recovering", "effective_concurrency": 1, "generation": 3,
+            "auth_identity_hash": "auth-b", "last_probe_at": "2026-09-11T04:00:00Z",
+        }
+        worker = {
+            "run_id": "legacy-or-canary", "logical_agent_id": "codex", "provider": "codex",
+            "status": "completed", "runner_status": "completed", "exit_code": 0,
+            "lease_acquired_at": "2026-09-11T04:00:00Z",
+        }
+        if worker_auth is not None:
+            worker["auth_identity_hash"] = worker_auth
+        if admitted:
+            worker.update({
+                "dispatched_pool_state": "recovering", "recovery_generation": 3,
+                "dispatched_recovery_epochs": {"pool_a": {key: entry.get(key) for key in (
+                    "auth_identity_hash", "generation", "last_probe_at", "last_failure_at", "last_worker_run_id"
+                )}},
+            })
+        state = {"workers": {worker["run_id"]: worker}, "account_pool_runtime": {"pool_a": entry}}
+        with (
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="auth-b"),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+>           assert supervisor.record_account_pool_canary_success(config, state, worker) is expected
+E           AssertionError: assert True is False
+E            +  where True = <function _entrypoint.<locals>._sync_scope_guard at 0x72f47a50a980>({'paths': {'activity_log': '/tmp/pytest-of-lupin/pytest-537/test_missing_worker_auth_canno0/activity.jsonl'}, 'account...ex': {'delivery_mode': 'codex', 'quota_group': 'codex'}, 'codex2': {'delivery_mode': 'codex', 'quota_group': 'codex'}}}, {'workers': {'legacy-or-canary': {'run_id': 'legacy-or-canary', 'logical_agent_id': 'codex', 'provider': 'codex', 'sta...e': {'pool_a': {'state': 'healthy', 'effective_concurrency': 2, 'generation': 3, 'auth_identity_hash': 'auth-b', ...}}}, {'run_id': 'legacy-or-canary', 'logical_agent_id': 'codex', 'provider': 'codex', 'status': 'completed', ...})
+E            +    where <function _entrypoint.<locals>._sync_scope_guard at 0x72f47a50a980> = supervisor.record_account_pool_canary_success
+
+.orchestrator/test_account_pool_admission_probe.py:181: AssertionError
+_ test_missing_worker_auth_cannot_be_inferred_from_current_credentials[None-True-False] _
+
+tmp_path = PosixPath('/tmp/pytest-of-lupin/pytest-537/test_missing_worker_auth_canno1')
+worker_auth = None, admitted = True, expected = False
+
+    @pytest.mark.parametrize("worker_auth,admitted,expected", [
+        (None, False, False),
+        (None, True, False),
+        ("auth-a", True, False),
+        ("auth-b", True, True),
+    ])
+    def test_missing_worker_auth_cannot_be_inferred_from_current_credentials(tmp_path, worker_auth, admitted, expected):
+        config, _ = fixture(tmp_path)
+        entry = {
+            "state": "recovering", "effective_concurrency": 1, "generation": 3,
+            "auth_identity_hash": "auth-b", "last_probe_at": "2026-09-11T04:00:00Z",
+        }
+        worker = {
+            "run_id": "legacy-or-canary", "logical_agent_id": "codex", "provider": "codex",
+            "status": "completed", "runner_status": "completed", "exit_code": 0,
+            "lease_acquired_at": "2026-09-11T04:00:00Z",
+        }
+        if worker_auth is not None:
+            worker["auth_identity_hash"] = worker_auth
+        if admitted:
+            worker.update({
+                "dispatched_pool_state": "recovering", "recovery_generation": 3,
+                "dispatched_recovery_epochs": {"pool_a": {key: entry.get(key) for key in (
+                    "auth_identity_hash", "generation", "last_probe_at", "last_failure_at", "last_worker_run_id"
+                )}},
+            })
+        state = {"workers": {worker["run_id"]: worker}, "account_pool_runtime": {"pool_a": entry}}
+        with (
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="auth-b"),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+>           assert supervisor.record_account_pool_canary_success(config, state, worker) is expected
+E           AssertionError: assert True is False
+E            +  where True = <function _entrypoint.<locals>._sync_scope_guard at 0x72f47a50a980>({'paths': {'activity_log': '/tmp/pytest-of-lupin/pytest-537/test_missing_worker_auth_canno1/activity.jsonl'}, 'account...ex': {'delivery_mode': 'codex', 'quota_group': 'codex'}, 'codex2': {'delivery_mode': 'codex', 'quota_group': 'codex'}}}, {'workers': {'legacy-or-canary': {'run_id': 'legacy-or-canary', 'logical_agent_id': 'codex', 'provider': 'codex', 'sta...e': {'pool_a': {'state': 'healthy', 'effective_concurrency': 2, 'generation': 3, 'auth_identity_hash': 'auth-b', ...}}}, {'run_id': 'legacy-or-canary', 'logical_agent_id': 'codex', 'provider': 'codex', 'status': 'completed', ...})
+E            +    where <function _entrypoint.<locals>._sync_scope_guard at 0x72f47a50a980> = supervisor.record_account_pool_canary_success
+
+.orchestrator/test_account_pool_admission_probe.py:181: AssertionError
+=========================== short test summary info ============================
+FAILED .orchestrator/test_account_pool_admission_probe.py::test_missing_worker_auth_cannot_be_inferred_from_current_credentials[None-False-False]
+FAILED .orchestrator/test_account_pool_admission_probe.py::test_missing_worker_auth_cannot_be_inferred_from_current_credentials[None-True-False]

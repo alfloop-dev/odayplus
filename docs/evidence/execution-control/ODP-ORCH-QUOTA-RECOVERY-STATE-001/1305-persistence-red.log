@@ -1,0 +1,121 @@
+.F.F                                                                     [100%]
+=================================== FAILURES ===================================
+____________ test_rotated_auth_canary_survives_real_disk_save[auth] ____________
+
+tmp_path = PosixPath('/tmp/pytest-of-lupin/pytest-562/test_rotated_auth_canary_survi1')
+failure_kind = 'auth'
+
+    @pytest.mark.parametrize('failure_kind', ['quota_terminal', 'auth'])
+    def test_rotated_auth_canary_survives_real_disk_save(tmp_path, failure_kind):
+        config = {
+            'paths': {
+                'state_file': str(tmp_path / 'state.json'),
+                'event_queue': str(tmp_path / 'events.jsonl'),
+                'activity_log': str(tmp_path / 'activity.jsonl'),
+            },
+            'account_pools': {'pool_a': {'max_concurrent': 3, 'enabled': True, 'state': 'healthy'}},
+            'agents': {'codex': {'id': 'codex', 'provider': 'codex', 'account_pool': 'pool_a'}},
+            'providers': {'codex': {'delivery_mode': 'codex', 'quota_group': 'codex'}},
+        }
+        Path(config['paths']['event_queue']).write_text('')
+        state = runtime_state.default_state()
+        worker = {'run_id': 'old-auth-failure', 'logical_agent_id': 'codex', 'provider': 'codex', 'auth_identity_hash': 'auth-a'}
+        with (
+            mock.patch.object(supervisor, 'provider_auth_identity_hash', return_value='auth-a'),
+            mock.patch.object(supervisor, 'datetime', PoolFailureClock),
+            mock.patch.object(supervisor, 'utc_now', return_value='2099-09-11T01:00:00Z'),
+            mock.patch.object(supervisor, 'write_activity_log'),
+            mock.patch.object(supervisor.model_rotation, 'rotation_enabled', return_value=False),
+        ):
+            assert supervisor.mark_provider_dispatch_paused(
+                config, state, 'codex', 'usage limit reached' if failure_kind == 'quota_terminal' else 'authentication failed',
+                worker_run_id=worker['run_id'], worker=worker, failure_kind=failure_kind,
+            )
+        runtime_state.save_runtime_state(config, state)
+        rotated_writer = runtime_state.load_runtime_state(config)
+        assert rotated_writer['account_pool_runtime']['pool_a']['state'] == 'cooldown'
+        with (
+            mock.patch.object(supervisor, 'provider_auth_identity_hash', return_value='auth-b'),
+            mock.patch.object(supervisor, 'write_activity_log'),
+            mock.patch.object(supervisor, 'utc_now', return_value='2099-09-11T01:01:00Z'),
+        ):
+            assert supervisor.expire_provider_dispatch_pauses(config, rotated_writer)
+            lifecycle, entry = supervisor.account_pool_runtime_state(
+                config, rotated_writer, 'codex', now=datetime(2099, 9, 11, 1, 1, tzinfo=UTC)
+            )
+        assert (lifecycle, entry['auth_identity_hash'], entry['effective_concurrency']) == ('recovering', 'auth-b', 1)
+        runtime_state.save_runtime_state(config, rotated_writer)
+        restored = runtime_state.load_runtime_state(config)
+        pool = restored['account_pool_runtime']['pool_a']
+>       assert (pool['state'], pool['auth_identity_hash'], pool['effective_concurrency']) == ('recovering', 'auth-b', 1), pool
+E       AssertionError: {'state': 'cooldown', 'effective_concurrency': 0, 'reason': 'Authentication failure', 'failure_kind': 'auth', ...}
+E       assert ('cooldown', 'auth-a', 0) == ('recovering', 'auth-b', 1)
+E         
+E         At index 0 diff: 'cooldown' != 'recovering'
+E         Use -v to get more diff
+
+.orchestrator/test_runtime_state.py:1796: AssertionError
+_ test_provider_expiry_does_not_allow_pre_failure_healthy_to_bypass_canary[True] _
+
+tmp_path = PosixPath('/tmp/pytest-of-lupin/pytest-562/test_provider_expiry_does_not_1')
+stale_save = True
+
+    @pytest.mark.parametrize('stale_save', [False, True])
+    def test_provider_expiry_does_not_allow_pre_failure_healthy_to_bypass_canary(tmp_path, stale_save):
+        config = {
+            'paths': {
+                'state_file': str(tmp_path / 'state.json'),
+                'event_queue': str(tmp_path / 'events.jsonl'),
+                'activity_log': str(tmp_path / 'activity.jsonl'),
+            },
+            'account_pools': {'pool_a': {'max_concurrent': 3, 'enabled': True, 'state': 'healthy'}},
+            'agents': {'codex': {'id': 'codex', 'provider': 'codex', 'account_pool': 'pool_a'}},
+            'providers': {'codex': {'delivery_mode': 'codex', 'quota_group': 'codex'}},
+        }
+        Path(config['paths']['event_queue']).write_text('')
+        state = runtime_state.default_state()
+        state['account_pool_runtime']['pool_a'] = {
+            'state': 'healthy', 'generation': 0, 'effective_concurrency': 3, 'auth_identity_hash': 'auth-a'
+        }
+        runtime_state.save_runtime_state(config, state)
+        pre_failure_writer = runtime_state.load_runtime_state(config)
+        worker = {'run_id': 'failure-run', 'logical_agent_id': 'codex', 'provider': 'codex', 'auth_identity_hash': 'auth-a'}
+        with (
+            mock.patch.object(supervisor, 'provider_auth_identity_hash', return_value='auth-a'),
+            mock.patch.object(supervisor, 'datetime', PoolFailureClock),
+            mock.patch.object(supervisor, 'utc_now', return_value='2099-09-11T01:00:00Z'),
+            mock.patch.object(supervisor, 'write_activity_log'),
+            mock.patch.object(supervisor.model_rotation, 'rotation_enabled', return_value=False),
+        ):
+            assert supervisor.mark_provider_dispatch_paused(
+                config, state, 'codex', 'usage limit reached',
+                worker_run_id=worker['run_id'], worker=worker, failure_kind='quota_terminal',
+            )
+        runtime_state.save_runtime_state(config, state)
+        with (
+            mock.patch.object(supervisor, 'provider_auth_identity_hash', return_value='auth-a'),
+            mock.patch.object(supervisor, 'datetime', PoolExpiryClock),
+            mock.patch.object(supervisor, 'utc_now', return_value='2099-09-11T03:00:00Z'),
+            mock.patch.object(supervisor, 'write_activity_log'),
+        ):
+            assert supervisor.expire_provider_dispatch_pauses(config, state)
+        runtime_state.save_runtime_state(config, state)
+        assert state['account_pool_runtime']['pool_a']['state'] == 'cooldown'
+        if stale_save:
+            runtime_state.save_runtime_state(config, pre_failure_writer)
+        restored = runtime_state.load_runtime_state(config)
+        assert not restored['provider_guardrails']['dispatch_pauses']
+        with (
+            mock.patch.object(supervisor, 'provider_auth_identity_hash', return_value='auth-a'),
+            mock.patch.object(supervisor, 'datetime', PoolExpiryClock),
+        ):
+            capacity = supervisor.account_pool_effective_concurrency(config, restored, 'codex')
+>       assert capacity <= 1, restored['account_pool_runtime']['pool_a']
+E       AssertionError: {'state': 'healthy', 'generation': 0, 'effective_concurrency': 3, 'auth_identity_hash': 'auth-a'}
+E       assert 3 <= 1
+
+.orchestrator/test_runtime_state.py:1855: AssertionError
+=========================== short test summary info ============================
+FAILED .orchestrator/test_runtime_state.py::test_rotated_auth_canary_survives_real_disk_save[auth]
+FAILED .orchestrator/test_runtime_state.py::test_provider_expiry_does_not_allow_pre_failure_healthy_to_bypass_canary[True]
+2 failed, 2 passed, 69 deselected in 1.22s

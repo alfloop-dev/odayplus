@@ -1,0 +1,22 @@
+{
+  "cwd": "/tmp/codex-1305-admission-fix",
+  "head_sha": "c9c0fb3fc6211161be0bd560caa7befb70dfba66",
+  "tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "argv": [
+    "/tmp/pantheon-worker-worktrees/pantheon/odp-orch-quota-recovery-state-001/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "-m",
+    "not requires_live_env",
+    ".orchestrator",
+    "delivery_toolchain",
+    "scripts",
+    "tests/tooling",
+    "infra"
+  ],
+  "started_at": "2026-09-12T15:19:35.302096+00:00",
+  "duration_seconds": 470.63492229097756,
+  "exit_code": 1,
+  "output": "1305-supplement-full.log"
+}
