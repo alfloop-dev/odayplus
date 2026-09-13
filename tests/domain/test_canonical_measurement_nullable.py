@@ -8,8 +8,6 @@ Acceptance: six production-shaped absence tests prove abstain/mark/reject.
 
 from __future__ import annotations
 
-import pytest
-
 from shared.domain.models import (
     CompetitorStore,
     DataSnapshot,
@@ -18,7 +16,6 @@ from shared.domain.models import (
     Poi,
     Prediction,
 )
-
 
 # ---------------------------------------------------------------------------
 # 1. The six fields default to None (unmeasured), not 1.0 (perfect)
