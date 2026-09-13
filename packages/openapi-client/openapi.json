@@ -7,6 +7,28 @@
             "title": "Asset Book Value",
             "type": "number"
           },
+          "asset_book_value_includes_equipment": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Book Value Includes Equipment"
+          },
+          "asset_in_service_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset In Service Date"
+          },
           "comparable_multiples": {
             "items": {
               "type": "number"
@@ -19,9 +41,54 @@
             "title": "Created By",
             "type": "string"
           },
+          "depreciation_effective_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Depreciation Effective Date"
+          },
+          "depreciation_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Depreciation Method"
+          },
+          "equipment_depreciation_basis": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Equipment Depreciation Basis"
+          },
           "equipment_fair_value": {
             "title": "Equipment Fair Value",
             "type": "number"
+          },
+          "equipment_original_cost": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Equipment Original Cost"
           },
           "forecast_gm_next_12m": {
             "title": "Forecast Gm Next 12M",
@@ -74,6 +141,19 @@
             ],
             "title": "Quality Score"
           },
+          "residual_value_ratio": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Residual Value Ratio"
+          },
           "source_snapshot_ids": {
             "items": {
               "type": "string"
@@ -85,6 +165,18 @@
             "minLength": 1,
             "title": "Store Id",
             "type": "string"
+          },
+          "useful_life_months": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Useful Life Months"
           },
           "working_capital": {
             "default": 0.0,
@@ -8831,6 +8923,60 @@
         "title": "RollbackPayload",
         "type": "object"
       },
+      "RollbackReceiptPayload": {
+        "properties": {
+          "decider": {
+            "minLength": 1,
+            "title": "Decider",
+            "type": "string"
+          },
+          "decision_time": {
+            "format": "date-time",
+            "title": "Decision Time",
+            "type": "string"
+          },
+          "depreciation_version_pin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Depreciation Version Pin"
+          },
+          "reason": {
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "receipt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt Id"
+          },
+          "target_expiry": {
+            "format": "date-time",
+            "title": "Target Expiry",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decider",
+          "decision_time",
+          "reason",
+          "target_expiry"
+        ],
+        "title": "RollbackReceiptPayload",
+        "type": "object"
+      },
       "SavedView": {
         "properties": {
           "created_at": {
@@ -10149,6 +10295,41 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "ValueCasePayload": {
+        "properties": {
+          "actor": {
+            "minLength": 1,
+            "title": "Actor",
+            "type": "string"
+          },
+          "depreciation_version_pin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Depreciation Version Pin"
+          },
+          "rollback_receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RollbackReceiptPayload"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "actor"
+        ],
+        "title": "ValueCasePayload",
         "type": "object"
       },
       "XlsxCommitReceipt": {
@@ -14053,7 +14234,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ActorPayload"
+                "$ref": "#/components/schemas/ValueCasePayload"
               }
             }
           },
