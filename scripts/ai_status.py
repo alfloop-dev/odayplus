@@ -6973,31 +6973,31 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
     )
 
     if is_same_submission:
-        # R4: Detect first OPEN-to-MERGED transition.  When the existing
-        # submission lacks merged_at but the new one carries it, this is the
-        # first post-merge recovery -- not a repeated submission.  Record
-        # recovery_at / recovery_by with the actual recovery time/actor and
-        # update last_update so audit has a post-merge timestamp.
-        is_first_merged_recovery = (
-            submission.get("merged_at")
-            and not existing_sub.get("merged_at")
-        )
-
-        # Stable submission provenance: preserve earlier verified_at and submitted_by
+        # Stable submission provenance: preserve earlier verified_at, submitted_by, recovery_at, recovery_by
         if "verified_at" in existing_sub:
             submission["verified_at"] = existing_sub["verified_at"]
         if "submitted_by" in existing_sub:
             submission["submitted_by"] = existing_sub["submitted_by"]
+        if "recovery_at" in existing_sub:
+            submission["recovery_at"] = existing_sub["recovery_at"]
+        if "recovery_by" in existing_sub:
+            submission["recovery_by"] = existing_sub["recovery_by"]
+
+        # R4: Detect first OPEN-to-MERGED transition.  When the existing
+        # submission lacks merged_at but the new one carries it, this is the
+        # first post-merge recovery -- not a repeated submission.  Record
+        # recovery_at / recovery_by with the actual recovery time/actor and
+        # append a merged_recovery audit event.
+        is_first_merged_recovery = (
+            submission.get("merged_at")
+            and not existing_sub.get("merged_at")
+            and not existing_sub.get("recovery_at")
+        )
 
         if is_first_merged_recovery:
-            # First OPEN-to-MERGED recovery: record actual recovery time/actor
             recovery_ts = iso_now()
             submission["recovery_at"] = recovery_ts
             submission["recovery_by"] = actor
-            task["review_submission"] = submission
-            task["last_update"] = recovery_ts
-            if message and task.get("next") != message:
-                task["next"] = message
             append_log(
                 {
                     "ts": recovery_ts,
@@ -7008,7 +7008,6 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
                     "submission": submission,
                 }
             )
-            return
 
         current_status = str(task.get("status") or "").lower()
         if current_status == "review_approved" and task.get("approved_head") == submission["remote_sha"]:

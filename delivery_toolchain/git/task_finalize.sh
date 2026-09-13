@@ -120,14 +120,23 @@ if git merge-base --is-ancestor HEAD "$BASE_REF" 2>/dev/null; then
   echo "task_finalize: HEAD is already an ancestor of $BASE_REF -- checking PR status."
   PR_NUMBER=""
   if [ -n "$GH" ] && command -v "$GH" >/dev/null 2>&1; then
-    # R3: Iterate all PRs for this head/base pair and find the MERGED one.
-    # GitHub lists PRs newest-first; a newer CLOSED unmerged PR would mask
-    # a valid older MERGED PR if we only inspected .[0].
-    ALL_PR_NUMBERS="$("$GH" pr list --head "$BRANCH" --base "$BASE_BRANCH" --state all \
-      --json number --jq '.[].number' 2>/dev/null || true)"
+    # R3/R4: Iterate all PRs for this head/base pair and find the MERGED one.
+    # Fail explicitly on nonzero exit (transport/server error) instead of swallowing.
+    LIST_OUT="$("$GH" pr list --head "$BRANCH" --base "$BASE_BRANCH" --state all \
+      --json number --jq '.[].number' 2>&1)" || {
+      LIST_RC=$?
+      echo "task_finalize: error: gh pr list failed ($LIST_RC): $LIST_OUT" >&2
+      exit 1
+    }
+    ALL_PR_NUMBERS="$LIST_OUT"
     FOUND_CLOSED=0
     for CANDIDATE_PR in $ALL_PR_NUMBERS; do
-      CANDIDATE_STATE="$("$GH" pr view "$CANDIDATE_PR" --json state --jq '.state' 2>/dev/null || true)"
+      VIEW_OUT="$("$GH" pr view "$CANDIDATE_PR" --json state --jq '.state' 2>&1)" || {
+        VIEW_RC=$?
+        echo "task_finalize: error: gh pr view #$CANDIDATE_PR failed ($VIEW_RC): $VIEW_OUT" >&2
+        exit 1
+      }
+      CANDIDATE_STATE="$VIEW_OUT"
       if [ "$CANDIDATE_STATE" = "MERGED" ]; then
         PR_NUMBER="$CANDIDATE_PR"
         break
@@ -137,13 +146,28 @@ if git merge-base --is-ancestor HEAD "$BASE_REF" 2>/dev/null; then
       fi
     done
     if [ -z "$PR_NUMBER" ] && [ -z "$ALL_PR_NUMBERS" ]; then
-      PR_NUMBER="$("$GH" pr view "$BRANCH" --json number --jq '.number // empty' 2>/dev/null || true)"
-      if [ -n "$PR_NUMBER" ]; then
-        CANDIDATE_STATE="$("$GH" pr view "$PR_NUMBER" --json state --jq '.state' 2>/dev/null || true)"
-        if [ "$CANDIDATE_STATE" != "MERGED" ]; then
-          PR_NUMBER=""
+      VIEW_BRANCH_OUT="$("$GH" pr view "$BRANCH" --json number,state --jq '{number: .number, state: .state}' 2>&1)" || {
+        VIEW_BRANCH_RC=$?
+        case "$VIEW_BRANCH_OUT" in
+          *"no pull requests found"*|*"no open pull requests"*)
+            VIEW_BRANCH_OUT="" ;;
+          *)
+            echo "task_finalize: error: gh pr view $BRANCH failed ($VIEW_BRANCH_RC): $VIEW_BRANCH_OUT" >&2
+            exit 1 ;;
+        esac
+      }
+      if [ -n "$VIEW_BRANCH_OUT" ]; then
+        BRANCH_PR_NUM="$(echo "$VIEW_BRANCH_OUT" | jq -r '.number // empty' 2>/dev/null || true)"
+        BRANCH_PR_STATE="$(echo "$VIEW_BRANCH_OUT" | jq -r '.state // empty' 2>/dev/null || true)"
+        if [ "$BRANCH_PR_STATE" = "MERGED" ]; then
+          PR_NUMBER="$BRANCH_PR_NUM"
         fi
       fi
+    fi
+  else
+    if [ "$DRY_RUN" -eq 0 ]; then
+      echo "task_finalize: error: GitHub CLI ('gh') not found; cannot verify merged PR status." >&2
+      exit 1
     fi
   fi
   if [ -n "$PR_NUMBER" ]; then

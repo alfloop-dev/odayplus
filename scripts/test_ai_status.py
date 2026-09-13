@@ -1169,6 +1169,416 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         # last_update was set during recovery (may match initial in sub-second execution)
         self.assertTrue(task["last_update"])
 
+    def test_r2_merged_recovery_after_reopen_transitions_to_review_and_creates_reviewer_handoff(self) -> None:
+        """R2 regression: after task is reopened to in_progress, first merged recovery transitions to review and creates pending reviewer handoff."""
+        self.state["handoffs"] = []
+        source_sha = "1111111122222222333333334444444455555555"
+        merge_commit = "9999999988888888777777776666666655555555"
+        task = self.state["tasks"][0]
+
+        # 1. Initial OPEN submission
+        pr_open = {
+            "number": 1305,
+            "state": "OPEN",
+            "url": "https://github.com/example/repo/pull/1305",
+            "headRefName": "task/REG-002",
+            "headRefOid": source_sha,
+            "baseRefName": "dev",
+            "isDraft": False,
+        }
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+            mock.patch.object(ai_status, "task_repository_id", return_value="pantheon"),
+            mock.patch.object(ai_status, "repository_local_path", return_value=ai_status.ROOT),
+            mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
+            mock.patch.object(ai_status, "run_gh_json_command", return_value=pr_open),
+            mock.patch.object(ai_status, "resolve_task_sha", return_value=source_sha),
+            mock.patch.object(ai_status, "validate_delivery_identity", return_value=[]),
+        ):
+            ai_status.command_submit_review(self.state, ["REG-002", "1305", "Initial OPEN submission"])
+
+        self.assertEqual(task["status"], "review")
+
+        # 2. Reviewer reopens task to in_progress
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            ai_status.command_reopen(self.state, ["REG-002", "Please fix XYZ"])
+        self.assertEqual(task["status"], "in_progress")
+
+        # 3. Owner submits merged recovery for the same PR now merged
+        pr_merged = {
+            "number": 1305,
+            "state": "MERGED",
+            "url": "https://github.com/example/repo/pull/1305",
+            "headRefName": "task/REG-002",
+            "headRefOid": source_sha,
+            "baseRefName": "dev",
+            "isDraft": False,
+            "mergedAt": "2026-09-13T06:53:45Z",
+            "mergeCommit": {"oid": merge_commit},
+            "statusCheckRollup": [
+                {"__typename": "CheckRun", "name": "product", "status": "COMPLETED", "conclusion": "SUCCESS"},
+            ],
+        }
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+            mock.patch.object(ai_status, "task_repository_id", return_value="pantheon"),
+            mock.patch.object(ai_status, "repository_local_path", return_value=ai_status.ROOT),
+            mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
+            mock.patch.object(ai_status, "run_gh_json_command", return_value=pr_merged),
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=True),
+            mock.patch.object(ai_status, "validate_delivery_identity", return_value=[]),
+        ):
+            ai_status.command_submit_review(self.state, ["REG-002", "1305", "Merged recovery after reopen"])
+
+        # Must have transitioned to "review"
+        self.assertEqual(task["status"], "review")
+        # Pending handoff to reviewer must exist
+        pending = [h for h in self.state["handoffs"] if h["status"] == "pending"]
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["to"], "Claude")
+        self.assertEqual(pending[0]["from"], "Codex")
+
+        # Recovery provenance must be recorded
+        sub = task["review_submission"]
+        self.assertIn("recovery_at", sub)
+        self.assertEqual(sub["recovery_by"], "Codex")
+        self.assertEqual(sub["merged_at"], "2026-09-13T06:53:45Z")
+
+    def test_r3_merged_recovery_retries_preserve_full_provenance(self) -> None:
+        """R3 regression: repeated merged recovery submissions preserve recovery_at/recovery_by and verified_at/submitted_by across review and review_approved."""
+        self.state["handoffs"] = []
+        source_sha = "1111111122222222333333334444444455555555"
+        merge_commit = "9999999988888888777777776666666655555555"
+        task = self.state["tasks"][0]
+
+        # 1. Initial OPEN submission
+        pr_open = {
+            "number": 1305,
+            "state": "OPEN",
+            "url": "https://github.com/example/repo/pull/1305",
+            "headRefName": "task/REG-002",
+            "headRefOid": source_sha,
+            "baseRefName": "dev",
+            "isDraft": False,
+        }
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+            mock.patch.object(ai_status, "task_repository_id", return_value="pantheon"),
+            mock.patch.object(ai_status, "repository_local_path", return_value=ai_status.ROOT),
+            mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
+            mock.patch.object(ai_status, "run_gh_json_command", return_value=pr_open),
+            mock.patch.object(ai_status, "resolve_task_sha", return_value=source_sha),
+            mock.patch.object(ai_status, "validate_delivery_identity", return_value=[]),
+        ):
+            ai_status.command_submit_review(self.state, ["REG-002", "1305", "Initial OPEN submission"])
+
+        initial_verified_at = task["review_submission"]["verified_at"]
+        initial_submitted_by = task["review_submission"]["submitted_by"]
+
+        # 2. First MERGED recovery
+        pr_merged = {
+            "number": 1305,
+            "state": "MERGED",
+            "url": "https://github.com/example/repo/pull/1305",
+            "headRefName": "task/REG-002",
+            "headRefOid": source_sha,
+            "baseRefName": "dev",
+            "isDraft": False,
+            "mergedAt": "2026-09-13T06:53:45Z",
+            "mergeCommit": {"oid": merge_commit},
+            "statusCheckRollup": [
+                {"__typename": "CheckRun", "name": "product", "status": "COMPLETED", "conclusion": "SUCCESS"},
+            ],
+        }
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+            mock.patch.object(ai_status, "task_repository_id", return_value="pantheon"),
+            mock.patch.object(ai_status, "repository_local_path", return_value=ai_status.ROOT),
+            mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
+            mock.patch.object(ai_status, "run_gh_json_command", return_value=pr_merged),
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=True),
+            mock.patch.object(ai_status, "validate_delivery_identity", return_value=[]),
+        ):
+            ai_status.command_submit_review(self.state, ["REG-002", "1305", "First merged recovery"])
+
+        first_recovery_at = task["review_submission"]["recovery_at"]
+        first_recovery_by = task["review_submission"]["recovery_by"]
+        self.assertTrue(first_recovery_at)
+        self.assertEqual(first_recovery_by, "Codex")
+
+        # 3. Second MERGED recovery while in review: must retain recovery_at/recovery_by
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+            mock.patch.object(ai_status, "task_repository_id", return_value="pantheon"),
+            mock.patch.object(ai_status, "repository_local_path", return_value=ai_status.ROOT),
+            mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
+            mock.patch.object(ai_status, "run_gh_json_command", return_value=pr_merged),
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=True),
+            mock.patch.object(ai_status, "validate_delivery_identity", return_value=[]),
+        ):
+            ai_status.command_submit_review(self.state, ["REG-002", "1305", "Retry merged recovery in review"])
+
+        sub2 = task["review_submission"]
+        self.assertEqual(sub2["verified_at"], initial_verified_at)
+        self.assertEqual(sub2["submitted_by"], initial_submitted_by)
+        self.assertEqual(sub2["recovery_at"], first_recovery_at)
+        self.assertEqual(sub2["recovery_by"], first_recovery_by)
+
+        # 4. Reviewer approves -> review_approved
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
+            mock.patch.object(ai_status, "resolve_task_sha", return_value=None),
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=True),
+            mock.patch.object(ai_status, "task_pr_ci_status", return_value=("MERGED", "success")),
+        ):
+            ai_status.command_approve(self.state, ["REG-002", "LGTM"])
+
+        self.assertEqual(task["status"], "review_approved")
+
+        # 5. Finalize retry while in review_approved: must retain full provenance and approved state
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+            mock.patch.object(ai_status, "task_repository_id", return_value="pantheon"),
+            mock.patch.object(ai_status, "repository_local_path", return_value=ai_status.ROOT),
+            mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
+            mock.patch.object(ai_status, "run_gh_json_command", return_value=pr_merged),
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=True),
+            mock.patch.object(ai_status, "validate_delivery_identity", return_value=[]),
+        ):
+            ai_status.command_submit_review(self.state, ["REG-002", "1305", "Retry merged recovery in approved"])
+
+        self.assertEqual(task["status"], "review_approved")
+        self.assertEqual(task["approved_head"], source_sha)
+        sub3 = task["review_submission"]
+        self.assertEqual(sub3["verified_at"], initial_verified_at)
+        self.assertEqual(sub3["submitted_by"], initial_submitted_by)
+        self.assertEqual(sub3["recovery_at"], first_recovery_at)
+        self.assertEqual(sub3["recovery_by"], first_recovery_by)
+
+    def test_r1_workspace_lease_lifecycle_merged_review_reopen_and_owner_reconnect(self) -> None:
+        """R1 integration: real-Git lifecycle covering owner refresh -> submission -> reviewer lease pinning exact SHA -> reviewer reopen -> next owner lease re-attaching cleanly -> dirty gate."""
+        import sys
+        orch_dir = Path(__file__).resolve().parents[1] / ".orchestrator"
+        if str(orch_dir) not in sys.path:
+            sys.path.insert(0, str(orch_dir))
+        import worker_workspace
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir()
+            # Initialize git repo
+            subprocess.run(["git", "init", "-b", "dev", str(repo_root)], capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "Test Agent"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
+
+            # Initial commit on dev
+            (repo_root / "README.md").write_text("initial")
+            subprocess.run(["git", "add", "README.md"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial commit"], cwd=repo_root, check=True)
+            base_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo_root, capture_output=True, text=True, check=True).stdout.strip()
+
+            # Create task branch
+            branch = "task/REG-002"
+            subprocess.run(["git", "branch", branch, base_sha], cwd=repo_root, check=True)
+
+            # Create worktree for task branch
+            worktree_path = Path(tmpdir) / "workers" / "pantheon" / "reg-002"
+            worktree_path.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "worktree", "add", str(worktree_path), branch], cwd=repo_root, check=True)
+
+            # 1. Owner makes a commit in worktree
+            (worktree_path / "feature.txt").write_text("feature content")
+            subprocess.run(["git", "add", "feature.txt"], cwd=worktree_path, check=True)
+            subprocess.run(["git", "commit", "-m", "REG-002: feature work"], cwd=worktree_path, check=True)
+            submitted_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=worktree_path, capture_output=True, text=True, check=True).stdout.strip()
+
+            # 2. Simulate merge into dev on repo
+            subprocess.run(["git", "checkout", "dev"], cwd=repo_root, check=True)
+            subprocess.run(["git", "merge", "--no-ff", branch, "-m", f"Merge pull request #1305 from {branch}"], cwd=repo_root, check=True)
+            merge_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo_root, capture_output=True, text=True, check=True).stdout.strip()
+
+            # 3. Simulate worktree fast-forwarded to dev / advanced past submitted_sha
+            subprocess.run(["git", "merge", "--ff-only", merge_sha], cwd=worktree_path, check=True)
+            wt_head_before_review = subprocess.run(["git", "rev-parse", "HEAD"], cwd=worktree_path, capture_output=True, text=True, check=True).stdout.strip()
+            self.assertEqual(wt_head_before_review, merge_sha)
+
+            # 4. Reviewer lease is prepared with required_head=submitted_sha
+            existing = worker_workspace._existing_worktree_for_branch(repo_root, branch, exclude_root=True, expected_path=worktree_path)
+            self.assertEqual(existing, worktree_path)
+
+            ok, status = worker_workspace._refresh_reused_worker_worktree(
+                repo_root,
+                worktree_path,
+                base_sha,
+                branch,
+                network_timeout_seconds=5.0,
+                materialized_paths=set(),
+                required_head=submitted_sha,
+            )
+            self.assertTrue(ok)
+            self.assertIn("review_head_pinned", status)
+
+            # Worktree HEAD is now pinned at exact submitted_sha (detached)
+            pinned_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=worktree_path, capture_output=True, text=True, check=True).stdout.strip()
+            self.assertEqual(pinned_sha, submitted_sha)
+            branch_rc, _ = worker_workspace._git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
+            self.assertNotEqual(branch_rc, 0)
+
+            # 5. Reviewer retry lease with required_head=submitted_sha
+            existing = worker_workspace._existing_worktree_for_branch(repo_root, branch, exclude_root=True, expected_path=worktree_path)
+            self.assertEqual(existing, worktree_path)
+            ok, status = worker_workspace._refresh_reused_worker_worktree(
+                repo_root,
+                worktree_path,
+                base_sha,
+                branch,
+                network_timeout_seconds=5.0,
+                materialized_paths=set(),
+                required_head=submitted_sha,
+            )
+            self.assertTrue(ok)
+
+            # 6. Reviewer reopens -> Owner is leased next (required_head=None)
+            existing = worker_workspace._existing_worktree_for_branch(repo_root, branch, exclude_root=True, expected_path=worktree_path)
+            self.assertEqual(existing, worktree_path)
+            ok, status = worker_workspace._refresh_reused_worker_worktree(
+                repo_root,
+                worktree_path,
+                base_sha,
+                branch,
+                network_timeout_seconds=5.0,
+                materialized_paths=set(),
+                required_head=None,
+            )
+            self.assertTrue(ok)
+
+            # Owner worktree is cleanly re-attached to branch!
+            branch_rc, current_branch = worker_workspace._git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
+            self.assertEqual(branch_rc, 0)
+            self.assertEqual(current_branch, branch)
+
+            # 7. Dirty worktree gate: leave untracked file, next lease fails closed
+            (worktree_path / "dirty.tmp").write_text("untracked")
+            ok, status = worker_workspace._refresh_reused_worker_worktree(
+                repo_root,
+                worktree_path,
+                base_sha,
+                branch,
+                network_timeout_seconds=5.0,
+                materialized_paths=set(),
+                required_head=None,
+            )
+            self.assertFalse(ok)
+            self.assertTrue(worker_workspace._is_skipped_dirty_worktree(status))
+
+    def test_r4_task_finalize_shell_gh_transport_failure_and_discovery(self) -> None:
+        """R4 executing shell regression: task_finalize.sh fails with nonzero exit on gh transport failure, correctly selects MERGED PR when preceded by CLOSED PR, and fails on CLOSED-only."""
+        script_path = Path(__file__).resolve().parents[1] / "delivery_toolchain" / "git" / "task_finalize.sh"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir()
+            subprocess.run(["git", "init", "-b", "dev", str(repo_root)], capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "Test Agent"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
+
+            (repo_root / "README.md").write_text("initial")
+            subprocess.run(["git", "add", "README.md"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial commit"], cwd=repo_root, check=True)
+
+            # Create remote branch structure
+            subprocess.run(["git", "remote", "add", "origin", str(repo_root)], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "-b", "task/TEST-TASK-001"], cwd=repo_root, check=True)
+            (repo_root / "file.txt").write_text("content")
+            subprocess.run(["git", "add", "file.txt"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "TEST-TASK-001: test change"], cwd=repo_root, check=True)
+
+            # Merge task branch into dev
+            subprocess.run(["git", "checkout", "dev"], cwd=repo_root, check=True)
+            subprocess.run(["git", "merge", "--no-ff", "task/TEST-TASK-001", "-m", "Merge PR #102"], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "task/TEST-TASK-001"], cwd=repo_root, check=True)
+
+            bin_dir = Path(tmpdir) / "bin"
+            bin_dir.mkdir()
+            gh_script = bin_dir / "gh"
+
+            env = {
+                **os.environ,
+                "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                "PANTHEON_STATUS_ROOT": str(repo_root),
+                "AI_NAME": "Codex",
+            }
+
+            # Scenario A: gh returns HTTP 503 / exit code 1
+            gh_script.write_text("#!/bin/sh\necho 'HTTP 503: Service Unavailable' >&2\nexit 1\n")
+            gh_script.chmod(0o755)
+
+            proc_a = subprocess.run(
+                ["bash", str(script_path), "--dry-run", "TEST-TASK-001"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(proc_a.returncode, 1)
+            self.assertIn("gh pr list failed", proc_a.stderr)
+            self.assertNotIn("no PR needed", proc_a.stdout)
+
+            # Scenario B: gh returns CLOSED PR (#101) and MERGED PR (#102)
+            gh_script.write_text(
+                '#!/bin/sh\n'
+                'if [ "$1" = "pr" ] && [ "$2" = "list" ]; then\n'
+                '  echo "101"\n  echo "102"\n  exit 0\n'
+                'fi\n'
+                'if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = "101" ]; then\n'
+                '  echo "CLOSED"\n  exit 0\n'
+                'fi\n'
+                'if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = "102" ]; then\n'
+                '  echo "MERGED"\n  exit 0\n'
+                'fi\n'
+                'exit 1\n'
+            )
+            gh_script.chmod(0o755)
+
+            proc_b = subprocess.run(
+                ["bash", str(script_path), "--dry-run", "TEST-TASK-001"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(proc_b.returncode, 0)
+            self.assertIn("PR #102 for task/TEST-TASK-001 is already MERGED", proc_b.stdout)
+
+            # Scenario C: gh returns only CLOSED PR (#101)
+            gh_script.write_text(
+                '#!/bin/sh\n'
+                'if [ "$1" = "pr" ] && [ "$2" = "list" ]; then\n'
+                '  echo "101"\n  exit 0\n'
+                'fi\n'
+                'if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = "101" ]; then\n'
+                '  echo "CLOSED"\n  exit 0\n'
+                'fi\n'
+                'exit 1\n'
+            )
+            gh_script.chmod(0o755)
+
+            proc_c = subprocess.run(
+                ["bash", str(script_path), "--dry-run", "TEST-TASK-001"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(proc_c.returncode, 1)
+            self.assertIn("only CLOSED (unmerged) PRs found", proc_c.stderr)
+
     def test_r5_resolve_task_sha_raises_on_timeout(self) -> None:
         """R5 regression: resolve_task_sha raises RuntimeError on git ls-remote timeout."""
         with (
