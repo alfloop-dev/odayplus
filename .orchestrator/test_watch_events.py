@@ -43,6 +43,8 @@ class WatcherBookkeepingTests(unittest.TestCase):
         self.assertIn("no-progress failure", owner_message)
         self.assertIn("必須做出可稽核的 review 決定", reviewer_message)
         self.assertIn("讓 task 留在 review", reviewer_message)
+        self.assertIn("預期審查分支或 exact submitted head", reviewer_message)
+        self.assertIn("審查工作區為唯讀核對", reviewer_message)
         self.assertIn("immutable finalize dispatch", finalize_message)
         self.assertIn("不可 merge、rebase", finalize_message)
         self.assertIn("PR 尚未 merge 就保持 review_approved", finalize_message)
