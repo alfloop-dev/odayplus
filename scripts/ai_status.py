@@ -6731,7 +6731,14 @@ def review_submission_for_task(
     if not task_id or not pr_number.isdigit():
         raise SystemExit("Review submission requires a task id and numeric PR number")
 
-    if str(task.get("status") or "").strip().lower() == "blocked" or task.get("waiting_for"):
+    task_status_lower = str(task.get("status") or "").strip().lower()
+    # R2: Only block submission when the task is explicitly in blocked status.
+    # The blocker→start workflow resolves blockers and sets status=in_progress
+    # but intentionally retains waiting_for as historical context.  Checking
+    # waiting_for alone would incorrectly reject a valid OPEN submission after
+    # all blockers are resolved.  Actual unresolved human/blocked gates are
+    # caught by the explicit status check and the human_gate checks below.
+    if task_status_lower == "blocked":
         waiting_for = task.get("waiting_for") or "unspecified"
         raise SystemExit(
             f"Cannot submit {task_id} for review: task is currently blocked (waiting for {waiting_for}). "
@@ -6804,7 +6811,13 @@ def review_submission_for_task(
         )
 
     if pr_state == "OPEN":
-        remote_sha = resolve_task_sha(task_id, force_refresh=True)
+        try:
+            remote_sha = resolve_task_sha(task_id, force_refresh=True)
+        except RuntimeError as exc:
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: remote branch lookup failed ({exc}). "
+                "Verify network connectivity and retry."
+            ) from exc
         if not remote_sha:
             raise SystemExit(
                 f"Cannot submit {task_id} for review: origin/{branch} is missing. "
@@ -6960,11 +6973,42 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
     )
 
     if is_same_submission:
+        # R4: Detect first OPEN-to-MERGED transition.  When the existing
+        # submission lacks merged_at but the new one carries it, this is the
+        # first post-merge recovery -- not a repeated submission.  Record
+        # recovery_at / recovery_by with the actual recovery time/actor and
+        # update last_update so audit has a post-merge timestamp.
+        is_first_merged_recovery = (
+            submission.get("merged_at")
+            and not existing_sub.get("merged_at")
+        )
+
         # Stable submission provenance: preserve earlier verified_at and submitted_by
         if "verified_at" in existing_sub:
             submission["verified_at"] = existing_sub["verified_at"]
         if "submitted_by" in existing_sub:
             submission["submitted_by"] = existing_sub["submitted_by"]
+
+        if is_first_merged_recovery:
+            # First OPEN-to-MERGED recovery: record actual recovery time/actor
+            recovery_ts = iso_now()
+            submission["recovery_at"] = recovery_ts
+            submission["recovery_by"] = actor
+            task["review_submission"] = submission
+            task["last_update"] = recovery_ts
+            if message and task.get("next") != message:
+                task["next"] = message
+            append_log(
+                {
+                    "ts": recovery_ts,
+                    "agent": actor,
+                    "type": "merged_recovery",
+                    "task_id": task_id,
+                    "message": f"First OPEN-to-MERGED recovery for PR #{submission['pr_number']}: {message}",
+                    "submission": submission,
+                }
+            )
+            return
 
         current_status = str(task.get("status") or "").lower()
         if current_status == "review_approved" and task.get("approved_head") == submission["remote_sha"]:
@@ -9496,31 +9540,49 @@ def resolve_task_sha(
             timeout=COMMAND_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired:
-        # An incomplete origin response cannot establish a reviewable head.
-        # Replace a warm cache too: a forced refresh must never fall back to a
-        # previously verified SHA after the authoritative read times out.
+        # R5: An incomplete origin response is a transport failure, not a
+        # confirmed branch deletion.  Replace the warm cache to prevent stale
+        # fallback, then raise so callers can distinguish error from absent.
         _TASK_SHA_CACHE[task_id] = (time.time(), None)
-        return None
+        raise RuntimeError(
+            f"git ls-remote timed out after {COMMAND_TIMEOUT_SECONDS}s for {task_id}; "
+            "remote branch state is unverifiable"
+        ) from None
     matches: list[str] = []
-    if result.returncode == 0:
-        for line in result.stdout.splitlines():
-            fields = line.split()
-            if (
-                len(fields) == 2
-                and fields[1] in remote_refs
-                and (
-                    re.fullmatch(r"[0-9a-fA-F]{40}", fields[0])
-                    or re.fullmatch(r"[0-9a-fA-F]{64}", fields[0])
-                )
-            ):
-                matches.append(fields[0])
+    if result.returncode != 0:
+        # R5: A nonzero exit from git ls-remote (network failure, auth error,
+        # etc.) is a transport failure, not a confirmed branch absence.
+        _TASK_SHA_CACHE[task_id] = (time.time(), None)
+        raise RuntimeError(
+            f"git ls-remote failed with exit code {result.returncode} for {task_id}; "
+            "remote branch state is unverifiable"
+        )
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if (
+            len(fields) == 2
+            and fields[1] in remote_refs
+            and (
+                re.fullmatch(r"[0-9a-fA-F]{40}", fields[0])
+                or re.fullmatch(r"[0-9a-fA-F]{64}", fields[0])
+            )
+        ):
+            matches.append(fields[0])
     # Fail closed unless origin returns exactly one valid canonical task ref.
     # Local HEAD, local task refs, cached origin refs, and old PR heads are not
     # authoritative active-task review/freeze evidence.
-    if result.returncode == 0 and len(matches) == 1:
+    if len(matches) == 1:
         _TASK_SHA_CACHE[task_id] = (now, matches[0])
         return matches[0]
+    if len(matches) > 1:
+        # R5: Ambiguous refs are not a confirmed absence either.
+        _TASK_SHA_CACHE[task_id] = (now, None)
+        raise RuntimeError(
+            f"git ls-remote returned {len(matches)} matching refs for {task_id}; "
+            "remote branch state is ambiguous"
+        )
 
+    # Confirmed absent: git ls-remote succeeded (rc=0) but found no matching refs.
     _TASK_SHA_CACHE[task_id] = (now, None)
     return None
 
@@ -9550,7 +9612,10 @@ def resolve_task_checkout_sha(
     if not task_id:
         return None
 
-    remote_sha = resolve_task_sha(task_id, force_refresh=force_refresh)
+    try:
+        remote_sha = resolve_task_sha(task_id, force_refresh=force_refresh)
+    except RuntimeError:
+        remote_sha = None
     if remote_sha:
         return remote_sha
 
@@ -9688,7 +9753,10 @@ def task_repository_slug_safe(task: dict[str, Any]) -> str:
 
 def task_review_status_payload(task: dict[str, Any], state_status: str) -> dict[str, str] | None:
     task_id = str(task.get("id") or "")
-    sha = resolve_task_sha(task_id)
+    try:
+        sha = resolve_task_sha(task_id)
+    except RuntimeError:
+        return None
     if not sha:
         return None
 
@@ -9964,7 +10032,10 @@ def review_gate_head_drifted(task: dict[str, Any]) -> bool:
         # sync for the second, so stay quiet and let the transition drive it.
         return False
 
-    current = resolve_task_sha(task_id)
+    try:
+        current = resolve_task_sha(task_id)
+    except RuntimeError:
+        return False
     return bool(current) and current != last
 
 

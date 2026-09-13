@@ -120,36 +120,58 @@ if git merge-base --is-ancestor HEAD "$BASE_REF" 2>/dev/null; then
   echo "task_finalize: HEAD is already an ancestor of $BASE_REF -- checking PR status."
   PR_NUMBER=""
   if [ -n "$GH" ] && command -v "$GH" >/dev/null 2>&1; then
-    PR_NUMBER="$("$GH" pr list --head "$BRANCH" --base "$BASE_BRANCH" --state all \
-      --json number --jq '.[0].number // empty' 2>/dev/null || true)"
-    if [ -z "$PR_NUMBER" ]; then
+    # R3: Iterate all PRs for this head/base pair and find the MERGED one.
+    # GitHub lists PRs newest-first; a newer CLOSED unmerged PR would mask
+    # a valid older MERGED PR if we only inspected .[0].
+    ALL_PR_NUMBERS="$("$GH" pr list --head "$BRANCH" --base "$BASE_BRANCH" --state all \
+      --json number --jq '.[].number' 2>/dev/null || true)"
+    FOUND_CLOSED=0
+    for CANDIDATE_PR in $ALL_PR_NUMBERS; do
+      CANDIDATE_STATE="$("$GH" pr view "$CANDIDATE_PR" --json state --jq '.state' 2>/dev/null || true)"
+      if [ "$CANDIDATE_STATE" = "MERGED" ]; then
+        PR_NUMBER="$CANDIDATE_PR"
+        break
+      fi
+      if [ "$CANDIDATE_STATE" = "CLOSED" ]; then
+        FOUND_CLOSED=1
+      fi
+    done
+    if [ -z "$PR_NUMBER" ] && [ -z "$ALL_PR_NUMBERS" ]; then
       PR_NUMBER="$("$GH" pr view "$BRANCH" --json number --jq '.number // empty' 2>/dev/null || true)"
+      if [ -n "$PR_NUMBER" ]; then
+        CANDIDATE_STATE="$("$GH" pr view "$PR_NUMBER" --json state --jq '.state' 2>/dev/null || true)"
+        if [ "$CANDIDATE_STATE" != "MERGED" ]; then
+          PR_NUMBER=""
+        fi
+      fi
     fi
   fi
   if [ -n "$PR_NUMBER" ]; then
-    PR_STATE="$("$GH" pr view "$PR_NUMBER" --json state --jq '.state' 2>/dev/null || true)"
     PR_URL="$("$GH" pr view "$PR_NUMBER" --json url --jq '.url' 2>/dev/null || true)"
-    if [ "$PR_STATE" = "MERGED" ]; then
-      echo "task_finalize: PR #$PR_NUMBER for $BRANCH is already MERGED into $BASE_BRANCH"
-      if [ "$DRY_RUN" -eq 1 ]; then
-        echo "dry-run: would record review submission for merged PR #$PR_NUMBER"
-        echo "task_finalize: dry-run complete"
-        exit 0
-      fi
-      if [ "$STATUS_SUBMIT" -eq 1 ]; then
-        if [ -z "${AI_NAME:-}" ]; then
-          echo "task_finalize: PR exists but review was NOT recorded: AI_NAME is required for the atomic status submission." >&2
-          echo "task_finalize: re-run with AI_NAME=<task-owner>, or use --no-status-submit only for untracked housekeeping PRs." >&2
-          exit 1
-        fi
-        AI_NAME="$AI_NAME" "${PANTHEON_STATUS_ROOT:-$ROOT}/scripts/ai-status.sh" submit_review "$TASK_ID" "$PR_NUMBER" \
-          "Remote PR #$PR_NUMBER is merged into $BASE_BRANCH: ${PR_URL:-GitHub URL unavailable}"
-        echo "task_finalize: review submission recorded atomically for $TASK_ID"
-      fi
-      echo "task_finalize: awaiting reviewer approval; once approved, close the task out with:"
-      echo "  AI_NAME=<Owner> ./scripts/ai-status.sh done \"$TASK_ID\" \"<checkpoint>\""
+    echo "task_finalize: PR #$PR_NUMBER for $BRANCH is already MERGED into $BASE_BRANCH"
+    if [ "$DRY_RUN" -eq 1 ]; then
+      echo "dry-run: would record review submission for merged PR #$PR_NUMBER"
+      echo "task_finalize: dry-run complete"
       exit 0
     fi
+    if [ "$STATUS_SUBMIT" -eq 1 ]; then
+      if [ -z "${AI_NAME:-}" ]; then
+        echo "task_finalize: PR exists but review was NOT recorded: AI_NAME is required for the atomic status submission." >&2
+        echo "task_finalize: re-run with AI_NAME=<task-owner>, or use --no-status-submit only for untracked housekeeping PRs." >&2
+        exit 1
+      fi
+      AI_NAME="$AI_NAME" "${PANTHEON_STATUS_ROOT:-$ROOT}/scripts/ai-status.sh" submit_review "$TASK_ID" "$PR_NUMBER" \
+        "Remote PR #$PR_NUMBER is merged into $BASE_BRANCH: ${PR_URL:-GitHub URL unavailable}"
+      echo "task_finalize: review submission recorded atomically for $TASK_ID"
+    fi
+    echo "task_finalize: awaiting reviewer approval; once approved, close the task out with:"
+    echo "  AI_NAME=<Owner> ./scripts/ai-status.sh done \"$TASK_ID\" \"<checkpoint>\""
+    exit 0
+  fi
+  if [ "$FOUND_CLOSED" -eq 1 ] 2>/dev/null; then
+    echo "task_finalize: HEAD is an ancestor of $BASE_REF but only CLOSED (unmerged) PRs found for $BRANCH." >&2
+    echo "task_finalize: the valid MERGED PR could not be discovered. Check GitHub for the correct PR number." >&2
+    exit 1
   fi
   echo "task_finalize: HEAD is already an ancestor of $BASE_REF -- the work has landed."
   echo "task_finalize: no PR needed. Close the task out with:"

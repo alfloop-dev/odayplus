@@ -997,18 +997,37 @@ def _refresh_reused_worker_worktree(
             review_contains_rc, _ = _git_output(
                 worktree_path, "merge-base", "--is-ancestor", local_head, expected_head
             )
-            if review_contains_rc != 0:
-                return False, f"review_head_mismatch: local={local_head}, expected={expected_head}"
-            merge_proc = subprocess.run(
-                ["git", "merge", "--ff-only", expected_head],
-                cwd=worktree_path,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if merge_proc.returncode != 0:
-                details = (merge_proc.stderr or merge_proc.stdout or "").strip().splitlines()
-                return False, f"review_head_fast_forward_failed: {details[0] if details else 'unknown'}"
+            if review_contains_rc == 0:
+                # local_head is an ancestor of expected_head: fast-forward to it.
+                merge_proc = subprocess.run(
+                    ["git", "merge", "--ff-only", expected_head],
+                    cwd=worktree_path,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if merge_proc.returncode != 0:
+                    details = (merge_proc.stderr or merge_proc.stdout or "").strip().splitlines()
+                    return False, f"review_head_fast_forward_failed: {details[0] if details else 'unknown'}"
+            else:
+                # R1: Check if expected_head is an ancestor of local_head (workspace
+                # advanced past submitted source, e.g. post-merge dev fast-forward).
+                # The reviewer needs the exact submitted source, so checkout to it.
+                reverse_rc, _ = _git_output(
+                    worktree_path, "merge-base", "--is-ancestor", expected_head, local_head
+                )
+                if reverse_rc != 0:
+                    return False, f"review_head_mismatch: local={local_head}, expected={expected_head}"
+                checkout_proc = subprocess.run(
+                    ["git", "checkout", expected_head],
+                    cwd=worktree_path,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if checkout_proc.returncode != 0:
+                    details = (checkout_proc.stderr or checkout_proc.stdout or "").strip().splitlines()
+                    return False, f"review_head_checkout_failed: {details[0] if details else 'unknown'}"
             local_head = _git_commit_oid(worktree_path, "HEAD")
             if local_head != expected_head:
                 return False, "review_head_fast_forward_incomplete"
@@ -1165,6 +1184,19 @@ def seal_worker_handoff(
     submission = task.get("review_submission") if isinstance(task, dict) else None
     expected_head = str(submission.get("remote_sha") or "") if isinstance(submission, dict) else ""
     if str((task or {}).get("status") or "").lower() == "review" and expected_head and head_sha != expected_head:
+        # R1: For merged review submissions, the owner workspace was fast-forwarded
+        # to dev/merge SHA. The submitted source is immutable and already landed.
+        # Accept if the submitted source is an ancestor of the workspace HEAD.
+        is_merged_submission = (
+            isinstance(submission, dict)
+            and (submission.get("merged_at") or submission.get("merge_commit"))
+        )
+        if is_merged_submission:
+            ancestor_rc, _ = _git_output(
+                workspace_path, "merge-base", "--is-ancestor", expected_head, head_sha
+            )
+            if ancestor_rc == 0:
+                return WorkerHandoffSeal(True, inspection.kind, inspection.detail, head_sha, inspection.fingerprint)
         return WorkerHandoffSeal(
             False,
             "review_head_mismatch",

@@ -1046,6 +1046,196 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(pending[0]["to"], "Codex")
         self.assertEqual(len(self.state["handoffs"]), 2)
 
+    def test_r2_resolved_blocker_does_not_prevent_open_submission(self) -> None:
+        """R2 regression: blocker→start retains waiting_for but must not block valid OPEN submit."""
+        source_sha = "1111111122222222333333334444444455555555"
+        task = self.state["tasks"][0]
+        # Simulate blocker→start sequence: status=in_progress, waiting_for retained
+        task["status"] = "in_progress"
+        task["waiting_for"] = "Human/Ops"
+        # Blockers are resolved in state
+        self.state.setdefault("blockers", []).append({
+            "task_id": "REG-002",
+            "status": "resolved",
+            "resolved_at": "2026-09-13T06:00:00Z",
+        })
+        pr_open = {
+            "number": 1305,
+            "state": "OPEN",
+            "url": "https://github.com/example/repo/pull/1305",
+            "headRefName": "task/REG-002",
+            "headRefOid": source_sha,
+            "baseRefName": "dev",
+            "isDraft": False,
+        }
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+            mock.patch.object(ai_status, "task_repository_id", return_value="pantheon"),
+            mock.patch.object(ai_status, "repository_local_path", return_value=ai_status.ROOT),
+            mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
+            mock.patch.object(ai_status, "run_gh_json_command", return_value=pr_open),
+            mock.patch.object(ai_status, "resolve_task_sha", return_value=source_sha),
+            mock.patch.object(ai_status, "validate_delivery_identity", return_value=[]),
+        ):
+            # Must not raise "currently blocked" despite waiting_for being present
+            ai_status.command_submit_review(self.state, ["REG-002", "1305", "Submit after resolved blocker"])
+
+        self.assertEqual(task["status"], "review")
+        self.assertEqual(task["review_submission"]["pr_number"], 1305)
+
+    def test_r2_explicitly_blocked_still_prevents_submission(self) -> None:
+        """R2 regression: a task in explicit 'blocked' status must still be rejected."""
+        task = self.state["tasks"][0]
+        task["status"] = "blocked"
+        task["waiting_for"] = "Human/Ops"
+        with self.assertRaisesRegex(SystemExit, r"task is currently blocked"):
+            ai_status.review_submission_for_task(task, "1305")
+
+    def test_r4_first_open_to_merged_recovery_records_audit_time(self) -> None:
+        """R4 regression: first OPEN-to-MERGED recovery records recovery_at/recovery_by and emits audit."""
+        self.state["handoffs"] = []
+        source_sha = "1111111122222222333333334444444455555555"
+        merge_commit = "9999999988888888777777776666666655555555"
+        task = self.state["tasks"][0]
+
+        # 1. Initial OPEN submission
+        pr_open = {
+            "number": 1305,
+            "state": "OPEN",
+            "url": "https://github.com/example/repo/pull/1305",
+            "headRefName": "task/REG-002",
+            "headRefOid": source_sha,
+            "baseRefName": "dev",
+            "isDraft": False,
+        }
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+            mock.patch.object(ai_status, "task_repository_id", return_value="pantheon"),
+            mock.patch.object(ai_status, "repository_local_path", return_value=ai_status.ROOT),
+            mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
+            mock.patch.object(ai_status, "run_gh_json_command", return_value=pr_open),
+            mock.patch.object(ai_status, "resolve_task_sha", return_value=source_sha),
+            mock.patch.object(ai_status, "validate_delivery_identity", return_value=[]),
+        ):
+            ai_status.command_submit_review(self.state, ["REG-002", "1305", "Initial OPEN submission"])
+
+        initial_verified_at = task["review_submission"]["verified_at"]
+        self.assertNotIn("merged_at", task["review_submission"])
+        self.assertNotIn("recovery_at", task["review_submission"])
+
+        # 2. Same PR now MERGED → first recovery
+        pr_merged = {
+            "number": 1305,
+            "state": "MERGED",
+            "url": "https://github.com/example/repo/pull/1305",
+            "headRefName": "task/REG-002",
+            "headRefOid": source_sha,
+            "baseRefName": "dev",
+            "isDraft": False,
+            "mergedAt": "2026-09-13T06:53:45Z",
+            "mergeCommit": {"oid": merge_commit},
+            "statusCheckRollup": [
+                {"__typename": "CheckRun", "name": "product", "status": "COMPLETED", "conclusion": "SUCCESS"},
+            ],
+        }
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+            mock.patch.object(ai_status, "task_repository_id", return_value="pantheon"),
+            mock.patch.object(ai_status, "repository_local_path", return_value=ai_status.ROOT),
+            mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
+            mock.patch.object(ai_status, "run_gh_json_command", return_value=pr_merged),
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=True),
+            mock.patch.object(ai_status, "validate_delivery_identity", return_value=[]),
+        ):
+            ai_status.command_submit_review(self.state, ["REG-002", "1305", "Merged recovery"])
+
+        sub = task["review_submission"]
+        # Original verified_at and submitted_by preserved
+        self.assertEqual(sub["verified_at"], initial_verified_at)
+        self.assertEqual(sub["submitted_by"], "Codex")
+        # Recovery time and actor recorded separately
+        self.assertIn("recovery_at", sub)
+        self.assertIn("recovery_by", sub)
+        self.assertEqual(sub["recovery_by"], "Codex")
+        # recovery_at is a valid ISO timestamp (may equal verified_at in fast tests)
+        self.assertTrue(sub["recovery_at"])
+        # Merged provenance recorded
+        self.assertEqual(sub["merged_at"], "2026-09-13T06:53:45Z")
+        self.assertEqual(sub["merge_commit"], merge_commit)
+        # last_update advanced past initial
+        # last_update was set during recovery (may match initial in sub-second execution)
+        self.assertTrue(task["last_update"])
+
+    def test_r5_resolve_task_sha_raises_on_timeout(self) -> None:
+        """R5 regression: resolve_task_sha raises RuntimeError on git ls-remote timeout."""
+        with (
+            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+            mock.patch.object(ai_status, "load_state", return_value={"tasks": []}),
+            mock.patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="git", timeout=30)),
+        ):
+            with self.assertRaises(RuntimeError):
+                ai_status.resolve_task_sha("REG-002", force_refresh=True)
+
+    def test_r5_resolve_task_sha_raises_on_nonzero_exit(self) -> None:
+        """R5 regression: resolve_task_sha raises RuntimeError on git ls-remote nonzero exit."""
+        mock_result = mock.Mock()
+        mock_result.returncode = 128
+        mock_result.stdout = ""
+        with (
+            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+            mock.patch.object(ai_status, "load_state", return_value={"tasks": []}),
+            mock.patch("subprocess.run", return_value=mock_result),
+        ):
+            with self.assertRaises(RuntimeError):
+                ai_status.resolve_task_sha("REG-002", force_refresh=True)
+
+    def test_r5_resolve_task_sha_returns_none_on_confirmed_absence(self) -> None:
+        """R5 regression: resolve_task_sha returns None when git ls-remote succeeds but finds no refs."""
+        mock_result = mock.Mock()
+        mock_result.returncode = 0
+        mock_result.stdout = ""
+        with (
+            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+            mock.patch.object(ai_status, "load_state", return_value={"tasks": []}),
+            mock.patch("subprocess.run", return_value=mock_result),
+        ):
+            result = ai_status.resolve_task_sha("REG-002", force_refresh=True)
+            self.assertIsNone(result)
+
+    def test_r5_command_approve_rejects_merged_pr_on_transport_failure(self) -> None:
+        """R5 regression: command_approve fails closed when remote lookup fails, even for merged submissions."""
+        source_sha = "1111111122222222333333334444444455555555"
+        merge_commit = "9999999988888888777777776666666655555555"
+        task = self.state["tasks"][0]
+        task["status"] = "review"
+        task["review_submission"] = {
+            "pr_number": 1305,
+            "pr_url": "https://github.com/example/repo/pull/1305",
+            "branch": "task/REG-002",
+            "remote_sha": source_sha,
+            "base_branch": "dev",
+            "verified_at": "2026-09-13T06:53:45Z",
+            "merged_at": "2026-09-13T06:53:45Z",
+            "merge_commit": merge_commit,
+            "ci_status": "success",
+        }
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
+            mock.patch.object(
+                ai_status, "resolve_task_sha",
+                side_effect=RuntimeError("git ls-remote failed with exit code 128")
+            ),
+            mock.patch.object(ai_status, "task_pr_ci_status", return_value=("MERGED", "success")),
+        ):
+            with self.assertRaisesRegex(SystemExit, r"unable to resolve the branch HEAD to freeze"):
+                ai_status.command_approve(self.state, ["REG-002", "LGTM"])
+
+        # Task must NOT have been approved
+        self.assertNotEqual(task["status"], "review_approved")
+
     def test_reviewer_reopen_creates_handoff_back_to_owner(self) -> None:
         self.state["tasks"][0]["status"] = "review"
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
