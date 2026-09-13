@@ -1,7 +1,7 @@
 # E01–E16 來源索引與交付驗證報告
 
 任務：`DPF-SOURCE-SA-SD-BASELINE-001`
-驗證時間：2026-09-13T15:43Z
+驗證時間：2026-09-13T16:23Z
 基準 Commit：`alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb`
 稽核輸入 Commit：`alfloop-dev/odayplus@cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1`
 
@@ -33,9 +33,9 @@
 本任務 `DPF-SOURCE-SA-SD-BASELINE-001` 在 `alfloop-dev/odayplus` 執行工作樹與變更核驗：
 
 - **驗證命令**：`git diff --check origin/dev...HEAD`
-- **Base SHA**：`9f25eca6a0d204a21e6c260bd8484c8bd28c6c10`（`origin/dev`）
+- **Base SHA**：`8beb382949f05b36d2f94353827ab20fbe24e46d`（`origin/dev`）
 - **實測退出碼**：`0`
-- **實測耗時**：`0.009s`
+- **實測耗時**：`0.012s`
 - **標準輸出**：無空格／衝突標記違規（乾淨通過）
 - **選擇範圍**：7 份 owned baseline 設計與收據文件
   - `docs/architecture/external-source-ingestion/README.md`
@@ -45,6 +45,7 @@
   - `docs/architecture/external-source-ingestion/TASK_DEDUP_REPORT.md`
   - `docs/architecture/external-source-ingestion/VERIFICATION_PLAN_AMENDMENT.md`
   - `docs/evidence/completion/DPF-SOURCE-SA-SD-BASELINE-001/baseline-reconciliation-receipt.json`
+- **版本關聯說明**：本分支由 dev 建立，歷經 base advance 合併 `origin/dev`（`8beb382949f0`），並依 Codex2 審查意見修訂 7 份 owned 文件與 canonical assign 收據，驗證確保交付物無語法或格式違規。
 
 ## 跨 Repository 引用與基線關係說明
 

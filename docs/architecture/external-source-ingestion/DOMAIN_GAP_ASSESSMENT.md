@@ -117,12 +117,12 @@
 | NORMALIZED_VERIFIED | — | — | — | — | — | 歷史局部 probe (31筆) | — | — | — | — |
 | RETAINED_IN_CLOUD | 未查證 | 未查證 | 未查證 | 未查證 | 未查證 | 未查證 | 未查證 | 未查證 | 未查證 | 未查證 |
 | RELEASE_ELIGIBLE | 待八域 | 待八域 | 待八域 | 待八域 | 待八域 | 待八域 | 待八域 | 待八域 | 待八域 | 待八域 |
-| ACTIVATED | 關閉 | 關閉 | 關閉 | 關閉 | 關閉 | 關閉 | 關閉 | 關閉 | 關閉 | 關閉 |
+| ACTIVATED | 未查證（政策要求 default-deny 關閉） | 未查證（政策要求 default-deny 關閉） | 未查證（政策要求 default-deny 關閉） | 未查證（政策要求 default-deny 關閉） | 未查證（政策要求 default-deny 關閉） | 未查證（政策要求 default-deny 關閉） | 未查證（政策要求 default-deny 關閉） | 未查證（政策要求 default-deny 關閉） | 未查證（政策要求 default-deny 關閉） | 未查證（政策要求 default-deny 關閉） |
 
 **核對結論**：
 1. **歷史局部 probe 證據承接**：MOF 100 筆與 RIS 31 筆在根調查（`cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1`）已完成 raw bytes 落地與 SHA-256 讀回核對，RIS 已完成 normalized 解析（零隔離）。這些屬於歷史局部驗證證據，由 `DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001` 正式接手整合為主線程式碼。
 2. **雲端留存（RETAINED_IN_CLOUD）狀態定位**：本次本機調查與設計基線納管未對雲端物件進行讀回核對，狀態標示為 `未查證`（`unknown_not_verified`）。未讀回代表本機調查範圍尚未包含該層級驗證，不代表雲端留存證明不存在；後續由 `DPF-ACQUISITION-RETENTION-BRIDGE-001` 等下游任務建立精確的 readback 驗證收據。
-3. **發布與啟用條件**：`RELEASE_ELIGIBLE` 需待八域受治理 raw 留存齊備後由 PR #63 生成 artifact；`ACTIVATED` 在全系統維持 sources-off / default-deny 關閉狀態，待技術稽核（PR #1312）與法務核准（`HUMAN-OSS-LEGAL-APPROVAL-001`）後方可啟用。
+3. **發布與啟用條件**：`RELEASE_ELIGIBLE` 需待八域受治理 raw 留存齊備後由 PR #63 生成 artifact；實際部署之 `ACTIVATED` 啟用狀態在本次本機調查中未進行全系統 runtime readback，標示為 `未查證`（政策規範維持 sources-off / default-deny 關閉要求）。正式啟用依賴技術稽核（PR #1312）與法務核准（`HUMAN-OSS-LEGAL-APPROVAL-001`）後方可執行。
 
 ## auth/terms 條件摘要
 

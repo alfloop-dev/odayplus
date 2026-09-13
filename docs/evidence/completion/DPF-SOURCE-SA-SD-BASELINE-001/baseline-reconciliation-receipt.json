@@ -1,11 +1,11 @@
 {
   "task_id": "DPF-SOURCE-SA-SD-BASELINE-001",
   "title": "納入外部來源調查與 SA／SD 設計基線",
-  "owner": "Antigravity2",
+  "owner": "Antigravity",
   "reviewer": "Codex2",
   "phase": "SA/SD execution plan 2026-09-13",
   "repository": "alfloop-dev/odayplus",
-  "completed_at": "2026-09-13T15:43:30Z",
+  "completed_at": "2026-09-13T16:24:00Z",
   "status": "ready_for_review",
   "publication_authorized": true,
   "publication_destination": "alfloop-dev/odayplus",
@@ -22,11 +22,14 @@
 
   "verification_execution_receipt": {
     "command": "git diff --check origin/dev...HEAD",
-    "base_sha": "9f25eca6a0d204a21e6c260bd8484c8bd28c6c10",
+    "base_sha": "8beb382949f05b36d2f94353827ab20fbe24e46d",
+    "measured_head_sha": "8cc73bc69ee821e43a3b1030bc9ce71c46f32fa9",
+    "measured_tree_sha": "f26ed4b02005a161e3f520da447e2d008bf995eb",
     "exit_code": 0,
-    "duration_seconds": 0.009,
+    "duration_seconds": 0.012,
     "test_selection": "docs/architecture/external-source-ingestion/*, docs/evidence/completion/DPF-SOURCE-SA-SD-BASELINE-001/*",
-    "status": "PASS"
+    "status": "PASS",
+    "commit_ancestry_note": "Task branch task/DPF-SOURCE-SA-SD-BASELINE-001 composed with origin/dev (8beb382949f0), reconciled all Codex2 review findings, and verified with zero diff violations."
   },
 
   "traceability": {
@@ -70,7 +73,7 @@
     },
     "retained_in_cloud_status": "unknown_not_verified_in_investigation",
     "release_eligible_status": "pending_eight_domain_retention",
-    "activation_status": "sources_off_default_deny",
+    "activation_status": "unknown_runtime_not_readback_policy_default_deny",
     "assessment_notes": "Historical bounded probe evidence (MOF 100 / RIS 31) inherited from audit cae4dd7e; absence of local cloud readback indicates verification pending at that layer, not that cloud retention proofs do not exist"
   },
 
@@ -104,61 +107,68 @@
       "owner": "Antigravity",
       "reviewer": "Codex2",
       "exit_code": 0,
-      "previous_last_update": "2026-09-13T14:56:50Z",
-      "updated_last_update": "2026-09-13T15:42:15Z"
+      "previous_last_update": "2026-09-13T15:42:15Z",
+      "updated_last_update": "2026-09-13T16:22:36Z",
+      "operation_summary": "TASK_METADATA_JSON='{\"verification\":[...]}' ai-status.sh assign DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001 Antigravity Codex2 ..."
     },
     {
       "task_id": "DPF-OFFICIAL-SOURCE-ENDPOINT-INTEGRATION-001",
       "owner": "Antigravity3",
       "reviewer": "Codex2",
       "exit_code": 0,
-      "previous_last_update": "2026-09-13T14:56:55Z",
-      "updated_last_update": "2026-09-13T15:42:27Z"
+      "previous_last_update": "2026-09-13T15:42:26Z",
+      "updated_last_update": "2026-09-13T16:22:38Z",
+      "operation_summary": "TASK_METADATA_JSON='{\"verification\":[...]}' ai-status.sh assign DPF-OFFICIAL-SOURCE-ENDPOINT-INTEGRATION-001 Antigravity3 Codex2 ..."
     },
     {
       "task_id": "DPF-TRANSPORT-POI-RELEASE-INTEGRATION-001",
       "owner": "Antigravity4",
       "reviewer": "Codex2",
       "exit_code": 0,
-      "previous_last_update": "2026-09-13T14:57:05Z",
-      "updated_last_update": "2026-09-13T15:42:29Z"
+      "previous_last_update": "2026-09-13T15:42:28Z",
+      "updated_last_update": "2026-09-13T16:22:41Z",
+      "operation_summary": "TASK_METADATA_JSON='{\"verification\":[...]}' ai-status.sh assign DPF-TRANSPORT-POI-RELEASE-INTEGRATION-001 Antigravity4 Codex2 ..."
     },
     {
       "task_id": "DPF-LISTING-PRODUCTION-ASSET-INTEGRATION-001",
       "owner": "Antigravity5",
       "reviewer": "Codex2",
       "exit_code": 0,
-      "previous_last_update": "2026-09-13T14:57:11Z",
-      "updated_last_update": "2026-09-13T15:42:31Z"
+      "previous_last_update": "2026-09-13T15:42:31Z",
+      "updated_last_update": "2026-09-13T16:22:44Z",
+      "operation_summary": "TASK_METADATA_JSON='{\"verification\":[...]}' ai-status.sh assign DPF-LISTING-PRODUCTION-ASSET-INTEGRATION-001 Antigravity5 Codex2 ..."
     },
     {
       "task_id": "DPF-MOBILITY-PRODUCTION-ASSET-INTEGRATION-001",
       "owner": "Antigravity6",
       "reviewer": "Codex2",
       "exit_code": 0,
-      "previous_last_update": "2026-09-13T14:57:16Z",
-      "updated_last_update": "2026-09-13T15:42:33Z"
+      "previous_last_update": "2026-09-13T15:42:33Z",
+      "updated_last_update": "2026-09-13T16:22:46Z",
+      "operation_summary": "TASK_METADATA_JSON='{\"verification\":[...]}' ai-status.sh assign DPF-MOBILITY-PRODUCTION-ASSET-INTEGRATION-001 Antigravity6 Codex2 ..."
     },
     {
       "task_id": "DPF-ACQUISITION-RETENTION-BRIDGE-001",
       "owner": "Antigravity7",
       "reviewer": "Codex2",
       "exit_code": 0,
-      "previous_last_update": "2026-09-13T14:57:21Z",
-      "updated_last_update": "2026-09-13T15:42:35Z"
+      "previous_last_update": "2026-09-13T15:42:35Z",
+      "updated_last_update": "2026-09-13T16:22:49Z",
+      "operation_summary": "TASK_METADATA_JSON='{\"verification\":[...]}' ai-status.sh assign DPF-ACQUISITION-RETENTION-BRIDGE-001 Antigravity7 Codex2 ..."
     },
     {
       "task_id": "DPF-SITE-CONTEXT-REAL-COMPONENTS-001",
       "owner": "Antigravity2",
       "reviewer": "Codex2",
       "exit_code": 0,
-      "previous_last_update": "2026-09-13T14:57:26Z",
-      "updated_last_update": "2026-09-13T15:42:38Z"
+      "previous_last_update": "2026-09-13T15:42:38Z",
+      "updated_last_update": "2026-09-13T16:22:51Z",
+      "operation_summary": "TASK_METADATA_JSON='{\"verification\":[...]}' ai-status.sh assign DPF-SITE-CONTEXT-REAL-COMPONENTS-001 Antigravity2 Codex2 ..."
     }
   ],
 
   "verification_amendment": {
-    "circular_dependency_analysis": "Resolved. Structural dependencies (PR #63 sources-off materializer, PR #1312 technical audit) separated from Legal Gate (HUMAN-OSS-LEGAL-APPROVAL-001) and subsequent activation (XR-SOURCE-APPROVAL-ACTIVATION-001).",
+    "circular_dependency_analysis": "Resolved. Structural dependencies (PR #63 sources-off materializer, PR #1312 technical audit) separated from Legal Gate (HUMAN-OSS-LEGAL-APPROVAL-001) and subsequent activation (XR-SOURCE-APPROVAL-ACTIVATION-001). Offline/governed snapshot comparison separated from live production dual-run.",
     "downstream_verification_plan_reconciled": true,
     "not_executed_gaps_annotated": true,
     "canonical_assign_metadata_synced": true,

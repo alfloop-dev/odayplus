@@ -18,7 +18,7 @@
 
 | # | Task ID | 類型 | Owner | Reviewer | depends_on |
 |---|---|---|---|---|---|
-| 1 | `DPF-SOURCE-SA-SD-BASELINE-001` | 新增 | Antigravity2 | Codex2 | 無 |
+| 1 | `DPF-SOURCE-SA-SD-BASELINE-001` | 新增 | Antigravity | Codex2 | 無 |
 | 2 | `DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001` | 沿用改派 | Antigravity | Codex2 | [1] |
 | 3 | `DPF-OFFICIAL-SOURCE-ENDPOINT-INTEGRATION-001` | 新增 | Antigravity3 | Codex2 | [2] |
 | 4 | `DPF-TRANSPORT-POI-RELEASE-INTEGRATION-001` | 新增 | Antigravity4 | Codex2 | [2] |
