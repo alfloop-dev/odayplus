@@ -1,0 +1,26 @@
+{
+  "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-orch-quota-recovery-state-001",
+  "head_sha": "10e20f8ae74fe5d31696ff67a6b033754ead8b7d",
+  "tracked_diff_sha256": "c85d0e2360502240e083d777f15837cc978421636fde3314643d11a752d78ffa",
+  "argv": [
+    ".venv/bin/python",
+    "-m",
+    "pytest",
+    "-o",
+    "addopts=",
+    "-q",
+    "--tb=short",
+    "--junitxml=/home/lupin/odayplus/support/handoffs/four-pr-continuation-20260911/1305-epoch10-full.xml",
+    "-m",
+    "not requires_live_env",
+    ".orchestrator",
+    "delivery_toolchain",
+    "scripts",
+    "tests/tooling",
+    "infra"
+  ],
+  "started_at": "2026-09-13T00:29:23.787058+00:00",
+  "duration_seconds": 421.2645111909951,
+  "exit_code": 1,
+  "output": "1305-epoch10-full.log"
+}

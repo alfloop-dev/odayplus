@@ -7,7 +7,7 @@ import os
 import tempfile
 from contextlib import contextmanager
 from copy import deepcopy
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +20,7 @@ from common import (
     load_jsonl,
     new_runtime_id,
     normalize_agent_id,
+    parse_iso_timestamp,
     summarize_failure_reason,
     utc_now,
     write_json,
@@ -592,6 +593,26 @@ def _merge_queue_record(disk_event: dict[str, Any], mem_event: dict[str, Any]) -
     return merged
 
 
+def provider_failure_identity(entry: dict[str, Any]) -> dict[str, Any]:
+    return {key: entry.get(key) for key in (
+        "paused_at", "worker_run_id", "auth_identity_hash", "failure_epoch"
+    )}
+
+
+def provider_failure_epoch(entry: dict[str, Any] | None) -> int:
+    """Comparable failure clock; legacy pauses retain their timestamp ordering."""
+    if not isinstance(entry, dict):
+        return 0
+    epoch = entry.get("failure_epoch")
+    if isinstance(epoch, int) and not isinstance(epoch, bool) and epoch > 0:
+        return epoch
+    observed = parse_iso_timestamp(str(entry.get("paused_at") or ""))
+    if observed is None:
+        return 0
+    delta = observed.astimezone(UTC) - datetime(1970, 1, 1, tzinfo=UTC)
+    return (delta.days * 86400 + delta.seconds) * 1_000_000 + delta.microseconds
+
+
 def _is_pause_entry_cleared(
     clearance: dict[str, Any] | None, pause_entry: dict[str, Any]
 ) -> bool:
@@ -613,6 +634,28 @@ def _is_pause_entry_cleared(
 
     # Check auth identity match if both present
     if c_auth and p_auth and c_auth != p_auth:
+        return False
+
+    # A newer observation records the exact predecessor it replaced, including
+    # legacy records without a logical clock. Clearing it also retires those
+    # known predecessors, so their stale snapshots cannot resurrect a pause.
+    predecessors = clearance.get("failure_predecessors")
+    if isinstance(predecessors, list):
+        identity = {key: pause_entry.get(key) for key in (
+            "paused_at", "worker_run_id", "auth_identity_hash", "failure_epoch"
+        )}
+        if identity in predecessors:
+            return True
+
+    # Modern producers carry a durable, subsecond logical failure clock.
+    # An older targeted clear cannot retire a later incident, even if the wall
+    # clock moved backward. Legacy records retain their existing matching rules.
+    c_epoch = clearance.get("failure_epoch")
+    p_epoch = pause_entry.get("failure_epoch")
+    if isinstance(c_epoch, int) and isinstance(p_epoch, int):
+        if p_epoch != c_epoch:
+            return p_epoch < c_epoch
+    elif isinstance(p_epoch, int) and c_run and p_run and c_run != p_run:
         return False
 
     # 1. Clearance targeted a specific pause timestamp
@@ -687,8 +730,8 @@ def _merge_provider_guardrails(
         m_valid = m_pause if (m_pause and not _is_cleared(m_pause)) else None
 
         if d_valid and m_valid:
-            d_p_at = str(d_valid.get("paused_at") or "")
-            m_p_at = str(m_valid.get("paused_at") or "")
+            d_p_at = provider_failure_epoch(d_valid)
+            m_p_at = provider_failure_epoch(m_valid)
             if m_p_at > d_p_at:
                 merged_pauses[prov] = deepcopy(m_valid)
             elif d_p_at > m_p_at:

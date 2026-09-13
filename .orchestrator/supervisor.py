@@ -1669,8 +1669,34 @@ def account_pool_runtime_state(
                 entry.pop("next_probe_at", None)
                 entry.pop("blocked_until", None)
             elif entry_state == "healthy":
+                previous_epochs = entry.get("superseded_auth_epochs")
+                epochs = list(previous_epochs) if isinstance(previous_epochs, list) else []
+                previous_epoch = account_pool_recovery_epoch(entry)
+                if previous_epoch not in epochs:
+                    epochs.append(previous_epoch)
+                entry["superseded_auth_epochs"] = epochs
+                entry["generation"] = int(entry.get("generation", 0) or 0) + 1
                 entry["auth_identity_hash"] = current_auth
                 entry["effective_concurrency"] = configured_limit
+
+    # Admission is account-scoped even for a previously healthy pool. Joining
+    # an account with an unverified recovery must join its canary fence too.
+    if str(entry.get("state") or "healthy").lower() == "healthy" and current_auth:
+        for other_id, other_entry in bucket.items():
+            if other_id == pool_id or not isinstance(other_entry, dict):
+                continue
+            other_auth = other_entry.get("auth_identity_hash") or configured_account_pool_auth_hash(config, other_id)
+            if other_auth == current_auth and other_entry.get("state") == "recovering":
+                entry.update(
+                    state="recovering", effective_concurrency=0,
+                    generation=int(entry.get("generation", 0) or 0) + 1,
+                    last_probe_at=current_time_iso,
+                    recovery_reason="joined shared auth recovery",
+                )
+                for field in ("failure_kind", "last_failure_at", "last_worker_run_id"):
+                    if field in other_entry:
+                        entry[field] = other_entry[field]
+                break
 
     lifecycle = str(entry.get("state") or "healthy").strip().lower()
     if lifecycle == "cooldown":
@@ -1804,6 +1830,8 @@ def account_pool_dispatch_block_reason(
     }:
         detail = str(runtime.get("reason") or "").strip()
         return f"account pool {pool_id} is {lifecycle}" + (f": {detail}" if detail else "")
+    if runtime.get("effective_concurrency") == 0:
+        return f"account pool {pool_id} has zero admission capacity ({lifecycle})"
     return None
 
 

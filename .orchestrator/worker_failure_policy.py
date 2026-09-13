@@ -1040,6 +1040,28 @@ def _is_pause_entry_cleared(
     if c_auth and p_auth and c_auth != p_auth:
         return False
 
+    # A newer observation records the exact predecessor it replaced, including
+    # legacy records without a logical clock. Clearing it also retires those
+    # known predecessors, so their stale snapshots cannot resurrect a pause.
+    predecessors = clearance.get("failure_predecessors")
+    if isinstance(predecessors, list):
+        identity = {key: pause_entry.get(key) for key in (
+            "paused_at", "worker_run_id", "auth_identity_hash", "failure_epoch"
+        )}
+        if identity in predecessors:
+            return True
+
+    # Modern producers carry a durable, subsecond logical failure clock.
+    # An older targeted clear cannot retire a later incident, even if the wall
+    # clock moved backward. Legacy records retain their existing matching rules.
+    c_epoch = clearance.get("failure_epoch")
+    p_epoch = pause_entry.get("failure_epoch")
+    if isinstance(c_epoch, int) and isinstance(p_epoch, int):
+        if p_epoch != c_epoch:
+            return p_epoch < c_epoch
+    elif isinstance(p_epoch, int) and c_run and p_run and c_run != p_run:
+        return False
+
     # 1. Clearance targeted a specific pause timestamp
     if c_p_at:
         if p_at == c_p_at:
@@ -1097,9 +1119,15 @@ def _record_clearance_tombstone(
     }
     if clear_reason:
         clearance["clear_reason"] = clear_reason
+    if isinstance(entry, dict) and isinstance(entry.get("failure_epoch"), int):
+        clearance["failure_epoch"] = entry["failure_epoch"]
+        if isinstance(entry.get("failure_predecessors"), list):
+            clearance["failure_predecessors"] = deepcopy(entry["failure_predecessors"])
 
     cleared_bucket[pause_id] = deepcopy(clearance)
     epoch_key = f"{pause_id}::{auth or '*'}::{run_id or '*'}::{p_at or '*'}::{cleared_at}"
+    if "failure_epoch" in clearance:
+        epoch_key += f"::{clearance['failure_epoch']}"
     cleared_bucket[epoch_key] = deepcopy(clearance)
     return clearance
 
@@ -1371,17 +1399,34 @@ def mark_provider_dispatch_paused(
     actual_pause_seconds = max(1, int((blocked_until - now).total_seconds()))
     bucket = _dispatch_pause_bucket(state)
     previous = bucket.get(pause_provider_id)
+    from runtime_state import provider_failure_epoch, provider_failure_identity
+    failure_worker = worker if isinstance(worker, dict) else (_lookup_worker_record(state, worker_run_id) or {})
+    auth_identity_hash = failure_worker.get("auth_identity_hash") or provider_auth_identity_hash(config, provider_id)
+    failure_epoch = max(
+        provider_failure_epoch({"paused_at": now.isoformat()}),
+        provider_failure_epoch(previous) + 1,
+    )
+    predecessors = []
+    if isinstance(previous, dict):
+        prior = previous.get("failure_predecessors")
+        predecessors = deepcopy(prior) if isinstance(prior, list) else []
+        identity = provider_failure_identity(previous)
+        if identity not in predecessors:
+            predecessors.append(identity)
     summary = summarize_failure_reason(reason, pause_provider_id)
     changed = (
         not isinstance(previous, dict)
         or str(previous.get("blocked_until") or "") != blocked_until_iso
         or str(previous.get("summary") or "") != summary.get("summary")
         or str(previous.get("raw_ref") or "") != str(raw_ref or "")
+        or previous.get("worker_run_id") != worker_run_id
+        or previous.get("auth_identity_hash") != auth_identity_hash
     )
     bucket[pause_provider_id] = {
         "provider": pause_provider_id,
         "trigger_provider": provider_id,
         "paused_at": now.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "failure_epoch": failure_epoch,
         "blocked_until": blocked_until_iso,
         "reason": summary.get("summary"),
         "summary": summary.get("summary"),
@@ -1393,10 +1438,10 @@ def mark_provider_dispatch_paused(
         "task_id": task_id,
         "worker_run_id": worker_run_id,
     }
-    failure_worker = worker if isinstance(worker, dict) else (_lookup_worker_record(state, worker_run_id) or {})
-    auth_identity_hash = failure_worker.get("auth_identity_hash") or provider_auth_identity_hash(config, provider_id)
     if auth_identity_hash:
         bucket[pause_provider_id]["auth_identity_hash"] = auth_identity_hash
+    if predecessors:
+        bucket[pause_provider_id]["failure_predecessors"] = predecessors
     if hinted_blocked_until:
         bucket[pause_provider_id]["hint_blocked_until"] = hinted_blocked_until
         bucket[pause_provider_id]["hint_capped"] = hint_capped
@@ -2743,7 +2788,7 @@ def agent_auto_dispatch_block_reason(
     if state is not None:
         quota_limit = account_pool_effective_concurrency(config, state, normalized_agent)
         quota_group = agent_quota_group_id(config, normalized_agent)
-        if quota_limit and quota_group:
+        if quota_limit is not None and quota_group:
             active_quota_counts = active_quota_group_counts(config, state, active_statuses)
             active_count = active_quota_counts.get(quota_group, 0)
             if active_count >= quota_limit:
