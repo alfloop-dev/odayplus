@@ -131,7 +131,7 @@ if git merge-base --is-ancestor HEAD "$BASE_REF" 2>/dev/null; then
         *)
           if [ "$DRY_RUN" -eq 1 ]; then
             case "$LIST_OUT" in
-              *[Kk]nown\ GitHub\ host*|*[Nn]o\ git\ remotes*|*[Nn]one\ of\ the\ git\ remotes*|*[Nn]o\ default\ remote*|*[Cc]ould\ not\ determine\ a\ default\ remote*)
+              *[Kk]nown\ GitHub\ host*|*[Nn]o\ git\ remotes*|*[Nn]one\ of\ the\ git\ remotes*|*[Nn]o\ default\ remote*|*[Cc]ould\ not\ determine\ a\ default\ remote*|*GH_TOKEN*|*[Gg]it[Hh]ub\ [Aa]ctions\ workflow*|*github.token*|*[Aa]uthenticat*|*[Nn]ot\ logged\ in*|*[Nn]o\ account*|*[Nn]o\ accounts*|*[Nn]o\ credential*)
                 LIST_OUT="" ;;
               *)
                 echo "task_finalize: error: gh pr list failed ($LIST_RC): $LIST_OUT" >&2
@@ -170,7 +170,7 @@ if git merge-base --is-ancestor HEAD "$BASE_REF" 2>/dev/null; then
           *)
             if [ "$DRY_RUN" -eq 1 ]; then
               case "$VIEW_BRANCH_OUT" in
-                *[Kk]nown\ GitHub\ host*|*[Nn]o\ git\ remotes*|*[Nn]one\ of\ the\ git\ remotes*|*[Nn]o\ default\ remote*|*[Cc]ould\ not\ determine\ a\ default\ remote*)
+                *[Kk]nown\ GitHub\ host*|*[Nn]o\ git\ remotes*|*[Nn]one\ of\ the\ git\ remotes*|*[Nn]o\ default\ remote*|*[Cc]ould\ not\ determine\ a\ default\ remote*|*GH_TOKEN*|*[Gg]it[Hh]ub\ [Aa]ctions\ workflow*|*github.token*|*[Aa]uthenticat*|*[Nn]ot\ logged\ in*|*[Nn]o\ account*|*[Nn]o\ accounts*|*[Nn]o\ credential*)
                   VIEW_BRANCH_OUT="" ;;
                 *)
                   echo "task_finalize: error: gh pr view $BRANCH failed ($VIEW_BRANCH_RC): $VIEW_BRANCH_OUT" >&2

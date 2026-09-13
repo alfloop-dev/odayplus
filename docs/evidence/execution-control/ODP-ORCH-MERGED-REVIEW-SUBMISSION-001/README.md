@@ -74,10 +74,13 @@
 
 ## 4. 驗證記錄 (Verification Receipts)
 
-### 4.1 Pytest 回歸測試 (test_ai_status.py)
+### 4.1 Pytest 回歸測試 (test_ai_status.py & test_git_task_scripts.py)
 - **Command**: `uv run pytest -q scripts/test_ai_status.py -k "Review or Submission or Merged"`
 - **Exit Code**: `0`
 - **Output Summary**: `85 passed, 198 deselected, 11 subtests passed`
+- **Tooling Command (CI unauthenticated environment)**: `env -u GH_TOKEN -u GITHUB_TOKEN GH_CONFIG_DIR=/tmp/empty GITHUB_ACTIONS=true uv run pytest tests/tooling/test_git_task_scripts.py`
+- **Exit Code**: `0`
+- **Output Summary**: `58 passed in 9.93s`
 
 ### 4.2 Ruff 語法與代碼風格檢查
 - **Command**: `uv run ruff check scripts/ai_status.py scripts/test_ai_status.py .orchestrator/worker_workspace.py`
