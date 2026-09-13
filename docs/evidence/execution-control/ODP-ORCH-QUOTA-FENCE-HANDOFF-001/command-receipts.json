@@ -1,16 +1,16 @@
 [
   {
-    "head_sha": "aa4891f598727f802bf213c1231918f86dd0d5e5",
+    "head_sha": "eb87475648093abe65d4e5c9cbd486a1250705be",
     "command": "uv run pytest -q .orchestrator/test_worker_failure_policy.py -k 'fence or handoff or quota'",
     "exit_code": 0,
-    "duration_ms": 10787,
-    "timestamp": "2026-09-13T13:32:05Z",
+    "duration_ms": 11328,
+    "timestamp": "2026-09-13T13:33:18Z",
     "test_count": 35,
     "selection": "fence or handoff or quota",
     "note": "All 35 tests pass including 4 new regression tests for the 3 P1 defects"
   },
   {
-    "head_sha": "aa4891f598727f802bf213c1231918f86dd0d5e5",
+    "head_sha": "eb87475648093abe65d4e5c9cbd486a1250705be",
     "command": "uv run ruff check .orchestrator/worker_failure_policy.py .orchestrator/test_worker_failure_policy.py",
     "exit_code": 0,
     "duration_ms": 74,
@@ -18,7 +18,7 @@
     "note": "All checks passed"
   },
   {
-    "head_sha": "aa4891f598727f802bf213c1231918f86dd0d5e5",
+    "head_sha": "eb87475648093abe65d4e5c9cbd486a1250705be",
     "command": "git diff --check",
     "exit_code": 0,
     "timestamp": "2026-09-13T13:31:48Z",
