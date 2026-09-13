@@ -1523,3 +1523,120 @@ def test_sources_off_egress_contract_differs_between_candidate_and_worktree(tmp_
         source_policy_digest=policy_digest,
         root=repo,
     ) == []
+
+
+def test_shallow_checkout_predecessor_sources_off_manifest_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In a shallow checkout (depth 1), missing predecessor commit is acquired automatically."""
+    monkeypatch.setenv("ODP_CLOUD_RUN_VPC_EGRESS", "ALL_TRAFFIC")
+    shallow_repo = tmp_path / "shallow_repo"
+    subprocess.run(
+        ["git", "clone", "--depth", "1", f"file://{ROOT}", str(shallow_repo)],
+        check=True,
+        capture_output=True,
+    )
+
+    # Initial state: predecessor commit is absent in depth-1 clone
+    res_before = subprocess.run(
+        ["git", "cat-file", "-e", f"{REAL_CANDIDATE_SHA}^{{commit}}"],
+        cwd=shallow_repo,
+        capture_output=True,
+    )
+    assert res_before.returncode != 0
+
+    sbom_ref = f"registry.example.invalid/odayplus/sbom@sha256:{'5' * 64}"
+    sig_ref = f"registry.example.invalid/odayplus/sig@sha256:{'6' * 64}"
+
+    # Build a valid previous sources-off manifest for REAL_CANDIDATE_SHA
+    prev_manifest = build_release_manifest(
+        release_id="odp-test-prev-shallow-001",
+        candidate_sha=REAL_CANDIDATE_SHA,
+        components=SOURCES_OFF_COMPONENTS,
+        sbom_refs=[sbom_ref],
+        signature_refs=[sig_ref],
+        created_at="2026-09-07T15:29:32Z",
+        created_by_workflow=f"github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@{REAL_CANDIDATE_SHA}",
+        sources_off_attestation=build_sources_off_attestation(
+            candidate_sha=REAL_CANDIDATE_SHA,
+            components=SOURCES_OFF_COMPONENTS,
+            source_policy_digest=compute_source_policy_digest(root=ROOT),
+            provider_mode=SOURCES_OFF_PROVIDER_MODE,
+            sources_inventory=clean_sources_inventory(),
+            root=ROOT,
+        ),
+        initial_release_recovery=first_release_recovery(
+            candidate_sha=REAL_CANDIDATE_SHA,
+            components=SOURCES_OFF_COMPONENTS,
+        ),
+        release_status="ready",
+        root=ROOT,
+    )
+
+    prev_manifest_path = shallow_repo / "previous_manifest.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    # validate_rollback_manifest in shallow_repo triggers automated fetch of REAL_CANDIDATE_SHA
+    rb_errors = validate_rollback_manifest(
+        prev_manifest,
+        current_candidate_sha=SECOND_REAL_CANDIDATE_SHA,
+        current_release_id="odp-test-current-shallow-002",
+        root=shallow_repo,
+    )
+    assert rb_errors == []
+
+    # Verify that predecessor commit is now present in shallow_repo
+    res_after = subprocess.run(
+        ["git", "cat-file", "-e", f"{REAL_CANDIDATE_SHA}^{{commit}}"],
+        cwd=shallow_repo,
+        capture_output=True,
+    )
+    assert res_after.returncode == 0
+
+    # Test build_handoff under shallow checkout
+    from delivery_toolchain.release.build_release_handoff import build_handoff
+
+    images, current_manifest = build_handoff(
+        release_sha=SECOND_REAL_CANDIDATE_SHA,
+        components={
+            "api": "registry.example.invalid/odayplus/api@sha256:" + "1" * 64,
+            "web": "registry.example.invalid/odayplus/web@sha256:" + "2" * 64,
+            "worker": "registry.example.invalid/odayplus/worker@sha256:" + "3" * 64,
+            "scheduler": "registry.example.invalid/odayplus/scheduler@sha256:" + "4" * 64,
+        },
+        sbom_refs=[sbom_ref],
+        signature_refs=[sig_ref],
+        rollback_manifest=prev_manifest_path,
+        root=shallow_repo,
+    )
+    assert current_manifest is not None
+    assert current_manifest["rollback_release"]["candidate_sha"] == REAL_CANDIDATE_SHA
+
+    # Truly missing candidate SHA remains fail-closed in shallow repo
+    missing_prev_manifest = copy.deepcopy(prev_manifest)
+    missing_prev_manifest["candidate_sha"] = "0" * 40
+    missing_prev_manifest["manifest_digest"] = compute_manifest_digest(missing_prev_manifest)
+    missing_errors = validate_rollback_manifest(
+        missing_prev_manifest,
+        current_candidate_sha=SECOND_REAL_CANDIDATE_SHA,
+        root=shallow_repo,
+    )
+    assert missing_errors
+    assert any(
+        "cannot be verified for candidate" in err or "cannot be read for candidate" in err
+        for err in missing_errors
+    )
+
+    # Missing blob candidate SHA remains fail-closed in shallow repo
+    missing_blob_sha = "ccb7c34d9659f81640a3dd9ec2b100cb595f87b3"
+    missing_blob_manifest = copy.deepcopy(prev_manifest)
+    missing_blob_manifest["candidate_sha"] = missing_blob_sha
+    missing_blob_manifest["manifest_digest"] = compute_manifest_digest(missing_blob_manifest)
+    blob_errors = validate_rollback_manifest(
+        missing_blob_manifest,
+        current_candidate_sha=SECOND_REAL_CANDIDATE_SHA,
+        root=shallow_repo,
+    )
+    assert blob_errors
+    assert any(".github/workflows/deploy-dev.yml" in err for err in blob_errors)
+

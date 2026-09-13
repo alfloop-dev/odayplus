@@ -367,6 +367,81 @@ def is_exact_sha(value: Any) -> bool:
     return isinstance(value, str) and bool(re.fullmatch(r"[0-9a-f]{40}", value))
 
 
+def ensure_candidate_commit(candidate_sha: str, *, root: Path = ROOT) -> bool:
+    """Ensure candidate commit object and its tree/blobs are present locally.
+
+    In a shallow or fresh depth-1 clone (e.g. Runtime Release build runner),
+    a predecessor/rollback candidate commit may not be in the local object store.
+    This helper attempts to fetch the exact candidate SHA from git remotes.
+    Returns True if the commit object is available locally, False otherwise.
+    """
+    if not is_exact_sha(candidate_sha):
+        return False
+
+    try:
+        res = subprocess.run(
+            ["git", "cat-file", "-e", f"{candidate_sha}^{{commit}}"],
+            cwd=root,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if res.returncode == 0:
+            return True
+    except Exception:
+        return False
+
+    remotes: list[str] = []
+    try:
+        out = (
+            subprocess.check_output(
+                ["git", "remote"],
+                cwd=root,
+                stderr=subprocess.DEVNULL,
+            )
+            .decode("utf-8")
+            .strip()
+            .split()
+        )
+        remotes = [r.strip() for r in out if r.strip()]
+    except Exception:
+        remotes = []
+
+    if "origin" in remotes:
+        remotes.remove("origin")
+        remotes.insert(0, "origin")
+    elif not remotes:
+        remotes = ["origin"]
+
+    for remote in remotes:
+        for fetch_cmd in (
+            ["git", "fetch", "--depth=1", remote, candidate_sha],
+            ["git", "fetch", remote, candidate_sha],
+        ):
+            try:
+                fetch_res = subprocess.run(
+                    fetch_cmd,
+                    cwd=root,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+                if fetch_res.returncode == 0:
+                    check_res = subprocess.run(
+                        ["git", "cat-file", "-e", f"{candidate_sha}^{{commit}}"],
+                        cwd=root,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                    )
+                    if check_res.returncode == 0:
+                        return True
+            except Exception:
+                pass
+
+    return False
+
+
 def release_candidate_job_name(base_name: Any, candidate_sha: Any) -> str:
     """Return the Cloud Run Job name used for one immutable release candidate.
 
@@ -1435,7 +1510,10 @@ def validate_manifest(
 
 
 def validate_release_admission(
-    manifest: Any, *, environment: str | None = None
+    manifest: Any,
+    *,
+    environment: str | None = None,
+    root: Path = ROOT,
 ) -> list[str]:
     """Return why a structurally valid manifest cannot be deployed.
 
@@ -1452,7 +1530,7 @@ def validate_release_admission(
     it and gets the record validated on its own terms.
     """
 
-    errors = validate_manifest(manifest)
+    errors = validate_manifest(manifest, root=root)
     if not isinstance(manifest, dict):
         return errors
     # Manifests created before the status field was introduced remain
@@ -1587,6 +1665,7 @@ def load_manifest(
     *,
     expected_candidate_sha: str | None = None,
     expected_digest: str | None = None,
+    root: Path = ROOT,
 ) -> tuple[dict[str, Any] | None, list[str]]:
     """Load and validate one manifest, returning errors instead of guessing."""
 
@@ -1600,6 +1679,7 @@ def load_manifest(
         payload,
         expected_candidate_sha=expected_candidate_sha,
         expected_digest=expected_digest,
+        root=root,
     )
     return (payload if isinstance(payload, dict) else None), errors
 
@@ -1631,6 +1711,7 @@ def compute_sources_off_egress_contract_digest(
             raise ValueError(
                 f"candidate_sha {candidate_sha!r} is not an exact 40-character SHA"
             )
+        ensure_candidate_commit(candidate_sha, root=root)
         h = hashlib.sha256()
         for rel in sorted(SOURCES_OFF_EGRESS_CONTRACT_FILES):
             try:
@@ -1836,6 +1917,7 @@ def _sources_off_egress_contract_errors(
             return [
                 f"candidate_sha {candidate_sha!r} is not an exact 40-character SHA"
             ]
+        ensure_candidate_commit(candidate_sha, root=root)
         for relative in SOURCES_OFF_EGRESS_CONTRACT_FILES:
             try:
                 content = subprocess.check_output(
@@ -2050,14 +2132,17 @@ def validate_rollback_manifest(
     *,
     current_candidate_sha: str | None = None,
     current_release_id: str | None = None,
+    root: Path = ROOT,
 ) -> list[str]:
     """Validate an entire admissible previous manifest before extracting it."""
     if not isinstance(prev_manifest, dict):
         return ["rollback manifest must be a JSON object"]
 
-    errors = validate_manifest(prev_manifest)
+    errors = validate_manifest(prev_manifest, root=root)
     errors.extend(
-        err for err in validate_release_admission(prev_manifest) if err not in errors
+        err
+        for err in validate_release_admission(prev_manifest, root=root)
+        if err not in errors
     )
 
     candidate_sha = prev_manifest.get("candidate_sha")
@@ -2135,6 +2220,7 @@ __all__ = [
     "compute_sources_off_egress_contract_digest",
     "compute_sources_off_probe_receipt_content_digest",
     "compute_sources_off_binding_digest",
+    "ensure_candidate_commit",
     "extract_rollback_release_binding",
     "INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS",
     "INITIAL_RELEASE_PROBE_COMMAND",

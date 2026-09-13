@@ -63,6 +63,7 @@ from delivery_toolchain.release.release_manifest import (  # noqa: E402
     classify_source_env_var,
     compute_data_contract_digest,
     compute_source_policy_digest,
+    ensure_candidate_commit,
     env_var_belongs_to_source,
     extract_rollback_release_binding,
     initial_release_recovery_errors,
@@ -385,7 +386,7 @@ def build_handoff(
             if raw_str.startswith("{") and raw_str.endswith("}"):
                 try:
                     previous_manifest = json.loads(raw_str)
-                    previous_errors = validate_manifest(previous_manifest)
+                    previous_errors = validate_manifest(previous_manifest, root=root)
                 except Exception as exc:
                     previous_manifest = None
                     previous_errors = [f"無法解析 rollback manifest JSON 字串：{exc}"]
@@ -397,7 +398,7 @@ def build_handoff(
                     "取回工作區再傳入。"
                 ]
             else:
-                previous_manifest, previous_errors = load_manifest(Path(rollback_source))
+                previous_manifest, previous_errors = load_manifest(Path(rollback_source), root=root)
             if previous_errors or previous_manifest is None:
                 errors.extend([f"無法載入 rollback manifest：{e}" for e in previous_errors])
         elif isinstance(rollback_source, dict):
@@ -406,10 +407,14 @@ def build_handoff(
             errors.append("rollback manifest 必須是完整 manifest dict 或檔案路徑")
 
         if previous_manifest is not None:
+            prev_sha = previous_manifest.get("candidate_sha")
+            if is_exact_sha(prev_sha):
+                ensure_candidate_commit(prev_sha, root=root)
             rb_errs = validate_rollback_manifest(
                 previous_manifest,
                 current_candidate_sha=release_sha,
                 current_release_id=effective_release_id,
+                root=root,
             )
             if rb_errs:
                 errors.extend([f"rollback manifest 無效：{e}" for e in rb_errs])
@@ -609,11 +614,11 @@ def build_handoff(
     )
 
     # 自我驗證：不把一份自己都驗不過的 manifest 交給 admission。
-    self_check = validate_manifest(manifest, expected_candidate_sha=release_sha)
+    self_check = validate_manifest(manifest, expected_candidate_sha=release_sha, root=root)
     self_check.extend(
         error
         for error in validate_release_admission(
-            manifest, environment=target_environment
+            manifest, environment=target_environment, root=root
         )
         if error not in self_check
     )
