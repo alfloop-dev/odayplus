@@ -1,35 +1,40 @@
 {
   "task_id": "ODP-ORCH-QUOTA-FENCE-HANDOFF-001",
-  "generated_at": "2026-09-13T11:37:30Z",
+  "head_sha": "73c2d26419ccea419b0557be41b61db14ad089ff",
+  "generated_at": "2026-09-13T12:06:15Z",
   "verified_by": "Antigravity3",
   "reviewer": "Codex2",
   "receipts": [
     {
       "command": "uv run pytest -q .orchestrator/test_worker_failure_policy.py -k \"fence or handoff or quota\"",
+      "head_sha": "73c2d26419ccea419b0557be41b61db14ad089ff",
       "exit_code": 0,
       "status": "passed",
-      "summary": "28 passed, 41 deselected in 6.46s (8.88s elapsed)",
+      "summary": "30 passed, 41 deselected in 7.02s (9.50s elapsed)",
       "target": ".orchestrator/test_worker_failure_policy.py"
     },
     {
       "command": "uv run pytest -v .orchestrator/test_worker_failure_policy.py -k \"QuotaSiblingFencing\"",
+      "head_sha": "73c2d26419ccea419b0557be41b61db14ad089ff",
       "exit_code": 0,
       "status": "passed",
-      "summary": "12 passed, 57 deselected in 6.56s (8.80s elapsed)",
+      "summary": "14 passed, 57 deselected in 7.08s (9.58s elapsed)",
       "target": ".orchestrator/test_worker_failure_policy.py::QuotaSiblingFencingDirtyHandoffTests"
     },
     {
       "command": "uv run ruff check .orchestrator/worker_failure_policy.py .orchestrator/worker_lifecycle.py .orchestrator/test_worker_failure_policy.py .orchestrator/supervisor.py",
+      "head_sha": "73c2d26419ccea419b0557be41b61db14ad089ff",
       "exit_code": 0,
       "status": "passed",
-      "summary": "All checks passed! (0.08s elapsed)",
+      "summary": "All checks passed! (0.09s elapsed)",
       "target": "lint"
     },
     {
       "command": "git diff --check",
+      "head_sha": "73c2d26419ccea419b0557be41b61db14ad089ff",
       "exit_code": 0,
       "status": "passed",
-      "summary": "clean whitespace and diff markers (0.04s elapsed)",
+      "summary": "clean whitespace and diff markers (0.02s elapsed)",
       "target": "diff_check"
     }
   ]
