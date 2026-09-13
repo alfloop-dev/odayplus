@@ -13,15 +13,21 @@ from modules.avm.application.calibration import (
 from modules.avm.application.production import (
     AVMProductionExecutionError,
     AVMProductionExecutor,
+    DepreciationCutoverEvidence,
     LiquidityArtifactEvidence,
 )
-from modules.avm.application.valuation import AVMService
+from modules.avm.application.valuation import (
+    AVMService,
+    DepreciationRollbackReceipt,
+)
 
 __all__ = [
     "AVMProductionExecutionError",
     "AVMProductionExecutor",
     "AVMService",
     "DealOutcomeCalibrationReport",
+    "DepreciationCutoverEvidence",
+    "DepreciationRollbackReceipt",
     "IDEAL_P10_P90_COVERAGE",
     "LiquidityArtifactEvidence",
     "MINIMUM_ACCEPTABLE_COVERAGE",

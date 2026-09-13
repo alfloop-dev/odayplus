@@ -1,0 +1,13 @@
+{
+  "base_sha": "423776af0f8ca5c43353219b89f54062f3bee22b",
+  "source_sha256": {
+    "apps/api/oday_api/main.py": "68d8070a58b1d3d1da41c597ab98e6e41d03e6a08fc41e0528015fe08d762d02",
+    "apps/api/app/routes/operator.py": "569c3ee0b7c6445a8d1132da3a731a5451b981d7f1f8a26bd38c473df7ab0c4a",
+    "modules/opsboard/application/network_rebalance.py": "3f6dd3232f342ec13fb9d5c64cce15f18e74b0e48b753c2fd1d3e812469933b2",
+    "modules/avm/tests/test_avm_production_execution.py": "92b5bff05d52401016f75d23850580de756b3d874a08ec3ccfe66f591fd62a0f"
+  },
+  "red": "Both real-artifact schemas fail at the Operator endpoint with Finance gate 409 while the same deployment /avm route returns v0 successfully",
+  "green": "2 real MLflow/LightGBM/lifelines/PostgreSQL production bootstrap cases pass for artifact v1 and v2; each exercises valid, expired, mismatched, malformed receipts across both APIs, tenant isolation, retained v1 history, and missing Finance cutover evidence",
+  "baseline": "93 AVM, Operator canonical wiring, durable history and governance tests pass; previously passed 2 artifact cases excluded to avoid repetition",
+  "static": "ruff passed on all changed source/test files; code boundary checks passed for 1157 files; git diff --check passed"
+}

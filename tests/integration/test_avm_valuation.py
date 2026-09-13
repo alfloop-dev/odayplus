@@ -1,36 +1,101 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
+from apps.api.app.routes.avm import AVMCasePayload
 from apps.api.oday_api.main import create_app
 from modules.avm import (
+    AVM_DEPRECIATION_LEGACY_DISPOSITION_TEXT,
+    AVM_DEPRECIATION_LEGACY_VERSION,
+    AVM_DEPRECIATION_VERSION,
     AVM_FEATURE_VERSION,
     LEGACY_QUALITY_DISPOSITION,
     LEGACY_UNKNOWN_QUALITY_STATUS,
+    DealOutcome,
     InMemoryAVMRepository,
     ValuationCaseStatus,
     build_valuation_view,
     run_avm_batch_valuation,
 )
 from modules.avm.application import AVMService
+from shared.api.idempotency import request_fingerprint
 from shared.infrastructure.persistence import build_persistence
+from shared.infrastructure.persistence.assisted_listing_intake import (
+    apply_upgrade_to_database,
+)
+from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+from shared.infrastructure.persistence.engine import SqliteEngine
+from shared.infrastructure.persistence.repositories import DurableAVMRepository
+from shared.jobs.queue import JobRequest, JobStatus
 from tests.integration._authz import AVM_HEADERS
 
 
+def _provision_canonical_schema(database: Any) -> None:
+    migration_root = Path("infra/db/migrations")
+    with database.connect(autocommit=True) as conn:
+        canonical_ddl = (
+            migration_root / "000002_data_domain_canonical_entities.sql"
+        ).read_text(encoding="utf-8")
+        canonical_ddl = (
+            canonical_ddl.replace('CREATE EXTENSION IF NOT EXISTS "uuid-ossp";', "")
+            .replace('CREATE EXTENSION IF NOT EXISTS "postgis";', "")
+            .replace("uuid_generate_v4()", "gen_random_uuid()")
+            .replace("GEOMETRY(Point, 4326)", "TEXT")
+            .replace("GEOMETRY(Polygon, 4326)", "TEXT")
+            .replace(
+                "CREATE INDEX IF NOT EXISTS idx_address_locations_geom ON core.address_locations USING GIST(geom);",
+                "",
+            )
+            .replace(
+                "CREATE INDEX IF NOT EXISTS idx_h3_cells_geom ON geo.h3_cells USING GIST(geom);",
+                "",
+            )
+        )
+        conn.execute(canonical_ddl)
+        conn.execute("CREATE SCHEMA IF NOT EXISTS workflow;")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS workflow.decisions (
+                decision_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                decision_type VARCHAR(100) NOT NULL DEFAULT 'site_go_wait_reject',
+                entity_type VARCHAR(100) NOT NULL,
+                entity_id VARCHAR(255) NOT NULL,
+                recommendation TEXT,
+                decision_status VARCHAR(50) NOT NULL DEFAULT 'proposed',
+                policy_version_id VARCHAR(100) NOT NULL,
+                created_by VARCHAR(255) NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+        conn.execute(
+            (migration_root / "000014_decision_policy_registry.sql").read_text(encoding="utf-8")
+        )
+
+
 def _as_pre_status_payload(item):
-    """Strip the quality status fields the way a pre-nullability pickle would.
+    """Strip the quality status and feature version fields the way a pre-upgrade pickle would.
 
     ``__init__`` always writes them, so removing the keys from the instance
-    dict reproduces exactly what unpickling a record stored by the previous
-    release yields, without pretending a freshly built object is legacy.
+    dict reproduces exactly what unpickling a record stored by previous
+    releases yields, without pretending a freshly built object is legacy.
     """
 
     for field_name in ("quality_score_status", "quality_disposition"):
         if field_name in item.__dict__:
             object.__delattr__(item, field_name)
+    from modules.avm.domain import NormalizedMargin, ValuationInput
+
+    if isinstance(item, (ValuationInput, NormalizedMargin)):
+        if "feature_version" in item.__dict__:
+            object.__delattr__(item, "feature_version")
     return item
 
 
@@ -48,6 +113,7 @@ def _valuation_payload() -> dict:
         "quality_score": 0.93,
         "source_snapshot_ids": ["forecast-20260627", "asset-ledger-202606"],
         "prediction_origin_time": "2026-06-27T09:00:00+00:00",
+        "equipment_depreciation_basis": "appraised_fair_value",
     }
 
 
@@ -467,6 +533,7 @@ def test_legacy_unknown_quality_score_disposition_and_durable_migration(tmp_path
         equipment_fair_value=100_000,
         quality_score=1.0,
         quality_score_status="legacy_unknown",
+        equipment_depreciation_basis="appraised_fair_value",
     )
     legacy_case = ValuationCase.create(
         legacy_input,
@@ -490,6 +557,7 @@ def test_legacy_unknown_quality_score_disposition_and_durable_migration(tmp_path
         equipment_fair_value=100_000,
         quality_score=1.0,
         quality_score_status="measured",
+        equipment_depreciation_basis="appraised_fair_value",
     )
     measured_case = ValuationCase.create(
         measured_input,
@@ -506,7 +574,7 @@ def test_legacy_unknown_quality_score_disposition_and_durable_migration(tmp_path
     store = SqliteDocumentStore(engine)
     repo = DurableAVMRepository(store)
 
-    # Simulate an opaque legacy pickled case without quality_score_status
+    # Simulate an opaque legacy pickled case without quality_score_status and without feature_version
     raw_legacy_input = _as_pre_status_payload(
         ValuationInput(
             store_id="store-legacy-durable",
@@ -515,8 +583,12 @@ def test_legacy_unknown_quality_score_disposition_and_durable_migration(tmp_path
             asset_book_value=400_000,
             equipment_fair_value=50_000,
             quality_score=1.0,
+            equipment_depreciation_basis="appraised_fair_value",
         )
     )
+    assert "quality_score_status" not in raw_legacy_input.__dict__
+    assert "feature_version" not in raw_legacy_input.__dict__
+
     raw_case = ValuationCase.create(
         raw_legacy_input,
         created_by="legacy-user",
@@ -526,23 +598,45 @@ def test_legacy_unknown_quality_score_disposition_and_durable_migration(tmp_path
     # Store directly into document store as pickled blob
     store.put(DurableAVMRepository._CASES, raw_case.case_id, raw_case)
 
-    # Retrieve through DurableAVMRepository
+    # Retrieve through DurableAVMRepository (triggers _migrate_legacy_case)
     retrieved_case = repo.get_case("case-legacy-durable-1")
     assert retrieved_case is not None
     assert retrieved_case.valuation_input.quality_score == 1.0
     assert retrieved_case.valuation_input.quality_score_status == "legacy_unknown"
+    assert retrieved_case.valuation_input.feature_version == "valuation-view-v1"
+    assert retrieved_case.valuation_input.to_dict()["feature_version"] == "valuation-view-v1"
+
+    # Confirm migration persisted valuation-view-v1 to storage
+    raw_stored = store.get(DurableAVMRepository._CASES, "case-legacy-durable-1")
+    assert raw_stored is not None
+    assert raw_stored.valuation_input.quality_score_status == "legacy_unknown"
+    assert raw_stored.valuation_input.feature_version == "valuation-view-v1"
+    assert raw_stored.valuation_input.to_dict()["feature_version"] == "valuation-view-v1"
 
     all_cases = repo.list_cases()
     assert len(all_cases) == 1
     assert all_cases[0].valuation_input.quality_score_status == "legacy_unknown"
+    assert all_cases[0].valuation_input.feature_version == "valuation-view-v1"
+    assert all_cases[0].valuation_input.to_dict()["feature_version"] == "valuation-view-v1"
 
-    # Value the retrieved legacy case via AVMService
+    # Value the retrieved legacy case via AVMService (fresh calculation produces v2 report)
     service = AVMService(repository=repo)
     valued_report = service.value(
         "case-legacy-durable-1", actor="worker-1", correlation_id="corr-val-1"
     )
     assert valued_report.confidence == "low"
+    assert valued_report.quality_score_status == "legacy_unknown"
+    assert valued_report.quality_disposition == "legacy_unknown_downgraded"
     assert "legacy_quality_unknown_discount" in valued_report.normalized_margin.adjustment_reasons
+    assert valued_report.feature_version == "valuation-view-v2"
+    assert valued_report.normalized_margin.feature_version == "valuation-view-v2"
+    assert valued_report.to_dict()["normalized_margin"]["feature_version"] == "valuation-view-v2"
+
+    # But the stored historical case itself remains valuation-view-v1
+    stored_case_after_val = repo.get_case("case-legacy-durable-1")
+    assert stored_case_after_val is not None
+    assert stored_case_after_val.valuation_input.feature_version == "valuation-view-v1"
+    assert stored_case_after_val.valuation_input.to_dict()["feature_version"] == "valuation-view-v1"
     engine.close()
 
 
@@ -559,6 +653,7 @@ def test_value_downgrades_persisted_high_confidence_legacy_margin() -> None:
             equipment_fair_value=100_000,
             quality_score=1.0,
             quality_score_status="legacy_unknown",
+            equipment_depreciation_basis="appraised_fair_value",
         ),
         created_by="legacy-system",
         correlation_id="corr-legacy-persisted-margin",
@@ -621,6 +716,7 @@ def test_legacy_report_and_dataroom_are_downgraded_on_every_read_path(tmp_path) 
                     asset_book_value=500_000,
                     equipment_fair_value=100_000,
                     quality_score=1.0,
+                    equipment_depreciation_basis="appraised_fair_value",
                 )
             ),
             created_by="legacy-system",
@@ -755,6 +851,7 @@ def test_persisted_legacy_margin_is_downgraded_before_valuation(tmp_path) -> Non
             equipment_fair_value=100_000,
             quality_score=1.0,
             quality_score_status=LEGACY_UNKNOWN_QUALITY_STATUS,
+            equipment_depreciation_basis="appraised_fair_value",
         ),
         created_by="legacy-system",
         correlation_id="corr-legacy-margin",
@@ -818,6 +915,7 @@ def test_fresh_input_with_omitted_status_is_measured_not_legacy(tmp_path) -> Non
             asset_book_value=500_000,
             equipment_fair_value=100_000,
             quality_score=0.95,
+            equipment_depreciation_basis="appraised_fair_value",
         )
 
     domain_input = fresh_input("store-fresh-measured")
@@ -893,3 +991,1223 @@ def test_fresh_input_with_omitted_status_is_measured_not_legacy(tmp_path) -> Non
     assert durable_latest.confidence == "high"
     assert repository.report_history(durable_case.case_id)[0].confidence == "high"
     engine.close()
+
+
+def test_durable_avm_repository_depreciation_and_deal_outcomes_roundtrip(tmp_path) -> None:
+    """R6: Verify DurableAVMRepository persists and rehydrates straight-line depreciation v1,
+    lenses evidence, dataroom, and deal outcomes faithfully across restart."""
+    db_path = tmp_path / "avm-depreciation-roundtrip.sqlite3"
+    engine = SqliteEngine(db_path)
+    store = SqliteDocumentStore(engine)
+    repository = DurableAVMRepository(store)
+    service = AVMService(repository=repository)
+
+    origin_time = datetime.now(UTC)
+    payload = {
+        "store_id": "store-dep-roundtrip-01",
+        "gm_ttm": 2_000_000,
+        "forecast_gm_next_12m": 2_200_000,
+        "asset_book_value": 800_000,
+        "equipment_fair_value": 300_000,
+        "lease_liability": 100_000.0,
+        "working_capital": 50_000.0,
+        "comparable_multiples": [2.1, 2.4, 2.8],
+        "liquidity_discount": 0.15,
+        "equipment_depreciation_basis": "original_cost",
+        "equipment_original_cost": 400_000.0,
+        "useful_life_months": 60,
+        "residual_value_ratio": 0.10,
+        "depreciation_method": "straight_line",
+        "asset_in_service_date": "2024-01-01",
+        "depreciation_effective_date": "2026-07-01",
+        "quality_score": 0.95,
+        "source_snapshot_ids": ["snap-rt-01"],
+        "prediction_origin_time": origin_time,
+    }
+    case = service.create_case(payload, created_by="tester", correlation_id="corr-rt-01")
+    report = service.value(case.case_id, actor="worker-1", correlation_id="corr-rt-01")
+
+    assert report.depreciation_applied is True
+    assert report.depreciation_version == AVM_DEPRECIATION_VERSION
+    assert report.lenses[1].evidence["depreciation"]["effective_date"] == "2026-07-01"
+    assert report.lenses[1].evidence["depreciation"]["version"] == AVM_DEPRECIATION_VERSION
+
+    # Finance approval
+    approved = service.approve_finance(
+        case.case_id,
+        actor="finance-lead",
+        reason="approved straight-line depreciation v1 valuation",
+        reserve_price=report.reserve_price,
+        correlation_id="corr-rt-01",
+    )
+    assert approved.finance_approval is not None
+
+    # Dataroom generation & export
+    dataroom = service.build_dataroom(
+        case.case_id,
+        actor="deal-lead",
+        correlation_id="corr-rt-01",
+    )
+    assert dataroom.completeness == 1.0
+    assert dataroom.is_complete is True
+    assert dataroom.valuation_card["depreciation_version"] == AVM_DEPRECIATION_VERSION
+    assert dataroom.valuation_card["depreciation_applied"] is True
+
+    exported_dataroom = service.export_dataroom(
+        case.case_id,
+        actor="deal-lead",
+        reason="diligence package with depreciation v1",
+        correlation_id="corr-rt-01",
+    )
+    assert len(exported_dataroom.export_audit) == 1
+    assert exported_dataroom.export_audit[0]["reason"] == "diligence package with depreciation v1"
+
+    # Deal Outcome persistence
+    outcome = DealOutcome(
+        outcome_id="outcome-dep-01",
+        valuation_id=report.report_id,
+        store_id="store-dep-roundtrip-01",
+        sold=True,
+        settlement_price=2_100_000.0,
+        settlement_date=datetime.now(UTC).date(),
+    )
+    repository.save_deal_outcome(outcome)
+
+    engine.close()
+
+    # Re-open persistence and verify full rehydration
+    reopened_engine = SqliteEngine(db_path)
+    reopened_store = SqliteDocumentStore(reopened_engine)
+    reopened_repo = DurableAVMRepository(reopened_store)
+
+    reloaded_case = reopened_repo.get_case(case.case_id)
+    assert reloaded_case is not None
+    assert reloaded_case.valuation_input.equipment_depreciation_basis == "original_cost"
+    assert reloaded_case.valuation_input.equipment_original_cost == 400_000.0
+    assert reloaded_case.valuation_input.depreciation_effective_date == "2026-07-01"
+
+    reloaded_report = reopened_repo.latest_report(case.case_id)
+    assert reloaded_report is not None
+    assert reloaded_report.report_id == report.report_id
+    assert reloaded_report.depreciation_applied is True
+    assert reloaded_report.depreciation_version == AVM_DEPRECIATION_VERSION
+    assert reloaded_report.fair_price.p50 == report.fair_price.p50
+    assert reloaded_report.lenses[1].evidence["depreciation"]["effective_date"] == "2026-07-01"
+
+    history = reopened_repo.report_history(case.case_id)
+    assert len(history) == 1
+    assert history[0].report_id == report.report_id
+
+    reloaded_dataroom = reopened_repo.get_dataroom(case.case_id)
+    assert reloaded_dataroom is not None
+    assert reloaded_dataroom.completeness == 1.0
+    assert reloaded_dataroom.is_complete is True
+    assert reloaded_dataroom.valuation_card["depreciation_version"] == AVM_DEPRECIATION_VERSION
+    assert reloaded_dataroom.valuation_card["depreciation_applied"] is True
+    assert len(reloaded_dataroom.export_audit) == 1
+    assert reloaded_dataroom.export_audit[0]["reason"] == "diligence package with depreciation v1"
+
+    saved_outcome = reopened_repo.get_deal_outcome("outcome-dep-01")
+    assert saved_outcome is not None
+    assert saved_outcome.outcome_id == "outcome-dep-01"
+    assert saved_outcome.store_id == "store-dep-roundtrip-01"
+    assert saved_outcome.sold is True
+    assert saved_outcome.settlement_price == 2_100_000.0
+
+    outcomes_for_val = reopened_repo.get_deal_outcomes_for_valuation(report.report_id)
+    assert len(outcomes_for_val) == 1
+    assert outcomes_for_val[0].outcome_id == "outcome-dep-01"
+
+    all_outcomes = reopened_repo.list_deal_outcomes()
+    assert any(o.outcome_id == "outcome-dep-01" for o in all_outcomes)
+
+    reopened_engine.close()
+
+
+@pytest.mark.requires_live_env
+def test_postgresql_durable_avm_repository_depreciation_roundtrip(
+    intake_blank_db: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R6: Verify PostgreSQL DurableAVMRepository persists and rehydrates straight-line depreciation v1,
+    lenses evidence, dataroom, and deal outcomes faithfully."""
+    _provision_canonical_schema(intake_blank_db)
+    database_url = intake_blank_db.url()
+    apply_upgrade_to_database(database_url)
+    monkeypatch.setenv("ODAY_DATABASE_URL", database_url)
+
+    bundle = build_persistence(mode="postgresql")
+    try:
+        repository = bundle.avm_repository
+        service = AVMService(repository=repository)
+
+        origin_time = datetime.now(UTC)
+        payload = {
+            "store_id": "store-dep-pg-roundtrip-01",
+            "gm_ttm": 3_000_000,
+            "forecast_gm_next_12m": 3_200_000,
+            "asset_book_value": 1_000_000,
+            "equipment_fair_value": 500_000,
+            "lease_liability": 150_000.0,
+            "working_capital": 80_000.0,
+            "comparable_multiples": [2.1, 2.4, 2.8],
+            "liquidity_discount": 0.15,
+            "equipment_depreciation_basis": "original_cost",
+            "equipment_original_cost": 600_000.0,
+            "useful_life_months": 60,
+            "residual_value_ratio": 0.10,
+            "depreciation_method": "straight_line",
+            "asset_in_service_date": "2024-01-01",
+            "depreciation_effective_date": "2026-07-01",
+            "quality_score": 0.95,
+            "source_snapshot_ids": ["snap-pg-01"],
+            "prediction_origin_time": origin_time,
+        }
+        case = service.create_case(payload, created_by="tester", correlation_id="corr-pg-rt-01")
+        report = service.value(case.case_id, actor="worker-1", correlation_id="corr-pg-rt-01")
+
+        assert report.depreciation_applied is True
+        assert report.depreciation_version == AVM_DEPRECIATION_VERSION
+        assert report.lenses[1].evidence["depreciation"]["effective_date"] == "2026-07-01"
+        assert report.lenses[1].evidence["depreciation"]["version"] == AVM_DEPRECIATION_VERSION
+
+        # Finance approval
+        approved = service.approve_finance(
+            case.case_id,
+            actor="finance-lead",
+            reason="approved postgres straight-line depreciation v1 valuation",
+            reserve_price=report.reserve_price,
+            correlation_id="corr-pg-rt-01",
+        )
+        assert approved.finance_approval is not None
+
+        # Dataroom generation & export
+        dataroom = service.build_dataroom(
+            case.case_id,
+            actor="deal-lead",
+            correlation_id="corr-pg-rt-01",
+        )
+        assert dataroom.completeness == 1.0
+        assert dataroom.is_complete is True
+        assert dataroom.valuation_card["depreciation_version"] == AVM_DEPRECIATION_VERSION
+        assert dataroom.valuation_card["depreciation_applied"] is True
+
+        exported = service.export_dataroom(
+            case.case_id,
+            actor="deal-lead",
+            reason="pg diligence package with depreciation v1",
+            correlation_id="corr-pg-rt-01",
+        )
+        assert len(exported.export_audit) == 1
+
+        # Deal Outcome persistence
+        outcome = DealOutcome(
+            outcome_id="outcome-pg-dep-01",
+            valuation_id=report.report_id,
+            store_id="store-dep-pg-roundtrip-01",
+            sold=True,
+            settlement_price=3_100_000.0,
+            settlement_date=datetime.now(UTC).date(),
+        )
+        repository.save_deal_outcome(outcome)
+
+        # Read back and verify
+        reloaded_case = repository.get_case(case.case_id)
+        assert reloaded_case is not None
+        assert reloaded_case.valuation_input.equipment_depreciation_basis == "original_cost"
+        assert reloaded_case.valuation_input.equipment_original_cost == 600_000.0
+
+        reloaded_report = repository.latest_report(case.case_id)
+        assert reloaded_report is not None
+        assert reloaded_report.report_id == report.report_id
+        assert reloaded_report.depreciation_applied is True
+        assert reloaded_report.depreciation_version == AVM_DEPRECIATION_VERSION
+        assert reloaded_report.fair_price.p50 == report.fair_price.p50
+        assert reloaded_report.lenses[1].evidence["depreciation"]["effective_date"] == "2026-07-01"
+
+        history = repository.report_history(case.case_id)
+        assert len(history) == 1
+        assert history[0].report_id == report.report_id
+
+        reloaded_dataroom = repository.get_dataroom(case.case_id)
+        assert reloaded_dataroom is not None
+        assert reloaded_dataroom.completeness == 1.0
+        assert reloaded_dataroom.is_complete is True
+        assert reloaded_dataroom.valuation_card["depreciation_version"] == AVM_DEPRECIATION_VERSION
+        assert reloaded_dataroom.valuation_card["depreciation_applied"] is True
+        assert len(reloaded_dataroom.export_audit) == 1
+        assert reloaded_dataroom.export_audit[0]["reason"] == "pg diligence package with depreciation v1"
+
+        saved_outcome = repository.get_deal_outcome("outcome-pg-dep-01")
+        assert saved_outcome is not None
+        assert saved_outcome.outcome_id == "outcome-pg-dep-01"
+        assert saved_outcome.settlement_price == 3_100_000.0
+
+        outcomes_for_val = repository.get_deal_outcomes_for_valuation(report.report_id)
+        assert len(outcomes_for_val) == 1
+        assert outcomes_for_val[0].outcome_id == "outcome-pg-dep-01"
+    finally:
+        bundle.engine.close()
+
+
+def test_durable_avm_repository_legacy_pre_depreciation_stored_payload_read_and_export(
+    tmp_path,
+) -> None:
+    """R6: Pre-depreciation stored reports and datarooms deserialized from document store
+    are faithfully tagged with v0 legacy markers and disclosure text, preserving original
+    IDs, store_id, prices, and allowing export without mutating legacy state."""
+    from modules.avm.domain import (
+        ApprovalDecision,
+        NormalizedMargin,
+        ValuationCase,
+        ValuationCaseStatus,
+        ValuationInput,
+        generate_data_room,
+        value_store,
+    )
+
+    engine = SqliteEngine(tmp_path / "legacy-predep-store.sqlite3")
+    store = SqliteDocumentStore(engine)
+    repository = DurableAVMRepository(store)
+
+    # 1. Create legacy case without any depreciation fields in DATAROOM_READY state
+    legacy_input = ValuationInput(
+        store_id="store-legacy-predep-01",
+        gm_ttm=1_000_000,
+        forecast_gm_next_12m=1_000_000,
+        asset_book_value=500_000,
+        equipment_fair_value=100_000,
+        lease_liability=50_000.0,
+        working_capital=50_000.0,
+        comparable_multiples=(2.5,),
+        quality_score=0.90,
+        quality_score_status="measured",
+        source_snapshot_ids=("snap-1",),
+    )
+    legacy_case = ValuationCase.create(
+        legacy_input,
+        created_by="legacy-admin",
+        correlation_id="corr-legacy-predep",
+        case_id="case-legacy-predep-01",
+    )
+    legacy_case = legacy_case.transition(
+        ValuationCaseStatus.REVIEW_REQUIRED,
+        actor="legacy-admin",
+        reason="legacy review",
+        correlation_id="corr-legacy-predep",
+    ).transition(
+        ValuationCaseStatus.APPROVED,
+        actor="legacy-admin",
+        reason="legacy approved case",
+        correlation_id="corr-legacy-predep",
+    ).transition(
+        ValuationCaseStatus.DATAROOM_READY,
+        actor="legacy-admin",
+        reason="legacy dataroom ready",
+        correlation_id="corr-legacy-predep",
+    )
+    legacy_input.__dict__.pop("feature_version", None)
+    store.put(repository._CASES, legacy_case.case_id, legacy_case)
+
+    # 2. Construct pre-upgrade ValuationReport omitting depreciation_version/depreciation_applied
+    margin = NormalizedMargin(
+        case_id=legacy_case.case_id,
+        store_id=legacy_case.store_id,
+        gm_ttm=1_000_000,
+        gm_fwd=1_000_000,
+        normalized_gm=1_000_000,
+        adjustment_reasons=("weighted_ttm_and_forecast_gm",),
+        confidence="high",
+    )
+    report = value_store(
+        legacy_case,
+        margin,
+        depreciation_version_pin=AVM_DEPRECIATION_LEGACY_VERSION,
+    )
+    report = replace(
+        report,
+        finance_approval=ApprovalDecision(
+            decision_id=f"decision-{legacy_case.case_id}",
+            actor_id="legacy-finance",
+            approved_at=legacy_case.created_at,
+            decision_reason="historical approval",
+            reserve_price=report.reserve_price,
+            correlation_id="corr-legacy-predep",
+        ),
+    )
+    report = replace(report, feature_version="valuation-view-v1")
+    report.normalized_margin.__dict__.pop("feature_version", None)
+    raw_legacy_report = report
+    for k in ("depreciation_version", "depreciation_applied"):
+        if k in raw_legacy_report.__dict__:
+            object.__delattr__(raw_legacy_report, k)
+
+    store.put(
+        repository._REPORTS,
+        raw_legacy_report.report_id,
+        raw_legacy_report,
+        group_key=legacy_case.case_id,
+        seq=1,
+    )
+
+    # 3. Construct and store pre-upgrade DataRoom
+    raw_dataroom = generate_data_room(raw_legacy_report)
+    raw_card = dict(raw_dataroom.valuation_card)
+    raw_card.pop("depreciation_version", None)
+    raw_card.pop("depreciation_applied", None)
+    raw_card.pop("depreciation_disposition", None)
+    raw_dataroom = replace(raw_dataroom, valuation_card=raw_card)
+    store.put(repository._DATAROOMS, legacy_case.case_id, raw_dataroom)
+
+    # 4. Read back via repository
+    latest = repository.latest_report(legacy_case.case_id)
+    assert latest is not None
+    _assert_historical_nested_avm_versions(repository, legacy_case.case_id, raw_legacy_report.report_id)
+    assert latest.report_id == raw_legacy_report.report_id
+    assert latest.store_id == "store-legacy-predep-01"
+    assert latest.fair_price.p50 == raw_legacy_report.fair_price.p50
+    assert latest.depreciation_version == AVM_DEPRECIATION_LEGACY_VERSION
+    assert latest.depreciation_applied is False
+
+    history = repository.report_history(legacy_case.case_id)
+    assert len(history) == 1
+    assert history[0].report_id == raw_legacy_report.report_id
+    assert history[0].depreciation_version == AVM_DEPRECIATION_LEGACY_VERSION
+    assert history[0].depreciation_applied is False
+
+    reloaded_dr = repository.get_dataroom(legacy_case.case_id)
+    assert reloaded_dr is not None
+    assert reloaded_dr.valuation_card["depreciation_version"] == AVM_DEPRECIATION_LEGACY_VERSION
+    assert reloaded_dr.valuation_card["depreciation_applied"] is False
+    assert reloaded_dr.valuation_card["depreciation_disposition"] == AVM_DEPRECIATION_LEGACY_DISPOSITION_TEXT
+    assert reloaded_dr.valuation_card["fair_price"]["p50"] == raw_legacy_report.fair_price.p50
+
+    # 5. Export legacy dataroom via service
+    service = AVMService(repository=repository)
+    exported = service.export_dataroom(
+        legacy_case.case_id,
+        actor="deal-room",
+        reason="export legacy pre-depreciation package",
+        correlation_id="corr-exp-legacy",
+    )
+    assert len(exported.export_audit) == 1
+    assert exported.export_audit[0]["reason"] == "export legacy pre-depreciation package"
+    assert exported.valuation_card["depreciation_version"] == AVM_DEPRECIATION_LEGACY_VERSION
+    assert exported.valuation_card["depreciation_applied"] is False
+    assert exported.valuation_card["depreciation_disposition"] == AVM_DEPRECIATION_LEGACY_DISPOSITION_TEXT
+
+    engine.close()
+
+
+@pytest.mark.requires_live_env
+def test_postgresql_durable_avm_repository_legacy_pre_depreciation_read_and_export(
+    intake_blank_db: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R6: Pre-depreciation stored reports and datarooms deserialized from PostgreSQL document store
+    are faithfully tagged with v0 legacy markers and disclosure text, preserving original
+    IDs, store_id, prices, and allowing export without mutating legacy state."""
+    from modules.avm.domain import (
+        ApprovalDecision,
+        NormalizedMargin,
+        ValuationCase,
+        ValuationCaseStatus,
+        ValuationInput,
+        generate_data_room,
+        value_store,
+    )
+
+    _provision_canonical_schema(intake_blank_db)
+    database_url = intake_blank_db.url()
+    apply_upgrade_to_database(database_url)
+    monkeypatch.setenv("ODAY_DATABASE_URL", database_url)
+
+    bundle = build_persistence(mode="postgresql")
+    try:
+        repository = bundle.avm_repository
+        store = repository._store
+
+        # 1. Create legacy case without any depreciation fields in DATAROOM_READY state
+        legacy_input = ValuationInput(
+            store_id="store-pg-legacy-predep-01",
+            gm_ttm=1_500_000,
+            forecast_gm_next_12m=1_500_000,
+            asset_book_value=700_000,
+            equipment_fair_value=200_000,
+            lease_liability=50_000.0,
+            working_capital=50_000.0,
+            comparable_multiples=(2.5,),
+            quality_score=0.92,
+            quality_score_status="measured",
+            source_snapshot_ids=("snap-pg-1",),
+        )
+        legacy_case = ValuationCase.create(
+            legacy_input,
+            created_by="legacy-admin",
+            correlation_id="corr-pg-legacy-predep",
+            case_id="case-pg-legacy-predep-01",
+        )
+        legacy_case = legacy_case.transition(
+            ValuationCaseStatus.REVIEW_REQUIRED,
+            actor="legacy-admin",
+            reason="legacy review",
+            correlation_id="corr-pg-legacy-predep",
+        ).transition(
+            ValuationCaseStatus.APPROVED,
+            actor="legacy-admin",
+            reason="legacy approved case",
+            correlation_id="corr-pg-legacy-predep",
+        ).transition(
+            ValuationCaseStatus.DATAROOM_READY,
+            actor="legacy-admin",
+            reason="legacy dataroom ready",
+            correlation_id="corr-pg-legacy-predep",
+        )
+        legacy_input.__dict__.pop("feature_version", None)
+        store.put(repository._CASES, legacy_case.case_id, legacy_case)
+
+        margin = NormalizedMargin(
+            case_id=legacy_case.case_id,
+            store_id=legacy_case.store_id,
+            gm_ttm=1_500_000,
+            gm_fwd=1_500_000,
+            normalized_gm=1_500_000,
+            adjustment_reasons=("weighted_ttm_and_forecast_gm",),
+            confidence="high",
+        )
+        report = value_store(
+            legacy_case,
+            margin,
+            depreciation_version_pin=AVM_DEPRECIATION_LEGACY_VERSION,
+        )
+        report = replace(
+            report,
+            finance_approval=ApprovalDecision(
+                decision_id=f"decision-{legacy_case.case_id}",
+                actor_id="legacy-finance",
+                approved_at=legacy_case.created_at,
+                decision_reason="historical approval",
+                reserve_price=report.reserve_price,
+                correlation_id="corr-pg-legacy-predep",
+            ),
+        )
+        report = replace(report, feature_version="valuation-view-v1")
+        report.normalized_margin.__dict__.pop("feature_version", None)
+        raw_legacy_report = report
+        for k in ("depreciation_version", "depreciation_applied"):
+            if k in raw_legacy_report.__dict__:
+                object.__delattr__(raw_legacy_report, k)
+
+        store.put(
+            repository._REPORTS,
+            raw_legacy_report.report_id,
+            raw_legacy_report,
+            group_key=legacy_case.case_id,
+            seq=1,
+        )
+
+        raw_dataroom = generate_data_room(raw_legacy_report)
+        raw_card = dict(raw_dataroom.valuation_card)
+        raw_card.pop("depreciation_version", None)
+        raw_card.pop("depreciation_applied", None)
+        raw_card.pop("depreciation_disposition", None)
+        raw_dataroom = replace(raw_dataroom, valuation_card=raw_card)
+        store.put(repository._DATAROOMS, legacy_case.case_id, raw_dataroom)
+
+        latest = repository.latest_report(legacy_case.case_id)
+        assert latest is not None
+        _assert_historical_nested_avm_versions(repository, legacy_case.case_id, raw_legacy_report.report_id)
+        assert latest.report_id == raw_legacy_report.report_id
+        assert latest.store_id == "store-pg-legacy-predep-01"
+        assert latest.fair_price.p50 == raw_legacy_report.fair_price.p50
+        assert latest.depreciation_version == AVM_DEPRECIATION_LEGACY_VERSION
+        assert latest.depreciation_applied is False
+
+        history = repository.report_history(legacy_case.case_id)
+        assert len(history) == 1
+        assert history[0].report_id == raw_legacy_report.report_id
+        assert history[0].depreciation_version == AVM_DEPRECIATION_LEGACY_VERSION
+
+        reloaded_dr = repository.get_dataroom(legacy_case.case_id)
+        assert reloaded_dr is not None
+        assert reloaded_dr.valuation_card["depreciation_version"] == AVM_DEPRECIATION_LEGACY_VERSION
+        assert reloaded_dr.valuation_card["depreciation_applied"] is False
+        assert reloaded_dr.valuation_card["depreciation_disposition"] == AVM_DEPRECIATION_LEGACY_DISPOSITION_TEXT
+
+        service = AVMService(repository=repository)
+        exported = service.export_dataroom(
+            legacy_case.case_id,
+            actor="deal-room",
+            reason="export pg legacy pre-depreciation package",
+            correlation_id="corr-exp-pg-legacy",
+        )
+        assert len(exported.export_audit) == 1
+        assert exported.export_audit[0]["reason"] == "export pg legacy pre-depreciation package"
+        assert exported.valuation_card["depreciation_version"] == AVM_DEPRECIATION_LEGACY_VERSION
+    finally:
+        bundle.engine.close()
+
+
+def test_pre_upgrade_create_case_idempotency_receipt_replay(tmp_path) -> None:
+    """R4: Pre-upgrade create-case requests omitting new depreciation fields produce
+    fingerprints matching pre-upgrade requests, enabling seamless replay without 409 conflict,
+    while genuinely changed depreciation requests on the same key are rejected."""
+    db_path = tmp_path / "avm-idempotency.sqlite3"
+    bundle = build_persistence(mode="durable", db_path=db_path)
+    client = TestClient(
+        create_app(persistence=bundle),
+        headers=AVM_HEADERS,
+        backend_options={"use_uvloop": True},
+    )
+
+    pre_upgrade_body = {
+        "store_id": "store-idemp-01",
+        "gm_ttm": 1_000_000,
+        "forecast_gm_next_12m": 1_000_000,
+        "asset_book_value": 500_000,
+        "equipment_fair_value": 200_000,
+        "lease_liability": 50_000,
+        "working_capital": 50_000,
+        "comparable_multiples": [2.5],
+        "liquidity_discount": 0.1,
+        "quality_score": 0.90,
+        "source_snapshot_ids": ["snap-1"],
+        "created_by": "lead",
+    }
+    key = "idemp-avm-legacy-key-001"
+
+    # Seed an actual pre-upgrade completed command receipt directly into the queue
+    seeded_response = {
+        "case_id": "avm-case-legacy-seeded-001",
+        "store_id": "store-idemp-01",
+        "status": "DATA_READY",
+        "valuation_input": {**pre_upgrade_body, "prediction_origin_time": None},
+        "created_by": "lead",
+        "created_at": "2026-08-01T00:00:00+00:00",
+        "status_history": [],
+        "created": True,
+        "correlation_id": "corr-idemp-legacy-0",
+        "audit_event_id": "audit-legacy-0",
+    }
+    depreciation_fields = (
+        "equipment_depreciation_basis",
+        "equipment_original_cost",
+        "asset_book_value_includes_equipment",
+        "useful_life_months",
+        "residual_value_ratio",
+        "depreciation_method",
+        "depreciation_effective_date",
+        "asset_in_service_date",
+    )
+    raw_legacy_payload = AVMCasePayload(**pre_upgrade_body).model_dump(mode="json")
+    pre_upgrade_fingerprint_payload = {
+        k: v for k, v in raw_legacy_payload.items() if k not in depreciation_fields
+    }
+    legacy_envelope = {
+        "tenant_id": "__local__",
+        "receipt_service": "avm",
+        "command_scope": "avm:create_case",
+        "request_fingerprint": request_fingerprint(pre_upgrade_fingerprint_payload),
+        "response": seeded_response,
+    }
+    scoped_key = f"command:v1:avm:__local__:avm:create_case:{key}"
+    record, _ = bundle.job_queue.enqueue(
+        JobRequest(
+            job_type="avm.command-receipt",
+            idempotency_key=scoped_key,
+            payload=legacy_envelope,
+        ),
+        correlation_id="corr-seed-0",
+    )
+    bundle.job_queue.update_status(
+        record.job_id,
+        JobStatus.SUCCEEDED,
+        payload=legacy_envelope,
+        expected_version=record.version,
+        fence_token=record.fence_token,
+    )
+
+    # First submission of legacy payload with upgraded API -> matches seeded pre-upgrade fingerprint
+    # and returns the replayed response (created=False)
+    resp1 = client.post(
+        "/avm/cases",
+        json=pre_upgrade_body,
+        headers={"x-correlation-id": "corr-idemp-1", "Idempotency-Key": key},
+    )
+    assert resp1.status_code == 201
+    assert resp1.json()["created"] is False
+    assert resp1.json()["case_id"] == "avm-case-legacy-seeded-001"
+
+    # Second submission (replay) -> also matches
+    resp2 = client.post(
+        "/avm/cases",
+        json=pre_upgrade_body,
+        headers={"x-correlation-id": "corr-idemp-2", "Idempotency-Key": key},
+    )
+    assert resp2.status_code == 201
+    assert resp2.json()["created"] is False
+    assert resp2.json()["case_id"] == "avm-case-legacy-seeded-001"
+
+    # Genuinely changed request with different depreciation fields on same key -> 409 Conflict
+    conflict_body = {
+        **pre_upgrade_body,
+        "equipment_depreciation_basis": "original_cost",
+        "equipment_original_cost": 300_000.0,
+    }
+    resp3 = client.post(
+        "/avm/cases",
+        json=conflict_body,
+        headers={"x-correlation-id": "corr-idemp-3", "Idempotency-Key": key},
+    )
+    assert resp3.status_code == 409
+    assert resp3.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REUSED"
+
+    bundle.engine.close()
+
+
+def test_missing_depreciation_inputs_fail_closed_and_persist_review_required(tmp_path) -> None:
+    """R5: An original_cost case missing required fields fails closed on valuation,
+    persisting case state as REVIEW_REQUIRED with failure reason, and producing no fake report."""
+    db_path = tmp_path / "avm-missing-input.sqlite3"
+    bundle = build_persistence(mode="durable", db_path=db_path)
+    client = TestClient(
+        create_app(persistence=bundle),
+        headers=AVM_HEADERS,
+        backend_options={"use_uvloop": True},
+    )
+
+    # Missing equipment_original_cost and asset_in_service_date
+    invalid_body = {
+        "store_id": "store-missing-dep-01",
+        "gm_ttm": 1_000_000,
+        "forecast_gm_next_12m": 1_000_000,
+        "asset_book_value": 500_000,
+        "equipment_fair_value": 200_000,
+        "quality_score": 0.90,
+        "equipment_depreciation_basis": "original_cost",
+        "created_by": "operator",
+    }
+    created = client.post(
+        "/avm/cases",
+        json=invalid_body,
+        headers={"x-correlation-id": "corr-missing-dep-1"},
+    )
+    assert created.status_code == 201
+    case_id = created.json()["case_id"]
+
+    # Attempt to value
+    val_resp = client.post(
+        f"/avm/cases/{case_id}/value",
+        json={"actor": "worker-1"},
+        headers={"x-correlation-id": "corr-missing-dep-2"},
+    )
+    assert val_resp.status_code == 422
+    assert "equipment_original_cost is required" in val_resp.json()["detail"]
+
+    # Verify case state in repository transitioned to REVIEW_REQUIRED
+    case_get = client.get(f"/avm/cases/{case_id}")
+    assert case_get.status_code == 200
+    case_data = case_get.json()
+    assert case_data["status"] == ValuationCaseStatus.REVIEW_REQUIRED.value
+    assert any("valuation failed" in h["reason"] for h in case_data["status_history"])
+
+    # Verify no report was produced
+    repo = bundle.avm_repository
+    assert repo.latest_report(case_id) is None
+
+    bundle.engine.close()
+
+
+def test_api_operational_rollback_with_valid_receipt_preserves_v1_history(tmp_path) -> None:
+    """R2: Verify operational rollback to v0 via API router/service with valid receipt
+    reproduces pre-cutover arithmetic while preserving prior v1 reports in immutable history."""
+    from modules.avm.domain import AVM_DEPRECIATION_LEGACY_VERSION, AVM_DEPRECIATION_VERSION
+
+    db_path = tmp_path / "avm-rollback.sqlite3"
+    bundle = build_persistence(mode="durable", db_path=db_path)
+    client = TestClient(
+        create_app(persistence=bundle),
+        headers=AVM_HEADERS,
+        backend_options={"use_uvloop": True},
+    )
+
+    body = {
+        "store_id": "store-rollback-test-01",
+        "gm_ttm": 4_800_000.0,
+        "forecast_gm_next_12m": 5_100_000.0,
+        "asset_book_value": 3_000_000.0,
+        "equipment_fair_value": 6_000_000.0,
+        "working_capital": 400_000.0,
+        "lease_liability": 900_000.0,
+        "comparable_multiples": [2.3, 2.6, 2.9],
+        "liquidity_discount": 0.12,
+        "quality_score": 0.95,
+        "source_snapshot_ids": ["snap-rb-01"],
+        "equipment_depreciation_basis": "original_cost",
+        "equipment_original_cost": 6_000_000.0,
+        "useful_life_months": 84,
+        "residual_value_ratio": 0.10,
+        "depreciation_method": "straight_line",
+        "asset_in_service_date": "2021-03-03",
+        "depreciation_effective_date": "2026-09-03",
+        "created_by": "lead",
+    }
+    created = client.post("/avm/cases", json=body, headers={"x-correlation-id": "corr-rb-1"})
+    assert created.status_code == 201
+    case_id = created.json()["case_id"]
+
+    # 1. Normal v1 valuation
+    val1 = client.post(
+        f"/avm/cases/{case_id}/value",
+        json={"actor": "worker-1"},
+        headers={"x-correlation-id": "corr-rb-2"},
+    )
+    assert val1.status_code == 200
+    res1 = val1.json()
+    assert res1["depreciation_version"] == AVM_DEPRECIATION_VERSION
+    assert res1["depreciation_applied"] is True
+    assert res1["valuation_version"] == 1
+
+    # 2. Rollback to v0 without receipt -> rejected
+    val_bad_rb = client.post(
+        f"/avm/cases/{case_id}/value",
+        json={
+            "actor": "worker-1",
+            "depreciation_version_pin": AVM_DEPRECIATION_LEGACY_VERSION,
+        },
+        headers={"x-correlation-id": "corr-rb-3"},
+    )
+    assert val_bad_rb.status_code == 422
+    assert "DepreciationRollbackReceipt" in val_bad_rb.json()["detail"]
+
+    # 2b. Rollback with malformed (empty) receipt -> rejected with structured 422 (N3)
+    val_malformed = client.post(
+        f"/avm/cases/{case_id}/value",
+        json={
+            "actor": "worker-1",
+            "depreciation_version_pin": AVM_DEPRECIATION_LEGACY_VERSION,
+            "rollback_receipt": {},
+        },
+        headers={"x-correlation-id": "corr-rb-malformed"},
+    )
+    assert val_malformed.status_code == 422
+
+    # 2c. Rollback with expired receipt -> rejected (N5)
+    now = datetime.now(UTC)
+    expired_receipt = {
+        "decider": "finance-lead-sarah",
+        "decision_time": (now - timedelta(days=2)).isoformat(),
+        "reason": "Expired rollback attempt",
+        "target_expiry": (now - timedelta(minutes=5)).isoformat(),
+        "depreciation_version_pin": AVM_DEPRECIATION_LEGACY_VERSION,
+    }
+    val_expired = client.post(
+        f"/avm/cases/{case_id}/value",
+        json={
+            "actor": "worker-1",
+            "depreciation_version_pin": AVM_DEPRECIATION_LEGACY_VERSION,
+            "rollback_receipt": expired_receipt,
+        },
+        headers={"x-correlation-id": "corr-rb-expired"},
+    )
+    assert val_expired.status_code == 422
+    assert "expired" in val_expired.json()["detail"].lower()
+
+    # 3. Rollback to v0 with valid receipt -> succeeds and reproduces pre-cutover arithmetic (N5)
+    valid_receipt = {
+        "decider": "finance-lead-sarah",
+        "decision_time": (now - timedelta(hours=2)).isoformat(),
+        "reason": "Emergency operational incident rollback to v0 for asset verification",
+        "target_expiry": (now + timedelta(days=7)).isoformat(),
+        "depreciation_version_pin": AVM_DEPRECIATION_LEGACY_VERSION,
+    }
+    val_rb = client.post(
+        f"/avm/cases/{case_id}/value",
+        json={
+            "actor": "worker-1",
+            "depreciation_version_pin": AVM_DEPRECIATION_LEGACY_VERSION,
+            "rollback_receipt": valid_receipt,
+        },
+        headers={"x-correlation-id": "corr-rb-4"},
+    )
+    assert val_rb.status_code == 200
+    res_rb = val_rb.json()
+    assert res_rb["depreciation_version"] == AVM_DEPRECIATION_LEGACY_VERSION
+    assert res_rb["depreciation_applied"] is False
+    assert res_rb["valuation_version"] == 2
+    assert res_rb["fair_price"] == {
+        "p10": 9228258.13,
+        "p50": 11253973.33,
+        "p90": 13279688.53,
+    }
+    assert res_rb["reserve_price"] == 8951410.39
+    assert res_rb["asking_price"] == 13943672.96
+
+    # 4. Verify history preserves both reports
+    repo = bundle.avm_repository
+    history = repo.report_history(case_id)
+    assert len(history) == 2
+    assert history[0].valuation_version == 1
+    assert history[0].depreciation_version == AVM_DEPRECIATION_VERSION
+    assert history[1].valuation_version == 2
+    assert history[1].depreciation_version == AVM_DEPRECIATION_LEGACY_VERSION
+
+    bundle.engine.close()
+
+
+
+
+def test_sqlite_durable_avm_repository_pre_status_legacy_input_migration_preserves_v1_provenance(
+    tmp_path: Path,
+) -> None:
+    """Historical case with both quality_score_status and feature_version absent from
+    serialized input preserves valuation-view-v1 across read-induced migration and subsequent stored reads."""
+    from modules.avm.domain import (
+        ApprovalDecision,
+        NormalizedMargin,
+        ValuationCase,
+        ValuationCaseStatus,
+        ValuationInput,
+        generate_data_room,
+        value_store,
+    )
+
+    db_path = tmp_path / "sqlite-legacy-provenance.sqlite3"
+    engine = SqliteEngine(db_path)
+    store = SqliteDocumentStore(engine)
+    repository = DurableAVMRepository(store)
+
+    # 1. Create historical case with both quality_score_status and feature_version absent
+    legacy_input = _as_pre_status_payload(
+        ValuationInput(
+            store_id="store-sqlite-prestatus-01",
+            gm_ttm=1_200_000,
+            forecast_gm_next_12m=1_200_000,
+            asset_book_value=600_000,
+            equipment_fair_value=120_000,
+            lease_liability=40_000.0,
+            working_capital=40_000.0,
+            comparable_multiples=(2.5,),
+            quality_score=0.95,
+            source_snapshot_ids=("snap-sqlite-1",),
+        )
+    )
+    assert "quality_score_status" not in legacy_input.__dict__
+    assert "feature_version" not in legacy_input.__dict__
+
+    legacy_case = ValuationCase.create(
+        legacy_input,
+        created_by="legacy-admin",
+        correlation_id="corr-sqlite-prestatus",
+        case_id="case-sqlite-prestatus-01",
+    )
+    legacy_case = legacy_case.transition(
+        ValuationCaseStatus.REVIEW_REQUIRED,
+        actor="legacy-admin",
+        reason="legacy review",
+        correlation_id="corr-sqlite-prestatus",
+    ).transition(
+        ValuationCaseStatus.APPROVED,
+        actor="legacy-admin",
+        reason="legacy approved case",
+        correlation_id="corr-sqlite-prestatus",
+    ).transition(
+        ValuationCaseStatus.DATAROOM_READY,
+        actor="legacy-admin",
+        reason="legacy dataroom ready",
+        correlation_id="corr-sqlite-prestatus",
+    )
+    store.put(repository._CASES, legacy_case.case_id, legacy_case)
+
+    # 2. Historical report with valuation-view-v1 and pre-depreciation markers
+    margin = _as_pre_status_payload(
+        NormalizedMargin(
+            case_id=legacy_case.case_id,
+            store_id=legacy_case.store_id,
+            gm_ttm=1_200_000,
+            gm_fwd=1_200_000,
+            normalized_gm=1_200_000,
+            adjustment_reasons=("weighted_ttm_and_forecast_gm",),
+            confidence="high",
+        )
+    )
+    assert "feature_version" not in margin.__dict__
+
+    report = value_store(
+        legacy_case,
+        margin,
+        depreciation_version_pin=AVM_DEPRECIATION_LEGACY_VERSION,
+    )
+    report = replace(
+        report,
+        finance_approval=ApprovalDecision(
+            decision_id=f"decision-{legacy_case.case_id}",
+            actor_id="legacy-finance",
+            approved_at=legacy_case.created_at,
+            decision_reason="historical approval",
+            reserve_price=report.reserve_price,
+            correlation_id="corr-sqlite-prestatus",
+        ),
+        feature_version="valuation-view-v1",
+    )
+    report.normalized_margin.__dict__.pop("feature_version", None)
+    raw_legacy_report = report
+    for k in ("depreciation_version", "depreciation_applied"):
+        if k in raw_legacy_report.__dict__:
+            object.__delattr__(raw_legacy_report, k)
+
+    store.put(
+        repository._REPORTS,
+        raw_legacy_report.report_id,
+        raw_legacy_report,
+        group_key=legacy_case.case_id,
+        seq=1,
+    )
+
+    raw_dataroom = generate_data_room(raw_legacy_report)
+    raw_card = dict(raw_dataroom.valuation_card)
+    raw_card.pop("depreciation_version", None)
+    raw_card.pop("depreciation_applied", None)
+    raw_card.pop("depreciation_disposition", None)
+    raw_dataroom = replace(raw_dataroom, valuation_card=raw_card)
+    store.put(repository._DATAROOMS, legacy_case.case_id, raw_dataroom)
+
+    # 3. Read back via repository, triggering _migrate_legacy_case via _case_has_legacy_quality / get_case
+    latest = repository.latest_report(legacy_case.case_id)
+    assert latest is not None
+    assert latest.report_id == raw_legacy_report.report_id
+    assert latest.store_id == "store-sqlite-prestatus-01"
+    assert latest.fair_price.p50 == raw_legacy_report.fair_price.p50
+    assert latest.depreciation_version == AVM_DEPRECIATION_LEGACY_VERSION
+    assert latest.depreciation_applied is False
+    assert latest.confidence == "low"
+    assert latest.quality_disposition == "legacy_unknown_downgraded"
+
+    _assert_historical_nested_avm_versions(
+        repository, legacy_case.case_id, raw_legacy_report.report_id
+    )
+
+    # Confirm raw stored case after migration retained valuation-view-v1
+    raw_stored_case = store.get(repository._CASES, legacy_case.case_id)
+    assert raw_stored_case is not None
+    assert raw_stored_case.valuation_input.quality_score_status == "legacy_unknown"
+    assert raw_stored_case.valuation_input.feature_version == "valuation-view-v1"
+    assert raw_stored_case.valuation_input.to_dict()["feature_version"] == "valuation-view-v1"
+
+    # Subsequent stored read via get_case and list_cases
+    re_read_case = repository.get_case(legacy_case.case_id)
+    assert re_read_case is not None
+    assert re_read_case.valuation_input.feature_version == "valuation-view-v1"
+    assert re_read_case.valuation_input.to_dict()["feature_version"] == "valuation-view-v1"
+
+    all_cases = repository.list_cases()
+    assert len(all_cases) == 1
+    assert all_cases[0].valuation_input.feature_version == "valuation-view-v1"
+    assert all_cases[0].valuation_input.to_dict()["feature_version"] == "valuation-view-v1"
+
+    # Dataroom verification
+    reloaded_dr = repository.get_dataroom(legacy_case.case_id)
+    assert reloaded_dr is not None
+    assert reloaded_dr.quality_disposition == "legacy_unknown_downgraded"
+    assert reloaded_dr.valuation_card["confidence"] == "low"
+    assert reloaded_dr.valuation_card["depreciation_version"] == AVM_DEPRECIATION_LEGACY_VERSION
+    assert reloaded_dr.valuation_card["fair_price"]["p50"] == raw_legacy_report.fair_price.p50
+
+    engine.close()
+
+
+@pytest.mark.requires_live_env
+def test_postgresql_durable_avm_repository_pre_status_legacy_input_migration_preserves_v1_provenance(
+    intake_blank_db: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Historical case with both quality_score_status and feature_version absent from
+    serialized input preserves valuation-view-v1 across PostgreSQL read-induced migration and subsequent stored reads."""
+    from modules.avm.domain import (
+        ApprovalDecision,
+        NormalizedMargin,
+        ValuationCase,
+        ValuationCaseStatus,
+        ValuationInput,
+        generate_data_room,
+        value_store,
+    )
+
+    _provision_canonical_schema(intake_blank_db)
+    database_url = intake_blank_db.url()
+    apply_upgrade_to_database(database_url)
+    monkeypatch.setenv("ODAY_DATABASE_URL", database_url)
+
+    bundle = build_persistence(mode="postgresql")
+    try:
+        repository = bundle.avm_repository
+        store = repository._store
+
+        # 1. Create historical case with both quality_score_status and feature_version absent
+        legacy_input = _as_pre_status_payload(
+            ValuationInput(
+                store_id="store-pg-prestatus-01",
+                gm_ttm=1_600_000,
+                forecast_gm_next_12m=1_600_000,
+                asset_book_value=800_000,
+                equipment_fair_value=250_000,
+                lease_liability=60_000.0,
+                working_capital=60_000.0,
+                comparable_multiples=(2.5,),
+                quality_score=0.92,
+                source_snapshot_ids=("snap-pg-pre-1",),
+            )
+        )
+        assert "quality_score_status" not in legacy_input.__dict__
+        assert "feature_version" not in legacy_input.__dict__
+
+        legacy_case = ValuationCase.create(
+            legacy_input,
+            created_by="legacy-admin",
+            correlation_id="corr-pg-prestatus",
+            case_id="case-pg-prestatus-01",
+        )
+        legacy_case = legacy_case.transition(
+            ValuationCaseStatus.REVIEW_REQUIRED,
+            actor="legacy-admin",
+            reason="legacy review",
+            correlation_id="corr-pg-prestatus",
+        ).transition(
+            ValuationCaseStatus.APPROVED,
+            actor="legacy-admin",
+            reason="legacy approved case",
+            correlation_id="corr-pg-prestatus",
+        ).transition(
+            ValuationCaseStatus.DATAROOM_READY,
+            actor="legacy-admin",
+            reason="legacy dataroom ready",
+            correlation_id="corr-pg-prestatus",
+        )
+        store.put(repository._CASES, legacy_case.case_id, legacy_case)
+
+        # 2. Historical report with valuation-view-v1 and pre-depreciation markers
+        margin = _as_pre_status_payload(
+            NormalizedMargin(
+                case_id=legacy_case.case_id,
+                store_id=legacy_case.store_id,
+                gm_ttm=1_600_000,
+                gm_fwd=1_600_000,
+                normalized_gm=1_600_000,
+                adjustment_reasons=("weighted_ttm_and_forecast_gm",),
+                confidence="high",
+            )
+        )
+        assert "feature_version" not in margin.__dict__
+
+        report = value_store(
+            legacy_case,
+            margin,
+            depreciation_version_pin=AVM_DEPRECIATION_LEGACY_VERSION,
+        )
+        report = replace(
+            report,
+            finance_approval=ApprovalDecision(
+                decision_id=f"decision-{legacy_case.case_id}",
+                actor_id="legacy-finance",
+                approved_at=legacy_case.created_at,
+                decision_reason="historical approval",
+                reserve_price=report.reserve_price,
+                correlation_id="corr-pg-prestatus",
+            ),
+            feature_version="valuation-view-v1",
+        )
+        report.normalized_margin.__dict__.pop("feature_version", None)
+        raw_legacy_report = report
+        for k in ("depreciation_version", "depreciation_applied"):
+            if k in raw_legacy_report.__dict__:
+                object.__delattr__(raw_legacy_report, k)
+
+        store.put(
+            repository._REPORTS,
+            raw_legacy_report.report_id,
+            raw_legacy_report,
+            group_key=legacy_case.case_id,
+            seq=1,
+        )
+
+        raw_dataroom = generate_data_room(raw_legacy_report)
+        raw_card = dict(raw_dataroom.valuation_card)
+        raw_card.pop("depreciation_version", None)
+        raw_card.pop("depreciation_applied", None)
+        raw_card.pop("depreciation_disposition", None)
+        raw_dataroom = replace(raw_dataroom, valuation_card=raw_card)
+        store.put(repository._DATAROOMS, legacy_case.case_id, raw_dataroom)
+
+        # 3. Read back via repository, triggering _migrate_legacy_case
+        latest = repository.latest_report(legacy_case.case_id)
+        assert latest is not None
+        assert latest.report_id == raw_legacy_report.report_id
+        assert latest.store_id == "store-pg-prestatus-01"
+        assert latest.fair_price.p50 == raw_legacy_report.fair_price.p50
+        assert latest.depreciation_version == AVM_DEPRECIATION_LEGACY_VERSION
+        assert latest.depreciation_applied is False
+        assert latest.confidence == "low"
+        assert latest.quality_disposition == "legacy_unknown_downgraded"
+
+        _assert_historical_nested_avm_versions(
+            repository, legacy_case.case_id, raw_legacy_report.report_id
+        )
+
+        # Confirm raw stored case after PostgreSQL migration retained valuation-view-v1
+        raw_stored_case = store.get(repository._CASES, legacy_case.case_id)
+        assert raw_stored_case is not None
+        assert raw_stored_case.valuation_input.quality_score_status == "legacy_unknown"
+        assert raw_stored_case.valuation_input.feature_version == "valuation-view-v1"
+        assert raw_stored_case.valuation_input.to_dict()["feature_version"] == "valuation-view-v1"
+
+        # Subsequent stored read via get_case and list_cases
+        re_read_case = repository.get_case(legacy_case.case_id)
+        assert re_read_case is not None
+        assert re_read_case.valuation_input.feature_version == "valuation-view-v1"
+        assert re_read_case.valuation_input.to_dict()["feature_version"] == "valuation-view-v1"
+
+        all_cases = repository.list_cases()
+        assert any(
+            c.case_id == legacy_case.case_id
+            and c.valuation_input.feature_version == "valuation-view-v1"
+            and c.valuation_input.to_dict()["feature_version"] == "valuation-view-v1"
+            for c in all_cases
+        )
+
+        # Dataroom verification
+        reloaded_dr = repository.get_dataroom(legacy_case.case_id)
+        assert reloaded_dr is not None
+        assert reloaded_dr.quality_disposition == "legacy_unknown_downgraded"
+        assert reloaded_dr.valuation_card["confidence"] == "low"
+        assert reloaded_dr.valuation_card["depreciation_version"] == AVM_DEPRECIATION_LEGACY_VERSION
+        assert reloaded_dr.valuation_card["fair_price"]["p50"] == raw_legacy_report.fair_price.p50
+    finally:
+        bundle.engine.close()
+
+
+def _assert_historical_nested_avm_versions(repository, case_id, report_id):
+    retrieved_case = repository.get_case(case_id)
+    assert retrieved_case is not None
+    assert retrieved_case.valuation_input.to_dict()["feature_version"] == "valuation-view-v1"
+    raw_case = repository._store.get(repository._CASES, case_id)
+    assert raw_case is not None
+    assert raw_case.valuation_input.to_dict()["feature_version"] == "valuation-view-v1"
+    for report in [repository.latest_report(case_id), *repository.report_history(case_id)]:
+        payload = report.to_dict()
+        assert payload["report_id"] == report_id
+        assert payload["feature_version"] == "valuation-view-v1"
+        assert payload["normalized_margin"]["feature_version"] == "valuation-view-v1"
+        assert report.with_legacy_quality_disposition().to_dict()["normalized_margin"]["feature_version"] == "valuation-view-v1"
+        assert report.normalized_margin.with_legacy_quality_disposition().to_dict()["feature_version"] == "valuation-view-v1"
+    client = TestClient(create_app(avm_repository=repository), headers=AVM_HEADERS)
+    case_response = client.get(f"/avm/cases/{case_id}")
+    assert case_response.status_code == 200, case_response.text
+    assert case_response.json()["valuation_input"]["feature_version"] == "valuation-view-v1"
+    response = client.get(f"/avm/cases/{case_id}/report")
+    assert response.status_code == 200, response.text
+    assert response.json()["normalized_margin"]["feature_version"] == "valuation-view-v1"
+    response = client.get(f"/avm/cases/{case_id}/reports")
+    assert response.status_code == 200, response.text
+    assert response.json()["items"][0]["normalized_margin"]["feature_version"] == "valuation-view-v1"
+    raw = repository._store.get(repository._REPORTS, report_id)
+    assert raw.normalized_margin.to_dict()["feature_version"] == "valuation-view-v1"

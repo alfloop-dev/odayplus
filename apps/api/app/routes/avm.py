@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from models.shared_ml import (
@@ -23,8 +24,14 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
 else:
+    from uuid import uuid4
+
     from apps.api.app.routes._common import durable_store_required
-    from modules.avm.application import AVMProductionExecutor, AVMService
+    from modules.avm.application import (
+        AVMProductionExecutor,
+        AVMService,
+        DepreciationRollbackReceipt,
+    )
     from modules.avm.infrastructure import InMemoryAVMRepository
 
 
@@ -41,12 +48,35 @@ else:
         quality_score: float | None = None
         source_snapshot_ids: list[str] = Field(default_factory=list)
         prediction_origin_time: str | None = None
+        equipment_depreciation_basis: str | None = None
+        equipment_original_cost: float | None = Field(default=None, ge=0.0)
+        asset_book_value_includes_equipment: bool | None = None
+        useful_life_months: int | None = Field(default=None, ge=1)
+        residual_value_ratio: float | None = Field(default=None, ge=0.0, le=1.0)
+        depreciation_method: str | None = None
+        depreciation_effective_date: str | None = None
+        asset_in_service_date: str | None = None
         created_by: str = Field(min_length=1)
         idempotency_key: str | None = None
 
 
     class ActorPayload(BaseModel):
         actor: str = Field(min_length=1)
+
+
+    class RollbackReceiptPayload(BaseModel):
+        decider: str = Field(min_length=1)
+        decision_time: datetime
+        reason: str = Field(min_length=1)
+        target_expiry: datetime
+        depreciation_version_pin: str | None = None
+        receipt_id: str | None = None
+
+
+    class ValueCasePayload(BaseModel):
+        actor: str = Field(min_length=1)
+        depreciation_version_pin: str | None = None
+        rollback_receipt: RollbackReceiptPayload | None = None
 
 
     class FinanceApprovalPayload(BaseModel):
@@ -86,6 +116,8 @@ else:
         require_durable_commands: bool | None = None,
         production_executor: AVMProductionExecutor | None = None,
         runtime_mode: str | None = None,
+        depreciation_version_pin: str | None = None,
+        rollback_receipt: DepreciationRollbackReceipt | None = None,
     ) -> APIRouter:
         from apps.api.app.routes._common import runtime_binding_guard
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
@@ -108,6 +140,8 @@ else:
                 repository=active_repository,
                 production_executor=production_executor,
                 runtime_mode=runtime_mode,
+                depreciation_version_pin=depreciation_version_pin,
+                rollback_receipt=rollback_receipt,
             )
         except ProductionExecutionConfigurationError as exc:
             composition_error = exc
@@ -230,12 +264,30 @@ else:
                 )
                 return payload
 
+            depreciation_fields = (
+                "equipment_depreciation_basis",
+                "equipment_original_cost",
+                "asset_book_value_includes_equipment",
+                "useful_life_months",
+                "residual_value_ratio",
+                "depreciation_method",
+                "depreciation_effective_date",
+                "asset_in_service_date",
+            )
+            raw_payload = body.model_dump(mode="json")
+            if all(raw_payload.get(k) is None for k in depreciation_fields):
+                fingerprint_payload = {
+                    k: v for k, v in raw_payload.items() if k not in depreciation_fields
+                }
+            else:
+                fingerprint_payload = raw_payload
+
             try:
                 outcome = command_store(request).run(
                     tenant_id=tenant_id(request),
                     idempotency_key=effective_key,
                     scope="avm:create_case",
-                    payload=body.model_dump(mode="json"),
+                    payload=fingerprint_payload,
                     correlation_id=request.state.correlation_id,
                     operation=execute,
                 )
@@ -301,10 +353,28 @@ else:
             return margin.to_dict()
 
         @router.post("/cases/{case_id}/value", dependencies=[Depends(require_permission("avm", Action.CREATE, engine=authz_engine))])
-        def value(case_id: str, body: ActorPayload, request: Request) -> dict[str, Any]:
+        def value(case_id: str, body: ValueCasePayload, request: Request) -> dict[str, Any]:
+            receipt_obj: DepreciationRollbackReceipt | None = None
+            if body.rollback_receipt is not None:
+                receipt_obj = DepreciationRollbackReceipt(
+                    decider=body.rollback_receipt.decider,
+                    decision_time=body.rollback_receipt.decision_time,
+                    reason=body.rollback_receipt.reason,
+                    target_expiry=body.rollback_receipt.target_expiry,
+                    depreciation_version_pin=(
+                        body.rollback_receipt.depreciation_version_pin
+                        or body.depreciation_version_pin
+                        or ""
+                    ),
+                    receipt_id=body.rollback_receipt.receipt_id or f"dep-rollback-{uuid4()}",
+                )
             report = _run(
                 lambda: service.value(
-                    case_id, actor=body.actor, correlation_id=request.state.correlation_id
+                    case_id,
+                    actor=body.actor,
+                    correlation_id=request.state.correlation_id,
+                    depreciation_version_pin=body.depreciation_version_pin,
+                    rollback_receipt=receipt_obj,
                 )
             )
             payload = report.to_dict()
@@ -547,5 +617,6 @@ else:
         "DealOutcomeExportPayload",
         "DealOutcomePayload",
         "FinanceApprovalPayload",
+        "ValueCasePayload",
         "create_avm_router",
     ]

@@ -7,6 +7,7 @@ correlation ID tracking middleware, job queues, and the audit log.
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
@@ -79,13 +80,13 @@ def release_version_payload(*, correlation_id: str) -> dict[str, str]:
 def production_feature_schema_versions() -> dict[str, str]:
     """Return the canonical runtime schema expected by each production model."""
 
-    from modules.avm.domain import AVM_FEATURE_VERSION
+    from modules.avm.application.production import avm_artifact_schema_from_environment
     from modules.forecastops.model_contract import FORECASTOPS_FEATURE_SCHEMA_ID
     from modules.heatzone.domain import HEATZONE_FEATURE_VERSION
     from modules.sitescore.domain import SITESCORE_FEATURE_VERSION
 
     return {
-        "avm": AVM_FEATURE_VERSION,
+        "avm": avm_artifact_schema_from_environment(),
         "forecastops": FORECASTOPS_FEATURE_SCHEMA_ID,
         "heatzone": HEATZONE_FEATURE_VERSION,
         "sitescore": SITESCORE_FEATURE_VERSION,
@@ -1704,7 +1705,7 @@ else:
             scoring_bindings: dict[str, Any] = {}
             production_composition_errors: list[str] = []
             try:
-                from modules.avm.domain import AVM_FEATURE_VERSION
+                from modules.avm.application.production import avm_artifact_schema_from_environment
                 from modules.forecastops.domain import FORECASTOPS_FEATURE_VERSION
                 from modules.heatzone.domain import HEATZONE_FEATURE_VERSION
                 from modules.sitescore.domain import SITESCORE_FEATURE_VERSION
@@ -1722,7 +1723,7 @@ else:
                 model_runtime = None
             if model_runtime is not None:
                 feature_schema_versions = {
-                    "avm": AVM_FEATURE_VERSION,
+                    "avm": avm_artifact_schema_from_environment(),
                     "forecastops": FORECASTOPS_FEATURE_VERSION,
                     "heatzone": HEATZONE_FEATURE_VERSION,
                     "sitescore": SITESCORE_FEATURE_VERSION,
@@ -1885,6 +1886,46 @@ else:
             ),
             exact_responses=True,
         )
+        avm_dep_pin = os.getenv("ODP_AVM_DEPRECIATION_VERSION_PIN", "").strip() or None
+        avm_rollback_receipt = None
+        avm_rollback_json = os.getenv("ODP_AVM_DEPRECIATION_ROLLBACK_RECEIPT_JSON", "").strip()
+        if avm_rollback_json:
+            try:
+                parsed_receipt = json.loads(avm_rollback_json)
+                from modules.avm.application import DepreciationRollbackReceipt
+
+                avm_rollback_receipt = DepreciationRollbackReceipt(
+                    decider=parsed_receipt["decider"],
+                    decision_time=parsed_receipt["decision_time"],
+                    reason=parsed_receipt["reason"],
+                    target_expiry=parsed_receipt["target_expiry"],
+                    depreciation_version_pin=parsed_receipt.get(
+                        "depreciation_version_pin", avm_dep_pin or ""
+                    ),
+                    receipt_id=parsed_receipt.get("receipt_id", f"dep-rollback-{uuid4()}"),
+                )
+            except Exception:
+                avm_rollback_receipt = None
+        elif avm_dep_pin:
+            decider = os.getenv("ODP_AVM_DEPRECIATION_ROLLBACK_DECIDER", "").strip()
+            reason = os.getenv("ODP_AVM_DEPRECIATION_ROLLBACK_REASON", "").strip()
+            target_exp = os.getenv("ODP_AVM_DEPRECIATION_ROLLBACK_EXPIRY", "").strip()
+            decision_time = os.getenv("ODP_AVM_DEPRECIATION_ROLLBACK_DECISION_TIME", "").strip()
+            if decider and reason and target_exp:
+                from modules.avm.application import DepreciationRollbackReceipt
+
+                avm_rollback_receipt = DepreciationRollbackReceipt(
+                    decider=decider,
+                    decision_time=(
+                        datetime.fromisoformat(decision_time.replace("Z", "+00:00"))
+                        if decision_time
+                        else datetime.now(UTC)
+                    ),
+                    reason=reason,
+                    target_expiry=datetime.fromisoformat(target_exp.replace("Z", "+00:00")),
+                    depreciation_version_pin=avm_dep_pin,
+                )
+
         mount_versioned(
             api,
             create_avm_router(
@@ -1894,6 +1935,8 @@ else:
                 require_durable_commands=require_live_data,
                 production_executor=avm_production_executor,
                 runtime_mode=domain_runtime_mode,
+                depreciation_version_pin=avm_dep_pin,
+                rollback_receipt=avm_rollback_receipt,
             ),
         )
         mount_versioned(
@@ -2050,6 +2093,8 @@ else:
                 priceops_repository_for_tenant=priceops_repository_for_tenant,
                 model_runtime=model_runtime,
                 avm_production_executor=avm_production_executor,
+                avm_depreciation_version_pin=avm_dep_pin,
+                avm_rollback_receipt=avm_rollback_receipt,
                 netplan_production_executor=netplan_production_executor,
                 netplan_policy_repository=netplan_policy_repo,
                 netplan_approval_verifier=netplan_approval_verifier,

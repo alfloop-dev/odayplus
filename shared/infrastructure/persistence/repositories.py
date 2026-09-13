@@ -32,12 +32,16 @@ from models.shared_ml.registry import ModelAlias, ModelRegistryError, ModelVersi
 from models.shared_ml.validation import ValidationRun
 from modules.adlift.domain.incrementality import IncrementalityReport
 from modules.avm.domain import (
+    AVM_FEATURE_VERSION_V1,
     LEGACY_UNKNOWN_QUALITY_STATUS,
     DataRoom,
+    DealOutcome,
     NormalizedMargin,
     ValuationCase,
     ValuationInput,
     ValuationReport,
+    rehydrate_legacy_report,
+    rehydrate_legacy_valuation_card,
 )
 from modules.forecastops.domain.feedback import ForecastFeedback
 from modules.forecastops.domain.forecasting import (
@@ -290,6 +294,7 @@ class DurableAVMRepository:
     _MARGINS = "avm.margins"
     _REPORTS = "avm.reports"
     _DATAROOMS = "avm.datarooms"
+    _DEAL_OUTCOMES = "avm.deal_outcomes"
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
@@ -309,6 +314,11 @@ class DurableAVMRepository:
         inp = case.valuation_input
         if getattr(inp, "is_pre_status_payload", False):
             legacy_status = inp.effective_quality_score_status
+            feature_version = (
+                inp.__dict__.get("feature_version", AVM_FEATURE_VERSION_V1)
+                if hasattr(inp, "__dict__")
+                else AVM_FEATURE_VERSION_V1
+            )
             new_input = ValuationInput(
                 store_id=inp.store_id,
                 gm_ttm=inp.gm_ttm,
@@ -323,6 +333,17 @@ class DurableAVMRepository:
                 quality_score_status=legacy_status,
                 source_snapshot_ids=getattr(inp, "source_snapshot_ids", ()),
                 prediction_origin_time=getattr(inp, "prediction_origin_time", datetime.now(UTC)),
+                equipment_depreciation_basis=getattr(inp, "equipment_depreciation_basis", None),
+                equipment_original_cost=getattr(inp, "equipment_original_cost", None),
+                asset_book_value_includes_equipment=getattr(
+                    inp, "asset_book_value_includes_equipment", None
+                ),
+                useful_life_months=getattr(inp, "useful_life_months", None),
+                residual_value_ratio=getattr(inp, "residual_value_ratio", None),
+                depreciation_method=getattr(inp, "depreciation_method", None),
+                depreciation_effective_date=getattr(inp, "depreciation_effective_date", None),
+                asset_in_service_date=getattr(inp, "asset_in_service_date", None),
+                feature_version=feature_version,
             )
             migrated = ValuationCase(
                 case_id=case.case_id,
@@ -348,6 +369,7 @@ class DurableAVMRepository:
         )
 
     def _dispose_legacy_report(self, report: ValuationReport) -> ValuationReport:
+        report = rehydrate_legacy_report(report)
         if not (
             self._case_has_legacy_quality(report.case_id)
             or report.is_legacy_quality_unknown
@@ -365,6 +387,11 @@ class DurableAVMRepository:
         return disposed
 
     def _dispose_legacy_dataroom(self, dataroom: DataRoom) -> DataRoom:
+        rehydrated_card = rehydrate_legacy_valuation_card(dataroom.valuation_card)
+        if rehydrated_card != dataroom.valuation_card:
+            dataroom = DataRoom(
+                **{**dataroom.__dict__, "valuation_card": rehydrated_card}
+            )
         if not (
             self._case_has_legacy_quality(dataroom.case_id)
             or dataroom.is_legacy_quality_unknown
@@ -436,6 +463,24 @@ class DurableAVMRepository:
     def get_dataroom(self, case_id: str) -> DataRoom | None:
         dataroom = self._store.get(self._DATAROOMS, case_id)
         return None if dataroom is None else self._dispose_legacy_dataroom(dataroom)
+
+    def save_deal_outcome(self, outcome: DealOutcome) -> DealOutcome:
+        self._store.put(
+            self._DEAL_OUTCOMES,
+            outcome.outcome_id,
+            outcome,
+            group_key=outcome.valuation_id,
+        )
+        return outcome
+
+    def get_deal_outcome(self, outcome_id: str) -> DealOutcome | None:
+        return self._store.get(self._DEAL_OUTCOMES, outcome_id)
+
+    def get_deal_outcomes_for_valuation(self, valuation_id: str) -> list[DealOutcome]:
+        return self._store.list_by_group(self._DEAL_OUTCOMES, valuation_id)
+
+    def list_deal_outcomes(self) -> list[DealOutcome]:
+        return self._store.list_all(self._DEAL_OUTCOMES)
 
 
 class DurableForecastOpsRepository:

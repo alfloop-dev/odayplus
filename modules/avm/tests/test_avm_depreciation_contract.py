@@ -24,8 +24,6 @@ import dataclasses
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from modules.avm.application.calibration import DealOutcomeCalibrationReport
 from modules.avm.domain.valuation import (
     ValuationCase,
@@ -154,18 +152,9 @@ class TestTheVerdictIsAVMSpecific:
         )
 
 
-class TestTheDepreciationContractIsNotImplementedYet:
-    """Contract sections C-1 through C-5, L-1/L-2/L-4 and R-1, as specs.
+class TestTheDepreciationContract:
+    """Contract sections C-1 through C-5, L-1/L-2/L-4 and R-1, as specs."""
 
-    Remove the marker on a test when the behaviour it describes lands. Leaving
-    it on turns the suite red via strict XPASS.
-    """
-
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason=f"{DOC} C-3: depreciation is not in the valuation path (ODP-FR-AVM-001)",
-    )
     def test_two_inputs_differing_only_in_depreciation_produce_different_valuation(self) -> None:
         """The acceptance test for the whole batch.
 
@@ -191,11 +180,6 @@ class TestTheDepreciationContractIsNotImplementedYet:
         assert old.reserve_price != young.reserve_price
         assert old.asking_price != young.asking_price
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason=f"{DOC} C-2: ValuationInput carries no depreciation fields",
-    )
     def test_valuation_input_carries_the_depreciation_contract_fields(self) -> None:
         view = build_valuation_view(_payload(asset_in_service_date="2021-03-03"))
         serialized = view.to_dict()
@@ -205,14 +189,9 @@ class TestTheDepreciationContractIsNotImplementedYet:
         assert serialized["residual_value_ratio"] == 0.10
         assert serialized["asset_in_service_date"].startswith("2021-03-03")
         assert serialized["feature_version"] == "valuation-view-v2", (
-            "ValuationInput changed shape, so the feature version must move with it"
+            "ValuationInput carries active feature version"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason=f"{DOC} C-4: the asset lens publishes no depreciation evidence",
-    )
     def test_the_asset_lens_publishes_its_depreciation_evidence(self) -> None:
         """Every intermediate value in C-3, on the card.
 
@@ -244,11 +223,6 @@ class TestTheDepreciationContractIsNotImplementedYet:
         assert report.depreciation_applied is True
         assert report.depreciation_version == _domain_constant("AVM_DEPRECIATION_VERSION")
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason=f"{DOC} C-5: missing depreciation inputs are not refused",
-    )
     def test_missing_depreciation_inputs_do_not_yield_a_complete_card(self) -> None:
         """Fail closed, one required field at a time.
 
@@ -267,11 +241,62 @@ class TestTheDepreciationContractIsNotImplementedYet:
                 f"the refusal for a missing {omitted} does not name the field: {error}"
             )
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason=f"{DOC} C-1: the depreciation basis is not distinguished",
-    )
+    def test_fractional_useful_life_is_rejected_at_mapping_and_calculation_boundaries(self) -> None:
+        """C-2 integer-month contract: fractional useful_life_months is rejected without coercion."""
+        import pytest
+
+        from modules.avm.domain.valuation import calculate_depreciation
+
+        invalid_values = (1.9, "1.9", 0.5, "0.5", 12.3, 0, -1, -5.5, True, False)
+        for val in invalid_values:
+            # 1. from_mapping / build_valuation_view boundary
+            payload = _payload(asset_in_service_date="2021-03-03", useful_life_months=val)
+            with pytest.raises(ValueError, match="useful_life_months"):
+                build_valuation_view(payload)
+
+            # 2. Direct ValuationInput dataclass instantiation boundary
+            valid_payload = _payload(asset_in_service_date="2021-03-03")
+            valid_payload.pop("useful_life_months", None)
+            base_view = build_valuation_view(valid_payload)
+            with pytest.raises(ValueError, match="useful_life_months"):
+                dataclasses.replace(base_view, useful_life_months=val)
+
+        # 3. Direct calculate_depreciation boundary
+        valid_input = build_valuation_view(_payload(asset_in_service_date="2021-03-03", useful_life_months=84))
+        # Verify valid integer calculation works and preserves 84 months
+        res = calculate_depreciation(valid_input)
+        assert res.evidence["useful_life_months"] == 84
+        assert res.depreciation_applied is True
+
+    def test_fractional_useful_life_raw_mapping_service_and_batch_worker_rejected(self) -> None:
+        """Raw mapping entry points (AVMService.create_case and AVMValuationWorker.run) reject fractional inputs."""
+        import pytest
+
+        from modules.avm.application import AVMService
+        from modules.avm.infrastructure import InMemoryAVMRepository
+        from modules.avm.workers.valuation_worker import AVMValuationWorker
+
+        repo = InMemoryAVMRepository()
+        service = AVMService(repository=repo)
+        worker = AVMValuationWorker(repository=repo)
+
+        raw_mapping = _payload(asset_in_service_date="2021-03-03", useful_life_months=1.9)
+
+        # 1. Service create_case with raw Mapping[str, Any]
+        with pytest.raises(ValueError, match="useful_life_months"):
+            service.create_case(raw_mapping, created_by="batch-test", correlation_id="corr-test-1")
+
+        # 2. Batch worker run with raw Mapping[str, Any]
+        with pytest.raises(ValueError, match="useful_life_months"):
+            worker.run([raw_mapping], job_id="batch-fractional-test")
+
+        # 3. Valid integer through worker succeeds and issues report
+        valid_mapping = _payload(asset_in_service_date="2021-03-03", useful_life_months=84)
+        batch_res = worker.run([valid_mapping], job_id="batch-valid-test")
+        assert len(batch_res.reports) == 1
+        assert batch_res.reports[0].depreciation_applied is True
+        assert _lens(batch_res.reports[0], "asset").evidence["depreciation"]["useful_life_months"] == 84
+
     def test_an_appraised_basis_is_not_depreciated_twice(self) -> None:
         """An independently appraised value is already net of age.
 
@@ -297,17 +322,26 @@ class TestTheDepreciationContractIsNotImplementedYet:
         assert report.depreciation_applied is False
         assert report.depreciation_version == "avm-depreciation-not-applicable-v1"
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason=f"{DOC} L-1/L-2: no legacy depreciation version exists to tag old cards with",
-    )
     def test_a_legacy_card_keeps_its_legacy_version_and_is_not_recomputed(self) -> None:
         """Cards already sent to buyers stay byte-comparable.
 
         The legacy tag is assigned at rehydration, never as a dataclass
         default -- a default would quietly relabel new cards as legacy too.
         """
+        import json
+        from datetime import UTC, datetime
+
+        from modules.avm.application.valuation import generate_data_room
+        from modules.avm.domain.valuation import (
+            LensValuation,
+            NormalizedMargin,
+            PriceBand,
+            ValuationReport,
+            rehydrate_legacy_report,
+            rehydrate_legacy_valuation_card,
+        )
+        from modules.avm.infrastructure.repositories import InMemoryAVMRepository
+
         legacy_version = _domain_constant("AVM_DEPRECIATION_LEGACY_VERSION")
         assert legacy_version == "avm-depreciation-absent-v0"
 
@@ -318,8 +352,9 @@ class TestTheDepreciationContractIsNotImplementedYet:
             and fields["depreciation_version"].default_factory is dataclasses.MISSING
         ), "depreciation_version has a default; every card must state its version on purpose"
 
-        legacy_card = {
-            "case_id": "avm-case-legacy",
+        # 1. Genuine pre-change serialized JSON bytes (stored before depreciation was added)
+        legacy_card_json = json.dumps({
+            "case_id": "avm-case-legacy-01",
             "store_id": BASE_INPUT["store_id"],
             "fair_price": {"p10": 100.0, "p50": 200.0, "p90": 300.0},
             "reserve_price": 97.0,
@@ -327,26 +362,100 @@ class TestTheDepreciationContractIsNotImplementedYet:
             "model_version": "dealroom-avm-baseline-v1",
             "valuation_version": 1,
             "finance_approval": None,
-        }
-        rehydrate = getattr(
-            __import__("modules.avm.domain.valuation", fromlist=["x"]),
-            "rehydrate_legacy_valuation_card",
-            None,
-        )
-        assert rehydrate is not None, (
-            f"no rehydration path tags pre-cutover cards; see {DOC} section L-2"
-        )
-        tagged = rehydrate(legacy_card)
+        })
+        legacy_card = json.loads(legacy_card_json)
+        tagged = rehydrate_legacy_valuation_card(legacy_card)
         assert tagged["depreciation_version"] == legacy_version
         assert tagged["depreciation_applied"] is False
+        assert tagged["depreciation_disposition"] == "本估值採 2026-09-03 前之計算版本，資產折舊未納入"
         for key, value in legacy_card.items():
             assert tagged[key] == value, f"rehydration recomputed {key}; see {DOC} section L-1"
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason=f"{DOC} R-1: there is no version pin to roll back to",
-    )
+        # 2. Genuine pre-depreciation report rehydration and document deserialization
+        legacy_report_dict = {
+            "report_id": "avm-report-legacy-01",
+            "case_id": "avm-case-legacy-01",
+            "store_id": BASE_INPUT["store_id"],
+            "fair_price": {"p10": 100.0, "p50": 200.0, "p90": 300.0},
+            "reserve_price": 97.0,
+            "asking_price": 315.0,
+            "lenses": [
+                {
+                    "lens": "asset",
+                    "p10": 90.0,
+                    "p50": 190.0,
+                    "p90": 290.0,
+                    "weight": 0.25,
+                    "evidence": {"asset_p50": 190.0},
+                }
+            ],
+            "model_version": "dealroom-avm-baseline-v1",
+            "execution_metadata": {"mode": "legacy_baseline"},
+            "valuation_version": 1,
+            "finance_approval": None,
+        }
+        # Deserialized report object without depreciation tags is tagged upon rehydration
+        report_obj = ValuationReport(
+            report_id=legacy_report_dict["report_id"],
+            case_id=legacy_report_dict["case_id"],
+            store_id=legacy_report_dict["store_id"],
+            normalized_margin=NormalizedMargin(
+                case_id=legacy_report_dict["case_id"],
+                store_id=legacy_report_dict["store_id"],
+                gm_ttm=100.0,
+                gm_fwd=100.0,
+                normalized_gm=100.0,
+                adjustment_reasons=(),
+                confidence="high",
+            ),
+            lenses=(
+                LensValuation(
+                    lens="asset",
+                    p10=90.0,
+                    p50=190.0,
+                    p90=290.0,
+                    method="asset",
+                    evidence={"asset_p50": 190.0},
+                ),
+            ),
+            fair_price=PriceBand(p10=100.0, p50=200.0, p90=300.0),
+            reserve_price=97.0,
+            asking_price=315.0,
+            confidence="high",
+            model_version="dealroom-avm-baseline-v1",
+            feature_version="valuation-view-v1",
+            prediction_origin_time=datetime(2026, 8, 1, tzinfo=UTC),
+            valued_at=datetime(2026, 8, 1, tzinfo=UTC),
+            depreciation_version="",
+            depreciation_applied=False,
+            execution_metadata={"mode": "legacy_baseline"},
+            valuation_version=1,
+        )
+        for k in ("depreciation_version", "depreciation_applied"):
+            if k in report_obj.__dict__:
+                object.__delattr__(report_obj, k)
+        rehydrated_rep = rehydrate_legacy_report(report_obj)
+        assert rehydrated_rep.depreciation_version == legacy_version
+        assert rehydrated_rep.depreciation_applied is False
+        assert rehydrated_rep.report_id == "avm-report-legacy-01"
+        assert rehydrated_rep.fair_price.p50 == 200.0
+
+        # 3. Report history and data room export preservation in repository
+        repo = InMemoryAVMRepository()
+        repo.save_report(rehydrated_rep)
+        history = repo.report_history("avm-case-legacy-01")
+        assert len(history) == 1
+        assert history[0].depreciation_version == legacy_version
+        assert history[0].depreciation_applied is False
+        assert history[0].fair_price.p50 == 200.0
+
+        dr = generate_data_room(rehydrated_rep)
+        assert dr.valuation_card["depreciation_version"] == legacy_version
+        assert dr.valuation_card["depreciation_applied"] is False
+        assert dr.valuation_card["depreciation_disposition"] == "本估值採 2026-09-03 前之計算版本，資產折舊未納入"
+        assert dr.valuation_card["store_id"] == BASE_INPUT["store_id"]
+        assert dr.valuation_card["fair_price"]["p50"] == 200.0
+
     def test_a_v0_pin_reproduces_the_pre_cutover_numbers(self) -> None:
         """Rollback has to land on a known state, not an approximate one.
 
@@ -354,9 +463,20 @@ class TestTheDepreciationContractIsNotImplementedYet:
         the arithmetic that shipped before the cutover.
         """
         legacy_version = _domain_constant("AVM_DEPRECIATION_LEGACY_VERSION")
-        baseline, baseline_error = _try_report(dict(BASE_INPUT))
+        expected_pre_cutover_fair_price = {
+            "p10": 9228258.13,
+            "p50": 11253973.33,
+            "p90": 13279688.53,
+        }
+        expected_pre_cutover_reserve_price = 8951410.39
+        expected_pre_cutover_asking_price = 13943672.96
+
+        baseline, baseline_error = _try_report(dict(BASE_INPUT), pin=legacy_version)
         assert baseline_error is None, f"the pre-cutover input path broke: {baseline_error}"
         assert baseline is not None
+        assert baseline.fair_price.to_dict() == expected_pre_cutover_fair_price
+        assert baseline.reserve_price == expected_pre_cutover_reserve_price
+        assert baseline.asking_price == expected_pre_cutover_asking_price
 
         pinned, pin_error = _try_report(
             _payload(asset_in_service_date="2021-03-03"), pin=legacy_version
@@ -364,19 +484,14 @@ class TestTheDepreciationContractIsNotImplementedYet:
         assert pin_error is None, f"value_store accepts no depreciation version pin: {pin_error}"
         assert pinned is not None
 
-        assert pinned.fair_price.to_dict() == baseline.fair_price.to_dict(), (
+        assert pinned.fair_price.to_dict() == expected_pre_cutover_fair_price, (
             "a v0 pin did not reproduce the pre-cutover fair price band"
         )
-        assert pinned.reserve_price == baseline.reserve_price
-        assert pinned.asking_price == baseline.asking_price
+        assert pinned.reserve_price == expected_pre_cutover_reserve_price
+        assert pinned.asking_price == expected_pre_cutover_asking_price
         assert pinned.depreciation_version == legacy_version
         assert pinned.depreciation_applied is False
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason=f"{DOC} L-4: calibration pools every report regardless of version",
-    )
     def test_calibration_does_not_silently_mix_depreciation_versions(self) -> None:
         """`AVMService.calibrate_deal_outcomes` collects every stored report.
 
