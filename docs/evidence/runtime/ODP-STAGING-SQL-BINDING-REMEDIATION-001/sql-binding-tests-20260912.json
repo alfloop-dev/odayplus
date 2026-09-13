@@ -1,0 +1,30 @@
+{
+  "started_at": "2026-09-12T15:41:04.909100+00:00",
+  "finished_at": "2026-09-12T15:41:14.692708+00:00",
+  "exit_code": 0,
+  "stdout": ".............................................................................................................                    [100%]\n",
+  "stderr": "",
+  "junit_summary": {
+    "name": "pytest",
+    "errors": "0",
+    "failures": "0",
+    "skipped": "0",
+    "tests": "125",
+    "time": "0.873",
+    "timestamp": "2026-09-12T15:41:12.056540+00:00"
+  },
+  "source_sha256": {
+    "product_ops/deployment/staging_lifecycle.py": "e521ef9e5387c6f3d1802014647efb86427e83534b03a6f5579cfc8d1e14921b",
+    "tests/ops/test_staging_foundation_sql_binding.py": "b3d5ce960eb9ea9fa9115afc7b035a9131211764326ca2a5e2d121aa836a3fb6",
+    "tests/ops/test_ephemeral_staging_lifecycle.py": "c094d8f1cbce7dc334c50d130020980a6114f414c5fdec6c1d8b7dd817ed9a64"
+  },
+  "redaction": {
+    "removed_fields": [
+      "argv (local absolute paths)",
+      "junit_summary.hostname"
+    ],
+    "original_receipt_sha256": "540615679d6efc59ce975470b6bc0a494e559964cee387979bc589bb06f26b7d",
+    "reason": "Public repository: keep local machine identifiers in operational handoff only."
+  },
+  "test_command": "python -m pytest -q --tb=short tests/ops/test_staging_foundation_sql_binding.py tests/ops/test_ephemeral_staging_lifecycle.py (JUnit output path omitted)"
+}

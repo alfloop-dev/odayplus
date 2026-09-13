@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -23,23 +24,28 @@ from delivery_toolchain.release.release_manifest import (
     INITIAL_RELEASE_RECOVERY_METHOD,
     INITIAL_RELEASE_TARGET_INVENTORY,
     SOURCES_OFF_CLOUD_RUN_EGRESS,
+    SOURCES_OFF_EGRESS_CONTRACT_FILES,
     SOURCES_OFF_EGRESS_POSTURE,
     SOURCES_OFF_PROVIDER_MODE,
     SOURCES_OFF_RUNTIME_PROBE_REASON,
     SOURCES_OFF_RUNTIME_PROBE_RESULT,
+    _sources_off_egress_contract_errors,
     build_initial_release_recovery,
     build_release_manifest,
     build_sources_off_attestation,
+    build_sources_off_egress_evidence,
     classify_source_env_var,
     compute_data_contract_digest,
     compute_manifest_digest,
     compute_source_policy_digest,
     compute_sources_off_binding_digest,
+    compute_sources_off_egress_contract_digest,
     compute_sources_off_probe_receipt_content_digest,
     env_var_belongs_to_source,
     extract_rollback_release_binding,
     initial_release_recovery_errors,
     release_candidate_job_name,
+    sources_off_attestation_errors,
     sources_off_posture_payload,
     validate_manifest,
     validate_release_admission,
@@ -50,6 +56,8 @@ from delivery_toolchain.release.release_manifest import (
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_PATH = ROOT / "docs/evidence/gates/RELEASE_MANIFEST.json"
 REGISTRY_PATH = ROOT / "docs/evidence/gates/RELEASE_GATE_REGISTRY.json"
+REAL_CANDIDATE_SHA = "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12"
+SECOND_REAL_CANDIDATE_SHA = "36a102b7b39d1fe2e58939ee6e454e20c6d72dbd"
 
 
 def load_manifest() -> dict:
@@ -582,7 +590,7 @@ def clean_sources_inventory() -> list[dict]:
     ]
 
 
-def sources_off_rollback_release(current_sha: str = "1" * 40) -> dict:
+def sources_off_rollback_release(current_sha: str = REAL_CANDIDATE_SHA) -> dict:
     """A previous release that was itself admitted with sources off."""
 
     rollback = valid_rollback_release(current_sha)
@@ -592,7 +600,7 @@ def sources_off_rollback_release(current_sha: str = "1" * 40) -> dict:
 
 
 def sources_off_manifest(**overrides) -> dict:
-    candidate_sha = overrides.pop("candidate_sha", "1" * 40)
+    candidate_sha = overrides.pop("candidate_sha", REAL_CANDIDATE_SHA)
     components = overrides.pop("components", copy.deepcopy(SOURCES_OFF_COMPONENTS))
     inventory = overrides.pop("sources_inventory", clean_sources_inventory())
     provider_mode = overrides.pop("provider_mode", SOURCES_OFF_PROVIDER_MODE)
@@ -609,6 +617,7 @@ def sources_off_manifest(**overrides) -> dict:
             source_policy_digest=binding_source_policy_digest,
             provider_mode=provider_mode,
             sources_inventory=inventory,
+            root=ROOT,
         ),
     )
     manifest = build_release_manifest(
@@ -626,7 +635,7 @@ def sources_off_manifest(**overrides) -> dict:
         created_at=overrides.pop("created_at", "2026-08-26T00:00:00Z"),
         created_by_workflow=overrides.pop(
             "created_by_workflow",
-            "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml",
+            f"github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@{candidate_sha}",
         ),
         data_snapshot=overrides.pop("data_snapshot", None),
         sources_off_attestation=attestation,
@@ -811,9 +820,9 @@ def _valid_sources_off_probe_receipt() -> dict:
         "schema_version": 1,
         "receipt_kind": "public_egress_probe",
         "secret_values_redacted": True,
-        "candidate_sha": "1" * 40,
+        "candidate_sha": REAL_CANDIDATE_SHA,
         "manifest_digest": "sha256:" + "2" * 64,
-        "job": "oday-worker-r-111111111111",
+        "job": f"oday-worker-r-{REAL_CANDIDATE_SHA[:12]}",
         "probe_url": "https://example.com/",
         "expected": "denied",
         "vpc_egress": SOURCES_OFF_CLOUD_RUN_EGRESS,
@@ -915,7 +924,7 @@ def test_sources_off_attestation_claiming_clean_over_a_dirty_inventory_fails_clo
 
 
 def test_sources_off_attestation_borrowed_from_another_candidate_fails_closed() -> None:
-    manifest = sources_off_manifest(binding_candidate_sha="7" * 40)
+    manifest = sources_off_manifest(binding_candidate_sha=SECOND_REAL_CANDIDATE_SHA)
 
     errors = validate_manifest(manifest)
     assert any("binding_digest is not bound to this release" in err for err in errors)
@@ -976,7 +985,7 @@ def test_sources_off_attestation_may_not_sit_beside_a_data_snapshot() -> None:
 def test_sources_off_attestation_may_not_replace_a_previous_snapshot_binding() -> None:
     """Anti-downgrade: a snapshot-bound predecessor keeps the next release strict."""
 
-    manifest = sources_off_manifest(rollback_release=valid_rollback_release("1" * 40))
+    manifest = sources_off_manifest(rollback_release=valid_rollback_release(REAL_CANDIDATE_SHA))
 
     errors = validate_release_admission(manifest)
     assert any(
@@ -985,7 +994,7 @@ def test_sources_off_attestation_may_not_replace_a_previous_snapshot_binding() -
 
 
 def test_rollback_release_without_snapshot_or_attestation_fails_closed() -> None:
-    rollback = valid_rollback_release("1" * 40)
+    rollback = valid_rollback_release(REAL_CANDIDATE_SHA)
     rollback.pop("data_snapshot")
     manifest = sources_off_manifest(rollback_release=rollback)
 
@@ -997,7 +1006,7 @@ def test_rollback_release_without_snapshot_or_attestation_fails_closed() -> None
 
 
 def test_rollback_release_sources_off_binding_must_be_a_digest() -> None:
-    rollback = sources_off_rollback_release("1" * 40)
+    rollback = sources_off_rollback_release(REAL_CANDIDATE_SHA)
     rollback["sources_off_attestation"] = {"binding_digest": "not-a-digest"}
     manifest = sources_off_manifest(rollback_release=rollback)
 
@@ -1008,7 +1017,7 @@ def test_rollback_release_sources_off_binding_must_be_a_digest() -> None:
 
 
 def test_extract_rollback_binding_from_a_sources_off_release_carries_the_digest() -> None:
-    previous = sources_off_manifest(candidate_sha="2" * 40, release_id="odp-test-prev-off")
+    previous = sources_off_manifest(candidate_sha=SECOND_REAL_CANDIDATE_SHA, release_id="odp-test-prev-off")
     assert validate_release_admission(previous) == []
 
     binding = extract_rollback_release_binding(previous)
@@ -1019,8 +1028,8 @@ def test_extract_rollback_binding_from_a_sources_off_release_carries_the_digest(
 
 
 def test_a_sources_off_release_is_valid_rollback_evidence() -> None:
-    previous = sources_off_manifest(candidate_sha="2" * 40, release_id="odp-test-prev-off")
-    assert validate_rollback_manifest(previous, current_candidate_sha="1" * 40) == []
+    previous = sources_off_manifest(candidate_sha=SECOND_REAL_CANDIDATE_SHA, release_id="odp-test-prev-off")
+    assert validate_rollback_manifest(previous, current_candidate_sha=REAL_CANDIDATE_SHA) == []
 
 
 # --------------------------------------------------------------------------
@@ -1038,7 +1047,7 @@ def test_a_sources_off_release_is_valid_rollback_evidence() -> None:
 # implying one, and it is unavailable to every other release.
 # --------------------------------------------------------------------------
 
-FIRST_RELEASE_SHA = "1" * 40
+FIRST_RELEASE_SHA = REAL_CANDIDATE_SHA
 FIRST_RELEASE_COMPONENTS = {
     "api": {"image": "registry.example.invalid/odayplus/api@sha256:" + "1" * 64},
     "web": {"image": "registry.example.invalid/odayplus/web@sha256:" + "2" * 64},
@@ -1231,7 +1240,7 @@ def test_a_first_release_admission_lifted_onto_another_candidate_fails_closed() 
     """
 
     stolen = first_release_recovery(candidate_sha=FIRST_RELEASE_SHA)
-    manifest = first_release_manifest(candidate_sha="7" * 40, recovery=stolen)
+    manifest = first_release_manifest(candidate_sha=SECOND_REAL_CANDIDATE_SHA, recovery=stolen)
 
     errors = validate_manifest(manifest)
     assert any("binding_digest is not bound" in error for error in errors)
@@ -1259,6 +1268,7 @@ def test_a_target_that_still_holds_a_release_is_not_a_first_release(field: str) 
     readback = empty_target_readback()
     readback["targets"][0][field] = True
     recovery = first_release_recovery(readback=readback)
+    recovery["prior_release_absent"] = True
 
     errors = initial_release_recovery_errors(
         recovery,
@@ -1390,7 +1400,7 @@ def test_a_second_release_binds_the_first_one_as_its_rollback_target() -> None:
     assert (
         validate_rollback_manifest(
             first,
-            current_candidate_sha="8" * 40,
+            current_candidate_sha=SECOND_REAL_CANDIDATE_SHA,
             current_release_id="odp-second-001",
         )
         == []
@@ -1399,3 +1409,234 @@ def test_a_second_release_binds_the_first_one_as_its_rollback_target() -> None:
     assert binding["candidate_sha"] == FIRST_RELEASE_SHA
     assert binding["manifest_digest"] == first["manifest_digest"]
     assert "initial_release_recovery" not in binding
+
+
+def test_sources_off_egress_contract_evaluates_real_candidate_content() -> None:
+    """Evaluate sources-off egress contract against exact candidate SHA."""
+    expected_digest = "sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09"
+    digest = compute_sources_off_egress_contract_digest(
+        root=ROOT,
+        candidate_sha=REAL_CANDIDATE_SHA,
+    )
+    assert digest == expected_digest
+    assert _sources_off_egress_contract_errors(root=ROOT, candidate_sha=REAL_CANDIDATE_SHA) == []
+    evidence = build_sources_off_egress_evidence(root=ROOT, candidate_sha=REAL_CANDIDATE_SHA)
+    assert evidence["contract_digest"] == expected_digest
+
+
+def _create_egress_candidate(tmp_path: Path, *, missing_file: str | None = None) -> tuple[Path, str]:
+    """Create a real candidate commit with controlled contract contents."""
+    repo = tmp_path / "candidate"
+    repo.mkdir()
+    subprocess.run(["git", "init", "--quiet", str(repo)], check=True, capture_output=True)
+    for relative in SOURCES_OFF_EGRESS_CONTRACT_FILES:
+        if relative == missing_file:
+            continue
+        destination = repo / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes((ROOT / relative).read_bytes())
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-c", "user.name=ODP Test Fixture", "-c", "user.email=fixture@example.invalid",
+         "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "Contract fixture"],
+        cwd=repo, check=True, capture_output=True,
+    )
+    sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    return repo, sha
+
+
+def test_sources_off_egress_contract_fails_explicitly_on_missing_candidate_blob_or_object(tmp_path: Path) -> None:
+    """Reading contract blobs from missing candidate object/blob must fail explicitly."""
+    with pytest.raises(RuntimeError) as exc_info:
+        compute_sources_off_egress_contract_digest(root=ROOT, candidate_sha="0" * 40)
+    assert "fatal:" in str(exc_info.value) or "failed to read" in str(exc_info.value)
+
+    errors = _sources_off_egress_contract_errors(root=ROOT, candidate_sha="0" * 40)
+    assert errors
+    assert any("cannot be read for candidate" in err for err in errors)
+
+    # The candidate really exists; only the required workflow blob is missing.
+    missing_file = ".github/workflows/deploy-dev.yml"
+    repo, incomplete_sha = _create_egress_candidate(tmp_path, missing_file=missing_file)
+    subprocess.run(
+        ["git", "cat-file", "-e", f"{incomplete_sha}^{{commit}}"],
+        cwd=repo, check=True, capture_output=True,
+    )
+    # A healthy checkout must not rescue the incomplete committed candidate.
+    restored_workflow = repo / missing_file
+    restored_workflow.parent.mkdir(parents=True, exist_ok=True)
+    restored_workflow.write_bytes((ROOT / missing_file).read_bytes())
+    assert _sources_off_egress_contract_errors(root=repo) == []
+    with pytest.raises(RuntimeError, match="deploy-dev.yml"):
+        compute_sources_off_egress_contract_digest(root=repo, candidate_sha=incomplete_sha)
+    errors = _sources_off_egress_contract_errors(root=repo, candidate_sha=incomplete_sha)
+    assert errors
+    assert any(missing_file in error for error in errors)
+
+    # sources_off_attestation_errors must also fail closed without falling back to worktree
+    manifest = load_manifest()
+    attestation = manifest["sources_off_attestation"]
+    att_errors = sources_off_attestation_errors(
+        attestation,
+        candidate_sha="0" * 40,
+        components=manifest["components"],
+        source_policy_digest=manifest["source_policy_digest"],
+        root=ROOT,
+    )
+    assert att_errors
+    assert any("egress_evidence cannot be verified" in err or "cannot be read for candidate" in err for err in att_errors)
+
+
+def test_sources_off_egress_contract_differs_between_candidate_and_worktree(tmp_path: Path) -> None:
+    """Dirty worktree contents cannot replace the exact candidate contract."""
+    repo, candidate_sha = _create_egress_candidate(tmp_path)
+    candidate_digest = compute_sources_off_egress_contract_digest(
+        root=repo, candidate_sha=candidate_sha,
+    )
+    assert candidate_digest == compute_sources_off_egress_contract_digest(root=repo)
+    assert _sources_off_egress_contract_errors(root=repo, candidate_sha=candidate_sha) == []
+
+    workflow = repo / ".github/workflows/deploy-dev.yml"
+    workflow.write_text("ODP_EXTERNAL_PROVIDER_MODE: enabled\n", encoding="utf-8")
+    assert compute_sources_off_egress_contract_digest(root=repo) != candidate_digest
+    assert _sources_off_egress_contract_errors(root=repo)
+    assert compute_sources_off_egress_contract_digest(
+        root=repo, candidate_sha=candidate_sha,
+    ) == candidate_digest
+    assert _sources_off_egress_contract_errors(root=repo, candidate_sha=candidate_sha) == []
+    evidence = build_sources_off_egress_evidence(root=repo, candidate_sha=candidate_sha)
+    assert evidence["contract_digest"] == candidate_digest
+
+    policy_digest = "sha256:" + "a" * 64
+    attestation = build_sources_off_attestation(
+        candidate_sha=candidate_sha,
+        components=SOURCES_OFF_COMPONENTS,
+        source_policy_digest=policy_digest,
+        provider_mode=SOURCES_OFF_PROVIDER_MODE,
+        sources_inventory=clean_sources_inventory(),
+        root=repo,
+    )
+    assert sources_off_attestation_errors(
+        attestation,
+        candidate_sha=candidate_sha,
+        components=SOURCES_OFF_COMPONENTS,
+        source_policy_digest=policy_digest,
+        root=repo,
+    ) == []
+
+
+def test_shallow_checkout_predecessor_sources_off_manifest_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In a shallow checkout (depth 1), missing predecessor commit is acquired automatically."""
+    monkeypatch.setenv("ODP_CLOUD_RUN_VPC_EGRESS", "ALL_TRAFFIC")
+    shallow_repo = tmp_path / "shallow_repo"
+    subprocess.run(
+        ["git", "clone", "--depth", "1", f"file://{ROOT}", str(shallow_repo)],
+        check=True,
+        capture_output=True,
+    )
+
+    # Initial state: predecessor commit is absent in depth-1 clone
+    res_before = subprocess.run(
+        ["git", "cat-file", "-e", f"{REAL_CANDIDATE_SHA}^{{commit}}"],
+        cwd=shallow_repo,
+        capture_output=True,
+    )
+    assert res_before.returncode != 0
+
+    sbom_ref = f"registry.example.invalid/odayplus/sbom@sha256:{'5' * 64}"
+    sig_ref = f"registry.example.invalid/odayplus/sig@sha256:{'6' * 64}"
+
+    # Build a valid previous sources-off manifest for REAL_CANDIDATE_SHA
+    prev_manifest = build_release_manifest(
+        release_id="odp-test-prev-shallow-001",
+        candidate_sha=REAL_CANDIDATE_SHA,
+        components=SOURCES_OFF_COMPONENTS,
+        sbom_refs=[sbom_ref],
+        signature_refs=[sig_ref],
+        created_at="2026-09-07T15:29:32Z",
+        created_by_workflow=f"github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@{REAL_CANDIDATE_SHA}",
+        sources_off_attestation=build_sources_off_attestation(
+            candidate_sha=REAL_CANDIDATE_SHA,
+            components=SOURCES_OFF_COMPONENTS,
+            source_policy_digest=compute_source_policy_digest(root=ROOT),
+            provider_mode=SOURCES_OFF_PROVIDER_MODE,
+            sources_inventory=clean_sources_inventory(),
+            root=ROOT,
+        ),
+        initial_release_recovery=first_release_recovery(
+            candidate_sha=REAL_CANDIDATE_SHA,
+            components=SOURCES_OFF_COMPONENTS,
+        ),
+        release_status="ready",
+        root=ROOT,
+    )
+
+    prev_manifest_path = shallow_repo / "previous_manifest.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    # validate_rollback_manifest in shallow_repo triggers automated fetch of REAL_CANDIDATE_SHA
+    rb_errors = validate_rollback_manifest(
+        prev_manifest,
+        current_candidate_sha=SECOND_REAL_CANDIDATE_SHA,
+        current_release_id="odp-test-current-shallow-002",
+        root=shallow_repo,
+    )
+    assert rb_errors == []
+
+    # Verify that predecessor commit is now present in shallow_repo
+    res_after = subprocess.run(
+        ["git", "cat-file", "-e", f"{REAL_CANDIDATE_SHA}^{{commit}}"],
+        cwd=shallow_repo,
+        capture_output=True,
+    )
+    assert res_after.returncode == 0
+
+    # Test build_handoff under shallow checkout
+    from delivery_toolchain.release.build_release_handoff import build_handoff
+
+    images, current_manifest = build_handoff(
+        release_sha=SECOND_REAL_CANDIDATE_SHA,
+        components={
+            "api": "registry.example.invalid/odayplus/api@sha256:" + "1" * 64,
+            "web": "registry.example.invalid/odayplus/web@sha256:" + "2" * 64,
+            "worker": "registry.example.invalid/odayplus/worker@sha256:" + "3" * 64,
+            "scheduler": "registry.example.invalid/odayplus/scheduler@sha256:" + "4" * 64,
+        },
+        sbom_refs=[sbom_ref],
+        signature_refs=[sig_ref],
+        rollback_manifest=prev_manifest_path,
+        root=shallow_repo,
+    )
+    assert current_manifest is not None
+    assert current_manifest["rollback_release"]["candidate_sha"] == REAL_CANDIDATE_SHA
+
+    # Truly missing candidate SHA remains fail-closed in shallow repo
+    missing_prev_manifest = copy.deepcopy(prev_manifest)
+    missing_prev_manifest["candidate_sha"] = "0" * 40
+    missing_prev_manifest["manifest_digest"] = compute_manifest_digest(missing_prev_manifest)
+    missing_errors = validate_rollback_manifest(
+        missing_prev_manifest,
+        current_candidate_sha=SECOND_REAL_CANDIDATE_SHA,
+        root=shallow_repo,
+    )
+    assert missing_errors
+    assert any(
+        "cannot be verified for candidate" in err or "cannot be read for candidate" in err
+        for err in missing_errors
+    )
+
+    # Missing blob candidate SHA remains fail-closed in shallow repo
+    missing_blob_sha = "ccb7c34d9659f81640a3dd9ec2b100cb595f87b3"
+    missing_blob_manifest = copy.deepcopy(prev_manifest)
+    missing_blob_manifest["candidate_sha"] = missing_blob_sha
+    missing_blob_manifest["manifest_digest"] = compute_manifest_digest(missing_blob_manifest)
+    blob_errors = validate_rollback_manifest(
+        missing_blob_manifest,
+        current_candidate_sha=SECOND_REAL_CANDIDATE_SHA,
+        root=shallow_repo,
+    )
+    assert blob_errors
+    assert any(".github/workflows/deploy-dev.yml" in err for err in blob_errors)
+

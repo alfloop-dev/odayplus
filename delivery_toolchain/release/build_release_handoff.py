@@ -63,6 +63,7 @@ from delivery_toolchain.release.release_manifest import (  # noqa: E402
     classify_source_env_var,
     compute_data_contract_digest,
     compute_source_policy_digest,
+    ensure_candidate_commit,
     env_var_belongs_to_source,
     extract_rollback_release_binding,
     initial_release_recovery_errors,
@@ -142,6 +143,7 @@ def derive_sources_off_posture(
     workflow_path: Path,
     enabled_sources: list[str] | None = None,
     resolved_egress: str | None = None,
+    candidate_sha: str | None = None,
     root: Path = ROOT,
 ) -> dict[str, Any]:
     """從 release SHA 上的 deploy workflow 推導出實際的 data-plane posture。
@@ -213,7 +215,9 @@ def derive_sources_off_posture(
         "all-traffic": SOURCES_OFF_CLOUD_RUN_EGRESS,
         "all_traffic": SOURCES_OFF_CLOUD_RUN_EGRESS,
     }.get(raw_resolved_egress.lower(), raw_resolved_egress or "unresolved")
-    contract_errors = _sources_off_egress_contract_errors(root=root)
+    contract_errors = _sources_off_egress_contract_errors(
+        root=root, candidate_sha=candidate_sha
+    )
     egress_contract_verified = (
         workflow_vpc_binding
         and deploy_entrypoint_vpc_binding
@@ -275,6 +279,7 @@ def derive_sources_off_posture(
             resolved_cloud_run_egress=resolved_cloud_run_egress,
             provider_credentials_runtime=provider_credentials_runtime,
             root=root,
+            candidate_sha=candidate_sha,
         ),
     }
 
@@ -381,7 +386,7 @@ def build_handoff(
             if raw_str.startswith("{") and raw_str.endswith("}"):
                 try:
                     previous_manifest = json.loads(raw_str)
-                    previous_errors = validate_manifest(previous_manifest)
+                    previous_errors = validate_manifest(previous_manifest, root=root)
                 except Exception as exc:
                     previous_manifest = None
                     previous_errors = [f"無法解析 rollback manifest JSON 字串：{exc}"]
@@ -393,7 +398,7 @@ def build_handoff(
                     "取回工作區再傳入。"
                 ]
             else:
-                previous_manifest, previous_errors = load_manifest(Path(rollback_source))
+                previous_manifest, previous_errors = load_manifest(Path(rollback_source), root=root)
             if previous_errors or previous_manifest is None:
                 errors.extend([f"無法載入 rollback manifest：{e}" for e in previous_errors])
         elif isinstance(rollback_source, dict):
@@ -402,10 +407,14 @@ def build_handoff(
             errors.append("rollback manifest 必須是完整 manifest dict 或檔案路徑")
 
         if previous_manifest is not None:
+            prev_sha = previous_manifest.get("candidate_sha")
+            if is_exact_sha(prev_sha):
+                ensure_candidate_commit(prev_sha, root=root)
             rb_errs = validate_rollback_manifest(
                 previous_manifest,
                 current_candidate_sha=release_sha,
                 current_release_id=effective_release_id,
+                root=root,
             )
             if rb_errs:
                 errors.extend([f"rollback manifest 無效：{e}" for e in rb_errs])
@@ -531,6 +540,7 @@ def build_handoff(
                             else root / DEFAULT_WORKFLOW_PATH
                         ),
                         enabled_sources=enabled_sources,
+                        candidate_sha=release_sha,
                         root=root,
                     )
                 except HandoffError as exc:
@@ -543,12 +553,14 @@ def build_handoff(
                         provider_mode=posture["provider_mode"],
                         sources_inventory=posture["sources_inventory"],
                         egress_evidence=posture["egress_evidence"],
+                        root=root,
                     )
                     posture_errors = sources_off_attestation_errors(
                         candidate,
                         candidate_sha=release_sha,
                         components=manifest_components,
                         source_policy_digest=compute_source_policy_digest(root=root),
+                        root=root,
                     )
                     if posture_errors:
                         errors.extend(
@@ -602,11 +614,11 @@ def build_handoff(
     )
 
     # 自我驗證：不把一份自己都驗不過的 manifest 交給 admission。
-    self_check = validate_manifest(manifest, expected_candidate_sha=release_sha)
+    self_check = validate_manifest(manifest, expected_candidate_sha=release_sha, root=root)
     self_check.extend(
         error
         for error in validate_release_admission(
-            manifest, environment=target_environment
+            manifest, environment=target_environment, root=root
         )
         if error not in self_check
     )

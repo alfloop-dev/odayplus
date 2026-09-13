@@ -44,7 +44,7 @@ from delivery_toolchain.release.release_manifest import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-SHA = "b" * 40
+SHA = "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12"
 CREATED_AT = "2026-08-26T12:00:00+00:00"
 
 REPO = "asia-east1-docker.pkg.dev/odayplus/oday-plus-dev"
@@ -1223,7 +1223,11 @@ def sources_off_workflow(**wired: str) -> str:
 def sources_off_rollback(current_sha: str = SHA, release_id: str = "odp-prev-off-001") -> dict:
     """A previous release admitted on posture evidence rather than a snapshot."""
 
-    prev_sha = "0" * 40 if current_sha != "0" * 40 else "9" * 40
+    prev_sha = (
+        "36a102b7b39d1fe2e58939ee6e454e20c6d72dbd"
+        if current_sha != "36a102b7b39d1fe2e58939ee6e454e20c6d72dbd"
+        else "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12"
+    )
     prev_components = {
         "api": {"image": ref("api", "a")},
         "web": {"image": ref("web", "b")},

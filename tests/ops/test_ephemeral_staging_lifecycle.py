@@ -2882,6 +2882,47 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
         self.assertFalse(receipt.success)
         self.assertTrue(any("incomplete result" in error for error in receipt.errors))
 
+    def test_sql_rehearsal_uses_bare_verified_foundation_name(self) -> None:
+        from unittest.mock import patch
+
+        from product_ops.deployment.staging_lifecycle import make_live_rehearsal_executor
+
+        outputs = self._valid_outputs()
+        with patch(
+            "product_ops.deployment.staging_lifecycle._live_gcloud",
+            side_effect=lambda argv, **kwargs: argv[3] if argv[0] == "iam" else "",
+        ) as cloud:
+            executor = make_live_rehearsal_executor(
+                outputs,
+                project_id=self.project_id,
+                region="asia-east1",
+                operator_identity=outputs["staging_runtime_service_account"],
+                cloud_sql_instance=f"{self.project_id}:asia-east1:oday-staging-pg",
+            )
+            result = executor("backup_restore_drill", {})
+        self.assertTrue(result["success"])
+        sql_calls = [call.args[0] for call in cloud.call_args_list if call.args[0][0] == "sql"]
+        self.assertEqual([argv[1:4] for argv in sql_calls], [
+            ["export", "sql", "oday-staging-pg"], ["import", "sql", "oday-staging-pg"],
+        ])
+
+    def test_sql_rehearsal_rejects_a_different_instance_before_any_api_call(self) -> None:
+        from unittest.mock import patch
+
+        from product_ops.deployment.staging_lifecycle import make_live_rehearsal_executor
+
+        outputs = self._valid_outputs()
+        with patch("product_ops.deployment.staging_lifecycle._live_gcloud") as cloud:
+            with self.assertRaisesRegex(ValueError, "Terraform output handoff"):
+                make_live_rehearsal_executor(
+                    outputs,
+                    project_id=self.project_id,
+                    region="asia-east1",
+                    operator_identity=outputs["staging_runtime_service_account"],
+                    cloud_sql_instance=f"{self.project_id}:asia-east1:other-instance",
+                )
+            cloud.assert_not_called()
+
     def test_live_executor_rejects_arbitrary_operator_identity(self) -> None:
         from product_ops.deployment.staging_lifecycle import make_live_rehearsal_executor
 
