@@ -1,0 +1,20 @@
+{
+  "cwd": "/tmp/codex-1305-persistence-fix",
+  "head_sha": "c9c0fb3fc6211161be0bd560caa7befb70dfba66",
+  "tracked_diff_sha256": "7cf6448d478ed748146d36c3a0c4118d63c0be123d4102bcd8b166ee3a2686f2",
+  "argv": [
+    "/tmp/pantheon-worker-worktrees/pantheon/odp-orch-quota-recovery-state-001/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-o",
+    "addopts=",
+    "-q",
+    ".orchestrator/test_runtime_state.py",
+    "-k",
+    "rotated_auth_canary_survives_real_disk_save or provider_expiry_does_not_allow_pre_failure_healthy_to_bypass_canary"
+  ],
+  "started_at": "2026-09-12T15:33:21.698194+00:00",
+  "duration_seconds": 3.2880000279983506,
+  "exit_code": 1,
+  "output": "1305-persistence-red.log"
+}
