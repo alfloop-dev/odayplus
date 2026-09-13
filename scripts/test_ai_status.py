@@ -1477,8 +1477,94 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             self.assertFalse(ok)
             self.assertTrue(worker_workspace._is_skipped_dirty_worktree(status))
 
+    def test_r1_open_review_reopen_and_owner_reconnect_preserves_submitted_work(self) -> None:
+        """R1 integration: real-Git lifecycle for OPEN PR where reviewer lease advances local task branch from ancestor to submitted H, and owner lease after reopen preserves H in checkout."""
+        import sys
+        orch_dir = Path(__file__).resolve().parents[1] / ".orchestrator"
+        if str(orch_dir) not in sys.path:
+            sys.path.insert(0, str(orch_dir))
+        import worker_workspace
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            origin = root / "origin.git"
+            seed = root / "seed"
+            repo = root / "repo"
+            task_id = "OPEN-REVIEW-001"
+            branch = f"task/{task_id}"
+
+            subprocess.run(["git", "init", "--bare", str(origin)], capture_output=True, check=True)
+            subprocess.run(["git", "init", "-b", "dev", str(seed)], capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "Test Agent"], cwd=seed, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=seed, check=True)
+
+            (seed / "base.txt").write_text("base\n")
+            subprocess.run(["git", "add", "base.txt"], cwd=seed, check=True)
+            subprocess.run(["git", "commit", "-m", "base"], cwd=seed, check=True)
+            base_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=seed, capture_output=True, text=True, check=True).stdout.strip()
+            subprocess.run(["git", "remote", "add", "origin", str(origin)], cwd=seed, check=True)
+            subprocess.run(["git", "push", "origin", "dev"], cwd=seed, check=True)
+            subprocess.run(["git", "symbolic-ref", "HEAD", "refs/heads/dev"], cwd=origin, check=True)
+
+            subprocess.run(["git", "clone", str(origin), str(repo)], capture_output=True, check=True)
+            workspace = root / "workers" / "pantheon" / "open-review-001"
+            workspace.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "worktree", "add", "-b", branch, str(workspace), base_sha], cwd=repo, check=True)
+
+            # Remote owner publishes H while local task ref stays at A
+            subprocess.run(["git", "checkout", "-b", branch], cwd=seed, check=True)
+            (seed / "submitted.txt").write_text("submitted work that must survive review\n")
+            subprocess.run(["git", "add", "submitted.txt"], cwd=seed, check=True)
+            subprocess.run(["git", "commit", "-m", "submitted task source"], cwd=seed, check=True)
+            submitted_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=seed, capture_output=True, text=True, check=True).stdout.strip()
+            subprocess.run(["git", "push", "origin", branch], cwd=seed, check=True)
+            subprocess.run(["git", "fetch", "origin", branch], cwd=repo, check=True)
+
+            # 1. Reviewer lease with required_head=submitted_sha
+            ok, status = worker_workspace._refresh_reused_worker_worktree(
+                repo,
+                workspace,
+                base_sha,
+                branch,
+                network_timeout_seconds=5.0,
+                materialized_paths=set(),
+                required_head=submitted_sha,
+            )
+            self.assertTrue(ok)
+            self.assertIn("review_head_pinned", status)
+            self.assertEqual(
+                subprocess.run(["git", "rev-parse", "HEAD"], cwd=workspace, capture_output=True, text=True, check=True).stdout.strip(),
+                submitted_sha,
+            )
+            self.assertEqual(
+                subprocess.run(["git", "rev-parse", branch], cwd=repo, capture_output=True, text=True, check=True).stdout.strip(),
+                submitted_sha,
+            )
+            self.assertTrue((workspace / "submitted.txt").exists())
+
+            # 2. Reviewer reopens -> Owner lease with required_head=None
+            ok, status = worker_workspace._refresh_reused_worker_worktree(
+                repo,
+                workspace,
+                base_sha,
+                branch,
+                network_timeout_seconds=5.0,
+                materialized_paths=set(),
+                required_head=None,
+            )
+            self.assertTrue(ok)
+            self.assertEqual(
+                subprocess.run(["git", "rev-parse", "HEAD"], cwd=workspace, capture_output=True, text=True, check=True).stdout.strip(),
+                submitted_sha,
+            )
+            self.assertEqual(
+                subprocess.run(["git", "branch", "--show-current"], cwd=workspace, capture_output=True, text=True, check=True).stdout.strip(),
+                branch,
+            )
+            self.assertTrue((workspace / "submitted.txt").exists())
+
     def test_r4_task_finalize_shell_gh_transport_failure_and_discovery(self) -> None:
-        """R4 executing shell regression: task_finalize.sh fails with nonzero exit on gh transport failure, correctly selects MERGED PR when preceded by CLOSED PR, and fails on CLOSED-only."""
+        """R4 executing shell regression: task_finalize.sh fails with nonzero exit on gh transport/auth failure, correctly selects MERGED PR when preceded by CLOSED PR, and fails on CLOSED-only."""
         script_path = Path(__file__).resolve().parents[1] / "delivery_toolchain" / "git" / "task_finalize.sh"
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1578,6 +1664,75 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             )
             self.assertEqual(proc_c.returncode, 1)
             self.assertIn("only CLOSED (unmerged) PRs found", proc_c.stderr)
+
+            # Scenario D: non-dry-run HTTP 401: Requires authentication on pr list
+            gh_script.write_text("#!/bin/sh\necho 'HTTP 401: Requires authentication' >&2\nexit 1\n")
+            proc_d = subprocess.run(
+                ["bash", str(script_path), "TEST-TASK-001"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(proc_d.returncode, 1)
+            self.assertIn("gh pr list failed", proc_d.stderr)
+            self.assertNotIn("no PR needed", proc_d.stdout)
+
+            # Scenario E: non-dry-run missing GH_TOKEN on pr list
+            gh_script.write_text(
+                "#!/bin/sh\n"
+                "echo 'To use GitHub CLI in a GitHub Actions workflow, set the GH_TOKEN environment variable.' >&2\n"
+                "exit 1\n"
+            )
+            proc_e = subprocess.run(
+                ["bash", str(script_path), "TEST-TASK-001"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(proc_e.returncode, 1)
+            self.assertIn("gh pr list failed", proc_e.stderr)
+            self.assertNotIn("no PR needed", proc_e.stdout)
+
+            # Scenario F: non-dry-run HTTP 401 on fallback pr view
+            gh_script.write_text(
+                '#!/bin/sh\n'
+                'if [ "$1" = "pr" ] && [ "$2" = "list" ]; then\n'
+                '  exit 0\n'
+                'fi\n'
+                'echo "HTTP 401: Requires authentication" >&2\n'
+                'exit 1\n'
+            )
+            proc_f = subprocess.run(
+                ["bash", str(script_path), "TEST-TASK-001"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(proc_f.returncode, 1)
+            self.assertIn("gh pr view task/TEST-TASK-001 failed", proc_f.stderr)
+            self.assertNotIn("no PR needed", proc_f.stdout)
+
+            # Scenario G: non-dry-run confirmed absence (pr list empty, fallback view says 'no pull requests found')
+            gh_script.write_text(
+                '#!/bin/sh\n'
+                'if [ "$1" = "pr" ] && [ "$2" = "list" ]; then\n'
+                '  exit 0\n'
+                'fi\n'
+                'echo "no pull requests found for branch task/TEST-TASK-001" >&2\n'
+                'exit 1\n'
+            )
+            proc_g = subprocess.run(
+                ["bash", str(script_path), "TEST-TASK-001"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(proc_g.returncode, 0)
+            self.assertIn("no PR needed", proc_g.stdout)
 
     def test_r5_resolve_task_sha_raises_on_timeout(self) -> None:
         """R5 regression: resolve_task_sha raises RuntimeError on git ls-remote timeout."""

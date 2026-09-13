@@ -1004,6 +1004,35 @@ def _refresh_reused_worker_worktree(
     if not local_head:
         return False, "unverifiable_refs: missing local HEAD"
 
+    # Ensure attached to expected_branch (re-attaching if detached e.g. by reviewer lease)
+    branch_rc, current_branch = _git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
+    if branch_rc == 0:
+        if current_branch != expected_branch:
+            return False, f"wrong_branch: expected {expected_branch}, found {current_branch}"
+    else:
+        # HEAD is detached (e.g. left by reviewer lease). Re-attach to expected_branch.
+        expected_head = (
+            _git_commit_oid(repo_root, f"refs/heads/{expected_branch}")
+            or _git_commit_oid(repo_root, f"origin/{expected_branch}")
+            or _git_commit_oid(repo_root, expected_branch)
+        )
+        if not expected_head:
+            return False, f"wrong_branch: expected {expected_branch}, branch ref not found in repo"
+        checkout_proc = subprocess.run(
+            ["git", "checkout", expected_branch],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if checkout_proc.returncode != 0:
+            details = (checkout_proc.stderr or checkout_proc.stdout or "").strip().splitlines()
+            return False, f"wrong_branch: unable to checkout {expected_branch}: {details[0] if details else 'unknown'}"
+        branch_rc, current_branch = _git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
+        if branch_rc != 0 or current_branch != expected_branch:
+            return False, f"wrong_branch: expected {expected_branch}, found {current_branch or 'detached HEAD'}"
+        local_head = _git_commit_oid(worktree_path, "HEAD")
+
     if required_head:
         required_head = str(required_head).strip()
         expected_head = _git_commit_oid(repo_root, required_head)
@@ -1014,16 +1043,16 @@ def _refresh_reused_worker_worktree(
                 worktree_path, "merge-base", "--is-ancestor", local_head, expected_head
             )
             if review_contains_rc == 0:
-                # local_head is an ancestor of expected_head: checkout to it.
-                checkout_proc = subprocess.run(
-                    ["git", "checkout", expected_head],
+                # local_head is an ancestor of expected_head: fast-forward the task branch.
+                merge_proc = subprocess.run(
+                    ["git", "merge", "--ff-only", expected_head],
                     cwd=worktree_path,
                     capture_output=True,
                     text=True,
                     check=False,
                 )
-                if checkout_proc.returncode != 0:
-                    details = (checkout_proc.stderr or checkout_proc.stdout or "").strip().splitlines()
+                if merge_proc.returncode != 0:
+                    details = (merge_proc.stderr or merge_proc.stdout or "").strip().splitlines()
                     return False, f"review_head_checkout_failed: {details[0] if details else 'unknown'}"
             else:
                 # R1: Check if expected_head is an ancestor of local_head (workspace
@@ -1052,34 +1081,6 @@ def _refresh_reused_worker_worktree(
         # this checkout when dev already contains it.
         return True, f"review_head_pinned_at_{expected_head[:12]}"
 
-    # No required_head (owner or finalize lease): ensure attached to expected_branch
-    branch_rc, current_branch = _git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
-    if branch_rc == 0:
-        if current_branch != expected_branch:
-            return False, f"wrong_branch: expected {expected_branch}, found {current_branch}"
-    else:
-        # HEAD is detached (e.g. left by reviewer lease). Re-attach to expected_branch.
-        expected_head = (
-            _git_commit_oid(repo_root, f"refs/heads/{expected_branch}")
-            or _git_commit_oid(repo_root, f"origin/{expected_branch}")
-            or _git_commit_oid(repo_root, expected_branch)
-        )
-        if not expected_head:
-            return False, f"wrong_branch: expected {expected_branch}, branch ref not found in repo"
-        checkout_proc = subprocess.run(
-            ["git", "checkout", expected_branch],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if checkout_proc.returncode != 0:
-            details = (checkout_proc.stderr or checkout_proc.stdout or "").strip().splitlines()
-            return False, f"wrong_branch: unable to checkout {expected_branch}: {details[0] if details else 'unknown'}"
-        branch_rc, current_branch = _git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
-        if branch_rc != 0 or current_branch != expected_branch:
-            return False, f"wrong_branch: expected {expected_branch}, found {current_branch or 'detached HEAD'}"
-        local_head = _git_commit_oid(worktree_path, "HEAD")
     # Production passes the SHA resolved once at the beginning of this cycle.
     # Symbolic refs remain accepted only for direct diagnostic/test callers.
     base_head = _git_commit_oid(worktree_path, base_sha)
