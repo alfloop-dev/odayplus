@@ -60,16 +60,37 @@
     3. 前置檢查改以 `if ( [ -z "$GH" ] || ! command -v "$GH" >/dev/null 2>&1 ) && [ "$DRY_RUN" -eq 0 ]; then` 嚴格確保在需要時 gh 必須存在且可執行。
   - **測試**: 在 `tests/tooling/test_git_task_scripts.py` 新增 `test_task_finalize_dry_run_with_missing_gh_on_already_merged_branch` 與 `test_task_finalize_refuses_when_gh_missing_in_non_dry_run_on_merged_branch`。
 
+#### Round 4 審查發現與修復 (R1-R4 Final Hardening)
+- **R1 [P1]: 已刪除遠端分支之 Merged Recovery 送審／核准／狀態檢查發布**
+  - **問題**: 當 PR 合併後遠端 `origin/task/<id>` 分支被 GitHub 自動刪除時，`command_approve` 與 `task_review_status_payload` 需透過 `resolve_immutable_merged_task_sha` 自 `review_submission` 與 merge ancestry 解析 exact source commit，並正確發布 `task-review-gate=success` 狀態檢查。
+  - **修復**: 在 `scripts/ai_status.py` 抽出 `resolve_immutable_merged_task_sha`，統一用於 `command_approve` 與 `task_review_status_payload`；支援 `enforce_delivery_merged_gate` 於分支刪除情境下之交付校驗。
+  - **測試**: 在 `scripts/test_ai_status.py` 新增 `test_r1_deleted_branch_merged_recovery_submit_approve_emit_status_and_owner_done`。
+- **R2 [P1]: Task Start Authoritative Head 驗證與過期 Anchor 拒絕**
+  - **問題**: `delivery_toolchain/git/task_start.sh` 曾以 commit subject / message 比對 Task ID 作為 detached HEAD 判定依據，導致 checkout 於舊的 intermediate anchor commit 時被誤判為合法工作區。
+  - **修復**: `task_start.sh` 改為嚴格比對 `ai-status.json` 中的 authoritative head（`approved_head` // `review_submission.remote_sha`），並驗證 HEAD 為目標分支之 ancestor；任何過期 anchor 或未授權 detached commit 均 fail-closed (exit 1)。
+  - **測試**: 在 `tests/tooling/test_git_task_scripts.py` 新增 `test_task_start_refuses_same_task_stale_anchor_commit`。
+- **R3 [P2]: Worktree Lease 重新掛載之 Detached Drift 保護**
+  - **問題**: 當 worktree 曾處於 detached HEAD 並在此狀態下產生新的 committed work (drift D) 時，若未經檢查直接 re-attach 回 task branch，將導致 drift D 丟失或孤立。
+  - **修復**: 在 `worker_workspace.py:_refresh_reused_worker_worktree` 中，於 detached HEAD 重新掛載前檢查 `local_head` 是否被 `expected_head` 包含；若存在未合入的 extra commits，則以 `wrong_branch` 拒絕並保留現場，防止工作遺失。
+  - **測試**: 在 `scripts/test_ai_status.py` 新增 `test_r3_workspace_reattachment_rejects_clean_detached_drift_and_preserves_work`。
+- **R4 [P2]: Submit Review 前置獨立 Gate 檢查**
+  - **問題**: `command_submit_review` 需在變更狀態或解決 blocker 之前，先行拒絕包含獨立 human gate、credential gate、deployment gate 或 production gate 之任務。
+  - **修復**: 在 `scripts/ai_status.py` 新增 `task_unresolved_human_or_independent_gate_reason`，於 `command_submit_review` 進入點前置攔截，確保不破壞 human signoff 與 independent gates。
+  - **測試**: 在 `scripts/test_ai_status.py` 新增 `test_r4_submit_review_rejects_independent_and_human_gates_before_mutation`。
+
 ---
 
 ## 3. 修復方案與設計 (Design & Implementation)
 
 ### 3.1 Merged Review Submission & Recovery (`scripts/ai_status.py`)
 - `command_submit_review`:
+  - 前置阻擋未解決之 human approval、credentials_gate、deployment_gate 等獨立 gates。
   - 完整保留 `verified_at`、`submitted_by`、`recovery_at`、`recovery_by`。
   - 偵測首次 OPEN-to-MERGED 轉換並記錄 `recovery_at`/`recovery_by` 與發布 audit log。
   - 確保 reopen 後（`status == "in_progress"`）能正確推進至 `status == "review"` 並建立 pending reviewer handoff。
   - 對於 `review` 與 `review_approved` 保持嚴格冪等，不抹除核准狀態與 approved_head。
+- `resolve_immutable_merged_task_sha`:
+  - 統一封裝已合併 PR 之 exact submitted SHA 解析與 target ancestry 驗證。
 
 ### 3.2 Worker Workspace Handoff & Branch Advancement (`.orchestrator/worker_workspace.py` & `watch_events.py`)
 - `_existing_worktree_for_branch`: 支援透過 `expected_path` 發現 detached HEAD 工作區。
@@ -78,13 +99,13 @@
   - Reviewer:
     - OPEN PR (`local_head` 為 ancestor): `git merge --ff-only expected_head` 前進任務分支，保持 HEAD attached。
     - MERGED PR (`expected_head` 為 ancestor): `git checkout expected_head` 精確鎖定 submitted source (detached)。
-  - Owner / Finalize: 若先前處於 detached HEAD 則重新掛載回任務分支，並根據 base_sha 執行必要驗證。
+  - Owner / Finalize: 若先前處於 detached HEAD 則重新掛載回任務分支，並根據 base_sha 執行必要驗證；若存在 detached drift 則 fail-closed 保護。
   - Dirty worktree 檢查在任何 HEAD 移動前嚴格 fail-closed。
 - Activity observer: 支援驗證合法的 `review_head` / `approved_head` detached 租約。
 - Prompt rendering: 審查提示詞明確宣告 merged exact source 鎖定合約。
 
 ### 3.3 Task Finalize & Task Start Integration (`delivery_toolchain/git/`)
-- `task_start.sh`: 驗證 detached HEAD 之 task 屬性與 ancestry，安全相容 merged immutable review checkout。
+- `task_start.sh`: 依據 `ai-status.json` authoritative head 驗證 detached HEAD 之 task 屬性與 ancestry，安全相容 merged immutable review checkout 並拒絕 stale anchor commits。
 - `task_finalize.sh`: 嚴格捕獲 `gh` 命令 returncode，遇 API / 認證 / 網路故障時 fail-closed (exit 1)；安全初始化 `FOUND_CLOSED=0` 並強化 missing-CLI preflight。
 
 ---
@@ -94,16 +115,16 @@
 ### 4.1 Pytest 回歸測試 (test_ai_status.py & test_git_task_scripts.py & test_watch_events.py)
 - **Command**: `uv run pytest -q scripts/test_ai_status.py -k "Review or Submission or Merged"`
 - **Exit Code**: `0`
-- **Output Summary**: `85 passed, 198 deselected, 11 subtests passed`
+- **Output Summary**: `88 passed, 198 deselected in 3.42s`
 - **Tooling Command**: `uv run pytest tests/tooling/test_git_task_scripts.py`
 - **Exit Code**: `0`
-- **Output Summary**: `62 passed in 15.99s`
+- **Output Summary**: `63 passed in 11.30s`
 - **Watch Events Command**: `uv run pytest .orchestrator/test_watch_events.py`
 - **Exit Code**: `0`
-- **Output Summary**: `4 passed, 8 subtests passed in 0.29s`
+- **Output Summary**: `4 passed, 8 subtests passed in 0.21s`
 
 ### 4.2 Ruff 語法與代碼風格檢查
-- **Command**: `uv run ruff check scripts/ai_status.py scripts/test_ai_status.py .orchestrator/worker_workspace.py .orchestrator/watch_events.py .orchestrator/test_watch_events.py`
+- **Command**: `uv run ruff check scripts/ai_status.py scripts/test_ai_status.py .orchestrator/worker_workspace.py tests/tooling/test_git_task_scripts.py .orchestrator/watch_events.py .orchestrator/test_watch_events.py`
 - **Exit Code**: `0`
 - **Output**: `All checks passed!`
 

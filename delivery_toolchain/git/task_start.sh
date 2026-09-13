@@ -70,40 +70,34 @@ fi
 
 if [ "$CURRENT" = "HEAD" ]; then
   HEAD_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
-  HEAD_SUBJ="$(git log -1 --format=%s HEAD 2>/dev/null || true)"
-  HEAD_MSG="$(git log -1 --format=%B HEAD 2>/dev/null || true)"
-
-  IS_TASK_HEAD=0
-  case "$HEAD_SUBJ" in
-    "$TASK_ID:"*|"$TASK_ID :"*) IS_TASK_HEAD=1 ;;
-  esac
-  if [ "$IS_TASK_HEAD" -eq 0 ]; then
-    case "$HEAD_MSG" in
-      *"Task-ID: $TASK_ID"*|*"Task-ID:[[:space:]]*$TASK_ID"*) IS_TASK_HEAD=1 ;;
-    esac
-  fi
-  if [ "$IS_TASK_HEAD" -eq 0 ]; then
+  STATUS_JSON="$ROOT/ai-status.json"
+  if [ ! -f "$STATUS_JSON" ]; then
     STATUS_JSON="${ORCH_STATUS_ROOT:-${PANTHEON_STATUS_ROOT:-$ROOT}}/ai-status.json"
-    [ -f "$STATUS_JSON" ] || STATUS_JSON="$ROOT/ai-status.json"
-    if [ -f "$STATUS_JSON" ] && command -v jq >/dev/null 2>&1; then
-      RECORDED_HEAD="$(jq -r --arg id "$TASK_ID" '.tasks[]? | select(.id == $id) | (.approved_head // .review_submission.remote_sha // empty)' "$STATUS_JSON" 2>/dev/null || true)"
-      if [ -n "$RECORDED_HEAD" ] && [ "$RECORDED_HEAD" = "$HEAD_SHA" ]; then
-        IS_TASK_HEAD=1
-      fi
+  fi
+  AUTHORITATIVE_HEAD=""
+  if [ -f "$STATUS_JSON" ]; then
+    if command -v jq >/dev/null 2>&1; then
+      AUTHORITATIVE_HEAD="$(jq -r --arg id "$TASK_ID" '.tasks[]? | select(.id == $id) | (.approved_head // .review_submission.remote_sha // empty)' "$STATUS_JSON" 2>/dev/null || true)"
+    elif command -v python3 >/dev/null 2>&1; then
+      AUTHORITATIVE_HEAD="$(python3 -c "import json; data=json.load(open('$STATUS_JSON')); tasks={t.get('id'): t for t in data.get('tasks', []) if isinstance(t, dict)}; t=tasks.get('$TASK_ID', {}); print(t.get('approved_head') or (t.get('review_submission') or {}).get('remote_sha') or '')" 2>/dev/null || true)"
     fi
   fi
+  AUTHORITATIVE_HEAD="$(echo "$AUTHORITATIVE_HEAD" | tr -d '[:space:]')"
 
-  if [ "$IS_TASK_HEAD" -eq 1 ]; then
-    IS_ANCESTOR=0
-    for target_ref in "$BRANCH" "origin/$BRANCH" "dev" "origin/dev"; do
-      if git merge-base --is-ancestor HEAD "$target_ref" 2>/dev/null; then
-        IS_ANCESTOR=1
-        break
+  if [ -n "$AUTHORITATIVE_HEAD" ] && [ -n "$HEAD_SHA" ]; then
+    AUTHORITATIVE_FULL="$(git rev-parse "$AUTHORITATIVE_HEAD" 2>/dev/null || true)"
+    if [ -n "$AUTHORITATIVE_FULL" ] && [ "$HEAD_SHA" = "$AUTHORITATIVE_FULL" ]; then
+      IS_ANCESTOR=0
+      for target_ref in "$BRANCH" "origin/$BRANCH" "dev" "origin/dev"; do
+        if git merge-base --is-ancestor HEAD "$target_ref" 2>/dev/null; then
+          IS_ANCESTOR=1
+          break
+        fi
+      done
+      if [ "$IS_ANCESTOR" -eq 1 ]; then
+        echo "task_start: already at verified immutable review checkout for $BRANCH (${HEAD_SHA:0:12})"
+        exit 0
       fi
-    done
-    if [ "$IS_ANCESTOR" -eq 1 ]; then
-      echo "task_start: already at verified immutable review checkout for $BRANCH (${HEAD_SHA:0:12})"
-      exit 0
     fi
   fi
 fi

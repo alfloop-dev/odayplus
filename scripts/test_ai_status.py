@@ -1379,7 +1379,8 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
 
             # Initial commit on dev
             (repo_root / "README.md").write_text("initial")
-            subprocess.run(["git", "add", "README.md"], cwd=repo_root, check=True)
+            (repo_root / ".gitignore").write_text("ai-status.json\n")
+            subprocess.run(["git", "add", "README.md", ".gitignore"], cwd=repo_root, check=True)
             subprocess.run(["git", "commit", "-m", "initial commit"], cwd=repo_root, check=True)
             base_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo_root, capture_output=True, text=True, check=True).stdout.strip()
 
@@ -1431,6 +1432,10 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             self.assertNotEqual(branch_rc, 0)
 
             # 4b. Reviewer runs task_start.sh verifier - must succeed on verified immutable review checkout
+            (worktree_path / "ai-status.json").write_text(
+                json.dumps({"tasks": [{"id": "REG-002", "review_submission": {"remote_sha": submitted_sha}}]}),
+                encoding="utf-8",
+            )
             task_start_script = Path(__file__).resolve().parents[1] / "delivery_toolchain" / "git" / "task_start.sh"
             ts_proc = subprocess.run(["bash", str(task_start_script), "REG-002"], cwd=worktree_path, capture_output=True, text=True, check=False)
             self.assertEqual(ts_proc.returncode, 0, f"task_start.sh failed: {ts_proc.stderr}")
@@ -1568,6 +1573,314 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                 branch,
             )
             self.assertTrue((workspace / "submitted.txt").exists())
+
+    def test_r3_workspace_reattachment_rejects_clean_detached_drift_and_preserves_work(self) -> None:
+        """R3: Reattaching a detached workspace when clean-but-committed extra commits exist (drift D) must refuse with wrong_branch, preserving D from being orphaned."""
+        import sys
+        orch_dir = Path(__file__).resolve().parents[1] / ".orchestrator"
+        if str(orch_dir) not in sys.path:
+            sys.path.insert(0, str(orch_dir))
+        import worker_workspace
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir()
+            subprocess.run(["git", "init", "-b", "dev", str(repo_root)], capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "Test Agent"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
+
+            (repo_root / "README.md").write_text("initial")
+            subprocess.run(["git", "add", "README.md"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial commit"], cwd=repo_root, check=True)
+            base_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo_root, capture_output=True, text=True, check=True).stdout.strip()
+
+            branch = "task/DRIFT-001"
+            subprocess.run(["git", "branch", branch, base_sha], cwd=repo_root, check=True)
+
+            worktree_path = Path(tmpdir) / "workers" / "pantheon" / "drift-001"
+            worktree_path.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "worktree", "add", str(worktree_path), branch], cwd=repo_root, check=True)
+
+            # Task commit H on task branch
+            (worktree_path / "task.txt").write_text("task work")
+            subprocess.run(["git", "add", "task.txt"], cwd=worktree_path, check=True)
+            subprocess.run(["git", "commit", "-m", "DRIFT-001: task commit H"], cwd=worktree_path, check=True)
+            h_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=worktree_path, capture_output=True, text=True, check=True).stdout.strip()
+
+            # Reviewer checks out H in detached HEAD
+            subprocess.run(["git", "checkout", h_sha], cwd=worktree_path, check=True)
+            self.assertNotEqual(
+                worker_workspace._git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")[0],
+                0,
+            )
+
+            # Detached commit D with extra committed work above H
+            (worktree_path / "extra_drift.txt").write_text("extra unmerged work in detached HEAD")
+            subprocess.run(["git", "add", "extra_drift.txt"], cwd=worktree_path, check=True)
+            subprocess.run(["git", "commit", "-m", "DRIFT-001: detached drift D"], cwd=worktree_path, check=True)
+            d_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=worktree_path, capture_output=True, text=True, check=True).stdout.strip()
+            self.assertNotEqual(d_sha, h_sha)
+
+            # Owner lease arrives (required_head=None): must REFUSE with wrong_branch and NOT switch to task branch
+            ok, status = worker_workspace._refresh_reused_worker_worktree(
+                repo_root,
+                worktree_path,
+                base_sha,
+                branch,
+                network_timeout_seconds=5.0,
+                materialized_paths=set(),
+                required_head=None,
+            )
+            self.assertFalse(ok)
+            self.assertTrue(status.startswith("wrong_branch:"), f"Expected wrong_branch, got {status}")
+            self.assertIn("unmerged commits", status)
+
+            # Crucial: Worktree HEAD is still at D, and extra_drift.txt is PRESERVED
+            current_head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=worktree_path, capture_output=True, text=True, check=True).stdout.strip()
+            self.assertEqual(current_head, d_sha)
+            self.assertTrue((worktree_path / "extra_drift.txt").exists())
+
+            # Now test normal reviewer-to-owner reattachment (detached at H without extra drift)
+            subprocess.run(["git", "checkout", h_sha], cwd=worktree_path, check=True)
+            ok_clean, status_clean = worker_workspace._refresh_reused_worker_worktree(
+                repo_root,
+                worktree_path,
+                base_sha,
+                branch,
+                network_timeout_seconds=5.0,
+                materialized_paths=set(),
+                required_head=None,
+            )
+            self.assertTrue(ok_clean, f"Clean reattach failed: {status_clean}")
+            branch_rc, current_branch = worker_workspace._git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
+            self.assertEqual(branch_rc, 0)
+            self.assertEqual(current_branch, branch)
+
+    def test_r1_deleted_branch_merged_recovery_submit_approve_emit_status_and_owner_done(self) -> None:
+        """R1: Deleted-branch merged recovery completes approve -> status check emission on immutable merged SHA -> owner done."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            repo_root.mkdir()
+            subprocess.run(["git", "init", "-b", "dev", str(repo_root)], capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "Test Agent"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
+
+            (repo_root / "README.md").write_text("initial")
+            subprocess.run(["git", "add", "README.md"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial commit"], cwd=repo_root, check=True)
+
+            branch = "task/MERGED-REC-001"
+            subprocess.run(["git", "checkout", "-b", branch], cwd=repo_root, check=True)
+            (repo_root / "feature.txt").write_text("feature content")
+            subprocess.run(["git", "add", "feature.txt"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "MERGED-REC-001: feature commit H"], cwd=repo_root, check=True)
+            h_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo_root, capture_output=True, text=True, check=True).stdout.strip()
+
+            subprocess.run(["git", "checkout", "dev"], cwd=repo_root, check=True)
+            subprocess.run(["git", "merge", "--no-ff", branch, "-m", "Merge pull request #1305 from task/MERGED-REC-001"], cwd=repo_root, check=True)
+            merge_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo_root, capture_output=True, text=True, check=True).stdout.strip()
+
+            # Delete the local task branch to simulate branch deletion after merge
+            subprocess.run(["git", "branch", "-D", branch], cwd=repo_root, check=True)
+            subprocess.run(["git", "remote", "add", "origin", str(repo_root)], cwd=repo_root, check=True)
+            subprocess.run(["git", "update-ref", "refs/remotes/origin/dev", "dev"], cwd=repo_root, check=True)
+
+            task_id = "MERGED-REC-001"
+            task = {
+                "id": task_id,
+                "title": "Merged recovery task",
+                "status": "review",
+                "owner": "Antigravity2",
+                "reviewer": "Codex2",
+                "branch": branch,
+                "review_submission": {
+                    "pr_number": 1305,
+                    "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1305",
+                    "branch": branch,
+                    "base_branch": "dev",
+                    "remote_sha": h_sha,
+                    "submitted_at": "2026-09-13T10:00:00Z",
+                    "submitted_by": "Antigravity2",
+                    "merged_at": "2026-09-13T10:05:00Z",
+                    "merge_commit": merge_sha,
+                },
+            }
+            state = {
+                "tasks": [task],
+                "agents": [
+                    {"name": "Antigravity2", "status": "active"},
+                    {"name": "Codex2", "status": "active"},
+                ],
+            }
+
+            # 1. Test payload before approval (state == "review") -> pending on h_sha
+            with (
+                mock.patch.object(ai_status, "ROOT", repo_root),
+                mock.patch.object(ai_status, "repository_local_path", return_value=repo_root),
+                mock.patch.object(ai_status, "resolve_task_sha", return_value=None),
+            ):
+                review_payload = ai_status.task_review_status_payload(task, "review")
+                self.assertIsNotNone(review_payload)
+                self.assertEqual(review_payload["sha"], h_sha)
+                self.assertEqual(review_payload["state"], "pending")
+                self.assertEqual(review_payload["context"], "task-review-gate")
+
+            # 2. Reviewer approves
+            with (
+                mock.patch.object(ai_status, "ROOT", repo_root),
+                mock.patch.object(ai_status, "repository_local_path", return_value=repo_root),
+                mock.patch.object(ai_status, "load_state", return_value=state),
+                mock.patch.object(ai_status, "save_state"),
+                mock.patch.object(ai_status, "resolve_task_sha", return_value=None),
+                mock.patch.object(ai_status, "task_pr_ci_status", return_value=("MERGED", "success")),
+                mock.patch.object(ai_status, "post_task_review_status_payload", return_value=(True, "")) as mock_post,
+            ):
+                os.environ["AI_NAME"] = "Codex2"
+                ai_status.command_approve(state, ["MERGED-REC-001", "LGTM approved"])
+
+                self.assertEqual(task["status"], "review_approved")
+                self.assertEqual(task["approved_head"], h_sha)
+
+                # Test payload in review_approved
+                approved_payload = ai_status.task_review_status_payload(task, "review_approved")
+                self.assertIsNotNone(approved_payload)
+                self.assertEqual(approved_payload["sha"], h_sha)
+                self.assertEqual(approved_payload["state"], "success")
+                self.assertEqual(approved_payload["context"], "task-review-gate")
+
+                # Verify emit_task_review_status_check posted to GitHub API for h_sha
+                ai_status.emit_task_review_status_check(task, "review_approved")
+                mock_post.assert_called()
+                last_call_payload = mock_post.call_args[0][0]
+                self.assertEqual(last_call_payload["sha"], h_sha)
+                self.assertEqual(last_call_payload["state"], "success")
+                self.assertNotIn("review_gate_refresh_pending", task)
+
+            # 3. Owner done with enforce_delivery_merged_gate
+            pr_status_fixture = {
+                "state": "MERGED",
+                "headRefOid": h_sha,
+                "headRefName": branch,
+                "baseRefName": "dev",
+                "mergedAt": "2026-09-13T10:05:00Z",
+                "mergeCommit": {"oid": merge_sha},
+                "statusCheckRollup": [
+                    {
+                        "__typename": "CheckRun",
+                        "name": "build",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS",
+                    },
+                    {
+                        "__typename": "StatusContext",
+                        "context": "task-review-gate",
+                        "state": "SUCCESS",
+                    },
+                ],
+            }
+            with (
+                mock.patch.object(ai_status, "ROOT", repo_root),
+                mock.patch.object(ai_status, "repository_local_path", return_value=repo_root),
+                mock.patch.object(ai_status, "load_state", return_value=state),
+                mock.patch.object(ai_status, "save_state"),
+                mock.patch.object(ai_status, "pull_request_status_for_branch", return_value=pr_status_fixture),
+            ):
+                delivery = {"verified_head": h_sha}
+                ai_status.enforce_delivery_merged_gate(
+                    {"branch_workflow": {"dev_branch": "dev"}},
+                    delivery,
+                    repository_root=repo_root,
+                    repository_id="pantheon",
+                    branch=branch,
+                    remote_names=["origin"],
+                    approved_head=h_sha,
+                    repository_slug_value="alfloop-dev/odayplus",
+                    task=task,
+                )
+                self.assertTrue(delivery.get("merge_verified_via_pr"))
+                self.assertEqual(delivery.get("ci_status"), "success")
+
+    def test_r4_submit_review_rejects_independent_and_human_gates_before_mutation(self) -> None:
+        """R4: command_submit_review rejects independent human, credential, and deployment gates before mutating task state or resolving blockers."""
+        cases = [
+            ({"gate_status": "pending_human_signoff"}, "unresolved human gate status"),
+            ({"gate_status": "pending_human_approval"}, "unresolved human gate status"),
+            ({"task_class": "human_gate"}, "human or non-dispatchable gate"),
+            ({"non_dispatchable": True}, "human or non-dispatchable gate"),
+            ({"requires_human_approval": True}, "unresolved human approval gate"),
+            ({"human_required_roles": ["security_reviewer"]}, "unresolved human approval gate"),
+            ({"credentials_gate": True}, "unresolved independent credentials_gate"),
+            ({"credential_gate": True}, "unresolved independent credential_gate"),
+            ({"deployment_gate": True}, "unresolved independent deployment_gate"),
+            ({"production_gate": True}, "unresolved independent production_gate"),
+            ({"external_data_gate": True}, "unresolved independent external_data_gate"),
+        ]
+
+        for gate_attrs, expected_msg in cases:
+            with self.subTest(gate_attrs=gate_attrs):
+                task = {
+                    "id": "ODP-HG-SUBMIT-001",
+                    "status": "in_progress",
+                    "owner": "Antigravity2",
+                    "reviewer": "Codex2",
+                    "branch": "task/ODP-HG-SUBMIT-001",
+                    **gate_attrs,
+                }
+                state = {
+                    "tasks": [task],
+                    "blockers": [{"id": "BLK-1", "task_id": "ODP-HG-SUBMIT-001", "status": "active"}],
+                    "handoffs": [],
+                }
+                with (
+                    mock.patch.object(ai_status, "load_state", return_value=state),
+                    mock.patch.object(ai_status, "save_state") as mock_save,
+                    mock.patch.object(ai_status, "append_log") as mock_log,
+                    mock.patch.object(ai_status, "repository_local_path", return_value=ai_status.ROOT),
+                ):
+                    os.environ["AI_NAME"] = "Antigravity2"
+                    with self.assertRaises(SystemExit) as ctx:
+                        ai_status.command_submit_review(state, ["ODP-HG-SUBMIT-001", "100", "ready for review"])
+                    self.assertIn(expected_msg, str(ctx.exception))
+                    self.assertEqual(task["status"], "in_progress")
+                    self.assertEqual(state["blockers"][0]["status"], "active")
+                    mock_save.assert_not_called()
+                    mock_log.assert_not_called()
+
+        # Historical waiting_for on in_progress (without active gates) must succeed
+        clean_task = {
+            "id": "ODP-CLEAN-SUBMIT-001",
+            "status": "in_progress",
+            "waiting_for": "Human/Ops",
+            "owner": "Antigravity2",
+            "reviewer": "Codex2",
+            "branch": "task/ODP-CLEAN-SUBMIT-001",
+        }
+        state = {
+            "tasks": [clean_task],
+            "blockers": [],
+            "handoffs": [],
+        }
+        pr_mock = {
+            "number": 100,
+            "url": "https://github.com/alfloop-dev/odayplus/pull/100",
+            "state": "OPEN",
+            "headRefName": "task/ODP-CLEAN-SUBMIT-001",
+            "headRefOid": "1111111111111111111111111111111111111111",
+            "baseRefName": "dev",
+            "commits": [{"oid": "1111111111111111111111111111111111111111"}],
+        }
+        with (
+            mock.patch.object(ai_status, "load_state", return_value=state),
+            mock.patch.object(ai_status, "repository_local_path", return_value=ai_status.ROOT),
+            mock.patch.object(ai_status, "save_state"),
+            mock.patch.object(ai_status, "append_log"),
+            mock.patch.object(ai_status, "run_gh_json_command", return_value=pr_mock),
+            mock.patch.object(ai_status, "resolve_task_sha", return_value="1111111111111111111111111111111111111111"),
+            mock.patch.object(ai_status, "validate_delivery_identity", return_value=[]),
+        ):
+            os.environ["AI_NAME"] = "Antigravity2"
+            ai_status.command_submit_review(state, ["ODP-CLEAN-SUBMIT-001", "100", "ready for review"])
+            self.assertEqual(clean_task["status"], "review")
 
     def test_r4_task_finalize_shell_gh_transport_failure_and_discovery(self) -> None:
         """R4 executing shell regression: task_finalize.sh fails with nonzero exit on gh transport/auth failure, correctly selects MERGED PR when preceded by CLOSED PR, and fails on CLOSED-only."""

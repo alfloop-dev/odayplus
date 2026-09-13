@@ -9,6 +9,7 @@ happen before any push.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -345,6 +346,10 @@ def test_task_start_accepts_verified_immutable_review_checkout_detached_head(rep
     assert committed.returncode == 0
 
     submitted_sha = git(repo, "rev-parse", "HEAD").stdout.strip()
+    (repo / "ai-status.json").write_text(
+        json.dumps({"tasks": [{"id": TASK, "review_submission": {"remote_sha": submitted_sha}}]}),
+        encoding="utf-8",
+    )
     git(repo, "switch", "--quiet", "dev")
     git(repo, "merge", "--no-ff", "-m", f"Merge task/{TASK}", f"task/{TASK}")
     git(repo, "checkout", "--quiet", submitted_sha)
@@ -353,6 +358,47 @@ def test_task_start_accepts_verified_immutable_review_checkout_detached_head(rep
     result = task_start(repo, TASK)
     assert result.returncode == 0
     assert "verified immutable review checkout" in result.stdout
+
+
+def test_task_start_refuses_same_task_stale_anchor_commit(repo: Path, tmp_path: Path):
+    """R2: A detached HEAD on an older same-task anchor must be rejected even with matching Task ID."""
+    git(repo, "switch", "--quiet", "--create", f"task/{TASK}")
+    (repo / "anchor.txt").write_text("anchor work\n", encoding="utf-8")
+    msg1 = tmp_path / "msg1.txt"
+    msg1.write_text(f"{TASK}: anchor intermediate work\n\nLLM-Agent: Antigravity2\nTask-ID: {TASK}\nReviewer: Codex2\n", encoding="utf-8")
+    committed1 = worker_commit(repo, "--task-id", TASK, "--message-file", str(msg1), "--scope", "anchor.txt")
+    assert committed1.returncode == 0
+    stale_anchor_sha = git(repo, "rev-parse", "HEAD").stdout.strip()
+
+    (repo / "final.txt").write_text("final work\n", encoding="utf-8")
+    msg2 = tmp_path / "msg2.txt"
+    msg2.write_text(f"{TASK}: final submitted work\n\nLLM-Agent: Antigravity2\nTask-ID: {TASK}\nReviewer: Codex2\n", encoding="utf-8")
+    committed2 = worker_commit(repo, "--task-id", TASK, "--message-file", str(msg2), "--scope", "final.txt")
+    assert committed2.returncode == 0
+    final_submitted_sha = git(repo, "rev-parse", "HEAD").stdout.strip()
+
+    (repo / "ai-status.json").write_text(
+        json.dumps({"tasks": [{"id": TASK, "review_submission": {"remote_sha": final_submitted_sha}}]}),
+        encoding="utf-8",
+    )
+    git(repo, "switch", "--quiet", "dev")
+    git(repo, "merge", "--no-ff", "-m", f"Merge task/{TASK}", f"task/{TASK}")
+
+    # Checkout stale anchor commit in detached HEAD
+    git(repo, "checkout", "--quiet", stale_anchor_sha)
+    assert git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "HEAD"
+
+    result = task_start(repo, TASK)
+    assert result.returncode == 1
+    assert "outside its Worker Manager lease" in result.stderr
+
+    # Checkout exact authoritative head in detached HEAD
+    git(repo, "checkout", "--quiet", final_submitted_sha)
+    assert git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "HEAD"
+
+    result_ok = task_start(repo, TASK)
+    assert result_ok.returncode == 0
+    assert "verified immutable review checkout" in result_ok.stdout
 
 
 def test_task_start_refuses_detached_head_on_unrelated_commit(repo: Path):

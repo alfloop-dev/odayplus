@@ -717,6 +717,57 @@ def continuation_approval_validation_error(
     return None
 
 
+def task_unresolved_human_or_independent_gate_reason(task: dict[str, Any]) -> str | None:
+    """Return why a task carries an unresolved human or independent gate blocking submission."""
+    if not isinstance(task, dict):
+        return None
+    task_class = str(task.get("task_class") or "").strip().lower()
+    if task_class == "human_gate" or bool(task.get("non_dispatchable")):
+        return "task carries an unresolved human gate (human or non-dispatchable gate)"
+    if task.get("requires_human_approval") is True or task.get("human_required_roles"):
+        return "task carries an unresolved human approval gate"
+    for gate_field in (
+        "credentials_gate",
+        "credential_gate",
+        "deployment_gate",
+        "production_gate",
+        "external_data_gate",
+        "human_gate",
+    ):
+        if task.get(gate_field):
+            return f"task carries an unresolved independent {gate_field}"
+    gate_status = str(task.get("gate_status") or "").strip().casefold()
+    if gate_status.startswith("pending_human"):
+        return f"task carries an unresolved human gate status ({gate_status})"
+    return None
+
+
+def resolve_immutable_merged_task_sha(task: dict[str, Any]) -> str | None:
+    """Resolve and verify the immutable source SHA for a merged review submission."""
+    submission = task.get("review_submission")
+    if not isinstance(submission, dict) or not submission.get("merged_at") or not submission.get("merge_commit"):
+        return None
+    submitted_sha = str(submission.get("remote_sha") or "").strip()
+    merge_commit = str(submission.get("merge_commit") or "").strip()
+    if not submitted_sha or not merge_commit:
+        return None
+    config = status_runtime_config()
+    repository_id = task_repository_id(config, task) or "pantheon"
+    repo_root = repository_local_path(config, repository_id) or ROOT
+    target_branch = delivery_merge_target_branch(config, repository_id)
+    target_ref = f"origin/{target_branch}"
+    if not git_command_succeeds(["rev-parse", "--verify", target_ref], cwd=repo_root):
+        target_ref = target_branch
+    if (
+        git_command_succeeds(["cat-file", "-e", f"{submitted_sha}^{{commit}}"], cwd=repo_root)
+        and git_command_succeeds(["cat-file", "-e", f"{merge_commit}^{{commit}}"], cwd=repo_root)
+        and git_command_succeeds(["merge-base", "--is-ancestor", submitted_sha, merge_commit], cwd=repo_root)
+        and git_command_succeeds(["merge-base", "--is-ancestor", merge_commit, target_ref], cwd=repo_root)
+    ):
+        return submitted_sha
+    return None
+
+
 def format_display_timestamp(value: Any) -> str:
     parsed = parse_timestamp(value)
     if parsed is None:
@@ -6744,14 +6795,10 @@ def review_submission_for_task(
             f"Cannot submit {task_id} for review: task is currently blocked (waiting for {waiting_for}). "
             "Resolve the blocker or human gate before submitting for review."
         )
-    if (
-        task.get("task_class") == "human_gate"
-        or bool(task.get("non_dispatchable"))
-        or task.get("requires_human_approval") is True
-        or task.get("human_required_roles")
-    ):
+    gate_reason = task_unresolved_human_or_independent_gate_reason(task)
+    if gate_reason:
         raise SystemExit(
-            f"Cannot submit {task_id} for review: task carries an unresolved human gate."
+            f"Cannot submit {task_id} for review: {gate_reason}."
         )
 
     config = status_runtime_config()
@@ -7816,26 +7863,8 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
         else ""
     )
 
-    if not approved_sha and isinstance(submission, dict) and submission.get("merged_at") and submission.get("merge_commit"):
-        # For merged PR review submissions where origin/task/<id> was deleted upon PR merge,
-        # verify the immutable source SHA and merge ancestry against the target branch history.
-        config = status_runtime_config()
-        repository_id = task_repository_id(config, task) or "pantheon"
-        repo_root = repository_local_path(config, repository_id) or ROOT
-        target_branch = delivery_merge_target_branch(config, repository_id)
-        target_ref = f"origin/{target_branch}"
-        if not git_command_succeeds(["rev-parse", "--verify", target_ref], cwd=repo_root):
-            target_ref = target_branch
-        merge_commit = str(submission.get("merge_commit") or "").strip()
-        if (
-            submitted_sha
-            and merge_commit
-            and git_command_succeeds(["cat-file", "-e", f"{submitted_sha}^{{commit}}"], cwd=repo_root)
-            and git_command_succeeds(["cat-file", "-e", f"{merge_commit}^{{commit}}"], cwd=repo_root)
-            and git_command_succeeds(["merge-base", "--is-ancestor", submitted_sha, merge_commit], cwd=repo_root)
-            and git_command_succeeds(["merge-base", "--is-ancestor", merge_commit, target_ref], cwd=repo_root)
-        ):
-            approved_sha = submitted_sha
+    if not approved_sha:
+        approved_sha = resolve_immutable_merged_task_sha(task)
 
     if not approved_sha:
         raise SystemExit(
@@ -9756,6 +9785,8 @@ def task_review_status_payload(task: dict[str, Any], state_status: str) -> dict[
         sha = resolve_task_sha(task_id)
     except RuntimeError:
         return None
+    if not sha:
+        sha = resolve_immutable_merged_task_sha(task)
     if not sha:
         return None
 
