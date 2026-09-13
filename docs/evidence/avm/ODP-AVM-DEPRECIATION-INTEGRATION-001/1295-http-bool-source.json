@@ -1,0 +1,23 @@
+{
+  "prepared_at": "2026-09-13T07:10:29.582465+00:00",
+  "base_head": "837aca65beb92703f8bf1d9a0f7590a847025476",
+  "finding": "HTTP useful_life_months=true was coerced to int 1 before domain validation",
+  "repair": "Reject bool in the request field before Pydantic int coercion; preserve remaining input behavior",
+  "source_sha256": {
+    "apps/api/app/routes/avm.py": "7a53af81d1b42c7f37baca44cfe14666f3323abf0aad35908a576311a4915bfb",
+    "tests/integration/test_avm_valuation.py": "68951667b34b9435445c3cec5dba59e63c92e585ecbb9148f74a31c5cb74edef"
+  },
+  "http_regression_cases": 12,
+  "original_red": "1295-http-bool-red.json",
+  "green": "1295-http-bool-green.json",
+  "broader_regression": "1295-http-bool-regression.json",
+  "contributor": "Codex",
+  "independent_review": "Supervisor Codex2 must review the resulting remote head",
+  "results": {
+    "red": "1 failed, 11 passed; true created a case with useful_life_months=1",
+    "http_green": "12 passed",
+    "regression": "100 passed, 3 requires_live_env cases deselected",
+    "lint": "passed",
+    "boundary": "passed, 1158 files"
+  }
+}

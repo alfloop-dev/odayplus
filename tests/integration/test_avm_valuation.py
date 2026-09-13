@@ -117,6 +117,67 @@ def _valuation_payload() -> dict:
     }
 
 
+def _original_cost_api_payload() -> dict:
+    return {
+        **_valuation_payload(),
+        "created_by": "avm-life-boundary-test",
+        "equipment_depreciation_basis": "original_cost",
+        "equipment_original_cost": 120_000,
+        "asset_book_value_includes_equipment": True,
+        "residual_value_ratio": 0.1,
+        "depreciation_method": "straight_line",
+        "asset_in_service_date": "2026-01-01",
+        "depreciation_effective_date": "2026-02-01",
+    }
+
+
+@pytest.mark.parametrize("value", [True, False, 1.9, "1.0000000000000000001", 0, -1])
+def test_avm_api_rejects_invalid_useful_life_before_persistence(value: Any) -> None:
+    repository = InMemoryAVMRepository()
+    with TestClient(create_app(avm_repository=repository), headers=AVM_HEADERS) as client:
+        response = client.post(
+            "/api/v1/avm/cases",
+            json={**_original_cost_api_payload(), "useful_life_months": value},
+        )
+
+    assert response.status_code == 422, response.text
+    assert any(error["loc"][-1] == "useful_life_months" for error in response.json()["detail"])
+    assert repository.list_cases() == []
+    assert repository._reports == {}
+
+
+@pytest.mark.parametrize("value", [84, 84.0, "84", "9007199254740993"])
+def test_avm_api_preserves_valid_integral_useful_life(value: Any) -> None:
+    repository = InMemoryAVMRepository()
+    with TestClient(create_app(avm_repository=repository), headers=AVM_HEADERS) as client:
+        response = client.post(
+            "/api/v1/avm/cases",
+            json={**_original_cost_api_payload(), "useful_life_months": value},
+        )
+
+    assert response.status_code == 201, response.text
+    cases = repository.list_cases()
+    assert len(cases) == 1
+    assert cases[0].valuation_input.useful_life_months == int(value)
+    assert repository.report_history(cases[0].case_id) == []
+
+
+@pytest.mark.parametrize("include_null", [False, True])
+def test_avm_api_preserves_missing_and_null_useful_life(include_null: bool) -> None:
+    repository = InMemoryAVMRepository()
+    payload = _original_cost_api_payload()
+    if include_null:
+        payload["useful_life_months"] = None
+    with TestClient(create_app(avm_repository=repository), headers=AVM_HEADERS) as client:
+        response = client.post("/api/v1/avm/cases", json=payload)
+
+    assert response.status_code == 201, response.text
+    cases = repository.list_cases()
+    assert len(cases) == 1
+    assert cases[0].valuation_input.useful_life_months is None
+    assert repository.report_history(cases[0].case_id) == []
+
+
 def test_valuation_view_and_worker_emit_lenses_and_price_separation() -> None:
     valuation_view = build_valuation_view(_valuation_payload())
     assert valuation_view.to_dict()["feature_version"] == AVM_FEATURE_VERSION

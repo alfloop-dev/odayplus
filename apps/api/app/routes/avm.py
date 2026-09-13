@@ -20,7 +20,7 @@ from shared.jobs.queue import InMemoryJobQueue
 
 try:
     from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-    from pydantic import BaseModel, Field
+    from pydantic import BaseModel, Field, field_validator
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
 else:
@@ -58,6 +58,14 @@ else:
         asset_in_service_date: str | None = None
         created_by: str = Field(min_length=1)
         idempotency_key: str | None = None
+
+        @field_validator("useful_life_months", mode="before")
+        @classmethod
+        def reject_boolean_useful_life(cls, value: Any) -> Any:
+            # Lax int parsing would turn JSON true into 1 before domain validation.
+            if isinstance(value, bool):
+                raise ValueError("useful_life_months must be an integer >= 1")
+            return value
 
 
     class ActorPayload(BaseModel):

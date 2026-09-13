@@ -24,3 +24,10 @@ Production bootstrap now supplies the same deployment depreciation pin and rollb
 The pending fractional-life repair converted strings through binary floating point. This accepted `1.0000000000000000001` as one month and changed `9007199254740993`. The correction parses integer text directly and compares numeric values with their exact integer conversion, preserving integral Decimal/Fraction input compatibility. Invalid fractional values fail at mapping, dataclass, rehydrated calculation, raw service and batch boundaries without creating cases or reports.
 
 The initial regressions failed before the correction. Final AVM tests: 51 passed; durable AVM/API and Operator integration: 35 passed, 3 live-environment cases deselected. Existing artifact rollback and nested legacy provenance tests are included. Original commands, exit codes and exact final source hashes accompany this evidence. This contributor patch requires owner submission and independent review of its resulting remote head.
+
+
+## HTTP boolean useful-life boundary
+
+The HTTP request model previously coerced JSON `true` to integer `1` before domain validation. An actual `POST /api/v1/avm/cases` regression with complete original-cost inputs reproduced HTTP 201 and a persisted one-month case. The request field now rejects booleans in a before validator, returning 422 before any case or report is stored. Other supported Pydantic input handling remains intact.
+
+Twelve real HTTP cases cover booleans, fractional values including exact fractional text, nonpositive values, valid integer/numeric/string inputs, large integer text, and missing/null inputs. The original red run has one failing boolean case and eleven passing controls; all twelve pass after the repair. Broader AVM/domain/artifact/rollback/history/API/Operator verification: **100 passed, 3 live-environment cases deselected**. Ruff and the 1158-file code boundary check passed. Original command/exit-code receipts and exact source hashes are in `1295-http-bool-*.json` and their sibling logs. This is contributor verification; the resulting PR head returns to the normal Supervisor owner and independent Codex2 auto-review flow.
