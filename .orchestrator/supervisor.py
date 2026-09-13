@@ -338,6 +338,9 @@ _FAILURE_HELPER_FUNCTIONS = [
 "worker_runtime_metrics_bucket",
 "worker_runtime_settings",
 "worker_supports_approval_resume",
+"worker_writer_pids",
+"worker_writers_are_alive",
+"terminate_worker_writers",
 "write_status_snapshot_if_current",
 ]
 
