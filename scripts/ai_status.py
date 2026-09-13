@@ -63,8 +63,13 @@ DELIVERY_GIT_DIR = ROOT / "delivery_toolchain" / "git"
 if str(DELIVERY_GIT_DIR) not in sys.path:
     sys.path.insert(0, str(DELIVERY_GIT_DIR))
 
+DELIVERY_GOVERNANCE_DIR = ROOT / "delivery_toolchain" / "governance"
+if str(DELIVERY_GOVERNANCE_DIR) not in sys.path:
+    sys.path.insert(0, str(DELIVERY_GOVERNANCE_DIR))
+
 import common as orchestrator_common
 from check_task_delivery_identity import validate_delivery_identity
+from classify_change_review_scope import classify_paths
 from common import (
     classify_reopen_reason,
 )
@@ -7677,6 +7682,103 @@ def command_restore_approved_head(state: dict[str, Any], args: list[str]) -> Non
     )
 
 
+def command_done_tooling(state: dict[str, Any], args: list[str]) -> None:
+    """Close an owner's merged pure-tooling delivery using CI and scope evidence.
+
+    This records delivery, not reviewer approval. Product/mixed changes retain
+    command_done's independent review requirements. Use the manifest from the
+    merge's first parent so a PR cannot expand its own no-product-review scope.
+    """
+    if len(args) != 4:
+        raise SystemExit("Usage: done_tooling <task-id> <pr-number> <source-sha> <message>")
+    task_id, pr_number, expected_head, message = args
+    actor = current_actor_validated()
+    task = get_task(state, task_id)
+    if task is None:
+        snapshot = archived_task_snapshot(task_id) or {}
+        archived = snapshot.get("task") or {}
+        delivery = archived.get("delivery") or {}
+        if (
+            archived.get("owner") == actor
+            and archived.get("status") == "done"
+            and delivery.get("verification_mode") == "merged_tooling_scope_and_ci"
+            and str((delivery.get("pull_request") or {}).get("number")) == pr_number
+            and delivery.get("verified_head") == expected_head
+        ):
+            return
+        raise SystemExit(f"Unknown active tooling task: {task_id}")
+    if task.get("owner") != actor:
+        raise SystemExit(f"Only the owner ({task.get('owner')}) can finalize {task_id} to done")
+    if task.get("status") not in {"in_progress", "review", "review_approved"}:
+        raise SystemExit(f"Cannot finalize tooling task {task_id} from {task.get('status')}")
+    if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", expected_head):
+        raise SystemExit("Tooling closeout requires the exact immutable source SHA")
+
+    # This validator is shared with merged recovery, but performs no review
+    # transition: owner, branch/base, source/merge ancestry, identity and CI.
+    submission = review_submission_for_task(task, pr_number, actor=actor)
+    if not submission.get("merged_at") or not submission.get("merge_commit"):
+        raise SystemExit("Tooling closeout requires a MERGED pull request")
+    if submission["remote_sha"] != expected_head:
+        raise SystemExit("Tooling closeout source SHA differs from the merged PR head")
+    config = status_runtime_config()
+    repository_id = task_repository_id(config, task) or "pantheon"
+    repo_root = repository_local_path(config, repository_id) or ROOT
+    merge_commit = submission["merge_commit"]
+    manifest_commit = run_git_command(["rev-parse", f"{merge_commit}^1"], cwd=repo_root)
+    manifest_text = run_git_command(
+        ["show", f"{manifest_commit}:config/change-review-scopes.json"], cwd=repo_root,
+        failure_message="Cannot finalize tooling task: trusted base scope manifest is unavailable",
+    )
+    try:
+        manifest = json.loads(manifest_text)
+        if not isinstance(manifest, dict) or not isinstance(manifest.get("development_tooling"), dict):
+            raise ValueError("invalid development_tooling manifest")
+        paths_raw = run_git_command(
+            ["diff", "--name-only", "--no-renames", "-z", f"{manifest_commit}...{expected_head}", "--"],
+            cwd=repo_root,
+        )
+        paths = [path for path in paths_raw.split("\0") if path]
+        if any(path != path.strip() for path in paths):
+            raise ValueError("ambiguous whitespace in delivery path")
+        scope = classify_paths(paths, manifest)
+    except (ValueError, TypeError, KeyError) as exc:
+        raise SystemExit(f"Cannot verify tooling scope: {exc}") from exc
+    if scope["scope"] != "development_tooling":
+        raise SystemExit("Product or mixed delivery requires the assigned product reviewer and normal done flow")
+    guard_cross_repo_delivery_gate(state, task)
+
+    timestamp = iso_now()
+    delivery = {
+        "verification_mode": "merged_tooling_scope_and_ci",
+        "scope": "development_tooling",
+        "repository_id": repository_id,
+        "branch": submission["branch"],
+        "base_branch": submission["base_branch"],
+        "verified_head": expected_head,
+        "pr_head_ref_oid": expected_head,
+        "pr_merge_commit": merge_commit,
+        "recorded_at": timestamp,
+        "recorded_by": actor,
+        "scope_manifest_commit": manifest_commit,
+        "scope_manifest_sha256": hashlib.sha256(manifest_text.encode()).hexdigest(),
+        "changed_paths": scope["paths"],
+        "pull_request": {
+            "number": submission["pr_number"], "url": submission["pr_url"],
+            "state": "MERGED", "head_sha": expected_head,
+            "merge_commit": merge_commit, "merged_at": submission["merged_at"],
+            "base_branch": submission["base_branch"], "ci_checks": submission["ci_checks"],
+        },
+    }
+    task.update(status="done", terminal_outcome="completed", last_update=timestamp, next=message, delivery=delivery)
+    task.pop("waiting_for", None)
+    mark_blockers_resolved(state, task_id)
+    mark_handoffs_done(state, task_id)
+    archive_terminal_task_from_state(state, task, archived_at=timestamp)
+    append_log({"ts": timestamp, "agent": actor, "type": "done_tooling", "task_id": task_id,
+                "message": message, "delivery": delivery})
+
+
 def command_done(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: done <task-id> <message>")
@@ -9569,25 +9671,33 @@ def resolve_task_sha(
         )
     except subprocess.TimeoutExpired:
         # R5: An incomplete origin response is a transport failure, not a
-        # confirmed branch deletion.  Replace the warm cache to prevent stale
-        # fallback, then raise so callers can distinguish error from absent.
-        _TASK_SHA_CACHE[task_id] = (time.time(), None)
+        # confirmed branch deletion. Invalidate the warm cache so the next
+        # ordinary lookup cannot reuse either an old SHA or false absence.
+        _TASK_SHA_CACHE.pop(task_id, None)
         raise RuntimeError(
             f"git ls-remote timed out after {COMMAND_TIMEOUT_SECONDS}s for {task_id}; "
+            "remote branch state is unverifiable"
+        ) from None
+    except OSError:
+        _TASK_SHA_CACHE.pop(task_id, None)
+        raise RuntimeError(
+            f"git ls-remote could not run for {task_id}; "
             "remote branch state is unverifiable"
         ) from None
     matches: list[str] = []
     if result.returncode != 0:
         # R5: A nonzero exit from git ls-remote (network failure, auth error,
         # etc.) is a transport failure, not a confirmed branch absence.
-        _TASK_SHA_CACHE[task_id] = (time.time(), None)
+        _TASK_SHA_CACHE.pop(task_id, None)
         raise RuntimeError(
             f"git ls-remote failed with exit code {result.returncode} for {task_id}; "
             "remote branch state is unverifiable"
         )
     for line in result.stdout.splitlines():
+        if not line.strip():
+            continue
         fields = line.split()
-        if (
+        if not (
             len(fields) == 2
             and fields[1] in remote_refs
             and (
@@ -9595,7 +9705,12 @@ def resolve_task_sha(
                 or re.fullmatch(r"[0-9a-fA-F]{64}", fields[0])
             )
         ):
-            matches.append(fields[0])
+            _TASK_SHA_CACHE.pop(task_id, None)
+            raise RuntimeError(
+                f"git ls-remote returned an invalid or unexpected ref for {task_id}; "
+                "remote branch state is unverifiable"
+            )
+        matches.append(fields[0])
     # Fail closed unless origin returns exactly one valid canonical task ref.
     # Local HEAD, local task refs, cached origin refs, and old PR heads are not
     # authoritative active-task review/freeze evidence.
@@ -9604,13 +9719,13 @@ def resolve_task_sha(
         return matches[0]
     if len(matches) > 1:
         # R5: Ambiguous refs are not a confirmed absence either.
-        _TASK_SHA_CACHE[task_id] = (now, None)
+        _TASK_SHA_CACHE.pop(task_id, None)
         raise RuntimeError(
             f"git ls-remote returned {len(matches)} matching refs for {task_id}; "
             "remote branch state is ambiguous"
         )
 
-    # Confirmed absent: git ls-remote succeeded (rc=0) but found no matching refs.
+    # Confirmed absent: git ls-remote succeeded (rc=0) with no ref output.
     _TASK_SHA_CACHE[task_id] = (now, None)
     return None
 
@@ -10193,6 +10308,7 @@ MUTATING_COMMANDS = {
     "retarget_blocker": command_retarget_blocker,
     "prune_agents": command_prune_agents,
     "done": command_done,
+    "done_tooling": command_done_tooling,
     "restore_approved": command_restore_approved,
     "restore_approved_head": command_restore_approved_head,
     "retarget_branch": command_retarget_branch,

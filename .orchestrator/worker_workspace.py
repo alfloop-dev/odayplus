@@ -1059,6 +1059,16 @@ def _refresh_reused_worker_worktree(
                 )
                 if reverse_rc != 0:
                     return False, f"review_head_mismatch: local={local_head}, expected={expected_head}"
+                # A backward pin must not orphan clean, committed detached work.
+                branch_rc, _ = _git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
+                if branch_rc != 0:
+                    # Restrict preservation to durable branch refs, not HEAD/reflog.
+                    preserved_rc, preserved_refs = _git_output(
+                        worktree_path, "for-each-ref", "--format=%(refname)",
+                        "--contains", local_head, "refs/heads/", "refs/remotes/",
+                    )
+                    if preserved_rc != 0 or not preserved_refs.strip():
+                        return False, f"review_head_mismatch: unpreserved detached work at {local_head}"
                 checkout_proc = subprocess.run(
                     ["git", "checkout", expected_head],
                     cwd=worktree_path,

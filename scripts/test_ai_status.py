@@ -1640,6 +1640,26 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             self.assertEqual(current_head, d_sha)
             self.assertTrue((worktree_path / "extra_drift.txt").exists())
 
+            # A reviewer retry must preserve the same unreferenced detached work.
+            ok_review, review_status = worker_workspace._refresh_reused_worker_worktree(
+                repo_root, worktree_path, base_sha, branch,
+                network_timeout_seconds=5.0, materialized_paths=set(), required_head=h_sha,
+            )
+            self.assertFalse(ok_review, review_status)
+            self.assertIn("unpreserved detached", review_status)
+            self.assertEqual(worker_workspace._git_commit_oid(worktree_path, "HEAD"), d_sha)
+            self.assertTrue((worktree_path / "extra_drift.txt").exists())
+
+            # A durable branch explicitly preserving D makes backward pinning safe.
+            subprocess.run(["git", "branch", "preserved-drift", d_sha], cwd=repo_root, check=True)
+            ok_preserved, preserved_status = worker_workspace._refresh_reused_worker_worktree(
+                repo_root, worktree_path, base_sha, branch,
+                network_timeout_seconds=5.0, materialized_paths=set(), required_head=h_sha,
+            )
+            self.assertTrue(ok_preserved, preserved_status)
+            self.assertEqual(worker_workspace._git_commit_oid(worktree_path, "HEAD"), h_sha)
+            self.assertEqual(worker_workspace._git_commit_oid(repo_root, "refs/heads/preserved-drift"), d_sha)
+
             # Now test normal reviewer-to-owner reattachment (detached at H without extra drift)
             subprocess.run(["git", "checkout", h_sha], cwd=worktree_path, check=True)
             ok_clean, status_clean = worker_workspace._refresh_reused_worker_worktree(
@@ -2308,6 +2328,182 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(archive_task["terminal_outcome"], "superseded")
         self.assertEqual(archive_task["superseded_by"], "REG-010")
         self.assertNotIn("waiting_for", archive_task)
+
+
+class ToolingCloseoutTests(unittest.TestCase):
+    """Real Git, identity, scope and archival checks; only GitHub is synthetic."""
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory(prefix="tooling-closeout-")
+        self.addCleanup(self.temp.cleanup)
+        self.repo = Path(self.temp.name)
+        self.task_id = "TOOL-CLOSE-" + self.repo.name[-8:].upper()
+        self.branch = f"task/{self.task_id}"
+        self.git("init", "-q", "-b", "dev")
+        self.git("config", "user.name", "Codex")
+        self.git("config", "user.email", "test@example.com")
+        (self.repo / "config").mkdir()
+        manifest = {"development_tooling": {"include_prefixes": [".orchestrator/"],
+                                            "include_paths": ["config/change-review-scopes.json"]}}
+        (self.repo / "config/change-review-scopes.json").write_text(json.dumps(manifest))
+        self.git("add", "config")
+        self.git("commit", "-q", "-m", "Base manifest")
+        self.git("checkout", "-q", "-b", self.branch)
+        (self.repo / ".orchestrator").mkdir()
+        (self.repo / ".orchestrator/fix.py").write_text("fixed = True\n")
+        self.commit_task()
+        self.merge_task()
+        self.task = {"id": self.task_id, "owner": "Codex", "reviewer": "Claude",
+                     "status": "in_progress", "branch": self.branch, "depends_on": [],
+                     "review_submission": {"pr_number": 1305, "remote_sha": "1" * 40}}
+        self.state = {"tasks": [self.task], "handoffs": [], "blockers": [], "agents": []}
+        self.pr = {"number": 1305, "state": "MERGED", "isDraft": False,
+                   "url": "https://github.com/example/repo/pull/1305", "headRefName": self.branch,
+                   "headRefOid": self.source, "baseRefName": "dev", "mergeCommit": {"oid": self.merge},
+                   "mergedAt": "2026-09-13T06:53:45Z", "statusCheckRollup": [
+                       {"__typename": "CheckRun", "name": "orchestrator", "status": "COMPLETED", "conclusion": "SUCCESS"},
+                       {"__typename": "StatusContext", "context": "task-review-gate", "state": "FAILURE"},
+                   ]}
+        patches = [
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}),
+            mock.patch.object(ai_status, "ROOT", self.repo),
+            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+            mock.patch.object(ai_status, "repository_local_path", return_value=self.repo),
+            mock.patch.object(ai_status, "task_repository_id", return_value="pantheon"),
+            mock.patch.object(ai_status, "repository_slug", return_value="example/repo"),
+            mock.patch.object(ai_status, "task_repository_slug_safe", return_value="example/repo"),
+            mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
+            mock.patch.object(ai_status, "run_gh_json_command", side_effect=lambda *a, **k: self.pr),
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def git(self, *args: str) -> str:
+        return subprocess.run(["git", *args], cwd=self.repo, check=True, capture_output=True, text=True).stdout.strip()
+
+    def commit_task(self) -> None:
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", f"{self.task_id}: fix\n\nTask-ID: {self.task_id}\nLLM-Agent: Codex\nReviewer: Claude")
+        self.source = self.git("rev-parse", "HEAD")
+
+    def merge_task(self) -> None:
+        self.git("checkout", "-q", "dev")
+        self.git("merge", "--no-ff", "-q", "-m", "Merge tooling task", self.branch)
+        self.merge = self.git("rev-parse", "HEAD")
+
+    def close(self, head: str | None = None) -> None:
+        ai_status.command_done_tooling(self.state, [self.task_id, "1305", head or self.source, "Tooling delivered"])
+
+    def test_tooling_closeout_archives_exact_merged_source_without_product_approval(self) -> None:
+        old_submission = dict(self.task["review_submission"])
+        self.close()
+        self.assertEqual(self.state["tasks"], [])
+        archived = ai_status.archived_task_snapshot(self.task_id)["task"]
+        self.assertEqual(archived["status"], "done")
+        self.assertEqual(archived["terminal_outcome"], "completed")
+        self.assertNotIn("approved_head", archived)
+        self.assertEqual(archived["review_submission"], old_submission)
+        self.assertEqual(archived["delivery"]["verified_head"], self.source)
+        self.assertEqual(archived["delivery"]["pr_merge_commit"], self.merge)
+        self.assertEqual(archived["delivery"]["scope"], "development_tooling")
+        self.assertEqual(archived["delivery"]["recorded_by"], "Codex")
+        before = json.dumps(ai_status.archived_task_snapshot(self.task_id), sort_keys=True)
+        self.close()
+        self.assertEqual(json.dumps(ai_status.archived_task_snapshot(self.task_id), sort_keys=True), before)
+
+    def test_tooling_closeout_rejects_product_and_head_manifest_self_expansion(self) -> None:
+        self.git("checkout", "-q", self.branch)
+        (self.repo / "apps").mkdir()
+        (self.repo / "apps/product.py").write_text("product = True\n")
+        manifest = json.loads((self.repo / "config/change-review-scopes.json").read_text())
+        manifest["development_tooling"]["include_prefixes"].append("apps/")
+        (self.repo / "config/change-review-scopes.json").write_text(json.dumps(manifest))
+        self.commit_task()
+        self.merge_task()
+        self.pr.update(headRefOid=self.source, mergeCommit={"oid": self.merge})
+        with self.assertRaisesRegex(SystemExit, "Product or mixed"):
+            self.close()
+        self.assertEqual(self.task["status"], "in_progress")
+        self.assertNotIn("delivery", self.task)
+        with self.assertRaisesRegex(SystemExit, "review_approved"):
+            ai_status.command_done(self.state, [self.task_id, "Product still needs review"])
+
+    def test_tooling_closeout_rejects_non_owner_even_with_helper_lease(self) -> None:
+        self.task["helper_execution_lease"] = {"claimed_by": "Claude", "lease_expires_at": "2999-01-01T00:00:00Z"}
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}):
+            with self.assertRaisesRegex(SystemExit, "Only the owner"):
+                self.close()
+        self.assertNotIn("delivery", self.task)
+
+    def test_tooling_closeout_keeps_human_and_blocked_gates(self) -> None:
+        for field, value in [("status", "blocked"), ("requires_human_approval", True), ("human_gate", {"status": "pending"})]:
+            with self.subTest(field=field):
+                previous = dict(self.task)
+                self.task[field] = value
+                with self.assertRaises(SystemExit):
+                    self.close()
+                self.assertNotIn("delivery", self.task)
+                self.task.clear()
+                self.task.update(previous)
+
+    def test_tooling_closeout_rejects_wrong_source_ci_and_pr_identity(self) -> None:
+        with self.assertRaisesRegex(SystemExit, "source SHA differs"):
+            self.close("f" * 40)
+        cases = [("state", "CLOSED"), ("baseRefName", "main"), ("headRefName", "task/OTHER"),
+                 ("headRefOid", "f" * 40), ("mergeCommit", {"oid": "f" * 40}),
+                 ("statusCheckRollup", []),
+                 ("statusCheckRollup", [{"__typename": "CheckRun", "name": "orchestrator", "status": "IN_PROGRESS", "conclusion": None}]),
+                 ("statusCheckRollup", [{"__typename": "CheckRun", "name": "orchestrator", "status": "COMPLETED", "conclusion": "FAILURE"}])]
+        for field, value in cases:
+            with self.subTest(field=field, value=value):
+                old = self.pr[field]
+                self.pr[field] = value
+                with self.assertRaises(SystemExit):
+                    self.close()
+                self.assertNotIn("delivery", self.task)
+                self.pr[field] = old
+
+    def test_same_sync_transport_failure_never_republishes_merged_review_success(self) -> None:
+        from copy import deepcopy
+        real_run = subprocess.run
+        for scenario in ("nonzero", "timeout", "confirmed_absent"):
+            with self.subTest(scenario=scenario):
+                ai_status.clear_ai_status_caches()
+                task = deepcopy(self.task)
+                task.update(status="review_approved", approved_head=self.source,
+                            review_submission={"remote_sha": self.source, "merge_commit": self.merge,
+                                               "merged_at": self.pr["mergedAt"], "branch": self.branch})
+                task["status_check_outbox"] = [{"repo_slug": "example/repo", "sha": self.source,
+                    "context": "task-review-gate", "state": "success", "description": "Queued approval"}]
+                state = {"tasks": [task]}
+                before = deepcopy(state)
+                calls, posts = [], []
+
+                def run(args, *a, scenario=scenario, calls=calls, **kw):
+                    if args[:2] == ["git", "ls-remote"]:
+                        calls.append(args)
+                        if scenario == "timeout":
+                            raise subprocess.TimeoutExpired(args, 8)
+                        return subprocess.CompletedProcess(args, 0 if scenario == "confirmed_absent" else 128, "", "")
+                    return real_run(args, *a, **kw)
+
+                def post(payload, posts=posts):
+                    posts.append(dict(payload))
+                    return True, ""
+
+                with mock.patch.object(ai_status, "load_state", return_value=state), \
+                     mock.patch.object(ai_status.subprocess, "run", side_effect=run), \
+                     mock.patch.object(ai_status, "post_task_review_status_payload", side_effect=post):
+                    ai_status.reconcile_status_check_outbox(state, refresh_review_gates=True)
+                    ai_status.emit_status_checks_for_changed_tasks(before, state, "sync", [])
+                if scenario == "confirmed_absent":
+                    self.assertTrue(any(p["state"] == "success" for p in posts), posts)
+                    self.assertEqual(len(calls), 1)
+                else:
+                    self.assertGreaterEqual(len(calls), 2)
+                    self.assertTrue(posts)
+                    self.assertTrue(all(p["state"] != "success" for p in posts), posts)
 
 
 class DeliveryMetadataValidationTests(unittest.TestCase):
@@ -5711,7 +5907,7 @@ class StatusCheckEmissionTests(unittest.TestCase):
             "subprocess.run",
             return_value=mock.Mock(returncode=1, stdout="stale-cached-ref"),
         ) as mock_run:
-            with self.assertRaises(RuntimeError, msg="unverifiable"):
+            with self.assertRaisesRegex(RuntimeError, "unverifiable"):
                 ai_status.resolve_task_sha("ODP-001")
         mock_run.assert_called_once()
 
@@ -5732,12 +5928,12 @@ class StatusCheckEmissionTests(unittest.TestCase):
             mock.patch("subprocess.run", side_effect=timed_out) as remote,
             mock.patch.object(ai_status, "post_task_review_status_payload") as post,
         ):
-            with self.assertRaises(RuntimeError, msg="unverifiable"):
+            with self.assertRaisesRegex(RuntimeError, "timed out"):
                 ai_status.resolve_task_sha(task_id, force_refresh=True)
             ai_status.emit_task_review_status_check(
                 {"id": task_id, "approved_head": old_sha}, "review_approved"
             )
-        remote.assert_called_once()
+        self.assertEqual(remote.call_count, 2)
         self.assertEqual(remote.call_args.kwargs["timeout"], ai_status.COMMAND_TIMEOUT_SECONDS)
         post.assert_not_called()
 
@@ -6329,27 +6525,21 @@ class StatusCheckEmissionTests(unittest.TestCase):
 
     def test_resolve_task_sha_rejects_ambiguous_or_malformed_remote_refs(self) -> None:
         task_id = "ODP-001"
-
-        # Malformed SHA: rc=0 but no valid 40/64-hex match → confirmed absent → None
-        with mock.patch(
-            "subprocess.run",
-            return_value=mock.Mock(returncode=0, stdout="not-a-sha\trefs/heads/task/ODP-001\n"),
-        ):
-            ai_status.clear_ai_status_caches()
-            self.assertIsNone(ai_status.resolve_task_sha(task_id))
-
-        # Ambiguous: two valid refs → R5 raises RuntimeError (not a confirmed absence)
-        ambiguous_stdout = (
-            f"{'1' * 40}\trefs/heads/task/{task_id}\n"
-            f"{'2' * 40}\trefs/heads/task-{task_id}\n"
+        cases = (
+            "not-a-sha\trefs/heads/task/ODP-001\n",
+            (
+                f"{'1' * 40}\trefs/heads/task/{task_id}\n"
+                f"{'2' * 40}\trefs/heads/task-{task_id}\n"
+            ),
         )
-        with mock.patch(
-            "subprocess.run",
-            return_value=mock.Mock(returncode=0, stdout=ambiguous_stdout),
-        ):
-            ai_status.clear_ai_status_caches()
-            with self.assertRaises(RuntimeError, msg="ambiguous"):
-                ai_status.resolve_task_sha(task_id)
+        for stdout in cases:
+            with self.subTest(stdout=stdout), mock.patch(
+                "subprocess.run",
+                return_value=mock.Mock(returncode=0, stdout=stdout),
+            ):
+                ai_status.clear_ai_status_caches()
+                with self.assertRaises(RuntimeError):
+                    ai_status.resolve_task_sha(task_id)
 
     def test_resolve_task_sha_uses_bounded_warm_cache_for_ordinary_lookups(self) -> None:
         task_id = "ODP-WARM-CACHE-001"
@@ -6405,10 +6595,10 @@ class StatusCheckEmissionTests(unittest.TestCase):
             third_sha = ai_status.resolve_task_sha(task_id, fresh=True)
             self.assertIsNone(third_sha)
 
-        # Step 4: Remote origin command fails. force_refresh=True raises RuntimeError (R5), NOT cached sha_updated.
+        # Step 4: A transport failure raises instead of reusing a SHA or absence.
         mock_res4 = mock.Mock(returncode=1, stdout="")
         with mock.patch("subprocess.run", return_value=mock_res4):
-            with self.assertRaises(RuntimeError, msg="unverifiable"):
+            with self.assertRaisesRegex(RuntimeError, "unverifiable"):
                 ai_status.resolve_task_sha(task_id, force_refresh=True)
 
     def test_active_branch_governance_refreshes_but_done_uses_delivery_provenance(self) -> None:
@@ -6537,16 +6727,16 @@ class StatusCheckEmissionTests(unittest.TestCase):
             mock_bad = mock.Mock(returncode=0, stdout=f"{bad_sha}\trefs/heads/task/{task_id}\n")
             with self.subTest(invalid_len=invalid_len), mock.patch("subprocess.run", return_value=mock_bad) as m_run:
                 ai_status.clear_ai_status_caches()
-                res = ai_status.resolve_task_sha(task_id)
-                self.assertIsNone(res)
+                with self.assertRaisesRegex(RuntimeError, "invalid or unexpected ref"):
+                    ai_status.resolve_task_sha(task_id)
                 self.assertTrue(m_run.called)
 
         for nonhex_sha in ("g" * 40, "z" * 64, "G" * 40, "X" * 64, "123456789012345678901234567890123456789g"):
             mock_nonhex = mock.Mock(returncode=0, stdout=f"{nonhex_sha}\trefs/heads/task/{task_id}\n")
             with self.subTest(nonhex_sha=nonhex_sha), mock.patch("subprocess.run", return_value=mock_nonhex) as m_run:
                 ai_status.clear_ai_status_caches()
-                res = ai_status.resolve_task_sha(task_id)
-                self.assertIsNone(res)
+                with self.assertRaisesRegex(RuntimeError, "invalid or unexpected ref"):
+                    ai_status.resolve_task_sha(task_id)
                 self.assertTrue(m_run.called)
 
     def test_emit_task_review_status_check_approved(self) -> None:
@@ -6730,6 +6920,51 @@ class StatusCheckEmissionTests(unittest.TestCase):
         self.assertEqual(post.call_args.args[0]["state"], "pending")
         self.assertEqual(after["tasks"][0]["review_gate_sha"], "c" * 40)
         self.assertEqual(after["tasks"][1]["review_gate_sha"], "b" * 40)
+
+
+    def test_remote_lookup_errors_cannot_be_reused_as_absence(self) -> None:
+        task_id = "ODP-ERROR-CACHE-001"
+        old_sha, recovered_sha = "a" * 40, "b" * 40
+        failures = (
+            ("nonzero", mock.Mock(returncode=128, stdout="")),
+            ("timeout", subprocess.TimeoutExpired("git ls-remote", 8)),
+            ("unavailable", FileNotFoundError("git unavailable")),
+            ("ambiguous", mock.Mock(returncode=0, stdout=(
+                f"{old_sha}\trefs/heads/task/{task_id}\n"
+                f"{recovered_sha}\trefs/heads/task-{task_id}\n"
+            ))),
+            ("malformed", mock.Mock(returncode=0, stdout=f"invalid\trefs/heads/task/{task_id}\n")),
+            ("unexpected", mock.Mock(returncode=0, stdout=f"{old_sha}\trefs/heads/unrelated\n")),
+        )
+        for label, failure in failures:
+            with self.subTest(failure=label):
+                ai_status.clear_ai_status_caches()
+                with mock.patch("subprocess.run", return_value=mock.Mock(
+                    returncode=0, stdout=f"{old_sha}\trefs/heads/task/{task_id}\n",
+                )):
+                    self.assertEqual(ai_status.resolve_task_sha(task_id), old_sha)
+                options = {"side_effect": failure} if isinstance(failure, Exception) else {"return_value": failure}
+                with mock.patch("subprocess.run", **options) as remote:
+                    with self.assertRaises(RuntimeError):
+                        ai_status.resolve_task_sha(task_id, force_refresh=True)
+                    with self.assertRaises(RuntimeError):
+                        ai_status.resolve_task_sha(task_id)
+                    self.assertEqual(remote.call_count, 2)
+                with mock.patch("subprocess.run", return_value=mock.Mock(
+                    returncode=0, stdout=f"{recovered_sha}\trefs/heads/task/{task_id}\n",
+                )) as recovered:
+                    self.assertEqual(ai_status.resolve_task_sha(task_id), recovered_sha)
+                    self.assertEqual(ai_status.resolve_task_sha(task_id), recovered_sha)
+                    recovered.assert_called_once()
+
+
+    def test_confirmed_remote_absence_retains_bounded_cache(self) -> None:
+        ai_status.clear_ai_status_caches()
+        with mock.patch("subprocess.run", return_value=mock.Mock(returncode=0, stdout="")) as remote:
+            self.assertIsNone(ai_status.resolve_task_sha("ODP-ABSENT-CACHE-001"))
+            self.assertIsNone(ai_status.resolve_task_sha("ODP-ABSENT-CACHE-001"))
+            remote.assert_called_once()
+
 
 
 class ActorReferenceValidationTests(unittest.TestCase):
@@ -7663,6 +7898,7 @@ class ActorCommandMutationGuardTests(unittest.TestCase):
         "restore_approved_head": [TASK_ID, "1111111122222222333333334444444455555555", "attesting"],
         "retarget_branch": [TASK_ID, "task/OTHER", "old branch was deleted"],
         "done": [TASK_ID, "finished"],
+        "done_tooling": [TASK_ID, "1305", "1" * 40, "finished tooling"],
         "supersede": [TASK_ID, "superseded"],
         "approve": [TASK_ID, "approved"],
         "approve_continuation": [TASK_ID, "operator approved review-churn continuation", "2099-01-01T00:00:00Z", "nonce-test"],
