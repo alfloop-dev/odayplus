@@ -1,0 +1,7 @@
+{
+  "base_head": "8a2bc4f420e04f6c57c59f8f50c71590e69983c3",
+  "source_sha256": {
+    "modules/avm/domain/valuation.py": "030c3306b717a85378b9e6c30e3a725794bd9b62b68fb5cf1ad5d27b02d9afd0",
+    "modules/avm/tests/test_avm_depreciation_contract.py": "4135b72f7fa1b838fc81ab1907f6f622e7b14e0f438613357b5db7cf641d7e1b"
+  }
+}

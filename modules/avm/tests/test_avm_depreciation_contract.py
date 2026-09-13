@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+from decimal import Decimal
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
@@ -247,7 +249,7 @@ class TestTheDepreciationContract:
 
         from modules.avm.domain.valuation import calculate_depreciation
 
-        invalid_values = (1.9, "1.9", 0.5, "0.5", 12.3, 0, -1, -5.5, True, False)
+        invalid_values = (1.9, "1.9", "1.0000000000000000001", Decimal("1.0000000000000000001"), Fraction(19, 10), 0.5, "0.5", 12.3, 0, -1, -5.5, True, False)
         for val in invalid_values:
             # 1. from_mapping / build_valuation_view boundary
             payload = _payload(asset_in_service_date="2021-03-03", useful_life_months=val)
@@ -260,6 +262,10 @@ class TestTheDepreciationContract:
             base_view = build_valuation_view(valid_payload)
             with pytest.raises(ValueError, match="useful_life_months"):
                 dataclasses.replace(base_view, useful_life_months=val)
+            # Rehydrated legacy objects can bypass the dataclass constructor.
+            object.__setattr__(base_view, "useful_life_months", val)
+            with pytest.raises(ValueError, match="useful_life_months"):
+                calculate_depreciation(base_view)
 
         # 3. Direct calculate_depreciation boundary
         valid_input = build_valuation_view(_payload(asset_in_service_date="2021-03-03", useful_life_months=84))
@@ -267,6 +273,17 @@ class TestTheDepreciationContract:
         res = calculate_depreciation(valid_input)
         assert res.evidence["useful_life_months"] == 84
         assert res.depreciation_applied is True
+
+    def test_integral_useful_life_preserves_exact_value(self) -> None:
+        from modules.avm.domain.valuation import calculate_depreciation
+
+        for value in (84, "84", 84.0, Decimal("84"), Fraction(84, 1), "9007199254740993"):
+            expected = int(value)
+            item = build_valuation_view(
+                _payload(asset_in_service_date="2021-03-03", useful_life_months=value)
+            )
+            assert item.useful_life_months == expected
+            assert calculate_depreciation(item).evidence["useful_life_months"] == expected
 
     def test_fractional_useful_life_raw_mapping_service_and_batch_worker_rejected(self) -> None:
         """Raw mapping entry points (AVMService.create_case and AVMValuationWorker.run) reject fractional inputs."""
@@ -280,15 +297,14 @@ class TestTheDepreciationContract:
         service = AVMService(repository=repo)
         worker = AVMValuationWorker(repository=repo)
 
-        raw_mapping = _payload(asset_in_service_date="2021-03-03", useful_life_months=1.9)
-
-        # 1. Service create_case with raw Mapping[str, Any]
-        with pytest.raises(ValueError, match="useful_life_months"):
-            service.create_case(raw_mapping, created_by="batch-test", correlation_id="corr-test-1")
-
-        # 2. Batch worker run with raw Mapping[str, Any]
-        with pytest.raises(ValueError, match="useful_life_months"):
-            worker.run([raw_mapping], job_id="batch-fractional-test")
+        for value in (1.9, "1.0000000000000000001", Decimal("1.0000000000000000001")):
+            raw_mapping = _payload(asset_in_service_date="2021-03-03", useful_life_months=value)
+            with pytest.raises(ValueError, match="useful_life_months"):
+                service.create_case(raw_mapping, created_by="batch-test", correlation_id="corr-test-1")
+            with pytest.raises(ValueError, match="useful_life_months"):
+                worker.run([raw_mapping], job_id="batch-fractional-test")
+            assert repo._reports == {}
+            assert repo.list_cases() == []
 
         # 3. Valid integer through worker succeeds and issues report
         valid_mapping = _payload(asset_in_service_date="2021-03-03", useful_life_months=84)

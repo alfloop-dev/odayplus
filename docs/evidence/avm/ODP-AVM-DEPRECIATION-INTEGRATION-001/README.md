@@ -18,3 +18,9 @@ Final verification: **76 passed** (2 real artifact variants and 74 remaining AVM
 ## Operator rollback composition
 
 Production bootstrap now supplies the same deployment depreciation pin and rollback receipt to the Operator router and its tenant-scoped NetworkRebalanceService. Its AVMService retains receipt validation and canonical tenant persistence. Two real artifact/bootstrap cases verify original-cost writes through both APIs restore v0 even without Finance cutover evidence, refuse expired/mismatched/malformed receipts, preserve existing v1 reports, and isolate tenants. Original failing and passing receipts are retained in operator-rollback-verification.json and sibling logs. Existing AVM/Operator/history/governance regression: 93 passed; real artifact tests: 2 passed; boundary 1157 and ruff passed.
+
+## Exact integer-month validation follow-up
+
+The pending fractional-life repair converted strings through binary floating point. This accepted `1.0000000000000000001` as one month and changed `9007199254740993`. The correction parses integer text directly and compares numeric values with their exact integer conversion, preserving integral Decimal/Fraction input compatibility. Invalid fractional values fail at mapping, dataclass, rehydrated calculation, raw service and batch boundaries without creating cases or reports.
+
+The initial regressions failed before the correction. Final AVM tests: 51 passed; durable AVM/API and Operator integration: 35 passed, 3 live-environment cases deselected. Existing artifact rollback and nested legacy provenance tests are included. Original commands, exit codes and exact final source hashes accompany this evidence. This contributor patch requires owner submission and independent review of its resulting remote head.

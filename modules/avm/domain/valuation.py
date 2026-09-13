@@ -4,7 +4,9 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from enum import StrEnum
+from numbers import Real
 from typing import Any
 from uuid import uuid4
 
@@ -37,31 +39,18 @@ class ValuationCaseStatus(StrEnum):
 
 
 def _validate_useful_life(val: Any) -> int:
-    if isinstance(val, bool):
-        raise ValueError("useful_life_months must be an integer >= 1")
-    if isinstance(val, int):
-        if val < 1:
-            raise ValueError(f"useful_life_months must be >= 1, got {val}")
-        return val
-    if isinstance(val, float):
-        if math.isnan(val) or math.isinf(val) or not val.is_integer():
-            raise ValueError(f"useful_life_months must be an integer >= 1, got {val}")
-        int_val = int(val)
-        if int_val < 1:
-            raise ValueError(f"useful_life_months must be >= 1, got {val}")
-        return int_val
-    if isinstance(val, str):
-        try:
-            f_val = float(val)
-            if math.isnan(f_val) or math.isinf(f_val) or not f_val.is_integer():
-                raise ValueError(f"useful_life_months must be an integer >= 1, got {val}")
-            int_val = int(f_val)
-            if int_val < 1:
-                raise ValueError(f"useful_life_months must be >= 1, got {val}")
-            return int_val
-        except (TypeError, ValueError) as err:
-            raise ValueError(f"useful_life_months must be an integer >= 1, got {val}") from err
-    raise ValueError(f"useful_life_months must be an integer >= 1, got {val}")
+    message = "useful_life_months must be an integer >= 1"
+    if isinstance(val, bool) or not isinstance(val, (str, Real, Decimal)):
+        raise ValueError(message)
+    try:
+        # Parse integer text directly: a float intermediate can round fractions
+        # into integers and change integers above its exact precision range.
+        result = int(val)
+    except (TypeError, ValueError, OverflowError) as err:
+        raise ValueError(message) from err
+    if result < 1 or (not isinstance(val, str) and val != result):
+        raise ValueError(message)
+    return result
 
 
 @dataclass(frozen=True)

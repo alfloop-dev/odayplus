@@ -1,0 +1,21 @@
+{
+  "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-avm-depreciation-integration-001",
+  "head_sha": "8a2bc4f420e04f6c57c59f8f50c71590e69983c3",
+  "tracked_diff_sha256": "c6d42dfcbb93bbea5d08557bde4e10813d7d1b760317674f52ec975df99707dc",
+  "argv": [
+    ".venv/bin/python",
+    "-m",
+    "pytest",
+    "-o",
+    "addopts=",
+    "-q",
+    "-m",
+    "not requires_live_env",
+    "tests/integration/test_avm_valuation.py",
+    "tests/integration/test_operator_canonical_wiring.py"
+  ],
+  "started_at": "2026-09-13T00:43:01.202065+00:00",
+  "duration_seconds": 112.88718963600695,
+  "exit_code": 0,
+  "output": "1295-precision-integration.log"
+}
