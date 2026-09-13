@@ -1094,15 +1094,22 @@ class OwnerPreferenceSharedPoolCapacityTests(unittest.TestCase):
         state = self._state()
         usage = worker_failure_policy.dispatch_pool_usage(config, state)
         self.assertEqual(usage, {})
+        original_limit = supervisor.account_pool_effective_concurrency
+
+        def account_limit(config, state, agent_id, provider_report=None):
+            if supervisor.agent_quota_group_id(config, agent_id) == "agy_main":
+                return 0
+            return original_limit(config, state, agent_id, provider_report)
 
         with mock.patch.object(
-            supervisor, "account_pool_effective_concurrency", return_value=0
+            supervisor, "account_pool_effective_concurrency", side_effect=account_limit
         ):
             self.assertFalse(
                 worker_failure_policy.account_pool_has_free_dispatch_slot(
                     config, state, "antigravity", usage
                 )
             )
+            # Only the recovering account has zero capacity, not every account.
             self.assertEqual(self._select(config, state), "Codex")
 
     def test_a_pool_with_no_declared_ceiling_keeps_the_previous_behaviour(self) -> None:

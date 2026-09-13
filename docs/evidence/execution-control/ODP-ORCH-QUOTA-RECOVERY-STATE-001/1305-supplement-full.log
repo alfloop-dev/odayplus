@@ -1,0 +1,2236 @@
+........................................................................ [  2%]
+............................................................ [  4%]
+...F................................................................. [  6%]
+........................................................................ [  9%]
+...................................................................... [ 11%]
+................................................................. [ 13%]
+..................................................................... [ 16%]
+..................................................................................................... [ 19%]
+................................................................. [ 22%]
+....................................... [ 23%]
+................................................................ [ 25%]
+........................................................................ [ 28%]
+........................................................................ [ 30%]
+.............................................................. [ 32%]
+................................................................................................................. [ 36%]
+........................................................................ [ 38%]
+........................................................................ [ 41%]
+.....................................................................................................F..F................... [ 45%]
+........................................................................................................... [ 49%]
+FFF..F.F....F.F....FFF.F.........................................FF......s....sss.ss................ [ 52%]
+............................................... [ 54%]
+......................................................... [ 56%]
+........................................... [ 57%]
+..................................................................................................................... [ 61%]
+.................................................................. [ 64%]
+.............................................................. [ 66%]
+......................................FFFFFFFFFF. [ 67%]
+FFFFFF.................................................................. [ 70%]
+........................................................................ [ 72%]
+........................................................................ [ 75%]
+................................................................... [ 77%]
+................................................... [ 79%]
+........................................................................ [ 81%]
+.......................................................... [ 83%]
+......................................... [ 85%]
+.......................................................................... [ 87%]
+.................................................................................................................... [ 91%]
+........................................................................ [ 94%]
+........................................................................ [ 96%]
+.....ss................................................................. [ 99%]
+............................                                             [100%]
+=================================== FAILURES ===================================
+_ CrossRepoTerminalGateTests.test_done_rejects_and_records_active_child_blocker _
+
+self = <test_cross_repo_terminal_gate.CrossRepoTerminalGateTests testMethod=test_done_rejects_and_records_active_child_blocker>
+
+    def test_done_rejects_and_records_active_child_blocker(self) -> None:
+        task = task_with_delivery()
+        self.state["tasks"] = [task]
+        with (
+            self._status_config(),
+            self._actor(),
+            mock.patch.dict("os.environ", {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "run_gh_json_command", return_value=red_open_child_pr()),
+            mock.patch.object(
+                ai_status,
+                "collect_done_delivery_metadata",
+                side_effect=AssertionError("parent delivery must not be collected"),
+            ),
+        ):
+            with self.assertRaises(ai_status.CrossRepoDeliveryBlocked):
+>               ai_status.command_done(self.state, [task["id"], "close"])
+
+.orchestrator/test_cross_repo_terminal_gate.py:190: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+scripts/ai_status.py:7400: in command_done
+    actor = current_actor_validated()
+            ^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:1049: in current_actor_validated
+    return resolve_actor_reference(os.environ.get("AI_NAME", default), field="AI_NAME")
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:1010: in resolve_actor_reference
+    is_slot, target_agent, target_pool = resolve_dispatch_slot_info(canonical)
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:922: in resolve_dispatch_slot_info
+    agents = merged_orchestrator_config().get("agents")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:887: in merged_orchestrator_config
+    payload = orchestrator_common.load_config(
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ HumanContinuationApprovalSupervisorTests.test_consumes_valid_approval_once_and_returns_task_to_todo _
+
+self = <test_supervisor.HumanContinuationApprovalSupervisorTests testMethod=test_consumes_valid_approval_once_and_returns_task_to_todo>
+
+    def test_consumes_valid_approval_once_and_returns_task_to_todo(self) -> None:
+        status = {"tasks": [self._task(self._approval())], "blockers": []}
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True) as commit,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+>           changed = supervisor.consume_human_continuation_approvals(self.config, {})
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.orchestrator/test_supervisor.py:11055: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.orchestrator/supervisor.py:4326: in consume_human_continuation_approvals
+    validation_error = runtime_ai_status.continuation_approval_validation_error(
+scripts/ai_status.py:693: in continuation_approval_validation_error
+    if canonical_agent_name(approval.get("issued_by")) != "Human/Ops":
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:747: in canonical_agent_name
+    canonical_by_lower.update({name.lower(): name for name in registered_agent_names()})
+                                                              ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:984: in registered_agent_names
+    names = configured_agent_names() | extra_actor_names() | set(NON_WORKER_ACTORS)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:958: in configured_agent_names
+    agents = merged_orchestrator_config().get("agents")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:887: in merged_orchestrator_config
+    payload = orchestrator_common.load_config(
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ HumanContinuationApprovalSupervisorTests.test_expired_scope_mismatch_and_replay_fail_closed (approval={'approval_id': 'apr-continuation-1', 'approval_type': 'human_ops_continuation', 'status': 'issued', 'task_id': 'ODP-CONTINUATION-001', ...}) _
+
+self = <test_supervisor.HumanContinuationApprovalSupervisorTests testMethod=test_expired_scope_mismatch_and_replay_fail_closed>
+
+    def test_expired_scope_mismatch_and_replay_fail_closed(self) -> None:
+        expired_task = self._task(self._approval(expires_at="2020-01-01T00:00:00Z"))
+        expired_status = {"tasks": [expired_task], "blockers": []}
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=expired_status),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True) as commit,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertTrue(supervisor.consume_human_continuation_approvals(self.config, {}))
+        self.assertEqual(expired_task["status"], "blocked")
+        self.assertEqual(expired_task["human_continuation_approval_history"][-1]["status"], "expired")
+        commit.assert_called_once()
+    
+        cases = [
+            self._approval(task_id="OTHER-TASK", task_scope="OTHER-TASK", scope={"task_id": "OTHER-TASK"}),
+            self._approval(issued_by="Codex2"),
+            self._approval(nonce="nonce-used"),
+        ]
+        for approval in cases:
+            with self.subTest(approval=approval):
+                task = self._task(approval)
+                if approval["nonce"] == "nonce-used":
+                    task["human_continuation_approval_history"] = [
+                        self._approval(approval_id="apr-old", nonce="nonce-used", status="consumed")
+                    ]
+                status = {"tasks": [task], "blockers": []}
+                with (
+                    mock.patch.object(supervisor, "load_status", return_value=status),
+                    mock.patch.object(supervisor, "commit_canonical_task_transition") as commit,
+                ):
+>                   self.assertFalse(supervisor.consume_human_continuation_approvals(self.config, {}))
+                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.orchestrator/test_supervisor.py:11105: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.orchestrator/supervisor.py:4326: in consume_human_continuation_approvals
+    validation_error = runtime_ai_status.continuation_approval_validation_error(
+scripts/ai_status.py:693: in continuation_approval_validation_error
+    if canonical_agent_name(approval.get("issued_by")) != "Human/Ops":
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:747: in canonical_agent_name
+    canonical_by_lower.update({name.lower(): name for name in registered_agent_names()})
+                                                              ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:984: in registered_agent_names
+    names = configured_agent_names() | extra_actor_names() | set(NON_WORKER_ACTORS)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:958: in configured_agent_names
+    agents = merged_orchestrator_config().get("agents")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:887: in merged_orchestrator_config
+    payload = orchestrator_common.load_config(
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ HumanContinuationApprovalSupervisorTests.test_expired_scope_mismatch_and_replay_fail_closed (approval={'approval_id': 'apr-continuation-1', 'approval_type': 'human_ops_continuation', 'status': 'issued', 'task_id': 'ODP-CONTINUATION-001', ...}) _
+
+self = <test_supervisor.HumanContinuationApprovalSupervisorTests testMethod=test_expired_scope_mismatch_and_replay_fail_closed>
+
+    def test_expired_scope_mismatch_and_replay_fail_closed(self) -> None:
+        expired_task = self._task(self._approval(expires_at="2020-01-01T00:00:00Z"))
+        expired_status = {"tasks": [expired_task], "blockers": []}
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=expired_status),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True) as commit,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertTrue(supervisor.consume_human_continuation_approvals(self.config, {}))
+        self.assertEqual(expired_task["status"], "blocked")
+        self.assertEqual(expired_task["human_continuation_approval_history"][-1]["status"], "expired")
+        commit.assert_called_once()
+    
+        cases = [
+            self._approval(task_id="OTHER-TASK", task_scope="OTHER-TASK", scope={"task_id": "OTHER-TASK"}),
+            self._approval(issued_by="Codex2"),
+            self._approval(nonce="nonce-used"),
+        ]
+        for approval in cases:
+            with self.subTest(approval=approval):
+                task = self._task(approval)
+                if approval["nonce"] == "nonce-used":
+                    task["human_continuation_approval_history"] = [
+                        self._approval(approval_id="apr-old", nonce="nonce-used", status="consumed")
+                    ]
+                status = {"tasks": [task], "blockers": []}
+                with (
+                    mock.patch.object(supervisor, "load_status", return_value=status),
+                    mock.patch.object(supervisor, "commit_canonical_task_transition") as commit,
+                ):
+>                   self.assertFalse(supervisor.consume_human_continuation_approvals(self.config, {}))
+                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.orchestrator/test_supervisor.py:11105: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.orchestrator/supervisor.py:4326: in consume_human_continuation_approvals
+    validation_error = runtime_ai_status.continuation_approval_validation_error(
+scripts/ai_status.py:693: in continuation_approval_validation_error
+    if canonical_agent_name(approval.get("issued_by")) != "Human/Ops":
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:747: in canonical_agent_name
+    canonical_by_lower.update({name.lower(): name for name in registered_agent_names()})
+                                                              ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:984: in registered_agent_names
+    names = configured_agent_names() | extra_actor_names() | set(NON_WORKER_ACTORS)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:958: in configured_agent_names
+    agents = merged_orchestrator_config().get("agents")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:887: in merged_orchestrator_config
+    payload = orchestrator_common.load_config(
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ HumanContinuationApprovalSupervisorTests.test_production_deployment_title_does_not_block_review_churn_consumption _
+
+self = <test_supervisor.HumanContinuationApprovalSupervisorTests testMethod=test_production_deployment_title_does_not_block_review_churn_consumption>
+
+    def test_production_deployment_title_does_not_block_review_churn_consumption(self) -> None:
+        task = self._task(
+            self._approval(),
+            title="Production deployment continuation",
+            summary="Deployment recovery for the production lane",
+            summary_zh="production deployment 修復",
+            blocker="Review churn only after repeated reviewer reopenings.",
+        )
+        status = {"tasks": [task], "blockers": []}
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+>           self.assertTrue(supervisor.consume_human_continuation_approvals(self.config, {}))
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.orchestrator/test_supervisor.py:11137: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.orchestrator/supervisor.py:4326: in consume_human_continuation_approvals
+    validation_error = runtime_ai_status.continuation_approval_validation_error(
+scripts/ai_status.py:693: in continuation_approval_validation_error
+    if canonical_agent_name(approval.get("issued_by")) != "Human/Ops":
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:747: in canonical_agent_name
+    canonical_by_lower.update({name.lower(): name for name in registered_agent_names()})
+                                                              ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:984: in registered_agent_names
+    names = configured_agent_names() | extra_actor_names() | set(NON_WORKER_ACTORS)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:958: in configured_agent_names
+    agents = merged_orchestrator_config().get("agents")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:887: in merged_orchestrator_config
+    payload = orchestrator_common.load_config(
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ ReviewHeadFreezeTests.test_approve_fails_closed_when_approved_head_cannot_be_resolved _
+
+self = <test_supervisor.ReviewHeadFreezeTests testMethod=test_approve_fails_closed_when_approved_head_cannot_be_resolved>
+
+    def test_approve_fails_closed_when_approved_head_cannot_be_resolved(self) -> None:
+        """B20: approving without freezing a head silently disables the freeze.
+    
+        command_done and both supervisor dispatch gates are guarded by
+        `if approved_head:`. Recording no head therefore does not fail closed --
+        it opts the task out of the integrity check entirely. Approval must
+        abort instead, leaving the task in `review`.
+        """
+        def _fresh_state() -> dict[str, Any]:
+            return {
+                "tasks": [
+                    {
+                        "id": "FREEZE-TEST-020A",
+                        "owner": "Antigravity4",
+                        "reviewer": "Codex",
+                        "status": "review",
+                        "review_submission": {"remote_sha": "1111111122222222333333334444444455555555"},
+                    }
+                ]
+            }
+    
+        # Positive control: a resolvable head still approves and freezes.
+        state = _fresh_state()
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex"), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
+             unittest.mock.patch("ai_status.append_log"), \
+             unittest.mock.patch("ai_status.sync_all"):
+>           ai_status.command_approve(state, ["FREEZE-TEST-020A", "Approve valid"])
+
+.orchestrator/test_supervisor.py:15351: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+scripts/ai_status.py:7529: in command_approve
+    owner = canonical_agent_name(task.get("owner"))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:747: in canonical_agent_name
+    canonical_by_lower.update({name.lower(): name for name in registered_agent_names()})
+                                                              ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:984: in registered_agent_names
+    names = configured_agent_names() | extra_actor_names() | set(NON_WORKER_ACTORS)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:958: in configured_agent_names
+    agents = merged_orchestrator_config().get("agents")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:887: in merged_orchestrator_config
+    payload = orchestrator_common.load_config(
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ ReviewHeadFreezeTests.test_approve_refuses_to_overwrite_uncleared_approved_head _
+
+self = <test_supervisor.ReviewHeadFreezeTests testMethod=test_approve_refuses_to_overwrite_uncleared_approved_head>
+
+    def test_approve_refuses_to_overwrite_uncleared_approved_head(self) -> None:
+        """B20: approved_head is immutable for the lifetime of one approval.
+    
+        Every transition back to `review` pops approved_head, so a task in
+        `review` still carrying one is inconsistent state. Silently overwriting
+        it would re-freeze on a head the reviewer never signed off.
+        """
+        old_head = "1111111122222222333333334444444455555555"
+        new_head = "9999999922222222333333334444444455555555"
+        state = {
+            "tasks": [
+                {
+                    "id": "FREEZE-TEST-020B",
+                    "owner": "Antigravity4",
+                    "reviewer": "Codex",
+                    "status": "review",
+                    "approved_head": old_head,
+                    "review_submission": {"remote_sha": new_head},
+                }
+            ]
+        }
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex"), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=new_head), \
+             unittest.mock.patch("ai_status.sync_all"):
+            with self.assertRaises(SystemExit) as cm:
+>               ai_status.command_approve(state, ["FREEZE-TEST-020B", "Approve drifted"])
+
+.orchestrator/test_supervisor.py:15405: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+scripts/ai_status.py:7529: in command_approve
+    owner = canonical_agent_name(task.get("owner"))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:747: in canonical_agent_name
+    canonical_by_lower.update({name.lower(): name for name in registered_agent_names()})
+                                                              ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:984: in registered_agent_names
+    names = configured_agent_names() | extra_actor_names() | set(NON_WORKER_ACTORS)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:958: in configured_agent_names
+    agents = merged_orchestrator_config().get("agents")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:887: in merged_orchestrator_config
+    payload = orchestrator_common.load_config(
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ ReviewHeadFreezeTests.test_approve_saves_approved_head_and_rejects_same_owner_reviewer _
+
+self = <test_supervisor.ReviewHeadFreezeTests testMethod=test_approve_saves_approved_head_and_rejects_same_owner_reviewer>
+
+    def test_approve_saves_approved_head_and_rejects_same_owner_reviewer(self) -> None:
+        state = {
+            "tasks": [
+                {
+                    "id": "FREEZE-TEST-001",
+                    "owner": "Antigravity4",
+                    "reviewer": "Codex",
+                    "status": "review",
+                    "review_submission": {"remote_sha": "1111111122222222333333334444444455555555"},
+                },
+                {
+                    "id": "FREEZE-TEST-002",
+                    "owner": "Codex",
+                    "reviewer": "Codex",
+                    "status": "review",
+                },
+            ]
+        }
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex"):
+            with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+                 unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+                with unittest.mock.patch("ai_status.sync_all"):
+                    with self.assertRaises(SystemExit) as cm:
+>                       ai_status.command_approve(state, ["FREEZE-TEST-002", "Approve self"])
+
+.orchestrator/test_supervisor.py:14924: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+scripts/ai_status.py:7529: in command_approve
+    owner = canonical_agent_name(task.get("owner"))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:747: in canonical_agent_name
+    canonical_by_lower.update({name.lower(): name for name in registered_agent_names()})
+                                                              ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:984: in registered_agent_names
+    names = configured_agent_names() | extra_actor_names() | set(NON_WORKER_ACTORS)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:958: in configured_agent_names
+    agents = merged_orchestrator_config().get("agents")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:887: in merged_orchestrator_config
+    payload = orchestrator_common.load_config(
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ ReviewHeadFreezeTests.test_command_done_fails_closed_when_delivery_checkout_sha_unresolved_or_collector_raises _
+
+self = <test_supervisor.ReviewHeadFreezeTests testMethod=test_command_done_fails_closed_when_delivery_checkout_sha_unresolved_or_collector_raises>
+
+    def test_command_done_fails_closed_when_delivery_checkout_sha_unresolved_or_collector_raises(self) -> None:
+        state = {
+            "tasks": [
+                {
+                    "id": "FREEZE-TEST-003B",
+                    "owner": "Antigravity4",
+                    "reviewer": "Claude",
+                    "status": "review_approved",
+                    "approved_head": "1111111122222222333333334444444455555555",
+                }
+            ]
+        }
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"):
+            with unittest.mock.patch(
+                "ai_status.collect_done_delivery_metadata",
+                return_value={
+                    "verified_head": None,
+                    "pull_request": {
+                        "head_sha": "1111111122222222333333334444444455555555",
+                        "merge_commit": "aaaaaaaa22222222333333334444444455555555",
+                    },
+                },
+            ):
+                with self.assertRaises(SystemExit) as cm:
+>                   ai_status.command_done(state, ["FREEZE-TEST-003B", "Finalize done"])
+
+.orchestrator/test_supervisor.py:14983: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+scripts/ai_status.py:7425: in command_done
+    guard_cross_repo_delivery_gate(state, task)
+scripts/ai_status.py:1882: in guard_cross_repo_delivery_gate
+    gate = refresh_cross_repo_delivery_gate(state, task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:1818: in refresh_cross_repo_delivery_gate
+    gate = evaluate_cross_repo_delivery_gate(task, state)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:1612: in evaluate_cross_repo_delivery_gate
+    config = status_runtime_config()
+             ^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:1220: in status_runtime_config
+    payload = deepcopy(merged_orchestrator_config())
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:887: in merged_orchestrator_config
+    payload = orchestrator_common.load_config(
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_________ ReviewHeadFreezeTests.test_command_done_rejects_mutated_head _________
+
+self = <test_supervisor.ReviewHeadFreezeTests testMethod=test_command_done_rejects_mutated_head>
+
+    def test_command_done_rejects_mutated_head(self) -> None:
+        state = {
+            "tasks": [
+                {
+                    "id": "FREEZE-TEST-003",
+                    "owner": "Antigravity4",
+                    "reviewer": "Claude",
+                    "status": "review_approved",
+                    "approved_head": "1111111122222222333333334444444455555555",
+                }
+            ]
+        }
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"):
+            with unittest.mock.patch(
+                "ai_status.collect_done_delivery_metadata",
+                return_value={
+                    "verified_head": "9999999922222222333333334444444455555555",
+                    "pull_request": {
+                        "head_sha": "1111111122222222333333334444444455555555",
+                        "merge_commit": "aaaaaaaa22222222333333334444444455555555",
+                    },
+                },
+            ):
+                with self.assertRaises(SystemExit) as cm:
+>                   ai_status.command_done(state, ["FREEZE-TEST-003", "Finalize done"])
+
+.orchestrator/test_supervisor.py:14956: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+scripts/ai_status.py:7425: in command_done
+    guard_cross_repo_delivery_gate(state, task)
+scripts/ai_status.py:1882: in guard_cross_repo_delivery_gate
+    gate = refresh_cross_repo_delivery_gate(state, task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:1818: in refresh_cross_repo_delivery_gate
+    gate = evaluate_cross_repo_delivery_gate(task, state)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:1612: in evaluate_cross_repo_delivery_gate
+    config = status_runtime_config()
+             ^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:1220: in status_runtime_config
+    payload = deepcopy(merged_orchestrator_config())
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:887: in merged_orchestrator_config
+    payload = orchestrator_common.load_config(
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ ReviewHeadFreezeTests.test_done_refuses_when_resolved_head_is_the_merge_commit _
+
+self = <test_supervisor.ReviewHeadFreezeTests testMethod=test_done_refuses_when_resolved_head_is_the_merge_commit>
+
+    def test_done_refuses_when_resolved_head_is_the_merge_commit(self) -> None:
+        """If a task branch resolves to the merge commit, the frozen head must
+        not be satisfiable by it -- the merge commit was never reviewed."""
+        merge = "4b32949322222222333333334444444455555555"
+        state = {
+            "tasks": [
+                {
+                    "id": "FREEZE-TEST-022E",
+                    "owner": "Antigravity4",
+                    "reviewer": "Claude",
+                    "status": "review_approved",
+                    "approved_head": merge,
+                }
+            ]
+        }
+        ai_status.clear_ai_status_caches()
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
+             unittest.mock.patch(
+                 "ai_status.collect_done_delivery_metadata",
+                 return_value={
+                     "verified_head": merge,
+                     "pull_request": {
+                         "head_sha": "e0147acb22222222333333334444444455555555",
+                         "merge_commit": merge,
+                     },
+                 },
+             ) as collect, \
+             unittest.mock.patch("ai_status.append_log"):
+            with self.assertRaises(SystemExit) as cm:
+>               ai_status.command_done(state, ["FREEZE-TEST-022E", "Finalize"])
+
+.orchestrator/test_supervisor.py:16251: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+scripts/ai_status.py:7425: in command_done
+    guard_cross_repo_delivery_gate(state, task)
+scripts/ai_status.py:1882: in guard_cross_repo_delivery_gate
+    gate = refresh_cross_repo_delivery_gate(state, task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:1818: in refresh_cross_repo_delivery_gate
+    gate = evaluate_cross_repo_delivery_gate(task, state)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:1612: in evaluate_cross_repo_delivery_gate
+    config = status_runtime_config()
+             ^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:1220: in status_runtime_config
+    payload = deepcopy(merged_orchestrator_config())
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:887: in merged_orchestrator_config
+    payload = orchestrator_common.load_config(
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+____________ ReviewHeadFreezeTests.test_explicit_re_review_command _____________
+
+self = <test_supervisor.ReviewHeadFreezeTests testMethod=test_explicit_re_review_command>
+
+    def test_explicit_re_review_command(self) -> None:
+        state = {
+            "tasks": [
+                {
+                    "id": "FREEZE-TEST-008",
+                    "owner": "Antigravity4",
+                    "reviewer": "Claude",
+                    "status": "review_approved",
+                    "approved_head": "1111111122222222333333334444444455555555",
+                }
+            ]
+        }
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
+             unittest.mock.patch("ai_status.load_state", return_value=state), \
+             unittest.mock.patch("ai_status.save_state"), \
+             unittest.mock.patch("ai_status.sync_all"), \
+             unittest.mock.patch("ai_status.emit_status_checks_for_changed_tasks"):
+>           ai_status.main(["ai_status.py", "re_review", "FREEZE-TEST-008", "Updated branch with strict merge"])
+
+.orchestrator/test_supervisor.py:15672: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+scripts/ai_status.py:9925: in main
+    commands[command](state, args)
+scripts/ai_status.py:6955: in command_re_review
+    owner = canonical_agent_name(task.get("owner"))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:747: in canonical_agent_name
+    canonical_by_lower.update({name.lower(): name for name in registered_agent_names()})
+                                                              ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:984: in registered_agent_names
+    names = configured_agent_names() | extra_actor_names() | set(NON_WORKER_ACTORS)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:958: in configured_agent_names
+    agents = merged_orchestrator_config().get("agents")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:887: in merged_orchestrator_config
+    payload = orchestrator_common.load_config(
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ ReviewHeadFreezeTests.test_restore_approved_fails_closed_when_head_unresolvable (head='None') _
+
+self = <test_supervisor.ReviewHeadFreezeTests testMethod=test_restore_approved_fails_closed_when_head_unresolvable>
+
+    def test_restore_approved_fails_closed_when_head_unresolvable(self) -> None:
+        approved = "1111111122222222333333334444444455555555"
+        for head, expected in (
+            (None, "branch HEAD could not be resolved"),
+            (RuntimeError("git down"), "unable to resolve the current branch HEAD"),
+        ):
+            with self.subTest(head=str(head)):
+                state = self._restore_state(id="FREEZE-TEST-021D", last_approved_head=approved)
+                ai_status.clear_ai_status_caches()
+                patch = (
+                    unittest.mock.patch("ai_status.resolve_task_sha", side_effect=head)
+                    if isinstance(head, Exception)
+                    else unittest.mock.patch("ai_status.resolve_task_sha", return_value=head)
+                )
+                with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
+                     patch, unittest.mock.patch("ai_status.append_log"):
+                    with self.assertRaises(SystemExit) as cm:
+>                       ai_status.command_restore_approved(state, ["FREEZE-TEST-021D", "Restore"])
+
+.orchestrator/test_supervisor.py:16369: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+scripts/ai_status.py:7255: in command_restore_approved
+    reviewer = canonical_agent_name(task.get("reviewer"))
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:747: in canonical_agent_name
+    canonical_by_lower.update({name.lower(): name for name in registered_agent_names()})
+                                                              ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:984: in registered_agent_names
+    names = configured_agent_names() | extra_actor_names() | set(NON_WORKER_ACTORS)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:958: in configured_agent_names
+    agents = merged_orchestrator_config().get("agents")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:887: in merged_orchestrator_config
+    payload = orchestrator_common.load_config(
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ ReviewHeadFreezeTests.test_restore_approved_fails_closed_when_head_unresolvable (head='git down') _
+
+self = <test_supervisor.ReviewHeadFreezeTests testMethod=test_restore_approved_fails_closed_when_head_unresolvable>
+
+    def test_restore_approved_fails_closed_when_head_unresolvable(self) -> None:
+        approved = "1111111122222222333333334444444455555555"
+        for head, expected in (
+            (None, "branch HEAD could not be resolved"),
+            (RuntimeError("git down"), "unable to resolve the current branch HEAD"),
+        ):
+            with self.subTest(head=str(head)):
+                state = self._restore_state(id="FREEZE-TEST-021D", last_approved_head=approved)
+                ai_status.clear_ai_status_caches()
+                patch = (
+                    unittest.mock.patch("ai_status.resolve_task_sha", side_effect=head)
+                    if isinstance(head, Exception)
+                    else unittest.mock.patch("ai_status.resolve_task_sha", return_value=head)
+                )
+                with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
+                     patch, unittest.mock.patch("ai_status.append_log"):
+                    with self.assertRaises(SystemExit) as cm:
+>                       ai_status.command_restore_approved(state, ["FREEZE-TEST-021D", "Restore"])
+
+.orchestrator/test_supervisor.py:16369: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+scripts/ai_status.py:7255: in command_restore_approved
+    reviewer = canonical_agent_name(task.get("reviewer"))
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:747: in canonical_agent_name
+    canonical_by_lower.update({name.lower(): name for name in registered_agent_names()})
+                                                              ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:984: in registered_agent_names
+    names = configured_agent_names() | extra_actor_names() | set(NON_WORKER_ACTORS)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:958: in configured_agent_names
+    agents = merged_orchestrator_config().get("agents")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:887: in merged_orchestrator_config
+    payload = orchestrator_common.load_config(
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ ReviewHeadFreezeTests.test_restore_approved_head_requires_the_missing_head_shape _
+
+self = <test_supervisor.ReviewHeadFreezeTests testMethod=test_restore_approved_head_requires_the_missing_head_shape>
+
+    def test_restore_approved_head_requires_the_missing_head_shape(self) -> None:
+        """It repairs the B22 shape only; it is not a second approve path."""
+        head = "1111111122222222333333334444444455555555"
+        ai_status.clear_ai_status_caches()
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=head), \
+             unittest.mock.patch("ai_status.task_pr_head_and_merge_commit", return_value=(head, None)), \
+             unittest.mock.patch("ai_status.append_log"):
+            in_progress = self._restore_state(id="FREEZE-TEST-022F")
+            with self.assertRaises(SystemExit) as cm:
+>               ai_status.command_restore_approved_head(in_progress, ["FREEZE-TEST-022F", head, "attest"])
+
+.orchestrator/test_supervisor.py:16385: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+scripts/ai_status.py:7327: in command_restore_approved_head
+    owner = canonical_agent_name(task.get("owner"))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:747: in canonical_agent_name
+    canonical_by_lower.update({name.lower(): name for name in registered_agent_names()})
+                                                              ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:984: in registered_agent_names
+    names = configured_agent_names() | extra_actor_names() | set(NON_WORKER_ACTORS)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:958: in configured_agent_names
+    agents = merged_orchestrator_config().get("agents")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:887: in merged_orchestrator_config
+    payload = orchestrator_common.load_config(
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ ReviewHeadFreezeTests.test_restore_approved_refreezes_the_reviewed_head_when_branch_unmoved _
+
+self = <test_supervisor.ReviewHeadFreezeTests testMethod=test_restore_approved_refreezes_the_reviewed_head_when_branch_unmoved>
+
+    def test_restore_approved_refreezes_the_reviewed_head_when_branch_unmoved(self) -> None:
+        """Positive control for the two refusals above: a genuinely spurious
+        downgrade still recovers, and it recovers *with* the freeze intact."""
+        approved = "1111111122222222333333334444444455555555"
+        state = self._restore_state(id="FREEZE-TEST-021C", last_approved_head=approved)
+        task = ai_status.get_task(state, "FREEZE-TEST-021C")
+        ai_status.clear_ai_status_caches()
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=approved), \
+             unittest.mock.patch("ai_status.append_log"):
+>           ai_status.command_restore_approved(state, ["FREEZE-TEST-021C", "Spurious downgrade"])
+
+.orchestrator/test_supervisor.py:16330: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+scripts/ai_status.py:7255: in command_restore_approved
+    reviewer = canonical_agent_name(task.get("reviewer"))
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:747: in canonical_agent_name
+    canonical_by_lower.update({name.lower(): name for name in registered_agent_names()})
+                                                              ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:984: in registered_agent_names
+    names = configured_agent_names() | extra_actor_names() | set(NON_WORKER_ACTORS)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:958: in configured_agent_names
+    agents = merged_orchestrator_config().get("agents")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:887: in merged_orchestrator_config
+    payload = orchestrator_common.load_config(
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ ReviewHeadFreezeTests.test_restore_approved_refuses_without_a_durable_approved_head _
+
+self = <test_supervisor.ReviewHeadFreezeTests testMethod=test_restore_approved_refuses_without_a_durable_approved_head>
+
+    def test_restore_approved_refuses_without_a_durable_approved_head(self) -> None:
+        """The round-8 reproduction: approve -> reopen -> restore -> done at an
+        unreviewed head. `reopen` pops approved_head but keeps review_notes_zh,
+        which is exactly restore_approved's precondition."""
+        approved = "1111111122222222333333334444444455555555"
+        state = {
+            "tasks": [
+                {
+                    "id": "FREEZE-TEST-021A",
+                    "owner": "Antigravity4",
+                    "reviewer": "Codex",
+                    "status": "review",
+                    "review_notes_zh": "已審核通過",
+                    "review_submission": {"remote_sha": approved},
+                }
+            ]
+        }
+        task = ai_status.get_task(state, "FREEZE-TEST-021A")
+        ai_status.clear_ai_status_caches()
+        with unittest.mock.patch("ai_status.append_log"), unittest.mock.patch("ai_status.sync_all"):
+            with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex"), \
+                 unittest.mock.patch("ai_status.resolve_task_sha", return_value=approved), \
+                 unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+>               ai_status.command_approve(state, ["FREEZE-TEST-021A", "Approved"])
+
+.orchestrator/test_supervisor.py:16293: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+scripts/ai_status.py:7529: in command_approve
+    owner = canonical_agent_name(task.get("owner"))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:747: in canonical_agent_name
+    canonical_by_lower.update({name.lower(): name for name in registered_agent_names()})
+                                                              ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:984: in registered_agent_names
+    names = configured_agent_names() | extra_actor_names() | set(NON_WORKER_ACTORS)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:958: in configured_agent_names
+    agents = merged_orchestrator_config().get("agents")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:887: in merged_orchestrator_config
+    payload = orchestrator_common.load_config(
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ ReviewHeadFreezeTests.test_return_to_review_transitions_clear_and_preserve_the_right_heads (command='reopen') _
+
+self = <test_supervisor.ReviewHeadFreezeTests testMethod=test_return_to_review_transitions_clear_and_preserve_the_right_heads>
+
+    def test_return_to_review_transitions_clear_and_preserve_the_right_heads(self) -> None:
+        """N2: `reopen`/`handoff` popping approved_head is load-bearing.
+    
+        After B20-b a leftover approved_head makes `command_approve` refuse
+        outright, so dropping either pop would wedge the whole
+        reject -> rework -> re-approve cycle with the suite still green. The
+        durable `last_approved_head` must survive all three, or B21's fix
+        loses its input.
+        """
+        approved = "1111111122222222333333334444444455555555"
+    
+        def _state() -> dict[str, Any]:
+            return {
+                "tasks": [
+                    {
+                        "id": "FREEZE-TEST-023",
+                        "owner": "Antigravity4",
+                        "reviewer": "Claude",
+                        "status": "review_approved",
+                        "review_submission": {
+                            "pr_number": 123,
+                            "remote_sha": approved,
+                            "branch": "task/FREEZE-TEST-023",
+                            "base_branch": "dev",
+                        },
+                        "approved_head": approved,
+                        "last_approved_head": approved,
+                    }
+                ],
+                "handoffs": [],
+            }
+    
+        cases = (
+            ("reopen", ai_status.command_reopen, ["FREEZE-TEST-023", "rework"], "Antigravity4"),
+            ("handoff", ai_status.command_handoff, ["FREEZE-TEST-023", "Claude", "review"], "Antigravity4"),
+            ("re_review", ai_status.command_re_review, ["FREEZE-TEST-023", "re-review"], "Antigravity4"),
+        )
+        for label, command, args, actor in cases:
+            with self.subTest(command=label):
+                state = _state()
+                with unittest.mock.patch("ai_status.current_actor_validated", return_value=actor), \
+                     unittest.mock.patch("ai_status.resolve_actor_reference", side_effect=lambda v, **_: v), \
+                     unittest.mock.patch("ai_status.append_log"):
+>                   command(state, args)
+
+.orchestrator/test_supervisor.py:16447: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+scripts/ai_status.py:6611: in command_reopen
+    owner = canonical_agent_name(task.get("owner"))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:747: in canonical_agent_name
+    canonical_by_lower.update({name.lower(): name for name in registered_agent_names()})
+                                                              ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:984: in registered_agent_names
+    names = configured_agent_names() | extra_actor_names() | set(NON_WORKER_ACTORS)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:958: in configured_agent_names
+    agents = merged_orchestrator_config().get("agents")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:887: in merged_orchestrator_config
+    payload = orchestrator_common.load_config(
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ ReviewHeadFreezeTests.test_return_to_review_transitions_clear_and_preserve_the_right_heads (command='handoff') _
+
+self = <test_supervisor.ReviewHeadFreezeTests testMethod=test_return_to_review_transitions_clear_and_preserve_the_right_heads>
+
+    def test_return_to_review_transitions_clear_and_preserve_the_right_heads(self) -> None:
+        """N2: `reopen`/`handoff` popping approved_head is load-bearing.
+    
+        After B20-b a leftover approved_head makes `command_approve` refuse
+        outright, so dropping either pop would wedge the whole
+        reject -> rework -> re-approve cycle with the suite still green. The
+        durable `last_approved_head` must survive all three, or B21's fix
+        loses its input.
+        """
+        approved = "1111111122222222333333334444444455555555"
+    
+        def _state() -> dict[str, Any]:
+            return {
+                "tasks": [
+                    {
+                        "id": "FREEZE-TEST-023",
+                        "owner": "Antigravity4",
+                        "reviewer": "Claude",
+                        "status": "review_approved",
+                        "review_submission": {
+                            "pr_number": 123,
+                            "remote_sha": approved,
+                            "branch": "task/FREEZE-TEST-023",
+                            "base_branch": "dev",
+                        },
+                        "approved_head": approved,
+                        "last_approved_head": approved,
+                    }
+                ],
+                "handoffs": [],
+            }
+    
+        cases = (
+            ("reopen", ai_status.command_reopen, ["FREEZE-TEST-023", "rework"], "Antigravity4"),
+            ("handoff", ai_status.command_handoff, ["FREEZE-TEST-023", "Claude", "review"], "Antigravity4"),
+            ("re_review", ai_status.command_re_review, ["FREEZE-TEST-023", "re-review"], "Antigravity4"),
+        )
+        for label, command, args, actor in cases:
+            with self.subTest(command=label):
+                state = _state()
+                with unittest.mock.patch("ai_status.current_actor_validated", return_value=actor), \
+                     unittest.mock.patch("ai_status.resolve_actor_reference", side_effect=lambda v, **_: v), \
+                     unittest.mock.patch("ai_status.append_log"):
+>                   command(state, args)
+
+.orchestrator/test_supervisor.py:16447: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+scripts/ai_status.py:6912: in command_handoff
+    if not task_actor_may_execute(task, actor):
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:6381: in task_actor_may_execute
+    if canonical_agent_name(task.get("owner")) == canonical_agent_name(actor):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:747: in canonical_agent_name
+    canonical_by_lower.update({name.lower(): name for name in registered_agent_names()})
+                                                              ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:984: in registered_agent_names
+    names = configured_agent_names() | extra_actor_names() | set(NON_WORKER_ACTORS)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:958: in configured_agent_names
+    agents = merged_orchestrator_config().get("agents")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:887: in merged_orchestrator_config
+    payload = orchestrator_common.load_config(
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ ReviewHeadFreezeTests.test_return_to_review_transitions_clear_and_preserve_the_right_heads (command='re_review') _
+
+self = <test_supervisor.ReviewHeadFreezeTests testMethod=test_return_to_review_transitions_clear_and_preserve_the_right_heads>
+
+    def test_return_to_review_transitions_clear_and_preserve_the_right_heads(self) -> None:
+        """N2: `reopen`/`handoff` popping approved_head is load-bearing.
+    
+        After B20-b a leftover approved_head makes `command_approve` refuse
+        outright, so dropping either pop would wedge the whole
+        reject -> rework -> re-approve cycle with the suite still green. The
+        durable `last_approved_head` must survive all three, or B21's fix
+        loses its input.
+        """
+        approved = "1111111122222222333333334444444455555555"
+    
+        def _state() -> dict[str, Any]:
+            return {
+                "tasks": [
+                    {
+                        "id": "FREEZE-TEST-023",
+                        "owner": "Antigravity4",
+                        "reviewer": "Claude",
+                        "status": "review_approved",
+                        "review_submission": {
+                            "pr_number": 123,
+                            "remote_sha": approved,
+                            "branch": "task/FREEZE-TEST-023",
+                            "base_branch": "dev",
+                        },
+                        "approved_head": approved,
+                        "last_approved_head": approved,
+                    }
+                ],
+                "handoffs": [],
+            }
+    
+        cases = (
+            ("reopen", ai_status.command_reopen, ["FREEZE-TEST-023", "rework"], "Antigravity4"),
+            ("handoff", ai_status.command_handoff, ["FREEZE-TEST-023", "Claude", "review"], "Antigravity4"),
+            ("re_review", ai_status.command_re_review, ["FREEZE-TEST-023", "re-review"], "Antigravity4"),
+        )
+        for label, command, args, actor in cases:
+            with self.subTest(command=label):
+                state = _state()
+                with unittest.mock.patch("ai_status.current_actor_validated", return_value=actor), \
+                     unittest.mock.patch("ai_status.resolve_actor_reference", side_effect=lambda v, **_: v), \
+                     unittest.mock.patch("ai_status.append_log"):
+>                   command(state, args)
+
+.orchestrator/test_supervisor.py:16447: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+scripts/ai_status.py:6955: in command_re_review
+    owner = canonical_agent_name(task.get("owner"))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:747: in canonical_agent_name
+    canonical_by_lower.update({name.lower(): name for name in registered_agent_names()})
+                                                              ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:984: in registered_agent_names
+    names = configured_agent_names() | extra_actor_names() | set(NON_WORKER_ACTORS)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:958: in configured_agent_names
+    agents = merged_orchestrator_config().get("agents")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:887: in merged_orchestrator_config
+    payload = orchestrator_common.load_config(
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ ReviewHeadFreezeTests.test_staging_shape_closes_only_after_explicit_head_restoration _
+
+self = <test_supervisor.ReviewHeadFreezeTests testMethod=test_staging_shape_closes_only_after_explicit_head_restoration>
+
+    def test_staging_shape_closes_only_after_explicit_head_restoration(self) -> None:
+        """End-to-end on the exact live shape: head e0147acb, merge 4b329493.
+    
+        Also pins B22-3: the freeze anchors on the immutable PR head, and the
+        merge commit GitHub created is recorded as separate delivery evidence
+        rather than being accepted as the reviewed commit.
+        """
+        head = "e0147acb22222222333333334444444455555555"
+        merge = "4b32949322222222333333334444444455555555"
+        task_id = "ODP-DEPLOY-STAGING-JOB-RECEIPT-UPLOAD-001"
+        state = {"tasks": [self._missing_head_task(task_id)]}
+        task = ai_status.get_task(state, task_id)
+        config = self._build_freeze_test_config()
+        ai_status.clear_ai_status_caches()
+    
+        resolve = unittest.mock.patch("ai_status.resolve_task_sha", return_value=head)
+        pr_info = unittest.mock.patch(
+            "ai_status.task_pr_head_and_merge_commit", return_value=(head, merge)
+        )
+    
+        # 1. Nothing dispatches and nothing finalizes while the head is missing.
+        with resolve, pr_info, unittest.mock.patch("ai_status.append_log"):
+            self.assertIsNone(
+                supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map={task_id: task})
+            )
+            with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
+                 unittest.mock.patch("ai_status.collect_done_delivery_metadata") as collect:
+                with self.assertRaises(SystemExit):
+                    ai_status.command_done(state, [task_id, "Finalize"])
+                collect.assert_not_called()
+    
+            # 2. The owner cannot attest their own head.
+            with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"):
+                with self.assertRaises(SystemExit) as cm:
+>                   ai_status.command_restore_approved_head(state, [task_id, head, "self-attest"])
+
+.orchestrator/test_supervisor.py:16172: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+scripts/ai_status.py:7327: in command_restore_approved_head
+    owner = canonical_agent_name(task.get("owner"))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:747: in canonical_agent_name
+    canonical_by_lower.update({name.lower(): name for name in registered_agent_names()})
+                                                              ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:984: in registered_agent_names
+    names = configured_agent_names() | extra_actor_names() | set(NON_WORKER_ACTORS)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:958: in configured_agent_names
+    agents = merged_orchestrator_config().get("agents")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:887: in merged_orchestrator_config
+    payload = orchestrator_common.load_config(
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ SupervisorFailureLoopCoverageTests.test_status_check_http_422_failure_injection_outbox_transactional _
+
+self = <test_supervisor.SupervisorFailureLoopCoverageTests testMethod=test_status_check_http_422_failure_injection_outbox_transactional>
+
+    def test_status_check_http_422_failure_injection_outbox_transactional(self) -> None:
+        """R13: Real isolated main retries the exact 422 payload without rolling back state."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_root = Path(tmpdir)
+            status_file = tmp_root / "ai-status.json"
+            activity_file = tmp_root / "ai-activity-log.jsonl"
+            runtime_file = tmp_root / ".orchestrator" / "state.json"
+            runtime_file.parent.mkdir(parents=True, exist_ok=True)
+            backup_dir = tmp_root / ".orchestrator" / "worktree-dirt-backups"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            backup_file = backup_dir / "odp-plan-acceptance-real-exec-001-lease_blocked.patch"
+            backup_file.write_text("patch content", encoding="utf-8")
+            runtime_payload = {
+                "workers": {
+                    "run-422": {
+                        "run_id": "run-422",
+                        "task_id": "ODP-422-TEST-001",
+                        "status": "running",
+                        "queue_event_id": "event-422",
+                    }
+                },
+                "queue": {
+                    "events": {
+                        "event-422": {
+                            "status": "started",
+                            "run_id": "run-422",
+                        }
+                    }
+                },
+            }
+            runtime_file.write_text(
+                json.dumps(runtime_payload, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            runtime_before = runtime_file.read_bytes()
+            state = {
+                "agents": [
+                    {
+                        "name": "CodexCoordinator",
+                        "capability_lane": [],
+                        "status": "idle",
+                        "current_task_ids": [],
+                        "branch": "",
+                        "next": "",
+                        "last_update": None,
+                    },
+                    {
+                        "name": "Codex2",
+                        "capability_lane": [],
+                        "status": "idle",
+                        "current_task_ids": [],
+                        "branch": "",
+                        "next": "",
+                        "last_update": None,
+                    },
+                ],
+                "tasks": [
+                    {
+                        "id": "ODP-422-TEST-001",
+                        "title": "Outbox transaction",
+                        "phase": "execution-control",
+                        "owner": "CodexCoordinator",
+                        "reviewer": "Codex2",
+                        "status": "review",
+                        "depends_on": [],
+                        "artifacts": [],
+                        "acceptance": [],
+                        "next": "Awaiting review",
+                        "last_update": "2026-07-31T08:00:00Z",
+                    }
+                ],
+                "handoffs": [
+                    {
+                        "task_id": "ODP-422-TEST-001",
+                        "from": "CodexCoordinator",
+                        "to": "Codex2",
+                        "message": "Review exact head",
+                        "status": "pending",
+                        "created_at": "2026-07-31T08:00:00Z",
+                    }
+                ],
+                "blockers": [],
+                "workload": {},
+                "workload_summary": {},
+            }
+            status_file.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+            sha = "f1078e8b" + ("0" * 32)
+            observed_status_at_post: list[str] = []
+            post_results = [
+                mock.MagicMock(
+                    returncode=1,
+                    stderr=f"HTTP 422 Unprocessable Entity: No commit found for SHA {sha}",
+                    stdout="",
+                ),
+                mock.MagicMock(returncode=0, stderr="", stdout="created"),
+                # After draining a queued gate, sync refreshes current canonical
+                # authority even when the remote HEAD has not changed.
+                mock.MagicMock(returncode=0, stderr="", stdout="created"),
+            ]
+    
+            def fake_post(*_args: Any, **_kwargs: Any) -> Any:
+                persisted = json.loads(status_file.read_text(encoding="utf-8"))
+                observed_status_at_post.append(persisted["tasks"][0]["status"])
+                return post_results.pop(0)
+    
+            live_activity = ROOT_DIR / "ai-activity-log.jsonl"
+            live_activity_before = live_activity.read_bytes() if live_activity.exists() else None
+            with (
+                mock.patch.dict(os.environ, {"AI_NAME": "Codex2"}, clear=False),
+                mock.patch.object(ai_status, "STATUS_ROOT", tmp_root),
+                mock.patch.object(ai_status, "STATUS_FILE", status_file),
+                mock.patch.object(ai_status, "LOG_FILE", activity_file),
+                mock.patch.object(ai_status, "CURRENT_WORK_FILE", tmp_root / "current-work.md"),
+                mock.patch.object(ai_status, "DOCS_SITE_DIR", tmp_root / "docs-site"),
+                mock.patch.object(ai_status, "ORCHESTRATOR_STATE_FILE", runtime_file),
+                mock.patch.object(ai_status, "DASHBOARD_BUNDLE_FILE", tmp_root / "dashboard-bundle.json"),
+                mock.patch.object(ai_status, "resolve_task_sha", return_value=sha),
+                mock.patch.object(ai_status, "task_repository_slug_safe", return_value="alfloop-dev/odayplus"),
+                mock.patch.object(ai_status, "get_repository_slug_safe", return_value="alfloop-dev/odayplus"),
+                mock.patch.object(ai_status, "sync_all", side_effect=lambda state_arg: ai_status.save_state(state_arg)),
+                mock.patch.object(ai_status.subprocess, "run", side_effect=fake_post),
+            ):
+                self.assertEqual(
+>                   ai_status.main(
+                        [
+                            "ai_status.py",
+                            "reopen",
+                            "ODP-422-TEST-001",
+                            "Exact-head review rejected",
+                        ]
+                    ),
+                    0,
+                )
+
+.orchestrator/test_supervisor.py:17692: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+scripts/ai_status.py:9919: in main
+    state = load_state()
+            ^^^^^^^^^^^^
+scripts/ai_status.py:1175: in load_state
+    normalize_state_agents(state)
+scripts/ai_status.py:4161: in normalize_state_agents
+    task["owner"] = active_agent_name(task.get("owner"))
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:757: in active_agent_name
+    canonical = canonical_agent_name(name)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:747: in canonical_agent_name
+    canonical_by_lower.update({name.lower(): name for name in registered_agent_names()})
+                                                              ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:984: in registered_agent_names
+    names = configured_agent_names() | extra_actor_names() | set(NON_WORKER_ACTORS)
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:958: in configured_agent_names
+    agents = merged_orchestrator_config().get("agents")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/ai_status.py:887: in merged_orchestrator_config
+    payload = orchestrator_common.load_config(
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ ProcessQueueAgentOverrideTests.test_post_merge_deleted_remote_branch_finalize_dispatch _
+
+self = <test_supervisor.ProcessQueueAgentOverrideTests testMethod=test_post_merge_deleted_remote_branch_finalize_dispatch>
+
+    def test_post_merge_deleted_remote_branch_finalize_dispatch(self) -> None:
+        """B1 regression: when origin branch task/<id> is deleted on PR merge,
+        resolve_task_checkout_sha resolves the post-merge checkout HEAD, enabling
+        supervisor priority dispatch and reconciliation gates to issue owned_finalize_dispatch.
+        Composed and verified on dev base d37e6e5cfae0a4c936b121b363906a17739d293c."""
+        approved_head = "b664a8ea9fed476c6224a339994fa66163c574fa"
+        checkout_head = "80ba278631111111222222223333333344444444"
+        task_id = "B1-TEST-POST-MERGE-001"
+        task_item = {
+            "id": task_id,
+            "status": "review_approved",
+            "owner": "Antigravity",
+            "reviewer": "Antigravity4",
+            "approved_head": approved_head,
+        }
+        task_map = {task_id: task_item}
+    
+        with mock.patch("ai_status.resolve_task_sha", return_value=None), \
+             mock.patch("ai_status.is_approved_head_satisfied", return_value=True), \
+             mock.patch("ai_status.run_git_command") as mock_git, \
+             mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")):
+            def git_side_effect(cmd, **kwargs):
+                if cmd[0] == "rev-parse" and cmd[1] == "HEAD":
+                    return checkout_head
+                if cmd[0] == "remote":
+                    return "origin\n"
+                if cmd[0] == "rev-parse" and cmd[1] == "--verify":
+                    return checkout_head
+                return ""
+            mock_git.side_effect = git_side_effect
+    
+            # 1. Verify resolve_task_checkout_sha returns checkout_head despite resolve_task_sha returning None
+            resolved = ai_status.resolve_task_checkout_sha(task_item, force_refresh=True)
+>           self.assertEqual(resolved, checkout_head)
+E           AssertionError: None != '80ba278631111111222222223333333344444444'
+
+.orchestrator/test_supervisor.py:18024: AssertionError
+__ HardInactivityTerminationTests.test_quiet_worker_under_the_window_survives __
+
+self = <test_worker_hard_inactivity.HardInactivityTerminationTests testMethod=test_quiet_worker_under_the_window_survives>
+
+    def test_quiet_worker_under_the_window_survives(self) -> None:
+        """Waiting on a model reply is quiet for minutes; that is not a hang."""
+        worker = self._worker(last_disk_activity_at=_ago(900))
+>       self.assertEqual(self._poll(worker, hard_inactivity_seconds=3600), "running")
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.orchestrator/test_worker_hard_inactivity.py:155: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.orchestrator/test_worker_hard_inactivity.py:114: in _poll
+    config = supervisor.load_config(".orchestrator/config.json")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ HardInactivityTerminationTests.test_worker_silent_on_disk_for_an_hour_is_terminated _
+
+self = <test_worker_hard_inactivity.HardInactivityTerminationTests testMethod=test_worker_silent_on_disk_for_an_hour_is_terminated>
+
+    def test_worker_silent_on_disk_for_an_hour_is_terminated(self) -> None:
+        worker = self._worker(last_disk_activity_at=_ago(3700))
+>       self.assertEqual(self._poll(worker, hard_inactivity_seconds=3600), "failed")
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.orchestrator/test_worker_hard_inactivity.py:145: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.orchestrator/test_worker_hard_inactivity.py:114: in _poll
+    config = supervisor.load_config(".orchestrator/config.json")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+__ HardInactivityTerminationTests.test_worker_without_the_field_is_untouched ___
+
+self = <test_worker_hard_inactivity.HardInactivityTerminationTests testMethod=test_worker_without_the_field_is_untouched>
+
+    def test_worker_without_the_field_is_untouched(self) -> None:
+        """Workers started before this change carry no signal; do not guess one."""
+        worker = self._worker()
+        worker.pop("last_disk_activity_at", None)
+>       self.assertEqual(self._poll(worker, hard_inactivity_seconds=3600), "running")
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.orchestrator/test_worker_hard_inactivity.py:165: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.orchestrator/test_worker_hard_inactivity.py:114: in _poll
+    config = supervisor.load_config(".orchestrator/config.json")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_____ HardInactivityTerminationTests.test_worker_writing_recently_survives _____
+
+self = <test_worker_hard_inactivity.HardInactivityTerminationTests testMethod=test_worker_writing_recently_survives>
+
+    def test_worker_writing_recently_survives(self) -> None:
+        """A slow worker that still touches storage must not be reclaimed."""
+        worker = self._worker(last_disk_activity_at=_ago(120))
+>       self.assertEqual(self._poll(worker, hard_inactivity_seconds=3600), "running")
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.orchestrator/test_worker_hard_inactivity.py:150: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.orchestrator/test_worker_hard_inactivity.py:114: in _poll
+    config = supervisor.load_config(".orchestrator/config.json")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+__________ HardInactivityTerminationTests.test_zero_disables_the_tier __________
+
+self = <test_worker_hard_inactivity.HardInactivityTerminationTests testMethod=test_zero_disables_the_tier>
+
+    def test_zero_disables_the_tier(self) -> None:
+        worker = self._worker(last_disk_activity_at=_ago(999999))
+>       self.assertEqual(self._poll(worker, hard_inactivity_seconds=0), "running")
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.orchestrator/test_worker_hard_inactivity.py:159: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.orchestrator/test_worker_hard_inactivity.py:114: in _poll
+    config = supervisor.load_config(".orchestrator/config.json")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ WorkerSettlementPathTests.test_assignment_moved_dead_worker_preserves_its_worktree_exactly_once _
+
+self = <test_worker_settlement_paths.WorkerSettlementPathTests testMethod=test_assignment_moved_dead_worker_preserves_its_worktree_exactly_once>
+
+    def test_assignment_moved_dead_worker_preserves_its_worktree_exactly_once(self) -> None:
+        """The call in front of `workers.pop` is an ordering net, not a second backup.
+    
+        `preserve_dead_worker_worktree` is not idempotent: each call mints a
+        fresh UUID backup directory and writes another `worker_death_worktree_*`
+        entry. Every worker reaching the assignment-moved drop is already dead,
+        so the poll preserved it on the way in; the direct call kept ahead of
+        the pop (pinned at the source level by
+        `test_the_orphan_path_preserves_before_the_record_disappears`) has to be
+        gated on that, or the one path that exists as a safety net doubles the
+        backup instead.
+        """
+        worker = self._assignment_moved_worker("assignment-moved-workspace")
+        with mock.patch.object(supervisor, "preserve_dead_worker_worktree") as preserve:
+>           state, _activity = self._run_settlement(
+                supervisor.poll_workers,
+                worker,
+                pid_alive=False,
+                status_doc=DONE_STATUS,
+                assignment_matches=False,
+            )
+
+.orchestrator/test_worker_settlement_paths.py:230: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.orchestrator/test_worker_settlement_paths.py:122: in _run_settlement
+    config = supervisor.load_config(".orchestrator/config.json")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ WorkerSettlementPathTests.test_assignment_moved_dead_worker_records_one_preservation_outcome _
+
+self = <test_worker_settlement_paths.WorkerSettlementPathTests testMethod=test_assignment_moved_dead_worker_records_one_preservation_outcome>
+
+    def test_assignment_moved_dead_worker_records_one_preservation_outcome(self) -> None:
+        """Same guarantee, observed through the real helper rather than a mock.
+    
+        The duplicate was only visible in its side effects -- a second backup
+        directory and a second activity entry -- so assert on the side effect
+        the helper always produces, whether or not it found anything to save.
+        """
+        worker = self._assignment_moved_worker("assignment-moved-logged-workspace")
+>       _state, activity = self._run_settlement(
+            supervisor.poll_workers,
+            worker,
+            pid_alive=False,
+            status_doc=DONE_STATUS,
+            assignment_matches=False,
+        )
+
+.orchestrator/test_worker_settlement_paths.py:254: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.orchestrator/test_worker_settlement_paths.py:122: in _run_settlement
+    config = supervisor.load_config(".orchestrator/config.json")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+____ WorkerSettlementPathTests.test_boot_does_not_retry_a_transient_failure ____
+
+self = <test_worker_settlement_paths.WorkerSettlementPathTests testMethod=test_boot_does_not_retry_a_transient_failure>
+
+    def test_boot_does_not_retry_a_transient_failure(self) -> None:
+        """Retry/backoff timestamps predate the restart, so boot settles instead."""
+        worker = self._worker(log_path=self._log("t", "Error: 429 rate limit exceeded, try again later\n"))
+>       self.assertEqual(self._settle(supervisor.reconcile_runtime_on_boot, worker)[0], "failed")
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.orchestrator/test_worker_settlement_paths.py:276: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.orchestrator/test_worker_settlement_paths.py:103: in _settle
+    state, _activity = self._run_settlement(path, worker, pid_alive=pid_alive)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.orchestrator/test_worker_settlement_paths.py:122: in _run_settlement
+    config = supervisor.load_config(".orchestrator/config.json")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+______ WorkerSettlementPathTests.test_boot_leaves_a_backoff_worker_alone _______
+
+self = <test_worker_settlement_paths.WorkerSettlementPathTests testMethod=test_boot_leaves_a_backoff_worker_alone>
+
+    def test_boot_leaves_a_backoff_worker_alone(self) -> None:
+        worker = self._worker(status="retry_backoff", log_path=self._log("b", ""))
+>       self.assertEqual(self._settle(supervisor.reconcile_runtime_on_boot, worker)[0], "retry_backoff")
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.orchestrator/test_worker_settlement_paths.py:287: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.orchestrator/test_worker_settlement_paths.py:103: in _settle
+    state, _activity = self._run_settlement(path, worker, pid_alive=pid_alive)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.orchestrator/test_worker_settlement_paths.py:122: in _run_settlement
+    config = supervisor.load_config(".orchestrator/config.json")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+__ WorkerSettlementPathTests.test_boot_leaves_an_approval_parked_worker_alone __
+
+self = <test_worker_settlement_paths.WorkerSettlementPathTests testMethod=test_boot_leaves_an_approval_parked_worker_alone>
+
+    def test_boot_leaves_an_approval_parked_worker_alone(self) -> None:
+        """`missing_process` covers only running/stalled; the poll correlates approvals."""
+        worker = self._worker(status="waiting_approval", log_path=self._log("w", ""))
+>       self.assertEqual(self._settle(supervisor.reconcile_runtime_on_boot, worker)[0], "waiting_approval")
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.orchestrator/test_worker_settlement_paths.py:282: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.orchestrator/test_worker_settlement_paths.py:103: in _settle
+    state, _activity = self._run_settlement(path, worker, pid_alive=pid_alive)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.orchestrator/test_worker_settlement_paths.py:122: in _run_settlement
+    config = supervisor.load_config(".orchestrator/config.json")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_______ WorkerSettlementPathTests.test_both_paths_agree_on_a_silent_exit _______
+
+self = <test_worker_settlement_paths.WorkerSettlementPathTests testMethod=test_both_paths_agree_on_a_silent_exit>
+
+    def test_both_paths_agree_on_a_silent_exit(self) -> None:
+        worker = self._worker(log_path=self._log("e", ""))
+        self.assertEqual(
+>           self._settle(supervisor.reconcile_runtime_on_boot, worker),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            self._settle(supervisor.poll_workers, worker),
+        )
+
+.orchestrator/test_worker_settlement_paths.py:306: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.orchestrator/test_worker_settlement_paths.py:103: in _settle
+    state, _activity = self._run_settlement(path, worker, pid_alive=pid_alive)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.orchestrator/test_worker_settlement_paths.py:122: in _run_settlement
+    config = supervisor.load_config(".orchestrator/config.json")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ WorkerSettlementPathTests.test_both_paths_agree_on_a_terminal_quota_failure __
+
+self = <test_worker_settlement_paths.WorkerSettlementPathTests testMethod=test_both_paths_agree_on_a_terminal_quota_failure>
+
+    def test_both_paths_agree_on_a_terminal_quota_failure(self) -> None:
+        """Where the outcome should NOT differ, it does not.
+    
+        With reassignment held still, a terminal quota failure settles the same way
+        on both paths -- the classification is shared, only the retry/resume
+        branches around it differ.
+        """
+        worker = self._worker(log_path=self._log("q", "Error: you have exhausted your capacity for model\n"))
+        self.assertEqual(
+>           self._settle(supervisor.reconcile_runtime_on_boot, worker),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            self._settle(supervisor.poll_workers, worker),
+        )
+
+.orchestrator/test_worker_settlement_paths.py:299: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.orchestrator/test_worker_settlement_paths.py:103: in _settle
+    state, _activity = self._run_settlement(path, worker, pid_alive=pid_alive)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.orchestrator/test_worker_settlement_paths.py:122: in _run_settlement
+    config = supervisor.load_config(".orchestrator/config.json")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ WorkerSettlementPathTests.test_dead_running_worker_preserves_worktree_before_failure_settlement _
+
+self = <test_worker_settlement_paths.WorkerSettlementPathTests testMethod=test_dead_running_worker_preserves_worktree_before_failure_settlement>
+
+    def test_dead_running_worker_preserves_worktree_before_failure_settlement(self) -> None:
+        worker = self._worker()
+        with mock.patch.object(supervisor, "preserve_dead_worker_worktree") as preserve:
+            self.assertEqual(
+>               self._settle(supervisor.poll_workers, worker, pid_alive=False),
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                ("failed", "failed"),
+            )
+
+.orchestrator/test_worker_settlement_paths.py:155: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.orchestrator/test_worker_settlement_paths.py:103: in _settle
+    state, _activity = self._run_settlement(path, worker, pid_alive=pid_alive)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.orchestrator/test_worker_settlement_paths.py:122: in _run_settlement
+    config = supervisor.load_config(".orchestrator/config.json")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ WorkerSettlementPathTests.test_failed_runner_marker_file_is_settled_before_terminal_skip _
+
+self = <test_worker_settlement_paths.WorkerSettlementPathTests testMethod=test_failed_runner_marker_file_is_settled_before_terminal_skip>
+
+    def test_failed_runner_marker_file_is_settled_before_terminal_skip(self) -> None:
+        status_path = self.logs / "failed-runner-status.json"
+        status_path.write_text('{"status": "failed", "exit_code": 1}', encoding="utf-8")
+        worker = self._worker(status="completed", runner_status_path=str(status_path))
+        with (
+            mock.patch.object(supervisor, "preserve_dead_worker_worktree") as preserve,
+            mock.patch.object(supervisor, "refresh_worker_lease") as refresh,
+            mock.patch.object(supervisor, "terminate_worker_pid") as terminate,
+        ):
+            self.assertEqual(
+>               self._settle(supervisor.poll_workers, worker, pid_alive=True),
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                ("failed", "failed"),
+            )
+
+.orchestrator/test_worker_settlement_paths.py:187: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.orchestrator/test_worker_settlement_paths.py:103: in _settle
+    state, _activity = self._run_settlement(path, worker, pid_alive=pid_alive)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.orchestrator/test_worker_settlement_paths.py:122: in _run_settlement
+    config = supervisor.load_config(".orchestrator/config.json")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ WorkerSettlementPathTests.test_failed_runner_marker_settles_without_refreshing_lease _
+
+self = <test_worker_settlement_paths.WorkerSettlementPathTests testMethod=test_failed_runner_marker_settles_without_refreshing_lease>
+
+    def test_failed_runner_marker_settles_without_refreshing_lease(self) -> None:
+        worker = self._worker(runner_status="failed", exit_code=1)
+        with (
+            mock.patch.object(supervisor, "preserve_dead_worker_worktree") as preserve,
+            mock.patch.object(supervisor, "refresh_worker_lease") as refresh,
+            mock.patch.object(supervisor, "terminate_worker_pid") as terminate,
+        ):
+            self.assertEqual(
+>               self._settle(supervisor.poll_workers, worker, pid_alive=True),
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                ("failed", "failed"),
+            )
+
+.orchestrator/test_worker_settlement_paths.py:169: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.orchestrator/test_worker_settlement_paths.py:103: in _settle
+    state, _activity = self._run_settlement(path, worker, pid_alive=pid_alive)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.orchestrator/test_worker_settlement_paths.py:122: in _run_settlement
+    config = supervisor.load_config(".orchestrator/config.json")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+_ WorkerSettlementPathTests.test_unsettled_failed_lifecycle_record_is_not_skipped _
+
+self = <test_worker_settlement_paths.WorkerSettlementPathTests testMethod=test_unsettled_failed_lifecycle_record_is_not_skipped>
+
+    def test_unsettled_failed_lifecycle_record_is_not_skipped(self) -> None:
+        worker = self._worker(status="failed", last_error="runner failed before queue settlement")
+        with mock.patch.object(supervisor, "preserve_dead_worker_worktree") as preserve:
+            self.assertEqual(
+>               self._settle(supervisor.poll_workers, worker, pid_alive=False),
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                ("failed", "failed"),
+            )
+
+.orchestrator/test_worker_settlement_paths.py:199: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.orchestrator/test_worker_settlement_paths.py:103: in _settle
+    state, _activity = self._run_settlement(path, worker, pid_alive=pid_alive)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.orchestrator/test_worker_settlement_paths.py:122: in _run_settlement
+    config = supervisor.load_config(".orchestrator/config.json")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.orchestrator/common.py:356: in load_config
+    config = load_config_document(config_file)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+path = PosixPath('/tmp/codex-1305-admission-fix/.orchestrator/config.json')
+
+    def load_config_document(path: Path) -> dict[str, Any]:
+        """Read and validate a single config document without any fallback source."""
+        if not path.is_file():
+>           raise ConfigError(
+                f"Orchestrator config does not exist: {path}. "
+                "Run `make bootstrap` for a development checkout or pass --config explicitly."
+            )
+E           common.ConfigError: Orchestrator config does not exist: /tmp/codex-1305-admission-fix/.orchestrator/config.json. Run `make bootstrap` for a development checkout or pass --config explicitly.
+
+.orchestrator/common.py:294: ConfigError
+=============================== warnings summary ===============================
+.orchestrator/test_supervisor.py::SupervisorFailureLoopCoverageTests::test_runtime_state_save_serializes_two_real_writers
+.orchestrator/test_supervisor.py::SupervisorFailureLoopCoverageTests::test_runtime_state_save_serializes_two_real_writers
+  /tmp/codex-1305-admission-fix/.orchestrator/test_supervisor.py:17457: DeprecationWarning: This process (pid=4013810) is multi-threaded, use of fork() may lead to deadlocks in the child.
+    pid = os.fork()
+
+.orchestrator/test_supervisor_watchdog.py::SupervisorPidIdentityTests::test_zombie_child_is_not_alive
+  /tmp/codex-1305-admission-fix/.orchestrator/test_supervisor_watchdog.py:237: DeprecationWarning: This process (pid=4013810) is multi-threaded, use of fork() may lead to deadlocks in the child.
+    pid = os.fork()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED .orchestrator/test_cross_repo_terminal_gate.py::CrossRepoTerminalGateTests::test_done_rejects_and_records_active_child_blocker
+FAILED .orchestrator/test_supervisor.py::HumanContinuationApprovalSupervisorTests::test_consumes_valid_approval_once_and_returns_task_to_todo
+SUBFAILED(approval={'approval_id': 'apr-continuation-1', 'approval_type': 'human_ops_continuation', 'status': 'issued', 'task_id': 'ODP-CONTINUATION-001', ...}) .orchestrator/test_supervisor.py::HumanContinuationApprovalSupervisorTests::test_expired_scope_mismatch_and_replay_fail_closed
+SUBFAILED(approval={'approval_id': 'apr-continuation-1', 'approval_type': 'human_ops_continuation', 'status': 'issued', 'task_id': 'ODP-CONTINUATION-001', ...}) .orchestrator/test_supervisor.py::HumanContinuationApprovalSupervisorTests::test_expired_scope_mismatch_and_replay_fail_closed
+FAILED .orchestrator/test_supervisor.py::HumanContinuationApprovalSupervisorTests::test_production_deployment_title_does_not_block_review_churn_consumption
+FAILED .orchestrator/test_supervisor.py::ReviewHeadFreezeTests::test_approve_fails_closed_when_approved_head_cannot_be_resolved
+FAILED .orchestrator/test_supervisor.py::ReviewHeadFreezeTests::test_approve_refuses_to_overwrite_uncleared_approved_head
+FAILED .orchestrator/test_supervisor.py::ReviewHeadFreezeTests::test_approve_saves_approved_head_and_rejects_same_owner_reviewer
+FAILED .orchestrator/test_supervisor.py::ReviewHeadFreezeTests::test_command_done_fails_closed_when_delivery_checkout_sha_unresolved_or_collector_raises
+FAILED .orchestrator/test_supervisor.py::ReviewHeadFreezeTests::test_command_done_rejects_mutated_head
+FAILED .orchestrator/test_supervisor.py::ReviewHeadFreezeTests::test_done_refuses_when_resolved_head_is_the_merge_commit
+FAILED .orchestrator/test_supervisor.py::ReviewHeadFreezeTests::test_explicit_re_review_command
+SUBFAILED(head='None') .orchestrator/test_supervisor.py::ReviewHeadFreezeTests::test_restore_approved_fails_closed_when_head_unresolvable
+SUBFAILED(head='git down') .orchestrator/test_supervisor.py::ReviewHeadFreezeTests::test_restore_approved_fails_closed_when_head_unresolvable
+FAILED .orchestrator/test_supervisor.py::ReviewHeadFreezeTests::test_restore_approved_head_requires_the_missing_head_shape
+FAILED .orchestrator/test_supervisor.py::ReviewHeadFreezeTests::test_restore_approved_refreezes_the_reviewed_head_when_branch_unmoved
+FAILED .orchestrator/test_supervisor.py::ReviewHeadFreezeTests::test_restore_approved_refuses_without_a_durable_approved_head
+SUBFAILED(command='reopen') .orchestrator/test_supervisor.py::ReviewHeadFreezeTests::test_return_to_review_transitions_clear_and_preserve_the_right_heads
+SUBFAILED(command='handoff') .orchestrator/test_supervisor.py::ReviewHeadFreezeTests::test_return_to_review_transitions_clear_and_preserve_the_right_heads
+SUBFAILED(command='re_review') .orchestrator/test_supervisor.py::ReviewHeadFreezeTests::test_return_to_review_transitions_clear_and_preserve_the_right_heads
+FAILED .orchestrator/test_supervisor.py::ReviewHeadFreezeTests::test_staging_shape_closes_only_after_explicit_head_restoration
+FAILED .orchestrator/test_supervisor.py::SupervisorFailureLoopCoverageTests::test_status_check_http_422_failure_injection_outbox_transactional
+FAILED .orchestrator/test_supervisor.py::ProcessQueueAgentOverrideTests::test_post_merge_deleted_remote_branch_finalize_dispatch
+FAILED .orchestrator/test_worker_hard_inactivity.py::HardInactivityTerminationTests::test_quiet_worker_under_the_window_survives
+FAILED .orchestrator/test_worker_hard_inactivity.py::HardInactivityTerminationTests::test_worker_silent_on_disk_for_an_hour_is_terminated
+FAILED .orchestrator/test_worker_hard_inactivity.py::HardInactivityTerminationTests::test_worker_without_the_field_is_untouched
+FAILED .orchestrator/test_worker_hard_inactivity.py::HardInactivityTerminationTests::test_worker_writing_recently_survives
+FAILED .orchestrator/test_worker_hard_inactivity.py::HardInactivityTerminationTests::test_zero_disables_the_tier
+FAILED .orchestrator/test_worker_settlement_paths.py::WorkerSettlementPathTests::test_assignment_moved_dead_worker_preserves_its_worktree_exactly_once
+FAILED .orchestrator/test_worker_settlement_paths.py::WorkerSettlementPathTests::test_assignment_moved_dead_worker_records_one_preservation_outcome
+FAILED .orchestrator/test_worker_settlement_paths.py::WorkerSettlementPathTests::test_boot_does_not_retry_a_transient_failure
+FAILED .orchestrator/test_worker_settlement_paths.py::WorkerSettlementPathTests::test_boot_leaves_a_backoff_worker_alone
+FAILED .orchestrator/test_worker_settlement_paths.py::WorkerSettlementPathTests::test_boot_leaves_an_approval_parked_worker_alone
+FAILED .orchestrator/test_worker_settlement_paths.py::WorkerSettlementPathTests::test_both_paths_agree_on_a_silent_exit
+FAILED .orchestrator/test_worker_settlement_paths.py::WorkerSettlementPathTests::test_both_paths_agree_on_a_terminal_quota_failure
+FAILED .orchestrator/test_worker_settlement_paths.py::WorkerSettlementPathTests::test_dead_running_worker_preserves_worktree_before_failure_settlement
+FAILED .orchestrator/test_worker_settlement_paths.py::WorkerSettlementPathTests::test_failed_runner_marker_file_is_settled_before_terminal_skip
+FAILED .orchestrator/test_worker_settlement_paths.py::WorkerSettlementPathTests::test_failed_runner_marker_settles_without_refreshing_lease
+FAILED .orchestrator/test_worker_settlement_paths.py::WorkerSettlementPathTests::test_unsettled_failed_lifecycle_record_is_not_skipped
