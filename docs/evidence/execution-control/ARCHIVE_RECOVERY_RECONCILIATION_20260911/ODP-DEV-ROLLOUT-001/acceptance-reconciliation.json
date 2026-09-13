@@ -739,21 +739,9 @@
   "verification_command_receipts": [
     {
       "receipt_id": "rcpt-001-git-diff-check-target-base",
-      "command": "git diff --check a04010cde22a0337fdda05a6fa5146f70cc699f4 HEAD",
-      "repo": "alfloop-dev/odayplus",
-      "target_base": "a04010cde22a0337fdda05a6fa5146f70cc699f4",
-      "target_base_short": "a04010cde22a",
-      "inspected_paths": [
-        "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/README.md",
-        "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/acceptance-reconciliation.json",
-        "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/canonical-task-snapshots.json",
-        "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/verify_reconciliation.sh"
-      ],
       "status": "unknown_unretained_local_log",
-      "prior_reported_exit_code": 0,
-      "stdout": "",
-      "stderr": "",
-      "note": "原始本地執行 terminal handle/log 未在 worktree 留存，依驗證證據政策降格為 unknown_unretained_local_log；真實 clean diff 由 Reviewer 於 exact head 4445970 之獨立收據 (chunk a28e57, exit 0, wall_time 0.000009716s) 以及本次 base advance (a04010cd) clean merge 與 git diff --check exit 0 支持。"
+      "historical_claim_ref": "historical-receipts/unverified-owner-claims-f73589ff.json",
+      "note": "Prior local success claim withdrawn. No exit, output, duration or revision is inferred. Separate reviewer observations remain bound to their original exact heads."
     },
     {
       "receipt_id": "rcpt-002-retraction-bad-object-diagnostic",
@@ -762,7 +750,7 @@
       "target_base": "4b35121031d054178550beaa2ca3e6ee8e0a39eb (non-existent bad object)",
       "observed_at": "2026-09-12T09:23:08Z",
       "exit_code": 128,
-      "duration_seconds": 0.000007358,
+      "duration_seconds": 7.358e-06,
       "stdout": "",
       "stderr": "fatal: bad object 4b35121031d054178550beaa2ca3e6ee8e0a39eb",
       "summary": "診斷確認先前引用之 4b35121031d054178550beaa2ca3e6ee8e0a39eb 為筆誤，執行必然 exit 128；已正式撤回該不實成功記錄。"
@@ -774,46 +762,22 @@
       "target_base": "4b35121031d0738ff7c529810cf1b2e267161083",
       "observed_at": "2026-09-12T09:23:08Z",
       "exit_code": 0,
-      "duration_seconds": 0.000012862,
+      "duration_seconds": 1.2862e-05,
       "stdout": "",
       "stderr": "",
       "summary": "Codex reviewer 於 PR #1320 exact head cfe569e1 獨立實測 exit 0，已修正為真實 exact baseline SHA。"
     },
     {
       "receipt_id": "rcpt-004-standalone-script-schema-and-dag-validation",
-      "command": "bash docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/verify_reconciliation.sh",
-      "script_path": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/verify_reconciliation.sh",
-      "script_sha256": "8ab0b4a50fbb6876300e8fb827fc023e708cf150ac174f77577a7c3423da383d",
-      "snapshots_file": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/canonical-task-snapshots.json",
-      "snapshots_sha256": "89878cdcf1fff8ba8dd4ab1998366e30b58f7f5d59c4ec168a3dfc139e69d204",
-      "repo": "alfloop-dev/odayplus",
-      "target_base": "a04010cde22a0337fdda05a6fa5146f70cc699f4",
       "status": "unknown_unretained_local_log",
-      "prior_reported_exit_code": 0,
-      "reviewer_verification_reference": "/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260912T103205Z-75b23b18/ODP-DEV-ROLLOUT-001-review-verification.json",
-      "reviewer_tool_receipt": {
-        "chunk_id": "6b0c53",
-        "wall_time_seconds": 0.009606862,
-        "exit_code": 0
-      },
-      "stdout": "================================================================================\nODP-DEV-ROLLOUT-001 Acceptance Reconciliation & Canonical DAG Verification\nEvidence Directory: /tmp/pantheon-worker-worktrees/pantheon/odp-dev-rollout-001/docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001\nRepository Root:    /tmp/pantheon-worker-worktrees/pantheon/odp-dev-rollout-001\n================================================================================\n================================================================================\nODP-DEV-ROLLOUT-001 Acceptance Reconciliation Verification: ALL CHECKS PASSED\n- Target Baseline: a04010cde22a0337fdda05a6fa5146f70cc699f4 (a04010cde22a, verified commit & ancestor)\n- Evaluated Nodes: 17 canonical task nodes\n- Derived DAG Edges: 17 dependency edges\n- Edge Set SHA-256: d1db3233c193f7ce93e0895efb227d3314376e68724db0bca7ae0579438fef4d\n- Cycle Detected: False (Strict DAG confirmed)\n- Acceptance Criteria: 5/5 reconciled (Disposition: false_done_superseded)\n- Successor Remediation Task: ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001\n- PR #1109 Merge Commit Ancestry: 640e35415aa33d5d53af21a8a527431b8f751cea -> a04010cde22a0337fdda05a6fa5146f70cc699f4 confirmed\n================================================================================\n",
-      "stderr": "",
-      "summary": "獨立驗證腳本執行通過：5 條驗收條款核對正確、17 節點 17 邊 DAG 無環確認、邊集 SHA-256 (d1db3233…) 比對一致、快照檔與引用 SHA-256 (89878cdc…) 比對一致、PR #1109 ancestry 確認。"
+      "historical_claim_ref": "historical-receipts/unverified-owner-claims-f73589ff.json",
+      "note": "Prior local success claim withdrawn. No exit, output, duration or revision is inferred. Separate reviewer observations remain bound to their original exact heads."
     },
     {
       "receipt_id": "rcpt-005-pr1109-ancestry-verification",
-      "command": "git merge-base --is-ancestor 640e35415aa33d5d53af21a8a527431b8f751cea a04010cde22a0337fdda05a6fa5146f70cc699f4",
-      "repo": "alfloop-dev/odayplus",
-      "source_archive_reference": "ai-task-archive/tasks/ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001.json",
-      "pr_number": 1109,
-      "merge_commit_sha": "640e35415aa33d5d53af21a8a527431b8f751cea",
-      "merged_at": "2026-09-01T14:49:31Z",
-      "target_base": "a04010cde22a0337fdda05a6fa5146f70cc699f4",
-      "exit_code": 0,
-      "duration_seconds": "unknown",
-      "stdout": "",
-      "stderr": "",
-      "summary": "確認 PR #1109 merge commit (640e35415aa3) 已合入 dev 且為 target_base (a04010cde22a) 之 ancestor。"
+      "status": "unknown_unretained_local_log",
+      "historical_claim_ref": "historical-receipts/unverified-owner-claims-f73589ff.json",
+      "note": "Prior local success claim withdrawn. No exit, output, duration or revision is inferred. Separate reviewer observations remain bound to their original exact heads."
     },
     {
       "receipt_id": "rcpt-006-candidate-gate-verification-reused",
@@ -830,5 +794,34 @@
       "stderr": "",
       "summary": "重用 ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002 (PR #1292, merge 3613faff) 之歷史驗證收據。Producer run 34179207603 (build/sign success, step 20 fail exit 1) 與 Handoff run 34179791241 (digest reuse, release artifacts success, deploy skipped) 職責已明確區分。"
     }
-  ]
+  ],
+  "focused_verification_20260913": {
+    "receipt_ref": "verification-20260913/receipt.json",
+    "scope": "New contributor observation of the exact worktree input hashes recorded by capture_verification.py; does not replace historical runtime or approval evidence.",
+    "actor": "Codex",
+    "retry_reason": "Latest review identified unretained raw results or results bound to different inputs. Preserve history and capture only the changed evidence assertions once."
+  },
+  "reused_reviewer_observations": [
+    {
+      "raw_result_ref": "historical-receipts/reviewer-103205Z-75b23b18.json",
+      "sha256": "ffa5f683b288605cf7e63c5310c8129164f85748803baa77a5aa561caf3ab630",
+      "reviewed_head": "4445970b0d31453b577e1bdab2ae6444074d3f08",
+      "scope": "Original unchanged reviewer result; only applies to its executed head and input hashes."
+    },
+    {
+      "raw_result_ref": "historical-receipts/reviewer-105005Z-5c7dc8bd.json.gz",
+      "sha256": "57969d9437a4c0f7f963ebc49c2ea7565577bb85097ff2151a0dca5123218974",
+      "reviewed_head": "f73589ff3022e88aa934b68306b0c175db38cf1f",
+      "scope": "Original unchanged reviewer result; only applies to its executed head and input hashes.",
+      "uncompressed_sha256": "5a89a053b6df246524eceb09bb605fbe98cf7fcaa30e4a2eac99c77e9949f6d4",
+      "encoding": "gzip; decompress returns exact reviewer original bytes, including original trailing blank line"
+    }
+  ],
+  "canonical_source_supplement": {
+    "raw_result_ref": "historical-receipts/reviewer-105005Z-5c7dc8bd.json.gz (decompress, then /canonical_sources_observation)",
+    "extractor_ref": "historical-receipts/review_canonical_sources.py",
+    "extractor_sha256": "064966b5c93e84727f8fa779943b7f9c08e53cfd0f74684d40af70aa51fd50d0",
+    "observation_time": "2026-09-12T10:52:17.712267+00:00",
+    "note": "Original successful 17-node extraction and earlier failed attempt retained byte-for-byte in reviewer sidecar. Historical 09:46 extraction remains unknown. DPF and staging IaC archived done at the later observation; dependency edges unchanged."
+  }
 }

@@ -196,25 +196,18 @@
 
 ---
 
-## 6. 當前驗證收據與命令 (Verification Commands & Receipts)
+## 6. 收據來源修正（2026-09-13）
 
-### 6.1 靜態與結構驗證命令
+先前 rcpt-001、004、005 的本地成功聲稱沒有保留原始執行結果，已降為 unknown，原文保存於 [unverified-owner-claims-f73589ff.json](historical-receipts/unverified-owner-claims-f73589ff.json)。它們不得支持現在或歷史版本通過。
 
-```bash
-# 1. Git Diff 格式檢查（對準當前 origin/dev base advance 目標 a04010cde22a）
-git diff --check a04010cde22a0337fdda05a6fa5146f70cc699f4 HEAD
+兩份 reviewer 原件直接按 bytes 複製，原 stdout、时间、head、input hashes 和工具退出碼均未改寫：
 
-# 2. 執行獨立驗證腳本（驗證機讀 JSON、17 節點快照與 DAG 邊集推導）
-bash docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/verify_reconciliation.sh
-```
+- [10:33 原件](historical-receipts/reviewer-103205Z-75b23b18.json)：只適用 `4445970b0d31453b577e1bdab2ae6444074d3f08`／base `4298fc15...`，不可套用新版輸入。
+- [10:51–10:52 原件](historical-receipts/reviewer-105005Z-5c7dc8bd.json.gz)：綁定 `f73589ff3022e88aa934b68306b0c175db38cf1f` 四檔 hash，包含 diff、verifier（含 PR #1109 ancestry）及 17 節點 canonical 擷取的原始工具回應。擷取失敗及後續修正重試亦原樣保存。
+- [原擷取程式](historical-receipts/review_canonical_sources.py)：SHA-256 與該 reviewer 原輸出一致；09:46 舊擷取仍為 unknown，沒有回填。較晚觀察 DPF／staging IaC 已歸檔 done 是時間差，17 條依賴邊未變。
 
-### 6.2 驗證執行結果與可追溯原始收據 (Verification Execution Receipts)
+本次文件修改由 [capture_verification.py](capture_verification.py) 做一次 focused 驗證，實際輸入檔 hash、git HEAD/tree、命令 argv、開始／完成時間、單調時鐘耗時、process exit 和 stdout/stderr 原件保存於 [本次收據](verification-20260913/receipt.json)。受驗內容以 worktree hashes 為準，沒有把前一個 HEAD 說成尚未 commit 的交付版本。這只驗證補證文件，未完成 live gate、原條款與正常審查流程仍保留。
 
-| 收據 ID | 驗證項目與執行命令 | 基準 SHA / 觀測時間 | 執行時長 | 退出碼 | 原始結果與判定 |
-|---|---|---|---|---|---|
-| `rcpt-001` | **Git Diff 格式檢查**<br>`git diff --check a04010cde22a0337fdda05a6fa5146f70cc699f4 HEAD` | `a04010cde22a`<br>`2026-09-12` | `unknown` | `0` (prior exit 0) | 原始本地執行 handle 未留存，降格為 `unknown_unretained_local_log`。由 Reviewer exact head `4445970` 獨立收據（chunk `a28e57`, exit 0, wall_time 0.000009716s）及本次 base advance (`a04010cd`) clean merge 與 `git diff --check` exit 0 支持。 |
-| `rcpt-002` | **撤回診斷記錄**<br>`git diff --check 4b35121031d054178550beaa2ca3e6ee8e0a39eb HEAD` | `4b35121031d0...`<br>`2026-09-12T09:23:08Z` | `0.000007358s` | `128` | stderr: `fatal: bad object 4b35121031d054178550beaa2ca3e6ee8e0a39eb`。確認筆誤並正式撤回不實成功記錄。 |
-| `rcpt-003` | **歷史 Exact Head 覆核 (Reused)**<br>`git diff --check 4b35121031d0738ff7c529810cf1b2e267161083 cfe569e1b4692af4c5c5c80d87c881f64d510593` | `4b35121031d0`<br>`2026-09-12T09:23:08Z` | `0.000012862s` | `0` | Codex reviewer 於 PR #1320 exact head `cfe569e1` 獨立實測 exit 0，精確 baseline SHA 4b35121031d0738ff7c529810cf1b2e267161083。 |
-| `rcpt-004` | **獨立腳本 JSON 與 17 節點 17 邊 DAG 驗證**<br>`bash docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/verify_reconciliation.sh` | `a04010cde22a`<br>`2026-09-12` | `unknown` | `0` (prior exit 0) | 腳本 SHA-256: `8ab0b4a50fbb6876300e8fb827fc023e708cf150ac174f77577a7c3423da383d`<br>快照 SHA-256: `89878cdcf1fff8ba8dd4ab1998366e30b58f7f5d59c4ec168a3dfc139e69d204`<br>Reviewer 獨立實測收據：`/home/lupin/odayplus/.orchestrator/worker-runtime/scratch/codex-20260912T103205Z-75b23b18/ODP-DEV-ROLLOUT-001-review-verification.json`（chunk `6b0c53`, exit 0, wall_time 0.009606862s）。stdout: `ODP-DEV-ROLLOUT-001 Acceptance Reconciliation Verification: ALL CHECKS PASSED`（5 criteria、DAG 17 節點 17 邊無環確認、edge hash `d1db3233c193f7ce93e0895efb227d3314376e68724db0bca7ae0579438fef4d` 一致、快照檔與引用 SHA-256 `89878cdc...` 一致、PR #1109 ancestry 確認）。 |
-| `rcpt-005` | **PR 1109 Ancestry 驗證**<br>`git merge-base --is-ancestor 640e35415aa33d5d53af21a8a527431b8f751cea a04010cde22a0337fdda05a6fa5146f70cc699f4` | `640e35415aa3`<br>`2026-09-12` | `unknown` | `0` | 參照 `ai-task-archive/tasks/ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001.json`（PR #1109 merged at `2026-09-01T14:49:31Z`），實測確認已為 target_base (`a04010cde22a`) 之 ancestor。 |
-| `rcpt-006` | **Run 34179207603 / Run 34179791241 職責驗證 (Reused)**<br>`bash docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/verify_live_artifact_binding.sh /tmp/odp-run-34179791241 /tmp/odp-candidate-c` | `596b9c9a1788`<br>`2026-09-08T05:05:00Z` | `unknown` | `0` | 參照 `alfloop-dev/odayplus@3613faff582bd1c5a2c9b2ae5b5cd390d8be381f:docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/verification-transcript.txt` 及同 commit README。Producer run 34179207603（02:11:41Z – 02:20:27Z，step 19 成功 build/push/sign 4 images，step 20 exit 1）；Handoff run 34179791241（02:21:49Z – 02:26:33Z，step 19 重用 digest 離線 cosign verify，steps 20-23 成功發布 6 份 release artifacts，deploy/lease/watch skipped）。原始 transcript 未記量測 duration 標為 unknown。 |
+歷史 candidate 收據 rcpt-006 維持 exact commit/path 引用；既有 build、產品套件與部署均未重跑。
+
+首次 focused diff 因原 reviewer JSON 自帶結尾空白行而 exit 2；該失敗原件保存於 `historical-receipts/focused-capture-attempt-1/`。為保持原 bytes，改用 gzip 保存，解壓 SHA-256 不變；修正後再驗證本次文件，沒有竄改歷史原件。
