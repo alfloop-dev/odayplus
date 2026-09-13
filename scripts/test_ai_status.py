@@ -545,6 +545,116 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, r"Only the owner \(Codex\) can submit"):
                 ai_status.command_submit_review(self.state, ["REG-002", "1305", "Merged recovery review"])
 
+    def test_merged_review_submission_helper_lease_authorized_for_open_but_rejected_for_merged(self) -> None:
+        source_sha = "1111111122222222333333334444444455555555"
+        merge_commit = "9999999988888888777777776666666655555555"
+        task = self.state["tasks"][0]
+        # Active helper execution lease for Antigravity2
+        task["helper_execution_lease"] = {
+            "claimed_by": "Antigravity2",
+            "lease_expires_at": "2099-01-01T00:00:00Z",
+        }
+
+        pr_open = {
+            "number": 1305,
+            "state": "OPEN",
+            "url": "https://github.com/example/repo/pull/1305",
+            "headRefName": "task/REG-002",
+            "headRefOid": source_sha,
+            "baseRefName": "dev",
+            "isDraft": False,
+        }
+        pr_merged = {
+            "number": 1305,
+            "state": "MERGED",
+            "url": "https://github.com/example/repo/pull/1305",
+            "headRefName": "task/REG-002",
+            "headRefOid": source_sha,
+            "baseRefName": "dev",
+            "isDraft": False,
+            "mergedAt": "2026-09-13T06:53:45Z",
+            "mergeCommit": {"oid": merge_commit},
+            "statusCheckRollup": [
+                {"__typename": "CheckRun", "name": "product", "status": "COMPLETED", "conclusion": "SUCCESS"},
+            ],
+        }
+
+        # 1. Helper with valid lease CAN submit OPEN PR
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Antigravity2"}, clear=False),
+            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+            mock.patch.object(ai_status, "task_repository_id", return_value="pantheon"),
+            mock.patch.object(ai_status, "repository_local_path", return_value=ai_status.ROOT),
+            mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
+            mock.patch.object(ai_status, "run_gh_json_command", return_value=pr_open),
+            mock.patch.object(ai_status, "resolve_task_sha", return_value=source_sha),
+            mock.patch.object(ai_status, "validate_delivery_identity", return_value=[]),
+        ):
+            submission = ai_status.review_submission_for_task(task, "1305", actor="Antigravity2")
+            self.assertEqual(submission["pr_number"], 1305)
+
+        # 2. Helper with valid lease CANNOT submit MERGED PR recovery (owner-only)
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Antigravity2"}, clear=False),
+            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+            mock.patch.object(ai_status, "task_repository_id", return_value="pantheon"),
+            mock.patch.object(ai_status, "repository_local_path", return_value=ai_status.ROOT),
+            mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
+            mock.patch.object(ai_status, "run_gh_json_command", return_value=pr_merged),
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=True),
+            mock.patch.object(ai_status, "validate_delivery_identity", return_value=[]),
+        ):
+            with self.assertRaisesRegex(SystemExit, r"merged PR recovery is owner-only \(Codex\); helper Antigravity2 cannot submit"):
+                ai_status.command_submit_review(self.state, ["REG-002", "1305", "Helper submit attempt"])
+
+        # 3. Task owner CAN submit MERGED PR recovery
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+            mock.patch.object(ai_status, "task_repository_id", return_value="pantheon"),
+            mock.patch.object(ai_status, "repository_local_path", return_value=ai_status.ROOT),
+            mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
+            mock.patch.object(ai_status, "run_gh_json_command", return_value=pr_merged),
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=True),
+            mock.patch.object(ai_status, "validate_delivery_identity", return_value=[]),
+        ):
+            ai_status.command_submit_review(self.state, ["REG-002", "1305", "Owner submit success"])
+            self.assertEqual(task["status"], "review")
+            self.assertEqual(task["review_submission"]["submitted_by"], "Codex")
+
+    def test_merged_review_submission_with_pending_review_gate_and_green_ci(self) -> None:
+        source_sha = "1111111122222222333333334444444455555555"
+        merge_commit = "9999999988888888777777776666666655555555"
+        pr_with_pending_gate = {
+            "number": 1305,
+            "state": "MERGED",
+            "url": "https://github.com/example/repo/pull/1305",
+            "headRefName": "task/REG-002",
+            "headRefOid": source_sha,
+            "baseRefName": "dev",
+            "isDraft": False,
+            "mergedAt": "2026-09-13T06:53:45Z",
+            "mergeCommit": {"oid": merge_commit},
+            "statusCheckRollup": [
+                {"__typename": "CheckRun", "name": "product", "status": "COMPLETED", "conclusion": "SUCCESS"},
+                {"__typename": "CheckRun", "name": "orchestrator", "status": "COMPLETED", "conclusion": "SUCCESS"},
+                {"__typename": "StatusContext", "context": "task-review-gate", "state": "PENDING"},
+            ],
+        }
+        task = self.state["tasks"][0]
+        with (
+            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+            mock.patch.object(ai_status, "task_repository_id", return_value="pantheon"),
+            mock.patch.object(ai_status, "repository_local_path", return_value=ai_status.ROOT),
+            mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
+            mock.patch.object(ai_status, "run_gh_json_command", return_value=pr_with_pending_gate),
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=True),
+            mock.patch.object(ai_status, "validate_delivery_identity", return_value=[]),
+        ):
+            submission = ai_status.review_submission_for_task(task, "1305", actor="Codex")
+            self.assertEqual(submission["ci_status"], "success")
+            self.assertEqual(len(submission["ci_checks"]), 2)
+
     def test_merged_review_submission_rejects_closed_unmerged(self) -> None:
         source_sha = "1111111122222222333333334444444455555555"
         pr = {
@@ -771,6 +881,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             ],
         }
         task = self.state["tasks"][0]
+        # Real Git ancestry and real validate_delivery_identity execution (NO mocking of validate_delivery_identity!)
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
             mock.patch.object(ai_status, "status_runtime_config", return_value={}),
@@ -778,23 +889,162 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             mock.patch.object(ai_status, "repository_local_path", return_value=temp_dir),
             mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
             mock.patch.object(ai_status, "run_gh_json_command", return_value=pr),
-            mock.patch.object(ai_status, "validate_delivery_identity", return_value=[]),
         ):
-            submission = ai_status.review_submission_for_task(task, "1305")
+            submission = ai_status.review_submission_for_task(task, "1305", actor="Codex")
             self.assertEqual(submission["pr_number"], 1305)
             self.assertEqual(submission["remote_sha"], source_sha)
             self.assertEqual(submission["merge_commit"], merge_commit)
             self.assertEqual(submission["ci_status"], "success")
 
-            # Test idempotency on repeated submit_review
+            # Positive submission via command
             ai_status.command_submit_review(self.state, ["REG-002", "1305", "First submission"])
             self.assertEqual(task["status"], "review")
             self.assertEqual(task["next"], "First submission")
 
-            ai_status.command_submit_review(self.state, ["REG-002", "1305", "Second submission"])
-            self.assertEqual(task["status"], "review")
-            self.assertEqual(task["next"], "Second submission")
-            self.assertEqual(task["review_submission"]["remote_sha"], source_sha)
+        # Now test negative delivery identity with an invalid commit trailer
+        git("checkout", "-q", "-b", "task/BAD-001", "dev")
+        (temp_dir / "bad.txt").write_text("bad feature\n", encoding="utf-8")
+        git("add", "-A")
+        # Commit missing Reviewer trailer
+        git("commit", "-q", "-m", "BAD-001: bad commit\n\nTask-ID: BAD-001\nLLM-Agent: Codex")
+        bad_source_sha = git("rev-parse", "HEAD")
+        git("checkout", "-q", "dev")
+        git("merge", "--no-ff", "-q", "-m", "Merge pull request #1306 from task/BAD-001", "task/BAD-001")
+        bad_merge_commit = git("rev-parse", "HEAD")
+
+        bad_pr = {
+            "number": 1306,
+            "state": "MERGED",
+            "url": "https://github.com/example/repo/pull/1306",
+            "headRefName": "task/BAD-001",
+            "headRefOid": bad_source_sha,
+            "baseRefName": "dev",
+            "isDraft": False,
+            "mergedAt": "2026-09-13T06:55:00Z",
+            "mergeCommit": {"oid": bad_merge_commit},
+            "statusCheckRollup": [
+                {"__typename": "CheckRun", "name": "product", "status": "COMPLETED", "conclusion": "SUCCESS"},
+            ],
+        }
+        bad_task = {
+            "id": "BAD-001",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "branch": "task/BAD-001",
+            "status": "in_progress",
+        }
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+            mock.patch.object(ai_status, "task_repository_id", return_value="pantheon"),
+            mock.patch.object(ai_status, "repository_local_path", return_value=temp_dir),
+            mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
+            mock.patch.object(ai_status, "run_gh_json_command", return_value=bad_pr),
+        ):
+            with self.assertRaisesRegex(SystemExit, r"delivery identity preflight failed"):
+                ai_status.review_submission_for_task(bad_task, "1306", actor="Codex")
+
+    def test_merged_review_submission_idempotency_preserves_approval_and_provenance(self) -> None:
+        self.state["handoffs"] = []
+        source_sha = "1111111122222222333333334444444455555555"
+        merge_commit = "9999999988888888777777776666666655555555"
+        pr = {
+            "number": 1305,
+            "state": "MERGED",
+            "url": "https://github.com/example/repo/pull/1305",
+            "headRefName": "task/REG-002",
+            "headRefOid": source_sha,
+            "baseRefName": "dev",
+            "isDraft": False,
+            "mergedAt": "2026-09-13T06:53:45Z",
+            "mergeCommit": {"oid": merge_commit},
+            "statusCheckRollup": [
+                {"__typename": "CheckRun", "name": "product", "status": "COMPLETED", "conclusion": "SUCCESS"},
+            ],
+        }
+        task = self.state["tasks"][0]
+
+        # 1. Initial submission
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+            mock.patch.object(ai_status, "task_repository_id", return_value="pantheon"),
+            mock.patch.object(ai_status, "repository_local_path", return_value=ai_status.ROOT),
+            mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
+            mock.patch.object(ai_status, "run_gh_json_command", return_value=pr),
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=True),
+            mock.patch.object(ai_status, "validate_delivery_identity", return_value=[]),
+        ):
+            ai_status.command_submit_review(self.state, ["REG-002", "1305", "Initial submission"])
+
+        self.assertEqual(task["status"], "review")
+        initial_verified_at = task["review_submission"]["verified_at"]
+        initial_submitted_by = task["review_submission"]["submitted_by"]
+        self.assertEqual(initial_submitted_by, "Codex")
+        pending = [h for h in self.state["handoffs"] if h["status"] != "done"]
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["to"], "Claude")
+        self.assertEqual(len(self.state["handoffs"]), 1)
+
+        # 2. Re-submitting while in review: preserves verified_at & submitted_by, does not duplicate handoff
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+            mock.patch.object(ai_status, "task_repository_id", return_value="pantheon"),
+            mock.patch.object(ai_status, "repository_local_path", return_value=ai_status.ROOT),
+            mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
+            mock.patch.object(ai_status, "run_gh_json_command", return_value=pr),
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=True),
+            mock.patch.object(ai_status, "validate_delivery_identity", return_value=[]),
+        ):
+            ai_status.command_submit_review(self.state, ["REG-002", "1305", "Duplicate submission"])
+
+        self.assertEqual(task["status"], "review")
+        self.assertEqual(task["review_submission"]["verified_at"], initial_verified_at)
+        self.assertEqual(task["review_submission"]["submitted_by"], initial_submitted_by)
+        pending = [h for h in self.state["handoffs"] if h["status"] != "done"]
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["to"], "Claude")
+        self.assertEqual(len(self.state["handoffs"]), 1)
+
+        # 3. Reviewer approves task -> review_approved
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
+            mock.patch.object(ai_status, "resolve_task_sha", return_value=None),
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=True),
+            mock.patch.object(ai_status, "task_pr_ci_status", return_value=("MERGED", "success")),
+        ):
+            ai_status.command_approve(self.state, ["REG-002", "LGTM"])
+
+        self.assertEqual(task["status"], "review_approved")
+        self.assertEqual(task["approved_head"], source_sha)
+        pending = [h for h in self.state["handoffs"] if h["status"] != "done"]
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["to"], "Codex")
+        self.assertEqual(len(self.state["handoffs"]), 2)
+
+        # 4. Finalize retry / repeated submit_review on review_approved task:
+        # Must NOT demote back to review, must NOT wipe approved_head, must preserve provenance!
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+            mock.patch.object(ai_status, "task_repository_id", return_value="pantheon"),
+            mock.patch.object(ai_status, "repository_local_path", return_value=ai_status.ROOT),
+            mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
+            mock.patch.object(ai_status, "run_gh_json_command", return_value=pr),
+            mock.patch.object(ai_status, "git_command_succeeds", return_value=True),
+            mock.patch.object(ai_status, "validate_delivery_identity", return_value=[]),
+        ):
+            ai_status.command_submit_review(self.state, ["REG-002", "1305", "Retry from finalize"])
+
+        self.assertEqual(task["status"], "review_approved")
+        self.assertEqual(task["approved_head"], source_sha)
+        self.assertEqual(task["review_submission"]["verified_at"], initial_verified_at)
+        self.assertEqual(task["review_submission"]["submitted_by"], initial_submitted_by)
+        pending = [h for h in self.state["handoffs"] if h["status"] != "done"]
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["to"], "Codex")
+        self.assertEqual(len(self.state["handoffs"]), 2)
 
     def test_reviewer_reopen_creates_handoff_back_to_owner(self) -> None:
         self.state["tasks"][0]["status"] = "review"

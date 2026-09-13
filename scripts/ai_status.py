@@ -2676,7 +2676,11 @@ def latest_status_check_runs(
     return latest, superseded
 
 
-def normalized_green_pr_checks(pr_status: dict[str, Any]) -> list[dict[str, Any]]:
+def normalized_green_pr_checks(
+    pr_status: dict[str, Any],
+    *,
+    exclude_review_gate: bool = False,
+) -> list[dict[str, Any]]:
     """Return auditable successful PR checks, failing closed on every other shape."""
 
     raw_rollup = pr_status.get("statusCheckRollup")
@@ -2693,8 +2697,11 @@ def normalized_green_pr_checks(pr_status: dict[str, Any]) -> list[dict[str, Any]
         if not isinstance(raw_check, dict):
             failed.append(f"check-{index} (malformed)")
             continue
-        check_type = str(raw_check.get("__typename") or "").strip()
         name = str(raw_check.get("name") or raw_check.get("context") or f"check-{index}").strip()
+        context = str(raw_check.get("context") or "").strip()
+        if exclude_review_gate and (name == "task-review-gate" or context == "task-review-gate"):
+            continue
+        check_type = str(raw_check.get("__typename") or "").strip()
         conclusion = str(raw_check.get("conclusion") or "").upper()
         status = str(raw_check.get("status") or "").upper()
         state = str(raw_check.get("state") or "").upper()
@@ -2722,6 +2729,11 @@ def normalized_green_pr_checks(pr_status: dict[str, Any]) -> list[dict[str, Any]
             }
         )
 
+    if not checks:
+        raise SystemExit(
+            "Cannot finalize task: merged PR has no verifiable CI status checks."
+        )
+
     if failed or pending:
         issues: list[str] = []
         if failed:
@@ -2736,12 +2748,14 @@ def normalized_green_pr_checks(pr_status: dict[str, Any]) -> list[dict[str, Any]
     for index, raw_check in enumerate(superseded_checks, start=1):
         if not isinstance(raw_check, dict):
             continue
+        name = str(raw_check.get("name") or raw_check.get("context") or f"superseded-{index}").strip()
+        context = str(raw_check.get("context") or "").strip()
+        if exclude_review_gate and (name == "task-review-gate" or context == "task-review-gate"):
+            continue
         checks.append(
             {
                 "type": str(raw_check.get("__typename") or "").strip() or None,
-                "name": str(
-                    raw_check.get("name") or raw_check.get("context") or f"superseded-{index}"
-                ).strip(),
+                "name": name,
                 "status": str(raw_check.get("status") or raw_check.get("state") or "").upper() or None,
                 "conclusion": str(
                     raw_check.get("conclusion") or raw_check.get("state") or ""
@@ -6689,10 +6703,15 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
-def review_submission_for_task(task: dict[str, Any], pr_number: str) -> dict[str, Any]:
-    """Return immutable evidence that an open or merged task PR exists on GitHub.
+def review_submission_for_task(
+    task: dict[str, Any],
+    pr_number: str,
+    *,
+    actor: str | None = None,
+) -> dict[str, Any]:
+    """Inspect and validate a GitHub PR as atomic evidence for review submission.
 
-    A local branch, a task handoff note, and a GitHub check are all insufficient
+    Reviewers run with an immutable checked-out commit, and never gather PR
     evidence on their own. The reviewer must be looking at a remotely published
     task branch or a verified merged PR which carries its exact immutable SHA into the
     configured integration branch. Keeping this check here makes the status
@@ -6819,6 +6838,15 @@ def review_submission_for_task(task: dict[str, Any], pr_number: str) -> dict[str
         }
 
     if pr_state == "MERGED":
+        if actor is not None:
+            norm_owner = canonical_agent_name(task.get("owner"))
+            norm_actor = canonical_agent_name(actor)
+            if norm_actor != norm_owner:
+                raise SystemExit(
+                    f"Cannot submit {task_id} for review: merged PR recovery is owner-only ({task.get('owner')}); "
+                    f"helper {actor} cannot submit merged PR recovery."
+                )
+
         merged_at = str(pr.get("mergedAt") or "").strip()
         if not merged_at:
             raise SystemExit(
@@ -6858,13 +6886,17 @@ def review_submission_for_task(task: dict[str, Any], pr_number: str) -> dict[str
                 f"Cannot submit {task_id} for review: merge commit {merge_commit[:8]} is not reachable in {target_ref} history."
             )
 
-        # Verify all required CI checks concluded with terminal SUCCESS
-        checks = normalized_green_pr_checks(pr)
+        # Verify all required CI checks concluded with terminal SUCCESS (excluding task-review-gate)
+        checks = normalized_green_pr_checks(pr, exclude_review_gate=True)
+
+        pre_merge_base = f"{merge_commit}^1"
+        if not git_command_succeeds(["rev-parse", "--verify", f"{pre_merge_base}^{{commit}}"], cwd=repository_root):
+            pre_merge_base = base_branch
 
         identity_errors = validate_delivery_identity(
             repository_root,
             task_id=task_id,
-            base=base_branch,
+            base=pre_merge_base,
             head=head_oid,
             expected_branch=branch,
             actual_branch=head_branch,
@@ -6911,13 +6943,43 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
     if not reviewer:
         raise SystemExit(f"{task_id} has no assigned reviewer")
 
-    submission = review_submission_for_task(task, pr_number)
+    submission = review_submission_for_task(task, pr_number, actor=actor)
     # Who authored what is now under review. The owner field can legitimately be
     # rewritten later -- by an operator, or by a reconcile pass -- and once it is,
     # nothing else on the record still names the account whose commits the
     # reviewer is supposed to be independent of. Recorded here, at the one moment
     # it is certain, so the independence check keeps working afterwards.
     submission["submitted_by"] = actor
+
+    existing_sub = task.get("review_submission")
+    is_same_submission = (
+        isinstance(existing_sub, dict)
+        and existing_sub.get("pr_number") == submission["pr_number"]
+        and str(existing_sub.get("remote_sha") or "").strip() == str(submission.get("remote_sha") or "").strip()
+        and str(existing_sub.get("branch") or "").strip() == str(submission.get("branch") or "").strip()
+    )
+
+    if is_same_submission:
+        # Stable submission provenance: preserve earlier verified_at and submitted_by
+        if "verified_at" in existing_sub:
+            submission["verified_at"] = existing_sub["verified_at"]
+        if "submitted_by" in existing_sub:
+            submission["submitted_by"] = existing_sub["submitted_by"]
+
+        current_status = str(task.get("status") or "").lower()
+        if current_status == "review_approved" and task.get("approved_head") == submission["remote_sha"]:
+            # Complete idempotent no-op: preserve review_approved state, approved_head, and handoffs
+            task["review_submission"] = submission
+            return
+
+        if current_status == "review":
+            # Already in review for the same head: update submission metadata without duplicate handoffs or wiping approval
+            task["review_submission"] = submission
+            if message and task.get("next") != message:
+                task["next"] = message
+                task["last_update"] = iso_now()
+            return
+
     timestamp = iso_now()
     task["status"] = "review"
     task["last_update"] = timestamp

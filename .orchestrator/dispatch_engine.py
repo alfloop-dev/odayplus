@@ -1451,8 +1451,20 @@ def is_task_review_dispatch_eligible(
         )
     except Exception:
         return False
-    if not current_head or current_head != submitted_sha:
-        return False
+
+    is_merged_submission = bool(
+        isinstance(submission, dict)
+        and (submission.get("merged_at") or submission.get("merge_commit"))
+    )
+
+    if not is_merged_submission:
+        if not current_head or current_head != submitted_sha:
+            return False
+    else:
+        # For merged submission, remote branch may be deleted upon merge (current_head is None)
+        # or retained at submitted_sha. If retained and drifted, reject.
+        if current_head and current_head != submitted_sha:
+            return False
 
     # Exact head required CI terminal success check
     try:
@@ -1461,8 +1473,13 @@ def is_task_review_dispatch_eligible(
         return False
     if ci_status != "success":
         return False
-    if str(pr_status or "").strip().upper() == "MERGED":
-        return False
+    pr_state_str = str(pr_status or "").strip().upper()
+    if not is_merged_submission:
+        if pr_state_str == "MERGED":
+            return False
+    else:
+        if pr_state_str not in {"MERGED", "OPEN"}:
+            return False
 
     return True
 
@@ -2883,6 +2900,10 @@ def dispatch_ready_tasks(
                             if isinstance(submission, dict)
                             else ""
                         )
+                        is_merged_submission = bool(
+                            isinstance(submission, dict)
+                            and (submission.get("merged_at") or submission.get("merge_commit"))
+                        )
                         current_head = None
                         try:
                             current_head = runtime_ai_status.resolve_task_sha(task_id, force_refresh=True)
@@ -2902,12 +2923,12 @@ def dispatch_ready_tasks(
                                 f"Task {task_id} is in review but has no verified review submission; "
                                 "review dispatch suppressed until owner publishes via task_finalize.sh."
                             )
-                        elif not current_head:
+                        elif not is_merged_submission and not current_head:
                             msg = (
                                 f"Cannot verify branch HEAD for task {task_id}; "
                                 "review dispatch suppressed until remote task branch resolves."
                             )
-                        elif current_head != submitted_sha:
+                        elif current_head and current_head != submitted_sha:
                             msg = (
                                 f"Task {task_id} remote HEAD ({current_head[:8]}) drifted from submitted review SHA "
                                 f"({submitted_sha[:8]}); re-submission via task_finalize.sh required before review dispatch."
@@ -2918,6 +2939,11 @@ def dispatch_ready_tasks(
                             msg = f"PR for task {task_id} has CI failure ({ci_status}); review dispatch suppressed until CI is repaired."
                         elif ci_status not in {"success"}:
                             msg = f"PR CI status for task {task_id} is unresolved ({ci_status}); review dispatch deferred until conclusive."
+                        elif not is_merged_submission and str(pr_status or "").strip().upper() == "MERGED":
+                            msg = (
+                                f"PR for task {task_id} is merged but review submission was not verified as merged recovery; "
+                                "resubmission via task_finalize.sh required."
+                            )
 
                         if msg and task.get("next") != msg and "merge group" not in str(task.get("next") or "").lower():
                             task["next"] = msg
