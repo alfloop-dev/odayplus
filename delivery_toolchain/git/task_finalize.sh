@@ -88,6 +88,28 @@ if ! cleanliness_out="$(python3 "$cleanliness_tool" --repo "$ROOT" 2>&1)"; then
   exit 1
 fi
 
+# gh resolution mirrors delivery_toolchain/github/check_pr_merge_eligibility.py:
+# .orchestrator/bin/gh is a broker shim, not the real CLI.
+resolve_gh() {
+  local found
+  found="$(command -v gh 2>/dev/null || true)"
+  case "$found" in
+    */.orchestrator/bin/gh)
+      for candidate in /usr/bin/gh /usr/local/bin/gh; do
+        [ -x "$candidate" ] && { echo "$candidate"; return 0; }
+      done
+      ;;
+  esac
+  if [ -n "$found" ]; then echo "$found"; return 0; fi
+  for candidate in /usr/bin/gh /usr/local/bin/gh; do
+    [ -x "$candidate" ] && { echo "$candidate"; return 0; }
+  done
+  return 1
+}
+
+GH="$(resolve_gh || true)"
+GH="${GH:-gh}"
+
 git fetch --quiet origin "$BASE_BRANCH" 2>/dev/null || \
   echo "task_finalize: warning: could not fetch origin/$BASE_BRANCH" >&2
 
@@ -95,6 +117,40 @@ BASE_REF="origin/$BASE_BRANCH"
 git show-ref --verify --quiet "refs/remotes/$BASE_REF" || BASE_REF="$BASE_BRANCH"
 
 if git merge-base --is-ancestor HEAD "$BASE_REF" 2>/dev/null; then
+  echo "task_finalize: HEAD is already an ancestor of $BASE_REF -- checking PR status."
+  PR_NUMBER=""
+  if [ -n "$GH" ] && command -v "$GH" >/dev/null 2>&1; then
+    PR_NUMBER="$("$GH" pr list --head "$BRANCH" --base "$BASE_BRANCH" --state all \
+      --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+    if [ -z "$PR_NUMBER" ]; then
+      PR_NUMBER="$("$GH" pr view "$BRANCH" --json number --jq '.number // empty' 2>/dev/null || true)"
+    fi
+  fi
+  if [ -n "$PR_NUMBER" ]; then
+    PR_STATE="$("$GH" pr view "$PR_NUMBER" --json state --jq '.state' 2>/dev/null || true)"
+    PR_URL="$("$GH" pr view "$PR_NUMBER" --json url --jq '.url' 2>/dev/null || true)"
+    if [ "$PR_STATE" = "MERGED" ]; then
+      echo "task_finalize: PR #$PR_NUMBER for $BRANCH is already MERGED into $BASE_BRANCH"
+      if [ "$DRY_RUN" -eq 1 ]; then
+        echo "dry-run: would record review submission for merged PR #$PR_NUMBER"
+        echo "task_finalize: dry-run complete"
+        exit 0
+      fi
+      if [ "$STATUS_SUBMIT" -eq 1 ]; then
+        if [ -z "${AI_NAME:-}" ]; then
+          echo "task_finalize: PR exists but review was NOT recorded: AI_NAME is required for the atomic status submission." >&2
+          echo "task_finalize: re-run with AI_NAME=<task-owner>, or use --no-status-submit only for untracked housekeeping PRs." >&2
+          exit 1
+        fi
+        AI_NAME="$AI_NAME" "${PANTHEON_STATUS_ROOT:-$ROOT}/scripts/ai-status.sh" submit_review "$TASK_ID" "$PR_NUMBER" \
+          "Remote PR #$PR_NUMBER is merged into $BASE_BRANCH: ${PR_URL:-GitHub URL unavailable}"
+        echo "task_finalize: review submission recorded atomically for $TASK_ID"
+      fi
+      echo "task_finalize: awaiting reviewer approval; once approved, close the task out with:"
+      echo "  AI_NAME=<Owner> ./scripts/ai-status.sh done \"$TASK_ID\" \"<checkpoint>\""
+      exit 0
+    fi
+  fi
   echo "task_finalize: HEAD is already an ancestor of $BASE_REF -- the work has landed."
   echo "task_finalize: no PR needed. Close the task out with:"
   echo "  AI_NAME=<Owner> ./scripts/ai-status.sh done \"$TASK_ID\" \"<checkpoint>\""
@@ -203,31 +259,10 @@ if [ -f "$verification_tool" ]; then
   fi
 fi
 
-# gh resolution mirrors delivery_toolchain/github/check_pr_merge_eligibility.py:
-# .orchestrator/bin/gh is a broker shim, not the real CLI.
-resolve_gh() {
-  local found
-  found="$(command -v gh 2>/dev/null || true)"
-  case "$found" in
-    */.orchestrator/bin/gh)
-      for candidate in /usr/bin/gh /usr/local/bin/gh; do
-        [ -x "$candidate" ] && { echo "$candidate"; return 0; }
-      done
-      ;;
-  esac
-  if [ -n "$found" ]; then echo "$found"; return 0; fi
-  for candidate in /usr/bin/gh /usr/local/bin/gh; do
-    [ -x "$candidate" ] && { echo "$candidate"; return 0; }
-  done
-  return 1
-}
-
-GH="$(resolve_gh || true)"
 if [ -z "$GH" ] && [ "$DRY_RUN" -eq 0 ]; then
   echo "task_finalize: GitHub CLI ('gh') not found; cannot open the task PR." >&2
   exit 1
 fi
-GH="${GH:-gh}"
 
 SUBJECT="$(git log --no-merges --format=%s "$BASE_REF..HEAD" 2>/dev/null | tail -1)"
 [ -n "$SUBJECT" ] || SUBJECT="$(git log -1 --format=%s)"

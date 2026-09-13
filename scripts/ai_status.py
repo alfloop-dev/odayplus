@@ -6690,36 +6690,64 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
 
 
 def review_submission_for_task(task: dict[str, Any], pr_number: str) -> dict[str, Any]:
-    """Return immutable evidence that an *open* task PR exists on GitHub.
+    """Return immutable evidence that an open or merged task PR exists on GitHub.
 
     A local branch, a task handoff note, and a GitHub check are all insufficient
-    evidence on their own.  The reviewer must be looking at a remotely published
-    task branch and at the PR which carries its exact current SHA into the
-    configured integration branch.  Keeping this check here makes the status
+    evidence on their own. The reviewer must be looking at a remotely published
+    task branch or a verified merged PR which carries its exact immutable SHA into the
+    configured integration branch. Keeping this check here makes the status
     transition atomic: a worker cannot first label work ``review`` and only
     later discover that its branch was never pushed.
+
+    Supports:
+    1. Active OPEN task PRs (standard flow): validates remote branch exists on origin,
+       matches exact branch and base, non-draft, and delivery identity passes.
+    2. Merged task PRs (exact-head recovery flow): validates PR was MERGED into the
+       configured base branch, immutable source SHA and merge commit are valid git
+       objects with verifiable ancestry in target history, and all required CI checks
+       concluded with terminal SUCCESS.
     """
 
     task_id = str(task.get("id") or "").strip()
     if not task_id or not pr_number.isdigit():
         raise SystemExit("Review submission requires a task id and numeric PR number")
 
+    if str(task.get("status") or "").strip().lower() == "blocked" or task.get("waiting_for"):
+        waiting_for = task.get("waiting_for") or "unspecified"
+        raise SystemExit(
+            f"Cannot submit {task_id} for review: task is currently blocked (waiting for {waiting_for}). "
+            "Resolve the blocker or human gate before submitting for review."
+        )
+    if (
+        task.get("task_class") == "human_gate"
+        or bool(task.get("non_dispatchable"))
+        or task.get("requires_human_approval") is True
+        or task.get("human_required_roles")
+    ):
+        raise SystemExit(
+            f"Cannot submit {task_id} for review: task carries an unresolved human gate."
+        )
+
     config = status_runtime_config()
     repository_id = task_repository_id(config, task) or "pantheon"
     repository_root = repository_local_path(config, repository_id) or ROOT
+    repository_slug_val = (
+        repository_slug(config, repository_id)
+        or git_remote_repository_slug(repository_root, "origin")
+        or get_repository_slug_safe()
+    )
     branch = task_branch_name(task, task_id)
     base_branch = delivery_merge_target_branch(config, repository_id)
-    remote_sha = resolve_task_sha(task_id, force_refresh=True)
-    if not remote_sha:
-        raise SystemExit(
-            f"Cannot submit {task_id} for review: origin/{branch} is missing. "
-            "Push the task branch with delivery_toolchain/git/task_finalize.sh first."
-        )
 
+    repo_args = ["--repo", repository_slug_val] if repository_slug_val else []
     pr = run_gh_json_command(
         [
-            "pr", "view", pr_number,
-            "--json", "number,state,url,headRefName,headRefOid,baseRefName,isDraft",
+            "pr",
+            "view",
+            pr_number,
+            "--json",
+            "number,state,url,headRefName,headRefOid,baseRefName,isDraft,mergedAt,mergeCommit,statusCheckRollup",
+            *repo_args,
         ],
         cwd=repository_root,
     )
@@ -6727,38 +6755,142 @@ def review_submission_for_task(task: dict[str, Any], pr_number: str) -> dict[str
         raise SystemExit(
             f"Cannot submit {task_id} for review: GitHub PR #{pr_number} cannot be verified."
         )
-    if (
-        str(pr.get("state") or "").upper() != "OPEN"
-        or bool(pr.get("isDraft"))
-        or str(pr.get("headRefName") or "") != branch
-        or str(pr.get("headRefOid") or "") != remote_sha
-        or str(pr.get("baseRefName") or "") != base_branch
+
+    pr_state = str(pr.get("state") or "").upper()
+    is_draft = bool(pr.get("isDraft"))
+    head_branch = str(pr.get("headRefName") or "").strip()
+    base_name = str(pr.get("baseRefName") or "").strip()
+    head_oid = str(pr.get("headRefOid") or "").strip()
+    pr_url = str(pr.get("url") or "")
+
+    if is_draft:
+        raise SystemExit(
+            f"Cannot submit {task_id} for review: PR #{pr_number} is a draft; mark it ready for review first."
+        )
+    if head_branch != branch:
+        raise SystemExit(
+            f"Cannot submit {task_id} for review: PR #{pr_number} head branch '{head_branch}' "
+            f"does not match task branch '{branch}'."
+        )
+    if base_name != base_branch:
+        raise SystemExit(
+            f"Cannot submit {task_id} for review: PR #{pr_number} base branch '{base_name}' "
+            f"does not match expected target branch '{base_branch}'."
+        )
+    if not head_oid or not (
+        re.fullmatch(r"[0-9a-fA-F]{40}", head_oid) or re.fullmatch(r"[0-9a-fA-F]{64}", head_oid)
     ):
         raise SystemExit(
-            f"Cannot submit {task_id} for review: PR #{pr_number} must be an open, non-draft "
-            f"{branch} -> {base_branch} PR at remote SHA {remote_sha[:8]}."
+            f"Cannot submit {task_id} for review: PR #{pr_number} has invalid head commit SHA '{head_oid}'."
         )
-    identity_errors = validate_delivery_identity(
-        repository_root,
-        task_id=task_id,
-        base=base_branch,
-        head=remote_sha,
-        expected_branch=branch,
-        actual_branch=str(pr.get("headRefName") or ""),
+
+    if pr_state == "OPEN":
+        remote_sha = resolve_task_sha(task_id, force_refresh=True)
+        if not remote_sha:
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: origin/{branch} is missing. "
+                "Push the task branch with delivery_toolchain/git/task_finalize.sh first."
+            )
+        if head_oid != remote_sha:
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: PR #{pr_number} remote head {head_oid[:8]} "
+                f"does not match origin/{branch} ({remote_sha[:8]})."
+            )
+        identity_errors = validate_delivery_identity(
+            repository_root,
+            task_id=task_id,
+            base=base_branch,
+            head=remote_sha,
+            expected_branch=branch,
+            actual_branch=head_branch,
+        )
+        if identity_errors:
+            details = "; ".join(identity_errors)
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: delivery identity preflight failed: {details}"
+            )
+        return {
+            "pr_number": int(pr_number),
+            "pr_url": pr_url,
+            "branch": branch,
+            "remote_sha": remote_sha,
+            "base_branch": base_branch,
+            "verified_at": iso_now(),
+        }
+
+    if pr_state == "MERGED":
+        merged_at = str(pr.get("mergedAt") or "").strip()
+        if not merged_at:
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: PR #{pr_number} is marked MERGED but missing mergedAt timestamp."
+            )
+        merge_commit_raw = pr.get("mergeCommit")
+        merge_commit = (
+            str(merge_commit_raw.get("oid") or "").strip()
+            if isinstance(merge_commit_raw, dict)
+            else str(merge_commit_raw or "").strip()
+        )
+        if not merge_commit or not (
+            re.fullmatch(r"[0-9a-fA-F]{40}", merge_commit) or re.fullmatch(r"[0-9a-fA-F]{64}", merge_commit)
+        ):
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: PR #{pr_number} is missing a valid merge commit SHA."
+            )
+
+        # Verify git object existence and merge ancestry in target branch history
+        if not git_command_succeeds(["cat-file", "-e", f"{head_oid}^{{commit}}"], cwd=repository_root):
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: immutable source commit {head_oid[:8]} is missing in repository."
+            )
+        if not git_command_succeeds(["cat-file", "-e", f"{merge_commit}^{{commit}}"], cwd=repository_root):
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: merge commit {merge_commit[:8]} is missing in repository."
+            )
+        if not git_command_succeeds(["merge-base", "--is-ancestor", head_oid, merge_commit], cwd=repository_root):
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: source commit {head_oid[:8]} is not an ancestor of merge commit {merge_commit[:8]}."
+            )
+        target_ref = f"origin/{base_branch}"
+        if not git_command_succeeds(["rev-parse", "--verify", target_ref], cwd=repository_root):
+            target_ref = base_branch
+        if not git_command_succeeds(["merge-base", "--is-ancestor", merge_commit, target_ref], cwd=repository_root):
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: merge commit {merge_commit[:8]} is not reachable in {target_ref} history."
+            )
+
+        # Verify all required CI checks concluded with terminal SUCCESS
+        checks = normalized_green_pr_checks(pr)
+
+        identity_errors = validate_delivery_identity(
+            repository_root,
+            task_id=task_id,
+            base=base_branch,
+            head=head_oid,
+            expected_branch=branch,
+            actual_branch=head_branch,
+        )
+        if identity_errors:
+            details = "; ".join(identity_errors)
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: delivery identity preflight failed: {details}"
+            )
+        return {
+            "pr_number": int(pr_number),
+            "pr_url": pr_url,
+            "branch": branch,
+            "remote_sha": head_oid,
+            "base_branch": base_branch,
+            "verified_at": iso_now(),
+            "merged_at": merged_at,
+            "merge_commit": merge_commit,
+            "ci_status": "success",
+            "ci_checks": checks,
+        }
+
+    raise SystemExit(
+        f"Cannot submit {task_id} for review: PR #{pr_number} state is '{pr_state}' (must be OPEN or MERGED). "
+        "Closed unmerged pull requests are rejected."
     )
-    if identity_errors:
-        details = "; ".join(identity_errors)
-        raise SystemExit(
-            f"Cannot submit {task_id} for review: delivery identity preflight failed: {details}"
-        )
-    return {
-        "pr_number": int(pr_number),
-        "pr_url": str(pr.get("url") or ""),
-        "branch": branch,
-        "remote_sha": remote_sha,
-        "base_branch": base_branch,
-        "verified_at": iso_now(),
-    }
 
 
 def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
@@ -7571,12 +7703,6 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
             f"Cannot approve task {task_id}: unable to resolve the branch HEAD to freeze ({exc}). "
             "Integrity gate failed closed; no approval was recorded."
         ) from exc
-    if not approved_sha:
-        raise SystemExit(
-            f"Cannot approve task {task_id}: branch HEAD could not be resolved, so the "
-            "reviewer-approved commit cannot be frozen. Push the task branch (or open its PR) "
-            "and approve again. No approval was recorded."
-        )
 
     submission = task.get("review_submission")
     submitted_sha = (
@@ -7584,6 +7710,35 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
         if isinstance(submission, dict)
         else ""
     )
+
+    if not approved_sha and isinstance(submission, dict) and submission.get("merged_at") and submission.get("merge_commit"):
+        # For merged PR review submissions where origin/task/<id> was deleted upon PR merge,
+        # verify the immutable source SHA and merge ancestry against the target branch history.
+        config = status_runtime_config()
+        repository_id = task_repository_id(config, task) or "pantheon"
+        repo_root = repository_local_path(config, repository_id) or ROOT
+        target_branch = delivery_merge_target_branch(config, repository_id)
+        target_ref = f"origin/{target_branch}"
+        if not git_command_succeeds(["rev-parse", "--verify", target_ref], cwd=repo_root):
+            target_ref = target_branch
+        merge_commit = str(submission.get("merge_commit") or "").strip()
+        if (
+            submitted_sha
+            and merge_commit
+            and git_command_succeeds(["cat-file", "-e", f"{submitted_sha}^{{commit}}"], cwd=repo_root)
+            and git_command_succeeds(["cat-file", "-e", f"{merge_commit}^{{commit}}"], cwd=repo_root)
+            and git_command_succeeds(["merge-base", "--is-ancestor", submitted_sha, merge_commit], cwd=repo_root)
+            and git_command_succeeds(["merge-base", "--is-ancestor", merge_commit, target_ref], cwd=repo_root)
+        ):
+            approved_sha = submitted_sha
+
+    if not approved_sha:
+        raise SystemExit(
+            f"Cannot approve task {task_id}: branch HEAD could not be resolved, so the "
+            "reviewer-approved commit cannot be frozen. Push the task branch (or open its PR) "
+            "and approve again. No approval was recorded."
+        )
+
     if not submitted_sha or submitted_sha != approved_sha:
         display_submitted = submitted_sha[:8] if submitted_sha else "missing"
         raise SystemExit(
