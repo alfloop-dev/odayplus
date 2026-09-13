@@ -1,40 +1,32 @@
 {
   "task_id": "ODP-ORCH-QUOTA-FENCE-HANDOFF-001",
-  "head_sha": "84c0508c06a74c4314aa7501a592ff9db4df7cb6",
-  "generated_at": "2026-09-13T12:28:40Z",
+  "head_sha": "51bff0941c7a60980ba288151de043879694ca94",
+  "generated_at": "2026-09-13T13:00:25Z",
   "verified_by": "Antigravity3",
   "reviewer": "Codex2",
   "receipts": [
     {
       "command": "uv run pytest -q .orchestrator/test_worker_failure_policy.py -k \"fence or handoff or quota\"",
-      "head_sha": "84c0508c06a74c4314aa7501a592ff9db4df7cb6",
+      "head_sha": "51bff0941c7a60980ba288151de043879694ca94",
       "exit_code": 0,
       "status": "passed",
-      "summary": "31 passed, 41 deselected in 15.58s",
+      "summary": "31 passed, 41 deselected, 2 subtests passed in 10.59s",
       "target": ".orchestrator/test_worker_failure_policy.py"
     },
     {
-      "command": "uv run pytest -v .orchestrator/test_worker_failure_policy.py -k \"QuotaSiblingFencing\"",
-      "head_sha": "84c0508c06a74c4314aa7501a592ff9db4df7cb6",
+      "command": "uv run ruff check .orchestrator/worker_failure_policy.py .orchestrator/worker_lifecycle.py .orchestrator/test_worker_failure_policy.py",
+      "head_sha": "51bff0941c7a60980ba288151de043879694ca94",
       "exit_code": 0,
       "status": "passed",
-      "summary": "15 passed, 57 deselected in 10.92s",
-      "target": ".orchestrator/test_worker_failure_policy.py::QuotaSiblingFencingDirtyHandoffTests"
-    },
-    {
-      "command": "uv run ruff check .orchestrator/worker_failure_policy.py .orchestrator/worker_lifecycle.py .orchestrator/test_worker_failure_policy.py .orchestrator/supervisor.py .orchestrator/runtime_state.py",
-      "head_sha": "84c0508c06a74c4314aa7501a592ff9db4df7cb6",
-      "exit_code": 0,
-      "status": "passed",
-      "summary": "All checks passed! (0.11s elapsed)",
+      "summary": "All checks passed!",
       "target": "lint"
     },
     {
       "command": "git diff --check",
-      "head_sha": "84c0508c06a74c4314aa7501a592ff9db4df7cb6",
+      "head_sha": "51bff0941c7a60980ba288151de043879694ca94",
       "exit_code": 0,
       "status": "passed",
-      "summary": "clean whitespace and diff markers (0.02s elapsed)",
+      "summary": "clean whitespace and diff markers",
       "target": "diff_check"
     }
   ]
