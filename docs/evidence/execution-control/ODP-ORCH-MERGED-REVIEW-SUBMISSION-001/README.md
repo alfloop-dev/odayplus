@@ -85,12 +85,9 @@
 - **Command**: `uv run pytest scripts/test_ai_status.py -k "Review or Submission or Merged"`
 - **Exit Code**: `0`
 - **Output Summary**: `84 passed, 198 deselected, 11 subtests passed in 2.69s`
-- **Tooling Command**: `uv run pytest tests/tooling/test_git_task_scripts.py`
+- **Tooling Command (with CI unauthenticated environment simulation)**: `env -u GH_TOKEN -u GITHUB_TOKEN GH_CONFIG_DIR=/tmp/nonexistent GITHUB_ACTIONS=true uv run pytest tests/tooling/test_git_task_scripts.py`
 - **Exit Code**: `0`
-- **Output Summary**: `58 passed in 9.79s`
-- **Full Tooling Suite**: `uv run pytest tests/tooling`
-- **Exit Code**: `0`
-- **Output Summary**: `245 passed in 68.35s`
+- **Output Summary**: `58 passed in 9.29s`
 
 ### 4.2 Ruff 語法與代碼風格檢查
 - **Command**: `uv run ruff check scripts/ai_status.py scripts/test_ai_status.py .orchestrator/worker_workspace.py delivery_toolchain/git/task_finalize.sh`
