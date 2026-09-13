@@ -3,7 +3,7 @@
   "version": "2026-09-13",
   "files": {
     "SA.md": "0f2e1d9c97ac73a8f80954efcce11352950befa8a9b0c5b698c98865f0e40f9f",
-    "SD.md": "2ea150abeca1b335da51a5625f2aa3a8094b4969123104524519b7bdb70fa091",
+    "SD.md": "d79bf0bc52499c741eb59d41f2963af521eba0dbe4ebb05d6dd10d94723e98f4",
     "OVERLAP_AUDIT.md": "ff8c59f2cae890b6c62ff023d61e08af88edcf5803e08146655ff106247241f9",
     "verified-results.json": "48dab328bbc0b277e13d00921bd8fceada82b760abd14d66c0c69423cbbe854d",
     "execution-tasks.json": "4ba4ef833891d5f290cc593f9599ccba5caec71bd8b3bd5d3cf974c03de3f703",
@@ -11,11 +11,12 @@
     "source-index.json": "e69d646f27c40b2ff45641de84b66d4e7df25f7ebfdbbdbda79f2293e0ab9dd3",
     "INVESTIGATION.md": "b012ba6e1a97ad3681e98ad41d561a0996b412874843a79f52b32939eeef5de9",
     "overlap-audit.json": "d9e2a307ba97d5c6356cb07f975d49a805690487c0595803d4a64b3d78d54f8a",
-    "implementation-handoff/manifest.json": "f5befe28048c5d1cfa99a95822eb8d9528c30ac9d77eeda1fb43e7d996d1e2f4",
-    "implementation-handoff/tracked.patch": "dc52e46ece767d303ff7f80c85bc55588d0f1af0e2e8ad80b4cceee077db8b82",
-    "implementation-handoff/untracked/scripts/capture_public_source_evidence.py": "a7e6212c399509a99f7a34b9d2154e3931b020713e4b235a094390663f6aad19",
-    "implementation-handoff/untracked/tests/sources/test_public_source_ingestion.py": "c5b0306d1ecad70be7c371dd9a60ff96cdfdf87c16278ed73c53a5f07671fc3b",
-    "implementation-handoff/untracked/src/oday_data_platform/external/sources/ris/official.py": "bf9b448792b41d1d3087ba3d61b62238ac9e414d7f2100d65ab96a87fe64f89d"
+    "implementation-handoff/manifest.json": "b3dcea43ed594271751c4ec43a75f0363aae47994d5e278147a0219a88422dac",
+    "implementation-handoff/README.md": "c47ad42deb1163f6b416a22d25e6a739de5be284277e37396a9210600b5feebd",
+    "implementation-handoff/tracked.patch.gz": "efce44083db21de56928a8b05b2f1b69fe48a1abff339577ab9418d160ddbeb7",
+    "implementation-handoff/untracked/scripts/capture_public_source_evidence.py.txt": "a7e6212c399509a99f7a34b9d2154e3931b020713e4b235a094390663f6aad19",
+    "implementation-handoff/untracked/tests/sources/test_public_source_ingestion.py.txt": "c5b0306d1ecad70be7c371dd9a60ff96cdfdf87c16278ed73c53a5f07671fc3b",
+    "implementation-handoff/untracked/src/oday_data_platform/external/sources/ris/official.py.txt": "bf9b448792b41d1d3087ba3d61b62238ac9e414d7f2100d65ab96a87fe64f89d"
   },
   "root_role": "investigation-and-planning-only",
   "executor": "supervisor/autoworker"

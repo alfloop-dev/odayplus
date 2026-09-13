@@ -14,5 +14,13 @@
   "committed": false,
   "pushed": false,
   "merged": false,
-  "deployed": false
+  "deployed": false,
+  "archive_paths": {
+    "scripts/capture_public_source_evidence.py": "untracked/scripts/capture_public_source_evidence.py.txt",
+    "src/oday_data_platform/external/sources/ris/official.py": "untracked/src/oday_data_platform/external/sources/ris/official.py.txt",
+    "tests/sources/test_public_source_ingestion.py": "untracked/tests/sources/test_public_source_ingestion.py.txt"
+  },
+  "archive_note": "Original source bytes are stored as .txt evidence; no product implementation or source fixes in this documentation repository.",
+  "tracked_patch_archive": "tracked.patch.gz",
+  "tracked_patch_archive_sha256": "efce44083db21de56928a8b05b2f1b69fe48a1abff339577ab9418d160ddbeb7"
 }

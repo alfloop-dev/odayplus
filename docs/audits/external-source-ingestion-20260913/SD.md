@@ -79,4 +79,4 @@ TLS需沿用已有provider相容驗證設定，保持CA／hostname驗證；不�
 
 ## D08：已封存patch的採納程序
 
-worker讀 `implementation-handoff/manifest.json`，驗tracked.patch與untracked hashes，對固定base確認diff；在worker-owned乾淨工作樹匯入並自行審查。這是繼承材料，非既成設計或批准。完成anchor、中文PR、獨立review、CI後才交Supervisor合併。根對話不再改這份patch。
+worker讀 `implementation-handoff/manifest.json`，驗tracked.patch.gz及解壓後原始patch、untracked hashes，依archive_paths讀取原樣.py.txt封存檔，對固定base確認diff；在worker-owned乾淨工作樹匯入並自行審查。這是繼承材料，非既成設計或批准。完成anchor、中文PR、獨立review、CI後才交Supervisor合併。根對話不再改這份patch。
