@@ -1,5 +1,30 @@
 [
   {
+    "head_sha": "07b570d40f22edfccebdc08fa327962a4a2f09ad",
+    "command": "uv run pytest -q .orchestrator/test_worker_failure_policy.py -k 'fence or handoff or quota'",
+    "exit_code": 0,
+    "duration_ms": 15000,
+    "timestamp": "2026-09-13T13:46:28Z",
+    "test_count": 35,
+    "selection": "fence or handoff or quota",
+    "note": "All 35 tests pass including 4 new regression tests for the 3 P1 defects; re-verified at current HEAD after review_head_mismatch recovery"
+  },
+  {
+    "head_sha": "07b570d40f22edfccebdc08fa327962a4a2f09ad",
+    "command": "uv run ruff check .orchestrator/worker_failure_policy.py .orchestrator/worker_lifecycle.py .orchestrator/test_worker_failure_policy.py",
+    "exit_code": 0,
+    "duration_ms": 100,
+    "timestamp": "2026-09-13T13:46:27Z",
+    "note": "All checks passed"
+  },
+  {
+    "head_sha": "07b570d40f22edfccebdc08fa327962a4a2f09ad",
+    "command": "git diff --check",
+    "exit_code": 0,
+    "timestamp": "2026-09-13T13:45:33Z",
+    "note": "No whitespace errors"
+  },
+  {
     "head_sha": "eb87475648093abe65d4e5c9cbd486a1250705be",
     "command": "uv run pytest -q .orchestrator/test_worker_failure_policy.py -k 'fence or handoff or quota'",
     "exit_code": 0,
