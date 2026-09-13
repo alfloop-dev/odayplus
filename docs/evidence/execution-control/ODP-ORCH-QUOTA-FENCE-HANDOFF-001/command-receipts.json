@@ -1,33 +1,27 @@
-{
-  "task_id": "ODP-ORCH-QUOTA-FENCE-HANDOFF-001",
-  "head_sha": "51bff0941c7a60980ba288151de043879694ca94",
-  "generated_at": "2026-09-13T13:00:25Z",
-  "verified_by": "Antigravity3",
-  "reviewer": "Codex2",
-  "receipts": [
-    {
-      "command": "uv run pytest -q .orchestrator/test_worker_failure_policy.py -k \"fence or handoff or quota\"",
-      "head_sha": "51bff0941c7a60980ba288151de043879694ca94",
-      "exit_code": 0,
-      "status": "passed",
-      "summary": "31 passed, 41 deselected, 2 subtests passed in 10.59s",
-      "target": ".orchestrator/test_worker_failure_policy.py"
-    },
-    {
-      "command": "uv run ruff check .orchestrator/worker_failure_policy.py .orchestrator/worker_lifecycle.py .orchestrator/test_worker_failure_policy.py",
-      "head_sha": "51bff0941c7a60980ba288151de043879694ca94",
-      "exit_code": 0,
-      "status": "passed",
-      "summary": "All checks passed!",
-      "target": "lint"
-    },
-    {
-      "command": "git diff --check",
-      "head_sha": "51bff0941c7a60980ba288151de043879694ca94",
-      "exit_code": 0,
-      "status": "passed",
-      "summary": "clean whitespace and diff markers",
-      "target": "diff_check"
-    }
-  ]
-}
+[
+  {
+    "head_sha": "aa4891f598727f802bf213c1231918f86dd0d5e5",
+    "command": "uv run pytest -q .orchestrator/test_worker_failure_policy.py -k 'fence or handoff or quota'",
+    "exit_code": 0,
+    "duration_ms": 10787,
+    "timestamp": "2026-09-13T13:32:05Z",
+    "test_count": 35,
+    "selection": "fence or handoff or quota",
+    "note": "All 35 tests pass including 4 new regression tests for the 3 P1 defects"
+  },
+  {
+    "head_sha": "aa4891f598727f802bf213c1231918f86dd0d5e5",
+    "command": "uv run ruff check .orchestrator/worker_failure_policy.py .orchestrator/test_worker_failure_policy.py",
+    "exit_code": 0,
+    "duration_ms": 74,
+    "timestamp": "2026-09-13T13:32:16Z",
+    "note": "All checks passed"
+  },
+  {
+    "head_sha": "aa4891f598727f802bf213c1231918f86dd0d5e5",
+    "command": "git diff --check",
+    "exit_code": 0,
+    "timestamp": "2026-09-13T13:31:48Z",
+    "note": "No whitespace errors"
+  }
+]

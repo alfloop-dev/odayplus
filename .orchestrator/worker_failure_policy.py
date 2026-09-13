@@ -3546,14 +3546,32 @@ def maybe_reassign_task_after_worker_failure(
             new_status="todo" if requeue_for_fresh_dispatch else None,
             handoff_to=new_owner,
             handoff_from=owner,
+            # Carry handoff authorization in the same atomic canonical write
+            # so a crash between actor-change and seal-update cannot leave the
+            # successor owning the task with no durable authorization.
+            task_updates={"handoff_authorization": {
+                "authorized_successor": new_owner,
+                "transferred_from": owner,
+                "transfer_reason": reason,
+                "source_run_id": str(worker.get("run_id") or ""),
+            }} if str(worker.get("workspace_path") or "") else None,
         ):
             return None
+        # Verify all source writers are stopped before transferring the seal.
+        # The quota-triggering worker bypasses the sibling fence guard; without
+        # this check the original child can survive handoff and mutate the
+        # dirty fingerprint after the successor is granted a sealed_owner_dirt
+        # lease.
+        if worker_writers_are_alive(worker):
+            terminate_worker_writers(worker)
+        writers_stopped = not worker_writers_are_alive(worker)
         handoff_block = ((state.get("worker_worktrees") or {}).get("handoff_blocks") or {}).get(task_id)
         worker_run_id = str(worker.get("run_id") or "")
         worker_workspace_path = str(worker.get("workspace_path") or "")
         worker_workspace_branch = str(worker.get("workspace_branch") or "")
         if (
-            isinstance(handoff_block, dict)
+            writers_stopped
+            and isinstance(handoff_block, dict)
             and worker_run_id
             and worker_workspace_path
             and normalize_agent_id(str(handoff_block.get("owner") or "")) == normalize_agent_id(owner)
@@ -3569,6 +3587,13 @@ def maybe_reassign_task_after_worker_failure(
             handoff_block["transfer_reason"] = reason
             handoff_block["transferred_at"] = utc_now()
             handoff_block["transfer_source_run_id"] = worker_run_id
+            handoff_block["writers_verified_stopped"] = True
+        elif isinstance(handoff_block, dict) and not writers_stopped:
+            # Writers are still alive — record the situation but do NOT
+            # transfer the seal.  The deferred pending_fence mechanism will
+            # settle the worker once its writers die.
+            handoff_block["handoff_deferred_writer_alive"] = True
+            handoff_block["handoff_deferred_at"] = utc_now()
         write_activity_log(
             config,
             {
@@ -3580,6 +3605,7 @@ def maybe_reassign_task_after_worker_failure(
                 "from_reviewer": reviewer,
                 "to_reviewer": new_reviewer,
                 "worker_run_id": worker.get("run_id"),
+                "writers_verified_stopped": writers_stopped,
             },
         )
         clear_task_failure_streaks_for_task(state, task_id)
@@ -3843,7 +3869,11 @@ def _settle_fenced_sibling_worker(
             f"Account pool {pool_id} fenced after a sibling quota failure. "
             f"{reason}"
         )
-        sibling.pop("pending_fence", None)
+        # Use explicit None sentinel instead of pop() so that
+        # _merge_worker_record's dict.update() overwrites the disk copy.
+        # pop() removes the key from memory, but update() only sets keys
+        # present in the source dict, so the disk's pending_fence survives.
+        sibling["pending_fence"] = None
         finalize_queue_event_record(
             config,
             state,
