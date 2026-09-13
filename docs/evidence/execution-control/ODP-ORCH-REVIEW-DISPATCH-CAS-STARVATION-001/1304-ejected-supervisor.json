@@ -1,0 +1,19 @@
+{
+  "cwd": "/tmp/codex-1304-ejected-fix",
+  "head_sha": "91042ee81bedff1d6c4899b57a1121d4577e1951",
+  "tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "argv": [
+    "/tmp/pantheon-worker-worktrees/pantheon/odp-orch-review-dispatch-cas-starvation-001/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-o",
+    "addopts=",
+    "-q",
+    ".orchestrator/test_supervisor.py::DispatchStatusSyncTests",
+    ".orchestrator/test_supervisor.py::AutomaticRecoveryTests::test_ci_failure_requeue_fails_closed_on_stale_status_snapshot"
+  ],
+  "started_at": "2026-09-12T15:29:43.729681+00:00",
+  "duration_seconds": 4.6662990740151145,
+  "exit_code": 0,
+  "output": "1304-ejected-supervisor.log"
+}
