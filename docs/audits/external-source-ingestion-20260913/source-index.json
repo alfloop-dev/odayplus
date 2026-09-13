@@ -1,0 +1,130 @@
+[
+  {
+    "id": "E01",
+    "repository": "alfloop-dev/oday-data-platform",
+    "commit": "b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb",
+    "path": "src/oday_data_platform/defs/external/live_source.py",
+    "sha256": "e5d5e80f21ac5a3598d1911f76275330adbb437cd542aa215dc306fbab06c2cd",
+    "reference": "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/defs/external/live_source.py"
+  },
+  {
+    "id": "E02",
+    "repository": "alfloop-dev/oday-data-platform",
+    "commit": "b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb",
+    "path": "src/oday_data_platform/defs/external/mof_moi.py",
+    "sha256": "eb7fe1c39a9825435cae271534e4d713a77c8b3106832739a4ba3ae0e0c8b9e3",
+    "reference": "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/defs/external/mof_moi.py"
+  },
+  {
+    "id": "E03",
+    "repository": "alfloop-dev/oday-data-platform",
+    "commit": "b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb",
+    "path": "src/oday_data_platform/defs/external/ris_nlsc.py",
+    "sha256": "e4f949378f0d4f5262c4ce2534240756efe0bed58fc394d5d29daba55f75b3fc",
+    "reference": "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/defs/external/ris_nlsc.py"
+  },
+  {
+    "id": "E04",
+    "repository": "alfloop-dev/oday-data-platform",
+    "commit": "b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb",
+    "path": "src/oday_data_platform/defs/external/context_events.py",
+    "sha256": "30cd9b2da909f9b401a3affdeba383343ba108b88a39973b67a41adf50a0da97",
+    "reference": "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/defs/external/context_events.py"
+  },
+  {
+    "id": "E05",
+    "repository": "alfloop-dev/oday-data-platform",
+    "commit": "b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb",
+    "path": "src/oday_data_platform/defs/external/transport.py",
+    "sha256": "ad3c7ebc7e77a596f34f24476242c28d49d06e94bfb259b0be32493be31db6f7",
+    "reference": "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/defs/external/transport.py"
+  },
+  {
+    "id": "E06",
+    "repository": "alfloop-dev/oday-data-platform",
+    "commit": "b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb",
+    "path": "src/oday_data_platform/defs/external/poi.py",
+    "sha256": "1ca88637f563394e1afd0955b113afa665dc10fade328766cd2855085fb74591",
+    "reference": "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/defs/external/poi.py"
+  },
+  {
+    "id": "E07",
+    "repository": "alfloop-dev/oday-data-platform",
+    "commit": "b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb",
+    "path": "src/oday_data_platform/defs/external/listings.py",
+    "sha256": "476289f590241374612e3322374640bf6410869b4ab079fcda388636eb970783",
+    "reference": "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/defs/external/listings.py"
+  },
+  {
+    "id": "E08",
+    "repository": "alfloop-dev/oday-data-platform",
+    "commit": "b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb",
+    "path": "src/oday_data_platform/defs/external/mobility.py",
+    "sha256": "b0d0e7eaa6563c71adf3bcd64d8ffdbe1c394033ca28e63e3590605a10f7214a",
+    "reference": "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/defs/external/mobility.py"
+  },
+  {
+    "id": "E09",
+    "repository": "alfloop-dev/oday-data-platform",
+    "commit": "b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb",
+    "path": "src/oday_data_platform/defs/products/site_context.py",
+    "sha256": "cb4ee1410e0c37924fbd547fb810e7b2d18f3250d153486a9a0eb7c033722069",
+    "reference": "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/defs/products/site_context.py"
+  },
+  {
+    "id": "E10",
+    "repository": "alfloop-dev/oday-data-platform",
+    "commit": "b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb",
+    "path": "src/oday_data_platform/products/site_context/builder.py",
+    "sha256": "e9e117c50421ba5dfadec0d59282fa338413a19491c829a8c091377cad3da68e",
+    "reference": "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/products/site_context/builder.py"
+  },
+  {
+    "id": "E11",
+    "repository": "alfloop-dev/oday-data-platform",
+    "commit": "b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb",
+    "path": "src/oday_data_platform/products/site_context/service.py",
+    "sha256": "673d014a668ce4bc5938ec05228bc9ad79512f93ffa18a9bd45565326130733e",
+    "reference": "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/products/site_context/service.py"
+  },
+  {
+    "id": "E12",
+    "repository": "alfloop-dev/oday-data-platform",
+    "commit": "b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb",
+    "path": "src/oday_data_platform/raw_snapshot_retention.py",
+    "sha256": "5bc8d00b1ecc52f1083e043e8bf167cc2edcc5f560834845bd8a7d5697058766",
+    "reference": "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/raw_snapshot_retention.py"
+  },
+  {
+    "id": "E13",
+    "repository": "alfloop-dev/oday-data-platform",
+    "commit": "b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb",
+    "path": "src/oday_data_platform/external/acquisition/kernel.py",
+    "sha256": "02a097524516941d8f1142b417285a118625cf846181303e45cb05ff82fc7df9",
+    "reference": "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/external/acquisition/kernel.py"
+  },
+  {
+    "id": "E14",
+    "repository": "alfloop-dev/oday-data-platform",
+    "commit": "b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb",
+    "path": "src/oday_data_platform/external/sources/mof_business/adapter.py",
+    "sha256": "5194b65186fbdce3983442d3e52cd1d2f8249ea0c31e9ca9f254d6a71c87ace0",
+    "reference": "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/external/sources/mof_business/adapter.py"
+  },
+  {
+    "id": "E15",
+    "repository": "alfloop-dev/oday-data-platform",
+    "commit": "b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb",
+    "path": "src/oday_data_platform/external/sources/ris/adapter.py",
+    "sha256": "8021d7aa53167c36fa59d4669eea8aafd2d8a4825f75ea50e0c3a715e709f386",
+    "reference": "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/src/oday_data_platform/external/sources/ris/adapter.py"
+  },
+  {
+    "id": "E16",
+    "repository": "alfloop-dev/oday-data-platform",
+    "commit": "b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb",
+    "path": "docs/runbooks/external-source-update-policy.md",
+    "sha256": "aa88b4bc3cd219402da18e759e7025af7ef84e9785a4def64f1d8d1098eca6fc",
+    "reference": "github://alfloop-dev/oday-data-platform@b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb/docs/runbooks/external-source-update-policy.md"
+  }
+]
