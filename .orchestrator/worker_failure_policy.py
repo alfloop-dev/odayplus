@@ -1059,8 +1059,12 @@ def _is_pause_entry_cleared(
     if isinstance(c_epoch, int) and isinstance(p_epoch, int):
         if p_epoch != c_epoch:
             return p_epoch < c_epoch
-    elif isinstance(p_epoch, int) and c_run and p_run and c_run != p_run:
-        return False
+    elif isinstance(p_epoch, int):
+        if c_run and p_run and c_run != p_run:
+            return False
+        from runtime_state import provider_clearance_epoch
+        if p_epoch > provider_clearance_epoch(clearance):
+            return False
 
     # 1. Clearance targeted a specific pause timestamp
     if c_p_at:
@@ -1399,12 +1403,28 @@ def mark_provider_dispatch_paused(
     actual_pause_seconds = max(1, int((blocked_until - now).total_seconds()))
     bucket = _dispatch_pause_bucket(state)
     previous = bucket.get(pause_provider_id)
-    from runtime_state import provider_failure_epoch, provider_failure_identity
+    from runtime_state import provider_clearance_epoch, provider_failure_epoch, provider_failure_identity
     failure_worker = worker if isinstance(worker, dict) else (_lookup_worker_record(state, worker_run_id) or {})
     auth_identity_hash = failure_worker.get("auth_identity_hash") or provider_auth_identity_hash(config, provider_id)
+    previous_epoch = provider_failure_epoch(previous)
+    # A formal clear removes the active pause, but its failure clock must not
+    # reset. Retained matching clearances remain the clock floor across reloads.
+    clearances = _provider_guardrail_bucket(state).get("cleared_pauses") or {}
+    for clearance in clearances.values():
+        if not isinstance(clearance, dict):
+            continue
+        cleared_provider = normalize_agent_id(str(
+            clearance.get("provider") or clearance.get("trigger_provider") or ""
+        ))
+        if cleared_provider and cleared_provider != pause_provider_id:
+            continue
+        cleared_auth = clearance.get("auth_identity_hash")
+        if cleared_auth and auth_identity_hash and cleared_auth != auth_identity_hash:
+            continue
+        previous_epoch = max(previous_epoch, provider_clearance_epoch(clearance))
     failure_epoch = max(
         provider_failure_epoch({"paused_at": now.isoformat()}),
-        provider_failure_epoch(previous) + 1,
+        previous_epoch + 1,
     )
     predecessors = []
     if isinstance(previous, dict):

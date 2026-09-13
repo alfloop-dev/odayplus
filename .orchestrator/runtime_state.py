@@ -613,6 +613,17 @@ def provider_failure_epoch(entry: dict[str, Any] | None) -> int:
     return (delta.days * 86400 + delta.seconds) * 1_000_000 + delta.microseconds
 
 
+def provider_clearance_epoch(entry: dict[str, Any]) -> int:
+    """Retain a comparable clock for modern and pre-epoch clearances."""
+    epoch = entry.get("failure_epoch")
+    if isinstance(epoch, int) and not isinstance(epoch, bool) and epoch > 0:
+        return epoch
+    return max(
+        provider_failure_epoch({"paused_at": entry.get(key)})
+        for key in ("cleared_paused_at", "cleared_at")
+    )
+
+
 def _is_pause_entry_cleared(
     clearance: dict[str, Any] | None, pause_entry: dict[str, Any]
 ) -> bool:
@@ -655,8 +666,11 @@ def _is_pause_entry_cleared(
     if isinstance(c_epoch, int) and isinstance(p_epoch, int):
         if p_epoch != c_epoch:
             return p_epoch < c_epoch
-    elif isinstance(p_epoch, int) and c_run and p_run and c_run != p_run:
-        return False
+    elif isinstance(p_epoch, int):
+        if c_run and p_run and c_run != p_run:
+            return False
+        if p_epoch > provider_clearance_epoch(clearance):
+            return False
 
     # 1. Clearance targeted a specific pause timestamp
     if c_p_at:

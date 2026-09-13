@@ -1,0 +1,14 @@
+.FF                                                                      [100%]
+=================================== FAILURES ===================================
+_ test_new_failure_after_clear_survives_retained_tombstone[clock-back-after-formal-clear] _
+.orchestrator/test_provider_failure_epoch.py:128: in test_new_failure_after_clear_survives_retained_tombstone
+    assert state['provider_guardrails']['dispatch_pauses']['codex']['failure_epoch'] > old_epoch
+E   assert 4092771599900000 > 4092771600100000
+_ test_new_failure_after_clear_survives_retained_tombstone[identical-time-after-clear] _
+.orchestrator/test_provider_failure_epoch.py:128: in test_new_failure_after_clear_survives_retained_tombstone
+    assert state['provider_guardrails']['dispatch_pauses']['codex']['failure_epoch'] > old_epoch
+E   assert 4092771600100000 > 4092771600100000
+=========================== short test summary info ============================
+FAILED .orchestrator/test_provider_failure_epoch.py::test_new_failure_after_clear_survives_retained_tombstone[clock-back-after-formal-clear]
+FAILED .orchestrator/test_provider_failure_epoch.py::test_new_failure_after_clear_survives_retained_tombstone[identical-time-after-clear]
+2 failed, 1 passed, 8 deselected in 0.91s
