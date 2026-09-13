@@ -28,16 +28,13 @@
 | E15 | `src/oday_data_platform/external/sources/ris/adapter.py` | `8021d7aa53167c36fa59d4669eea8aafd2d8a4825f75ea50e0c3a715e709f386` | 一致 | ✓ 通過 |
 | E16 | `docs/runbooks/external-source-update-policy.md` | `aa88b4bc3cd219402da18e759e7025af7ef84e9785a4def64f1d8d1098eca6fc` | 一致 | ✓ 通過 |
 
-## 本次任務交付物驗證收據
+## 本次任務交付物驗證規範與收據
 
-本任務 `DPF-SOURCE-SA-SD-BASELINE-001` 在 `alfloop-dev/odayplus` 執行工作樹與變更核驗：
+本任務 `DPF-SOURCE-SA-SD-BASELINE-001` 在 `alfloop-dev/odayplus` 依據任務規範執行工作樹與交付物核驗：
 
-- **驗證命令**：`git diff --check origin/dev...HEAD`
+- **宣告驗證命令**：`git diff --check origin/dev...HEAD`
 - **Base SHA**：`8beb382949f05b36d2f94353827ab20fbe24e46d`（`origin/dev`）
-- **實測退出碼**：`0`
-- **實測耗時**：`0.012s`
-- **標準輸出**：無空格／衝突標記違規（乾淨通過）
-- **選擇範圍**：7 份 owned baseline 設計與收據文件
+- **交付物範圍**：7 份 owned baseline 架構與收據文件
   - `docs/architecture/external-source-ingestion/README.md`
   - `docs/architecture/external-source-ingestion/SOURCE_VERIFICATION.md`
   - `docs/architecture/external-source-ingestion/TRACEABILITY.md`
@@ -45,7 +42,10 @@
   - `docs/architecture/external-source-ingestion/TASK_DEDUP_REPORT.md`
   - `docs/architecture/external-source-ingestion/VERIFICATION_PLAN_AMENDMENT.md`
   - `docs/evidence/completion/DPF-SOURCE-SA-SD-BASELINE-001/baseline-reconciliation-receipt.json`
-- **版本關聯說明**：本分支由 dev 建立，歷經 base advance 合併 `origin/dev`（`8beb382949f0`），並依 Codex2 審查意見修訂 7 份 owned 文件與 canonical assign 收據，驗證確保交付物無語法或格式違規。
+- **驗證執行與收據關係**：
+  1. **實質文件修正**：先 commit 完整 6 份架構設計與修正文件。
+  2. **實質 Head 驗證量測**：對該固定 substantive head 執行宣告命令 `git diff --check origin/dev...HEAD`，記錄 exit code 0、耗時、tree SHA 與無違規輸出。
+  3. **Evidence-Only 收據提交**：將包含上述精確量測數據與 canonical assign 完整記錄之 `baseline-reconciliation-receipt.json` 作為 evidence-only 後繼 commit 提交，確保驗證證據嚴格對應被驗證的內容 head。
 
 ## 跨 Repository 引用與基線關係說明
 

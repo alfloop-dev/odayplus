@@ -80,21 +80,28 @@ Legal Gate 決策點：
   7. 沿用既有模組與控制面，按 scope 產生 anchor 及中文 PR、獨立審查與合併；遇 specific live blocker 仍先完成可獨立推進部分。
 - **中文驗證項目對照**：
   1. `uv run --frozen pytest -q tests/sources/test_public_source_ingestion.py tests/sources/test_official_live_acquisition.py tests/external/test_live_acquisition_kernel.py tests/sources/test_mof_moi.py tests/sources/test_ris_nlsc.py`
-  2. 以既有 Dagster 入口重跑 MOF/RIS 有界 live capture 並 readback
-  3. `git diff --check`
+  2. `uv run python scripts/capture_public_source_evidence.py --source mof --output <new_private_mof_dir>`
+  3. `RIS_RELEASE_KEY="2026-08" RIS_COUNTY="臺北市" RIS_TOWN="中正區" RIS_VILLAGE="" RIS_MAX_PAGES="5" uv run python scripts/capture_public_source_evidence.py --source ris --output <new_private_ris_dir>`
+  4. `NOT_EXECUTED: 需由本 task 於實作時自 implementation-handoff 匯入 patch 與測試檔，設定有界地理/月份環境變數（歷史觀察 31 筆非預設保證），執行分源 capture_public_source_evidence.py 至互異私有目錄，產出有界 live capture 與 normalized readback 證據收據`
+  5. `git diff --check`
 - **可執行驗證命令**：
   ```bash
   uv run --frozen pytest -q tests/sources/test_public_source_ingestion.py tests/sources/test_official_live_acquisition.py tests/external/test_live_acquisition_kernel.py tests/sources/test_mof_moi.py tests/sources/test_ris_nlsc.py
   uv run python scripts/capture_public_source_evidence.py --source mof --output /tmp/mof-capture-evidence-$(date +%s)
-  uv run python scripts/capture_public_source_evidence.py --source ris --output /tmp/ris-capture-evidence-$(date +%s)
+  RIS_RELEASE_KEY="2026-08" RIS_COUNTY="臺北市" RIS_TOWN="中正區" RIS_VILLAGE="" RIS_MAX_PAGES="5" uv run python scripts/capture_public_source_evidence.py --source ris --output /tmp/ris-capture-evidence-$(date +%s)
   git diff --check
   ```
-- **CLI 參數與執行規範**：
+- **CLI 參數、環境變數與執行規範**：
   - 封存 CLI `scripts/capture_public_source_evidence.py` 定義必填參數 `--source {mof,ris}` 與 `--output <Path>`。
-  - `--output` 必須指定全新且不存在的本機目錄（內部以 `output.mkdir(parents=True, exist_ok=False)` 強制保護）。
-  - 有界前置：MOF 預設 request scope `{'limit': 100, 'offset': 0}`（第 1 頁有界 probe）；RIS 預設 2026-08 臺北市中正區 ODRP014（31 筆人口資料）。
+  - `--output` 必須指定全新且不存在的本機目錄（內部以 `output.mkdir(parents=True, exist_ok=False)` 強制保護）。MOF 與 RIS 必須分別指定**分源且互異**的全新私有輸出路徑（例如 `<new_private_mof_dir>` 與 `<new_private_ris_dir>`），禁止共用相同目錄路徑。
+  - **MOF 有界前置**：MOF adapter/CLI 預設 request scope 為 `{'limit': 100, 'offset': 0}`（第 1 頁有界 probe）。
+  - **RIS 有界範圍與環境變數前置**：
+    - 封存實作 `defs/external/ris_nlsc.py` 中，`_release_key("RIS_RELEASE_KEY")` 讀取 `RIS_RELEASE_KEY` 或回退至 `last_completed_month()`；`ris_population_release` 從環境變數 `RIS_COUNTY`、`RIS_TOWN`、`RIS_VILLAGE`（若未設置或為空則略過）組裝查詢 query params；`RIS_MAX_PAGES` 預設上限為 20（可透過環境變數設為 1–100）。
+    - 封存 CLI `capture()` 僅設定 `EMGI_EVIDENCE_ROOT`，未自動 pin 地理與月份參數。若直接執行 bare CLI 而未設環境變數，query params 為空，將發起全國範圍查詢，且全國總頁數將超出 `RIS_MAX_PAGES` 上限而觸發 fail-closed 錯誤。
+    - 經查證之有界 probe 執行設定為：`RIS_RELEASE_KEY="2026-08"`、`RIS_COUNTY="臺北市"`、`RIS_TOWN="中正區"`、`RIS_VILLAGE=""`（空值處理）、`RIS_MAX_PAGES="5"`（request budget）。
+    - **歷史觀察標示**：調查階段產出之 31 筆（ODRP014 臺北市中正區各里人口資料）為上述特定有界地理範圍下的**歷史實測觀察結果**，不得當成 bare CLI 的程式碼預設保證；實作 task 執行 live capture probe 時須明確指定上述環境變數以限定範圍。
 - **工具／輸入準備與 NOT_EXECUTED 缺口說明**：
-  - `NOT_EXECUTED`：需由本 task worker 於實作時自 `docs/audits/external-source-ingestion-20260913/implementation-handoff/` 匯入 patch 與測試檔（`test_public_source_ingestion.py`、`official.py`、`capture_public_source_evidence.py`），執行分源 CLI 產出有界 100/31 筆 live capture 與 normalized readback 證據收據。
+  - `NOT_EXECUTED`：需由本 task worker 於實作時自 `docs/audits/external-source-ingestion-20260913/implementation-handoff/` 匯入 patch 與測試檔（`test_public_source_ingestion.py`、`official.py`、`capture_public_source_evidence.py`），依上述有界環境設定執行分源 CLI 產出有界 100 筆 MOF 與 31 筆 RIS live capture 與 normalized readback 證據收據。
 
 ---
 
@@ -280,16 +287,120 @@ Legal Gate 決策點：
 
 ## Canonical Metadata 同步與操作收據
 
-本任務已透過 live canonical `ai-status.sh assign` 將上述完整對照的可執行驗證計畫與 `NOT_EXECUTED` 缺口標示同步至 canonical `ai-status.json`，保留各任務之既有 owner、reviewer、acceptance 與 depends_on：
+本任務已透過 live canonical `ai-status.sh assign` 將上述完整對照的可執行驗證計畫與 `NOT_EXECUTED` 缺口標示同步至 canonical `ai-status.json`，完整保留各任務之既有 owner、reviewer、acceptance（共 44 條）與 depends_on：
 
-| 任務 ID | Owner | Reviewer | Canonical 操作命令摘要 | 退出碼 | 更新前 last_update | 更新後 last_update |
+### 下游任務 Canonical Assign 操作清冊
+
+| 任務 ID | Owner | Reviewer | 退出碼 | 更新前 last_update | 更新後 last_update | 操作摘要與修訂說明 |
 |---|---|---|---|---|---|---|
-| `DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001` | Antigravity | Codex2 | `TASK_METADATA_JSON='{"verification":[...]}' ai-status.sh assign ...` | `0` | 2026-09-13T15:42:15Z | 2026-09-13T16:22:36Z |
-| `DPF-OFFICIAL-SOURCE-ENDPOINT-INTEGRATION-001` | Antigravity3 | Codex2 | `TASK_METADATA_JSON='{"verification":[...]}' ai-status.sh assign ...` | `0` | 2026-09-13T15:42:26Z | 2026-09-13T16:22:38Z |
-| `DPF-TRANSPORT-POI-RELEASE-INTEGRATION-001` | Antigravity4 | Codex2 | `TASK_METADATA_JSON='{"verification":[...]}' ai-status.sh assign ...` | `0` | 2026-09-13T15:42:28Z | 2026-09-13T16:22:41Z |
-| `DPF-LISTING-PRODUCTION-ASSET-INTEGRATION-001` | Antigravity5 | Codex2 | `TASK_METADATA_JSON='{"verification":[...]}' ai-status.sh assign ...` | `0` | 2026-09-13T15:42:31Z | 2026-09-13T16:22:44Z |
-| `DPF-MOBILITY-PRODUCTION-ASSET-INTEGRATION-001` | Antigravity6 | Codex2 | `TASK_METADATA_JSON='{"verification":[...]}' ai-status.sh assign ...` | `0` | 2026-09-13T15:42:33Z | 2026-09-13T16:22:46Z |
-| `DPF-ACQUISITION-RETENTION-BRIDGE-001` | Antigravity7 | Codex2 | `TASK_METADATA_JSON='{"verification":[...]}' ai-status.sh assign ...` | `0` | 2026-09-13T15:42:35Z | 2026-09-13T16:22:49Z |
-| `DPF-SITE-CONTEXT-REAL-COMPONENTS-001` | Antigravity2 | Codex2 | `TASK_METADATA_JSON='{"verification":[...]}' ai-status.sh assign ...` | `0` | 2026-09-13T15:42:38Z | 2026-09-13T16:22:51Z |
+| `DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001` | Antigravity | Codex2 | `0` | 2026-09-13T16:22:36Z | 2026-09-13T16:59:34Z | 依審查意見修正 RIS 執行環境變數（`RIS_RELEASE_KEY="2026-08"`、`RIS_COUNTY="臺北市"`、`RIS_TOWN="中正區"`、`RIS_VILLAGE=""`、`RIS_MAX_PAGES="5"`）、互異私有目錄（`<new_private_mof_dir>` 與 `<new_private_ris_dir>`）與 31 筆歷史觀察標示 |
+| `DPF-OFFICIAL-SOURCE-ENDPOINT-INTEGRATION-001` | Antigravity3 | Codex2 | `0` | 2026-09-13T15:42:26Z | 2026-09-13T16:22:38Z | 同步端點整合與 join 驗證計畫及 `NOT_EXECUTED` 缺口標示 |
+| `DPF-TRANSPORT-POI-RELEASE-INTEGRATION-001` | Antigravity4 | Codex2 | `0` | 2026-09-13T15:42:28Z | 2026-09-13T16:22:41Z | 同步二進位／Parquet／coverage 驗證計畫及 `NOT_EXECUTED` 缺口標示 |
+| `DPF-LISTING-PRODUCTION-ASSET-INTEGRATION-001` | Antigravity5 | Codex2 | `0` | 2026-09-13T15:42:31Z | 2026-09-13T16:22:44Z | 同步刊登 asset 與 lifecycle 驗證計畫及 `NOT_EXECUTED` 缺口標示 |
+| `DPF-MOBILITY-PRODUCTION-ASSET-INTEGRATION-001` | Antigravity6 | Codex2 | `0` | 2026-09-13T15:42:33Z | 2026-09-13T16:22:46Z | 同步聚合人流與 timezone 驗證計畫及 `NOT_EXECUTED` 缺口標示 |
+| `DPF-ACQUISITION-RETENTION-BRIDGE-001` | Antigravity7 | Codex2 | `0` | 2026-09-13T15:42:35Z | 2026-09-13T16:22:49Z | 同步 retention bridge 與 manifest 驗證計畫及 `NOT_EXECUTED` 缺口標示 |
+| `DPF-SITE-CONTEXT-REAL-COMPONENTS-001` | Antigravity2 | Codex2 | `0` | 2026-09-13T15:42:38Z | 2026-09-13T16:22:51Z | 同步 site context 組裝與 content SHA 驗證計畫及 `NOT_EXECUTED` 缺口標示 |
+
+### 完整 Canonical 操作命令與 Payload
+
+1. **`DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001`**（最新修訂 2026-09-13T16:59:34Z）：
+   - **執行命令**：`AI_NAME=Antigravity "$PANTHEON_STATUS_ROOT/scripts/ai-status.sh" assign DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001 Antigravity Codex2 "接手MOF／RIS局部修正並完成公開來源實測"`
+   - **TASK_METADATA_JSON**：
+     ```json
+     {
+       "verification": [
+         "uv run --frozen pytest -q tests/sources/test_public_source_ingestion.py tests/sources/test_official_live_acquisition.py tests/external/test_live_acquisition_kernel.py tests/sources/test_mof_moi.py tests/sources/test_ris_nlsc.py",
+         "uv run python scripts/capture_public_source_evidence.py --source mof --output <new_private_mof_dir>",
+         "RIS_RELEASE_KEY=\"2026-08\" RIS_COUNTY=\"臺北市\" RIS_TOWN=\"中正區\" RIS_VILLAGE=\"\" RIS_MAX_PAGES=\"5\" uv run python scripts/capture_public_source_evidence.py --source ris --output <new_private_ris_dir>",
+         "NOT_EXECUTED: 需由本 task 於實作時自 implementation-handoff 匯入 patch 與測試檔，設定有界地理/月份環境變數（歷史觀察 31 筆非預設保證），執行分源 capture_public_source_evidence.py 至互異私有目錄，產出有界 live capture 與 normalized readback 證據收據",
+         "git diff --check"
+       ]
+     }
+     ```
+   - **驗收標準保留確認**：7 條 acceptance 條件全數保留未變；depends_on 保留 `["DPF-SOURCE-SA-SD-BASELINE-001"]`。
+
+2. **`DPF-OFFICIAL-SOURCE-ENDPOINT-INTEGRATION-001`**（2026-09-13T16:22:38Z）：
+   - **執行命令**：`AI_NAME=Antigravity "$PANTHEON_STATUS_ROOT/scripts/ai-status.sh" assign DPF-OFFICIAL-SOURCE-ENDPOINT-INTEGRATION-001 Antigravity3 Codex2 "完成CWA／MOI租賃／NLSC真實來源接入"`
+   - **TASK_METADATA_JSON**：
+     ```json
+     {
+       "verification": [
+         "uv run --frozen pytest -q tests/sources/test_official_live_acquisition.py tests/sources/test_mof_moi.py tests/sources/test_ris_nlsc.py tests/sources/test_official_source_endpoints.py",
+         "NOT_EXECUTED: 需由本 task 於實作時建立 test_official_source_endpoints.py，查證 CWA_API_KEY 可用性（market-event 未核實前不可稱已接入）、MOI 租賃期別檔案格式與 NLSC GeoJSON 邊界/行政代碼 join 驗證",
+         "git diff --check"
+       ]
+     }
+     ```
+   - **驗收標準保留確認**：6 條 acceptance 條件全數保留未變；depends_on 保留 `["DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001"]`。
+
+3. **`DPF-TRANSPORT-POI-RELEASE-INTEGRATION-001`**（2026-09-13T16:22:41Z）：
+   - **執行命令**：`AI_NAME=Antigravity "$PANTHEON_STATUS_ROOT/scripts/ai-status.sh" assign DPF-TRANSPORT-POI-RELEASE-INTEGRATION-001 Antigravity4 Codex2 "完成OSM／TDX與開放POI真實release接入"`
+   - **TASK_METADATA_JSON**：
+     ```json
+     {
+       "verification": [
+         "uv run --frozen pytest -q tests/sources/test_transport_poi_live_acquisition.py tests/sources/test_real_transport_poi_releases.py",
+         "NOT_EXECUTED: 需由本 task 於實作時建立 test_real_transport_poi_releases.py，取得 OSM Taiwan PBF 二進位檔、TDX token/配額（與 Google verifier 隔離）及 Overture/Foursquare release 物件後執行 binary/Parquet/coverage 讀回驗證",
+         "git diff --check"
+       ]
+     }
+     ```
+   - **驗收標準保留確認**：6 條 acceptance 條件全數保留未變；depends_on 保留 `["DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001"]`。
+
+4. **`DPF-LISTING-PRODUCTION-ASSET-INTEGRATION-001`**（2026-09-13T16:22:44Z）：
+   - **執行命令**：`AI_NAME=Antigravity "$PANTHEON_STATUS_ROOT/scripts/ai-status.sh" assign DPF-LISTING-PRODUCTION-ASSET-INTEGRATION-001 Antigravity5 Codex2 "將刊登production asset接到真實來源channel"`
+   - **TASK_METADATA_JSON**：
+     ```json
+     {
+       "verification": [
+         "uv run --frozen pytest -q tests/sources/test_listing_production_asset.py",
+         "NOT_EXECUTED: 需由本 task 於實作時建立 test_listing_production_asset.py，移除 LST-101 示例與 now approval，對接 ListingObservationService，驗證 listing lifecycle/敏感欄位/raw response hash 讀回與缺來源不造假 listing 負例（fixture 僅支持 offline 層）",
+         "git diff --check"
+       ]
+     }
+     ```
+   - **驗收標準保留確認**：6 條 acceptance 條件全數保留未變；depends_on 保留 `["DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001"]`。
+
+5. **`DPF-MOBILITY-PRODUCTION-ASSET-INTEGRATION-001`**（2026-09-13T16:22:46Z）：
+   - **執行命令**：`AI_NAME=Antigravity "$PANTHEON_STATUS_ROOT/scripts/ai-status.sh" assign DPF-MOBILITY-PRODUCTION-ASSET-INTEGRATION-001 Antigravity6 Codex2 "將observed mobility接到真實聚合資料feed"`
+   - **TASK_METADATA_JSON**：
+     ```json
+     {
+       "verification": [
+         "uv run --frozen pytest -q tests/sources/test_mobility_production_asset.py tests/sources/test_listing_mobility_live_acquisition.py",
+         "NOT_EXECUTED: 需由本 task 於實作時建立 test_mobility_production_asset.py，移除 flow_count=1000 示例數值，分離 observed/synthetic，驗證 business_date/timezone、raw 到 counted rows 讀回與缺時段不補造 0 負例",
+         "git diff --check"
+       ]
+     }
+     ```
+   - **驗收標準保留確認**：6 條 acceptance 條件全數保留未變；depends_on 保留 `["DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001"]`。
+
+6. **`DPF-ACQUISITION-RETENTION-BRIDGE-001`**（2026-09-13T16:22:49Z）：
+   - **執行命令**：`AI_NAME=Antigravity "$PANTHEON_STATUS_ROOT/scripts/ai-status.sh" assign DPF-ACQUISITION-RETENTION-BRIDGE-001 Antigravity7 Codex2 "銜接擷取證據與受治理raw retention"`
+   - **TASK_METADATA_JSON**：
+     ```json
+     {
+       "verification": [
+         "uv run --frozen pytest -q tests/deploy/test_retained_raw_snapshots.py tests/external/test_acquisition_retained_import.py",
+         "NOT_EXECUTED: 需由本 task 於實作時建立 test_acquisition_retained_import.py，移除固定 54,443 count，改以動態 manifest 驗證 capture/normalized receipts 匯入、分類與持久化讀回，及 hash/count/domain 篡改負例",
+         "git diff --check"
+       ]
+     }
+     ```
+   - **驗收標準保留確認**：7 條 acceptance 條件全數保留未變；depends_on 保留 `["DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001"]`。
+
+7. **`DPF-SITE-CONTEXT-REAL-COMPONENTS-001`**（2026-09-13T16:22:51Z）：
+   - **執行命令**：`AI_NAME=Antigravity "$PANTHEON_STATUS_ROOT/scripts/ai-status.sh" assign DPF-SITE-CONTEXT-REAL-COMPONENTS-001 Antigravity2 Codex2 "將site market context接到真實component manifests"`
+   - **TASK_METADATA_JSON**：
+     ```json
+     {
+       "verification": [
+         "uv run --frozen pytest -q tests/products/test_site_context_real_components.py tests/products/test_site_context.py",
+         "NOT_EXECUTED: 需由本 task 於實作時建立 test_site_context_real_components.py，依賴 BRIDGE-001 提供真實 component manifests，呼叫組裝服務並驗證 component content digest（禁止 hash(identifier)）與 tampered digest 負例",
+         "git diff --check"
+       ]
+     }
+     ```
+   - **驗收標準保留確認**：6 條 acceptance 條件全數保留未變；depends_on 保留 `["DPF-ACQUISITION-RETENTION-BRIDGE-001"]`。
 
 本基線任務 `DPF-SOURCE-SA-SD-BASELINE-001` 僅負責設計規劃與 canonical metadata 對齊驗收，不越權執行下游實作或下游 live 擷取。
