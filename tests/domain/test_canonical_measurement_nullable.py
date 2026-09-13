@@ -220,13 +220,13 @@ class TestDatabaseMigrationsAndIndexes:
 
     def test_postgres_migration_qualified_and_alembic_revision_exists(self) -> None:
         pg_migration = Path("infra/db/migrations/000026_canonical_measurement_nullable.sql").read_text(encoding="utf-8")
-        assert "ALTER TABLE geo.pois ALTER COLUMN confidence DROP NOT NULL;" in pg_migration
-        assert "ALTER TABLE geo.pois ALTER COLUMN confidence DROP DEFAULT;" in pg_migration
-        assert "ALTER TABLE geo.competitor_stores ALTER COLUMN confidence DROP NOT NULL;" in pg_migration
-        assert "ALTER TABLE expansion.listings ALTER COLUMN confidence DROP NOT NULL;" in pg_migration
-        assert "ALTER TABLE learning.predictions ALTER COLUMN confidence DROP NOT NULL;" in pg_migration
-        assert "ALTER TABLE audit.data_snapshots ALTER COLUMN quality_score DROP NOT NULL;" in pg_migration
-        assert "ALTER TABLE expansion.heatzone_scores ALTER COLUMN confidence DROP DEFAULT;" in pg_migration
+        assert "ALTER TABLE IF EXISTS geo.pois ALTER COLUMN confidence DROP NOT NULL;" in pg_migration
+        assert "ALTER TABLE IF EXISTS geo.pois ALTER COLUMN confidence DROP DEFAULT;" in pg_migration
+        assert "ALTER TABLE IF EXISTS geo.competitor_stores ALTER COLUMN confidence DROP NOT NULL;" in pg_migration
+        assert "ALTER TABLE IF EXISTS expansion.listings ALTER COLUMN confidence DROP NOT NULL;" in pg_migration
+        assert "ALTER TABLE IF EXISTS learning.predictions ALTER COLUMN confidence DROP NOT NULL;" in pg_migration
+        assert "ALTER TABLE IF EXISTS audit.data_snapshots ALTER COLUMN quality_score DROP NOT NULL;" in pg_migration
+        assert "ALTER TABLE IF EXISTS expansion.heatzone_scores ALTER COLUMN confidence DROP DEFAULT;" in pg_migration
 
         # Alembic revision 0020
         alembic_file = Path("infra/db/migrations/versions/0020_canonical_measurement_nullable.py")
