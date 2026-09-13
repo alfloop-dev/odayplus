@@ -36,6 +36,34 @@ class ValuationCaseStatus(StrEnum):
     DATAROOM_READY = "DATAROOM_READY"
 
 
+def _validate_useful_life(val: Any) -> int:
+    if isinstance(val, bool):
+        raise ValueError("useful_life_months must be an integer >= 1")
+    if isinstance(val, int):
+        if val < 1:
+            raise ValueError(f"useful_life_months must be >= 1, got {val}")
+        return val
+    if isinstance(val, float):
+        if math.isnan(val) or math.isinf(val) or not val.is_integer():
+            raise ValueError(f"useful_life_months must be an integer >= 1, got {val}")
+        int_val = int(val)
+        if int_val < 1:
+            raise ValueError(f"useful_life_months must be >= 1, got {val}")
+        return int_val
+    if isinstance(val, str):
+        try:
+            f_val = float(val)
+            if math.isnan(f_val) or math.isinf(f_val) or not f_val.is_integer():
+                raise ValueError(f"useful_life_months must be an integer >= 1, got {val}")
+            int_val = int(f_val)
+            if int_val < 1:
+                raise ValueError(f"useful_life_months must be >= 1, got {val}")
+            return int_val
+        except (TypeError, ValueError) as err:
+            raise ValueError(f"useful_life_months must be an integer >= 1, got {val}") from err
+    raise ValueError(f"useful_life_months must be an integer >= 1, got {val}")
+
+
 @dataclass(frozen=True)
 class ValuationInput:
     store_id: str
@@ -61,6 +89,12 @@ class ValuationInput:
     asset_in_service_date: str | None = None
     # Persist per record; pre-field pickles serialize as v1, not the class default.
     feature_version: str = AVM_FEATURE_VERSION
+
+    def __post_init__(self) -> None:
+        if self.useful_life_months is not None:
+            validated = _validate_useful_life(self.useful_life_months)
+            if validated != self.useful_life_months or type(self.useful_life_months) is not int:
+                object.__setattr__(self, "useful_life_months", validated)
 
     @property
     def is_pre_status_payload(self) -> bool:
@@ -102,13 +136,7 @@ class ValuationInput:
 
         useful_life = data.get("useful_life_months")
         if useful_life is not None:
-            try:
-                ul_val = int(useful_life)
-            except (TypeError, ValueError) as err:
-                raise ValueError("useful_life_months must be an integer >= 1") from err
-            if ul_val < 1:
-                raise ValueError(f"useful_life_months must be >= 1, got {ul_val}")
-            useful_life = ul_val
+            useful_life = _validate_useful_life(useful_life)
 
         residual_ratio = data.get("residual_value_ratio")
         if residual_ratio is not None:
@@ -756,9 +784,9 @@ def calculate_depreciation(
         if cost < 0.0 or math.isnan(cost) or math.isinf(cost):
             raise ValueError("equipment_original_cost must be a non-negative finite number")
 
-        if item.useful_life_months is None or item.useful_life_months < 1:
+        if item.useful_life_months is None:
             raise ValueError("useful_life_months is required and must be >= 1")
-        useful_life = int(item.useful_life_months)
+        useful_life = _validate_useful_life(item.useful_life_months)
 
         if item.asset_in_service_date is None:
             raise ValueError(

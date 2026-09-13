@@ -241,6 +241,63 @@ class TestTheDepreciationContract:
                 f"the refusal for a missing {omitted} does not name the field: {error}"
             )
 
+    def test_fractional_useful_life_is_rejected_at_mapping_and_calculation_boundaries(self) -> None:
+        """C-2 integer-month contract: fractional useful_life_months is rejected without coercion."""
+        import pytest
+        from modules.avm.domain.valuation import (
+            ValuationInput,
+            calculate_depreciation,
+        )
+
+        invalid_values = (1.9, "1.9", 0.5, "0.5", 12.3, 0, -1, -5.5, True, False)
+        for val in invalid_values:
+            # 1. from_mapping / build_valuation_view boundary
+            payload = _payload(asset_in_service_date="2021-03-03", useful_life_months=val)
+            with pytest.raises(ValueError, match="useful_life_months"):
+                build_valuation_view(payload)
+
+            # 2. Direct ValuationInput dataclass instantiation boundary
+            valid_payload = _payload(asset_in_service_date="2021-03-03")
+            valid_payload.pop("useful_life_months", None)
+            base_view = build_valuation_view(valid_payload)
+            with pytest.raises(ValueError, match="useful_life_months"):
+                dataclasses.replace(base_view, useful_life_months=val)
+
+        # 3. Direct calculate_depreciation boundary
+        valid_input = build_valuation_view(_payload(asset_in_service_date="2021-03-03", useful_life_months=84))
+        # Verify valid integer calculation works and preserves 84 months
+        res = calculate_depreciation(valid_input)
+        assert res.evidence["useful_life_months"] == 84
+        assert res.depreciation_applied is True
+
+    def test_fractional_useful_life_raw_mapping_service_and_batch_worker_rejected(self) -> None:
+        """Raw mapping entry points (AVMService.create_case and AVMValuationWorker.run) reject fractional inputs."""
+        import pytest
+        from modules.avm.application import AVMService
+        from modules.avm.infrastructure import InMemoryAVMRepository
+        from modules.avm.workers.valuation_worker import AVMValuationWorker
+
+        repo = InMemoryAVMRepository()
+        service = AVMService(repository=repo)
+        worker = AVMValuationWorker(repository=repo)
+
+        raw_mapping = _payload(asset_in_service_date="2021-03-03", useful_life_months=1.9)
+
+        # 1. Service create_case with raw Mapping[str, Any]
+        with pytest.raises(ValueError, match="useful_life_months"):
+            service.create_case(raw_mapping, created_by="batch-test", correlation_id="corr-test-1")
+
+        # 2. Batch worker run with raw Mapping[str, Any]
+        with pytest.raises(ValueError, match="useful_life_months"):
+            worker.run([raw_mapping], job_id="batch-fractional-test")
+
+        # 3. Valid integer through worker succeeds and issues report
+        valid_mapping = _payload(asset_in_service_date="2021-03-03", useful_life_months=84)
+        batch_res = worker.run([valid_mapping], job_id="batch-valid-test")
+        assert len(batch_res.reports) == 1
+        assert batch_res.reports[0].depreciation_applied is True
+        assert _lens(batch_res.reports[0], "asset").evidence["depreciation"]["useful_life_months"] == 84
+
     def test_an_appraised_basis_is_not_depreciated_twice(self) -> None:
         """An independently appraised value is already net of age.
 
