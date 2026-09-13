@@ -1,0 +1,13 @@
+{
+  "cwd": "/tmp/codex-1325-cache-failure",
+  "head_sha": "ae26968a90cb8ee3a27c454fb20dfa12184ca857",
+  "tracked_diff_sha256": "4fc7329c587ec2142507c009a37640be9523813328137d92af36be260a3442d2",
+  "argv": [
+    "python3",
+    "delivery_toolchain/governance/check_code_boundaries.py"
+  ],
+  "started_at": "2026-09-13T08:21:53.268996+00:00",
+  "duration_seconds": 13.758451137982775,
+  "exit_code": 0,
+  "output": "1325-cache-boundary.log"
+}

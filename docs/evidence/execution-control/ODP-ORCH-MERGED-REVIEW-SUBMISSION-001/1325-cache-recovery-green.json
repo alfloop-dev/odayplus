@@ -1,0 +1,28 @@
+{
+  "cwd": "/tmp/codex-1325-cache-failure",
+  "head_sha": "ae26968a90cb8ee3a27c454fb20dfa12184ca857",
+  "tracked_diff_sha256": "83e0de40ac8143d7b2b2c07400953d239b0bf181b3510c240131027b40ecfcd2",
+  "argv": [
+    "env",
+    "UV_PROJECT_ENVIRONMENT=/tmp/pantheon-worker-worktrees/pantheon/odp-orch-merged-review-submission-001/.venv",
+    "uv",
+    "run",
+    "--no-sync",
+    "pytest",
+    "-o",
+    "addopts=",
+    "-q",
+    "--lf",
+    "-m",
+    "not requires_live_env",
+    ".orchestrator",
+    "delivery_toolchain",
+    "scripts",
+    "tests/tooling",
+    "infra"
+  ],
+  "started_at": "2026-09-13T08:32:06.690395+00:00",
+  "duration_seconds": 63.91991016501561,
+  "exit_code": 0,
+  "output": "1325-cache-recovery-green.log"
+}

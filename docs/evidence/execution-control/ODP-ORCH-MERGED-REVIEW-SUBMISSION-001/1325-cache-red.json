@@ -1,0 +1,20 @@
+{
+  "cwd": "/tmp/codex-1325-cache-failure",
+  "head_sha": "ae26968a90cb8ee3a27c454fb20dfa12184ca857",
+  "tracked_diff_sha256": "fdad583d25e2f7cfd3e81bcfa6b92bc552c00be4ac9854a4baa3a09acf7b015f",
+  "argv": [
+    "/tmp/pantheon-worker-worktrees/pantheon/odp-orch-merged-review-submission-001/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-o",
+    "addopts=",
+    "-q",
+    "scripts/test_ai_status.py",
+    "-k",
+    "remote_lookup_errors_cannot or confirmed_remote_absence_retains"
+  ],
+  "started_at": "2026-09-13T08:17:14.648115+00:00",
+  "duration_seconds": 6.306864070997108,
+  "exit_code": 1,
+  "output": "1325-cache-red.log"
+}

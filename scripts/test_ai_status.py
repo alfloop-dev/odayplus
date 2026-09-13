@@ -4827,7 +4827,8 @@ class StatusCheckEmissionTests(unittest.TestCase):
             "subprocess.run",
             return_value=mock.Mock(returncode=1, stdout="stale-cached-ref"),
         ) as mock_run:
-            self.assertIsNone(ai_status.resolve_task_sha("ODP-001"))
+            with self.assertRaisesRegex(RuntimeError, "unverifiable"):
+                ai_status.resolve_task_sha("ODP-001")
         mock_run.assert_called_once()
 
     def test_remote_sha_timeout_rejects_warm_cache_and_partial_output(self) -> None:
@@ -4847,11 +4848,12 @@ class StatusCheckEmissionTests(unittest.TestCase):
             mock.patch("subprocess.run", side_effect=timed_out) as remote,
             mock.patch.object(ai_status, "post_task_review_status_payload") as post,
         ):
-            self.assertIsNone(ai_status.resolve_task_sha(task_id, force_refresh=True))
+            with self.assertRaisesRegex(RuntimeError, "timed out"):
+                ai_status.resolve_task_sha(task_id, force_refresh=True)
             ai_status.emit_task_review_status_check(
                 {"id": task_id, "approved_head": old_sha}, "review_approved"
             )
-        remote.assert_called_once()
+        self.assertEqual(remote.call_count, 2)
         self.assertEqual(remote.call_args.kwargs["timeout"], ai_status.COMMAND_TIMEOUT_SECONDS)
         post.assert_not_called()
 
@@ -5456,7 +5458,50 @@ class StatusCheckEmissionTests(unittest.TestCase):
                 return_value=mock.Mock(returncode=0, stdout=stdout),
             ):
                 ai_status.clear_ai_status_caches()
-                self.assertIsNone(ai_status.resolve_task_sha(task_id))
+                with self.assertRaises(RuntimeError):
+                    ai_status.resolve_task_sha(task_id)
+
+    def test_remote_lookup_errors_cannot_be_reused_as_absence(self) -> None:
+        task_id = "ODP-ERROR-CACHE-001"
+        old_sha, recovered_sha = "a" * 40, "b" * 40
+        failures = (
+            ("nonzero", mock.Mock(returncode=128, stdout="")),
+            ("timeout", subprocess.TimeoutExpired("git ls-remote", 8)),
+            ("unavailable", FileNotFoundError("git unavailable")),
+            ("ambiguous", mock.Mock(returncode=0, stdout=(
+                f"{old_sha}\trefs/heads/task/{task_id}\n"
+                f"{recovered_sha}\trefs/heads/task-{task_id}\n"
+            ))),
+            ("malformed", mock.Mock(returncode=0, stdout=f"invalid\trefs/heads/task/{task_id}\n")),
+            ("unexpected", mock.Mock(returncode=0, stdout=f"{old_sha}\trefs/heads/unrelated\n")),
+        )
+        for label, failure in failures:
+            with self.subTest(failure=label):
+                ai_status.clear_ai_status_caches()
+                with mock.patch("subprocess.run", return_value=mock.Mock(
+                    returncode=0, stdout=f"{old_sha}\trefs/heads/task/{task_id}\n",
+                )):
+                    self.assertEqual(ai_status.resolve_task_sha(task_id), old_sha)
+                options = {"side_effect": failure} if isinstance(failure, Exception) else {"return_value": failure}
+                with mock.patch("subprocess.run", **options) as remote:
+                    with self.assertRaises(RuntimeError):
+                        ai_status.resolve_task_sha(task_id, force_refresh=True)
+                    with self.assertRaises(RuntimeError):
+                        ai_status.resolve_task_sha(task_id)
+                    self.assertEqual(remote.call_count, 2)
+                with mock.patch("subprocess.run", return_value=mock.Mock(
+                    returncode=0, stdout=f"{recovered_sha}\trefs/heads/task/{task_id}\n",
+                )) as recovered:
+                    self.assertEqual(ai_status.resolve_task_sha(task_id), recovered_sha)
+                    self.assertEqual(ai_status.resolve_task_sha(task_id), recovered_sha)
+                    recovered.assert_called_once()
+
+    def test_confirmed_remote_absence_retains_bounded_cache(self) -> None:
+        ai_status.clear_ai_status_caches()
+        with mock.patch("subprocess.run", return_value=mock.Mock(returncode=0, stdout="")) as remote:
+            self.assertIsNone(ai_status.resolve_task_sha("ODP-ABSENT-CACHE-001"))
+            self.assertIsNone(ai_status.resolve_task_sha("ODP-ABSENT-CACHE-001"))
+            remote.assert_called_once()
 
     def test_resolve_task_sha_uses_bounded_warm_cache_for_ordinary_lookups(self) -> None:
         task_id = "ODP-WARM-CACHE-001"
@@ -5512,11 +5557,11 @@ class StatusCheckEmissionTests(unittest.TestCase):
             third_sha = ai_status.resolve_task_sha(task_id, fresh=True)
             self.assertIsNone(third_sha)
 
-        # Step 4: Remote origin command fails. force_refresh=True fails closed (returns None), NOT cached sha_updated.
+        # Step 4: A transport failure raises instead of reusing a SHA or absence.
         mock_res4 = mock.Mock(returncode=1, stdout="")
         with mock.patch("subprocess.run", return_value=mock_res4):
-            fourth_sha = ai_status.resolve_task_sha(task_id, force_refresh=True)
-            self.assertIsNone(fourth_sha)
+            with self.assertRaisesRegex(RuntimeError, "unverifiable"):
+                ai_status.resolve_task_sha(task_id, force_refresh=True)
 
     def test_active_branch_governance_refreshes_but_done_uses_delivery_provenance(self) -> None:
         task_id = "ODP-GOV-TEST-001"
@@ -5644,16 +5689,16 @@ class StatusCheckEmissionTests(unittest.TestCase):
             mock_bad = mock.Mock(returncode=0, stdout=f"{bad_sha}\trefs/heads/task/{task_id}\n")
             with self.subTest(invalid_len=invalid_len), mock.patch("subprocess.run", return_value=mock_bad) as m_run:
                 ai_status.clear_ai_status_caches()
-                res = ai_status.resolve_task_sha(task_id)
-                self.assertIsNone(res)
+                with self.assertRaisesRegex(RuntimeError, "invalid or unexpected ref"):
+                    ai_status.resolve_task_sha(task_id)
                 self.assertTrue(m_run.called)
 
         for nonhex_sha in ("g" * 40, "z" * 64, "G" * 40, "X" * 64, "123456789012345678901234567890123456789g"):
             mock_nonhex = mock.Mock(returncode=0, stdout=f"{nonhex_sha}\trefs/heads/task/{task_id}\n")
             with self.subTest(nonhex_sha=nonhex_sha), mock.patch("subprocess.run", return_value=mock_nonhex) as m_run:
                 ai_status.clear_ai_status_caches()
-                res = ai_status.resolve_task_sha(task_id)
-                self.assertIsNone(res)
+                with self.assertRaisesRegex(RuntimeError, "invalid or unexpected ref"):
+                    ai_status.resolve_task_sha(task_id)
                 self.assertTrue(m_run.called)
 
     def test_emit_task_review_status_check_approved(self) -> None:

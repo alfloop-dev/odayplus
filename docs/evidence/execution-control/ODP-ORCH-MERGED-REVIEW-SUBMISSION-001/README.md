@@ -104,3 +104,14 @@
 | **A4** | 已 merged `task_finalize` 及 review dispatch 沿原 task 接續，不建空 PR/重複 task，不手改 JSON，冪等防重派 | R3: task_finalize.sh 遍歷所有 PR 找 MERGED，不漏掉被 CLOSED PR 遮蓋的有效合併 | **PASS** |
 | **A5** | 補有意義正反 CLI/Git ancestry/CI/actor regression，保存原始結果與 exact source，Ruff/boundary 通過 | 新增 7 個 regression tests: R2 (2個), R4 (1個), R5 (4個)。Ruff 與 Code Boundaries 100% 通過 | **PASS** |
 | **A6** | 正常 per-task PR / required CI / 獨立 Codex2 審查 / owner 結案；不修改 live runtime/config/狀態或重啟 Supervisor | 循標準 `worker_commit.py` -> `task_finalize.sh` 提交流程，未改動 live runtime 與 supervisor 設定 | **PASS** |
+
+
+## Contributor correction: cache lookup failures (2026-09-13)
+
+A forced remote lookup error previously replaced a warm SHA cache with `None`. An immediate ordinary lookup then returned cached absence without checking origin. This patch invalidates the cache on transport, executable, protocol, and ambiguous-ref errors and raises an unverifiable-state error. Only a successful empty response remains a cacheable confirmed absence. Valid exact 40/64-character object IDs retain bounded caching.
+
+Executing regression covers warm SHA -> forced failure -> repeated ordinary failure -> fresh successful recovery for nonzero exit, timeout, missing executable, ambiguous refs, malformed object ID, and unexpected ref. The original new regression recorded six failing subtests before the implementation change; confirmed-absence controls passed. Existing error/status-emission and invalid-SHA assertions now match the explicit error contract.
+
+Final complete tooling regression: `3042 passed, 8 skipped, 10 deselected, 3 warnings, 642 subtests passed in 431.24s (0:07:11)`. Final Ruff and boundary checks passed. Exact file hashes, original commands, exit codes, timings and raw outputs are in `1325-cache-source.json` and the accompanying `1325-cache-*.json` / `.log` files. The isolated worktree uses the normal `make bootstrap` test configuration; no live config was changed.
+
+These receipts cover this cache correction. They do not establish acceptance for the separate workspace lease, reopened merged recovery transition/provenance, and shell discovery defects recorded against owner head `9321e35d3fe4065bdc6ca321513039c41d1a7c1c`. Earlier task-wide PASS labels remain subject to those owner repairs; no reviewer or Human/Ops approval is asserted by this contributor evidence.

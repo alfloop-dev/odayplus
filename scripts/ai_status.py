@@ -9541,25 +9541,33 @@ def resolve_task_sha(
         )
     except subprocess.TimeoutExpired:
         # R5: An incomplete origin response is a transport failure, not a
-        # confirmed branch deletion.  Replace the warm cache to prevent stale
-        # fallback, then raise so callers can distinguish error from absent.
-        _TASK_SHA_CACHE[task_id] = (time.time(), None)
+        # confirmed branch deletion. Invalidate the warm cache so the next
+        # ordinary lookup cannot reuse either an old SHA or false absence.
+        _TASK_SHA_CACHE.pop(task_id, None)
         raise RuntimeError(
             f"git ls-remote timed out after {COMMAND_TIMEOUT_SECONDS}s for {task_id}; "
+            "remote branch state is unverifiable"
+        ) from None
+    except OSError:
+        _TASK_SHA_CACHE.pop(task_id, None)
+        raise RuntimeError(
+            f"git ls-remote could not run for {task_id}; "
             "remote branch state is unverifiable"
         ) from None
     matches: list[str] = []
     if result.returncode != 0:
         # R5: A nonzero exit from git ls-remote (network failure, auth error,
         # etc.) is a transport failure, not a confirmed branch absence.
-        _TASK_SHA_CACHE[task_id] = (time.time(), None)
+        _TASK_SHA_CACHE.pop(task_id, None)
         raise RuntimeError(
             f"git ls-remote failed with exit code {result.returncode} for {task_id}; "
             "remote branch state is unverifiable"
         )
     for line in result.stdout.splitlines():
+        if not line.strip():
+            continue
         fields = line.split()
-        if (
+        if not (
             len(fields) == 2
             and fields[1] in remote_refs
             and (
@@ -9567,7 +9575,12 @@ def resolve_task_sha(
                 or re.fullmatch(r"[0-9a-fA-F]{64}", fields[0])
             )
         ):
-            matches.append(fields[0])
+            _TASK_SHA_CACHE.pop(task_id, None)
+            raise RuntimeError(
+                f"git ls-remote returned an invalid or unexpected ref for {task_id}; "
+                "remote branch state is unverifiable"
+            )
+        matches.append(fields[0])
     # Fail closed unless origin returns exactly one valid canonical task ref.
     # Local HEAD, local task refs, cached origin refs, and old PR heads are not
     # authoritative active-task review/freeze evidence.
@@ -9576,13 +9589,13 @@ def resolve_task_sha(
         return matches[0]
     if len(matches) > 1:
         # R5: Ambiguous refs are not a confirmed absence either.
-        _TASK_SHA_CACHE[task_id] = (now, None)
+        _TASK_SHA_CACHE.pop(task_id, None)
         raise RuntimeError(
             f"git ls-remote returned {len(matches)} matching refs for {task_id}; "
             "remote branch state is ambiguous"
         )
 
-    # Confirmed absent: git ls-remote succeeded (rc=0) but found no matching refs.
+    # Confirmed absent: git ls-remote succeeded (rc=0) with no ref output.
     _TASK_SHA_CACHE[task_id] = (now, None)
     return None
 

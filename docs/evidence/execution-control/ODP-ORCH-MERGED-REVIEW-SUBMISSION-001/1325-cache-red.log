@@ -1,0 +1,229 @@
+..                                                                 [100%]
+=================================== FAILURES ===================================
+_ StatusCheckEmissionTests.test_remote_lookup_errors_cannot_be_reused_as_absence (failure='nonzero') _
+
+self = <test_ai_status.StatusCheckEmissionTests testMethod=test_remote_lookup_errors_cannot_be_reused_as_absence>
+
+    def test_remote_lookup_errors_cannot_be_reused_as_absence(self) -> None:
+        task_id = "ODP-ERROR-CACHE-001"
+        old_sha, recovered_sha = "a" * 40, "b" * 40
+        failures = (
+            ("nonzero", mock.Mock(returncode=128, stdout="")),
+            ("timeout", subprocess.TimeoutExpired("git ls-remote", 8)),
+            ("unavailable", FileNotFoundError("git unavailable")),
+            ("ambiguous", mock.Mock(returncode=0, stdout=(
+                f"{old_sha}\trefs/heads/task/{task_id}\n"
+                f"{recovered_sha}\trefs/heads/task-{task_id}\n"
+            ))),
+            ("malformed", mock.Mock(returncode=0, stdout=f"invalid\trefs/heads/task/{task_id}\n")),
+            ("unexpected", mock.Mock(returncode=0, stdout=f"{old_sha}\trefs/heads/unrelated\n")),
+        )
+        for label, failure in failures:
+            with self.subTest(failure=label):
+                ai_status.clear_ai_status_caches()
+                with mock.patch("subprocess.run", return_value=mock.Mock(
+                    returncode=0, stdout=f"{old_sha}\trefs/heads/task/{task_id}\n",
+                )):
+                    self.assertEqual(ai_status.resolve_task_sha(task_id), old_sha)
+                options = {"side_effect": failure} if isinstance(failure, Exception) else {"return_value": failure}
+                with mock.patch("subprocess.run", **options) as remote:
+                    with self.assertRaises(RuntimeError):
+                        ai_status.resolve_task_sha(task_id, force_refresh=True)
+>                   with self.assertRaises(RuntimeError):
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E                   AssertionError: RuntimeError not raised
+
+scripts/test_ai_status.py:5489: AssertionError
+_ StatusCheckEmissionTests.test_remote_lookup_errors_cannot_be_reused_as_absence (failure='timeout') _
+
+self = <test_ai_status.StatusCheckEmissionTests testMethod=test_remote_lookup_errors_cannot_be_reused_as_absence>
+
+    def test_remote_lookup_errors_cannot_be_reused_as_absence(self) -> None:
+        task_id = "ODP-ERROR-CACHE-001"
+        old_sha, recovered_sha = "a" * 40, "b" * 40
+        failures = (
+            ("nonzero", mock.Mock(returncode=128, stdout="")),
+            ("timeout", subprocess.TimeoutExpired("git ls-remote", 8)),
+            ("unavailable", FileNotFoundError("git unavailable")),
+            ("ambiguous", mock.Mock(returncode=0, stdout=(
+                f"{old_sha}\trefs/heads/task/{task_id}\n"
+                f"{recovered_sha}\trefs/heads/task-{task_id}\n"
+            ))),
+            ("malformed", mock.Mock(returncode=0, stdout=f"invalid\trefs/heads/task/{task_id}\n")),
+            ("unexpected", mock.Mock(returncode=0, stdout=f"{old_sha}\trefs/heads/unrelated\n")),
+        )
+        for label, failure in failures:
+            with self.subTest(failure=label):
+                ai_status.clear_ai_status_caches()
+                with mock.patch("subprocess.run", return_value=mock.Mock(
+                    returncode=0, stdout=f"{old_sha}\trefs/heads/task/{task_id}\n",
+                )):
+                    self.assertEqual(ai_status.resolve_task_sha(task_id), old_sha)
+                options = {"side_effect": failure} if isinstance(failure, Exception) else {"return_value": failure}
+                with mock.patch("subprocess.run", **options) as remote:
+                    with self.assertRaises(RuntimeError):
+                        ai_status.resolve_task_sha(task_id, force_refresh=True)
+>                   with self.assertRaises(RuntimeError):
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E                   AssertionError: RuntimeError not raised
+
+scripts/test_ai_status.py:5489: AssertionError
+_ StatusCheckEmissionTests.test_remote_lookup_errors_cannot_be_reused_as_absence (failure='unavailable') _
+
+self = <test_ai_status.StatusCheckEmissionTests testMethod=test_remote_lookup_errors_cannot_be_reused_as_absence>
+
+    def test_remote_lookup_errors_cannot_be_reused_as_absence(self) -> None:
+        task_id = "ODP-ERROR-CACHE-001"
+        old_sha, recovered_sha = "a" * 40, "b" * 40
+        failures = (
+            ("nonzero", mock.Mock(returncode=128, stdout="")),
+            ("timeout", subprocess.TimeoutExpired("git ls-remote", 8)),
+            ("unavailable", FileNotFoundError("git unavailable")),
+            ("ambiguous", mock.Mock(returncode=0, stdout=(
+                f"{old_sha}\trefs/heads/task/{task_id}\n"
+                f"{recovered_sha}\trefs/heads/task-{task_id}\n"
+            ))),
+            ("malformed", mock.Mock(returncode=0, stdout=f"invalid\trefs/heads/task/{task_id}\n")),
+            ("unexpected", mock.Mock(returncode=0, stdout=f"{old_sha}\trefs/heads/unrelated\n")),
+        )
+        for label, failure in failures:
+            with self.subTest(failure=label):
+                ai_status.clear_ai_status_caches()
+                with mock.patch("subprocess.run", return_value=mock.Mock(
+                    returncode=0, stdout=f"{old_sha}\trefs/heads/task/{task_id}\n",
+                )):
+                    self.assertEqual(ai_status.resolve_task_sha(task_id), old_sha)
+                options = {"side_effect": failure} if isinstance(failure, Exception) else {"return_value": failure}
+                with mock.patch("subprocess.run", **options) as remote:
+                    with self.assertRaises(RuntimeError):
+>                       ai_status.resolve_task_sha(task_id, force_refresh=True)
+
+scripts/test_ai_status.py:5488: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+scripts/ai_status.py:9534: in resolve_task_sha
+    result = subprocess.run(
+/home/lupin/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/unittest/mock.py:1139: in __call__
+    return self._mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/lupin/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/unittest/mock.py:1143: in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _execute_mock_call(self, /, *args, **kwargs):
+        # separate from _increment_mock_call so that awaited functions are
+        # executed separately from their call, also AsyncMock overrides this method
+    
+        effect = self.side_effect
+        if effect is not None:
+            if _is_exception(effect):
+>               raise effect
+E               FileNotFoundError: git unavailable
+
+/home/lupin/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/lib/python3.12/unittest/mock.py:1198: FileNotFoundError
+_ StatusCheckEmissionTests.test_remote_lookup_errors_cannot_be_reused_as_absence (failure='ambiguous') _
+
+self = <test_ai_status.StatusCheckEmissionTests testMethod=test_remote_lookup_errors_cannot_be_reused_as_absence>
+
+    def test_remote_lookup_errors_cannot_be_reused_as_absence(self) -> None:
+        task_id = "ODP-ERROR-CACHE-001"
+        old_sha, recovered_sha = "a" * 40, "b" * 40
+        failures = (
+            ("nonzero", mock.Mock(returncode=128, stdout="")),
+            ("timeout", subprocess.TimeoutExpired("git ls-remote", 8)),
+            ("unavailable", FileNotFoundError("git unavailable")),
+            ("ambiguous", mock.Mock(returncode=0, stdout=(
+                f"{old_sha}\trefs/heads/task/{task_id}\n"
+                f"{recovered_sha}\trefs/heads/task-{task_id}\n"
+            ))),
+            ("malformed", mock.Mock(returncode=0, stdout=f"invalid\trefs/heads/task/{task_id}\n")),
+            ("unexpected", mock.Mock(returncode=0, stdout=f"{old_sha}\trefs/heads/unrelated\n")),
+        )
+        for label, failure in failures:
+            with self.subTest(failure=label):
+                ai_status.clear_ai_status_caches()
+                with mock.patch("subprocess.run", return_value=mock.Mock(
+                    returncode=0, stdout=f"{old_sha}\trefs/heads/task/{task_id}\n",
+                )):
+                    self.assertEqual(ai_status.resolve_task_sha(task_id), old_sha)
+                options = {"side_effect": failure} if isinstance(failure, Exception) else {"return_value": failure}
+                with mock.patch("subprocess.run", **options) as remote:
+                    with self.assertRaises(RuntimeError):
+                        ai_status.resolve_task_sha(task_id, force_refresh=True)
+>                   with self.assertRaises(RuntimeError):
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E                   AssertionError: RuntimeError not raised
+
+scripts/test_ai_status.py:5489: AssertionError
+_ StatusCheckEmissionTests.test_remote_lookup_errors_cannot_be_reused_as_absence (failure='malformed') _
+
+self = <test_ai_status.StatusCheckEmissionTests testMethod=test_remote_lookup_errors_cannot_be_reused_as_absence>
+
+    def test_remote_lookup_errors_cannot_be_reused_as_absence(self) -> None:
+        task_id = "ODP-ERROR-CACHE-001"
+        old_sha, recovered_sha = "a" * 40, "b" * 40
+        failures = (
+            ("nonzero", mock.Mock(returncode=128, stdout="")),
+            ("timeout", subprocess.TimeoutExpired("git ls-remote", 8)),
+            ("unavailable", FileNotFoundError("git unavailable")),
+            ("ambiguous", mock.Mock(returncode=0, stdout=(
+                f"{old_sha}\trefs/heads/task/{task_id}\n"
+                f"{recovered_sha}\trefs/heads/task-{task_id}\n"
+            ))),
+            ("malformed", mock.Mock(returncode=0, stdout=f"invalid\trefs/heads/task/{task_id}\n")),
+            ("unexpected", mock.Mock(returncode=0, stdout=f"{old_sha}\trefs/heads/unrelated\n")),
+        )
+        for label, failure in failures:
+            with self.subTest(failure=label):
+                ai_status.clear_ai_status_caches()
+                with mock.patch("subprocess.run", return_value=mock.Mock(
+                    returncode=0, stdout=f"{old_sha}\trefs/heads/task/{task_id}\n",
+                )):
+                    self.assertEqual(ai_status.resolve_task_sha(task_id), old_sha)
+                options = {"side_effect": failure} if isinstance(failure, Exception) else {"return_value": failure}
+                with mock.patch("subprocess.run", **options) as remote:
+>                   with self.assertRaises(RuntimeError):
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E                   AssertionError: RuntimeError not raised
+
+scripts/test_ai_status.py:5487: AssertionError
+_ StatusCheckEmissionTests.test_remote_lookup_errors_cannot_be_reused_as_absence (failure='unexpected') _
+
+self = <test_ai_status.StatusCheckEmissionTests testMethod=test_remote_lookup_errors_cannot_be_reused_as_absence>
+
+    def test_remote_lookup_errors_cannot_be_reused_as_absence(self) -> None:
+        task_id = "ODP-ERROR-CACHE-001"
+        old_sha, recovered_sha = "a" * 40, "b" * 40
+        failures = (
+            ("nonzero", mock.Mock(returncode=128, stdout="")),
+            ("timeout", subprocess.TimeoutExpired("git ls-remote", 8)),
+            ("unavailable", FileNotFoundError("git unavailable")),
+            ("ambiguous", mock.Mock(returncode=0, stdout=(
+                f"{old_sha}\trefs/heads/task/{task_id}\n"
+                f"{recovered_sha}\trefs/heads/task-{task_id}\n"
+            ))),
+            ("malformed", mock.Mock(returncode=0, stdout=f"invalid\trefs/heads/task/{task_id}\n")),
+            ("unexpected", mock.Mock(returncode=0, stdout=f"{old_sha}\trefs/heads/unrelated\n")),
+        )
+        for label, failure in failures:
+            with self.subTest(failure=label):
+                ai_status.clear_ai_status_caches()
+                with mock.patch("subprocess.run", return_value=mock.Mock(
+                    returncode=0, stdout=f"{old_sha}\trefs/heads/task/{task_id}\n",
+                )):
+                    self.assertEqual(ai_status.resolve_task_sha(task_id), old_sha)
+                options = {"side_effect": failure} if isinstance(failure, Exception) else {"return_value": failure}
+                with mock.patch("subprocess.run", **options) as remote:
+>                   with self.assertRaises(RuntimeError):
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E                   AssertionError: RuntimeError not raised
+
+scripts/test_ai_status.py:5487: AssertionError
+=========================== short test summary info ============================
+SUBFAILED(failure='nonzero') scripts/test_ai_status.py::StatusCheckEmissionTests::test_remote_lookup_errors_cannot_be_reused_as_absence
+SUBFAILED(failure='timeout') scripts/test_ai_status.py::StatusCheckEmissionTests::test_remote_lookup_errors_cannot_be_reused_as_absence
+SUBFAILED(failure='unavailable') scripts/test_ai_status.py::StatusCheckEmissionTests::test_remote_lookup_errors_cannot_be_reused_as_absence
+SUBFAILED(failure='ambiguous') scripts/test_ai_status.py::StatusCheckEmissionTests::test_remote_lookup_errors_cannot_be_reused_as_absence
+SUBFAILED(failure='malformed') scripts/test_ai_status.py::StatusCheckEmissionTests::test_remote_lookup_errors_cannot_be_reused_as_absence
+SUBFAILED(failure='unexpected') scripts/test_ai_status.py::StatusCheckEmissionTests::test_remote_lookup_errors_cannot_be_reused_as_absence
+6 failed, 2 passed, 278 deselected in 3.61s

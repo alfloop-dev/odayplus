@@ -1,0 +1,21 @@
+{
+  "cwd": "/tmp/codex-1325-cache-failure",
+  "head_sha": "ae26968a90cb8ee3a27c454fb20dfa12184ca857",
+  "tracked_diff_sha256": "83e0de40ac8143d7b2b2c07400953d239b0bf181b3510c240131027b40ecfcd2",
+  "argv": [
+    "env",
+    "UV_PROJECT_ENVIRONMENT=/tmp/pantheon-worker-worktrees/pantheon/odp-orch-merged-review-submission-001/.venv",
+    "uv",
+    "run",
+    "--no-sync",
+    "ruff",
+    "check",
+    "scripts/ai_status.py",
+    "scripts/test_ai_status.py",
+    ".orchestrator/test_supervisor.py"
+  ],
+  "started_at": "2026-09-13T08:38:44.005037+00:00",
+  "duration_seconds": 0.22978234896436334,
+  "exit_code": 0,
+  "output": "1325-cache-final-lint.log"
+}

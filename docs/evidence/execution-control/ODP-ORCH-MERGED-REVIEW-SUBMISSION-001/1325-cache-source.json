@@ -1,0 +1,10 @@
+{
+  "base_sha": "ae26968a90cb8ee3a27c454fb20dfa12184ca857",
+  "files": {
+    "scripts/ai_status.py": "efba50eee591b5068bb4fc8b2b805522784d094981cfc9a8a4bdd0f4c5c97586",
+    "scripts/test_ai_status.py": "b3389e7cc0639735d3f8ec09cd9c14274f35c7e2650ec5fcee531592cf8e7d1c",
+    ".orchestrator/test_supervisor.py": "68c85b741039cd758b639aead05a93c3ad05ec4f722c96fa60d05a5347dd6402"
+  },
+  "test_environment": "make bootstrap; locked existing project venv through UV_PROJECT_ENVIRONMENT and uv run --no-sync",
+  "scope": "Cache transport/protocol failures must not become confirmed branch absence; no live runtime or canonical status edits."
+}
