@@ -1,0 +1,279 @@
+{
+  "observed_at": "2026-09-13T13:13:40.839712+00:00",
+  "running_workers": [
+    {
+      "run_id": "antigravity-20260913T122606Z-bbe4a50d",
+      "task_id": "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+      "status": "running",
+      "pid": 768796,
+      "child_pid": 768798,
+      "workspace_path": "/tmp/pantheon-worker-worktrees/pantheon/odp-canonical-measurement-nullable-cutover-001",
+      "process_alive": {
+        "768796": true,
+        "768798": true
+      }
+    }
+  ],
+  "planned_pair_overlaps": [
+    {
+      "a": "DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001",
+      "b": "DPF-OFFICIAL-SOURCE-ENDPOINT-INTEGRATION-001",
+      "paths": [
+        [
+          "src/oday_data_platform/defs/external/ris_nlsc.py",
+          "src/oday_data_platform/defs/external/ris_nlsc.py"
+        ],
+        [
+          "src/oday_data_platform/defs/external/mof_moi.py",
+          "src/oday_data_platform/defs/external/mof_moi.py"
+        ],
+        [
+          "tests/sources/test_official_live_acquisition.py",
+          "tests/sources/test_official_live_acquisition.py"
+        ],
+        [
+          "tests/sources/official_source_fixtures.py",
+          "tests/sources/official_source_fixtures.py"
+        ]
+      ],
+      "serialized": true
+    }
+  ],
+  "planned_vs_other_active_tasks": [
+    {
+      "new": "DPF-OFFICIAL-SOURCE-ENDPOINT-INTEGRATION-001",
+      "existing": "DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001",
+      "status": "todo",
+      "paths": [
+        [
+          "src/oday_data_platform/defs/external/mof_moi.py",
+          "src/oday_data_platform/defs/external/mof_moi.py"
+        ],
+        [
+          "src/oday_data_platform/defs/external/ris_nlsc.py",
+          "src/oday_data_platform/defs/external/ris_nlsc.py"
+        ],
+        [
+          "tests/sources/test_official_live_acquisition.py",
+          "tests/sources/test_official_live_acquisition.py"
+        ],
+        [
+          "tests/sources/official_source_fixtures.py",
+          "tests/sources/official_source_fixtures.py"
+        ]
+      ],
+      "serialized": true
+    }
+  ],
+  "data_platform_open_prs": [
+    {
+      "baseRefName": "main",
+      "headRefOid": "0577773d0457d7b51e93d2e1913f70002227fdb4",
+      "number": 1,
+      "title": "[Feat] add transactions daily lookback automation",
+      "changed_paths": [
+        "deploy/k8s/dev/configmap.yaml",
+        "src/oday_data_platform/defs/assets.py",
+        "src/oday_data_platform/defs/raw_transactions.py",
+        "src/oday_data_platform/defs/schedules.py",
+        "tests/test_assets.py",
+        "tests/test_schedules.py"
+      ],
+      "planned_collisions": []
+    },
+    {
+      "baseRefName": "dev",
+      "headRefOid": "56c9c2bb04f0e9312d89b6d481a8abf82eeffe04",
+      "number": 63,
+      "title": "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001: emit masked release snapshot",
+      "changed_paths": [
+        ".github/workflows/emgi-runtime-deploy.yml",
+        ".github/workflows/source-suite.yml",
+        "NOTICE-THIRD-PARTY.md",
+        "docs/evidence/final/XR-EXT-OSS-FINAL-AUDIT-001/technical-gap-closure-matrix.json",
+        "docs/evidence/gap-audits/XR-EXT-OSS-INVENTORY-002/gap-manifest.json",
+        "docs/evidence/gap-audits/XR-EXT-OSS-INVENTORY-002/sbom-inputs.json",
+        "docs/evidence/runtime/DPF-EMGI-LIVE-ROLLOUT-001/README.md",
+        "docs/evidence/runtime/DPF-EMGI-LIVE-ROLLOUT-001/live-rollout-receipt.json",
+        "docs/evidence/runtime/DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001/README.md",
+        "docs/evidence/runtime/DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001/consumer-contract-handoff.json",
+        "docs/evidence/runtime/DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001/emgi-masked-snapshot-20260825-001.json.gz",
+        "docs/evidence/runtime/DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001/masked-release-snapshot-manifest.json",
+        "docs/evidence/runtime/DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001/masking-policy-audit.json",
+        "docs/evidence/runtime/DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001/runtime-egress-posture-audit.json",
+        "docs/evidence/runtime/DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001/snapshot-readback-verification-receipt.json",
+        "docs/evidence/runtime/DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001/verification-run-receipt.json",
+        "infra/k8s/data-platform/runtime/README.md",
+        "scripts/materialize_emgi_release_snapshot.py",
+        "src/oday_data_platform/release_snapshot.py",
+        "tests/deploy/test_emgi_release_snapshot.py"
+      ],
+      "planned_collisions": []
+    }
+  ],
+  "relevant_odayplus_prs": [
+    {
+      "headRefOid": "2c50d5a6ff8d9f986221489d548072e9f8bfbde4",
+      "number": 1305,
+      "state": "MERGED",
+      "title": "[ReviewBus] ODP-ORCH-QUOTA-RECOVERY-STATE-001 修正 quota 解除被舊狀態復活及帳號 cooldown 殘留",
+      "changed_paths": [
+        ".orchestrator/dispatch_engine.py",
+        ".orchestrator/runtime_state.py",
+        ".orchestrator/supervisor.py",
+        ".orchestrator/test_account_pool_admission.py",
+        ".orchestrator/test_account_pool_queue_recovery.py",
+        ".orchestrator/test_provider_failure_epoch.py",
+        ".orchestrator/test_runtime_state.py",
+        ".orchestrator/test_supervisor.py",
+        ".orchestrator/test_worker_failure_policy.py",
+        ".orchestrator/worker_failure_policy.py",
+        "docs/audits/code-boundary-inventory.csv",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-admission-baseline.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-admission-final.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-admission-window-green.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-admission-window-red.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-epoch10-admission.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-epoch10-admission.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-epoch10-expanded.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-epoch10-expanded.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-epoch10-final-source.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-epoch10-full-final.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-epoch10-full-final.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-epoch10-full-final.xml",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-epoch10-full.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-epoch10-full.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-epoch10-green.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-epoch10-green.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-epoch10-red.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-epoch10-red.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-final-admission-check.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-final-admission-check.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-final-combined-full.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-final-combined-full.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-final-combined-full.xml",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-green.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-legacy-sibling-baseline.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-legacy-sibling-baseline.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-legacy-sibling-green.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-legacy-sibling-green.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-legacy-sibling-red.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-legacy-sibling-red.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-missing-auth-green.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-missing-auth-red.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-persistence-controls.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-persistence-controls.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-persistence-green.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-persistence-green.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-persistence-red.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-persistence-red.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-post-clear-clock-red.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-post-clear-clock-red.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-post-clear-final-boundary.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-post-clear-final-boundary.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-post-clear-legacy-green.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-post-clear-legacy-green.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-post-clear-legacy-red.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-post-clear-legacy-red.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-postconditions-green.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-runtime-common.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-supplement-bootstrapped-full.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-supplement-bootstrapped-full.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-supplement-full.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/1305-supplement-full.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/README.md",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/admission-window-verification.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/admission-window.junit.xml",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/bounded-continuation-verification.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/final-continuation-verification.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/legacy-sibling-verification.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/missing-worker-auth-verification.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/persistence-followup-verification.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/post-clear-clock-verification.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/post-clear-final-independent-receipt.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/post-clear-final-independent.log",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/post-clear-final-independent.xml",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/postcondition-admission-verification.json",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-RECOVERY-STATE-001/postcondition-admission.junit.xml"
+      ]
+    },
+    {
+      "headRefOid": "749e740a1ed2cd10bffa56cad0dcf3ddbf93983f",
+      "number": 1325,
+      "state": "OPEN",
+      "title": "[ReviewBus] ODP-ORCH-MERGED-REVIEW-SUBMISSION-001 修復已合併PR的精確版本送審接續",
+      "changed_paths": [
+        ".orchestrator/dispatch_engine.py",
+        ".orchestrator/test_dispatch_policy.py",
+        ".orchestrator/test_watch_events.py",
+        ".orchestrator/watch_events.py",
+        ".orchestrator/worker_workspace.py",
+        "delivery_toolchain/git/task_finalize.sh",
+        "delivery_toolchain/git/task_start.sh",
+        "docs/evidence/execution-control/ODP-ORCH-MERGED-REVIEW-SUBMISSION-001/README.md",
+        "scripts/ai_status.py",
+        "scripts/test_ai_status.py",
+        "tests/tooling/test_git_task_scripts.py"
+      ]
+    },
+    {
+      "headRefOid": "aa4891f598727f802bf213c1231918f86dd0d5e5",
+      "number": 1326,
+      "state": "OPEN",
+      "title": "[ReviewBus] ODP-ORCH-QUOTA-FENCE-HANDOFF-001 修復 quota 同帳號停派後的修改保全與續接",
+      "changed_paths": [
+        ".orchestrator/runtime_state.py",
+        ".orchestrator/supervisor.py",
+        ".orchestrator/test_worker_failure_policy.py",
+        ".orchestrator/worker_failure_policy.py",
+        ".orchestrator/worker_lifecycle.py",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-FENCE-HANDOFF-001/README.md",
+        "docs/evidence/execution-control/ODP-ORCH-QUOTA-FENCE-HANDOFF-001/command-receipts.json"
+      ]
+    },
+    {
+      "headRefOid": "e16513eab02d93dde382b3fd5a86ca8249201b03",
+      "number": 1327,
+      "state": "OPEN",
+      "title": "[ReviewBus] ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001 原子切換六個 canonical model 的 nullable measurement semantics",
+      "changed_paths": [
+        "apps/api/app/routes/listings.py",
+        "apps/api/app/routes/market_survey.py",
+        "apps/web/features/operator/NetworkFindAreasWorkspace.tsx",
+        "apps/web/features/operator/network/HeatZoneMap.tsx",
+        "apps/web/features/operator/network/heatZoneMapAdapters.ts",
+        "apps/web/features/operator/network/mapTypes.ts",
+        "apps/web/features/operator/network/networkFindAreasLoader.ts",
+        "apps/web/features/operator/networkFindAreasViewModel.ts",
+        "apps/web/features/operator/types.ts",
+        "delivery_toolchain/governance/measurement_default_exemptions.json",
+        "delivery_toolchain/governance/test_check_measurement_defaults.py",
+        "docs/audits/code-boundary-inventory.csv",
+        "infra/db/migrations/000026_canonical_measurement_nullable.sql",
+        "infra/db/migrations/000026_canonical_measurement_nullable_sqlite.sql",
+        "infra/db/migrations/versions/0020_canonical_measurement_nullable.py",
+        "modules/external_data/application/ingestion_service.py",
+        "modules/external_data/connectors/external.py",
+        "modules/external_data/geo/pipeline.py",
+        "modules/heatzone/v3/contract.py",
+        "modules/integration/application/mapping.py",
+        "modules/opsboard/application/network_listings.py",
+        "modules/opsboard/application/network_scoring.py",
+        "packages/domain-types/src/heatzone.ts",
+        "packages/openapi-client/src/index.ts",
+        "packages/schemas/canonical/index.ts",
+        "packages/ui-domain/src/components.tsx",
+        "shared/domain/models.py",
+        "shared/infrastructure/persistence/engine.py",
+        "shared/infrastructure/persistence/model_ready.py",
+        "tests/domain/test_canonical_measurement_nullable.py"
+      ]
+    }
+  ],
+  "unresolved_new_writer_overlaps": [],
+  "limitations": [
+    "Canonical tasks without owned_paths cannot support a blanket no-overlap statement; actual relevant PR paths and running workspace were also examined.",
+    "Semantically related existing libraries are reused; duplicate functionality cannot be ruled out solely by filename.",
+    "This is point-in-time evidence; Supervisor must recheck leases/HEAD before dispatch."
+  ]
+}
