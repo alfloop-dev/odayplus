@@ -25,7 +25,7 @@ from shared.jobs.queue import InMemoryJobQueue
 
 try:
     from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-    from pydantic import BaseModel, Field
+    from pydantic import BaseModel, Field, field_validator
 except ModuleNotFoundError:  # pragma: no cover - optional API dependency
     APIRouter = None  # type: ignore[assignment]
 else:
@@ -102,6 +102,34 @@ else:
         reason: str = ""
         follow_up: bool = False
         follow_up_kind: str | None = None
+
+    class AdjustPayload(BaseModel):
+        actor: str = Field(min_length=1)
+        reason: str = Field(min_length=1)
+        action_spec: dict[str, Any] | None = None
+        planned_start: str | None = None
+        planned_end: str | None = None
+        expected_outcome: str | None = None
+        rollback_plan: str | dict[str, Any] | None = None
+        expected_version: int | None = None
+
+        @field_validator("planned_start", "planned_end")
+        @classmethod
+        def validate_planned_time(cls, value: str | None) -> str | None:
+            if value:
+                try:
+                    _parse_time(value)
+                except (OverflowError, ValueError) as exc:
+                    raise ValueError(f"invalid date format or range: {exc}") from exc
+            return value
+
+    class StopPayload(BaseModel):
+        actor: str = Field(min_length=1)
+        reason: str = Field(min_length=1)
+
+    class RollbackPayload(BaseModel):
+        actor: str = Field(min_length=1)
+        reason: str = Field(min_length=1)
 
     def _parse_time(value: str) -> datetime:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -600,6 +628,101 @@ else:
                 ),
             )
 
+        @router.post(
+            "/{intervention_id}/adjust",
+            dependencies=[
+                Depends(require_permission("intervention", Action.EXECUTE, engine=authz_engine)),
+                Depends(require_permission("intervention", Action.CREATE, engine=authz_engine)),
+            ],
+        )
+        def adjust_case(
+            intervention_id: str,
+            body: AdjustPayload,
+            request: Request,
+            idempotency_key: str | None = Header(
+                default=None,
+                alias="Idempotency-Key",
+            ),
+        ) -> dict[str, Any]:
+            try:
+                planned_start = _parse_time(body.planned_start) if body.planned_start else None
+                planned_end = _parse_time(body.planned_end) if body.planned_end else None
+            except (OverflowError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"invalid date format or range: {exc}",
+                ) from exc
+            return run_command(
+                request=request,
+                scope=f"interventions:{intervention_id}:adjust",
+                payload=body.model_dump(mode="json"),
+                idempotency_key=idempotency_key,
+                operation=lambda: _run(
+                    lambda: active_workflow.adjust_case(
+                        intervention_id,
+                        actor=body.actor,
+                        reason=body.reason,
+                        action_spec=body.action_spec,
+                        planned_start=planned_start,
+                        planned_end=planned_end,
+                        expected_outcome=body.expected_outcome,
+                        rollback_plan=body.rollback_plan,
+                        expected_version=body.expected_version,
+                        correlation_id=request.state.correlation_id,
+                    )
+                ),
+            )
+
+        @router.post("/{intervention_id}/stop", dependencies=[Depends(require_permission("intervention", Action.EXECUTE, engine=authz_engine))])
+        def stop_case(
+            intervention_id: str,
+            body: StopPayload,
+            request: Request,
+            idempotency_key: str | None = Header(
+                default=None,
+                alias="Idempotency-Key",
+            ),
+        ) -> dict[str, Any]:
+            return run_command(
+                request=request,
+                scope=f"interventions:{intervention_id}:stop",
+                payload=body.model_dump(mode="json"),
+                idempotency_key=idempotency_key,
+                operation=lambda: _run(
+                    lambda: active_workflow.stop(
+                        intervention_id,
+                        actor=body.actor,
+                        reason=body.reason,
+                        correlation_id=request.state.correlation_id,
+                    )
+                ),
+            )
+
+        @router.post("/{intervention_id}/rollback", dependencies=[Depends(require_permission("intervention", Action.EXECUTE, engine=authz_engine))])
+        def rollback_case(
+            intervention_id: str,
+            body: RollbackPayload,
+            request: Request,
+            idempotency_key: str | None = Header(
+                default=None,
+                alias="Idempotency-Key",
+            ),
+        ) -> dict[str, Any]:
+            return run_command(
+                request=request,
+                scope=f"interventions:{intervention_id}:rollback",
+                payload=body.model_dump(mode="json"),
+                idempotency_key=idempotency_key,
+                operation=lambda: _run(
+                    lambda: active_workflow.rollback(
+                        intervention_id,
+                        actor=body.actor,
+                        reason=body.reason,
+                        correlation_id=request.state.correlation_id,
+                    )
+                ),
+            )
+
         @router.get("/{intervention_id}/label", dependencies=[Depends(require_permission("intervention", Action.VIEW, engine=authz_engine))])
         def get_label(intervention_id: str) -> dict[str, Any]:
             _get_or_404(intervention_id)
@@ -613,7 +736,7 @@ else:
         def _run(action: Any) -> dict[str, Any]:
             try:
                 return action().to_dict()
-            except (InterventionError, ValueError) as exc:
+            except (InterventionError, ValueError, OverflowError) as exc:
                 msg = str(exc)
                 if "stale update" in msg:
                     raise HTTPException(

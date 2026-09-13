@@ -1,0 +1,10 @@
+.......F                                                                 [100%]
+=================================== FAILURES ===================================
+__________ test_clock_floor_scope_and_stale_save[runless-pause-True] ___________
+.orchestrator/test_provider_failure_epoch.py:176: in test_clock_floor_scope_and_stale_save
+    assert saved['provider_guardrails']['dispatch_pauses'][provider]['worker_run_id']=='new-run'
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'codex'
+=========================== short test summary info ============================
+FAILED .orchestrator/test_provider_failure_epoch.py::test_clock_floor_scope_and_stale_save[runless-pause-True]
+1 failed, 7 passed, 11 deselected in 0.85s
