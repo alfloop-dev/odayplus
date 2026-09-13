@@ -91,6 +91,13 @@ fi
 # gh resolution mirrors delivery_toolchain/github/check_pr_merge_eligibility.py:
 # .orchestrator/bin/gh is a broker shim, not the real CLI.
 resolve_gh() {
+  if [ -n "${GH:-}" ]; then
+    if command -v "$GH" >/dev/null 2>&1; then
+      echo "$GH"
+      return 0
+    fi
+    return 1
+  fi
   local found
   found="$(command -v gh 2>/dev/null || true)"
   case "$found" in
@@ -108,7 +115,6 @@ resolve_gh() {
 }
 
 GH="$(resolve_gh || true)"
-GH="${GH:-gh}"
 
 git fetch --quiet origin "$BASE_BRANCH" 2>/dev/null || \
   echo "task_finalize: warning: could not fetch origin/$BASE_BRANCH" >&2
@@ -119,6 +125,7 @@ git show-ref --verify --quiet "refs/remotes/$BASE_REF" || BASE_REF="$BASE_BRANCH
 if git merge-base --is-ancestor HEAD "$BASE_REF" 2>/dev/null; then
   echo "task_finalize: HEAD is already an ancestor of $BASE_REF -- checking PR status."
   PR_NUMBER=""
+  FOUND_CLOSED=0
   if [ -n "$GH" ] && command -v "$GH" >/dev/null 2>&1; then
     # R3/R4: Iterate all PRs for this head/base pair and find the MERGED one.
     # Fail explicitly on nonzero exit (transport/server error) instead of swallowing.
@@ -145,7 +152,6 @@ if git merge-base --is-ancestor HEAD "$BASE_REF" 2>/dev/null; then
       esac
     }
     ALL_PR_NUMBERS="$LIST_OUT"
-    FOUND_CLOSED=0
     for CANDIDATE_PR in $ALL_PR_NUMBERS; do
       VIEW_OUT="$("$GH" pr view "$CANDIDATE_PR" --json state --jq '.state' 2>&1)" || {
         VIEW_RC=$?
@@ -332,10 +338,11 @@ if [ -f "$verification_tool" ]; then
   fi
 fi
 
-if [ -z "$GH" ] && [ "$DRY_RUN" -eq 0 ]; then
+if ( [ -z "$GH" ] || ! command -v "$GH" >/dev/null 2>&1 ) && [ "$DRY_RUN" -eq 0 ]; then
   echo "task_finalize: GitHub CLI ('gh') not found; cannot open the task PR." >&2
   exit 1
 fi
+GH="${GH:-gh}"
 
 SUBJECT="$(git log --no-merges --format=%s "$BASE_REF..HEAD" 2>/dev/null | tail -1)"
 [ -n "$SUBJECT" ] || SUBJECT="$(git log -1 --format=%s)"

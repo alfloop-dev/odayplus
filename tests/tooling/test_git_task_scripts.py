@@ -337,6 +337,34 @@ def test_task_start_requires_a_task_id(repo: Path):
     assert task_start(repo).returncode == 2
 
 
+def test_task_start_accepts_verified_immutable_review_checkout_detached_head(repo: Path, tmp_path: Path):
+    git(repo, "switch", "--quiet", "--create", f"task/{TASK}")
+    (repo / "owned.txt").write_text("owned\n", encoding="utf-8")
+    msg = write_msg(tmp_path, GOOD_MESSAGE)
+    committed = worker_commit(repo, "--task-id", TASK, "--message-file", str(msg), "--scope", "owned.txt")
+    assert committed.returncode == 0
+
+    submitted_sha = git(repo, "rev-parse", "HEAD").stdout.strip()
+    git(repo, "switch", "--quiet", "dev")
+    git(repo, "merge", "--no-ff", "-m", f"Merge task/{TASK}", f"task/{TASK}")
+    git(repo, "checkout", "--quiet", submitted_sha)
+    assert git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "HEAD"
+
+    result = task_start(repo, TASK)
+    assert result.returncode == 0
+    assert "verified immutable review checkout" in result.stdout
+
+
+def test_task_start_refuses_detached_head_on_unrelated_commit(repo: Path):
+    dev_sha = git(repo, "rev-parse", "HEAD").stdout.strip()
+    git(repo, "checkout", "--quiet", dev_sha)
+    assert git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "HEAD"
+
+    result = task_start(repo, TASK)
+    assert result.returncode == 1
+    assert "outside its Worker Manager lease" in result.stderr
+
+
 # --------------------------------------------------------------------------
 # task_finalize.sh
 # --------------------------------------------------------------------------
@@ -537,6 +565,49 @@ def test_task_finalize_reports_already_merged_branch(repo: Path):
 
 def test_task_finalize_requires_a_task_id(repo: Path):
     assert task_finalize(repo).returncode == 2
+
+
+def test_task_finalize_dry_run_with_missing_gh_on_already_merged_branch(repo: Path, tmp_path: Path):
+    git(repo, "switch", "--quiet", "--create", f"task/{TASK}")
+    (repo / "owned.txt").write_text("owned\n", encoding="utf-8")
+    msg = write_msg(tmp_path, GOOD_MESSAGE)
+    committed = worker_commit(repo, "--task-id", TASK, "--message-file", str(msg), "--scope", "owned.txt")
+    assert committed.returncode == 0
+
+    git(repo, "switch", "--quiet", "dev")
+    git(repo, "merge", "--no-ff", "-m", f"Merge task/{TASK}", f"task/{TASK}")
+    git(repo, "push", "--quiet", "origin", "dev")
+    git(repo, "switch", "--quiet", f"task/{TASK}")
+    git(repo, "merge", "--ff-only", "dev")
+
+    empty_dir = tmp_path / "empty_bin"
+    empty_dir.mkdir()
+    env = {"PATH": f"{empty_dir}:/bin:/usr/bin", "GH": str(empty_dir / "nonexistent_gh")}
+    result = run(["bash", str(GIT_DIR / "task_finalize.sh"), TASK, "--dry-run"], repo, env=env)
+    assert result.returncode == 0, result.stderr
+    assert "already an ancestor" in result.stdout
+    assert "no PR needed" in result.stdout
+
+
+def test_task_finalize_refuses_when_gh_missing_in_non_dry_run_on_merged_branch(repo: Path, tmp_path: Path):
+    git(repo, "switch", "--quiet", "--create", f"task/{TASK}")
+    (repo / "owned.txt").write_text("owned\n", encoding="utf-8")
+    msg = write_msg(tmp_path, GOOD_MESSAGE)
+    committed = worker_commit(repo, "--task-id", TASK, "--message-file", str(msg), "--scope", "owned.txt")
+    assert committed.returncode == 0
+
+    git(repo, "switch", "--quiet", "dev")
+    git(repo, "merge", "--no-ff", "-m", f"Merge task/{TASK}", f"task/{TASK}")
+    git(repo, "push", "--quiet", "origin", "dev")
+    git(repo, "switch", "--quiet", f"task/{TASK}")
+    git(repo, "merge", "--ff-only", "dev")
+
+    empty_dir = tmp_path / "empty_bin"
+    empty_dir.mkdir()
+    env = {"PATH": f"{empty_dir}:/bin:/usr/bin", "GH": str(empty_dir / "nonexistent_gh")}
+    result = run(["bash", str(GIT_DIR / "task_finalize.sh"), TASK], repo, env=env)
+    assert result.returncode == 1
+    assert "GitHub CLI ('gh') not found" in result.stderr
 
 
 # --------------------------------------------------------------------------

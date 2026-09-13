@@ -709,8 +709,20 @@ def observe_worker_worktree_activity(
         branch_rc, current_branch = _git_output(
             worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD"
         )
+        is_valid_review_head = False
         if branch_rc != 0 or not current_branch or current_branch != expected_branch:
-            return _worker_worktree_activity_failure(worker, "wrong_branch")
+            head_sha = _git_commit_oid(worktree_path, "HEAD")
+            if head_sha:
+                review_head = (
+                    worker.get("review_head")
+                    or worker.get("approved_head")
+                    or (task_record.get("review_submission") or {}).get("remote_sha")
+                    or task_record.get("approved_head")
+                )
+                if review_head and head_sha == review_head:
+                    is_valid_review_head = True
+            if not is_valid_review_head:
+                return _worker_worktree_activity_failure(worker, "wrong_branch")
         registered = False
         for record in _git_worktree_records(repo_root):
             record_path = str(record.get("worktree") or "").strip()
@@ -720,7 +732,7 @@ def observe_worker_worktree_activity(
                 same_path = Path(record_path).resolve() == worktree_path
             except (OSError, RuntimeError, ValueError):
                 same_path = False
-            if same_path and _worktree_record_branch(record) == expected_branch:
+            if same_path and (_worktree_record_branch(record) == expected_branch or is_valid_review_head):
                 registered = True
                 break
         if not registered:
@@ -1528,7 +1540,7 @@ def _generated_collaboration_guide(config: dict[str, Any]) -> str:
             "",
             "## Workspace",
             "- You run inside an isolated per-task git worktree. It is NOT a staging area.",
-            "- Confirm you are on the expected `task/<TASK-ID>` branch; use",
+            "- Confirm you are on the expected `task/<TASK-ID>` branch (or verified immutable review checkout); use",
             "  `./delivery_toolchain/git/task_start.sh \"<TASK-ID>\"` if not.",
             "- ai-status.json / current-work.md / ai-activity-log.jsonl are seeded here",
             "  (gitignored); do not edit them by hand — use the status commands.",

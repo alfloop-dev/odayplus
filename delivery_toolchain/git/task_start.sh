@@ -68,6 +68,46 @@ if [ "$CURRENT" = "$BRANCH" ]; then
   exit 0
 fi
 
+if [ "$CURRENT" = "HEAD" ]; then
+  HEAD_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
+  HEAD_SUBJ="$(git log -1 --format=%s HEAD 2>/dev/null || true)"
+  HEAD_MSG="$(git log -1 --format=%B HEAD 2>/dev/null || true)"
+
+  IS_TASK_HEAD=0
+  case "$HEAD_SUBJ" in
+    "$TASK_ID:"*|"$TASK_ID :"*) IS_TASK_HEAD=1 ;;
+  esac
+  if [ "$IS_TASK_HEAD" -eq 0 ]; then
+    case "$HEAD_MSG" in
+      *"Task-ID: $TASK_ID"*|*"Task-ID:[[:space:]]*$TASK_ID"*) IS_TASK_HEAD=1 ;;
+    esac
+  fi
+  if [ "$IS_TASK_HEAD" -eq 0 ]; then
+    STATUS_JSON="${ORCH_STATUS_ROOT:-${PANTHEON_STATUS_ROOT:-$ROOT}}/ai-status.json"
+    [ -f "$STATUS_JSON" ] || STATUS_JSON="$ROOT/ai-status.json"
+    if [ -f "$STATUS_JSON" ] && command -v jq >/dev/null 2>&1; then
+      RECORDED_HEAD="$(jq -r --arg id "$TASK_ID" '.tasks[]? | select(.id == $id) | (.approved_head // .review_submission.remote_sha // empty)' "$STATUS_JSON" 2>/dev/null || true)"
+      if [ -n "$RECORDED_HEAD" ] && [ "$RECORDED_HEAD" = "$HEAD_SHA" ]; then
+        IS_TASK_HEAD=1
+      fi
+    fi
+  fi
+
+  if [ "$IS_TASK_HEAD" -eq 1 ]; then
+    IS_ANCESTOR=0
+    for target_ref in "$BRANCH" "origin/$BRANCH" "dev" "origin/dev"; do
+      if git merge-base --is-ancestor HEAD "$target_ref" 2>/dev/null; then
+        IS_ANCESTOR=1
+        break
+      fi
+    done
+    if [ "$IS_ANCESTOR" -eq 1 ]; then
+      echo "task_start: already at verified immutable review checkout for $BRANCH (${HEAD_SHA:0:12})"
+      exit 0
+    fi
+  fi
+fi
+
 echo "task_start: refusing to create or switch $BRANCH outside its Worker Manager lease." >&2
 echo "task_start: re-dispatch $TASK_ID, then run this command inside the leased worktree." >&2
 exit 1

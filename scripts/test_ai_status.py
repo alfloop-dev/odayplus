@@ -1430,6 +1430,12 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             branch_rc, _ = worker_workspace._git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
             self.assertNotEqual(branch_rc, 0)
 
+            # 4b. Reviewer runs task_start.sh verifier - must succeed on verified immutable review checkout
+            task_start_script = Path(__file__).resolve().parents[1] / "delivery_toolchain" / "git" / "task_start.sh"
+            ts_proc = subprocess.run(["bash", str(task_start_script), "REG-002"], cwd=worktree_path, capture_output=True, text=True, check=False)
+            self.assertEqual(ts_proc.returncode, 0, f"task_start.sh failed: {ts_proc.stderr}")
+            self.assertIn("verified immutable review checkout", ts_proc.stdout)
+
             # 5. Reviewer retry lease with required_head=submitted_sha
             existing = worker_workspace._existing_worktree_for_branch(repo_root, branch, exclude_root=True, expected_path=worktree_path)
             self.assertEqual(existing, worktree_path)
