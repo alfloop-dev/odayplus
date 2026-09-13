@@ -397,12 +397,34 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
     return status_transition.sync_dispatched_task_status(config, event)
 
 
-def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -> bool:
-    return status_transition.sync_preempted_task_status(config, worker)
+def sync_status_snapshot_dict(config: dict[str, Any], status: dict[str, Any], latest: dict[str, Any]) -> None:
+    status_transition.sync_status_snapshot_dict(config, status, latest)
 
 
 def commit_canonical_task_transition(config: dict[str, Any], status: dict[str, Any]) -> bool:
-    return write_status_snapshot_if_current(config, status) and sync_status_pipeline(config)
+    if not write_status_snapshot_if_current(config, status):
+        return False
+    if not sync_status_pipeline(config):
+        try:
+            latest = load_status(config)
+            schema = config.get("schema", {}) or {} if isinstance(config, dict) else {}
+            tasks_path = schema.get("tasks_path", "tasks")
+            if isinstance(latest, dict) and tasks_path in latest:
+                sync_status_snapshot_dict(config, status, latest)
+        except Exception:
+            pass
+        return False
+    try:
+        latest = load_status(config)
+        schema = config.get("schema", {}) or {} if isinstance(config, dict) else {}
+        tasks_path = schema.get("tasks_path", "tasks")
+        if isinstance(latest, dict) and tasks_path in latest:
+            sync_status_snapshot_dict(config, status, latest)
+        else:
+            return False
+    except Exception:
+        return False
+    return True
 
 
 def release_dead_helper_claims(

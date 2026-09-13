@@ -5257,6 +5257,76 @@ PY
         self.assertEqual(len(failures), 1)
         self.assertIn("timed out", failures[0]["message"])
 
+    def test_commit_canonical_task_transition_maintains_task_object_identity(self) -> None:
+        status = supervisor.load_status(self.config)
+        task = status["tasks"][0]
+        self.assertEqual(task["id"], "APP-002-W1-FRONT-HANDOFF")
+        task["status"] = "in_progress"
+
+        self.assertTrue(supervisor.commit_canonical_task_transition(self.config, status))
+
+        self.assertIs(status["tasks"][0], task)
+        self.assertEqual(task["status"], "in_progress")
+
+        task["status"] = "done"
+        self.assertTrue(supervisor.commit_canonical_task_transition(self.config, status))
+        self.assertIs(status["tasks"][0], task)
+        self.assertEqual(task["status"], "done")
+
+        on_disk = json.loads(self.status_path.read_text(encoding="utf-8"))
+        self.assertEqual(on_disk["tasks"][0]["status"], "done")
+
+    def test_commit_canonical_task_transition_supports_custom_tasks_path_collection(self) -> None:
+        custom_status_path = self.root / "custom-status.json"
+        custom_status_path.write_text(
+            json.dumps(
+                {
+                    "_status_write_revision": "initial-rev",
+                    "items": [
+                        {
+                            "task_id": "CUSTOM-TASK-001",
+                            "status": "todo",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        config = {
+            "schema": {
+                "tasks_path": "items",
+                "task_id_field": "task_id",
+                "status_field": "status",
+            },
+            "paths": {
+                "status_file": str(custom_status_path),
+                "activity_log": str(self.root / "activity-log.jsonl"),
+            },
+        }
+        sync_count = 0
+
+        def sync_side_effect(cfg):
+            nonlocal sync_count
+            sync_count += 1
+            disk = json.loads(custom_status_path.read_text(encoding="utf-8"))
+            disk["_status_write_revision"] = f"rev-{sync_count}"
+            disk["sync_marker"] = "synced"
+            custom_status_path.write_text(json.dumps(disk), encoding="utf-8")
+            return True
+
+        with mock.patch.object(supervisor, "sync_status_pipeline", side_effect=sync_side_effect):
+            status = supervisor.load_status(config)
+            task = status["items"][0]
+            task["status"] = "in_progress"
+            committed = supervisor.commit_canonical_task_transition(config, status)
+            self.assertTrue(committed)
+            self.assertEqual(status["_status_write_revision"], "rev-1")
+            self.assertEqual(status["items"][0]["status"], "in_progress")
+            self.assertIs(status["items"][0], task)
+            disk = json.loads(custom_status_path.read_text(encoding="utf-8"))
+            self.assertEqual(disk["items"][0]["status"], "in_progress")
+            self.assertEqual(disk["sync_marker"], "synced")
+
 
 class RunOnceSupervisorStateTests(unittest.TestCase):
     def test_discussion_planning_needs_materialization_for_accepted_approved_session(self) -> None:
@@ -14904,19 +14974,19 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                 {
                     "id": "FREEZE-TEST-001",
                     "owner": "Antigravity4",
-                    "reviewer": "Codex",
+                    "reviewer": "Codex2",
                     "status": "review",
                     "review_submission": {"remote_sha": "1111111122222222333333334444444455555555"},
                 },
                 {
                     "id": "FREEZE-TEST-002",
-                    "owner": "Codex",
-                    "reviewer": "Codex",
+                    "owner": "Codex2",
+                    "reviewer": "Codex2",
                     "status": "review",
                 },
             ]
         }
-        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex"):
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex2"):
             with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
                  unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
                 with unittest.mock.patch("ai_status.sync_all"):
@@ -15334,7 +15404,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                     {
                         "id": "FREEZE-TEST-020A",
                         "owner": "Antigravity4",
-                        "reviewer": "Codex",
+                        "reviewer": "Codex2",
                         "status": "review",
                         "review_submission": {"remote_sha": "1111111122222222333333334444444455555555"},
                     }
@@ -15343,7 +15413,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
 
         # Positive control: a resolvable head still approves and freezes.
         state = _fresh_state()
-        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex"), \
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex2"), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
              unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
              unittest.mock.patch("ai_status.append_log"), \
@@ -15355,7 +15425,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
 
         # Unresolvable head -> abort, and leave no half-applied approval behind.
         state = _fresh_state()
-        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex"), \
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex2"), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value=None), \
              unittest.mock.patch("ai_status.sync_all"):
             with self.assertRaises(SystemExit) as cm:
@@ -15367,7 +15437,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
 
         # A raising probe must fail closed too, not escape as a traceback.
         state = _fresh_state()
-        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex"), \
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex2"), \
              unittest.mock.patch("ai_status.resolve_task_sha", side_effect=RuntimeError("gh down")), \
              unittest.mock.patch("ai_status.sync_all"):
             with self.assertRaises(SystemExit) as cm:
@@ -15391,14 +15461,14 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                 {
                     "id": "FREEZE-TEST-020B",
                     "owner": "Antigravity4",
-                    "reviewer": "Codex",
+                    "reviewer": "Codex2",
                     "status": "review",
                     "approved_head": old_head,
                     "review_submission": {"remote_sha": new_head},
                 }
             ]
         }
-        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex"), \
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex2"), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value=new_head), \
              unittest.mock.patch("ai_status.sync_all"):
             with self.assertRaises(SystemExit) as cm:
@@ -15411,7 +15481,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         # Positive control: re-approving at the *same* head is not a conflict,
         # so the guard cannot be satisfied by rejecting every stale-head task.
         state["tasks"][0]["review_submission"]["remote_sha"] = old_head
-        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex"), \
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex2"), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value=old_head), \
              unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
              unittest.mock.patch("ai_status.append_log"), \
@@ -16277,7 +16347,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                 {
                     "id": "FREEZE-TEST-021A",
                     "owner": "Antigravity4",
-                    "reviewer": "Codex",
+                    "reviewer": "Codex2",
                     "status": "review",
                     "review_notes_zh": "已審核通過",
                     "review_submission": {"remote_sha": approved},
@@ -16287,7 +16357,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         task = ai_status.get_task(state, "FREEZE-TEST-021A")
         ai_status.clear_ai_status_caches()
         with unittest.mock.patch("ai_status.append_log"), unittest.mock.patch("ai_status.sync_all"):
-            with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex"), \
+            with unittest.mock.patch("ai_status.current_actor_validated", return_value="Codex2"), \
                  unittest.mock.patch("ai_status.resolve_task_sha", return_value=approved), \
                  unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
                 ai_status.command_approve(state, ["FREEZE-TEST-021A", "Approved"])
