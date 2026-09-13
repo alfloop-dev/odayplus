@@ -1,0 +1,110 @@
+{
+  "task_id": "DPF-SOURCE-SA-SD-BASELINE-001",
+  "title": "納入外部來源調查與 SA／SD 設計基線",
+  "owner": "Antigravity2",
+  "reviewer": "Codex2",
+  "phase": "SA/SD execution plan 2026-09-13",
+  "repository": "alfloop-dev/odayplus",
+  "completed_at": "2026-09-13T15:13:00Z",
+  "status": "ready_for_review",
+  "publication_authorized": true,
+  "publication_destination": "alfloop-dev/odayplus",
+
+  "source_baseline": {
+    "mainline_commit": "b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb",
+    "audit_commit": "cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1",
+    "source_index_count": 16,
+    "sha256_verification": "ALL_PASS",
+    "verification_timestamp": "2026-09-13T14:13:04Z"
+  },
+
+  "traceability": {
+    "sa_requirements": {
+      "total": 12,
+      "ids": ["FR01", "FR02", "FR03", "FR04", "FR05", "FR06", "FR07", "FR08", "FR09", "FR10", "FR11", "FR12"],
+      "all_mapped_to_sd": true,
+      "all_mapped_to_sources": true
+    },
+    "sd_design_sections": {
+      "total": 8,
+      "ids": ["D01", "D02", "D03", "D04", "D05", "D06", "D07", "D08"],
+      "all_mapped_to_fr": true
+    },
+    "gaps_identified": 3,
+    "gap_descriptions": [
+      "NFR lacks explicit ID numbering (suggest NFR01-NFR06)",
+      "D03 dedup key 'request partition' not mapped to existing program model field",
+      "D05 dynamic manifest count validation vs E12 fixed 54,443 count"
+    ]
+  },
+
+  "domain_assessment": {
+    "total_domains": 8,
+    "domain_levels": {
+      "cwa_events": "CONFIGURED",
+      "transport_osm_tdx": "CONFIGURED",
+      "open_poi": "CONFIGURED",
+      "mof_moi": "LIVE_CAPTURED_partial",
+      "ris_nlsc": "NORMALIZED_VERIFIED_partial",
+      "listing_observations": "CONFIGURED",
+      "mobility": "CONFIGURED",
+      "site_market_context": "CONFIGURED"
+    },
+    "any_retained_in_cloud": false,
+    "any_release_eligible": false,
+    "any_activated": false,
+    "retained_readback_note": "Absence of local readback in audit indicates verification pending at this layer, not that cloud retention proofs do not exist"
+  },
+
+  "task_dedup": {
+    "new_tasks": 7,
+    "reused_tasks": 1,
+    "preserved_existing": [
+      "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+      "XR-SOURCE-APPROVAL-ACTIVATION-001",
+      "XR-EXT-OSS-FINAL-AUDIT-001",
+      "HUMAN-OSS-LEGAL-APPROVAL-001"
+    ],
+    "path_ownership_conflicts": 0,
+    "shared_files_serialization": [
+      "src/oday_data_platform/defs/external/mof_moi.py",
+      "src/oday_data_platform/defs/external/ris_nlsc.py",
+      "tests/sources/test_official_live_acquisition.py",
+      "tests/sources/official_source_fixtures.py"
+    ],
+    "canonical_dispatch_alignment": {
+      "mutates_canonical_all_true": true,
+      "manual_hold_lifted": true,
+      "baseline_repository": "alfloop-dev/odayplus",
+      "product_repository": "alfloop-dev/oday-data-platform"
+    }
+  },
+
+  "verification_amendment": {
+    "circular_dependency_analysis": "Distinguish structural dependency from inference; bounded engineering capture separated from production live activation post-legal-receipt",
+    "downstream_verification_mapped": true,
+    "existing_decisions_preserved": ["D01-D14", "D15"],
+    "acceptance_criteria_modified": false,
+    "policy_thresholds_modified": false
+  },
+
+  "deliverables": [
+    "docs/architecture/external-source-ingestion/README.md",
+    "docs/architecture/external-source-ingestion/SOURCE_VERIFICATION.md",
+    "docs/architecture/external-source-ingestion/TRACEABILITY.md",
+    "docs/architecture/external-source-ingestion/DOMAIN_GAP_ASSESSMENT.md",
+    "docs/architecture/external-source-ingestion/TASK_DEDUP_REPORT.md",
+    "docs/architecture/external-source-ingestion/VERIFICATION_PLAN_AMENDMENT.md",
+    "docs/evidence/completion/DPF-SOURCE-SA-SD-BASELINE-001/baseline-reconciliation-receipt.json"
+  ],
+
+  "constraints": {
+    "code_modified": false,
+    "sources_enabled": false,
+    "receipts_fabricated": false,
+    "public_upload_approved": true,
+    "scope_restricted_to_owned_docs": true
+  },
+
+  "next_action": "submit_for_codex2_review"
+}
