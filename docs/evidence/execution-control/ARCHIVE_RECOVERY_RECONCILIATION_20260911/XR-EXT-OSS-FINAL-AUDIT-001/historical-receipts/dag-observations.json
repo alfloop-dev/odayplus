@@ -1,0 +1,38 @@
+{
+  "original_observation": {
+    "source_commit": "a6436675132ef9fc8458727c9bd47df22fa1c2dc",
+    "record": {
+      "command": "python3 -c \"import json, pathlib; p = pathlib.Path('docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/acceptance-reconciliation.json'); data = json.loads(p.read_text()); assert data['task_id'] == 'XR-EXT-OSS-FINAL-AUDIT-001'; assert len(data['acceptance_criteria_reconciliation']) == 5; assert data['summary']['criteria_met'] == 2; assert data['summary']['criteria_partially_met'] == 3; assert data['summary']['human_oss_legal_dependency_unblocked_technically'] is False; assert data['summary']['can_closeout_as_done'] is False; assert data['summary']['reconciliation_verdict'] == 'reconciliation_completed_with_technical_gaps_itemized_and_canonical_tasks_mapped'; digests = data['this_round_observation_and_provenance']['full_sha256_digests']; assert len(digests) == 11 and all(len(v.split('sha256:')[-1]) == 64 for v in digests.values()); cidrs = data['this_round_observation_and_provenance']['egress_network_policy']['allowed_cidrs']; assert '199.36.153.4/30' in cidrs and data['this_round_observation_and_provenance']['egress_network_policy']['default_deny'] is True; board = json.loads(pathlib.Path('/home/lupin/odayplus/ai-status.json').read_text()); canonical_tasks = {t['id']: list(t.get('depends_on', [])) for t in board.get('tasks', [])}; check_dag_acyclic = lambda adj: (lambda nodes: (lambda state: not any((lambda u, self: state.update({u: 1}) or any(state.get(v, 0) == 1 or (state.get(v, 0) == 0 and self(v, self)) for v in adj.get(u, [])) or state.update({u: 2}) or False)(n, (lambda u, self: state.update({u: 1}) or any(state.get(v, 0) == 1 or (state.get(v, 0) == 0 and self(v, self)) for v in adj.get(u, [])) or state.update({u: 2}) or False)) for n in nodes if state[n] == 0))({u: 0 for u in nodes}))(set(adj.keys()) | {v for deps in adj.values() for v in deps}); assert check_dag_acyclic(canonical_tasks); assert 'XR-EXT-OSS-FINAL-AUDIT-001' in canonical_tasks.get('HUMAN-OSS-LEGAL-APPROVAL-001', []); proposed_tasks = dict(canonical_tasks); proposed_tasks['HUMAN-OSS-LEGAL-APPROVAL-001'] = ['XR-EXT-OSS-FINAL-AUDIT-001', 'DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001', 'ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001']; assert check_dag_acyclic(proposed_tasks); print('All focused checks (boundary, digests, CIDR, task DAG acyclicity, criteria verdicts, cannot_done status) verified successfully.')\"",
+      "target_repo": "alfloop-dev/odayplus",
+      "measured_head_sha": "17caf7f5dcbfbf7fe32830e584d7501b37634377",
+      "selection": "acceptance-reconciliation.json structure, digests, CIDRs, DAG acyclicity, and criteria verification",
+      "observed_at": "2026-09-12T09:29:43.456640+00:00",
+      "duration_seconds": 0.074,
+      "exit_code": 0,
+      "stdout_sha256": "654a2c8b14ed4316aa7e66a6a0ebbe34615b305ede3c133e08ff6c75c2ac5a5f",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_bytes_len": 128,
+      "raw_stdout_excerpt": "All focused checks (boundary, digests, CIDR, task DAG acyclicity, criteria verdicts, cannot_done status) verified successfully.\n",
+      "summary": "All focused offline checks verified successfully: boundary, commit identity, digests, CIDR, task DAG acyclicity, criteria verdicts, and cannot_done status."
+    },
+    "interpretation": "Original observation/output restored without rewriting. Old graph input was not retained; old summary exceeded actual measured scope, so it cannot prove the later hash-bound DAG."
+  },
+  "retracted_observation": {
+    "source_commit": "cdd26f75d0bce75ee9be33064b463be5724b9438",
+    "record": {
+      "command": "python3 -c \"import json, pathlib, hashlib; p = pathlib.Path('docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/acceptance-reconciliation.json'); data = json.loads(p.read_text()); assert data['task_id'] == 'XR-EXT-OSS-FINAL-AUDIT-001'; assert len(data['acceptance_criteria_reconciliation']) == 5; assert data['summary']['criteria_met'] == 2; assert data['summary']['criteria_partially_met'] == 3; assert data['summary']['human_oss_legal_dependency_unblocked_technically'] is False; assert data['summary']['can_closeout_as_done'] is False; assert data['summary']['reconciliation_verdict'] == 'reconciliation_completed_with_technical_gaps_itemized_and_canonical_tasks_mapped'; digests = data['this_round_observation_and_provenance']['full_sha256_digests']; assert len(digests) == 11 and all(len(v.split('sha256:')[-1]) == 64 for v in digests.values()); cidrs = data['this_round_observation_and_provenance']['egress_network_policy']['allowed_cidrs']; assert '199.36.153.4/30' in cidrs and data['this_round_observation_and_provenance']['egress_network_policy']['default_deny'] is True; snapshot = data['canonical_task_dag_snapshot']; canonical_tasks = snapshot['tasks']; computed_adj_sha = hashlib.sha256(json.dumps(canonical_tasks, sort_keys=True, indent=2).encode('utf-8')).hexdigest(); assert computed_adj_sha == snapshot['adjacency_sha256'] == '592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390'; def check_dag_acyclic(adj): nodes = set(adj.keys()); [nodes.update(deps) for deps in adj.values()]; state = {u: 0 for u in nodes}; def dfs(u): state[u] = 1; [dfs(v) for v in adj.get(u, []) if state.get(v,0)==0 or (state.get(v,0)==1 and not False)]; state[u] = 2; return False; return not any(dfs(u) for u in nodes if state[u]==0); assert check_dag_acyclic(canonical_tasks), 'Canonical task graph must be acyclic'; assert 'XR-EXT-OSS-FINAL-AUDIT-001' in canonical_tasks.get('HUMAN-OSS-LEGAL-APPROVAL-001', []); proposed_tasks = dict(canonical_tasks); proposed_tasks['HUMAN-OSS-LEGAL-APPROVAL-001'] = ['XR-EXT-OSS-FINAL-AUDIT-001', 'DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001', 'ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001']; assert check_dag_acyclic(proposed_tasks), 'Proposed task graph must be acyclic'; print('All focused checks (digests, CIDR, snapshot DAG acyclicity, criteria verdicts, cannot_done status) verified successfully.')\"",
+      "target_repo": "alfloop-dev/odayplus",
+      "measured_head_sha": "1ea269e1f5ec1396b1a774d75d259e875aa314eb",
+      "selection": "acceptance-reconciliation.json structure, digests, CIDRs, immutable snapshot DAG acyclicity, and criteria verification",
+      "observed_at": "2026-09-12T09:44:53.000000+00:00",
+      "duration_seconds": 0.045,
+      "exit_code": 0,
+      "stdout_sha256": "f42b7bf81dcaeb643eab76a1cf700d482a38b9649f334729e669730d99d26855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_bytes_len": 122,
+      "raw_stdout_excerpt": "All focused checks (digests, CIDR, snapshot DAG acyclicity, criteria verdicts, cannot_done status) verified successfully.\n",
+      "summary": "Validated acceptance-reconciliation.json schema, SHA256 digests, egress CIDR rules, canonical task DAG acyclicity (0 cycles across 30 tasks from hash-bound snapshot), proposed DAG acyclicity (0 cycles), and criteria verdicts."
+    },
+    "interpretation": "Claimed command contains invalid Python compound statements after semicolons; measured SHA does not resolve. Claimed successful execution is unverifiable and withdrawn, not repaired retroactively."
+  }
+}

@@ -267,19 +267,16 @@
       "redaction_note": "The raw GitHub contents API response contained a transient signed query token in download_url which has been redacted in this committed artifact (token=[REDACTED]). Unredacted response SHA256 was 89333a7d6427abd97f7b02afd5c135fca6d307fe7677a89db6d047dbf6fbe0a1 (201756 bytes). The decoded ledger content Git blob SHA is 660f60ed08762ef6a1eca1d2db8ccd984f788883 (size 145339 bytes), which is intact and verified."
     },
     {
-      "command": "python3 -c \"import json, pathlib, hashlib; p = pathlib.Path('docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/acceptance-reconciliation.json'); data = json.loads(p.read_text()); assert data['task_id'] == 'XR-EXT-OSS-FINAL-AUDIT-001'; assert len(data['acceptance_criteria_reconciliation']) == 5; assert data['summary']['criteria_met'] == 2; assert data['summary']['criteria_partially_met'] == 3; assert data['summary']['human_oss_legal_dependency_unblocked_technically'] is False; assert data['summary']['can_closeout_as_done'] is False; assert data['summary']['reconciliation_verdict'] == 'reconciliation_completed_with_technical_gaps_itemized_and_canonical_tasks_mapped'; digests = data['this_round_observation_and_provenance']['full_sha256_digests']; assert len(digests) == 11 and all(len(v.split('sha256:')[-1]) == 64 for v in digests.values()); cidrs = data['this_round_observation_and_provenance']['egress_network_policy']['allowed_cidrs']; assert '199.36.153.4/30' in cidrs and data['this_round_observation_and_provenance']['egress_network_policy']['default_deny'] is True; snapshot = data['canonical_task_dag_snapshot']; canonical_tasks = snapshot['tasks']; computed_adj_sha = hashlib.sha256(json.dumps(canonical_tasks, sort_keys=True, indent=2).encode('utf-8')).hexdigest(); assert computed_adj_sha == snapshot['adjacency_sha256'] == '592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390'; def check_dag_acyclic(adj): nodes = set(adj.keys()); [nodes.update(deps) for deps in adj.values()]; state = {u: 0 for u in nodes}; def dfs(u): state[u] = 1; [dfs(v) for v in adj.get(u, []) if state.get(v,0)==0 or (state.get(v,0)==1 and not False)]; state[u] = 2; return False; return not any(dfs(u) for u in nodes if state[u]==0); assert check_dag_acyclic(canonical_tasks), 'Canonical task graph must be acyclic'; assert 'XR-EXT-OSS-FINAL-AUDIT-001' in canonical_tasks.get('HUMAN-OSS-LEGAL-APPROVAL-001', []); proposed_tasks = dict(canonical_tasks); proposed_tasks['HUMAN-OSS-LEGAL-APPROVAL-001'] = ['XR-EXT-OSS-FINAL-AUDIT-001', 'DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001', 'ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001']; assert check_dag_acyclic(proposed_tasks), 'Proposed task graph must be acyclic'; print('All focused checks (digests, CIDR, snapshot DAG acyclicity, criteria verdicts, cannot_done status) verified successfully.')\"",
-      "target_repo": "alfloop-dev/odayplus",
-      "measured_head_sha": "1ea269e1f5ec1396b1a774d75d259e875aa314eb",
-      "selection": "acceptance-reconciliation.json structure, digests, CIDRs, immutable snapshot DAG acyclicity, and criteria verification",
-      "observed_at": "2026-09-12T09:44:53.000000+00:00",
-      "duration_seconds": 0.045,
-      "exit_code": 0,
-      "stdout_sha256": "f42b7bf81dcaeb643eab76a1cf700d482a38b9649f334729e669730d99d26855",
-      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "stdout_bytes_len": 122,
-      "raw_stdout_excerpt": "All focused checks (digests, CIDR, snapshot DAG acyclicity, criteria verdicts, cannot_done status) verified successfully.\n",
-      "summary": "Validated acceptance-reconciliation.json schema, SHA256 digests, egress CIDR rules, canonical task DAG acyclicity (0 cycles across 30 tasks from hash-bound snapshot), proposed DAG acyclicity (0 cycles), and criteria verdicts."
+      "observation_status": "unknown_unverifiable_execution",
+      "source_record_ref": "historical-receipts/dag-observations.json",
+      "note": "Both original 09:29 and invalid replacement 09:44 observations retained separately; neither proves the later hash-bound DAG. No previous stdout/time/hash was rewritten into a new measurement."
     }
   ],
-  "prior_dev_base_sha": "ef8345bce29436ce86bd1a70b857d668ac16182a"
+  "prior_dev_base_sha": "ef8345bce29436ce86bd1a70b857d668ac16182a",
+  "focused_verification_20260913": {
+    "receipt_ref": "verification-20260913/receipt.json",
+    "scope": "New contributor observation of the exact worktree input hashes recorded by capture_verification.py; does not replace historical runtime or approval evidence.",
+    "actor": "Codex",
+    "retry_reason": "Latest review identified unretained raw results or results bound to different inputs. Preserve history and capture only the changed evidence assertions once."
+  }
 }

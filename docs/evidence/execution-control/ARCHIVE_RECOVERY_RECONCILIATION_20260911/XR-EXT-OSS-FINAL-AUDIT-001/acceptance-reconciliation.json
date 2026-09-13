@@ -793,5 +793,11 @@
         "HUMAN-OSS-LEGAL-APPROVAL-001"
       ]
     }
+  },
+  "focused_verification_20260913": {
+    "receipt_ref": "verification-20260913/receipt.json",
+    "scope": "New contributor observation of the exact worktree input hashes recorded by capture_verification.py; does not replace historical runtime or approval evidence.",
+    "actor": "Codex",
+    "retry_reason": "Latest review identified unretained raw results or results bound to different inputs. Preserve history and capture only the changed evidence assertions once."
   }
 }

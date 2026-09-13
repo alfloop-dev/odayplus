@@ -93,7 +93,7 @@
    - 人類決策 D01–D14 已選定內部 OSS 政策方向（D01–D04 個案附條件/允許、D05 第一方標示 `UNLICENSED`、D06–D14 共通政策）。
    - 4 項法務待決事項（`LICENSE-BLOCKED-CONSUMER` 163 項、`LICENSE-BLOCKED-PRODUCER` 24 項、`LICENSE-POLICY-NOT-APPROVED`、`SOURCE-DATA-LICENCE-NOT-MODELLED` 14 來源）完整對映至 `HUMAN-OSS-LEGAL-APPROVAL-001`。
 2. **依賴關係與無環檢查 (DAG No-Cycle Check)**:
-   - 全圖經由 hash-bound 任務拓撲快照（SHA256: `592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390`）與完整 DFS Topological Sort 驗證，當前 Canonical 圖與提案更新圖均為 0 cycles。
+   - 全圖經由 hash-bound 任務拓撲快照（SHA256: `592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390`）與完整 DFS Topological Sort 驗證，該歷史鄰接表與提案更新圖均為 0 cycles；實際執行以第 6 節新收據為準。
    - 當前 Canonical 鏈條：`XR-EXT-OSS-FINAL-AUDIT-001` (depends_on: `[]`) -> `HUMAN-OSS-LEGAL-APPROVAL-001` (depends_on: `["XR-EXT-OSS-FINAL-AUDIT-001"]`) -> `XR-SOURCE-APPROVAL-ACTIVATION-001` (depends_on: `["HUMAN-OSS-LEGAL-APPROVAL-001"]`)。
    - 因本任務不 done，`HUMAN-OSS-LEGAL-APPROVAL-001` 持續受阻擋。
    - 提案依賴更新（若未來由 canonical 治理流程正式承接未完成技術驗收）：`HUMAN-OSS-LEGAL-APPROVAL-001` depends_on 增加 `["DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001", "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001"]`，經 topological sort 驗證亦為 0 cycles。
@@ -104,63 +104,12 @@
 
 ---
 
-## 6. 離線驗證方式 (Verification)
+## 6. DAG 執行收據修復（2026-09-13）
 
-本任務交付物由以下宣告命令驗證（包含代碼邊界、JSON 結構完整性、完整 SHA 雜湊、網路策略 CIDR 及完整 DAG 無環檢查）：
+[歷史原觀察及被撤回觀察](historical-receipts/dag-observations.json) 分開保留：`a6436675...` 的 09:29 原 stdout／时间没有改寫；當時未保存圖輸入、摘要超出實測範圍。`cdd26f75...` 的 09:44 紀錄所列 Python 命令不可解析，且所列 HEAD 不存在，成功聲稱已撤回、記為 unknown。不能將更正文字當成曾執行過的結果。
 
-```bash
-git diff --check 3828c5ada2a1baab33d7dbe734c7ec70152d3d77 HEAD
-python3 -c "
-import json, pathlib, hashlib
+[dependency-input-snapshot.json](dependency-input-snapshot.json) 保存原 30 個 active task 的鄰接表及原 SHA-256。新增可直接執行的 [capture_verification.py](capture_verification.py) 只針對這個已保存輸入做一次 focused 驗證：綁定輸入 bytes/hash、確認原圖及提案圖無環、保留原 A1–A3 partially_met／cannot_done 與來源關閉 gate。依賴中另有 36 個節點沒有 active key，前次 reviewer 已確認均為 archived done；本次只是原 active adjacency 的無環檢查，未宣稱重新讀取整份 canonical board／archive。
 
-p = pathlib.Path('docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/acceptance-reconciliation.json')
-data = json.loads(p.read_text())
-assert data['task_id'] == 'XR-EXT-OSS-FINAL-AUDIT-001'
-assert len(data['acceptance_criteria_reconciliation']) == 5
-assert data['summary']['criteria_met'] == 2
-assert data['summary']['criteria_partially_met'] == 3
-assert data['summary']['human_oss_legal_dependency_unblocked_technically'] is False
-assert data['summary']['can_closeout_as_done'] is False
-assert data['summary']['reconciliation_verdict'] == 'reconciliation_completed_with_technical_gaps_itemized_and_canonical_tasks_mapped'
+[本次原始收據](verification-20260913/receipt.json) 自動保存實際完整 argv、受驗 git HEAD/tree 和 worktree input hashes、時間、monotonic duration、subprocess exit、stdout/stderr 原件與 bytes/hash，不手填通過結果。已成功 GitHub 讀取及歷史套件均未重跑。
 
-digests = data['this_round_observation_and_provenance']['full_sha256_digests']
-assert len(digests) == 11 and all(len(v.split('sha256:')[-1]) == 64 for v in digests.values())
-
-cidrs = data['this_round_observation_and_provenance']['egress_network_policy']['allowed_cidrs']
-assert '199.36.153.4/30' in cidrs and data['this_round_observation_and_provenance']['egress_network_policy']['default_deny'] is True
-
-snapshot = data['canonical_task_dag_snapshot']
-canonical_tasks = snapshot['tasks']
-computed_adj_sha = hashlib.sha256(json.dumps(canonical_tasks, sort_keys=True, indent=2).encode('utf-8')).hexdigest()
-assert computed_adj_sha == snapshot['adjacency_sha256'] == '592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390'
-
-def check_dag_acyclic(adj):
-    nodes = set(adj.keys())
-    for deps in adj.values():
-        nodes.update(deps)
-    state = {u: 0 for u in nodes}
-    def dfs(u):
-        state[u] = 1
-        for v in adj.get(u, []):
-            if state.get(v, 0) == 1:
-                return True
-            if state.get(v, 0) == 0:
-                if dfs(v): return True
-        state[u] = 2
-        return False
-    return not any(dfs(u) for u in nodes if state[u] == 0)
-
-assert check_dag_acyclic(canonical_tasks), 'Canonical task graph must be acyclic'
-assert 'XR-EXT-OSS-FINAL-AUDIT-001' in canonical_tasks.get('HUMAN-OSS-LEGAL-APPROVAL-001', [])
-
-proposed_tasks = dict(canonical_tasks)
-proposed_tasks['HUMAN-OSS-LEGAL-APPROVAL-001'] = [
-    'XR-EXT-OSS-FINAL-AUDIT-001',
-    'DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001',
-    'ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001'
-]
-assert check_dag_acyclic(proposed_tasks), 'Proposed task graph must be acyclic'
-
-print('All focused checks (digests, CIDR, snapshot DAG acyclicity, criteria verdicts, cannot_done status) verified successfully.')
-"
-```
+A1–A3 尚缺真 snapshot/query、歷史七軸比對與 live runtime/flow-log 證據，仍按第 4 節映射既有責任 task／精確輸入。這次只修收據品質，不能把此 ID 送入 done lane，亦未解除 HUMAN-OSS 技術依賴、批准來源或執行部署。
