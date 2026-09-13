@@ -3541,6 +3541,16 @@ def maybe_reassign_task_after_worker_failure(
             handoff_from=owner,
         ):
             return None
+        handoff_block = ((state.get("worker_worktrees") or {}).get("handoff_blocks") or {}).get(task_id)
+        if isinstance(handoff_block, dict):
+            handoff_block["original_owner"] = handoff_block.get("original_owner") or handoff_block.get("owner") or owner
+            handoff_block["owner"] = new_owner
+            handoff_block["authorized_successor"] = new_owner
+            handoff_block["transferred_from"] = owner
+            handoff_block["transferred_to"] = new_owner
+            handoff_block["transfer_reason"] = reason
+            handoff_block["transferred_at"] = utc_now()
+            handoff_block["transfer_source_run_id"] = str(worker.get("run_id") or "")
         write_activity_log(
             config,
             {
@@ -3595,8 +3605,19 @@ def fence_account_pool_workers(
         sibling_identity = worker_logical_dispatch_agent_id(config, sibling)
         if agent_account_pool_id(config, sibling_identity) != pool_id:
             continue
-        if pid_is_alive(sibling.get("pid")):
-            terminate_worker_pid(sibling.get("pid"))
+        pid = sibling.get("pid")
+        if pid_is_alive(pid):
+            terminate_worker_pid(pid)
+        if not pid_is_alive(pid):
+            task_id = str(sibling.get("task_id") or "")
+            task_record = canonical_task_record(config, task_id) if task_id else None
+            preserve_dead_worker_worktree(
+                config,
+                state,
+                sibling,
+                task=task_record,
+                trigger="sibling_fenced",
+            )
         reassigned_to = maybe_reassign_task_after_worker_failure(
             config,
             state,

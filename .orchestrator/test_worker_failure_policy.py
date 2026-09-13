@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -14,7 +15,11 @@ SCRIPTS_DIR = ROOT_DIR / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+import supervisor
 import worker_failure_policy
+import worker_workspace
+from adapters.base import DeliveryRequest
+from worktree_cleanliness import inspect_worktree
 
 
 class WorkerFailurePolicyAuthorityTests(unittest.TestCase):
@@ -1279,6 +1284,706 @@ class OwnerPreferenceSharedPoolCapacityTests(unittest.TestCase):
             )
         )
         self.assertEqual(self._select(config, state), "Codex")
+
+
+def _git_run(repo: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+    )
+    return result.stdout.strip()
+
+
+class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
+    """End-to-end regression tests for sibling quota fencing and dirty worktree handoff recovery."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.repo = self.root / "repo"
+        self.repo.mkdir(parents=True, exist_ok=True)
+        _git_run(self.repo, "init", "--quiet")
+        _git_run(self.repo, "config", "user.email", "test@pantheon.local")
+        _git_run(self.repo, "config", "user.name", "Test Runner")
+        (self.repo / "README.md").write_text("base repository content\n", encoding="utf-8")
+        _git_run(self.repo, "add", "README.md")
+        _git_run(self.repo, "commit", "--quiet", "-m", "initial base commit")
+        _git_run(self.repo, "branch", "-M", "dev")
+
+        self.worktree = self.root / "worktrees" / "pantheon" / "task-sibling-001"
+        self.worktree.parent.mkdir(parents=True, exist_ok=True)
+        _git_run(self.repo, "worktree", "add", "-b", "task/TASK-SIBLING-001", str(self.worktree), "dev")
+        self.head_sha = _git_run(self.worktree, "rev-parse", "HEAD")
+
+        self.status_file = self.root / "ai-status.json"
+        self.activity_log = self.root / "activity.jsonl"
+        self.event_queue = self.root / "event_queue.jsonl"
+        self.event_queue.write_text("", encoding="utf-8")
+
+        self.status_data: dict[str, Any] = {
+            "project": "pantheon",
+            "agents": [
+                {"name": "Antigravity", "status": "running"},
+                {"name": "Antigravity2", "status": "running"},
+                {"name": "Codex", "status": "idle"},
+                {"name": "Codex2", "status": "idle"},
+                {"name": "Claude", "status": "idle"},
+            ],
+            "tasks": [
+                {
+                    "id": "TASK-SIBLING-001",
+                    "title": "Sibling Task",
+                    "owner": "Antigravity2",
+                    "reviewer": "Codex2",
+                    "status": "todo",
+                    "repository": "pantheon",
+                },
+                {
+                    "id": "TASK-TRIGGER-001",
+                    "title": "Triggering Task",
+                    "owner": "Antigravity",
+                    "reviewer": "Codex",
+                    "status": "todo",
+                    "repository": "pantheon",
+                },
+                {
+                    "id": "TASK-INDEPENDENT-001",
+                    "title": "Independent Task",
+                    "owner": "Claude",
+                    "reviewer": "Codex",
+                    "status": "todo",
+                    "repository": "pantheon",
+                },
+            ],
+            "handoffs": [],
+            "blockers": [],
+        }
+        self.status_file.write_text(json.dumps(self.status_data, indent=2), encoding="utf-8")
+
+        self.config: dict[str, Any] = {
+            "paths": {
+                "status_file": str(self.status_file),
+                "activity_log": str(self.activity_log),
+                "event_queue": str(self.event_queue),
+            },
+            "schema": {"assignee_field": "owner"},
+            "coordination": {
+                "repositories": {
+                    "pantheon": {
+                        "repo": None,
+                        "local_path": str(self.repo),
+                        "default_branch": "dev",
+                    }
+                }
+            },
+            "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            "worker_worktrees": {"root": str(self.root / "worktrees")},
+            "worker_retry": {
+                "enabled": True,
+                "max_attempts": 3,
+                "transient_error_patterns": ["retryablequotaerror", "resource_exhausted"],
+            },
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 1,
+                "reassign_on_terminal_failure": True,
+                "eligible_statuses": ["todo", "in_progress", "review"],
+                "owner_fallbacks": {
+                    "antigravity": ["Codex", "Claude"],
+                    "antigravity2": ["Codex", "Claude"],
+                    "Antigravity": ["Codex", "Claude"],
+                    "Antigravity2": ["Codex", "Claude"],
+                },
+                "reviewer_fallbacks": {
+                    "codex": ["Claude"],
+                    "codex2": ["Claude"],
+                    "Codex": ["Claude"],
+                    "Codex2": ["Claude"],
+                },
+            },
+            "provider_guardrails": {
+                "pause_on_capacity_failure": True,
+                "pause_on_auth_failure": True,
+                "capacity_pause_seconds": 900,
+                "quota_terminal_pause_seconds": 900,
+            },
+            "providers": {
+                "antigravity": {"dispatch_group": "antigravity", "delivery_mode": "antigravity"},
+                "antigravity2": {"dispatch_group": "antigravity", "delivery_mode": "antigravity"},
+                "codex": {"dispatch_group": "codex", "delivery_mode": "codex"},
+                "codex2": {"dispatch_group": "codex", "delivery_mode": "codex"},
+                "claude": {"dispatch_group": "claude", "delivery_mode": "claude_cli"},
+            },
+            "agents": {
+                "antigravity": {
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                    "adapter": "antigravity",
+                    "account_pool": "antigravity_main",
+                },
+                "antigravity2": {
+                    "display_name": "Antigravity2",
+                    "provider": "antigravity2",
+                    "adapter": "antigravity",
+                    "account_pool": "antigravity_main",
+                },
+                "codex": {
+                    "display_name": "Codex",
+                    "provider": "codex",
+                    "adapter": "codex",
+                    "account_pool": "codex_main",
+                },
+                "codex2": {
+                    "display_name": "Codex2",
+                    "provider": "codex2",
+                    "adapter": "codex",
+                    "account_pool": "codex_main",
+                },
+                "claude": {
+                    "display_name": "Claude",
+                    "provider": "claude",
+                    "adapter": "claude_cli",
+                    "account_pool": "claude_main",
+                },
+            },
+            "account_pools": {
+                "antigravity_main": {
+                    "enabled": True,
+                    "max_concurrent": 2,
+                    "providers": ["antigravity", "antigravity2"],
+                },
+                "codex_main": {
+                    "enabled": True,
+                    "max_concurrent": 2,
+                    "providers": ["codex", "codex2"],
+                },
+                "claude_main": {
+                    "enabled": True,
+                    "max_concurrent": 2,
+                    "providers": ["claude"],
+                },
+            },
+        }
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_sibling_quota_fence_preserves_dirty_worktree_and_authorizes_successor_lease_continuation(self) -> None:
+        """E2E: Sibling worker dirty changes are preserved at fencing, sealed, and handed off to authorized successor."""
+        # Create uncommitted dirty work in the sibling's isolated worktree
+        dirty_file = self.worktree / "task_impl.py"
+        dirty_file.write_text("print('valuable uncommitted work')\n", encoding="utf-8")
+        inspection = inspect_worktree(self.worktree)
+        self.assertEqual(inspection.kind, "owner_dirty")
+
+        state: dict[str, Any] = {
+            "workers": {
+                "run-trigger": {
+                    "run_id": "run-trigger",
+                    "provider": "antigravity",
+                    "agent_id": "antigravity",
+                    "task_id": "TASK-TRIGGER-001",
+                    "status": "running",
+                    "pid": 999999,
+                },
+                "run-sibling": {
+                    "run_id": "run-sibling",
+                    "provider": "antigravity2",
+                    "agent_id": "antigravity2",
+                    "task_id": "TASK-SIBLING-001",
+                    "workspace_path": str(self.worktree.resolve()),
+                    "workspace_branch": "task/TASK-SIBLING-001",
+                    "workspace_mode": "isolated_worktree",
+                    "reason": "owned_ready_dispatch",
+                    "status": "running",
+                    "pid": 999998,
+                },
+                "run-independent": {
+                    "run_id": "run-independent",
+                    "provider": "claude",
+                    "agent_id": "claude",
+                    "task_id": "TASK-INDEPENDENT-001",
+                    "status": "running",
+                    "pid": 999997,
+                },
+            },
+            "worker_worktrees": {"handoff_blocks": {}},
+        }
+        triggering_worker = state["workers"]["run-trigger"]
+        quota_reason = "ERROR: You've hit your usage limit. Visit https://antigravity.google.com to upgrade or try again at 7:00 PM."
+
+        with mock.patch.object(supervisor, "pid_is_alive", return_value=False), \
+             mock.patch.object(supervisor, "terminate_worker_pid", return_value=True), \
+             mock.patch.object(supervisor, "sync_status_pipeline", return_value=True), \
+             mock.patch("status_transition.sync_status_pipeline", return_value=True):
+            fenced = worker_failure_policy.fence_account_pool_workers(
+                self.config, state, triggering_worker, quota_reason
+            )
+
+        self.assertEqual(fenced, 1)
+
+        # Sibling was reassigned to Codex outside antigravity_main pool
+        sibling = state["workers"]["run-sibling"]
+        self.assertEqual(sibling["status"], "reassigned")
+        self.assertEqual(sibling["reassigned_to"], "Codex")
+
+        # Independent worker in claude_main pool was NOT touched
+        independent = state["workers"]["run-independent"]
+        self.assertEqual(independent["status"], "running")
+
+        # Task in canonical status was reassigned to Codex
+        updated_task = worker_failure_policy.canonical_task_record(self.config, "TASK-SIBLING-001")
+        self.assertIsNotNone(updated_task)
+        self.assertEqual(updated_task.get("owner"), "Codex")
+
+        # Handoff block recorded with exact provenance and transferred to authorized successor
+        handoff_block = state["worker_worktrees"]["handoff_blocks"].get("TASK-SIBLING-001")
+        self.assertIsNotNone(handoff_block)
+        self.assertEqual(handoff_block.get("owner"), "Codex")
+        self.assertEqual(handoff_block.get("authorized_successor"), "Codex")
+        self.assertEqual(handoff_block.get("original_owner"), "Antigravity2")
+        self.assertEqual(handoff_block.get("transferred_from"), "Antigravity2")
+        self.assertEqual(handoff_block.get("transferred_to"), "Codex")
+        self.assertEqual(handoff_block.get("dirt_fingerprint"), inspection.fingerprint)
+        self.assertEqual(handoff_block.get("head_sha"), self.head_sha)
+        self.assertEqual(handoff_block.get("workspace_branch"), "task/TASK-SIBLING-001")
+        self.assertEqual(handoff_block.get("workspace_path"), str(self.worktree.resolve()))
+
+        # Authorized successor (Codex) requests lease continuation
+        successor_request = DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="resume work on existing worktree",
+            task_id="TASK-SIBLING-001",
+            reason="owned_ready_dispatch",
+        )
+        allowed, detail = worker_workspace.sealed_owner_continuation_allowed(
+            self.config,
+            state,
+            successor_request,
+            updated_task,
+            target_agent="codex",
+            worktree_path=self.worktree,
+            branch="task/TASK-SIBLING-001",
+        )
+        self.assertTrue(allowed, f"Authorized successor must be allowed continuation: {detail}")
+
+        # Successor completes work, commits, and leaves clean repo
+        _git_run(self.worktree, "add", "task_impl.py")
+        _git_run(self.worktree, "commit", "--quiet", "-m", "TASK-SIBLING-001: complete task implementation")
+        clean_inspection = inspect_worktree(self.worktree)
+        self.assertEqual(clean_inspection.kind, "clean")
+
+    def test_sibling_quota_fence_refuses_preservation_while_writer_is_still_alive(self) -> None:
+        """Active writer guard: Worktree preservation and handoff sealing is refused while process is alive."""
+        (self.worktree / "uncommitted.py").write_text("print('writer active')\n", encoding="utf-8")
+        state: dict[str, Any] = {
+            "workers": {
+                "run-trigger": {
+                    "run_id": "run-trigger",
+                    "provider": "antigravity",
+                    "agent_id": "antigravity",
+                    "task_id": "TASK-TRIGGER-001",
+                    "status": "running",
+                    "pid": 999999,
+                },
+                "run-sibling": {
+                    "run_id": "run-sibling",
+                    "provider": "antigravity2",
+                    "agent_id": "antigravity2",
+                    "task_id": "TASK-SIBLING-001",
+                    "workspace_path": str(self.worktree.resolve()),
+                    "workspace_branch": "task/TASK-SIBLING-001",
+                    "workspace_mode": "isolated_worktree",
+                    "reason": "owned_ready_dispatch",
+                    "status": "running",
+                    "pid": 999998,
+                },
+            },
+            "worker_worktrees": {"handoff_blocks": {}},
+        }
+        quota_reason = "ERROR: Free daily quota has been reached."
+
+        # Process is alive and cannot be terminated
+        with mock.patch.object(supervisor, "pid_is_alive", return_value=True), \
+             mock.patch.object(supervisor, "terminate_worker_pid", return_value=True):
+            worker_failure_policy.fence_account_pool_workers(
+                self.config, state, state["workers"]["run-trigger"], quota_reason
+            )
+
+        # No handoff block created because active writer was present
+        self.assertNotIn("TASK-SIBLING-001", state.get("worker_worktrees", {}).get("handoff_blocks", {}))
+
+    def test_authorized_successor_refuses_foreign_agent_or_unauthorized_owner(self) -> None:
+        """Negative: Foreign agent cannot claim an authorized successor dirty worktree lease."""
+        (self.worktree / "uncommitted.py").write_text("print('dirt')\n", encoding="utf-8")
+        inspection = inspect_worktree(self.worktree)
+        state: dict[str, Any] = {
+            "worker_worktrees": {
+                "handoff_blocks": {
+                    "TASK-SIBLING-001": {
+                        "owner": "Codex",
+                        "authorized_successor": "Codex",
+                        "original_owner": "Antigravity2",
+                        "workspace_path": str(self.worktree.resolve()),
+                        "workspace_branch": "task/TASK-SIBLING-001",
+                        "head_sha": self.head_sha,
+                        "dirt_fingerprint": inspection.fingerprint,
+                        "detail": inspection.detail,
+                    }
+                }
+            }
+        }
+        task = {"id": "TASK-SIBLING-001", "owner": "Codex"}
+        foreign_request = DeliveryRequest(
+            agent_id="claude",
+            provider="claude",
+            delivery_mode="claude_cli",
+            message="attempt claim by third agent",
+            task_id="TASK-SIBLING-001",
+            reason="owned_ready_dispatch",
+        )
+        allowed, reason = worker_workspace.sealed_owner_continuation_allowed(
+            self.config,
+            state,
+            foreign_request,
+            task,
+            target_agent="claude",
+            worktree_path=self.worktree,
+            branch="task/TASK-SIBLING-001",
+        )
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "not_same_owner")
+
+    def test_authorized_successor_refuses_reviewer_guard(self) -> None:
+        """Reviewer guard: Reviewers must never inherit uncommitted dirty worktrees."""
+        (self.worktree / "uncommitted.py").write_text("print('dirt')\n", encoding="utf-8")
+        inspection = inspect_worktree(self.worktree)
+        state: dict[str, Any] = {
+            "worker_worktrees": {
+                "handoff_blocks": {
+                    "TASK-SIBLING-001": {
+                        "owner": "Codex",
+                        "authorized_successor": "Codex",
+                        "workspace_path": str(self.worktree.resolve()),
+                        "workspace_branch": "task/TASK-SIBLING-001",
+                        "head_sha": self.head_sha,
+                        "dirt_fingerprint": inspection.fingerprint,
+                        "detail": inspection.detail,
+                    }
+                }
+            }
+        }
+        task = {"id": "TASK-SIBLING-001", "owner": "Codex", "reviewer": "Codex2"}
+        reviewer_request = DeliveryRequest(
+            agent_id="codex2",
+            provider="codex2",
+            delivery_mode="codex",
+            message="review request",
+            task_id="TASK-SIBLING-001",
+            reason="review_ready_dispatch",
+        )
+        allowed, reason = worker_workspace.sealed_owner_continuation_allowed(
+            self.config,
+            state,
+            reviewer_request,
+            task,
+            target_agent="codex2",
+            worktree_path=self.worktree,
+            branch="task/TASK-SIBLING-001",
+        )
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "not_owner_execution")
+
+    def test_authorized_successor_refuses_helper_guard(self) -> None:
+        """Helper guard: Helper claims must never inherit uncommitted dirty worktrees."""
+        (self.worktree / "uncommitted.py").write_text("print('dirt')\n", encoding="utf-8")
+        inspection = inspect_worktree(self.worktree)
+        state: dict[str, Any] = {
+            "worker_worktrees": {
+                "handoff_blocks": {
+                    "TASK-SIBLING-001": {
+                        "owner": "Codex",
+                        "authorized_successor": "Codex",
+                        "workspace_path": str(self.worktree.resolve()),
+                        "workspace_branch": "task/TASK-SIBLING-001",
+                        "head_sha": self.head_sha,
+                        "dirt_fingerprint": inspection.fingerprint,
+                        "detail": inspection.detail,
+                    }
+                }
+            }
+        }
+        task = {"id": "TASK-SIBLING-001", "owner": "Codex"}
+        helper_request = DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="helper claim",
+            task_id="TASK-SIBLING-001",
+            reason="helper_claim",
+        )
+        allowed, reason = worker_workspace.sealed_owner_continuation_allowed(
+            self.config,
+            state,
+            helper_request,
+            task,
+            target_agent="codex",
+            worktree_path=self.worktree,
+            branch="task/TASK-SIBLING-001",
+        )
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "not_owner_execution")
+
+    def test_authorized_successor_refuses_when_head_sha_drifted(self) -> None:
+        """Negative: Lease continuation fails if HEAD SHA drifted since sealing."""
+        (self.worktree / "uncommitted.py").write_text("print('dirt')\n", encoding="utf-8")
+        inspection = inspect_worktree(self.worktree)
+        state: dict[str, Any] = {
+            "worker_worktrees": {
+                "handoff_blocks": {
+                    "TASK-SIBLING-001": {
+                        "owner": "Codex",
+                        "authorized_successor": "Codex",
+                        "workspace_path": str(self.worktree.resolve()),
+                        "workspace_branch": "task/TASK-SIBLING-001",
+                        "head_sha": self.head_sha,
+                        "dirt_fingerprint": inspection.fingerprint,
+                        "detail": inspection.detail,
+                    }
+                }
+            }
+        }
+        task = {"id": "TASK-SIBLING-001", "owner": "Codex"}
+        successor_request = DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="resume",
+            task_id="TASK-SIBLING-001",
+            reason="owned_ready_dispatch",
+        )
+
+        # Advance HEAD unexpectedly
+        _git_run(self.worktree, "commit", "--allow-empty", "-m", "unexpected HEAD advance")
+
+        allowed, reason = worker_workspace.sealed_owner_continuation_allowed(
+            self.config,
+            state,
+            successor_request,
+            task,
+            target_agent="codex",
+            worktree_path=self.worktree,
+            branch="task/TASK-SIBLING-001",
+        )
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "head_changed")
+
+    def test_authorized_successor_refuses_when_dirt_fingerprint_drifted(self) -> None:
+        """Negative: Lease continuation fails if dirty bytes or files drifted since sealing."""
+        (self.worktree / "uncommitted.py").write_text("print('dirt v1')\n", encoding="utf-8")
+        inspection = inspect_worktree(self.worktree)
+        state: dict[str, Any] = {
+            "worker_worktrees": {
+                "handoff_blocks": {
+                    "TASK-SIBLING-001": {
+                        "owner": "Codex",
+                        "authorized_successor": "Codex",
+                        "workspace_path": str(self.worktree.resolve()),
+                        "workspace_branch": "task/TASK-SIBLING-001",
+                        "head_sha": self.head_sha,
+                        "dirt_fingerprint": inspection.fingerprint,
+                        "detail": inspection.detail,
+                    }
+                }
+            }
+        }
+        task = {"id": "TASK-SIBLING-001", "owner": "Codex"}
+        successor_request = DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="resume",
+            task_id="TASK-SIBLING-001",
+            reason="owned_ready_dispatch",
+        )
+
+        # Alter dirty content
+        (self.worktree / "uncommitted.py").write_text("print('dirt tampered')\n", encoding="utf-8")
+
+        allowed, reason = worker_workspace.sealed_owner_continuation_allowed(
+            self.config,
+            state,
+            successor_request,
+            task,
+            target_agent="codex",
+            worktree_path=self.worktree,
+            branch="task/TASK-SIBLING-001",
+        )
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "dirt_changed")
+
+    def test_authorized_successor_refuses_when_branch_mismatched(self) -> None:
+        """Negative: Lease continuation fails if branch does not match sealed workspace branch."""
+        (self.worktree / "uncommitted.py").write_text("print('dirt')\n", encoding="utf-8")
+        inspection = inspect_worktree(self.worktree)
+        state: dict[str, Any] = {
+            "worker_worktrees": {
+                "handoff_blocks": {
+                    "TASK-SIBLING-001": {
+                        "owner": "Codex",
+                        "authorized_successor": "Codex",
+                        "workspace_path": str(self.worktree.resolve()),
+                        "workspace_branch": "task/TASK-SIBLING-001",
+                        "head_sha": self.head_sha,
+                        "dirt_fingerprint": inspection.fingerprint,
+                        "detail": inspection.detail,
+                    }
+                }
+            }
+        }
+        task = {"id": "TASK-SIBLING-001", "owner": "Codex"}
+        successor_request = DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="resume",
+            task_id="TASK-SIBLING-001",
+            reason="owned_ready_dispatch",
+        )
+        allowed, reason = worker_workspace.sealed_owner_continuation_allowed(
+            self.config,
+            state,
+            successor_request,
+            task,
+            target_agent="codex",
+            worktree_path=self.worktree,
+            branch="task/FOREIGN-BRANCH",
+        )
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "workspace_changed")
+
+    def test_sibling_quota_fence_without_reassignment_allows_same_owner_continuation(self) -> None:
+        """Same-owner: If no successor is reassigned, original owner retains sealed handoff block for later recovery."""
+        (self.worktree / "same_owner_dirt.py").write_text("print('same owner dirt')\n", encoding="utf-8")
+        inspection = inspect_worktree(self.worktree)
+
+        state: dict[str, Any] = {
+            "workers": {
+                "run-trigger": {
+                    "run_id": "run-trigger",
+                    "provider": "antigravity",
+                    "agent_id": "antigravity",
+                    "task_id": "TASK-TRIGGER-001",
+                    "status": "running",
+                    "pid": 999999,
+                },
+                "run-sibling": {
+                    "run_id": "run-sibling",
+                    "provider": "antigravity2",
+                    "agent_id": "antigravity2",
+                    "task_id": "TASK-SIBLING-001",
+                    "workspace_path": str(self.worktree.resolve()),
+                    "workspace_branch": "task/TASK-SIBLING-001",
+                    "workspace_mode": "isolated_worktree",
+                    "reason": "owned_ready_dispatch",
+                    "status": "running",
+                    "pid": 999998,
+                },
+            },
+            "worker_worktrees": {"handoff_blocks": {}},
+        }
+        quota_reason = "ERROR: Free daily quota has been reached."
+
+        with mock.patch.object(supervisor, "pid_is_alive", return_value=False), \
+             mock.patch.object(supervisor, "terminate_worker_pid", return_value=True), \
+             mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure", return_value=None):
+            fenced = worker_failure_policy.fence_account_pool_workers(
+                self.config, state, state["workers"]["run-trigger"], quota_reason
+            )
+
+        self.assertEqual(fenced, 1)
+        sibling = state["workers"]["run-sibling"]
+        self.assertEqual(sibling["status"], "failed")
+
+        # Handoff block retained for original owner Antigravity2
+        handoff_block = state["worker_worktrees"]["handoff_blocks"].get("TASK-SIBLING-001")
+        self.assertIsNotNone(handoff_block)
+        self.assertEqual(handoff_block.get("owner"), "Antigravity2")
+        self.assertEqual(inspection.kind, "owner_dirty")
+        self.assertEqual(handoff_block.get("dirt_fingerprint"), inspection.fingerprint)
+
+        # Task owner remains Antigravity2
+        task = worker_failure_policy.canonical_task_record(self.config, "TASK-SIBLING-001")
+        self.assertEqual(task.get("owner"), "Antigravity2")
+
+        # Original owner dispatched later is allowed continuation
+        orig_request = DeliveryRequest(
+            agent_id="antigravity2",
+            provider="antigravity2",
+            delivery_mode="antigravity",
+            message="resume after cooldown",
+            task_id="TASK-SIBLING-001",
+            reason="owned_ready_dispatch",
+        )
+        allowed, detail = worker_workspace.sealed_owner_continuation_allowed(
+            self.config,
+            state,
+            orig_request,
+            task,
+            target_agent="antigravity2",
+            worktree_path=self.worktree,
+            branch="task/TASK-SIBLING-001",
+        )
+        self.assertTrue(allowed, f"Original owner must be allowed continuation: {detail}")
+
+    def test_sibling_quota_fence_clean_worktree_reassigns_without_handoff_seal(self) -> None:
+        """Clean worktree: Sibling worker with clean worktree reassigns normally without creating a handoff seal."""
+        clean_inspection = inspect_worktree(self.worktree)
+        self.assertEqual(clean_inspection.kind, "clean")
+
+        state: dict[str, Any] = {
+            "workers": {
+                "run-trigger": {
+                    "run_id": "run-trigger",
+                    "provider": "antigravity",
+                    "agent_id": "antigravity",
+                    "task_id": "TASK-TRIGGER-001",
+                    "status": "running",
+                    "pid": 999999,
+                },
+                "run-sibling": {
+                    "run_id": "run-sibling",
+                    "provider": "antigravity2",
+                    "agent_id": "antigravity2",
+                    "task_id": "TASK-SIBLING-001",
+                    "workspace_path": str(self.worktree.resolve()),
+                    "workspace_branch": "task/TASK-SIBLING-001",
+                    "workspace_mode": "isolated_worktree",
+                    "reason": "owned_ready_dispatch",
+                    "status": "running",
+                    "pid": 999998,
+                },
+            },
+            "worker_worktrees": {"handoff_blocks": {}},
+        }
+        quota_reason = "ERROR: Free daily quota has been reached."
+
+        with mock.patch.object(supervisor, "pid_is_alive", return_value=False), \
+             mock.patch.object(supervisor, "terminate_worker_pid", return_value=True), \
+             mock.patch.object(supervisor, "sync_status_pipeline", return_value=True), \
+             mock.patch("status_transition.sync_status_pipeline", return_value=True):
+            fenced = worker_failure_policy.fence_account_pool_workers(
+                self.config, state, state["workers"]["run-trigger"], quota_reason
+            )
+
+        self.assertEqual(fenced, 1)
+        sibling = state["workers"]["run-sibling"]
+        self.assertEqual(sibling["status"], "reassigned")
+        self.assertEqual(sibling["reassigned_to"], "Codex")
+
+        # No handoff block created because worktree was clean
+        self.assertNotIn("TASK-SIBLING-001", state.get("worker_worktrees", {}).get("handoff_blocks", {}))
 
 
 if __name__ == "__main__":
