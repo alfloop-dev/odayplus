@@ -4827,7 +4827,8 @@ class StatusCheckEmissionTests(unittest.TestCase):
             "subprocess.run",
             return_value=mock.Mock(returncode=1, stdout="stale-cached-ref"),
         ) as mock_run:
-            self.assertIsNone(ai_status.resolve_task_sha("ODP-001"))
+            with self.assertRaises(RuntimeError, msg="unverifiable"):
+                ai_status.resolve_task_sha("ODP-001")
         mock_run.assert_called_once()
 
     def test_remote_sha_timeout_rejects_warm_cache_and_partial_output(self) -> None:
@@ -4847,7 +4848,8 @@ class StatusCheckEmissionTests(unittest.TestCase):
             mock.patch("subprocess.run", side_effect=timed_out) as remote,
             mock.patch.object(ai_status, "post_task_review_status_payload") as post,
         ):
-            self.assertIsNone(ai_status.resolve_task_sha(task_id, force_refresh=True))
+            with self.assertRaises(RuntimeError, msg="unverifiable"):
+                ai_status.resolve_task_sha(task_id, force_refresh=True)
             ai_status.emit_task_review_status_check(
                 {"id": task_id, "approved_head": old_sha}, "review_approved"
             )
@@ -5443,20 +5445,27 @@ class StatusCheckEmissionTests(unittest.TestCase):
 
     def test_resolve_task_sha_rejects_ambiguous_or_malformed_remote_refs(self) -> None:
         task_id = "ODP-001"
-        cases = (
-            "not-a-sha\trefs/heads/task/ODP-001\n",
-            (
-                f"{'1' * 40}\trefs/heads/task/{task_id}\n"
-                f"{'2' * 40}\trefs/heads/task-{task_id}\n"
-            ),
+
+        # Malformed SHA: rc=0 but no valid 40/64-hex match → confirmed absent → None
+        with mock.patch(
+            "subprocess.run",
+            return_value=mock.Mock(returncode=0, stdout="not-a-sha\trefs/heads/task/ODP-001\n"),
+        ):
+            ai_status.clear_ai_status_caches()
+            self.assertIsNone(ai_status.resolve_task_sha(task_id))
+
+        # Ambiguous: two valid refs → R5 raises RuntimeError (not a confirmed absence)
+        ambiguous_stdout = (
+            f"{'1' * 40}\trefs/heads/task/{task_id}\n"
+            f"{'2' * 40}\trefs/heads/task-{task_id}\n"
         )
-        for stdout in cases:
-            with self.subTest(stdout=stdout), mock.patch(
-                "subprocess.run",
-                return_value=mock.Mock(returncode=0, stdout=stdout),
-            ):
-                ai_status.clear_ai_status_caches()
-                self.assertIsNone(ai_status.resolve_task_sha(task_id))
+        with mock.patch(
+            "subprocess.run",
+            return_value=mock.Mock(returncode=0, stdout=ambiguous_stdout),
+        ):
+            ai_status.clear_ai_status_caches()
+            with self.assertRaises(RuntimeError, msg="ambiguous"):
+                ai_status.resolve_task_sha(task_id)
 
     def test_resolve_task_sha_uses_bounded_warm_cache_for_ordinary_lookups(self) -> None:
         task_id = "ODP-WARM-CACHE-001"
@@ -5512,11 +5521,11 @@ class StatusCheckEmissionTests(unittest.TestCase):
             third_sha = ai_status.resolve_task_sha(task_id, fresh=True)
             self.assertIsNone(third_sha)
 
-        # Step 4: Remote origin command fails. force_refresh=True fails closed (returns None), NOT cached sha_updated.
+        # Step 4: Remote origin command fails. force_refresh=True raises RuntimeError (R5), NOT cached sha_updated.
         mock_res4 = mock.Mock(returncode=1, stdout="")
         with mock.patch("subprocess.run", return_value=mock_res4):
-            fourth_sha = ai_status.resolve_task_sha(task_id, force_refresh=True)
-            self.assertIsNone(fourth_sha)
+            with self.assertRaises(RuntimeError, msg="unverifiable"):
+                ai_status.resolve_task_sha(task_id, force_refresh=True)
 
     def test_active_branch_governance_refreshes_but_done_uses_delivery_provenance(self) -> None:
         task_id = "ODP-GOV-TEST-001"
