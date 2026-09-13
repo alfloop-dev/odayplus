@@ -92,8 +92,18 @@ def load_task(status_file: Path, task_id: str) -> dict[str, Any] | None:
     return None
 
 
+def is_executable_command(cmd: str) -> bool:
+    if not cmd:
+        return False
+    # If the entry contains CJK ideographs or punctuation, it is human prose rather than a shell command
+    if any("\u4e00" <= ch <= "\u9fff" or "\u3000" <= ch <= "\u303f" or "\uff00" <= ch <= "\uffef" for ch in cmd):
+        return False
+    return True
+
+
 def declared_commands(task: dict[str, Any] | None) -> list[str]:
-    return [str(item).strip() for item in ((task or {}).get("verification") or []) if str(item).strip()]
+    raw = [str(item).strip() for item in ((task or {}).get("verification") or []) if str(item).strip()]
+    return [cmd for cmd in raw if is_executable_command(cmd)]
 
 
 def cmd_run(args: argparse.Namespace) -> int:
