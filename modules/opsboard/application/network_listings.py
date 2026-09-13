@@ -601,9 +601,7 @@ class NetworkListingService:
             area_ping=float(d["areaPing"]),
             floor=d["floor"],
             frontage_m=float(d.get("frontageMeters") or 0),
-            confidence=_optional_float(
-                d.get("listingConfidence"), default=geocode_confidence
-            ),
+            confidence=_optional_number(d.get("listingConfidence"), float),
             snapshot_id=d.get("sourceUrl") or "",
         )
         addr = AddressLocation(

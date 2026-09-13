@@ -213,6 +213,24 @@ class Poi:
     status: str = "active"  # active/closed/unknown
     confidence: float | None = None
     snapshot_id: str = ""
+    measurement_schema_version: str = "v2"
+    confidence_status: str | None = None
+
+    @property
+    def effective_confidence_provenance(self) -> str:
+        if self.confidence_status is not None:
+            return self.confidence_status
+        if self.confidence is None:
+            return "unmeasured"
+        if (self.measurement_schema_version == "v1" or self.snapshot_id == "v1") and self.confidence == 1.0:
+            return "legacy_unknown"
+        return "measured"
+
+    @property
+    def effective_confidence(self) -> float | None:
+        if self.effective_confidence_provenance == "legacy_unknown":
+            return None
+        return self.confidence
 
 
 @dataclass(frozen=True)
@@ -228,6 +246,26 @@ class CompetitorStore:
     status: str = "active"  # active/closed/unknown
     confidence: float | None = None
     last_verified_at: datetime | None = None
+    measurement_schema_version: str = "v2"
+    snapshot_id: str = ""
+    source_competitor_id: str = ""
+    confidence_status: str | None = None
+
+    @property
+    def effective_confidence_provenance(self) -> str:
+        if self.confidence_status is not None:
+            return self.confidence_status
+        if self.confidence is None:
+            return "unmeasured"
+        if (self.measurement_schema_version == "v1" or self.snapshot_id == "v1") and self.confidence == 1.0:
+            return "legacy_unknown"
+        return "measured"
+
+    @property
+    def effective_confidence(self) -> float | None:
+        if self.effective_confidence_provenance == "legacy_unknown":
+            return None
+        return self.confidence
 
 
 @dataclass(frozen=True)
@@ -253,6 +291,24 @@ class Listing:
     snapshot_id: str = ""
     confidence: float | None = None
     tenant_id: str = ""
+    measurement_schema_version: str = "v2"
+    confidence_status: str | None = None
+
+    @property
+    def effective_confidence_provenance(self) -> str:
+        if self.confidence_status is not None:
+            return self.confidence_status
+        if self.confidence is None:
+            return "unmeasured"
+        if (self.measurement_schema_version == "v1" or self.snapshot_id == "v1") and self.confidence == 1.0:
+            return "legacy_unknown"
+        return "measured"
+
+    @property
+    def effective_confidence(self) -> float | None:
+        if self.effective_confidence_provenance == "legacy_unknown":
+            return None
+        return self.confidence
 
 
 @dataclass(frozen=True)
@@ -307,6 +363,24 @@ class Prediction:
     unit: str = ""
     explanation_json: dict[str, Any] = field(default_factory=dict)
     confidence: float | None = None
+    measurement_schema_version: str = "v2"
+    confidence_status: str | None = None
+
+    @property
+    def effective_confidence_provenance(self) -> str:
+        if self.confidence_status is not None:
+            return self.confidence_status
+        if self.confidence is None:
+            return "unmeasured"
+        if self.measurement_schema_version == "v1" and self.confidence == 1.0:
+            return "legacy_unknown"
+        return "measured"
+
+    @property
+    def effective_confidence(self) -> float | None:
+        if self.effective_confidence_provenance == "legacy_unknown":
+            return None
+        return self.confidence
 
 
 @dataclass(frozen=True)
@@ -349,6 +423,24 @@ class HeatZoneScore:
     rent_feasibility_score: float = 0.0
     heatzone_state: str = "untouched"  # untouched/partially_absorbed/saturated/under_realized/still_expandable
     confidence: float | None = None
+    measurement_schema_version: str = "v2"
+    confidence_status: str | None = None
+
+    @property
+    def effective_confidence_provenance(self) -> str:
+        if self.confidence_status is not None:
+            return self.confidence_status
+        if self.confidence is None:
+            return "unmeasured"
+        if self.measurement_schema_version == "v1" and self.confidence == 1.0:
+            return "legacy_unknown"
+        return "measured"
+
+    @property
+    def effective_confidence(self) -> float | None:
+        if self.effective_confidence_provenance == "legacy_unknown":
+            return None
+        return self.confidence
 
 
 @dataclass(frozen=True)
@@ -521,6 +613,23 @@ class DataSnapshot:
     row_count: int = 0
     quality_score: float | None = None
     created_by_run_id: str = ""
+    quality_score_status: str | None = None
+
+    @property
+    def effective_quality_score_provenance(self) -> str:
+        if self.quality_score_status is not None:
+            return self.quality_score_status
+        if self.quality_score is None:
+            return "unmeasured"
+        if self.schema_version == "v1" and self.quality_score == 1.0:
+            return "legacy_unknown"
+        return "measured"
+
+    @property
+    def effective_quality_score(self) -> float | None:
+        if self.effective_quality_score_provenance == "legacy_unknown":
+            return None
+        return self.quality_score
 
 
 @dataclass(frozen=True)

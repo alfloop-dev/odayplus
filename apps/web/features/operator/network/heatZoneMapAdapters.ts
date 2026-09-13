@@ -48,7 +48,7 @@ function offsetFromZone(
 
 /** Derive a canonical HeatZone state from OperatorHeatZone metrics. */
 export function deriveHeatZoneState(zone: OperatorHeatZone): MapHeatZone["state"] {
-  if (zone.confidence < 0.7) return "SUPPRESSED_LOW_CONFIDENCE";
+  if (zone.confidence === null || zone.confidence < 0.7) return "SUPPRESSED_LOW_CONFIDENCE";
   if (zone.demandGap >= 0.75) return "STILL_EXPANDABLE";
   if (zone.demandGap >= 0.5) return "UNDER_REALIZED";
   if (zone.competitionIndex >= 0.7) return "SATURATED";

@@ -271,7 +271,7 @@ class HeatZoneV3ScoreResult:
             listing_availability_score=float(data.get("listing_availability_score", 0.0)),
             housing_density_score=float(data.get("housing_density_score", 0.0)),
             demographic_vitality_score=float(data.get("demographic_vitality_score", 0.0)),
-            confidence=float(data.get("confidence", 1.0)),
+            confidence=float(data["confidence"]) if data.get("confidence") is not None else None,
             state=HeatZoneV3State(data.get("state", HeatZoneV3State.UNTOUCHED)),
             abstained=bool(data.get("abstained", False)),
             abstain_reasons=tuple(str(r) for r in data.get("abstain_reasons", ())),

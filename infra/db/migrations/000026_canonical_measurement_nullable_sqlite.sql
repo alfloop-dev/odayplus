@@ -25,9 +25,21 @@ CREATE TABLE pois_nullable (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-INSERT INTO pois_nullable SELECT * FROM pois;
+INSERT INTO pois_nullable (
+    poi_id, source_poi_id, poi_name, poi_category, poi_subcategory,
+    address_id, geo_cell_id, status, confidence, snapshot_id, created_at, updated_at
+) SELECT
+    poi_id, source_poi_id, poi_name, poi_category, poi_subcategory,
+    address_id, geo_cell_id, status, confidence, snapshot_id, created_at, updated_at
+FROM pois;
 DROP TABLE pois;
 ALTER TABLE pois_nullable RENAME TO pois;
+
+-- Recreate pois secondary indexes from 000004
+CREATE INDEX IF NOT EXISTS idx_pois_geo_cell ON pois(geo_cell_id);
+CREATE INDEX IF NOT EXISTS idx_pois_source ON pois(source_poi_id);
+CREATE INDEX IF NOT EXISTS idx_pois_snapshot ON pois(snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_pois_category ON pois(poi_category, status);
 
 -- ============================================================
 -- 2. competitor_stores: confidence REAL NOT NULL DEFAULT 1.00 → REAL
@@ -45,13 +57,28 @@ CREATE TABLE competitor_stores_nullable (
     status TEXT NOT NULL DEFAULT 'active',
     confidence REAL,
     last_verified_at TEXT,
+    measurement_schema_version TEXT NOT NULL DEFAULT 'v1',
+    snapshot_id TEXT REFERENCES data_snapshots(snapshot_id),
+    source_competitor_id TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-INSERT INTO competitor_stores_nullable SELECT * FROM competitor_stores;
+INSERT INTO competitor_stores_nullable (
+    competitor_store_id, brand_name, store_name, address_id, geo_cell_id,
+    estimated_capacity, distance_to_nearest_oday_m, status, confidence,
+    last_verified_at, created_at, updated_at
+) SELECT
+    competitor_store_id, brand_name, store_name, address_id, geo_cell_id,
+    estimated_capacity, distance_to_nearest_oday_m, status, confidence,
+    last_verified_at, created_at, updated_at
+FROM competitor_stores;
 DROP TABLE competitor_stores;
 ALTER TABLE competitor_stores_nullable RENAME TO competitor_stores;
+
+-- Recreate competitor_stores secondary indexes from 000004
+CREATE INDEX IF NOT EXISTS idx_competitor_stores_geo_cell ON competitor_stores(geo_cell_id);
+CREATE INDEX IF NOT EXISTS idx_competitor_stores_brand ON competitor_stores(brand_name, status);
 
 -- ============================================================
 -- 3. listings: confidence REAL NOT NULL DEFAULT 1.00 → REAL
@@ -82,9 +109,25 @@ CREATE TABLE listings_nullable (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-INSERT INTO listings_nullable SELECT * FROM listings;
+INSERT INTO listings_nullable (
+    listing_id, source_listing_id, source_id, listing_status, address_id,
+    rent_amount, currency, area_ping, floor, frontage_m, depth_m,
+    corner_flag, parking_flag, utility_electricity_flag, utility_drainage_flag,
+    utility_gas_flag, available_from, snapshot_id, confidence, created_at, updated_at
+) SELECT
+    listing_id, source_listing_id, source_id, listing_status, address_id,
+    rent_amount, currency, area_ping, floor, frontage_m, depth_m,
+    corner_flag, parking_flag, utility_electricity_flag, utility_drainage_flag,
+    utility_gas_flag, available_from, snapshot_id, confidence, created_at, updated_at
+FROM listings;
 DROP TABLE listings;
 ALTER TABLE listings_nullable RENAME TO listings;
+
+-- Recreate listings secondary indexes from 000004
+CREATE INDEX IF NOT EXISTS idx_listings_address ON listings(address_id);
+CREATE INDEX IF NOT EXISTS idx_listings_source ON listings(source_id, source_listing_id);
+CREATE INDEX IF NOT EXISTS idx_listings_snapshot ON listings(snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_listings_status ON listings(listing_status);
 
 -- ============================================================
 -- 4. predictions: confidence REAL NOT NULL DEFAULT 1.00 → REAL
@@ -107,8 +150,20 @@ CREATE TABLE predictions_nullable (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-INSERT INTO predictions_nullable SELECT * FROM predictions;
+INSERT INTO predictions_nullable (
+    prediction_id, prediction_run_id, entity_type, entity_id, target_name,
+    p10_value, p50_value, p90_value, unit, explanation_json, confidence,
+    created_at, updated_at
+) SELECT
+    prediction_id, prediction_run_id, entity_type, entity_id, target_name,
+    p10_value, p50_value, p90_value, unit, explanation_json, confidence,
+    created_at, updated_at
+FROM predictions;
 DROP TABLE predictions;
 ALTER TABLE predictions_nullable RENAME TO predictions;
+
+-- Recreate predictions secondary indexes from 000004
+CREATE INDEX IF NOT EXISTS idx_predictions_run_entity ON predictions(prediction_run_id, entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_predictions_target ON predictions(target_name, created_at);
 
 PRAGMA foreign_keys = ON;

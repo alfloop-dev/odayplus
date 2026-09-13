@@ -68,7 +68,7 @@ class GeoFeatureSnapshot:
     active_listing_count: int = 0
     median_listing_rent: float = 0.0
     competitor_capacity: float = 0.0
-    average_confidence: float = 0.0
+    average_confidence: float | None = None
     source_snapshot_ids: tuple[str, ...] = ()
 
 
@@ -257,24 +257,28 @@ class GeoPipeline:
                 bucket["listing_rents"].append(rent)
             self._track_common(bucket, record)
 
-        return [
-            GeoFeatureSnapshot(
-                h3_index=h3_index,
-                h3_resolution=resolution,
-                feature_snapshot_time=snapshot_time,
-                view_version=self.view_version,
-                poi_count=values["poi_count"],
-                competitor_count=values["competitor_count"],
-                active_listing_count=values["active_listing_count"],
-                median_listing_rent=float(median(values["listing_rents"])) if values["listing_rents"] else 0.0,
-                competitor_capacity=round(values["competitor_capacity"], 4),
-                average_confidence=round(sum(values["confidences"]) / len(values["confidences"]), 4)
-                if values["confidences"]
-                else 0.0,
-                source_snapshot_ids=tuple(sorted(values["snapshot_ids"])),
+        snapshots = []
+        for h3_index, values in sorted(buckets.items()):
+            total_records = values["poi_count"] + values["competitor_count"] + values["active_listing_count"]
+            avg_conf = None
+            if values["confidences"] and len(values["confidences"]) == total_records:
+                avg_conf = round(sum(values["confidences"]) / len(values["confidences"]), 4)
+            snapshots.append(
+                GeoFeatureSnapshot(
+                    h3_index=h3_index,
+                    h3_resolution=resolution,
+                    feature_snapshot_time=snapshot_time,
+                    view_version=self.view_version,
+                    poi_count=values["poi_count"],
+                    competitor_count=values["competitor_count"],
+                    active_listing_count=values["active_listing_count"],
+                    median_listing_rent=float(median(values["listing_rents"])) if values["listing_rents"] else 0.0,
+                    competitor_capacity=round(values["competitor_capacity"], 4),
+                    average_confidence=avg_conf,
+                    source_snapshot_ids=tuple(sorted(values["snapshot_ids"])),
+                )
             )
-            for h3_index, values in sorted(buckets.items())
-        ]
+        return snapshots
 
     def _candidate_from_coordinates(self, record: Mapping[str, Any]) -> GeocodeCandidate | None:
         latitude = record.get("latitude") or record.get("lat")

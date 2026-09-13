@@ -43,9 +43,11 @@ GEOCODE_MIN_CONFIDENCE = 0.80
 
 
 def _none_safe_min(*values: float | None) -> float | None:
-    """Return the minimum of non-None values, or None if all are absent."""
-    present = [v for v in values if v is not None]
-    return min(present) if present else None
+    """Return the minimum if all values are present (non-None), or None if any is absent."""
+    if not values or any(v is None for v in values):
+        return None
+    return min(values)  # type: ignore[type-var]
+
 
 # The six required data dimensions the gate enforces before scoring.
 REQUIRED_DATA_DIMENSIONS = ("address", "geocode", "rent", "area", "floor", "hardRule")

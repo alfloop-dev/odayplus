@@ -20,27 +20,35 @@
 
 BEGIN;
 
--- 1. pois.confidence
-ALTER TABLE pois ALTER COLUMN confidence DROP NOT NULL;
-ALTER TABLE pois ALTER COLUMN confidence DROP DEFAULT;
+-- 1. geo.pois
+ALTER TABLE geo.pois ALTER COLUMN confidence DROP NOT NULL;
+ALTER TABLE geo.pois ALTER COLUMN confidence DROP DEFAULT;
 
--- 2. competitor_stores.confidence
-ALTER TABLE competitor_stores ALTER COLUMN confidence DROP NOT NULL;
-ALTER TABLE competitor_stores ALTER COLUMN confidence DROP DEFAULT;
+-- 2. geo.competitor_stores
+ALTER TABLE geo.competitor_stores ALTER COLUMN confidence DROP NOT NULL;
+ALTER TABLE geo.competitor_stores ALTER COLUMN confidence DROP DEFAULT;
+ALTER TABLE geo.competitor_stores ADD COLUMN IF NOT EXISTS measurement_schema_version VARCHAR(50) NOT NULL DEFAULT 'v1';
+ALTER TABLE geo.competitor_stores ADD COLUMN IF NOT EXISTS snapshot_id VARCHAR(100);
+ALTER TABLE geo.competitor_stores ADD COLUMN IF NOT EXISTS source_competitor_id VARCHAR(255);
 
--- 3. listings.confidence
-ALTER TABLE listings ALTER COLUMN confidence DROP NOT NULL;
-ALTER TABLE listings ALTER COLUMN confidence DROP DEFAULT;
+-- 3. expansion.listings
+ALTER TABLE expansion.listings ALTER COLUMN confidence DROP NOT NULL;
+ALTER TABLE expansion.listings ALTER COLUMN confidence DROP DEFAULT;
 
--- 4. predictions.confidence
-ALTER TABLE predictions ALTER COLUMN confidence DROP NOT NULL;
-ALTER TABLE predictions ALTER COLUMN confidence DROP DEFAULT;
+-- 4. learning.predictions
+ALTER TABLE learning.predictions ALTER COLUMN confidence DROP NOT NULL;
+ALTER TABLE learning.predictions ALTER COLUMN confidence DROP DEFAULT;
 
--- 5. data_snapshots.quality_score
-ALTER TABLE data_snapshots ALTER COLUMN quality_score DROP NOT NULL;
-ALTER TABLE data_snapshots ALTER COLUMN quality_score DROP DEFAULT;
+-- 5. learning.prediction_runs (Strategy B: Run-level measurement schema version)
+ALTER TABLE learning.prediction_runs ADD COLUMN IF NOT EXISTS measurement_schema_version VARCHAR(50) NOT NULL DEFAULT 'v1';
 
--- 6. expansion.heatzone_scores.confidence (already nullable, just drop default)
+-- 6. audit.data_snapshots
+ALTER TABLE audit.data_snapshots ALTER COLUMN quality_score DROP NOT NULL;
+ALTER TABLE audit.data_snapshots ALTER COLUMN quality_score DROP DEFAULT;
+
+-- 7. expansion.heatzone_scores (Strategy C: Preventive schema version)
 ALTER TABLE expansion.heatzone_scores ALTER COLUMN confidence DROP DEFAULT;
+ALTER TABLE expansion.heatzone_scores ADD COLUMN IF NOT EXISTS measurement_schema_version VARCHAR(50) NOT NULL DEFAULT 'v1';
 
 COMMIT;
+

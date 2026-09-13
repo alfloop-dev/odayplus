@@ -262,7 +262,7 @@ export type OperatorHeatZone = {
   competitionIndex: number;
   cannibalizationRisk: RiskLevel;
   rentBand: string;
-  confidence: number;
+  confidence: number | null;
   recommendedLens: HeatZoneLens;
   reasons: string[];
   risks: string[];

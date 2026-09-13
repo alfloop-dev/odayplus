@@ -239,7 +239,7 @@ export type HeatZoneScore = {
   score: number;
   rank: number;
   unmet_demand: number;
-  confidence: number;
+  confidence: number | null;
   state: string;
   [key: string]: unknown;
 };
