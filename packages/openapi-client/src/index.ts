@@ -43,6 +43,7 @@ export * from "./generated/types";
 export * as AssistedListingIntakeV1 from "./generated/assisted_listing_intake";
 
 import type {
+  AVMCasePayload as GeneratedAVMCasePayload,
   IntakeCorrectPayload as GeneratedIntakeCorrectPayload,
   IntakeDecidePayload as GeneratedIntakeDecidePayload,
   IntakePromotePayload as GeneratedIntakePromotePayload,
@@ -97,6 +98,14 @@ export type CreateAvmCaseInput = {
   forecast_gm_next_12m: number;
   asset_book_value: number;
   equipment_fair_value: number;
+  equipment_depreciation_basis?: string | null;
+  equipment_original_cost?: number | null;
+  asset_book_value_includes_equipment?: boolean | null;
+  useful_life_months?: number | null;
+  residual_value_ratio?: number | null;
+  depreciation_method?: string | null;
+  depreciation_effective_date?: string | null;
+  asset_in_service_date?: string | null;
   lease_liability?: number;
   working_capital?: number;
   comparable_multiples?: number[];
@@ -2124,6 +2133,10 @@ type _PinListingActor = AssertAssignable<
 type _PinListingMerge = AssertAssignable<
   NetworkListingMergePayload,
   GeneratedNetworkListingMergePayload
+>;
+type _PinCreateAvmCase = AssertAssignable<
+  CreateAvmCaseInput,
+  GeneratedAVMCasePayload
 >;
 
 /**
