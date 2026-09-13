@@ -16,19 +16,22 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: delivery_toolchain/git/task_start.sh <TASK-ID> [--allow-dirty]
+Usage: delivery_toolchain/git/task_start.sh <TASK-ID> [--allow-dirty] [--branch <branch>]
 
   <TASK-ID>       e.g. ODP-EXAMPLE-001 (branch becomes task/ODP-EXAMPLE-001)
   --allow-dirty   do not refuse when tracked files are already modified
+  --branch <name> explicit branch name (default: task/<TASK-ID>)
 EOF
 }
 
 TASK_ID=""
 ALLOW_DIRTY=0
+EXPLICIT_BRANCH=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --allow-dirty) ALLOW_DIRTY=1; shift ;;
+    --branch) EXPLICIT_BRANCH="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     -*) echo "task_start: unknown option $1" >&2; usage; exit 2 ;;
     *)
@@ -43,7 +46,7 @@ ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
 PREFIX="${PANTHEON_TASK_BRANCH_PREFIX:-task/}"
-BRANCH="${PREFIX}${TASK_ID}"
+BRANCH="${EXPLICIT_BRANCH:-${PREFIX}${TASK_ID}}"
 CURRENT="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
 
 # Tracked modifications only: per-task worktrees are seeded with gitignored
