@@ -1,7 +1,7 @@
 # 八域逐項層級評估與缺口清單
 
 任務：`DPF-SOURCE-SA-SD-BASELINE-001`
-版本：2026-09-13
+版本：2026-09-13（修訂版 2）
 驗收層級定義（SA §層級）：
 `DISCOVERED → CONFIGURED → CONTRACT_TESTED → LIVE_CAPTURED → RAW_READBACK_VERIFIED → NORMALIZED_VERIFIED → RETAINED_IN_CLOUD → RELEASE_ELIGIBLE → ACTIVATED`
 
@@ -49,9 +49,9 @@
 |---|---|
 | 來源 | MOF 財政部公開 API + MOI 內政部租賃實價資料 |
 | 對應來源檔 | E02（`mof_moi.py`）、E14（MOF adapter） |
-| 當前層級 | **LIVE_CAPTURED**（MOF 局部）/ **CONFIGURED**（MOI） |
-| 已具備 | MOF/MOI parser、adapter、raw asset；MOF 已真實取得 100 筆 |
-| 查明缺口 | (1) MOF 主線預設 `data.gov.tw/dataset/mof_business` 為佔位網址 (2) parser 不認真實 camelCase 回應 (3) 100 筆僅為 first-page probe，非全量 (4) MOI 預設 `DownloadOpenData` 未指定可驗證期別/檔案 |
+| 當前層級 | **LIVE_CAPTURED / RAW_READBACK_VERIFIED**（MOF 歷史局部 probe 100 筆）／**CONFIGURED**（MOI 及主線） |
+| 已具備 | MOF/MOI parser、adapter、raw asset；調查階段 MOF 已取得 100 筆 raw bytes 落地並驗證 SHA-256 讀回 |
+| 查明缺口 | (1) MOF 主線預設 `data.gov.tw/dataset/mof_business` 為佔位網址 (2) parser 不認真實 camelCase 回應 (3) 100 筆僅為 first-page probe，非全量主線整合 (4) MOI 預設 `DownloadOpenData` 未指定可驗證期別/檔案 |
 | 後續 task | `DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001`（MOF/RIS 修正）→ `DPF-OFFICIAL-SOURCE-ENDPOINT-INTEGRATION-001`（MOI 接入）|
 | auth/terms 狀態 | MOF 為公開 API 無需 auth；MOI 為政府公開資料，需查證下載格式與使用條款 |
 
@@ -61,8 +61,8 @@
 |---|---|
 | 來源 | RIS 內政部戶政司 ODRP014 API + NLSC 國土測繪中心界線資料 |
 | 對應來源檔 | E03（`ris_nlsc.py`）、E15（RIS adapter） |
-| 當前層級 | **NORMALIZED_VERIFIED**（RIS 局部）/ **CONFIGURED**（NLSC） |
-| 已具備 | RIS/NLSC adapter、administrative fusion asset；RIS 已取得 2026-08 臺北市中正區 31 筆並完成解析（零隔離） |
+| 當前層級 | **NORMALIZED_VERIFIED**（RIS 歷史局部 probe 31 筆）／**CONFIGURED**（NLSC 及主線） |
+| 已具備 | RIS/NLSC adapter、administrative fusion asset；調查階段 RIS 已取得 2026-08 臺北市中正區 31 筆 raw bytes 落地、驗證 SHA-256 並完成 normalized 解析（零隔離） |
 | 查明缺口 | (1) RIS 主線為舊 download URL，未解 `responseData` 封裝 (2) 真實人口欄位與 ROC 年月需正確解析 (3) NLSC 年份 GeoJSON URL 未實際驗證格式 (4) 5/8/11 位行政代碼與發布版本的 join 邏輯待驗 (5) 31 筆不代表全國或 RIS/NLSC join 完成 |
 | 後續 task | `DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001`（RIS 修正）→ `DPF-OFFICIAL-SOURCE-ENDPOINT-INTEGRATION-001`（NLSC 接入） |
 | auth/terms 狀態 | RIS 為政府公開 API；NLSC 為政府開放資料（CC BY）；均無需特別授權 |
@@ -105,21 +105,24 @@
 
 ## 跨域彙總
 
+區分歷史局部 probe 證據與主線已審狀態：
+
 | 層級 | cwa | transport | poi | mof | moi | ris | nlsc | listing | mobility | site_ctx |
 |---|---|---|---|---|---|---|---|---|---|---|
 | DISCOVERED | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | CONFIGURED | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| CONTRACT_TESTED | — | — | — | 部分 | — | 部分 | — | — | — | — |
-| LIVE_CAPTURED | — | — | — | 局部 | — | 局部 | — | — | — | — |
-| RAW_READBACK_VERIFIED | — | — | — | — | — | — | — | — | — | — |
-| NORMALIZED_VERIFIED | — | — | — | — | — | 局部 | — | — | — | — |
-| RETAINED_IN_CLOUD | — | — | — | — | — | — | — | — | — | — |
-| RELEASE_ELIGIBLE | — | — | — | — | — | — | — | — | — | — |
-| ACTIVATED | — | — | — | — | — | — | — | — | — | — |
+| CONTRACT_TESTED | — | — | — | 局部 | — | 局部 | — | — | — | — |
+| LIVE_CAPTURED | — | — | — | 歷史局部 probe (100筆) | — | 歷史局部 probe (31筆) | — | — | — | — |
+| RAW_READBACK_VERIFIED | — | — | — | 歷史局部 probe (100筆) | — | 歷史局部 probe (31筆) | — | — | — | — |
+| NORMALIZED_VERIFIED | — | — | — | — | — | 歷史局部 probe (31筆) | — | — | — | — |
+| RETAINED_IN_CLOUD | 未查證 | 未查證 | 未查證 | 未查證 | 未查證 | 未查證 | 未查證 | 未查證 | 未查證 | 未查證 |
+| RELEASE_ELIGIBLE | 待八域 | 待八域 | 待八域 | 待八域 | 待八域 | 待八域 | 待八域 | 待八域 | 待八域 | 待八域 |
+| ACTIVATED | 關閉 | 關閉 | 關閉 | 關閉 | 關閉 | 關閉 | 關閉 | 關閉 | 關閉 | 關閉 |
 
 **核對結論**：
-1. 本地審查與核對中，無任何 domain 達到已驗證的 `RETAINED_IN_CLOUD` 或以上層級。未讀回 retained object 代表本機/本次調查尚未完成該層級之讀回核對，不推論雲端留存證明不存在；各 domain 需由下游對應任務完成精確的 readback 驗證收據。
-2. MOF 與 RIS 有局部 live 證據（100 筆/31 筆），但僅為局部有界功能驗證。其餘 domain 處於程式結構就緒（CONFIGURED）但 Dagster 入口未接真實來源的狀態。
+1. **歷史局部 probe 證據承接**：MOF 100 筆與 RIS 31 筆在根調查（`cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1`）已完成 raw bytes 落地與 SHA-256 讀回核對，RIS 已完成 normalized 解析（零隔離）。這些屬於歷史局部驗證證據，由 `DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001` 正式接手整合為主線程式碼。
+2. **雲端留存（RETAINED_IN_CLOUD）狀態定位**：本次本機調查與設計基線納管未對雲端物件進行讀回核對，狀態標示為 `未查證`（`unknown_not_verified`）。未讀回代表本機調查範圍尚未包含該層級驗證，不代表雲端留存證明不存在；後續由 `DPF-ACQUISITION-RETENTION-BRIDGE-001` 等下游任務建立精確的 readback 驗證收據。
+3. **發布與啟用條件**：`RELEASE_ELIGIBLE` 需待八域受治理 raw 留存齊備後由 PR #63 生成 artifact；`ACTIVATED` 在全系統維持 sources-off / default-deny 關閉狀態，待技術稽核（PR #1312）與法務核准（`HUMAN-OSS-LEGAL-APPROVAL-001`）後方可啟用。
 
 ## auth/terms 條件摘要
 

@@ -5,17 +5,28 @@
   "reviewer": "Codex2",
   "phase": "SA/SD execution plan 2026-09-13",
   "repository": "alfloop-dev/odayplus",
-  "completed_at": "2026-09-13T15:13:00Z",
+  "completed_at": "2026-09-13T15:43:30Z",
   "status": "ready_for_review",
   "publication_authorized": true,
   "publication_destination": "alfloop-dev/odayplus",
 
   "source_baseline": {
     "mainline_commit": "b690a8dfd82fc6d47e2f6d7fdfa9ab05430e41cb",
+    "mainline_repo": "alfloop-dev/oday-data-platform",
     "audit_commit": "cae4dd7ec3a3e00a1478e1d1cc8b9ae0cd3841f1",
+    "audit_repo": "alfloop-dev/odayplus",
     "source_index_count": 16,
     "sha256_verification": "ALL_PASS",
     "verification_timestamp": "2026-09-13T14:13:04Z"
+  },
+
+  "verification_execution_receipt": {
+    "command": "git diff --check origin/dev...HEAD",
+    "base_sha": "9f25eca6a0d204a21e6c260bd8484c8bd28c6c10",
+    "exit_code": 0,
+    "duration_seconds": 0.009,
+    "test_selection": "docs/architecture/external-source-ingestion/*, docs/evidence/completion/DPF-SOURCE-SA-SD-BASELINE-001/*",
+    "status": "PASS"
   },
 
   "traceability": {
@@ -44,16 +55,23 @@
       "cwa_events": "CONFIGURED",
       "transport_osm_tdx": "CONFIGURED",
       "open_poi": "CONFIGURED",
-      "mof_moi": "LIVE_CAPTURED_partial",
-      "ris_nlsc": "NORMALIZED_VERIFIED_partial",
+      "mof_moi": "LIVE_CAPTURED_bounded_probe_100_records_raw_readback_verified",
+      "ris_nlsc": "NORMALIZED_VERIFIED_bounded_probe_31_records_zero_isolation",
       "listing_observations": "CONFIGURED",
       "mobility": "CONFIGURED",
       "site_market_context": "CONFIGURED"
     },
-    "any_retained_in_cloud": false,
-    "any_release_eligible": false,
-    "any_activated": false,
-    "retained_readback_note": "Absence of local readback in audit indicates verification pending at this layer, not that cloud retention proofs do not exist"
+    "historical_bounded_probe_evidence": {
+      "mof_raw_bytes_landed": true,
+      "mof_raw_sha256_verified": true,
+      "ris_raw_bytes_landed": true,
+      "ris_raw_sha256_verified": true,
+      "ris_normalized_verified": true
+    },
+    "retained_in_cloud_status": "unknown_not_verified_in_investigation",
+    "release_eligible_status": "pending_eight_domain_retention",
+    "activation_status": "sources_off_default_deny",
+    "assessment_notes": "Historical bounded probe evidence (MOF 100 / RIS 31) inherited from audit cae4dd7e; absence of local cloud readback indicates verification pending at that layer, not that cloud retention proofs do not exist"
   },
 
   "task_dedup": {
@@ -80,9 +98,70 @@
     }
   },
 
+  "downstream_canonical_assign_receipts": [
+    {
+      "task_id": "DPF-PUBLIC-SOURCE-LIVE-INGESTION-REPAIR-001",
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "exit_code": 0,
+      "previous_last_update": "2026-09-13T14:56:50Z",
+      "updated_last_update": "2026-09-13T15:42:15Z"
+    },
+    {
+      "task_id": "DPF-OFFICIAL-SOURCE-ENDPOINT-INTEGRATION-001",
+      "owner": "Antigravity3",
+      "reviewer": "Codex2",
+      "exit_code": 0,
+      "previous_last_update": "2026-09-13T14:56:55Z",
+      "updated_last_update": "2026-09-13T15:42:27Z"
+    },
+    {
+      "task_id": "DPF-TRANSPORT-POI-RELEASE-INTEGRATION-001",
+      "owner": "Antigravity4",
+      "reviewer": "Codex2",
+      "exit_code": 0,
+      "previous_last_update": "2026-09-13T14:57:05Z",
+      "updated_last_update": "2026-09-13T15:42:29Z"
+    },
+    {
+      "task_id": "DPF-LISTING-PRODUCTION-ASSET-INTEGRATION-001",
+      "owner": "Antigravity5",
+      "reviewer": "Codex2",
+      "exit_code": 0,
+      "previous_last_update": "2026-09-13T14:57:11Z",
+      "updated_last_update": "2026-09-13T15:42:31Z"
+    },
+    {
+      "task_id": "DPF-MOBILITY-PRODUCTION-ASSET-INTEGRATION-001",
+      "owner": "Antigravity6",
+      "reviewer": "Codex2",
+      "exit_code": 0,
+      "previous_last_update": "2026-09-13T14:57:16Z",
+      "updated_last_update": "2026-09-13T15:42:33Z"
+    },
+    {
+      "task_id": "DPF-ACQUISITION-RETENTION-BRIDGE-001",
+      "owner": "Antigravity7",
+      "reviewer": "Codex2",
+      "exit_code": 0,
+      "previous_last_update": "2026-09-13T14:57:21Z",
+      "updated_last_update": "2026-09-13T15:42:35Z"
+    },
+    {
+      "task_id": "DPF-SITE-CONTEXT-REAL-COMPONENTS-001",
+      "owner": "Antigravity2",
+      "reviewer": "Codex2",
+      "exit_code": 0,
+      "previous_last_update": "2026-09-13T14:57:26Z",
+      "updated_last_update": "2026-09-13T15:42:38Z"
+    }
+  ],
+
   "verification_amendment": {
-    "circular_dependency_analysis": "Distinguish structural dependency from inference; bounded engineering capture separated from production live activation post-legal-receipt",
-    "downstream_verification_mapped": true,
+    "circular_dependency_analysis": "Resolved. Structural dependencies (PR #63 sources-off materializer, PR #1312 technical audit) separated from Legal Gate (HUMAN-OSS-LEGAL-APPROVAL-001) and subsequent activation (XR-SOURCE-APPROVAL-ACTIVATION-001).",
+    "downstream_verification_plan_reconciled": true,
+    "not_executed_gaps_annotated": true,
+    "canonical_assign_metadata_synced": true,
     "existing_decisions_preserved": ["D01-D14", "D15"],
     "acceptance_criteria_modified": false,
     "policy_thresholds_modified": false
