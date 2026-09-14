@@ -9,35 +9,35 @@
       "field": "infra/db/migrations/000004_durable_product_domain.sql::data_snapshots.quality_score",
       "layer": "sql",
       "owner": "Claude2",
-      "reason": "NOT NULL DEFAULT 1.00. The column cannot hold 'not measured' at all, so making DataSnapshot.quality_score optional in Python has no persistent form to write. This batch needs a migration, not just a dataclass edit.",
+      "reason": "NOT NULL DEFAULT 1.00. The column cannot hold 'not measured' at all, so making DataSnapshot.quality_score optional in Python has no persistent form to write. Superseded in the live schema by migration 000026 (ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001), which drops the substituting default and adds the measurement_schema_version marker that tells a stored 1.00 apart from a measured one. This entry stays because an applied migration is immutable: the DDL text above is the historical record of what 000004 created, not of what the database holds now.",
       "expires": "2027-01-31"
     },
     {
       "field": "infra/db/migrations/000004_durable_product_domain.sql::pois.confidence",
       "layer": "sql",
       "owner": "Claude2",
-      "reason": "NOT NULL DEFAULT 1.00 under Poi.confidence, and the source of the nulls that geo_grid_view coalesces. The two entries are the same decision seen from either end of the pipeline.",
+      "reason": "NOT NULL DEFAULT 1.00 under Poi.confidence, and the source of the nulls that geo_grid_view coalesces. The two entries are the same decision seen from either end of the pipeline. Superseded in the live schema by migration 000026 (ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001), which drops the substituting default and adds the measurement_schema_version marker that tells a stored 1.00 apart from a measured one. This entry stays because an applied migration is immutable: the DDL text above is the historical record of what 000004 created, not of what the database holds now.",
       "expires": "2027-01-31"
     },
     {
       "field": "infra/db/migrations/000004_durable_product_domain.sql::competitor_stores.confidence",
       "layer": "sql",
       "owner": "Claude2",
-      "reason": "NOT NULL DEFAULT 1.00 under CompetitorStore.confidence; existing rows carry the substituted value with no marker saying it was substituted, so the migration has to decide what happens to them.",
+      "reason": "NOT NULL DEFAULT 1.00 under CompetitorStore.confidence; existing rows carry the substituted value with no marker saying it was substituted. Superseded in the live schema by migration 000026 (ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001), which drops the substituting default and adds the measurement_schema_version marker that tells a stored 1.00 apart from a measured one. This entry stays because an applied migration is immutable: the DDL text above is the historical record of what 000004 created, not of what the database holds now.",
       "expires": "2027-01-31"
     },
     {
       "field": "infra/db/migrations/000004_durable_product_domain.sql::listings.confidence",
       "layer": "sql",
       "owner": "Claude2",
-      "reason": "NOT NULL DEFAULT 1.00 under Listing.confidence.",
+      "reason": "NOT NULL DEFAULT 1.00 under Listing.confidence. Superseded in the live schema by migration 000026 (ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001), which drops the substituting default and adds the measurement_schema_version marker that tells a stored 1.00 apart from a measured one. This entry stays because an applied migration is immutable: the DDL text above is the historical record of what 000004 created, not of what the database holds now.",
       "expires": "2027-01-31"
     },
     {
       "field": "infra/db/migrations/000004_durable_product_domain.sql::predictions.confidence",
       "layer": "sql",
       "owner": "Claude2",
-      "reason": "NOT NULL DEFAULT 1.00 under Prediction.confidence -- the persisted form of the entry most likely to reach an operator's screen.",
+      "reason": "NOT NULL DEFAULT 1.00 under Prediction.confidence -- the persisted form of the entry most likely to reach an operator's screen. Superseded in the live schema by migration 000026 (ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001), which drops the substituting default and adds the measurement_schema_version marker that tells a stored 1.00 apart from a measured one. This entry stays because an applied migration is immutable: the DDL text above is the historical record of what 000004 created, not of what the database holds now.",
       "expires": "2027-01-31"
     }
   ]

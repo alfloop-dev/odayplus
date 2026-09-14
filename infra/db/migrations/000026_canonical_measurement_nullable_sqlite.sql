@@ -18,12 +18,25 @@ PRAGMA foreign_keys = OFF;
 
 -- ============================================================
 -- 0. prediction_runs: add measurement_schema_version (Strategy B)
---    data_snapshots: quality_score was already made nullable in 000024, so it
---    only needs the measurement marker. It stays separate from schema_version,
---    which describes the dataset layout rather than how the score was obtained.
 -- ============================================================
 ALTER TABLE prediction_runs ADD COLUMN measurement_schema_version TEXT NOT NULL DEFAULT 'v1';
-ALTER TABLE data_snapshots ADD COLUMN measurement_schema_version TEXT NOT NULL DEFAULT 'v1';
+
+-- data_snapshots deliberately does NOT get the marker column here.
+--
+-- Unlike PostgreSQL, this file is replayed in full on every engine bootstrap,
+-- and 000024 -- which runs first -- rebuilds data_snapshots through an
+-- INSERT...SELECT with a fixed column list. Any column added to that table
+-- *after* 000024 is therefore dropped on the next restart and re-added at its
+-- DEFAULT, silently resetting a genuinely measured 'v2' row back to 'v1'.
+-- That is precisely the "measured 1.00 reads as legacy" failure this cutover
+-- exists to remove, so the column is not added rather than added and reset.
+--
+-- Nothing is lost: the canonical snapshot registry is PostgreSQL
+-- audit.data_snapshots (see the companion 000026 .sql), which is what
+-- LineageManifest.to_audit_snapshot_row() is shaped for. No production writer
+-- inserts into this SQLite table; the durable path for DataSnapshot is the
+-- pickled document store, where the marker travels on the aggregate itself.
+-- tests/domain/test_canonical_measurement_nullable.py pins both halves.
 
 -- ============================================================
 -- 1. pois: confidence REAL NOT NULL DEFAULT 1.00 → REAL

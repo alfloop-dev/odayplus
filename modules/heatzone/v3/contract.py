@@ -13,7 +13,7 @@ from packages.oday_data_product_contracts_client.models.market_cell_profile impo
     ProductComponentRef,
     ReadinessLevel,
 )
-from shared.domain.models import MEASUREMENT_UNMEASURED, HeatZoneScore
+from shared.domain.models import HeatZoneScore
 
 CONTRACT_ID = "odayplus.heatzone-v3.v1"
 CONTRACT_VERSION = "1.0.0"
@@ -191,6 +191,12 @@ class HeatZoneV3ScoreResult:
         return HeatZoneScore(
             heatzone_score_id=self.heat_zone_id,
             geo_cell_id=self.h3_index,
+            # heat_score is NOT one of the six columns this cutover made
+            # nullable, and HeatZoneScore still declares it non-optional, so an
+            # abstained (None) score lands on the model's 0.0 default. Nothing
+            # reads heat_score off this projection -- it exists to resolve the
+            # confidence columns -- but the substitution is stated rather than
+            # hidden, because it is the same shape this task removes elsewhere.
             heat_score=self.score if self.score is not None else 0.0,
             priority_rank=self.priority_rank,
             unmet_demand_score=self.unmet_demand_score,
@@ -199,9 +205,6 @@ class HeatZoneV3ScoreResult:
             rent_feasibility_score=self.rent_feasibility_score,
             heatzone_state=self.state.value,
             confidence=self.confidence,
-            confidence_status=(
-                MEASUREMENT_UNMEASURED if self.abstained and self.confidence is None else None
-            ),
         )
 
     def to_dict(self) -> dict[str, Any]:

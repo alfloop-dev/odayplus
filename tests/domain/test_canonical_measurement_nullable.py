@@ -18,6 +18,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from modules.external_data.connectors.external import (
     _parse_optional_float,
 )
@@ -138,10 +140,24 @@ class TestCanonicalMeasurementModelSemantics:
         assert hz_legacy.effective_confidence_provenance == "legacy_unknown"
         assert hz_legacy.effective_confidence is None
 
-        snap_legacy = DataSnapshot(quality_score=1.0, schema_version="v1")
+        snap_legacy = DataSnapshot(quality_score=1.0, measurement_schema_version="v1")
         assert snap_legacy.quality_score == 1.0
         assert snap_legacy.effective_quality_score_provenance == "legacy_unknown"
         assert snap_legacy.effective_quality_score is None
+
+    def test_dataset_schema_version_does_not_decide_measurement_provenance(self) -> None:
+        """``schema_version`` describes the dataset layout, not the measurement.
+
+        A pipeline may legitimately keep emitting a "v1" dataset shape while
+        its quality scores are measured under the post-cutover contract --
+        ``geo_grid_view`` emits ``data_quality_score = 1.0`` for every row with
+        an h3 index, so conflating the two would discard the default path as
+        legacy rather than a corner case.
+        """
+        measured_on_a_v1_dataset = DataSnapshot(quality_score=1.0, schema_version="v1")
+
+        assert measured_on_a_v1_dataset.effective_quality_score_provenance == "measured"
+        assert measured_on_a_v1_dataset.effective_quality_score == 1.0
 
     def test_v2_measured_perfect_score_is_preserved_as_measured(self) -> None:
         """A fresh v2 write with measured 1.0 is preserved as measured, not legacy_unknown."""
@@ -580,3 +596,102 @@ class TestSqliteRestartPreservesNewColumns:
         assert row["measurement_schema_version"] == "v2"
         engine2.close()
 
+
+
+class TestSqliteMarkerColumnsAreOnlyAddedWhereTheySurvive:
+    """A marker that resets on restart is worse than no marker at all.
+
+    ``SqliteEngine._bootstrap()`` replays every migration file on every init,
+    and ``000024`` -- which runs before ``000026`` -- rebuilds
+    ``data_snapshots`` through an ``INSERT...SELECT`` with a fixed column list.
+    A column added to that table afterwards is therefore dropped on the next
+    restart and re-added at its DEFAULT, turning a genuinely measured ``v2``
+    row back into ``v1`` -- which reads as ``legacy_unknown`` and discards a
+    real measurement. These cases pin both halves of that decision.
+    """
+
+    _MARKED_TABLES = (
+        ("pois", "poi_id", "P-MARK-1"),
+        ("listings", "listing_id", "L-MARK-1"),
+        ("competitor_stores", "competitor_store_id", "CS-MARK-1"),
+        ("prediction_runs", "prediction_run_id", "PR-MARK-1"),
+    )
+
+    def _seed(self, engine: SqliteEngine, table: str, key: str) -> None:
+        if table == "pois":
+            engine.execute(
+                "INSERT INTO pois (poi_id, source_poi_id, poi_name, poi_category, "
+                " confidence, measurement_schema_version) VALUES (?, ?, ?, ?, ?, ?)",
+                (key, "SRC-1", "marked", "retail", 1.0, "v2"),
+            )
+        elif table == "listings":
+            engine.execute(
+                "INSERT INTO listings (listing_id, source_listing_id, source_id, "
+                " confidence, measurement_schema_version) VALUES (?, ?, ?, ?, ?)",
+                (key, "SRC-1", "provider-a", 1.0, "v2"),
+            )
+        elif table == "competitor_stores":
+            engine.execute(
+                "INSERT INTO competitor_stores (competitor_store_id, brand_name, "
+                " store_name, confidence, measurement_schema_version) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (key, "rival", "rival branch", 1.0, "v2"),
+            )
+        else:
+            # model_version_id is left unset: it foreign-keys model_versions,
+            # and the marker under test has nothing to do with it.
+            engine.execute(
+                "INSERT INTO prediction_runs (prediction_run_id, "
+                " feature_snapshot_time, prediction_origin_time, prediction_horizon, "
+                " run_status, measurement_schema_version) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    key,
+                    "2026-09-01T00:00:00Z",
+                    "2026-09-01T00:00:00Z",
+                    "m12",
+                    "succeeded",
+                    "v2",
+                ),
+            )
+
+    @pytest.mark.parametrize(("table", "id_column", "key"), _MARKED_TABLES)
+    def test_a_v2_marker_survives_a_restart(
+        self, tmp_path: Path, table: str, id_column: str, key: str
+    ) -> None:
+        db_path = tmp_path / "marker_restart.db"
+        engine = SqliteEngine(db_path)
+        self._seed(engine, table, key)
+        engine.close()
+
+        engine = SqliteEngine(db_path)
+        try:
+            row = engine.query_one(
+                f"SELECT measurement_schema_version FROM {table} "  # nosec B608
+                f"WHERE {id_column} = ?",
+                (key,),
+            )
+        finally:
+            engine.close()
+
+        assert row is not None, f"{table} row did not survive the restart"
+        assert row["measurement_schema_version"] == "v2", (
+            f"{table}.measurement_schema_version was reset to the DEFAULT on restart"
+        )
+
+    def test_data_snapshots_carries_no_marker_column(self, tmp_path: Path) -> None:
+        """The column is absent on purpose; see the comment in 000026 (sqlite).
+
+        If a later change adds it back without also teaching 000024's rebuild
+        to carry it, this test fails and the reason is one file away.
+        """
+        engine = SqliteEngine(tmp_path / "marker_absent.db")
+        try:
+            columns = {
+                row["name"]
+                for row in engine.query("PRAGMA table_info(data_snapshots)")
+            }
+        finally:
+            engine.close()
+
+        assert "quality_score" in columns, "the probe is reading the right table"
+        assert "measurement_schema_version" not in columns
