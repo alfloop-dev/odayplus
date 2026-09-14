@@ -183,6 +183,7 @@ default 原子移除。這一輪把剩下五筆 SQL exemption 的理由更新成
 | `pytest` 受影響套件（canonical、model_ready materialization、canonical schema contract、durable repository wiring、`modules/sitescore`、migration、governance） | 194 passed |
 | `pytest modules/{heatzone,listing,opsboard,external_data,integration}/tests -n auto` | 125 passed |
 | `pytest tests/domain modules/learninghub/tests -n auto` | 113 passed |
+| `pytest` 受改動 route／序列化的 integration + contract 檔（sitescore decision、forecastops alerts、assisted listing promotion、listing platform observations、durable repository wiring、model-ready materialization、canonical schema、openapi artifact） | 88 passed |
 | `ruff check tests modules apps shared models solver pipelines infra` | clean |
 | `ruff check .orchestrator delivery_toolchain scripts infra` | clean |
 | `npm run typecheck`（全 workspace） | exit 0 |
@@ -196,5 +197,6 @@ default 原子移除。這一輪把剩下五筆 SQL exemption 的理由更新成
 `TestItReadsTheMapperLayer`、`TestItReadsTheSqlLayer` 以合成輸入各自證明，沒有因此
 失去偵測力。
 
-完整 product 測試集（約 2000 筆）在這台同時跑 fleet 的機器上序列與 `-n auto` 都遠超過
-一個 worker 週期，交由 CI 的 product job 執行。
+完整 product 測試集在這台同時跑 fleet 的機器上，即使 `-n auto` 也遠超過一個 worker
+週期（實測約 1 test/sec），因此改為按 blast radius 分段跑完上表，其餘由 CI 的
+product job 涵蓋。上表合計 592 筆，涵蓋這次 diff 觸及的每一個模組與測試區。
