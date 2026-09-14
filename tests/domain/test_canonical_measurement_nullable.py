@@ -113,12 +113,12 @@ class TestCanonicalMeasurementModelSemantics:
 
     def test_legacy_v1_rows_yield_legacy_unknown_provenance_and_none_effective_score(self) -> None:
         """A legacy row with 1.00 has provenance legacy_unknown and effective score None."""
-        lst_legacy = Listing(confidence=1.0, snapshot_id="v1", measurement_schema_version="v1")
+        lst_legacy = Listing(confidence=1.0, snapshot_id="snap-lst-20250101", measurement_schema_version="v1")
         assert lst_legacy.confidence == 1.0  # Physical historic value preserved
         assert lst_legacy.effective_confidence_provenance == "legacy_unknown"
         assert lst_legacy.effective_confidence is None  # Downstream consumes as unmeasured
 
-        poi_legacy = Poi(confidence=1.0, snapshot_id="v1", measurement_schema_version="v1")
+        poi_legacy = Poi(confidence=1.0, snapshot_id="snap-poi-20250101", measurement_schema_version="v1")
         assert poi_legacy.confidence == 1.0
         assert poi_legacy.effective_confidence_provenance == "legacy_unknown"
         assert poi_legacy.effective_confidence is None
@@ -394,36 +394,189 @@ class TestAPIListingConfidenceProvenance:
             listing_id="L-LEGACY-001",
             rent_amount=20000.0,
             confidence=1.0,
-            snapshot_id="v1",
+            snapshot_id="snap-poi-20260803-001",  # Real snapshot ID, not "v1"
             measurement_schema_version="v1",
         )
 
-        # In get_listing serialization logic:
-        eff_conf = (
-            None
-            if (
-                legacy_listing.confidence is None
-                or (
-                    legacy_listing.confidence == 1.0
-                    and (
-                        legacy_listing.snapshot_id == "v1"
-                        or getattr(legacy_listing, "measurement_schema_version", "") == "v1"
-                    )
-                )
-            )
-            else legacy_listing.confidence
+        # The model's effective_confidence and effective_confidence_provenance
+        # properties must be used by API serialization — not inline logic.
+        assert legacy_listing.effective_confidence is None
+        assert legacy_listing.effective_confidence_provenance == "legacy_unknown"
+
+    def test_measured_listing_preserves_confidence(self) -> None:
+        measured_listing = Listing(
+            listing_id="L-MEASURED-001",
+            rent_amount=30000.0,
+            confidence=0.85,
+            measurement_schema_version="v2",
         )
-        provenance = (
-            "legacy_unknown"
-            if (
-                legacy_listing.confidence == 1.0
-                and (
-                    legacy_listing.snapshot_id == "v1"
-                    or getattr(legacy_listing, "measurement_schema_version", "") == "v1"
-                )
-            )
-            else ("unmeasured" if legacy_listing.confidence is None else "measured")
+        assert measured_listing.effective_confidence == 0.85
+        assert measured_listing.effective_confidence_provenance == "measured"
+
+    def test_unmeasured_listing_returns_none(self) -> None:
+        unmeasured_listing = Listing(
+            listing_id="L-UNMEASURED-001",
+            rent_amount=25000.0,
+            confidence=None,
+            measurement_schema_version="v2",
+        )
+        assert unmeasured_listing.effective_confidence is None
+        assert unmeasured_listing.effective_confidence_provenance == "unmeasured"
+
+    def test_v2_genuinely_perfect_score_preserved(self) -> None:
+        perfect_listing = Listing(
+            listing_id="L-PERFECT-001",
+            rent_amount=28000.0,
+            confidence=1.0,
+            measurement_schema_version="v2",
+        )
+        assert perfect_listing.effective_confidence == 1.0
+        assert perfect_listing.effective_confidence_provenance == "measured"
+
+
+# ---------------------------------------------------------------------------
+# 6. SQLite Migration Restart Survival (PR #1327 Review Fix)
+# ---------------------------------------------------------------------------
+
+
+class TestSqliteRestartPreservesNewColumns:
+    """Migration 000026 must preserve measurement_schema_version on restart.
+
+    SqliteEngine._bootstrap() re-runs all DDL on every init.  The original
+    migration omitted new columns from the INSERT...SELECT, so a process
+    restart would silently reset measurement_schema_version to the DEFAULT
+    'v1' and drop snapshot_id / source_competitor_id.
+    """
+
+    def test_competitor_stores_schema_version_survives_restart(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "test_restart.db"
+        engine = SqliteEngine(db_path)
+
+        # Satisfy FK: competitor_stores.snapshot_id references data_snapshots
+        engine.execute(
+            "INSERT OR IGNORE INTO data_snapshots "
+            "(snapshot_id, snapshot_type, source_id, snapshot_time, storage_uri, "
+            " schema_version, row_count, created_by_run_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            ("snap-20260901", "external", "test", "2026-09-01T00:00:00Z",
+             "s3://test", "v2", 0, "test-run-001"),
         )
 
-        assert eff_conf is None
-        assert provenance == "legacy_unknown"
+        # Write a v2 competitor store row
+        engine.execute(
+            "INSERT INTO competitor_stores "
+            "(competitor_store_id, brand_name, store_name, confidence, "
+            " measurement_schema_version, snapshot_id, source_competitor_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("CS-001", "TestBrand", "TestStore", 0.85, "v2", "snap-20260901", "SRC-001"),
+        )
+
+        # Verify before restart
+        row = engine.query_one(
+            "SELECT measurement_schema_version, snapshot_id, source_competitor_id "
+            "FROM competitor_stores WHERE competitor_store_id = ?",
+            ("CS-001",),
+        )
+        assert row is not None
+        assert row["measurement_schema_version"] == "v2"
+        assert row["snapshot_id"] == "snap-20260901"
+        assert row["source_competitor_id"] == "SRC-001"
+
+        # Simulate restart: close and re-open (re-runs _bootstrap)
+        engine.close()
+        engine2 = SqliteEngine(db_path)
+
+        row2 = engine2.query_one(
+            "SELECT measurement_schema_version, snapshot_id, source_competitor_id, confidence "
+            "FROM competitor_stores WHERE competitor_store_id = ?",
+            ("CS-001",),
+        )
+        assert row2 is not None
+        assert row2["measurement_schema_version"] == "v2", (
+            "measurement_schema_version was reset to DEFAULT on restart"
+        )
+        assert row2["snapshot_id"] == "snap-20260901", (
+            "snapshot_id was lost on restart"
+        )
+        assert row2["source_competitor_id"] == "SRC-001", (
+            "source_competitor_id was lost on restart"
+        )
+        assert row2["confidence"] == 0.85
+        engine2.close()
+
+    def test_pois_schema_version_survives_restart(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "test_restart_pois.db"
+        engine = SqliteEngine(db_path)
+
+        engine.execute(
+            "INSERT INTO pois "
+            "(poi_id, source_poi_id, poi_name, poi_category, confidence, measurement_schema_version) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            ("POI-001", "SRC-POI-001", "TestPoi", "restaurant", 0.90, "v2"),
+        )
+
+        engine.close()
+        engine2 = SqliteEngine(db_path)
+
+        row = engine2.query_one(
+            "SELECT measurement_schema_version, confidence "
+            "FROM pois WHERE poi_id = ?",
+            ("POI-001",),
+        )
+        assert row is not None
+        assert row["measurement_schema_version"] == "v2", (
+            "pois measurement_schema_version was reset on restart"
+        )
+        assert row["confidence"] == 0.90
+        engine2.close()
+
+    def test_listings_schema_version_survives_restart(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "test_restart_listings.db"
+        engine = SqliteEngine(db_path)
+
+        engine.execute(
+            "INSERT INTO listings "
+            "(listing_id, source_listing_id, source_id, confidence, measurement_schema_version) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("L-001", "SRC-L-001", "591", 0.75, "v2"),
+        )
+
+        engine.close()
+        engine2 = SqliteEngine(db_path)
+
+        row = engine2.query_one(
+            "SELECT measurement_schema_version, confidence "
+            "FROM listings WHERE listing_id = ?",
+            ("L-001",),
+        )
+        assert row is not None
+        assert row["measurement_schema_version"] == "v2", (
+            "listings measurement_schema_version was reset on restart"
+        )
+        assert row["confidence"] == 0.75
+        engine2.close()
+
+    def test_null_confidence_survives_restart(self, tmp_path: Path) -> None:
+        """NULL confidence (unmeasured) must not be replaced with a default on restart."""
+        db_path = tmp_path / "test_restart_null.db"
+        engine = SqliteEngine(db_path)
+
+        engine.execute(
+            "INSERT INTO pois "
+            "(poi_id, source_poi_id, poi_name, poi_category, confidence, measurement_schema_version) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            ("POI-NULL", "SRC-NULL", "NullPoi", "cafe", None, "v2"),
+        )
+
+        engine.close()
+        engine2 = SqliteEngine(db_path)
+
+        row = engine2.query_one(
+            "SELECT confidence, measurement_schema_version FROM pois WHERE poi_id = ?",
+            ("POI-NULL",),
+        )
+        assert row is not None
+        assert row["confidence"] is None, "NULL confidence was replaced with a default on restart"
+        assert row["measurement_schema_version"] == "v2"
+        engine2.close()
+

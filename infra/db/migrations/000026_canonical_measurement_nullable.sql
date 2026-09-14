@@ -23,6 +23,7 @@ BEGIN;
 -- 1. geo.pois
 ALTER TABLE IF EXISTS geo.pois ALTER COLUMN confidence DROP NOT NULL;
 ALTER TABLE IF EXISTS geo.pois ALTER COLUMN confidence DROP DEFAULT;
+ALTER TABLE IF EXISTS geo.pois ADD COLUMN IF NOT EXISTS measurement_schema_version VARCHAR(50) NOT NULL DEFAULT 'v1';
 
 -- 2. geo.competitor_stores
 ALTER TABLE IF EXISTS geo.competitor_stores ALTER COLUMN confidence DROP NOT NULL;
@@ -34,6 +35,7 @@ ALTER TABLE IF EXISTS geo.competitor_stores ADD COLUMN IF NOT EXISTS source_comp
 -- 3. expansion.listings
 ALTER TABLE IF EXISTS expansion.listings ALTER COLUMN confidence DROP NOT NULL;
 ALTER TABLE IF EXISTS expansion.listings ALTER COLUMN confidence DROP DEFAULT;
+ALTER TABLE IF EXISTS expansion.listings ADD COLUMN IF NOT EXISTS measurement_schema_version VARCHAR(50) NOT NULL DEFAULT 'v1';
 
 -- 4. learning.predictions
 ALTER TABLE IF EXISTS learning.predictions ALTER COLUMN confidence DROP NOT NULL;

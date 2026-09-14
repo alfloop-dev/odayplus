@@ -2,12 +2,32 @@
 -- SQLite has no ALTER COLUMN; tables must be rebuilt to change NOT NULL.
 -- data_snapshots.quality_score was already made nullable in 000024.
 -- Existing 1.00 values are preserved — they may be genuine measurements.
+--
+-- Legacy disambiguation: new rows get measurement_schema_version = 'v2';
+-- existing rows default to 'v1' (via DEFAULT on ADD COLUMN), and the
+-- application layer uses effective_confidence_provenance to distinguish
+-- legacy 1.00 from genuinely measured 1.00.
+--
+-- RESTART SAFETY: ALTER TABLE ADD COLUMN runs before each table rebuild.
+-- On the first run, this adds the column to the original table.
+-- On restart, engine.py catches "duplicate column name" and continues.
+-- The subsequent INSERT...SELECT then copies the column value, preserving
+-- data written between the first run and the restart.
 
 PRAGMA foreign_keys = OFF;
 
 -- ============================================================
--- 1. pois: confidence REAL NOT NULL DEFAULT 1.00 → REAL
+-- 0. prediction_runs: add measurement_schema_version (Strategy B)
 -- ============================================================
+ALTER TABLE prediction_runs ADD COLUMN measurement_schema_version TEXT NOT NULL DEFAULT 'v1';
+
+-- ============================================================
+-- 1. pois: confidence REAL NOT NULL DEFAULT 1.00 → REAL
+--    Also add measurement_schema_version for legacy_unknown strategy.
+-- ============================================================
+-- Pre-add column so it exists in source table for the SELECT on restart.
+ALTER TABLE pois ADD COLUMN measurement_schema_version TEXT NOT NULL DEFAULT 'v1';
+
 DROP TABLE IF EXISTS pois_nullable;
 
 CREATE TABLE pois_nullable (
@@ -21,16 +41,19 @@ CREATE TABLE pois_nullable (
     status TEXT NOT NULL DEFAULT 'active',
     confidence REAL,
     snapshot_id TEXT REFERENCES data_snapshots(snapshot_id),
+    measurement_schema_version TEXT NOT NULL DEFAULT 'v1',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 INSERT INTO pois_nullable (
     poi_id, source_poi_id, poi_name, poi_category, poi_subcategory,
-    address_id, geo_cell_id, status, confidence, snapshot_id, created_at, updated_at
+    address_id, geo_cell_id, status, confidence, snapshot_id,
+    measurement_schema_version, created_at, updated_at
 ) SELECT
     poi_id, source_poi_id, poi_name, poi_category, poi_subcategory,
-    address_id, geo_cell_id, status, confidence, snapshot_id, created_at, updated_at
+    address_id, geo_cell_id, status, confidence, snapshot_id,
+    measurement_schema_version, created_at, updated_at
 FROM pois;
 DROP TABLE pois;
 ALTER TABLE pois_nullable RENAME TO pois;
@@ -44,6 +67,11 @@ CREATE INDEX IF NOT EXISTS idx_pois_category ON pois(poi_category, status);
 -- ============================================================
 -- 2. competitor_stores: confidence REAL NOT NULL DEFAULT 1.00 → REAL
 -- ============================================================
+-- Pre-add columns so they exist in source table for the SELECT on restart.
+ALTER TABLE competitor_stores ADD COLUMN measurement_schema_version TEXT NOT NULL DEFAULT 'v1';
+ALTER TABLE competitor_stores ADD COLUMN snapshot_id TEXT;
+ALTER TABLE competitor_stores ADD COLUMN source_competitor_id TEXT;
+
 DROP TABLE IF EXISTS competitor_stores_nullable;
 
 CREATE TABLE competitor_stores_nullable (
@@ -67,11 +95,13 @@ CREATE TABLE competitor_stores_nullable (
 INSERT INTO competitor_stores_nullable (
     competitor_store_id, brand_name, store_name, address_id, geo_cell_id,
     estimated_capacity, distance_to_nearest_oday_m, status, confidence,
-    last_verified_at, created_at, updated_at
+    last_verified_at, measurement_schema_version, snapshot_id,
+    source_competitor_id, created_at, updated_at
 ) SELECT
     competitor_store_id, brand_name, store_name, address_id, geo_cell_id,
     estimated_capacity, distance_to_nearest_oday_m, status, confidence,
-    last_verified_at, created_at, updated_at
+    last_verified_at, measurement_schema_version, snapshot_id,
+    source_competitor_id, created_at, updated_at
 FROM competitor_stores;
 DROP TABLE competitor_stores;
 ALTER TABLE competitor_stores_nullable RENAME TO competitor_stores;
@@ -82,7 +112,11 @@ CREATE INDEX IF NOT EXISTS idx_competitor_stores_brand ON competitor_stores(bran
 
 -- ============================================================
 -- 3. listings: confidence REAL NOT NULL DEFAULT 1.00 → REAL
+--    Also add measurement_schema_version for legacy_unknown strategy.
 -- ============================================================
+-- Pre-add column so it exists in source table for the SELECT on restart.
+ALTER TABLE listings ADD COLUMN measurement_schema_version TEXT NOT NULL DEFAULT 'v1';
+
 DROP TABLE IF EXISTS listings_nullable;
 
 CREATE TABLE listings_nullable (
@@ -105,6 +139,7 @@ CREATE TABLE listings_nullable (
     available_from TEXT,
     snapshot_id TEXT REFERENCES data_snapshots(snapshot_id),
     confidence REAL,
+    measurement_schema_version TEXT NOT NULL DEFAULT 'v1',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -113,12 +148,14 @@ INSERT INTO listings_nullable (
     listing_id, source_listing_id, source_id, listing_status, address_id,
     rent_amount, currency, area_ping, floor, frontage_m, depth_m,
     corner_flag, parking_flag, utility_electricity_flag, utility_drainage_flag,
-    utility_gas_flag, available_from, snapshot_id, confidence, created_at, updated_at
+    utility_gas_flag, available_from, snapshot_id, confidence,
+    measurement_schema_version, created_at, updated_at
 ) SELECT
     listing_id, source_listing_id, source_id, listing_status, address_id,
     rent_amount, currency, area_ping, floor, frontage_m, depth_m,
     corner_flag, parking_flag, utility_electricity_flag, utility_drainage_flag,
-    utility_gas_flag, available_from, snapshot_id, confidence, created_at, updated_at
+    utility_gas_flag, available_from, snapshot_id, confidence,
+    measurement_schema_version, created_at, updated_at
 FROM listings;
 DROP TABLE listings;
 ALTER TABLE listings_nullable RENAME TO listings;

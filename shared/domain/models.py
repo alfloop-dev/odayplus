@@ -222,7 +222,7 @@ class Poi:
             return self.confidence_status
         if self.confidence is None:
             return "unmeasured"
-        if (self.measurement_schema_version == "v1" or self.snapshot_id == "v1") and self.confidence == 1.0:
+        if self.measurement_schema_version == "v1" and self.confidence == 1.0:
             return "legacy_unknown"
         return "measured"
 
@@ -257,7 +257,7 @@ class CompetitorStore:
             return self.confidence_status
         if self.confidence is None:
             return "unmeasured"
-        if (self.measurement_schema_version == "v1" or self.snapshot_id == "v1") and self.confidence == 1.0:
+        if self.measurement_schema_version == "v1" and self.confidence == 1.0:
             return "legacy_unknown"
         return "measured"
 
@@ -300,7 +300,7 @@ class Listing:
             return self.confidence_status
         if self.confidence is None:
             return "unmeasured"
-        if (self.measurement_schema_version == "v1" or self.snapshot_id == "v1") and self.confidence == 1.0:
+        if self.measurement_schema_version == "v1" and self.confidence == 1.0:
             return "legacy_unknown"
         return "measured"
 

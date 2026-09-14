@@ -1489,32 +1489,9 @@ else:
                 "utility_electricity_flag": listing.utility_electricity_flag,
                 "utility_drainage_flag": listing.utility_drainage_flag,
                 "utility_gas_flag": listing.utility_gas_flag,
-                "confidence": (
-                    None
-                    if (
-                        listing.confidence is None
-                        or (
-                            listing.confidence == 1.0
-                            and (
-                                listing.snapshot_id == "v1"
-                                or getattr(listing, "measurement_schema_version", "") == "v1"
-                                or getattr(listing, "confidence_status", "") == "legacy_unknown"
-                            )
-                        )
-                    )
-                    else listing.confidence
-                ),
-                "confidenceProvenance": (
-                    "legacy_unknown"
-                    if (
-                        listing.confidence == 1.0
-                        and (
-                            listing.snapshot_id == "v1"
-                            or getattr(listing, "measurement_schema_version", "") == "v1"
-                            or getattr(listing, "confidence_status", "") == "legacy_unknown"
-                        )
-                    )
-                    else ("unmeasured" if listing.confidence is None else "measured")
+                "confidence": listing.effective_confidence if hasattr(listing, 'effective_confidence') else listing.confidence,
+                "confidenceProvenance": listing.effective_confidence_provenance if hasattr(listing, 'effective_confidence_provenance') else (
+                    "unmeasured" if listing.confidence is None else "measured"
                 ),
                 "snapshot_id": listing.snapshot_id,
             }
