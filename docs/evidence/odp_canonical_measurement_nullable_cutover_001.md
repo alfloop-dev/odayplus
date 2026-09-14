@@ -79,6 +79,18 @@ abstention 寫成 `confidence=None, confidence_status="unmeasured"`。
 `SiteScoreReportService.score_candidates()`、存進 durable repository、重開
 process、用 `get_predictions()` 讀回來。
 
+另一個 `Prediction` producer `modules/forecastops/application/forecasting.py`
+根本沒有傳 `confidence`，改 default 之後它自動變成 `None`／`unmeasured`——
+cutover 之前它寫出來的是憑空的完美 `1.0`。
+
+**刻意留下的界線**：`SiteScoreReport` 不是這次的六欄之一，也沒有拿到六個 model
+那套 `__setstate__` legacy 還原。一份 cutover 之前 pickle 的舊 report 缺
+`confidence_status`，回載後會落在 class default `"measured"`——它的 `0.0` 究竟是
+真的低分還是 abstention，資料本身已經分辨不出來。這只影響舊 report 的序列化：
+`_persist_reports` 只為當次新算出的 report 寫 `Prediction`，不會從回載的 report
+再寫一次，所以 canonical 邊界不受影響。要處理它需要為 `SiteScoreReport` 另立一個
+legacy 值並放寬已發布的 TS 型別，屬於另一個 task 的範圍。
+
 ## 4. R4 — dbt geo view 與 Python pipeline 語意一致
 
 PostgreSQL 的 `avg()` 會跳過 NULL，所以一個「部分被量測」的 bucket 在 SQL 會
@@ -160,3 +172,29 @@ after restart: {'measurement_schema_version': 'v1', 'quality_score': 1.0}
 default 原子移除。這一輪把剩下五筆 SQL exemption 的理由更新成事實：
 它們指向 `000004` 的歷史 DDL 文字（已套用的 migration 不可改），而 live schema
 已由 `000026` 取代。原本寫著「這批還欠一支 migration」的理由已經不成立。
+
+## 9. 本機驗證
+
+全部以 `uv run --frozen`（專案 `.venv`，Python 3.12）執行，背景 job 收 exit code。
+
+| 檢查 | 結果 |
+| --- | --- |
+| `pytest tests/integration/test_canonical_measurement_production_paths.py tests/integration/test_canonical_measurement_postgresql.py tests/domain/test_canonical_measurement_nullable.py` | 72 passed（含對真 PostgreSQL 16 執行 migration 與 geo view） |
+| `pytest` 受影響套件（canonical、model_ready materialization、canonical schema contract、durable repository wiring、`modules/sitescore`、migration、governance） | 194 passed |
+| `pytest modules/{heatzone,listing,opsboard,external_data,integration}/tests -n auto` | 125 passed |
+| `pytest tests/domain modules/learninghub/tests -n auto` | 113 passed |
+| `ruff check tests modules apps shared models solver pipelines infra` | clean |
+| `ruff check .orchestrator delivery_toolchain scripts infra` | clean |
+| `npm run typecheck`（全 workspace） | exit 0 |
+| `delivery_toolchain/openapi/export_openapi.py --check` | 與 live schema 相符 |
+| `delivery_toolchain/governance/check_measurement_defaults.py` | 通過；剩 5 筆 SQL exemption，dataclass／mapper 層歸零 |
+| `delivery_toolchain/governance/check_code_boundaries.py` | 1169 檔通過；inventory 已重產 |
+
+`check_measurement_defaults` 的 repo 層斷言由 `{"dataclass","mapper","sql"}` 放寬為
+`{"sql"}`，反映 dataclass 與 mapper 兩層的債已清。掃描器本身對每一層的偵測能力仍由
+`TestItRefusesTheDefectItExistsFor`、`TestItReadsThePydanticLayer`、
+`TestItReadsTheMapperLayer`、`TestItReadsTheSqlLayer` 以合成輸入各自證明，沒有因此
+失去偵測力。
+
+完整 product 測試集（約 2000 筆）在這台同時跑 fleet 的機器上序列與 `-n auto` 都遠超過
+一個 worker 週期，交由 CI 的 product job 執行。
