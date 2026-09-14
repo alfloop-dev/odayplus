@@ -2234,13 +2234,145 @@ def test_review_dispatch_eligible_when_task_review_gate_pending_but_other_ci_gre
                 supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
             ),
         ):
-            changed = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["codex"])
+            assert supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["codex"]) is True
 
-    assert changed is True
     assert len(queued_events) == 1
     assert queued_events[0]["task_id"] == "TASK-REV-GATE-PENDING-001"
     assert queued_events[0]["target_agent"] == "Codex"
     assert queued_events[0]["reason"] == "review_ready_dispatch"
+
+
+def test_review_dispatch_eligible_for_merged_submission_with_deleted_remote_branch() -> None:
+    cfg = _base_test_config()
+    task = {
+        "id": "TASK-MERGED-DEL-001",
+        "priority": "P1",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "review_submission": {
+            "pr_number": 1305,
+            "branch": "task/TASK-MERGED-DEL-001",
+            "base_branch": "dev",
+            "remote_sha": "a" * 40,
+            "merged_at": "2026-09-13T06:53:45Z",
+            "merge_commit": "b" * 40,
+            "ci_status": "success",
+        },
+        "depends_on": [],
+        "last_update": "2026-09-13T07:00:00Z",
+    }
+    status = {"tasks": [task]}
+    state = {"workers": {}, "queue": {"events": {}}}
+    queued_events: list[dict] = []
+
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value=None),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("MERGED", "success")),
+    ):
+        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is True
+        assert supervisor.is_task_review_dispatch_eligible(cfg, task, "Codex") is True
+        assert supervisor.dispatch_priority_for_task(cfg, task, "Codex", task_map={"TASK-MERGED-DEL-001": task}) == 0
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+            mock.patch.object(dispatch_engine, "commit_canonical_task_transition", create=True, return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(
+                supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
+            ),
+        ):
+            changed = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["codex"])
+
+    assert changed is True
+    assert len(queued_events) == 1
+    assert queued_events[0]["task_id"] == "TASK-MERGED-DEL-001"
+    assert queued_events[0]["target_agent"] == "Codex"
+    assert queued_events[0]["reason"] == "review_ready_dispatch"
+
+
+def test_review_dispatch_eligible_for_merged_submission_with_retained_remote_branch() -> None:
+    cfg = _base_test_config()
+    task = {
+        "id": "TASK-MERGED-RET-001",
+        "priority": "P1",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "review_submission": {
+            "pr_number": 1305,
+            "branch": "task/TASK-MERGED-RET-001",
+            "base_branch": "dev",
+            "remote_sha": "a" * 40,
+            "merged_at": "2026-09-13T06:53:45Z",
+            "merge_commit": "b" * 40,
+            "ci_status": "success",
+        },
+        "depends_on": [],
+        "last_update": "2026-09-13T07:00:00Z",
+    }
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value="a" * 40),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("MERGED", "success")),
+    ):
+        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is True
+        assert supervisor.is_task_review_dispatch_eligible(cfg, task, "Codex") is True
+
+
+def test_review_dispatch_suppressed_for_merged_submission_when_drifted_or_ci_pending() -> None:
+    cfg = _base_test_config()
+    task = {
+        "id": "TASK-MERGED-DRIFT-001",
+        "priority": "P1",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "review_submission": {
+            "pr_number": 1305,
+            "branch": "task/TASK-MERGED-DRIFT-001",
+            "base_branch": "dev",
+            "remote_sha": "a" * 40,
+            "merged_at": "2026-09-13T06:53:45Z",
+            "merge_commit": "b" * 40,
+            "ci_status": "success",
+        },
+        "depends_on": [],
+        "last_update": "2026-09-13T07:00:00Z",
+    }
+    status = {"tasks": [task]}
+    state = {"workers": {}, "queue": {"events": {}}}
+    queued_events: list[dict] = []
+
+    # Case 1: Remote branch retained but drifted
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value="c" * 40),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("MERGED", "success")),
+    ):
+        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is False
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+            mock.patch.object(dispatch_engine, "commit_canonical_task_transition", create=True, return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(
+                supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
+            ),
+        ):
+            supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["codex"])
+        assert len(queued_events) == 0
+        assert "drifted" in task.get("next", "")
+
+    # Case 2: CI pending
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value=None),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("MERGED", "pending")),
+    ):
+        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is False
 
 
 

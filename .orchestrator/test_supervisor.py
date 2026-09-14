@@ -17932,11 +17932,11 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
                 return unittest.mock.Mock(returncode=1, stdout="")
 
             with unittest.mock.patch("subprocess.run", side_effect=fake_ls_remote):
-                resolved = ai_status.resolve_task_sha(task_id, force_refresh=True)
                 if is_valid:
-                    self.assertEqual(resolved, sha)
+                    self.assertEqual(ai_status.resolve_task_sha(task_id, force_refresh=True), sha)
                 else:
-                    self.assertIsNone(resolved)
+                    with self.assertRaisesRegex(RuntimeError, "invalid or unexpected ref"):
+                        ai_status.resolve_task_sha(task_id, force_refresh=True)
 
 
 
