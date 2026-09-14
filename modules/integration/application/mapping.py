@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass, fields
+from dataclasses import dataclass, fields
 from datetime import UTC, date, datetime, time
 from typing import Any
 
@@ -11,6 +11,7 @@ from modules.integration.application.identity_resolution import (
     source_key_from_payload,
 )
 from shared.domain import AddressLocation, Listing, Machine, Store, Transaction
+from shared.domain.models import canonical_measurement_dict
 
 ENTITY_TYPES = {
     "address": AddressLocation,
@@ -70,7 +71,7 @@ class MappingResult:
     warnings: tuple[str, ...] = ()
 
     def canonical_dict(self) -> dict[str, Any]:
-        return asdict(self.canonical)
+        return canonical_measurement_dict(self.canonical)
 
 
 def _lookup(payload: Mapping[str, Any], canonical_field: str) -> tuple[str, Any] | None:

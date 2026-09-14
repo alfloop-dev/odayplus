@@ -34,8 +34,18 @@ from modules.learninghub.domain import (
     ModelReadyRecord,
     build_dataset_snapshot,
 )
+from shared.domain.models import (
+    CURRENT_MEASUREMENT_SCHEMA_VERSION,
+    DataSnapshot,
+    QualityScoreMeasurement,
+)
 
 MODEL_READY_SNAPSHOT_TYPE = "model_ready"
+
+# The *dataset* layout version stamped on a manifest. It is deliberately
+# unrelated to ``measurement_schema_version``: a pipeline may legitimately keep
+# emitting a "v1" dataset shape while its quality scores are genuinely
+# measured under the post-cutover contract.
 DEFAULT_SCHEMA_VERSION = "v1"
 
 # A source is either the concrete rows or a zero-arg reader that produces them.
@@ -67,8 +77,14 @@ class SnapshotSink(Protocol):
 
 
 @dataclass(frozen=True)
-class LineageManifest:
-    """Queryable lineage + quality header for a materialized dataset snapshot."""
+class LineageManifest(QualityScoreMeasurement):
+    """Queryable lineage + quality header for a materialized dataset snapshot.
+
+    Manifests are persisted as pickles by :class:`DocumentStoreLineageRecorder`,
+    so the measurement marker inherited from ``QualityScoreMeasurement``
+    resolves a pre-cutover manifest (no marker in its pickled state) back to
+    ``"v1"`` instead of silently adopting the new default.
+    """
 
     dataset_snapshot_id: str
     snapshot_type: str
@@ -88,20 +104,48 @@ class LineageManifest:
     time_range: tuple[datetime, datetime]
     storage_uri: str
     materialized_at: datetime
+    measurement_schema_version: str = CURRENT_MEASUREMENT_SCHEMA_VERSION
+    quality_score_status: str | None = None
+
+    def to_data_snapshot(self) -> DataSnapshot:
+        """Canonical :class:`DataSnapshot` for this materialization.
+
+        This is the production write path for the sixth canonical measured
+        column: the audit registry row below is derived from the canonical
+        model rather than assembled from raw manifest fields, so the
+        model-ready pipeline inherits the model's absence semantics instead of
+        re-deriving a parallel (and previously wrong) status of its own.
+        """
+        return DataSnapshot(
+            snapshot_id=self.dataset_snapshot_id,
+            snapshot_type=self.snapshot_type,
+            source_id=",".join(self.source_snapshot_ids),
+            snapshot_time=self.feature_snapshot_time,
+            storage_uri=self.storage_uri,
+            schema_version=self.schema_version,
+            row_count=self.row_count,
+            quality_score=(
+                round(self.quality_score, 2) if self.quality_score is not None else None
+            ),
+            created_by_run_id=self.run_id,
+            measurement_schema_version=self.measurement_schema_version,
+            quality_score_status=self.quality_score_status,
+        )
 
     def to_audit_snapshot_row(self) -> dict[str, Any]:
         """Row shaped for the canonical ``audit.data_snapshots`` registry."""
-        status = "measured" if self.quality_score is not None else "unmeasured"
+        snapshot = self.to_data_snapshot()
         return {
-            "snapshot_type": self.snapshot_type,
-            "source_id": ",".join(self.source_snapshot_ids),
-            "snapshot_time": self.feature_snapshot_time,
-            "storage_uri": self.storage_uri,
-            "schema_version": self.schema_version,
-            "row_count": self.row_count,
-            "quality_score": round(self.quality_score, 2) if self.quality_score is not None else None,
-            "quality_score_status": status,
-            "created_by_run_id": self.run_id,
+            "snapshot_type": snapshot.snapshot_type,
+            "source_id": snapshot.source_id,
+            "snapshot_time": snapshot.snapshot_time,
+            "storage_uri": snapshot.storage_uri,
+            "schema_version": snapshot.schema_version,
+            "row_count": snapshot.row_count,
+            "quality_score": snapshot.effective_quality_score,
+            "quality_score_status": snapshot.effective_quality_score_provenance,
+            "measurement_schema_version": snapshot.measurement_schema_version,
+            "created_by_run_id": snapshot.created_by_run_id,
         }
 
 
@@ -172,6 +216,7 @@ def build_lineage_manifest(
     run_id: str,
     storage_uri: str | None = None,
     schema_version: str = DEFAULT_SCHEMA_VERSION,
+    measurement_schema_version: str = CURRENT_MEASUREMENT_SCHEMA_VERSION,
     materialized_at: datetime | None = None,
 ) -> LineageManifest:
     """Derive the lineage/quality header for a built :class:`DatasetSnapshot`."""
@@ -202,6 +247,7 @@ def build_lineage_manifest(
         time_range=snapshot.time_range,
         storage_uri=storage_uri or f"model-ready://{snapshot.dataset_snapshot_id}",
         materialized_at=materialized_at or datetime.now(UTC),
+        measurement_schema_version=measurement_schema_version,
     )
 
 

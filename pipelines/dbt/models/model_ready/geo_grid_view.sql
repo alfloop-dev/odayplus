@@ -1,10 +1,22 @@
+-- confidence became nullable in migration 000026
+-- (ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001). PostgreSQL's ``avg``
+-- silently skips NULL inputs, which would average the rows that happen to
+-- carry a measurement and publish the result as if the whole bucket had been
+-- measured. ``modules/external_data/geo/pipeline.py`` refuses to average a
+-- partially measured bucket, so the aggregates below are guarded to yield
+-- NULL unless every contributing row carries a confidence -- otherwise the
+-- same inputs produce opposite semantics in Python and SQL.
 with poi_counts as (
     select
         h3_cells.geo_cell_id,
         count(*) filter (where pois.poi_category = 'school') as poi_school_count,
         count(*) filter (where pois.poi_category = 'residential') as poi_residential_count,
         count(*) filter (where pois.poi_category in ('market', 'retail')) as poi_market_count,
-        avg(pois.confidence) as poi_confidence
+        case
+            when count(pois.poi_id) > 0 and count(pois.poi_id) = count(pois.confidence)
+                then avg(pois.confidence)
+            else null
+        end as poi_confidence
     from geo.h3_cells
     left join geo.pois on pois.geo_cell_id = h3_cells.geo_cell_id
     group by h3_cells.geo_cell_id
@@ -14,7 +26,10 @@ competitor_counts as (
         geo_cell_id,
         count(*) as competitor_count_500m,
         sum(estimated_capacity) as competitor_capacity_proxy_500m,
-        avg(confidence) as competitor_confidence
+        case
+            when count(*) = count(confidence) then avg(confidence)
+            else null
+        end as competitor_confidence
     from geo.competitor_stores
     where status = 'active'
     group by geo_cell_id

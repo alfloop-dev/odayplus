@@ -6,6 +6,7 @@
 --   listings.confidence            NOT NULL DEFAULT 1.00  →  NULL  (DROP DEFAULT)
 --   predictions.confidence         NOT NULL DEFAULT 1.00  →  NULL  (DROP DEFAULT)
 --   data_snapshots.quality_score   NOT NULL DEFAULT 1.00  →  NULL  (DROP DEFAULT)
+--                                  + measurement_schema_version marker
 --   expansion.heatzone_scores.confidence  DEFAULT 1.00   →  DROP DEFAULT
 --
 -- Existing rows that carry 1.00 are NOT modified to NULL: they may
@@ -45,8 +46,14 @@ ALTER TABLE IF EXISTS learning.predictions ALTER COLUMN confidence DROP DEFAULT;
 ALTER TABLE IF EXISTS learning.prediction_runs ADD COLUMN IF NOT EXISTS measurement_schema_version VARCHAR(50) NOT NULL DEFAULT 'v1';
 
 -- 6. audit.data_snapshots
+--    quality_score_status carries the resolved provenance written by the
+--    model-ready materializer; measurement_schema_version disambiguates a
+--    pre-cutover substituted 1.00 from a genuinely measured one. It is
+--    deliberately separate from schema_version, which describes the dataset
+--    layout and says nothing about how quality_score was obtained.
 ALTER TABLE IF EXISTS audit.data_snapshots ALTER COLUMN quality_score DROP NOT NULL;
 ALTER TABLE IF EXISTS audit.data_snapshots ALTER COLUMN quality_score DROP DEFAULT;
+ALTER TABLE IF EXISTS audit.data_snapshots ADD COLUMN IF NOT EXISTS measurement_schema_version VARCHAR(50) NOT NULL DEFAULT 'v1';
 
 -- 7. expansion.heatzone_scores (Strategy C: Preventive schema version)
 ALTER TABLE IF EXISTS expansion.heatzone_scores ALTER COLUMN confidence DROP DEFAULT;

@@ -661,12 +661,15 @@ class NetworkScoringService:
                 monthly_rent=listing.rent_amount,
                 area_ping=listing.area_ping,
                 frontage_m=listing.frontage_m,
+                # ``effective_confidence`` rather than the raw column: a
+                # pre-cutover listing carrying a substituted 1.00 must enter
+                # the gate as unmeasured, not as a perfect measurement.
                 average_confidence=_none_safe_min(
-                    listing.confidence,
+                    listing.effective_confidence,
                     address.geocode_confidence,
                 ),
                 data_quality_score=_none_safe_min(
-                    listing.confidence,
+                    listing.effective_confidence,
                     address.geocode_confidence,
                 ),
                 source_snapshot_ids=tuple(

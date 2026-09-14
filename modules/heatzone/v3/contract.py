@@ -13,6 +13,7 @@ from packages.oday_data_product_contracts_client.models.market_cell_profile impo
     ProductComponentRef,
     ReadinessLevel,
 )
+from shared.domain.models import MEASUREMENT_UNMEASURED, HeatZoneScore
 
 CONTRACT_ID = "odayplus.heatzone-v3.v1"
 CONTRACT_VERSION = "1.0.0"
@@ -156,7 +157,7 @@ class HeatZoneV3ScoreResult:
     listing_availability_score: float
     housing_density_score: float
     demographic_vitality_score: float
-    confidence: float
+    confidence: float | None
     state: HeatZoneV3State
     abstained: bool
     abstain_reasons: tuple[str, ...]
@@ -178,7 +179,33 @@ class HeatZoneV3ScoreResult:
     absorption_excluded_store_ids: tuple[str, ...] = ()
     absorption_excluded_reasons: dict[str, str] = field(default_factory=dict)
 
+    def to_canonical_score(self) -> HeatZoneScore:
+        """Canonical :class:`HeatZoneScore` for this evaluated cell.
+
+        HeatZone v3 is the live producer of the canonical heatzone measurement,
+        so the serializations below resolve confidence through this model
+        rather than reading the raw attribute. A result reloaded from a
+        pre-cutover payload therefore reports ``legacy_unknown`` instead of
+        republishing a substituted 1.00 as measured.
+        """
+        return HeatZoneScore(
+            heatzone_score_id=self.heat_zone_id,
+            geo_cell_id=self.h3_index,
+            heat_score=self.score if self.score is not None else 0.0,
+            priority_rank=self.priority_rank,
+            unmet_demand_score=self.unmet_demand_score,
+            format_fit_score=self.format_fit_score,
+            cannibalization_risk_score=self.cannibalization_risk_score,
+            rent_feasibility_score=self.rent_feasibility_score,
+            heatzone_state=self.state.value,
+            confidence=self.confidence,
+            confidence_status=(
+                MEASUREMENT_UNMEASURED if self.abstained and self.confidence is None else None
+            ),
+        )
+
     def to_dict(self) -> dict[str, Any]:
+        canonical = self.to_canonical_score()
         return {
             "heat_zone_id": self.heat_zone_id,
             "h3_index": self.h3_index,
@@ -193,7 +220,8 @@ class HeatZoneV3ScoreResult:
             "listing_availability_score": self.listing_availability_score,
             "housing_density_score": self.housing_density_score,
             "demographic_vitality_score": self.demographic_vitality_score,
-            "confidence": self.confidence,
+            "confidence": canonical.effective_confidence,
+            "confidence_provenance": canonical.effective_confidence_provenance,
             "state": self.state.value,
             "abstained": self.abstained,
             "abstain_reasons": list(self.abstain_reasons),
@@ -217,6 +245,7 @@ class HeatZoneV3ScoreResult:
         }
 
     def to_map_feature(self) -> dict[str, Any]:
+        canonical = self.to_canonical_score()
         return {
             "type": "Feature",
             "id": self.heat_zone_id,
@@ -231,7 +260,8 @@ class HeatZoneV3ScoreResult:
                 "cannibalization_risk": self.cannibalization_risk_score,
                 "rent_feasibility": self.rent_feasibility_score,
                 "listing_availability": self.listing_availability_score,
-                "confidence": self.confidence,
+                "confidence": canonical.effective_confidence,
+                "confidence_provenance": canonical.effective_confidence_provenance,
                 "status": self.state.value,
                 "abstained": self.abstained,
                 "is_shadow": self.is_shadow,

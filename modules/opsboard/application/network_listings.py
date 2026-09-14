@@ -544,7 +544,8 @@ class NetworkListingService:
             "areaPing": lst.area_ping,
             "floor": lst.floor,
             "frontageMeters": int(lst.frontage_m) if lst.frontage_m else 0,
-            "listingConfidence": lst.confidence,
+            "listingConfidence": lst.effective_confidence,
+            "listingConfidenceProvenance": lst.effective_confidence_provenance,
             # Not lst.confidence. That is extraction confidence -- how sure the
             # parser is about the rent and area it read -- and a listing whose
             # address never resolved would otherwise report a fully-confident

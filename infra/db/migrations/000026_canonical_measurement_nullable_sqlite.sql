@@ -18,8 +18,12 @@ PRAGMA foreign_keys = OFF;
 
 -- ============================================================
 -- 0. prediction_runs: add measurement_schema_version (Strategy B)
+--    data_snapshots: quality_score was already made nullable in 000024, so it
+--    only needs the measurement marker. It stays separate from schema_version,
+--    which describes the dataset layout rather than how the score was obtained.
 -- ============================================================
 ALTER TABLE prediction_runs ADD COLUMN measurement_schema_version TEXT NOT NULL DEFAULT 'v1';
+ALTER TABLE data_snapshots ADD COLUMN measurement_schema_version TEXT NOT NULL DEFAULT 'v1';
 
 -- ============================================================
 -- 1. pois: confidence REAL NOT NULL DEFAULT 1.00 → REAL

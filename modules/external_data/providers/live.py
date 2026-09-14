@@ -17,7 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
@@ -57,6 +57,7 @@ from modules.integration.connectors.base import (
     first_time,
 )
 from modules.integration.domain.contracts import ContractIssue
+from shared.domain.models import canonical_measurement_dict
 from shared.observability import new_correlation_id
 
 LISTING_PROVIDER_ID = "listing.partner_feed"
@@ -630,7 +631,7 @@ class CanonicalListingSnapshot:
     @property
     def canonical_records(self) -> tuple[dict[str, Any], ...]:
         return tuple(
-            asdict(record.canonical)
+            canonical_measurement_dict(record.canonical)
             for record in self.connector_run.accepted
             if record.canonical is not None
         )

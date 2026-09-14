@@ -1489,10 +1489,8 @@ else:
                 "utility_electricity_flag": listing.utility_electricity_flag,
                 "utility_drainage_flag": listing.utility_drainage_flag,
                 "utility_gas_flag": listing.utility_gas_flag,
-                "confidence": listing.effective_confidence if hasattr(listing, 'effective_confidence') else listing.confidence,
-                "confidenceProvenance": listing.effective_confidence_provenance if hasattr(listing, 'effective_confidence_provenance') else (
-                    "unmeasured" if listing.confidence is None else "measured"
-                ),
+                "confidence": listing.effective_confidence,
+                "confidenceProvenance": listing.effective_confidence_provenance,
                 "snapshot_id": listing.snapshot_id,
             }
             for attr in (
@@ -1567,6 +1565,8 @@ else:
                     available_from=existing_listing.available_from,
                     snapshot_id=existing_listing.snapshot_id,
                     confidence=existing_listing.confidence,
+                    measurement_schema_version=existing_listing.measurement_schema_version,
+                    confidence_status=existing_listing.confidence_status,
                 )
                 address = self.get_address(existing_listing.address_id)
                 if address is None:
