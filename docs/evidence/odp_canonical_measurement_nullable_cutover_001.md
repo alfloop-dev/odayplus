@@ -49,7 +49,15 @@ pre-cutover payload 是把新欄位從 `__dict__` 拿掉之後才 pickle，位�
 | `apps/api/app/routes/sitescore.py` | `"confidence": p.confidence` | `p.effective_confidence` + `confidenceProvenance` |
 | `apps/api/app/routes/listings.py` | `hasattr()` 防呆後才用 property | 直接用 property |
 | `modules/heatzone/v3/contract.py` | `to_dict`/`to_map_feature` 直讀 `self.confidence` | 經 `to_canonical_score()` 的 `HeatZoneScore` |
-| `modules/integration/application/mapping.py`、`modules/external_data/providers/live.py` | `asdict(canonical)` | `canonical_measurement_dict(canonical)`，附 `confidence_provenance` |
+| `modules/integration/application/mapping.py` | `asdict(canonical)` | `canonical_measurement_dict(canonical)`，附 `confidence_provenance` |
+| `modules/integration/connectors/base.py` | 無此投影 | 新增 `ConnectorRun.canonical_entity_dicts()`，`CanonicalListingSnapshot.canonical_records` 改為委派 |
+
+`Poi` 與 `CompetitorStore` 在 production Python 裡**沒有讀取端**——
+`ConnectorRun.canonical_entities()` 沒有任何呼叫者，geo pipeline 吃的是原始
+mapping record 而不是這兩個 aggregate。它們真正的消費者在 SQL／dbt 層，也就是
+第 4 節那道閘。Python 這側擁有的是 producer 與「aggregate 變成 dict」的邊界，
+所以修的是那個邊界：`canonical_entity_dicts()` 讓每一個 connector 的輸出都經過
+同一個保留 provenance 的投影，而不是只有 listing 那一條。
 
 `network_listings` 的 dict round trip（`_listing_to_dict` → `_dict_to_listing`）
 會把 `legacy_unknown` 收斂成 `unmeasured`：重建出來的 `Listing` 拿到的是

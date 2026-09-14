@@ -330,7 +330,16 @@ export type SiteScoreReportSummary = {
   candidateSiteId: string;
   reportVersion: number;
   recommendation: string;
+  /**
+   * The scoring figure, which stays numeric even when the site abstained:
+   * an unmeasured site is scored with the widest band and the lowest
+   * recommendation tier rather than dropped. Read confidenceStatus before
+   * presenting this as a measurement -- "unmeasured" means the 0 below was
+   * never measured, and the canonical Prediction this report produced
+   * carries null rather than 0.
+   */
   confidence: number;
+  confidenceStatus: "measured" | "unmeasured";
   modelVersion: string;
   featureSnapshotTime: string;
   cannibalizationRisk: string;

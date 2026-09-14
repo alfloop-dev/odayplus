@@ -24,12 +24,20 @@ Every case here therefore drives a real production path end to end:
 from __future__ import annotations
 
 import pickle
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
 
 from apps.api.app.routes.listings import V1ListingRepositoryAdapter
+from modules.external_data.application.external_contracts import external_contract
+from modules.external_data.connectors.external import (
+    CompetitorStoreConnector,
+    PoiConnector,
+)
+from modules.external_data.geo.pipeline import GeoPipeline
 from modules.heatzone.v3.contract import HeatZoneV3ScoreResult, HeatZoneV3State
+from modules.learninghub.domain.dataset_snapshot import DatasetQualityAdmissionError
 from modules.listing.domain.models import ListingDedupKey
 from modules.sitescore.application.reporting import SiteScoreReportService
 from modules.sitescore.domain.scoring import SiteScoreFeatureInput
@@ -41,6 +49,7 @@ from shared.domain.models import (
     Listing,
     Poi,
     Prediction,
+    canonical_measurement_dict,
 )
 from shared.infrastructure.persistence import SqliteDocumentStore, SqliteEngine
 from shared.infrastructure.persistence.factory import _durable_bundle
@@ -238,8 +247,6 @@ class TestPreCutoverPayloadsReloadAsLegacyUnknown:
         updates, promotion). If the marker did not survive, the second write
         would bake the substituted 1.00 in as measured.
         """
-        from dataclasses import replace
-
         engine = SqliteEngine(str(tmp_path / "documents.sqlite3"))
         try:
             store = SqliteDocumentStore(engine)
@@ -537,10 +544,6 @@ class TestModelReadyMaterializerWritesDataSnapshot:
         refuses the row instead of persisting a snapshot whose quality header
         claims a measurement nobody took.
         """
-        from modules.learninghub.domain.dataset_snapshot import (
-            DatasetQualityAdmissionError,
-        )
-
         with pytest.raises(DatasetQualityAdmissionError):
             self._audit_row(tmp_path, [row])
 
@@ -649,6 +652,100 @@ class TestHeatZoneSerializesThroughCanonicalScore:
 
         assert feature["properties"]["confidence"] is None
         assert feature["properties"]["confidence_provenance"] == "unmeasured"
+
+
+# ---------------------------------------------------------------------------
+# 6. Poi / CompetitorStore: the connector dict boundary keeps absence
+# ---------------------------------------------------------------------------
+
+
+class TestConnectorOutputPreservesAbsenceAtTheDictBoundary:
+    """Connector output is where these two aggregates become plain payloads.
+
+    ``Poi`` and ``CompetitorStore`` have no Python read path -- their consumer
+    is the SQL/dbt layer (covered by
+    tests/integration/test_canonical_measurement_postgresql.py). What Python
+    owns is the producer and the crossing into dicts, which is what these
+    cases exercise through the real connectors.
+    """
+
+    def _poi_connector(self) -> PoiConnector:
+        return PoiConnector(
+            external_contract("poi_snapshot"), geo_pipeline=GeoPipeline()
+        )
+
+    def _competitor_connector(self) -> CompetitorStoreConnector:
+        return CompetitorStoreConnector(
+            external_contract("competitor_store_snapshot"),
+            geo_pipeline=GeoPipeline(),
+        )
+
+    def test_a_poi_source_row_without_confidence_stays_unmeasured(self) -> None:
+        run = self._poi_connector().ingest(
+            [
+                {
+                    "source_poi_id": "POI-MEASURED",
+                    "poi_name": "measured",
+                    "poi_category": "Transit",
+                    "address_raw": "台北市信義區忠孝東路五段",
+                    "latitude": 25.040944,
+                    "longitude": 121.565472,
+                    "status": "active",
+                    "confidence": 1.0,
+                    "snapshot_id": "poi-2026-09-01",
+                },
+                {
+                    "source_poi_id": "POI-SILENT",
+                    "poi_name": "silent",
+                    "poi_category": "Education",
+                    "address_raw": "台北市信義區忠孝東路五段",
+                    "latitude": 25.040944,
+                    "longitude": 121.565472,
+                    "status": "active",
+                    "snapshot_id": "poi-2026-09-01",
+                },
+            ]
+        )
+        assert not run.quarantined, run.quarantine_reasons()
+
+        by_source = {d["source_poi_id"]: d for d in run.canonical_entity_dicts()}
+
+        assert by_source["POI-MEASURED"]["confidence"] == 1.0
+        assert by_source["POI-MEASURED"]["confidence_provenance"] == "measured"
+        # The source said nothing; it must not arrive downstream as a perfect 1.00.
+        assert by_source["POI-SILENT"]["confidence"] is None
+        assert by_source["POI-SILENT"]["confidence_provenance"] == "unmeasured"
+
+    def test_a_competitor_source_row_without_confidence_stays_unmeasured(
+        self,
+    ) -> None:
+        run = self._competitor_connector().ingest(
+            [
+                {
+                    "source_competitor_id": "CS-SILENT",
+                    "brand_name": "rival",
+                    "store_name": "rival branch",
+                    "address_raw": "台北市信義區忠孝東路五段",
+                    "latitude": 25.040944,
+                    "longitude": 121.565472,
+                    "status": "active",
+                    "snapshot_id": "competitor-2026-09-01",
+                }
+            ]
+        )
+        assert not run.quarantined, run.quarantine_reasons()
+
+        payload = run.canonical_entity_dicts()[0]
+        assert payload["confidence"] is None
+        assert payload["confidence_provenance"] == "unmeasured"
+
+    def test_a_pre_cutover_aggregate_is_not_republished_as_measured(self) -> None:
+        """The same projection, applied to a reloaded legacy payload."""
+        legacy = pickle.loads(pickle.dumps(as_pre_cutover(Poi(confidence=1.0))))
+        payload = canonical_measurement_dict(legacy)
+
+        assert payload["confidence"] is None
+        assert payload["confidence_provenance"] == "legacy_unknown"
 
 
 # The Python half of the Poi / CompetitorStore aggregation contract lives in

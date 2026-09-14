@@ -57,7 +57,6 @@ from modules.integration.connectors.base import (
     first_time,
 )
 from modules.integration.domain.contracts import ContractIssue
-from shared.domain.models import canonical_measurement_dict
 from shared.observability import new_correlation_id
 
 LISTING_PROVIDER_ID = "listing.partner_feed"
@@ -630,11 +629,7 @@ class CanonicalListingSnapshot:
 
     @property
     def canonical_records(self) -> tuple[dict[str, Any], ...]:
-        return tuple(
-            canonical_measurement_dict(record.canonical)
-            for record in self.connector_run.accepted
-            if record.canonical is not None
-        )
+        return self.connector_run.canonical_entity_dicts()
 
     @property
     def quarantine_records(self) -> tuple[ConnectorRecord, ...]:
