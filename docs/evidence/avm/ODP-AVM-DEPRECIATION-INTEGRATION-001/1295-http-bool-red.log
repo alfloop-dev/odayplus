@@ -1,0 +1,36 @@
+F...........                                                             [100%]
+=================================== FAILURES ===================================
+______ test_avm_api_rejects_invalid_useful_life_before_persistence[True] _______
+
+value = True
+
+    @pytest.mark.parametrize("value", [True, False, 1.9, "1.0000000000000000001", 0, -1])
+    def test_avm_api_rejects_invalid_useful_life_before_persistence(value: Any) -> None:
+        repository = InMemoryAVMRepository()
+        with TestClient(create_app(avm_repository=repository), headers=AVM_HEADERS) as client:
+            response = client.post(
+                "/api/v1/avm/cases",
+                json={**_original_cost_api_payload(), "useful_life_months": value},
+            )
+    
+>       assert response.status_code == 422, response.text
+E       AssertionError: {"case_id":"avm-case-e26da2af-2224-4cb8-97a7-da71b6aae170","store_id":"store-red-001","status":"DATA_READY","valuation_input":{"store_id":"store-red-001","gm_ttm":1200000.0,"forecast_gm_next_12m":980000.0,"asset_book_value":520000.0,"equipment_fair_value":180000.0,"lease_liability":90000.0,"working_capital":70000.0,"comparable_multiples":[2.1,2.4,2.8],"liquidity_discount":0.12,"quality_score":0.93,"quality_score_status":"measured","source_snapshot_ids":["forecast-20260627","asset-ledger-202606"],"prediction_origin_time":"2026-06-27T09:00:00+00:00","equipment_depreciation_basis":"original_cost","equipment_original_cost":120000.0,"asset_book_value_includes_equipment":true,"useful_life_months":1,"residual_value_ratio":0.1,"depreciation_method":"straight_line","depreciation_effective_date":"2026-02-01","asset_in_service_date":"2026-01-01","feature_version":"valuation-view-v2"},"created_by":"avm-life-boundary-test","created_at":"2026-09-13T07:05:03.223752+00:00","status_history":[{"from_status":"DATA_READY","to_status":"DATA_READY","actor":"avm-life-boundary-test","reason":"valuation request created with required inputs","timestamp":"2026-09-13T07:05:03.223752+00:00","correlation_id":"382dfb3e-610f-431c-a257-ade4b5e9030d"}],"created":true,"correlation_id":"382dfb3e-610f-431c-a257-ade4b5e9030d","audit_event_id":"f7795b77-155b-4a50-9cf6-82ca625da8aa","idempotent_replay":false}
+E       assert 201 == 422
+E        +  where 201 = <Response [201 Created]>.status_code
+
+tests/integration/test_avm_valuation.py:143: AssertionError
+----------------------------- Captured stderr call -----------------------------
+2026/09/13 07:04:55 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026/09/13 07:04:55 INFO mlflow.store.db.utils: Updating database tables
+{"timestamp": "2026-09-13T07:05:03.226843+00:00", "level": "INFO", "service": "oday-api", "actor": "user", "correlation_id": "382dfb3e-610f-431c-a257-ade4b5e9030d", "resource": "HTTP", "action": "POST", "result": "ok", "error_code": null, "message": "HTTP POST /api/v1/avm/cases ok"}
+------------------------------ Captured log call -------------------------------
+INFO     mlflow.store.db.utils:utils.py:87 Creating initial MLflow database tables...
+INFO     mlflow.store.db.utils:utils.py:294 Updating database tables
+=============================== warnings summary ===============================
+../pantheon-worker-worktrees/pantheon/odp-avm-depreciation-integration-001/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /tmp/pantheon-worker-worktrees/pantheon/odp-avm-depreciation-integration-001/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/integration/test_avm_valuation.py::test_avm_api_rejects_invalid_useful_life_before_persistence[True]

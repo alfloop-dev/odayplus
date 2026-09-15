@@ -1,0 +1,53 @@
+{
+  "task_id": "ODP-AVM-DEPRECIATION-INTEGRATION-001",
+  "source_commit": "b50bca51e62c58cf183d3a11076f1bb5a04d7817",
+  "source_sha256": {
+    "apps/api/oday_api/main.py": "92d254daf12996a86c281626c6a86da54326bfc5a4590ff6dfc7d3ef1020deb7",
+    "modules/avm/application/production.py": "aba1120834c415919da7d9a8f000d492809baa253c46dd588a16e9f997fd0876",
+    "modules/avm/domain/valuation.py": "352d2eb1a8775719c881e30a0596062e9cfdcac7bee4882c88fbefb2b98c0c7a",
+    "modules/avm/tests/test_avm_production_execution.py": "a64921ea45a2784545bff9331ba9e9e833416c75b71561ba1a55c14499d7c59e",
+    "tests/integration/test_avm_valuation.py": "44ede190d5321f1c68b19e7b2ec5647702d4b4e18fb16ae77674f3c4cb2fa3fb"
+  },
+  "receipts": [
+    {
+      "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-avm-depreciation-integration-001",
+      "head_sha": "7f6af4533ec4e1634d034664515dbd17fe8cb76b",
+      "tracked_diff_sha256": "fb6a3d8bd27e4e9a2f5d11573e36d74838403b569f4562fde6d8c5b95eb1b251",
+      "argv": [
+        "uv",
+        "run",
+        "pytest",
+        "-q",
+        "modules/avm/tests/test_avm_production_execution.py",
+        "-k",
+        "reloads_and_executes_real_oss_artifacts"
+      ],
+      "started_at": "2026-09-12T14:25:01.531792+00:00",
+      "duration_seconds": 36.173263902019244,
+      "exit_code": 0,
+      "output": "1295-artifact-verified.log"
+    },
+    {
+      "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-avm-depreciation-integration-001",
+      "head_sha": "b50bca51e62c58cf183d3a11076f1bb5a04d7817",
+      "tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "argv": [
+        "uv",
+        "run",
+        "pytest",
+        "-q",
+        "modules/avm/tests",
+        "tests/integration/test_avm_valuation.py",
+        "tests/integration/test_production_api_composition.py",
+        "-k",
+        "not reloads_and_executes_real_oss_artifacts",
+        "--junitxml=/tmp/codex-1295-suite.xml"
+      ],
+      "started_at": "2026-09-12T14:26:21.185134+00:00",
+      "duration_seconds": 105.18064531602431,
+      "exit_code": 0,
+      "output": "1295-suite-verified.log"
+    }
+  ],
+  "result": "2 real artifact cases plus 74 AVM/domain/durable/API composition cases passed. No skips in final runs. The artifact run used the same source before its commit; the remaining suite ran against the source commit with an empty tracked diff."
+}

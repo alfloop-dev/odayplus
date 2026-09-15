@@ -65,7 +65,7 @@ else:
         attributes: dict[str, Any] = Field(default_factory=dict)
         media_attachments: list[dict[str, Any]] = Field(default_factory=list)
         surveyed_at: str | None = None
-        confidence: float | None = 1.0
+        confidence: float | None = None
         metadata: dict[str, Any] = Field(default_factory=dict)
 
     class CancelAssignmentPayload(BaseModel):

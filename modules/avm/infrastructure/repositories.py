@@ -9,6 +9,8 @@ from modules.avm.domain import (
     NormalizedMargin,
     ValuationCase,
     ValuationReport,
+    rehydrate_legacy_report,
+    rehydrate_legacy_valuation_card,
 )
 
 
@@ -45,6 +47,7 @@ class InMemoryAVMRepository:
         )
 
     def _dispose_legacy_report(self, report: ValuationReport) -> ValuationReport:
+        report = rehydrate_legacy_report(report)
         if not (
             self._case_has_legacy_quality(report.case_id)
             or report.is_legacy_quality_unknown
@@ -90,6 +93,12 @@ class InMemoryAVMRepository:
         dataroom = self._datarooms.get(case_id)
         if dataroom is None:
             return None
+        rehydrated_card = rehydrate_legacy_valuation_card(dataroom.valuation_card)
+        if rehydrated_card != dataroom.valuation_card:
+            dataroom = DataRoom(
+                **{**dataroom.__dict__, "valuation_card": rehydrated_card}
+            )
+            self._datarooms[case_id] = dataroom
         if self._case_has_legacy_quality(case_id) or dataroom.is_legacy_quality_unknown:
             dataroom = dataroom.with_legacy_quality_disposition()
             self._datarooms[case_id] = dataroom

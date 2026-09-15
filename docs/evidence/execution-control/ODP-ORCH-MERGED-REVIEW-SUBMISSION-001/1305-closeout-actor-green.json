@@ -1,0 +1,23 @@
+{
+  "cwd": "/tmp/codex-1305-tooling-closeout",
+  "head_sha": "749e740a1ed2cd10bffa56cad0dcf3ddbf93983f",
+  "tracked_diff_sha256": "c33397cd1cfe9168e5d01279c8a1db7ff6ed7799665d0346433bf975e0cca215",
+  "argv": [
+    "env",
+    "UV_PROJECT_ENVIRONMENT=/tmp/pantheon-worker-worktrees/pantheon/odp-orch-merged-review-submission-001/.venv",
+    "uv",
+    "run",
+    "--no-sync",
+    "pytest",
+    "-o",
+    "addopts=",
+    "-q",
+    "scripts/test_ai_status.py",
+    "-k",
+    "ActorCommandMutationGuard or ToolingCloseout or remote_lookup_errors_cannot_be_reused_as_absence or r3_workspace_reattachment_rejects_clean_detached_drift"
+  ],
+  "started_at": "2026-09-13T15:38:55.002300+00:00",
+  "duration_seconds": 4.147597652976401,
+  "exit_code": 0,
+  "output": "1305-closeout-actor-green.log"
+}

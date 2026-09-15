@@ -56,6 +56,8 @@ from delivery_toolchain.release.release_manifest import (  # noqa: E402
     SOURCES_OFF_PROVIDER_MODE,
     SOURCES_OFF_RUNTIME_PROBE_RECEIPT,
     _sources_off_egress_contract_errors,
+    _wired_env_names,
+    _wired_env_value,
     build_initial_release_recovery,
     build_release_manifest,
     build_sources_off_attestation,
@@ -63,11 +65,13 @@ from delivery_toolchain.release.release_manifest import (  # noqa: E402
     classify_source_env_var,
     compute_data_contract_digest,
     compute_source_policy_digest,
+    ensure_candidate_commit,
     env_var_belongs_to_source,
     extract_rollback_release_binding,
     initial_release_recovery_errors,
     is_exact_sha,
     load_manifest,
+    read_sources_off_contract_file,
     sources_off_attestation_errors,
     validate_manifest,
     validate_release_admission,
@@ -106,42 +110,12 @@ def _parse_assignment(raw: str) -> tuple[str, str]:
 PROVIDER_MODE_ENV_VAR = "ODP_EXTERNAL_PROVIDER_MODE"
 
 
-def _wired_env_value(workflow_text: str, name: str) -> str | None:
-    """回傳 workflow 實際接到 runtime 的 env 值；未接線時回傳 ``None``。
-
-    只認 YAML 的 ``NAME: value`` 形式，因此註解裡提到變數名稱不會被誤判成接線。
-    """
-
-    pattern = re.compile(rf"^[ \t]*{re.escape(name)}:[ \t]*(.*?)[ \t]*$", re.MULTILINE)
-    values = [match.group(1).strip().strip('"').strip("'") for match in pattern.finditer(workflow_text)]
-    wired = [value for value in values if value]
-    if not wired:
-        return None
-    return wired[0]
-
-
-def _wired_env_names(workflow_text: str) -> tuple[str, ...]:
-    """回傳 workflow 真正接到 runtime 的環境變數名稱（去重、排序）。
-
-    和 :func:`_wired_env_value` 同一個判準：只認 ``NAME: value`` 且值非空，所以
-    註解裡提到的變數名稱不算接線。列舉名稱而不是逐一查已知清單，release
-    toolchain 才不需要自己記住任何 provider 的變數叫什麼。
-    """
-
-    pattern = re.compile(r"^[ \t]*([A-Z][A-Z0-9_]*):[ \t]*(.*?)[ \t]*$", re.MULTILINE)
-    names = {
-        match.group(1)
-        for match in pattern.finditer(workflow_text)
-        if match.group(2).strip().strip('"').strip("'")
-    }
-    return tuple(sorted(names))
-
-
 def derive_sources_off_posture(
     *,
     workflow_path: Path,
     enabled_sources: list[str] | None = None,
     resolved_egress: str | None = None,
+    candidate_sha: str | None = None,
     root: Path = ROOT,
 ) -> dict[str, Any]:
     """從 release SHA 上的 deploy workflow 推導出實際的 data-plane posture。
@@ -159,12 +133,29 @@ def derive_sources_off_posture(
     """
 
     try:
-        workflow_text = workflow_path.read_text(encoding="utf-8")
-    except OSError as exc:
+        if candidate_sha is None:
+            workflow_text = workflow_path.read_text(encoding="utf-8")
+        else:
+            workflow_text = read_sources_off_contract_file(
+                DEFAULT_WORKFLOW_PATH, root=root, candidate_sha=candidate_sha
+            )
+            # A caller may name a separate copy, but cannot substitute a clean
+            # workflow for the workflow deployed by this candidate. The default
+            # checkout path is never read in candidate mode, even when dirty.
+            if workflow_path.resolve() != (root / DEFAULT_WORKFLOW_PATH).resolve():
+                if workflow_path.read_text(encoding="utf-8") != workflow_text:
+                    raise HandoffError([
+                        "workflow override does not match candidate " + candidate_sha
+                    ])
+        deploy_entrypoint_text = read_sources_off_contract_file(
+            "product_ops/deployment/deploy_cloud_run_waji.sh",
+            root=root, candidate_sha=candidate_sha,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
         raise HandoffError(
             [
-                f"無法讀取 deploy workflow {workflow_path}：{exc}；"
-                "sources-off posture 必須由 release SHA 上的 workflow 推導，不接受手填。"
+                f"無法讀取 sources-off workflow/entrypoint：{exc}；"
+                "sources-off posture 必須由 release SHA 上的內容推導，不接受手填。"
             ]
         ) from exc
 
@@ -183,12 +174,6 @@ def derive_sources_off_posture(
         == "${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}"
         and _wired_env_value(workflow_text, "ODP_CLOUD_RUN_VPC_EGRESS")
         == "${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}"
-    )
-    deploy_entrypoint = root / "product_ops/deployment/deploy_cloud_run_waji.sh"
-    deploy_entrypoint_text = (
-        deploy_entrypoint.read_text(encoding="utf-8")
-        if deploy_entrypoint.is_file()
-        else ""
     )
     deploy_entrypoint_vpc_binding = all(
         token in deploy_entrypoint_text
@@ -213,7 +198,9 @@ def derive_sources_off_posture(
         "all-traffic": SOURCES_OFF_CLOUD_RUN_EGRESS,
         "all_traffic": SOURCES_OFF_CLOUD_RUN_EGRESS,
     }.get(raw_resolved_egress.lower(), raw_resolved_egress or "unresolved")
-    contract_errors = _sources_off_egress_contract_errors(root=root)
+    contract_errors = _sources_off_egress_contract_errors(
+        root=root, candidate_sha=candidate_sha
+    )
     egress_contract_verified = (
         workflow_vpc_binding
         and deploy_entrypoint_vpc_binding
@@ -275,6 +262,7 @@ def derive_sources_off_posture(
             resolved_cloud_run_egress=resolved_cloud_run_egress,
             provider_credentials_runtime=provider_credentials_runtime,
             root=root,
+            candidate_sha=candidate_sha,
         ),
     }
 
@@ -381,7 +369,7 @@ def build_handoff(
             if raw_str.startswith("{") and raw_str.endswith("}"):
                 try:
                     previous_manifest = json.loads(raw_str)
-                    previous_errors = validate_manifest(previous_manifest)
+                    previous_errors = validate_manifest(previous_manifest, root=root)
                 except Exception as exc:
                     previous_manifest = None
                     previous_errors = [f"無法解析 rollback manifest JSON 字串：{exc}"]
@@ -393,7 +381,7 @@ def build_handoff(
                     "取回工作區再傳入。"
                 ]
             else:
-                previous_manifest, previous_errors = load_manifest(Path(rollback_source))
+                previous_manifest, previous_errors = load_manifest(Path(rollback_source), root=root)
             if previous_errors or previous_manifest is None:
                 errors.extend([f"無法載入 rollback manifest：{e}" for e in previous_errors])
         elif isinstance(rollback_source, dict):
@@ -402,15 +390,19 @@ def build_handoff(
             errors.append("rollback manifest 必須是完整 manifest dict 或檔案路徑")
 
         if previous_manifest is not None:
+            prev_sha = previous_manifest.get("candidate_sha")
+            if is_exact_sha(prev_sha):
+                ensure_candidate_commit(prev_sha, root=root)
             rb_errs = validate_rollback_manifest(
                 previous_manifest,
                 current_candidate_sha=release_sha,
                 current_release_id=effective_release_id,
+                root=root,
             )
             if rb_errs:
                 errors.extend([f"rollback manifest 無效：{e}" for e in rb_errs])
             else:
-                resolved_rollback_release = extract_rollback_release_binding(previous_manifest)
+                resolved_rollback_release = extract_rollback_release_binding(previous_manifest, root=root)
 
     enabled_sources = [
         str(source).strip()
@@ -531,6 +523,7 @@ def build_handoff(
                             else root / DEFAULT_WORKFLOW_PATH
                         ),
                         enabled_sources=enabled_sources,
+                        candidate_sha=release_sha,
                         root=root,
                     )
                 except HandoffError as exc:
@@ -543,12 +536,14 @@ def build_handoff(
                         provider_mode=posture["provider_mode"],
                         sources_inventory=posture["sources_inventory"],
                         egress_evidence=posture["egress_evidence"],
+                        root=root,
                     )
                     posture_errors = sources_off_attestation_errors(
                         candidate,
                         candidate_sha=release_sha,
                         components=manifest_components,
                         source_policy_digest=compute_source_policy_digest(root=root),
+                        root=root,
                     )
                     if posture_errors:
                         errors.extend(
@@ -602,11 +597,11 @@ def build_handoff(
     )
 
     # 自我驗證：不把一份自己都驗不過的 manifest 交給 admission。
-    self_check = validate_manifest(manifest, expected_candidate_sha=release_sha)
+    self_check = validate_manifest(manifest, expected_candidate_sha=release_sha, root=root)
     self_check.extend(
         error
         for error in validate_release_admission(
-            manifest, environment=target_environment
+            manifest, environment=target_environment, root=root
         )
         if error not in self_check
     )

@@ -12,6 +12,7 @@ from models.shared_ml.output_contracts import (
     require_output_contract,
     sitescore_90d_sum_to_monthly,
 )
+from shared.domain.models import MEASUREMENT_MEASURED, MEASUREMENT_UNMEASURED
 
 SITESCORE_MODEL_VERSION = "sitescore-baseline-v1"
 SITESCORE_FEATURE_VERSION = "candidate-site-view-v2"
@@ -198,6 +199,13 @@ class SiteScoreReport:
     feature_snapshot_time: datetime
     prediction_origin_time: datetime
     scored_at: datetime
+    # ``confidence`` above is the *scoring* figure and stays numeric: an
+    # abstaining site is scored with the widest band and the lowest
+    # recommendation tier rather than being dropped. ``confidence_status``
+    # records whether that figure was measured at all, so the canonical
+    # ``Prediction`` this report produces can express absence as NULL instead
+    # of persisting an abstention as a measured 0.0.
+    confidence_status: str = MEASUREMENT_MEASURED
     heat_zone_id: str = ""
     source_snapshot_ids: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
@@ -237,6 +245,7 @@ class SiteScoreReport:
             "key_positive_factors": list(self.key_positive_factors),
             "key_negative_factors": list(self.key_negative_factors),
             "confidence": self.confidence,
+            "confidence_status": self.confidence_status,
             "model_version": self.model_version,
             "feature_version": self.feature_version,
             "feature_snapshot_time": self.feature_snapshot_time.isoformat(),
@@ -264,6 +273,7 @@ class SiteScoreReport:
             "keyPositiveFactors": list(self.key_positive_factors),
             "keyNegativeFactors": list(self.key_negative_factors),
             "confidence": self.confidence,
+            "confidenceStatus": self.confidence_status,
             "modelVersion": self.model_version,
             "featureSnapshotTime": self.feature_snapshot_time.isoformat(),
         }
@@ -358,7 +368,14 @@ def _score_feature(
         if feature.heat_zone_score
         else feature.poi_demand_index
     )
-    confidence = _confidence(feature)
+    measured_confidence = _confidence(feature)
+    # Abstention arithmetic stays numeric so an unmeasured site still gets the
+    # widest band and the lowest recommendation tier; only the *reported*
+    # figure carries the absence marker downstream.
+    confidence = 0.0 if measured_confidence is None else measured_confidence
+    confidence_status = (
+        MEASUREMENT_UNMEASURED if measured_confidence is None else MEASUREMENT_MEASURED
+    )
     if mature_revenue_prediction is None:
         mature_p50 = _mature_revenue(feature, demand)
         spread = (1.0 - confidence) * 0.40 + 0.12
@@ -411,6 +428,7 @@ def _score_feature(
         key_positive_factors=positives,
         key_negative_factors=negatives,
         confidence=round(confidence, 4),
+        confidence_status=confidence_status,
         model_version=model_version,
         feature_version=feature.view_version,
         feature_snapshot_time=feature_snapshot_time,
@@ -466,13 +484,15 @@ def _rent_reasonableness(monthly_rent: float, mature_p50: float) -> float:
     return _bounded(1.0 - (rent_ratio - 0.15) / 0.30)
 
 
-def _confidence(feature: SiteScoreFeatureInput) -> float:
+def _confidence(feature: SiteScoreFeatureInput) -> float | None:
     # Fail closed on either quality component being unmeasured. Substituting a
     # 1.0 identity for the missing side reports an unmeasured site as measured, and
     # scores it strictly above a site whose quality was actually measured at the
-    # same figure.
+    # same figure. Returning ``None`` rather than ``0.0`` keeps absence
+    # distinguishable from a genuinely measured zero all the way to the
+    # canonical ``Prediction`` producer boundary.
     if feature.average_confidence is None or feature.data_quality_score is None:
-        return 0.0
+        return None
     confidence = _bounded(feature.average_confidence * feature.data_quality_score)
     if feature.comparable_store_count == 0:
         confidence *= 0.5

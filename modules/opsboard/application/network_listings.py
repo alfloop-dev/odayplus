@@ -544,7 +544,8 @@ class NetworkListingService:
             "areaPing": lst.area_ping,
             "floor": lst.floor,
             "frontageMeters": int(lst.frontage_m) if lst.frontage_m else 0,
-            "listingConfidence": lst.confidence,
+            "listingConfidence": lst.effective_confidence,
+            "listingConfidenceProvenance": lst.effective_confidence_provenance,
             # Not lst.confidence. That is extraction confidence -- how sure the
             # parser is about the rent and area it read -- and a listing whose
             # address never resolved would otherwise report a fully-confident
@@ -601,9 +602,7 @@ class NetworkListingService:
             area_ping=float(d["areaPing"]),
             floor=d["floor"],
             frontage_m=float(d.get("frontageMeters") or 0),
-            confidence=_optional_float(
-                d.get("listingConfidence"), default=geocode_confidence
-            ),
+            confidence=_optional_number(d.get("listingConfidence"), float),
             snapshot_id=d.get("sourceUrl") or "",
         )
         addr = AddressLocation(
