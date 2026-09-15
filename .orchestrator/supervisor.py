@@ -245,6 +245,7 @@ _FAILURE_HELPER_FUNCTIONS = [
 "_parse_iso_utc",
 "_provider_guardrail_bucket",
 "_task_failure_streak_bucket",
+"_settle_fenced_sibling_worker",
 "agent_auto_dispatch_block_reason",
 "agent_can_take_task",
 "agent_dispatch_disabled",
@@ -337,6 +338,9 @@ _FAILURE_HELPER_FUNCTIONS = [
 "worker_runtime_metrics_bucket",
 "worker_runtime_settings",
 "worker_supports_approval_resume",
+"worker_writer_pids",
+"worker_writers_are_alive",
+"terminate_worker_writers",
 "write_status_snapshot_if_current",
 ]
 
@@ -3576,6 +3580,25 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
     workers = state.setdefault("workers", {})
 
     for run_id, worker in list(workers.items()):
+        if not isinstance(worker, dict):
+            continue
+        pending_fence = worker.get("pending_fence")
+        if isinstance(pending_fence, dict):
+            if worker_writers_are_alive(worker):
+                terminate_worker_writers(worker)
+            if not worker_writers_are_alive(worker):
+                settled = _settle_fenced_sibling_worker(
+                    config,
+                    state,
+                    worker,
+                    str(pending_fence.get("pool_id") or ""),
+                    str(pending_fence.get("reason") or ""),
+                )
+                if settled:
+                    changed = True
+                    continue
+            changed = True
+            continue
         if worker.get("status") == "failed":
             task_id = str(worker.get("task_id") or "")
             task = task_map.get(task_id)
