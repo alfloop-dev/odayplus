@@ -535,7 +535,7 @@ Wave 0 中，manifest 與 admission 會接觸共同介面，必須明確指定�
 - WIF provider、deployment service account、runtime service accounts、KMS key。
 - Cloud SQL、GKE、Artifact Registry、Cloud Run、Cloud Scheduler 與 bucket 的既有或待建資源。
 - GitHub `staging`、`production` environment required reviewers 與 secrets/vars ownership。
-- production 營運治理參數（PROD-OPS-05）：watch window 30 分鐘、SLO 門檻（錯誤率 < 5% 且 p95 < 5 秒）、rollback 觸發條件（錯誤率 > 10% 持續 5 分鐘、p95 > 10 秒持續 5 分鐘、health check 連續失敗 3 次）、rollback / on-call owner（Human/Ops：`bjoe734@gmail.com`）。上述數值為人工判斷之寬鬆初始值（非自動化閘門），首次 production 部署後以實測數據收窄；PROD-GCP-01~04 依既存配置維持。
+- production 營運治理參數（PROD-OPS-05）：watch window 30 分鐘、SLO 門檻（錯誤率 < 5% 且 p95 < 5 秒）、rollback 觸發條件（錯誤率 > 10% 持續 5 分鐘、p95 > 10 秒持續 5 分鐘、health check 連續失敗 3 次）、rollback / on-call owner（Human/Ops：`bjoe734@gmail.com`）。上述數值為人工判斷之寬鬆初始值（非自動化閘門），首次 production 部署後以實測數據收窄。
 - masked staging snapshot 的來源、遮罩責任人與保存期限。
 
 這些外部 authority 未準備好時，Auto Worker 可以完成 code、IaC、tests 與 dry-run，但不能宣稱環境已實際部署。

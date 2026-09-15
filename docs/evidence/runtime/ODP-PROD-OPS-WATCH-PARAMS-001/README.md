@@ -37,8 +37,8 @@
    - 系統**不會**自動依門檻觸發回退，須由 rollback / on-call owner 人工判定後執行回滾指令。
 3. **未修改 workflow 與部署腳本**：
    本任務嚴格限定於補齊治理參數，未修改 `deploy-dev.yml`、`bluegreen_release.py` 或任何 CI/CD workflow。
-4. **PROD-GCP-01~04 保持既存配置**：
-   PROD-GCP-01 至 PROD-GCP-04 既有之配置與狀態不受影響，未做順帶修改或重新宣告。
+4. **範圍邊界（PROD-GCP-01~04 不在範圍內）**：
+   PROD-GCP-01 至 PROD-GCP-04 不在本任務範圍內，本任務僅針對 PROD-OPS-05 填入營運治理參數，未在文件中修改或重新宣告 PROD-GCP-01~04 之狀態。
 
 ---
 
