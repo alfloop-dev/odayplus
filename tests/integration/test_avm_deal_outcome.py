@@ -59,6 +59,7 @@ def test_avm_router_deal_outcomes_and_calibration_endpoints(monkeypatch: pytest.
         forecast_gm_next_12m=2_200_000.0,
         asset_book_value=3_000_000.0,
         equipment_fair_value=1_000_000.0,
+        equipment_depreciation_basis="appraised_fair_value",
         quality_score=0.95,
     )
     case = service.create_case(val_input, created_by="operator-1", correlation_id="corr-1")

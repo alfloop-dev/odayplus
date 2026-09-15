@@ -1,0 +1,13 @@
+{
+  "base_head": "a5ab3477b95fd86cdbd94cb4fc6dce6ae6d867de",
+  "source_sha256": {
+    ".orchestrator/runtime_state.py": "2914bc4d3c1c56b654d9ab02a8cdb945d6a92689f9a4f60e82849cd9918b3add",
+    ".orchestrator/worker_failure_policy.py": "f13caa959c7e08d3db8b61ba6021ab232c9880c7b5bd35c98f40bf86c58c3527",
+    ".orchestrator/test_provider_failure_epoch.py": "5b384b21690a4fe4334b926cb63d3d9dd56f5d02d5bcfa024e4ed411622137d9"
+  },
+  "focused_result": "179 passed, 38 subtests passed",
+  "independent_result": "18 passed; no remaining finding in this narrow correction",
+  "ruff": "passed",
+  "boundary": "passed,1161 files",
+  "canonical_approval": false
+}

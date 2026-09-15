@@ -17,7 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
@@ -629,11 +629,7 @@ class CanonicalListingSnapshot:
 
     @property
     def canonical_records(self) -> tuple[dict[str, Any], ...]:
-        return tuple(
-            asdict(record.canonical)
-            for record in self.connector_run.accepted
-            if record.canonical is not None
-        )
+        return self.connector_run.canonical_entity_dicts()
 
     @property
     def quarantine_records(self) -> tuple[ConnectorRecord, ...]:

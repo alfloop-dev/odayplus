@@ -63,8 +63,13 @@ DELIVERY_GIT_DIR = ROOT / "delivery_toolchain" / "git"
 if str(DELIVERY_GIT_DIR) not in sys.path:
     sys.path.insert(0, str(DELIVERY_GIT_DIR))
 
+DELIVERY_GOVERNANCE_DIR = ROOT / "delivery_toolchain" / "governance"
+if str(DELIVERY_GOVERNANCE_DIR) not in sys.path:
+    sys.path.insert(0, str(DELIVERY_GOVERNANCE_DIR))
+
 import common as orchestrator_common
 from check_task_delivery_identity import validate_delivery_identity
+from classify_change_review_scope import classify_paths
 from common import (
     classify_reopen_reason,
 )
@@ -714,6 +719,57 @@ def continuation_approval_validation_error(
         return "approval expires before or at issue time"
     if expires_at.astimezone(UTC) <= current:
         return "approval has expired"
+    return None
+
+
+def task_unresolved_human_or_independent_gate_reason(task: dict[str, Any]) -> str | None:
+    """Return why a task carries an unresolved human or independent gate blocking submission."""
+    if not isinstance(task, dict):
+        return None
+    task_class = str(task.get("task_class") or "").strip().lower()
+    if task_class == "human_gate" or bool(task.get("non_dispatchable")):
+        return "task carries an unresolved human gate (human or non-dispatchable gate)"
+    if task.get("requires_human_approval") is True or task.get("human_required_roles"):
+        return "task carries an unresolved human approval gate"
+    for gate_field in (
+        "credentials_gate",
+        "credential_gate",
+        "deployment_gate",
+        "production_gate",
+        "external_data_gate",
+        "human_gate",
+    ):
+        if task.get(gate_field):
+            return f"task carries an unresolved independent {gate_field}"
+    gate_status = str(task.get("gate_status") or "").strip().casefold()
+    if gate_status.startswith("pending_human"):
+        return f"task carries an unresolved human gate status ({gate_status})"
+    return None
+
+
+def resolve_immutable_merged_task_sha(task: dict[str, Any]) -> str | None:
+    """Resolve and verify the immutable source SHA for a merged review submission."""
+    submission = task.get("review_submission")
+    if not isinstance(submission, dict) or not submission.get("merged_at") or not submission.get("merge_commit"):
+        return None
+    submitted_sha = str(submission.get("remote_sha") or "").strip()
+    merge_commit = str(submission.get("merge_commit") or "").strip()
+    if not submitted_sha or not merge_commit:
+        return None
+    config = status_runtime_config()
+    repository_id = task_repository_id(config, task) or "pantheon"
+    repo_root = repository_local_path(config, repository_id) or ROOT
+    target_branch = delivery_merge_target_branch(config, repository_id)
+    target_ref = f"origin/{target_branch}"
+    if not git_command_succeeds(["rev-parse", "--verify", target_ref], cwd=repo_root):
+        target_ref = target_branch
+    if (
+        git_command_succeeds(["cat-file", "-e", f"{submitted_sha}^{{commit}}"], cwd=repo_root)
+        and git_command_succeeds(["cat-file", "-e", f"{merge_commit}^{{commit}}"], cwd=repo_root)
+        and git_command_succeeds(["merge-base", "--is-ancestor", submitted_sha, merge_commit], cwd=repo_root)
+        and git_command_succeeds(["merge-base", "--is-ancestor", merge_commit, target_ref], cwd=repo_root)
+    ):
+        return submitted_sha
     return None
 
 
@@ -2676,7 +2732,11 @@ def latest_status_check_runs(
     return latest, superseded
 
 
-def normalized_green_pr_checks(pr_status: dict[str, Any]) -> list[dict[str, Any]]:
+def normalized_green_pr_checks(
+    pr_status: dict[str, Any],
+    *,
+    exclude_review_gate: bool = False,
+) -> list[dict[str, Any]]:
     """Return auditable successful PR checks, failing closed on every other shape."""
 
     raw_rollup = pr_status.get("statusCheckRollup")
@@ -2693,8 +2753,11 @@ def normalized_green_pr_checks(pr_status: dict[str, Any]) -> list[dict[str, Any]
         if not isinstance(raw_check, dict):
             failed.append(f"check-{index} (malformed)")
             continue
-        check_type = str(raw_check.get("__typename") or "").strip()
         name = str(raw_check.get("name") or raw_check.get("context") or f"check-{index}").strip()
+        context = str(raw_check.get("context") or "").strip()
+        if exclude_review_gate and (name == "task-review-gate" or context == "task-review-gate"):
+            continue
+        check_type = str(raw_check.get("__typename") or "").strip()
         conclusion = str(raw_check.get("conclusion") or "").upper()
         status = str(raw_check.get("status") or "").upper()
         state = str(raw_check.get("state") or "").upper()
@@ -2722,6 +2785,11 @@ def normalized_green_pr_checks(pr_status: dict[str, Any]) -> list[dict[str, Any]
             }
         )
 
+    if not checks:
+        raise SystemExit(
+            "Cannot finalize task: merged PR has no verifiable CI status checks."
+        )
+
     if failed or pending:
         issues: list[str] = []
         if failed:
@@ -2736,12 +2804,14 @@ def normalized_green_pr_checks(pr_status: dict[str, Any]) -> list[dict[str, Any]
     for index, raw_check in enumerate(superseded_checks, start=1):
         if not isinstance(raw_check, dict):
             continue
+        name = str(raw_check.get("name") or raw_check.get("context") or f"superseded-{index}").strip()
+        context = str(raw_check.get("context") or "").strip()
+        if exclude_review_gate and (name == "task-review-gate" or context == "task-review-gate"):
+            continue
         checks.append(
             {
                 "type": str(raw_check.get("__typename") or "").strip() or None,
-                "name": str(
-                    raw_check.get("name") or raw_check.get("context") or f"superseded-{index}"
-                ).strip(),
+                "name": name,
                 "status": str(raw_check.get("status") or raw_check.get("state") or "").upper() or None,
                 "conclusion": str(
                     raw_check.get("conclusion") or raw_check.get("state") or ""
@@ -6689,37 +6759,73 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
-def review_submission_for_task(task: dict[str, Any], pr_number: str) -> dict[str, Any]:
-    """Return immutable evidence that an *open* task PR exists on GitHub.
+def review_submission_for_task(
+    task: dict[str, Any],
+    pr_number: str,
+    *,
+    actor: str | None = None,
+) -> dict[str, Any]:
+    """Inspect and validate a GitHub PR as atomic evidence for review submission.
 
-    A local branch, a task handoff note, and a GitHub check are all insufficient
-    evidence on their own.  The reviewer must be looking at a remotely published
-    task branch and at the PR which carries its exact current SHA into the
-    configured integration branch.  Keeping this check here makes the status
+    Reviewers run with an immutable checked-out commit, and never gather PR
+    evidence on their own. The reviewer must be looking at a remotely published
+    task branch or a verified merged PR which carries its exact immutable SHA into the
+    configured integration branch. Keeping this check here makes the status
     transition atomic: a worker cannot first label work ``review`` and only
     later discover that its branch was never pushed.
+
+    Supports:
+    1. Active OPEN task PRs (standard flow): validates remote branch exists on origin,
+       matches exact branch and base, non-draft, and delivery identity passes.
+    2. Merged task PRs (exact-head recovery flow): validates PR was MERGED into the
+       configured base branch, immutable source SHA and merge commit are valid git
+       objects with verifiable ancestry in target history, and all required CI checks
+       concluded with terminal SUCCESS.
     """
 
     task_id = str(task.get("id") or "").strip()
     if not task_id or not pr_number.isdigit():
         raise SystemExit("Review submission requires a task id and numeric PR number")
 
+    task_status_lower = str(task.get("status") or "").strip().lower()
+    # R2: Only block submission when the task is explicitly in blocked status.
+    # The blocker→start workflow resolves blockers and sets status=in_progress
+    # but intentionally retains waiting_for as historical context.  Checking
+    # waiting_for alone would incorrectly reject a valid OPEN submission after
+    # all blockers are resolved.  Actual unresolved human/blocked gates are
+    # caught by the explicit status check and the human_gate checks below.
+    if task_status_lower == "blocked":
+        waiting_for = task.get("waiting_for") or "unspecified"
+        raise SystemExit(
+            f"Cannot submit {task_id} for review: task is currently blocked (waiting for {waiting_for}). "
+            "Resolve the blocker or human gate before submitting for review."
+        )
+    gate_reason = task_unresolved_human_or_independent_gate_reason(task)
+    if gate_reason:
+        raise SystemExit(
+            f"Cannot submit {task_id} for review: {gate_reason}."
+        )
+
     config = status_runtime_config()
     repository_id = task_repository_id(config, task) or "pantheon"
     repository_root = repository_local_path(config, repository_id) or ROOT
+    repository_slug_val = (
+        repository_slug(config, repository_id)
+        or git_remote_repository_slug(repository_root, "origin")
+        or get_repository_slug_safe()
+    )
     branch = task_branch_name(task, task_id)
     base_branch = delivery_merge_target_branch(config, repository_id)
-    remote_sha = resolve_task_sha(task_id, force_refresh=True)
-    if not remote_sha:
-        raise SystemExit(
-            f"Cannot submit {task_id} for review: origin/{branch} is missing. "
-            "Push the task branch with delivery_toolchain/git/task_finalize.sh first."
-        )
 
+    repo_args = ["--repo", repository_slug_val] if repository_slug_val else []
     pr = run_gh_json_command(
         [
-            "pr", "view", pr_number,
-            "--json", "number,state,url,headRefName,headRefOid,baseRefName,isDraft",
+            "pr",
+            "view",
+            pr_number,
+            "--json",
+            "number,state,url,headRefName,headRefOid,baseRefName,isDraft,mergedAt,mergeCommit,statusCheckRollup",
+            *repo_args,
         ],
         cwd=repository_root,
     )
@@ -6727,38 +6833,161 @@ def review_submission_for_task(task: dict[str, Any], pr_number: str) -> dict[str
         raise SystemExit(
             f"Cannot submit {task_id} for review: GitHub PR #{pr_number} cannot be verified."
         )
-    if (
-        str(pr.get("state") or "").upper() != "OPEN"
-        or bool(pr.get("isDraft"))
-        or str(pr.get("headRefName") or "") != branch
-        or str(pr.get("headRefOid") or "") != remote_sha
-        or str(pr.get("baseRefName") or "") != base_branch
+
+    pr_state = str(pr.get("state") or "").upper()
+    is_draft = bool(pr.get("isDraft"))
+    head_branch = str(pr.get("headRefName") or "").strip()
+    base_name = str(pr.get("baseRefName") or "").strip()
+    head_oid = str(pr.get("headRefOid") or "").strip()
+    pr_url = str(pr.get("url") or "")
+
+    if is_draft:
+        raise SystemExit(
+            f"Cannot submit {task_id} for review: PR #{pr_number} is a draft; mark it ready for review first."
+        )
+    if head_branch != branch:
+        raise SystemExit(
+            f"Cannot submit {task_id} for review: PR #{pr_number} head branch '{head_branch}' "
+            f"does not match task branch '{branch}'."
+        )
+    if base_name != base_branch:
+        raise SystemExit(
+            f"Cannot submit {task_id} for review: PR #{pr_number} base branch '{base_name}' "
+            f"does not match expected target branch '{base_branch}'."
+        )
+    if not head_oid or not (
+        re.fullmatch(r"[0-9a-fA-F]{40}", head_oid) or re.fullmatch(r"[0-9a-fA-F]{64}", head_oid)
     ):
         raise SystemExit(
-            f"Cannot submit {task_id} for review: PR #{pr_number} must be an open, non-draft "
-            f"{branch} -> {base_branch} PR at remote SHA {remote_sha[:8]}."
+            f"Cannot submit {task_id} for review: PR #{pr_number} has invalid head commit SHA '{head_oid}'."
         )
-    identity_errors = validate_delivery_identity(
-        repository_root,
-        task_id=task_id,
-        base=base_branch,
-        head=remote_sha,
-        expected_branch=branch,
-        actual_branch=str(pr.get("headRefName") or ""),
+
+    if pr_state == "OPEN":
+        try:
+            remote_sha = resolve_task_sha(task_id, force_refresh=True)
+        except RuntimeError as exc:
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: remote branch lookup failed ({exc}). "
+                "Verify network connectivity and retry."
+            ) from exc
+        if not remote_sha:
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: origin/{branch} is missing. "
+                "Push the task branch with delivery_toolchain/git/task_finalize.sh first."
+            )
+        if head_oid != remote_sha:
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: PR #{pr_number} remote head {head_oid[:8]} "
+                f"does not match origin/{branch} ({remote_sha[:8]})."
+            )
+        identity_errors = validate_delivery_identity(
+            repository_root,
+            task_id=task_id,
+            base=base_branch,
+            head=remote_sha,
+            expected_branch=branch,
+            actual_branch=head_branch,
+        )
+        if identity_errors:
+            details = "; ".join(identity_errors)
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: delivery identity preflight failed: {details}"
+            )
+        return {
+            "pr_number": int(pr_number),
+            "pr_url": pr_url,
+            "branch": branch,
+            "remote_sha": remote_sha,
+            "base_branch": base_branch,
+            "verified_at": iso_now(),
+        }
+
+    if pr_state == "MERGED":
+        if actor is not None:
+            norm_owner = canonical_agent_name(task.get("owner"))
+            norm_actor = canonical_agent_name(actor)
+            if norm_actor != norm_owner:
+                raise SystemExit(
+                    f"Cannot submit {task_id} for review: merged PR recovery is owner-only ({task.get('owner')}); "
+                    f"helper {actor} cannot submit merged PR recovery."
+                )
+
+        merged_at = str(pr.get("mergedAt") or "").strip()
+        if not merged_at:
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: PR #{pr_number} is marked MERGED but missing mergedAt timestamp."
+            )
+        merge_commit_raw = pr.get("mergeCommit")
+        merge_commit = (
+            str(merge_commit_raw.get("oid") or "").strip()
+            if isinstance(merge_commit_raw, dict)
+            else str(merge_commit_raw or "").strip()
+        )
+        if not merge_commit or not (
+            re.fullmatch(r"[0-9a-fA-F]{40}", merge_commit) or re.fullmatch(r"[0-9a-fA-F]{64}", merge_commit)
+        ):
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: PR #{pr_number} is missing a valid merge commit SHA."
+            )
+
+        # Verify git object existence and merge ancestry in target branch history
+        if not git_command_succeeds(["cat-file", "-e", f"{head_oid}^{{commit}}"], cwd=repository_root):
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: immutable source commit {head_oid[:8]} is missing in repository."
+            )
+        if not git_command_succeeds(["cat-file", "-e", f"{merge_commit}^{{commit}}"], cwd=repository_root):
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: merge commit {merge_commit[:8]} is missing in repository."
+            )
+        if not git_command_succeeds(["merge-base", "--is-ancestor", head_oid, merge_commit], cwd=repository_root):
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: source commit {head_oid[:8]} is not an ancestor of merge commit {merge_commit[:8]}."
+            )
+        target_ref = f"origin/{base_branch}"
+        if not git_command_succeeds(["rev-parse", "--verify", target_ref], cwd=repository_root):
+            target_ref = base_branch
+        if not git_command_succeeds(["merge-base", "--is-ancestor", merge_commit, target_ref], cwd=repository_root):
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: merge commit {merge_commit[:8]} is not reachable in {target_ref} history."
+            )
+
+        # Verify all required CI checks concluded with terminal SUCCESS (excluding task-review-gate)
+        checks = normalized_green_pr_checks(pr, exclude_review_gate=True)
+
+        pre_merge_base = f"{merge_commit}^1"
+        if not git_command_succeeds(["rev-parse", "--verify", f"{pre_merge_base}^{{commit}}"], cwd=repository_root):
+            pre_merge_base = base_branch
+
+        identity_errors = validate_delivery_identity(
+            repository_root,
+            task_id=task_id,
+            base=pre_merge_base,
+            head=head_oid,
+            expected_branch=branch,
+            actual_branch=head_branch,
+        )
+        if identity_errors:
+            details = "; ".join(identity_errors)
+            raise SystemExit(
+                f"Cannot submit {task_id} for review: delivery identity preflight failed: {details}"
+            )
+        return {
+            "pr_number": int(pr_number),
+            "pr_url": pr_url,
+            "branch": branch,
+            "remote_sha": head_oid,
+            "base_branch": base_branch,
+            "verified_at": iso_now(),
+            "merged_at": merged_at,
+            "merge_commit": merge_commit,
+            "ci_status": "success",
+            "ci_checks": checks,
+        }
+
+    raise SystemExit(
+        f"Cannot submit {task_id} for review: PR #{pr_number} state is '{pr_state}' (must be OPEN or MERGED). "
+        "Closed unmerged pull requests are rejected."
     )
-    if identity_errors:
-        details = "; ".join(identity_errors)
-        raise SystemExit(
-            f"Cannot submit {task_id} for review: delivery identity preflight failed: {details}"
-        )
-    return {
-        "pr_number": int(pr_number),
-        "pr_url": str(pr.get("url") or ""),
-        "branch": branch,
-        "remote_sha": remote_sha,
-        "base_branch": base_branch,
-        "verified_at": iso_now(),
-    }
 
 
 def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
@@ -6779,13 +7008,73 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
     if not reviewer:
         raise SystemExit(f"{task_id} has no assigned reviewer")
 
-    submission = review_submission_for_task(task, pr_number)
+    submission = review_submission_for_task(task, pr_number, actor=actor)
     # Who authored what is now under review. The owner field can legitimately be
     # rewritten later -- by an operator, or by a reconcile pass -- and once it is,
     # nothing else on the record still names the account whose commits the
     # reviewer is supposed to be independent of. Recorded here, at the one moment
     # it is certain, so the independence check keeps working afterwards.
     submission["submitted_by"] = actor
+
+    existing_sub = task.get("review_submission")
+    is_same_submission = (
+        isinstance(existing_sub, dict)
+        and existing_sub.get("pr_number") == submission["pr_number"]
+        and str(existing_sub.get("remote_sha") or "").strip() == str(submission.get("remote_sha") or "").strip()
+        and str(existing_sub.get("branch") or "").strip() == str(submission.get("branch") or "").strip()
+    )
+
+    if is_same_submission:
+        # Stable submission provenance: preserve earlier verified_at, submitted_by, recovery_at, recovery_by
+        if "verified_at" in existing_sub:
+            submission["verified_at"] = existing_sub["verified_at"]
+        if "submitted_by" in existing_sub:
+            submission["submitted_by"] = existing_sub["submitted_by"]
+        if "recovery_at" in existing_sub:
+            submission["recovery_at"] = existing_sub["recovery_at"]
+        if "recovery_by" in existing_sub:
+            submission["recovery_by"] = existing_sub["recovery_by"]
+
+        # R4: Detect first OPEN-to-MERGED transition.  When the existing
+        # submission lacks merged_at but the new one carries it, this is the
+        # first post-merge recovery -- not a repeated submission.  Record
+        # recovery_at / recovery_by with the actual recovery time/actor and
+        # append a merged_recovery audit event.
+        is_first_merged_recovery = (
+            submission.get("merged_at")
+            and not existing_sub.get("merged_at")
+            and not existing_sub.get("recovery_at")
+        )
+
+        if is_first_merged_recovery:
+            recovery_ts = iso_now()
+            submission["recovery_at"] = recovery_ts
+            submission["recovery_by"] = actor
+            append_log(
+                {
+                    "ts": recovery_ts,
+                    "agent": actor,
+                    "type": "merged_recovery",
+                    "task_id": task_id,
+                    "message": f"First OPEN-to-MERGED recovery for PR #{submission['pr_number']}: {message}",
+                    "submission": submission,
+                }
+            )
+
+        current_status = str(task.get("status") or "").lower()
+        if current_status == "review_approved" and task.get("approved_head") == submission["remote_sha"]:
+            # Complete idempotent no-op: preserve review_approved state, approved_head, and handoffs
+            task["review_submission"] = submission
+            return
+
+        if current_status == "review":
+            # Already in review for the same head: update submission metadata without duplicate handoffs or wiping approval
+            task["review_submission"] = submission
+            if message and task.get("next") != message:
+                task["next"] = message
+                task["last_update"] = iso_now()
+            return
+
     timestamp = iso_now()
     task["status"] = "review"
     task["last_update"] = timestamp
@@ -7393,6 +7682,103 @@ def command_restore_approved_head(state: dict[str, Any], args: list[str]) -> Non
     )
 
 
+def command_done_tooling(state: dict[str, Any], args: list[str]) -> None:
+    """Close an owner's merged pure-tooling delivery using CI and scope evidence.
+
+    This records delivery, not reviewer approval. Product/mixed changes retain
+    command_done's independent review requirements. Use the manifest from the
+    merge's first parent so a PR cannot expand its own no-product-review scope.
+    """
+    if len(args) != 4:
+        raise SystemExit("Usage: done_tooling <task-id> <pr-number> <source-sha> <message>")
+    task_id, pr_number, expected_head, message = args
+    actor = current_actor_validated()
+    task = get_task(state, task_id)
+    if task is None:
+        snapshot = archived_task_snapshot(task_id) or {}
+        archived = snapshot.get("task") or {}
+        delivery = archived.get("delivery") or {}
+        if (
+            archived.get("owner") == actor
+            and archived.get("status") == "done"
+            and delivery.get("verification_mode") == "merged_tooling_scope_and_ci"
+            and str((delivery.get("pull_request") or {}).get("number")) == pr_number
+            and delivery.get("verified_head") == expected_head
+        ):
+            return
+        raise SystemExit(f"Unknown active tooling task: {task_id}")
+    if task.get("owner") != actor:
+        raise SystemExit(f"Only the owner ({task.get('owner')}) can finalize {task_id} to done")
+    if task.get("status") not in {"in_progress", "review", "review_approved"}:
+        raise SystemExit(f"Cannot finalize tooling task {task_id} from {task.get('status')}")
+    if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", expected_head):
+        raise SystemExit("Tooling closeout requires the exact immutable source SHA")
+
+    # This validator is shared with merged recovery, but performs no review
+    # transition: owner, branch/base, source/merge ancestry, identity and CI.
+    submission = review_submission_for_task(task, pr_number, actor=actor)
+    if not submission.get("merged_at") or not submission.get("merge_commit"):
+        raise SystemExit("Tooling closeout requires a MERGED pull request")
+    if submission["remote_sha"] != expected_head:
+        raise SystemExit("Tooling closeout source SHA differs from the merged PR head")
+    config = status_runtime_config()
+    repository_id = task_repository_id(config, task) or "pantheon"
+    repo_root = repository_local_path(config, repository_id) or ROOT
+    merge_commit = submission["merge_commit"]
+    manifest_commit = run_git_command(["rev-parse", f"{merge_commit}^1"], cwd=repo_root)
+    manifest_text = run_git_command(
+        ["show", f"{manifest_commit}:config/change-review-scopes.json"], cwd=repo_root,
+        failure_message="Cannot finalize tooling task: trusted base scope manifest is unavailable",
+    )
+    try:
+        manifest = json.loads(manifest_text)
+        if not isinstance(manifest, dict) or not isinstance(manifest.get("development_tooling"), dict):
+            raise ValueError("invalid development_tooling manifest")
+        paths_raw = run_git_command(
+            ["diff", "--name-only", "--no-renames", "-z", f"{manifest_commit}...{expected_head}", "--"],
+            cwd=repo_root,
+        )
+        paths = [path for path in paths_raw.split("\0") if path]
+        if any(path != path.strip() for path in paths):
+            raise ValueError("ambiguous whitespace in delivery path")
+        scope = classify_paths(paths, manifest)
+    except (ValueError, TypeError, KeyError) as exc:
+        raise SystemExit(f"Cannot verify tooling scope: {exc}") from exc
+    if scope["scope"] != "development_tooling":
+        raise SystemExit("Product or mixed delivery requires the assigned product reviewer and normal done flow")
+    guard_cross_repo_delivery_gate(state, task)
+
+    timestamp = iso_now()
+    delivery = {
+        "verification_mode": "merged_tooling_scope_and_ci",
+        "scope": "development_tooling",
+        "repository_id": repository_id,
+        "branch": submission["branch"],
+        "base_branch": submission["base_branch"],
+        "verified_head": expected_head,
+        "pr_head_ref_oid": expected_head,
+        "pr_merge_commit": merge_commit,
+        "recorded_at": timestamp,
+        "recorded_by": actor,
+        "scope_manifest_commit": manifest_commit,
+        "scope_manifest_sha256": hashlib.sha256(manifest_text.encode()).hexdigest(),
+        "changed_paths": scope["paths"],
+        "pull_request": {
+            "number": submission["pr_number"], "url": submission["pr_url"],
+            "state": "MERGED", "head_sha": expected_head,
+            "merge_commit": merge_commit, "merged_at": submission["merged_at"],
+            "base_branch": submission["base_branch"], "ci_checks": submission["ci_checks"],
+        },
+    }
+    task.update(status="done", terminal_outcome="completed", last_update=timestamp, next=message, delivery=delivery)
+    task.pop("waiting_for", None)
+    mark_blockers_resolved(state, task_id)
+    mark_handoffs_done(state, task_id)
+    archive_terminal_task_from_state(state, task, archived_at=timestamp)
+    append_log({"ts": timestamp, "agent": actor, "type": "done_tooling", "task_id": task_id,
+                "message": message, "delivery": delivery})
+
+
 def command_done(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: done <task-id> <message>")
@@ -7571,12 +7957,6 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
             f"Cannot approve task {task_id}: unable to resolve the branch HEAD to freeze ({exc}). "
             "Integrity gate failed closed; no approval was recorded."
         ) from exc
-    if not approved_sha:
-        raise SystemExit(
-            f"Cannot approve task {task_id}: branch HEAD could not be resolved, so the "
-            "reviewer-approved commit cannot be frozen. Push the task branch (or open its PR) "
-            "and approve again. No approval was recorded."
-        )
 
     submission = task.get("review_submission")
     submitted_sha = (
@@ -7584,6 +7964,17 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
         if isinstance(submission, dict)
         else ""
     )
+
+    if not approved_sha:
+        approved_sha = resolve_immutable_merged_task_sha(task)
+
+    if not approved_sha:
+        raise SystemExit(
+            f"Cannot approve task {task_id}: branch HEAD could not be resolved, so the "
+            "reviewer-approved commit cannot be frozen. Push the task branch (or open its PR) "
+            "and approve again. No approval was recorded."
+        )
+
     if not submitted_sha or submitted_sha != approved_sha:
         display_submitted = submitted_sha[:8] if submitted_sha else "missing"
         raise SystemExit(
@@ -9279,31 +9670,62 @@ def resolve_task_sha(
             timeout=COMMAND_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired:
-        # An incomplete origin response cannot establish a reviewable head.
-        # Replace a warm cache too: a forced refresh must never fall back to a
-        # previously verified SHA after the authoritative read times out.
-        _TASK_SHA_CACHE[task_id] = (time.time(), None)
-        return None
+        # R5: An incomplete origin response is a transport failure, not a
+        # confirmed branch deletion. Invalidate the warm cache so the next
+        # ordinary lookup cannot reuse either an old SHA or false absence.
+        _TASK_SHA_CACHE.pop(task_id, None)
+        raise RuntimeError(
+            f"git ls-remote timed out after {COMMAND_TIMEOUT_SECONDS}s for {task_id}; "
+            "remote branch state is unverifiable"
+        ) from None
+    except OSError:
+        _TASK_SHA_CACHE.pop(task_id, None)
+        raise RuntimeError(
+            f"git ls-remote could not run for {task_id}; "
+            "remote branch state is unverifiable"
+        ) from None
     matches: list[str] = []
-    if result.returncode == 0:
-        for line in result.stdout.splitlines():
-            fields = line.split()
-            if (
-                len(fields) == 2
-                and fields[1] in remote_refs
-                and (
-                    re.fullmatch(r"[0-9a-fA-F]{40}", fields[0])
-                    or re.fullmatch(r"[0-9a-fA-F]{64}", fields[0])
-                )
-            ):
-                matches.append(fields[0])
+    if result.returncode != 0:
+        # R5: A nonzero exit from git ls-remote (network failure, auth error,
+        # etc.) is a transport failure, not a confirmed branch absence.
+        _TASK_SHA_CACHE.pop(task_id, None)
+        raise RuntimeError(
+            f"git ls-remote failed with exit code {result.returncode} for {task_id}; "
+            "remote branch state is unverifiable"
+        )
+    for line in result.stdout.splitlines():
+        if not line.strip():
+            continue
+        fields = line.split()
+        if not (
+            len(fields) == 2
+            and fields[1] in remote_refs
+            and (
+                re.fullmatch(r"[0-9a-fA-F]{40}", fields[0])
+                or re.fullmatch(r"[0-9a-fA-F]{64}", fields[0])
+            )
+        ):
+            _TASK_SHA_CACHE.pop(task_id, None)
+            raise RuntimeError(
+                f"git ls-remote returned an invalid or unexpected ref for {task_id}; "
+                "remote branch state is unverifiable"
+            )
+        matches.append(fields[0])
     # Fail closed unless origin returns exactly one valid canonical task ref.
     # Local HEAD, local task refs, cached origin refs, and old PR heads are not
     # authoritative active-task review/freeze evidence.
-    if result.returncode == 0 and len(matches) == 1:
+    if len(matches) == 1:
         _TASK_SHA_CACHE[task_id] = (now, matches[0])
         return matches[0]
+    if len(matches) > 1:
+        # R5: Ambiguous refs are not a confirmed absence either.
+        _TASK_SHA_CACHE.pop(task_id, None)
+        raise RuntimeError(
+            f"git ls-remote returned {len(matches)} matching refs for {task_id}; "
+            "remote branch state is ambiguous"
+        )
 
+    # Confirmed absent: git ls-remote succeeded (rc=0) with no ref output.
     _TASK_SHA_CACHE[task_id] = (now, None)
     return None
 
@@ -9333,7 +9755,10 @@ def resolve_task_checkout_sha(
     if not task_id:
         return None
 
-    remote_sha = resolve_task_sha(task_id, force_refresh=force_refresh)
+    try:
+        remote_sha = resolve_task_sha(task_id, force_refresh=force_refresh)
+    except RuntimeError:
+        remote_sha = None
     if remote_sha:
         return remote_sha
 
@@ -9471,7 +9896,12 @@ def task_repository_slug_safe(task: dict[str, Any]) -> str:
 
 def task_review_status_payload(task: dict[str, Any], state_status: str) -> dict[str, str] | None:
     task_id = str(task.get("id") or "")
-    sha = resolve_task_sha(task_id)
+    try:
+        sha = resolve_task_sha(task_id)
+    except RuntimeError:
+        return None
+    if not sha:
+        sha = resolve_immutable_merged_task_sha(task)
     if not sha:
         return None
 
@@ -9747,7 +10177,10 @@ def review_gate_head_drifted(task: dict[str, Any]) -> bool:
         # sync for the second, so stay quiet and let the transition drive it.
         return False
 
-    current = resolve_task_sha(task_id)
+    try:
+        current = resolve_task_sha(task_id)
+    except RuntimeError:
+        return False
     return bool(current) and current != last
 
 
@@ -9875,6 +10308,7 @@ MUTATING_COMMANDS = {
     "retarget_blocker": command_retarget_blocker,
     "prune_agents": command_prune_agents,
     "done": command_done,
+    "done_tooling": command_done_tooling,
     "restore_approved": command_restore_approved,
     "restore_approved_head": command_restore_approved_head,
     "retarget_branch": command_retarget_branch,

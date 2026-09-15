@@ -312,6 +312,15 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
             "- 完成既有狀態交接或復原後，使用 `supersede` 封存任務。"
         )
         finalize_guardrails = ""
+    elif normalized_reason in {"review_ready_dispatch", "status:review"}:
+        branch_work_guardrails = (
+            "進入 task 審查前，先確認你在正確的審查狀態上：\n"
+            f"- 預期審查分支或 exact submitted head：`{branch_name}`（若為 merged PR 則為 exact submitted source 鎖定狀態）。\n"
+            f"- 如果目前工作區狀態不對，優先使用 `./delivery_toolchain/git/task_start.sh \"{task_id}\"` 核對，不要手寫臨時 branch 規則。\n"
+            "- 審查工作區為唯讀核對；如果 working tree 有未 commit diff，回報 blocker，不要 stash、不要繼續。\n"
+            "- 不得修改程式碼或推送新 commit；審查完成後依審查結果執行 `approve` 或 `reopen`。"
+        )
+        finalize_guardrails = ""
     else:
         branch_work_guardrails = (
             "進入 task 工作前，先確認你在正確的 branch 上：\n"

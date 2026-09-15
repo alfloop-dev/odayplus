@@ -52,6 +52,16 @@ def _deterministic_id(entity_type: str, source_system: str, source_entity_id: st
     )
 
 
+def _parse_optional_float(value: Any) -> float | None:
+    """Parse a float from a source record, returning None when absent."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 class _GeoConnector(SourceConnector):
     """Base for external connectors that geocode an address-bearing record."""
 
@@ -93,7 +103,7 @@ class PoiConnector(_GeoConnector):
             address_id=geocode.address.address_id,
             geo_cell_id=self._geo_cell_id(geocode),
             status=str(record.get("status", "active")),
-            confidence=float(record.get("confidence", 1.0)),
+            confidence=_parse_optional_float(record.get("confidence")),
             snapshot_id=str(record.get("snapshot_id", "")),
         )
         lineage = build_field_lineage(
@@ -130,7 +140,7 @@ class CompetitorStoreConnector(_GeoConnector):
             geo_cell_id=self._geo_cell_id(geocode),
             estimated_capacity=float(record.get("estimated_capacity", 0.0) or 0.0),
             status=str(record.get("status", "active")),
-            confidence=float(record.get("confidence", 1.0)),
+            confidence=_parse_optional_float(record.get("confidence")),
             last_verified_at=parse_datetime(record.get("last_verified_at")),
         )
         lineage = build_field_lineage(
