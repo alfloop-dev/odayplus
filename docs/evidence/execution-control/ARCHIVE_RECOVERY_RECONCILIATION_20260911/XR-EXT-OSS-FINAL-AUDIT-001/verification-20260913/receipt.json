@@ -1,0 +1,87 @@
+{
+  "task_id": "XR-EXT-OSS-FINAL-AUDIT-001",
+  "actor": "Codex contributor",
+  "repository": "alfloop-dev/odayplus",
+  "cwd": "/tmp/pantheon-worker-worktrees/pantheon/xr-ext-oss-final-audit-001",
+  "measured_head_sha": "cdd26f75d0bce75ee9be33064b463be5724b9438",
+  "measured_head_tree": "015b977cfea6011fe2c7c93ad3f8594f87c42e16",
+  "revision_semantics": "The parent HEAD identifies repository ancestry. Changed evidence is bound by actual worktree input hashes, not claimed committed at HEAD.",
+  "input_files": {
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/README.md": {
+      "sha256": "303974f4a378f0ea0b81ada538a300a99d88e4ff29ee747825488943449494cf",
+      "bytes": 17083
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/acceptance-reconciliation.json": {
+      "sha256": "f0c3c221470ac9a8565020508102f997963a6c5809c0fbab2f2796a66752dc9a",
+      "bytes": 46016
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/capture_verification.py": {
+      "sha256": "726027bc93236d902b4a14f684b4824023293aaf8b1f7a0ae4e798de32b42e1a",
+      "bytes": 8268
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/dependency-input-snapshot.json": {
+      "sha256": "540e4c56a43c3cf0b27ed01261f85d8445a7ef127fc5bfccd9822d672cbf2db6",
+      "bytes": 4231
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/historical-receipts/dag-observations.json": {
+      "sha256": "26d3b707526c2e25d63f6048812c92d2ef5e1692aae2752ab85afdfd00a1529b",
+      "bytes": 7332
+    },
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/raw-command-receipts.json": {
+      "sha256": "429fae13a033698c97653d8221d10b49829a1f612320bdacf6c39fe6f6933d62",
+      "bytes": 227198
+    }
+  },
+  "retry_reason": "Required narrow capture after correcting unretained or mixed-revision raw receipts; no historical product suites rerun.",
+  "commands": [
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check",
+        "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
+        "--",
+        "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001"
+      ],
+      "started_at": "2026-09-13T04:15:48.698226+00:00",
+      "completed_at": "2026-09-13T04:15:48.713246+00:00",
+      "duration_seconds": 0.014982313,
+      "duration_source": "time.monotonic_ns around subprocess.run",
+      "exit_code": 0,
+      "stdout": {
+        "raw_result_ref": "verification-20260913/command-1.stdout.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "stderr": {
+        "raw_result_ref": "verification-20260913/command-1.stderr.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    },
+    {
+      "argv": [
+        "/usr/bin/python3",
+        "/tmp/pantheon-worker-worktrees/pantheon/xr-ext-oss-final-audit-001/docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/capture_verification.py",
+        "--check"
+      ],
+      "started_at": "2026-09-13T04:15:48.714175+00:00",
+      "completed_at": "2026-09-13T04:15:48.797641+00:00",
+      "duration_seconds": 0.08343537,
+      "duration_source": "time.monotonic_ns around subprocess.run",
+      "exit_code": 0,
+      "stdout": {
+        "raw_result_ref": "verification-20260913/command-2.stdout.txt",
+        "sha256": "10115521958ea001044dc803b630c9d6e7e94feed4fb8dfa26677ba7135f925b",
+        "bytes": 6354
+      },
+      "stderr": {
+        "raw_result_ref": "verification-20260913/command-2.stderr.txt",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      }
+    }
+  ],
+  "inputs_unchanged_after_execution": true,
+  "all_commands_succeeded": true
+}
