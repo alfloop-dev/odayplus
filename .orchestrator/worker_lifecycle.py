@@ -1695,6 +1695,32 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             if is_terminal_quota_failure_kind(failure_kind):
                 fence_account_pool_workers(config, state, worker, failure_reason)
             if is_terminal_quota_failure_kind(failure_kind):
+                # `fence_account_pool_workers` skips the triggering run, so this
+                # is the one worker in the fenced pool that never received the
+                # deferred handoff its siblings get. Changing the canonical owner
+                # while this run's writers are still mutating the worktree
+                # strands the final bytes: the successor is granted a lease whose
+                # dirt fingerprint no longer matches, and `finalize_queue_event_record`
+                # below marks the event completed, so no later poll comes back for
+                # it. Fence it exactly like a sibling instead and let the
+                # `pending_fence` path in `poll_workers` / `reconcile_runtime_on_boot`
+                # preserve, reseal and transfer once the writers are confirmed dead.
+                if worker_writers_are_alive(worker):
+                    terminate_worker_writers(worker)
+                if worker_writers_are_alive(worker):
+                    worker["pending_fence"] = {
+                        "pool_id": agent_account_pool_id(
+                            config, worker_logical_dispatch_agent_id(config, worker)
+                        ),
+                        "reason": failure_reason,
+                        "fenced_at": (worker.get("pending_fence") or {}).get("fenced_at")
+                        or utc_now(),
+                    }
+                    worker["last_error"] = failure_summary.get("summary") or failure_reason
+                    worker["last_error_raw_ref"] = raw_ref
+                    worker["last_event_at"] = utc_now()
+                    changed = True
+                    continue
                 reassigned_to = None
                 if not antigravity_pool_fallback_available(
                     config, str(worker.get("provider") or worker.get("agent_id") or "")

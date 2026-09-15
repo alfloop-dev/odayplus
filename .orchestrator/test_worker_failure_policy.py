@@ -2836,10 +2836,18 @@ while True:
         self.assertTrue(lease_ok, f"Successor lease failed after fence clearance: {lease_err}")
         self.assertEqual(successor_request.metadata.get("worktree_continuation"), "sealed_owner_dirt")
 
-    def test_seal_transfer_requires_writers_stopped_quota_trigger_path(self) -> None:
-        """Regression: seal transfer must refuse when source writers are still alive.
-        The quota-triggering worker bypasses the sibling fence guard; without
-        writer verification the original child can survive handoff.
+    def test_seal_transfer_refuses_while_writers_alive(self) -> None:
+        """Regression: `maybe_reassign_...` must not move the seal with live writers.
+
+        This covers the seal-transfer guard inside `maybe_reassign_task_after_worker_failure`
+        for any caller that reaches it with writers still running. It deliberately
+        does NOT describe the quota-trigger path: on that path the canonical owner
+        must not move at all, which
+        `test_quota_trigger_fences_itself_while_its_own_writers_are_alive` asserts
+        against the real `poll_workers` branch. Reading the assertion below as the
+        quota-path invariant is what let the defect survive six review rounds --
+        reassignment happening here is this helper's behaviour, not a statement
+        that quota handling may reassign.
         """
         dirty = self.worktree / "trigger_writer_probe.py"
         dirty.write_text("print('original writer still running')\n", encoding="utf-8")
@@ -2902,7 +2910,11 @@ while True:
                 force=True,
             )
 
-        self.assertIsNotNone(reassigned_to, "Task must still be reassigned")
+        self.assertIsNotNone(
+            reassigned_to,
+            "This helper still selects a successor; deferring the canonical change "
+            "is the caller's job on the quota path, not this function's",
+        )
         handoff_block = state["worker_worktrees"]["handoff_blocks"].get("TASK-SIBLING-001")
         self.assertIsNotNone(handoff_block)
         # Seal must NOT be transferred to the new owner when writers are alive.
@@ -2916,6 +2928,89 @@ while True:
         )
         # Original owner must still hold the seal.
         self.assertEqual(handoff_block.get("owner"), "Antigravity")
+
+    def test_quota_trigger_fences_itself_while_its_own_writers_are_alive(self) -> None:
+        """Regression: the quota-triggering run must fence itself, not hand off.
+
+        `fence_account_pool_workers` skips the triggering run, so it was the one
+        worker in the fenced pool whose canonical owner changed while its own
+        writers were still mutating the worktree. The successor then received a
+        lease whose dirt fingerprint no longer matched, and completing the queue
+        event stopped any later poll from coming back for it. This exercises the
+        real `poll_workers` quota branch rather than `maybe_reassign_...`
+        directly, because that is the path the defect lived on.
+        """
+        # The trigger must still own its task, otherwise poll_workers reclaims it
+        # through the "responsibility moved" path and never reaches the quota branch.
+        status_data = json.loads(self.status_file.read_text(encoding="utf-8"))
+        for task in status_data.get("tasks", []):
+            if task["id"] == "TASK-SIBLING-001":
+                task["owner"] = "Antigravity"
+                task["status"] = "in_progress"
+        self.status_file.write_text(json.dumps(status_data, indent=2), encoding="utf-8")
+
+        trigger = {
+            "run_id": "run-quota-trigger-self",
+            "provider": "antigravity",
+            "agent_id": "antigravity",
+            "task_id": "TASK-SIBLING-001",
+            "workspace_path": str(self.worktree.resolve()),
+            "workspace_branch": "task/TASK-SIBLING-001",
+            "workspace_mode": "isolated_worktree",
+            "reason": "owned_ready_dispatch",
+            "status": "running",
+            "pid": None,
+            "queue_event_id": "evt-quota-trigger-self",
+        }
+        state: dict[str, Any] = {
+            "workers": {trigger["run_id"]: trigger},
+            "queue": {
+                "events": {
+                    trigger["queue_event_id"]: {
+                        "status": "started",
+                        "task_id": trigger["task_id"],
+                    }
+                }
+            },
+            "worker_worktrees": {"handoff_blocks": {}},
+        }
+
+        with mock.patch.object(
+            supervisor, "detect_worker_failure", return_value="ERROR: You've hit your usage limit."
+        ), mock.patch.object(
+            supervisor, "worker_writers_are_alive", return_value=True
+        ), mock.patch.object(
+            supervisor, "terminate_worker_writers", return_value=False
+        ), mock.patch.object(
+            worker_failure_policy, "worker_writers_are_alive", return_value=True
+        ), mock.patch.object(
+            worker_failure_policy, "terminate_worker_writers", return_value=False
+        ), mock.patch.object(
+            supervisor, "sync_status_pipeline", return_value=True
+        ), mock.patch(
+            "status_transition.sync_status_pipeline", return_value=True
+        ):
+            supervisor.poll_workers(self.config, state, provider_report={})
+
+        self.assertIsNotNone(
+            trigger.get("pending_fence"),
+            "Quota-triggering run must fence itself while its writers are alive",
+        )
+        self.assertNotEqual(
+            trigger.get("status"),
+            "reassigned",
+            "Canonical responsibility must not move while the writers are alive",
+        )
+        self.assertNotEqual(
+            state["queue"]["events"][trigger["queue_event_id"]].get("status"),
+            "completed",
+            "Completing the queue event strands the run: no later poll recovers it",
+        )
+        self.assertNotIn(
+            "TASK-SIBLING-001",
+            state["worker_worktrees"]["handoff_blocks"],
+            "No seal may be granted to a successor while the original writers run",
+        )
 
     def test_seal_transfer_succeeds_when_writers_verified_stopped(self) -> None:
         """Regression: seal transfer proceeds normally when all writers are confirmed dead."""
