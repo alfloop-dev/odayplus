@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, time
 from typing import Any
 from uuid import uuid4
@@ -200,8 +200,126 @@ class GeoCell:
     service_area_id: str | None = None
 
 
+# ---------------------------------------------------------------------------
+# Canonical measurement semantics (ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001)
+# ---------------------------------------------------------------------------
+
+LEGACY_MEASUREMENT_SCHEMA_VERSION = "v1"
+CURRENT_MEASUREMENT_SCHEMA_VERSION = "v2"
+
+MEASUREMENT_MEASURED = "measured"
+MEASUREMENT_UNMEASURED = "unmeasured"
+MEASUREMENT_LEGACY_UNKNOWN = "legacy_unknown"
+
+
+class MeasuredColumnSemantics:
+    """Absence-preserving semantics for a canonical measured column.
+
+    Before the cutover these columns were ``NOT NULL DEFAULT 1.00``, so a
+    stored ``1.0`` is ambiguous: it is either a real perfect measurement or a
+    substituted default standing in for "nobody measured this". Rows written
+    after the cutover carry ``measurement_schema_version = "v2"`` and are
+    trusted at face value; ``"v1"`` rows holding exactly ``1.0`` resolve to
+    ``legacy_unknown`` and hand callers ``None``.
+
+    ``__setstate__`` is load-bearing rather than cosmetic. The durable
+    repositories persist these aggregates as pickles through
+    :class:`~shared.infrastructure.persistence.document_store.SqliteDocumentStore`,
+    not as columns, so a payload written before the cutover has no
+    ``measurement_schema_version`` key in its state at all. Plain attribute
+    lookup would fall through to the *new* class default (``"v2"``) and
+    relabel a legacy substituted value as ``measured`` -- the exact masking
+    this cutover exists to remove. Restoring the absent key as ``"v1"`` is
+    what makes the marker survive reload, and ``dataclasses.replace`` then
+    carries it through mutation because it reads the instance value.
+    """
+
+    # Declared for type checkers only. These are plain annotations on a
+    # non-dataclass base, so ``@dataclass`` on the concrete models does not
+    # pick them up as fields.
+    measurement_schema_version: str
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        restored = dict(state)
+        restored.setdefault(
+            "measurement_schema_version", LEGACY_MEASUREMENT_SCHEMA_VERSION
+        )
+        self.__dict__.update(restored)
+
+    def _resolve_provenance(self, value: float | None, status: str | None) -> str:
+        if status is not None:
+            return status
+        if value is None:
+            return MEASUREMENT_UNMEASURED
+        if (
+            self.measurement_schema_version == LEGACY_MEASUREMENT_SCHEMA_VERSION
+            and value == 1.0
+        ):
+            return MEASUREMENT_LEGACY_UNKNOWN
+        return MEASUREMENT_MEASURED
+
+    @staticmethod
+    def _resolve_value(value: float | None, provenance: str) -> float | None:
+        if provenance in (MEASUREMENT_UNMEASURED, MEASUREMENT_LEGACY_UNKNOWN):
+            return None
+        return value
+
+
+class ConfidenceMeasurement(MeasuredColumnSemantics):
+    """Canonical models whose measured column is ``confidence``."""
+
+    confidence: float | None
+    confidence_status: str | None
+
+    @property
+    def effective_confidence_provenance(self) -> str:
+        return self._resolve_provenance(self.confidence, self.confidence_status)
+
+    @property
+    def effective_confidence(self) -> float | None:
+        return self._resolve_value(
+            self.confidence, self.effective_confidence_provenance
+        )
+
+
+class QualityScoreMeasurement(MeasuredColumnSemantics):
+    """Canonical models whose measured column is ``quality_score``."""
+
+    quality_score: float | None
+    quality_score_status: str | None
+
+    @property
+    def effective_quality_score_provenance(self) -> str:
+        return self._resolve_provenance(self.quality_score, self.quality_score_status)
+
+    @property
+    def effective_quality_score(self) -> float | None:
+        return self._resolve_value(
+            self.quality_score, self.effective_quality_score_provenance
+        )
+
+
+def canonical_measurement_dict(model: Any) -> dict[str, Any]:
+    """``dataclasses.asdict`` with measured columns resolved through provenance.
+
+    Serializing a canonical aggregate straight from its raw column republishes
+    a pre-cutover substituted ``1.0`` as though it had been measured. Callers
+    get the effective value plus an explicit ``*_provenance`` key instead, so
+    the absence marker survives the crossing into plain dicts (canonical
+    snapshot payloads, mapper output, downstream JSON).
+    """
+    payload = asdict(model)
+    if isinstance(model, ConfidenceMeasurement):
+        payload["confidence"] = model.effective_confidence
+        payload["confidence_provenance"] = model.effective_confidence_provenance
+    if isinstance(model, QualityScoreMeasurement):
+        payload["quality_score"] = model.effective_quality_score
+        payload["quality_score_provenance"] = model.effective_quality_score_provenance
+    return payload
+
+
 @dataclass(frozen=True)
-class Poi:
+class Poi(ConfidenceMeasurement):
     """Point of interest data."""
     poi_id: str = field(default_factory=lambda: str(uuid4()))
     source_poi_id: str = ""
@@ -211,12 +329,14 @@ class Poi:
     address_id: str = ""
     geo_cell_id: str = ""
     status: str = "active"  # active/closed/unknown
-    confidence: float = 1.0
+    confidence: float | None = None
     snapshot_id: str = ""
+    measurement_schema_version: str = CURRENT_MEASUREMENT_SCHEMA_VERSION
+    confidence_status: str | None = None
 
 
 @dataclass(frozen=True)
-class CompetitorStore:
+class CompetitorStore(ConfidenceMeasurement):
     """Competitor laundry location."""
     competitor_store_id: str = field(default_factory=lambda: str(uuid4()))
     brand_name: str = ""
@@ -226,12 +346,16 @@ class CompetitorStore:
     estimated_capacity: float = 0.0
     distance_to_nearest_oday_m: float = 0.0
     status: str = "active"  # active/closed/unknown
-    confidence: float = 1.0
+    confidence: float | None = None
     last_verified_at: datetime | None = None
+    measurement_schema_version: str = CURRENT_MEASUREMENT_SCHEMA_VERSION
+    snapshot_id: str = ""
+    source_competitor_id: str = ""
+    confidence_status: str | None = None
 
 
 @dataclass(frozen=True)
-class Listing:
+class Listing(ConfidenceMeasurement):
     """Real estate listing (merges source properties)."""
     listing_id: str = field(default_factory=lambda: str(uuid4()))
     source_listing_id: str = ""
@@ -251,8 +375,10 @@ class Listing:
     utility_gas_flag: bool = False
     available_from: date | None = None
     snapshot_id: str = ""
-    confidence: float = 1.0
+    confidence: float | None = None
     tenant_id: str = ""
+    measurement_schema_version: str = CURRENT_MEASUREMENT_SCHEMA_VERSION
+    confidence_status: str | None = None
 
 
 @dataclass(frozen=True)
@@ -294,7 +420,7 @@ class PredictionRun:
 
 
 @dataclass(frozen=True)
-class Prediction:
+class Prediction(ConfidenceMeasurement):
     """Specific prediction output (forecast/value/probabilities)."""
     prediction_id: str = field(default_factory=lambda: str(uuid4()))
     prediction_run_id: str = ""
@@ -306,7 +432,9 @@ class Prediction:
     p90_value: float = 0.0
     unit: str = ""
     explanation_json: dict[str, Any] = field(default_factory=dict)
-    confidence: float = 1.0
+    confidence: float | None = None
+    measurement_schema_version: str = CURRENT_MEASUREMENT_SCHEMA_VERSION
+    confidence_status: str | None = None
 
 
 @dataclass(frozen=True)
@@ -336,7 +464,7 @@ class Approval:
 
 
 @dataclass(frozen=True)
-class HeatZoneScore:
+class HeatZoneScore(ConfidenceMeasurement):
     """HeatZone Radar geographic evaluation score."""
     heatzone_score_id: str = field(default_factory=lambda: str(uuid4()))
     geo_cell_id: str = ""
@@ -348,7 +476,9 @@ class HeatZoneScore:
     cannibalization_risk_score: float = 0.0
     rent_feasibility_score: float = 0.0
     heatzone_state: str = "untouched"  # untouched/partially_absorbed/saturated/under_realized/still_expandable
-    confidence: float = 1.0
+    confidence: float | None = None
+    measurement_schema_version: str = CURRENT_MEASUREMENT_SCHEMA_VERSION
+    confidence_status: str | None = None
 
 
 @dataclass(frozen=True)
@@ -510,7 +640,7 @@ class AuditEvent:
 
 
 @dataclass(frozen=True)
-class DataSnapshot:
+class DataSnapshot(QualityScoreMeasurement):
     """Point-in-time snapshot references."""
     snapshot_id: str = field(default_factory=lambda: str(uuid4()))
     snapshot_type: str = "raw"  # raw/canonical/model_ready/training
@@ -519,8 +649,15 @@ class DataSnapshot:
     storage_uri: str = ""
     schema_version: str = ""
     row_count: int = 0
-    quality_score: float = 1.0
+    quality_score: float | None = None
     created_by_run_id: str = ""
+    # ``schema_version`` above describes the *dataset* layout and is chosen by
+    # the producing pipeline; it says nothing about how ``quality_score`` was
+    # obtained. Measurement provenance therefore hangs off its own marker, so
+    # a pipeline legitimately emitting a "v1" dataset with a genuinely
+    # measured 1.0 is not misread as a legacy substituted default.
+    measurement_schema_version: str = CURRENT_MEASUREMENT_SCHEMA_VERSION
+    quality_score_status: str | None = None
 
 
 @dataclass(frozen=True)

@@ -408,13 +408,13 @@ function ComparableStoreTable({ stores }: { stores: readonly ComparableStore[] }
 export function HeatZoneScoreCard({ score, dataQuality, audit, onOpen, "data-testid": testId = "heat-zone-score-card" }: HeatZoneScoreCardProps) {
   const title = [score.admin_city, score.admin_district].filter(Boolean).join(" / ") || score.heat_zone_id;
   return (
-    <DomainCard title={title} eyebrow={`HeatZone ${score.heat_zone_id}`} badge={<StatusBadge label={score.state} tone={score.confidence >= 0.75 ? "green" : score.confidence >= 0.5 ? "yellow" : "orange"} />} testId={testId}>
+    <DomainCard title={title} eyebrow={`HeatZone ${score.heat_zone_id}`} badge={<StatusBadge label={score.state} tone={score.confidence == null ? "gray" : score.confidence >= 0.75 ? "green" : score.confidence >= 0.5 ? "yellow" : "orange"} />} testId={testId}>
       <FieldGrid>
         <Field label="H3 index" value={score.h3_index} />
         <Field label="H3 resolution" value={score.h3_resolution} />
         <Field label="Heat zone score" value={formatNumber(score.score)} />
         <Field label="Priority rank" value={score.priority_rank} />
-        <Field label="Confidence" value={formatPercent(score.confidence)} />
+        <Field label="Confidence" value={score.confidence != null ? formatPercent(score.confidence) : "未評估"} />
         <Field label="Last scored" value={score.last_scored_at} />
       </FieldGrid>
       <Section title="Score breakdown">
