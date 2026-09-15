@@ -110,7 +110,7 @@ LOG_ROTATE_MAX_BYTES = int(os.environ.get("AI_STATUS_LOG_ROTATE_MAX_BYTES", str(
 LOG_ROTATE_KEEP_LINES = int(os.environ.get("AI_STATUS_LOG_ROTATE_KEEP_LINES", "1000"))
 CURRENT_WORK_FILE = STATUS_ROOT / "current-work.md"
 DOCS_SITE_DIR = STATUS_ROOT / "docs-site"
-CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
+CONFIG_FILE = STATUS_ROOT / ".orchestrator" / "config.json"
 # Worker processes inherit PANTHEON_CONFIG_PATH from Supervisor. An explicitly
 # selected runtime config is self-contained and must never inherit a checkout
 # or status-root overlay. Interactive commands without that environment value
@@ -906,7 +906,7 @@ def active_config_file() -> Path:
     """Resolve Supervisor's config after startup has published its CLI choice."""
     configured = configured_config_path_env()
     path = Path(os.path.expanduser(configured)) if configured else CONFIG_FILE
-    return path if path.is_absolute() else ROOT / path
+    return path if path.is_absolute() else STATUS_ROOT / path
 
 
 def _config_fingerprint() -> tuple[Any, ...]:
@@ -944,6 +944,7 @@ def merged_orchestrator_config() -> dict[str, Any]:
         active_config_file(),
         overlay_paths=tuple(local_config_overlay_paths()),
     )
+    payload = orchestrator_common.anchor_config_paths(payload, STATUS_ROOT)
 
     _MERGED_CONFIG_CACHE["fingerprint"] = fingerprint
     _MERGED_CONFIG_CACHE["payload"] = payload
