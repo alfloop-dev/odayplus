@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "/home/lupin/odayplus/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/release/test_release_manifest.py",
+    "tests/release/test_foundation_egress_contract.py",
+    "infra/terraform/tests"
+  ],
+  "started_at": "2026-09-15T04:48:41.946176+00:00",
+  "finished_at": "2026-09-15T04:49:53.640302+00:00",
+  "exit_code": 0,
+  "stdout": "........................................................................ [ 47%]\n........................................................................ [ 94%]\n.........                                                                [100%]\n",
+  "stderr": ""
+}

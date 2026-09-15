@@ -1,0 +1,2 @@
+bucket = "oday-tfstate-staging-odayplus-runtime-20260825"
+prefix = "oday-plus/staging/recovery-storage"
