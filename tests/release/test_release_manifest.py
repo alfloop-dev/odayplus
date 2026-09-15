@@ -56,8 +56,8 @@ from delivery_toolchain.release.release_manifest import (
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_PATH = ROOT / "docs/evidence/gates/RELEASE_MANIFEST.json"
 REGISTRY_PATH = ROOT / "docs/evidence/gates/RELEASE_GATE_REGISTRY.json"
-REAL_CANDIDATE_SHA = "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12"
-SECOND_REAL_CANDIDATE_SHA = "36a102b7b39d1fe2e58939ee6e454e20c6d72dbd"
+REAL_CANDIDATE_SHA = "0162328cc99dfab4a2fcd97abd9491256ff326ca"
+SECOND_REAL_CANDIDATE_SHA = "581899518fdfd095e2420d41d5e5a3d27b68ae66"
 
 
 def load_manifest() -> dict:
@@ -1413,7 +1413,7 @@ def test_a_second_release_binds_the_first_one_as_its_rollback_target() -> None:
 
 def test_sources_off_egress_contract_evaluates_real_candidate_content() -> None:
     """Evaluate sources-off egress contract against exact candidate SHA."""
-    expected_digest = "sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09"
+    expected_digest = "sha256:088b8f925cc6e11a2a6da6ca148b43b7bca096bfedc714c0256892fbfb0d98f8"
     digest = compute_sources_off_egress_contract_digest(
         root=ROOT,
         candidate_sha=REAL_CANDIDATE_SHA,

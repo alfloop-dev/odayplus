@@ -1,5 +1,5 @@
 {
-  "candidate_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+  "candidate_sha": "0162328cc99dfab4a2fcd97abd9491256ff326ca",
   "components": {
     "api": {
       "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:5e1a152e839cbfa7a2bf422b924928b56fad89f35e44243619a3f2fe98802cee"
@@ -19,10 +19,21 @@
     }
   },
   "created_at": "2026-09-07T15:29:32+00:00",
-  "created_by_workflow": "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+  "created_by_workflow": "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@0162328cc99dfab4a2fcd97abd9491256ff326ca",
   "data_contract_digest": "sha256:05e2cb05619f1c524b0f9578e4ceba9ec863d143d5e64b0eeac97539ce8e7c73",
   "external_sources_expected_enabled": [],
   "initial_release_recovery": {
+    "kind": "initial-release-recovery",
+    "target_environment": "dev",
+    "recovery_method": "delete-candidate-zero-traffic",
+    "recovery_actions": [
+      "delete-candidate-cloud-run-services",
+      "delete-candidate-cloud-run-jobs",
+      "delete-candidate-scheduler-triggers",
+      "hold-zero-traffic"
+    ],
+    "rollback_target_available": false,
+    "prior_release_absent": true,
     "absence_readback": {
       "kind": "runtime-release-target-absence-readback",
       "probe_command": "gcloud run services list --format=value(metadata.name); gcloud run jobs list --format=value(metadata.name)",
@@ -41,14 +52,14 @@
           "component": "migration",
           "exists": false,
           "resource_kind": "cloud-run-job",
-          "resource_name": "oday-migration-r-596b9c9a1788",
+          "resource_name": "oday-migration-r-0162328cc99d",
           "serving_traffic": false
         },
         {
           "component": "scheduler",
           "exists": false,
           "resource_kind": "cloud-run-job",
-          "resource_name": "oday-scheduler-r-596b9c9a1788",
+          "resource_name": "oday-scheduler-r-0162328cc99d",
           "serving_traffic": false
         },
         {
@@ -62,27 +73,16 @@
           "component": "worker",
           "exists": false,
           "resource_kind": "cloud-run-job",
-          "resource_name": "oday-worker-r-596b9c9a1788",
+          "resource_name": "oday-worker-r-0162328cc99d",
           "serving_traffic": false
         }
       ]
     },
-    "binding_digest": "sha256:77ffa2570d34fca0ddd1cc1fb87aecad4b3db0dbd85e185c8da2cfdc90b04235",
-    "kind": "initial-release-recovery",
-    "prior_release_absent": true,
-    "recovery_actions": [
-      "delete-candidate-cloud-run-services",
-      "delete-candidate-cloud-run-jobs",
-      "delete-candidate-scheduler-triggers",
-      "hold-zero-traffic"
-    ],
-    "recovery_method": "delete-candidate-zero-traffic",
-    "rollback_target_available": false,
-    "target_environment": "dev"
+    "binding_digest": "sha256:e92c95c67996905076d5b5aa898f7fc2c0dba0fdcdec139b63af741845f94998"
   },
-  "manifest_digest": "sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c",
+  "manifest_digest": "sha256:95d081a06304ec4989ad27c11bf0c8b293d21c7d0767edb29596924790e3a4c1",
   "migration_digest": "sha256:17794de9afb84681aabff9ed0966dedde83d950aef132de519fdc193099e620b",
-  "release_id": "odp-596b9c9a1788",
+  "release_id": "odp-0162328cc99d",
   "release_status": "ready",
   "sbom_refs": [
     "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:c962987fdaeaab721b5fe7f08fd70af9ee730271aff365f2d604a3f8c6ad8980",
@@ -100,28 +100,34 @@
   "source_policy_digest": "sha256:0a34bb128b5b5b26201b7f014f4b4f8e631e841c8f205f38dfc09c9eb682d824",
   "sources_off_attestation": {
     "all_sources_disabled": true,
-    "binding_digest": "sha256:ada473d051cdfdd9ddbb1cbee0b4a0abc222f2b6a61812b7a216ea73a71441fe",
+    "binding_digest": "sha256:5a07d0f78db299784536781d085d35663fac05f573f7ce684ddb5cd39733e519",
     "egress_evidence": {
-      "cloud_run_egress": "ALL_TRAFFIC",
-      "contract_digest": "sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09",
-      "deploy_entrypoint_vpc_binding": "verified",
-      "firewall_egress": "default-deny",
       "kind": "runtime-release-egress-contract",
+      "cloud_run_egress": "ALL_TRAFFIC",
+      "firewall_egress": "default-deny",
+      "workflow_vpc_binding": "verified",
+      "deploy_entrypoint_vpc_binding": "verified",
+      "runtime_probe_wiring": "verified",
+      "runtime_probe": "public_egress_denied",
+      "runtime_probe_receipt": ".odp_data/deployment/public-egress-probe.json",
+      "resolved_cloud_run_egress": "ALL_TRAFFIC",
+      "runtime_probe_receipt_content_digest": "sha256:c41821c2e44c23c08142ed4d18de093112607fa07dff09660902df8379d29f85",
+      "provider_credentials_runtime": "absent",
       "proof_source": [
         ".github/workflows/deploy-dev.yml",
         "product_ops/deployment/deploy_cloud_run_waji.sh",
         "infra/terraform/cloud_run.tf",
         "infra/terraform/network.tf",
+        "infra/terraform/modules/runtime_foundation/main.tf",
+        "infra/terraform/modules/runtime_foundation/variables.tf",
+        "infra/terraform/modules/runtime_foundation/network.tf",
+        "infra/terraform/modules/runtime_foundation/outputs.tf",
+        "infra/terraform/modules/runtime_foundation/kms.tf",
+        "infra/terraform/modules/runtime_foundation/database.tf",
         "product_ops/deployment/staging_lifecycle.py",
         "product_ops/deployment/cloud_run_job_entrypoint.py"
       ],
-      "provider_credentials_runtime": "absent",
-      "resolved_cloud_run_egress": "ALL_TRAFFIC",
-      "runtime_probe": "public_egress_denied",
-      "runtime_probe_receipt": ".odp_data/deployment/public-egress-probe.json",
-      "runtime_probe_receipt_content_digest": "sha256:c41821c2e44c23c08142ed4d18de093112607fa07dff09660902df8379d29f85",
-      "runtime_probe_wiring": "verified",
-      "workflow_vpc_binding": "verified"
+      "contract_digest": "sha256:088b8f925cc6e11a2a6da6ca148b43b7bca096bfedc714c0256892fbfb0d98f8"
     },
     "egress_posture": "default-deny",
     "provider_mode": "disabled",

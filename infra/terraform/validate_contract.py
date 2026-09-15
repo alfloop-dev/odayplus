@@ -300,11 +300,7 @@ def validate(root: Path = ROOT) -> list[str]:
     return errors
 
 
-def validate_egress_contract(
-    network_text: str,
-    source_name: str = "network.tf",
-    root: Path = ROOT,
-) -> list[str]:
+def validate_egress_contract(network_text: str, source_name: str = "network.tf") -> list[str]:
     """Computably verify fail-closed egress firewall rules and absence of Cloud NAT."""
     errors: list[str] = []
     if "google_compute_router_nat" in network_text:
@@ -322,19 +318,6 @@ def validate_egress_contract(
         firewalls[name] = match.group("body")
 
     if "deny_all_egress" not in firewalls:
-        if 'source = "./modules/runtime_foundation"' in network_text:
-            mod_file = root / "modules/runtime_foundation/network.tf"
-            if not mod_file.is_file():
-                mod_file = root / "infra/terraform/modules/runtime_foundation/network.tf"
-            if not mod_file.is_file():
-                mod_file = ROOT / "modules/runtime_foundation/network.tf"
-            if mod_file.is_file():
-                mod_text = mod_file.read_text(encoding="utf-8")
-                return errors + validate_egress_contract(
-                    mod_text,
-                    source_name="modules/runtime_foundation/network.tf",
-                    root=ROOT,
-                )
         errors.append(f"{source_name}: missing required firewall rule 'deny_all_egress'")
     else:
         body = firewalls["deny_all_egress"]

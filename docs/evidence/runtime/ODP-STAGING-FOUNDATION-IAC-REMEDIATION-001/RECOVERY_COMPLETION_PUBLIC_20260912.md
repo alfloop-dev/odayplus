@@ -15,4 +15,4 @@ SQL connection string 會被誤當 bare instance 的程式缺陷，已分拆為 
 
 受 retention 約束的舊 plan 清理仍是獨立延後任務，不構成本次 foundation IAM/recovery 阻擋。
 
-已整合 dev `36a102b7b39d1fe2e58939ee6e454e20c6d72dbd`，包含已審查合併的依賴與 Adjust 修復。整合後 Ruff、code boundary 檢查通過；foundation egress 與 Terraform 回歸 **66 passed / 0 failures**。真正 successor build run `34726258529` 已成功，六份原始 artifact digest 與 manifest 綁定驗證通過，詳見 `SUCCESSOR_BUILD_20260912.md`。舊 canonical manifest 的四項不一致尚待正式 reconciliation，不能因新 artifact 或 focused suite 通過而認列全部 gate 解決。
+已整合 dev `fc4f7529ff8425d57b15dbe39f824c13dbfa2ff4`，包含已審查合併的依賴、Adjust 與 Quota Fence 修復。整合後 Ruff、code boundary 檢查通過；foundation egress 契約已完整恢復包含 12 項定義檔案（含 `modules/runtime_foundation/*.tf`），且 `RELEASE_MANIFEST.json` 與 `RELEASE_GATE_REGISTRY.json` 完成 candidate binding 對齊與驗證。回歸測試包含 `tests/release/test_release_manifest.py`、`tests/release/test_foundation_egress_contract.py` 與 `infra/terraform/tests` 全數通過 (**153 passed / 0 failures**)，且 gate registry 驗證通過 (`release_state: NO-GO`、0 integrity errors)。真正的 successor build run `34726258529` 六份原始 artifact digest 與 manifest 綁定驗證通過，詳見 `SUCCESSOR_BUILD_20260912.md`。

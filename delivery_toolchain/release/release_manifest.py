@@ -246,6 +246,12 @@ SOURCES_OFF_EGRESS_CONTRACT_FILES = (
     "product_ops/deployment/deploy_cloud_run_waji.sh",
     "infra/terraform/cloud_run.tf",
     "infra/terraform/network.tf",
+    "infra/terraform/modules/runtime_foundation/main.tf",
+    "infra/terraform/modules/runtime_foundation/variables.tf",
+    "infra/terraform/modules/runtime_foundation/network.tf",
+    "infra/terraform/modules/runtime_foundation/outputs.tf",
+    "infra/terraform/modules/runtime_foundation/kms.tf",
+    "infra/terraform/modules/runtime_foundation/database.tf",
     "product_ops/deployment/staging_lifecycle.py",
     "product_ops/deployment/cloud_run_job_entrypoint.py",
 )
@@ -1988,6 +1994,24 @@ def _sources_off_egress_contract_errors(
                 return [
                     f"sources-off egress contract file {relative} is not valid UTF-8 for candidate {candidate_sha}: {exc}"
                 ]
+        # Check for unbound runtime_foundation module inputs in candidate
+        try:
+            tree_output = subprocess.check_output(
+                ["git", "ls-tree", "-r", "--name-only", candidate_sha, "infra/terraform/modules/runtime_foundation"],
+                cwd=root,
+                stderr=subprocess.PIPE,
+            ).decode("utf-8")
+            candidate_module_files = [
+                f.strip() for f in tree_output.splitlines()
+                if f.strip().endswith(".tf") or f.strip().endswith(".tf.json")
+            ]
+            extra_candidate_inputs = sorted(
+                f for f in candidate_module_files if f not in file_contents
+            )
+            if extra_candidate_inputs:
+                errors.append("unbound runtime_foundation inputs: " + ", ".join(extra_candidate_inputs))
+        except subprocess.CalledProcessError:
+            pass
     else:
         paths = {relative: root / relative for relative in SOURCES_OFF_EGRESS_CONTRACT_FILES}
         missing = [relative for relative, path in paths.items() if not path.is_file()]
@@ -1997,6 +2021,17 @@ def _sources_off_egress_contract_errors(
             ]
         for relative, path in paths.items():
             file_contents[relative] = path.read_text(encoding="utf-8")
+
+        module_dir = root / "infra/terraform/modules/runtime_foundation"
+        if module_dir.is_dir():
+            extra_inputs = sorted(
+                path.relative_to(root).as_posix()
+                for path in module_dir.glob("*.tf*")
+                if (path.suffix == ".tf" or path.name.endswith(".tf.json"))
+                and path.relative_to(root).as_posix() not in paths
+            )
+            if extra_inputs:
+                errors.append("unbound runtime_foundation inputs: " + ", ".join(extra_inputs))
 
     workflow = file_contents[".github/workflows/deploy-dev.yml"]
     if "ODP_EXTERNAL_PROVIDER_MODE: disabled" not in workflow:
@@ -2061,6 +2096,29 @@ def _sources_off_egress_contract_errors(
         errors.append("cloud_run.tf does not enforce ALL_TRAFFIC VPC egress")
 
     network = file_contents["infra/terraform/network.tf"]
+    # Bind the local module and its caller, and inspect the instantiated rules.
+    # A detached copy of a valid module is not evidence of an active firewall.
+    foundation_call = re.search(
+        r'^module\s+"runtime_foundation"\s*\{(?P<body>.*?)^\}',
+        network,
+        re.MULTILINE | re.DOTALL,
+    )
+    if foundation_call is None or not re.search(
+        r'^\s*source\s*=\s*"\./modules/runtime_foundation"\s*$',
+        foundation_call.group("body"),
+        re.MULTILINE,
+    ):
+        errors.append("network.tf must instantiate the local runtime_foundation module")
+    elif re.search(
+        r'^\s*(count|for_each)\s*=', foundation_call.group("body"), re.MULTILINE
+    ):
+        errors.append("runtime_foundation must be unconditional (no count or for_each)")
+    if "google_compute_router" in network:
+        errors.append("network.tf must not define a Cloud NAT router")
+    if re.search(r'resource\s+"google_compute_firewall"', network):
+        errors.append("network.tf must keep firewall resources in runtime_foundation")
+
+    foundation_network = file_contents["infra/terraform/modules/runtime_foundation/network.tf"]
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
     try:
@@ -2068,24 +2126,12 @@ def _sources_off_egress_contract_errors(
     except ImportError as exc:  # pragma: no cover - repository packaging failure
         errors.append(f"cannot load Terraform egress contract verifier: {exc}")
     else:
-        if candidate_sha is not None and 'source = "./modules/runtime_foundation"' in network:
-            try:
-                mod_network = subprocess.check_output(
-                    ["git", "show", f"{candidate_sha}:infra/terraform/modules/runtime_foundation/network.tf"],
-                    cwd=root,
-                    stderr=subprocess.PIPE,
-                ).decode("utf-8")
-                errors.extend(
-                    validate_egress_contract(
-                        mod_network,
-                        source_name="modules/runtime_foundation/network.tf",
-                        root=root,
-                    )
-                )
-            except Exception:
-                errors.extend(validate_egress_contract(network, root=root))
-        else:
-            errors.extend(validate_egress_contract(network, root=root))
+        errors.extend(
+            validate_egress_contract(
+                foundation_network,
+                source_name="modules/runtime_foundation/network.tf",
+            )
+        )
     return errors
 
 
