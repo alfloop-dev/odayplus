@@ -43,7 +43,7 @@ function adaptHeatZone(raw: Record<string, unknown>): OperatorHeatZone {
   // directly so the frontend lens map can show real IDs.
   const id = (raw["h3_index"] as string | undefined) ?? String(raw["id"] ?? "HZ-UNKNOWN");
   const unmetDemand = Number(raw["unmet_demand"] ?? raw["unmetDemand"] ?? 0);
-  const confidence = Number(raw["confidence"] ?? 0);
+  const confidence = raw["confidence"] != null ? Number(raw["confidence"]) : null;
 
   return {
     id,

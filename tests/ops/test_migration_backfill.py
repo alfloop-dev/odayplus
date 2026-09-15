@@ -42,6 +42,7 @@ def test_migration_plan_indexes_revision_hashes_and_rollback() -> None:
         "0017",
         "0018",
         "0019",
+        "0020",
     ]
     assert len(plan.manifest_sha256) == 64
     assert all(len(step.sha256) == 64 for step in plan.steps)
@@ -232,6 +233,19 @@ def test_intervention_adjust_lineage_migration_is_reachable_from_alembic_head() 
         for asset in lineage_step.assets
         if asset.role == "sql"
     } == {"infra/db/migrations/000025_intervention_adjust_lineage.sql"}
+
+
+def test_canonical_measurement_nullable_migration_is_reachable_from_alembic_head() -> None:
+    """ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001: 0020 nullable migration reachability."""
+    plan = build_migration_plan(environment="dev")
+    measurement_step = next(step for step in plan.steps if step.revision == "0020")
+
+    assert measurement_step.path.endswith("0020_canonical_measurement_nullable.py")
+    assert {
+        asset.path
+        for asset in measurement_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000026_canonical_measurement_nullable.sql"}
 
 
 def test_migration_plan_uses_explicit_alembic_sql_references() -> None:

@@ -567,6 +567,11 @@ class PromotionService:
                     available_from=listing.available_from,
                     snapshot_id=listing.snapshot_id,
                     confidence=listing.confidence,
+                    # Copy the measurement lineage across, or promoting a
+                    # pre-cutover listing would restamp it with the current
+                    # writer version and relabel a legacy 1.00 as measured.
+                    measurement_schema_version=listing.measurement_schema_version,
+                    confidence_status=listing.confidence_status,
                 )
                 self.listing_repository.save_listing(updated_listing)
 
@@ -632,6 +637,8 @@ class PromotionService:
                         available_from=listing.available_from,
                         snapshot_id=listing.snapshot_id,
                         confidence=listing.confidence,
+                        measurement_schema_version=listing.measurement_schema_version,
+                        confidence_status=listing.confidence_status,
                     )
                     self.listing_repository.save_listing(updated_listing)
 

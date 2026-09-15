@@ -5,7 +5,7 @@ export type HeatZone = {
   centroid: [number, number];
   h3Resolution: number;
   score: number;
-  confidence: number;
+  confidence: number | null;
   state:
     | "UNTOUCHED"
     | "PARTIALLY_ABSORBED"
@@ -33,7 +33,7 @@ export type HeatZone = {
   competitorCapacity: number;
   medianListingRent: number;
   existingStoreCount: number;
-  dataQualityScore: number;
+  dataQualityScore: number | null;
   isMerged?: boolean;
   compositionKind?: "MERGED" | "SPLIT_CHILD" | "ATOMIC";
   memberCellIds?: string[];

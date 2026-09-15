@@ -451,7 +451,8 @@ else:
                         "p50_value": p.p50_value,
                         "p90_value": p.p90_value,
                         "unit": p.unit,
-                        "confidence": p.confidence,
+                        "confidence": p.effective_confidence,
+                        "confidenceProvenance": p.effective_confidence_provenance,
                     }
                     for p in predictions
                 ],

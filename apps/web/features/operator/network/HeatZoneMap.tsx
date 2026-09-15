@@ -625,7 +625,7 @@ function EvidenceDefinitionList({ freshness, zone }: { freshness: Freshness; zon
       </div>
       <div>
         <dt>Confidence</dt>
-        <dd>{zone.confidence.toFixed(2)}</dd>
+        <dd>{zone.confidence != null ? zone.confidence.toFixed(2) : "未評估"}</dd>
       </div>
       <div>
         <dt>Warnings</dt>
@@ -732,7 +732,7 @@ function buildDeckLayers({
       data: zones,
       visible: visible.freshness,
       getPosition: (zone) => zone.centroid,
-      getText: (zone) => `${zone.id}\n${zone.score} / ${zone.confidence.toFixed(2)}`,
+      getText: (zone) => `${zone.id}\n${zone.score} / ${zone.confidence != null ? zone.confidence.toFixed(2) : "N/A"}`,
       getColor: [23, 37, 84, 255],
       getSize: 13,
       getTextAnchor: "middle",
@@ -788,7 +788,7 @@ function encodeLayerState(layers: LayerState): string {
 }
 
 function riskStroke(zone: HeatZone): [number, number, number, number] {
-  if (zone.state === "SUPPRESSED_LOW_CONFIDENCE" || zone.confidence < 0.7) return [192, 86, 33, 245];
+  if (zone.state === "SUPPRESSED_LOW_CONFIDENCE" || zone.confidence === null || zone.confidence < 0.7) return [192, 86, 33, 245];
   if (zone.state === "UNDER_REALIZED") return [183, 121, 31, 230];
   if (zone.state === "SATURATED") return [113, 128, 150, 210];
   return [47, 133, 90, 210];
@@ -909,7 +909,8 @@ function zoneToFeature(zone: HeatZone): ZoneFeature {
   };
 }
 
-function confidenceBand(confidence: number): "high" | "medium" | "low" {
+function confidenceBand(confidence: number | null): "high" | "medium" | "low" {
+  if (confidence === null) return "low";
   if (confidence >= 0.8) return "high";
   if (confidence >= 0.7) return "medium";
   return "low";
