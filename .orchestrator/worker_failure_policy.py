@@ -3,6 +3,10 @@ from __future__ import annotations
 """Worker failure policy helpers extracted from legacy supervisor."""
 # ruff: noqa: F401,F821,F841,I001
 
+import json
+import os
+from pathlib import Path
+import signal
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
@@ -10,6 +14,7 @@ from typing import Any
 from adapters.base import DeliveryRequest
 from common import (
     claude_model_selection_args,
+    load_json,
     parse_iso_timestamp,
     spawn_background_process,
     substantive_review_reopen_count,
@@ -46,6 +51,8 @@ def _sync_supervisor_scope() -> None:
         "ROLE_HELPER", "ROLE_OWNER", "ROLE_REVIEWER", "dispatch_reason_role",
         "role_provider_block_reason", "dispatch_policy_agent_provider_identity_ids",
         "task_closeout_is_frozen", "DEFAULT_FROZEN_CLOSEOUT_STATUSES", "task_submitted_author",
+        "worker_writer_pids", "worker_writers_are_alive", "terminate_worker_writers",
+        "_settle_fenced_sibling_worker", "fence_account_pool_workers",
     }
     module_exports = {
         "__all__",
@@ -3539,8 +3546,54 @@ def maybe_reassign_task_after_worker_failure(
             new_status="todo" if requeue_for_fresh_dispatch else None,
             handoff_to=new_owner,
             handoff_from=owner,
+            # Carry handoff authorization in the same atomic canonical write
+            # so a crash between actor-change and seal-update cannot leave the
+            # successor owning the task with no durable authorization.
+            task_updates={"handoff_authorization": {
+                "authorized_successor": new_owner,
+                "transferred_from": owner,
+                "transfer_reason": reason,
+                "source_run_id": str(worker.get("run_id") or ""),
+            }} if str(worker.get("workspace_path") or "") else None,
         ):
             return None
+        # Verify all source writers are stopped before transferring the seal.
+        # The quota-triggering worker bypasses the sibling fence guard; without
+        # this check the original child can survive handoff and mutate the
+        # dirty fingerprint after the successor is granted a sealed_owner_dirt
+        # lease.
+        if worker_writers_are_alive(worker):
+            terminate_worker_writers(worker)
+        writers_stopped = not worker_writers_are_alive(worker)
+        handoff_block = ((state.get("worker_worktrees") or {}).get("handoff_blocks") or {}).get(task_id)
+        worker_run_id = str(worker.get("run_id") or "")
+        worker_workspace_path = str(worker.get("workspace_path") or "")
+        worker_workspace_branch = str(worker.get("workspace_branch") or "")
+        if (
+            writers_stopped
+            and isinstance(handoff_block, dict)
+            and worker_run_id
+            and worker_workspace_path
+            and normalize_agent_id(str(handoff_block.get("owner") or "")) == normalize_agent_id(owner)
+            and str(handoff_block.get("source_run_id") or "") == worker_run_id
+            and str(handoff_block.get("workspace_path") or "") == worker_workspace_path
+            and (not worker_workspace_branch or str(handoff_block.get("workspace_branch") or "") == worker_workspace_branch)
+        ):
+            handoff_block["original_owner"] = handoff_block.get("original_owner") or handoff_block.get("owner") or owner
+            handoff_block["owner"] = new_owner
+            handoff_block["authorized_successor"] = new_owner
+            handoff_block["transferred_from"] = owner
+            handoff_block["transferred_to"] = new_owner
+            handoff_block["transfer_reason"] = reason
+            handoff_block["transferred_at"] = utc_now()
+            handoff_block["transfer_source_run_id"] = worker_run_id
+            handoff_block["writers_verified_stopped"] = True
+        elif isinstance(handoff_block, dict) and not writers_stopped:
+            # Writers are still alive — record the situation but do NOT
+            # transfer the seal.  The deferred pending_fence mechanism will
+            # settle the worker once its writers die.
+            handoff_block["handoff_deferred_writer_alive"] = True
+            handoff_block["handoff_deferred_at"] = utc_now()
         write_activity_log(
             config,
             {
@@ -3552,6 +3605,7 @@ def maybe_reassign_task_after_worker_failure(
                 "from_reviewer": reviewer,
                 "to_reviewer": new_reviewer,
                 "worker_run_id": worker.get("run_id"),
+                "writers_verified_stopped": writers_stopped,
             },
         )
         clear_task_failure_streaks_for_task(state, task_id)
@@ -3562,6 +3616,314 @@ def maybe_reassign_task_after_worker_failure(
         return new_owner
 
     return None
+
+
+@_entrypoint
+def worker_writer_pids(worker: dict[str, Any] | None) -> set[int]:
+    """Return all active process IDs associated with writing to worker workspace.
+
+    Includes the runner PID, child CLI PID, any known/tracked descendant
+    processes in their process tree, any process whose working directory
+    is inside the worker's workspace, and any process holding open file
+    descriptors inside the worker's workspace.
+    """
+    if not isinstance(worker, dict):
+        return set()
+    initial_pids: set[int] = set()
+    for key in ("pid", "child_pid"):
+        val = worker.get(key)
+        try:
+            val_int = int(val)
+            if val_int > 0:
+                initial_pids.add(val_int)
+        except (TypeError, ValueError):
+            pass
+    for tracked in worker.get("tracked_writer_pids") or ():
+        try:
+            t_int = int(tracked)
+            if t_int > 0:
+                initial_pids.add(t_int)
+        except (TypeError, ValueError):
+            pass
+    pending_fence = worker.get("pending_fence")
+    if isinstance(pending_fence, dict):
+        for tracked in pending_fence.get("tracked_writer_pids") or ():
+            try:
+                t_int = int(tracked)
+                if t_int > 0:
+                    initial_pids.add(t_int)
+            except (TypeError, ValueError):
+                pass
+    metadata = worker.get("metadata") if isinstance(worker.get("metadata"), dict) else {}
+    for tracked in metadata.get("tracked_writer_pids") or ():
+        try:
+            t_int = int(tracked)
+            if t_int > 0:
+                initial_pids.add(t_int)
+        except (TypeError, ValueError):
+            pass
+    status_path = worker.get("runner_status_path") or metadata.get("runner_status_path")
+    heartbeat_path = worker.get("heartbeat_path") or metadata.get("heartbeat_path")
+    for marker_path in (status_path, heartbeat_path):
+        if not marker_path:
+            continue
+        try:
+            marker = load_json(Path(str(marker_path)), default={}) or {}
+            if isinstance(marker, dict):
+                for key in ("pid", "child_pid"):
+                    val = marker.get(key)
+                    if val is not None:
+                        try:
+                            val_int = int(val)
+                            if val_int > 0:
+                                initial_pids.add(val_int)
+                        except (TypeError, ValueError):
+                            pass
+                for tracked in marker.get("tracked_writer_pids") or ():
+                    try:
+                        t_int = int(tracked)
+                        if t_int > 0:
+                            initial_pids.add(t_int)
+                    except (TypeError, ValueError):
+                        pass
+        except Exception:
+            pass
+
+    proc = Path("/proc")
+    if not proc.exists():
+        live = {p for p in initial_pids if pid_is_alive(p)}
+        if live:
+            worker["tracked_writer_pids"] = sorted(live)
+        return live
+
+    children_map: dict[int, set[int]] = {}
+    all_proc_pids: set[int] = set()
+    try:
+        for entry in proc.iterdir():
+            if not entry.name.isdigit():
+                continue
+            p = int(entry.name)
+            all_proc_pids.add(p)
+            stat_file = entry / "stat"
+            try:
+                content = stat_file.read_text(encoding="utf-8", errors="ignore")
+                rparen = content.rfind(")")
+                if rparen != -1:
+                    rest = content[rparen + 1:].split()
+                    if len(rest) >= 2:
+                        ppid = int(rest[1])
+                        children_map.setdefault(ppid, set()).add(p)
+            except (OSError, ValueError):
+                continue
+    except OSError:
+        pass
+
+    collected: set[int] = set()
+    to_visit = list(initial_pids)
+    while to_visit:
+        curr = to_visit.pop()
+        if curr not in collected:
+            collected.add(curr)
+            for child in children_map.get(curr, ()):
+                if child not in collected:
+                    to_visit.append(child)
+
+    workspace_path_str = str(worker.get("workspace_path") or "")
+    if workspace_path_str:
+        try:
+            workspace_resolved = Path(workspace_path_str).resolve()
+            workspace_prefix = str(workspace_resolved) + "/"
+            for p in all_proc_pids:
+                if p in collected or p <= 1:
+                    continue
+                try:
+                    cwd = (proc / str(p) / "cwd").resolve()
+                    if cwd == workspace_resolved or str(cwd).startswith(workspace_prefix):
+                        collected.add(p)
+                        continue
+                except (OSError, PermissionError):
+                    pass
+                fd_dir = proc / str(p) / "fd"
+                try:
+                    for fd_entry in fd_dir.iterdir():
+                        try:
+                            target = os.readlink(fd_entry)
+                            if target == str(workspace_resolved) or target.startswith(workspace_prefix):
+                                collected.add(p)
+                                break
+                        except (OSError, PermissionError):
+                            continue
+                except (OSError, PermissionError):
+                    pass
+        except Exception:
+            pass
+
+    live = {p for p in collected if pid_is_alive(p)}
+    if live or "tracked_writer_pids" in worker:
+        worker["tracked_writer_pids"] = sorted(live)
+    if isinstance(worker.get("pending_fence"), dict):
+        worker["pending_fence"]["tracked_writer_pids"] = sorted(live)
+    return live
+
+
+@_entrypoint
+def worker_writers_are_alive(worker: dict[str, Any] | None) -> bool:
+    """Return True if the worker runner or any descendant writer process is alive."""
+    if not isinstance(worker, dict):
+        return False
+    pid = worker.get("pid")
+    if pid_is_alive(pid):
+        return True
+    child_pid = worker.get("child_pid")
+    if pid_is_alive(child_pid):
+        return True
+    pids = worker_writer_pids(worker)
+    return any(pid_is_alive(p) for p in pids)
+
+
+@_entrypoint
+def terminate_worker_writers(worker: dict[str, Any] | None, sig: int = signal.SIGTERM) -> bool:
+    """Send termination signal to runner wrapper and all descendant processes."""
+    if not isinstance(worker, dict):
+        return False
+    killed_any = False
+    pids = worker_writer_pids(worker)
+    if not pids:
+        direct_pid = worker.get("pid")
+        if direct_pid:
+            return terminate_worker_pid(direct_pid)
+        return False
+    for p in pids:
+        try:
+            try:
+                os.killpg(p, sig)
+            except (OSError, PermissionError):
+                pass
+            if terminate_worker_pid(p):
+                killed_any = True
+            else:
+                try:
+                    os.kill(p, sig)
+                    killed_any = True
+                except OSError:
+                    pass
+        except OSError:
+            pass
+    return killed_any
+
+
+@_entrypoint
+def _settle_fenced_sibling_worker(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    sibling: dict[str, Any],
+    pool_id: str,
+    reason: str,
+) -> bool:
+    """Settle a dead sibling worker after account pool fencing.
+
+    Preserves worktree uncommitted changes before any owner reassignment.
+    If preservation succeeds or worktree was clean, reassigns the task
+    and transfers handoff seal provenance to the authorized successor.
+    If preservation fails on dirty work, preserves retryable/blocker recovery
+    for the original owner and does not transfer responsibility.
+    """
+    if worker_writers_are_alive(sibling):
+        sibling["pending_fence"] = {
+            "pool_id": pool_id,
+            "reason": reason,
+            "fenced_at": (sibling.get("pending_fence") or {}).get("fenced_at") or utc_now(),
+        }
+        return False
+
+    task_id = str(sibling.get("task_id") or "")
+    task_record = canonical_task_record(config, task_id) if task_id else None
+    outcome = preserve_dead_worker_worktree(
+        config,
+        state,
+        sibling,
+        task=task_record,
+        trigger="sibling_fenced",
+    )
+    is_clean = getattr(outcome, "reason", "") in {
+        "worktree_clean",
+        "nothing_to_preserve",
+        "worker_had_no_workspace",
+        "no_worktree_path",
+    }
+    preservation_succeeded = bool(outcome) or getattr(outcome, "preserved", False)
+
+    if preservation_succeeded or is_clean:
+        reassigned_to = maybe_reassign_task_after_worker_failure(
+            config,
+            state,
+            sibling,
+            reason,
+            terminal=True,
+            force=True,
+        )
+        sibling["status"] = "reassigned" if reassigned_to else "failed"
+        sibling["reassigned_to"] = reassigned_to
+        sibling["last_event_at"] = utc_now()
+        sibling["last_error"] = (
+            f"Account pool {pool_id} fenced after a sibling quota failure. "
+            f"{reason}"
+        )
+        # Use explicit None sentinel instead of pop() so that
+        # _merge_worker_record's dict.update() overwrites the disk copy.
+        # pop() removes the key from memory, but update() only sets keys
+        # present in the source dict, so the disk's pending_fence survives.
+        sibling["pending_fence"] = None
+        finalize_queue_event_record(
+            config,
+            state,
+            sibling,
+            "completed" if reassigned_to else "failed",
+            sibling["last_error"],
+        )
+        write_activity_log(
+            config,
+            {
+                "type": "account_pool_worker_fenced",
+                "account_pool": pool_id,
+                "task_id": sibling.get("task_id"),
+                "worker_run_id": sibling.get("run_id"),
+                "reassigned_to": reassigned_to,
+                "message": sibling["last_error"],
+            },
+        )
+        return True
+
+    preservation_reason = getattr(outcome, "reason", "") or "preservation_failed"
+    preservation_detail = getattr(outcome, "detail", "")
+    detail_str = f" ({preservation_reason}: {preservation_detail})" if preservation_detail else f" ({preservation_reason})"
+    sibling["last_error"] = (
+        f"Account pool {pool_id} fenced after a sibling quota failure. "
+        f"Worktree preservation failed{detail_str}. "
+        f"Responsibility not reassigned; pending preservation retry. {reason}"
+    )
+    sibling["pending_fence"] = {
+        "pool_id": pool_id,
+        "reason": reason,
+        "fenced_at": (sibling.get("pending_fence") or {}).get("fenced_at") or utc_now(),
+        "preservation_failed": True,
+        "preservation_reason": preservation_reason,
+    }
+    write_activity_log(
+        config,
+        {
+            "type": "account_pool_worker_fenced",
+            "account_pool": pool_id,
+            "task_id": sibling.get("task_id"),
+            "worker_run_id": sibling.get("run_id"),
+            "reassigned_to": None,
+            "preservation_failed": True,
+            "preservation_reason": preservation_reason,
+            "message": sibling["last_error"],
+        },
+    )
+    return False
+
 
 @_entrypoint
 def fence_account_pool_workers(
@@ -3595,41 +3957,20 @@ def fence_account_pool_workers(
         sibling_identity = worker_logical_dispatch_agent_id(config, sibling)
         if agent_account_pool_id(config, sibling_identity) != pool_id:
             continue
-        if pid_is_alive(sibling.get("pid")):
-            terminate_worker_pid(sibling.get("pid"))
-        reassigned_to = maybe_reassign_task_after_worker_failure(
-            config,
-            state,
-            sibling,
-            reason,
-            terminal=True,
-            force=True,
-        )
-        sibling["status"] = "reassigned" if reassigned_to else "failed"
-        sibling["reassigned_to"] = reassigned_to
-        sibling["last_event_at"] = utc_now()
-        sibling["last_error"] = (
-            f"Account pool {pool_id} fenced after a sibling quota failure. "
-            f"{reason}"
-        )
-        finalize_queue_event_record(
-            config,
-            state,
-            sibling,
-            "completed" if reassigned_to else "failed",
-            sibling["last_error"],
-        )
-        write_activity_log(
-            config,
-            {
-                "type": "account_pool_worker_fenced",
-                "account_pool": pool_id,
-                "task_id": sibling.get("task_id"),
-                "worker_run_id": sibling.get("run_id"),
-                "reassigned_to": reassigned_to,
-                "message": sibling["last_error"],
-            },
-        )
+        if worker_writers_are_alive(sibling):
+            terminate_worker_writers(sibling)
+        if worker_writers_are_alive(sibling):
+            # Process is still alive / shutdown in progress, or termination failed.
+            # Defer actor change and terminal settlement until confirmed death.
+            sibling["pending_fence"] = {
+                "pool_id": pool_id,
+                "reason": reason,
+                "fenced_at": utc_now(),
+            }
+            fenced += 1
+            continue
+
+        _settle_fenced_sibling_worker(config, state, sibling, pool_id, reason)
         fenced += 1
     return fenced
 
@@ -3841,6 +4182,8 @@ def retry_due_workers(
 ) -> bool:
     changed = False
     for worker in list(state.get("workers", {}).values()):
+        if worker.get("pending_fence"):
+            continue
         if worker.get("status") != "retry_backoff":
             continue
         next_retry_at = _parse_iso_utc(worker.get("next_retry_at"))
