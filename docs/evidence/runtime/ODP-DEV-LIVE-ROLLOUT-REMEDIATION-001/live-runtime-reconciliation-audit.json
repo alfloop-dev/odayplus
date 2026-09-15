@@ -1,0 +1,225 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+  "audit_type": "live_runtime_vs_hosted_build_reconciliation",
+  "release_status": "blocked",
+  "deployment_success_claimed": false,
+  "historical_receipts_modified": false,
+  "generated_at": "2026-09-04T06:41:04Z",
+  "generated_by": "Codex",
+  "readback_window_utc": {
+    "start_utc": "2026-09-04T06:25:50Z",
+    "end_utc": "2026-09-04T06:41:04Z"
+  },
+  "readback_identity": {
+    "hosted_build": "GitHub Actions Runtime Release with Google WIF",
+    "gcp_project_id": "odayplus-runtime-20260825",
+    "gcp_region": "asia-east1",
+    "secret_values_redacted": true,
+    "note": "Only hosted readback receipts and public artifact metadata are recorded; no secret payload was read."
+  },
+  "candidate_reconciliation": {
+    "authoritative_manifest_candidate_sha": "ebc4fca5c2dd5871275aee39a18406dd67464f04",
+    "origin_dev_head_sha": "1edb2f834cbf38ccd489cd999802098076e891b7",
+    "drift_status": "diverged",
+    "candidate_must_rebuild": true,
+    "fresh_build_candidate_sha": "1edb2f834cbf38ccd489cd999802098076e891b7",
+    "base_advance": {
+      "previous_candidate_checked": "d858e1c3a75489b5ecae5f67920fb314289a93d9",
+      "current_base": "1edb2f834cbf38ccd489cd999802098076e891b7",
+      "product_or_build_input_changed": true,
+      "old_artifacts_reused": false
+    },
+    "repository_manifest": {
+      "schema_version": 1,
+      "release_id": "odp-ebc4fca5c2dd",
+      "release_status": "ready",
+      "manifest_digest": "sha256:fa2f52220951dc89c56b41b7f0fd61280ce00a028709d2124ceefcdc55f24de9",
+      "admission_result": "blocked",
+      "admission_errors": [
+        "missing sources-off attestation or masked data snapshot binding",
+        "missing rollback_release with verified candidate sha and components"
+      ]
+    }
+  },
+  "hosted_build_execution": {
+    "workflow": "Runtime Release (.github/workflows/deploy-dev.yml)",
+    "run_id": 33844319992,
+    "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/33844319992",
+    "event": "workflow_dispatch",
+    "phase": "build",
+    "environment": "dev-build",
+    "release_sha": "1edb2f834cbf38ccd489cd999802098076e891b7",
+    "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+    "result": "success",
+    "release_id": "odp-1edb2f834cbf",
+    "manifest_digest": "sha256:c9ff71c7557c4009487cf6e093280f47369db2fdd49a17ac8b9e1aa472e8c2c7",
+    "steps_passed": [
+      "Validate release phase inputs",
+      "Assert exact release SHA is checked out",
+      "確認 build 階段已綁定 environment 且變數齊備",
+      "Publish build environment binding receipt",
+      "Run Secret Scan",
+      "Run Python SAST Scan",
+      "Generate SBOM",
+      "Install locked project dependencies",
+      "Run E2E deployment health, backup, restore, and rollback proof",
+      "Authenticate to Google Cloud (WIF)",
+      "Set up Cloud SDK",
+      "讀回部署 target 以確認沒有既有已核准 release",
+      "Install Cosign",
+      "Build, publish, sign, and attest immutable container images",
+      "Write the build-once artifact handoff",
+      "Publish immutable image handoff",
+      "Publish candidate release manifest",
+      "Publish initial-release target absence readback"
+    ],
+    "published_images": {
+      "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:520c3c0cb49f5b46b8c21c9e3e7e3284c4e3b7576a7b42ea1a8a7e5504d5e7a2",
+      "web": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:72bd3c5fc86a2e341af3e4faccf869edd53bba37fc9f1751ef044892ba113de4",
+      "worker": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:68f25db411228bb5fa2d21ad23469bc1045bfe7b19054ffa4e66eda349120538",
+      "scheduler": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:82b0bf9be56a301b3c27bac5a22825b2d1cf65a3d1309b3f0ea7250a3ea88a76"
+    },
+    "signature_refs": [
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:4f0eef45d3ebec4bdd4c979d3d0ce28b23deb2280a40bc72ea61869702934e5c",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:4b7a8405a103d76f8caced7d246ffb313f7a546d46a5a3288dc371cfc6cf5f2d",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:201244582c1827a9961ac6b69172c07e25bc8cd0d045840c520ae4455c5d925c",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:3abbdc39064f26a6d9f71b0f214cc955b762d6c3b1fa9c51e8371c650d44c4c1"
+    ],
+    "sbom_refs": [
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:50bb492fd0429040f6031c573072deff1ccb0643dfcedc2d9da87e3e1b906e8b",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:9febd14f6f2fcb115a8b142df31a00d8788f8951a7c88592ac09935f0c816629",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:df895c3bb4542db1d34adc39811d744555c448334035b61430daeb69a2ff9d5b",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:21ccb416f42e6e07ac283f0885abec927ee6e33b670ea98892fc1ba89c26fb38"
+    ],
+    "uploaded_artifacts": [
+      "release-phase-receipt-dev-build (9851558806)",
+      "release-environment-receipt-dev-build (9851570153)",
+      "runtime-release-images-1edb2f834cbf38ccd489cd999802098076e891b7 (9926308131)",
+      "runtime-release-manifest-1edb2f834cbf38ccd489cd999802098076e891b7 (9926308373)",
+      "initial-release-absence-readback-1edb2f834cbf38ccd489cd999802098076e891b7 (9926308639)"
+    ],
+    "handoff_manifest_published": true,
+    "image_handoff_published": true,
+    "initial_release_absence_readback_published": true,
+    "external_sources_expected_enabled": []
+  },
+  "source_posture": {
+    "all_sources_disabled": true,
+    "external_sources_expected_enabled": [],
+    "provider_mode": "disabled",
+    "zero_credentials_present": true,
+    "total_sources_audited": 16,
+    "egress_posture": "default-deny",
+    "cloud_run_egress": "ALL_TRAFFIC",
+    "post_deploy_runtime_probe": "not_available_without_signed_supervisor_lease",
+    "evidence_source": "hosted schema-v2 manifest and build environment binding receipt"
+  },
+  "authorization_state": {
+    "supervisor_lease_issued": false,
+    "private_signing_key_available_to_worker": false,
+    "dev_environment_lease_public_key": "configured",
+    "dev_environment_lease_state_uri": "gs://odayplus-runtime-20260825-release-leases/leases",
+    "canonical_registry_candidate_sha": "ebc4fca5c2dd5871275aee39a18406dd67464f04",
+    "canonical_registry_manifest_digest": "sha256:fa2f52220951dc89c56b41b7f0fd61280ce00a028709d2124ceefcdc55f24de9",
+    "canonical_registry_decision": "no-go",
+    "hosted_manifest_bound_to_canonical_registry": false,
+    "admission_possible": false
+  },
+  "live_gcp_runtime_state": {
+    "project_id": "odayplus-runtime-20260825",
+    "region": "asia-east1",
+    "current_readback_result": "predeploy_target_absence_verified",
+    "target_absence_receipt": {
+      "kind": "runtime-release-target-absence-readback",
+      "candidate_sha": "1edb2f834cbf38ccd489cd999802098076e891b7",
+      "api_service": {"name": "oday-api", "exists": false, "serving_traffic": false},
+      "web_service": {"name": "oday-web", "exists": false, "serving_traffic": false},
+      "migration_job": {"name": "oday-migration-r-1edb2f834cbf", "exists": false, "serving_traffic": false},
+      "worker_job": {"name": "oday-worker-r-1edb2f834cbf", "exists": false, "serving_traffic": false},
+      "scheduler_job": {"name": "oday-scheduler-r-1edb2f834cbf", "exists": false, "serving_traffic": false}
+    },
+    "deployment_commands_run": false,
+    "traffic_switch_run": false,
+    "post_deploy_readback": "not_applicable_without_signed_supervisor_lease",
+    "cloud_run_generated_urls": [],
+    "cloud_run_revisions": [],
+    "job_executions": [],
+    "scheduler_triggers": []
+  },
+  "reconciliation_findings": [
+    {
+      "id": "FINDING-001",
+      "severity": "P0",
+      "topic": "candidate_drift_requires_new_build",
+      "finding": "The base advanced from d858e1c3a754 to 1edb2f834cbf with product/build-input changes; the d858 build was discarded and a fresh 1edb2f834cbf build was run.",
+      "status": "verified"
+    },
+    {
+      "id": "FINDING-002",
+      "severity": "P0",
+      "topic": "hosted_build_handoff_ready",
+      "finding": "Runtime Release run 33844319992 successfully published a schema-v2 manifest, four exact image refs, four Cosign signature refs, four SBOM attestation refs, and first-release target absence readback for 1edb2f834cbf.",
+      "status": "verified"
+    },
+    {
+      "id": "FINDING-003",
+      "severity": "P0",
+      "topic": "canonical_registry_stale_for_hosted_candidate",
+      "finding": "The canonical release gate registry remains bound to ebc4fca5c2dd and no-go; it does not bind the hosted 1edb2f834cbf manifest digest.",
+      "status": "blocked"
+    },
+    {
+      "id": "FINDING-004",
+      "severity": "P0",
+      "topic": "supervisor_lease_missing",
+      "finding": "No Supervisor signed lease was issued for action deploy and manifest digest sha256:c9ff71c7557c4009487cf6e093280f47369db2fdd49a17ac8b9e1aa472e8c2c7; the worker has no private signing key.",
+      "status": "blocked"
+    },
+    {
+      "id": "FINDING-005",
+      "severity": "P0",
+      "topic": "deployment_not_attempted",
+      "finding": "Because exact lease admission was unavailable, no Cloud Run deployment, job execution, authenticated smoke, provider-off runtime probe, or egress probe was run. The target absence readback is pre-deploy evidence only.",
+      "status": "fail_closed"
+    },
+    {
+      "id": "FINDING-006",
+      "severity": "P0",
+      "topic": "historical_false_receipts_immutable",
+      "finding": "Historical ODP-DEV-ROLLOUT-001 receipt bytes remain unmodified and are explicitly superseded by this current reconciliation.",
+      "status": "verified_without_mutation"
+    }
+  ],
+  "historical_receipts_sha256": {
+    "README.md": "fc9cfc042068d56e00dbd88a3e6f27e3f550c0cba7aa11b09989660aa864b477",
+    "data-platform-dev-deployment.json": "5f0fc2983a3b2f95bc987c67cebe24aa2b188d004d53ec903ad399535b5a8615",
+    "dev-integration-readback.json": "25add1cce139170c260ccce1793f726c450549bffb1c4d6af572f4d151ca8072",
+    "dev-rollout-manifest-binding.json": "223b35cb0a2da874c50172bf2561f378034cd7b73622441e85134fd4026e621a",
+    "external-sources-provider-off-audit.json": "72cd51e8dcdf7ef77e3fcd4c0e68fed09b371c4189b06eac26465c52e6985f75",
+    "odayplus-dev-deployment.json": "2ac6638467ccf4b260df1bed51fddee59d579e6c43edb6ec21fa86dc40775e26",
+    "release-receipts-index.json": "5b1e41015c9291e2fe6dda26de681f456a90672a325aa7e9ce868e9e96e09449"
+  },
+  "actions_taken": [
+    "Confirmed the expected task branch and kept all prior task history.",
+    "Normally merged the current origin/dev base 1edb2f834cbf into the task branch and pushed the merge normally.",
+    "Added the existing migration target variable to dev-build so the first-release recovery branch had complete environment binding.",
+    "Dispatched and verified hosted Runtime Release build run 33844319992 for the exact current base.",
+    "Downloaded and structurally verified the hosted schema-v2 manifest and exact image handoff.",
+    "Recorded the hosted target-absence receipt and canonical registry mismatch without mutating the registry or historical receipts."
+  ],
+  "actions_not_taken": [
+    "No old d858 image, manifest, or build handoff was reused after the base advanced.",
+    "No Supervisor lease was fabricated, signed, consumed, or replayed.",
+    "No Cloud Run service/job deployment, migration, worker/scheduler execution, traffic switch, or DNS/custom-domain/certificate mutation was performed.",
+    "No provider credential payload was read and no third-party source was enabled.",
+    "No historical receipt under docs/evidence/runtime/ODP-DEV-ROLLOUT-001/ was edited, moved, or deleted.",
+    "No deployment-success receipt was written."
+  ],
+  "unblock_requirements": [
+    "Reconcile the canonical release gate registry to candidate 1edb2f834cbf38ccd489cd999802098076e891b7 and manifest digest sha256:c9ff71c7557c4009487cf6e093280f47369db2fdd49a17ac8b9e1aa472e8c2c7.",
+    "Have the Supervisor issuer create and durably record an Ed25519-signed lease for task ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001, target dev, action deploy, and the exact manifest digest.",
+    "Dispatch the existing Runtime Release deploy phase with the four exact hosted image refs and the signed lease.",
+    "Capture authorized post-deploy Cloud Run URLs/revisions, migration/worker/scheduler executions, authenticated smoke, provider-off/16-source, default-deny egress, and exact manifest-binding receipts."
+  ]
+}
