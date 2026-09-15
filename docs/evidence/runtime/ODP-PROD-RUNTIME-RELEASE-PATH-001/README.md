@@ -1,16 +1,24 @@
 # ODP-PROD-RUNTIME-RELEASE-PATH-001: Production Runtime Release Path Evidence
 
 Task: 建立 production 的 Runtime Release 部署路徑
-Status: Verification complete — all acceptance criteria already satisfied
-Verified at: 2026-09-15T05:30:00Z
+Status: Path structurally correct — blocked on ops variable provisioning
+Verified at: 2026-09-15T06:05:00Z
 Verified by: Antigravity6
 
 ## Summary
 
 Runtime Release (`.github/workflows/deploy-dev.yml`) is the sole deployment
-entrypoint for all environments.  This document proves every acceptance
-criterion is satisfied and the production path is live‑ready for
-ODP-PROD-BLUEGREEN-ROLLOUT-001.
+entrypoint for all environments.  The workflow already routes production
+correctly at the code level: environment choice, concurrency groups, job
+bindings, conditional gates, and fail-closed URL validation are all in place.
+
+**However**, the GitHub `production` and `production-build` environments are
+both missing two required variables (`ODP_CLOUD_RUN_VPC_CONNECTOR` and
+`ODP_CLOUD_RUN_VPC_EGRESS`).  Until those are provisioned, both the build
+and deploy binding gates will fail closed, making the production path
+**currently not executable**.  A blocker has been raised for Human/Ops.
+
+No workflow code change is required — the path structure is already correct.
 
 ---
 
@@ -49,14 +57,27 @@ asserts `set(env_input["options"]) == {"dev", "staging", "production"}`.
 
 ---
 
-## AC-2: URL resolution is an explicit three‑branch — production resolves to `vars.ODP_PROD_DEPLOY_URL`
+## AC-2: URL resolution — production resolves to `vars.ODP_PROD_DEPLOY_URL` with fail-closed guard
 
 **Status: ✅ Satisfied**
+
+### Disclosure: AC-2 references a removed artifact
+
+AC-2 originally referenced "第 94 行 url 的二元三元式" — a ternary expression
+in the workflow's `environment:` block `url:` key.  **That `url:` key was
+removed by commit `c35ffe05`** (`ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001`),
+which replaced the staging-in-workflow URL derivation with Terraform-based
+ephemeral staging.  The current line 94 is a `web_image` input definition.
+
+The defect AC-2 targeted (production silently falling back to the dev URL) is
+**no longer possible** because the URL resolution now occurs inside the deploy
+script with explicit fail-closed guards, not in a ternary expression that
+could silently default.
 
 ### Current implementation
 
 The live E2E URL resolution in `product_ops/deployment/deploy_cloud_run_waji.sh`
-lines 985–991 is an explicit three-branch pattern:
+lines 985–991 is a **two-branch if/else** (not a three-branch ternary):
 
 ```bash
 if [ "${ODP_DEPLOY_ENV}" = "production" ]; then
@@ -68,12 +89,18 @@ else
 fi
 ```
 
-- **production** → `ODP_PROD_DEPLOY_URL` / `ODP_PROD_API_URL` (custom HTTPS domains)
-- **dev** → Cloud Run default service URL (the `else` branch)
-- **staging** → entirely separate path via `staging_lifecycle.py`, which derives
-  URLs from Terraform outputs (`staging_web_uri`, `staging_api_uri`) at workflow
-  lines 1287–1288.  Staging never reaches `deploy_cloud_run_waji.sh` (gated by
-  `if: ${{ inputs.environment != 'staging' }}` at line 1200).
+The three effective paths are:
+
+- **production** → `ODP_PROD_DEPLOY_URL` / `ODP_PROD_API_URL` (enters the `if` branch)
+- **dev** → Cloud Run default service URL (enters the `else` branch)
+- **staging** → never reaches `deploy_cloud_run_waji.sh` at all, because the
+  step is gated on `if: ${{ inputs.environment != 'staging' }}` at line 1200.
+  Staging derives URLs from Terraform outputs via `staging_lifecycle.py` at
+  workflow lines 1287–1288.
+
+This constitutes three **effective** URL paths, but the if/else itself is a
+two-branch structure.  The previous ternary was a literal three-branch
+expression; this is a two-branch shell conditional plus a workflow-level gate.
 
 ### Fail-closed guard
 
@@ -125,7 +152,7 @@ GitHub `production` environment where the value
 
 **Status: ✅ Satisfied — all conditions audited below**
 
-Every condition in the deploy job that branches on `staging` falls into two
+Every condition in the deploy job that branches on `staging` falls into three
 categories:
 
 ### Category A: `!= 'staging'` — runs for both dev and production
@@ -172,7 +199,7 @@ pattern like `staging ? X : Y` where production would silently receive Y.
 
 ## AC-4: Deploy job binds the production environment — `vars.*` resolve correctly
 
-**Status: ✅ Satisfied**
+**Status: ⚠️ Structurally correct but NOT YET EXECUTABLE — missing VPC variables**
 
 ### Environment binding
 
@@ -209,6 +236,34 @@ This step verifies all required variables resolved to non-empty values:
 If any variable is empty (unbound environment), the gate fails closed with a
 zh-TW receipt naming the missing variables.
 
+### Variable provisioning gap
+
+**Measured fact**: the GitHub `production` environment currently has 42 variables,
+but `ODP_CLOUD_RUN_VPC_CONNECTOR` and `ODP_CLOUD_RUN_VPC_EGRESS` are both absent.
+The `production-build` environment has 9 variables and also lacks these two.
+
+For comparison, `dev-build` has 12 variables including both VPC variables,
+confirming the gap is production-specific and not a repository-wide omission.
+
+**Consequence**: a `workflow_dispatch` with `environment=production` and
+`phase=deploy` will trigger the binding gate at line 1120, which calls
+`check_release_environment.py --scope deploy`.  The `deploy` scope requires
+both `ODP_CLOUD_RUN_VPC_CONNECTOR` and `ODP_CLOUD_RUN_VPC_EGRESS`
+(`delivery_toolchain/release/check_release_environment.py` lines 103–104).
+Both will resolve to empty strings, so the gate will **fail closed** and abort
+the run before any Google Cloud authentication or deploy mutation.
+
+Similarly, a `phase=build` run against `production-build` will hit the build
+binding gate at line 317, which requires both VPC variables in the `build`
+scope (lines 82–83).  This also fails closed.
+
+**This is by design**: the binding gate exists precisely to prevent silent
+empty-string resolution from producing broken deploys.  The gap is an **ops
+variable provisioning** issue, not a workflow code defect.
+
+A blocker has been raised for Human/Ops to provision these two variables in
+both `production` and `production-build`.
+
 ### Contract test
 
 `test_the_binding_gate_exposes_exactly_the_variables_its_scope_requires`
@@ -238,9 +293,17 @@ ODP-PROD-BLUEGREEN-ROLLOUT-001.
 
 ---
 
+## AC-6: Not relaxed by billing or PROD-OPS-05
+
+No acceptance criterion has been relaxed based on billing status or
+PROD-OPS-05 operational parameters. The variable provisioning gap is recorded
+as a measured fact with an ops blocker, not waived.
+
+---
+
 ## Existing Contract Tests
 
-The following existing tests prove the production path was already structurally
+The following existing tests prove the production path is structurally
 sound at the time this task was reviewed:
 
 | Test | File | Line | What it proves |
@@ -248,7 +311,7 @@ sound at the time this task was reviewed:
 | `test_environment_inputs_support_dev_staging_production` | test_deploy_workflow_contract.py | 1134 | Environment choice includes production |
 | `test_each_phase_binds_to_its_own_authority_environment` | test_deploy_workflow_contract.py | 1567 | Deploy binds `${{ inputs.environment }}` |
 | `test_the_binding_gate_exposes_exactly_the_variables_its_scope_requires` | test_deploy_workflow_contract.py | 1586 | Binding gate checks exactly the right variables |
-| `test_the_binding_gate_runs_before_the_job_touches_google_cloud` | test_deploy_workflow_contract.py | 1618 | Gate fires before WIF auth |
+| `test_the_binding_gate_runs_before_the_job_touches_google_cloud` | test_deploy_workflow_contract.py | 1619 | Gate fires before WIF auth |
 | `test_every_job_that_reads_environment_variables_binds_an_environment` | test_deploy_workflow_contract.py | 1542 | No unbound job reads `vars.*` |
 | `test_production_bluegreen_verification_gated_on_production_environment` | test_deploy_workflow_contract.py | 1289 | Blue-green fires for production only |
 | `test_staging_lifecycle_invocations_gated_on_staging_environment` | test_deploy_workflow_contract.py | 848 | Staging lifecycle skipped for non-staging |
@@ -258,16 +321,35 @@ sound at the time this task was reviewed:
 
 ---
 
+## Blocker: Production VPC Variable Provisioning
+
+**Blocker target**: Human/Ops
+**Required action**: Add the following variables to the GitHub `production`
+and `production-build` environments:
+
+| Variable | Example value (from dev-build) | Environment |
+|----------|-------------------------------|-------------|
+| `ODP_CLOUD_RUN_VPC_CONNECTOR` | (production VPC connector name) | production, production-build |
+| `ODP_CLOUD_RUN_VPC_EGRESS` | (production VPC egress setting) | production, production-build |
+
+Until these are provisioned, `ODP-PROD-BLUEGREEN-ROLLOUT-001` cannot execute
+its first dispatch — both the build and deploy binding gates will fail closed.
+
+---
+
 ## Prerequisites for ODP-PROD-BLUEGREEN-ROLLOUT-001
 
 With this path established, the following must be verified before the first
 production dispatch:
 
-1. **`production-build` GitHub environment** exists with the same GCP variables
-   as the production environment but without `required_reviewers`.
-2. **`production` GitHub environment** has all 42 variables configured
-   (including `ODP_PROD_DEPLOY_URL=https://console.oday-plus.com.tw`).
+1. **`production-build` GitHub environment** has all 11 build-scope variables
+   (currently 9; missing `ODP_CLOUD_RUN_VPC_CONNECTOR` and
+   `ODP_CLOUD_RUN_VPC_EGRESS`). **⚠️ NOT YET MET.**
+2. **`production` GitHub environment** has all deploy-scope variables.
+   Currently has 42 but is missing the two VPC variables required by the
+   deploy binding gate. **⚠️ NOT YET MET.**
 3. **WIF** is configured for production's GCP project.
 4. **Supervisor lease issuer** is configured for the production environment.
 
-These are operational prerequisites, not code changes.
+Items 1–2 are tracked by the blocker above.  Items 3–4 are not measurable by
+this task and remain as operational prerequisites.
