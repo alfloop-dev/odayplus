@@ -21849,6 +21849,29 @@ class WorkerPromptContractTests(unittest.TestCase):
                 self.assertIn("uv run", rendered)
                 self.assertIn("不自行掃描主機", rendered)
 
+    def test_worker_prompt_stale_worktree_guardrail_applies_across_dispatch_reasons(self) -> None:
+        dispatch_reasons = [
+            "owned_ready_dispatch",
+            "owned_in_progress_dispatch",
+            "review_ready_dispatch",
+            "owned_finalize_dispatch",
+            "helper_claim_dispatch",
+        ]
+        for reason in dispatch_reasons:
+            with self.subTest(reason=reason):
+                event = {
+                    "task_id": "OPS-WORKER-STALE-WORKTREE-001",
+                    "reason": reason,
+                    "context_files": ["AI_COLLABORATION_GUIDE.md"],
+                    "task": {"artifacts": [".orchestrator/templates/wakeup.txt"]},
+                }
+                rendered = watch_events.render_wakeup_message(self.config, event, "antigravity4")
+                self.assertIn("PANTHEON_STATUS_ROOT", rendered)
+                self.assertIn("禁止從隔離 worktree 執行", rendered)
+                self.assertIn("亦禁止直接依賴本機工作樹檔案判斷 repo 現況", rendered)
+                self.assertIn("git show origin/dev:<path>", rendered)
+                self.assertIn("stale branch code", rendered)
+
 
 class ReopenReasonClassificationTests(unittest.TestCase):
     """Reopen classification must come from --reason, never from the message prose.
@@ -22020,6 +22043,13 @@ class GitHubBusReopenReasonTests(unittest.TestCase):
         ):
             self.assertIn(reason, guide)
         self.assertIn("never parsed", guide)
+
+    def test_seeded_collaboration_guide_documents_stale_worktree_guardrail(self) -> None:
+        """Guide must advise checking origin/dev and running status with PANTHEON_STATUS_ROOT."""
+        guide = worker_workspace._generated_collaboration_guide({})
+        self.assertIn("origin/dev", guide)
+        self.assertIn("git show origin/dev:<path>", guide)
+        self.assertIn("PANTHEON_STATUS_ROOT", guide)
 
     def test_run_ai_status_forwards_extra_args(self) -> None:
         recorded: dict[str, Any] = {}
