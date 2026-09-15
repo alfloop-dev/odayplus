@@ -71,6 +71,7 @@ def test_execution_control_evidence_and_orchestrator_are_tooling() -> None:
         [
             ".orchestrator/supervisor.py",
             "docs/evidence/execution-control/2026-08-27-supervisor-health.md",
+            "docs/evidence/runtime/ODP-MAIN-CHECKOUT-RESYNC-001/evidence.md",
         ],
         manifest,
     )
