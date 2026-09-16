@@ -3,7 +3,7 @@
 - **任務識別碼**：`ODP-PROD-NETWORK-PARITY-PLAN-001`
 - **執行者**：`Antigravity7`
 - **審核者**：`Claude`
-- **產出時間**：`2026-09-16T01:00:00Z`
+- **產出時間**：`2026-09-16T01:20:00Z`
 - **環境設定**：
   - Production GCP 專案：`odayplus-prod-20260826` (專案編號: `365886461656`)
   - Staging GCP 專案：`odayplus-runtime-20260825` (專案編號: `767864276141`)
@@ -23,7 +23,7 @@
 1. **零雲端變更**：未執行任何 `terraform apply`、`gcloud` 寫入/修補/刪除操作、API 啟用或雲端資源異動。
 2. **零 Cloud SQL 異動**：未修改 `oday-prod-sql` 之任何網路、SSL 或安全設定。
 3. **零 Secret 洩漏**：所有變數清單僅列出結構與值來源，不填寫真實敏感金鑰。
-4. **標準基準**：所有 Terraform 定義均以遠端基準 `origin/dev` 的 `network.tf`、`database.tf`、`cloud_run.tf`、`main.tf`、`variables.tf` 為準，不讀取未受控之本機臨時工作樹。
+4. **標準基準**：所有 Terraform 定義均以遠端基準 `origin/dev` 的 `network.tf`、`database.tf`、`cloud_run.tf`、`main.tf`、`variables.tf`、`checks.tf` 為準，不讀取未受控之本機臨時工作樹。
 
 ---
 
@@ -32,23 +32,25 @@
 本節針對 Production 專案（`odayplus-prod-20260826`）之實際雲端配置，與 `origin/dev:infra/terraform/` 定義進行逐項實測比對。
 
 ```
-+---------------------------------------------------------------------------------------------------+
-|                                   架構落差對比概覽 (Parity Overview)                                 |
-+--------------------------------+----------------------------------+-------------------------------+
-| 項目 (Component)               | Production 現況 (GCP Actual)     | Terraform 定義 (origin/dev)   |
-+--------------------------------+----------------------------------+-------------------------------+
-| VPC Network                    | default (Auto-mode)              | oday-prod-runtime (Custom)    |
-| Subnetwork                     | default (10.140.0.0/20)          | oday-prod-runtime (10.42.0.0) |
-| Private Service Connection     | 未啟用 (API Disabled, 0 Peering) | 16-bit Range + Peering 連線   |
-| Firewall Egress Rules          | 0 條 (僅 default 4 條 ingress)    | 3 條 (嚴格 Egress Lockdown)   |
-| Cloud SQL: IPv4 Public IP      | 開啟 (34.81.148.88)              | 關閉 (ipv4_enabled = false)   |
-| Cloud SQL: Private IP          | 無 (未連接任何 VPC)              | 有 (連接 oday-prod-runtime)   |
-| Cloud SQL: SSL Mode            | ALLOW_UNENCRYPTED_AND_ENCRYPTED  | ENCRYPTED_ONLY                |
-| Cloud SQL: Tier / HA           | db-f1-micro / ZONAL              | db-custom-4-15360 / REGIONAL  |
-| Cloud SQL: Disk CMEK           | Google-managed (無 CMEK)         | KMS CMEK 加密                 |
-| Serverless VPC Connector       | 未啟用 (API Disabled)            | 不使用 (採 Direct VPC Egress) |
-+--------------------------------+----------------------------------+-------------------------------+
++-------------------------------------------------------------------------------------------------------------------------------+
+|                                                架構落差對比概覽 (Parity Overview)                                              |
++--------------------------------+----------------------------------+-----------------------------------------------------------+
+| 項目 (Component)               | Production 現況 (GCP Actual)     | Terraform 定義 (origin/dev)                               |
++--------------------------------+----------------------------------+-----------------------------------------------------------+
+| VPC Network                    | default (Auto-mode)              | oday-prod-runtime (Custom, auto_create_subnetworks=false)  |
+| Subnetwork                     | default (10.140.0.0/20)          | oday-prod-runtime (10.42.0.0/24, Private Google Access)   |
+| Private Service Connection     | 未啟用 (API Disabled, 0 Peering) | 16-bit Range + servicenetworking Peering                  |
+| Firewall Egress Rules          | 0 條 (僅 default 4 條 ingress)    | 3 條 (嚴格 Egress Lockdown)                               |
+| Cloud SQL: IPv4 Public IP      | 開啟 (34.81.148.88)              | 關閉 (ipv4_enabled = false)                               |
+| Cloud SQL: Private IP          | 無 (未連接任何 VPC)              | 有 (連接 oday-prod-runtime)                               |
+| Cloud SQL: SSL Mode            | ALLOW_UNENCRYPTED_AND_ENCRYPTED  | ENCRYPTED_ONLY                                            |
+| Cloud SQL: Tier / HA           | db-f1-micro / ZONAL              | db-custom-4-15360 (prod.tfvars/checks.tf) / REGIONAL      |
+| Cloud SQL: Disk CMEK           | Google-managed (無 CMEK)         | KMS CMEK 加密                                             |
+| Serverless VPC Connector       | 未啟用 (API Disabled)            | 不使用 (採 Direct VPC Egress)                             |
++--------------------------------+----------------------------------+-----------------------------------------------------------+
 ```
+> [!NOTE]
+> 關於 Cloud SQL Tier：`infra/terraform/variables.tf:217` 模組預設值為 `db-custom-2-7680`，但在生產環境中受 `infra/terraform/checks.tf:50` 之 Precondition（`can(regex("^db-custom-([4-9]|[1-9][0-9]+)-[0-9]+$", var.cloud_sql_tier))`）強制約束，且 `infra/terraform/env/prod.tfvars.example:11` 宣告之生產基準為 `db-custom-4-15360`（4 vCPU / 15 GB RAM）。
 
 ---
 
@@ -67,7 +69,7 @@
   ```bash
   gcloud compute networks list --project=odayplus-prod-20260826 --format=json
   ```
-- **實測輸出 (摘要)**：
+- **實測輸出**：
   ```json
   [
     {
@@ -139,18 +141,26 @@
     depends_on              = [google_project_service.required]
   }
   ```
-- **實測命令**：
+- **實測命令 1 (`servicenetworking.googleapis.com` API 狀態)**：
   ```bash
-  gcloud services list --enabled --project=odayplus-prod-20260826 --filter="name:servicenetworking.googleapis.com"
-  gcloud compute addresses list --global --project=odayplus-prod-20260826
-  gcloud compute networks peerings list --project=odayplus-prod-20260826
+  gcloud services list --enabled --project=odayplus-prod-20260826 --filter="name:servicenetworking.googleapis.com" --format=json
   ```
-- **實測輸出**：
-  ```text
-  Listed 0 items. (servicenetworking.googleapis.com 未啟用)
-  Listed 0 items. (無任何 global internal IP address 保留)
-  Listed 0 items. (無任何 VPC Peering 連線)
+  **實測輸出 1**：`[]` (API 未啟用)
+- **實測命令 2 (Global Internal IP 保留清單)**：
+  ```bash
+  gcloud compute addresses list --global --project=odayplus-prod-20260826 --format=json
   ```
+  **實測輸出 2**：`[]` (無任何 global internal IP address 保留)
+- **實測命令 3 (VPC Peering 對等連線清單)**：
+  ```bash
+  gcloud compute networks peerings list --project=odayplus-prod-20260826 --format=json
+  ```
+  **實測輸出 3**：`[]` (無任何 VPC Peering 連線)
+- **實測命令 4 (`vpcaccess.googleapis.com` API 狀態)**：
+  ```bash
+  gcloud services list --enabled --project=odayplus-prod-20260826 --filter="name:vpcaccess.googleapis.com" --format=json
+  ```
+  **實測輸出 4**：`[]` (API 未啟用)
 - **落差判定**：`DRIFT_MISSING`。`servicenetworking.googleapis.com` API 從未啟用，無保留 IP 區段，亦無 Service Networking Peering 連線。此為 Cloud SQL 無法配置 Private IP 的核心根本原因。
 
 ---
@@ -183,13 +193,13 @@
 - **Terraform 定義 (`origin/dev:infra/terraform/database.tf:10-72`)**：
   ```terraform
   resource "google_sql_database_instance" "primary" {
-    name                = "${local.name_prefix}-sql"
+    name                = "${local.name_prefix}-sql" # 即 oday-prod-sql
     database_version    = "POSTGRES_16"
     region              = var.region
     encryption_key_name = google_kms_crypto_key.runtime.id
 
     settings {
-      tier                        = var.cloud_sql_tier # db-custom-4-15360
+      tier                        = var.cloud_sql_tier # checks.tf 要求 >= db-custom-4-*, prod.tfvars 設 db-custom-4-15360
       availability_type           = local.is_prod ? "REGIONAL" : "ZONAL" # REGIONAL
       disk_size                   = var.cloud_sql_disk_gb # 100
       disk_type                   = "PD_SSD"
@@ -286,8 +296,11 @@ gcloud compute networks vpc-access connectors describe oday-staging-vpc --region
 
 ## 4. Gate 與 IaC 脫節分析與修正方案建議 (Gate vs. IaC Disconnect Analysis)
 
-### 4.1 脫節原因分析 (Root Cause)
-檢視 `delivery_toolchain/release/check_release_environment.py:72-105`：
+### 4.1 雙重 Fail-Closed 脫節原因分析 (Two-Layer Fail-Closed Gates)
+
+檢視目前的發布工具鏈，存在**兩道互相咬死的 Fail-Closed 阻擋關卡**：
+
+#### 第一道關卡：`delivery_toolchain/release/check_release_environment.py:72-105`
 ```python
 REQUIRED_VARIABLES: dict[str, tuple[str, ...]] = {
     "build": (
@@ -297,7 +310,7 @@ REQUIRED_VARIABLES: dict[str, tuple[str, ...]] = {
         "ODP_CLOUD_RUN_WEB_SERVICE",
         "ODP_CLOUD_RUN_WORKER_JOB",
         "ODP_CLOUD_RUN_SCHEDULER_JOB",
-        "ODP_CLOUD_RUN_VPC_CONNECTOR", # <--- 脫節點 1
+        "ODP_CLOUD_RUN_VPC_CONNECTOR", # <--- Gate 1 脫節點 (Build 階段誤查)
         "ODP_CLOUD_RUN_VPC_EGRESS",
     ),
     "deploy": (
@@ -308,21 +321,45 @@ REQUIRED_VARIABLES: dict[str, tuple[str, ...]] = {
         "ODP_CLOUD_RUN_MIGRATION_JOB",
         "ODP_CLOUD_RUN_WORKER_JOB",
         "ODP_CLOUD_RUN_SCHEDULER_JOB",
-        "ODP_CLOUD_RUN_VPC_CONNECTOR", # <--- 脫節點 2
+        "ODP_CLOUD_RUN_VPC_CONNECTOR", # <--- Gate 1 脫節點 (Deploy 階段硬要 Connector)
         "ODP_CLOUD_RUN_VPC_EGRESS",
     ),
 }
 ```
 
-**連鎖問題剖析**：
-1. **Gate Fail-Closed**：
-   - Gate 對 `build` 與 `deploy` scope 都硬性要求 GitHub Environment 變數必須提供 `ODP_CLOUD_RUN_VPC_CONNECTOR`。
-   - 但 Terraform 建立的 Direct VPC egress 只產出 Network (`oday-prod-runtime`) 與 Subnetwork (`oday-prod-runtime`)，**根本不會產出 Connector 資源名稱** (`projects/.../locations/.../connectors/...`)。
-   - 若維持現狀，即使 Production Terraform 完全成功建置，發布流程的 Release Gate 仍會因缺少 `ODP_CLOUD_RUN_VPC_CONNECTOR` 而判定 Fail-Closed 拒絕發布。
-2. **錯誤 Workaround 的災難性後果**：
-   - 若為通過 Gate 而將 VPC 網路或子網路名稱填入 `ODP_CLOUD_RUN_VPC_CONNECTOR`，`deploy_cloud_run_waji.sh` 會將其帶入 `gcloud run deploy --vpc-connector=...`，GCP API 會因資源格式非 Connector 而噴錯中斷部署。
-3. **Build Scope 誤傷**：
-   - Build 階段僅負責建置容器映像並推送到 Artifact Registry，完全不涉及 Cloud Run 執行期網路出站，要求 VPC Connector 變數純屬過度約束。
+#### 第二道關卡：`product_ops/deployment/deploy_cloud_run_waji.sh:81-96`
+檢視部署腳本第 81-96 行：
+```bash
+# A provider-off Runtime Release must route all traffic through the VPC.
+# `private-ranges-only` would leave public destinations on Cloud Run's direct
+# egress path, so accepting it here would turn an absent endpoint into a false
+# default-deny claim. This guard runs before the first Cloud Run mutation.
+if [ "${ODP_EXTERNAL_PROVIDER_MODE:-}" = "disabled" ]; then
+  : "${ODP_CLOUD_RUN_VPC_CONNECTOR:?Error: sources-off deploy requires ODP_CLOUD_RUN_VPC_CONNECTOR.}"
+  : "${MANIFEST_DIGEST:?Error: sources-off deploy requires MANIFEST_DIGEST.}"
+  if [[ ! "${MANIFEST_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    echo "Error: sources-off deploy requires an immutable MANIFEST_DIGEST." >&2
+    exit 1
+  fi
+  case "${ODP_CLOUD_RUN_VPC_EGRESS:-}" in
+    all|all-traffic)
+      ;;
+    *)
+      echo "Error: sources-off deploy requires ALL_TRAFFIC VPC egress; got '${ODP_CLOUD_RUN_VPC_EGRESS:-}'." >&2
+      exit 1
+      ;;
+  esac
+fi
+```
+同時，`.github/workflows/deploy-dev.yml:1072` 對所有環境寫死：
+```yaml
+ODP_EXTERNAL_PROVIDER_MODE: disabled
+```
+
+#### 連鎖連帶崩潰後果剖析：
+1. **Gate 1 阻擋**：`check_release_environment.py` 要求必須有 `ODP_CLOUD_RUN_VPC_CONNECTOR`。但 IaC Direct VPC egress 根本不產生 Connector 資源名稱。
+2. **Gate 2 阻擋 (致命盲點)**：**即使工程師單方面放寬或修改了 `check_release_environment.py`，當部署流程進到 `deploy_cloud_run_waji.sh` 時，因 `ODP_EXTERNAL_PROVIDER_MODE=disabled`，腳本第 82 行的 `: "${ODP_CLOUD_RUN_VPC_CONNECTOR:?Error: ...}"` 仍會直接爆出錯誤終止部署！**
+3. **錯誤 Workaround 的災難**：若為通過上述檢查而將 VPC 網路名稱填入 `ODP_CLOUD_RUN_VPC_CONNECTOR`，`deploy_cloud_run_waji.sh:100` 會帶入 `--vpc-connector=oday-prod-runtime`，GCP Cloud Run API 會因資源格式不符直接拋錯中斷。
 
 ---
 
@@ -334,24 +371,28 @@ REQUIRED_VARIABLES: dict[str, tuple[str, ...]] = {
 
 ```mermaid
 flowchart TD
-    A["check_release_environment.py (Gate)"] --> B{"檢查 Scope"}
+    A["check_release_environment.py (Gate 1)"] --> B{"檢查 Scope"}
     B -->|build scope| C["移除 VPC Connector / Egress 檢查<br>(僅保留 OIDC / AR / 服務名稱)"]
     B -->|deploy scope| D{"判斷網路模式 (Dual-Mode)"}
     D -->|模式 1: Direct VPC (IaC 標準)| E["驗證 ODP_CLOUD_RUN_NETWORK<br>+ ODP_CLOUD_RUN_SUBNETWORK<br>+ ODP_CLOUD_RUN_VPC_EGRESS"]
     D -->|模式 2: Legacy Connector| F["驗證 ODP_CLOUD_RUN_VPC_CONNECTOR<br>+ ODP_CLOUD_RUN_VPC_EGRESS"]
     
-    G["deploy_cloud_run_waji.sh"] --> H{"判斷環境變數"}
-    H -->|存在 ODP_CLOUD_RUN_NETWORK| I["加入 --network=... --subnet=...<br>--vpc-egress=all-traffic"]
-    H -->|存在 ODP_CLOUD_RUN_VPC_CONNECTOR| J["加入 --vpc-connector=...<br>--vpc-egress=private-ranges-only"]
+    G["deploy_cloud_run_waji.sh (Gate 2)"] --> H{"sources-off Guard (line 81-96)"}
+    H -->|Direct VPC 滿足| I["檢查 ODP_CLOUD_RUN_NETWORK / SUBNETWORK<br>+ VPC_EGRESS=all-traffic"]
+    H -->|Connector 滿足| J["檢查 ODP_CLOUD_RUN_VPC_CONNECTOR<br>+ VPC_EGRESS=all-traffic"]
+    
+    G --> K{"Cloud Run 參數組裝 (line 98-102)"}
+    K -->|Direct VPC 模式| L["組裝 --network=... --subnet=...<br>--vpc-egress=all-traffic"]
+    K -->|Connector 模式| M["組裝 --vpc-connector=...<br>--vpc-egress=..."]
 ```
 
-1. **Build Scope 鬆綁**：
-   - 自 `REQUIRED_VARIABLES["build"]` 移除 `ODP_CLOUD_RUN_VPC_CONNECTOR` 與 `ODP_CLOUD_RUN_VPC_EGRESS`。
-2. **Deploy Scope 支援 Direct VPC 變數**：
-   - 引入 `ODP_CLOUD_RUN_NETWORK`、`ODP_CLOUD_RUN_SUBNETWORK`。
-   - `check_release_environment.py` 驗證邏輯更新為：`ODP_CLOUD_RUN_NETWORK` 組合或 `ODP_CLOUD_RUN_VPC_CONNECTOR` 組合兩者擇一必須齊備。
-3. **部署腳本 (`deploy_cloud_run_waji.sh`) 支援 Direct VPC 旗標**：
-   - 當 `ODP_CLOUD_RUN_NETWORK` 與 `ODP_CLOUD_RUN_SUBNETWORK` 存在時，組裝 `--network` 與 `--subnet` 參數。
+1. **Gate 1 (`check_release_environment.py`) 修復**：
+   - Build Scope 鬆綁：移除 `ODP_CLOUD_RUN_VPC_CONNECTOR` 與 `ODP_CLOUD_RUN_VPC_EGRESS`。
+   - Deploy Scope 支援 Direct VPC 雙軌判斷：支援 `ODP_CLOUD_RUN_NETWORK` + `ODP_CLOUD_RUN_SUBNETWORK` 或 `ODP_CLOUD_RUN_VPC_CONNECTOR` 二擇一通過。
+2. **Gate 2 (`deploy_cloud_run_waji.sh:81-96`) sources-off 防護邏輯重構**：
+   - 修正 line 82 之硬性要求，改為：若 `ODP_EXTERNAL_PROVIDER_MODE=disabled`，要求 `[ -n "${ODP_CLOUD_RUN_VPC_CONNECTOR:-}" ] || ( [ -n "${ODP_CLOUD_RUN_NETWORK:-}" ] && [ -n "${ODP_CLOUD_RUN_SUBNETWORK:-}" ] )`，確保 Direct VPC 模式合法通過。
+3. **部署參數組裝 (`deploy_cloud_run_waji.sh:98-102`)**：
+   - 支援 Direct VPC flag：當 `ODP_CLOUD_RUN_NETWORK` 與 `ODP_CLOUD_RUN_SUBNETWORK` 存在時，組裝 `--network` 與 `--subnet` 參數傳遞予 `gcloud run deploy`。
 
 ---
 
@@ -366,9 +407,9 @@ flowchart TD
 | `region` | `"asia-east1"` | GCP 區域（台灣資料落地規範） |
 | `network_cidr` | `"10.42.0.0/24"` | Direct VPC 子網路 RFC1918 網段 |
 | `private_service_prefix_length` | `16` | Service Networking Peering 保留網段長度 |
-| `cloud_sql_tier` | `"db-custom-4-15360"` | 4 vCPU / 15 GB RAM（生產級效能基準） |
-| `cloud_sql_disk_gb` | `100` | 初始 SSD 容量 |
-| `cloud_sql_retained_backups` | `30` | 備份保留天數 |
+| `cloud_sql_tier` | `"db-custom-4-15360"` | 4 vCPU / 15 GB RAM（生產級效能基準，符 checks.tf:50） |
+| `cloud_sql_disk_gb` | `100` | 初始 SSD 容量（checks.tf:48 要求 >= 100） |
+| `cloud_sql_retained_backups` | `30` | 備份保留天數（checks.tf:49 要求 >= 30） |
 | `cloud_sql_transaction_log_retention_days` | `7` | PITR 交易日誌保留天數（合規要求 >= 7） |
 | `cloud_sql_backup_start_time` | `"18:00"` | 每日備份 UTC 時間（台北時間 02:00） |
 | `cloud_sql_maintenance_day` | `7` | 週日維護窗口 |
@@ -383,67 +424,128 @@ flowchart TD
 | `identity_token_signing_key_ref` | `{ secret_id = "oday-prod-identity-token-signing-key", version = "1" }` | Secret Manager 本地 JWT 簽名金鑰參照 |
 | `mlflow_tracking_uri` | `"https://oday-prod-mlflow-icm6xhajsa-de.a.run.app"` | 現存 Production MLflow 服務網址 |
 | `model_runtime_config` | RFC3339 時間、審核者、Artifact SHA256 等 | 經審核合規之模型元資料 |
-| `api_invoker_members` | `["group:ops@odayplus.com"]` | 內部 API 呼叫者群組 |
+| `api_invoker_members` | `["group:ops@odayplus.com"]` | 內部 API 呼叫者群組（checks.tf:58 禁 allUsers） |
 | `web_invoker_members` | `["allUsers"]` | 公開 Web 存取介面 |
 
 ---
 
-### 5.2 執行順序與每步可回復性 (Execution Phases & Reversibility)
+### 5.2 Canonical 兩階段 Bootstrap 架構與可回復性分析 (Canonical Bootstrap & Reversibility)
+
+依據 `infra/terraform/README.md:103-142` 之官方標準規範，環境首次建置採用**嚴格定義之 Canonical 兩階段 Bootstrap**。
+
+> [!IMPORTANT]
+> **關於 `-target` 之最高準則**：
+> `infra/terraform/README.md:141-142` 明確規範：**「Never use `-target` for routine updates. The one bootstrap target above exists only to break the initial database-migration/readiness dependency.」**
+> 因此，Apply 計畫嚴格遵守 Canonical 兩階段，不得自行切分為多個隨意 `-target` 的破碎階段。
 
 ```mermaid
 flowchart TD
-    P0["Phase 0: 安全備份與前置防護<br>(Cloud SQL On-demand Backup + SQL Dump)"] --> P1["Phase 1: 基礎網路與金鑰 IaC Apply<br>(APIs, KMS, VPC, Subnet, Peering, Firewalls)"]
-    P1 --> P2["Phase 2: 資料庫平移與網路介面轉移<br>(CMEK Regional SQL 建置 / 資料同調 / 私網切換)"]
-    P2 --> P3["Phase 3: 儲存、訊息、IAM 與 Secret 管理<br>(GCS, PubSub, SA IAM, Secret Manager)"]
-    P3 --> P4["Phase 4: Cloud Run v2 服務部署與流量驗證<br>(Direct VPC Egress 驗證, 健康檢查, 流量切換)"]
+    P0["Phase 0: 前置安全防護 (Out-of-Band)<br>Cloud SQL On-demand Backup + SQL Dump 匯出至 GCS"] --> S1
+    
+    subgraph S1["Canonical Bootstrap Stage 1 (唯一允許之 -target 階段)"]
+        direction TB
+        S1_1["terraform apply -target=google_secret_manager_secret_version.database_url"]
+        S1_2["建立: Required APIs, KMS, VPC, Subnet, Private Peering,<br>Cloud SQL (Private IP/CMEK), Database User, DSN Secret"]
+        S1_1 --> S1_2
+    end
+    
+    S1 --> M["Migration & Data Reconciliation (Out-of-Band)<br>Migration Job 執行 Schema 遷移與資料同調<br>驗證 Model Secrets、MLflow Aliases、Datasets"]
+    
+    M --> S2
+    
+    subgraph S2["Canonical Bootstrap Stage 2 (標準全量 Apply，無 -target)"]
+        direction TB
+        S2_1["terraform plan -var-file=prod.tfvars -out=prod.tfplan"]
+        S2_2["terraform apply prod.tfplan"]
+        S2_3["部署: Cloud Run v2 (Direct VPC), Storage, Messaging, IAM, Monitoring"]
+        S2_1 --> S2_2 --> S2_3
+    end
+    
+    S2 --> V["Post-Apply Verification (發布驗收)<br>驗證 /healthz, /readiness, release_sha, OIDC, PITR, 流量切換"]
 ```
 
-#### Phase 0: 安全備份與前置防護 (Pre-Flight Safety)
+#### 各階段操作與精確可回復性深度分析：
+
+#### Phase 0: 前置安全防護 (Pre-Flight Safety)
 1. **操作**：
    - 建立 `oday-prod-sql` 即時備份：`gcloud sql backups create --instance=oday-prod-sql --project=odayplus-prod-20260826`。
    - 匯出全庫 SQL Dump 至 GCS：`gcloud sql export sql oday-prod-sql gs://odayplus-prod-20260826-artifacts/pre_apply_backup.sql.gz --database=oday,mlflow`。
-2. **可回復性**：具備 100% 資料快照與匯出檔，任何非預期中斷皆可完整回滾還原。
+2. **可回復性**：具備 100% 資料快照與匯出檔，任何中斷皆可完整回滾。
 
-#### Phase 1: 基礎網路與金鑰 IaC Apply (Foundation & Network IaC)
+#### Stage 1: Canonical Bootstrap Stage 1 (`-target=database_url`)
 1. **操作**：
-   - 啟用必要 API (`servicenetworking.googleapis.com` 等)。
-   - 執行 Terraform Apply 建立 KMS (`oday-prod-runtime`)、VPC (`oday-prod-runtime`)、Subnet (`10.42.0.0/24`)、Service Networking Peering 連線、3 則防火牆規則。
-2. **可回復性**：此階段建立之所有網路資源皆為全新獨立資源，完全不觸碰現存 `default` 網路與 `oday-prod-sql`，失敗時可安全執行 `terraform destroy` 清理。
+   - 執行 `terraform apply -target=google_secret_manager_secret_version.database_url`。
+   - 自動拉起底層相依資源：API 啟用、KMS Key Ring / CryptoKey、VPC、Subnet、Private Service Peering、Cloud SQL、Database User 及 DSN Secret。
+2. **可回復性與 KMS `prevent_destroy` 關鍵限制 (Crucial Constraint)**：
+   - > [!WARNING]
+     > **`terraform destroy` 必失敗警告**：
+     > `infra/terraform/kms.tf:13-15` 對 `google_kms_crypto_key.runtime` 設定了 `lifecycle { prevent_destroy = true }`，且 `infra/terraform/README.md:157-158` 載明生產 KMS 金鑰受到防銷毀保護。此外，GCP 底層 KMS CryptoKey 無法直接即時刪除（僅支援排程銷毀或停用版本）。
+     > **因此，若 Stage 1 失敗，執行 `terraform destroy` 將直接被 Terraform 引擎攔截並報錯拒絕！**
+   - **正確回復與狀態清理處置**：
+     - 若 Stage 1 遭遇非預期中斷需清理重置，必須透過 `terraform state rm google_kms_crypto_key.runtime` 將受保護金鑰移出 state，再針對其餘無狀態資源進行銷毀，或保留已建好之 VPC / KMS 並修補配置後重新 apply。
 
-#### Phase 2: 資料庫轉移與 `oday-prod-sql` 影響評估 (Database Migration)
-*(詳細分析請見 5.3 節)*
+#### Stage 1.5: 資料同調與 Migration (Out-of-Band Migration)
+1. **操作**：
+   - 由具備 Cloud SQL Client 與 Secret Manager 讀取權限之 Migration Identity 執行資料庫同調與資料移轉。
+   - 確認 Model Secrets 已就緒，MLflow Production Aliases 已審核通過。
 
-#### Phase 3: 儲存、訊息、IAM 與 Secret 管理 (Platform Services IaC)
-1. **操作**：建立 GCS Buckets、Pub/Sub Topics/Subscriptions、Service Accounts 及 IAM 角色、Secret Manager 秘密版本。
-2. **可回復性**：IaC 宣告式建立，失敗時直接修復配置或回滾。
-
-#### Phase 4: Cloud Run v2 服務部署 (Direct VPC Egress Deployment)
-1. **操作**：部署 `google_cloud_run_v2_service.api` 與 `web`，驗證 Direct VPC egress 連線至 Cloud SQL。
-2. **可回復性**：Cloud Run 原生支援版本流量回滾（Traffic Split 瞬時切換回舊 Revision）。
+#### Stage 2: Canonical Bootstrap Stage 2 (全量 Plan & Apply)
+1. **操作**：
+   - 執行全量 `terraform plan -var-file=/secure/path/prod.tfvars -out=/secure/path/prod.tfplan`。
+   - 執行 `terraform apply /secure/path/prod.tfplan`，部署 Cloud Run v2 (API & Web)、GCS Buckets、Pub/Sub Topics/DLQ、IAM 角色等全量資源。
+2. **可回復性**：IaC 宣告式全量管理，Cloud Run 支援多版本流量切換（Traffic Split 回滾至舊版）。
 
 ---
 
-### 5.3 對現有 `oday-prod-sql` 的深度影響評估 (Cloud SQL Impact Assessment)
+### 5.3 對現有 `oday-prod-sql` 的深度影響評估與三大遷移路徑評析 (Cloud SQL Cutover Paths)
 
 > [!IMPORTANT]
-> **關鍵技術事實**：不得以「Terraform 會自動處理」帶過。以下為 Cloud SQL 實體層與 Terraform 引擎的具體行為剖析：
+> **技術事實與實體命名約束**：
+> 1. `infra/terraform/database.tf:12` 與 `main.tf:35` 將 instance 名稱固定為 `name = "${local.name_prefix}-sql"`（即 `oday-prod-sql`）。
+> 2. GCP 專案中已存在名為 `oday-prod-sql` 的實例（`db-f1-micro`、無 CMEK、公網 IP `34.81.148.88`）。
+> 3. **GCP 嚴禁在同一專案中建立兩個同名的 Cloud SQL 實例**。
+> 4. 現有實例未啟用 CMEK，而 Terraform 定義宣告了 `encryption_key_name`。在 GCP 與 Terraform Provider 中，**`encryption_key_name` 為不可原處變更（Immutable / ForceNew）屬性**。
 
-1. **`ipv4_enabled` 由 `true` 改為 `false` 的連線與停機影響**：
-   - **連線中斷**：一旦關閉 `ipv4Enabled`，公網 IP（`34.81.148.88`）將立即釋放或失效。所有透過公網 IP 直連的客戶端連線會**立即斷線**。
-   - **重啟/重新綁定網路介面**：在 GCP Cloud SQL 中，配置 `private_network` 並關閉 `ipv4_enabled` 屬於實體層網路介面重構，實例會經歷 1~3 分鐘的服務重載與網路重新綁定，期間資料庫暫停受理查詢。
-   - **先決條件強制約束**：在 Service Networking Peering (`servicenetworking.googleapis.com`) 建立並完成握手前，**嚴禁**將 `ipv4_enabled` 改為 `false`，否則實例將因無任何可用網路介面而處於完全無法連通之孤島狀態。
+基於上述硬性限制，在 Production 執行 Apply 時，有且僅有以下三條路徑，各路徑之操作、代價與風險評估如下：
 
-2. **CMEK 加密帶來的 ForceNew (毀滅性重建) 陷阱**：
-   - 現有 `oday-prod-sql` 建立時採用 Google 預設金鑰（無 CMEK）。
-   - `infra/terraform/database.tf:12` 宣告了 `encryption_key_name = google_kms_crypto_key.runtime.id`。
-   - **在 Google Cloud SQL 與 Terraform Provider 中，`encryption_key_name` 為不可原處變更（Immutable / ForceNew）屬性**。
-   - 若直接對現有實例執行 `terraform import` 並 apply，Terraform 會判定必須 **銷毀並重新建立實例 (Destroy and Recreate)**！
+```
++---------------------------------------------------------------------------------------------------------------------------------------+
+|                                                  三大 Cloud SQL 遷移路徑對比矩陣                                                       |
++----------------------+--------------------+---------------------+-----------------------------------+---------------------------------+
+| 遷移路徑             | 停機時間 (Downtime)| 資料遺失與營運風險  | 對 Terraform 模組的修改要求       | 執行可行性與推薦評級            |
++----------------------+--------------------+---------------------+-----------------------------------+---------------------------------+
+| 路徑 1: 參數化實例名 | 近乎零 (趨近 0)    | 極低 (新舊庫並存驗證)| 需在 database.tf 增加名稱/後綴變數| ★★★★★ 強烈推薦 (最佳實踐)       |
+| 路徑 2: Import+重建  | 巨大 (數十分鐘~數時)| 極高 (同名毀滅性重建)| 無須修改模組 (直接 Import)        | ★★☆☆☆ 高風險 (易引發重大事故)   |
+| 路徑 3: 先刪除後新建 | 巨大 (數十分鐘~數時)| 極高 (受限名稱冷卻期)| 無須修改模組 (綠地新建)            | ★☆☆☆☆ 極度危險 (可能卡在冷卻期) |
++----------------------+--------------------+---------------------+-----------------------------------+---------------------------------+
+```
 
-3. **推薦之平滑遷移切換策略 (Zero-Loss Cutover Strategy)**：
-   - **步驟 A (新庫建置)**：利用 Terraform 建立符合規格的新實例（具備 CMEK、Regional HA、db-custom-4-15360、Private IP）。
-   - **步驟 B (資料同步)**：透過 GCP 跨實例資料匯入（或 pg_dump/pg_restore）將現有 `oday-prod-sql` 資料同步至新庫。
-   - **步驟 C (Secret 切換)**：將 Secret Manager 中 `oday-prod-database-url` 的 Cloud SQL 連線字串無縫切換至新實例連線名稱。
-   - **步驟 D (舊庫封存)**：待驗證無誤後，始執行舊庫 `oday-prod-sql` 的封存與清理。
+#### 路徑 1：參數化實例名稱 (Parameterize Instance Name) —— 【強烈推薦路徑】
+- **操作步驟**：
+  1. 於後續 IaC PR 中將 `database.tf:12` 之 instance 名稱參數化（例如新增 `var.cloud_sql_instance_suffix` 或 `var.cloud_sql_instance_name`，預設或設定為 `oday-prod-sql-v2`）。
+  2. 執行 Canonical Bootstrap Stage 1，Terraform 全新建立符合生產標準之新實例 `oday-prod-sql-v2`（具備 CMEK、Regional HA、db-custom-4-15360、Private IP `10.42.0.x`）。
+  3. 透過 GCP 跨實例匯入或 pg_dump / pg_restore 將現有 `oday-prod-sql` 之資料完整同步至 `oday-prod-sql-v2`。
+  4. Secret Manager 中之 DSN 連線字串指向新庫，Cloud Run 流量無縫切換。
+  5. 驗證無誤後，手動封存並刪除舊庫 `oday-prod-sql`。
+- **代價與影響**：需在後續 IaC PR 中修改 Terraform 變數與引用，但換取**最短停機時間、零資料遺失風險與最平滑之雙庫切換**。
+
+#### 路徑 2：Terraform Import + 原處 ForceNew 重構 (Import & In-Place Recreate)
+- **操作步驟**：
+  1. 執行 `terraform import google_sql_database_instance.primary projects/odayplus-prod-20260826/instances/oday-prod-sql` 將現有實例納管進 state。
+  2. 手動關閉現有實例之 deletion protection：`gcloud sql instances patch oday-prod-sql --no-deletion-protection`。
+  3. 執行 `terraform apply`。由於 `encryption_key_name` 變更為 KMS CMEK，Terraform 判定必須 **Destroy and Recreate**。
+  4. Terraform 先刪除現有 `oday-prod-sql`，隨後以原名重新建立具備 CMEK 與 Private IP 的新實例。
+  5. 由 Ops 團隊自 Phase 0 的 SQL dump 檔案執行災難還原，將資料匯入全新建立的實例中。
+- **代價與影響**：**造成長達數十分鐘至數小時的業務完全中斷**。若重建中途遇到配額、KMS 權限或匯入失敗，現有資料庫已被銷毀，系統處於完全不可用狀態，風險極高。
+
+#### 路徑 3：先行刪除舊實例後執行綠地 Apply (Delete Existing then Greenfield Apply)
+- **操作步驟**：
+  1. 在 Phase 0 完整匯出備份後，手動執行 `gcloud sql instances delete oday-prod-sql` 刪除舊實例。
+  2. 執行 Canonical Bootstrap Stage 1，由 Terraform 原生建立 `oday-prod-sql`。
+  3. 將 Phase 0 備份匯入新庫。
+- **代價與重大陷阱 (GCP Cloud SQL Name Reuse Restriction)**：
+  - **GCP Cloud SQL 名稱重用限制**：Cloud SQL 實例刪除後，其名稱通常會進入一段時間（數小時至數天）的冷卻鎖定保留期。若 GCP API 拒絕立即以 `oday-prod-sql` 重建，Terraform apply 會直接噴錯卡死，無法繼續推進。
+  - 同樣伴隨重大停機時間與災難復原風險。
 
 ---
 
@@ -504,7 +606,7 @@ flowchart TD
 #### 評估項目 C：關閉公網 IP (`ipv4_enabled = false`)
 - **先行緩解可行性**：**絕對不可在 VPC Peering 完成前執行 (NOT Feasible Prior to Peering)**。
 - **理由**：目前 Production 專案未建立 VPC Peering，若貿然在公網上 patch 關閉 `ipv4Enabled`，資料庫將完全沒有任何私有 IP 可供連通，導致現有所有服務（包括 MLflow）立即中斷癱瘓。
-- **建議**：**嚴格納入 Phase 1 (VPC Peering 建立) 後之 Phase 2 執行**。
+- **建議**：**嚴格納入 Canonical Bootstrap Stage 1 (VPC Peering 建立) 後之切換階段執行**。
 
 ---
 
@@ -512,9 +614,9 @@ flowchart TD
 
 | 產物路徑 | 格式 | 說明 |
 | :--- | :--- | :--- |
-| `docs/evidence/runtime/ODP-PROD-NETWORK-PARITY-PLAN-001/README.md` | Markdown | 本報告書（完整盤點、分析、架構圖與計畫） |
+| `docs/evidence/runtime/ODP-PROD-NETWORK-PARITY-PLAN-001/README.md` | Markdown | 本報告書（完整盤點、分析、架構圖、雙閘門脫節剖析、兩階段 Bootstrap 與三大遷移路徑） |
 | `docs/evidence/runtime/ODP-PROD-NETWORK-PARITY-PLAN-001/inventory-discrepancy-matrix.json` | JSON | 結構化盤點矩陣，標註每項落差與風險層級 |
-| `docs/evidence/runtime/ODP-PROD-NETWORK-PARITY-PLAN-001/live-gcp-readback-receipts.json` | JSON | 實測唯讀命令執行紀錄與 GCP 原始輸出收據 |
+| `docs/evidence/runtime/ODP-PROD-NETWORK-PARITY-PLAN-001/live-gcp-readback-receipts.json` | JSON | 實測唯讀命令執行紀錄與 GCP 原始輸出收據 (含 servicenetworking / addresses / peerings / vpcaccess) |
 
 ---
 *報告產出完成，等待 Reviewer 審查。*

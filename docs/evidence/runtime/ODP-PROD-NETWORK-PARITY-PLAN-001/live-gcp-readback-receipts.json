@@ -1,7 +1,7 @@
 {
   "receipt_metadata": {
     "task_id": "ODP-PROD-NETWORK-PARITY-PLAN-001",
-    "executed_at": "2026-09-16T01:00:00Z",
+    "executed_at": "2026-09-16T01:20:00Z",
     "executor": "Antigravity7",
     "mode": "READ_ONLY_INSPECTION"
   },
@@ -37,6 +37,24 @@
           "region": "https://www.googleapis.com/compute/v1/projects/odayplus-prod-20260826/regions/asia-east1"
         }
       ]
+    },
+    {
+      "command": "gcloud services list --enabled --project=odayplus-prod-20260826 --filter=\"name:servicenetworking.googleapis.com\" --format=json",
+      "exit_code": 0,
+      "summary": "Production servicenetworking.googleapis.com service status",
+      "data": []
+    },
+    {
+      "command": "gcloud compute addresses list --global --project=odayplus-prod-20260826 --format=json",
+      "exit_code": 0,
+      "summary": "Production global internal peering addresses list",
+      "data": []
+    },
+    {
+      "command": "gcloud compute networks peerings list --project=odayplus-prod-20260826 --format=json",
+      "exit_code": 0,
+      "summary": "Production VPC peerings list",
+      "data": []
     },
     {
       "command": "gcloud compute firewall-rules list --project=odayplus-prod-20260826 --format=json",
@@ -117,6 +135,12 @@
           }
         }
       }
+    },
+    {
+      "command": "gcloud services list --enabled --project=odayplus-prod-20260826 --filter=\"name:vpcaccess.googleapis.com\" --format=json",
+      "exit_code": 0,
+      "summary": "Production vpcaccess.googleapis.com service status",
+      "data": []
     },
     {
       "command": "gcloud compute networks vpc-access connectors describe oday-staging-vpc --region=asia-east1 --project=odayplus-runtime-20260825 --format=json",

@@ -1,7 +1,7 @@
 {
   "audit_metadata": {
     "task_id": "ODP-PROD-NETWORK-PARITY-PLAN-001",
-    "timestamp": "2026-09-16T01:00:00Z",
+    "timestamp": "2026-09-16T01:20:00Z",
     "auditor": "Antigravity7",
     "reviewer": "Claude",
     "scope": "production_network_and_database_iac_parity",
@@ -23,8 +23,10 @@
         "existing_networks": [
           {
             "name": "default",
-            "auto_create_subnetworks": true,
-            "routing_mode": "REGIONAL"
+            "autoCreateSubnetworks": true,
+            "routingConfig": {
+              "routingMode": "REGIONAL"
+            }
           }
         ],
         "target_network_status": "MISSING"
@@ -211,7 +213,7 @@
       "terraform_identifier": "google_sql_database_instance.primary.settings",
       "terraform_name": "oday-prod-sql",
       "terraform_definition": {
-        "tier": "db-custom-4-15360",
+        "tier": "db-custom-4-15360 (prod.tfvars.example / checks.tf baseline; variables.tf default is db-custom-2-7680)",
         "availability_type": "REGIONAL",
         "deletion_protection_enabled": true,
         "encryption_key_name": "projects/odayplus-prod-20260826/locations/asia-east1/keyRings/oday-prod-runtime/cryptoKeys/oday-prod-runtime"
