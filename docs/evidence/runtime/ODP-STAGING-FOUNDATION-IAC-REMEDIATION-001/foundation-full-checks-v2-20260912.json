@@ -27,5 +27,8 @@
   "source_sha256": {
     "delivery_toolchain/release/release_manifest.py": "ab47e7378c2621e94dc7476642355bcb8f9cda317919dc0cee985432d38d81cb",
     "tests/release/test_foundation_egress_contract.py": "9a27488ee035900d686f4f4facc792e7364ba4829e3db95b51fd86dc9405d225"
-  }
+  },
+  "status": "superseded",
+  "superseded_by": "foundation-full-checks-20260912.json",
+  "note": "Historical run prior to egress contract restoration (ab47e737). Superseded by foundation-full-checks-20260912.json."
 }

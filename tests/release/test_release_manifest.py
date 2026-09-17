@@ -56,8 +56,8 @@ from delivery_toolchain.release.release_manifest import (
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_PATH = ROOT / "docs/evidence/gates/RELEASE_MANIFEST.json"
 REGISTRY_PATH = ROOT / "docs/evidence/gates/RELEASE_GATE_REGISTRY.json"
-REAL_CANDIDATE_SHA = "0162328cc99dfab4a2fcd97abd9491256ff326ca"
-SECOND_REAL_CANDIDATE_SHA = "581899518fdfd095e2420d41d5e5a3d27b68ae66"
+REAL_CANDIDATE_SHA = "b1e9b57b0b61bcc692ec16b2d7a0ce03b612fd8e"
+SECOND_REAL_CANDIDATE_SHA = "0162328cc99dfab4a2fcd97abd9491256ff326ca"
 
 
 def load_manifest() -> dict:
