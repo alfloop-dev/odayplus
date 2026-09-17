@@ -199,6 +199,34 @@ class ConfigContractTests(unittest.TestCase):
         self.assertEqual(loaded["supervisor"]["poll_interval_seconds"], 45)
         self.assertEqual(worker_env[common.CONFIG_PATH_ENV_VAR], str(runtime))
 
+    def test_load_config_resolves_from_authoritative_status_root_when_env_unset(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_root = Path(tmpdir)
+            orch_dir = status_root / ".orchestrator"
+            orch_dir.mkdir(parents=True)
+            config_file = orch_dir / "config.json"
+            config_file.write_text(
+                json.dumps({
+                    "supervisor": {"poll_interval_seconds": 25},
+                    "paths": {"status_file": "ai-status.json"},
+                }),
+                encoding="utf-8",
+            )
+            with mock.patch.dict(
+                common.os.environ,
+                {
+                    common.STATUS_ROOT_ENV_VAR: str(status_root),
+                    common.CONFIG_PATH_ENV_VAR: "",
+                    common.LEGACY_CONFIG_PATH_ENV_VAR: "",
+                },
+                clear=False,
+            ):
+                loaded = common.load_config()
+
+            self.assertEqual(loaded["supervisor"]["poll_interval_seconds"], 25)
+            # Relative paths in config are anchored to status_root
+            self.assertEqual(loaded["paths"]["status_file"], str(status_root / "ai-status.json"))
+
 
 class FailureSummaryTests(unittest.TestCase):
     def test_summarize_failure_reason_treats_claude_credit_balance_as_quota(self) -> None:

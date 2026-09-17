@@ -1,0 +1,231 @@
+{
+  "audit_metadata": {
+    "task_id": "ODP-PROD-NETWORK-PARITY-PLAN-001",
+    "timestamp": "2026-09-16T01:20:00Z",
+    "auditor": "Antigravity7",
+    "reviewer": "Claude",
+    "scope": "production_network_and_database_iac_parity",
+    "production_project_id": "odayplus-prod-20260826",
+    "staging_project_id": "odayplus-runtime-20260825",
+    "terraform_source_ref": "origin/dev"
+  },
+  "discrepancies": [
+    {
+      "category": "VPC Network",
+      "resource_type": "google_compute_network",
+      "terraform_identifier": "google_compute_network.runtime",
+      "terraform_name": "oday-prod-runtime",
+      "terraform_definition": {
+        "auto_create_subnetworks": false,
+        "routing_mode": "REGIONAL"
+      },
+      "production_actual": {
+        "existing_networks": [
+          {
+            "name": "default",
+            "autoCreateSubnetworks": true,
+            "routingConfig": {
+              "routingMode": "REGIONAL"
+            }
+          }
+        ],
+        "target_network_status": "MISSING"
+      },
+      "parity_status": "DRIFT_MISSING",
+      "risk_impact": "High - Workloads lack dedicated custom isolated VPC; running on default auto-mode VPC."
+    },
+    {
+      "category": "Subnetwork",
+      "resource_type": "google_compute_subnetwork",
+      "terraform_identifier": "google_compute_subnetwork.runtime",
+      "terraform_name": "oday-prod-runtime",
+      "terraform_definition": {
+        "region": "asia-east1",
+        "ip_cidr_range": "10.42.0.0/24",
+        "private_ip_google_access": true,
+        "log_config": {
+          "aggregation_interval": "INTERVAL_5_SEC",
+          "flow_sampling": 0.5,
+          "metadata": "INCLUDE_ALL_METADATA"
+        }
+      },
+      "production_actual": {
+        "existing_subnets_in_region": [
+          {
+            "name": "default",
+            "region": "asia-east1",
+            "ip_cidr_range": "10.140.0.0/20",
+            "private_ip_google_access": false,
+            "log_config": null
+          }
+        ],
+        "target_subnet_status": "MISSING"
+      },
+      "parity_status": "DRIFT_MISSING",
+      "risk_impact": "High - Direct VPC egress cannot bind without dedicated runtime subnetwork."
+    },
+    {
+      "category": "Private Services Peering",
+      "resource_type": "google_service_networking_connection / google_compute_global_address",
+      "terraform_identifier": "google_compute_global_address.private_services & google_service_networking_connection.private_services",
+      "terraform_name": "oday-prod-private-services",
+      "terraform_definition": {
+        "purpose": "VPC_PEERING",
+        "address_type": "INTERNAL",
+        "prefix_length": 16,
+        "service": "servicenetworking.googleapis.com"
+      },
+      "production_actual": {
+        "servicenetworking_api_enabled": false,
+        "global_peering_addresses": [],
+        "vpc_peerings": []
+      },
+      "parity_status": "DRIFT_MISSING",
+      "risk_impact": "Critical - Cloud SQL Private IP requires servicenetworking.googleapis.com API and peering connection."
+    },
+    {
+      "category": "Firewall Rules - Deny All Egress",
+      "resource_type": "google_compute_firewall",
+      "terraform_identifier": "google_compute_firewall.deny_all_egress",
+      "terraform_name": "oday-prod-deny-all-egress",
+      "terraform_definition": {
+        "network": "oday-prod-runtime",
+        "direction": "EGRESS",
+        "priority": 65534,
+        "action": "DENY",
+        "protocol": "all",
+        "destination_ranges": ["0.0.0.0/0"]
+      },
+      "production_actual": {
+        "status": "MISSING"
+      },
+      "parity_status": "DRIFT_MISSING",
+      "risk_impact": "High - Zero egress lockdown posture on production."
+    },
+    {
+      "category": "Firewall Rules - Allow Private Egress",
+      "resource_type": "google_compute_firewall",
+      "terraform_identifier": "google_compute_firewall.allow_private_egress",
+      "terraform_name": "oday-prod-allow-private-egress",
+      "terraform_definition": {
+        "network": "oday-prod-runtime",
+        "direction": "EGRESS",
+        "priority": 1000,
+        "action": "ALLOW",
+        "protocol": "all",
+        "destination_ranges": [
+          "10.0.0.0/8",
+          "172.16.0.0/12",
+          "192.168.0.0/16",
+          "10.42.0.0/24"
+        ]
+      },
+      "production_actual": {
+        "status": "MISSING"
+      },
+      "parity_status": "DRIFT_MISSING",
+      "risk_impact": "High - Private RFC1918 egress not structured via explicit firewall rules."
+    },
+    {
+      "category": "Firewall Rules - Allow Restricted Google APIs",
+      "resource_type": "google_compute_firewall",
+      "terraform_identifier": "google_compute_firewall.allow_restricted_google_apis",
+      "terraform_name": "oday-prod-allow-restricted-google-apis",
+      "terraform_definition": {
+        "network": "oday-prod-runtime",
+        "direction": "EGRESS",
+        "priority": 1000,
+        "action": "ALLOW",
+        "protocol": "tcp",
+        "ports": ["443"],
+        "destination_ranges": ["199.36.153.4/30", "199.36.153.8/30"]
+      },
+      "production_actual": {
+        "status": "MISSING"
+      },
+      "parity_status": "DRIFT_MISSING",
+      "risk_impact": "Medium - Google API private VIP access rules absent."
+    },
+    {
+      "category": "Cloud SQL - Public IP / IPv4 Enabled",
+      "resource_type": "google_sql_database_instance",
+      "terraform_identifier": "google_sql_database_instance.primary.settings.ip_configuration.ipv4_enabled",
+      "terraform_name": "oday-prod-sql",
+      "terraform_definition": {
+        "ipv4_enabled": false
+      },
+      "production_actual": {
+        "ipv4_enabled": true,
+        "primary_ip_address": "34.81.148.88"
+      },
+      "parity_status": "DRIFT_INSECURE",
+      "risk_impact": "Critical - Public IP 34.81.148.88 is exposed on the public internet."
+    },
+    {
+      "category": "Cloud SQL - Private Network",
+      "resource_type": "google_sql_database_instance",
+      "terraform_identifier": "google_sql_database_instance.primary.settings.ip_configuration.private_network",
+      "terraform_name": "oday-prod-sql",
+      "terraform_definition": {
+        "private_network": "projects/odayplus-prod-20260826/global/networks/oday-prod-runtime",
+        "enable_private_path_for_google_cloud_services": true
+      },
+      "production_actual": {
+        "private_network": null,
+        "enable_private_path_for_google_cloud_services": false,
+        "private_ip_address": null
+      },
+      "parity_status": "DRIFT_MISSING",
+      "risk_impact": "Critical - Cloud SQL has no internal VPC IP and cannot be reached via private network."
+    },
+    {
+      "category": "Cloud SQL - SSL Mode & Require SSL",
+      "resource_type": "google_sql_database_instance",
+      "terraform_identifier": "google_sql_database_instance.primary.settings.ip_configuration.ssl_mode",
+      "terraform_name": "oday-prod-sql",
+      "terraform_definition": {
+        "ssl_mode": "ENCRYPTED_ONLY"
+      },
+      "production_actual": {
+        "ssl_mode": "ALLOW_UNENCRYPTED_AND_ENCRYPTED",
+        "require_ssl": false
+      },
+      "parity_status": "DRIFT_INSECURE",
+      "risk_impact": "High - Permits cleartext / unencrypted database connections over network."
+    },
+    {
+      "category": "Cloud SQL - Authorized Networks",
+      "resource_type": "google_sql_database_instance",
+      "terraform_identifier": "google_sql_database_instance.primary.settings.ip_configuration.authorized_networks",
+      "terraform_name": "oday-prod-sql",
+      "terraform_definition": {
+        "authorized_networks": []
+      },
+      "production_actual": {
+        "authorized_networks": []
+      },
+      "parity_status": "CONVERGED_EMPTY",
+      "risk_impact": "Medium - Authorized networks list is empty; public IP connection relies on Cloud SQL proxy/IAM."
+    },
+    {
+      "category": "Cloud SQL - Availability & Tier",
+      "resource_type": "google_sql_database_instance",
+      "terraform_identifier": "google_sql_database_instance.primary.settings",
+      "terraform_name": "oday-prod-sql",
+      "terraform_definition": {
+        "tier": "db-custom-4-15360 (prod.tfvars.example / checks.tf baseline; variables.tf default is db-custom-2-7680)",
+        "availability_type": "REGIONAL",
+        "deletion_protection_enabled": true,
+        "encryption_key_name": "projects/odayplus-prod-20260826/locations/asia-east1/keyRings/oday-prod-runtime/cryptoKeys/oday-prod-runtime"
+      },
+      "production_actual": {
+        "tier": "db-f1-micro",
+        "availability_type": "ZONAL",
+        "deletion_protection_enabled": false,
+        "disk_encryption": "GOOGLE_MANAGED_DEFAULT (NO CMEK)"
+      },
+      "parity_status": "DRIFT_MISMATCH",
+      "risk_impact": "Critical - db-f1-micro (0.6GB RAM) easily OOMs in prod; Zonal has no HA failover; CMEK is missing forcing instance replacement on direct Terraform apply."
+    }
+  ]
+}
