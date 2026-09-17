@@ -6,7 +6,7 @@
   "phase": "History Recovery — executable acceptance reconciliation",
   "owner": "Antigravity3",
   "reviewer": "Claude",
-  "recorded_at": "2026-09-17T06:00:00Z",
+  "recorded_at": "2026-09-17T06:20:00Z",
   "reconciliation_target": {
     "repository": "alfloop-dev/odayplus",
     "continuation_branch": "task/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001-RECOVERY-20260911",
@@ -215,7 +215,62 @@
             "ODP_WEB_BASE_URL"
           ],
           "responsible_task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
-          "receipt_ref": "docs/evidence/runtime/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003/receipts/github-receipts/receipt-gh-env-vars-dev.json"
+          "receipt_ref": "docs/evidence/runtime/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003/receipts/github-receipts/receipt-gh-env-vars-dev.json",
+          "remediation_findings": [
+            {
+              "finding_id": "REM-DEV-VAR-ODP_WEB_BASE_URL",
+              "affected_input": "ODP_WEB_BASE_URL",
+              "status": "active_gap",
+              "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/dev/variables --jq '[.variables[] | select(.name==\"ODP_WEB_BASE_URL\")]'"
+            },
+            {
+              "finding_id": "REM-DEV-VAR-ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET",
+              "affected_input": "ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET",
+              "status": "active_gap",
+              "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/dev/variables --jq '[.variables[] | select(.name==\"ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET\")]'"
+            }
+          ]
+        },
+        "production": {
+          "missing_required_inputs": [
+            "ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET",
+            "ODP_WEB_BASE_URL"
+          ],
+          "responsible_task_id": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+          "receipt_ref": "docs/evidence/runtime/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003/receipts/github-receipts/receipt-gh-env-vars-production.json",
+          "remediation_findings": [
+            {
+              "finding_id": "REM-PROD-VAR-ODP_WEB_BASE_URL",
+              "affected_input": "ODP_WEB_BASE_URL",
+              "status": "active_gap",
+              "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/production/variables --jq '[.variables[] | select(.name==\"ODP_WEB_BASE_URL\")]'",
+              "consumption_path": ".github/workflows/deploy-dev.yml:1050,1070; product_ops/deployment/deploy_cloud_run_waji.sh:906",
+              "note": "Required in all auth modes (validate_cloud_run_live_deployment.py:98 REQUIRED_PUBLIC_CONFIG). Still absent from 50 production variables on 2026-09-17."
+            },
+            {
+              "finding_id": "REM-PROD-VAR-ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET",
+              "affected_input": "ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET",
+              "status": "active_gap",
+              "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/production/variables --jq '[.variables[] | select(.name==\"ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET\")]'",
+              "consumption_path": "product_ops/deployment/deploy_cloud_run_waji.sh:434,439 API/WEB secret binding",
+              "note": "Required in all auth modes for Web local token signing and API verification (validate_cloud_run_live_deployment.py:112 REQUIRED_SECRET_REFERENCES). Still absent from 50 production variables on 2026-09-17."
+            },
+            {
+              "finding_id": "REM-PROD-VAR-ODP_CLOUD_RUN_VPC_EGRESS",
+              "affected_input": "ODP_CLOUD_RUN_VPC_EGRESS",
+              "status": "resolved_2026-09-17",
+              "resolved_value": "ODP_CLOUD_RUN_VPC_EGRESS=all-traffic",
+              "resolution_date": "2026-09-17",
+              "resolution_note": "Populated in GitHub production environment on 2026-09-17."
+            },
+            {
+              "finding_id": "REM-PROD-VAR-ODP_CLOUD_RUN_VPC_CONNECTOR",
+              "affected_input": "ODP_CLOUD_RUN_VPC_CONNECTOR",
+              "status": "deliberately_omitted_2026-09-17",
+              "resolution_date": "2026-09-17",
+              "resolution_note": "Intentionally omitted per Direct VPC egress architecture; mutually exclusive with ODP_CLOUD_RUN_VPC_EGRESS in check_release_environment.py."
+            }
+          ]
         },
         "staging_foundation": {
           "missing_required_inputs": [
@@ -248,21 +303,30 @@
       "scope_boundary_note": "Plan §8 line 273 explicitly excludes production deploy/GO/lease. PROD-GCP-01~05 human authority decisions were maintained as dedicated open governance prerequisites until the 2026-09-17 formal adjudication."
     },
     "human_ops_production_adjudication_20260917": {
+      "canonical_provenance": {
+        "source_file": "ai-activity-log.jsonl",
+        "timestamp": "2026-09-17T05:58:32Z",
+        "type": "start",
+        "task_id": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+        "agent": "Antigravity3",
+        "adjudication_authority": "Human/Ops (蔡尚志 / Bjoe)"
+      },
       "adjudication_date": "2026-09-17",
-      "adjudication_authority": "Human/Ops (Bjoe / 蔡尚志)",
-      "adjudication_summary": "PROD-GCP-01~05 五項全部結清，解除本 task 的 blocked recovery disposition。原 blocker（2026-09-14）稱五項均為 pending_human_decision，經實測其中四項早已完成，第五項正式定案。",
+      "adjudication_authority": "Human/Ops (蔡尚志 / Bjoe)",
+      "adjudication_summary": "PROD-GCP-01~05 五項全部結清，解除本 task 的 blocked recovery disposition。原 blocker（2026-09-14）稱五項均為 pending_human_decision，經實測與裁定，前四項早已就位，第五項正式定案。",
       "items": {
         "PROD-GCP-01": {
           "status": "completed",
-          "details": "production 專用專案 odayplus-prod-20260826（project_number 365886461656）lifecycle_state=ACTIVE，region asia-east1；GitHub production environment 的 GCP_PROJECT_ID／GCP_REGION／GCP_AR_REPO 均已設定。與 dev/staging 共用的 odayplus-runtime-20260825 為不同專案，production 早已分離，無須再做共用專案分割簽署。"
+          "details": "Human/Ops 提供之 readback 事實：production 專用專案 odayplus-prod-20260826（project_number 365886461656）lifecycle_state=ACTIVE，region asia-east1；GitHub production environment 的 GCP_PROJECT_ID／GCP_REGION／GCP_AR_REPO 均已設定。與 dev/staging 共用的 odayplus-runtime-20260825 為不同專案，production 早已分離，無須再做共用專案分割簽署。"
         },
         "PROD-GCP-02": {
           "status": "completed",
-          "details": "workloadIdentityPools/github-actions/providers/odayplus state=ACTIVE；四個 SA 實測存在：github-deployer、oday-prod-runtime、oday-prod-scheduler、oday-prod-smoke-operator（皆 @odayplus-prod-20260826.iam.gserviceaccount.com）。"
+          "details": "Human/Ops 提供之 readback 事實：workloadIdentityPools/github-actions/providers/odayplus state=ACTIVE；四個 SA 實測存在：github-deployer、oday-prod-runtime、oday-prod-scheduler、oday-prod-smoke-operator（皆 @odayplus-prod-20260826.iam.gserviceaccount.com）。"
         },
         "PROD-GCP-03": {
           "status": "completed",
-          "details": "oday-prod-sql、POSTGRES_16、state=RUNNABLE、connection_name odayplus-prod-20260826:asia-east1:oday-prod-sql；三個 secret 版本 ENABLED：oday-prod-database-url、oday-prod-auth-principal-map、oday-prod-web-session-secret。"
+          "technical_residual_status": "private_ip_pending_vpc_terraform_apply",
+          "details": "2026-09-17 Human/Ops 裁決結清治理面要求。實體資源：oday-prod-sql、POSTGRES_16、state=RUNNABLE、connection_name odayplus-prod-20260826:asia-east1:oday-prod-sql；三個 secret 版本 ENABLED：oday-prod-database-url、oday-prod-auth-principal-map、oday-prod-web-session-secret。技術層殘差說明：依 docs/evidence/runtime/ODP-PROD-NETWORK-PARITY-PLAN-001/live-gcp-readback-receipts.json（2026-09-16，gcloud sql instances describe，exit 0），目前該 instance 設有 public IP（34.81.148.88，authorizedNetworks=[]，sslMode=ALLOW_UNENCRYPTED_AND_ENCRYPTED），private IP 需待 oday-prod-runtime VPC 建立後由 Terraform 套用。此技術殘差綁定至責任任務 ODP-PROD-BLUEGREEN-ROLLOUT-001。"
         },
         "PROD-GCP-04": {
           "status": "completed_scope_narrowed",
@@ -270,10 +334,34 @@
         },
         "PROD-OPS-05": {
           "status": "completed_by_human_adjudication",
-          "details": "watch 窗口：切換後 60 分鐘密集觀察（人在線上），接續 24 小時自動監控。Rollback 觸發閾值：錯誤率 > 1%，或 p95 延遲 > 2 秒。Rollback 完成目標：15 分鐘內。指定 rollback／on-call 負責人：蔡尚志（與 H07 簽核人一致，避免決策者與 rollback 執行者分屬不同人）。裁定理由：此為 production 首次部署且系統從未實際承載流量，窗口需長到能採集真實流量峰谷，閾值需敏感到能在使用者回報前發現。"
+          "supersedes_prior_record": {
+            "prior_task_id": "ODP-PROD-OPS-WATCH-PARAMS-001",
+            "prior_pr": 1338,
+            "prior_approval_date": "2026-09-15T17:44:00Z",
+            "superseded_files_in_dev": [
+              {
+                "path": "docs/evidence/runtime/ODP-PROD-OPS-WATCH-PARAMS-001/prod-ops-governance-parameters.json",
+                "lines": "7-29",
+                "prior_values": "watch_window_minutes=30; error_rate < 5%; p95 < 5s; rollback error_rate > 10% 5m / p95 > 10s 5m / health check 3 failures; owner=bjoe734@gmail.com"
+              },
+              {
+                "path": "docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md",
+                "lines": "204, 206, 288, 292-294, 303-309",
+                "prior_values": "watch_window=30m; error_rate < 5% / p95 < 5s; rollback > 10% / > 10s; owner=bjoe734@gmail.com"
+              }
+            ],
+            "synchronization_responsibility": {
+              "responsible_task_id": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+              "action": "Synchronize prod-ops-governance-parameters.json and EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md to reflect the 2026-09-17 adjudication parameters prior to production rollout."
+            }
+          },
+          "details": "watch 窗口：切換後 60 分鐘密集觀察（人在線上），接續 24 小時自動監控。Rollback 觸發閾值：錯誤率 > 1%，或 p95 延遲 > 2 秒。Rollback 完成目標：15 分鐘內。指定 rollback／on-call 負責人：蔡尚志（與 H07 簽核人一致，避免決策者與 rollback 執行者分屬不同人）。裁定理由：此為 production 首次部署且系統從未實際承載流量，窗口需長到能採集真實流量峰谷，閾值需敏感到能在使用者回報前發現。本項 supersedes ODP-PROD-OPS-WATCH-PARAMS-001 舊參數，舊檔同步由 ODP-PROD-BLUEGREEN-ROLLOUT-001 承接。"
         }
       },
       "github_variables_readback": {
+        "command": "gh api --paginate repos/alfloop-dev/odayplus/environments/production/variables",
+        "exit_code": 0,
+        "observed_date": "2026-09-17",
         "total_variables_count": 50,
         "deploy_scope_variables_status": "11 of 11 required variables populated (zero missing)",
         "added_variables": [
@@ -286,13 +374,31 @@
           "ODP_PROD_TERRAFORM_STATE_BUCKET=odayplus-prod-20260826-tfstate",
           "ODP_PROD_RECOVERY_BUNDLE_BUCKET=odayplus-prod-20260826-recovery"
         ],
-        "omitted_variable_rationale": "ODP_CLOUD_RUN_VPC_CONNECTOR 保持不存在。infra/terraform cloud_run.tf 使用 Direct VPC egress（network_interfaces + ALL_TRAFFIC），IaC 不產生 connector 資源；check_release_environment.py 的 VPC_BINDING_MODES 兩種模式互斥，補上 connector 會使綁定解析報「同時設定兩種網路綁定」而失敗。"
+        "omitted_variable_rationale": "ODP_CLOUD_RUN_VPC_CONNECTOR 保持不存在。infra/terraform cloud_run.tf 使用 Direct VPC egress（network_interfaces + ALL_TRAFFIC），IaC 不產生 connector 資源；check_release_environment.py 的 VPC_BINDING_MODES 兩種模式互斥，補上 connector 會使綁定解析報「同時設定兩種網路綁定」而失敗。",
+        "active_missing_variables_in_general_config": [
+          {
+            "name": "ODP_WEB_BASE_URL",
+            "category": "REQUIRED_PUBLIC_CONFIG",
+            "responsible_task_id": "ODP-PROD-BLUEGREEN-ROLLOUT-001"
+          },
+          {
+            "name": "ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET",
+            "category": "REQUIRED_SECRET_REFERENCES",
+            "responsible_task_id": "ODP-PROD-BLUEGREEN-ROLLOUT-001"
+          }
+        ]
       },
       "gcp_resources_readback": {
+        "source": "Human/Ops operational readback & merged evidence receipts",
         "tfstate_bucket": "gs://odayplus-prod-20260826-tfstate (ASIA-EAST1, STANDARD, UBLA, versioning, PAP enforced, CMEK=oday-runtime:runtime, no retention policy)",
         "recovery_bucket": "gs://odayplus-prod-20260826-recovery (ASIA-EAST1, STANDARD, UBLA, versioning, PAP enforced, CMEK=oday-runtime:runtime, retention 2592000s / 30d)"
       },
-      "next_prerequisite": "oday-prod-runtime VPC 目前不存在（production 專案內僅有 default 網路），需由 terraform apply 產生；state bucket 已就位故該 apply 不再有前置阻礙。此步屬 ODP-PROD-BLUEGREEN-ROLLOUT-001 範圍，非本 task。"
+      "next_prerequisites": [
+        "oday-prod-runtime VPC 目前不存在（production 專案內僅有 default 網路），需由 terraform apply 產生；state bucket 已就位故該 apply 不再有前置阻礙。此步屬 ODP-PROD-BLUEGREEN-ROLLOUT-001 範圍。",
+        "Cloud SQL oday-prod-sql private IP 連線配置（待 VPC 建立後由 Terraform 套用），由 ODP-PROD-BLUEGREEN-ROLLOUT-001 承接。",
+        "補齊 GitHub production 變數 ODP_WEB_BASE_URL 與 ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET，由 ODP-PROD-BLUEGREEN-ROLLOUT-001 承接。",
+        "同步 prod-ops-governance-parameters.json 與 EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md 中 PROD-OPS-05 營運參數，由 ODP-PROD-BLUEGREEN-ROLLOUT-001 承接。"
+      ]
     }
   },
   "acceptance_criteria_reconciliation": [
@@ -320,11 +426,16 @@
       "classes_zh": [
         "runtime／部署"
       ],
-      "status": "met",
-      "status_zh": "已滿足",
-      "evidence": "GitHub production environment variables are completed from 42 to 50, with all 11 required deploy scope variables fully populated (zero missing). WIF provider (projects/365886461656/.../providers/odayplus) state=ACTIVE, 4 service accounts exist (github-deployer, oday-prod-runtime, oday-prod-scheduler, oday-prod-smoke-operator), Cloud SQL (oday-prod-sql) state=RUNNABLE, 3 Secret Manager secret versions ENABLED (oday-prod-database-url, oday-prod-auth-principal-map, oday-prod-web-session-secret), and GCS state/recovery buckets (gs://odayplus-prod-20260826-tfstate, gs://odayplus-prod-20260826-recovery) provisioned. Direct VPC egress (ODP_CLOUD_RUN_VPC_EGRESS=all-traffic) is properly set without conflicting connector. All secret values are strictly referenced by name without plaintext (secret_values_redacted=true). Remaining dev/staging input requirements are explicitly preserved and mapped to owning tasks (ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001, ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001).",
-      "gaps": [],
-      "boundary": "Verified dev/staging/production secret references, GitHub environment variable bindings, and production GCP resource readback; secret values remain unread and redacted."
+      "status": "partially_met",
+      "status_zh": "部分滿足（GitHub 環境變數已補齊至 50 項、deploy scope 11/11 齊備、WIF/SA/Secret Manager/GCS 已建立；dev 2 項、production 2 項與 staging 7 項必要變數缺口持續保留並映射至承接任務，Direct VPC 實體網路待 Terraform 建立）",
+      "evidence": "GitHub production environment variables are completed from 42 to 50, with all 11 required deploy scope variables fully populated (zero missing). WIF provider (projects/365886461656/.../providers/odayplus) state=ACTIVE, 4 service accounts exist (github-deployer, oday-prod-runtime, oday-prod-scheduler, oday-prod-smoke-operator), Cloud SQL (oday-prod-sql) state=RUNNABLE, 3 Secret Manager secret versions ENABLED (oday-prod-database-url, oday-prod-auth-principal-map, oday-prod-web-session-secret), and GCS state/recovery buckets (gs://odayplus-prod-20260826-tfstate, gs://odayplus-prod-20260826-recovery) provisioned. Direct VPC egress setting (ODP_CLOUD_RUN_VPC_EGRESS=all-traffic) is properly set without conflicting connector. All secret values are strictly referenced by name without plaintext (secret_values_redacted=true). Known variable and physical infrastructure gaps in dev, staging, and production are explicitly preserved and mapped to owning tasks.",
+      "gaps": [
+        "Production environment general config gaps: ODP_WEB_BASE_URL (validate_cloud_run_live_deployment.py:98 REQUIRED_PUBLIC_CONFIG) and ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET (validate_cloud_run_live_deployment.py:112 REQUIRED_SECRET_REFERENCES) are not present in the 50 production variables (REM-PROD-VAR-ODP_WEB_BASE_URL, REM-PROD-VAR-ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET mapped to ODP-PROD-BLUEGREEN-ROLLOUT-001).",
+        "Dev environment input gaps: ODP_WEB_BASE_URL and ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET are missing from dev variables (REM-DEV-VAR-* mapped to ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001).",
+        "Staging environment input gaps: 6 staging foundation inputs (ODP_STAGING_VPC_NETWORK, ODP_STAGING_VPC_SUBNETWORK, ODP_STAGING_KMS_KEY_ID, ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT, ODP_STAGING_TERRAFORM_STATE_BUCKET, ODP_STAGING_RECOVERY_BUNDLE_BUCKET) mapped to ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001; ODP_PRODUCTION_WATCH_CLOSEOUT_URI mapped to ODP-EPHEMERAL-STAGING-ROLLOUT-001.",
+        "Physical VPC network gap: ODP_PROD_VPC_NETWORK/SUBNETWORK points to oday-prod-runtime, which does not exist yet physically and requires terraform apply in ODP-PROD-BLUEGREEN-ROLLOUT-001."
+      ],
+      "boundary": "Verified dev/staging/production secret references, GitHub environment variable bindings, and production GCP resource readback; secret values remain unread and redacted; input gaps remain tracked."
     },
     {
       "index": 3,
@@ -339,7 +450,7 @@
       ],
       "status": "met",
       "status_zh": "已滿足",
-      "evidence": "GitHub Environment production (id 20574639394) exists and required_reviewers rule (Alien-alfaloop, ajoe734) is active. On 2026-09-17, Human/Ops formally completed and cleared all 5 human authority decisions (PROD-GCP-01~05): PROD-GCP-01 (dedicated project odayplus-prod-20260826 ACTIVE in asia-east1), PROD-GCP-02 (WIF pool provider ACTIVE and 4 SAs exist), PROD-GCP-03 (Cloud SQL RUNNABLE and 3 secrets ENABLED), PROD-GCP-04 (endpoints ODP_PROD_API_URL/ODP_PROD_DEPLOY_URL configured, local auth mode active per D15), and PROD-OPS-05 (60min intensive watch + 24h auto monitoring, error rate >1% or p95 >2s rollback threshold, 15min target, on-call owner 蔡尚志). GCS state/recovery buckets readback verified. production-authority-prerequisites.json updated to status=cleared_per_human_adjudication.",
+      "evidence": "GitHub Environment production (id 20574639394) exists and required_reviewers rule (Alien-alfaloop, ajoe734) is active. On 2026-09-17, Human/Ops formally completed and cleared all 5 human authority decisions (PROD-GCP-01~05, recorded in canonical ai-activity-log.jsonl @ 2026-09-17T05:58:32Z): PROD-GCP-01 (dedicated project odayplus-prod-20260826 ACTIVE in asia-east1), PROD-GCP-02 (WIF pool provider ACTIVE and 4 SAs exist), PROD-GCP-03 (Cloud SQL RUNNABLE and 3 secrets ENABLED; private IP technical residual mapped to ODP-PROD-BLUEGREEN-ROLLOUT-001), PROD-GCP-04 (endpoints ODP_PROD_API_URL/ODP_PROD_DEPLOY_URL configured, local auth mode active per D15), and PROD-OPS-05 (60min intensive watch + 24h auto monitoring, error rate >1% or p95 >2s rollback threshold, 15min target, on-call owner 蔡尚志; superseding ODP-PROD-OPS-WATCH-PARAMS-001 with doc sync mapped to ODP-PROD-BLUEGREEN-ROLLOUT-001). GCS state/recovery buckets readback verified. production-authority-prerequisites.json updated to status=cleared_per_human_adjudication.",
       "gaps": [],
       "boundary": "Distinguishes bootstrap environment protection and human governance clearance (which are now fully satisfied) from subsequent live rollout execution tasks (ODP-PROD-BLUEGREEN-ROLLOUT-001)."
     },
@@ -354,7 +465,7 @@
       ],
       "status": "met",
       "status_zh": "已滿足",
-      "evidence": "Historical delivery strictly enforced fail-closed compliance (recording status=blocked_pending_human_authority without fake placeholders). On 2026-09-17, formal Human/Ops adjudication definitively resolved all checklist items PROD-GCP-01 through PROD-OPS-05 with verified real infrastructure parameters and readback receipts. No synthetic or placeholder data was ever introduced.",
+      "evidence": "Historical delivery strictly enforced fail-closed compliance (recording status=blocked_pending_human_authority without fake placeholders). On 2026-09-17, formal Human/Ops adjudication definitively resolved all checklist items PROD-GCP-01 through PROD-OPS-05 with verified real infrastructure parameters and readback receipts (canonical entry in ai-activity-log.jsonl @ 2026-09-17T05:58:32Z). PROD-OPS-05 parameter supersession over ODP-PROD-OPS-WATCH-PARAMS-001 is explicitly documented with file/line locations and handed off for synchronization. No synthetic or placeholder data was ever introduced.",
       "gaps": [],
       "boundary": "Fulfills fail-closed compliance; non-fabrication of human governance values verified."
     },
@@ -369,7 +480,7 @@
       ],
       "status": "met",
       "status_zh": "已滿足",
-      "evidence": "All 5 runtime audit files in docs/evidence/runtime/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/ are present and complete at merge commit 8ad3f10dab70 with secret_values_redacted=true. Supplementary readback in support/handoffs/max-dispatch-20260910/archive-evidence/ includes verified GitHub API commands (command-receipts.json exit 0). The 2026-09-17 readback receipts confirm GitHub production environment variables (50 total), GCP project, WIF provider, SAs, Cloud SQL, Secret Manager, and GCS buckets. All secret references remain strictly sanitized.",
+      "evidence": "All 5 runtime audit files in docs/evidence/runtime/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/ are present and complete at merge commit 8ad3f10dab70 with secret_values_redacted=true. Supplementary readback in support/handoffs/max-dispatch-20260910/archive-evidence/ includes verified GitHub API commands (command-receipts.json exit 0). The 2026-09-17 readback receipts confirm GitHub production environment variables (50 total, exit code 0), GCP project, WIF provider, SAs, Cloud SQL (cross-referenced with ODP-PROD-NETWORK-PARITY-PLAN-001 live receipts), Secret Manager, and GCS buckets. All secret references remain strictly sanitized.",
       "gaps": [],
       "boundary": "Readback receipts verified complete, structured, and sanitized."
     }
@@ -522,6 +633,9 @@
         "ODP-EPHEMERAL-STAGING-ROLLOUT-001 completion",
         "ODP-PROD-RUNTIME-RELEASE-PATH-001 completion (PR #1333)",
         "Provisioning of oday-prod-runtime VPC via terraform apply against gs://odayplus-prod-20260826-tfstate",
+        "Configuration of Cloud SQL private IP connection on oday-prod-sql (resolving PROD-GCP-03 technical residual)",
+        "Resolution of missing required production variables ODP_WEB_BASE_URL and ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET",
+        "Synchronization of PROD-OPS-05 governance parameters in prod-ops-governance-parameters.json and EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md",
         "0% green smoke validation and controlled 100% traffic switch under PROD-OPS-05 governance"
       ],
       "governance_gate": "Human GO (PROD-GCP-01~05 cleared 2026-09-17) + Supervisor Production Release Lease",
@@ -569,23 +683,33 @@
     {
       "scope": "Production Human Governance Decisions (PROD-GCP-01~05)",
       "responsible_task_id": "UNASSIGNED_HUMAN_GOVERNANCE_GATE",
-      "canonical_dependency": "Formally adjudicated and cleared on 2026-09-17 by Human/Ops",
-      "boundary_clarification": "Formally cleared per 2026-09-17 Human/Ops adjudication; PROD-GCP-01 through PROD-OPS-05 are resolved.",
+      "canonical_dependency": "Formally adjudicated and cleared on 2026-09-17 by Human/Ops (ai-activity-log.jsonl @ 2026-09-17T05:58:32Z)",
+      "boundary_clarification": "Formally cleared per 2026-09-17 Human/Ops adjudication; PROD-GCP-01 through PROD-OPS-05 are resolved in governance.",
       "prerequisites": [
         "PROD-GCP-01: Production GCP Project ID (odayplus-prod-20260826, #365886461656), region asia-east1, dedicated project separation verified [COMPLETED]",
         "PROD-GCP-02: Production Workload Identity Pool provider ACTIVE, 4 service accounts verified [COMPLETED]",
-        "PROD-GCP-03: Production Cloud SQL instance (oday-prod-sql) RUNNABLE, 3 Secret Manager secret versions ENABLED [COMPLETED]",
+        "PROD-GCP-03: Production Cloud SQL instance (oday-prod-sql) RUNNABLE, 3 Secret Manager secret versions ENABLED [COMPLETED]; private IP technical residual mapped to ODP-PROD-BLUEGREEN-ROLLOUT-001",
         "PROD-GCP-04: ODP_PROD_API_URL/ODP_PROD_DEPLOY_URL configured; local auth mode active per D15; OAuth client requirement narrowed [COMPLETED]",
-        "PROD-OPS-05: 60m intensive watch + 24h auto monitoring; error rate >1% or p95 >2s rollback; 15m target; on-call owner 蔡尚志 [COMPLETED]"
+        "PROD-OPS-05: 60m intensive watch + 24h auto monitoring; error rate >1% or p95 >2s rollback; 15m target; on-call owner 蔡尚志 [COMPLETED]; supersedes ODP-PROD-OPS-WATCH-PARAMS-001 with doc sync mapped to ODP-PROD-BLUEGREEN-ROLLOUT-001"
       ],
       "governance_gate": "Human/Ops formal adjudication (2026-09-17)",
       "status": "resolved_by_human_ops_adjudication_20260917"
     }
   ],
+  "toolchain_changes_disclosure": {
+    "summary": "Shared delivery toolchain change disclosure (delivery_toolchain/git/task_start.sh & task_finalize.sh)",
+    "files_modified": [
+      "delivery_toolchain/git/task_start.sh",
+      "delivery_toolchain/git/task_finalize.sh"
+    ],
+    "rationale": "Added support for explicit '--branch' argument to allow working with canonical retargeted recovery branches (e.g. task/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001-RECOVERY-20260911) without hardcoding branch naming conventions.",
+    "risks": "Shared fleet control-plane scripts; modification was introduced in commit b2cf147b without automated unit test coverage.",
+    "recommendation": "Recommend opening a dedicated narrow-scope tooling task (e.g. ODP-TOOLCHAIN-BRANCH-PARAM-TESTS-001) to add comprehensive contract and regression tests for both '--branch' and default 'task/<ID>' execution paths."
+  },
   "summary": {
     "criteria_total": 5,
-    "criteria_met": 5,
-    "criteria_partially_met": 0,
+    "criteria_met": 4,
+    "criteria_partially_met": 1,
     "criteria_unmet": 0,
     "github_environment_protection_verified": true,
     "wif_iam_secret_reference_policy_verified": true,
@@ -595,7 +719,7 @@
     "human_ops_adjudication_20260917_resolved": true,
     "canonical_dependencies_unchanged": true,
     "no_dependency_cycles_in_scoped_subgraph": true,
-    "reconciliation_verdict": "acceptance_fully_reconciled",
+    "reconciliation_verdict": "acceptance_reconciled_with_known_gaps",
     "recommendation": "ready_for_review"
   }
 }

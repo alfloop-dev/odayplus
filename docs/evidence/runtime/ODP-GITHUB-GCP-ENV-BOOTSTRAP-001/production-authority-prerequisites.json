@@ -3,28 +3,37 @@
   "task_id": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
   "status": "cleared_per_human_adjudication",
   "resolution_adjudication_date": "2026-09-17",
-  "resolution_summary": "2026-09-17 Human/Ops 裁決：PROD-GCP-01~05 五項全部結清，解除本 task 的 blocked recovery disposition。原 blocker（2026-09-14）稱五項均為 pending_human_decision，經本日逐項實測，其中四項早已完成，僅第五項需要新裁示，現已一併定案。",
+  "canonical_adjudication_provenance": {
+    "source_file": "ai-activity-log.jsonl",
+    "timestamp": "2026-09-17T05:58:32Z",
+    "type": "start",
+    "task_id": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+    "agent": "Antigravity3",
+    "adjudication_authority": "Human/Ops (蔡尚志 / Bjoe)"
+  },
+  "resolution_summary": "2026-09-17 Human/Ops 正式裁決（canonical 記錄於 ai-activity-log.jsonl @ 2026-09-17T05:58:32Z）：PROD-GCP-01~05 五項全部結清，解除本 task 的 blocked recovery disposition。原 blocker（2026-09-14）稱五項均為 pending_human_decision，經實測與裁定，前四項早已就位，第五項正式定案。",
   "human_authority_checklist": [
     {
       "id": "PROD-GCP-01",
       "category": "GCP Project & Resource Naming",
       "requirement": "Dedicated production GCP Project ID (or formal signoff on shared project partitioning), region selection (e.g. asia-east1), and resource naming conventions.",
       "status": "completed",
-      "resolution_evidence": "production 專用專案 odayplus-prod-20260826（project_number 365886461656）lifecycle_state=ACTIVE，region asia-east1；GitHub production environment 的 GCP_PROJECT_ID／GCP_REGION／GCP_AR_REPO 均已設定。與 dev/staging 共用的 odayplus-runtime-20260825 為不同專案，production 早已分離，無須再做共用專案分割簽署。"
+      "resolution_evidence": "Human/Ops 提供之 readback 事實：production 專用專案 odayplus-prod-20260826（project_number 365886461656）lifecycle_state=ACTIVE，region asia-east1；GitHub production environment 的 GCP_PROJECT_ID／GCP_REGION／GCP_AR_REPO 均已設定。與 dev/staging 共用的 odayplus-runtime-20260825 為不同專案，production 早已分離，無須再做共用專案分割簽署。"
     },
     {
       "id": "PROD-GCP-02",
       "category": "WIF & IAM Service Accounts",
       "requirement": "Production Workload Identity Pool provider attribute mapping to repository alfloop-dev/odayplus, production deployer SA with least-privilege Cloud Run & Secret Manager bindings, and runtime/scheduler service accounts.",
       "status": "completed",
-      "resolution_evidence": "workloadIdentityPools/github-actions/providers/odayplus state=ACTIVE；四個 SA 實測存在：github-deployer、oday-prod-runtime、oday-prod-scheduler、oday-prod-smoke-operator（皆 @odayplus-prod-20260826.iam.gserviceaccount.com）。"
+      "resolution_evidence": "Human/Ops 提供之 readback 事實：workloadIdentityPools/github-actions/providers/odayplus state=ACTIVE；四個 SA 實體存在：github-deployer、oday-prod-runtime、oday-prod-scheduler、oday-prod-smoke-operator（皆 @odayplus-prod-20260826.iam.gserviceaccount.com）。"
     },
     {
       "id": "PROD-GCP-03",
       "category": "Cloud SQL & Secret Manager",
       "requirement": "Production Cloud SQL PostgreSQL 16 instance with private IP / Cloud SQL Auth proxy, dedicated Secret Manager secrets (ODAY_DATABASE_URL_SECRET, ODP_AUTH_PRINCIPAL_MAP_SECRET, ODP_WEB_SESSION_SECRET_SECRET, ODP_WEB_OIDC_CLIENT_SECRET_SECRET).",
       "status": "completed",
-      "resolution_evidence": "oday-prod-sql、POSTGRES_16、state=RUNNABLE、connection_name odayplus-prod-20260826:asia-east1:oday-prod-sql；三個 secret 版本 ENABLED：oday-prod-database-url、oday-prod-auth-principal-map、oday-prod-web-session-secret。"
+      "technical_residual_status": "private_ip_pending_vpc_terraform_apply",
+      "resolution_evidence": "2026-09-17 Human/Ops 裁決結清治理面要求。實體資源方面：oday-prod-sql、POSTGRES_16、state=RUNNABLE、connection_name odayplus-prod-20260826:asia-east1:oday-prod-sql；三個 secret 版本 ENABLED：oday-prod-database-url、oday-prod-auth-principal-map、oday-prod-web-session-secret。技術層殘差說明：依 origin/dev 合併之 docs/evidence/runtime/ODP-PROD-NETWORK-PARITY-PLAN-001/live-gcp-readback-receipts.json（2026-09-16，gcloud sql instances describe，exit 0），目前該 instance 設有 public IP（34.81.148.88，authorizedNetworks=[]，sslMode=ALLOW_UNENCRYPTED_AND_ENCRYPTED），private IP 需待 oday-prod-runtime VPC 建立後由 Terraform 套用。此技術殘差已明確綁定至責任任務 ODP-PROD-BLUEGREEN-ROLLOUT-001。"
     },
     {
       "id": "PROD-GCP-04",
@@ -38,14 +47,53 @@
       "category": "Operations & Incident Governance",
       "requirement": "Production watch window duration, SLO and rollback latency/error thresholds, and designated rollback/on-call owner assignment.",
       "status": "completed_by_human_adjudication",
-      "resolution_evidence": "watch 窗口：切換後 60 分鐘密集觀察（人在線上），接續 24 小時自動監控。Rollback 觸發閾值：錯誤率 > 1%，或 p95 延遲 > 2 秒。Rollback 完成目標：15 分鐘內。指定 rollback／on-call 負責人：蔡尚志（與 H07 簽核人一致，避免決策者與 rollback 執行者分屬不同人）。裁定理由：此為 production 首次部署且系統從未實際承載流量，窗口需長到能採集真實流量峰谷，閾值需敏感到能在使用者回報前發現。"
+      "supersedes_prior_record": {
+        "prior_task_id": "ODP-PROD-OPS-WATCH-PARAMS-001",
+        "prior_pr": 1338,
+        "prior_approval_date": "2026-09-15T17:44:00Z",
+        "superseded_files_in_dev": [
+          {
+            "path": "docs/evidence/runtime/ODP-PROD-OPS-WATCH-PARAMS-001/prod-ops-governance-parameters.json",
+            "lines": "7-29",
+            "prior_values": "watch_window_minutes=30; error_rate < 5%; p95 < 5s; rollback error_rate > 10% 5m / p95 > 10s 5m / health check 3 failures; owner=bjoe734@gmail.com"
+          },
+          {
+            "path": "docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md",
+            "lines": "204, 206, 288, 292-294, 303-309",
+            "prior_values": "watch_window=30m; error_rate < 5% / p95 < 5s; rollback > 10% / > 10s; owner=bjoe734@gmail.com"
+          }
+        ],
+        "synchronization_responsibility": {
+          "responsible_task_id": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+          "action": "Synchronize prod-ops-governance-parameters.json and EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md to reflect the 2026-09-17 adjudication parameters prior to production rollout."
+        }
+      },
+      "resolution_evidence": "2026-09-17 裁決新參數：watch 窗口為切換後 60 分鐘密集觀察（人在線上），接續 24 小時自動監控。Rollback 觸發閾值：錯誤率 > 1%，或 p95 延遲 > 2 秒。Rollback 完成目標：15 分鐘內。指定 rollback／on-call 負責人：蔡尚志（與 H07 簽核人一致，避免決策者與 rollback 執行者分屬不同人）。裁定理由：此為 production 首次部署且系統從未實際承載流量，窗口需長到能採集真實流量峰谷，閾值需敏感到能在使用者回報前發現。本項 supersedes ODP-PROD-OPS-WATCH-PARAMS-001 舊參數，舊檔同步由 ODP-PROD-BLUEGREEN-ROLLOUT-001 承接。"
     }
   ],
   "production_infrastructure_readback_summary": {
     "github_production_variables_total": 50,
+    "github_production_variables_readback_command": "gh api --paginate repos/alfloop-dev/odayplus/environments/production/variables",
+    "github_production_variables_exit_code": 0,
+    "github_production_variables_observed_date": "2026-09-17",
     "github_production_deploy_scope_variables_status": "complete_11_of_11_required",
+    "github_production_active_missing_variables_in_general_config": [
+      {
+        "name": "ODP_WEB_BASE_URL",
+        "category": "REQUIRED_PUBLIC_CONFIG",
+        "responsible_task_id": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+        "note": "Required in all auth modes (validate_cloud_run_live_deployment.py:98)"
+      },
+      {
+        "name": "ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET",
+        "category": "REQUIRED_SECRET_REFERENCES",
+        "responsible_task_id": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+        "note": "Required in all auth modes for local auth token signing (validate_cloud_run_live_deployment.py:112)"
+      }
+    ],
     "vpc_binding_mode": "direct_vpc_egress",
     "direct_vpc_egress_setting": "ODP_CLOUD_RUN_VPC_EGRESS=all-traffic",
+    "direct_vpc_target_network_status": "ODP_PROD_VPC_NETWORK=oday-prod-runtime (physical VPC pending creation via terraform apply in ODP-PROD-BLUEGREEN-ROLLOUT-001)",
     "vpc_connector_omitted_reason": "infra/terraform cloud_run.tf uses Direct VPC egress (network_interfaces + ALL_TRAFFIC); VPC_BINDING_MODES mutually exclusive; ODP_CLOUD_RUN_VPC_CONNECTOR intentionally omitted",
     "gcp_storage_buckets": [
       {
@@ -69,9 +117,16 @@
         "retention_policy": "2592000s (30 days)"
       }
     ],
-    "next_prerequisite_task": {
-      "task_id": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
-      "required_action": "Provision oday-prod-runtime VPC via terraform apply against ready tfstate bucket gs://odayplus-prod-20260826-tfstate"
-    }
+    "next_prerequisite_tasks": [
+      {
+        "task_id": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+        "actions": [
+          "Provision oday-prod-runtime VPC via terraform apply against ready tfstate bucket gs://odayplus-prod-20260826-tfstate",
+          "Configure Cloud SQL private IP connection on oday-prod-sql (resolving PROD-GCP-03 technical residual)",
+          "Populate missing required variables ODP_WEB_BASE_URL and ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET in GitHub production environment",
+          "Synchronize PROD-OPS-05 governance parameters in prod-ops-governance-parameters.json and EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md"
+        ]
+      }
+    ]
   }
 }

@@ -10,7 +10,7 @@
 - **當前集成基準 (Current Base Commit)**: `307e6e7286c5ca89e72572e4462eb45a57e8888d`（已組合 `origin/dev` 最新 tip；原歷史開出 base: `4499a2993e37b62033926b07de8d8d2e8469a6c7`）
 - **原始交付記錄**: 經 PR [#1011](https://github.com/alfloop-dev/odayplus/pull/1011) 合併入 `dev`（PR head: `5edcf009640ae31dde160b1ce4c9123ac2c31a2f`，merge commit: `8ad3f10dab707711bc1394ff3f6a81042b0b5648`，merged at `2026-08-25T16:26:32Z`）。
 
-在 2026-09-06 archive 事故後，本任務進行可執行的歷史驗收核對與續辦補證。經 2026-09-17 Human/Ops 正式裁決與實測驗證，PROD-GCP-01~05 五項人類治理與雲端前置條件已全數結清，GitHub production 環境變數已由 42 補齊至 50 項（11 項 deploy scope 必填零缺漏），實體 GCP 資源（專用專案、WIF provider、4 個 SA、Cloud SQL、3 個 Secret Manager 密鑰版本、GCS state/recovery buckets）全數 readback 驗證就位。本記錄完整登載各項歷史交付、唯讀查核、2026-09-17 裁決事實與逐條 A1–A5 滿足依據。
+在 2026-09-06 archive 事故後，本任務進行可執行的歷史驗收核對與續辦補證。經 2026-09-17 Human/Ops 正式裁決（canonical 記錄於 `ai-activity-log.jsonl` @ `2026-09-17T05:58:32Z`），PROD-GCP-01~05 五項人類治理與雲端前置條件已全數結清，GitHub production 環境變數已由 42 補齊至 50 項（11 項 deploy scope 必填零缺漏），實體 GCP 資源（專用專案、WIF provider、4 個 SA、Cloud SQL、3 個 Secret Manager 密鑰版本、GCS state/recovery buckets）全數 readback 驗證就位。本記錄完整登載各項歷史交付、唯讀查核、2026-09-17 裁決事實、殘差與缺口交接，以及逐條 A1–A5 滿足依據。
 
 ---
 
@@ -24,7 +24,7 @@
 | **GitHub Protected Environments 補證** | 2026-09-10T23:31:25Z (`support/handoffs/max-dispatch-20260910/archive-evidence/github-protected-environments.json`) | 實體 GitHub API 唯讀讀回（`command-receipts.json` 中 3 筆 `gh api repos/alfloop-dev/odayplus/environments/*` exit 0）：<br>1. `staging` (id `17295059155`)：具 `required_reviewers` (`Alien-alfaloop`, `ajoe734`)<br>2. `production` (id `20574639394`)：具 `required_reviewers` (`Alien-alfaloop`, `ajoe734`)<br>3. `dev` (id `17295066036`)：無 protection rule，符合 CI 自動化整合契約 | A1, A3 |
 | **GCP Preflight #1245 補證** | PR #1245 @ `6ee658a0bd65` (merge `f21fd2a242d7`) | 唯讀讀回 GitHub dev/staging/production 變數，宣告引用專屬專案 `odayplus-prod-20260826` 與 WIF/SA 等；記錄各環境 auth mode 皆為 `ODP_AUTH_MODE=local`。 | A2, A3, A5 |
 | **Staging Foundation Mapping 補證** | PR #1296 @ `f741af4def87` | `foundation-reference-map.json` 完成 staging 基礎設施映射至 `ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001`。 | A2, A3 |
-| **Human/Ops 裁決與實測 (2026-09-17)** | 2026-09-17 (`docs/evidence/runtime/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/production-authority-prerequisites.json`) | 1. **PROD-GCP-01~05 全部結清**：解除 blocked recovery disposition。<br>2. **PROD-GCP-01 (專案/區域/命名)**：專用專案 `odayplus-prod-20260826`（#365886461656）ACTIVE，region `asia-east1`；GitHub production 環境 `GCP_PROJECT_ID`／`GCP_REGION`／`GCP_AR_REPO` 均已設定。<br>3. **PROD-GCP-02 (WIF/SA)**：WIF provider `odayplus` ACTIVE；4 個 SA 實測存在（`github-deployer`、`oday-prod-runtime`、`oday-prod-scheduler`、`oday-prod-smoke-operator`）。<br>4. **PROD-GCP-03 (SQL/Secrets)**：`oday-prod-sql` POSTGRES_16 RUNNABLE；3 個 secret 版本 ENABLED（`oday-prod-database-url`、`oday-prod-auth-principal-map`、`oday-prod-web-session-secret`）。<br>5. **PROD-GCP-04 (網域/認證模式)**：`ODP_PROD_API_URL` 與 `ODP_PROD_DEPLOY_URL` 均已設定；本地認證 local auth 模式定案，OAuth client 需求依 D15 決策失效收斂。<br>6. **PROD-OPS-05 (watch/SLO/rollback)**：watch 窗口 60m 密集 + 24h 自動監控；錯誤率 > 1% 或 p95 > 2s 觸發 rollback；15 分鐘完成目標；負責人蔡尚志。<br>7. **GitHub 變數 42->50 補齊**：deploy scope 11 項必填零缺漏；Direct VPC egress (`ODP_CLOUD_RUN_VPC_EGRESS=all-traffic`) 生效，互斥之 connector 刻意未設。<br>8. **GCS Buckets 實測**：`gs://odayplus-prod-20260826-tfstate` (無 retention) 與 `gs://odayplus-prod-20260826-recovery` (retention 30d) 均配置 CMEK、versioning、PAP、UBLA 就位。 | A1, A2, A3, A4, A5 |
+| **Human/Ops 正式裁決與 Readback (2026-09-17)** | 2026-09-17T05:58:32Z (`ai-activity-log.jsonl` type=start)<br>本地同步：`docs/evidence/runtime/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/production-authority-prerequisites.json` | 1. **PROD-GCP-01~05 全部結清**：解除 blocked recovery disposition。<br>2. **PROD-GCP-01 (專案/區域/命名)**：專用專案 `odayplus-prod-20260826`（#365886461656）ACTIVE，region `asia-east1`；GitHub production 環境 `GCP_PROJECT_ID`／`GCP_REGION`／`GCP_AR_REPO` 均已設定。<br>3. **PROD-GCP-02 (WIF/SA)**：WIF provider `odayplus` ACTIVE；4 個 SA 實體存在（`github-deployer`、`oday-prod-runtime`、`oday-prod-scheduler`、`oday-prod-smoke-operator`）。<br>4. **PROD-GCP-03 (SQL/Secrets 與技術殘差)**：`oday-prod-sql` POSTGRES_16 RUNNABLE；3 個 secret 版本 ENABLED（`oday-prod-database-url`、`oday-prod-auth-principal-map`、`oday-prod-web-session-secret`）。技術殘差：依 `ODP-PROD-NETWORK-PARITY-PLAN-001` live receipt（2026-09-16，exit 0），目前為 public IP，private IP 待 `oday-prod-runtime` VPC 建立後由 Terraform 套用，綁至 `ODP-PROD-BLUEGREEN-ROLLOUT-001`。<br>5. **PROD-GCP-04 (網域/認證模式)**：`ODP_PROD_API_URL` 與 `ODP_PROD_DEPLOY_URL` 均已設定；本地認證 local auth 模式定案，OAuth client 需求依 D15 決策失效收斂。<br>6. **PROD-OPS-05 (watch/SLO/rollback 新參數與取代關係)**：watch 窗口 60m 密集 + 24h 自動監控；錯誤率 > 1% 或 p95 > 2s 觸發 rollback；15 分鐘完成目標；負責人蔡尚志。**本項 supersedes `ODP-PROD-OPS-WATCH-PARAMS-001`**（舊檔 `prod-ops-governance-parameters.json:7-29` 與 `EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:204,206,288,292-294,303-309` 由 `ODP-PROD-BLUEGREEN-ROLLOUT-001` 承接同步）。<br>7. **GitHub 變數 42->50 補齊**：可複驗命令 `gh api --paginate repos/alfloop-dev/odayplus/environments/production/variables`（exit 0，50 項）。deploy scope 11 項必填零缺漏；Direct VPC egress (`ODP_CLOUD_RUN_VPC_EGRESS=all-traffic`) 生效，互斥之 connector 刻意未設。全域必填缺口 `ODP_WEB_BASE_URL` 與 `ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET` 保留並綁至 `ODP-PROD-BLUEGREEN-ROLLOUT-001`。<br>8. **GCS Buckets Readback**：`gs://odayplus-prod-20260826-tfstate` (無 retention) 與 `gs://odayplus-prod-20260826-recovery` (retention 30d) 均配置 CMEK、versioning、PAP、UBLA 就位。 | A1, A2, A3, A4, A5 |
 
 ---
 
@@ -33,10 +33,10 @@
 | 項次 | 原驗收條款 | 類別 | 判定結果 | 核對依據、現有證據與判定理由 |
 |---|---|---|---|---|
 | **A1** | `staging/production environments具 required reviewers` | 部署運行 (R) | **已滿足 (met)** | 歷史審查收據 (`github-environments-audit.json @ 8ad3f10dab70`) 與 2026-09-10 最新 readback (`github-protected-environments.json`，API 退出碼 0) 共同證明：GitHub Environment `staging` (id `17295059155`) 與 `production` (id `20574639394`) 均具備 `required_reviewers` 保護規則，具名審查者為 `Alien-alfaloop` 與 `ajoe734`。`dev` 環境無阻擋。 |
-| **A2** | `WIF/IAM/vars/secret references 完整且只有 references 被記錄` | 部署運行 (R) | **已滿足 (met)** | GitHub production environment 變數已由 42 補齊至 50，deploy scope 11 項必填零缺漏；WIF provider (projects/365886461656/.../providers/odayplus) state=ACTIVE，4 個 SA 實測存在（github-deployer、oday-prod-runtime、oday-prod-scheduler、oday-prod-smoke-operator），Cloud SQL (oday-prod-sql) state=RUNNABLE，3 個 Secret Manager 密鑰版本 ENABLED，GCS state/recovery buckets 就位。Direct VPC egress (`ODP_CLOUD_RUN_VPC_EGRESS=all-traffic`) 設定正確。所有 secret 均以名稱 reference 引用，絕不讀取或提交 plaintext。dev 與 staging 變數需求明確由 `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 與 `ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001` 責任承接。 |
-| **A3** | `production environment存在且保護有效` | 部署運行 (R)<br>人類授權 (H) | **已滿足 (met)** | GitHub 側環境 `production` (id `20574639394`) 存在且 `required_reviewers` 保護有效；2026-09-17 Human/Ops 正式裁決結清 PROD-GCP-01~05 五項人類治理與雲端前置條件。專用專案 `odayplus-prod-20260826` ACTIVE，WIF、SA、Cloud SQL、Secret Manager、網域變數與 Direct VPC 網路綁定均已設定；PROD-OPS-05 營運治理參數定案。production-authority-prerequisites.json 已更新為 `cleared_per_human_adjudication`。 |
-| **A4** | `缺少人類 authority 時明確 blocked而非填 placeholder` | 人類授權 (H) | **已滿足 (met)** | 歷史交付落實 fail-closed 原則 (`status=blocked_pending_human_authority`) 且無任何 fake placeholder；2026-09-17 由權責 Human/Ops 正式完成 PROD-GCP-01~05 裁決與實測驗證，解除 blocked 狀態，流程完全符合授權與治理規範。 |
-| **A5** | `redacted readback receipts 完整` | 部署運行 (R) | **已滿足 (met)** | PR #1011 交付之 5 份 audit 檔案完整且 `secret_values_redacted=true`；Preflight #1245、2026-09-10 readback 及 2026-09-17 實測提供完整命令來源及遮蔽後 API 回讀；所有 secret 引用嚴格遮蔽。 |
+| **A2** | `WIF/IAM/vars/secret references 完整且只有 references 被記錄` | 部署運行 (R) | **部分滿足 (partially_met)** | GitHub production environment 變數已由 42 補齊至 50，deploy scope 11 項必填零缺漏；WIF provider state=ACTIVE，4 個 SA 存在，Cloud SQL state=RUNNABLE，3 個 Secret Manager 密鑰版本 ENABLED，GCS state/recovery buckets 就位。Direct VPC egress (`ODP_CLOUD_RUN_VPC_EGRESS=all-traffic`) 設定正確。所有 secret 均以名稱 reference 引用，絕不讀取或提交 plaintext (`secret_values_redacted=true`)。<br><br>**保留之缺口與交接 (Gaps)**：<br>1. Production 環境缺少通用必填項 `ODP_WEB_BASE_URL`（`validate_cloud_run_live_deployment.py:98` REQUIRED_PUBLIC_CONFIG）與 `ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET`（`:112` REQUIRED_SECRET_REFERENCES），綁定至 `ODP-PROD-BLUEGREEN-ROLLOUT-001`（`REM-PROD-VAR-*`）。<br>2. Dev 環境缺少 `ODP_WEB_BASE_URL` 與 `ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET`，綁定至 `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001`。<br>3. Staging foundation 缺少 6 項變數（綁至 `ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001`），watch closeout 缺少 1 項（綁至 `ODP-EPHEMERAL-STAGING-ROLLOUT-001`）。<br>4. Direct VPC 網路 `oday-prod-runtime` 實體尚未存在，待 `ODP-PROD-BLUEGREEN-ROLLOUT-001` 執行 terraform apply 建立。 |
+| **A3** | `production environment存在且保護有效` | 部署運行 (R)<br>人類授權 (H) | **已滿足 (met)** | GitHub 側環境 `production` (id `20574639394`) 存在且 `required_reviewers` 保護有效；2026-09-17 Human/Ops 正式裁決結清 PROD-GCP-01~05 五項人類治理與雲端前置條件（canonical 記錄於 `ai-activity-log.jsonl @ 2026-09-17T05:58:32Z`）。專案 `odayplus-prod-20260826` ACTIVE，WIF、SA、Cloud SQL、Secret Manager、網域變數與 Direct VPC egress 均已設定；PROD-OPS-05 營運治理參數定案。PROD-GCP-03 private IP 技術殘差與實體 VPC 建立已明確映射至 `ODP-PROD-BLUEGREEN-ROLLOUT-001`。 |
+| **A4** | `缺少人類 authority 時明確 blocked而非填 placeholder` | 人類授權 (H) | **已滿足 (met)** | 歷史交付落實 fail-closed 原則 (`status=blocked_pending_human_authority`) 且無任何 fake placeholder；2026-09-17 由權責 Human/Ops 正式完成 PROD-GCP-01~05 裁決（`ai-activity-log.jsonl @ 2026-09-17T05:58:32Z`），解除 blocked 狀態。PROD-OPS-05 裁決對舊有 `ODP-PROD-OPS-WATCH-PARAMS-001` 之 supersedes 關係已精確記載位置並交接同步，流程完全符合授權與治理規範。 |
+| **A5** | `redacted readback receipts 完整` | 部署運行 (R) | **已滿足 (met)** | PR #1011 交付之 5 份 audit 檔案完整且 `secret_values_redacted=true`；Preflight #1245、2026-09-10 readback 及 2026-09-17 實測提供完整命令來源（GitHub API `gh api` exit 0）及遮蔽後 API 回讀；GCP 側實體狀態引用既有唯讀收據（`ODP-PROD-NETWORK-PARITY-PLAN-001`）與 Human/Ops readback，所有 secret 引用嚴格遮蔽。 |
 
 ---
 
@@ -75,7 +75,7 @@
 
 ```mermaid
 flowchart TD
-    BOOTSTRAP["ODP-GITHUB-GCP-ENV-BOOTSTRAP-001<br>(GitHub Protection & Reference Policy)<br>[FULLY RECONCILED]"]
+    BOOTSTRAP["ODP-GITHUB-GCP-ENV-BOOTSTRAP-001<br>(GitHub Protection & Reference Policy)<br>[RECONCILED WITH KNOWN GAPS]"]
 
     DEV_ROLLOUT["ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001<br>(Dev Cloud Run Live Rollout & Dev Inputs)"]
     STAGING_IAC["ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001<br>(Staging Foundation IaC & State & Staging Inputs)"]
@@ -96,11 +96,14 @@ flowchart TD
 
 1. **Production Live Blue-Green Rollout Execution**:
    - **責任任務**: `ODP-PROD-BLUEGREEN-ROLLOUT-001`
-   - **前置條件**:
+   - **前置條件與承接事項**:
      - `ODP-EPHEMERAL-STAGING-ROLLOUT-001` 完成。
      - `ODP-PROD-RUNTIME-RELEASE-PATH-001` 完成（PR #1333 已合併）。
      - PROD-GCP-01~05 人類治理與雲端前置裁決已於 2026-09-17 全部結清。
-     - 下一個真實前置：透過 terraform apply 於 `odayplus-prod-20260826-tfstate` 上建立 `oday-prod-runtime` VPC（state bucket 已就位）。
+     - **實體 VPC 前置**：透過 terraform apply 於 `odayplus-prod-20260826-tfstate` 上建立 `oday-prod-runtime` VPC（state bucket 已就位）。
+     - **PROD-GCP-03 技術殘差結清**：於 VPC 建立後配置 Cloud SQL `oday-prod-sql` private IP 連線。
+     - **Production 變數補齊**：補齊 GitHub production 環境中通用必填變數 `ODP_WEB_BASE_URL` 與 `ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET`（`REM-PROD-VAR-*`）。
+     - **PROD-OPS-05 文件同步**：同步 `docs/evidence/runtime/ODP-PROD-OPS-WATCH-PARAMS-001/prod-ops-governance-parameters.json:7-29` 與 `docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:204,206,288,292-294,303-309` 至 2026-09-17 裁決之新參數。
      - 0% green smoke 驗證與受控 100% 流量切換。
    - **治理 Gate**: Human GO (已完成裁決) + Supervisor Production Release Lease。
 
@@ -111,7 +114,7 @@ flowchart TD
 
 3. **Dev Live Rollout Remediation & Dev Inputs**:
    - **責任任務**: `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001`
-   - **前置條件**: 補齊 2 項缺漏 dev 必要變數，驗證權威 manifest、Dev Cloud Run 服務健康狀態與 deployer IAM 綁定。
+   - **前置條件**: 補齊 2 項缺漏 dev 必要變數（`ODP_WEB_BASE_URL` 與 `ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET`），驗證權威 manifest、Dev Cloud Run 服務健康狀態與 deployer IAM 綁定。
    - **治理 Gate**: 標準 dev CI/CD 合併與部署。
 
 4. **Ephemeral Staging Watch Closeout Input**:
@@ -120,17 +123,23 @@ flowchart TD
    - **治理 Gate**: Staging release rehearsal 執行。
 
 5. **Production Human Governance Decisions (PROD-GCP-01~05)**:
-   - **裁決狀態**: **已於 2026-09-17 由 Human/Ops 正式結清**。
-   - **裁決內容**: PROD-GCP-01（專案/區域/命名）、PROD-GCP-02（WIF/SA）、PROD-GCP-03（Cloud SQL/Secrets）、PROD-GCP-04（網域/local 認證模式）、PROD-OPS-05（watch window/SLO/rollback owner 蔡尚志）全數定案。
+   - **裁決狀態**: **已於 2026-09-17 由 Human/Ops 正式結清**（`ai-activity-log.jsonl @ 2026-09-17T05:58:32Z`）。
+   - **裁決內容**: PROD-GCP-01（專案/區域/命名）、PROD-GCP-02（WIF/SA）、PROD-GCP-03（Cloud SQL/Secrets）、PROD-GCP-04（網域/local 認證模式）、PROD-OPS-05（watch window 60m+24h / 錯誤率>1% 或 p95>2s rollback / 15m 完成 / 負責人蔡尚志）全數定案。
 
 ---
 
-## 5. 權限邊界與不變量原則
+## 5. 權限邊界、不變量原則與工具鏈揭露
 
 1. **唯讀核對，嚴格遵守授權邊界**: 本次核對重用現有唯讀 readback、PR 收據與 2026-09-17 Human/Ops 裁決，未越權變更雲端資源。
 2. **絕不讀取或提交 Secret 原文**: 所有變數查核與收據均保持 `secret_values_redacted=true`，僅記錄 reference 名稱。
 3. **歷史真實性保留**: 原 PR #1011 (head `5edcf009`) 之 CI 成功記錄與 reviewer Antigravity2 之歷史 approval 完整保留。
 4. **單一證據 Scope**: 本次修改限定於本任務所屬之證據與運行審查目錄，不修改產品程式、workflow 或部署設定。
+5. **共用交付工具變更揭露 (Shared Delivery Toolchain Change Disclosure)**:
+   - **變更檔案**: `delivery_toolchain/git/task_start.sh` 與 `delivery_toolchain/git/task_finalize.sh`。
+   - **變更內容**: 於兩支腳本中新增 `--branch <BRANCH_NAME>` 參數支援。
+   - **變更理由**: 支援已由 canonical retarget_branch 登記的復原分支名稱（如 `task/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001-RECOVERY-20260911`），使交付工具能正確辨識並推送目標分支，避免寫死預設命名。
+   - **風險評估**: 此變更位於全 fleet 共用的控制面路徑；本 PR 中未包含自動化契約測試。
+   - **後續建議**: 建議開立專屬 narrow-scope tooling 任務（如 `ODP-TOOLCHAIN-BRANCH-PARAM-TESTS-001`）為 `--branch` 與預設 `task/<ID>` 兩條路徑補充完整的契約測試與回歸測試。
 
 ---
 
@@ -140,6 +149,6 @@ flowchart TD
 
 ```bash
 git diff --check 307e6e7286c5ca89e72572e4462eb45a57e8888d HEAD -- docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/ docs/evidence/runtime/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/
-python3 -c "import json; data=json.load(open('docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/acceptance-reconciliation.json')); assert data['summary']['reconciliation_verdict'] == 'acceptance_fully_reconciled'; assert data['summary']['criteria_total'] == 5; assert data['summary']['criteria_met'] == 5; assert data['summary']['criteria_partially_met'] == 0; print('ODP-GITHUB-GCP-ENV-BOOTSTRAP-001 acceptance reconciliation verified successfully.')"
+python3 -c "import json; data=json.load(open('docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/acceptance-reconciliation.json')); assert data['summary']['reconciliation_verdict'] == 'acceptance_reconciled_with_known_gaps'; assert data['summary']['criteria_total'] == 5; assert data['summary']['criteria_met'] == 4; assert data['summary']['criteria_partially_met'] == 1; print('ODP-GITHUB-GCP-ENV-BOOTSTRAP-001 acceptance reconciliation verified successfully.')"
 python3 -c "import json; data=json.load(open('docs/evidence/runtime/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/production-authority-prerequisites.json')); assert data['status'] == 'cleared_per_human_adjudication'; assert len(data['human_authority_checklist']) == 5; assert all(item['status'] in ('completed', 'completed_scope_narrowed', 'completed_by_human_adjudication') for item in data['human_authority_checklist']); print('production-authority-prerequisites.json verified successfully.')"
 ```
