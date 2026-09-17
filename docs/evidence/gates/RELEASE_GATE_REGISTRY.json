@@ -3,7 +3,7 @@
   "registry_id": "ODP-RELEASE-GATE-REGISTRY",
   "task_id": "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
   "generated_at": "2026-09-08",
-  "description": "ODay Plus release gate registry for candidate 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12. Reflects staged admission boundaries (§6.1) with candidate-built, dev-verified, and staging-verified gates, bound to real build artifacts from Runtime Release run 34179791241. Fail-closed NO-GO state preserved.",
+  "description": "ODay Plus release gate registry for candidate 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12. Reflects staged admission boundaries (\u00a76.1) with candidate-built, dev-verified, and staging-verified gates, bound to real build artifacts from Runtime Release run 34179791241. Fail-closed NO-GO state preserved.",
   "migration": {
     "from_schema_version": "1.0.0",
     "source_registry_id": "ODP-RELEASE-GATE-REGISTRY",
@@ -15,15 +15,14 @@
     "candidate_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
     "candidate_ref": "refs/heads/dev",
     "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json",
-    "manifest_digest": "sha256:509a9ea3cfedf661f8c5a319f36844b1818bd1c461639d701b06bf4fe9ad2ea5",
+    "manifest_digest": "sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c",
     "stage": "candidate-built",
     "environment": "dev",
     "admission_target": "dev",
     "decision": "no-go",
     "decision_owner": "Human/Ops",
     "decision_date": "2026-09-08",
-    "decision_note": "Mechanical rebind to verified candidate C (596b9c9a1788d952811a2bf8d4bba8a4e4d76b12) from Runtime Release build run 34179791241. All 7 gates remain blocked; fail-closed NO-GO preserved.",
-    "release_id": "odp-596b9c9a1788"
+    "decision_note": "Mechanical rebind to verified candidate C (596b9c9a1788d952811a2bf8d4bba8a4e4d76b12) from Runtime Release build run 34179791241. All 7 gates remain blocked; fail-closed NO-GO preserved."
   },
   "gates": [
     {

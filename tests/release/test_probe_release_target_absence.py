@@ -41,7 +41,7 @@ from delivery_toolchain.release.release_manifest import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-SHA = "b1e9b57b0b61bcc692ec16b2d7a0ce03b612fd8e"
+SHA = "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12"
 CREATED_AT = "2026-08-26T12:00:00+00:00"
 REPO = "asia-east1-docker.pkg.dev/odayplus/oday-plus-dev"
 

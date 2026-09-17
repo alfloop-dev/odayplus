@@ -56,8 +56,8 @@ from delivery_toolchain.release.release_manifest import (
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_PATH = ROOT / "docs/evidence/gates/RELEASE_MANIFEST.json"
 REGISTRY_PATH = ROOT / "docs/evidence/gates/RELEASE_GATE_REGISTRY.json"
-REAL_CANDIDATE_SHA = "b1e9b57b0b61bcc692ec16b2d7a0ce03b612fd8e"
-SECOND_REAL_CANDIDATE_SHA = "0162328cc99dfab4a2fcd97abd9491256ff326ca"
+REAL_CANDIDATE_SHA = "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12"
+SECOND_REAL_CANDIDATE_SHA = "36a102b7b39d1fe2e58939ee6e454e20c6d72dbd"
 
 
 def load_manifest() -> dict:
@@ -1413,7 +1413,7 @@ def test_a_second_release_binds_the_first_one_as_its_rollback_target() -> None:
 
 def test_sources_off_egress_contract_evaluates_real_candidate_content() -> None:
     """Evaluate sources-off egress contract against exact candidate SHA."""
-    expected_digest = "sha256:088b8f925cc6e11a2a6da6ca148b43b7bca096bfedc714c0256892fbfb0d98f8"
+    expected_digest = "sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09"
     digest = compute_sources_off_egress_contract_digest(
         root=ROOT,
         candidate_sha=REAL_CANDIDATE_SHA,
@@ -1435,6 +1435,12 @@ def _create_egress_candidate(tmp_path: Path, *, missing_file: str | None = None)
         destination = repo / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes((ROOT / relative).read_bytes())
+    foundation_dir = ROOT / "infra/terraform/modules/runtime_foundation"
+    if foundation_dir.is_dir():
+        for f in foundation_dir.glob("*.tf"):
+            dest = repo / "infra/terraform/modules/runtime_foundation" / f.name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(f.read_bytes())
     subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
     subprocess.run(
         ["git", "-c", "user.name=ODP Test Fixture", "-c", "user.email=fixture@example.invalid",

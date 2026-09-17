@@ -46,7 +46,7 @@ from delivery_toolchain.release.release_manifest import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-SHA = "b1e9b57b0b61bcc692ec16b2d7a0ce03b612fd8e"
+SHA = "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12"
 CREATED_AT = "2026-08-26T12:00:00+00:00"
 
 REPO = "asia-east1-docker.pkg.dev/odayplus/oday-plus-dev"
@@ -1226,8 +1226,8 @@ def sources_off_rollback(current_sha: str = SHA, release_id: str = "odp-prev-off
     """A previous release admitted on posture evidence rather than a snapshot."""
 
     prev_sha = (
-        "581899518fdfd095e2420d41d5e5a3d27b68ae66"
-        if current_sha != "581899518fdfd095e2420d41d5e5a3d27b68ae66"
+        "36a102b7b39d1fe2e58939ee6e454e20c6d72dbd"
+        if current_sha != "36a102b7b39d1fe2e58939ee6e454e20c6d72dbd"
         else "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12"
     )
     prev_components = {
@@ -1830,6 +1830,12 @@ def _independent_contract_repo(parent: Path) -> tuple[Path, str]:
         destination = root / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes((ROOT / relative).read_bytes())
+    foundation_dir = ROOT / "infra/terraform/modules/runtime_foundation"
+    if foundation_dir.is_dir():
+        for f in foundation_dir.glob("*.tf"):
+            dest = root / "infra/terraform/modules/runtime_foundation" / f.name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(f.read_bytes())
     return root, _commit_contract(root)
 
 
