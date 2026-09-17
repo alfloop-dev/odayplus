@@ -129,9 +129,11 @@ git diff --check
 uv run pytest tests/integration/test_scoped_cdc_adapter.py -q
 ```
 
-> 執行注意（供重跑者）：本機 `uv` 預設解析到 CPython 3.14，而 `pgserver==0.1.4` 只有
-> cp312 wheel，故需釘住直譯器：`uv run --frozen --python 3.12 pytest ...`。
-> 裸 `python3 -m pytest` 在本機沒有 pytest，重跑必失敗。
+> 執行注意（供重跑者）：宣告命令已原樣量測過，exit 0。但**前提是 `.venv` 已存在且是 3.12**
+> ——在尚未建立 `.venv` 的乾淨 checkout 上，`uv` 會解析到 CPython 3.14，而 `pgserver==0.1.4`
+> 只有 cp312 wheel，環境會直接建不起來。此時先用
+> `uv run --frozen --python 3.12 pytest ...` 建出 3.12 的 `.venv`，之後宣告命令即可原樣執行。
+> 另：裸 `python3 -m pytest` 在本機沒有 pytest，據收據字面重跑必失敗。
 
 回歸範圍（非宣告命令，另行執行以確認未破壞既有行為，均 exit 0）：
 
