@@ -62,6 +62,7 @@ _AI_STATUS_ROOT_ATTRIBUTES = (
     "LOG_FILE",
     "CURRENT_WORK_FILE",
     "DOCS_SITE_DIR",
+    "CONFIG_FILE",
     "STATUS_ROOT_CONFIG_LOCAL_FILE",
     "PLANNING_STATE_FILE",
     "ORCHESTRATOR_STATE_FILE",
@@ -112,6 +113,7 @@ def setUpModule() -> None:
     ai_status.LOG_FILE = _TEST_STATUS_ROOT / "ai-activity-log.jsonl"
     ai_status.CURRENT_WORK_FILE = _TEST_STATUS_ROOT / "current-work.md"
     ai_status.DOCS_SITE_DIR = _TEST_STATUS_ROOT / "docs-site"
+    ai_status.CONFIG_FILE = _TEST_STATUS_ROOT / ".orchestrator" / "config.json"
     ai_status.STATUS_ROOT_CONFIG_LOCAL_FILE = _TEST_STATUS_ROOT / ".orchestrator" / "config.local.json"
     ai_status.PLANNING_STATE_FILE = _TEST_STATUS_ROOT / ".orchestrator" / "planning-state.json"
     ai_status.ORCHESTRATOR_STATE_FILE = _TEST_STATUS_ROOT / ".orchestrator" / "state.json"
@@ -7493,7 +7495,7 @@ class MergedConfigActorAuthorityTests(unittest.TestCase):
         """Actor authority always uses Supervisor's canonical loader."""
         import common
 
-        self.assertEqual(common.DEFAULT_CONFIG_PATH, ai_status.CONFIG_FILE)
+        self.assertEqual(ai_status.STATUS_ROOT / ".orchestrator" / "config.json", ai_status.CONFIG_FILE)
         with no_explicit_config_environment(), mock.patch.object(
             common, "load_config", return_value={"agents": {"nessie": {"display_name": "Nessie9"}}}
         ) as load_config:
