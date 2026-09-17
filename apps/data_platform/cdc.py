@@ -1488,6 +1488,13 @@ class ScopedCdcAdapter:
         sequence = 0 if checkpoint is None else checkpoint.last_sequence_no
         staged: list[CdcChangeEnvelope] = []
         quarantines: list[tuple[str, tuple[Any, ...]]] = []
+        # Changes staged earlier in this same tick are not visible to
+        # `recorded_state` yet, because the tick commits once at the end. Without
+        # this, two copies of one change arriving in a single batch would both be
+        # counted as applied and only collapse later on the staging table's
+        # conflict clause, making the tick's own readback disagree with the row
+        # count it produced.
+        in_tick: dict[str, tuple[datetime, str]] = {}
         try:
             stream = self._stream_factory(source_kind, resume_after=resume_after)
             for raw in _bounded(stream, limit):
@@ -1518,9 +1525,9 @@ class ScopedCdcAdapter:
                 if boundary is not None:
                     self._reject(result, quarantines, envelope, boundary, run_id)
                     continue
-                recorded_ts, recorded_key = self._store.recorded_state(
-                    source_kind, envelope.source_id
-                )
+                recorded_ts, recorded_key = in_tick.get(
+                    envelope.source_id
+                ) or self._store.recorded_state(source_kind, envelope.source_id)
                 decision = decide_change(
                     envelope,
                     recorded_server_timestamp=recorded_ts,
@@ -1545,6 +1552,10 @@ class ScopedCdcAdapter:
                     )
                     continue
                 staged.append(envelope)
+                in_tick[envelope.source_id] = (
+                    envelope.server_timestamp,
+                    envelope.idempotency_key,
+                )
                 result.applied += 1
                 result.plans.append(
                     plan_change_application(
@@ -1780,6 +1791,47 @@ class PsycopgCdcStore:
             return None, None
         return row[0], str(row[1])
 
+    def open_tick(
+        self, run_id: str, source_kind: SourceKind, partition_id: str, *, started_at: datetime
+    ) -> None:
+        """Record the tick's run row before anything can need to reference it."""
+        statement, params = tick_run_statement(
+            run_id,
+            source_kind,
+            partition_id,
+            status="RUNNING",
+            started_at=started_at,
+            control_schema=self.control_schema,
+        )
+        with self._connect() as connection:
+            connection.execute(statement, params)
+
+    def close_tick(
+        self,
+        run_id: str,
+        result: CdcDrainResult,
+        *,
+        started_at: datetime,
+        finished_at: datetime,
+        error: BaseException | None = None,
+    ) -> None:
+        """Close the tick's run row with what the drain actually did."""
+        statement, params = tick_run_statement(
+            run_id,
+            result.source_kind,
+            result.partition_id,
+            status="FAILED" if error is not None else "SUCCEEDED",
+            started_at=started_at,
+            processed_count=result.applied,
+            final_cursor=None if result.checkpoint is None else result.checkpoint.resume_token,
+            finished_at=finished_at,
+            error_type=None if error is None else type(error).__name__,
+            error_message=None if error is None else str(error),
+            control_schema=self.control_schema,
+        )
+        with self._connect() as connection:
+            connection.execute(statement, params)
+
     def pending_statement(
         self, source_kind: SourceKind, partition_key: str, *, limit: int
     ) -> tuple[str, tuple[Any, ...]]:
@@ -1893,3 +1945,55 @@ class ScopedCdcProjector:
         with self._landing._connect() as connection:  # noqa: SLF001
             cursor = connection.execute(statement, params)
         return int(getattr(cursor, "rowcount", 0) or 0)
+
+
+def tick_run_statement(
+    run_id: str,
+    source_kind: SourceKind,
+    partition_id: str,
+    *,
+    status: str,
+    started_at: datetime,
+    processed_count: int = 0,
+    final_cursor: str | None = None,
+    finished_at: datetime | None = None,
+    error_type: str | None = None,
+    error_message: str | None = None,
+    control_schema: str,
+) -> tuple[str, tuple[Any, ...]]:
+    """Return the ``ingestion_runs`` upsert for one resident CDC tick.
+
+    A drain tick *is* an ingestion run: it reads ``fongniao_prod`` and lands
+    records, and ``quarantined_records.run_id`` references this table, so a
+    poison packet has nothing to attach to without it. Two flags stay FALSE on
+    purpose and should be read literally rather than as a degraded batch run:
+    ``reconciled`` is FALSE because a tick performs no reconciliation, and
+    ``partition_complete`` is FALSE because a change stream has no end to reach.
+    """
+    statement = (
+        f"INSERT INTO {control_schema}.ingestion_runs ("  # nosec B608
+        f"run_id, source_database, source_kind, partition_key, status, "
+        f"processed_count, final_cursor, started_at, finished_at, "
+        f"error_type, error_message"
+        f") VALUES (%s, 'fongniao_prod', %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+        f"ON CONFLICT (run_id) DO UPDATE SET "
+        f"status = EXCLUDED.status, "
+        f"processed_count = EXCLUDED.processed_count, "
+        f"final_cursor = EXCLUDED.final_cursor, "
+        f"finished_at = EXCLUDED.finished_at, "
+        f"error_type = EXCLUDED.error_type, "
+        f"error_message = EXCLUDED.error_message"
+    )
+    params = (
+        run_id,
+        source_kind.value,
+        partition_id,
+        status,
+        processed_count,
+        final_cursor,
+        started_at,
+        finished_at,
+        error_type,
+        error_message,
+    )
+    return statement, params
