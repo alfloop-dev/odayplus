@@ -194,6 +194,8 @@ class ScopedCdcPolicy:
     canonical_table: str
     #: Redaction profile applied in memory before buffering (constraint b).
     redaction_profile: str
+    #: Primary key of :attr:`canonical_table`, used to join lineage to the row.
+    canonical_id_column: str
     #: Column the soft delete marks, or ``None`` when the canonical table has no
     #: approved record-lifecycle column.
     lifecycle_column: str | None
@@ -208,6 +210,7 @@ SCOPED_CDC_POLICIES: dict[SourceKind, ScopedCdcPolicy] = {
         latency_sla_seconds=10,
         partition_key_fields=("tenant_id", "store_id"),
         canonical_table="core.transactions",
+        canonical_id_column="transaction_id",
         redaction_profile="orders_projected_v1",
         lifecycle_column="transaction_status",
     ),
@@ -217,6 +220,7 @@ SCOPED_CDC_POLICIES: dict[SourceKind, ScopedCdcPolicy] = {
         latency_sla_seconds=10,
         partition_key_fields=("machine_id",),
         canonical_table="core.machine_status_events",
+        canonical_id_column="status_event_id",
         redaction_profile="device_log_minimized_v1",
         lifecycle_column=None,
         lifecycle_gap=(
@@ -915,6 +919,7 @@ class SoftDeleteDirective:
     """H07 decision 4's soft delete: mark the business row, never remove it."""
 
     canonical_table: str
+    canonical_id_column: str
     status_column: str
     status_value: str
     source_kind: SourceKind
@@ -932,12 +937,20 @@ class SoftDeleteDirective:
         the tenant at the row itself rather than trusting the lineage row alone.
         The version predicate makes a late-arriving older retirement a no-op
         instead of a regression.
+
+        The join column comes from the source kind's policy rather than being
+        written into this string. An earlier revision hardcoded
+        ``target.transaction_id``, which was correct only because
+        ``core.transactions`` is the one canonical table that currently has an
+        approved lifecycle column; the moment a second one gained one, that
+        literal would have produced silently wrong SQL against it.
         """
         statement = (
             f"UPDATE {self.canonical_table} AS target "  # nosec B608
             f"SET {self.status_column} = %s, updated_at = %s "
             f"FROM {control_schema}.canonical_lineage AS lineage, core.stores AS scope "
-            f"WHERE lineage.canonical_table = %s AND lineage.canonical_id = target.transaction_id "
+            f"WHERE lineage.canonical_table = %s "
+            f"AND lineage.canonical_id = target.{self.canonical_id_column} "
             f"AND lineage.source_kind = %s AND lineage.source_id = %s "
             f"AND lineage.tenant_id = %s AND target.store_id = scope.store_id "
             f"AND scope.tenant_id = %s "
@@ -1103,6 +1116,7 @@ def plan_change_application(
     if policy.lifecycle_column is not None and envelope.tenant_id is not None:
         soft_delete = SoftDeleteDirective(
             canonical_table=policy.canonical_table,
+            canonical_id_column=policy.canonical_id_column,
             status_column=policy.lifecycle_column,
             status_value=status,
             source_kind=envelope.source_kind,

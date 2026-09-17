@@ -82,7 +82,7 @@ sensor 的 recovery 分支同樣是對既有批次 job 送 `RunRequest`。
 | `apps/data_platform/sql/control_schema.sql` | 新增 `cdc_checkpoints`、`cdc_staging_events` 兩張表與其守衛 CHECK／索引 |
 | `apps/data_platform/definitions.py` | 兩個常駐 CDC sensor 與 drain／replay tick；recovery 分支對既有批次 job 送 `RunRequest` |
 | `apps/data_platform/source.py` | 新增 `MongoSource.database` property，讓 CDC 沿用同一個已驗證的連線而非另建 client |
-| `tests/integration/test_scoped_cdc_adapter.py`（新增） | 58 項驗收測試 |
+| `tests/integration/test_scoped_cdc_adapter.py`（新增） | 59 項驗收測試 |
 
 ### 設計上刻意的取捨
 

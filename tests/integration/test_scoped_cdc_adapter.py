@@ -37,6 +37,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -569,6 +570,41 @@ def test_the_soft_delete_statement_is_tenant_scoped_and_version_guarded() -> Non
     # A late-arriving older retirement must be a no-op, not a regression.
     assert "lineage.source_version <= %s::bigint" in statement
     assert "IS DISTINCT FROM %s" in statement
+
+
+def test_the_soft_delete_join_column_comes_from_the_policy_not_a_literal() -> None:
+    # Every scoped policy declares its canonical primary key, and the statement
+    # builder uses it. Hardcoding `target.transaction_id` would work today only
+    # because core.transactions is the single table with an approved lifecycle
+    # column; the moment a second one gains one — which is exactly the
+    # carried-forward gap for core.machine_status_events — that literal would
+    # emit silently wrong SQL against it.
+    for policy in SCOPED_CDC_POLICIES.values():
+        assert policy.canonical_id_column
+
+    plan = plan_change_application(
+        _envelope(operation_type="delete"), run_id=RUN_ID, now=INGESTED_AT
+    )
+    assert plan.soft_delete is not None
+    statement, _ = plan.soft_delete.statement(CONTROL_SCHEMA)
+    orders_policy = cdc_policy(SourceKind.ORDERS)
+    assert plan.soft_delete.canonical_id_column == orders_policy.canonical_id_column
+    assert (
+        f"lineage.canonical_id = target.{orders_policy.canonical_id_column}" in statement
+    )
+
+    # The same builder aimed at the other scoped table joins on that table's own
+    # key rather than carrying the orders one over.
+    log_policy = cdc_policy(SourceKind.DEVICE_LOG)
+    retargeted = replace(
+        plan.soft_delete,
+        canonical_table=log_policy.canonical_table,
+        canonical_id_column=log_policy.canonical_id_column,
+        status_column="status_type",
+    )
+    log_statement, _ = retargeted.statement(CONTROL_SCHEMA)
+    assert "lineage.canonical_id = target.status_event_id" in log_statement
+    assert "transaction_id" not in log_statement
 
 
 def test_a_delete_without_a_resolvable_tenant_still_records_a_tombstone() -> None:
