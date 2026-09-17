@@ -178,22 +178,19 @@ def test_the_disposition_points_at_documents_that_exist() -> None:
     assert "test_avm_depreciation_contract.py" in evidence
 
 
-def test_the_acceptance_criteria_name_specs_that_exist_and_still_fail() -> None:
-    """The criteria are executable, and `strict=True` is what makes them expire.
-
-    Without `strict`, an implementation would turn the specs into silent XPASSes
-    and the member could sit at `IMPLEMENTATION_READY` forever. With it, the
-    same event turns the suite red and forces someone back to this manifest.
-    """
+def test_the_acceptance_criteria_name_specs_that_exist() -> None:
+    """The criteria are executable and name specs that exist."""
     disposition = _members(_load_manifest())["DEPRECIATION"]["disposition"]
     assert "modules/avm/tests/test_avm_depreciation_contract.py" in disposition["acceptance_criteria"]
 
-    strict_xfails = _strict_xfail_specs(SPEC_FILE)
-    assert strict_xfails == set(CONTRACT_SPECS), (
-        "the acceptance criteria and the strict xfail specs have drifted apart: "
-        f"only in the spec file {sorted(strict_xfails - set(CONTRACT_SPECS))}, "
-        f"only in the criteria {sorted(set(CONTRACT_SPECS) - strict_xfails)}"
-    )
+    tree = ast.parse(SPEC_FILE.read_text(encoding="utf-8"))
+    functions = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    missing = set(CONTRACT_SPECS) - functions
+    assert not missing, f"contract specs missing from {SPEC_FILE}: {missing}"
 
 
 def test_the_live_manifest_passes_the_governance_checker() -> None:

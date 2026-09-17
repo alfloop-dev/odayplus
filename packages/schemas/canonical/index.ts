@@ -191,7 +191,7 @@ export interface Poi {
   address_id: string;
   geo_cell_id: string;
   status: 'active' | 'closed' | 'unknown';
-  confidence: number;
+  confidence: number | null;
   snapshot_id: string;
 }
 
@@ -204,7 +204,7 @@ export interface CompetitorStore {
   estimated_capacity: number;
   distance_to_nearest_oday_m: number;
   status: 'active' | 'closed' | 'unknown';
-  confidence: number;
+  confidence: number | null;
   last_verified_at: string | null;
 }
 
@@ -227,7 +227,7 @@ export interface Listing {
   utility_gas_flag: boolean;
   available_from: string | null;
   snapshot_id: string;
-  confidence: number;
+  confidence: number | null;
 }
 
 export interface CandidateSite {
@@ -273,7 +273,7 @@ export interface Prediction {
   p90_value: number;
   unit: string;
   explanation_json: Record<string, any>;
-  confidence: number;
+  confidence: number | null;
 }
 
 export interface Decision {
@@ -309,7 +309,7 @@ export interface HeatZoneScore {
   cannibalization_risk_score: number;
   rent_feasibility_score: number;
   heatzone_state: 'untouched' | 'partially_absorbed' | 'saturated' | 'under_realized' | 'still_expandable';
-  confidence: number;
+  confidence: number | null;
 }
 
 export interface SiteScoreRun {
@@ -372,6 +372,9 @@ export interface Intervention {
   observation_start_time: string;
   observation_end_time: string;
   status: 'proposed' | 'approved' | 'executing' | 'observing' | 'evaluated' | 'stopped' | 'rolled_back';
+  predecessor_id?: string | null;
+  replacement_id?: string | null;
+  adjustment_json?: Record<string, any> | null;
 }
 
 /** ADR-0004: single authority for evidence strength, per ODP-ML-05 §5. */
@@ -474,6 +477,6 @@ export interface DataSnapshot {
   storage_uri: string;
   schema_version: string;
   row_count: number;
-  quality_score: number;
+  quality_score: number | null;
   created_by_run_id: string;
 }

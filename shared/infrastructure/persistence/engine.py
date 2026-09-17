@@ -37,6 +37,7 @@ _SCHEMA_FILES = (
     "000017_durable_operator_comments.sql",
     "000022_durable_manual_corrections.sql",
     "000024_avm_quality_score_nullable_sqlite.sql",
+    "000026_canonical_measurement_nullable_sqlite.sql",
 )
 
 
@@ -139,7 +140,11 @@ class SqliteEngine:
             else:
                 self._tx_depth -= 1
                 if self._tx_depth == 0:
-                    self._conn.commit()
+                    try:
+                        self._conn.commit()
+                    except BaseException:
+                        self._conn.rollback()
+                        raise
 
     def _maybe_commit(self) -> None:
         if self._tx_depth == 0:

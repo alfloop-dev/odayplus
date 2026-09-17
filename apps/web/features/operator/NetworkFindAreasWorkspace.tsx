@@ -1857,13 +1857,20 @@ function FindAreasPanel({
   );
 }
 
-function Metric({ label, meter, value }: { label: string; meter: number; value: string }) {
+function Metric({ label, meter, value }: { label: string; meter?: number | null; value: string }) {
   return (
     <div className={styles.metric}>
       <span>{label}</span>
       <strong>{value}</strong>
       <i aria-hidden="true">
-        <b style={{ width: `${Math.max(4, Math.min(100, Math.round(meter * 100)))}%` }} />
+        <b
+          style={{
+            width:
+              meter == null
+                ? "0%"
+                : `${Math.max(4, Math.min(100, Math.round(meter * 100)))}%`,
+          }}
+        />
       </i>
     </div>
   );

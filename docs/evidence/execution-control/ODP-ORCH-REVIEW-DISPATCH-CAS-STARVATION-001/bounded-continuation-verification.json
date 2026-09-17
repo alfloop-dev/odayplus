@@ -1,0 +1,62 @@
+{
+  "pr": 1304,
+  "executor": "Codex",
+  "source_sha256": {
+    ".orchestrator/release_lease_integration.py": "75fb4bd2630e29fdf9a52dca2f8498ad44f6f51d2da8cfcd2a58788f59a3840c",
+    ".orchestrator/test_release_lease_integration.py": "9275681ea13ec3155b5fef5784cf6396ba9a0655dd77196820eeb0453ba2dcd7"
+  },
+  "scope": "Reject terminal publication when refreshed issuance or request differs; preserve the fresh canonical history. Real disk CAS regression covers external receipt, replacement request, request-only change, task removal, and history-only update across successful and unknown dispatch.",
+  "receipts": [
+    {
+      "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-orch-review-dispatch-cas-starvation-001",
+      "head_sha": "d9df9087884ec7ec7ec4ed5442125feaaec35468",
+      "tracked_diff_sha256": "e8d2edc5371aebf48d531282aca646d7ff0d7fe70d1a99f3a23a5c0fcef373e9",
+      "argv": [
+        "uv",
+        "run",
+        "pytest",
+        "-q",
+        ".orchestrator/test_release_lease_integration.py"
+      ],
+      "started_at": "2026-09-11T12:31:02.082422+00:00",
+      "duration_seconds": 4.1302761209663,
+      "exit_code": 0,
+      "output": "1304-green-release.log"
+    },
+    {
+      "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-orch-review-dispatch-cas-starvation-001",
+      "head_sha": "d9df9087884ec7ec7ec4ed5442125feaaec35468",
+      "tracked_diff_sha256": "e8d2edc5371aebf48d531282aca646d7ff0d7fe70d1a99f3a23a5c0fcef373e9",
+      "argv": [
+        "uv",
+        "run",
+        "pytest",
+        "-q",
+        ".orchestrator/test_dispatch_policy.py",
+        "-k",
+        "diagnostic_cas or review_dispatch or stale_wake or cas or release_dead_helper_claims"
+      ],
+      "started_at": "2026-09-11T12:32:54.384219+00:00",
+      "duration_seconds": 15.833548816968687,
+      "exit_code": 0,
+      "output": "1304-declared.log"
+    },
+    {
+      "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-orch-review-dispatch-cas-starvation-001",
+      "head_sha": "d9df9087884ec7ec7ec4ed5442125feaaec35468",
+      "tracked_diff_sha256": "e8d2edc5371aebf48d531282aca646d7ff0d7fe70d1a99f3a23a5c0fcef373e9",
+      "argv": [
+        "uv",
+        "run",
+        "pytest",
+        "-q",
+        ".orchestrator/test_supervisor.py::DispatchStatusSyncTests",
+        ".orchestrator/test_supervisor.py::AutomaticRecoveryTests::test_ci_failure_requeue_fails_closed_on_stale_status_snapshot"
+      ],
+      "started_at": "2026-09-11T12:37:54.047919+00:00",
+      "duration_seconds": 7.34494249697309,
+      "exit_code": 0,
+      "output": "1304-supervisor.log"
+    }
+  ]
+}

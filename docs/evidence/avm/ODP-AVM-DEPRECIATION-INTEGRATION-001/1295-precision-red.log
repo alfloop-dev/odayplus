@@ -1,0 +1,79 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_ TestTheDepreciationContract.test_fractional_useful_life_is_rejected_at_mapping_and_calculation_boundaries _
+
+self = <test_avm_depreciation_contract.TestTheDepreciationContract object at 0x7ae68755edb0>
+
+    def test_fractional_useful_life_is_rejected_at_mapping_and_calculation_boundaries(self) -> None:
+        """C-2 integer-month contract: fractional useful_life_months is rejected without coercion."""
+        import pytest
+    
+        from modules.avm.domain.valuation import calculate_depreciation
+    
+        invalid_values = (1.9, "1.9", "1.0000000000000000001", Decimal("1.0000000000000000001"), Fraction(19, 10), 0.5, "0.5", 12.3, 0, -1, -5.5, True, False)
+        for val in invalid_values:
+            # 1. from_mapping / build_valuation_view boundary
+            payload = _payload(asset_in_service_date="2021-03-03", useful_life_months=val)
+>           with pytest.raises(ValueError, match="useful_life_months"):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE ValueError
+
+modules/avm/tests/test_avm_depreciation_contract.py:256: Failed
+_ TestTheDepreciationContract.test_integral_useful_life_preserves_exact_value __
+
+self = <test_avm_depreciation_contract.TestTheDepreciationContract object at 0x7ae6873e3a40>
+
+    def test_integral_useful_life_preserves_exact_value(self) -> None:
+        from modules.avm.domain.valuation import calculate_depreciation
+    
+        for value in (84, "84", 84.0, Decimal("84"), Fraction(84, 1), "9007199254740993"):
+            expected = int(value)
+>           item = build_valuation_view(
+                _payload(asset_in_service_date="2021-03-03", useful_life_months=value)
+            )
+
+modules/avm/tests/test_avm_depreciation_contract.py:278: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+modules/avm/domain/valuation.py:651: in build_valuation_view
+    return ValuationInput.from_mapping(data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+modules/avm/domain/valuation.py:139: in from_mapping
+    useful_life = _validate_useful_life(useful_life)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+val = Decimal('84')
+
+    def _validate_useful_life(val: Any) -> int:
+        if isinstance(val, bool):
+            raise ValueError("useful_life_months must be an integer >= 1")
+        if isinstance(val, int):
+            if val < 1:
+                raise ValueError(f"useful_life_months must be >= 1, got {val}")
+            return val
+        if isinstance(val, float):
+            if math.isnan(val) or math.isinf(val) or not val.is_integer():
+                raise ValueError(f"useful_life_months must be an integer >= 1, got {val}")
+            int_val = int(val)
+            if int_val < 1:
+                raise ValueError(f"useful_life_months must be >= 1, got {val}")
+            return int_val
+        if isinstance(val, str):
+            try:
+                f_val = float(val)
+                if math.isnan(f_val) or math.isinf(f_val) or not f_val.is_integer():
+                    raise ValueError(f"useful_life_months must be an integer >= 1, got {val}")
+                int_val = int(f_val)
+                if int_val < 1:
+                    raise ValueError(f"useful_life_months must be >= 1, got {val}")
+                return int_val
+            except (TypeError, ValueError) as err:
+                raise ValueError(f"useful_life_months must be an integer >= 1, got {val}") from err
+>       raise ValueError(f"useful_life_months must be an integer >= 1, got {val}")
+E       ValueError: useful_life_months must be an integer >= 1, got 84
+
+modules/avm/domain/valuation.py:64: ValueError
+=========================== short test summary info ============================
+FAILED modules/avm/tests/test_avm_depreciation_contract.py::TestTheDepreciationContract::test_fractional_useful_life_is_rejected_at_mapping_and_calculation_boundaries
+FAILED modules/avm/tests/test_avm_depreciation_contract.py::TestTheDepreciationContract::test_integral_useful_life_preserves_exact_value
+2 failed, 10 deselected in 0.44s

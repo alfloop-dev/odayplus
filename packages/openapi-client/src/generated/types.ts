@@ -24,9 +24,15 @@ export const API_VERSION = "0.1.0";
 /** AVMCasePayload */
 export type AVMCasePayload = {
   asset_book_value: number;
+  asset_book_value_includes_equipment?: boolean | null;
+  asset_in_service_date?: string | null;
   comparable_multiples?: number[];
   created_by: string;
+  depreciation_effective_date?: string | null;
+  depreciation_method?: string | null;
+  equipment_depreciation_basis?: string | null;
   equipment_fair_value: number;
+  equipment_original_cost?: number | null;
   forecast_gm_next_12m: number;
   gm_ttm: number;
   idempotency_key?: string | null;
@@ -34,8 +40,10 @@ export type AVMCasePayload = {
   liquidity_discount?: number;
   prediction_origin_time?: string | null;
   quality_score?: number | null;
+  residual_value_ratio?: number | null;
   source_snapshot_ids?: string[];
   store_id: string;
+  useful_life_months?: number | null;
   working_capital?: number;
 };
 
@@ -101,6 +109,18 @@ export type AddressRollbackPayload = {
   actor_id?: string | null;
   expected_revision?: number | null;
   reason: string;
+};
+
+/** AdjustPayload */
+export type AdjustPayload = {
+  action_spec?: Record<string, unknown> | null;
+  actor: string;
+  expected_outcome?: string | null;
+  expected_version?: number | null;
+  planned_end?: string | null;
+  planned_start?: string | null;
+  reason: string;
+  rollback_plan?: string | Record<string, unknown> | null;
 };
 
 /** ApiError */
@@ -1626,6 +1646,22 @@ export type RoleWorkspacesRequest = {
   allowedWorkspaces: string[];
 };
 
+/** RollbackPayload */
+export type RollbackPayload = {
+  actor: string;
+  reason: string;
+};
+
+/** RollbackReceiptPayload */
+export type RollbackReceiptPayload = {
+  decider: string;
+  decision_time: string;
+  depreciation_version_pin?: string | null;
+  reason: string;
+  receipt_id?: string | null;
+  target_expiry: string;
+};
+
 /** SavedView */
 export type SavedView = {
   created_at: string;
@@ -1744,6 +1780,12 @@ export type SplitRequest = {
   risk_acknowledged: true;
   source_property_id: string;
   source_property_version?: number;
+};
+
+/** StopPayload */
+export type StopPayload = {
+  actor: string;
+  reason: string;
 };
 
 /** StoreOpsCameraPurposePayload */
@@ -1865,6 +1907,13 @@ export type ValidationError = {
   loc: (string | number)[];
   msg: string;
   type: string;
+};
+
+/** ValueCasePayload */
+export type ValueCasePayload = {
+  actor: string;
+  depreciation_version_pin?: string | null;
+  rollback_receipt?: RollbackReceiptPayload | null;
 };
 
 /** XlsxCommitReceipt */
@@ -2080,6 +2129,7 @@ export const API_PATHS = {
   "/api/v1/interventions": ["GET", "POST"],
   "/api/v1/interventions/{intervention_id}": ["GET"],
   "/api/v1/interventions/{intervention_id}/action": ["POST"],
+  "/api/v1/interventions/{intervention_id}/adjust": ["POST"],
   "/api/v1/interventions/{intervention_id}/approve": ["POST"],
   "/api/v1/interventions/{intervention_id}/assign": ["POST"],
   "/api/v1/interventions/{intervention_id}/close": ["POST"],
@@ -2089,6 +2139,8 @@ export const API_PATHS = {
   "/api/v1/interventions/{intervention_id}/execute": ["POST"],
   "/api/v1/interventions/{intervention_id}/label": ["GET"],
   "/api/v1/interventions/{intervention_id}/outcomes": ["POST"],
+  "/api/v1/interventions/{intervention_id}/rollback": ["POST"],
+  "/api/v1/interventions/{intervention_id}/stop": ["POST"],
   "/api/v1/interventions/{intervention_id}/submit": ["POST"],
   "/api/v1/interventions/{intervention_id}/unassign": ["POST"],
   "/api/v1/jobs": ["POST"],

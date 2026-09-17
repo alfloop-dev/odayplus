@@ -43,12 +43,46 @@ class WatcherBookkeepingTests(unittest.TestCase):
         self.assertIn("no-progress failure", owner_message)
         self.assertIn("必須做出可稽核的 review 決定", reviewer_message)
         self.assertIn("讓 task 留在 review", reviewer_message)
+        self.assertIn("預期審查分支或 exact submitted head", reviewer_message)
+        self.assertIn("審查工作區為唯讀核對", reviewer_message)
         self.assertIn("immutable finalize dispatch", finalize_message)
         self.assertIn("不可 merge、rebase", finalize_message)
         self.assertIn("PR 尚未 merge 就保持 review_approved", finalize_message)
         self.assertIn("明確禁止執行 pytest、npm test、build、lint、security scan 與 E2E 等驗證命令", finalize_message)
         self.assertIn("僅讀取 exact approved head 的 PR、CI 與 receipt 證據，不得重跑測試", finalize_message)
         self.assertNotIn("delivery_toolchain/git/task_finalize.sh 推送", finalize_message)
+        for msg in (owner_message, reviewer_message, finalize_message):
+            self.assertIn("亦禁止直接依賴本機工作樹檔案判斷 repo 現況", msg)
+            self.assertIn("git show origin/dev:<path>", msg)
+
+    def test_wakeup_prompt_stale_worktree_guardrail_applies_universally(self) -> None:
+        base = {
+            "schema": {},
+            "branch_workflow": {"dev_branch": "dev", "task_branch_prefix": "task/"},
+            "agents": {
+                "antigravity4": {"id": "antigravity4", "display_name": "Antigravity4", "wake_template": ".orchestrator/templates/wakeup.txt"},
+            },
+        }
+        reasons = [
+            "owned_ready_dispatch",
+            "owned_in_progress_dispatch",
+            "review_ready_dispatch",
+            "owned_finalize_dispatch",
+        ]
+        for reason in reasons:
+            with self.subTest(reason=reason):
+                event = {
+                    "task_id": "ODP-GUARDRAIL-001",
+                    "reason": reason,
+                    "context_files": ["AI_COLLABORATION_GUIDE.md"],
+                    "task": {"artifacts": []},
+                }
+                msg = watch_events.render_wakeup_message(base, event, "antigravity4")
+                self.assertIn("PANTHEON_STATUS_ROOT", msg)
+                self.assertIn("禁止從隔離 worktree 執行", msg)
+                self.assertIn("亦禁止直接依賴本機工作樹檔案判斷 repo 現況", msg)
+                self.assertIn("git show origin/dev:<path>", msg)
+                self.assertIn("stale branch code", msg)
 
     def test_nonmutating_owner_dispatch_prohibits_empty_pr_and_recommends_supersede(self) -> None:
         base = {

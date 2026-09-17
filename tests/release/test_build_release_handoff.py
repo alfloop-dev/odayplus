@@ -31,8 +31,10 @@ from delivery_toolchain.release.release_manifest import (
     INITIAL_RELEASE_READBACK_KIND,
     INITIAL_RELEASE_RECOVERY_METHOD,
     INITIAL_RELEASE_TARGET_INVENTORY,
+    SOURCES_OFF_EGRESS_CONTRACT_FILES,
     build_release_manifest,
     build_sources_off_attestation,
+    build_sources_off_egress_evidence,
     compute_data_contract_digest,
     compute_manifest_digest,
     compute_source_policy_digest,
@@ -44,7 +46,7 @@ from delivery_toolchain.release.release_manifest import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-SHA = "b" * 40
+SHA = "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12"
 CREATED_AT = "2026-08-26T12:00:00+00:00"
 
 REPO = "asia-east1-docker.pkg.dev/odayplus/oday-plus-dev"
@@ -1223,7 +1225,11 @@ def sources_off_workflow(**wired: str) -> str:
 def sources_off_rollback(current_sha: str = SHA, release_id: str = "odp-prev-off-001") -> dict:
     """A previous release admitted on posture evidence rather than a snapshot."""
 
-    prev_sha = "0" * 40 if current_sha != "0" * 40 else "9" * 40
+    prev_sha = (
+        "36a102b7b39d1fe2e58939ee6e454e20c6d72dbd"
+        if current_sha != "36a102b7b39d1fe2e58939ee6e454e20c6d72dbd"
+        else "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12"
+    )
     prev_components = {
         "api": {"image": ref("api", "a")},
         "web": {"image": ref("web", "b")},
@@ -1345,7 +1351,7 @@ def test_a_live_provider_mode_refuses_to_write_a_sources_off_handoff(
     )
 
     with pytest.raises(HandoffError) as excinfo:
-        handoff(
+        _committed_workflow_handoff(
             data_snapshot=None,
             rollback_release=sources_off_rollback(),
             workflow_path=workflow,
@@ -1367,7 +1373,7 @@ def test_a_wired_provider_credential_refuses_to_write_a_sources_off_handoff(
     )
 
     with pytest.raises(HandoffError) as excinfo:
-        handoff(
+        _committed_workflow_handoff(
             data_snapshot=None,
             rollback_release=sources_off_rollback(),
             workflow_path=workflow,
@@ -1387,7 +1393,7 @@ def test_a_wired_provider_endpoint_refuses_to_write_a_sources_off_handoff(
     )
 
     with pytest.raises(HandoffError) as excinfo:
-        handoff(
+        _committed_workflow_handoff(
             data_snapshot=None,
             rollback_release=sources_off_rollback(),
             workflow_path=workflow,
@@ -1401,7 +1407,7 @@ def test_a_workflow_without_a_provider_mode_refuses_to_guess(tmp_path: Path) -> 
     workflow.write_text("jobs:\n  deploy:\n    env: {}\n", encoding="utf-8")
 
     with pytest.raises(HandoffError) as excinfo:
-        handoff(
+        _committed_workflow_handoff(
             data_snapshot=None,
             rollback_release=sources_off_rollback(),
             workflow_path=workflow,
@@ -1427,7 +1433,7 @@ def test_a_commented_out_credential_is_not_read_as_wired(tmp_path: Path) -> None
         encoding="utf-8",
     )
 
-    _, manifest = handoff(
+    _, manifest = _committed_workflow_handoff(
         data_snapshot=None,
         rollback_release=sources_off_rollback(),
         workflow_path=workflow,
@@ -1445,7 +1451,7 @@ def test_a_sources_off_workflow_without_vpc_binding_fails_closed(tmp_path: Path)
     )
 
     with pytest.raises(HandoffError) as excinfo:
-        handoff(
+        _committed_workflow_handoff(
             data_snapshot=None,
             rollback_release=sources_off_rollback(),
             workflow_path=workflow,
@@ -1465,7 +1471,7 @@ def test_a_sources_off_workflow_with_non_environment_vpc_egress_fails_closed(
     )
 
     with pytest.raises(HandoffError) as excinfo:
-        handoff(
+        _committed_workflow_handoff(
             data_snapshot=None,
             rollback_release=sources_off_rollback(),
             workflow_path=workflow,
@@ -1486,7 +1492,7 @@ def test_a_sources_off_workflow_without_public_egress_probe_fails_closed(
     )
 
     with pytest.raises(HandoffError) as excinfo:
-        handoff(
+        _committed_workflow_handoff(
             data_snapshot=None,
             rollback_release=sources_off_rollback(),
             workflow_path=workflow,
@@ -1799,3 +1805,199 @@ def test_the_cli_writes_nothing_when_the_target_is_not_empty(tmp_path: Path) -> 
     assert exit_code == 1
     assert not images_output.exists()
     assert not manifest_output.exists()
+
+
+# Exact-candidate regressions use commits that exist only in independent local
+# repositories. Historical module-repository SHAs would mask root loss.
+def _git(root: Path, *args: str) -> str:
+    return subprocess.check_output(
+        ["git", *args], cwd=root, text=True, stderr=subprocess.PIPE,
+    ).strip()
+
+
+def _commit_contract(root: Path) -> str:
+    _git(root, "add", ".")
+    _git(root, "-c", "user.name=ODP Test Fixture", "-c", "user.email=fixture@example.invalid",
+         "-c", "commit.gpgsign=false", "commit", "--quiet", "--allow-empty", "-m", "Contract fixture")
+    return _git(root, "rev-parse", "HEAD")
+
+
+def _independent_contract_repo(parent: Path) -> tuple[Path, str]:
+    root = parent / "contract-repo"
+    root.mkdir()
+    _git(root, "init", "--quiet")
+    for relative in SOURCES_OFF_EGRESS_CONTRACT_FILES:
+        destination = root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes((ROOT / relative).read_bytes())
+    return root, _commit_contract(root)
+
+
+def _first_release_in_repo(root: Path, candidate_sha: str) -> dict:
+    readback = empty_target_readback()
+    for entry in readback["targets"]:
+        if entry["resource_kind"] == "cloud-run-job":
+            entry["resource_name"] = release_candidate_job_name(
+                f"oday-plus-{entry['component']}", candidate_sha,
+            )
+    return first_release(
+        root=root, release_sha=candidate_sha, initial_release_readback=readback,
+    )[1]
+
+
+def _committed_workflow_handoff(*, workflow_path: Path, **overrides):
+    root, previous_sha = _independent_contract_repo(workflow_path.parent)
+    previous = _first_release_in_repo(root, previous_sha)
+    (root / ".github/workflows/deploy-dev.yml").write_bytes(workflow_path.read_bytes())
+    candidate_sha = _commit_contract(root)
+    overrides.update(root=root, release_sha=candidate_sha, rollback_release=previous)
+    return handoff(**overrides)
+
+
+def test_candidate_credential_cannot_be_hidden_by_clean_worktree_or_inventory(tmp_path: Path) -> None:
+    root, previous_sha = _independent_contract_repo(tmp_path)
+    previous = _first_release_in_repo(root, previous_sha)
+    workflow = root / ".github/workflows/deploy-dev.yml"
+    clean_workflow = workflow.read_text(encoding="utf-8")
+    credential_line = "      ODP_POI_PROVIDER_API_KEY: ${{ secrets.ODP_POI_PROVIDER_API_KEY }}\n"
+    workflow.write_text(clean_workflow + credential_line, encoding="utf-8")
+    candidate_sha = _commit_contract(root)
+    workflow.write_text(clean_workflow, encoding="utf-8")
+
+    posture = derive_sources_off_posture(
+        workflow_path=workflow, candidate_sha=candidate_sha, root=root,
+    )
+    assert any(entry["credentials_present"] for entry in posture["sources_inventory"])
+    with pytest.raises(HandoffError, match="credentials_present must be False"):
+        handoff(root=root, release_sha=candidate_sha, data_snapshot=None, rollback_release=previous)
+
+    # Admission also rejects a forged clean inventory sealed over the correct
+    # candidate digest; the digest alone cannot attest the candidate's posture.
+    clean_inventory = previous["sources_off_attestation"]["sources_inventory"]
+    candidate_components = previous["components"]
+    attestation = build_sources_off_attestation(
+        candidate_sha=candidate_sha, components=candidate_components,
+        source_policy_digest=compute_source_policy_digest(root=root),
+        provider_mode="disabled", sources_inventory=clean_inventory,
+        egress_evidence=build_sources_off_egress_evidence(root=root, candidate_sha=candidate_sha),
+        root=root,
+    )
+    forged = build_release_manifest(
+        release_id="odp-forged-candidate", candidate_sha=candidate_sha,
+        components=candidate_components, sbom_refs=[ref("api", "5")],
+        signature_refs=[ref("api", "6")], created_at=CREATED_AT,
+        created_by_workflow=f"github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@{candidate_sha}",
+        sources_off_attestation=attestation,
+        rollback_release=extract_rollback_release_binding(previous, root=root),
+        release_status="ready", root=root,
+    )
+    assert any("wires provider credential ODP_POI_PROVIDER_API_KEY" in error
+               for error in validate_release_admission(forged, root=root))
+
+    clean_override = tmp_path / "clean-workflow.yml"
+    clean_override.write_text(clean_workflow, encoding="utf-8")
+    with pytest.raises(HandoffError, match="workflow override does not match candidate"):
+        handoff(root=root, release_sha=candidate_sha, data_snapshot=None,
+                rollback_release=previous, workflow_path=clean_override)
+    assert all(not entry["credentials_present"] for entry in derive_sources_off_posture(
+        workflow_path=workflow, root=root,
+    )["sources_inventory"])
+
+
+@pytest.mark.parametrize("relative,old,new,field", [
+    (".github/workflows/deploy-dev.yml", "ODP_EXTERNAL_PROVIDER_MODE: disabled",
+     "ODP_EXTERNAL_PROVIDER_MODE: live", "provider_mode"),
+    (".github/workflows/deploy-dev.yml", "${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}",
+     "private-ranges-only", "workflow_vpc_binding"),
+    ("product_ops/deployment/deploy_cloud_run_waji.sh", '"--vpc-egress=${ODP_CLOUD_RUN_VPC_EGRESS}"',
+     '"--vpc-egress=private-ranges-only"', "deploy_entrypoint_vpc_binding"),
+    ("product_ops/deployment/deploy_cloud_run_waji.sh", "public-egress-probe", "no-probe",
+     "runtime_probe_wiring"),
+])
+def test_candidate_posture_cannot_be_repaired_by_clean_worktree(
+    tmp_path: Path, relative: str, old: str, new: str, field: str,
+) -> None:
+    root, previous_sha = _independent_contract_repo(tmp_path)
+    previous = _first_release_in_repo(root, previous_sha)
+    path = root / relative
+    clean_text = path.read_text(encoding="utf-8")
+    assert old in clean_text
+    path.write_text(clean_text.replace(old, new), encoding="utf-8")
+    candidate_sha = _commit_contract(root)
+    path.write_text(clean_text, encoding="utf-8")
+    posture = derive_sources_off_posture(
+        workflow_path=root / ".github/workflows/deploy-dev.yml", candidate_sha=candidate_sha, root=root,
+    )
+    if field == "provider_mode":
+        assert posture[field] == "live"
+    else:
+        assert posture["egress_evidence"][field] == "unbound"
+    with pytest.raises(HandoffError):
+        handoff(root=root, release_sha=candidate_sha, data_snapshot=None, rollback_release=previous)
+
+
+def test_healthy_candidate_handoff_ignores_dirty_workflow_and_entrypoint(tmp_path: Path) -> None:
+    root, previous_sha = _independent_contract_repo(tmp_path)
+    previous = _first_release_in_repo(root, previous_sha)
+    candidate_sha = _commit_contract(root)
+    workflow = root / ".github/workflows/deploy-dev.yml"
+    workflow.write_text("ODP_EXTERNAL_PROVIDER_MODE: live\n", encoding="utf-8")
+    (root / "product_ops/deployment/deploy_cloud_run_waji.sh").write_text("", encoding="utf-8")
+    _, manifest = handoff(root=root, release_sha=candidate_sha, data_snapshot=None, rollback_release=previous)
+    assert validate_release_admission(manifest, root=root) == []
+    posture = derive_sources_off_posture(workflow_path=workflow, root=root)
+    assert posture["provider_mode"] == "live"
+    assert posture["egress_evidence"]["deploy_entrypoint_vpc_binding"] == "unbound"
+
+
+@pytest.mark.parametrize("relative", [
+    ".github/workflows/deploy-dev.yml", "product_ops/deployment/deploy_cloud_run_waji.sh",
+])
+def test_candidate_posture_missing_blob_fails_closed_with_healthy_worktree(
+    tmp_path: Path, relative: str,
+) -> None:
+    root, _ = _independent_contract_repo(tmp_path)
+    path = root / relative
+    original = path.read_bytes()
+    path.unlink()
+    candidate_sha = _commit_contract(root)
+    path.write_bytes(original)
+    with pytest.raises(HandoffError, match="failed to read"):
+        derive_sources_off_posture(
+            workflow_path=root / ".github/workflows/deploy-dev.yml", candidate_sha=candidate_sha, root=root,
+        )
+    with pytest.raises(HandoffError, match="failed to read"):
+        derive_sources_off_posture(
+            workflow_path=root / ".github/workflows/deploy-dev.yml", candidate_sha="0" * 40, root=root,
+        )
+    assert derive_sources_off_posture(
+        workflow_path=root / ".github/workflows/deploy-dev.yml", root=root,
+    )["provider_mode"] == "disabled"
+
+
+@pytest.mark.parametrize("rollback_input", ["dict", "path", "inline"])
+def test_independent_shallow_predecessor_survives_extraction_and_admission(
+    tmp_path: Path, rollback_input: str,
+) -> None:
+    remote, previous_sha = _independent_contract_repo(tmp_path)
+    previous = _first_release_in_repo(remote, previous_sha)
+    current_sha = _commit_contract(remote)
+    shallow = tmp_path / "shallow"
+    _git(tmp_path, "clone", "--quiet", "--depth=1", remote.as_uri(), str(shallow))
+    for root in (ROOT, shallow):
+        assert subprocess.run(
+            ["git", "cat-file", "-e", f"{previous_sha}^{{commit}}"], cwd=root,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        ).returncode != 0
+    rollback = previous
+    if rollback_input == "path":
+        rollback = shallow / "previous.json"
+        rollback.write_text(json.dumps(previous), encoding="utf-8")
+    elif rollback_input == "inline":
+        rollback = json.dumps(previous)
+    _, manifest = handoff(root=shallow, release_sha=current_sha, data_snapshot=None,
+                          rollback_release=None, rollback_manifest=rollback)
+    assert _git(shallow, "rev-parse", f"{previous_sha}^{{commit}}") == previous_sha
+    assert manifest["rollback_release"]["candidate_sha"] == previous_sha
+    assert extract_rollback_release_binding(previous, root=shallow) == manifest["rollback_release"]
+    assert validate_release_admission(manifest, root=shallow) == []

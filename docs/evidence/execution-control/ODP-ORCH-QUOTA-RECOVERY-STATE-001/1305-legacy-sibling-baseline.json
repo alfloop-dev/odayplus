@@ -1,0 +1,21 @@
+{
+  "cwd": "/tmp/codex-1305-legacy-sibling",
+  "head_sha": "4c8b333b15968abd74bcd4595ef5d124115763a4",
+  "tracked_diff_sha256": "d3db6f51e3719be419302e007b1bea659060115f59bb786115cef5f2def37980",
+  "argv": [
+    "/tmp/pantheon-worker-worktrees/pantheon/odp-orch-quota-recovery-state-001/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-o",
+    "addopts=",
+    "-q",
+    "--tb=short",
+    ".orchestrator/test_supervisor.py",
+    "-k",
+    "quota or pause or account_pool or config or SuccessfulWorkerPostconditionTests"
+  ],
+  "started_at": "2026-09-12T23:54:44.829010+00:00",
+  "duration_seconds": 4.70965683599934,
+  "exit_code": 0,
+  "output": "1305-legacy-sibling-baseline.log"
+}

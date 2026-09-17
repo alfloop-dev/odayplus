@@ -32,6 +32,7 @@ from modules.sitescore.runtime import (
     sitescore_production_required,
 )
 from shared.domain import Prediction, PredictionRun, SiteScoreRun
+from shared.domain.models import MEASUREMENT_UNMEASURED
 
 
 @dataclass(frozen=True)
@@ -209,7 +210,16 @@ class SiteScoreReportService:
                     p50_value=report.m12.p50,
                     p90_value=report.m12.p90,
                     unit="TWD",
-                    confidence=report.confidence,
+                    # An abstaining report scores with a numeric 0.0 but was
+                    # never measured; persisting that as the canonical
+                    # confidence would be indistinguishable from a measured
+                    # zero, so absence crosses this boundary as NULL.
+                    confidence=(
+                        None
+                        if report.confidence_status == MEASUREMENT_UNMEASURED
+                        else report.confidence
+                    ),
+                    confidence_status=report.confidence_status,
                 )
                 self.repository.save_prediction(prediction)
 

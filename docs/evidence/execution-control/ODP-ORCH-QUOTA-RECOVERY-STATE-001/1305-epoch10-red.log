@@ -1,0 +1,28 @@
+F...F.F.                                                                 [100%]
+=================================== FAILURES ===================================
+_________ test_shared_canary_actual_process_queue_launch[zero_sibling] _________
+.orchestrator/test_account_pool_queue_recovery.py:89: in test_shared_canary_actual_process_queue_launch
+    assert launch.call_count == expected_launches, f"{scenario}: capacity={capacity}, queue={state['queue']}"
+E   AssertionError: zero_sibling: capacity=0, queue={'events': {'fixture-event': {'attempt_count': 1, 'status': 'started', 'last_attempt_at': '2026-09-13T00:23:05Z', 'run_id': 'fixture-launch', 'lease_owner': 'fixture-launch', 'lease_acquired_at': '2026-09-13T00:23:05Z', 'lease_expires_at': '2026-09-13T00:53:05Z', 'processed_at': '2026-09-13T00:23:05Z'}}}
+E   assert 1 == 0
+E    +  where 1 = <MagicMock name='start_worker_for_request' id='132729041363520'>.call_count
+_ test_healthy_pool_rotating_into_recovering_identity_respects_shared_budget[auth-a] _
+.orchestrator/test_account_pool_queue_recovery.py:107: in test_healthy_pool_rotating_into_recovering_identity_respects_shared_budget
+    assert sum(limits.values()) <= 1, f"same auth exposed {limits} before canary success"
+E   AssertionError: same auth exposed {'codex': 1, 'codex2': 2} before canary success
+E   assert 3 <= 1
+E    +  where 3 = sum(dict_values([1, 2]))
+E    +    where dict_values([1, 2]) = <built-in method values of dict object at 0x78b76358dec0>()
+E    +      where <built-in method values of dict object at 0x78b76358dec0> = {'codex': 1, 'codex2': 2}.values
+_ test_stale_live_pause_cannot_replace_new_failure_before_clear[2099-09-11T01:00:00.900000Z] _
+.orchestrator/test_provider_failure_epoch.py:63: in test_stale_live_pause_cannot_replace_new_failure_before_clear
+    assert (
+E   AssertionError: assert ('old-run', None) == ('new-run', 'new-run')
+E     
+E     At index 0 diff: 'old-run' != 'new-run'
+E     Use -v to get more diff
+=========================== short test summary info ============================
+FAILED .orchestrator/test_account_pool_queue_recovery.py::test_shared_canary_actual_process_queue_launch[zero_sibling]
+FAILED .orchestrator/test_account_pool_queue_recovery.py::test_healthy_pool_rotating_into_recovering_identity_respects_shared_budget[auth-a]
+FAILED .orchestrator/test_provider_failure_epoch.py::test_stale_live_pause_cannot_replace_new_failure_before_clear[2099-09-11T01:00:00.900000Z]
+3 failed, 5 passed in 0.65s

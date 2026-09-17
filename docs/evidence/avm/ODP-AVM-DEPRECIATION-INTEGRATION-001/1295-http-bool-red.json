@@ -1,0 +1,18 @@
+{
+  "cwd": "/tmp/codex-1295-exact-life",
+  "head_sha": "837aca65beb92703f8bf1d9a0f7590a847025476",
+  "tracked_diff_sha256": "372b8b9e405f0e56457e64e65a4a2a529105e5d13e5461ae69866c7b85c295c7",
+  "argv": [
+    "/tmp/pantheon-worker-worktrees/pantheon/odp-avm-depreciation-integration-001/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/integration/test_avm_valuation.py",
+    "-k",
+    "useful_life"
+  ],
+  "started_at": "2026-09-13T07:04:26.488483+00:00",
+  "duration_seconds": 134.74664813099662,
+  "exit_code": 1,
+  "output": "1295-http-bool-red.log"
+}

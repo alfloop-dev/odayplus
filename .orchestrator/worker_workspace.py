@@ -395,10 +395,13 @@ def _worktree_matches_repo_common_dir(repo_root: Path, path: Path) -> bool:
 
 
 @_entrypoint
-def _existing_worktree_for_branch(repo_root: Path, branch: str, *, exclude_root: bool) -> Path | None:
+def _existing_worktree_for_branch(
+    repo_root: Path, branch: str, *, exclude_root: bool, expected_path: Path | None = None
+) -> Path | None:
     resolved_repo_root = repo_root.resolve()
 
-    for record in _git_worktree_records(repo_root):
+    records = _git_worktree_records(repo_root)
+    for record in records:
         if _worktree_record_branch(record) != branch:
             continue
         path_value = record.get("worktree")
@@ -416,6 +419,31 @@ def _existing_worktree_for_branch(repo_root: Path, branch: str, *, exclude_root:
         if not _worktree_matches_repo_common_dir(repo_root, path):
             continue
         return path
+
+    if expected_path is not None:
+        try:
+            resolved_expected = expected_path.resolve()
+        except (OSError, RuntimeError, ValueError):
+            return None
+        if exclude_root and resolved_expected == resolved_repo_root:
+            return None
+        if not resolved_expected.exists() or not resolved_expected.is_dir():
+            return None
+        if not (resolved_expected / ".git").exists():
+            return None
+        if _git_output(resolved_expected, "rev-parse", "--is-inside-work-tree")[0] != 0:
+            return None
+        if not _worktree_matches_repo_common_dir(repo_root, resolved_expected):
+            return None
+        for record in records:
+            rec_path = record.get("worktree")
+            if not rec_path:
+                continue
+            try:
+                if Path(rec_path).resolve() == resolved_expected:
+                    return resolved_expected
+            except (OSError, RuntimeError, ValueError):
+                continue
     return None
 
 @_entrypoint
@@ -681,8 +709,20 @@ def observe_worker_worktree_activity(
         branch_rc, current_branch = _git_output(
             worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD"
         )
+        is_valid_review_head = False
         if branch_rc != 0 or not current_branch or current_branch != expected_branch:
-            return _worker_worktree_activity_failure(worker, "wrong_branch")
+            head_sha = _git_commit_oid(worktree_path, "HEAD")
+            if head_sha:
+                review_head = (
+                    worker.get("review_head")
+                    or worker.get("approved_head")
+                    or (task_record.get("review_submission") or {}).get("remote_sha")
+                    or task_record.get("approved_head")
+                )
+                if review_head and head_sha == review_head:
+                    is_valid_review_head = True
+            if not is_valid_review_head:
+                return _worker_worktree_activity_failure(worker, "wrong_branch")
         registered = False
         for record in _git_worktree_records(repo_root):
             record_path = str(record.get("worktree") or "").strip()
@@ -692,7 +732,7 @@ def observe_worker_worktree_activity(
                 same_path = Path(record_path).resolve() == worktree_path
             except (OSError, RuntimeError, ValueError):
                 same_path = False
-            if same_path and _worktree_record_branch(record) == expected_branch:
+            if same_path and (_worktree_record_branch(record) == expected_branch or is_valid_review_head):
                 registered = True
                 break
         if not registered:
@@ -952,19 +992,6 @@ def _refresh_reused_worker_worktree(
     ):
         return False, "wrong_worktree: path is not the expected repository worktree"
 
-    branch_rc, branch = _git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
-    if branch_rc == 0:
-        if branch != expected_branch:
-            return False, f"wrong_branch: expected {expected_branch}, found {branch}"
-    else:
-        current_head = _git_commit_oid(worktree_path, "HEAD")
-        expected_head = (
-            _git_commit_oid(repo_root, f"refs/heads/{expected_branch}")
-            or _git_commit_oid(repo_root, f"origin/{expected_branch}")
-            or _git_commit_oid(repo_root, expected_branch)
-        )
-        if not current_head or not expected_head or current_head != expected_head:
-            return False, f"wrong_branch: expected {expected_branch} ({expected_head or 'none'}), found detached HEAD at {current_head or 'none'}"
     if _git_operation_in_progress(worktree_path):
         return False, "unresolved_git_operation"
 
@@ -986,29 +1013,72 @@ def _refresh_reused_worker_worktree(
             return False, f"{_SKIPPED_DIRTY_WORKTREE}: {inspection.detail}"
 
     local_head = _git_commit_oid(worktree_path, "HEAD")
+    if not local_head:
+        return False, "unverifiable_refs: missing local HEAD"
+
     if required_head:
         required_head = str(required_head).strip()
         expected_head = _git_commit_oid(repo_root, required_head)
         if not expected_head or expected_head != required_head:
             return False, "review_head_unavailable"
-        if not local_head:
-            return False, "unverifiable_refs: missing local HEAD"
         if local_head != expected_head:
             review_contains_rc, _ = _git_output(
                 worktree_path, "merge-base", "--is-ancestor", local_head, expected_head
             )
-            if review_contains_rc != 0:
-                return False, f"review_head_mismatch: local={local_head}, expected={expected_head}"
-            merge_proc = subprocess.run(
-                ["git", "merge", "--ff-only", expected_head],
-                cwd=worktree_path,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if merge_proc.returncode != 0:
-                details = (merge_proc.stderr or merge_proc.stdout or "").strip().splitlines()
-                return False, f"review_head_fast_forward_failed: {details[0] if details else 'unknown'}"
+            if review_contains_rc == 0:
+                # local_head is an ancestor of expected_head: fast-forward task branch if attached, or checkout.
+                branch_rc, current_branch = _git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
+                if branch_rc == 0 and current_branch == expected_branch:
+                    merge_proc = subprocess.run(
+                        ["git", "merge", "--ff-only", expected_head],
+                        cwd=worktree_path,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    if merge_proc.returncode != 0:
+                        details = (merge_proc.stderr or merge_proc.stdout or "").strip().splitlines()
+                        return False, f"review_head_checkout_failed: {details[0] if details else 'unknown'}"
+                else:
+                    checkout_proc = subprocess.run(
+                        ["git", "checkout", expected_head],
+                        cwd=worktree_path,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    if checkout_proc.returncode != 0:
+                        details = (checkout_proc.stderr or checkout_proc.stdout or "").strip().splitlines()
+                        return False, f"review_head_checkout_failed: {details[0] if details else 'unknown'}"
+            else:
+                # R1: Check if expected_head is an ancestor of local_head (workspace
+                # advanced past submitted source, e.g. post-merge dev fast-forward).
+                # The reviewer needs the exact submitted source, so checkout to it.
+                reverse_rc, _ = _git_output(
+                    worktree_path, "merge-base", "--is-ancestor", expected_head, local_head
+                )
+                if reverse_rc != 0:
+                    return False, f"review_head_mismatch: local={local_head}, expected={expected_head}"
+                # A backward pin must not orphan clean, committed detached work.
+                branch_rc, _ = _git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
+                if branch_rc != 0:
+                    # Restrict preservation to durable branch refs, not HEAD/reflog.
+                    preserved_rc, preserved_refs = _git_output(
+                        worktree_path, "for-each-ref", "--format=%(refname)",
+                        "--contains", local_head, "refs/heads/", "refs/remotes/",
+                    )
+                    if preserved_rc != 0 or not preserved_refs.strip():
+                        return False, f"review_head_mismatch: unpreserved detached work at {local_head}"
+                checkout_proc = subprocess.run(
+                    ["git", "checkout", expected_head],
+                    cwd=worktree_path,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if checkout_proc.returncode != 0:
+                    details = (checkout_proc.stderr or checkout_proc.stdout or "").strip().splitlines()
+                    return False, f"review_head_checkout_failed: {details[0] if details else 'unknown'}"
             local_head = _git_commit_oid(worktree_path, "HEAD")
             if local_head != expected_head:
                 return False, "review_head_fast_forward_incomplete"
@@ -1016,6 +1086,44 @@ def _refresh_reused_worker_worktree(
         # been established, the ordinary base refresh below must not advance
         # this checkout when dev already contains it.
         return True, f"review_head_pinned_at_{expected_head[:12]}"
+
+    # No required_head (owner or finalize lease): ensure attached to expected_branch
+    branch_rc, current_branch = _git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
+    if branch_rc == 0:
+        if current_branch != expected_branch:
+            return False, f"wrong_branch: expected {expected_branch}, found {current_branch}"
+    else:
+        # HEAD is detached (e.g. left by reviewer lease). Re-attach to expected_branch.
+        expected_head = (
+            _git_commit_oid(repo_root, f"refs/heads/{expected_branch}")
+            or _git_commit_oid(repo_root, f"origin/{expected_branch}")
+            or _git_commit_oid(repo_root, expected_branch)
+        )
+        if not expected_head:
+            return False, f"wrong_branch: expected {expected_branch}, branch ref not found in repo"
+        # Validate that the detached checkout is a legitimate saved review pin (i.e. contained in expected_head)
+        # before switching to avoid losing unreferenced committed commits (drift D).
+        if local_head != expected_head:
+            is_anc_rc, _ = _git_output(
+                worktree_path, "merge-base", "--is-ancestor", local_head, expected_head
+            )
+            if is_anc_rc != 0:
+                return False, f"wrong_branch: expected {expected_branch} ({expected_head}), found detached HEAD at {local_head} with unmerged commits"
+        checkout_proc = subprocess.run(
+            ["git", "checkout", expected_branch],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if checkout_proc.returncode != 0:
+            details = (checkout_proc.stderr or checkout_proc.stdout or "").strip().splitlines()
+            return False, f"wrong_branch: unable to checkout {expected_branch}: {details[0] if details else 'unknown'}"
+        branch_rc, current_branch = _git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
+        if branch_rc != 0 or current_branch != expected_branch:
+            return False, f"wrong_branch: expected {expected_branch}, found {current_branch or 'detached HEAD'}"
+        local_head = _git_commit_oid(worktree_path, "HEAD")
+
     # Production passes the SHA resolved once at the beginning of this cycle.
     # Symbolic refs remain accepted only for direct diagnostic/test callers.
     base_head = _git_commit_oid(worktree_path, base_sha)
@@ -1165,6 +1273,19 @@ def seal_worker_handoff(
     submission = task.get("review_submission") if isinstance(task, dict) else None
     expected_head = str(submission.get("remote_sha") or "") if isinstance(submission, dict) else ""
     if str((task or {}).get("status") or "").lower() == "review" and expected_head and head_sha != expected_head:
+        # R1: For merged review submissions, the owner workspace was fast-forwarded
+        # to dev/merge SHA. The submitted source is immutable and already landed.
+        # Accept if the submitted source is an ancestor of the workspace HEAD.
+        is_merged_submission = (
+            isinstance(submission, dict)
+            and (submission.get("merged_at") or submission.get("merge_commit"))
+        )
+        if is_merged_submission:
+            ancestor_rc, _ = _git_output(
+                workspace_path, "merge-base", "--is-ancestor", expected_head, head_sha
+            )
+            if ancestor_rc == 0:
+                return WorkerHandoffSeal(True, inspection.kind, inspection.detail, head_sha, inspection.fingerprint)
         return WorkerHandoffSeal(
             False,
             "review_head_mismatch",
@@ -1450,10 +1571,12 @@ def _generated_collaboration_guide(config: dict[str, Any]) -> str:
             "",
             "## Workspace",
             "- You run inside an isolated per-task git worktree. It is NOT a staging area.",
-            "- Confirm you are on the expected `task/<TASK-ID>` branch; use",
+            "- Confirm you are on the expected `task/<TASK-ID>` branch (or verified immutable review checkout); use",
             "  `./delivery_toolchain/git/task_start.sh \"<TASK-ID>\"` if not.",
             "- ai-status.json / current-work.md / ai-activity-log.jsonl are seeded here",
             "  (gitignored); do not edit them by hand — use the status commands.",
+            "- Do not rely on local worktree files alone to judge repository truth or configuration; verify",
+            "  against `origin/dev` (e.g. `git show origin/dev:<path>`) to avoid acting on stale files.",
             "",
             "## Commit discipline (critical — uncommitted work jams the fleet)",
             "- Commit AND push your work before you finish. A worktree left dirty blocks",
@@ -1465,8 +1588,8 @@ def _generated_collaboration_guide(config: dict[str, Any]) -> str:
             "- No interactive git (`git add -p/-i`, `git commit --interactive`, `git rebase -i`).",
             "",
             "## Status & closeout",
-            "- Update status only via `scripts/ai-status.sh` or `python3 scripts/ai_status.py`",
-            "  with your own `AI_NAME`.",
+            "- Update status only via `AI_NAME=<Name> \"$PANTHEON_STATUS_ROOT/scripts/ai-status.sh\" ...`",
+            "  (never run status scripts from isolated worktrees without $PANTHEON_STATUS_ROOT).",
             "- For `owned_finalize_dispatch` / `review_approved`, follow",
             "  .orchestrator/skills/task-closeout-finalization.md before `... done`.",
             "",
@@ -1967,7 +2090,9 @@ def prepare_worker_workspace(
     # A task branch has exactly one registered lease.  `reuse_existing=false`
     # never had a safe meaning for a single branch (Git cannot check it out in
     # two worktrees), so always discover and validate the existing binding.
-    existing = _existing_worktree_for_branch(repo_root, branch, exclude_root=True)
+    existing = _existing_worktree_for_branch(
+        repo_root, branch, exclude_root=True, expected_path=worktree_path
+    )
     if existing:
         worktree_path = existing
         reused = True

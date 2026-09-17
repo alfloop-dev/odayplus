@@ -350,15 +350,26 @@ def load_config(
             or os.environ.get(LEGACY_CONFIG_PATH_ENV_VAR)
             or ""
         ).strip() or None
-    config_file = resolve_path(selected_path) if selected_path else DEFAULT_CONFIG_PATH
+    if selected_path:
+        config_file = resolve_path(selected_path)
+    else:
+        status_root = authoritative_status_root()
+        if status_root is not None:
+            config_file = status_root / ".orchestrator" / "config.json"
+        else:
+            config_file = DEFAULT_CONFIG_PATH
     if config_file is None:
         raise RuntimeError("Unable to resolve orchestrator config path")
     config = load_config_document(config_file)
     selected_overlays: tuple[str | Path, ...]
     if overlay_paths is not None:
         selected_overlays = tuple(overlay_paths)
-    elif config_file == DEFAULT_CONFIG_PATH:
-        selected_overlays = (LOCAL_CONFIG_PATH,)
+    elif config_file == DEFAULT_CONFIG_PATH or (
+        authoritative_status_root() is not None
+        and config_file == authoritative_status_root() / ".orchestrator" / "config.json"
+    ):
+        local_path = config_file.with_name("config.local.json")
+        selected_overlays = (local_path,)
     else:
         selected_overlays = ()
     applied = [config_file]
@@ -368,7 +379,11 @@ def load_config(
             continue
         config = deep_merge(config, load_config_document(overlay_path))
         applied.append(overlay_path)
-    return validate_config(config, source=" + ".join(str(path) for path in applied))
+    validated = validate_config(config, source=" + ".join(str(path) for path in applied))
+    status_root = authoritative_status_root()
+    if status_root is not None and (selected_path is None or not Path(selected_path).is_absolute()):
+        return anchor_config_paths(validated, status_root)
+    return validated
 
 
 def config_path(config: dict[str, Any], key: str, default: str | None = None) -> Path:
