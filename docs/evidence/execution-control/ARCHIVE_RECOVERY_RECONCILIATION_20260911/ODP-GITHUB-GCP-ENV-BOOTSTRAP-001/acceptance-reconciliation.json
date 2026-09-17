@@ -4,9 +4,24 @@
   "original_title": "建立 staging/production GitHub 與 GCP 環境保護",
   "task_class": "remediation",
   "phase": "History Recovery — executable acceptance reconciliation",
-  "owner": "Antigravity3",
-  "reviewer": "Claude",
-  "recorded_at": "2026-09-17T06:20:00Z",
+  "owner": "Claude2",
+  "reviewer": "Codex",
+  "recorded_at": "2026-09-17T06:42:11Z",
+  "ownership_history": [
+    {
+      "owner": "Antigravity3",
+      "reviewer": "Claude",
+      "head_sha": "30583e70c31c0eece1bfd7c4422854351dd84f46",
+      "ended_at": "2026-09-17T06:39:26Z",
+      "reason": "review_churn_reassigned after 5 reviewer reopens (canonical ai-status.json assignment_note)"
+    },
+    {
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "started_at": "2026-09-17T06:39:39Z",
+      "scope": "Fix round-5 reopen finding P1-7 (staging gap factual accuracy) and P3-8 (superseded line range). No other deliverable content changed."
+    }
+  ],
   "reconciliation_target": {
     "repository": "alfloop-dev/odayplus",
     "continuation_branch": "task/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001-RECOVERY-20260911",
@@ -282,12 +297,86 @@
             "ODP_STAGING_RECOVERY_BUNDLE_BUCKET"
           ],
           "responsible_task_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
-          "receipt_ref": "docs/evidence/runtime/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003/receipts/github-receipts/receipt-gh-env-vars-staging.json"
+          "receipt_ref": "docs/evidence/runtime/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003/receipts/github-receipts/receipt-gh-env-vars-staging.json",
+          "inventory_nature": "Historical observation recorded by ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003 on 2026-09-08 (PR #1245 remediation-table.json). Preserved verbatim as the historical fact; superseded by the 2026-09-12 remediation recorded below. Not a present-tense gap statement.",
+          "inventory_observed_at": "2026-09-08T11:46:09Z",
+          "remediation_findings": [
+            {
+              "finding_id": "REM-STAGING-VAR-ODP_STAGING_VPC_NETWORK",
+              "affected_input": "ODP_STAGING_VPC_NETWORK",
+              "status": "resolved_2026-09-12",
+              "resolved_value": "oday-staging-runtime",
+              "resolution_date": "2026-09-12",
+              "variable_created_at": "2026-09-12T14:23:25Z",
+              "resolution_note": "Populated in the GitHub staging environment on 2026-09-12 with a real value (not a placeholder). Confirmed still present by owner continuation readback on 2026-09-17 (see readback_evidence_sources.owner_continuation_readback_20260917).",
+              "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_VPC_NETWORK\")]'"
+            },
+            {
+              "finding_id": "REM-STAGING-VAR-ODP_STAGING_VPC_SUBNETWORK",
+              "affected_input": "ODP_STAGING_VPC_SUBNETWORK",
+              "status": "resolved_2026-09-12",
+              "resolved_value": "oday-staging-runtime",
+              "resolution_date": "2026-09-12",
+              "variable_created_at": "2026-09-12T14:23:26Z",
+              "resolution_note": "Populated in the GitHub staging environment on 2026-09-12 with a real value (not a placeholder). Confirmed still present by owner continuation readback on 2026-09-17 (see readback_evidence_sources.owner_continuation_readback_20260917).",
+              "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_VPC_SUBNETWORK\")]'"
+            },
+            {
+              "finding_id": "REM-STAGING-VAR-ODP_STAGING_KMS_KEY_ID",
+              "affected_input": "ODP_STAGING_KMS_KEY_ID",
+              "status": "resolved_2026-09-12",
+              "resolved_value": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime",
+              "resolution_date": "2026-09-12",
+              "variable_created_at": "2026-09-12T14:23:27Z",
+              "resolution_note": "Populated in the GitHub staging environment on 2026-09-12 with a real value (not a placeholder). Confirmed still present by owner continuation readback on 2026-09-17 (see readback_evidence_sources.owner_continuation_readback_20260917).",
+              "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_KMS_KEY_ID\")]'"
+            },
+            {
+              "finding_id": "REM-STAGING-VAR-ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT",
+              "affected_input": "ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT",
+              "status": "resolved_2026-09-12",
+              "resolved_value": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+              "resolution_date": "2026-09-12",
+              "variable_created_at": "2026-09-12T14:23:27Z",
+              "resolution_note": "Populated in the GitHub staging environment on 2026-09-12 with a real value (not a placeholder). Confirmed still present by owner continuation readback on 2026-09-17 (see readback_evidence_sources.owner_continuation_readback_20260917).",
+              "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT\")]'"
+            },
+            {
+              "finding_id": "REM-STAGING-VAR-ODP_STAGING_TERRAFORM_STATE_BUCKET",
+              "affected_input": "ODP_STAGING_TERRAFORM_STATE_BUCKET",
+              "status": "resolved_2026-09-12",
+              "resolved_value": "oday-tfstate-staging-odayplus-runtime-20260825",
+              "resolution_date": "2026-09-12",
+              "variable_created_at": "2026-09-12T14:23:28Z",
+              "resolution_note": "Populated in the GitHub staging environment on 2026-09-12 with a real value (not a placeholder). Confirmed still present by owner continuation readback on 2026-09-17 (see readback_evidence_sources.owner_continuation_readback_20260917).",
+              "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_TERRAFORM_STATE_BUCKET\")]'"
+            },
+            {
+              "finding_id": "REM-STAGING-VAR-ODP_STAGING_RECOVERY_BUNDLE_BUCKET",
+              "affected_input": "ODP_STAGING_RECOVERY_BUNDLE_BUCKET",
+              "status": "resolved_2026-09-12",
+              "resolved_value": "oday-staging-recovery-odayplus-runtime-20260825",
+              "resolution_date": "2026-09-12",
+              "variable_created_at": "2026-09-12T15:37:03Z",
+              "resolution_note": "Populated in the GitHub staging environment on 2026-09-12 with a real value (not a placeholder). Confirmed still present by owner continuation readback on 2026-09-17 (see readback_evidence_sources.owner_continuation_readback_20260917).",
+              "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_RECOVERY_BUNDLE_BUCKET\")]'"
+            }
+          ],
+          "measurement_target_reference": "delivery_toolchain/release/check_release_environment.py:60-70 STAGING_FOUNDATION_VARIABLES @ origin/dev (307e6e7286c5ca89e72572e4462eb45a57e8888d) — the six names above plus GCP_PROJECT_ID, GCP_REGION, GCP_CLOUD_SQL_INSTANCE; verified read-only via `git show origin/dev:<path>` on 2026-09-17."
         },
         "staging_watch_closeout": {
           "missing_required_input": "ODP_PRODUCTION_WATCH_CLOSEOUT_URI",
           "responsible_task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
-          "receipt_ref": "docs/evidence/runtime/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003/receipts/github-receipts/receipt-gh-env-vars-staging.json"
+          "receipt_ref": "docs/evidence/runtime/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003/receipts/github-receipts/receipt-gh-env-vars-staging.json",
+          "remediation_findings": [
+            {
+              "finding_id": "REM-STAGING-VAR-ODP_PRODUCTION_WATCH_CLOSEOUT_URI",
+              "affected_input": "ODP_PRODUCTION_WATCH_CLOSEOUT_URI",
+              "status": "active_gap",
+              "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_PRODUCTION_WATCH_CLOSEOUT_URI\")]'",
+              "note": "Still absent from the 50 staging variables on 2026-09-17 (owner continuation readback, exit 0). Control case confirming the six resolved entries above are a real remediation, not a measurement error."
+            }
+          ]
         }
       }
     },
@@ -341,8 +430,10 @@
             "superseded_files_in_dev": [
               {
                 "path": "docs/evidence/runtime/ODP-PROD-OPS-WATCH-PARAMS-001/prod-ops-governance-parameters.json",
-                "lines": "7-29",
-                "prior_values": "watch_window_minutes=30; error_rate < 5%; p95 < 5s; rollback error_rate > 10% 5m / p95 > 10s 5m / health check 3 failures; owner=bjoe734@gmail.com"
+                "lines": "7-37",
+                "prior_values": "watch_window_minutes=30; error_rate < 5%; p95 < 5s; rollback error_rate > 10% 5m / p95 > 10s 5m / health check 3 failures; owner=bjoe734@gmail.com",
+                "line_detail": "governance_parameters spans lines 7-37 @ origin/dev: watch_window_minutes:8, slo_thresholds:9-12, rollback_triggers:13-32, rollback_and_on_call_owner:33-36. The prior range 7-29 did not cover the owner field, so the synchronizing task would have missed rollback_and_on_call_owner.",
+                "verification": "git show origin/dev:docs/evidence/runtime/ODP-PROD-OPS-WATCH-PARAMS-001/prod-ops-governance-parameters.json | cat -n -> exit 0, 2026-09-17."
               },
               {
                 "path": "docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md",
@@ -399,6 +490,53 @@
         "補齊 GitHub production 變數 ODP_WEB_BASE_URL 與 ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET，由 ODP-PROD-BLUEGREEN-ROLLOUT-001 承接。",
         "同步 prod-ops-governance-parameters.json 與 EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md 中 PROD-OPS-05 營運參數，由 ODP-PROD-BLUEGREEN-ROLLOUT-001 承接。"
       ]
+    },
+    "owner_continuation_readback_20260917": {
+      "purpose": "Independent re-measurement by the continuation owner (Claude2) before amending the staging gap statement. Read-only GitHub API and read-only git object reads; no GCP request, no secret value read, no write.",
+      "repository": "alfloop-dev/odayplus",
+      "base_commit_sha": "307e6e7286c5ca89e72572e4462eb45a57e8888d",
+      "prior_head_sha": "30583e70c31c0eece1bfd7c4422854351dd84f46",
+      "operator": "Claude2",
+      "commands": [
+        {
+          "label": "staging_variables_readback",
+          "command": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables",
+          "exit_code": 0,
+          "started_at": "2026-09-17T06:41:06Z",
+          "completed_at": "2026-09-17T06:41:07Z",
+          "result": "50 unique variable names. All 6 STAGING_FOUNDATION_VARIABLES GitHub inputs PRESENT with real values (created_at 2026-09-12T14:23:25Z..2026-09-12T15:37:03Z). ODP_PRODUCTION_WATCH_CLOSEOUT_URI ABSENT."
+        },
+        {
+          "label": "production_variables_readback",
+          "command": "gh api --paginate repos/alfloop-dev/odayplus/environments/production/variables",
+          "exit_code": 0,
+          "observed_at": "2026-09-17T06:41:14Z",
+          "result": "50 unique names. ODP_WEB_BASE_URL ABSENT, ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET ABSENT (REM-PROD-VAR-* remain active_gap), ODP_CLOUD_RUN_VPC_EGRESS=all-traffic PRESENT, ODP_CLOUD_RUN_VPC_CONNECTOR ABSENT (deliberate Direct VPC egress omission)."
+        },
+        {
+          "label": "dev_variables_readback",
+          "command": "gh api --paginate repos/alfloop-dev/odayplus/environments/dev/variables",
+          "exit_code": 0,
+          "observed_at": "2026-09-17T06:41:14Z",
+          "result": "41 unique names. ODP_WEB_BASE_URL ABSENT and ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET ABSENT, confirming REM-DEV-VAR-* remain active_gap."
+        },
+        {
+          "label": "staging_foundation_variable_contract",
+          "command": "git show origin/dev:delivery_toolchain/release/check_release_environment.py",
+          "exit_code": 0,
+          "observed_at": "2026-09-17T06:41:14Z",
+          "result": "STAGING_FOUNDATION_VARIABLES at lines 60-70 matches the six measured names; measurement target confirmed correct."
+        },
+        {
+          "label": "prod_ops_governance_line_range",
+          "command": "git show origin/dev:docs/evidence/runtime/ODP-PROD-OPS-WATCH-PARAMS-001/prod-ops-governance-parameters.json",
+          "exit_code": 0,
+          "observed_at": "2026-09-17T06:41:14Z",
+          "result": "governance_parameters spans lines 7-37; rollback_and_on_call_owner at 33-36. Supersedes line range corrected from 7-29 to 7-37."
+        }
+      ],
+      "secret_values_redacted": true,
+      "scope_note": "Variable names, non-secret values and created_at timestamps only. No Secret Manager payload, no GitHub secret value, and no environment write was performed."
     }
   },
   "acceptance_criteria_reconciliation": [
@@ -427,12 +565,12 @@
         "runtime／部署"
       ],
       "status": "partially_met",
-      "status_zh": "部分滿足（GitHub 環境變數已補齊至 50 項、deploy scope 11/11 齊備、WIF/SA/Secret Manager/GCS 已建立；dev 2 項、production 2 項與 staging 7 項必要變數缺口持續保留並映射至承接任務，Direct VPC 實體網路待 Terraform 建立）",
-      "evidence": "GitHub production environment variables are completed from 42 to 50, with all 11 required deploy scope variables fully populated (zero missing). WIF provider (projects/365886461656/.../providers/odayplus) state=ACTIVE, 4 service accounts exist (github-deployer, oday-prod-runtime, oday-prod-scheduler, oday-prod-smoke-operator), Cloud SQL (oday-prod-sql) state=RUNNABLE, 3 Secret Manager secret versions ENABLED (oday-prod-database-url, oday-prod-auth-principal-map, oday-prod-web-session-secret), and GCS state/recovery buckets (gs://odayplus-prod-20260826-tfstate, gs://odayplus-prod-20260826-recovery) provisioned. Direct VPC egress setting (ODP_CLOUD_RUN_VPC_EGRESS=all-traffic) is properly set without conflicting connector. All secret values are strictly referenced by name without plaintext (secret_values_redacted=true). Known variable and physical infrastructure gaps in dev, staging, and production are explicitly preserved and mapped to owning tasks.",
+      "status_zh": "部分滿足（GitHub 環境變數已補齊至 50 項、deploy scope 11/11 齊備、WIF/SA/Secret Manager/GCS 已建立；staging foundation 6 項已於 2026-09-12 補齊並於 2026-09-17 複驗；dev 2 項、production 2 項與 staging 1 項（ODP_PRODUCTION_WATCH_CLOSEOUT_URI）必要變數缺口持續保留並映射至承接任務，Direct VPC 實體網路待 Terraform 建立）",
+      "evidence": "GitHub production environment variables are completed from 42 to 50, with all 11 required deploy scope variables fully populated (zero missing). WIF provider (projects/365886461656/.../providers/odayplus) state=ACTIVE, 4 service accounts exist (github-deployer, oday-prod-runtime, oday-prod-scheduler, oday-prod-smoke-operator), Cloud SQL (oday-prod-sql) state=RUNNABLE, 3 Secret Manager secret versions ENABLED (oday-prod-database-url, oday-prod-auth-principal-map, oday-prod-web-session-secret), and GCS state/recovery buckets (gs://odayplus-prod-20260826-tfstate, gs://odayplus-prod-20260826-recovery) provisioned. Direct VPC egress setting (ODP_CLOUD_RUN_VPC_EGRESS=all-traffic) is properly set without conflicting connector. All secret values are strictly referenced by name without plaintext (secret_values_redacted=true). The 6 staging foundation variable inputs recorded as missing in the 2026-09-08 PR #1245 remediation-table.json were populated on 2026-09-12 and re-verified present on 2026-09-17; the remaining variable and physical infrastructure gaps in dev, staging, and production are explicitly preserved and mapped to owning tasks.",
       "gaps": [
         "Production environment general config gaps: ODP_WEB_BASE_URL (validate_cloud_run_live_deployment.py:98 REQUIRED_PUBLIC_CONFIG) and ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET (validate_cloud_run_live_deployment.py:112 REQUIRED_SECRET_REFERENCES) are not present in the 50 production variables (REM-PROD-VAR-ODP_WEB_BASE_URL, REM-PROD-VAR-ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET mapped to ODP-PROD-BLUEGREEN-ROLLOUT-001).",
         "Dev environment input gaps: ODP_WEB_BASE_URL and ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET are missing from dev variables (REM-DEV-VAR-* mapped to ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001).",
-        "Staging environment input gaps: 6 staging foundation inputs (ODP_STAGING_VPC_NETWORK, ODP_STAGING_VPC_SUBNETWORK, ODP_STAGING_KMS_KEY_ID, ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT, ODP_STAGING_TERRAFORM_STATE_BUCKET, ODP_STAGING_RECOVERY_BUNDLE_BUCKET) mapped to ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001; ODP_PRODUCTION_WATCH_CLOSEOUT_URI mapped to ODP-EPHEMERAL-STAGING-ROLLOUT-001.",
+        "Staging environment inputs (re-verified 2026-09-17): the 6 staging foundation inputs recorded as missing in the 2026-09-08 PR #1245 remediation-table.json (ODP_STAGING_VPC_NETWORK, ODP_STAGING_VPC_SUBNETWORK, ODP_STAGING_KMS_KEY_ID, ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT, ODP_STAGING_TERRAFORM_STATE_BUCKET, ODP_STAGING_RECOVERY_BUNDLE_BUCKET) were all populated on 2026-09-12 and are no longer gaps (REM-STAGING-VAR-* status=resolved_2026-09-12; readback `gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables` exit 0 at 2026-09-17T06:41:07Z returned 50 variables with all 6 present as real values, not placeholders). The one remaining staging variable gap is ODP_PRODUCTION_WATCH_CLOSEOUT_URI, confirmed ABSENT in that same readback and mapped to ODP-EPHEMERAL-STAGING-ROLLOUT-001 (REM-STAGING-VAR-ODP_PRODUCTION_WATCH_CLOSEOUT_URI). ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001 still owns the physical staging IaC/state scope; it no longer owns these six GitHub variable inputs.",
         "Physical VPC network gap: ODP_PROD_VPC_NETWORK/SUBNETWORK points to oday-prod-runtime, which does not exist yet physically and requires terraform apply in ODP-PROD-BLUEGREEN-ROLLOUT-001."
       ],
       "boundary": "Verified dev/staging/production secret references, GitHub environment variable bindings, and production GCP resource readback; secret values remain unread and redacted; input gaps remain tracked."
