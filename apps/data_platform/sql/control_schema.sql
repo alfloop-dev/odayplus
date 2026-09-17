@@ -323,3 +323,100 @@ CREATE TABLE IF NOT EXISTS {{control_schema}}.tombstones (
 );
 CREATE INDEX IF NOT EXISTS ix_data_plane_tombstones_entity
     ON {{control_schema}}.tombstones(entity_type, entity_id, source_version DESC);
+
+-- Scoped CDC checkpoints (ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001).
+-- One row per (scoped collection, ordering partition). This is a different
+-- table from `checkpoints` above on purpose: that one stores a batch `_id`
+-- high-water mark, while a resume token is an opaque cluster position with its
+-- own lifecycle, including a terminal EXPIRED state the batch cursor has no
+-- equivalent of. The 34A contract names the key columns `source_id` /
+-- `partition_id`; `source_id` is renamed to `source_kind` here so it cannot be
+-- misread as a document id, which is what `source_id` means in every other
+-- table in this schema.
+--
+-- `resume_token` is kept even after expiry: it is the only record of where the
+-- stream actually stopped, and `last_server_timestamp` beside it is what bounds
+-- the snapshot re-read that H07 decision 2 authorised. `recovery_run_id` stays
+-- NULL until a batch run has actually covered that window, so an expired cursor
+-- cannot be revived by simply writing a fresh token over it.
+CREATE TABLE IF NOT EXISTS {{control_schema}}.cdc_checkpoints (
+    source_kind TEXT NOT NULL,
+    partition_id TEXT NOT NULL,
+    resume_token TEXT NOT NULL,
+    last_sequence_no BIGINT NOT NULL CHECK (last_sequence_no >= 0),
+    last_server_timestamp TIMESTAMPTZ NOT NULL,
+    processed_count BIGINT NOT NULL DEFAULT 0 CHECK (processed_count >= 0),
+    status TEXT NOT NULL CHECK (status IN ('ACTIVE', 'STALE', 'EXPIRED', 'PAUSED')),
+    expired_at TIMESTAMPTZ,
+    expiry_detail TEXT NOT NULL DEFAULT '',
+    recovery_run_id UUID REFERENCES {{control_schema}}.ingestion_runs(run_id),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (source_kind, partition_id),
+    -- An expired cursor must say when it died; a live one must not claim to have.
+    CHECK ((status = 'EXPIRED') = (expired_at IS NOT NULL)),
+    -- A recovery run only means anything against an expiry it closes.
+    CHECK (recovery_run_id IS NULL OR status = 'EXPIRED')
+);
+CREATE INDEX IF NOT EXISTS ix_data_plane_cdc_checkpoints_status
+    ON {{control_schema}}.cdc_checkpoints(status, updated_at DESC);
+
+-- Scoped CDC staging table (H07 decision 5: the Dagster-resident sensor writes
+-- straight to PostgreSQL; no Kafka, Redpanda, Pub/Sub or RabbitMQ is involved).
+--
+-- This is the durability boundary of the stream. A tick inserts here and moves
+-- `cdc_checkpoints` in the same transaction, so the cursor can never advance
+-- past a change that was not landed. `idempotency_key` is the primary key
+-- rather than a unique index because collapsing a redelivered change onto the
+-- existing row *is* the exactly-once guarantee, not a constraint violation to
+-- be handled later.
+--
+-- `after_payload` holds the in-memory-projected document only. A change stream
+-- returns the whole document, which is wider than the batch reader's
+-- server-side projection, so `apps.data_platform.cdc.redact_change_document`
+-- narrows it before this insert is even built; `redacted_fields` records what
+-- was dropped so the boundary is auditable without retaining what it excluded.
+-- `tenant_id` deliberately carries no foreign key: a landing table that
+-- rejected an event because its merchant had not been projected yet would turn
+-- an ordering artefact into data loss.
+CREATE TABLE IF NOT EXISTS {{control_schema}}.cdc_staging_events (
+    idempotency_key TEXT PRIMARY KEY CHECK (length(idempotency_key) = 64),
+    change_id TEXT NOT NULL,
+    source_kind TEXT NOT NULL CHECK (source_kind IN ('orders', 'device_log')),
+    source_collection TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    tenant_id UUID,
+    operation TEXT NOT NULL CHECK (
+        operation IN (
+            'insert', 'update', 'replace', 'delete', 'void', 'refund',
+            'withdraw', 'tombstone', 'snapshot_backfill'
+        )
+    ),
+    partition_key TEXT NOT NULL,
+    sequence_number BIGINT NOT NULL CHECK (sequence_number >= 0),
+    resume_token TEXT NOT NULL,
+    server_timestamp TIMESTAMPTZ NOT NULL,
+    source_timestamp TIMESTAMPTZ,
+    ingested_at TIMESTAMPTZ NOT NULL,
+    after_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_fields TEXT[] NOT NULL DEFAULT '{}',
+    removed_fields TEXT[] NOT NULL DEFAULT '{}',
+    redaction_profile TEXT NOT NULL CHECK (
+        redaction_profile IN ('orders_projected_v1', 'device_log_minimized_v1')
+    ),
+    redacted_fields TEXT[] NOT NULL DEFAULT '{}',
+    content_sha256 TEXT NOT NULL CHECK (length(content_sha256) = 64),
+    contract_version TEXT NOT NULL,
+    -- NULL until the canonical projection replayed this row. A crash between
+    -- staging and projection leaves it NULL, which is what makes the replay
+    -- zero-loss instead of merely at-least-once in principle.
+    applied_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (jsonb_typeof(after_payload) = 'object')
+);
+CREATE INDEX IF NOT EXISTS ix_data_plane_cdc_staging_pending
+    ON {{control_schema}}.cdc_staging_events(source_kind, partition_key, sequence_number)
+    WHERE applied_at IS NULL;
+CREATE INDEX IF NOT EXISTS ix_data_plane_cdc_staging_entity
+    ON {{control_schema}}.cdc_staging_events(
+        source_kind, source_id, server_timestamp DESC
+    );
