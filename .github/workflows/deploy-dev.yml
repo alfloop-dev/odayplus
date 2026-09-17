@@ -288,7 +288,10 @@ jobs:
       WEB_SERVICE: ${{ vars.ODP_CLOUD_RUN_WEB_SERVICE }}
       WORKER_JOB: ${{ vars.ODP_CLOUD_RUN_WORKER_JOB }}
       SCHEDULER_JOB: ${{ vars.ODP_CLOUD_RUN_SCHEDULER_JOB }}
-      ODP_CLOUD_RUN_VPC_CONNECTOR: ${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}
+      # The build phase never touches a network, so it carries no VPC binding
+      # (neither a connector nor a Direct VPC network). The egress mode is the
+      # one non-secret runtime fact the sources-off handoff records, so it is
+      # still resolved here from the `<environment>-build` twin.
       ODP_CLOUD_RUN_VPC_EGRESS: ${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}
       ODAY_RELEASE_SHA: ${{ inputs.release_sha }}
       IMAGE_TAG: release-${{ inputs.release_sha }}
@@ -325,7 +328,6 @@ jobs:
           ODP_CLOUD_RUN_WEB_SERVICE: ${{ vars.ODP_CLOUD_RUN_WEB_SERVICE }}
           ODP_CLOUD_RUN_WORKER_JOB: ${{ vars.ODP_CLOUD_RUN_WORKER_JOB }}
           ODP_CLOUD_RUN_SCHEDULER_JOB: ${{ vars.ODP_CLOUD_RUN_SCHEDULER_JOB }}
-          ODP_CLOUD_RUN_VPC_CONNECTOR: ${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}
           ODP_CLOUD_RUN_VPC_EGRESS: ${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}
         run: |
           set -euo pipefail
@@ -566,7 +568,6 @@ jobs:
           ROLLBACK_MANIFEST: ${{ inputs.rollback_manifest || vars.ODP_PREVIOUS_RELEASE_MANIFEST_PATH }}
           INITIAL_RELEASE_RECOVERY: ${{ inputs.initial_release_recovery }}
           EXTERNAL_SOURCES_ENABLED: ${{ inputs.external_sources_enabled }}
-          ODP_CLOUD_RUN_VPC_CONNECTOR: ${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}
           ODP_CLOUD_RUN_VPC_EGRESS: ${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}
         run: |
           set -euo pipefail
@@ -1016,7 +1017,14 @@ jobs:
       SCHEDULER_SCHEDULE_NAME: ${{ vars.ODP_CLOUD_SCHEDULER_SCHEDULER_TRIGGER }}
       ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT: ${{ vars.ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT }}
       ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT: ${{ vars.ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT }}
+      # Cloud Run VPC binding, one of two mutually exclusive modes resolved from
+      # the bound environment: a Serverless VPC Access connector (dev/staging)
+      # or Direct VPC egress (production; infra/terraform/cloud_run.tf declares
+      # network_interfaces and creates no connector). The deploy binding gate
+      # and deploy_cloud_run_waji.sh refuse a half-configured or doubled mode.
       ODP_CLOUD_RUN_VPC_CONNECTOR: ${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}
+      ODP_PROD_VPC_NETWORK: ${{ vars.ODP_PROD_VPC_NETWORK }}
+      ODP_PROD_VPC_SUBNETWORK: ${{ vars.ODP_PROD_VPC_SUBNETWORK }}
       ODP_CLOUD_RUN_VPC_EGRESS: ${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}
       ODP_WORKER_CRON: ${{ vars.ODP_WORKER_CRON }}
       ODP_SCHEDULER_CRON: ${{ vars.ODP_SCHEDULER_CRON }}
@@ -1129,8 +1137,10 @@ jobs:
           ODP_CLOUD_RUN_MIGRATION_JOB: ${{ vars.ODP_CLOUD_RUN_MIGRATION_JOB }}
           ODP_CLOUD_RUN_WORKER_JOB: ${{ vars.ODP_CLOUD_RUN_WORKER_JOB }}
           ODP_CLOUD_RUN_SCHEDULER_JOB: ${{ vars.ODP_CLOUD_RUN_SCHEDULER_JOB }}
-          ODP_CLOUD_RUN_VPC_CONNECTOR: ${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}
           ODP_CLOUD_RUN_VPC_EGRESS: ${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}
+          ODP_CLOUD_RUN_VPC_CONNECTOR: ${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}
+          ODP_PROD_VPC_NETWORK: ${{ vars.ODP_PROD_VPC_NETWORK }}
+          ODP_PROD_VPC_SUBNETWORK: ${{ vars.ODP_PROD_VPC_SUBNETWORK }}
         run: |
           set -euo pipefail
           python3 delivery_toolchain/release/check_release_environment.py \

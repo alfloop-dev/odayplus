@@ -79,7 +79,12 @@ REQUIRED_VARIABLES: dict[str, tuple[str, ...]] = {
         "ODP_CLOUD_RUN_WEB_SERVICE",
         "ODP_CLOUD_RUN_WORKER_JOB",
         "ODP_CLOUD_RUN_SCHEDULER_JOB",
-        "ODP_CLOUD_RUN_VPC_CONNECTOR",
+        # build 不部署，所以不需要任何 VPC 網路綁定（connector 或 Direct VPC 都
+        # 不需要）。但 egress 模式是 build handoff 為 sources-off attestation 記錄
+        # 的非 secret runtime fact（build_release_handoff.py 讀
+        # ODP_CLOUD_RUN_VPC_EGRESS，缺值時以 resolved_cloud_run_egress=unresolved
+        # fail closed），所以它留在 build scope，讓缺值在這一關就以中文收據被拒，
+        # 而不是在 handoff 那一步以較難讀的錯誤爆掉。
         "ODP_CLOUD_RUN_VPC_EGRESS",
     ),
     # admission 不部署也不 build，它只需要能讀共用 lease 狀態並驗章。
@@ -98,9 +103,10 @@ REQUIRED_VARIABLES: dict[str, tuple[str, ...]] = {
         "ODP_CLOUD_RUN_WORKER_JOB",
         "ODP_CLOUD_RUN_SCHEDULER_JOB",
         # Sources-off is only safe when the actual deploy environment resolves
-        # both halves of the VPC binding; an empty vars.* expression otherwise
-        # silently falls back to public Cloud Run egress.
-        "ODP_CLOUD_RUN_VPC_CONNECTOR",
+        # the egress mode; an empty vars.* expression otherwise silently falls
+        # back to public Cloud Run egress. The network half of the binding is
+        # one of two mutually exclusive modes (see VPC_BINDING_MODES) and is
+        # checked separately by ``vpc_binding_errors``.
         "ODP_CLOUD_RUN_VPC_EGRESS",
     ),
     # Staging release-scoped names, endpoints, tenants, and service accounts
@@ -114,9 +120,38 @@ REQUIRED_VARIABLES: dict[str, tuple[str, ...]] = {
 
 SCOPES = tuple(REQUIRED_VARIABLES)
 
+# Cloud Run 接進 VPC 有兩種互斥的方式，deploy 階段必須剛好解析到其中一種：
+#
+# * ``connector``：Serverless VPC Access connector（dev / staging 沿用）。
+# * ``direct_vpc``：Direct VPC egress，Cloud Run 直接掛在 VPC 的 subnetwork 上。
+#   這是 ``infra/terraform/cloud_run.tf`` 對 production 宣告的架構
+#   （``vpc_access { network_interfaces { network, subnetwork } }``），IaC 不會
+#   產生任何 connector 資源，所以 production 的 GitHub environment 沒有、也不
+#   該有 ``ODP_CLOUD_RUN_VPC_CONNECTOR``。變數名沿用 production environment 既有
+#   的 ``ODP_PROD_VPC_NETWORK`` / ``ODP_PROD_VPC_SUBNETWORK``（與 staging
+#   foundation 的 ``ODP_STAGING_VPC_*`` 同一命名慣例）；gate、deploy script 與
+#   GitHub 變數三處使用同一組名字。
+#
+# 兩種模式都必須搭配 ``ODP_CLOUD_RUN_VPC_EGRESS``（列在 REQUIRED_VARIABLES）。
+# 半套（只有 network 沒有 subnetwork）與兩套並存（connector 與 network 同時
+# 有值）都 fail closed：前者 gcloud 會拒絕，後者 ``--vpc-connector`` 與
+# ``--network`` 互斥，兩種情況都不該走到第一次 Cloud Run mutation 才發現。
+VPC_BINDING_MODES: dict[str, tuple[str, ...]] = {
+    "connector": ("ODP_CLOUD_RUN_VPC_CONNECTOR",),
+    "direct_vpc": ("ODP_PROD_VPC_NETWORK", "ODP_PROD_VPC_SUBNETWORK"),
+}
+
+# 只有真正執行 Cloud Run mutation 的 scope 需要網路綁定。build 不部署；
+# admission 只驗 lease；staging 的網路由 Terraform output 決定，不經這裡。
+VPC_BINDING_SCOPES = ("deploy",)
+
+VPC_BINDING_VARIABLES = tuple(
+    name for names in VPC_BINDING_MODES.values() for name in names
+)
+
 
 def required_variables(scope: str) -> tuple[str, ...]:
-    """回傳這個 scope 必須解析得到的 GitHub environment 變數名稱。"""
+    """回傳這個 scope 無條件必須解析得到的 GitHub environment 變數名稱。"""
 
     try:
         return REQUIRED_VARIABLES[scope]
@@ -126,14 +161,89 @@ def required_variables(scope: str) -> tuple[str, ...]:
         ) from None
 
 
+def declared_variables(scope: str) -> tuple[str, ...]:
+    """回傳這個 scope 會讀取的全部變數：無條件必要的，加上二擇一的網路綁定。
+
+    workflow 裡綁定檢查 step 的 ``env:`` 區塊必須逐一對應這個集合（contract
+    test 會比對），否則某個模式的變數在 GitHub 上設好了、gate 卻讀不到。
+    """
+
+    names = list(required_variables(scope))
+    if scope in VPC_BINDING_SCOPES:
+        names.extend(VPC_BINDING_VARIABLES)
+    return tuple(names)
+
+
 def missing_variables(scope: str, values: dict[str, str | None]) -> list[str]:
-    """回傳沒有解析到值的變數名稱（保持宣告順序）。"""
+    """回傳沒有解析到值的無條件必要變數名稱（保持宣告順序）。"""
 
     return [
         name
         for name in required_variables(scope)
         if not (values.get(name) or "").strip()
     ]
+
+
+def _resolved(values: dict[str, str | None], name: str) -> bool:
+    return bool((values.get(name) or "").strip())
+
+
+def resolved_vpc_binding_mode(values: dict[str, str | None]) -> str | None:
+    """回傳完整解析到的網路綁定模式名稱；沒有或不只一個時回傳 ``None``。"""
+
+    complete = [
+        mode
+        for mode, names in VPC_BINDING_MODES.items()
+        if all(_resolved(values, name) for name in names)
+    ]
+    if len(complete) != 1:
+        return None
+    return complete[0]
+
+
+def vpc_binding_errors(
+    scope: str, github_environment: str, values: dict[str, str | None]
+) -> list[str]:
+    """回傳 deploy 階段網路綁定的阻擋理由（中文）；空 list 代表剛好一種模式。"""
+
+    if scope not in VPC_BINDING_SCOPES:
+        return []
+
+    errors: list[str] = []
+    complete: list[str] = []
+    for mode, names in VPC_BINDING_MODES.items():
+        present = [name for name in names if _resolved(values, name)]
+        missing = [name for name in names if not _resolved(values, name)]
+        if present and missing:
+            errors.append(
+                f"{scope} 階段在 GitHub environment `{github_environment}` 的 "
+                f"{mode} 網路綁定只設定了一半：已有 "
+                + "、".join(present)
+                + "，缺少 "
+                + "、".join(missing)
+                + "。半套綁定會在 Cloud Run mutation 時才被 gcloud 拒絕；請補齊或全部移除。"
+            )
+        elif present:
+            complete.append(mode)
+
+    if len(complete) > 1:
+        errors.append(
+            f"{scope} 階段在 GitHub environment `{github_environment}` 同時設定了 "
+            + " 與 ".join(complete)
+            + " 兩種網路綁定；`--vpc-connector` 與 `--network/--subnet` 互斥，"
+            "請只保留實際架構使用的那一種。"
+        )
+    elif not complete and not errors:
+        options = "；或 ".join(
+            f"{mode}（" + "、".join(names) + "）"
+            for mode, names in VPC_BINDING_MODES.items()
+        )
+        errors.append(
+            f"{scope} 階段在 GitHub environment `{github_environment}` 取不到任何 "
+            f"Cloud Run VPC 網路綁定，需要二擇一：{options}。"
+            "沒有網路綁定的 sources-off 部署會走 Cloud Run 公網 egress，因此不得繼續執行。"
+        )
+    return errors
 
 
 def binding_errors(
@@ -170,6 +280,8 @@ def binding_errors(
             "而不是變數的值有問題；請到該 environment 補齊後重跑。"
         )
 
+    errors.extend(vpc_binding_errors(scope, github_environment, values))
+
     if scope == "staging":
         state_bucket = (values.get("ODP_STAGING_TERRAFORM_STATE_BUCKET") or "").strip()
         recovery_bucket = (values.get("ODP_STAGING_RECOVERY_BUNDLE_BUCKET") or "").strip()
@@ -200,21 +312,40 @@ def build_receipt(
 ) -> dict[str, Any]:
     """組出中文 fail-closed 收據。收據只記錄變數「有沒有解析到」，永不記錄值。"""
 
-    names = required_variables(scope) if scope in REQUIRED_VARIABLES else ()
-    resolved = {name: bool((values.get(name) or "").strip()) for name in names}
-    missing = [name for name, present in resolved.items() if not present]
+    names = declared_variables(scope) if scope in REQUIRED_VARIABLES else ()
+    required = required_variables(scope) if scope in REQUIRED_VARIABLES else ()
+    resolved = {name: _resolved(values, name) for name in names}
+    missing = [name for name in required if not resolved[name]]
     admitted = not errors
+
+    # 網路綁定是二擇一，所以收據另外記「解析到哪一種模式」；只有 present/absent，
+    # 不記 connector 名或網路名。
+    vpc_binding: dict[str, Any] | None = None
+    if scope in VPC_BINDING_SCOPES:
+        vpc_binding = {
+            "mode": resolved_vpc_binding_mode(values),
+            "modes": {
+                mode: {name: resolved[name] for name in mode_names}
+                for mode, mode_names in VPC_BINDING_MODES.items()
+            },
+        }
 
     if admitted:
         summary = (
             f"{scope} 階段已綁定 GitHub environment `{github_environment}`，"
-            f"{len(names)} 個必要環境變數全部解析成功。"
+            f"{len(required)} 個必要環境變數全部解析成功"
         )
+        if vpc_binding is not None:
+            summary += f"，Cloud Run VPC 網路綁定模式為 {vpc_binding['mode']}"
+        summary += "。"
     else:
         summary = (
             f"{scope} 階段被拒絕：GitHub environment `{github_environment}` "
-            f"缺少 {len(missing)} 個必要變數；此階段不得繼續執行。"
+            f"缺少 {len(missing)} 個必要變數"
         )
+        if vpc_binding is not None and vpc_binding["mode"] is None:
+            summary += "，且沒有剛好一種 Cloud Run VPC 網路綁定"
+        summary += "；此階段不得繼續執行。"
 
     # The egress mode is a non-secret runtime fact. Recording its resolved
     # value lets the build handoff bind sources-off evidence to what GitHub
@@ -244,6 +375,7 @@ def build_receipt(
         "summary_zh_tw": summary,
         "secret_values_redacted": True,
         "resolved_non_secret_values": resolved_non_secret_values,
+        "vpc_binding": vpc_binding,
     }
 
 
@@ -273,7 +405,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # 變數值從 environment 讀，不從 argv 讀：argv 會出現在 process listing 與
     # 錯誤訊息裡，而這裡拿到的是可辨識雲端身分的字串。
-    values = {name: os.environ.get(name) for name in required_variables(args.scope)}
+    values = {name: os.environ.get(name) for name in declared_variables(args.scope)}
 
     errors = binding_errors(
         scope=args.scope,

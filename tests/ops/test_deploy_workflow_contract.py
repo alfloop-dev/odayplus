@@ -29,6 +29,9 @@ if str(ROOT) not in sys.path:
 
 from delivery_toolchain.release.check_release_environment import (  # noqa: E402
     REQUIRED_VARIABLES,
+    VPC_BINDING_MODES,
+    VPC_BINDING_VARIABLES,
+    declared_variables,
 )
 
 # Which GitHub environment each job binds to, and why it is that one.
@@ -1252,26 +1255,111 @@ def test_deploy_script_applies_optional_vpc_network_args_to_every_cloud_run_targ
 
 
 def test_deploy_script_rejects_partial_or_invalid_vpc_config_before_cloud_run() -> None:
-    """Connector mistakes must fail before any Cloud Run mutation is possible."""
+    """Binding mistakes must fail before any Cloud Run mutation is possible.
+
+    Two mutually exclusive modes share the entrypoint: a Serverless VPC Access
+    connector, or Direct VPC egress through `ODP_PROD_VPC_NETWORK` +
+    `ODP_PROD_VPC_SUBNETWORK` (the shape `infra/terraform/cloud_run.tf`
+    declares for production, which creates no connector). A half of either, both
+    at once, an egress mode with no binding, or a binding with no egress mode all
+    have to be refused up front, where the message names the variable.
+    """
     script = _deploy_script_text()
     first_cloud_run_call = script.index("gcloud run ")
     guard_end = script.index("CLOUD_RUN_NETWORK_ARGS=()")
+    assembly_end = script.index("esac", guard_end)
 
-    assert "ODP_CLOUD_RUN_VPC_EGRESS is required with ODP_CLOUD_RUN_VPC_CONNECTOR" in script
-    assert "ODP_CLOUD_RUN_VPC_CONNECTOR is required with ODP_CLOUD_RUN_VPC_EGRESS" in script
+    assert "ODP_PROD_VPC_SUBNETWORK is required with ODP_PROD_VPC_NETWORK" in script
+    assert "ODP_PROD_VPC_NETWORK is required with ODP_PROD_VPC_SUBNETWORK" in script
+    assert (
+        "ODP_CLOUD_RUN_VPC_CONNECTOR and ODP_PROD_VPC_NETWORK/ODP_PROD_VPC_SUBNETWORK "
+        "are mutually exclusive" in script
+    )
+    assert "ODP_CLOUD_RUN_VPC_EGRESS is required with the ${CLOUD_RUN_VPC_MODE} VPC binding" in script
+    assert (
+        "ODP_CLOUD_RUN_VPC_CONNECTOR or ODP_PROD_VPC_NETWORK+ODP_PROD_VPC_SUBNETWORK "
+        "is required with ODP_CLOUD_RUN_VPC_EGRESS" in script
+    )
     assert "all|all-traffic|private-ranges-only" in script
-    assert "sources-off deploy requires ODP_CLOUD_RUN_VPC_CONNECTOR" in script
+    assert (
+        "sources-off deploy requires a VPC binding: ODP_CLOUD_RUN_VPC_CONNECTOR or "
+        "ODP_PROD_VPC_NETWORK+ODP_PROD_VPC_SUBNETWORK" in script
+    )
     assert "sources-off deploy requires ALL_TRAFFIC VPC egress" in script
-    assert guard_end < first_cloud_run_call
+    # The hard `:?` demand for a connector is gone; a Direct VPC deploy has none.
+    assert "sources-off deploy requires ODP_CLOUD_RUN_VPC_CONNECTOR" not in script
+    assert guard_end < assembly_end < first_cloud_run_call
+
+
+def test_deploy_script_assembles_direct_vpc_egress_args_without_a_connector() -> None:
+    """Production reaches the VPC by `--network/--subnet`, never by a connector name.
+
+    Filling the network name into `ODP_CLOUD_RUN_VPC_CONNECTOR` would make gcloud
+    send `--vpc-connector=<network>` and be rejected by the Cloud Run API, so the
+    two modes must assemble disjoint flag sets from disjoint variables.
+    """
+    script = _deploy_script_text()
+    case_start = script.index('case "${CLOUD_RUN_VPC_MODE}" in')
+    case_end = script.index("esac", case_start)
+    assembly = script[case_start:case_end]
+    connector_branch = assembly[assembly.index("connector)") : assembly.index("direct-vpc)")]
+    direct_branch = assembly[assembly.index("direct-vpc)") :]
+
+    assert '"--vpc-connector=${ODP_CLOUD_RUN_VPC_CONNECTOR}"' in connector_branch
+    assert '"--vpc-egress=${ODP_CLOUD_RUN_VPC_EGRESS}"' in connector_branch
+    assert "--network=" not in connector_branch
+    assert "--subnet=" not in connector_branch
+
+    assert '"--network=${ODP_PROD_VPC_NETWORK}"' in direct_branch
+    assert '"--subnet=${ODP_PROD_VPC_SUBNETWORK}"' in direct_branch
+    assert '"--vpc-egress=${ODP_CLOUD_RUN_VPC_EGRESS}"' in direct_branch
+    assert "--vpc-connector" not in direct_branch
+
+    # The mode is decided from the same variable names the binding gate checks,
+    # so gate, script and GitHub environment agree on one vocabulary.
+    for name in VPC_BINDING_VARIABLES:
+        assert f"${{{name}:-}}" in script, name
+    assert set(VPC_BINDING_MODES["direct_vpc"]) == {"ODP_PROD_VPC_NETWORK", "ODP_PROD_VPC_SUBNETWORK"}
+    # No network name is hard-coded; it always comes from the bound environment.
+    assert "oday-prod-runtime" not in script
 
 
 def test_deploy_job_passes_optional_vpc_config_through_environment() -> None:
-    """The single Runtime Release entrypoint receives environment-scoped vars."""
+    """The single Runtime Release entrypoint receives environment-scoped vars.
+
+    Both binding modes are wired from `vars.*` so the bound environment, not the
+    workflow, decides which one resolves. The build phase never opens a network
+    and wires no binding at all; it keeps only the egress mode, which the
+    sources-off handoff records.
+    """
     parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
     deploy_env = parsed["jobs"]["deploy"]["env"]
+    build_env = parsed["jobs"]["build"]["env"]
 
-    assert deploy_env["ODP_CLOUD_RUN_VPC_CONNECTOR"] == "${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}"
-    assert deploy_env["ODP_CLOUD_RUN_VPC_EGRESS"] == "${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}"
+    for name in (*VPC_BINDING_VARIABLES, "ODP_CLOUD_RUN_VPC_EGRESS"):
+        assert deploy_env[name] == "${{ vars." + name + " }}", name
+    for name in VPC_BINDING_VARIABLES:
+        assert name not in build_env, f"the build phase has no use for {name}"
+    assert build_env["ODP_CLOUD_RUN_VPC_EGRESS"] == "${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}"
+
+
+def test_deploy_job_passes_the_production_live_e2e_origins_from_the_bound_environment() -> None:
+    """`ODP_PROD_DEPLOY_URL` reaches the deploy script only via the `production` binding.
+
+    The script selects the production live E2E origins on `ODP_DEPLOY_ENV`, and
+    that value is the workflow input itself, so there is no expression here that
+    could resolve `production` to another environment's URL.
+    """
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_job = parsed["jobs"]["deploy"]
+    deploy_env = deploy_job["env"]
+
+    assert deploy_job["environment"]["name"] == "${{ inputs.environment }}"
+    assert deploy_env["ODP_DEPLOY_ENV"] == "${{ inputs.environment }}"
+    assert deploy_env["ODP_PROD_DEPLOY_URL"] == "${{ vars.ODP_PROD_DEPLOY_URL }}"
+    assert deploy_env["ODP_PROD_API_URL"] == "${{ vars.ODP_PROD_API_URL }}"
+    for name in ("ODP_DEV_DEPLOY_URL", "ODP_STAGING_DEPLOY_URL", "ODP_STAGING_API_URL"):
+        assert name not in deploy_env, f"{name} must not be a fallback origin for the deploy script"
 
 
 def test_sources_off_probe_persists_and_validates_the_runtime_receipt() -> None:
@@ -1594,8 +1682,13 @@ def test_the_binding_gate_exposes_exactly_the_variables_its_scope_requires(
 
     job = _release_jobs()[job_id]
     step = _job_steps(job)[_binding_gate_index(job)]
-    assert set(step["env"]) == set(REQUIRED_VARIABLES[scope])
+    # `declared_variables` is the unconditional set plus the either/or VPC
+    # binding names a deploying scope reads; a mode whose variable the step
+    # forgot to expose could never resolve, however the environment is set.
+    assert set(step["env"]) == set(declared_variables(scope))
     for name in REQUIRED_VARIABLES[scope]:
+        assert name in step["env"]
+    for name in declared_variables(scope):
         assert step["env"][name] == "${{ vars." + name + " }}"
 
 
