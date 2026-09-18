@@ -527,16 +527,17 @@ def _continuation_nonnegative_int(value: Any) -> int:
 
 
 def blocked_task_prose_context(task: dict[str, Any]) -> str:
-    """Return blocker prose without task/dependency identifiers.
+    """Return blocker prose without task/dependency identifiers, code identifiers, and paths.
 
     Titles and summaries describe the work, not why a blocked task is waiting.
     Continuation eligibility must therefore inspect only the same blocker-facing
     fields used by Supervisor, while removing identifiers whose tokens can look
-    like hard-gate markers (for example ``...-DATASET-...``).
+    like hard-gate markers (for example ``...-DATASET-...``), code identifiers,
+    file paths, backtick snippets, key=value pairs, and CI job references.
     """
     identifiers = [str(task.get("id") or "")]
     identifiers.extend(str(dep) for dep in (task.get("depends_on") or []))
-    context = " ".join(
+    raw_context = " ".join(
         str(task.get(key) or "")
         for key in (
             "next",
@@ -547,7 +548,33 @@ def blocked_task_prose_context(task: dict[str, Any]) -> str:
             "last_failure_reason",
             "push_status",
         )
-    ).casefold()
+    )
+
+    # 1. Strip code blocks and inline backticks
+    context = re.sub(r"```[\s\S]*?```", " ", raw_context)
+    context = re.sub(r"`[^`]*`", " ", context)
+
+    # 2. Strip <key>=<value> pairs
+    context = re.sub(r"[A-Za-z0-9_.\-/]+\s*=\s*[A-Za-z0-9_.\-/]+", " ", context)
+
+    # 3. Strip paths with slashes or files with specified extensions (.py .sh .tf .yml .yaml .json)
+    context = re.sub(r"[A-Za-z0-9_.\-]*/[A-Za-z0-9_.\-/]+", " ", context)
+    context = re.sub(
+        r"\b[A-Za-z0-9_.\-]+\.(?:py|sh|tf|yml|yaml|json)\b",
+        " ",
+        context,
+        flags=re.IGNORECASE,
+    )
+
+    # 4. Strip snake_case identifiers containing underscore
+    context = re.sub(r"\b[A-Za-z0-9_]*_[A-Za-z0-9_]*\b", " ", context)
+
+    # 5. Strip job references (e.g. 'deploy 相關 job', 'build job', 'deploy job')
+    context = re.sub(
+        r"\b[A-Za-z0-9_.\-]+\s*(?:相關\s*)?job\b", " ", context, flags=re.IGNORECASE
+    )
+
+    context = context.casefold()
     for identifier in identifiers:
         token = identifier.strip().casefold()
         if token:
