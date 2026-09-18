@@ -610,7 +610,12 @@ def task_id_matches_branch(task_id: str, branch: str) -> bool:
         return False
     task_ref = task_id.strip("/").lower().replace("_", "-")
     branch_ref = branch.strip("/").lower().replace("_", "-")
-    return branch_ref == task_ref or branch_ref.endswith(f"/{task_ref}")
+    return (
+        branch_ref == task_ref
+        or branch_ref.endswith(f"/{task_ref}")
+        or branch_ref.startswith(f"{task_ref}-")
+        or branch_ref.startswith(f"task/{task_ref}-")
+    )
 
 
 def review_branch_for_task(config: dict[str, Any], status: dict[str, Any], task: dict[str, Any]) -> str | None:
