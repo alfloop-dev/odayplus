@@ -1655,13 +1655,13 @@ class TaskPRDiscoveryTests(unittest.TestCase):
         self.assertIsNone(found_branch)
         self.assertIn("task/ODP-FOO-001", queried_branches)
 
-    def test_review_branch_for_task_returns_none_when_canonical_absent_and_only_substring_or_unrelated_branch_exists(self) -> None:
+    def test_review_branch_for_task_returns_none_when_canonical_absent_and_only_sidecar_or_unrelated_branch_exists(self) -> None:
         config = {"branch_workflow": {"task_branch_prefix": "task/"}}
         status = {
             "agents": [
                 {
                     "name": "Codex",
-                    "branch": "task/ODP-FOO-0010",
+                    "branch": "task/ODP-FOO-001-SIDECAR-ACCEPTANCE",
                 }
             ]
         }
@@ -1673,12 +1673,12 @@ class TaskPRDiscoveryTests(unittest.TestCase):
 
         def mock_exists(branch_name: str) -> bool:
             return branch_name in {
-                "task/ODP-FOO-0010",
+                "task/ODP-FOO-001-SIDECAR-ACCEPTANCE",
                 "feat/unrelated-branch",
             }
 
         with mock.patch.object(github_bus, "branch_exists", side_effect=mock_exists):
-            with mock.patch.object(github_bus, "current_branch", return_value="task/ODP-FOO-0010"):
+            with mock.patch.object(github_bus, "current_branch", return_value="task/ODP-FOO-001-SIDECAR-ACCEPTANCE"):
                 found_branch = github_bus.review_branch_for_task(config, status, task)
 
         self.assertIsNone(found_branch)
