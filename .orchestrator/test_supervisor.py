@@ -11391,6 +11391,34 @@ class AutomaticRecoveryTests(unittest.TestCase):
             supervisor.blocked_task_auto_recovery_eligible(self.config, task, {task["id"]: task})
         )
 
+    def test_human_ops_waiting_for_task_with_worktree_prose_is_not_auto_recovery_eligible(self) -> None:
+        """Tasks waiting for Human/Ops remain fail-closed and do not auto-recover on routing tokens like 'worktree'."""
+        for waiting_for in ("Human/Ops", "human/ops", "human", "ops", "Human", "Ops", "human/security"):
+            with self.subTest(waiting_for=waiting_for):
+                task = {
+                    "id": "ODP-TEST-HUMAN-OPS-001",
+                    "status": "blocked",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude",
+                    "waiting_for": waiting_for,
+                    "depends_on": [],
+                    "next": "Review churn recovery: clean worktree and await operator continuation approval.",
+                }
+                task_map = {task["id"]: task}
+
+                self.assertFalse(
+                    supervisor.blocked_task_auto_recovery_eligible(self.config, task, task_map)
+                )
+
+                with (
+                    mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+                    mock.patch.object(supervisor, "write_activity_log"),
+                ):
+                    changed = supervisor.normalize_mainline_task_assignment(self.config, task, task_map)
+
+                self.assertFalse(changed)
+                persist.assert_not_called()
+
     def test_unregistered_coordinator_reviewer_is_reassigned(self) -> None:
         task = {
             "id": "AUTO-REVIEW-001",

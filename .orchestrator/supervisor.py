@@ -4593,7 +4593,13 @@ def blocked_task_auto_recovery_eligible(
     """
     if str(task.get("status") or "").strip().lower() != "blocked":
         return False
-    if task_is_human_gate(task) or task_is_sidecar(task) or bool(task.get("non_dispatchable")):
+    if (
+        task_is_human_gate(task)
+        or is_human_gate_agent(task.get("waiting_for"))
+        or str(task.get("waiting_for") or "").strip().casefold() in {"human/ops", "human", "ops"}
+        or task_is_sidecar(task)
+        or bool(task.get("non_dispatchable"))
+    ):
         return False
     declared_dependencies = [str(dep).strip() for dep in (task.get("depends_on") or []) if str(dep).strip()]
     dependency_gate_released = False
