@@ -23,6 +23,7 @@ import runtime_state
 import supervisor
 import worker_failure_policy
 import worker_workspace
+import worktree_cleanliness
 from adapters.base import DeliveryRequest
 from worktree_cleanliness import inspect_worktree
 
@@ -3510,6 +3511,92 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
             ),
             "lifecycle_complete",
         )
+
+    def test_same_dirty_fingerprint_redispatch_and_handoff_bounds(self) -> None:
+        """Verify unsealed handoff recording, same dirty fingerprint redispatch, and rejection boundaries."""
+        state: dict[str, Any] = {"worker_worktrees": {"handoff_blocks": {}}}
+        worker = {
+            "run_id": "run-dirty-001",
+            "task_id": "TASK-DIRTY-001",
+            "workspace_path": "/tmp/test-worktree",
+            "workspace_branch": "task/TASK-DIRTY-001",
+        }
+        task = {"id": "TASK-DIRTY-001", "owner": "Antigravity7", "status": "in_progress"}
+        seal = worker_workspace.WorkerHandoffSeal(
+            accepted=False,
+            reason="owner_dirty",
+            detail="1 dirty change: modified_file.py",
+            head_sha="a" * 40,
+            dirt_fingerprint="fingerprint-xyz-123",
+        )
+        worker_workspace.record_unsealed_worker_handoff(self.config, state, worker, task, seal)
+        self.assertIn("TASK-DIRTY-001", state["worker_worktrees"]["handoff_blocks"])
+        block = state["worker_worktrees"]["handoff_blocks"]["TASK-DIRTY-001"]
+        self.assertEqual(block["dirt_fingerprint"], "fingerprint-xyz-123")
+        self.assertEqual(block["head_sha"], "a" * 40)
+        self.assertEqual(block["owner"], "Antigravity7")
+
+        req_same_owner = DeliveryRequest(
+            task_id="TASK-DIRTY-001",
+            agent_id="Antigravity7",
+            provider="antigravity",
+            delivery_mode="antigravity",
+            message="wake",
+            reason="owned_in_progress_dispatch",
+        )
+        fake_path = Path("/tmp/test-worktree")
+        mock_insp = mock.Mock(kind="owner_dirty", fingerprint="fingerprint-xyz-123")
+        with (
+            mock.patch.object(worktree_cleanliness, "inspect_worktree", return_value=mock_insp),
+            mock.patch.object(worker_workspace, "inspect_worktree", return_value=mock_insp),
+            mock.patch.object(worker_workspace, "_git_commit_oid", return_value="a" * 40),
+            mock.patch.object(supervisor, "_git_commit_oid", return_value="a" * 40),
+        ):
+            # 1. Same owner, matching dirty fingerprint & HEAD -> allowed
+            allowed, detail = worker_workspace.sealed_owner_continuation_allowed(
+                self.config,
+                state,
+                req_same_owner,
+                task,
+                target_agent="Antigravity7",
+                worktree_path=fake_path,
+                branch="task/TASK-DIRTY-001",
+            )
+            self.assertTrue(allowed, f"Expected allowed, got detail: {detail}")
+            self.assertEqual(detail, "1 dirty change: modified_file.py")
+
+            # 2. Different target agent (alias or another agent) -> rejected
+            allowed, detail = worker_workspace.sealed_owner_continuation_allowed(
+                self.config,
+                state,
+                req_same_owner,
+                task,
+                target_agent="Codex2",
+                worktree_path=fake_path,
+                branch="task/TASK-DIRTY-001",
+            )
+            self.assertFalse(allowed)
+            self.assertEqual(detail, "not_same_owner")
+
+        # 3. Changed dirt fingerprint -> rejected
+        mock_diff_insp = mock.Mock(kind="owner_dirty", fingerprint="different-fingerprint")
+        with (
+            mock.patch.object(worktree_cleanliness, "inspect_worktree", return_value=mock_diff_insp),
+            mock.patch.object(worker_workspace, "inspect_worktree", return_value=mock_diff_insp),
+            mock.patch.object(worker_workspace, "_git_commit_oid", return_value="a" * 40),
+            mock.patch.object(supervisor, "_git_commit_oid", return_value="a" * 40),
+        ):
+            allowed, detail = worker_workspace.sealed_owner_continuation_allowed(
+                self.config,
+                state,
+                req_same_owner,
+                task,
+                target_agent="Antigravity7",
+                worktree_path=fake_path,
+                branch="task/TASK-DIRTY-001",
+            )
+            self.assertFalse(allowed)
+            self.assertEqual(detail, "dirt_changed")
 
 
 if __name__ == "__main__":
