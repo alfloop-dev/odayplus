@@ -103,7 +103,7 @@
       "evidence_kind": "gcp_storage_bucket_describe_probe",
       "active_account": "oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com",
       "error_message": "ERROR: (gcloud.storage.buckets.describe) [oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com] does not have permission to access b instance [oday-staging-recovery-odayplus-runtime-20260825] (or it may not exist): Permission 'storage.buckets.get' denied on resource '//storage.googleapis.com/projects/_/buckets/oday-staging-recovery-odayplus-runtime-20260825'",
-      "finding": "Authenticated SA token is valid (exit 0), but lacks storage.buckets.get permission on staging recovery bucket. Live GCP storage metadata status remains UNPROBED/IAM_DENIED. No pass claimed, and no IAM mutation authorized."
+      "finding": "Authenticated SA token is valid (exit 0), but lacks storage.buckets.get permission on staging recovery bucket in odayplus-runtime-20260825. Proves local host active identity lacks cross-project read permissions. In accordance with acceptance criteria, Stage A remains INCOMPLETE and BLOCKED pending authorized readback credentials or owner metadata receipts. Baseline specification reference: docs/evidence/runtime/ODP-STAGING-FOUNDATION-REFS-MAPPING-001/binding-proposal.json:80."
     },
     {
       "receipt_id": "RCPT-GCP-RECOVERY-BUCKET-IAM-001",
@@ -114,7 +114,7 @@
       "evidence_kind": "gcp_storage_bucket_iam_probe",
       "active_account": "oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com",
       "error_message": "ERROR: (gcloud.storage.buckets.get-iam-policy) [oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com] does not have permission to access b instance [oday-staging-recovery-odayplus-runtime-20260825] (or it may not exist): Permission 'storage.buckets.getIamPolicy' denied on resource '//storage.googleapis.com/projects/_/buckets/oday-staging-recovery-odayplus-runtime-20260825'",
-      "finding": "Authenticated SA token is valid, but lacks storage.buckets.getIamPolicy permission on staging recovery bucket. Live GCP IAM policy metadata remains UNPROBED/IAM_DENIED; no pass claimed."
+      "finding": "Authenticated SA token is valid, but lacks storage.buckets.getIamPolicy permission on staging recovery bucket. Proves active identity cannot verify deployer SA roles/storage.objectUser binding on cloud. Stage A is BLOCKED pending authorized readback credentials. Baseline specification reference: docs/evidence/runtime/ODP-STAGING-FOUNDATION-REFS-MAPPING-001/binding-proposal.json:81."
     },
     {
       "receipt_id": "RCPT-GCP-KMS-DESCRIBE-001",
@@ -125,7 +125,15 @@
       "evidence_kind": "gcp_kms_key_describe_probe",
       "active_account": "oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com",
       "error_message": "ERROR: (gcloud.kms.keys.describe) PERMISSION_DENIED: Permission 'cloudkms.cryptoKeys.get' denied on resource 'projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime'",
-      "finding": "Authenticated SA token is valid, but lacks cloudkms.cryptoKeys.get permission on staging KMS Key. Live GCP KMS metadata remains UNPROBED/IAM_DENIED; no pass claimed."
+      "finding": "Authenticated SA token is valid, but lacks cloudkms.cryptoKeys.get permission on staging KMS Key. Proves active identity cannot verify CMEK key state/rotation period on cloud. Stage A is BLOCKED pending authorized readback credentials. Baseline specification reference: docs/evidence/runtime/ODP-STAGING-FOUNDATION-REFS-MAPPING-001/binding-proposal.json:80."
+    },
+    {
+      "receipt_id": "BLOCKER-EXTERNAL-GCP-IAM-READBACK-001",
+      "source_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+      "timestamp_utc": "2026-09-19T16:42:00Z",
+      "evidence_kind": "durable_task_blocker_record",
+      "waiting_for": "Human/Ops",
+      "blocker_reason": "Live GCP metadata verification for Stage A recovery storage readiness is blocked on external readback authority. The execution environment only possesses runtime credentials for alfaloop-data-project-2, which is denied IAM read permissions on odayplus-runtime-20260825 resources. Per task acceptance rules and reviewer findings, Stage A remains INCOMPLETE/BLOCKED until Human/Ops supplies authorized readback credentials or signed metadata receipts."
     },
     {
       "receipt_id": "RCPT-HISTORICAL-PR-1208",

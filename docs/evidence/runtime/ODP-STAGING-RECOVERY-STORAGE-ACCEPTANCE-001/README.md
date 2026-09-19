@@ -26,9 +26,10 @@
    - **Stage A (Storage Readiness - 本任務核實範圍)**：
      - 代碼與合約狀態：**VERIFIED / READY**（守門規則、Fail-closed 機制、收據去敏化契約已收斂）。
      - GitHub 環境座標狀態：**BOUND / VERIFIED**（2026-09-19 live readback 確認 State/Recovery Bucket、Deployer SA、KMS Key、VPC Network 皆已綁定）。
-     - Live GCP 雲端 Metadata 狀態：**METADATA UNPROBED / IAM_BLOCKED**。主機 OAuth token 獲取探針（`oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com`）成功（exit 0，無 token 留存）；但現場執行 `storage buckets describe`、`get-iam-policy` 與 `kms keys describe` 因該 SA 跨專案缺少 staging 專案 (`odayplus-runtime-20260825`) 之 IAM 讀取權限返回 exit 1 (`storage.buckets.get` / `storage.buckets.getIamPolicy` / `cloudkms.cryptoKeys.get` denied）。如實記錄為 IAM 權限阻擋，不假造通過，亦不推斷 bucket 缺失。
+     - Live GCP 雲端 Metadata 狀態：**METADATA UNPROBED / IAM_BLOCKED**。主機 OAuth token 獲取探針（`oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com`）成功（exit 0，無 token 留存）；但現場執行 `storage buckets describe`、`get-iam-policy` 與 `kms keys describe` 因該 SA 跨專案缺少 staging 專案 (`odayplus-runtime-20260825`) 之 IAM 讀取權限返回 exit 1 (`storage.buckets.get` / `storage.buckets.getIamPolicy` / `cloudkms.cryptoKeys.get` denied）。
+     - Stage A 總體判定：**STAGE_A_INCOMPLETE_BLOCKED_ON_EXTERNAL_GCP_IAM_READBACK_AUTHORITY**。依任務驗收標準與審查要求，在取得 Human/Ops 授權唯讀身分或 signed metadata 收據前，Stage A 保持 INCOMPLETE/BLOCKED，不假造通過，亦不推斷 bucket 缺失。
    - **Stage B (Release Rehearsal - 由 `ODP-EPHEMERAL-STAGING-ROLLOUT-001` 承接)**：
-     - 在建立 ephemeral staging 演練時實際生成 bundle、上傳至 GCS、捕捉真實 object generation 與 SHA-256 雜湊、執行 Cloud SQL backup/restore drill 與 Cloud Run traffic rollback drill，並驗證 rerun identity guard。
+     - 在建立 ephemeral staging 演練時實際生成 bundle、計算本地 content SHA-256、上傳至 GCS、捕捉真實 object generation、以指定 generation 驗證遠端內容 SHA-256 一致性、涵蓋 hold 狀態重寫後之 new generation 追蹤、執行 Cloud SQL backup/restore drill 與 Cloud Run traffic rollback drill，並驗證 rerun identity guard。
      - 不得把尚未執行的 release rehearsal 所產生的 bundle 當作入場前已存在的物件，亦不得偽造物件 hash。
      - 揭露 snapshot-pointer restore 尚未在 `staging_lifecycle.py` 實作之顯式缺口。
 3. **無雲端變更與唯讀邊界 (No Cloud Mutation & Read-Only Boundary)**：
@@ -42,9 +43,9 @@
 
 | 產物檔案 | 說明 |
 |---|---|
-| [recovery-storage-readiness.json](recovery-storage-readiness.json) | Staging Recovery Storage 契約規範、安全基準（CMEK、Versioning、Retention、PAP、UBLA、IAM）、GitHub Actions runner 產物上傳邊界、GCP/GitHub 座標盤點與當前 Readiness 判定。 |
-| [rollout-acceptance-mapping.json](rollout-acceptance-mapping.json) | 歷史 10 項驗收條件逐項映射矩陣，清晰區隔 Stage A（前置 Readiness）與 Stage B（Release Rehearsal 由 `ODP-EPHEMERAL-STAGING-ROLLOUT-001` 承接），提供可執行命令接點、權限要求、收據欄位、失敗條件與顯式缺口揭露。 |
-| [readback-receipts-index.json](readback-receipts-index.json) | 索引所有引用之唯讀 metadata 收據、PR 合併紀錄、2026-09-19 GitHub 變數讀取收據、GCP 探針認證與 IAM 阻擋收據與審計雜湊。 |
+| [recovery-storage-readiness.json](recovery-storage-readiness.json) | Staging Recovery Storage 契約規範、安全基準（CMEK、Versioning、Retention、PAP、UBLA、IAM）、GitHub Actions runner 產物上傳邊界、GCP/GitHub 座標盤點、Stage A 外部權限 Blocker 記錄與解鎖前置條件。 |
+| [rollout-acceptance-mapping.json](rollout-acceptance-mapping.json) | 歷史 10 項驗收條件逐項映射矩陣，清晰區隔 Stage A（前置 Readiness，狀態為 INCOMPLETE/BLOCKED）與 Stage B（Release Rehearsal 由 `ODP-EPHEMERAL-STAGING-ROLLOUT-001` 承接），提供 CRIT-08 完整之可執行 SHA-256/Generation/Hold 流程接點、權限要求、收據欄位、失敗條件與顯式缺口揭露。 |
+| [readback-receipts-index.json](readback-receipts-index.json) | 索引所有引用之唯讀 metadata 收據、PR 合併紀錄、2026-09-19 GitHub 變數讀取收據、GCP 探針認證與 IAM 阻擋收據、外部權限 Blocker 紀錄與審計雜湊。 |
 
 ---
 
@@ -93,16 +94,16 @@
 
 ## 5. Staging Recovery Storage 安全基準與現況核對 (Security Baseline Status)
 
-Recovery Storage 規範要求與現場唯讀探針結果如下：
+Recovery Storage 規範要求與現場唯讀探針結果如下（安全基準規範引用自 `origin/dev:docs/evidence/runtime/ODP-STAGING-FOUNDATION-REFS-MAPPING-001/binding-proposal.json:78-87` 及 `docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:99,104,248`）：
 
-| 安全基準項目 | 規範要求 | 驗收依據 / 既有證據來源 | 當前核實狀態 |
+| 安全基準項目 | 規範要求 | 驗收依據 / 規範來源 | 當前核實狀態 |
 |---|---|---|---|
-| **CMEK 加密** | 使用客戶自管金鑰加密，綁定 `oday-staging-runtime` Key (90d rotation, `prevent_destroy=true`) | `ODP_STAGING_KMS_KEY_ID` 已綁定 (`RCPT-GH-ENV-VARS-STAGING-002`) | **CONTRACT_FROZEN_LIVE_READBACK_IAM_BLOCKED**：現場 KMS describe 探針返回 exit 1 (`cloudkms.cryptoKeys.get` denied)，如實記錄阻擋，不偽造 pass |
-| **Object Versioning** | 強制啟用版本控制，防止誤刪或覆寫 | `docs/deployment/GCP_DEPLOY_GUIDE.md:67` | **CONTRACT_FROZEN_LIVE_READBACK_IAM_BLOCKED**：規範已凍結；GCP 現場探針 exit 1 (`storage.buckets.get` denied) |
-| **Retention Policy** | 30 天保留期限，涵蓋 24h debug TTL 與事後稽核 | `docs/evidence/runtime/ODP-STAGING-FOUNDATION-REFS-MAPPING-001/binding-proposal.json:85` | **CONTRACT_FROZEN_LIVE_READBACK_IAM_BLOCKED**：規範已凍結；GCP 現場探針 exit 1 (`storage.buckets.get` denied) |
-| **Public Access Prevention** | 強制 `enforced`，阻斷所有公網存取路徑 | `docs/evidence/runtime/ODP-STAGING-FOUNDATION-REFS-MAPPING-001/foundation-reference-map.json:260` | **CONTRACT_FROZEN_LIVE_READBACK_IAM_BLOCKED**：規範已凍結；GCP 現場探針 exit 1 (`storage.buckets.get` denied) |
-| **Uniform Bucket-Level Access** | 強制 `enabled`，統一由 IAM 控制 | `docs/evidence/runtime/ODP-STAGING-FOUNDATION-REFS-MAPPING-001/foundation-reference-map.json:261` | **CONTRACT_FROZEN_LIVE_READBACK_IAM_BLOCKED**：規範已凍結；GCP 現場探針 exit 1 (`storage.buckets.get` denied) |
-| **Least-Privilege IAM** | Deployer SA 僅授予 `roles/storage.objectUser`；禁止 `roles/storage.admin` | `ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT` 已綁定 (`RCPT-GH-ENV-VARS-STAGING-002`) | **CONTRACT_FROZEN_LIVE_READBACK_IAM_BLOCKED**：權限模型凍結；GCP 現場 get-iam-policy 探針返回 exit 1 (`storage.buckets.getIamPolicy` denied) |
+| **CMEK 加密** | 使用客戶自管金鑰加密，綁定 `oday-staging-runtime` Key (90d rotation, `prevent_destroy=true`) | `binding-proposal.json:80`, `EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:99`, `ODP_STAGING_KMS_KEY_ID` 已綁定 (`RCPT-GH-ENV-VARS-STAGING-002`) | **CONTRACT_FROZEN_STAGE_A_BLOCKED_ON_EXTERNAL_IAM_READBACK**：規範已凍結；現場 KMS describe 探針返回 exit 1 (`cloudkms.cryptoKeys.get` denied)，Stage A 保持 BLOCKED 等待外部授權 |
+| **Object Versioning** | 強制啟用版本控制，防止誤刪或覆寫 | `binding-proposal.json:80`, `EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:104` | **CONTRACT_FROZEN_STAGE_A_BLOCKED_ON_EXTERNAL_IAM_READBACK**：規範已凍結；GCP 現場探針 exit 1 (`storage.buckets.get` denied) |
+| **Retention Policy** | 30 天保留期限，涵蓋 24h debug TTL 與事後稽核 | `binding-proposal.json:80`, `EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:104` | **CONTRACT_FROZEN_STAGE_A_BLOCKED_ON_EXTERNAL_IAM_READBACK**：規範已凍結；GCP 現場探針 exit 1 (`storage.buckets.get` denied) |
+| **Public Access Prevention** | 強制 `enforced`，阻斷所有公網存取路徑 | `binding-proposal.json:80`, `EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:104` | **CONTRACT_FROZEN_STAGE_A_BLOCKED_ON_EXTERNAL_IAM_READBACK**：規範已凍結；GCP 現場探針 exit 1 (`storage.buckets.get` denied) |
+| **Uniform Bucket-Level Access** | 強制 `enabled`，統一由 IAM 控制 | `binding-proposal.json:80`, `EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:104` | **CONTRACT_FROZEN_STAGE_A_BLOCKED_ON_EXTERNAL_IAM_READBACK**：規範已凍結；GCP 現場探針 exit 1 (`storage.buckets.get` denied) |
+| **Least-Privilege IAM** | Deployer SA 僅授予 `roles/storage.objectUser`；禁止 `roles/storage.admin` | `binding-proposal.json:81`, `EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:248`, `ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT` 已綁定 (`RCPT-GH-ENV-VARS-STAGING-002`) | **CONTRACT_FROZEN_STAGE_A_BLOCKED_ON_EXTERNAL_IAM_READBACK**：權限模型凍結；GCP 現場 get-iam-policy 探針返回 exit 1 (`storage.buckets.getIamPolicy` denied) |
 
 ---
 
@@ -166,12 +167,19 @@ Recovery Storage 規範要求與現場唯讀探針結果如下：
   - Exit Code: `1`
   - Result: `PERMISSION_DENIED: Permission 'cloudkms.cryptoKeys.get' denied on resource ...`
 
-### 7.2 Readiness 總體結論
+### 7.2 Readiness 總體結論與 Blocker 說明
 - **代碼與合約狀態 (Code & Contracts)**：**READY / MERGED**
 - **管線守門狀態 (Pipeline Guards)**：**ACTIVE / VERIFIED**
 - **環境變數綁定 (GitHub Environment Variables)**：**BOUND / VERIFIED**
 - **GCP 現場 Metadata 狀態 (GCP Storage Probe)**：**METADATA UNPROBED / IAM_BLOCKED**
-- **整體判定**：**CONTRACT & COORDINATES VERIFIED; GCP READBACK BLOCKED ON IAM PERMISSION**
+- **Stage A 狀態**：**STAGE_A_INCOMPLETE_BLOCKED_ON_EXTERNAL_GCP_IAM_READBACK_AUTHORITY**
+- **外部權限 Blocker 詳情 (`BLOCKER-EXTERNAL-GCP-IAM-READBACK-001`)**：
+  - **Waiting For**: `Human/Ops`
+  - **Reason**: 本機執行環境僅具備 `alfaloop-data-project-2` 專案之 `oday-dev-runtime` 服務帳號認證，對跨專案 `odayplus-runtime-20260825` 資源遭遇 GCP IAM 權限拒絕。依任務驗收規則與審查判定，Stage A 前置條件保持 INCOMPLETE/BLOCKED，不假造通過，亦不執行未授權之雲端修改。
+  - **Unblocking 前置要求**：
+    1. Human/Ops 或資源負責人提供已授權之唯讀身分（具備 staging 專案之 `storage.buckets.get`、`storage.buckets.getIamPolicy` 與 `cloudkms.cryptoKeys.get`）或簽署之 metadata 讀回收據。
+    2. 核對 CMEK 金鑰、Versioning、30d Retention、PAP (enforced)、UBLA (enabled) 與 Deployer SA `roles/storage.objectUser`。
+    3. 核實無誤後，Stage A 方可推進至 `VERIFIED_READY`。
 
 ---
 
@@ -181,7 +189,7 @@ Recovery Storage 規範要求與現場唯讀探針結果如下：
 
 ```mermaid
 flowchart TD
-    subgraph STAGE_A["Stage A: 前置 Storage Readiness (代碼/座標核實，GCP 雲端探針 IAM 阻擋)"]
+    subgraph STAGE_A["Stage A: 前置 Storage Readiness (代碼/座標核實，GCP 雲端探針 IAM 阻擋 - INCOMPLETE/BLOCKED)"]
         A1["CRIT-01: 儲存邊界嚴格分離 (check_release_environment & deploy-dev.yml) - VERIFIED_READY"]
         A2["CRIT-02: State-Only 儲存桶合約 (禁止混放一般產物或 recovery bundle) - VERIFIED_READY"]
         A3["CRIT-03: CMEK 金鑰基準 (oday-staging-runtime KMS bound, GCP probe IAM-blocked)"]
@@ -192,7 +200,7 @@ flowchart TD
 
     subgraph STAGE_B["Stage B: Release Rehearsal 執行期驗收 (由 ODP-EPHEMERAL-STAGING-ROLLOUT-001 承接)"]
         B1["CRIT-07: Ephemeral Staging 部署時自動生成 sidecars 並上傳至 recovery bundle URI，包含 hold 重寫"]
-        B2["CRIT-08: 驗證 GCS object generation、SHA-256 雜湊與不可變輸出結構"]
+        B2["CRIT-08: 驗證 GCS object generation、SHA-256 雜湊與不可變輸出結構，涵蓋 hold generation 追蹤"]
         B3["CRIT-09: 演練 Cloud SQL backup/restore、Cloud Run rollback 與 Rerun identity guard (snapshot-pointer 為顯式缺口)"]
         B4["CRIT-10: Watch window 後依 exact labels 自動清理 (24h debug TTL)"]
     end
@@ -200,7 +208,7 @@ flowchart TD
     STAGE_A -->|提供核實之儲存契約、環境座標與映射關係| STAGE_B
 ```
 
-- **Stage A 項目 (CRIT-01 至 CRIT-06)**：已完成代碼合約、守門邏輯、GitHub 環境座標核對，並誠實記錄 GCP 唯讀探針之 IAM 權限拒絕收據。
+- **Stage A 項目 (CRIT-01 至 CRIT-06)**：已完成代碼合約、守門邏輯、GitHub 環境座標核對，並誠實記錄 GCP 唯讀探針之 IAM 權限拒絕收據，狀態為 INCOMPLETE/BLOCKED。
 - **Stage B 項目 (CRIT-07 至 CRIT-10)**：正式映射至 parent task `ODP-EPHEMERAL-STAGING-ROLLOUT-001`（Owner: `Antigravity5`，Reviewer: `Codex`）。
 
 ### 8.1 Stage B 可執行流程與接點規範 (Executable Stage B Entrypoints)
@@ -222,9 +230,16 @@ flowchart TD
    - **必要權限**：Deployer SA (`github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com`) 於 Recovery Bucket 具備 `roles/storage.objectUser`。
    - **注意**：Rehearsal bundle 係於演練建立環境時產生，不要求於演練前已存在。
 2. **CRIT-08 (GCS Object Generation 與 SHA-256 雜湊驗證)**：
-   - **執行要求**：Stage B 於上傳 bundle 後，使用 `gcloud storage objects describe` 抓取各 sidecar 物件之真實 GCS `location`、整數 `generation` 與內容 `sha256` / `crc32c` 雜湊，記錄於 `staging-lifecycle-create.json` 或 `staging-rehearsal-receipt.json`。
-   - **收據欄位要求**：包含 `bundle_uri`、`object_generation` (正整數)、`content_sha256`、`uploaded_at` 與 `secret_values_redacted: true`。
-   - **Pass/Fail 判定**：若 GCS generation 為空/0 或 SHA-256 不符，Rehearsal 必須 Fail-Closed。禁止偽造假 hash 或假 generation。
+   - **GCS 物件 Metadata 限制**：GCS standard object metadata（依官方 [JSON API objects schema](https://docs.cloud.google.com/storage/docs/json_api/v1/objects)）不提供原生 content SHA-256 欄位；`crc32c` 不能替代 SHA-256，`customerEncryption.keySha256` 係加密金鑰雜湊而非物件內容雜湊。
+   - **Stage B 可執行驗收程序 (`ODP-EPHEMERAL-STAGING-ROLLOUT-001`)**：
+     1. **本地 Content SHA-256 計算**：在各 sidecar（`*.tfvars.json`、`*.inventory.json`、`*.lifecycle.json`、`staging-terraform-outputs.json`）上傳前，以 `sha256sum "${sidecar}" | awk '{print $1}'` 或 python `hashlib.sha256(path.read_bytes()).hexdigest()` 計算本地內容 SHA-256。
+     2. **上傳並捕捉 Generation**：透過 `gcloud storage cp` 上傳各 sidecar 至 `${STAGING_BUNDLE_URI}/`，隨即以 `gcloud storage objects describe "${STAGING_BUNDLE_URI}/$(basename "${sidecar}")" --format='value(generation)'` 抓取真實 GCS 正整數 `generation`，斷言非空且大於 0。
+     3. **指定 Generation 遠端一致性校驗**：使用指定 generation 讀回遠端物件（`gsutil cp "${STAGING_BUNDLE_URI}/$(basename "${sidecar}")#${generation}" /tmp/verify_sidecar` 或串流讀取），計算遠端內容 SHA-256，並嚴格斷言 `remote_sha256 == local_sha256`。
+     4. **保存每物件收據**：將 `{object_uri, generation, content_sha256, size_bytes, uploaded_at, secret_values_redacted: true}` 寫入 `staging-lifecycle-create.json` 與 `staging-rehearsal-receipt.json`。
+     5. **Hold 狀態重寫 generation 追蹤 (`deploy-dev.yml:1324-1334`)**：若演練失敗進入 hold，`staging_lifecycle.py hold` 更新 `*.lifecycle.json`；重新計算本地 SHA-256、重新上傳至 `${STAGING_BUNDLE_URI}/`、捕捉新 GCS generation（斷言 `new_generation > initial_generation`）、驗證新 generation 之遠端 SHA-256，並更新收據記錄 generation 演變。
+     6. **必要權限**：Deployer SA 於 Recovery Bucket 具備 `roles/storage.objectUser`。
+     7. **Fail-Closed 條件**：若任一 sidecar 缺失、generation 為空/0、SHA-256 雜湊不符或發生未預期之 generation 漂移，Rehearsal 必須 Fail-Closed。禁止偽造假 hash 或假 generation。
+     8. **邊界說明**：上述步驟屬未來 Stage B 演練授權範圍，本任務不要求演練前預先存在 bundle 物件，亦不讀取私密內容。
 3. **CRIT-09 (Rehearsal Drills、Restore 與 Rerun Guard)**：
    - **Rehearsal 驗證接點**：`.github/workflows/deploy-dev.yml:1272-1291` 呼叫 `python3 product_ops/deployment/staging_lifecycle.py verify`
      1. **Cloud SQL Backup / Restore Drill (`staging_lifecycle.py:2904-2942`)**：
