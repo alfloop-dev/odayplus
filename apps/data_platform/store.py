@@ -1091,8 +1091,7 @@ class PsycopgCanonicalStore:
                 tenant_id = EXCLUDED.tenant_id,
                 brand_code = EXCLUDED.brand_code,
                 brand_name = EXCLUDED.brand_name,
-                brand_type = 'owned',
-                brand_capture_group = 'fongniao_prod',
+                brand_capture_group = EXCLUDED.brand_capture_group,
                 status = EXCLUDED.status,
                 updated_at = CURRENT_TIMESTAMP
             """,

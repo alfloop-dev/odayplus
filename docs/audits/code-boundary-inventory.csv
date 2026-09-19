@@ -169,6 +169,7 @@ apps/data_platform/store.py,product_system,product_required,true,,engineering;op
 apps/data_platform/store_opening.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/data_platform/tests/__init__.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 apps/data_platform/tests/conftest.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+apps/data_platform/tests/test_brand_classification_sync.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 apps/data_platform/tests/test_config.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 apps/data_platform/tests/test_definitions_and_backfill.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 apps/data_platform/tests/test_delete_propagation.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
