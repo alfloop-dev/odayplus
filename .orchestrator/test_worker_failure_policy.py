@@ -3185,8 +3185,11 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmpdir = tempfile.TemporaryDirectory()
+        self.status_file = Path(self.tmpdir.name) / "ai-status.json"
+        self.status_file.write_text(json.dumps({"tasks": []}), encoding="utf-8")
         self.config: dict[str, Any] = {
             "paths": {
+                "status_file": str(self.status_file),
                 "activity_log": str(Path(self.tmpdir.name) / "activity.jsonl"),
             },
             "worker_retry": {
@@ -3201,14 +3204,16 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
             "providers": {
                 "antigravity": {"dispatch_group": "antigravity"},
                 "codex": {"dispatch_group": "codex"},
+                "claude": {"dispatch_group": "claude"},
             },
             "agents": {
-                "Antigravity": {"provider": "antigravity", "account_pool": "antigravity"},
-                "Antigravity2": {"provider": "antigravity", "account_pool": "antigravity"},
-                "Antigravity7": {"provider": "antigravity", "account_pool": "antigravity"},
-                "Codex": {"provider": "codex", "account_pool": "codex"},
-                "Codex2": {"provider": "codex", "account_pool": "codex"},
-                "Claude": {"provider": "claude", "account_pool": "claude"},
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity", "account_pool": "antigravity"},
+                "antigravity2": {"display_name": "Antigravity2", "provider": "antigravity", "account_pool": "antigravity"},
+                "antigravity3": {"display_name": "Antigravity3", "provider": "antigravity", "account_pool": "antigravity"},
+                "antigravity7": {"display_name": "Antigravity7", "provider": "antigravity", "account_pool": "antigravity"},
+                "codex": {"display_name": "Codex", "provider": "codex", "account_pool": "codex"},
+                "codex2": {"display_name": "Codex2", "provider": "codex", "account_pool": "codex"},
+                "claude": {"display_name": "Claude", "provider": "claude", "account_pool": "claude"},
             },
             "account_pools": {
                 "antigravity": {
@@ -3227,10 +3232,6 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
                 "after_attempts": 2,
                 "reassign_on_terminal_failure": True,
                 "eligible_statuses": ["todo", "in_progress", "review", "review_approved"],
-                "fallbacks": {
-                    "Antigravity": ["Codex", "Claude"],
-                    "Antigravity7": ["Codex", "Claude"],
-                },
             },
         }
 
@@ -3512,6 +3513,159 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
             "lifecycle_complete",
         )
 
+    def test_real_subcommand_lifecycle_and_duration_receipts(self) -> None:
+        """Run real subprocess commands via worker_runner to verify exit code, duration, and terminal receipts."""
+        import tempfile
+        import worker_runner
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            heartbeat_path = temp_path / "heartbeat.json"
+            status_path = temp_path / "status.json"
+
+            # 1. Real short command success
+            cmd_short = [sys.executable, "-c", "import sys, time; time.sleep(0.05); sys.exit(0)"]
+            ret = worker_runner.main([
+                "--run-id", "test-run-short",
+                "--heartbeat-path", str(heartbeat_path),
+                "--status-path", str(status_path),
+                "--heartbeat-interval-seconds", "1.0",
+                "--", *cmd_short,
+            ])
+            self.assertEqual(ret, 0)
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            self.assertEqual(status.get("status"), "completed")
+            self.assertEqual(status.get("exit_code"), 0)
+            self.assertIsNotNone(status.get("duration_seconds"))
+            self.assertGreaterEqual(status.get("duration_seconds", 0), 0.04)
+
+            # 2. Real >5s command success
+            cmd_long = [sys.executable, "-c", "import sys, time; time.sleep(5.1); sys.exit(0)"]
+            ret = worker_runner.main([
+                "--run-id", "test-run-long",
+                "--heartbeat-path", str(heartbeat_path),
+                "--status-path", str(status_path),
+                "--heartbeat-interval-seconds", "1.0",
+                "--", *cmd_long,
+            ])
+            self.assertEqual(ret, 0)
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            self.assertEqual(status.get("status"), "completed")
+            self.assertEqual(status.get("exit_code"), 0)
+            self.assertGreaterEqual(status.get("duration_seconds", 0), 5.0)
+
+            # 3. Real nonzero exit command
+            cmd_fail = [sys.executable, "-c", "import sys, time; time.sleep(0.05); sys.exit(42)"]
+            ret = worker_runner.main([
+                "--run-id", "test-run-fail",
+                "--heartbeat-path", str(heartbeat_path),
+                "--status-path", str(status_path),
+                "--heartbeat-interval-seconds", "1.0",
+                "--", *cmd_fail,
+            ])
+            self.assertEqual(ret, 42)
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            self.assertEqual(status.get("status"), "failed")
+            self.assertEqual(status.get("exit_code"), 42)
+
+    def test_log_quotation_provenance_filtering(self) -> None:
+        """Verify user/tool/fixture quotations of termination markers do not override real structured success."""
+        # 1. Log with user JSON record quoting background task termination
+        user_quoted_log = (
+            '{"type": "user", "message": {"role": "user", "content": "Fix: terminating 1 background task(s) on exit"}}\n'
+            '{"type": "assistant", "message": {"role": "assistant", "content": "I fixed the issue."}}\n'
+        )
+        tmpdir, worker = self._make_worker_log(user_quoted_log)
+        try:
+            worker["exit_code"] = 0
+            worker["runner_status"] = "completed"
+            # Provenance filtering ignores user quotation
+            self.assertFalse(worker_failure_policy.worker_has_terminated_background_tasks(worker))
+            self.assertTrue(worker_failure_policy.is_structured_successful_worker(worker))
+            self.assertIsNone(worker_failure_policy.detect_worker_failure(worker))
+        finally:
+            tmpdir.cleanup()
+
+        # 2. Log with tool command output quoting termination marker
+        tool_quoted_log = (
+            "exited 0 in 1.2s:\n"
+            "stdout: log shows terminating 2 background task(s) on exit in old test run\n"
+        )
+        tmpdir, worker = self._make_worker_log(tool_quoted_log)
+        try:
+            worker["exit_code"] = 0
+            worker["runner_status"] = "completed"
+            self.assertFalse(worker_failure_policy.worker_has_terminated_background_tasks(worker))
+            self.assertTrue(worker_failure_policy.is_structured_successful_worker(worker))
+            self.assertIsNone(worker_failure_policy.detect_worker_failure(worker))
+        finally:
+            tmpdir.cleanup()
+
+        # 3. Real authoritative CLI background task termination line
+        real_termination_log = (
+            "root agent idle; waiting up to 5s for 1 background task(s)\n"
+            "terminating 1 background task(s) on exit\n"
+        )
+        tmpdir, worker = self._make_worker_log(real_termination_log)
+        try:
+            worker["exit_code"] = 0
+            worker["runner_status"] = "completed"
+            self.assertTrue(worker_failure_policy.worker_has_terminated_background_tasks(worker))
+            self.assertFalse(worker_failure_policy.is_structured_successful_worker(worker))
+            reason = worker_failure_policy.detect_worker_failure(worker)
+            self.assertIsNotNone(reason)
+            failure = worker_failure_policy.classify_worker_failure(self.config, worker, reason)
+            self.assertEqual(failure.get("kind"), "interrupted")
+            self.assertTrue(failure.get("transient"))
+        finally:
+            tmpdir.cleanup()
+
+    def test_cross_alias_repeated_failure_exhaustion(self) -> None:
+        """Verify cross-alias failures accumulate durable task streaks and cleanly exhaust fallback candidates."""
+        state: dict[str, Any] = {"provider_guardrails": {"task_failure_streaks": {}, "dispatch_pauses": {}}}
+        task_id = "TASK-ALIAS-001"
+        task = {
+            "id": task_id,
+            "status": "in_progress",
+            "owner": "Antigravity",
+            "reviewer": "Codex2",
+        }
+        status_data = {"tasks": [task]}
+        self.status_file.write_text(json.dumps(status_data), encoding="utf-8")
+
+        # 1. Antigravity fails
+        w1 = {"task_id": task_id, "provider": "antigravity", "logical_agent_id": "antigravity", "run_id": "run-1"}
+        worker_failure_policy.record_task_failure_streak(state, w1, "terminating 1 background task(s) on exit", failure_kind="interrupted")
+        worker_failure_policy.record_task_failure_streak(state, w1, "terminating 1 background task(s) on exit", failure_kind="interrupted")
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"][f"{task_id}:antigravity"]["count"], 2)
+
+        with (
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+            mock.patch("status_transition.sync_status_pipeline", return_value=True),
+        ):
+            # Reassignment triggers from Antigravity -> Antigravity2
+            reassigned_owner = worker_failure_policy.maybe_reassign_task_after_worker_failure(
+                self.config, state, w1, "terminating 1 background task(s) on exit", terminal=True
+            )
+            self.assertEqual(reassigned_owner, "Antigravity2")
+            # Streak for antigravity is preserved (not cleared)
+            self.assertIn(f"{task_id}:antigravity", state["provider_guardrails"]["task_failure_streaks"])
+
+            # 2. Antigravity2 fails on same unprogressed task
+            task["owner"] = "Antigravity2"
+            self.status_file.write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+            w2 = {"task_id": task_id, "provider": "antigravity", "logical_agent_id": "antigravity2", "run_id": "run-2"}
+            worker_failure_policy.record_task_failure_streak(state, w2, "terminating 1 background task(s) on exit", failure_kind="interrupted")
+            worker_failure_policy.record_task_failure_streak(state, w2, "terminating 1 background task(s) on exit", failure_kind="interrupted")
+            self.assertEqual(state["provider_guardrails"]["task_failure_streaks"][f"{task_id}:antigravity2"]["count"], 2)
+
+            # Reassignment from Antigravity2: Antigravity is excluded because it already failed
+            reassigned_owner_2 = worker_failure_policy.maybe_reassign_task_after_worker_failure(
+                self.config, state, w2, "terminating 1 background task(s) on exit", terminal=True
+            )
+            self.assertNotIn(reassigned_owner_2, {"Antigravity", "Antigravity2"})
+            self.assertEqual(reassigned_owner_2, "Antigravity3")
+
     def test_same_dirty_fingerprint_redispatch_and_handoff_bounds(self) -> None:
         """Verify unsealed handoff recording, same dirty fingerprint redispatch, and rejection boundaries."""
         state: dict[str, Any] = {"worker_worktrees": {"handoff_blocks": {}}}
@@ -3597,6 +3751,67 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
             )
             self.assertFalse(allowed)
             self.assertEqual(detail, "dirt_changed")
+
+    def test_repeated_unsealed_handoff_rejection_exhaustion(self) -> None:
+        """Verify repeated unsealed handoffs increment rejection_count and halt when exceeding bounds."""
+        state: dict[str, Any] = {"worker_worktrees": {"handoff_blocks": {}}}
+        worker = {
+            "run_id": "run-dirty-001",
+            "task_id": "TASK-DIRTY-BOUND-001",
+            "workspace_path": "/tmp/test-worktree",
+            "workspace_branch": "task/TASK-DIRTY-BOUND-001",
+        }
+        task = {"id": "TASK-DIRTY-BOUND-001", "owner": "Antigravity7", "status": "in_progress"}
+        seal = worker_workspace.WorkerHandoffSeal(
+            accepted=False,
+            reason="owner_dirty",
+            detail="1 dirty change: modified_file.py",
+            head_sha="b" * 40,
+            dirt_fingerprint="fingerprint-abc-456",
+        )
+
+        # 1st rejection
+        worker_workspace.record_unsealed_worker_handoff(self.config, state, worker, task, seal)
+        self.assertEqual(state["worker_worktrees"]["handoff_blocks"]["TASK-DIRTY-BOUND-001"]["rejection_count"], 1)
+
+        req = DeliveryRequest(
+            task_id="TASK-DIRTY-BOUND-001",
+            agent_id="Antigravity7",
+            provider="antigravity",
+            delivery_mode="antigravity",
+            message="wake",
+            reason="owned_in_progress_dispatch",
+        )
+        fake_path = Path("/tmp/test-worktree")
+        mock_insp = mock.Mock(kind="owner_dirty", fingerprint="fingerprint-abc-456")
+        with (
+            mock.patch.object(worktree_cleanliness, "inspect_worktree", return_value=mock_insp),
+            mock.patch.object(worker_workspace, "inspect_worktree", return_value=mock_insp),
+            mock.patch.object(worker_workspace, "_git_commit_oid", return_value="b" * 40),
+            mock.patch.object(supervisor, "_git_commit_oid", return_value="b" * 40),
+        ):
+            # Continuation allowed on 1st rejection
+            allowed, _ = worker_workspace.sealed_owner_continuation_allowed(
+                self.config, state, req, task, target_agent="Antigravity7", worktree_path=fake_path, branch="task/TASK-DIRTY-BOUND-001"
+            )
+            self.assertTrue(allowed)
+
+            # 2nd rejection (same dirt fingerprint & head)
+            worker_workspace.record_unsealed_worker_handoff(self.config, state, worker, task, seal)
+            self.assertEqual(state["worker_worktrees"]["handoff_blocks"]["TASK-DIRTY-BOUND-001"]["rejection_count"], 2)
+            allowed, _ = worker_workspace.sealed_owner_continuation_allowed(
+                self.config, state, req, task, target_agent="Antigravity7", worktree_path=fake_path, branch="task/TASK-DIRTY-BOUND-001"
+            )
+            self.assertTrue(allowed)
+
+            # 3rd rejection -> exceeds max_unsealed_handoff_attempts (default 2)
+            worker_workspace.record_unsealed_worker_handoff(self.config, state, worker, task, seal)
+            self.assertEqual(state["worker_worktrees"]["handoff_blocks"]["TASK-DIRTY-BOUND-001"]["rejection_count"], 3)
+            allowed, detail = worker_workspace.sealed_owner_continuation_allowed(
+                self.config, state, req, task, target_agent="Antigravity7", worktree_path=fake_path, branch="task/TASK-DIRTY-BOUND-001"
+            )
+            self.assertFalse(allowed)
+            self.assertIn("unsealed_handoff_limit_exceeded", detail)
 
 
 if __name__ == "__main__":

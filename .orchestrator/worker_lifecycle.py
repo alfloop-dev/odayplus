@@ -1924,6 +1924,41 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                             changed = True
                             continue
                     record_unsealed_worker_handoff(config, state, worker, current_task, handoff_seal)
+                    block = ((state.get("worker_worktrees") or {}).get("handoff_blocks") or {}).get(worker.get("task_id"))
+                    rejection_count = int((block or {}).get("rejection_count", 1))
+                    max_rejections = int(
+                        (config.get("worker_reassignment") or {}).get("max_unsealed_handoff_attempts", 2)
+                    )
+                    failure_count = record_task_failure_streak(
+                        state,
+                        worker,
+                        f"Handoff seal rejected: {handoff_seal.reason}: {handoff_seal.detail}",
+                        failure_kind="handoff_seal_rejected",
+                    )
+                    if rejection_count > max_rejections:
+                        worker["status"] = "failed"
+                        worker["last_event_at"] = utc_now()
+                        worker["progress_outcome"] = "handoff_seal_rejected"
+                        worker["last_error"] = (
+                            f"Handoff seal rejected repeated {rejection_count} times exceeding limit "
+                            f"({max_rejections}): {handoff_seal.reason}: {handoff_seal.detail}"
+                        )
+                        finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "worker_handoff_rejected",
+                                "provider": worker.get("provider"),
+                                "task_id": worker.get("task_id"),
+                                "message": worker["last_error"],
+                                "worker_run_id": worker.get("run_id"),
+                                "handoff_reason": handoff_seal.reason,
+                                "handoff_detail": handoff_seal.detail,
+                                "rejection_count": rejection_count,
+                            },
+                        )
+                        changed = True
+                        continue
                     worker["status"] = "completed"
                     worker["last_event_at"] = utc_now()
                     worker["progress_outcome"] = "handoff_seal_rejected"
@@ -1939,6 +1974,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                             "worker_run_id": worker.get("run_id"),
                             "handoff_reason": handoff_seal.reason,
                             "handoff_detail": handoff_seal.detail,
+                            "rejection_count": rejection_count,
                         },
                     )
                     changed = True

@@ -111,8 +111,75 @@ BACKGROUND_TASK_TERMINATED_PATTERN = re.compile(
 
 
 @_entrypoint
+def is_captured_orchestrator_record(payload: dict[str, Any]) -> bool:
+    if payload.get("event_id") or payload.get("event_key"):
+        return True
+    if payload.get("queue_event_id") or payload.get("worker_run_id"):
+        return True
+    if payload.get("target_agent") or payload.get("target_display_name"):
+        return True
+    if isinstance(payload.get("metadata"), dict) and isinstance(payload.get("context_files"), list):
+        return True
+    return False
+
+
+@_entrypoint
+def is_allowed_rate_limit_event(payload: dict[str, Any]) -> bool:
+    if payload.get("type") != "rate_limit_event":
+        return False
+    info = payload.get("rate_limit_info")
+    if not isinstance(info, dict):
+        return False
+    return str(info.get("status") or "").strip().lower() == "allowed"
+
+
+@_entrypoint
+def is_tool_command_output_failure_line(lines: list[str], idx: int) -> bool:
+    for prev_idx in range(idx - 1, max(idx - 5, -1), -1):
+        previous = lines[prev_idx].strip()
+        if not previous:
+            continue
+        return bool(COMMAND_OUTPUT_EXIT_LINE_PATTERN.search(previous))
+    return False
+
+
+def _is_authoritative_log_line(lines: list[str], idx: int) -> tuple[bool, str]:
+    """Return (True, stripped_line) only for authoritative CLI/system lines, ignoring quotations and fixtures."""
+    line = lines[idx]
+    stripped = line.strip()
+    if not stripped:
+        return False, ""
+    if '"ts":' in stripped and '"type":' in stripped:
+        return False, ""
+    try:
+        stream_payload = json.loads(stripped)
+    except json.JSONDecodeError:
+        stream_payload = None
+    if isinstance(stream_payload, dict):
+        if is_captured_orchestrator_record(stream_payload):
+            return False, ""
+        if is_allowed_rate_limit_event(stream_payload):
+            return False, ""
+        message = stream_payload.get("message")
+        role = message.get("role") if isinstance(message, dict) else None
+        if stream_payload.get("type") == "user" or role == "user":
+            return False, ""
+    if SEARCH_RESULT_JSON_FIELD_PATTERN.search(stripped):
+        return False, ""
+    if JSON_FIELD_LINE_PATTERN.search(stripped):
+        return False, ""
+    if SEARCH_RESULT_LOG_JSON_PATTERN.search(stripped):
+        return False, ""
+    if is_tool_command_output_failure_line(lines, idx):
+        return False, ""
+    if any(pattern.search(stripped) for pattern in WORKER_FAILURE_FALSE_POSITIVE_PATTERNS):
+        return False, ""
+    return True, stripped
+
+
+@_entrypoint
 def worker_has_terminated_background_tasks(worker: dict[str, Any] | None) -> bool:
-    """Return whether the worker CLI log recorded background task termination on exit."""
+    """Return whether the authoritative worker CLI log recorded background task termination on exit."""
     if not isinstance(worker, dict):
         return False
     log_path_value = worker.get("log_path")
@@ -122,10 +189,16 @@ def worker_has_terminated_background_tasks(worker: dict[str, Any] | None) -> boo
     if not log_path.exists():
         return False
     try:
-        content = log_path.read_text(encoding="utf-8", errors="ignore")
+        lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
     except OSError:
         return False
-    return bool(BACKGROUND_TASK_TERMINATED_PATTERN.search(content))
+    for idx in range(len(lines) - 1, -1, -1):
+        is_auth, stripped = _is_authoritative_log_line(lines, idx)
+        if not is_auth:
+            continue
+        if BACKGROUND_TASK_TERMINATED_PATTERN.search(stripped):
+            return True
+    return False
 
 
 @_entrypoint
@@ -272,34 +345,8 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
 
     fallback: str | None = None
     for idx in range(len(lines) - 1, -1, -1):
-        line = lines[idx]
-        stripped = line.strip()
-        if not stripped:
-            continue
-        if '"ts":' in stripped and '"type":' in stripped:
-            continue
-        try:
-            stream_payload = json.loads(stripped)
-        except json.JSONDecodeError:
-            stream_payload = None
-        if isinstance(stream_payload, dict):
-            if is_captured_orchestrator_record(stream_payload):
-                continue
-            if is_allowed_rate_limit_event(stream_payload):
-                continue
-            message = stream_payload.get("message")
-            role = message.get("role") if isinstance(message, dict) else None
-            if stream_payload.get("type") == "user" or role == "user":
-                continue
-        if SEARCH_RESULT_JSON_FIELD_PATTERN.search(stripped):
-            continue
-        if JSON_FIELD_LINE_PATTERN.search(stripped):
-            continue
-        if SEARCH_RESULT_LOG_JSON_PATTERN.search(stripped):
-            continue
-        if is_tool_command_output_failure_line(lines, idx):
-            continue
-        if any(pattern.search(stripped) for pattern in WORKER_FAILURE_FALSE_POSITIVE_PATTERNS):
+        is_auth, stripped = _is_authoritative_log_line(lines, idx)
+        if not is_auth:
             continue
         if any(pattern.search(stripped) for pattern in WORKER_FAILURE_PATTERNS):
             normalized = stripped.lower()
@@ -313,36 +360,6 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
                 continue
             return stripped
     return fallback
-
-@_entrypoint
-def is_captured_orchestrator_record(payload: dict[str, Any]) -> bool:
-    if payload.get("event_id") or payload.get("event_key"):
-        return True
-    if payload.get("queue_event_id") or payload.get("worker_run_id"):
-        return True
-    if payload.get("target_agent") or payload.get("target_display_name"):
-        return True
-    if isinstance(payload.get("metadata"), dict) and isinstance(payload.get("context_files"), list):
-        return True
-    return False
-
-@_entrypoint
-def is_allowed_rate_limit_event(payload: dict[str, Any]) -> bool:
-    if payload.get("type") != "rate_limit_event":
-        return False
-    info = payload.get("rate_limit_info")
-    if not isinstance(info, dict):
-        return False
-    return str(info.get("status") or "").strip().lower() == "allowed"
-
-@_entrypoint
-def is_tool_command_output_failure_line(lines: list[str], idx: int) -> bool:
-    for prev_idx in range(idx - 1, max(idx - 5, -1), -1):
-        previous = lines[prev_idx].strip()
-        if not previous:
-            continue
-        return bool(COMMAND_OUTPUT_EXIT_LINE_PATTERN.search(previous))
-    return False
 
 @_entrypoint
 def is_antigravity_provider(config: dict[str, Any] | None, provider: str | None) -> bool:
@@ -1876,7 +1893,9 @@ def record_task_failure_streak(
     failure_kind: str | None = None,
 ) -> int:
     task_id = str(worker.get("task_id") or "").strip()
-    provider_id = normalize_agent_id(str(worker.get("provider") or worker.get("agent_id") or ""))
+    provider_id = normalize_agent_id(
+        str(worker.get("logical_agent_id") or worker.get("agent_id") or worker.get("provider") or "")
+    )
     if not task_id or not provider_id:
         return 0
     bucket = _task_failure_streak_bucket(state)
@@ -1927,7 +1946,7 @@ def clear_task_failure_streak(
 ) -> None:
     if worker is not None:
         task_id = str(worker.get("task_id") or task_id or "")
-        provider = str(worker.get("provider") or worker.get("agent_id") or provider or "")
+        provider = str(worker.get("logical_agent_id") or worker.get("agent_id") or worker.get("provider") or provider or "")
     task_id = str(task_id or "").strip()
     provider_id = normalize_agent_id(provider or "")
     if not task_id or not provider_id:
@@ -2741,9 +2760,10 @@ def first_viable_agent(
     seen: set[str] = set()
     viable: list[str] = []
     excluded_pool_ids = {normalize_agent_id(pool) for pool in (exclude_pools or set()) if normalize_agent_id(pool)}
+    excluded_agent_ids = set(exclude) | {normalize_agent_id(ex) for ex in exclude if normalize_agent_id(ex)}
     for candidate in preferred:
         name = str(candidate or "").strip()
-        if not name or name in seen or name in exclude:
+        if not name or name in seen or name in exclude or normalize_agent_id(name) in excluded_agent_ids:
             continue
         seen.add(name)
         if is_human_gate_agent(name):
@@ -3469,10 +3489,15 @@ def maybe_reassign_task_after_worker_failure(
         if is_human_gate_agent(reviewer):
             return None
         candidates = get_agent_reassignment_candidates(config, failing_agent, role="reviewer", task=task)
+        failed_reviewers = {
+            normalize_agent_id(str(entry.get("provider") or key.split(":", 1)[1]))
+            for key, entry in (_task_failure_streak_bucket(state) or {}).items()
+            if key.startswith(f"{task_id}:") and int(entry.get("count", 0)) > 0
+        }
         new_reviewer = first_viable_agent(
             config,
             candidates,
-            exclude={owner, reviewer} | ({submitted_author} if submitted_author else set()),
+            exclude={owner, reviewer} | failed_reviewers | ({submitted_author} if submitted_author else set()),
             state=state,
             task=task,
             role="reviewer",
@@ -3504,7 +3529,6 @@ def maybe_reassign_task_after_worker_failure(
                 "worker_run_id": worker.get("run_id"),
             },
         )
-        clear_task_failure_streaks_for_task(state, task_id)
         console_log(
             f"reassigned review: task={task_id} from={reviewer} to={new_reviewer} kind={failure_label}",
             quiet=SUPERVISOR_LOG_QUIET,
@@ -3515,10 +3539,15 @@ def maybe_reassign_task_after_worker_failure(
         if is_human_gate_agent(owner):
             return None
         candidates = get_agent_reassignment_candidates(config, failing_agent, role="owner", task=task)
+        failed_owners = {
+            normalize_agent_id(str(entry.get("provider") or key.split(":", 1)[1]))
+            for key, entry in (_task_failure_streak_bucket(state) or {}).items()
+            if key.startswith(f"{task_id}:") and int(entry.get("count", 0)) > 0
+        }
         new_owner = first_viable_agent(
             config,
             candidates,
-            exclude={owner, reviewer},
+            exclude={owner, reviewer} | failed_owners,
             state=state,
             task=task,
             role="owner",
@@ -3643,7 +3672,6 @@ def maybe_reassign_task_after_worker_failure(
                 "writers_verified_stopped": writers_stopped,
             },
         )
-        clear_task_failure_streaks_for_task(state, task_id)
         console_log(
             f"reassigned owner: task={task_id} from={owner} to={new_owner} kind={failure_label}",
             quiet=SUPERVISOR_LOG_QUIET,
@@ -4149,14 +4177,6 @@ def maybe_trigger_retry_or_fallback(
     request = request_for_worker(config, worker)
     if request is None:
         return False, False
-    reassigned_to = maybe_reassign_task_after_worker_failure(config, state, worker, reason)
-    if reassigned_to:
-        worker["status"] = "reassigned"
-        worker["reassigned_to"] = reassigned_to
-        worker["last_error"] = reason
-        worker["last_event_at"] = utc_now()
-        finalize_queue_event_record(config, state, worker, "completed")
-        return True, True
     if retry_count < max_attempts:
         schedule_worker_retry(config, worker, reason)
         write_activity_log(
@@ -4174,6 +4194,21 @@ def maybe_trigger_retry_or_fallback(
             f"retry scheduled: provider={worker.get('provider')} task={worker.get('task_id')} kind={failure.get('label')} next={worker.get('next_retry_at')}",
             quiet=SUPERVISOR_LOG_QUIET,
         )
+        return True, True
+
+    reassigned_to = maybe_reassign_task_after_worker_failure(
+        config,
+        state,
+        worker,
+        reason,
+        terminal=True,
+    )
+    if reassigned_to:
+        worker["status"] = "reassigned"
+        worker["reassigned_to"] = reassigned_to
+        worker["last_error"] = reason
+        worker["last_event_at"] = utc_now()
+        finalize_queue_event_record(config, state, worker, "completed")
         return True, True
 
     if retry.get("fallback_mode") == "file_inbox":
