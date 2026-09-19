@@ -1317,7 +1317,7 @@ def record_unsealed_worker_handoff(
         isinstance(existing, dict)
         and existing.get("head_sha") == seal.head_sha
         and existing.get("dirt_fingerprint") == seal.dirt_fingerprint
-        and existing.get("owner") == owner
+        and existing.get("reason") == seal.reason
     ):
         rejection_count = int(existing.get("rejection_count", 1)) + 1
     bucket[task_id] = {
@@ -1372,7 +1372,7 @@ def sealed_owner_continuation_allowed(
         return False, "no_handoff_block"
     rejection_count = int(record.get("rejection_count", 1))
     max_rejections = int(
-        (config.get("worker_reassignment") or {}).get("max_unsealed_handoff_attempts", 2)
+        (config.get("worker_reassignment") or {}).get("after_attempts", 2)
     )
     if rejection_count > max_rejections:
         return False, f"unsealed_handoff_limit_exceeded (repeated {rejection_count} times)"

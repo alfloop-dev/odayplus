@@ -3270,7 +3270,7 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
 
             reason = worker_failure_policy.detect_worker_failure(worker)
             self.assertIsNotNone(reason)
-            self.assertIn("terminating 1 background task(s) on exit", reason)
+            self.assertIn("agy background lifecycle interrupted:", reason)
 
             failure = worker_failure_policy.classify_worker_failure(self.config, worker, reason)
             self.assertEqual(failure.get("kind"), "interrupted")
@@ -3279,6 +3279,43 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
             self.assertFalse(worker_failure_policy.should_pause_dispatch_for_failure_kind(failure.get("kind")))
         finally:
             tmpdir.cleanup()
+
+    def test_stream_receipt_overrides_prose_but_not_other_providers(self) -> None:
+        marker = Path(self.tmpdir.name) / "runner.json"
+        session = Path(str(marker) + ".agy.json")
+        session.write_text(json.dumps({"transport": "agy_stream_json", "status": "interrupted"}))
+        worker = {"provider": "antigravity", "runner_status_path": str(marker),
+                  "runner_status": "completed", "exit_code": 0}
+        self.assertFalse(worker_failure_policy.is_structured_successful_worker(worker))
+        reason = worker_failure_policy.detect_worker_failure(worker)
+        self.assertEqual(worker_failure_policy.classify_worker_failure(self.config, worker, reason)["kind"], "interrupted")
+        worker["provider"] = "codex"
+        self.assertTrue(worker_failure_policy.is_structured_successful_worker(worker))
+
+    def test_other_provider_quoting_plain_agy_marker_is_success(self) -> None:
+        tmpdir, worker = self._make_worker_log("terminating 1 background task(s) on exit\n")
+        try:
+            worker.update(provider="codex", runner_status="completed", exit_code=0)
+            self.assertTrue(worker_failure_policy.is_structured_successful_worker(worker))
+            self.assertIsNone(worker_failure_policy.detect_worker_failure(worker))
+        finally:
+            tmpdir.cleanup()
+
+    def test_dirty_handoff_budget_survives_owner_alias_change(self) -> None:
+        state = {}
+        worker = {"task_id": "TASK-ALIAS-DIRT", "run_id": "first"}
+        task = {"owner": "Antigravity"}
+        seal = worker_workspace.WorkerHandoffSeal(
+            accepted=False, reason="owner_dirty", detail="unchanged file",
+            head_sha="a" * 40, dirt_fingerprint="same-dirt",
+        )
+        for i, owner in enumerate(("Antigravity", "Antigravity2", "Antigravity3"), 1):
+            task["owner"] = owner
+            worker_workspace.record_unsealed_worker_handoff(self.config, state, worker, task, seal)
+            self.assertEqual(state["worker_worktrees"]["handoff_blocks"]["TASK-ALIAS-DIRT"]["rejection_count"], i)
+        changed = seal._replace(head_sha="b" * 40)
+        worker_workspace.record_unsealed_worker_handoff(self.config, state, worker, task, changed)
+        self.assertEqual(state["worker_worktrees"]["handoff_blocks"]["TASK-ALIAS-DIRT"]["rejection_count"], 1)
 
     def test_task_progress_snapshot_ignores_ephemeral_fields_and_notes(self) -> None:
         """task_progress_snapshot must only track durable progress (head, pr_url, artifacts), not notes or assignments."""

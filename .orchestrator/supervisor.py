@@ -617,7 +617,6 @@ WORKER_FAILURE_PATTERNS = (
     re.compile(r"^An unexpected critical error occurred", re.IGNORECASE),
     re.compile(r"^(?:Error|error|fatal):", re.IGNORECASE),
     re.compile(r"^terminating \d+ background task\(s\) on exit\b", re.IGNORECASE),
-    re.compile(r"^root agent idle; waiting up to \d+s for \d+ background task\(s\)\b", re.IGNORECASE),
     PROVIDER_LAUNCHER_MISSING_PATTERN,
 )
 WORKER_FAILURE_FALSE_POSITIVE_PATTERNS = (

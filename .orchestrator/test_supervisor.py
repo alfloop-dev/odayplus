@@ -17191,7 +17191,13 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
         self.assertEqual(kwargs["task_id"], "ODP-PLAN-SITESCORE-OUTCOME-001")
         self.assertEqual(kwargs["new_owner"], reassigned_to)
         self.assertEqual(kwargs["new_status"], "todo")
-        self.assertNotIn("ODP-PLAN-SITESCORE-OUTCOME-001:antigravity4", state["provider_guardrails"]["task_failure_streaks"])
+        # Reassignment must preserve the unchanged task's failure budget.
+        self.assertEqual(
+            state["provider_guardrails"]["task_failure_streaks"][
+                "ODP-PLAN-SITESCORE-OUTCOME-001:antigravity4"
+            ]["count"],
+            2,
+        )
 
     def test_failure_loop_reassignment_drill_reviewer(self) -> None:
         worker = {

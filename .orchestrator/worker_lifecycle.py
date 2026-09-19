@@ -1927,9 +1927,9 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     block = ((state.get("worker_worktrees") or {}).get("handoff_blocks") or {}).get(worker.get("task_id"))
                     rejection_count = int((block or {}).get("rejection_count", 1))
                     max_rejections = int(
-                        (config.get("worker_reassignment") or {}).get("max_unsealed_handoff_attempts", 2)
+                        (config.get("worker_reassignment") or {}).get("after_attempts", 2)
                     )
-                    failure_count = record_task_failure_streak(
+                    record_task_failure_streak(
                         state,
                         worker,
                         f"Handoff seal rejected: {handoff_seal.reason}: {handoff_seal.detail}",
@@ -1984,7 +1984,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 worker["status"] = "completed"
                 worker["last_event_at"] = utc_now()
                 worker["progress_outcome"] = success_outcome
-                clear_task_failure_streak(state, worker=worker)
+                clear_task_failure_streaks_for_task(state, worker.get("task_id"))
                 message = (
                     "Background worker process exited after recording meaningful incremental progress; task remains dispatchable."
                     if success_outcome == "incremental_progress"

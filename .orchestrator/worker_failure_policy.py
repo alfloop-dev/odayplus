@@ -105,7 +105,7 @@ def _has_runner_signal(value: Any) -> bool:
 
 
 BACKGROUND_TASK_TERMINATED_PATTERN = re.compile(
-    r"\bterminating \d+ background task\(s\) on exit\b",
+    r"^terminating [1-9]\d* background task\(s\) on exit$",
     re.IGNORECASE,
 )
 
@@ -182,6 +182,15 @@ def worker_has_terminated_background_tasks(worker: dict[str, Any] | None) -> boo
     """Return whether the authoritative worker CLI log recorded background task termination on exit."""
     if not isinstance(worker, dict):
         return False
+    provider = str(worker.get("provider") or worker.get("agent_id") or "").lower()
+    if provider and not provider.startswith("antigravity"):
+        return False
+    metadata = worker.get("metadata") if isinstance(worker.get("metadata"), dict) else {}
+    marker_path = worker.get("runner_status_path") or metadata.get("runner_status_path")
+    if marker_path:
+        session = _load_runtime_marker(str(marker_path) + ".agy.json")
+        if session.get("transport") == "agy_stream_json":
+            return session.get("status") == "interrupted"
     log_path_value = worker.get("log_path")
     if not log_path_value:
         return False
@@ -332,6 +341,8 @@ def worker_log_scan_should_be_skipped(worker: dict[str, Any] | None) -> bool:
 def detect_worker_failure(worker: dict[str, Any]) -> str | None:
     if worker_log_scan_should_be_skipped(worker):
         return None
+    if worker_has_terminated_background_tasks(worker):
+        return "agy background lifecycle interrupted: command cancelled or terminal result missing"
     log_path_value = worker.get("log_path")
     if not log_path_value:
         return None
@@ -483,9 +494,7 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         return {"kind": "provider_config", "transient": False, "label": "provider config"}
     if any(marker in normalized for marker in auth_markers):
         return {"kind": "auth", "transient": False, "label": "auth"}
-    if BACKGROUND_TASK_TERMINATED_PATTERN.search(normalized) or (
-        "terminating" in normalized and "background task" in normalized
-    ):
+    if normalized.startswith("agy background lifecycle interrupted:") or BACKGROUND_TASK_TERMINATED_PATTERN.fullmatch(normalized):
         return {"kind": "interrupted", "transient": True, "label": "background task terminated on exit"}
     if is_antigravity_quota_banner(config, provider, reason):
         return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}

@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "transport": "agy_stream_json",
+  "status": "completed",
+  "conversation_id": "a03dca53-a82e-4ec6-a02f-8280539dc532",
+  "result_status": "SUCCESS",
+  "cli_exit_code": 0,
+  "signal": null,
+  "duration_seconds": 22.26,
+  "tools": [
+    {
+      "step_index": 2,
+      "tool_name": "run_command",
+      "state": "DONE",
+      "duration_seconds": 0.281671294,
+      "exit_code": 0
+    },
+    {
+      "step_index": 3,
+      "tool_name": "run_command",
+      "state": "DONE",
+      "duration_seconds": 12.097251054000001,
+      "exit_code": 0
+    },
+    {
+      "step_index": 4,
+      "tool_name": "run_command",
+      "state": "DONE",
+      "duration_seconds": 6.579979385,
+      "exit_code": 7
+    }
+  ],
+  "reason": null,
+  "evidence_kind": "native_agy_1.2.7_controlled_command_canary",
+  "recorded_at": "2026-09-19T23:01:21.748227+00:00",
+  "original_receipt_sha256": "1f64ebaa4f55510e295b0a7bd6a05b000ed30d67f11a34f560be72aebfc7a7e3",
+  "limits": "Isolated native CLI transport verification; does not itself prove production promotion or product task acceptance."
+}
