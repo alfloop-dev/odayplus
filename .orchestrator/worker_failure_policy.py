@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
 import signal
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -53,6 +54,8 @@ def _sync_supervisor_scope() -> None:
         "task_closeout_is_frozen", "DEFAULT_FROZEN_CLOSEOUT_STATUSES", "task_submitted_author",
         "worker_writer_pids", "worker_writers_are_alive", "terminate_worker_writers",
         "_settle_fenced_sibling_worker", "fence_account_pool_workers",
+        "BACKGROUND_TASK_TERMINATED_PATTERN", "worker_has_terminated_background_tasks",
+        "is_interrupted_failure_kind",
     }
     module_exports = {
         "__all__",
@@ -101,6 +104,30 @@ def _has_runner_signal(value: Any) -> bool:
     return value != 0
 
 
+BACKGROUND_TASK_TERMINATED_PATTERN = re.compile(
+    r"\bterminating \d+ background task\(s\) on exit\b",
+    re.IGNORECASE,
+)
+
+
+@_entrypoint
+def worker_has_terminated_background_tasks(worker: dict[str, Any] | None) -> bool:
+    """Return whether the worker CLI log recorded background task termination on exit."""
+    if not isinstance(worker, dict):
+        return False
+    log_path_value = worker.get("log_path")
+    if not log_path_value:
+        return False
+    log_path = Path(log_path_value)
+    if not log_path.exists():
+        return False
+    try:
+        content = log_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+    return bool(BACKGROUND_TASK_TERMINATED_PATTERN.search(content))
+
+
 @_entrypoint
 def worker_was_terminated(worker: dict[str, Any] | None) -> bool:
     """Return whether the runner recorded an operator/signal termination.
@@ -145,6 +172,8 @@ def is_structured_successful_worker(worker: dict[str, Any] | None) -> bool:
     postcondition transition.
     """
     if not isinstance(worker, dict) or worker_was_terminated(worker):
+        return False
+    if worker_has_terminated_background_tasks(worker):
         return False
     runner_status = str(worker.get("runner_status") or "").strip().lower()
     if runner_status in {"completed", "success", "succeeded"}:
@@ -214,6 +243,8 @@ def worker_log_scan_should_be_skipped(worker: dict[str, Any] | None) -> bool:
         return False
     if worker_was_terminated(worker):
         return True
+    if worker_has_terminated_background_tasks(worker):
+        return False
     if _has_explicit_failure_evidence(worker):
         return False
     if is_structured_successful_worker(worker):
@@ -435,6 +466,10 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         return {"kind": "provider_config", "transient": False, "label": "provider config"}
     if any(marker in normalized for marker in auth_markers):
         return {"kind": "auth", "transient": False, "label": "auth"}
+    if BACKGROUND_TASK_TERMINATED_PATTERN.search(normalized) or (
+        "terminating" in normalized and "background task" in normalized
+    ):
+        return {"kind": "interrupted", "transient": True, "label": "background task terminated on exit"}
     if is_antigravity_quota_banner(config, provider, reason):
         return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
     if is_claude_session_limit_banner(config, provider, reason):
@@ -1230,6 +1265,10 @@ def is_provider_unavailable_failure_kind(kind: str | None) -> bool:
     return str(kind or "").strip().lower() == "provider_unavailable"
 
 @_entrypoint
+def is_interrupted_failure_kind(kind: str | None) -> bool:
+    return str(kind or "").strip().lower() == "interrupted"
+
+@_entrypoint
 def should_pause_dispatch_for_failure_kind(kind: str | None) -> bool:
     return (
         is_terminal_quota_failure_kind(kind)
@@ -1926,25 +1965,21 @@ def _nonnegative_int(value: Any) -> int:
 
 @_entrypoint
 def task_progress_snapshot(task: dict[str, Any] | None) -> dict[str, Any]:
-    """Return durable task state; timestamps alone are not meaningful progress."""
+    """Return durable task progress state; metadata, notes and assignments are not meaningful progress."""
     task = task if isinstance(task, dict) else {}
+    task_id = str(task.get("id") or "").strip()
     head = (
         str(task.get("head") or "").strip() or None
         if "head" in task
-        else resolve_task_progress_head(str(task.get("id") or ""))
+        else resolve_task_progress_head(task_id)
     )
+    pr_url = str(task.get("pr_url") or task.get("pr") or "").strip() or None
+    artifacts = tuple(sorted(str(a) for a in (task.get("artifacts") or []) if str(a).strip()))
     return {
-        "id": str(task.get("id") or "").strip(),
-        "status": str(task.get("status") or "").strip().lower(),
-        "owner": normalize_agent_id(str(task.get("owner") or "")),
-        "reviewer": normalize_agent_id(str(task.get("reviewer") or "")),
-        "priority": str(task.get("priority") or "").strip().upper(),
-        "title": str(task.get("title") or task.get("summary") or "").strip(),
-        "task_class": str(task.get("task_class") or "").strip().lower(),
-        "review_reopen_count": _nonnegative_int(task.get("review_reopen_count")),
-        "review_churn_reassigned_at_count": _nonnegative_int(task.get("review_churn_reassigned_at_count")),
-        "next": " ".join(str(task.get("next") or "").split()),
+        "id": task_id,
         "head": head,
+        "pr_url": pr_url,
+        "artifacts": list(artifacts),
     }
 
 @_entrypoint

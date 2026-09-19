@@ -276,6 +276,7 @@ _FAILURE_HELPER_FUNCTIONS = [
 "is_claude_session_limit_banner",
 "is_cloud_run_quota_error",
 "is_human_gate_agent",
+"is_interrupted_failure_kind",
 "is_provider_config_failure_kind",
 "is_provider_unavailable_failure_kind",
 "is_retryable_capacity_failure_kind",
@@ -325,6 +326,8 @@ _FAILURE_HELPER_FUNCTIONS = [
 "task_progress_snapshot",
 "update_worker_runtime_markers",
 "worker_dispatch_task_snapshot",
+"worker_has_terminated_background_tasks",
+"BACKGROUND_TASK_TERMINATED_PATTERN",
 "worker_heartbeat_is_stale",
 "worker_is_review_dispatch",
 "worker_lease_expiry",
@@ -613,6 +616,8 @@ WORKER_FAILURE_PATTERNS = (
     re.compile(r"^Error loading config\.toml\b", re.IGNORECASE),
     re.compile(r"^An unexpected critical error occurred", re.IGNORECASE),
     re.compile(r"^(?:Error|error|fatal):", re.IGNORECASE),
+    re.compile(r"^terminating \d+ background task\(s\) on exit\b", re.IGNORECASE),
+    re.compile(r"^root agent idle; waiting up to \d+s for \d+ background task\(s\)\b", re.IGNORECASE),
     PROVIDER_LAUNCHER_MISSING_PATTERN,
 )
 WORKER_FAILURE_FALSE_POSITIVE_PATTERNS = (

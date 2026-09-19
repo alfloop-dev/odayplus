@@ -3179,5 +3179,338 @@ while True:
         self.assertEqual(reloaded_auth.get("authorized_successor"), reassigned_to)
 
 
+class AgyBackgroundExitRecoveryTests(unittest.TestCase):
+    """Regression tests for agy background task termination, snapshot stability, and failure classification."""
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.config: dict[str, Any] = {
+            "paths": {
+                "activity_log": str(Path(self.tmpdir.name) / "activity.jsonl"),
+            },
+            "worker_retry": {
+                "max_attempts": 3,
+                "transient_error_patterns": ["retryablequotaerror", "resource_exhausted"],
+            },
+            "provider_guardrails": {
+                "pause_on_capacity_failure": True,
+                "pause_on_auth_failure": True,
+                "generic_exit_reassign_after": 2,
+            },
+            "providers": {
+                "antigravity": {"dispatch_group": "antigravity"},
+                "codex": {"dispatch_group": "codex"},
+            },
+            "agents": {
+                "Antigravity": {"provider": "antigravity", "account_pool": "antigravity"},
+                "Antigravity2": {"provider": "antigravity", "account_pool": "antigravity"},
+                "Antigravity7": {"provider": "antigravity", "account_pool": "antigravity"},
+                "Codex": {"provider": "codex", "account_pool": "codex"},
+                "Codex2": {"provider": "codex", "account_pool": "codex"},
+                "Claude": {"provider": "claude", "account_pool": "claude"},
+            },
+            "account_pools": {
+                "antigravity": {
+                    "enabled": True,
+                    "max_concurrent": 2,
+                    "providers": ["antigravity"],
+                },
+                "codex": {
+                    "enabled": True,
+                    "max_concurrent": 2,
+                    "providers": ["codex"],
+                },
+            },
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 2,
+                "reassign_on_terminal_failure": True,
+                "eligible_statuses": ["todo", "in_progress", "review", "review_approved"],
+                "fallbacks": {
+                    "Antigravity": ["Codex", "Claude"],
+                    "Antigravity7": ["Codex", "Claude"],
+                },
+            },
+        }
+
+    def tearDown(self) -> None:
+        self.tmpdir.cleanup()
+
+    def _make_worker_log(self, text: str) -> tuple[tempfile.TemporaryDirectory, dict[str, Any]]:
+        tmpdir = tempfile.TemporaryDirectory()
+        log_path = Path(tmpdir.name) / "worker.log"
+        log_path.write_text(text, encoding="utf-8")
+        worker = {
+            "run_id": "run-agy-test-001",
+            "task_id": "ODP-AGY-BACKGROUND-EXIT-RECOVERY-001",
+            "provider": "antigravity",
+            "agent_id": "Antigravity7",
+            "log_path": str(log_path),
+            "pid": 999999,
+        }
+        return tmpdir, worker
+
+    def test_worker_with_terminated_background_tasks_is_interrupted_not_success(self) -> None:
+        """A worker exiting 0 whose log contains background task termination must be detected as interrupted failure."""
+        log_text = (
+            "I have launched the test command and am waiting for it to complete.\n"
+            "root agent idle; waiting up to 5s for 1 background task(s)\n"
+            "terminating 1 background task(s) on exit\n"
+        )
+        tmpdir, worker = self._make_worker_log(log_text)
+        try:
+            worker["exit_code"] = 0
+            worker["runner_status"] = "completed"
+            self.assertTrue(worker_failure_policy.worker_has_terminated_background_tasks(worker))
+            self.assertFalse(worker_failure_policy.is_structured_successful_worker(worker))
+            self.assertFalse(worker_failure_policy.worker_log_scan_should_be_skipped(worker))
+
+            reason = worker_failure_policy.detect_worker_failure(worker)
+            self.assertIsNotNone(reason)
+            self.assertIn("terminating 1 background task(s) on exit", reason)
+
+            failure = worker_failure_policy.classify_worker_failure(self.config, worker, reason)
+            self.assertEqual(failure.get("kind"), "interrupted")
+            self.assertTrue(failure.get("transient"))
+            self.assertTrue(worker_failure_policy.is_interrupted_failure_kind(failure.get("kind")))
+            self.assertFalse(worker_failure_policy.should_pause_dispatch_for_failure_kind(failure.get("kind")))
+        finally:
+            tmpdir.cleanup()
+
+    def test_task_progress_snapshot_ignores_ephemeral_fields_and_notes(self) -> None:
+        """task_progress_snapshot must only track durable progress (head, pr_url, artifacts), not notes or assignments."""
+        task_dispatched = {
+            "id": "TASK-TEST-001",
+            "head": "a" * 40,
+            "status": "todo",
+            "owner": "Antigravity7",
+            "reviewer": "Codex2",
+            "priority": "P1",
+            "title": "Old title",
+            "task_class": "ops",
+            "review_reopen_count": 0,
+            "review_churn_reassigned_at_count": 0,
+            "next": "Waiting for worker to start.",
+        }
+        task_autostarted_with_note = {
+            "id": "TASK-TEST-001",
+            "head": "a" * 40,
+            "status": "in_progress",
+            "owner": "Antigravity2",
+            "reviewer": "Codex",
+            "priority": "P2",
+            "title": "New title",
+            "task_class": "feature",
+            "review_reopen_count": 1,
+            "review_churn_reassigned_at_count": 1,
+            "next": "Supervisor auto-started TASK-TEST-001 after successful dispatch.",
+        }
+        snap_disp = worker_failure_policy.task_progress_snapshot(task_dispatched)
+        snap_curr = worker_failure_policy.task_progress_snapshot(task_autostarted_with_note)
+        self.assertEqual(snap_disp, snap_curr)
+        self.assertEqual(
+            worker_failure_policy.task_progress_fingerprint(task_dispatched),
+            worker_failure_policy.task_progress_fingerprint(task_autostarted_with_note),
+        )
+
+        worker = {
+            "request_snapshot": {
+                "reason": "owned_in_progress_dispatch",
+                "metadata": {"task": task_dispatched},
+            }
+        }
+        outcome = worker_failure_policy.successful_worker_exit_outcome(
+            worker,
+            task_autostarted_with_note,
+            terminal_statuses={"done", "review_approved"},
+        )
+        self.assertEqual(outcome, "no_progress")
+
+    def test_task_progress_snapshot_detects_head_pr_and_artifact_advancement(self) -> None:
+        """Durable changes like new git HEAD, PR URL, or artifacts must yield incremental_progress."""
+        task_dispatched = {
+            "id": "TASK-TEST-001",
+            "head": "a" * 40,
+            "status": "in_progress",
+        }
+        worker = {
+            "request_snapshot": {
+                "reason": "owned_in_progress_dispatch",
+                "metadata": {"task": task_dispatched},
+            }
+        }
+
+        # Case 1: New commit HEAD (e.g. anchor commit)
+        task_new_head = {"id": "TASK-TEST-001", "head": "b" * 40, "status": "in_progress"}
+        self.assertEqual(
+            worker_failure_policy.successful_worker_exit_outcome(
+                worker, task_new_head, terminal_statuses={"done", "review_approved"}
+            ),
+            "incremental_progress",
+        )
+
+        # Case 2: New PR URL
+        task_new_pr = {
+            "id": "TASK-TEST-001",
+            "head": "a" * 40,
+            "status": "in_progress",
+            "pr_url": "https://github.com/alfloop-dev/odayplus/pull/999",
+        }
+        self.assertEqual(
+            worker_failure_policy.successful_worker_exit_outcome(
+                worker, task_new_pr, terminal_statuses={"done", "review_approved"}
+            ),
+            "incremental_progress",
+        )
+
+        # Case 3: New artifact
+        task_new_artifact = {
+            "id": "TASK-TEST-001",
+            "head": "a" * 40,
+            "status": "in_progress",
+            "artifacts": ["services/new_feature.py"],
+        }
+        self.assertEqual(
+            worker_failure_policy.successful_worker_exit_outcome(
+                worker, task_new_artifact, terminal_statuses={"done", "review_approved"}
+            ),
+            "incremental_progress",
+        )
+
+    def test_subcommand_outcomes_and_classifications(self) -> None:
+        """Verify short success, >5s success, nonzero exit, and cancellation classification."""
+        # 1. Short command success
+        short_success_log = "Running quick check...\nCheck completed successfully in 0.4s.\n"
+        tmpdir, worker = self._make_worker_log(short_success_log)
+        try:
+            worker["exit_code"] = 0
+            worker["runner_status"] = "completed"
+            self.assertFalse(worker_failure_policy.worker_has_terminated_background_tasks(worker))
+            self.assertTrue(worker_failure_policy.is_structured_successful_worker(worker))
+            self.assertIsNone(worker_failure_policy.detect_worker_failure(worker))
+        finally:
+            tmpdir.cleanup()
+
+        # 2. >5s command success (e.g. 25s test suite)
+        long_success_log = (
+            "Running full test suite...\n"
+            "manage_task(Action=status) -> RUNNING\n"
+            "manage_task(Action=status) -> DONE\n"
+            "77 passed, 20 subtests passed in 25.23s\n"
+        )
+        tmpdir, worker = self._make_worker_log(long_success_log)
+        try:
+            worker["exit_code"] = 0
+            worker["runner_status"] = "completed"
+            self.assertFalse(worker_failure_policy.worker_has_terminated_background_tasks(worker))
+            self.assertTrue(worker_failure_policy.is_structured_successful_worker(worker))
+            self.assertIsNone(worker_failure_policy.detect_worker_failure(worker))
+        finally:
+            tmpdir.cleanup()
+
+        # 3. Nonzero exit
+        nonzero_log = "Running test suite...\nError: test execution failed with exit code 1\n"
+        tmpdir, worker = self._make_worker_log(nonzero_log)
+        try:
+            worker["exit_code"] = 1
+            worker["runner_status"] = "failed"
+            self.assertFalse(worker_failure_policy.is_structured_successful_worker(worker))
+            reason = worker_failure_policy.detect_worker_failure(worker)
+            self.assertIsNotNone(reason)
+            self.assertIn("Error: test execution failed", reason)
+        finally:
+            tmpdir.cleanup()
+
+        # 4. Context canceled / background task terminated on exit
+        canceled_log = (
+            "Running long command...\n"
+            "root agent idle; waiting up to 5s for 1 background task(s)\n"
+            "terminating 1 background task(s) on exit\n"
+        )
+        tmpdir, worker = self._make_worker_log(canceled_log)
+        try:
+            worker["exit_code"] = 0
+            worker["runner_status"] = "completed"
+            self.assertTrue(worker_failure_policy.worker_has_terminated_background_tasks(worker))
+            self.assertFalse(worker_failure_policy.is_structured_successful_worker(worker))
+            reason = worker_failure_policy.detect_worker_failure(worker)
+            self.assertIsNotNone(reason)
+            failure = worker_failure_policy.classify_worker_failure(self.config, worker, reason)
+            self.assertEqual(failure.get("kind"), "interrupted")
+            self.assertTrue(failure.get("transient"))
+        finally:
+            tmpdir.cleanup()
+
+    def test_successful_worker_exit_outcome_review_and_lifecycle_decisions(self) -> None:
+        """Verify review decisions, owner-to-review transitions, and terminal lifecycle completions."""
+        review_worker = {
+            "request_snapshot": {
+                "reason": "status:review",
+                "metadata": {"task": {"id": "TASK-REV-001", "status": "review"}},
+            }
+        }
+        # Reviewer reopens to in_progress -> review_decided
+        self.assertEqual(
+            worker_failure_policy.successful_worker_exit_outcome(
+                review_worker,
+                {"id": "TASK-REV-001", "status": "in_progress"},
+                terminal_statuses={"done", "review_approved"},
+            ),
+            "review_decided",
+        )
+        # Reviewer blocks task -> review_decided
+        self.assertEqual(
+            worker_failure_policy.successful_worker_exit_outcome(
+                review_worker,
+                {"id": "TASK-REV-001", "status": "blocked"},
+                terminal_statuses={"done", "review_approved"},
+            ),
+            "review_decided",
+        )
+        # Reviewer leaves task in review (no decision) -> no_progress
+        self.assertEqual(
+            worker_failure_policy.successful_worker_exit_outcome(
+                review_worker,
+                {"id": "TASK-REV-001", "status": "review"},
+                terminal_statuses={"done", "review_approved"},
+            ),
+            "no_progress",
+        )
+
+        owner_worker = {
+            "request_snapshot": {
+                "reason": "owned_in_progress_dispatch",
+                "metadata": {"task": {"id": "TASK-OWN-001", "status": "in_progress"}},
+            }
+        }
+        # Owner submits to review -> lifecycle_complete
+        self.assertEqual(
+            worker_failure_policy.successful_worker_exit_outcome(
+                owner_worker,
+                {"id": "TASK-OWN-001", "status": "review"},
+                terminal_statuses={"done", "review_approved"},
+            ),
+            "lifecycle_complete",
+        )
+        # Owner reaches review_approved -> lifecycle_complete
+        self.assertEqual(
+            worker_failure_policy.successful_worker_exit_outcome(
+                owner_worker,
+                {"id": "TASK-OWN-001", "status": "review_approved"},
+                terminal_statuses={"done", "review_approved"},
+            ),
+            "lifecycle_complete",
+        )
+        # Owner reaches done -> lifecycle_complete
+        self.assertEqual(
+            worker_failure_policy.successful_worker_exit_outcome(
+                owner_worker,
+                {"id": "TASK-OWN-001", "status": "done"},
+                terminal_statuses={"done", "review_approved"},
+            ),
+            "lifecycle_complete",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
