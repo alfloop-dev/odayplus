@@ -1,0 +1,41 @@
+{
+  "recorded_at": "2026-09-19T23:09:18.076777+00:00",
+  "implementation_commit": "b8669ab554f1b779fa8db371992bf83cae943c8e",
+  "implementation_sha256": {
+    ".orchestrator/agy_session.py": "368e1d6085ca353fe412656bdf776542ab565081186e45bdaaff5f42b0b718ff",
+    ".orchestrator/adapters/antigravity.py": "90d49a7aaf45a6d18a002de300a9e1fd4043a296e1324a642166adeeea4f94da",
+    ".orchestrator/worker_failure_policy.py": "66dc5a01fea843860de90a1e09b90d69e7e1ca41dfb3d921a109a8a13cfc0708",
+    ".orchestrator/worker_lifecycle.py": "565f653430896dc17d528bc385b9cf4b4acc651370d784d397206b67d3f0fcbd",
+    ".orchestrator/worker_workspace.py": "7f573d750c81b9d6fa52ce5e329a7d3087e1200e92481bd3a8bc7cd8c24470a1"
+  },
+  "checks": [
+    {
+      "command": "uv run --python 3.12 pytest -m 'not requires_live_env' .orchestrator delivery_toolchain scripts tests/tooling infra",
+      "exit_code": 0,
+      "duration_seconds": 382.87,
+      "summary": "3119 passed, 6 skipped, 10 deselected, 3 warnings, 689 subtests passed",
+      "log_sha256": "b0651d1cae003bb3cd58fd67334ead4efe31cf854b2e961c73e9ad61ab4afae1"
+    },
+    {
+      "command": "uv run --python 3.12 pytest -q .orchestrator/test_agy_session.py",
+      "exit_code": 0,
+      "summary": "10 subprocess regressions passed after transport cleanup hardening",
+      "log_sha256": "7040371af15613c02e821ec0eecc1d1330f691ace4cef93a41bfa358822c4103"
+    },
+    {
+      "command": "uv run ruff check .orchestrator delivery_toolchain scripts infra",
+      "exit_code": 0
+    },
+    {
+      "command": "uv run python delivery_toolchain/governance/check_orchestrator_config.py",
+      "exit_code": 0,
+      "summary": "3 config documents and merged runtime views validated"
+    },
+    {
+      "command": "uv run python delivery_toolchain/governance/check_config_wiring.py",
+      "exit_code": 0,
+      "summary": "190 config keys wired"
+    }
+  ],
+  "measurement_notes": "Full suite started on the candidate worktree before the anchor commit; content hashes identify delivered implementation. Session cleanup hardening was covered by the separate final session subprocess run. GitHub required CI must validate the final immutable PR head before merge."
+}

@@ -38,10 +38,12 @@ These are local transport probes. They do not assert that a product acceptance
 passed or that the production Supervisor has already loaded this patch. Runtime
 promotion and live task progression are separate post-merge checks.
 
-Local verification at the anchor: Ruff passed; config schema and wiring passed;
-10 session subprocess regressions passed. The complete required tooling suite
-was still running when this anchor was created. Final results are recorded in
-a subsequent verification receipt before publication.
+Local verification: the full required tooling suite completed with 3,119 tests
+and 689 subtests passing (6 skipped, 10 deselected), exit 0 in 382.87 seconds.
+Ten session subprocess regressions also passed after cleanup hardening. Ruff,
+config schema and all 190 config wiring checks passed. `local-verification.json`
+records commands and content hashes; GitHub CI remains the immutable final-head
+validation required before merge.
 
 ## Deployment
 
