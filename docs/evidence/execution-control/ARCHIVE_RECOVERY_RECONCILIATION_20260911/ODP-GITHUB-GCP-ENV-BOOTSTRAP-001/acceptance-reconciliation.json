@@ -6,7 +6,7 @@
   "phase": "History Recovery — executable acceptance reconciliation",
   "owner": "Antigravity3",
   "reviewer": "Codex",
-  "recorded_at": "2026-09-19T14:15:00Z",
+  "recorded_at": "2026-09-19T14:50:00Z",
   "ownership_history": [
     {
       "owner": "Antigravity3",
@@ -26,12 +26,18 @@
       "reviewer": "Codex",
       "started_at": "2026-09-19T14:02:38Z",
       "scope": "2026-09-19 assigned to Antigravity3. Base advance to origin/dev (b095935e079f), remove forged receipts, correct PROD-OPS-05 watch params per PR #1338 without fake human approval, remove supersedes_prior_record, update production-authority-prerequisites.json, and verify."
+    },
+    {
+      "owner": "Antigravity3",
+      "reviewer": "Codex",
+      "started_at": "2026-09-19T14:48:00Z",
+      "scope": "Resolve round-6 review findings: P1-1 (complete retraction of governance cleared claims and doc-sync assignments in machine-readable JSON; separate interactive parameter provenance from fake receipts; PROD-OPS-05 strictly per PR #1338), P1-2 (synchronize PR #1314 body with exact head), P2-3 (remove resolved 6 staging variables from downstream prerequisites of ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001), P2-4 (mark GCS bucket readiness as unverified per lack of storage readback receipts; update live prod vars count to 48 and record historical 50), P2-5 (correct base SHA to b095935e079f518dcdbb3fe94db899cd76d89710), P2-6 (provide task-scoped audit of deleted synthetic verification receipts 92a766aad15ec9c7 and 70b27b3b5be1b2fb with retracted claims and replacement runner receipts)."
     }
   ],
   "reconciliation_target": {
     "repository": "alfloop-dev/odayplus",
     "continuation_branch": "task/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001-RECOVERY-20260911",
-    "base_commit_sha": "b095935e079f4e124485a430f66162743e2e3690",
+    "base_commit_sha": "b095935e079f518dcdbb3fe94db899cd76d89710",
     "historical_base_commit_sha": "4499a2993e37b62033926b07de8d8d2e8469a6c7"
   },
   "historical_delivery": {
@@ -266,7 +272,7 @@
               "status": "active_gap",
               "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/production/variables --jq '[.variables[] | select(.name==\"ODP_WEB_BASE_URL\")]'",
               "consumption_path": ".github/workflows/deploy-dev.yml:1050,1070; product_ops/deployment/deploy_cloud_run_waji.sh:906",
-              "note": "Required in all auth modes (validate_cloud_run_live_deployment.py:98 REQUIRED_PUBLIC_CONFIG). Still absent from 50 production variables on 2026-09-17."
+              "note": "Required in all auth modes (validate_cloud_run_live_deployment.py:98 REQUIRED_PUBLIC_CONFIG). Still absent from production variables."
             },
             {
               "finding_id": "REM-PROD-VAR-ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET",
@@ -274,7 +280,7 @@
               "status": "active_gap",
               "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/production/variables --jq '[.variables[] | select(.name==\"ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET\")]'",
               "consumption_path": "product_ops/deployment/deploy_cloud_run_waji.sh:434,439 API/WEB secret binding",
-              "note": "Required in all auth modes for Web local token signing and API verification (validate_cloud_run_live_deployment.py:112 REQUIRED_SECRET_REFERENCES). Still absent from 50 production variables on 2026-09-17."
+              "note": "Required in all auth modes for Web local token signing and API verification (validate_cloud_run_live_deployment.py:112 REQUIRED_SECRET_REFERENCES). Still absent from production variables."
             },
             {
               "finding_id": "REM-PROD-VAR-ODP_CLOUD_RUN_VPC_EGRESS",
@@ -314,7 +320,7 @@
               "resolved_value": "oday-staging-runtime",
               "resolution_date": "2026-09-12",
               "variable_created_at": "2026-09-12T14:23:25Z",
-              "resolution_note": "Populated in the GitHub staging environment on 2026-09-12 with a real value (not a placeholder). Confirmed still present by owner continuation readback on 2026-09-17 (see readback_evidence_sources.owner_continuation_readback_20260917).",
+              "resolution_note": "Populated in the GitHub staging environment on 2026-09-12 with a real value (not a placeholder). Confirmed still present by owner continuation readback on 2026-09-17/19.",
               "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_VPC_NETWORK\")]'"
             },
             {
@@ -324,7 +330,7 @@
               "resolved_value": "oday-staging-runtime",
               "resolution_date": "2026-09-12",
               "variable_created_at": "2026-09-12T14:23:26Z",
-              "resolution_note": "Populated in the GitHub staging environment on 2026-09-12 with a real value (not a placeholder). Confirmed still present by owner continuation readback on 2026-09-17 (see readback_evidence_sources.owner_continuation_readback_20260917).",
+              "resolution_note": "Populated in the GitHub staging environment on 2026-09-12 with a real value (not a placeholder). Confirmed still present by owner continuation readback on 2026-09-17/19.",
               "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_VPC_SUBNETWORK\")]'"
             },
             {
@@ -334,7 +340,7 @@
               "resolved_value": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime",
               "resolution_date": "2026-09-12",
               "variable_created_at": "2026-09-12T14:23:27Z",
-              "resolution_note": "Populated in the GitHub staging environment on 2026-09-12 with a real value (not a placeholder). Confirmed still present by owner continuation readback on 2026-09-17 (see readback_evidence_sources.owner_continuation_readback_20260917).",
+              "resolution_note": "Populated in the GitHub staging environment on 2026-09-12 with a real value (not a placeholder). Confirmed still present by owner continuation readback on 2026-09-17/19.",
               "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_KMS_KEY_ID\")]'"
             },
             {
@@ -344,7 +350,7 @@
               "resolved_value": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
               "resolution_date": "2026-09-12",
               "variable_created_at": "2026-09-12T14:23:27Z",
-              "resolution_note": "Populated in the GitHub staging environment on 2026-09-12 with a real value (not a placeholder). Confirmed still present by owner continuation readback on 2026-09-17 (see readback_evidence_sources.owner_continuation_readback_20260917).",
+              "resolution_note": "Populated in the GitHub staging environment on 2026-09-12 with a real value (not a placeholder). Confirmed still present by owner continuation readback on 2026-09-17/19.",
               "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT\")]'"
             },
             {
@@ -354,7 +360,7 @@
               "resolved_value": "oday-tfstate-staging-odayplus-runtime-20260825",
               "resolution_date": "2026-09-12",
               "variable_created_at": "2026-09-12T14:23:28Z",
-              "resolution_note": "Populated in the GitHub staging environment on 2026-09-12 with a real value (not a placeholder). Confirmed still present by owner continuation readback on 2026-09-17 (see readback_evidence_sources.owner_continuation_readback_20260917).",
+              "resolution_note": "Populated in the GitHub staging environment on 2026-09-12 with a real value (not a placeholder). Confirmed still present by owner continuation readback on 2026-09-17/19.",
               "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_TERRAFORM_STATE_BUCKET\")]'"
             },
             {
@@ -364,11 +370,11 @@
               "resolved_value": "oday-staging-recovery-odayplus-runtime-20260825",
               "resolution_date": "2026-09-12",
               "variable_created_at": "2026-09-12T15:37:03Z",
-              "resolution_note": "Populated in the GitHub staging environment on 2026-09-12 with a real value (not a placeholder). Confirmed still present by owner continuation readback on 2026-09-17 (see readback_evidence_sources.owner_continuation_readback_20260917).",
+              "resolution_note": "Populated in the GitHub staging environment on 2026-09-12 with a real value (not a placeholder). Confirmed still present by owner continuation readback on 2026-09-17/19.",
               "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_RECOVERY_BUNDLE_BUCKET\")]'"
             }
           ],
-          "measurement_target_reference": "delivery_toolchain/release/check_release_environment.py:60-70 STAGING_FOUNDATION_VARIABLES @ origin/dev (307e6e7286c5ca89e72572e4462eb45a57e8888d) — the six names above plus GCP_PROJECT_ID, GCP_REGION, GCP_CLOUD_SQL_INSTANCE; verified read-only via `git show origin/dev:<path>` on 2026-09-17."
+          "measurement_target_reference": "delivery_toolchain/release/check_release_environment.py:60-70 STAGING_FOUNDATION_VARIABLES @ origin/dev — the six names above plus GCP_PROJECT_ID, GCP_REGION, GCP_CLOUD_SQL_INSTANCE; verified read-only via `git show origin/dev:<path>`."
         },
         "staging_watch_closeout": {
           "missing_required_input": "ODP_PRODUCTION_WATCH_CLOSEOUT_URI",
@@ -380,7 +386,7 @@
               "affected_input": "ODP_PRODUCTION_WATCH_CLOSEOUT_URI",
               "status": "active_gap",
               "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_PRODUCTION_WATCH_CLOSEOUT_URI\")]'",
-              "note": "Still absent from the 50 staging variables on 2026-09-17 (owner continuation readback, exit 0). Control case confirming the six resolved entries above are a real remediation, not a measurement error."
+              "note": "Still absent from the 50 staging variables on 2026-09-17/19 (owner continuation readback, exit 0). Control case confirming the six resolved entries above are a real remediation, not a measurement error."
             }
           ]
         }
@@ -395,12 +401,12 @@
     },
     "human_decisions_execution_plan": {
       "source_path": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
-      "scope_boundary_note": "Plan §8 line 273 explicitly excludes production deploy/GO/lease. PROD-GCP-01~05 human authority decisions were maintained as dedicated open governance prerequisites until the 2026-09-17 formal adjudication."
+      "scope_boundary_note": "Plan §8 line 273 explicitly excludes production deploy/GO/lease. PROD-GCP-01~04 human authority decisions remain open governance prerequisites (infrastructure readback verified, formal canonical human governance signoff pending); PROD-OPS-05 is governed by merged PR #1338 (ODP-PROD-OPS-WATCH-PARAMS-001)."
     },
-    "human_ops_production_adjudication_20260917": {
-      "adjudication_date": "2026-09-17",
-      "adjudication_authority": "Human/Ops (蔡尚志 / Bjoe)",
-      "adjudication_summary": "PROD-GCP-01~04 基礎設施資源已由 readback 證實就位，治理裁決未以 canonical 形式取得；PROD-OPS-05 依 PR #1338（ODP-PROD-OPS-WATCH-PARAMS-001）定案參數為唯一有效值，先前 60分/1%/2s 撤回。不自簽人類裁決，保持客觀缺口記錄。",
+    "production_authority_prerequisites_and_readback_status": {
+      "status": "infrastructure_readback_verified_governance_pending",
+      "provenance_note": "參數源自操作者互動選擇，經由 worker 轉錄，非 canonical 人類裁決記錄。worker 寫入之 log 不得充當人類授權憑據。",
+      "summary": "PROD-GCP-01~04 基礎設施資源已由 readback 證實就位，治理裁決未以 canonical 形式取得；PROD-OPS-05 依 PR #1338（ODP-PROD-OPS-WATCH-PARAMS-001）定案參數為唯一有效值，先前 60分/1%/2s 撤回。不自簽人類裁決，保持客觀缺口記錄。",
       "items": {
         "PROD-GCP-01": {
           "status": "readback_verified_governance_uncertified",
@@ -427,19 +433,10 @@
       "github_variables_readback": {
         "command": "gh api --paginate repos/alfloop-dev/odayplus/environments/production/variables",
         "exit_code": 0,
-        "observed_date": "2026-09-17",
-        "total_variables_count": 50,
+        "observed_date": "2026-09-19",
+        "total_variables_count": 48,
+        "historical_observed_total_20260917": 50,
         "deploy_scope_variables_status": "11 of 11 required variables populated (zero missing)",
-        "added_variables": [
-          "ODP_PROD_KMS_KEY_ID=projects/odayplus-prod-20260826/locations/asia-east1/keyRings/oday-runtime/cryptoKeys/runtime",
-          "ODP_PROD_DEPLOYER_SERVICE_ACCOUNT=github-deployer@odayplus-prod-20260826.iam.gserviceaccount.com",
-          "ODP_PROD_SECRET_OWNER=Platform/Ops",
-          "ODP_PROD_VPC_NETWORK=oday-prod-runtime",
-          "ODP_PROD_VPC_SUBNETWORK=oday-prod-runtime",
-          "ODP_CLOUD_RUN_VPC_EGRESS=all-traffic",
-          "ODP_PROD_TERRAFORM_STATE_BUCKET=odayplus-prod-20260826-tfstate",
-          "ODP_PROD_RECOVERY_BUNDLE_BUCKET=odayplus-prod-20260826-recovery"
-        ],
         "omitted_variable_rationale": "ODP_CLOUD_RUN_VPC_CONNECTOR 保持不存在。infra/terraform cloud_run.tf 使用 Direct VPC egress（network_interfaces + ALL_TRAFFIC），IaC 不產生 connector 資源；check_release_environment.py 的 VPC_BINDING_MODES 兩種模式互斥，補上 connector 會使綁定解析報「同時設定兩種網路綁定」而失敗。",
         "active_missing_variables_in_general_config": [
           {
@@ -456,16 +453,14 @@
         "bucket_variable_note": "依 ODP-PROD-NETWORK-PARITY-PLAN-001，ODP_PROD_TERRAFORM_STATE_BUCKET 與 ODP_PROD_RECOVERY_BUNDLE_BUCKET 刻意不設（資源未建，不製造齊備假象）。不得以其存在佐證 production 就緒。"
       },
       "gcp_resources_readback": {
-        "source": "Human/Ops operational readback & merged evidence receipts",
-        "tfstate_bucket": "gs://odayplus-prod-20260826-tfstate (ASIA-EAST1, STANDARD, UBLA, versioning, PAP enforced, CMEK=oday-runtime:runtime, no retention policy)",
-        "recovery_bucket": "gs://odayplus-prod-20260826-recovery (ASIA-EAST1, STANDARD, UBLA, versioning, PAP enforced, CMEK=oday-runtime:runtime, retention 2592000s / 30d)"
+        "source": "PROD-GCP-01~04 resources verified by merged evidence receipts; storage buckets unverified per absent storage receipts",
+        "note": "PROD-GCP-01~04 實體資源（專案、WIF、4 SA、Cloud SQL、3 secrets）經 readback 證實存在。GCS storage bucket 配置未在既有收據中包含讀回，其就緒狀態標記為未證實（unverified），不推論已就緒亦不反推不存在。"
       },
       "next_prerequisites": [
-        "oday-prod-runtime VPC 目前不存在（production 專案內僅有 default 網路），需由 terraform apply 產生；state bucket 已就位故該 apply 不再有前置阻礙。此步屬 ODP-PROD-BLUEGREEN-ROLLOUT-001 範圍。",
+        "oday-prod-runtime VPC 目前不存在（production 專案內僅有 default 網路），需由 terraform apply 產生；此步屬 ODP-PROD-BLUEGREEN-ROLLOUT-001 範圍。",
         "Cloud SQL oday-prod-sql private IP 連線配置（待 VPC 建立後由 Terraform 套用），由 ODP-PROD-BLUEGREEN-ROLLOUT-001 承接。",
         "補齊 GitHub production 變數 ODP_WEB_BASE_URL 與 ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET，由 ODP-PROD-BLUEGREEN-ROLLOUT-001 承接。"
-      ],
-      "provenance_note": "參數源自操作者互動選擇，經由 worker 轉錄，非 canonical 人類裁決記錄。worker 寫入之 log 不得充當人類授權憑據。"
+      ]
     },
     "owner_continuation_readback_20260917": {
       "purpose": "Independent re-measurement by the continuation owner (Claude2) before amending the staging gap statement. Read-only GitHub API and read-only git object reads; no GCP request, no secret value read, no write.",
@@ -508,11 +503,34 @@
           "command": "git show origin/dev:docs/evidence/runtime/ODP-PROD-OPS-WATCH-PARAMS-001/prod-ops-governance-parameters.json",
           "exit_code": 0,
           "observed_at": "2026-09-17T06:41:14Z",
-          "result": "governance_parameters spans lines 7-37; rollback_and_on_call_owner at 33-36. Supersedes line range corrected from 7-29 to 7-37."
+          "result": "governance_parameters spans lines 7-37; rollback_and_on_call_owner at 33-36. PR #1338 is the valid authoritative record."
         }
       ],
       "secret_values_redacted": true,
       "scope_note": "Variable names, non-secret values and created_at timestamps only. No Secret Manager payload, no GitHub secret value, and no environment write was performed."
+    },
+    "owner_continuation_readback_20260919": {
+      "purpose": "Independent re-measurement by Antigravity3 during round-6 reconciliation on base b095935e079f518dcdbb3fe94db899cd76d89710. Read-only GitHub API; no GCP request, no secret value read, no write.",
+      "repository": "alfloop-dev/odayplus",
+      "base_commit_sha": "b095935e079f518dcdbb3fe94db899cd76d89710",
+      "operator": "Antigravity3",
+      "commands": [
+        {
+          "label": "staging_variables_readback",
+          "command": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables",
+          "exit_code": 0,
+          "observed_at": "2026-09-19T14:49:25Z",
+          "result": "50 unique variable names. All 6 STAGING_FOUNDATION_VARIABLES GitHub inputs PRESENT with real values. ODP_PRODUCTION_WATCH_CLOSEOUT_URI ABSENT."
+        },
+        {
+          "label": "production_variables_readback",
+          "command": "gh api --paginate repos/alfloop-dev/odayplus/environments/production/variables",
+          "exit_code": 0,
+          "observed_at": "2026-09-19T14:49:20Z",
+          "result": "48 unique names. ODP_WEB_BASE_URL ABSENT, ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET ABSENT (REM-PROD-VAR-* remain active_gap), ODP_CLOUD_RUN_VPC_EGRESS=all-traffic PRESENT, ODP_CLOUD_RUN_VPC_CONNECTOR ABSENT, ODP_PROD_TERRAFORM_STATE_BUCKET ABSENT, ODP_PROD_RECOVERY_BUNDLE_BUCKET ABSENT."
+        }
+      ],
+      "secret_values_redacted": true
     }
   },
   "acceptance_criteria_reconciliation": [
@@ -541,12 +559,12 @@
         "runtime／部署"
       ],
       "status": "partially_met",
-      "status_zh": "部分滿足（GitHub 環境變數已補齊至 50 項、deploy scope 11/11 齊備、WIF/SA/Secret Manager/GCS 已建立；staging foundation 6 項已於 2026-09-12 補齊並於 2026-09-17 複驗；dev 2 項、production 2 項與 staging 1 項（ODP_PRODUCTION_WATCH_CLOSEOUT_URI）必要變數缺口持續保留並映射至承接任務，Direct VPC 實體網路待 Terraform 建立）",
-      "evidence": "GitHub production environment variables are completed from 42 to 50, with all 11 required deploy scope variables fully populated (zero missing). WIF provider (projects/365886461656/.../providers/odayplus) state=ACTIVE, 4 service accounts exist (github-deployer, oday-prod-runtime, oday-prod-scheduler, oday-prod-smoke-operator), Cloud SQL (oday-prod-sql) state=RUNNABLE, 3 Secret Manager secret versions ENABLED (oday-prod-database-url, oday-prod-auth-principal-map, oday-prod-web-session-secret), and GCS state/recovery buckets (gs://odayplus-prod-20260826-tfstate, gs://odayplus-prod-20260826-recovery) provisioned. Direct VPC egress setting (ODP_CLOUD_RUN_VPC_EGRESS=all-traffic) is properly set without conflicting connector. All secret values are strictly referenced by name without plaintext (secret_values_redacted=true). The 6 staging foundation variable inputs recorded as missing in the 2026-09-08 PR #1245 remediation-table.json were populated on 2026-09-12 and re-verified present on 2026-09-17; the remaining variable and physical infrastructure gaps in dev, staging, and production are explicitly preserved and mapped to owning tasks.",
+      "status_zh": "部分滿足（GitHub 環境變數 deploy scope 11/11 齊備、WIF/SA/Secret Manager 已建立；staging foundation 6 項已於 2026-09-12 補齊並複驗；dev 2 項、production 2 項與 staging 1 項（ODP_PRODUCTION_WATCH_CLOSEOUT_URI）必要變數缺口持續保留並映射至承接任務；GCS bucket 讀回收據未包含故標記未證實，Direct VPC 實體網路待 Terraform 建立）",
+      "evidence": "GitHub production environment variables contain all 11 required deploy scope variables fully populated (zero missing). WIF provider (projects/365886461656/.../providers/odayplus) state=ACTIVE, 4 service accounts exist (github-deployer, oday-prod-runtime, oday-prod-scheduler, oday-prod-smoke-operator), Cloud SQL (oday-prod-sql) state=RUNNABLE, 3 Secret Manager secret versions ENABLED (oday-prod-database-url, oday-prod-auth-principal-map, oday-prod-web-session-secret). Direct VPC egress setting (ODP_CLOUD_RUN_VPC_EGRESS=all-traffic) is properly set without conflicting connector. GCS state/recovery buckets have no storage readback receipts in repo, marked as unverified readiness with bucket variables intentionally unset per ODP-PROD-NETWORK-PARITY-PLAN-001. All secret values are strictly referenced by name without plaintext (secret_values_redacted=true). The 6 staging foundation variable inputs recorded as missing in the 2026-09-08 PR #1245 remediation-table.json were populated on 2026-09-12 and re-verified present on 2026-09-17/19; the remaining variable and physical infrastructure gaps in dev, staging, and production are explicitly preserved and mapped to owning tasks.",
       "gaps": [
-        "Production environment general config gaps: ODP_WEB_BASE_URL (validate_cloud_run_live_deployment.py:98 REQUIRED_PUBLIC_CONFIG) and ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET (validate_cloud_run_live_deployment.py:112 REQUIRED_SECRET_REFERENCES) are not present in the 50 production variables (REM-PROD-VAR-ODP_WEB_BASE_URL, REM-PROD-VAR-ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET mapped to ODP-PROD-BLUEGREEN-ROLLOUT-001).",
+        "Production environment general config gaps: ODP_WEB_BASE_URL (validate_cloud_run_live_deployment.py:98 REQUIRED_PUBLIC_CONFIG) and ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET (validate_cloud_run_live_deployment.py:112 REQUIRED_SECRET_REFERENCES) are not present in production variables (REM-PROD-VAR-ODP_WEB_BASE_URL, REM-PROD-VAR-ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET mapped to ODP-PROD-BLUEGREEN-ROLLOUT-001).",
         "Dev environment input gaps: ODP_WEB_BASE_URL and ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET are missing from dev variables (REM-DEV-VAR-* mapped to ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001).",
-        "Staging environment inputs (re-verified 2026-09-17): the 6 staging foundation inputs recorded as missing in the 2026-09-08 PR #1245 remediation-table.json (ODP_STAGING_VPC_NETWORK, ODP_STAGING_VPC_SUBNETWORK, ODP_STAGING_KMS_KEY_ID, ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT, ODP_STAGING_TERRAFORM_STATE_BUCKET, ODP_STAGING_RECOVERY_BUNDLE_BUCKET) were all populated on 2026-09-12 and are no longer gaps (REM-STAGING-VAR-* status=resolved_2026-09-12; readback `gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables` exit 0 at 2026-09-17T06:41:07Z returned 50 variables with all 6 present as real values, not placeholders). The one remaining staging variable gap is ODP_PRODUCTION_WATCH_CLOSEOUT_URI, confirmed ABSENT in that same readback and mapped to ODP-EPHEMERAL-STAGING-ROLLOUT-001 (REM-STAGING-VAR-ODP_PRODUCTION_WATCH_CLOSEOUT_URI). ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001 still owns the physical staging IaC/state scope; it no longer owns these six GitHub variable inputs.",
+        "Staging environment inputs (re-verified 2026-09-17/19): the 6 staging foundation inputs recorded as missing in the 2026-09-08 PR #1245 remediation-table.json (ODP_STAGING_VPC_NETWORK, ODP_STAGING_VPC_SUBNETWORK, ODP_STAGING_KMS_KEY_ID, ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT, ODP_STAGING_TERRAFORM_STATE_BUCKET, ODP_STAGING_RECOVERY_BUNDLE_BUCKET) were all populated on 2026-09-12 and are no longer gaps (REM-STAGING-VAR-* status=resolved_2026-09-12; readback `gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables` exit 0 returned 50 variables with all 6 present as real values, not placeholders). The one remaining staging variable gap is ODP_PRODUCTION_WATCH_CLOSEOUT_URI, confirmed ABSENT in that same readback and mapped to ODP-EPHEMERAL-STAGING-ROLLOUT-001 (REM-STAGING-VAR-ODP_PRODUCTION_WATCH_CLOSEOUT_URI). ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001 still owns the physical staging IaC/state scope; it no longer owns these six GitHub variable inputs.",
         "Physical VPC network gap: ODP_PROD_VPC_NETWORK/SUBNETWORK points to oday-prod-runtime, which does not exist yet physically and requires terraform apply in ODP-PROD-BLUEGREEN-ROLLOUT-001."
       ],
       "boundary": "Verified dev/staging/production secret references, GitHub environment variable bindings, and production GCP resource readback; secret values remain unread and redacted; input gaps remain tracked."
@@ -564,7 +582,7 @@
       ],
       "status": "met",
       "status_zh": "已滿足",
-      "evidence": "GitHub Environment production (id 20574639394) exists and required_reviewers rule (Alien-alfaloop, ajoe734) is active. PROD-GCP-01~04 physical resources are readback verified in place: dedicated project odayplus-prod-20260826 ACTIVE in asia-east1, WIF pool provider ACTIVE and 4 SAs exist, Cloud SQL RUNNABLE and 3 secrets ENABLED (private IP technical residual mapped to ODP-PROD-BLUEGREEN-ROLLOUT-001), endpoints ODP_PROD_API_URL/ODP_PROD_DEPLOY_URL configured with local auth mode active per D15. Governance adjudication was not obtained in canonical form; PROD-OPS-05 operations governance parameters are established by merged PR #1338 (ODP-PROD-OPS-WATCH-PARAMS-001). GCS state/recovery buckets readback verified per ODP-PROD-NETWORK-PARITY-PLAN-001 with bucket variables intentionally unset.",
+      "evidence": "GitHub Environment production (id 20574639394) exists and required_reviewers rule (Alien-alfaloop, ajoe734) is active. PROD-GCP-01~04 physical resources are readback verified in place: dedicated project odayplus-prod-20260826 ACTIVE in asia-east1, WIF pool provider ACTIVE and 4 SAs exist, Cloud SQL RUNNABLE and 3 secrets ENABLED (private IP technical residual mapped to ODP-PROD-BLUEGREEN-ROLLOUT-001), endpoints ODP_PROD_API_URL/ODP_PROD_DEPLOY_URL configured with local auth mode active per D15. Governance adjudication was not obtained in canonical form; PROD-OPS-05 operations governance parameters are established by merged PR #1338 (ODP-PROD-OPS-WATCH-PARAMS-001). GCS bucket readiness is unverified per absence of storage readback receipts in repo, with bucket variables intentionally unset per ODP-PROD-NETWORK-PARITY-PLAN-001.",
       "gaps": [],
       "boundary": "Distinguishes bootstrap environment protection and readback verification from subsequent live rollout execution tasks (ODP-PROD-BLUEGREEN-ROLLOUT-001)."
     },
@@ -594,7 +612,7 @@
       ],
       "status": "met",
       "status_zh": "已滿足",
-      "evidence": "All 5 runtime audit files in docs/evidence/runtime/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/ are present and complete at merge commit 8ad3f10dab70 with secret_values_redacted=true. Supplementary readback in support/handoffs/max-dispatch-20260910/archive-evidence/ includes verified GitHub API commands (command-receipts.json exit 0). The 2026-09-17 readback receipts confirm GitHub production environment variables (50 total, exit code 0), GCP project, WIF provider, SAs, Cloud SQL (cross-referenced with ODP-PROD-NETWORK-PARITY-PLAN-001 live receipts), Secret Manager, and GCS buckets. All secret references remain strictly sanitized.",
+      "evidence": "All 5 runtime audit files in docs/evidence/runtime/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/ are present and complete at merge commit 8ad3f10dab70 with secret_values_redacted=true. Supplementary readback in support/handoffs/max-dispatch-20260910/archive-evidence/ includes verified GitHub API commands (command-receipts.json exit 0). The 2026-09-17 and 2026-09-19 readback receipts confirm GitHub production environment variables (48 total in current readback, 50 in historical readback, exit code 0), GCP project, WIF provider, SAs, Cloud SQL (cross-referenced with ODP-PROD-NETWORK-PARITY-PLAN-001 live receipts), and Secret Manager. Storage bucket readbacks are noted as unverified in repo receipts. All secret references remain strictly sanitized.",
       "gaps": [],
       "boundary": "Readback receipts verified complete, structured, and sanitized."
     }
@@ -746,13 +764,12 @@
       "prerequisites": [
         "ODP-EPHEMERAL-STAGING-ROLLOUT-001 completion",
         "ODP-PROD-RUNTIME-RELEASE-PATH-001 completion (PR #1333)",
-        "Provisioning of oday-prod-runtime VPC via terraform apply against gs://odayplus-prod-20260826-tfstate",
+        "Provisioning of oday-prod-runtime VPC and GCS tfstate backend via terraform apply",
         "Configuration of Cloud SQL private IP connection on oday-prod-sql (resolving PROD-GCP-03 technical residual)",
         "Resolution of missing required production variables ODP_WEB_BASE_URL and ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET",
-        "Synchronization of PROD-OPS-05 governance parameters in prod-ops-governance-parameters.json and EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md",
-        "0% green smoke validation and controlled 100% traffic switch under PROD-OPS-05 governance"
+        "0% green smoke validation and controlled 100% traffic switch under PROD-OPS-05 governance (PR #1338)"
       ],
-      "governance_gate": "Human GO (PROD-GCP-01~05 cleared 2026-09-17) + Supervisor Production Release Lease",
+      "governance_gate": "Human GO (formal canonical governance signoff for PROD-GCP-01~04; PROD-OPS-05 per PR #1338) + Supervisor Production Release Lease",
       "status": "todo / non_dispatchable"
     },
     {
@@ -762,7 +779,7 @@
       "related_reference_mapping_task": "ODP-STAGING-FOUNDATION-REFS-MAPPING-001 (PR #1296)",
       "prerequisites": [
         "Extraction and reuse of runtime_foundation Terraform module",
-        "Resolution of 6 staging foundation input variables (REM-STAGING-VAR-ODP_STAGING_VPC_NETWORK, REM-STAGING-VAR-ODP_STAGING_VPC_SUBNETWORK, REM-STAGING-VAR-ODP_STAGING_KMS_KEY_ID, REM-STAGING-VAR-ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT, REM-STAGING-VAR-ODP_STAGING_TERRAFORM_STATE_BUCKET, REM-STAGING-VAR-ODP_STAGING_RECOVERY_BUNDLE_BUCKET)",
+        "6 staging foundation input variables were populated on 2026-09-12 (re-verified present on 2026-09-17/19); scope converged to physical staging IaC and state",
         "Live staging VPC subnet, KMS, private Cloud SQL provisioning",
         "Governance of GCS remote state backend (CMEK, versioning, 30d retention, PAP, UBLA)",
         "Direct VPC egress and default-deny firewall readback"
@@ -795,21 +812,64 @@
       "status": "blocked"
     },
     {
-      "scope": "Production Human Governance Decisions (PROD-GCP-01~05)",
+      "scope": "Production Governance Decisions (PROD-GCP-01~05)",
       "responsible_task_id": "UNASSIGNED_HUMAN_GOVERNANCE_GATE",
-      "canonical_dependency": "Formally adjudicated and cleared on 2026-09-17 by Human/Ops (ai-activity-log.jsonl @ 2026-09-17T05:58:32Z)",
-      "boundary_clarification": "Formally cleared per 2026-09-17 Human/Ops adjudication; PROD-GCP-01 through PROD-OPS-05 are resolved in governance.",
+      "canonical_dependency": "PROD-GCP-01~04 infrastructure readback verified in place; formal canonical human governance signoff pending. PROD-OPS-05 established by merged PR #1338 (ODP-PROD-OPS-WATCH-PARAMS-001).",
+      "boundary_clarification": "Readback facts confirm infrastructure is provisioned, but readback != canonical human adjudication. PROD-GCP-01~04 governance signoff remains pending. PROD-OPS-05 parameters are strictly governed by merged PR #1338; prior 60m/1%/2s parameters are retracted.",
       "prerequisites": [
-        "PROD-GCP-01: Production GCP Project ID (odayplus-prod-20260826, #365886461656), region asia-east1, dedicated project separation verified [COMPLETED]",
-        "PROD-GCP-02: Production Workload Identity Pool provider ACTIVE, 4 service accounts verified [COMPLETED]",
-        "PROD-GCP-03: Production Cloud SQL instance (oday-prod-sql) RUNNABLE, 3 Secret Manager secret versions ENABLED [COMPLETED]; private IP technical residual mapped to ODP-PROD-BLUEGREEN-ROLLOUT-001",
-        "PROD-GCP-04: ODP_PROD_API_URL/ODP_PROD_DEPLOY_URL configured; local auth mode active per D15; OAuth client requirement narrowed [COMPLETED]",
-        "PROD-OPS-05: 60m intensive watch + 24h auto monitoring; error rate >1% or p95 >2s rollback; 15m target; on-call owner 蔡尚志 [COMPLETED]; supersedes ODP-PROD-OPS-WATCH-PARAMS-001 with doc sync mapped to ODP-PROD-BLUEGREEN-ROLLOUT-001"
+        "PROD-GCP-01: Production GCP Project ID (odayplus-prod-20260826, #365886461656), region asia-east1, dedicated project separation verified [readback verified; formal governance signoff pending]",
+        "PROD-GCP-02: Production Workload Identity Pool provider ACTIVE, 4 service accounts verified [readback verified; formal governance signoff pending]",
+        "PROD-GCP-03: Production Cloud SQL instance (oday-prod-sql) RUNNABLE, 3 Secret Manager secret versions ENABLED [readback verified; private IP technical residual mapped to ODP-PROD-BLUEGREEN-ROLLOUT-001; formal governance signoff pending]",
+        "PROD-GCP-04: ODP_PROD_API_URL/ODP_PROD_DEPLOY_URL configured; local auth mode active per D15; OAuth client requirement narrowed [completed_scope_narrowed]",
+        "PROD-OPS-05: Operational governance parameters established by PR #1338 (watch 30m, SLO error rate <5% / p95 <5s, rollback error rate >10% 5m / p95 >10s 5m / health check 3 failures, on-call owner bjoe734@gmail.com) [completed_by_prior_pr1338]"
       ],
-      "governance_gate": "Human/Ops formal adjudication (2026-09-17)",
-      "status": "resolved_by_human_ops_adjudication_20260917"
+      "governance_gate": "Formal Human/Ops signoff gate for PROD-GCP-01~04; PROD-OPS-05 per PR #1338",
+      "status": "infrastructure_readback_verified_governance_pending"
     }
   ],
+  "verification_receipts_integrity_audit": {
+    "summary": "Task-scoped verification receipts audit & retraction record",
+    "deleted_synthetic_receipts": [
+      {
+        "receipt_id": "92a766aad15ec9c7",
+        "file": "verification-odp_github_gcp_env_bootstrap_001-92a766aad15ec9c7.json",
+        "generation_method": "unknown (non-runner generated / synthetic; contained non-executable Chinese prose description instead of shell/python command invocation)",
+        "retracted_claims": "Any review submission or acceptance claims that cited this receipt as evidence of verification for acceptance-reconciliation.json are formally retracted."
+      },
+      {
+        "receipt_id": "70b27b3b5be1b2fb",
+        "file": "verification-odp_github_gcp_env_bootstrap_001-70b27b3b5be1b2fb.json",
+        "generation_method": "unknown (non-runner generated / synthetic; contained non-executable Chinese prose description instead of shell/python command invocation)",
+        "retracted_claims": "Any review submission or acceptance claims that cited this receipt as evidence of verification for production-authority-prerequisites.json are formally retracted."
+      }
+    ],
+    "active_runner_receipts": [
+      {
+        "receipt_id": "e29bf30be9aa332c",
+        "command": "git diff --check",
+        "exit_code": 0,
+        "duration_seconds": 0.016
+      },
+      {
+        "receipt_id": "b73bd0c33d2476f2",
+        "command": "python3 -c \"import json; d=json.load(open('docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/acceptance-reconciliation.json')); assert d['summary']['reconciliation_verdict']=='acceptance_reconciled_with_known_gaps'; assert d['summary']['criteria_total']==5 and d['summary']['criteria_met']==4 and d['summary']['criteria_partially_met']==1\"",
+        "exit_code": 0,
+        "duration_seconds": 0.043
+      },
+      {
+        "receipt_id": "0c6a0251f5eddc9a",
+        "command": "python3 -c \"import json; d=json.load(open('docs/evidence/runtime/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/production-authority-prerequisites.json')); assert d['status']!='cleared_per_human_adjudication'; assert 'supersedes_prior_record' not in d; assert len(d['human_authority_checklist'])==5\"",
+        "exit_code": 0,
+        "duration_seconds": 0.038
+      },
+      {
+        "receipt_id": "eaba5ed7696eac75",
+        "command": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables",
+        "exit_code": 0,
+        "duration_seconds": 0.824
+      }
+    ]
+  },
   "toolchain_changes_disclosure": {
     "summary": "Shared delivery toolchain change disclosure (delivery_toolchain/git/task_start.sh & task_finalize.sh)",
     "files_modified": [
@@ -829,8 +889,9 @@
     "wif_iam_secret_reference_policy_verified": true,
     "required_variables_and_inputs_gaps_preserved": true,
     "fail_closed_human_authority_compliance_verified": true,
-    "production_authority_prerequisites_cleared": true,
-    "human_ops_adjudication_20260917_resolved": true,
+    "production_authority_infrastructure_readback_verified": true,
+    "production_authority_governance_pending": true,
+    "prod_ops_parameters_governed_by_pr1338": true,
     "canonical_dependencies_unchanged": true,
     "no_dependency_cycles_in_scoped_subgraph": true,
     "reconciliation_verdict": "acceptance_reconciled_with_known_gaps",

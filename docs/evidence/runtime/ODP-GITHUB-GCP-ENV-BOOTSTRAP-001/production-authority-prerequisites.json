@@ -3,7 +3,7 @@
   "task_id": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
   "status": "infrastructure_readback_verified_governance_pending",
   "resolution_adjudication_date": "2026-09-17",
-  "provenance_note": "參數源自操作者互動選擇，經由 worker 轉錄，非 canonical 人類裁決記錄。worker 寫入之 log 不得充當人類授權憑據。",
+  "provenance_note": "參數源自操作者互動選擇，經由 worker 轉錄，非 canonical 人類裁決記錄。worker 寫入之 log 不得充當人類授權憑據。獨立的驗證收據誠信問題（非 runner 產生收據已刪除並替換為 4 筆真實收據）已於歷史稽核中載明。",
   "resolution_summary": "PROD-GCP-01~04 基礎設施資源已由 readback 證實就位，治理裁決未以 canonical 形式取得；PROD-OPS-05 依 PR #1338（ODP-PROD-OPS-WATCH-PARAMS-001）定案參數為唯一有效值，先前 60分/1%/2s 撤回。不自簽人類裁決，保持客觀缺口記錄。",
   "human_authority_checklist": [
     {
@@ -44,10 +44,11 @@
     }
   ],
   "production_infrastructure_readback_summary": {
-    "github_production_variables_total": 50,
+    "github_production_variables_total": 48,
+    "github_production_variables_historical_observed_total_20260917": 50,
     "github_production_variables_readback_command": "gh api --paginate repos/alfloop-dev/odayplus/environments/production/variables",
     "github_production_variables_exit_code": 0,
-    "github_production_variables_observed_date": "2026-09-17",
+    "github_production_variables_observed_date": "2026-09-19",
     "github_production_deploy_scope_variables_status": "complete_11_of_11_required",
     "github_production_active_missing_variables_in_general_config": [
       {
@@ -67,34 +68,16 @@
     "direct_vpc_egress_setting": "ODP_CLOUD_RUN_VPC_EGRESS=all-traffic",
     "direct_vpc_target_network_status": "ODP_PROD_VPC_NETWORK=oday-prod-runtime (physical VPC pending creation via terraform apply in ODP-PROD-BLUEGREEN-ROLLOUT-001)",
     "vpc_connector_omitted_reason": "infra/terraform cloud_run.tf uses Direct VPC egress (network_interfaces + ALL_TRAFFIC); VPC_BINDING_MODES mutually exclusive; ODP_CLOUD_RUN_VPC_CONNECTOR intentionally omitted",
-    "bucket_variable_note": "依 ODP-PROD-NETWORK-PARITY-PLAN-001，ODP_PROD_TERRAFORM_STATE_BUCKET 與 ODP_PROD_RECOVERY_BUNDLE_BUCKET 刻意不設（資源未建，不製造齊備假象）。不得以其存在佐證 production 就緒。",
-    "gcp_storage_buckets": [
-      {
-        "bucket": "gs://odayplus-prod-20260826-tfstate",
-        "location": "ASIA-EAST1",
-        "storage_class": "STANDARD",
-        "ubla": true,
-        "versioning": true,
-        "pap": "enforced",
-        "cmek": "projects/odayplus-prod-20260826/locations/asia-east1/keyRings/oday-runtime/cryptoKeys/runtime",
-        "retention_policy": "none (versioning sufficient; prevents quarantine lockout)"
-      },
-      {
-        "bucket": "gs://odayplus-prod-20260826-recovery",
-        "location": "ASIA-EAST1",
-        "storage_class": "STANDARD",
-        "ubla": true,
-        "versioning": true,
-        "pap": "enforced",
-        "cmek": "projects/odayplus-prod-20260826/locations/asia-east1/keyRings/oday-runtime/cryptoKeys/runtime",
-        "retention_policy": "2592000s (30 days)"
-      }
-    ],
+    "bucket_variable_note": "依 ODP-PROD-NETWORK-PARITY-PLAN-001，ODP_PROD_TERRAFORM_STATE_BUCKET 與 ODP_PROD_RECOVERY_BUNDLE_BUCKET 刻意不設（資源未建，不製造齊備假象）。repo 現有收據未包含 GCS storage bucket 讀回結果，bucket 具體配置與就緒狀態未經證實（不得推論已就緒，亦不反推不存在）。",
+    "gcp_storage_buckets_status": {
+      "status": "unverified_readback_absent",
+      "note": "repo 內 live-gcp-readback-receipts.json 僅包含 network/SQL/services 收據，無 storage bucket 讀回收據。gs://odayplus-prod-20260826-tfstate 與 gs://odayplus-prod-20260826-recovery 之就緒狀態與配置標記為未證實（unverified），不推論已就緒亦不反推不存在。2026-09-17 觀察有 50 項 GitHub 變數，本輪 2026-09-19 唯讀量測為 48 項，兩 bucket 變數均不存在。"
+    },
     "next_prerequisite_tasks": [
       {
         "task_id": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
         "actions": [
-          "Provision oday-prod-runtime VPC via terraform apply against ready tfstate bucket gs://odayplus-prod-20260826-tfstate",
+          "Provision oday-prod-runtime VPC and GCS tfstate backend via terraform apply in ODP-PROD-BLUEGREEN-ROLLOUT-001",
           "Configure Cloud SQL private IP connection on oday-prod-sql (resolving PROD-GCP-03 technical residual)",
           "Populate missing required variables ODP_WEB_BASE_URL and ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET in GitHub production environment"
         ]
