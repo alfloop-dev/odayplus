@@ -1311,6 +1311,15 @@ def record_unsealed_worker_handoff(
     schema = config.get("schema") if isinstance(config.get("schema"), dict) else {}
     owner = str((task or {}).get(schema.get("assignee_field", "owner")) or "")
     bucket = state.setdefault("worker_worktrees", {}).setdefault("handoff_blocks", {})
+    existing = bucket.get(task_id)
+    rejection_count = 1
+    if (
+        isinstance(existing, dict)
+        and existing.get("head_sha") == seal.head_sha
+        and existing.get("dirt_fingerprint") == seal.dirt_fingerprint
+        and existing.get("owner") == owner
+    ):
+        rejection_count = int(existing.get("rejection_count", 1)) + 1
     bucket[task_id] = {
         "task_id": task_id,
         "owner": owner,
@@ -1322,6 +1331,7 @@ def record_unsealed_worker_handoff(
         "detail": seal.detail,
         "source_run_id": worker.get("run_id"),
         "sealed_at": utc_now(),
+        "rejection_count": rejection_count,
     }
 
 
@@ -1360,6 +1370,12 @@ def sealed_owner_continuation_allowed(
     record = ((state.get("worker_worktrees") or {}).get("handoff_blocks") or {}).get(task_id)
     if not isinstance(record, dict):
         return False, "no_handoff_block"
+    rejection_count = int(record.get("rejection_count", 1))
+    max_rejections = int(
+        (config.get("worker_reassignment") or {}).get("max_unsealed_handoff_attempts", 2)
+    )
+    if rejection_count > max_rejections:
+        return False, f"unsealed_handoff_limit_exceeded (repeated {rejection_count} times)"
     schema = config.get("schema") if isinstance(config.get("schema"), dict) else {}
     owner = str((task or {}).get(schema.get("assignee_field", "owner")) or "")
     if not owner or normalize_agent_id(owner) != normalize_agent_id(str(target_agent or "")):
