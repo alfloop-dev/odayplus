@@ -1595,13 +1595,13 @@ class TaskPRDiscoveryTests(unittest.TestCase):
 
         self.assertEqual(found_branch, "task/ODP-API-HEALTH-DATA-MODE-CONTRACT-001")
 
-    def test_review_branch_for_task_rejects_related_sidecar_agent_branch(self) -> None:
+    def test_review_branch_for_task_rejects_substring_agent_branch(self) -> None:
         config = {"branch_workflow": {"task_branch_prefix": "task/"}}
         status = {
             "agents": [
                 {
                     "name": "Codex",
-                    "branch": "task/ODP-FOO-001-SIDECAR-ACCEPTANCE",
+                    "branch": "task/ODP-FOO-0010",
                 }
             ]
         }
@@ -1609,13 +1609,13 @@ class TaskPRDiscoveryTests(unittest.TestCase):
             "id": "ODP-FOO-001",
             "owner": "Codex",
             "title": "Parent task",
-            "github": {"head_branch": "task/ODP-FOO-001-SIDECAR-ACCEPTANCE"},
+            "github": {"head_branch": "task/ODP-FOO-0010"},
         }
 
         def mock_exists(branch_name: str) -> bool:
             return branch_name in {
                 "task/ODP-FOO-001",
-                "task/ODP-FOO-001-SIDECAR-ACCEPTANCE",
+                "task/ODP-FOO-0010",
             }
 
         with mock.patch.object(github_bus, "branch_exists", side_effect=mock_exists):
@@ -1623,8 +1623,8 @@ class TaskPRDiscoveryTests(unittest.TestCase):
 
         self.assertEqual(found_branch, "task/ODP-FOO-001")
         self.assertTrue(github_bus.task_id_matches_branch("ODP-FOO-001", "origin/task/ODP-FOO-001"))
-        self.assertFalse(github_bus.task_id_matches_branch("ODP-FOO-001", "task/ODP-FOO-001-SIDECAR-ACCEPTANCE"))
         self.assertFalse(github_bus.task_id_matches_branch("ODP-FOO-001", "task/ODP-FOO-0010"))
+        self.assertFalse(github_bus.task_id_matches_branch("ODP-FOO-001", "task/ODP-FOO-001X"))
 
     def test_review_branch_for_task_rejects_unrelated_agent_or_current_branch_when_canonical_absent(self) -> None:
         config = {"branch_workflow": {"task_branch_prefix": "task/"}}
@@ -1682,6 +1682,45 @@ class TaskPRDiscoveryTests(unittest.TestCase):
                 found_branch = github_bus.review_branch_for_task(config, status, task)
 
         self.assertIsNone(found_branch)
+
+    def test_task_id_matches_branch_accepts_canonical_and_suffixed_and_rejects_substrings(self) -> None:
+        self.assertTrue(github_bus.task_id_matches_branch("ODP-FOO-001", "task/ODP-FOO-001"))
+        self.assertTrue(github_bus.task_id_matches_branch("ODP-FOO-001", "task/ODP-FOO-001-RECOVERY-20260911"))
+        self.assertTrue(github_bus.task_id_matches_branch("ODP-FOO-001", "task/ODP-FOO-001-SIDECAR-ACCEPTANCE"))
+        self.assertTrue(github_bus.task_id_matches_branch("ODP-FOO-001", "ODP-FOO-001"))
+        self.assertTrue(github_bus.task_id_matches_branch("ODP-FOO-001", "ODP-FOO-001-RECOVERY"))
+        self.assertTrue(github_bus.task_id_matches_branch("ODP_FOO_001", "task/odp-foo-001-recovery"))
+        self.assertTrue(github_bus.task_id_matches_branch("ODP-FOO-001", "task/odp_foo_001_recovery"))
+        self.assertTrue(github_bus.task_id_matches_branch("ODP-FOO-001", "origin/task/ODP-FOO-001"))
+
+        self.assertFalse(github_bus.task_id_matches_branch("ODP-FOO-001", "task/ODP-FOO-0010"))
+        self.assertFalse(github_bus.task_id_matches_branch("ODP-FOO-001", "task/ODP-FOO-001X"))
+        self.assertFalse(github_bus.task_id_matches_branch("ODP-FOO-001", "task/ODP-FOO-0010-RECOVERY"))
+        self.assertFalse(github_bus.task_id_matches_branch("ODP-FOO-001", "task/ODP-FOO-002"))
+        self.assertFalse(github_bus.task_id_matches_branch("ODP-FOO-001", "task/ODP-OTHER-001"))
+        self.assertFalse(github_bus.task_id_matches_branch("", "task/ODP-FOO-001"))
+        self.assertFalse(github_bus.task_id_matches_branch("ODP-FOO-001", ""))
+
+    def test_review_branch_for_task_prefers_explicit_suffixed_branch_over_canonical_coexisting(self) -> None:
+        config = {"branch_workflow": {"task_branch_prefix": "task/"}}
+        status = {"agents": []}
+        task = {
+            "id": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+            "branch": "task/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001-RECOVERY-20260911",
+            "owner": "Antigravity",
+            "title": "Bootstrap GCP env",
+        }
+
+        def mock_exists(branch_name: str) -> bool:
+            return branch_name in {
+                "task/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+                "task/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001-RECOVERY-20260911",
+            }
+
+        with mock.patch.object(github_bus, "branch_exists", side_effect=mock_exists):
+            found_branch = github_bus.review_branch_for_task(config, status, task)
+
+        self.assertEqual(found_branch, "task/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001-RECOVERY-20260911")
 
     def test_review_branch_for_task_accepts_exact_matching_agent_branch_when_canonical_prefix_absent(self) -> None:
         config = {"branch_workflow": {"task_branch_prefix": "task/"}}
@@ -2308,6 +2347,22 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertEqual(self._gh_calls(run_gh), [])
         self.assertEqual(entry["auto_merge"]["state"], "skipped_branch_mismatch")
+
+    def test_pr_from_suffixed_task_branch_is_armed(self) -> None:
+        suffixed_head = f"{self.BRANCH}-RECOVERY-20260911"
+        changed, entry, run_gh, _, _ = self._arm(
+            self._pr(headRefName=suffixed_head, isDraft=False, mergeStateStatus="BLOCKED"),
+            readback=self._pr(
+                headRefName=suffixed_head,
+                isDraft=False,
+                mergeStateStatus="BLOCKED",
+                autoMergeRequest={"enabledAt": "2026-09-11T00:00:00Z"},
+            ),
+        )
+
+        self.assertTrue(changed)
+        self.assertEqual(entry["auto_merge"]["state"], "enabled")
+        self.assertIn("--auto", self._gh_calls(run_gh)[0])
 
     def test_conflicting_pr_is_left_for_a_rebase(self) -> None:
         changed, entry, run_gh, _, _ = self._arm(self._pr(mergeStateStatus="DIRTY"))
