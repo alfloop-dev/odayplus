@@ -1,0 +1,212 @@
+{
+  "prepared_at": "2026-09-19T14:28:04.643093+00:00",
+  "destination_repository": "alfloop-dev/odayplus",
+  "destination_directory": "docs/audits/agy-codex-dispatch-20260919",
+  "inputs": [
+    {
+      "source": "work-status-20260919T135511Z/REPORT.md",
+      "sha256": "e161b1500988ef9312ac1fadc75aa1a40e49a41750130c85af112f91573bbfcd",
+      "bytes": 9084
+    },
+    {
+      "source": "work-status-20260919T135511Z/snapshot.json",
+      "sha256": "5e14099d4b4d500d9cfa7615499cdd138a7d94f5ebd303bf5caf1831c93e4b7c",
+      "bytes": 16676
+    },
+    {
+      "source": "agy-codex-dispatch-20260919/RESULT.md",
+      "sha256": "be571b963511ebac1b8deb52e2270909d6c1040e570ab7b7b91133b64fa067c5",
+      "bytes": 4272
+    },
+    {
+      "source": "agy-codex-dispatch-20260919/SA-SD-EXECUTION-HANDOFF.md",
+      "sha256": "0b57633eed0063eb94957b33c7666e372b545862a5e133250ab187a012ba8e38",
+      "bytes": 5092
+    },
+    {
+      "source": "agy-codex-dispatch-20260919/assignment-results.json",
+      "sha256": "58e33b92289ef2abbaad48959efb6d93576ea3698223d7fdecb732ce946f8c50",
+      "bytes": 3466
+    },
+    {
+      "source": "agy-codex-dispatch-20260919/brand-sync-task.json",
+      "sha256": "6bbb7186f957fc6d6058fde9e7b8fe61527a0a196c06eee4f5875d1c425dcad8",
+      "bytes": 2628
+    },
+    {
+      "source": "agy-codex-dispatch-20260919/config-before.json",
+      "sha256": "c42075c7681d43d1abacc4943ac7a82853f23f69c2efe0eddb286ae9c3065e6b",
+      "bytes": 29877
+    },
+    {
+      "source": "agy-codex-dispatch-20260919/config-candidate.json",
+      "sha256": "e86dcce1491b4af5abad4f4b23b9bd0d3cf3077c8feeda39f957868419a804c4",
+      "bytes": 25590
+    },
+    {
+      "source": "agy-codex-dispatch-20260919/config-enabled-validation.txt",
+      "sha256": "15a0f4ea238a941abbf639cda2065bc6204cf9154d93f6ca23fe2bb7b1559476",
+      "bytes": 61
+    },
+    {
+      "source": "agy-codex-dispatch-20260919/config-enabled.json",
+      "sha256": "b7cee72e2e449941e520c8b094b72ae52a56d4306c415cd6a9f63a50d101ba8c",
+      "bytes": 25589
+    },
+    {
+      "source": "agy-codex-dispatch-20260919/config-validation.txt",
+      "sha256": "15a0f4ea238a941abbf639cda2065bc6204cf9154d93f6ca23fe2bb7b1559476",
+      "bytes": 61
+    },
+    {
+      "source": "agy-codex-dispatch-20260919/corrective-handoff-readback.json",
+      "sha256": "7331b70921e4fca58937472a3760569229664b2788ee118f903596c4d1dfe08b",
+      "bytes": 660
+    },
+    {
+      "source": "agy-codex-dispatch-20260919/deployment-routing-mutations.json",
+      "sha256": "984b02c9a75f937d3f12dc54b218a6eab3f18ed89fce0c4b0da8d15986d0aa09",
+      "bytes": 7225
+    },
+    {
+      "source": "agy-codex-dispatch-20260919/dispatch-after.json",
+      "sha256": "7305dd4f9aeaeebc99281305a3ed527162be825318ff63e3da764440e1795aaa",
+      "bytes": 15055
+    },
+    {
+      "source": "agy-codex-dispatch-20260919/dispatch-mutations.json",
+      "sha256": "a48cd8b37cf1eb4a9d1f8cb9648882a13c0195a031a240d255cba1636f276475",
+      "bytes": 23093
+    },
+    {
+      "source": "agy-codex-dispatch-20260919/execution-tasks-registered.json",
+      "sha256": "2bf349203b2fa8c844b1a1aeefc5f2399df49e845b1358afabf67652edf9731b",
+      "bytes": 14649
+    },
+    {
+      "source": "agy-codex-dispatch-20260919/first-dispatch-followup.json",
+      "sha256": "9b9650b97e4aa66949fd816a1f70c4e90aace6fe8ca36d466bd653fcd1d981f4",
+      "bytes": 361
+    },
+    {
+      "source": "agy-codex-dispatch-20260919/latest-dispatch-observation.json",
+      "sha256": "b956cc425e5db2557f8dc8acec6622456fb0fd99dc5aeb6c6fa9d73455c15c9d",
+      "bytes": 3941
+    },
+    {
+      "source": "agy-codex-dispatch-20260919/new-execution-tasks.json",
+      "sha256": "19e140f1dc6ce4ce7022be77598b3468ad0bb4a096c322ed25b55533c9a00789",
+      "bytes": 10331
+    },
+    {
+      "source": "agy-codex-dispatch-20260919/restart-result.txt",
+      "sha256": "e31c0a6f7840574315065c913f8384912ac9cfa5026d0f8481a6d7e0dd564385",
+      "bytes": 81
+    },
+    {
+      "source": "agy-codex-dispatch-20260919/routing-verification.json",
+      "sha256": "358e7fc934d49679268107621e32420a382829fe2450ee90538933c35697a5e2",
+      "bytes": 4046
+    },
+    {
+      "source": "agy-codex-dispatch-20260919/tasks-before.json",
+      "sha256": "18ae5ddc0829bdbf24e7a6906e459bcb71983afff0558aa4b7583de040772354",
+      "bytes": 292344
+    }
+  ],
+  "excluded_raw_operational_files": [
+    "tasks-before.json",
+    "config-before.json",
+    "config-candidate.json",
+    "config-enabled.json",
+    "raw worker logs and approval registries"
+  ],
+  "historical_drafts_replaced_by_registered_contracts": [
+    "new-execution-tasks.json",
+    "brand-sync-task.json"
+  ],
+  "redactions_and_transformations": [
+    "Select only task/role/dependency fields from current board; never export approval registry.",
+    "Publish dispatch policy subset, not full operational configuration.",
+    "Replace task brief host paths with worker-relative paths.",
+    "Publish canonical operation/task/exit code, omitting copied historical notes and full runtime configuration.",
+    "Omit historical supervisor process object from status-before.json; preserve status counts and task findings."
+  ],
+  "files": [
+    {
+      "path": "DISPATCH-RESULT-1420.md",
+      "sha256": "a1adff0b83f200e06a531a3e75ddf83aaf86ac70d7789bf6ebf7d184173389d0",
+      "bytes": 4382
+    },
+    {
+      "path": "EXECUTION-TASKS.md",
+      "sha256": "371534a3d9de3a7cab3a9c27b6787deb91db7d90c9da9f07e3f54bff85a88cbb",
+      "bytes": 1064
+    },
+    {
+      "path": "OVERLAP-AUDIT.md",
+      "sha256": "95dd93de17ec6589c8501d78d745ed5b2dcd5e0cba383fc57d0d3026824025cf",
+      "bytes": 2569
+    },
+    {
+      "path": "README.md",
+      "sha256": "451e9532e19e71d4af2563d00089620418dc1198f1c96cd5d52741bc06cc1631",
+      "bytes": 2849
+    },
+    {
+      "path": "SA-SD-EXECUTION-HANDOFF.md",
+      "sha256": "88c261b5e49690cefbefd95c8d8bfc183c2c648617666cc4c05840f27892aeaa",
+      "bytes": 5202
+    },
+    {
+      "path": "STATUS-BEFORE.md",
+      "sha256": "636ae4a4a0931ddbc3e2412ec0f1b2f52991496511c9c2390ef5a6a4dfc28b64",
+      "bytes": 9194
+    },
+    {
+      "path": "assignment-dependency-delta.json",
+      "sha256": "9b69becccce2bc9ec438679da0cd4a22a36a924342ea6d5fced5b79a8f872589",
+      "bytes": 7799
+    },
+    {
+      "path": "canonical-command-results.json",
+      "sha256": "d8335c27454d8a770182e845bb711a5c631b6c89dd9834164092dde58f4a25f1",
+      "bytes": 3522
+    },
+    {
+      "path": "corrective-handoff-readback.json",
+      "sha256": "9f3baf6c3c02c48ff674bfd46ba6ee76b153a3b16233877f6f9497c9bee9aa0f",
+      "bytes": 696
+    },
+    {
+      "path": "dispatch-observation-1420.json",
+      "sha256": "2ef0b5836217a43562c091e41d08baf607e6ddc69e28f6b9ef8d84e3b95b3c78",
+      "bytes": 4191
+    },
+    {
+      "path": "dispatch-policy.json",
+      "sha256": "7e91d4964a676d64b02c16ee7553bbb0aa6740442ca18d2e817861604f88da49",
+      "bytes": 810
+    },
+    {
+      "path": "execution-tasks-registered.json",
+      "sha256": "2bf349203b2fa8c844b1a1aeefc5f2399df49e845b1358afabf67652edf9731b",
+      "bytes": 14649
+    },
+    {
+      "path": "publication-observation.json",
+      "sha256": "0aac2e81107e5985bd00873591437f726716ca66733eb197779ffa1458ab794b",
+      "bytes": 15457
+    },
+    {
+      "path": "routing-verification.json",
+      "sha256": "358e7fc934d49679268107621e32420a382829fe2450ee90538933c35697a5e2",
+      "bytes": 4046
+    },
+    {
+      "path": "status-before.json",
+      "sha256": "1d6fa397653f1f1fbd6678dd828e9f4e049aa54f495c4cfe3070cecc6988d5e5",
+      "bytes": 16386
+    }
+  ]
+}
