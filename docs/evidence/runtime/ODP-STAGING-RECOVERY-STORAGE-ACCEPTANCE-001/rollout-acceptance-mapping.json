@@ -1,8 +1,8 @@
 {
   "task_id": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
   "schema_version": 1,
-  "generated_at_utc": "2026-09-19T16:15:00Z",
-  "executor_worker": "Antigravity6",
+  "generated_at_utc": "2026-09-19T16:28:00Z",
+  "executor_worker": "Antigravity2",
   "reviewer": "Codex",
   "title": "Staging Recovery Storage 驗收與 Rollout 映射矩陣",
   "purpose": "明確分離前置 Storage Readiness（Stage A）與 Release Rehearsal Bundle 實際生成/驗收（Stage B，由 ODP-EPHEMERAL-STAGING-ROLLOUT-001 承接），確保歷史依賴具名承接、執行步驟明確且所有驗收項目與缺口如實披露。",
@@ -10,7 +10,7 @@
     "stage_a_pre_deployment_storage_readiness": {
       "phase_name": "Stage A: Pre-deployment Storage Readiness",
       "owner_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
-      "owner": "Antigravity6",
+      "owner": "Antigravity2",
       "reviewer": "Codex",
       "scope": "核對已合併儲存契約、分離守門規則、GitHub staging 環境變數與身分座標、CMEK/Versioning/Retention/PAP/UBLA/IAM 安全基準、唯讀審計收據及環境綁定前置條件。不執行雲端資源建立或修改。對因 cross-project IAM 權限未授予（非 OAuth token 過期）導致之 GCP 雲端 metadata 唯讀探針誠實記錄 IAM_DENIED 阻擋收據，不偽造運行中物件或通過狀態。",
       "status": "STAGE_A_CONTRACT_AND_COORDINATES_VERIFIED_GCP_METADATA_IAM_BLOCKED"

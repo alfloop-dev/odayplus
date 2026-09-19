@@ -4,7 +4,7 @@
 
 - **Task ID**: `ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001`
 - **Title**: 驗證 staging recovery storage 並承接失效歷史依賴
-- **Owner**: `Antigravity6`
+- **Owner**: `Antigravity2`
 - **Reviewer**: `Codex`
 - **Phase**: Staging recovery storage acceptance & contract mapping
 - **Branch**: `task/ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001`

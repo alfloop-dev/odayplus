@@ -1,8 +1,8 @@
 {
   "task_id": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
   "schema_version": 1,
-  "generated_at_utc": "2026-09-19T16:15:00Z",
-  "executor_worker": "Antigravity6",
+  "generated_at_utc": "2026-09-19T16:28:00Z",
+  "executor_worker": "Antigravity2",
   "reviewer": "Codex",
   "purpose": "Index of all historical receipts, merged code commits, live environment readbacks, and probe attempts used to establish staging recovery storage acceptance, coordinate verification, and rollout mapping.",
   "authority_boundary": {

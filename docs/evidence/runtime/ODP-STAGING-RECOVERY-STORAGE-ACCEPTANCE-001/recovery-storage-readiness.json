@@ -1,8 +1,8 @@
 {
   "task_id": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
   "schema_version": 1,
-  "generated_at_utc": "2026-09-19T16:15:00Z",
-  "executor_worker": "Antigravity6",
+  "generated_at_utc": "2026-09-19T16:28:00Z",
+  "executor_worker": "Antigravity2",
   "reviewer": "Codex",
   "title": "驗證 staging recovery storage 並承接失效歷史依賴",
   "summary": "具名承接已 superseded 的 recovery-bundle 歷史依賴，核對 staging recovery storage contract 與安全基準，區隔前置 storage readiness 與 release rehearsal 實際 bundle 驗收，建立清晰的驗收映射與治理邊界。",
