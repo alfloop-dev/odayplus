@@ -5,7 +5,7 @@ import json
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 EVIDENCE = Path(__file__).resolve().parent
@@ -134,11 +134,11 @@ def capture():
         "commands": [],
     }
     for index, argv in enumerate(commands, 1):
-        started = datetime.now(timezone.utc).isoformat()
+        started = datetime.now(UTC).isoformat()
         monotonic_start = time.monotonic_ns()
         process = subprocess.run(argv, cwd=REPO, capture_output=True, check=False)
         elapsed = time.monotonic_ns() - monotonic_start
-        finished = datetime.now(timezone.utc).isoformat()
+        finished = datetime.now(UTC).isoformat()
         entry = {"argv": argv, "started_at": started, "completed_at": finished, "duration_seconds": elapsed / 1e9, "duration_source": "time.monotonic_ns around subprocess.run", "exit_code": process.returncode}
         for stream, content in [("stdout", process.stdout), ("stderr", process.stderr)]:
             destination = output / f"command-{index}.{stream}.txt"
