@@ -250,6 +250,15 @@ SOURCES_OFF_EGRESS_CONTRACT_FILES = (
     "product_ops/deployment/cloud_run_job_entrypoint.py",
 )
 
+RUNTIME_FOUNDATION_MODULE_FILES = (
+    "infra/terraform/modules/runtime_foundation/main.tf",
+    "infra/terraform/modules/runtime_foundation/variables.tf",
+    "infra/terraform/modules/runtime_foundation/network.tf",
+    "infra/terraform/modules/runtime_foundation/outputs.tf",
+    "infra/terraform/modules/runtime_foundation/kms.tf",
+    "infra/terraform/modules/runtime_foundation/database.tf",
+)
+
 
 # ---------------------------------------------------------------------------
 # Initial-release recovery admission
@@ -1732,11 +1741,42 @@ def _wired_env_names(workflow_text: str) -> tuple[str, ...]:
     return tuple(sorted(names))
 
 
+def resolve_sources_off_egress_contract_files(
+    root: Path = ROOT,
+    candidate_sha: str | None = None,
+) -> tuple[str, ...]:
+    """Resolve the active sources-off contract files for candidate or worktree."""
+    network_content = ""
+    if candidate_sha is not None:
+        if is_exact_sha(candidate_sha):
+            ensure_candidate_commit(candidate_sha, root=root)
+            try:
+                network_content = subprocess.check_output(
+                    ["git", "show", f"{candidate_sha}:infra/terraform/network.tf"],
+                    cwd=root,
+                    stderr=subprocess.PIPE,
+                ).decode("utf-8")
+            except subprocess.CalledProcessError:
+                network_content = ""
+    else:
+        network_path = root / "infra/terraform/network.tf"
+        if network_path.is_file():
+            try:
+                network_content = network_path.read_text(encoding="utf-8")
+            except OSError:
+                network_content = ""
+
+    if 'module "runtime_foundation"' in network_content:
+        return SOURCES_OFF_EGRESS_CONTRACT_FILES + RUNTIME_FOUNDATION_MODULE_FILES
+    return SOURCES_OFF_EGRESS_CONTRACT_FILES
+
+
 def read_sources_off_contract_file(
     relative: str, *, root: Path = ROOT, candidate_sha: str | None = None,
 ) -> str:
     """Read contract posture from one exact candidate, or explicit worktree mode."""
-    if relative not in SOURCES_OFF_EGRESS_CONTRACT_FILES:
+    contract_files = resolve_sources_off_egress_contract_files(root=root, candidate_sha=candidate_sha)
+    if relative not in contract_files:
         raise ValueError(f"not a sources-off contract file: {relative}")
     if candidate_sha is None:
         return (root / relative).read_text(encoding="utf-8")
@@ -1760,6 +1800,7 @@ def compute_sources_off_egress_contract_digest(
     candidate_sha: str | None = None,
 ) -> str:
     """Hash the checked-in Runtime Release egress contract inputs."""
+    contract_files = resolve_sources_off_egress_contract_files(root=root, candidate_sha=candidate_sha)
     if candidate_sha is not None:
         if not is_exact_sha(candidate_sha):
             raise ValueError(
@@ -1767,7 +1808,7 @@ def compute_sources_off_egress_contract_digest(
             )
         ensure_candidate_commit(candidate_sha, root=root)
         h = hashlib.sha256()
-        for rel in sorted(SOURCES_OFF_EGRESS_CONTRACT_FILES):
+        for rel in sorted(contract_files):
             try:
                 content = subprocess.check_output(
                     ["git", "show", f"{candidate_sha}:{rel}"],
@@ -1785,7 +1826,7 @@ def compute_sources_off_egress_contract_digest(
         return "sha256:" + h.hexdigest()
 
     return compute_file_set_digest(
-        (root / relative_path for relative_path in SOURCES_OFF_EGRESS_CONTRACT_FILES),
+        (root / relative_path for relative_path in contract_files),
         root=root,
     )
 
@@ -1812,6 +1853,7 @@ def build_sources_off_egress_evidence(
     receipt_digest = compute_sources_off_probe_receipt_content_digest(
         resolved_cloud_run_egress=resolved_egress,
     )
+    contract_files = resolve_sources_off_egress_contract_files(root=root, candidate_sha=candidate_sha)
     return {
         "kind": SOURCES_OFF_EGRESS_EVIDENCE_KIND,
         "cloud_run_egress": (
@@ -1832,7 +1874,7 @@ def build_sources_off_egress_evidence(
         "resolved_cloud_run_egress": resolved_egress,
         "runtime_probe_receipt_content_digest": receipt_digest,
         "provider_credentials_runtime": provider_credentials_runtime,
-        "proof_source": list(SOURCES_OFF_EGRESS_CONTRACT_FILES),
+        "proof_source": list(contract_files),
         "contract_digest": compute_sources_off_egress_contract_digest(
             root=root, candidate_sha=candidate_sha
         ),
@@ -1966,13 +2008,14 @@ def _sources_off_egress_contract_errors(
 
     errors: list[str] = []
     file_contents: dict[str, str] = {}
+    contract_files = resolve_sources_off_egress_contract_files(root=root, candidate_sha=candidate_sha)
     if candidate_sha is not None:
         if not is_exact_sha(candidate_sha):
             return [
                 f"candidate_sha {candidate_sha!r} is not an exact 40-character SHA"
             ]
         ensure_candidate_commit(candidate_sha, root=root)
-        for relative in SOURCES_OFF_EGRESS_CONTRACT_FILES:
+        for relative in contract_files:
             try:
                 content = subprocess.check_output(
                     ["git", "show", f"{candidate_sha}:{relative}"],
@@ -1988,8 +2031,26 @@ def _sources_off_egress_contract_errors(
                 return [
                     f"sources-off egress contract file {relative} is not valid UTF-8 for candidate {candidate_sha}: {exc}"
                 ]
+        # Check for unbound runtime_foundation module inputs in candidate
+        try:
+            tree_output = subprocess.check_output(
+                ["git", "ls-tree", "-r", "--name-only", candidate_sha, "infra/terraform/modules/runtime_foundation"],
+                cwd=root,
+                stderr=subprocess.PIPE,
+            ).decode("utf-8")
+            candidate_module_files = [
+                f.strip() for f in tree_output.splitlines()
+                if f.strip().endswith(".tf") or f.strip().endswith(".tf.json")
+            ]
+            extra_candidate_inputs = sorted(
+                f for f in candidate_module_files if f not in file_contents
+            )
+            if extra_candidate_inputs:
+                errors.append("unbound runtime_foundation inputs: " + ", ".join(extra_candidate_inputs))
+        except subprocess.CalledProcessError:
+            pass
     else:
-        paths = {relative: root / relative for relative in SOURCES_OFF_EGRESS_CONTRACT_FILES}
+        paths = {relative: root / relative for relative in contract_files}
         missing = [relative for relative, path in paths.items() if not path.is_file()]
         if missing:
             return [
@@ -1997,6 +2058,17 @@ def _sources_off_egress_contract_errors(
             ]
         for relative, path in paths.items():
             file_contents[relative] = path.read_text(encoding="utf-8")
+
+        module_dir = root / "infra/terraform/modules/runtime_foundation"
+        if module_dir.is_dir():
+            extra_inputs = sorted(
+                path.relative_to(root).as_posix()
+                for path in module_dir.glob("*.tf*")
+                if (path.suffix == ".tf" or path.name.endswith(".tf.json"))
+                and path.relative_to(root).as_posix() not in paths
+            )
+            if extra_inputs:
+                errors.append("unbound runtime_foundation inputs: " + ", ".join(extra_inputs))
 
     workflow = file_contents[".github/workflows/deploy-dev.yml"]
     if "ODP_EXTERNAL_PROVIDER_MODE: disabled" not in workflow:
@@ -2063,19 +2135,27 @@ def _sources_off_egress_contract_errors(
     network = file_contents["infra/terraform/network.tf"]
     foundation_network = None
     if 'module "runtime_foundation"' in network:
-        if candidate_sha is not None:
-            try:
-                foundation_network = subprocess.check_output(
-                    ["git", "show", f"{candidate_sha}:infra/terraform/modules/runtime_foundation/network.tf"],
-                    cwd=root,
-                    stderr=subprocess.PIPE,
-                ).decode("utf-8")
-            except subprocess.CalledProcessError:
-                foundation_network = None
-        else:
-            mod_path = root / "infra/terraform/modules/runtime_foundation/network.tf"
-            if mod_path.is_file():
-                foundation_network = mod_path.read_text(encoding="utf-8")
+        foundation_call = re.search(
+            r'^module\s+"runtime_foundation"\s*\{(?P<body>.*?)^\}',
+            network,
+            re.MULTILINE | re.DOTALL,
+        )
+        if foundation_call is None or not re.search(
+            r'^\s*source\s*=\s*"\./modules/runtime_foundation"\s*$',
+            foundation_call.group("body"),
+            re.MULTILINE,
+        ):
+            errors.append("network.tf must instantiate the local runtime_foundation module")
+        elif re.search(
+            r'^\s*(count|for_each)\s*=', foundation_call.group("body"), re.MULTILINE
+        ):
+            errors.append("runtime_foundation must be unconditional (no count or for_each)")
+        if "google_compute_router" in network:
+            errors.append("network.tf must not define a Cloud NAT router")
+        if re.search(r'resource\s+"google_compute_firewall"', network):
+            errors.append("network.tf must keep firewall resources in runtime_foundation")
+
+        foundation_network = file_contents.get("infra/terraform/modules/runtime_foundation/network.tf")
 
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
@@ -2085,10 +2165,6 @@ def _sources_off_egress_contract_errors(
         errors.append(f"cannot load Terraform egress contract verifier: {exc}")
     else:
         if foundation_network is not None:
-            if "google_compute_router" in network:
-                errors.append("network.tf must not define a Cloud NAT router")
-            if re.search(r'resource\s+"google_compute_firewall"', network):
-                errors.append("network.tf must keep firewall resources in runtime_foundation")
             errors.extend(
                 validate_egress_contract(
                     foundation_network,
@@ -2290,6 +2366,8 @@ __all__ = [
     "SNAPSHOT_FIELDS",
     "SOURCES_OFF_ATTESTATION_FIELDS",
     "SOURCES_OFF_EGRESS_CONTRACT_FILES",
+    "RUNTIME_FOUNDATION_MODULE_FILES",
+    "resolve_sources_off_egress_contract_files",
     "SOURCES_OFF_EGRESS_EVIDENCE_FIELDS",
     "SOURCES_OFF_EGRESS_EVIDENCE_KIND",
     "SOURCES_OFF_EGRESS_POSTURE",
