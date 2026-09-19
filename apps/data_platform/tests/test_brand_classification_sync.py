@@ -18,7 +18,6 @@ import shutil
 import tempfile
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
@@ -348,7 +347,6 @@ def test_new_brand_without_prior_classification_defaults_to_owned(live_store) ->
 def test_sync_replay_and_idempotency_preserves_classification(live_store) -> None:
     """Replaying merchant sync multiple times is idempotent and never changes classification."""
     m_id = "replay-competitor-merchant"
-    tenant_id = tenant_id_for_merchant(m_id)
     brand_id = brand_id_for_merchant(m_id)
 
     with live_store.connect() as conn:
