@@ -156,6 +156,20 @@ def _is_authoritative_log_line(lines: list[str], idx: int) -> tuple[bool, str]:
     except json.JSONDecodeError:
         stream_payload = None
     if isinstance(stream_payload, dict):
+        # agy stream events carry tool stdout and assistant prose as nested
+        # data. Only a failed session result is provider failure authority.
+        if stream_payload.get("event") in {"init", "step_update", "result"}:
+            result = stream_payload.get("result")
+            if (
+                stream_payload.get("event") == "result"
+                and isinstance(result, dict)
+                and str(result.get("status") or "").upper() in {"ERROR", "FAILED"}
+            ):
+                error = result.get("error")
+                if isinstance(error, str) and error.strip():
+                    return True, "Error: " + error.strip()
+                return True, "Error: agy session failed without a diagnostic"
+            return False, ""
         if is_captured_orchestrator_record(stream_payload):
             return False, ""
         if is_allowed_rate_limit_event(stream_payload):

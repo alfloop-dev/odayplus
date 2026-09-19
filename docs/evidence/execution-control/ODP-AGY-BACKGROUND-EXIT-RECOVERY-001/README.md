@@ -27,6 +27,9 @@ real sealed progress clears it. Repeated identical head/dirt/reason handoffs
 share a budget across owner aliases and use the existing `after_attempts` setting.
 Files are neither discarded nor admitted for review without a clean handoff.
 
+Failed native stream session results preserve provider quota/auth diagnostics.
+Tool output and successful response quotations are excluded from that authority.
+
 ## Evidence and limits
 
 `native-command-canary.json` records actual short success, a 12-second success,
@@ -43,7 +46,8 @@ and 689 subtests passing (6 skipped, 10 deselected), exit 0 in 382.87 seconds.
 Ten session subprocess regressions also passed after cleanup hardening. Ruff,
 config schema and all 190 config wiring checks passed. `local-verification.json`
 records commands and content hashes; GitHub CI remains the immutable final-head
-validation required before merge.
+validation required before merge. A subsequent provider-error compatibility
+check passed all 91 failure-policy tests and 23 subtests in 18.67 seconds.
 
 ## Deployment
 

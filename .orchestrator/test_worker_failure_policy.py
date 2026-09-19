@@ -3280,6 +3280,29 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
         finally:
             tmpdir.cleanup()
 
+    def test_stream_session_errors_are_authoritative_but_tool_quotes_are_not(self) -> None:
+        for error in ("authentication failed", "quota exceeded", "You have exhausted your capacity on this model."):
+            with self.subTest(error=error):
+                tmpdir, worker = self._make_worker_log(json.dumps({
+                    "event": "result", "result": {"status": "ERROR", "error": error},
+                }) + "\n")
+                try:
+                    worker.update(runner_status="failed", exit_code=1)
+                    reason = worker_failure_policy.detect_worker_failure(worker)
+                    self.assertEqual(reason, "Error: " + error)
+                finally:
+                    tmpdir.cleanup()
+        for event in (
+            {"event": "step_update", "step_update": {"tool_info": {"output": "quota exceeded"}}},
+            {"event": "result", "result": {"status": "SUCCESS", "response": "Earlier log: quota exceeded"}},
+        ):
+            tmpdir, worker = self._make_worker_log(json.dumps(event) + "\n")
+            try:
+                worker.update(runner_status="failed", exit_code=1)
+                self.assertIsNone(worker_failure_policy.detect_worker_failure(worker))
+            finally:
+                tmpdir.cleanup()
+
     def test_stream_receipt_overrides_prose_but_not_other_providers(self) -> None:
         marker = Path(self.tmpdir.name) / "runner.json"
         session = Path(str(marker) + ".agy.json")

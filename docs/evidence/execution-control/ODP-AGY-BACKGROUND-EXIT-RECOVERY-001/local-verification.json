@@ -37,5 +37,18 @@
       "summary": "190 config keys wired"
     }
   ],
-  "measurement_notes": "Full suite started on the candidate worktree before the anchor commit; content hashes identify delivered implementation. Session cleanup hardening was covered by the separate final session subprocess run. GitHub required CI must validate the final immutable PR head before merge."
+  "measurement_notes": "Full suite started on the candidate worktree before the anchor commit; content hashes identify delivered implementation. Session cleanup hardening was covered by the separate final session subprocess run. GitHub required CI must validate the final immutable PR head before merge.",
+  "supplemental_stream_error_verification": {
+    "recorded_at": "2026-09-19T23:18:57.494603+00:00",
+    "base_commit": "2cc9bbaf5825fe9eb54835fa99b6cbb8d301e7ea",
+    "command": "uv run --python 3.12 pytest .orchestrator/test_worker_failure_policy.py",
+    "exit_code": 0,
+    "duration_seconds": 18.67,
+    "summary": "91 passed, 23 subtests passed",
+    "source_sha256": {
+      ".orchestrator/worker_failure_policy.py": "92c9dd7f686456ffeb6ec92b0c55273c42d9699106a4e18a64b288207af0501d",
+      ".orchestrator/test_worker_failure_policy.py": "9d35a8ff5ec0b649a3aab2f485daa89165b62a35e7b6dc8100e52b40a12de4ef"
+    },
+    "log_sha256": "5a302b771b83794a83c952a58a16d3180d0fca04bb447f37b98d68d33eb65f26"
+  }
 }
