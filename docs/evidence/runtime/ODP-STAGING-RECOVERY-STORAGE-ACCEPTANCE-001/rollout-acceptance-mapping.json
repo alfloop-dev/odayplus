@@ -1,0 +1,136 @@
+{
+  "task_id": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+  "schema_version": 1,
+  "generated_at_utc": "2026-09-19T14:15:00Z",
+  "executor_worker": "Antigravity6",
+  "reviewer": "Codex",
+  "title": "Staging Recovery Storage 驗收與 Rollout 映射矩陣",
+  "purpose": "明確分離前置 Storage Readiness（Stage A，本任務完成）與 Release Rehearsal Bundle 實際生成/驗收（Stage B，由 ODP-EPHEMERAL-STAGING-ROLLOUT-001 承接），確保歷史依賴具名承接且無任何驗收項目遺失或被假造。",
+  "stage_definitions": {
+    "stage_a_pre_deployment_storage_readiness": {
+      "phase_name": "Stage A: Pre-deployment Storage Readiness",
+      "owner_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+      "owner": "Antigravity6",
+      "reviewer": "Codex",
+      "scope": "核對已合併儲存契約、分離守門規則、GCP/GitHub 環境變數與身分座標、CMEK/Versioning/Retention/PAP/UBLA/IAM 安全基準、唯讀審計收據及環境綁定前置條件。不執行雲端資源建立或修改，不偽造運行中物件。",
+      "status": "COMPLETED_IN_THIS_TASK"
+    },
+    "stage_b_release_rehearsal_bundle_lifecycle": {
+      "phase_name": "Stage B: Release Rehearsal Bundle Lifecycle & Drill",
+      "owner_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "scope": "於 Ephemeral Staging 部署演練時實際建立短生命週期環境、生成 release-scoped recovery bundle（tfvars.json、inventory.json、lifecycle_state.json 與 outputs）、上傳至 GCS、驗證 object generation 與 SHA-256 雜湊、執行 backup/restore 與 rerun identity guard 驗證、並在 watch window 結束後依 TTL 自動清理。",
+      "status": "MAPPED_TO_ROLLOUT_TASK"
+    }
+  },
+  "criteria_mapping_matrix": [
+    {
+      "criterion_id": "CRIT-01-STORAGE-SEPARATION",
+      "description": "ODP_STAGING_RECOVERY_BUNDLE_BUCKET 與 ODP_STAGING_TERRAFORM_STATE_BUCKET 必須嚴格獨立，禁止共用同一 bucket 或使用 placeholder 佔位值。",
+      "historical_source_task": "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
+      "historical_pr": "#1208",
+      "stage_assignment": "Stage A",
+      "responsible_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+      "verification_evidence": "check_release_environment.py:285-298, deploy-dev.yml:1218-1222, 1487-1491, tests/release/test_release_environment_precheck.py",
+      "status": "VERIFIED_READY"
+    },
+    {
+      "criterion_id": "CRIT-02-STATE-ONLY-BACKEND",
+      "description": "Terraform State Backend Bucket 遵循 State-Only 契約，僅存放 .tfstate 與 lock 物件，嚴禁混放一般 artifact、binary plan 或 recovery bundle。",
+      "historical_source_task": "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
+      "historical_pr": "#1208",
+      "stage_assignment": "Stage A",
+      "responsible_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+      "verification_evidence": "RCPT-LIVE-FOUNDATION-READBACK-001, docs/deployment/GCP_DEPLOY_GUIDE.md:66, infra/terraform/env/staging.tfvars.example",
+      "status": "VERIFIED_READY"
+    },
+    {
+      "criterion_id": "CRIT-03-SECURITY-BASELINE-CMEK",
+      "description": "Recovery Storage 必須啟用 CMEK 客戶自管金鑰加密，綁定 staging runtime KMS Key (oday-staging-runtime)，輪替週期 90 天，prevent_destroy = true。",
+      "historical_source_task": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+      "historical_pr": "#1046",
+      "stage_assignment": "Stage A",
+      "responsible_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+      "verification_evidence": "RCPT-LIVE-FOUNDATION-READBACK-001 (KMS CryptoKey oday-staging-runtime converged in remote state)",
+      "status": "VERIFIED_READY"
+    },
+    {
+      "criterion_id": "CRIT-04-SECURITY-BASELINE-GOVERNANCE",
+      "description": "Recovery Storage 必須強制啟用 Uniform Bucket-Level Access (UBLA)、Public Access Prevention (PAP=enforced)、Object Versioning 與 30 天 Retention 策略。",
+      "historical_source_task": "ODP-STAGING-FOUNDATION-REFS-MAPPING-001",
+      "historical_pr": "#1314",
+      "stage_assignment": "Stage A",
+      "responsible_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+      "verification_evidence": "docs/evidence/runtime/ODP-STAGING-FOUNDATION-REFS-MAPPING-001/binding-proposal.json:85",
+      "status": "VERIFIED_READY"
+    },
+    {
+      "criterion_id": "CRIT-05-LEAST-PRIVILEGE-IAM",
+      "description": "Deployer Service Account 僅被授予 roles/storage.objectUser 權限，禁止授予專案級或儲存桶級 roles/storage.admin。",
+      "historical_source_task": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+      "historical_pr": "#1046",
+      "stage_assignment": "Stage A",
+      "responsible_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+      "verification_evidence": "RCPT-LIVE-FOUNDATION-READBACK-001 (deployer_readback.role = roles/storage.objectUser)",
+      "status": "VERIFIED_READY"
+    },
+    {
+      "criterion_id": "CRIT-06-SECRET-FREE-RECEIPTS",
+      "description": "所有儲存檢查收據、log 與錯誤訊息必須遵循 secret_values_redacted=true 不變式，不得輸出真實 secret 值或私密 bundle 內容。",
+      "historical_source_task": "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
+      "historical_pr": "#1208 (commit a5e6a2f7)",
+      "stage_assignment": "Stage A",
+      "responsible_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+      "verification_evidence": "tests/release/test_release_environment_precheck.py:test_staging_bucket_separation_receipt_redaction",
+      "status": "VERIFIED_READY"
+    },
+    {
+      "criterion_id": "CRIT-07-BUNDLE-GENERATION-UPLOAD",
+      "description": "在 Release Rehearsal 建立 ephemeral staging 時，自動序列化 tfvars.json、inventory.json、lifecycle_state.json 並上傳至 gs://${ODP_STAGING_RECOVERY_BUNDLE_BUCKET}/${staging_backend_prefix}/bundle。",
+      "historical_source_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+      "historical_pr": "Pending execution in parent task",
+      "stage_assignment": "Stage B",
+      "responsible_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+      "verification_evidence": "product_ops/deployment/staging_lifecycle.py:1550-1650, deploy-dev.yml:1213-1235",
+      "status": "TO_BE_EXECUTED_IN_STAGE_B"
+    },
+    {
+      "criterion_id": "CRIT-08-BUNDLE-OBJECT-GENERATION-HASH",
+      "description": "驗證上傳之 Recovery Bundle 具備真實 GCS object generation、SHA-256 content digest 與不可變輸出結構，記錄於 release receipts 中。",
+      "historical_source_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+      "historical_pr": "Pending execution in parent task",
+      "stage_assignment": "Stage B",
+      "responsible_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+      "verification_evidence": "product_ops/deployment/staging_lifecycle.py:validate_immutable_release_identity, tests/ops/test_ephemeral_staging_lifecycle.py",
+      "status": "TO_BE_EXECUTED_IN_STAGE_B"
+    },
+    {
+      "criterion_id": "CRIT-09-RERUN-GUARD-AND-RESTORE-DRILL",
+      "description": "驗證當 durable state 存在時，重跑必須具備完整 recovery bundle 且所有不可變身分欄位完全一致；否則拋出 ReleaseStateUnverifiable 並拒絕覆寫或錯誤清理。",
+      "historical_source_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+      "historical_pr": "Pending execution in parent task",
+      "stage_assignment": "Stage B",
+      "responsible_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+      "verification_evidence": "product_ops/deployment/staging_lifecycle.py:1593-1620, tests/ops/test_ephemeral_staging_lifecycle.py",
+      "status": "TO_BE_EXECUTED_IN_STAGE_B"
+    },
+    {
+      "criterion_id": "CRIT-10-EPHEMERAL-CLEANUP-AND-LIFECYCLE",
+      "description": "Staging 成功後於 watch window 結束時自動銷毀，失敗時保留至 24h TTL；清理依照 exact label matching 精確執行，不得使用寬泛 wildcard。",
+      "historical_source_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+      "historical_pr": "Pending execution in parent task",
+      "stage_assignment": "Stage B",
+      "responsible_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+      "verification_evidence": "product_ops/deployment/staging_lifecycle.py:destroy, cleanup_expired, deploy-dev.yml:1483-1520",
+      "status": "TO_BE_EXECUTED_IN_STAGE_B"
+    }
+  ],
+  "summary_disposition": {
+    "total_criteria": 10,
+    "stage_a_verified_ready": 6,
+    "stage_b_mapped_to_rollout": 4,
+    "unmapped_criteria": 0,
+    "conclusion": "前置 Storage Readiness（Stage A）已於本任務完成代碼契約、安全基準與座標映射之核對；Release Rehearsal 執行期驗收項目（Stage B）已完整映射至 ODP-EPHEMERAL-STAGING-ROLLOUT-001，歷史依賴完成具名承接，無遺失或冒充已完成之情形。"
+  }
+}

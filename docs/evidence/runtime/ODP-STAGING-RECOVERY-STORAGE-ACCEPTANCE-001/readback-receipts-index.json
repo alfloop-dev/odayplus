@@ -1,0 +1,97 @@
+{
+  "task_id": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+  "schema_version": 1,
+  "generated_at_utc": "2026-09-19T14:15:00Z",
+  "executor_worker": "Antigravity6",
+  "reviewer": "Codex",
+  "purpose": "Index of all historical receipts, merged code commits, and readback sources used to establish staging recovery storage acceptance, coordinate verification, and rollout mapping.",
+  "authority_boundary": {
+    "permitted_actions": [
+      "Read immutable existing foundation metadata and state receipts",
+      "Read immutable preflight, CI collection, and PR merge receipts",
+      "Verify code contracts, fail-closed prechecks, and workflow boundaries",
+      "Map historical criteria to current readiness and future rollout tasks"
+    ],
+    "prohibited_actions": [
+      "No reading secret versions, tokens, or plaintext keys",
+      "No reading raw Terraform binary state plans or signing keys",
+      "No creating, modifying, or deleting cloud resources or GCS buckets",
+      "No modifying IAM policy bindings or enabling GCP APIs",
+      "No running terraform init, plan, apply, import, or state commands against live cloud",
+      "No running gh variable set or releasing dispatch triggers",
+      "No modifying or deleting quarantined security state objects"
+    ]
+  },
+  "receipts_index": [
+    {
+      "receipt_id": "RCPT-HISTORICAL-PR-1208",
+      "source_task": "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
+      "source_pr": "#1208",
+      "head_sha": "a5e6a2f7074b6c5e679cbf7f0c6d03f9e6141a5a",
+      "merge_commit": "b9dd2e7b337e4bab8236cd15b5df07092685100b",
+      "merged_at_utc": "2026-09-05T16:02:58Z",
+      "evidence_kind": "merged_code_and_contract_tests",
+      "key_deliverables": [
+        "check_release_environment.py: ODP_STAGING_RECOVERY_BUNDLE_BUCKET presence check and state bucket separation guard",
+        "deploy-dev.yml: deploy and staging_closeout jobs wired to dedicated recovery bucket",
+        "test_release_environment_precheck.py: fail-closed rejection tests for identical bucket and placeholder bucket",
+        "test_deploy_workflow_contract.py: staging foundation contract tests"
+      ]
+    },
+    {
+      "receipt_id": "RCPT-LIVE-FOUNDATION-READBACK-001",
+      "source_task": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+      "source_pr": "#1046",
+      "source_commit_sha": "494d09145b2932d5bbc27682e918b1afa176a140",
+      "verified_at_utc": "2026-08-30T15:52:48Z",
+      "evidence_kind": "historical_aggregate_receipt",
+      "target_project": "odayplus-runtime-20260825",
+      "target_region": "asia-east1",
+      "verified_facts": [
+        "State bucket oday-tfstate-staging-odayplus-runtime-20260825 configured with CMEK, versioning, PAP=enforced, UBLA=enabled, 30d retention",
+        "Deployer SA github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com bound with roles/storage.objectUser on state bucket",
+        "KMS KeyRing oday-staging-runtime with CryptoKey oday-staging-runtime converged in remote state",
+        "Quarantine plan object 1787822664931431 retention expires at 2026-09-26T09:24:24Z (no early deletion)"
+      ]
+    },
+    {
+      "receipt_id": "RCPT-GH-ENV-VARS-STAGING-001",
+      "source_task": "ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003",
+      "source_pr": "#1245",
+      "source_commit_sha": "6ee658a0bd65ab79303fdfd75baa09c14410a220",
+      "timestamp_utc": "2026-09-08T11:46:08Z",
+      "command": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables",
+      "exit_code": 0,
+      "evidence_kind": "github_environment_variables_readback",
+      "findings": [
+        "ODP_STAGING_TERRAFORM_STATE_BUCKET: UNSET",
+        "ODP_STAGING_RECOVERY_BUNDLE_BUCKET: UNSET",
+        "GCP_SERVICE_ACCOUNT: github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com (BOUND)",
+        "GCP_PROJECT_ID: odayplus-runtime-20260825 (BOUND)",
+        "GCP_REGION: asia-east1 (BOUND)"
+      ]
+    },
+    {
+      "receipt_id": "RCPT-STAGING-IAC-CI-COLLECTION-PR-1291",
+      "source_task": "ODP-STAGING-IAC-CI-COLLECTION-001",
+      "source_pr": "#1291",
+      "exact_commit_sha": "726065c3aec57147f37902b94d754234dd55e25f",
+      "evidence_kind": "ci_pipeline_collection",
+      "verified_facts": [
+        "18 ephemeral staging offline Terraform/contract tests integrated into CI orchestrator job",
+        "Offline fail-closed test harness with pinned Terraform 1.9.8"
+      ]
+    },
+    {
+      "receipt_id": "RCPT-STAGING-LIFECYCLE-INTEGRATION-PR-1041",
+      "source_task": "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+      "source_pr": "#1041",
+      "merge_commit": "462c8cd4588e3fa0ae34f1ecbb066bfdaae3e1c6",
+      "evidence_kind": "workflow_lifecycle_integration",
+      "verified_facts": [
+        "Ephemeral staging lifecycle and receipt paths unified to RELEASE_RECEIPT_DIR in .github/workflows/deploy-dev.yml",
+        "Lifecycle contract tests incorporated into release verification"
+      ]
+    }
+  ]
+}
