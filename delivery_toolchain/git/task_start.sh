@@ -42,8 +42,25 @@ if [ -z "$TASK_ID" ]; then usage; exit 2; fi
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
-PREFIX="${PANTHEON_TASK_BRANCH_PREFIX:-task/}"
-BRANCH="${PREFIX}${TASK_ID}"
+STATUS_JSON="${ORCH_STATUS_ROOT:-${PANTHEON_STATUS_ROOT:-$ROOT}}/ai-status.json"
+if [ ! -f "$STATUS_JSON" ]; then
+  STATUS_JSON="$ROOT/ai-status.json"
+fi
+RECORDED_BRANCH=""
+if [ -f "$STATUS_JSON" ]; then
+  if command -v jq >/dev/null 2>&1; then
+    RECORDED_BRANCH="$(jq -r --arg id "$TASK_ID" '.tasks[]? | select(.id == $id) | .branch // empty' "$STATUS_JSON" 2>/dev/null || true)"
+  elif command -v python3 >/dev/null 2>&1; then
+    RECORDED_BRANCH="$(python3 -c "import json; data=json.load(open('$STATUS_JSON')); tasks={t.get('id'): t for t in data.get('tasks', []) if isinstance(t, dict)}; t=tasks.get('$TASK_ID', {}); print(t.get('branch') or '')" 2>/dev/null || true)"
+  fi
+fi
+
+if [ -n "$RECORDED_BRANCH" ]; then
+  BRANCH="$RECORDED_BRANCH"
+else
+  PREFIX="${PANTHEON_TASK_BRANCH_PREFIX:-task/}"
+  BRANCH="${PREFIX}${TASK_ID}"
+fi
 CURRENT="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
 
 # Tracked modifications only: per-task worktrees are seeded with gitignored
