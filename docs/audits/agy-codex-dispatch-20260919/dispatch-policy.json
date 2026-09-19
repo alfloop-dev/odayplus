@@ -1,0 +1,37 @@
+{
+  "ready_dispatcher_enabled": {
+    "before": false,
+    "after": true
+  },
+  "role_provider_policy": {
+    "enabled": true,
+    "rules": [
+      {
+        "roles": [
+          "reviewer"
+        ],
+        "providers": [
+          "codex"
+        ]
+      },
+      {
+        "roles": [
+          "owner",
+          "helper"
+        ],
+        "providers": [
+          "antigravity"
+        ]
+      }
+    ],
+    "unclassified_owned_work": [
+      "antigravity"
+    ]
+  },
+  "schema_validation_receipts": [
+    "Validated 3 config documents and their merged runtime views.",
+    "Validated 3 config documents and their merged runtime views."
+  ],
+  "loaded_supervisor_config_digest": "b7cee72e2e449941",
+  "publication_scope": "Dispatch policy only. Full operational config/account environment stays local."
+}
