@@ -711,6 +711,8 @@ def process_queue(
             attempt_count=record["attempt_count"],
             event_id_for_log=event_id,
         )
+        # Successful launch persists and replaces nested state records.
+        record = queue_event_record(state, event_id)
         if not ok:
             failure_worker = {
                 "provider": request_provider,
@@ -872,7 +874,10 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
         "supersede_deferrals": 0,
     }
     workers = state.setdefault("workers", {})
-    for run_id, worker in list(workers.items()):
+    for run_id in list(workers):
+        # Retry/fallback launch can replace the nested worker map on save.
+        workers = state.setdefault("workers", {})
+        worker = workers.get(run_id)
         if not isinstance(worker, dict):
             continue
         pending_fence = worker.get("pending_fence")

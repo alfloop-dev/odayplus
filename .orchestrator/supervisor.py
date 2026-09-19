@@ -2561,6 +2561,16 @@ def start_worker_for_request(
         },
         emit_activity=False,
     )
+    # The replacement and its parent's handoff must be persisted together.
+    # Otherwise a restart (or stale caller reference after save) leaves the
+    # already-due parent eligible to spawn a duplicate replacement.
+    parent = state["workers"].get(parent_run_id)
+    if isinstance(parent, dict) and activity_type in {"worker_retried", "worker_fallback_started"}:
+        parent["status"] = "retried" if activity_type == "worker_retried" else "fallback"
+        successor_key = "superseded_by_run_id" if activity_type == "worker_retried" else "fallback_run_id"
+        parent[successor_key] = worker_run_id
+        parent["last_event_at"] = now
+        parent["next_retry_at"] = None
     # Persist immediately after launch so a supervisor crash cannot orphan
     # a live worker before the end-of-tick state save.
     save_runtime_state(config, state)

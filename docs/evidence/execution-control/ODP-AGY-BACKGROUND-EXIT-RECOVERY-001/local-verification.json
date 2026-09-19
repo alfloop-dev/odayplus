@@ -70,5 +70,35 @@
       ".orchestrator/test_worker_failure_policy.py": "a1ddf2688686a36d560662e448ae279a2a6cead65e15c7ae04251cc6693d8f50"
     },
     "log_sha256": "b683397ca50a7f1e8d0dfeaad043d57f3c1dd25f6600e279cc6800a976a8cea5"
+  },
+  "actual_persistence_verification": {
+    "command": [
+      "uv",
+      "run",
+      "--python",
+      "3.12",
+      "pytest",
+      ".orchestrator/test_worker_failure_policy.py",
+      ".orchestrator/test_supervisor.py",
+      ".orchestrator/test_runtime_state.py",
+      "-k",
+      "retry or fallback or manual_pending or AgyBackgroundExitRecoveryTests"
+    ],
+    "exit_code": 0,
+    "duration_seconds": 12.106,
+    "recorded_at": "2026-09-19T23:57:20.034370+00:00",
+    "base_commit": "74fb6187ce8aa01c6a87c2a2ea22924ca6b1763f",
+    "summary": "35 passed, 809 deselected, 5 subtests passed in 10.60s",
+    "findings": [
+      "R1a exhausted inbox requeue",
+      "R1b state replacement detaches parent and loop references"
+    ],
+    "source_sha256": {
+      ".orchestrator/supervisor.py": "bb8512d99e2ef1d85e5e8fdccd50f257eeffe46dbffc1e7cc01b23e8769f0ce4",
+      ".orchestrator/worker_failure_policy.py": "585caacfb0a7cd07f37867ae02d05c2000e21caf127e2a691a1626955b66a7da",
+      ".orchestrator/worker_lifecycle.py": "66dd9fd37913689630824fa22c97c4a6b7379694fb098028147744abc4608a94",
+      ".orchestrator/test_worker_failure_policy.py": "b1c5f7d0a1a37088d090f3d6160058e8713e096e7a0247609823a199b3142184"
+    },
+    "log_sha256": "aac25f6750d507ed8d36171f4d57cfbd4b9419c5e21f826fa17b868496cd96d5"
   }
 }

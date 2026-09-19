@@ -3678,24 +3678,81 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
         finally:
             tmpdir.cleanup()
 
+    def test_two_due_retries_persist_handoffs_before_another_tick(self) -> None:
+        from datetime import UTC, datetime
+
+        from adapters.base import DeliveryResult
+
+        self.config['paths'].update(state_file=str(Path(self.tmpdir.name) / 'state.json'),
+                                    event_queue=str(Path(self.tmpdir.name) / 'queue.jsonl'))
+        state = {'workers': {}}
+        for index in range(2):
+            request = DeliveryRequest(agent_id='antigravity', provider='antigravity',
+                                      delivery_mode='antigravity', message='fixture',
+                                      task_id=f'TASK-RETRY-{index}', reason='owned_in_progress_dispatch')
+            event_id = f'event-{index}'
+            runtime_state.enqueue_event(self.config, {
+                'event_id': event_id, 'target_agent': 'antigravity', 'provider': 'antigravity',
+                'task_id': request.task_id, 'reason': request.reason, 'message': request.message})
+            state['workers'][f'parent-{index}'] = {
+                'run_id': f'parent-{index}', 'provider': 'antigravity',
+                'task_id': request.task_id, 'queue_event_id': event_id,
+                'request_snapshot': supervisor.request_snapshot(request),
+                'status': 'retry_backoff', 'retry_count': 1, 'attempt_count': 1,
+                'next_retry_at': '2000-01-01T00:00:00Z',
+            }
+        with (
+            mock.patch.object(supervisor, 'build_adapter') as adapter,
+            mock.patch.object(supervisor, 'provider_auth_identity_hash', return_value='fixture'),
+            mock.patch.object(supervisor, 'save_runtime_state', side_effect=runtime_state.save_runtime_state),
+            mock.patch.object(supervisor, 'write_activity_log'),
+            mock.patch.object(supervisor, 'record_worker_runtime_measurement'),
+        ):
+            adapter.return_value.deliver.side_effect = [
+                DeliveryResult(ok=True, adapter='antigravity', mode='antigravity', target='fixture',
+                               auto_delivered=True, manual_confirmation_required=False,
+                               run_id=f'child-{index}') for index in range(2)]
+            self.assertTrue(supervisor.retry_due_workers(self.config, state, {}, datetime.now(UTC)))
+            # Read the file written during child launch, before any outer tick save.
+            persisted = json.loads(Path(self.config['paths']['state_file']).read_text())
+            for index in range(2):
+                parent = persisted['workers'][f'parent-{index}']
+                self.assertEqual(parent['status'], 'retried')
+                self.assertEqual(parent['superseded_by_run_id'], f'child-{index}')
+                self.assertIsNone(parent['next_retry_at'])
+                self.assertEqual(persisted['workers'][f'child-{index}']['retry_count'], 1)
+            state = runtime_state.load_runtime_state(self.config)
+            for _ in range(3):
+                self.assertFalse(supervisor.retry_due_workers(self.config, state, {}, datetime.now(UTC)))
+            self.assertEqual(adapter.return_value.deliver.call_count, 2)
+
     def test_real_retry_replacements_exhaust_across_aliases_and_restart(self) -> None:
         from datetime import UTC, datetime, timedelta
+        from types import SimpleNamespace
 
         from adapters.base import DeliveryResult
 
         task = {'id': 'TASK-RETRY-CHAIN', 'owner': 'Antigravity',
                 'reviewer': 'Codex2', 'status': 'in_progress'}
         aliases = ['antigravity', 'antigravity2', 'antigravity3']
-        self.config['worker_retry'].update(max_attempts=2, fallback_mode='none')
+        self.config['worker_retry'].update(max_attempts=2, fallback_mode='file_inbox')
+        self.config['paths'].update(state_file=str(Path(self.tmpdir.name) / 'state.json'),
+                                    event_queue=str(Path(self.tmpdir.name) / 'queue.jsonl'))
+        for agent in self.config['agents'].values():
+            agent['adapter'] = 'antigravity'
+        for alias in aliases:
+            runtime_state.enqueue_event(self.config, {
+                'event_id': f'event-{alias}', 'target_agent': alias, 'provider': 'antigravity',
+                'task_id': task['id'], 'reason': 'owned_in_progress_dispatch', 'message': 'fixture'})
         state = {'workers': {}}
         reason = 'agy background lifecycle interrupted: command_exit_unknown'
         deliveries = []
 
-        def deliver(request):
+        def deliver(request, mode):
             deliveries.append(request.agent_id)
-            return DeliveryResult(ok=True, adapter='antigravity', mode='antigravity',
-                                  target='fixture', auto_delivered=True,
-                                  manual_confirmation_required=False,
+            return DeliveryResult(ok=True, adapter=mode, mode=mode,
+                                  target='fixture', auto_delivered=mode != 'file_inbox',
+                                  manual_confirmation_required=mode == 'file_inbox',
                                   run_id=f'run-{len(deliveries)}')
 
         def persist(_config, **kwargs):
@@ -3704,9 +3761,10 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
             return True
 
         with (
-            mock.patch.object(supervisor, 'build_adapter') as adapter,
+            mock.patch.object(supervisor, 'build_adapter', side_effect=lambda mode, **kw:
+                              SimpleNamespace(deliver=lambda req: deliver(req, mode))),
             mock.patch.object(supervisor, 'provider_auth_identity_hash', return_value='fixture'),
-            mock.patch.object(supervisor, 'save_runtime_state'),
+            mock.patch.object(supervisor, 'save_runtime_state', side_effect=runtime_state.save_runtime_state),
             mock.patch.object(supervisor, 'write_activity_log'),
             mock.patch.object(supervisor, 'record_worker_runtime_measurement'),
             mock.patch.object(supervisor, 'load_status', return_value={'tasks': [task]}),
@@ -3714,7 +3772,6 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
             mock.patch.object(supervisor, 'get_agent_reassignment_candidates',
                               return_value=['Antigravity', 'Antigravity2', 'Antigravity3']),
         ):
-            adapter.return_value.deliver.side_effect = deliver
             for alias in aliases:
                 self.assertEqual(task['owner'].lower(), alias)
                 task['status'] = 'in_progress'
@@ -3732,6 +3789,7 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
                         state, worker, reason, failure_kind='interrupted')
                     outcome = supervisor.maybe_trigger_retry_or_fallback(
                         self.config, state, {}, worker, reason)
+                    worker = state['workers'][run_id]
                     if generation < 2:
                         self.assertEqual(outcome, (True, True))
                         self.assertEqual(worker['status'], 'retry_backoff')
@@ -3746,11 +3804,34 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
                         self.assertEqual(outcome, (True, True))
                         self.assertEqual(worker['status'], 'reassigned')
                     else:
-                        self.assertEqual(outcome, (False, False))
-                self.assertEqual(len(deliveries), 3 * (aliases.index(alias) + 1))
+                        self.assertEqual(outcome, (True, True))
+                        self.assertEqual(worker['status'], 'fallback')
+                        fallback_id = worker['fallback_run_id']
+                        self.assertEqual(state['workers'][fallback_id]['retry_count'], 2)
+                        self.assertEqual(state['workers'][fallback_id]['status'], 'manual_pending')
+                self.assertEqual(len(deliveries), 3 * (aliases.index(alias) + 1) + (alias == aliases[-1]))
             self.assertFalse(supervisor.retry_due_workers(
                 self.config, state, {}, datetime.now(UTC) + timedelta(days=1)))
-        self.assertEqual(deliveries, [alias for alias in aliases for _ in range(3)])
+            report = {'agent_adapters': {alias: {'can_auto_deliver': True,
+                                                'delivery_mode': 'antigravity'} for alias in aliases}}
+            fresh_inbox = {**state['workers'][fallback_id], 'retry_count': 0}
+            self.assertTrue(supervisor.manual_pending_inbox_can_auto_redeliver(
+                self.config, state, report, fresh_inbox))
+            persisted = json.loads(Path(self.config['paths']['state_file']).read_text())
+            self.assertEqual(persisted['workers'][run_id]['status'], 'fallback')
+            self.assertEqual(persisted['workers'][run_id]['fallback_run_id'], fallback_id)
+            # Exercise deployed poll -> inbox recovery -> queue repeatedly with
+            # actual save/reload (which replaces nested state dictionaries).
+            with mock.patch.object(supervisor, 'load_approval_state', return_value={'pending': [], 'history': []}):
+                for _ in range(3):
+                    supervisor.poll_workers(self.config, state, report)
+                    supervisor.process_queue(self.config, state, report)
+                    runtime_state.save_runtime_state(self.config, state)
+                    state = runtime_state.load_runtime_state(self.config)
+                    self.assertEqual(state['workers'][fallback_id]['status'], 'manual_pending')
+                    self.assertEqual(state['workers'][run_id]['status'], 'fallback')
+                    self.assertEqual(len(deliveries), 10)
+        self.assertEqual(deliveries, [alias for alias in aliases for _ in range(3)] + [aliases[-1]])
         streaks = state['provider_guardrails']['task_failure_streaks']
         self.assertEqual([streaks[f"{task['id']}:{alias}"]['count'] for alias in aliases], [3, 3, 3])
 

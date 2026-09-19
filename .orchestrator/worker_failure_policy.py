@@ -4118,6 +4118,11 @@ def manual_pending_inbox_can_auto_redeliver(
         return False
     if worker.get("mode") != "file_inbox":
         return False
+    # Exhausted fallback is a manual escalation, not provider-unavailable
+    # inbox delivery. Automatic requeue would delete its consumed budget.
+    retry = worker_retry_settings(config, worker.get("provider"))
+    if int(worker.get("retry_count", 0)) >= int(retry.get("max_attempts", 5)):
+        return False
     if pid_is_alive(worker.get("pid")):
         return False
     request = request_for_worker(config, worker)
@@ -4261,6 +4266,7 @@ def maybe_trigger_retry_or_fallback(
                 activity_message=f"Worker fell back to file inbox after transient failures: {reason}",
             )
             if ok:
+                worker = state["workers"][worker["run_id"]]
                 worker["status"] = "fallback"
                 worker["fallback_run_id"] = outcome
                 worker["last_event_at"] = utc_now()
@@ -4275,7 +4281,12 @@ def retry_due_workers(
     now: datetime,
 ) -> bool:
     changed = False
-    for worker in list(state.get("workers", {}).values()):
+    for run_id in list(state.get("workers", {})):
+        # Launch persistence replaces nested state records; never retain the
+        # previous iteration's worker objects across that boundary.
+        worker = state.get("workers", {}).get(run_id)
+        if not isinstance(worker, dict):
+            continue
         if worker.get("pending_fence"):
             continue
         if worker.get("status") != "retry_backoff":
@@ -4312,6 +4323,7 @@ def retry_due_workers(
             activity_type="worker_retried",
             activity_message=f"Worker retry launched after backoff from {worker['run_id']}",
         )
+        worker = state["workers"][run_id]
         if ok:
             worker["status"] = "retried"
             worker["superseded_by_run_id"] = outcome

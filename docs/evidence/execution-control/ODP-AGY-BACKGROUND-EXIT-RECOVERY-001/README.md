@@ -28,7 +28,15 @@ share a budget across owner aliases and use the existing `after_attempts` settin
 Files are neither discarded nor admitted for review without a clean handoff.
 Replacement retries and inbox fallback inherit the consumed retry count.
 A real retry/start regression traverses three aliases to exhaustion, including
-serialization/reload between attempts to model a Supervisor restart.
+actual isolated runtime state persistence/reload between attempts. Exhausted
+file-inbox fallback stays pending for explicit recovery instead of being
+automatically deleted and redispatched with a fresh budget. Healthy initial
+inbox delivery can still recover automatically.
+
+Replacement launch persists the child and parent handoff together before
+returning; retry/poll loops and queue updates reacquire current records after
+state persistence replaces nested dictionaries. Tests cover two simultaneously
+due retries and repeated poll/queue ticks with actual save/load semantics.
 
 The transport polls CLI termination independently of pipe EOF. If a crashed
 CLI leaves descendants holding stdout/stderr, its drain deadline still starts;
@@ -61,6 +69,13 @@ The two Codex2 findings on `db5fff768ce579be4a2655f74f497deeb14ade16`
 were subsequently repaired. The session and failure-policy suites completed
 with exit 0; their terminal output and implementation hashes are recorded in
 `local-verification.json`. Duration was not captured for that invocation.
+
+The later Codex2 R1a/R1b findings on the composed `74fb6187` head were
+addressed through the deployed file-inbox path and actual state persistence.
+A focused lifecycle run passed 35 tests and 5 subtests (809 deselected), exit 0
+in 12.106 seconds; pytest reported 10.60 seconds. The test reads the on-disk
+parent handoff before an outer tick save, and repeated poll/queue cycles do not
+create new deliveries after exhaustion.
 
 ## Deployment
 
