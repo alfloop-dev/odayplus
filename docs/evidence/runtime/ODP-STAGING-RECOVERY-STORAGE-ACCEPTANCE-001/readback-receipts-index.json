@@ -1,14 +1,15 @@
 {
   "task_id": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
   "schema_version": 1,
-  "generated_at_utc": "2026-09-19T14:15:00Z",
+  "generated_at_utc": "2026-09-19T14:48:45Z",
   "executor_worker": "Antigravity6",
   "reviewer": "Codex",
-  "purpose": "Index of all historical receipts, merged code commits, and readback sources used to establish staging recovery storage acceptance, coordinate verification, and rollout mapping.",
+  "purpose": "Index of all historical receipts, merged code commits, live environment readbacks, and probe attempts used to establish staging recovery storage acceptance, coordinate verification, and rollout mapping.",
   "authority_boundary": {
     "permitted_actions": [
       "Read immutable existing foundation metadata and state receipts",
       "Read immutable preflight, CI collection, and PR merge receipts",
+      "Perform authorized read-only GitHub API and GCP metadata readbacks",
       "Verify code contracts, fail-closed prechecks, and workflow boundaries",
       "Map historical criteria to current readiness and future rollout tasks"
     ],
@@ -23,6 +24,88 @@
     ]
   },
   "receipts_index": [
+    {
+      "receipt_id": "RCPT-GH-ENV-VARS-STAGING-002",
+      "source_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+      "timestamp_utc": "2026-09-19T14:48:43Z",
+      "command": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables",
+      "exit_code": 0,
+      "evidence_kind": "github_environment_variables_readback",
+      "verified_bindings": {
+        "ODP_STAGING_TERRAFORM_STATE_BUCKET": {
+          "value": "oday-tfstate-staging-odayplus-runtime-20260825",
+          "updated_at": "2026-09-12T14:23:28Z",
+          "status": "BOUND"
+        },
+        "ODP_STAGING_RECOVERY_BUNDLE_BUCKET": {
+          "value": "oday-staging-recovery-odayplus-runtime-20260825",
+          "updated_at": "2026-09-12T15:37:03Z",
+          "status": "BOUND"
+        },
+        "ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT": {
+          "value": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+          "updated_at": "2026-09-12T14:23:27Z",
+          "status": "BOUND"
+        },
+        "ODP_STAGING_KMS_KEY_ID": {
+          "value": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime",
+          "updated_at": "2026-09-12T14:23:27Z",
+          "status": "BOUND"
+        },
+        "ODP_STAGING_VPC_NETWORK": {
+          "value": "oday-staging-runtime",
+          "updated_at": "2026-09-12T14:23:25Z",
+          "status": "BOUND"
+        },
+        "ODP_STAGING_VPC_SUBNETWORK": {
+          "value": "oday-staging-runtime",
+          "updated_at": "2026-09-12T14:23:26Z",
+          "status": "BOUND"
+        },
+        "GCP_PROJECT_ID": {
+          "value": "odayplus-runtime-20260825",
+          "updated_at": "2026-08-25T15:41:39Z",
+          "status": "BOUND"
+        },
+        "GCP_REGION": {
+          "value": "asia-east1",
+          "updated_at": "2026-08-25T15:41:40Z",
+          "status": "BOUND"
+        },
+        "GCP_SERVICE_ACCOUNT": {
+          "value": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+          "updated_at": "2026-08-25T15:41:43Z",
+          "status": "BOUND"
+        },
+        "GCP_WORKLOAD_IDENTITY_PROVIDER": {
+          "value": "projects/767864276141/locations/global/workloadIdentityPools/github-actions/providers/odayplus",
+          "updated_at": "2026-08-25T15:41:42Z",
+          "status": "BOUND"
+        }
+      }
+    },
+    {
+      "receipt_id": "RCPT-GCP-RECOVERY-BUCKET-DESCRIBE-001",
+      "source_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+      "timestamp_utc": "2026-09-19T14:48:50Z",
+      "command": "gcloud --quiet storage buckets describe gs://oday-staging-recovery-odayplus-runtime-20260825 --format='json(name,location,default_kms_key,versioning_enabled,retention_policy,public_access_prevention,uniform_bucket_level_access,creation_time,update_time)'",
+      "exit_code": 1,
+      "evidence_kind": "gcp_storage_bucket_describe_probe",
+      "active_account": "deborah.lu@dev.cctech-support.com",
+      "error_message": "There was a problem refreshing your current auth tokens: Reauthentication failed. cannot prompt during non-interactive execution.",
+      "finding": "OAuth token refresh failed during non-interactive execution. Live GCP storage metadata status remains UNKNOWN due to authentication expiration. This is an environment authentication failure, not proof of bucket absence or IAM permission denial. No pass claimed."
+    },
+    {
+      "receipt_id": "RCPT-GCP-RECOVERY-BUCKET-IAM-001",
+      "source_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+      "timestamp_utc": "2026-09-19T14:48:53Z",
+      "command": "gcloud --quiet storage buckets get-iam-policy gs://oday-staging-recovery-odayplus-runtime-20260825 --format=json",
+      "exit_code": 1,
+      "evidence_kind": "gcp_storage_bucket_iam_probe",
+      "active_account": "deborah.lu@dev.cctech-support.com",
+      "error_message": "There was a problem refreshing your current auth tokens: Reauthentication failed. cannot prompt during non-interactive execution.",
+      "finding": "Bucket IAM policy readback blocked due to non-interactive OAuth token refresh failure. Metadata remains UNKNOWN; no pass claimed."
+    },
     {
       "receipt_id": "RCPT-HISTORICAL-PR-1208",
       "source_task": "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
@@ -62,13 +145,11 @@
       "timestamp_utc": "2026-09-08T11:46:08Z",
       "command": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables",
       "exit_code": 0,
-      "evidence_kind": "github_environment_variables_readback",
+      "evidence_kind": "historical_github_environment_variables_readback",
       "findings": [
-        "ODP_STAGING_TERRAFORM_STATE_BUCKET: UNSET",
-        "ODP_STAGING_RECOVERY_BUNDLE_BUCKET: UNSET",
-        "GCP_SERVICE_ACCOUNT: github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com (BOUND)",
-        "GCP_PROJECT_ID: odayplus-runtime-20260825 (BOUND)",
-        "GCP_REGION: asia-east1 (BOUND)"
+        "Historical observation (2026-09-08): ODP_STAGING_TERRAFORM_STATE_BUCKET was UNSET",
+        "Historical observation (2026-09-08): ODP_STAGING_RECOVERY_BUNDLE_BUCKET was UNSET",
+        "Superseded by live binding readback RCPT-GH-ENV-VARS-STAGING-002 on 2026-09-19"
       ]
     },
     {

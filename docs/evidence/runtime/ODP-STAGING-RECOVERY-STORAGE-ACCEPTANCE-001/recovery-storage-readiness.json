@@ -1,7 +1,7 @@
 {
   "task_id": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
   "schema_version": 1,
-  "generated_at_utc": "2026-09-19T14:15:00Z",
+  "generated_at_utc": "2026-09-19T14:48:45Z",
   "executor_worker": "Antigravity6",
   "reviewer": "Codex",
   "title": "驗證 staging recovery storage 並承接失效歷史依賴",
@@ -18,8 +18,8 @@
         {
           "file": ".github/workflows/deploy-dev.yml",
           "steps": [
-            "Prepare release-scoped staging handoff paths (line 1218-1222)",
-            "Prepare release-scoped staging closeout paths (line 1487-1491)"
+            "Prepare release-scoped staging handoff paths (lines 1218-1222)",
+            "Prepare release-scoped staging closeout paths (lines 1487-1491)"
           ],
           "behavior": "Exit code 1 if ODP_STAGING_RECOVERY_BUNDLE_BUCKET equals ODP_STAGING_TERRAFORM_STATE_BUCKET or if either variable is empty."
         }
@@ -42,9 +42,10 @@
     "recovery_bundle_contract": {
       "uri_pattern": "gs://${ODP_STAGING_RECOVERY_BUNDLE_BUCKET}/oday-plus/ephemeral-staging/odp-${ODAY_RELEASE_SHA:0:12}/bundle",
       "required_sidecar_files": [
-        "tfvars.json",
-        "inventory.json",
-        "lifecycle_state.json"
+        "*.tfvars.json",
+        "*.inventory.json",
+        "*.lifecycle.json",
+        "staging-terraform-outputs.json"
       ],
       "immutable_identity_fields": [
         "release_id",
@@ -58,7 +59,7 @@
         "worker_image",
         "scheduler_image"
       ],
-      "immutable_output_handoff_requirement": "lifecycle_state.json must contain non-empty mapping 'outputs' recording authoritative Terraform resource outputs for the release."
+      "immutable_output_handoff_requirement": "staging-terraform-outputs.json and lifecycle sidecars must record authoritative Terraform resource outputs for the release."
     }
   },
   "security_baseline_requirements": {
@@ -66,26 +67,31 @@
       "required": true,
       "key_resource_id": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime",
       "rotation_period": "7776000s (90 days)",
-      "prevent_destroy": true
+      "prevent_destroy": true,
+      "verification_status": "CONTRACT_FROZEN_METADATA_UNPROBED_AUTH_BLOCKED"
     },
     "versioning": {
       "required": true,
-      "purpose": "Preserve all historical recovery bundle revisions against accidental overwrites or corruption."
+      "purpose": "Preserve all historical recovery bundle revisions against accidental overwrites or corruption.",
+      "verification_status": "CONTRACT_FROZEN_METADATA_UNPROBED_AUTH_BLOCKED"
     },
     "retention_policy": {
       "required": true,
       "retention_period_days": 30,
-      "purpose": "Align with 24h default ephemeral debug TTL, maximum 7d extension, and post-deployment audit window."
+      "purpose": "Align with 24h default ephemeral debug TTL, maximum 7d extension, and post-deployment audit window.",
+      "verification_status": "CONTRACT_FROZEN_METADATA_UNPROBED_AUTH_BLOCKED"
     },
     "public_access_prevention": {
       "required": true,
       "setting": "enforced",
-      "purpose": "Prevent public object exposure at bucket level."
+      "purpose": "Prevent public object exposure at bucket level.",
+      "verification_status": "CONTRACT_FROZEN_METADATA_UNPROBED_AUTH_BLOCKED"
     },
     "uniform_bucket_level_access": {
       "required": true,
       "setting": "enabled",
-      "purpose": "Enforce IAM-only access control and disable per-object ACLs."
+      "purpose": "Enforce IAM-only access control and disable per-object ACLs.",
+      "verification_status": "CONTRACT_FROZEN_METADATA_UNPROBED_AUTH_BLOCKED"
     },
     "least_privilege_iam": {
       "required": true,
@@ -96,12 +102,53 @@
         "roles/owner",
         "roles/editor"
       ],
-      "admin_principal": "user:admin@dev.cctech-support.com (roles/storage.admin reserved for human administrator)"
+      "admin_principal": "user:admin@dev.cctech-support.com (roles/storage.admin reserved for human administrator)",
+      "verification_status": "CONTRACT_FROZEN_METADATA_UNPROBED_AUTH_BLOCKED"
     },
     "artifact_leakage_protection": {
-      "default_deny_egress": true,
-      "isolated_prefix": "oday-plus/ephemeral-staging/{release_id}/bundle",
-      "public_egress_disabled": true
+      "mechanism": "workflow_artifact_allowlist_and_secret_redaction",
+      "runner_artifact_allowlists": [
+        {
+          "step": "Upload staging lifecycle receipts (deploy-dev.yml:1336-1345)",
+          "artifact_name": "runtime-release-staging-lifecycle-receipts",
+          "paths": [
+            ".odp_data/release/staging-lifecycle-create.json",
+            ".odp_data/release/staging-rehearsal-receipt.json",
+            ".odp_data/release/staging-lifecycle-hold.json"
+          ]
+        },
+        {
+          "step": "Upload deployment validation reports (deploy-dev.yml:1364-1397)",
+          "artifact_name": "runtime-release-${{ inputs.environment }}-validation",
+          "paths": [
+            ".odp_data/deployment/cloud-run-preflight.json",
+            ".odp_data/deployment/cloud-run-smoke.json",
+            ".odp_data/deployment/cloud-run-migration-compatibility.json",
+            ".odp_data/deployment/live-e2e-gate.json",
+            ".odp_data/deployment/public-egress-probe.json",
+            ".odp_data/deployment/cloud-run-jobs/migration-validation.json",
+            ".odp_data/deployment/cloud-run-jobs/scheduler-validation.json",
+            ".odp_data/deployment/cloud-run-jobs/worker-validation.json",
+            ".odp_data/remote-staging-proof/staging-${{ github.run_id }}.json"
+          ]
+        },
+        {
+          "step": "Upload staging closeout receipts (deploy-dev.yml:1541-1550)",
+          "artifact_name": "runtime-release-production-staging-closeout-receipts",
+          "paths": [
+            ".odp_data/release/staging-closeout-environment-receipt.json",
+            ".odp_data/release/production-watch-window-receipt.json",
+            ".odp_data/release/staging-lifecycle-cleanup.json"
+          ]
+        }
+      ],
+      "excluded_sensitive_materials": [
+        "Raw gcloud dumps (*-job.json, *-execution.json, *-execution-list.json) carrying verbatim env blocks and secret selectors are strictly excluded from upload",
+        "Terraform remote state (*.tfstate) is confined strictly to GCS state bucket oday-tfstate-staging-odayplus-runtime-20260825",
+        "Recovery bundle sidecars (*.tfvars.json, *.inventory.json, *.lifecycle.json, staging-terraform-outputs.json) are stored exclusively in GCS recovery bucket gs://oday-staging-recovery-odayplus-runtime-20260825/... and never published as Actions artifacts",
+        "Binary plans and secret values are never staged or uploaded"
+      ],
+      "redaction_contract": "All receipt-generating scripts enforce secret_values_redacted: true (emitting check names, outcomes, and env variable names only, never bound values)."
     }
   },
   "environment_coordinates": {
@@ -112,40 +159,70 @@
     "workload_identity_pool": "projects/767864276141/locations/global/workloadIdentityPools/github-actions",
     "workload_identity_provider": "projects/767864276141/locations/global/workloadIdentityPools/github-actions/providers/odayplus",
     "github_environment": "staging",
-    "candidate_recovery_bucket_names": [
-      "odayplus-staging-recovery-asia-east1",
-      "oday-staging-recovery-odayplus-runtime-20260825"
-    ],
     "current_github_variables_posture": {
       "ODP_STAGING_TERRAFORM_STATE_BUCKET": {
-        "status": "UNSET",
-        "observed_in": "RCPT-GH-ENV-VARS-STAGING-001 (2026-09-08T11:46:08Z)"
+        "status": "BOUND",
+        "value": "oday-tfstate-staging-odayplus-runtime-20260825",
+        "updated_at": "2026-09-12T14:23:28Z",
+        "verified_in": "RCPT-GH-ENV-VARS-STAGING-002 (2026-09-19T14:48:43Z)"
       },
       "ODP_STAGING_RECOVERY_BUNDLE_BUCKET": {
-        "status": "UNSET",
-        "observed_in": "RCPT-GH-ENV-VARS-STAGING-001 (2026-09-08T11:46:08Z)"
+        "status": "BOUND",
+        "value": "oday-staging-recovery-odayplus-runtime-20260825",
+        "updated_at": "2026-09-12T15:37:03Z",
+        "verified_in": "RCPT-GH-ENV-VARS-STAGING-002 (2026-09-19T14:48:43Z)"
+      },
+      "ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT": {
+        "status": "BOUND",
+        "value": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+        "updated_at": "2026-09-12T14:23:27Z",
+        "verified_in": "RCPT-GH-ENV-VARS-STAGING-002 (2026-09-19T14:48:43Z)"
+      },
+      "ODP_STAGING_KMS_KEY_ID": {
+        "status": "BOUND",
+        "value": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime",
+        "updated_at": "2026-09-12T14:23:27Z",
+        "verified_in": "RCPT-GH-ENV-VARS-STAGING-002 (2026-09-19T14:48:43Z)"
+      },
+      "ODP_STAGING_VPC_NETWORK": {
+        "status": "BOUND",
+        "value": "oday-staging-runtime",
+        "updated_at": "2026-09-12T14:23:25Z",
+        "verified_in": "RCPT-GH-ENV-VARS-STAGING-002 (2026-09-19T14:48:43Z)"
+      },
+      "ODP_STAGING_VPC_SUBNETWORK": {
+        "status": "BOUND",
+        "value": "oday-staging-runtime",
+        "updated_at": "2026-09-12T14:23:26Z",
+        "verified_in": "RCPT-GH-ENV-VARS-STAGING-002 (2026-09-19T14:48:43Z)"
       },
       "GCP_SERVICE_ACCOUNT": {
         "status": "BOUND",
-        "value": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com"
+        "value": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+        "verified_in": "RCPT-GH-ENV-VARS-STAGING-002 (2026-09-19T14:48:43Z)"
       },
       "GCP_PROJECT_ID": {
         "status": "BOUND",
-        "value": "odayplus-runtime-20260825"
+        "value": "odayplus-runtime-20260825",
+        "verified_in": "RCPT-GH-ENV-VARS-STAGING-002 (2026-09-19T14:48:43Z)"
       },
       "GCP_REGION": {
         "status": "BOUND",
-        "value": "asia-east1"
+        "value": "asia-east1",
+        "verified_in": "RCPT-GH-ENV-VARS-STAGING-002 (2026-09-19T14:48:43Z)"
       }
+    },
+    "historical_preflight_observation": {
+      "observation": "On 2026-09-08 (RCPT-GH-ENV-VARS-STAGING-001), ODP_STAGING_TERRAFORM_STATE_BUCKET and ODP_STAGING_RECOVERY_BUNDLE_BUCKET were UNSET. They were subsequent bound on 2026-09-12 and verified live on 2026-09-19."
     }
   },
   "readiness_verdict": {
     "code_and_contracts": "READY_MERGED",
     "pipeline_fail_closed_guards": "ACTIVE_VERIFIED",
-    "github_environment_bindings": "UNSET_BLOCKED_PENDING_HUMAN_OPS",
-    "gcp_bucket_infrastructure": "UNPROBED_REQUIRES_STAGE_A_RESOLUTION",
-    "overall_status": "CONTRACT_READINESS_ESTABLISHED_ENVIRONMENT_BINDING_PENDING",
-    "note": "Storage contract, guard rails, and lifecycle verification logic are fully verified and merged. Live release admission remains properly fail-closed until Human/Ops completes GitHub variable binding and Stage A coordinate resolution."
+    "github_environment_bindings": "BOUND_VERIFIED",
+    "gcp_bucket_infrastructure": "METADATA_UNKNOWN_GCP_AUTH_REFRESH_REQUIRED",
+    "overall_status": "CONTRACT_AND_COORDINATES_VERIFIED_GCP_READBACK_BLOCKED_ON_AUTH",
+    "note": "Storage contracts, separation guards, fail-closed prechecks, and GitHub staging environment variable coordinates are fully verified. Live GCP storage bucket describe and IAM policy readback failed on OAuth token refresh in non-interactive mode (exit code 1). The metadata remains UNKNOWN; this is documented as an authentication refresh blocker rather than claiming a false pass or inferring bucket absence. Release-scoped bundle generation, object generation/hash verification, and restore drills are cleanly mapped to Stage B under ODP-EPHEMERAL-STAGING-ROLLOUT-001."
   },
   "authority_and_governance_boundaries": {
     "read_only_execution": true,
