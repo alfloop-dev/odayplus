@@ -1,26 +1,26 @@
 {
   "task_id": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
   "schema_version": 1,
-  "generated_at_utc": "2026-09-19T14:48:45Z",
+  "generated_at_utc": "2026-09-19T16:15:00Z",
   "executor_worker": "Antigravity6",
   "reviewer": "Codex",
   "title": "Staging Recovery Storage 驗收與 Rollout 映射矩陣",
-  "purpose": "明確分離前置 Storage Readiness（Stage A，本任務完成）與 Release Rehearsal Bundle 實際生成/驗收（Stage B，由 ODP-EPHEMERAL-STAGING-ROLLOUT-001 承接），確保歷史依賴具名承接且無任何驗收項目遺失或被假造。",
+  "purpose": "明確分離前置 Storage Readiness（Stage A）與 Release Rehearsal Bundle 實際生成/驗收（Stage B，由 ODP-EPHEMERAL-STAGING-ROLLOUT-001 承接），確保歷史依賴具名承接、執行步驟明確且所有驗收項目與缺口如實披露。",
   "stage_definitions": {
     "stage_a_pre_deployment_storage_readiness": {
       "phase_name": "Stage A: Pre-deployment Storage Readiness",
       "owner_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
       "owner": "Antigravity6",
       "reviewer": "Codex",
-      "scope": "核對已合併儲存契約、分離守門規則、GitHub staging 環境變數與身分座標、CMEK/Versioning/Retention/PAP/UBLA/IAM 安全基準、唯讀審計收據及環境綁定前置條件。不執行雲端資源建立或修改，對因認證過期而無法完成之 GCP 雲端 metadata 唯讀探針誠實記錄阻擋收據，不偽造運行中物件或通過狀態。",
-      "status": "STAGE_A_CONTRACT_AND_COORDINATES_VERIFIED_GCP_AUTH_BLOCKED"
+      "scope": "核對已合併儲存契約、分離守門規則、GitHub staging 環境變數與身分座標、CMEK/Versioning/Retention/PAP/UBLA/IAM 安全基準、唯讀審計收據及環境綁定前置條件。不執行雲端資源建立或修改。對因 cross-project IAM 權限未授予（非 OAuth token 過期）導致之 GCP 雲端 metadata 唯讀探針誠實記錄 IAM_DENIED 阻擋收據，不偽造運行中物件或通過狀態。",
+      "status": "STAGE_A_CONTRACT_AND_COORDINATES_VERIFIED_GCP_METADATA_IAM_BLOCKED"
     },
     "stage_b_release_rehearsal_bundle_lifecycle": {
       "phase_name": "Stage B: Release Rehearsal Bundle Lifecycle & Drill",
       "owner_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
       "owner": "Antigravity5",
       "reviewer": "Codex",
-      "scope": "於 Ephemeral Staging 部署演練時實際建立短生命週期環境、生成 release-scoped recovery bundle（*.tfvars.json、*.inventory.json、*.lifecycle.json 與 staging-terraform-outputs.json）、上傳至 GCS recovery bucket、驗證 GCS object generation 與 SHA-256 雜湊、執行 backup/restore 與 rerun identity guard 驗證、並在 watch window 結束後依 exact labels 自動清理。不預設 rehearsal bundle 於 rehearsal 前已存在。",
+      "scope": "於 Ephemeral Staging 部署演練時實際建立短生命週期環境、生成 release-scoped recovery bundle（*.tfvars.json、*.inventory.json、*.lifecycle.json 與 staging-terraform-outputs.json）、上傳至 GCS recovery bucket、驗證 GCS object generation 與 SHA-256 雜湊、執行 backup/restore、Cloud Run traffic rollback 與 rerun identity guard 驗證、並在 watch window 結束後依 exact labels 自動清理。不預設 rehearsal bundle 於 rehearsal 前已存在。注意：snapshot-pointer restore 尚未在 staging_lifecycle.py 實作，列為原 rollout task 之顯式驗收缺口。",
       "status": "MAPPED_TO_ROLLOUT_TASK"
     }
   },
@@ -52,8 +52,8 @@
       "historical_pr": "#1046",
       "stage_assignment": "Stage A",
       "responsible_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
-      "verification_evidence": "ODP_STAGING_KMS_KEY_ID bound in staging env (RCPT-GH-ENV-VARS-STAGING-002); Live GCP bucket CMEK readback probe failed on OAuth token refresh (RCPT-GCP-RECOVERY-BUCKET-DESCRIBE-001, exit 1). Live metadata remains unprobed; no pass claimed.",
-      "status": "CONTRACT_FROZEN_METADATA_UNPROBED_AUTH_BLOCKED"
+      "verification_evidence": "ODP_STAGING_KMS_KEY_ID bound in staging env (RCPT-GH-ENV-VARS-STAGING-002); Live GCP KMS describe probe via runtime SA was denied (RCPT-GCP-KMS-DESCRIBE-001, exit 1, cloudkms.cryptoKeys.get denied). Live metadata remains unprobed on cloud; no pass claimed.",
+      "status": "CONTRACT_FROZEN_LIVE_READBACK_IAM_BLOCKED"
     },
     {
       "criterion_id": "CRIT-04-SECURITY-BASELINE-GOVERNANCE",
@@ -62,8 +62,8 @@
       "historical_pr": "#1314",
       "stage_assignment": "Stage A",
       "responsible_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
-      "verification_evidence": "Security governance standards codified in IaC guidelines; Live GCP bucket describe probe failed on OAuth token refresh (RCPT-GCP-RECOVERY-BUCKET-DESCRIBE-001, exit 1). Live metadata remains unprobed; no pass claimed.",
-      "status": "CONTRACT_FROZEN_METADATA_UNPROBED_AUTH_BLOCKED"
+      "verification_evidence": "Security governance standards codified in IaC guidelines; Live GCP bucket describe probe via runtime SA was denied (RCPT-GCP-RECOVERY-BUCKET-DESCRIBE-001, exit 1, storage.buckets.get denied). Live metadata remains unprobed on cloud; no pass claimed.",
+      "status": "CONTRACT_FROZEN_LIVE_READBACK_IAM_BLOCKED"
     },
     {
       "criterion_id": "CRIT-05-LEAST-PRIVILEGE-IAM",
@@ -72,8 +72,8 @@
       "historical_pr": "#1046",
       "stage_assignment": "Stage A",
       "responsible_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
-      "verification_evidence": "ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT bound in staging env (RCPT-GH-ENV-VARS-STAGING-002); roles/storage.objectUser frozen in deploy contracts; Live GCP bucket IAM policy probe failed on OAuth token refresh (RCPT-GCP-RECOVERY-BUCKET-IAM-001, exit 1). Live metadata remains unprobed; no pass claimed.",
-      "status": "CONTRACT_FROZEN_METADATA_UNPROBED_AUTH_BLOCKED"
+      "verification_evidence": "ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT bound in staging env (RCPT-GH-ENV-VARS-STAGING-002); roles/storage.objectUser frozen in deploy contracts; Live GCP bucket IAM policy probe via runtime SA was denied (RCPT-GCP-RECOVERY-BUCKET-IAM-001, exit 1, storage.buckets.getIamPolicy denied). Live metadata remains unprobed on cloud; no pass claimed.",
+      "status": "CONTRACT_FROZEN_LIVE_READBACK_IAM_BLOCKED"
     },
     {
       "criterion_id": "CRIT-06-SECRET-FREE-RECEIPTS",
@@ -87,12 +87,12 @@
     },
     {
       "criterion_id": "CRIT-07-BUNDLE-GENERATION-UPLOAD",
-      "description": "在 Release Rehearsal 建立 ephemeral staging 時，自動序列化 *.tfvars.json、*.inventory.json、*.lifecycle.json 與 staging-terraform-outputs.json 並上傳至 gs://${ODP_STAGING_RECOVERY_BUNDLE_BUCKET}/${staging_backend_prefix}/bundle。",
+      "description": "在 Release Rehearsal 建立 ephemeral staging 時，自動序列化 *.tfvars.json、*.inventory.json、*.lifecycle.json 與 staging-terraform-outputs.json 並上傳至 gs://${ODP_STAGING_RECOVERY_BUNDLE_BUCKET}/${staging_backend_prefix}/bundle，並於 hold 狀態時重寫 lifecycle sidecar。",
       "historical_source_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
       "historical_pr": "Pending execution in parent rollout task",
       "stage_assignment": "Stage B",
       "responsible_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
-      "verification_evidence": "deploy-dev.yml:1236-1271 (staging_lifecycle.py create generates sidecars in STAGING_STATE_DIR; persist step uploads *.tfvars.json, *.inventory.json, *.lifecycle.json, staging-terraform-outputs.json to STAGING_BUNDLE_URI); required permission: roles/storage.objectUser on recovery bucket. Rehearsal bundle is generated during rehearsal, not required beforehand.",
+      "verification_evidence": "deploy-dev.yml:1236-1271 (staging_lifecycle.py create generates sidecars in STAGING_STATE_DIR; persist step uploads *.tfvars.json, *.inventory.json, *.lifecycle.json, staging-terraform-outputs.json to STAGING_BUNDLE_URI); deploy-dev.yml:1324-1334 (lifecycle hold state overwrite upload to STAGING_BUNDLE_URI); required permission: roles/storage.objectUser on recovery bucket for github-deployer SA. Bundles are produced during rehearsal and do not exist prior to rehearsal.",
       "status": "TO_BE_EXECUTED_IN_STAGE_B"
     },
     {
@@ -102,17 +102,17 @@
       "historical_pr": "Pending execution in parent rollout task",
       "stage_assignment": "Stage B",
       "responsible_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
-      "verification_evidence": "During Stage B rehearsal bundle upload, capture and record real GCS location, integer object generation, and SHA-256 content digest for all sidecars in release receipts (staging-lifecycle-create.json / staging-rehearsal-receipt.json). Rehearsal must fail closed if generation is missing/zero or SHA-256 digest is invalid.",
+      "verification_evidence": "During Stage B rehearsal bundle upload, probe uploaded GCS objects (gcloud storage objects describe) to capture and record real GCS location, integer object generation, and SHA-256 content digest for all sidecars into release receipts (staging-lifecycle-create.json / staging-rehearsal-receipt.json). Rehearsal must fail closed if object generation is missing/zero or SHA-256 digest fails verification. Bundles are not created or hash-mocked beforehand.",
       "status": "TO_BE_EXECUTED_IN_STAGE_B"
     },
     {
       "criterion_id": "CRIT-09-RERUN-GUARD-AND-RESTORE-DRILL",
-      "description": "驗證當 durable state 存在時，重跑必須具備完整 recovery bundle 且所有不可變身分欄位完全一致；否則拋出 ReleaseStateUnverifiable 並拒絕覆寫或錯誤清理；完成 restore/rollback 演練。",
+      "description": "驗證當 durable state 存在時，重跑必須具備完整 recovery bundle 且所有不可變身分欄位完全一致；否則拋出 ReleaseStateUnverifiable 並拒絕覆寫或錯誤清理；於 verify 階段完成 Cloud SQL backup/restore drill 與 Cloud Run traffic rollback drill（snapshot pointer restore 為顯式缺口）。",
       "historical_source_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
       "historical_pr": "Pending execution in parent rollout task",
       "stage_assignment": "Stage B",
       "responsible_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
-      "verification_evidence": "Restore drill in deploy-dev.yml:1507-1518 (downloads recovery bundle, checks outputs and tfvars identity fields); Rerun protection in staging_lifecycle.py:1550-1631 (validate_immutable_release_identity guards 10 immutable identity fields, raising ReleaseStateUnverifiable upon corruption/mismatch); Rollback drill restores snapshot pointer without destructive schema down-migration.",
+      "verification_evidence": "deploy-dev.yml:1272-1291 (staging_lifecycle.py verify executes rehearsal drills); Cloud SQL backup/restore at staging_lifecycle.py:2904-2942 (exports SQL to gs://${staging_data_bucket}/rehearsal/${release_id}/database.sql and imports back); Cloud Run traffic rollback at staging_lifecycle.py:2943-3076 (creates rollback-probe revision, tests health readback, and restores original approved revision allocation); Closeout bundle readback at deploy-dev.yml:1507-1518 (validates outputs and tfvars identity fields); Rerun protection in staging_lifecycle.py:1550-1631 (validate_immutable_release_identity guards 10 immutable identity fields). NOTE: Data platform snapshot-pointer restore is NOT implemented in staging_lifecycle.py and remains an explicit original-rollout acceptance gap for ODP-EPHEMERAL-STAGING-ROLLOUT-001.",
       "status": "TO_BE_EXECUTED_IN_STAGE_B"
     },
     {
@@ -122,16 +122,16 @@
       "historical_pr": "Pending execution in parent rollout task",
       "stage_assignment": "Stage B",
       "responsible_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
-      "verification_evidence": "deploy-dev.yml:1526-1540 (staging_lifecycle.py cleanup using exact label matching for release_id, created_at, managed_by, preserving durable base resources); staging_lifecycle.py hold on failure path (24h debug TTL); scan-orphans scanner alerts on expired resources.",
+      "verification_evidence": "deploy-dev.yml:1526-1540 (staging_lifecycle.py cleanup using exact label matching for release_id, created_at, managed_by, preserving durable base resources); staging_lifecycle.py hold on failure path at deploy-dev.yml:1306-1323 (24h debug TTL); scan-orphans scanner alerts on expired resources.",
       "status": "TO_BE_EXECUTED_IN_STAGE_B"
     }
   ],
   "summary_disposition": {
     "total_criteria": 10,
     "stage_a_verified_ready": 3,
-    "stage_a_contract_frozen_gcp_metadata_unprobed": 3,
+    "stage_a_contract_frozen_gcp_metadata_iam_blocked": 3,
     "stage_b_mapped_to_rollout": 4,
     "unmapped_criteria": 0,
-    "conclusion": "前置 Storage Readiness（Stage A）已於本任務完成代碼契約、分離守門規則、GitHub staging 環境變數座標（2026-09-19 live readback 驗證全部 BOUND）與收據去敏化契約核對；針對因 non-interactive OAuth token 過期導致之 GCP 儲存桶描述與 IAM 探針失敗（exit 1），如實記錄阻擋收據，不假造通過亦不推斷儲存桶缺失。Stage B 之 Release Rehearsal 執行期驗收項目（CRIT-07 至 CRIT-10）已具備可執行命令、流程接點、權限要求與 pass/fail 條件，完整映射至 ODP-EPHEMERAL-STAGING-ROLLOUT-001（Owner: Antigravity5, Reviewer: Codex），歷史依賴完成具名承接。"
+    "conclusion": "前置 Storage Readiness（Stage A）已於本任務完成代碼契約、分離守門規則、GitHub staging 環境變數座標（2026-09-19 live readback 驗證全部 BOUND）與收據去敏化契約核對；針對 runtime 服務帳號執行 GCP 唯讀探針（OAuth token exit 0）所遭遇之 IAM 權限拒絕（storage.buckets.get, storage.buckets.getIamPolicy, cloudkms.cryptoKeys.get），如實記錄 IAM_BLOCKED 阻擋收據，不假造通過亦不推斷儲存桶缺失。Stage B 之 Release Rehearsal 執行期驗收項目（CRIT-07 至 CRIT-10）已具備可執行命令、流程接點（包含 hold 重寫、generation/hash 探針、Cloud SQL backup/restore 與 Cloud Run rollback）、權限要求、pass/fail 條件與 snapshot-pointer restore 顯式缺口揭露，完整映射至 ODP-EPHEMERAL-STAGING-ROLLOUT-001（Owner: Antigravity5, Reviewer: Codex），歷史依賴完成具名承接。"
   }
 }

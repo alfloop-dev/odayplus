@@ -1,7 +1,7 @@
 {
   "task_id": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
   "schema_version": 1,
-  "generated_at_utc": "2026-09-19T14:48:45Z",
+  "generated_at_utc": "2026-09-19T16:15:00Z",
   "executor_worker": "Antigravity6",
   "reviewer": "Codex",
   "title": "驗證 staging recovery storage 並承接失效歷史依賴",
@@ -68,30 +68,35 @@
       "key_resource_id": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime",
       "rotation_period": "7776000s (90 days)",
       "prevent_destroy": true,
-      "verification_status": "CONTRACT_FROZEN_METADATA_UNPROBED_AUTH_BLOCKED"
+      "verification_status": "CONTRACT_FROZEN_LIVE_READBACK_IAM_BLOCKED",
+      "evidence_ref": "RCPT-GCP-KMS-DESCRIBE-001"
     },
     "versioning": {
       "required": true,
       "purpose": "Preserve all historical recovery bundle revisions against accidental overwrites or corruption.",
-      "verification_status": "CONTRACT_FROZEN_METADATA_UNPROBED_AUTH_BLOCKED"
+      "verification_status": "CONTRACT_FROZEN_LIVE_READBACK_IAM_BLOCKED",
+      "evidence_ref": "RCPT-GCP-RECOVERY-BUCKET-DESCRIBE-001"
     },
     "retention_policy": {
       "required": true,
       "retention_period_days": 30,
       "purpose": "Align with 24h default ephemeral debug TTL, maximum 7d extension, and post-deployment audit window.",
-      "verification_status": "CONTRACT_FROZEN_METADATA_UNPROBED_AUTH_BLOCKED"
+      "verification_status": "CONTRACT_FROZEN_LIVE_READBACK_IAM_BLOCKED",
+      "evidence_ref": "RCPT-GCP-RECOVERY-BUCKET-DESCRIBE-001"
     },
     "public_access_prevention": {
       "required": true,
       "setting": "enforced",
       "purpose": "Prevent public object exposure at bucket level.",
-      "verification_status": "CONTRACT_FROZEN_METADATA_UNPROBED_AUTH_BLOCKED"
+      "verification_status": "CONTRACT_FROZEN_LIVE_READBACK_IAM_BLOCKED",
+      "evidence_ref": "RCPT-GCP-RECOVERY-BUCKET-DESCRIBE-001"
     },
     "uniform_bucket_level_access": {
       "required": true,
       "setting": "enabled",
       "purpose": "Enforce IAM-only access control and disable per-object ACLs.",
-      "verification_status": "CONTRACT_FROZEN_METADATA_UNPROBED_AUTH_BLOCKED"
+      "verification_status": "CONTRACT_FROZEN_LIVE_READBACK_IAM_BLOCKED",
+      "evidence_ref": "RCPT-GCP-RECOVERY-BUCKET-DESCRIBE-001"
     },
     "least_privilege_iam": {
       "required": true,
@@ -103,7 +108,8 @@
         "roles/editor"
       ],
       "admin_principal": "user:admin@dev.cctech-support.com (roles/storage.admin reserved for human administrator)",
-      "verification_status": "CONTRACT_FROZEN_METADATA_UNPROBED_AUTH_BLOCKED"
+      "verification_status": "CONTRACT_FROZEN_LIVE_READBACK_IAM_BLOCKED",
+      "evidence_ref": "RCPT-GCP-RECOVERY-BUCKET-IAM-001"
     },
     "artifact_leakage_protection": {
       "mechanism": "workflow_artifact_allowlist_and_secret_redaction",
@@ -220,9 +226,9 @@
     "code_and_contracts": "READY_MERGED",
     "pipeline_fail_closed_guards": "ACTIVE_VERIFIED",
     "github_environment_bindings": "BOUND_VERIFIED",
-    "gcp_bucket_infrastructure": "METADATA_UNKNOWN_GCP_AUTH_REFRESH_REQUIRED",
-    "overall_status": "CONTRACT_AND_COORDINATES_VERIFIED_GCP_READBACK_BLOCKED_ON_AUTH",
-    "note": "Storage contracts, separation guards, fail-closed prechecks, and GitHub staging environment variable coordinates are fully verified. Live GCP storage bucket describe and IAM policy readback failed on OAuth token refresh in non-interactive mode (exit code 1). The metadata remains UNKNOWN; this is documented as an authentication refresh blocker rather than claiming a false pass or inferring bucket absence. Release-scoped bundle generation, object generation/hash verification, and restore drills are cleanly mapped to Stage B under ODP-EPHEMERAL-STAGING-ROLLOUT-001."
+    "gcp_bucket_infrastructure": "METADATA_UNVERIFIED_IAM_PERMISSION_DENIED",
+    "overall_status": "CONTRACT_AND_COORDINATES_VERIFIED_GCP_METADATA_IAM_BLOCKED",
+    "note": "Storage contracts, separation guards, fail-closed prechecks, and GitHub staging environment variable coordinates are fully verified. Live GCP storage bucket describe, IAM policy, and KMS key describe probes executed via authenticated runtime service account (exit 0 token probe) were denied by GCP IAM (storage.buckets.get, storage.buckets.getIamPolicy, cloudkms.cryptoKeys.get; exit code 1). This is recorded as an IAM permission blocker rather than claiming a false pass or inferring bucket absence. Release-scoped bundle generation, generation/hash verification, rehearsal backup/restore, rollback drills, and TTL cleanup are mapped with executable steps and explicit gap disclosure to Stage B under ODP-EPHEMERAL-STAGING-ROLLOUT-001."
   },
   "authority_and_governance_boundaries": {
     "read_only_execution": true,
