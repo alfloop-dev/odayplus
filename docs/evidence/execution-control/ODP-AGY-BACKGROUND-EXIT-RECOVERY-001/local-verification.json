@@ -50,5 +50,25 @@
       ".orchestrator/test_worker_failure_policy.py": "9d35a8ff5ec0b649a3aab2f485daa89165b62a35e7b6dc8100e52b40a12de4ef"
     },
     "log_sha256": "5a302b771b83794a83c952a58a16d3180d0fca04bb447f37b98d68d33eb65f26"
+  },
+  "review_findings_verification": {
+    "recorded_at": "2026-09-19T23:36:23.254036+00:00",
+    "base_commit": "db5fff768ce579be4a2655f74f497deeb14ade16",
+    "findings": [
+      "R1 retry count reset on replacement",
+      "R2 CLI death with retained pipes"
+    ],
+    "command": "uv run --python 3.12 pytest .orchestrator/test_agy_session.py .orchestrator/test_worker_failure_policy.py -q",
+    "exit_code": 0,
+    "duration_seconds": null,
+    "measurement_notes": "Original tool process completed with exit 0; quiet output has no duration/count summary. No second run was performed to manufacture those metrics.",
+    "source_sha256": {
+      ".orchestrator/agy_session.py": "0ea25a0f6fee228eb77ef70a3b4bd93ba0d50558942b09b687cdba4cb964404e",
+      ".orchestrator/supervisor.py": "ed56132fbc2a6d2692e487d9b20ac95d23e77ab58263b61ac38dff716f237d8d",
+      ".orchestrator/worker_failure_policy.py": "bd6ba4ed178c8d3a39344ef8b5333ef16f2083790de9f8e1c3209859746ee14f",
+      ".orchestrator/test_agy_session.py": "9f059a352a645e0b179f8e5bb4ce24c8203795b4d2af36343f3a9c26d39a6a54",
+      ".orchestrator/test_worker_failure_policy.py": "a1ddf2688686a36d560662e448ae279a2a6cead65e15c7ae04251cc6693d8f50"
+    },
+    "log_sha256": "b683397ca50a7f1e8d0dfeaad043d57f3c1dd25f6600e279cc6800a976a8cea5"
   }
 }

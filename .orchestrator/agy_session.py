@@ -139,13 +139,21 @@ def run_session(argv: list[str]) -> int:
         publish()
         send(prompt)
         ended: set[str] = set()
-        while len(ended) < 2 or child.poll() is None:
+        while True:
+            # Poll the leader independently: descendants can keep both pipes
+            # open after the CLI has exited without emitting a result.
+            cli_exit = child.poll()
+            if cli_exit is not None and closed_at is None:
+                close_input()
+            if len(ended) == 2 and cli_exit is not None:
+                break
             if interrupted and closed_at is None:
                 close_input()
             if closed_at is not None and time.monotonic() - closed_at > 10:
                 interrupted = True
                 receipt["reason"] = receipt["reason"] or "cli_exit_timeout"
                 stop(signal.SIGKILL)
+                break
             try:
                 tag, line = events.get(timeout=0.2)
             except queue.Empty:
@@ -244,6 +252,8 @@ def run_session(argv: list[str]) -> int:
         except subprocess.TimeoutExpired:
             stop(signal.SIGKILL)
             child.wait(timeout=5)
+        # The leader may already be dead while a descendant ignores SIGTERM.
+        stop(signal.SIGKILL)
         for signum, handler in previous_handlers.items():
             signal.signal(signum, handler)
 

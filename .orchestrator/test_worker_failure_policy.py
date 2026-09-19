@@ -3678,6 +3678,82 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
         finally:
             tmpdir.cleanup()
 
+    def test_real_retry_replacements_exhaust_across_aliases_and_restart(self) -> None:
+        from datetime import UTC, datetime, timedelta
+
+        from adapters.base import DeliveryResult
+
+        task = {'id': 'TASK-RETRY-CHAIN', 'owner': 'Antigravity',
+                'reviewer': 'Codex2', 'status': 'in_progress'}
+        aliases = ['antigravity', 'antigravity2', 'antigravity3']
+        self.config['worker_retry'].update(max_attempts=2, fallback_mode='none')
+        state = {'workers': {}}
+        reason = 'agy background lifecycle interrupted: command_exit_unknown'
+        deliveries = []
+
+        def deliver(request):
+            deliveries.append(request.agent_id)
+            return DeliveryResult(ok=True, adapter='antigravity', mode='antigravity',
+                                  target='fixture', auto_delivered=True,
+                                  manual_confirmation_required=False,
+                                  run_id=f'run-{len(deliveries)}')
+
+        def persist(_config, **kwargs):
+            task.update(owner=kwargs['new_owner'], reviewer=kwargs['new_reviewer'],
+                        status=kwargs.get('new_status') or task['status'])
+            return True
+
+        with (
+            mock.patch.object(supervisor, 'build_adapter') as adapter,
+            mock.patch.object(supervisor, 'provider_auth_identity_hash', return_value='fixture'),
+            mock.patch.object(supervisor, 'save_runtime_state'),
+            mock.patch.object(supervisor, 'write_activity_log'),
+            mock.patch.object(supervisor, 'record_worker_runtime_measurement'),
+            mock.patch.object(supervisor, 'load_status', return_value={'tasks': [task]}),
+            mock.patch.object(supervisor, 'persist_task_reassignment', side_effect=persist),
+            mock.patch.object(supervisor, 'get_agent_reassignment_candidates',
+                              return_value=['Antigravity', 'Antigravity2', 'Antigravity3']),
+        ):
+            adapter.return_value.deliver.side_effect = deliver
+            for alias in aliases:
+                self.assertEqual(task['owner'].lower(), alias)
+                task['status'] = 'in_progress'
+                request = DeliveryRequest(agent_id=alias, provider='antigravity',
+                                          delivery_mode='antigravity', message='fixture',
+                                          task_id=task['id'], reason='owned_in_progress_dispatch')
+                ok, run_id, _ = supervisor.start_worker_for_request(
+                    self.config, state, {}, request, queue_event_id=f'event-{alias}',
+                    attempt_count=1, event_id_for_log=None)
+                self.assertTrue(ok)
+                for generation in range(3):
+                    worker = state['workers'][run_id]
+                    self.assertEqual(worker['retry_count'], generation)
+                    worker_failure_policy.record_task_failure_streak(
+                        state, worker, reason, failure_kind='interrupted')
+                    outcome = supervisor.maybe_trigger_retry_or_fallback(
+                        self.config, state, {}, worker, reason)
+                    if generation < 2:
+                        self.assertEqual(outcome, (True, True))
+                        self.assertEqual(worker['status'], 'retry_backoff')
+                        # A supervisor restart must not give the next run a fresh budget.
+                        state = json.loads(json.dumps(state))
+                        self.assertTrue(supervisor.retry_due_workers(
+                            self.config, state, {}, datetime.now(UTC) + timedelta(days=1)))
+                        parent = state['workers'][run_id]
+                        self.assertEqual(parent['status'], 'retried')
+                        run_id = parent['superseded_by_run_id']
+                    elif alias != aliases[-1]:
+                        self.assertEqual(outcome, (True, True))
+                        self.assertEqual(worker['status'], 'reassigned')
+                    else:
+                        self.assertEqual(outcome, (False, False))
+                self.assertEqual(len(deliveries), 3 * (aliases.index(alias) + 1))
+            self.assertFalse(supervisor.retry_due_workers(
+                self.config, state, {}, datetime.now(UTC) + timedelta(days=1)))
+        self.assertEqual(deliveries, [alias for alias in aliases for _ in range(3)])
+        streaks = state['provider_guardrails']['task_failure_streaks']
+        self.assertEqual([streaks[f"{task['id']}:{alias}"]['count'] for alias in aliases], [3, 3, 3])
+
     def test_cross_alias_repeated_failure_exhaustion(self) -> None:
         """Verify cross-alias failures accumulate durable task streaks and cleanly exhaust fallback candidates."""
         state: dict[str, Any] = {"provider_guardrails": {"task_failure_streaks": {}, "dispatch_pauses": {}}}

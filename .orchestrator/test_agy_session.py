@@ -26,6 +26,11 @@ assert '--print=' in sys.argv
 emit('init', conversation_id=conversation)
 if scenario == 'missing':
  sys.exit(0)
+if scenario == 'dead_cli_retained_pipes':
+ descendant = subprocess.Popen([sys.executable, '-c',
+  'import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(45)'])
+ Path(os.environ['ORCH_RUNNER_STATUS_PATH'] + '.descendant').write_text(str(descendant.pid))
+ sys.exit(17)
 emit('step_update', step_update={'conversation_id': conversation, 'step_index': 2,
  'step_type': 'tool', 'tool_name': 'run_command', 'state': 'ACTIVE'})
 if scenario == 'signal':
@@ -120,3 +125,24 @@ def test_stream_preserves_original_options_without_shell_interpolation():
     assert command[-5:] == ['--print=', '--input-format', 'stream-json', '--output-format', 'stream-json']
     with pytest.raises(ValueError):
         stream_command(['agy', '--prompt', 'a', '--input-format', 'text'])
+
+
+def test_cli_death_with_retained_pipes_is_bounded(tmp_path):
+    started = time.monotonic()
+    child, marker = launch(tmp_path, 'dead_cli_retained_pipes')
+    try:
+        stdout, stderr = child.communicate(timeout=15)
+    finally:
+        if child.poll() is None:
+            child.send_signal(signal.SIGTERM)
+            child.communicate(timeout=15)
+    assert child.returncode == 17, (stdout, stderr)
+    receipt = json.loads(marker.read_text())
+    assert receipt['cli_exit_code'] == 17
+    assert receipt['status'] == 'interrupted'
+    assert receipt['reason'] == 'cli_exit_timeout'
+    assert receipt['result_status'] is None
+    assert time.monotonic() - started < 15
+    pid = int((tmp_path / 'runner.json.descendant').read_text())
+    stat = Path(f'/proc/{pid}/stat')
+    assert not stat.exists() or stat.read_text().split(') ', 1)[1][0] == 'Z'

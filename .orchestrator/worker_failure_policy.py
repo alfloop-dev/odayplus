@@ -4255,6 +4255,7 @@ def maybe_trigger_retry_or_fallback(
                 attempt_count=int(worker.get("attempt_count", 0)) + 1,
                 event_id_for_log=worker.get("queue_event_id"),
                 parent_run_id=worker["run_id"],
+                retry_count=int(worker.get("retry_count", 0)),
                 delivery_mode_override="file_inbox",
                 activity_type="worker_fallback_started",
                 activity_message=f"Worker fell back to file inbox after transient failures: {reason}",
@@ -4307,6 +4308,7 @@ def retry_due_workers(
             attempt_count=int(worker.get("attempt_count", 0)) + 1,
             event_id_for_log=worker.get("queue_event_id"),
             parent_run_id=worker["run_id"],
+            retry_count=int(worker.get("retry_count", 0)),
             activity_type="worker_retried",
             activity_message=f"Worker retry launched after backoff from {worker['run_id']}",
         )

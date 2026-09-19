@@ -2376,6 +2376,7 @@ def start_worker_for_request(
     attempt_count: int,
     event_id_for_log: str | None,
     parent_run_id: str | None = None,
+    retry_count: int = 0,
     delivery_mode_override: str | None = None,
     activity_type: str = "worker_started",
     activity_message: str | None = None,
@@ -2501,7 +2502,8 @@ def start_worker_for_request(
         "metadata": result_metadata,
         "request_snapshot": request_snapshot(request),
         "parent_run_id": parent_run_id,
-        "retry_count": 0,
+        # Replacement runs continue the same retry budget, even after a restart.
+        "retry_count": retry_count,
         "next_retry_at": None,
         "last_error": None,
     }

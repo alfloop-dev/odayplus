@@ -26,6 +26,14 @@ and lifecycle decisions still count. Reassignment preserves failure history;
 real sealed progress clears it. Repeated identical head/dirt/reason handoffs
 share a budget across owner aliases and use the existing `after_attempts` setting.
 Files are neither discarded nor admitted for review without a clean handoff.
+Replacement retries and inbox fallback inherit the consumed retry count.
+A real retry/start regression traverses three aliases to exhaustion, including
+serialization/reload between attempts to model a Supervisor restart.
+
+The transport polls CLI termination independently of pipe EOF. If a crashed
+CLI leaves descendants holding stdout/stderr, its drain deadline still starts;
+cleanup kills the session process group and records interruption. A subprocess
+regression covers exit 17 with a 45-second descendant that ignores SIGTERM.
 
 Failed native stream session results preserve provider quota/auth diagnostics.
 Tool output and successful response quotations are excluded from that authority.
@@ -48,6 +56,11 @@ config schema and all 190 config wiring checks passed. `local-verification.json`
 records commands and content hashes; GitHub CI remains the immutable final-head
 validation required before merge. A subsequent provider-error compatibility
 check passed all 91 failure-policy tests and 23 subtests in 18.67 seconds.
+
+The two Codex2 findings on `db5fff768ce579be4a2655f74f497deeb14ade16`
+were subsequently repaired. The session and failure-policy suites completed
+with exit 0; their terminal output and implementation hashes are recorded in
+`local-verification.json`. Duration was not captured for that invocation.
 
 ## Deployment
 
