@@ -22,6 +22,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 import runtime_state
 import supervisor
 import worker_failure_policy
+import worker_runner
 import worker_workspace
 import worktree_cleanliness
 from adapters.base import DeliveryRequest
@@ -3515,9 +3516,6 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
 
     def test_real_subcommand_lifecycle_and_duration_receipts(self) -> None:
         """Run real subprocess commands via worker_runner to verify exit code, duration, and terminal receipts."""
-        import tempfile
-        import worker_runner
-
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             heartbeat_path = temp_path / "heartbeat.json"
