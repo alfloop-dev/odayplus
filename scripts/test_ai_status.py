@@ -62,6 +62,7 @@ _AI_STATUS_ROOT_ATTRIBUTES = (
     "LOG_FILE",
     "CURRENT_WORK_FILE",
     "DOCS_SITE_DIR",
+    "CONFIG_FILE",
     "STATUS_ROOT_CONFIG_LOCAL_FILE",
     "PLANNING_STATE_FILE",
     "ORCHESTRATOR_STATE_FILE",
@@ -112,6 +113,7 @@ def setUpModule() -> None:
     ai_status.LOG_FILE = _TEST_STATUS_ROOT / "ai-activity-log.jsonl"
     ai_status.CURRENT_WORK_FILE = _TEST_STATUS_ROOT / "current-work.md"
     ai_status.DOCS_SITE_DIR = _TEST_STATUS_ROOT / "docs-site"
+    ai_status.CONFIG_FILE = _TEST_STATUS_ROOT / ".orchestrator" / "config.json"
     ai_status.STATUS_ROOT_CONFIG_LOCAL_FILE = _TEST_STATUS_ROOT / ".orchestrator" / "config.local.json"
     ai_status.PLANNING_STATE_FILE = _TEST_STATUS_ROOT / ".orchestrator" / "planning-state.json"
     ai_status.ORCHESTRATOR_STATE_FILE = _TEST_STATUS_ROOT / ".orchestrator" / "state.json"
@@ -7493,7 +7495,7 @@ class MergedConfigActorAuthorityTests(unittest.TestCase):
         """Actor authority always uses Supervisor's canonical loader."""
         import common
 
-        self.assertEqual(common.DEFAULT_CONFIG_PATH, ai_status.CONFIG_FILE)
+        self.assertEqual(ai_status.STATUS_ROOT / ".orchestrator" / "config.json", ai_status.CONFIG_FILE)
         with no_explicit_config_environment(), mock.patch.object(
             common, "load_config", return_value={"agents": {"nessie": {"display_name": "Nessie9"}}}
         ) as load_config:
@@ -8080,6 +8082,137 @@ class HumanContinuationApprovalTests(unittest.TestCase):
                     state,
                     ["ODP-CONTINUATION-001", "replay", "2099-01-01T00:00:00Z", "nonce-once"],
                 )
+
+    def test_staging_foundation_fixture_code_identifiers_do_not_trigger_hard_gate(self) -> None:
+        """A1 fixture: ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001 at 2026-09-17T23:27:08Z.
+
+        The next prose contains code identifiers, file paths, key=value pairs, and CI job tokens
+        (including 'deploy 相關 job 全 skipped' and 'build_sources_off_attestation').
+        After stripping code identifiers, continuation_approval_gate_error must return None.
+        """
+        staging_next = (
+            "【第 12 輪升級的實測紀錄：支撐 2026-09-17 continuation approval 的量測】本則記錄裁決所依據的實測，"
+            "量測方式為 detached worktree（git worktree add --detach 97b97097），A/B 皆在同一份 scratch 複本進行，主 checkout 未被更動。\n\n"
+            "■ 量測 1：受測集合從未被縮\n"
+            "SOURCES_OFF_EGRESS_CONTRACT_FILES —— origin/dev = 6 項；PR head 97b97097 = 6 項，與 dev 逐字相同；4fc26c6a = 12 項。"
+            "分支上改過該檔的 commit 依序為 fff9a7da、edc60cab（擴張為 12）、b04d70a2、9bbdaddb、ba696ab8（還原為 6 並加入條件式）。"
+            "結論：12 項從未存在於 dev，ba696ab8 是還原自己先前的擴張，不是改動共用 gate 的受測集合。\n\n"
+            "■ 量測 2：firewall 規則已搬入 module（條件式為承重結構）\n"
+            "grep 'resource \"google_compute_firewall\"' 計數：origin/dev:infra/terraform/network.tf = 3；"
+            "97b97097:infra/terraform/network.tf = 0；97b97097:infra/terraform/modules/runtime_foundation/network.tf = 3。\n"
+            "A/B（uv run --frozen --python 3.12 pytest tests/release/）：\n"
+            " - pristine HEAD 97b97097 → exit 0，0 筆失敗\n"
+            " - 僅將 delivery_toolchain/release/release_manifest.py 換成 origin/dev 版 → exit 1，19 筆失敗\n"
+            " - 首筆錯誤：tests/release/test_release_manifest.py:1503「network.tf: missing required firewall rule 'deny_all_egress'」\n"
+            "注意：同一組還原在 check_release_gate_registry.py --json 是 exit 0、integrity_errors=[]。"
+            "registry 檢查與 tests/release 量的不是同一件事，只跑一組會得到相反結論，兩組都要跑。\n\n"
+            "■ 量測 3：三條路的實際代價（check_release_gate_registry.py --json）\n"
+            " - HEAD 現況（6 項 + 條件式）：exit 0，integrity_errors=[]，candidate 596b9c9a，release_state=NO-GO\n"
+            " - (b) 4fc26c6a 版 12 項 + 596b9c9a：exit 1，恰 2 筆，內容皆為 failed to read "
+            "infra/terraform/modules/runtime_foundation/{database,main}.tf at candidate 596b9c9a。"
+            "成因：596b9c9a 是 dev 上的 commit（Merge PR #1234），module 為本分支所建，要求它含有該檔結構上不可能成立。\n"
+            " - (a) 12 項 + candidate 改綁 b1e9b57b：exit 1，10 筆——manifest.candidate_sha 不符，且 gate-0 至 gate-6 七個全部要求重新 attest。"
+            "另查：b1e9b57b 是本分支 commit（「merge reviewed dev」），是 HEAD 的祖先但不是 dev 的祖先；"
+            "前兩個 candidate ebc4fca5（Merge PR #1029）與 596b9c9a 皆為 dev commit，registry 的 candidate_ref 亦寫 refs/heads/dev。"
+            "採用 (a) 等同讓 dev 的 release candidate 首次指向未合併分支，且該 registry 屬於已 done 的 "
+            "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002（decision=no-go、7 gate 全 blocked、cleared_gates=[]）。\n"
+            " - successor build run 34726258529 本身查證屬實：conclusion=success、event=workflow_dispatch、build job 成功、"
+            "deploy 相關 job 全 skipped；b1e9b57b 當時的合約集合確為 12 項。採用與否是治理問題，不是證據問題。\n\n"
+            "■ 量測 4：P1-3 的機制（不需 A/B，讀碼即可確認）\n"
+            "compute_sources_off_egress_contract_digest 與 build_sources_off_attestation 的 proof_source 都直接疊代模組級常數 "
+            "SOURCES_OFF_EGRESS_CONTRACT_FILES；ba696ab8 的條件式只加在 _sources_off_egress_contract_errors。"
+            "故驗證時讀 module（fail-closed 正確），算 digest 時不讀 → 兩個 egress posture 不同的 candidate 得到相同 contract_digest。"
+            "(c) 要補的就是這一段：release_manifest.py 內 6 個使用點（digest 的 candidate/local 兩分支、proof_source、讀取器白名單檢查、兩處 paths 組裝），"
+            "以及 tests/release/test_build_release_handoff.py 與 tests/release/test_release_manifest.py 兩個直接 import 該常數的檔。"
+            "被刪的 tests/release/test_foundation_egress_contract.py 在 4fc26c6a 為 94 行、9 個 test 函式。\n\n"
+            "■ 範圍問題（本次裁決的核心）\n"
+            "head vs origin/dev 動到的 forbidden_paths 檔案僅一個：delivery_toolchain/release/release_manifest.py。(a)(b)(c) 全都要繼續改它。"
+            "module 抽取與該共用 gate 是同一件事的兩面，禁止改該檔等於禁止交付 module 抽取，而 module 抽取正是本 task 的交付物。"
+            "owner 12 輪即卡在此夾縫。裁決已於 continuation approval 的 reason 中將該檔納入有效範圍。\n\n"
+            "■ 維持通過的評價（reviewer 原判，本次不變更）\n"
+            "foundation 本體：infra/ 自 4fc26c6a 逐位元未變、module 抽取、17 個 moved block 零替換、bootstrap backend 宣告、"
+            "state bucket CMEK/versioning/retention/PAP/UBLA 與 IAM readback、quarantine 控制。"
+            "acceptance 第 4 項 API/Web Direct VPC ALL_TRAFFIC live readback 仍 PENDING，receipt 誠實標示，非退回理由。"
+        )
+        task = self._task(
+            id="ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+            title="Extract runtime foundation terraform module",
+            review_churn_escalated_at="2026-09-17T05:52:01Z",
+            review_churn_escalated_at_count=12,
+            next=staging_next,
+        )
+        self.assertIsNone(ai_status.continuation_approval_gate_error(task))
+
+    def test_ci_job_and_attestation_identifier_prose_group_a(self) -> None:
+        """A3 group (a): CI job names and code identifiers vs actual deploy gates."""
+        # Positive example: CI job reference and function identifier in review-churn task
+        positive_task = self._task(
+            next=(
+                "Review churn: successor build run completed; build job 成功、"
+                "deploy 相關 job 全 skipped; verified with build_sources_off_attestation."
+            ),
+        )
+        self.assertIsNone(ai_status.continuation_approval_gate_error(positive_task))
+
+        # Negative example: genuine deploy gate prose
+        negative_task = self._task(
+            next="Review churn is blocked; requires manual deploy approval before proceeding.",
+        )
+        self.assertEqual(
+            ai_status.continuation_approval_gate_error(negative_task),
+            "task carries an independent credentials/deployment/production or human gate",
+        )
+
+    def test_credential_and_vpc_flow_logs_code_tokens_group_b(self) -> None:
+        """A3 group (b): file paths, code identifiers, and backticks vs genuine credential/flow log gates."""
+        # Positive example: code identifiers, file paths, and backtick terms
+        positive_task = self._task(
+            next=(
+                "Review churn recovery: inspected credential_helper.py, `GCP VPC Flow Logs`, "
+                "tests/credentials/test_auth.py, infra/vpc_flow_logs.tf, and gcp_vpc_flow_logs module."
+            ),
+        )
+        self.assertIsNone(ai_status.continuation_approval_gate_error(positive_task))
+
+        # Negative examples: genuine natural language gates
+        negative_credential = self._task(
+            next="Review churn blocked: requires manual credential injection from Ops before proceeding.",
+        )
+        self.assertEqual(
+            ai_status.continuation_approval_gate_error(negative_credential),
+            "task carries an independent credentials/deployment/production or human gate",
+        )
+
+        negative_flow_logs = self._task(
+            next="Review churn blocked: awaiting GCP VPC Flow Logs manual verification and operator signoff.",
+        )
+        self.assertEqual(
+            ai_status.continuation_approval_gate_error(negative_flow_logs),
+            "task carries an independent credentials/deployment/production or human gate",
+        )
+
+    def test_natural_language_independent_gates_group_c(self) -> None:
+        """A3 group (c): genuine natural language gates remain fail-closed."""
+        # Positive examples (genuine gates that MUST be blocked)
+        natural_gates = [
+            "pending production deployment approval",
+            "requires manual approval before production deployment",
+            "waiting for operator intervention on production rollout",
+            "blocked pending human gate authorization",
+        ]
+        for gate_phrase in natural_gates:
+            with self.subTest(gate_phrase=gate_phrase):
+                task = self._task(next=f"Review churn occurred, but also {gate_phrase}.")
+                self.assertEqual(
+                    ai_status.continuation_approval_gate_error(task),
+                    "task carries an independent credentials/deployment/production or human gate",
+                )
+
+        # Negative examples (not hard gates)
+        clean_reopen_task = self._task(
+            next="Review churn only after repeated reviewer reopenings.",
+        )
+        self.assertIsNone(ai_status.continuation_approval_gate_error(clean_reopen_task))
 
 
 class HistoricalClosemergeProvenanceTests(unittest.TestCase):

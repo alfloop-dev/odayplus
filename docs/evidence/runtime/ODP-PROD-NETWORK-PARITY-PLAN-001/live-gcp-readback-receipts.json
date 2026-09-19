@@ -1,0 +1,162 @@
+{
+  "receipt_metadata": {
+    "task_id": "ODP-PROD-NETWORK-PARITY-PLAN-001",
+    "executed_at": "2026-09-16T01:20:00Z",
+    "executor": "Antigravity7",
+    "mode": "READ_ONLY_INSPECTION"
+  },
+  "readback_receipts": [
+    {
+      "command": "gcloud compute networks list --project=odayplus-prod-20260826 --format=json",
+      "exit_code": 0,
+      "summary": "Production VPC networks list",
+      "data": [
+        {
+          "autoCreateSubnetworks": true,
+          "name": "default",
+          "routingConfig": {
+            "routingMode": "REGIONAL"
+          },
+          "selfLink": "https://www.googleapis.com/compute/v1/projects/odayplus-prod-20260826/global/networks/default",
+          "subnetworks": [
+            "https://www.googleapis.com/compute/v1/projects/odayplus-prod-20260826/regions/asia-east1/subnetworks/default"
+          ]
+        }
+      ]
+    },
+    {
+      "command": "gcloud compute networks subnets list --project=odayplus-prod-20260826 --filter='region:asia-east1' --format=json",
+      "exit_code": 0,
+      "summary": "Production asia-east1 subnetwork list",
+      "data": [
+        {
+          "ipCidrRange": "10.140.0.0/20",
+          "name": "default",
+          "network": "https://www.googleapis.com/compute/v1/projects/odayplus-prod-20260826/global/networks/default",
+          "privateIpGoogleAccess": false,
+          "region": "https://www.googleapis.com/compute/v1/projects/odayplus-prod-20260826/regions/asia-east1"
+        }
+      ]
+    },
+    {
+      "command": "gcloud services list --enabled --project=odayplus-prod-20260826 --filter=\"name:servicenetworking.googleapis.com\" --format=json",
+      "exit_code": 0,
+      "summary": "Production servicenetworking.googleapis.com service status",
+      "data": []
+    },
+    {
+      "command": "gcloud compute addresses list --global --project=odayplus-prod-20260826 --format=json",
+      "exit_code": 0,
+      "summary": "Production global internal peering addresses list",
+      "data": []
+    },
+    {
+      "command": "gcloud compute networks peerings list --project=odayplus-prod-20260826 --format=json",
+      "exit_code": 0,
+      "summary": "Production VPC peerings list",
+      "data": []
+    },
+    {
+      "command": "gcloud compute firewall-rules list --project=odayplus-prod-20260826 --format=json",
+      "exit_code": 0,
+      "summary": "Production firewall rules list",
+      "data": [
+        {
+          "direction": "INGRESS",
+          "disabled": false,
+          "name": "default-allow-icmp",
+          "network": "https://www.googleapis.com/compute/v1/projects/odayplus-prod-20260826/global/networks/default",
+          "priority": 65534,
+          "sourceRanges": ["0.0.0.0/0"]
+        },
+        {
+          "direction": "INGRESS",
+          "disabled": false,
+          "name": "default-allow-internal",
+          "network": "https://www.googleapis.com/compute/v1/projects/odayplus-prod-20260826/global/networks/default",
+          "priority": 65534,
+          "sourceRanges": ["10.128.0.0/9"]
+        },
+        {
+          "direction": "INGRESS",
+          "disabled": false,
+          "name": "default-allow-rdp",
+          "network": "https://www.googleapis.com/compute/v1/projects/odayplus-prod-20260826/global/networks/default",
+          "priority": 65534,
+          "sourceRanges": ["0.0.0.0/0"]
+        },
+        {
+          "direction": "INGRESS",
+          "disabled": false,
+          "name": "default-allow-ssh",
+          "network": "https://www.googleapis.com/compute/v1/projects/odayplus-prod-20260826/global/networks/default",
+          "priority": 65534,
+          "sourceRanges": ["0.0.0.0/0"]
+        }
+      ]
+    },
+    {
+      "command": "gcloud sql instances describe oday-prod-sql --project=odayplus-prod-20260826 --format=json",
+      "exit_code": 0,
+      "summary": "Production Cloud SQL oday-prod-sql describe",
+      "data": {
+        "backendType": "SECOND_GEN",
+        "connectionName": "odayplus-prod-20260826:asia-east1:oday-prod-sql",
+        "databaseVersion": "POSTGRES_16",
+        "databaseInstalledVersion": "POSTGRES_16_15",
+        "gceZone": "asia-east1-a",
+        "instanceType": "CLOUD_SQL_INSTANCE",
+        "ipAddresses": [
+          {
+            "ipAddress": "34.81.148.88",
+            "type": "PRIMARY"
+          },
+          {
+            "ipAddress": "34.80.196.123",
+            "type": "OUTGOING"
+          }
+        ],
+        "name": "oday-prod-sql",
+        "project": "odayplus-prod-20260826",
+        "region": "asia-east1",
+        "state": "RUNNABLE",
+        "settings": {
+          "activationPolicy": "ALWAYS",
+          "availabilityType": "ZONAL",
+          "tier": "db-f1-micro",
+          "dataDiskSizeGb": "10",
+          "dataDiskType": "PD_SSD",
+          "deletionProtectionEnabled": false,
+          "ipConfiguration": {
+            "ipv4Enabled": true,
+            "requireSsl": false,
+            "sslMode": "ALLOW_UNENCRYPTED_AND_ENCRYPTED",
+            "authorizedNetworks": []
+          }
+        }
+      }
+    },
+    {
+      "command": "gcloud services list --enabled --project=odayplus-prod-20260826 --filter=\"name:vpcaccess.googleapis.com\" --format=json",
+      "exit_code": 0,
+      "summary": "Production vpcaccess.googleapis.com service status",
+      "data": []
+    },
+    {
+      "command": "gcloud compute networks vpc-access connectors describe oday-staging-vpc --region=asia-east1 --project=odayplus-runtime-20260825 --format=json",
+      "exit_code": 0,
+      "summary": "Staging VPC Access Connector oday-staging-vpc describe",
+      "data": {
+        "ipCidrRange": "10.8.0.0/28",
+        "machineType": "e2-micro",
+        "maxInstances": 3,
+        "maxThroughput": 300,
+        "minInstances": 2,
+        "minThroughput": 200,
+        "name": "projects/odayplus-runtime-20260825/locations/asia-east1/connectors/oday-staging-vpc",
+        "network": "default",
+        "state": "READY"
+      }
+    }
+  ]
+}

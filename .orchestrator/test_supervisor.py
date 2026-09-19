@@ -11171,10 +11171,73 @@ class HumanContinuationApprovalSupervisorTests(unittest.TestCase):
                 with (
                     mock.patch.object(supervisor, "load_status", return_value=status),
                     mock.patch.object(supervisor, "commit_canonical_task_transition") as commit,
+                    mock.patch.object(supervisor, "write_activity_log"),
                 ):
                     self.assertFalse(supervisor.consume_human_continuation_approvals(self.config, {}))
                 self.assertEqual(task["status"], "blocked")
                 commit.assert_not_called()
+
+    def test_rejected_continuation_approval_writes_activity_log_and_deduplicates(self) -> None:
+        """Validation error or nonce reuse writes a rejection activity log, deduplicated per tick."""
+        # 1. Validation error: issued_by is not Human/Ops
+        invalid_approval = self._approval(issued_by="Codex2")
+        task = self._task(invalid_approval)
+        status = {"tasks": [task], "blockers": []}
+        state: dict[str, Any] = {}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "commit_canonical_task_transition") as commit,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            # First tick: emits rejection activity event
+            changed = supervisor.consume_human_continuation_approvals(self.config, state)
+            self.assertFalse(changed)
+            commit.assert_not_called()
+            write_activity_log.assert_called_once()
+            event = write_activity_log.call_args.args[1]
+            self.assertEqual(event["type"], "human_continuation_approval_rejected")
+            self.assertEqual(event["task_id"], "ODP-CONTINUATION-001")
+            self.assertEqual(event["approval_id"], "apr-continuation-1")
+            self.assertEqual(event["reason"], "approval issuer is not Human/Ops")
+
+            # Second tick with same state: deduplicated, no additional write
+            write_activity_log.reset_mock()
+            changed = supervisor.consume_human_continuation_approvals(self.config, state)
+            self.assertFalse(changed)
+            write_activity_log.assert_not_called()
+
+        # 2. Nonce reuse rejection
+        reused_approval = self._approval(approval_id="apr-continuation-2", nonce="nonce-reused")
+        reused_task = self._task(
+            reused_approval,
+            human_continuation_approval_history=[
+                self._approval(approval_id="apr-old", nonce="nonce-reused", status="consumed")
+            ],
+        )
+        reused_status = {"tasks": [reused_task], "blockers": []}
+        reused_state: dict[str, Any] = {}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=reused_status),
+            mock.patch.object(supervisor, "commit_canonical_task_transition") as commit,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.consume_human_continuation_approvals(self.config, reused_state)
+            self.assertFalse(changed)
+            commit.assert_not_called()
+            write_activity_log.assert_called_once()
+            event = write_activity_log.call_args.args[1]
+            self.assertEqual(event["type"], "human_continuation_approval_rejected")
+            self.assertEqual(event["task_id"], "ODP-CONTINUATION-001")
+            self.assertEqual(event["approval_id"], "apr-continuation-2")
+            self.assertEqual(event["reason"], "continuation approval nonce has already been used")
+
+            # Subsequent tick deduplication
+            write_activity_log.reset_mock()
+            changed = supervisor.consume_human_continuation_approvals(self.config, reused_state)
+            self.assertFalse(changed)
+            write_activity_log.assert_not_called()
 
     def test_independent_production_gate_is_not_released_by_continuation_approval(self) -> None:
         task = self._task(
@@ -11185,6 +11248,7 @@ class HumanContinuationApprovalSupervisorTests(unittest.TestCase):
         with (
             mock.patch.object(supervisor, "load_status", return_value=status),
             mock.patch.object(supervisor, "commit_canonical_task_transition") as commit,
+            mock.patch.object(supervisor, "write_activity_log"),
         ):
             self.assertFalse(supervisor.consume_human_continuation_approvals(self.config, {}))
         self.assertEqual(task["status"], "blocked")
@@ -11326,6 +11390,34 @@ class AutomaticRecoveryTests(unittest.TestCase):
         self.assertFalse(
             supervisor.blocked_task_auto_recovery_eligible(self.config, task, {task["id"]: task})
         )
+
+    def test_human_ops_waiting_for_task_with_worktree_prose_is_not_auto_recovery_eligible(self) -> None:
+        """Tasks waiting for Human/Ops remain fail-closed and do not auto-recover on routing tokens like 'worktree'."""
+        for waiting_for in ("Human/Ops", "human/ops", "human", "ops", "Human", "Ops", "human/security"):
+            with self.subTest(waiting_for=waiting_for):
+                task = {
+                    "id": "ODP-TEST-HUMAN-OPS-001",
+                    "status": "blocked",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude",
+                    "waiting_for": waiting_for,
+                    "depends_on": [],
+                    "next": "Review churn recovery: clean worktree and await operator continuation approval.",
+                }
+                task_map = {task["id"]: task}
+
+                self.assertFalse(
+                    supervisor.blocked_task_auto_recovery_eligible(self.config, task, task_map)
+                )
+
+                with (
+                    mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+                    mock.patch.object(supervisor, "write_activity_log"),
+                ):
+                    changed = supervisor.normalize_mainline_task_assignment(self.config, task, task_map)
+
+                self.assertFalse(changed)
+                persist.assert_not_called()
 
     def test_unregistered_coordinator_reviewer_is_reassigned(self) -> None:
         task = {
@@ -21849,6 +21941,29 @@ class WorkerPromptContractTests(unittest.TestCase):
                 self.assertIn("uv run", rendered)
                 self.assertIn("不自行掃描主機", rendered)
 
+    def test_worker_prompt_stale_worktree_guardrail_applies_across_dispatch_reasons(self) -> None:
+        dispatch_reasons = [
+            "owned_ready_dispatch",
+            "owned_in_progress_dispatch",
+            "review_ready_dispatch",
+            "owned_finalize_dispatch",
+            "helper_claim_dispatch",
+        ]
+        for reason in dispatch_reasons:
+            with self.subTest(reason=reason):
+                event = {
+                    "task_id": "OPS-WORKER-STALE-WORKTREE-001",
+                    "reason": reason,
+                    "context_files": ["AI_COLLABORATION_GUIDE.md"],
+                    "task": {"artifacts": [".orchestrator/templates/wakeup.txt"]},
+                }
+                rendered = watch_events.render_wakeup_message(self.config, event, "antigravity4")
+                self.assertIn("PANTHEON_STATUS_ROOT", rendered)
+                self.assertIn("禁止從隔離 worktree 執行", rendered)
+                self.assertIn("亦禁止直接依賴本機工作樹檔案判斷 repo 現況", rendered)
+                self.assertIn("git show origin/dev:<path>", rendered)
+                self.assertIn("stale branch code", rendered)
+
 
 class ReopenReasonClassificationTests(unittest.TestCase):
     """Reopen classification must come from --reason, never from the message prose.
@@ -22020,6 +22135,13 @@ class GitHubBusReopenReasonTests(unittest.TestCase):
         ):
             self.assertIn(reason, guide)
         self.assertIn("never parsed", guide)
+
+    def test_seeded_collaboration_guide_documents_stale_worktree_guardrail(self) -> None:
+        """Guide must advise checking origin/dev and running status with PANTHEON_STATUS_ROOT."""
+        guide = worker_workspace._generated_collaboration_guide({})
+        self.assertIn("origin/dev", guide)
+        self.assertIn("git show origin/dev:<path>", guide)
+        self.assertIn("PANTHEON_STATUS_ROOT", guide)
 
     def test_run_ai_status_forwards_extra_args(self) -> None:
         recorded: dict[str, Any] = {}

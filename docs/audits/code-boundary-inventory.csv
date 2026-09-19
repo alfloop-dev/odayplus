@@ -151,6 +151,7 @@ apps/cli/oday_cli/__init__.py,product_system,product_required,true,,engineering;
 apps/cli/oday_cli/__main__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/cli/oday_cli/ops.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/data_platform/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+apps/data_platform/cdc.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/data_platform/config.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/data_platform/contracts.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/data_platform/definitions.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -1051,6 +1052,7 @@ tests/integration/test_production_api_composition.py,verification,verification_o
 tests/integration/test_production_model_lifecycle.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_production_model_runtime.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_scheduled_ingestion_tenant_propagation.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/integration/test_scoped_cdc_adapter.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_scoring_model_binding.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_sitescore_decision.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_store_opening_backfill.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.

@@ -51,15 +51,45 @@ if [ "${ODP_DEPLOY_ENV}" = "production" ]; then
   done
 fi
 
-# Private-IP Cloud SQL is used by isolated staging. Keep the connectivity
+# Private-IP Cloud SQL is reached through the VPC. Keep the connectivity
 # binding in this single release entrypoint so every service and job follows
-# the same path; if either half is missing, fail before any mutation.
-if [ -n "${ODP_CLOUD_RUN_VPC_CONNECTOR:-}" ] && [ -z "${ODP_CLOUD_RUN_VPC_EGRESS:-}" ]; then
-  echo "Error: ODP_CLOUD_RUN_VPC_EGRESS is required with ODP_CLOUD_RUN_VPC_CONNECTOR." >&2
+# the same path. Two mutually exclusive binding modes are supported:
+#
+#   connector  -- Serverless VPC Access connector (dev / staging):
+#                 ODP_CLOUD_RUN_VPC_CONNECTOR
+#   direct-vpc -- Direct VPC egress, the architecture infra/terraform/cloud_run.tf
+#                 declares for production (vpc_access.network_interfaces; the IaC
+#                 creates no connector resource):
+#                 ODP_PROD_VPC_NETWORK + ODP_PROD_VPC_SUBNETWORK
+#
+# Both modes require ODP_CLOUD_RUN_VPC_EGRESS. A half-configured mode, both
+# modes at once (`--vpc-connector` and `--network` are mutually exclusive on
+# Cloud Run), or an egress mode without a network binding all fail here,
+# before any mutation, instead of at the first gcloud call.
+CLOUD_RUN_VPC_MODE=""
+if [ -n "${ODP_CLOUD_RUN_VPC_CONNECTOR:-}" ] && { [ -n "${ODP_PROD_VPC_NETWORK:-}" ] || [ -n "${ODP_PROD_VPC_SUBNETWORK:-}" ]; }; then
+  echo "Error: ODP_CLOUD_RUN_VPC_CONNECTOR and ODP_PROD_VPC_NETWORK/ODP_PROD_VPC_SUBNETWORK are mutually exclusive; configure exactly one VPC binding mode." >&2
   exit 1
 fi
-if [ -n "${ODP_CLOUD_RUN_VPC_EGRESS:-}" ] && [ -z "${ODP_CLOUD_RUN_VPC_CONNECTOR:-}" ]; then
-  echo "Error: ODP_CLOUD_RUN_VPC_CONNECTOR is required with ODP_CLOUD_RUN_VPC_EGRESS." >&2
+if [ -n "${ODP_PROD_VPC_NETWORK:-}" ] && [ -z "${ODP_PROD_VPC_SUBNETWORK:-}" ]; then
+  echo "Error: ODP_PROD_VPC_SUBNETWORK is required with ODP_PROD_VPC_NETWORK." >&2
+  exit 1
+fi
+if [ -n "${ODP_PROD_VPC_SUBNETWORK:-}" ] && [ -z "${ODP_PROD_VPC_NETWORK:-}" ]; then
+  echo "Error: ODP_PROD_VPC_NETWORK is required with ODP_PROD_VPC_SUBNETWORK." >&2
+  exit 1
+fi
+if [ -n "${ODP_CLOUD_RUN_VPC_CONNECTOR:-}" ]; then
+  CLOUD_RUN_VPC_MODE="connector"
+elif [ -n "${ODP_PROD_VPC_NETWORK:-}" ]; then
+  CLOUD_RUN_VPC_MODE="direct-vpc"
+fi
+if [ -n "${CLOUD_RUN_VPC_MODE}" ] && [ -z "${ODP_CLOUD_RUN_VPC_EGRESS:-}" ]; then
+  echo "Error: ODP_CLOUD_RUN_VPC_EGRESS is required with the ${CLOUD_RUN_VPC_MODE} VPC binding." >&2
+  exit 1
+fi
+if [ -n "${ODP_CLOUD_RUN_VPC_EGRESS:-}" ] && [ -z "${CLOUD_RUN_VPC_MODE}" ]; then
+  echo "Error: ODP_CLOUD_RUN_VPC_CONNECTOR or ODP_PROD_VPC_NETWORK+ODP_PROD_VPC_SUBNETWORK is required with ODP_CLOUD_RUN_VPC_EGRESS." >&2
   exit 1
 fi
 if [ -n "${ODP_CLOUD_RUN_VPC_EGRESS:-}" ]; then
@@ -77,9 +107,14 @@ fi
 # A provider-off Runtime Release must route all traffic through the VPC.
 # `private-ranges-only` would leave public destinations on Cloud Run's direct
 # egress path, so accepting it here would turn an absent endpoint into a false
-# default-deny claim. This guard runs before the first Cloud Run mutation.
+# default-deny claim. Either binding mode satisfies the network half; the
+# egress half must be ALL_TRAFFIC. This guard runs before the first Cloud Run
+# mutation.
 if [ "${ODP_EXTERNAL_PROVIDER_MODE:-}" = "disabled" ]; then
-  : "${ODP_CLOUD_RUN_VPC_CONNECTOR:?Error: sources-off deploy requires ODP_CLOUD_RUN_VPC_CONNECTOR.}"
+  if [ -z "${CLOUD_RUN_VPC_MODE}" ]; then
+    echo "Error: sources-off deploy requires a VPC binding: ODP_CLOUD_RUN_VPC_CONNECTOR or ODP_PROD_VPC_NETWORK+ODP_PROD_VPC_SUBNETWORK." >&2
+    exit 1
+  fi
   : "${MANIFEST_DIGEST:?Error: sources-off deploy requires MANIFEST_DIGEST.}"
   if [[ ! "${MANIFEST_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
     echo "Error: sources-off deploy requires an immutable MANIFEST_DIGEST." >&2
@@ -96,10 +131,18 @@ if [ "${ODP_EXTERNAL_PROVIDER_MODE:-}" = "disabled" ]; then
 fi
 
 CLOUD_RUN_NETWORK_ARGS=()
-if [ -n "${ODP_CLOUD_RUN_VPC_CONNECTOR:-}" ]; then
-  CLOUD_RUN_NETWORK_ARGS+=("--vpc-connector=${ODP_CLOUD_RUN_VPC_CONNECTOR}")
-  CLOUD_RUN_NETWORK_ARGS+=("--vpc-egress=${ODP_CLOUD_RUN_VPC_EGRESS}")
-fi
+case "${CLOUD_RUN_VPC_MODE}" in
+  connector)
+    CLOUD_RUN_NETWORK_ARGS+=("--vpc-connector=${ODP_CLOUD_RUN_VPC_CONNECTOR}")
+    CLOUD_RUN_NETWORK_ARGS+=("--vpc-egress=${ODP_CLOUD_RUN_VPC_EGRESS}")
+    ;;
+  direct-vpc)
+    CLOUD_RUN_NETWORK_ARGS+=("--network=${ODP_PROD_VPC_NETWORK}")
+    CLOUD_RUN_NETWORK_ARGS+=("--subnet=${ODP_PROD_VPC_SUBNETWORK}")
+    CLOUD_RUN_NETWORK_ARGS+=("--vpc-egress=${ODP_CLOUD_RUN_VPC_EGRESS}")
+    ;;
+esac
+echo "Cloud Run VPC binding mode: ${CLOUD_RUN_VPC_MODE:-none}"
 
 if [ -z "${ODP_SCHEDULED_INGESTION_TENANT_ID:-}" ] && [ -z "${ODP_TENANT_ID:-}" ]; then
   echo "Error: ODP_SCHEDULED_INGESTION_TENANT_ID or ODP_TENANT_ID is required." >&2

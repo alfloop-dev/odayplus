@@ -245,6 +245,7 @@ _FAILURE_HELPER_FUNCTIONS = [
 "_parse_iso_utc",
 "_provider_guardrail_bucket",
 "_task_failure_streak_bucket",
+"_settle_fenced_sibling_worker",
 "agent_auto_dispatch_block_reason",
 "agent_can_take_task",
 "agent_dispatch_disabled",
@@ -337,6 +338,9 @@ _FAILURE_HELPER_FUNCTIONS = [
 "worker_runtime_metrics_bucket",
 "worker_runtime_settings",
 "worker_supports_approval_resume",
+"worker_writer_pids",
+"worker_writers_are_alive",
+"terminate_worker_writers",
 "write_status_snapshot_if_current",
 ]
 
@@ -3576,6 +3580,25 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
     workers = state.setdefault("workers", {})
 
     for run_id, worker in list(workers.items()):
+        if not isinstance(worker, dict):
+            continue
+        pending_fence = worker.get("pending_fence")
+        if isinstance(pending_fence, dict):
+            if worker_writers_are_alive(worker):
+                terminate_worker_writers(worker)
+            if not worker_writers_are_alive(worker):
+                settled = _settle_fenced_sibling_worker(
+                    config,
+                    state,
+                    worker,
+                    str(pending_fence.get("pool_id") or ""),
+                    str(pending_fence.get("reason") or ""),
+                )
+                if settled:
+                    changed = True
+                    continue
+            changed = True
+            continue
         if worker.get("status") == "failed":
             task_id = str(worker.get("task_id") or "")
             task = task_map.get(task_id)
@@ -4257,7 +4280,7 @@ def normalized_business_priority(value: Any, default: str = "P2") -> str:
 
 
 def blocked_task_prose_context(task: dict[str, Any]) -> str:
-    """Free-text blocker context with declared task IDs removed.
+    """Return blocker prose without task/dependency identifiers, code identifiers, and paths.
 
     The gate keywords below are matched as substrings, so any task ID that
     happens to contain one poisons every task that depends on it: a task
@@ -4268,10 +4291,44 @@ def blocked_task_prose_context(task: dict[str, Any]) -> str:
     """
     identifiers = [str(task.get("id") or "")]
     identifiers.extend(str(dep) for dep in (task.get("depends_on") or []))
-    context = " ".join(
+    raw_context = " ".join(
         str(task.get(key) or "")
-        for key in ("next", "waiting_for", "blocker", "blocked_by", "failure_reason", "last_failure_reason", "push_status")
-    ).casefold()
+        for key in (
+            "next",
+            "waiting_for",
+            "blocker",
+            "blocked_by",
+            "failure_reason",
+            "last_failure_reason",
+            "push_status",
+        )
+    )
+
+    # 1. Strip code blocks and inline backticks
+    context = re.sub(r"```[\s\S]*?```", " ", raw_context)
+    context = re.sub(r"`[^`]*`", " ", context)
+
+    # 2. Strip <key>=<value> pairs
+    context = re.sub(r"[A-Za-z0-9_.\-/]+\s*=\s*[A-Za-z0-9_.\-/]+", " ", context)
+
+    # 3. Strip paths with slashes or files with specified extensions (.py .sh .tf .yml .yaml .json)
+    context = re.sub(r"[A-Za-z0-9_.\-]*/[A-Za-z0-9_.\-/]+", " ", context)
+    context = re.sub(
+        r"\b[A-Za-z0-9_.\-]+\.(?:py|sh|tf|yml|yaml|json)\b",
+        " ",
+        context,
+        flags=re.IGNORECASE,
+    )
+
+    # 4. Strip snake_case identifiers containing underscore
+    context = re.sub(r"\b[A-Za-z0-9_]*_[A-Za-z0-9_]*\b", " ", context)
+
+    # 5. Strip job references (e.g. 'deploy 相關 job', 'build job', 'deploy job')
+    context = re.sub(
+        r"\b[A-Za-z0-9_.\-]+\s*(?:相關\s*)?job\b", " ", context, flags=re.IGNORECASE
+    )
+
+    context = context.casefold()
     for identifier in identifiers:
         token = identifier.strip().casefold()
         if token:
@@ -4386,14 +4443,40 @@ def consume_human_continuation_approvals(
             approval,
             now=now_dt,
         )
-        if validation_error or _continuation_approval_nonce_reused(
+        nonce_reused = _continuation_approval_nonce_reused(
             status,
             approval,
             tasks_path=tasks_path,
-        ):
+        )
+        if validation_error or nonce_reused:
             # Do not mutate a malformed, unauthorized, or replayed record. The
             # task remains blocked, so a later cycle cannot turn bad state into
             # an execution capability.
+            rejection_reason = (
+                validation_error
+                if validation_error
+                else "continuation approval nonce has already been used"
+            )
+            approval_id = str(approval.get("approval_id") or "").strip()
+            task_id = str(task.get("id") or approval.get("task_id") or "").strip()
+            dedup_key = f"{approval_id}:{task_id}:{rejection_reason}"
+            reported = state.setdefault("human_continuation_approval_rejected", {})
+            if isinstance(reported, dict) and dedup_key not in reported:
+                reported[dedup_key] = now
+                write_activity_log(
+                    config,
+                    {
+                        "type": "human_continuation_approval_rejected",
+                        "task_id": task_id,
+                        "approval_id": approval_id,
+                        "task_scope": approval.get("task_scope"),
+                        "reason": rejection_reason,
+                        "issued_by": approval.get("issued_by"),
+                        "issued_at": approval.get("issued_at"),
+                        "expires_at": approval.get("expires_at"),
+                        "nonce": approval.get("nonce"),
+                    },
+                )
             continue
 
         task_id = str(task.get("id") or "").strip()
@@ -4510,7 +4593,13 @@ def blocked_task_auto_recovery_eligible(
     """
     if str(task.get("status") or "").strip().lower() != "blocked":
         return False
-    if task_is_human_gate(task) or task_is_sidecar(task) or bool(task.get("non_dispatchable")):
+    if (
+        task_is_human_gate(task)
+        or is_human_gate_agent(task.get("waiting_for"))
+        or str(task.get("waiting_for") or "").strip().casefold() in {"human/ops", "human", "ops"}
+        or task_is_sidecar(task)
+        or bool(task.get("non_dispatchable"))
+    ):
         return False
     declared_dependencies = [str(dep).strip() for dep in (task.get("depends_on") or []) if str(dep).strip()]
     dependency_gate_released = False

@@ -455,10 +455,15 @@ def prune_worker_records(state: dict[str, Any], tasks_by_id: dict[str, str] | No
     workers = state.setdefault("workers", {})
     keep: dict[str, Any] = {}
     for run_id, worker in workers.items():
+        if not isinstance(worker, dict):
+            continue
         status = str(worker.get("status") or "")
         task_id = str(worker.get("task_id") or "")
         event_id = worker.get("queue_event_id")
         task_status = str(tasks_by_id.get(task_id) or "")
+        if worker.get("pending_fence"):
+            keep[run_id] = worker
+            continue
         if status in ACTIVE_WORKER_STATUSES:
             keep[run_id] = worker
             continue
@@ -525,7 +530,7 @@ def compact_worker_history(state: dict[str, Any], max_entries: int) -> None:
         if not isinstance(worker, dict):
             continue
         status = str(worker.get("status") or "").lower()
-        if status in ACTIVE_WORKER_STATUSES:
+        if status in ACTIVE_WORKER_STATUSES or worker.get("pending_fence"):
             active[run_id] = worker
         else:
             terminal.append((run_id, worker))
