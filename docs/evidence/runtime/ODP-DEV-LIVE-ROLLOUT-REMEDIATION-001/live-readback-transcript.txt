@@ -1,0 +1,79 @@
+=== ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 hosted build/readback transcript ===
+Captured: 2026-09-04T06:41:04Z
+Worker: Codex
+Task: ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001
+
+[1] Branch/base composition
+Command: git fetch origin dev && git merge --no-edit origin/dev
+Result: merge commit 6f3624ac9a1e38042eba84c6e0ce8b5b513a84ce; first parent is the prior
+task head 87889e9cfed3d2ad2e6dbe6db8aa6aea5de16706 and second parent is origin/dev
+1edb2f834cbf38ccd489cd999802098076e891b7. No merge conflict. The origin/dev tip is an
+ancestor of the task HEAD after the merge and the merge was pushed normally.
+
+[2] Product/build drift check
+Command: git diff --name-status d858e1c3a75489b5ecae5f67920fb314289a93d9 1edb2f834cbf38ccd489cd999802098076e891b7
+Result: 248 files changed, including product files, workflow/tooling, tests, and build inputs.
+Decision: d858 artifacts were not reused; a new build-once run was mandatory.
+
+[3] Hosted build dispatch
+Command: gh workflow run deploy-dev.yml --repo alfloop-dev/odayplus --ref dev -f phase=build -f environment=dev -f release_sha=1edb2f834cbf38ccd489cd999802098076e891b7 -f task_id=ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 -f initial_release_recovery=true
+Run: https://github.com/alfloop-dev/odayplus/actions/runs/33844319992
+Result: workflow_dispatch run completed success. Input validation and the build job passed;
+lease verification, deploy, and watch/cleanup jobs were skipped because phase=build.
+
+[4] Hosted build receipts
+Run: 33844319992
+Artifacts:
+- release phase receipt: `release-phase-receipt-dev-build`, artifact id 9925953169
+- environment binding receipt: `release-environment-receipt-dev-build`, artifact id 9925964706
+- image handoff: `runtime-release-images-1edb2f834cbf38ccd489cd999802098076e891b7`, artifact id 9926308131
+- candidate manifest: `runtime-release-manifest-1edb2f834cbf38ccd489cd999802098076e891b7`, artifact id 9926308373
+- target absence: `initial-release-absence-readback-1edb2f834cbf38ccd489cd999802098076e891b7`, artifact id 9926308639
+Build result: success, completed at 2026-09-04T06:41:04Z.
+
+[5] Manifest and image handoff readback
+Manifest: schema_version=2, release_id=odp-1edb2f834cbf, candidate_sha=1edb2f834cbf38ccd489cd999802098076e891b7, release_status=ready.
+Manifest digest: sha256:c9ff71c7557c4009487cf6e093280f47369db2fdd49a17ac8b9e1aa472e8c2c7.
+Image refs:
+- api: asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:520c3c0cb49f5b46b8c21c9e3e7e3284c4e3b7576a7b42ea1a8a7e5504d5e7a2
+- web: asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:72bd3c5fc86a2e341af3e4faccf869edd53bba37fc9f1751ef044892ba113de4
+- worker: asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:68f25db411228bb5fa2d21ad23469bc1045bfe7b19054ffa4e66eda349120538
+- scheduler: asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:82b0bf9be56a301b3c27bac5a22825b2d1cf65a3d1309b3f0ea7250a3ea88a76
+The hosted log records the same four push digests, four Cosign signature references, and four
+SBOM attestation references. `compute_manifest_digest` equals the recorded digest; manifest
+and dev admission validators returned empty error lists.
+
+[6] First-release target absence readback
+Command executed by hosted workflow: gcloud run services list --format=value(metadata.name); gcloud run jobs list --format=value(metadata.name)
+Project/region: odayplus-runtime-20260825 / asia-east1
+Result: all five target records had `exists=false` and `serving_traffic=false`:
+- api service oday-api
+- web service oday-web
+- migration job oday-migration-r-1edb2f834cbf
+- worker job oday-worker-r-1edb2f834cbf
+- scheduler job oday-scheduler-r-1edb2f834cbf
+
+[7] Supply-chain and source posture
+Hosted build logs show gcloud registry pushes for each exact image digest and successful Cosign
+certificate/transparency-log verification. The manifest records four immutable SBOM refs and
+four immutable signature refs, `external_sources_expected_enabled=[]`, all 16 sources disabled,
+zero provider credentials, provider mode disabled, and default-deny egress. No post-deploy
+runtime readback is asserted because no signed deploy lease was available.
+
+[8] Canonical admission state
+Command: jq '.release | {candidate_sha,manifest_digest,stage,environment,admission_target,decision}' docs/evidence/gates/RELEASE_GATE_REGISTRY.json
+Result: candidate_sha=ebc4fca5c2dd5871275aee39a18406dd67464f04; manifest_digest=sha256:fa2f52220951dc89c56b41b7f0fd61280ce00a028709d2124ceefcdc55f24de9; stage=candidate-built; environment=dev; admission_target=dev; decision=no-go.
+The registry does not bind hosted candidate 1edb2f834cbf. No Supervisor lease was issued,
+signed, consumed, or replayed; no private signing key was available to this worker.
+
+[9] Historical immutability and local auth boundary
+The seven historical ODP-DEV-ROLLOUT-001 receipt hashes all matched their recorded values
+after the base merge. A local read-only gcloud artifact probe was attempted but could not
+reauthenticate non-interactively; it is not used as a pass claim. Hosted gcloud/Cosign logs
+are the authoritative supply-chain verification for this build.
+
+[10] Commands intentionally not run
+No Runtime Release deploy dispatch was made. No Cloud Run service/job deployment, migration
+execution, worker/scheduler one-shot, traffic switch, authenticated smoke, provider credential
+read, provider activation, or public-egress probe was run. No DNS/custom-domain/certificate
+mutation was made. No historical ODP-DEV-ROLLOUT-001 file was changed.
