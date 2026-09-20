@@ -97,6 +97,21 @@ def check():
         proposed["HUMAN-OSS-LEGAL-APPROVAL-001"] = [TASK, "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001", "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001"]
         result["proposed_topological_order"] = topological_order(proposed)
         result["adjacency_sha256"] = adjacency_hash
+
+        # Fresh 2026-09-20 live Canonical DAG verification
+        fresh_path = EVIDENCE / "requery-20260920/fresh-canonical-dag.stdout.json"
+        fresh_data = json.loads(fresh_path.read_bytes())
+        assert data["fresh_canonical_dag_snapshot_20260920"]["tasks"] == fresh_data["adjacency"]
+        assert data["fresh_canonical_dag_snapshot_20260920"]["adjacency_sha256"] == fresh_data["adjacency_sha256"] == "7ab7e86e8578e237656c4d69150092b3e44db436d2e98c6f186805e07ecfcb38"
+        assert len(fresh_data["adjacency"]) == 24
+        fresh_adj = {k: v["depends_on"] for k, v in fresh_data["adjacency"].items()}
+        result["fresh_canonical_topological_order"] = topological_order(fresh_adj)
+        assert len(result["fresh_canonical_topological_order"]) == 64
+        fresh_proposed = dict(fresh_adj)
+        fresh_proposed["HUMAN-OSS-LEGAL-APPROVAL-001"] = sorted(list(set(fresh_adj.get("HUMAN-OSS-LEGAL-APPROVAL-001", []) + ["DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001", "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001"])))
+        result["fresh_proposed_topological_order"] = topological_order(fresh_proposed)
+        assert len(result["fresh_proposed_topological_order"]) == 64
+        result["fresh_adjacency_sha256"] = fresh_data["adjacency_sha256"]
     result.update(active_records=len(adjacency), edges=sum(map(len, adjacency.values())), cycles=0)
     print(json.dumps(result, indent=2, sort_keys=True))
 
