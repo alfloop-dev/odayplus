@@ -82,21 +82,32 @@
 
 ### 4.1 Gate 0 (Code Gate) — 阻塞 (Blocked)
 - **已澄清歷史項目**: 舊 registry 引用之 `ODP-PLAN-ENGINEERING-HARDENING-001` 為早期計劃之歷史代號，已於 sidecar 文件中記錄為 blocked；不作為 active task 引用。
-- **候選 39ae43f6 實際情況**:
-  1. **部署前 CI 驗證已 100% 通過**: GitHub merge queue CI run `35491368925` 在候選 commit `39ae43f6fe679f03dd7df459a51835cbd2d54f77` 上完整執行並全數通過 `product-lint-unit` (20m52s), `product-node` (2m18s), `product-api-contract` (33s), `product-security` (3m57s), `product-db` (3m11s), `product-e2e-gate` (5m19s), `performance-gate` (1m22s), `orchestrator` (4m57s), `product` (7s)。包含 `ruff`, `ruff format --check`, `npm run typecheck` (涵蓋 `packages/design-tokens`, `domain-types`, `openapi-client`, `ui-domain`, `ui`), `npm test`, `pytest tests/unit` 等。
-  2. **門禁收據狀態**: 由於 dev admission 尚未正式執行，registry 內 Gate 0 receipt 維持為空、狀態維持 `blocked` (fail-closed)。
-- **具名活動後續負責人與驗收條件**:
-  - **負責人**: Gate Owner `Codex2` (Reviewer `Claude`) / 下游部署任務 `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` (Owner `Antigravity2`)。
-  - **驗收條件**: 在 dev 准入與部署執行時，將候選 `39ae43f6` 之 CI 通過收據與部署收據綁定至 release gate registry。
+- **候選 39ae43f6 部署前程式碼審查 (Predeployment Code Review — 本 task 執行)**:
+  1. **CI 驗證完整通過**: GitHub merge queue CI run `35491368925` 在候選 commit `39ae43f6fe679f03dd7df459a51835cbd2d54f77` 上完整執行並全數通過（10 個 jobs 全 `success`）：`product-lint-unit` (20m52s), `product-node` (2m18s), `product-api-contract` (33s), `product-security` (3m57s), `product-db` (3m11s), `product-e2e-gate` (5m19s), `performance-gate` (1m22s), `orchestrator` (4m57s), `product` (7s)。包含 `ruff`, `ruff format --check`, `npm run typecheck` (涵蓋 `packages/design-tokens`, `domain-types`, `openapi-client`, `ui-domain`, `ui`), `npm test`, `pytest tests/unit` 等。
+  2. **靜態程式碼品質**: lint (ruff), format (ruff format --check), type check (npm run typecheck 跨 5 workspaces) 全數通過。build artifact 追溯至 exact candidate SHA。
+  3. **未滿足標準 C1 (Zero Build Warnings)**: CI run `35491368925` 之 `product-node` job (`106026784688`) 於 `2026-09-20T05:20:29Z` 報告 `Compiled with warnings in 1574ms`，包含 `pg-connection-string` 之 `process.emitWarning` 與 `pg-pool` 之 `process.nextTick` 在 Edge Runtime 不支援警告（import 路徑經由 `apps/web/src/lib/auth/sessionStore.ts` 與 `session.ts`）。Job 仍 exit 0 (成功)，但原 C1 zero-warning 硬化標準未滿足。詳見 §5.1 C1。
+  4. **門禁收據狀態**: 部署前 CI 證據已由本 task 綁定至候選 SHA。Gate 0 狀態維持 `blocked` (fail-closed) 直到 C1 未滿足標準解決且 dev admission 正式執行。
+- **未滿足標準之修復提案**:
+  - **C1 Zero Build Warnings**: 路徑 `apps/web/src/lib/auth/sessionStore.ts` 與 `session.ts` 透過 `pg-connection-string` / `pg-pool` 引入 Edge Runtime 不相容警告。最小修復：將 database session 邏輯限制至 Node.js runtime 而非 Edge Runtime，或將相關 import 置於 `next.config.js` 之 `serverExternalPackages` 排除清單。測試提案：於 `npm run build` 後驗證零警告輸出。此修復超出本 evidence-only task scope，提交供協調者建立不重疊承接。
+- **部署期剩餘工作（非部署前）**:
+  - **負責人**: `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` (Owner `Antigravity2`)。
+  - **驗收條件**: 部署執行完成後，將 runtime deployment receipt 綁定至 registry。
 
 ### 4.2 Gate 1 (Contract Gate) — 阻塞 (Blocked)
 - **已澄清歷史項目**: 舊 registry 引用之 `ODP-PLAN-ENGINEERING-HARDENING-001` 澄清為具體契約落差。
-- **候選 39ae43f6 實際情況**:
-  1. **靜態 API 契約漂移檢查通過**: CI run `35491368925` 之 `product-api-contract` job (33s) 於 candidate 樹執行通過；跨版本 breaking diff 在 dev 初次部署無前版 baseline 情況下，已於 release manifest 中固化初始復原姿態 `delete-candidate-zero-traffic`。
-  2. **動態/多版本事件與資料契約驗證**: Live runtime event schema proposed-vs-implementation 相容性驗證與 data contract pin 遷移收據，屬於部署後與 staging 演練範疇。
-- **具名活動後續負責人與驗收條件**:
-  - **負責人**: Gate Owner `Claude` (Reviewer `Codex2`) / 下游 dev 部署任務 `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` (Owner `Antigravity2`) 與 ephemeral staging 演練任務 `ODP-EPHEMERAL-STAGING-ROLLOUT-001` (Owner `Antigravity5`)。
-  - **驗收條件**: 於 dev 部署後驗證 live endpoint 契約，並於 staging 演練完成多版本 event schema replay 與 data contract 相容性驗證。
+- **候選 39ae43f6 部署前契約審查 (Predeployment Contract Review — 本 task 執行)**:
+  1. **靜態 API 契約漂移檢查**: CI run `35491368925` 之 `product-api-contract` job (`106026784677`) 實際執行 `make api-contract` → `check_drift.py --base-ref origin/dev`，於 `2026-09-20T05:19:55Z` 報告：breaking diff with 0 additive, 0 approved breaking, 0 unapproved breaking — **API contract gate PASS**。存在 Git baseline (origin/dev)，並非初次無 baseline 之 `--skip-diff`。
+  2. **Generated client 一致性 (A2)**: `packages/openapi-client/src/generated/types.ts` 與 `openapi.json` 嚴格匹配，由 CI run `35491368925` 驗證無漂移。
+  3. **Data contract digest**: `data_contract_digest` 重算吻合 (`sha256:05e2cb05619f1c524b0f9578e4ceba9ec863d143d5e64b0eeac97539ce8e7c73`)，與 RELEASE_MANIFEST.json 一致。
+  4. **事件 schema 政策/實作不一致 (UNMET — 需修復)**:
+     - **政策**: `docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml:8` 之 `compatibility_policy.rules` 要求 "consumers must ignore unknown optional fields"。
+     - **實作**: `docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENT_PAYLOAD_SCHEMAS_V1.yaml` 所有 16 個 payload schema 均設定 `additionalProperties: false`，且 `shared/domain/events.py:174` 之 `EventContractValidator.validate_schema()` 在 `additionalProperties is False` 時拒絕額外欄位。
+     - **影響**: 消費端無法忽略未知 optional 欄位，與政策聲明衝突。若生產端增加 optional 欄位，消費端驗證會失敗。
+     - **修復提案**: (a) 移除 payload schemas 中的 `additionalProperties: false`（使政策與 schema 一致），或 (b) 修改 `events.py:174` 使 `additionalProperties: false` 僅在 strict 模式下生效而非 consumer 預設行為，或 (c) 將 compatibility_policy 改為 closed schema 語義並移除 "ignore unknown" 規則。需同步更新 `tests/contract/` 相關測試。此修復涉及 product path (`shared/domain/events.py`) 超出本 evidence-only task scope，提交供協調者建立不重疊承接。
+  5. **門禁收據狀態**: 部署前靜態契約證據已由本 task 綁定。Gate 1 狀態維持 `blocked` (fail-closed) 直到事件 schema 不一致解決。
+- **部署期剩餘工作（非部署前）**:
+  - **負責人**: `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` (Owner `Antigravity2`) 與 `ODP-EPHEMERAL-STAGING-ROLLOUT-001` (Owner `Antigravity5`)。
+  - **驗收條件**: 部署後驗證 live endpoint 契約一致性；staging 演練完成多版本 event schema replay。
 
 ### 4.3 Gate 2 (Data Gate) — 阻塞 (Blocked)
 - **候選 39ae43f6 實際缺口**: `check_live_production_data.py` 需在 dev runtime 實際部署後對 live dev 資料庫執行對盤，離線 fixtures 不滿足 Data Gate。
@@ -116,21 +127,40 @@
   - **Gate Owner**: `Codex2` (Reviewer `Antigravity2`)。
 
 ### 4.5 Gate 4 (Security & Privacy Gate) — 阻塞 (Blocked)
-- **候選 39ae43f6 實際情況與缺口**:
-  1. **部署前技術安全性已驗證**:
-     - Secret scanning, SAST, 依賴安全 (`npm-audit-receipt.json` 顯示 production 依賴 0 漏洞), 靜態 RBAC 映射與 `tests/security/` 測試已於 CI run `35491368925` 之 `product-security` job (3m57s) 驗證通過。
-     - 4 個 component images 已由 run `35492613570` / `35493018607` 完成 Cosign 簽章與 CycloneDX SBOM attestation。
+- **候選 39ae43f6 部署前安全審查 (Predeployment Security Review — 本 task 執行)**:
+  1. **Secret scanning & SAST**: CI run `35491368925` 之 `product-security` job (`106026784697`, 3m57s, 353 tests passed) 於候選 `39ae43f6` 完整通過。具體測試 selection：
+     - `tests/security/test_oss_notice.py` — 驗證 installed-tree NOTICE/D05 markers 一致性。
+     - `tests/security/test_supply_chain_security_gate.py::test_sbom_and_provenance_present_and_valid` — 驗證 SBOM 與 provenance attestation 存在且有效。
+     - `tests/security/test_oss_license_gate.py::test_sbom_catalogues_no_first_party_workspace_package` — 驗證 SBOM 不包含第一方 workspace packages（確保只有真實第三方依賴被揭露）。
+     - Secret scanning 與 SAST 靜態分析均已通過，無 critical/high findings。
+  2. **依賴安全**:
+     - **Production 依賴 (omit_dev=true)**: `npm-audit-receipt.json` (artifact `10600055709`) 顯示 0 vulnerabilities across all severities — **PASSED**。
+     - **Full 依賴 (含 dev)**: 候選 CI `npm ci` logs 報告 2 moderate + 1 high（非歷史性的 13 dev-tool highs）。Production images 透過 `omit_dev=true` 排除 dev 依賴，不受影響。
+     - **Python 依賴**: `pip-audit` 於 `product-security` 通過。
+  3. **Container image 安全**:
+     - 4 個 component images 已由 run `35492613570` 建置並完成 Cosign 簽章。
+     - 4 個 CycloneDX SBOM attestation 已附加。
+     - Run `35493018607` 執行 `cosign verify` 驗章通過。
+  4. **NOTICE/SBOM/D05 個別對帳**:
+     - `NOTICE-THIRD-PARTY.md` 存在於候選樹 root。
      - 8 個 workspace 與根目錄 lockfile 均具備 D05 `license: "UNLICENSED"` 標示。
-  2. **部署期技術驗證**:
-     - Live runtime public egress probe (`.odp_data/deployment/public-egress-probe.json` 確認 default-deny) 與候選 GCP IAM service account 最小權限審查紀錄，屬於部署執行產物。
-  3. **權威法務門禁阻塞 (Authority Blocker)**:
-     - `HUMAN-OSS-LEGAL-APPROVAL-001` 尚未完成。
-     - H01 具名法務簽署人身分（`display_name`, `principal_id`, `role`）與外部權威系統決策參照（`approval_reference`, `source_system`）仍缺失。
-     - `docs/security/license_policy.json` 維持 `proposed` 狀態，`license_exemptions.json` 未簽署。
-- **具名活動後續負責人與驗收條件**:
-  - **部署期技術缺口負責人**: Gate Owner `Claude` (Reviewer `Antigravity2`) / 下游 dev 部署任務 `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` (Owner `Antigravity2`)。驗收條件：部署時採集 live egress probe 與 IAM 審查紀錄。
-  - **法務權威負責人**: `Human/Ops` (Legal Counsel / Product Owner) 於 `HUMAN-OSS-LEGAL-APPROVAL-001`。驗收條件：完成 H01 審核，將 `license_policy.json` 批准為 `approved` 並簽署豁免清冊。AI 助理嚴禁代簽法務核准。
-  - **相關活動任務**: OSS 最終審計由 `XR-EXT-OSS-FINAL-AUDIT-001` (Owner `Antigravity4`) 執行；資料來源啟用由 `XR-SOURCE-APPROVAL-ACTIVATION-001` (Owner `Antigravity`) 執行。
+     - `delivery_toolchain/security/generate_oss_notice.py` 為 NOTICE 生成腳本，已驗證存在。
+     - SBOM attestation 透過 `test_supply_chain_security_gate.py` 驗證 purl/root dependencies 揭露完整性。
+  5. **RBAC/ABAC**: 靜態角色映射記載於 `docs/evidence/DOMAIN_API_SERVICE_RBAC.md`；`tests/security/` 測試已於 CI 通過。
+  6. **候選 GCP IAM 最小權限離線審查 (Offline Code Review)**:
+     - `infra/terraform/iam.tf` 審查：候選 `39ae43f6` 定義 3 個 service account (`runtime`, `web`, `github_deployer`) + 1 個 smoke operator (`oday-dev-smoke-operator`)。
+     - Runtime SA: `roles/cloudsql.client` + `roles/secretmanager.secretAccessor` (scoped to database_url, cursor_signing_key, external_runtime secrets, identity_token_signing_key) + `roles/storage.objectUser` (scoped to artifacts & source_snapshots buckets)。符合最小權限。
+     - Web SA: `roles/cloudsql.client` + `roles/secretmanager.secretAccessor` (scoped to database_url, web_session_secret, web_oidc_client, identity_token_signing_key)。符合最小權限。
+     - GitHub Deployer SA: `roles/run.admin` + `roles/cloudscheduler.admin` + `roles/cloudsql.client` + `roles/artifactregistry.writer` + `roles/iam.serviceAccountUser` (scoped to runtime, web, worker SAs) + `roles/iam.serviceAccountTokenCreator` (scoped to smoke_operator)。WIF 限制為 `assertion.repository == 'alfloop-dev/odayplus'`。
+     - **審查結論**: 所有 IAM binding 均 scoped 至必要資源，無 project-level Editor/Owner 角色，WIF attribute condition 限制正確。離線程式碼審查通過。
+  7. **Egress contract**: `egress_contract_digest` (`sha256:8492ae19...`) 驗證吻合；16 個外部資料來源群組盤點為 disabled 且 default-deny。
+- **仍然阻塞之項目**:
+  1. **Dev-tool 依賴風險簽核 (H02)**: Full npm audit 含 2 moderate + 1 high dev dependencies。正式風險簽核待 `Human/Ops` 於 `HUMAN-OSS-LEGAL-APPROVAL-001` 簽署。
+  2. **權威法務門禁 (H01)**: `HUMAN-OSS-LEGAL-APPROVAL-001` 尚未完成。H01 具名法務簽署人身分（`display_name`, `principal_id`, `role`）與外部權威系統決策參照仍缺失。`docs/security/license_policy.json` 維持 `proposed` 狀態。AI 助理嚴禁代簽法務核准。
+  3. **法務權威負責人**: `Human/Ops` (Legal Counsel / Product Owner)；OSS 最終審計由 `XR-EXT-OSS-FINAL-AUDIT-001` (Owner `Antigravity4`) 執行。
+- **部署期剩餘工作（非部署前）**:
+  - **負責人**: `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` (Owner `Antigravity2`)。
+  - **驗收條件**: 部署時採集 live runtime public egress probe readback (`.odp_data/deployment/public-egress-probe.json` 確認 default-deny)。離線 IAM 程式碼審查已於本 task 完成，live IAM state readback 屬部署驗證。
 
 ### 4.6 Gate 5 (E2E, Performance and UAT Gate) — 阻塞 (Blocked)
 - **候選 39ae43f6 實際缺口**: Ephemeral staging live E2E proof、非功能性需求量測 (NFR) 與跨角色 UAT 簽核。
@@ -162,15 +192,15 @@
 
 | 原始標準 ID | 原始驗收要求 (Original Criteria) | 新候選 `39ae43f6` 實際證據 (Exact Evidence) | 驗證結論 (Result) | 活動具名後續承接與驗收條件 (Active Successor & Acceptance) |
 |---|---|---|---|---|
-| **A1** | OpenAPI schema 與前端/client 型別定義嚴格對齊，零 response typing drift | `delivery_toolchain/openapi/check_drift.py --skip-diff` 與 `tests/contract/test_openapi_artifact_and_client.py` 於 CI run `35491368925` 之 `product-api-contract` (33s) 執行通過；FastAPI 路由與 generated client 一致 | **PASSED (靜態一致)** / **BLOCKED (跨版 diff)** | `Claude` / `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` (Owner `Antigravity2`): 於 dev 部署後驗證 live endpoint 與 client 一致；跨版 diff 在無前版 baseline 下維持 initial release 姿態 |
+| **A1** | OpenAPI schema 與前端/client 型別定義嚴格對齊，零 response typing drift | CI run `35491368925` 之 `product-api-contract` job (`106026784677`, 33s) 實際執行 `make api-contract` → `check_drift.py --base-ref origin/dev`，於 `2026-09-20T05:19:55Z` 報告 breaking diff with 0 additive, 0 approved breaking, 0 unapproved breaking — **API contract gate PASS**。存在 Git baseline (origin/dev)；`tests/contract/test_openapi_artifact_and_client.py` 通過；FastAPI 路由與 generated client 一致 | **PASSED (靜態一致，API contract gate PASS)** | Live endpoint 一致性驗證屬部署後範疇，由 `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` (Owner `Antigravity2`) 執行 |
 | **A2** | Client 重新產生腳本確定性執行，無未 commit drift | `packages/openapi-client/src/generated/types.ts` 與 `openapi.json` 嚴格匹配，產生無漂移 | **PASSED** | Platform lane: 持續維持確定性 client 產出 |
 | **B1** | Production 依賴 high/critical 漏洞完全解決 | `npm-audit-receipt.json` (artifact `10600055709`, `omit_dev=true`) 顯示 production 依賴 0 漏洞；pip-audit 於 CI run `35491368925` `product-security` 通過 | **PASSED (Prod 依賴)** | Production 映像檔依賴無 high/critical 漏洞；鎖定於 build-once 映像檔 |
-| **B2** | Dev-tool 漏洞 (13 high findings) 綁定至權威 Human/Ops 風險裁決 | Dev 依賴在 production image 建置時透過 `omit_dev=true` 排除；dev-tool 13 項 high 之正式風險簽核仍待 Human/Ops 於 `HUMAN-OSS-LEGAL-APPROVAL-001` (H02) 簽署 | **BLOCKED (待法務/Ops 簽署)** | `Human/Ops` (Legal Counsel / Security Owner): 於 `HUMAN-OSS-LEGAL-APPROVAL-001` 提供具名且非過期之 dev-tool 風險接受收據 |
-| **C1** | Web workspace 建置產生零 CSS 或 bundle 建置警告 | CI run `35491368925` 之 `product-node` (2m18s) 成功通過 Next.js workspace build 與 bundle checks；Run `35492613570` Step 19 成功完成 web Docker 建置 | **PASSED (CI 驗證通過)** | Platform & Web lane: 持續維持乾淨 build |
+| **B2** | Dev-tool 漏洞綁定至權威 Human/Ops 風險裁決 | 候選 `39ae43f6` CI `npm ci` logs 報告 2 moderate + 1 high（全為 dev dependencies，與歷史性 13 dev-tool highs 不同，反映當前依賴狀態）。Production image 透過 `omit_dev=true` 排除 dev 依賴不受影響。正式 dev-tool 風險簽核仍待 Human/Ops 於 `HUMAN-OSS-LEGAL-APPROVAL-001` (H02) 簽署 | **BLOCKED (待 Human/Ops 簽署)** | `Human/Ops` (Legal Counsel / Security Owner): 於 `HUMAN-OSS-LEGAL-APPROVAL-001` 提供具名且非過期之 dev-tool 風險接受收據，針對當前 2 moderate + 1 high findings |
+| **C1** | Web workspace 建置產生零 CSS 或 bundle 建置警告 | CI run `35491368925` 之 `product-node` job (`106026784688`, 2m18s) 於 `2026-09-20T05:20:29Z` 報告 `Compiled with warnings in 1574ms`。警告內容：`pg-connection-string` 之 `process.emitWarning` 與 `pg-pool` 之 `process.nextTick` 在 Edge Runtime 不支援（import 路徑 `apps/web/src/lib/auth/sessionStore.ts` → `session.ts`）。Job exit 0 (成功)，但零警告硬化標準未滿足 | **UNMET (有建置警告)** | 修復提案：將 database session 邏輯限制至 Node.js runtime 或於 `next.config.js` 之 `serverExternalPackages` 排除 `pg-connection-string`/`pg-pool`。測試：`npm run build` 驗證零警告。此修復涉及 product path 超出本 evidence-only scope，提交供協調者建立不重疊承接 |
 | **C2** | 大型路由與工作區拆解維持 100% 行為對等 | 路由拆解已於 `dev` 分支完成，靜態結構與型別匯出正常；CI run `35491368925` 通過 | **PASSED (靜態)** / **BLOCKED (動態 E2E)** | `ODP-EPHEMERAL-STAGING-ROLLOUT-001` (Owner `Antigravity5`): 於 ephemeral staging 演練驗證完整使用者流程對等性 |
 | **D1** | `docs/` 文件與目前平台契約同步 | `docs/data` 與 contract toml 之 digests 重算吻合 (`05e2cb05...`) | **PASSED** | Platform lane: 維持文件與契約同步 |
 | **D2** | 任務執行符合 `ODP-PLAN-EXECUTION-CONTROL-PACK-001` 規範 | 依據 canonical orchestrator 與 staged gate registry 規範交付 | **PASSED** | 維持於 canonical task DAG 治理邊界 |
-| **E1** | 完整契約與建置矩陣 (`ruff`, `npm run typecheck`, `npm test`, `npm run build`, `git diff --check`) 乾淨通過 | GitHub merge queue CI run `35491368925` 10 個 jobs 全數通過（`product-lint-unit`, `product-node`, `product-api-contract`, `product-security`, `product-db`, `product-e2e-gate`, `performance-gate`, `orchestrator`, `product`）；本工作樹 `git diff --check` 通過 | **PASSED (Pre-deployment CI)** / **BLOCKED (Gate 0 收據綁定)** | `Codex2` / `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` (Owner `Antigravity2`): 於 dev 准入執行時完成 Gate 0 收據綁定 |
+| **E1** | 完整契約與建置矩陣 (`ruff`, `npm run typecheck`, `npm test`, `npm run build`, `git diff --check`) 乾淨通過 | GitHub merge queue CI run `35491368925` 10 個 jobs 全數通過（`product-lint-unit`, `product-node`, `product-api-contract`, `product-security`, `product-db`, `product-e2e-gate`, `performance-gate`, `orchestrator`, `product`）；本工作樹 `git diff --check` 通過。部署前 CI 證據已由本 task 綁定至 candidate SHA | **PASSED (Pre-deployment CI)** / **BLOCKED (C1 build warnings 未解決)** | C1 zero-warning 修復提案已提交供協調者派工（見 §4.1 及 C1 行）。部署 runtime receipt 屬 `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` |
 | **E2** | 部署契約維持 strictly `forbidden` | 零部署執行、無 lease 提供、fail-closed NO-GO 嚴格維持 | **PASSED (強制執行)** | 維持 fail-closed，未取得簽發 lease 前嚴禁部署 |
 
 ### 5.2 Security & Privacy Gate 原始標準 (Criteria 1–6) 對照
@@ -178,11 +208,11 @@
 | 原始標準 ID | 原始驗收要求 (Original Criteria) | 新候選 `39ae43f6` 實際證據 (Exact Evidence) | 驗證結論 (Result) | 活動具名後續承接與驗收條件 (Active Successor & Acceptance) |
 |---|---|---|---|---|
 | **Sec-1** | Secret scanning passes | CI merge queue run `35491368925` 與 preflight 階段 secret scan 於 candidate `39ae43f6` 乾淨通過 | **PASSED** | Security tooling: 持續由 CI 管線把關 |
-| **Sec-2** | 依賴與 SAST 掃描無未解決 critical/high 漏洞 | `npm-audit-receipt.json` (`omit_dev=true`) 顯示 0 漏洞；SAST 靜態檢查於 CI run `35491368925` `product-security` 通過 | **PASSED (Prod)** / **BLOCKED (Dev 簽核)** | `Human/Ops`: 於 `HUMAN-OSS-LEGAL-APPROVAL-001` 簽核 dev toolchain 依賴風險 (H02) |
-| **Sec-3** | 受影響角色之 RBAC/ABAC 測試通過 | 靜態角色映射記載於 `docs/evidence/DOMAIN_API_SERVICE_RBAC.md`；候選 `39ae43f6` 之 `tests/security/` 測試已於 CI run `35491368925` `product-security` 通過 | **PASSED (CI 測試通過)** | Security Engineering lane: 維持 RBAC 規則一致性 |
-| **Sec-4** | 敏感匯出與審計控制查核 | Egress contract digest (`sha256:8492ae19...`) 驗證吻合；16 個外部資料來源群組盤點為 disabled 且 default-deny；live runtime egress readback 為 deploy-time 產物 | **BLOCKED (部署期探針)** | `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` (Owner `Antigravity2`): 於 dev 部署准入階段執行 live egress probe 採集 |
-| **Sec-5** | IAM 與基礎設施變更審查 | 11 個環境變數解析完成 (`release-environment-receipt.json`)；5 個 Cloud Run 資源確認初始不存在 (`initial-release-absence-readback.json`)；候選 `39ae43f6` 之專屬 GCP IAM 最小權限審查紀錄屬於部署期產物 | **BLOCKED (部署期 IAM 審查)** | `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` (Owner `Antigravity2`): 於 dev 部署時產出 candidate `39ae43f6` 之 GCP IAM service account 最小權限審查紀錄 |
-| **Sec-6** | 具備授權意識之 SBOM 產出且 OSS 授權門禁通過 | 4 個映像檔附帶 CycloneDX SBOM attestation 與 Cosign 簽章（run `35492613570` / `35493018607`）；8 個 workspace 與根目錄 lockfile 具備 D05 `license: "UNLICENSED"` 標示；`HUMAN-OSS-LEGAL-APPROVAL-001` (H01) 待簽署 | **BLOCKED (法務門禁)** | 法務權威：`Human/Ops` (Legal Counsel) 於 `HUMAN-OSS-LEGAL-APPROVAL-001` 完成 H01 簽署並批准 `license_policy.json`；活動任務 `XR-EXT-OSS-FINAL-AUDIT-001` (Owner `Antigravity4`) 執行 OSS 最終審計 |
+| **Sec-2** | 依賴與 SAST 掃描無未解決 critical/high 漏洞 | Production 依賴：`npm-audit-receipt.json` (`omit_dev=true`) 顯示 0 vulnerabilities across all severities — PASSED。Full (含 dev)：候選 CI `npm ci` logs 報告 2 moderate + 1 high（反映候選 `39ae43f6` 當前依賴狀態）。Python：`pip-audit` 於 `product-security` 通過。SAST 靜態檢查通過 | **PASSED (Prod)** / **BLOCKED (Dev 風險簽核)** | `Human/Ops`: 於 `HUMAN-OSS-LEGAL-APPROVAL-001` 針對當前 2 moderate + 1 high dev findings 簽核風險接受 (H02) |
+| **Sec-3** | 受影響角色之 RBAC/ABAC 測試通過 | 靜態角色映射記載於 `docs/evidence/DOMAIN_API_SERVICE_RBAC.md`；候選 `39ae43f6` 之 `tests/security/` 測試已於 CI run `35491368925` `product-security` (353 tests) 通過 | **PASSED (CI 測試通過)** | Security Engineering lane: 維持 RBAC 規則一致性 |
+| **Sec-4** | 敏感匯出與審計控制查核 | Egress contract digest (`sha256:8492ae19...`) 驗證吻合（部署前離線驗證由本 task 完成）；16 個外部資料來源群組盤點為 disabled 且 default-deny。Live runtime egress readback 為部署期採集產物 | **PASSED (離線 egress contract)** / **BLOCKED (runtime readback)** | `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` (Owner `Antigravity2`): 部署時採集 live egress probe 確認 default-deny |
+| **Sec-5** | IAM 與基礎設施變更審查 | 11 個環境變數解析完成 (`release-environment-receipt.json`)；5 個 Cloud Run 資源確認初始不存在 (`initial-release-absence-readback.json`)。**離線 IAM 程式碼審查（本 task 完成）**：`infra/terraform/iam.tf` 審查通過 — 3 runtime SAs + 1 deployer SA + 1 smoke operator，所有 binding scoped 至必要資源，無 project-level Editor/Owner，WIF 限制 `assertion.repository == 'alfloop-dev/odayplus'`。詳見 §4.5 項 6 | **PASSED (離線程式碼審查)** / **BLOCKED (live state readback)** | `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` (Owner `Antigravity2`): 部署後產出 live IAM state readback 確認與 Terraform 宣告一致 |
+| **Sec-6** | 具備授權意識之 SBOM 產出且 OSS 授權門禁通過 | **個別對帳（本 task 完成）**：CI run `35491368925` `product-security` job (`106026784697`, 353 tests) 包含：`tests/security/test_oss_notice.py` (installed-tree NOTICE/D05 markers)、`tests/security/test_supply_chain_security_gate.py::test_sbom_and_provenance_present_and_valid` (SBOM 與 provenance attestation)、`tests/security/test_oss_license_gate.py::test_sbm_catalogues_no_first_party_workspace_package` (確保 SBOM 只揭露真實第三方依賴)。4 個映像檔附帶 CycloneDX SBOM attestation 與 Cosign 簽章（run `35492613570` / `35493018607`）。`NOTICE-THIRD-PARTY.md` 存在於候選樹 root。8 個 workspace 與根目錄 lockfile 具備 D05 `license: "UNLICENSED"` 標示。`HUMAN-OSS-LEGAL-APPROVAL-001` (H01) 待簽署 | **BLOCKED (法務門禁)** | 法務權威：`Human/Ops` (Legal Counsel) 完成 H01 簽署並批准 `license_policy.json`；`XR-EXT-OSS-FINAL-AUDIT-001` (Owner `Antigravity4`) 執行 OSS 最終審計 |
 
 ---
 
