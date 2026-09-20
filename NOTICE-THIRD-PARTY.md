@@ -791,7 +791,7 @@ File-level copyleft: source of any modified MPL file must be offered.
 - `alive-progress` 3.3.0 (pypi)
 - `annotated-doc` 0.0.4 (pypi)
 - `annotated-types` 0.7.0 (pypi)
-- `anyio` 4.13.0 (pypi)
+- `anyio` 4.14.2 (pypi)
 - `argon2-cffi` 25.1.0 (pypi)
 - `argon2-cffi-bindings` 26.1.0 (pypi)
 - `attrs` 26.1.0 (pypi)

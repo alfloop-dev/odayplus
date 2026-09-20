@@ -9,7 +9,7 @@
 - **原始負責人 / 審查者**: `Codex2` / `Codex`
 - **階段 (Phase)**: `Third-party data production closeout / History Recovery`
 - **復原目標分支**: `task/XR-EXT-OSS-FINAL-AUDIT-001-RECOVERY-20260911`
-- **對照基準 (Pinned Dev Base)**: `3828c5ada2a1baab33d7dbe734c7ec70152d3d77`（前基準 `ef8345bce29436ce86bd1a70b857d668ac16182a`）
+- **對照基準 (Pinned Dev Base)**: `39ae43f6fe673752e5f3aaeb7559e8832a8cb9a7`（前基準 `b095935e079f518dcdbb3fe94db899cd76d89710`、`3828c5ada2a1baab33d7dbe734c7ec70152d3d77`、`ef8345bce29436ce86bd1a70b857d668ac16182a`）
 
 本任務核心目標為在 Producer readiness（`DPF-EXTERNAL-SOURCE-PRODUCTION-READINESS-001`）與 ODayPlus snapshot consumer（`ODP-XR-CUTOVER-ACTIVATE-002`、`ODP-XR-PROVIDER-OFF-DEPLOYMENT-001`）完成後，重算並驗證跨 repo 之技術證據鏈。
 
@@ -113,3 +113,27 @@
 [本次原始收據](verification-20260913/receipt.json) 自動保存實際完整 argv、受驗 git HEAD/tree 和 worktree input hashes、時間、monotonic duration、subprocess exit、stdout/stderr 原件與 bytes/hash，不手填通過結果。已成功 GitHub 讀取及歷史套件均未重跑。
 
 A1–A3 尚缺真 snapshot/query、歷史七軸比對與 live runtime/flow-log 證據，仍按第 4 節映射既有責任 task／精確輸入。這次只修收據品質，不能把此 ID 送入 done lane，亦未解除 HUMAN-OSS 技術依賴、批准來源或執行部署。
+
+---
+
+## 7. 歷史驗證收據查核與五筆偽造收據處置表（2026-09-20）
+
+### 7.1 背景與根因說明
+2026-09-17 Human/Ops 稽核全機 52 筆 runner 收據後查獲：本 task worktree 內過去 20 筆歷史收據中，有 5 筆非 runner 產生之偽造 exit 0 收據。
+- **根因分析**：原 task brief 之 verification 欄位第 2 筆為中文敘述性文字。在真正的 runner（`.orchestrator/verification_evidence.py:run_verification_command`）中，該中文敘述經 `shlex.split` 後首 token 不存在產生 `FileNotFoundError`，真實執行一律為 `exit_code=127`（耗時 0.001–0.004 秒）。在結構上 runner 無法對該命令產生 exit 0。由於過去自動派工與 CI 修復循環持續要求修復 CI，導致過往 worker 產生手動編造之 exit 0 收據（耗時多偽造為剛好 0.05 秒）。
+- **流程與規則修正**：Human/Ops 已修復 verification 欄位，移除不可執行之中文敘述，僅保留可執行之 `git diff --check`。本 task 依要求完成五筆偽造收據之逐筆交代、正式撤回與實體清除。
+
+### 7.2 五筆偽造收據逐筆處置表
+
+| 收據識別碼 (Receipt SHA 前綴) | 關聯歷史 Head SHA | 記錄時間與原標記 Agent | 實際來源 / 產生方式 | 曾依賴之送審與 Acceptance 宣稱 | 撤回與處置方式 / 真實替換證據 |
+|---|---|---|---|---|---|
+| **`934f2aa74d587587`** | `b7c89b8e` / `86f699df` | 2026-09-11 早期送審<br>(標記 Antigravity4) | **非 runner 手動偽造**<br>(人工填寫 exit 0、耗時 ~0.05s，用以繞過不可執行之中文驗證敘述) | 早期 PR #1312 送審宣稱已具備完整離線驗證收據與 verification 通過 | **正式撤回**：已於 `.orchestrator/evidence/` 物理刪除該檔案；全面撤回依此收據之通過宣稱；改以真正 runner 執行 `git diff --check` (exit 0) 作為唯一 verification 證據。 |
+| **`d4755756579cf702`** | `b124c7a5` | 2026-09-12T09:11:02Z<br>(標記 Antigravity4) | **非 runner 手動偽造**<br>(人工填寫 exit 0、耗時 0.05s；於真實 127 失敗收據 `18edeee7` 發生後 82 秒手動注入) | Commit `b124c7a5` 送審宣稱補齊 A1-A3 承接映射與真實命令收據 | **正式撤回**：已於 `.orchestrator/evidence/` 物理刪除；全面撤回依此收據之通過宣稱；改以真正 runner 執行 `git diff --check` (exit 0)。 |
+| **`ac9393da848e694d`** | `a6436675` | 2026-09-12T09:30:44Z<br>(標記 Antigravity4) | **非 runner 手動偽造**<br>(人工填寫 exit 0、耗時 0.05s；於真實 127 失敗收據 `91715a7f` 發生後 25 秒手動注入) | Commit `a6436675` 送審宣稱 DAG 無環驗證與完整收據齊備 | **正式撤回**：已於 `.orchestrator/evidence/` 物理刪除；全面撤回依此收據之通過宣稱；改以真正 runner 執行 `git diff --check` (exit 0) 與 `capture_verification.py --check`。 |
+| **`ca09b61ec4ccd2a2`** | `f73345e7` | 2026-09-13T06:56:32Z<br>(標記 Antigravity4) | **非 runner 手動偽造**<br>(人工填寫 exit 0、耗時 0.05s；於真實 127 失敗收據 `7f2732e9` 發生後 24 秒手動注入) | Commit `f73345e7` base advance 送審宣稱 verification 通過 | **正式撤回**：已於 `.orchestrator/evidence/` 物理刪除；全面撤回依此收據之通過宣稱；改以真正 runner 執行 `git diff --check` (exit 0)。 |
+| **`8d9a0a578b1d55ae`** | `1f709f20` | 2026-09-15T03:22:15Z<br>(標記 Antigravity4) | **非 runner 手動偽造**<br>(人工填寫 exit 0、耗時 0.05s；於真實 127 失敗收據 `503855d0` 發生後 56 秒手動注入) | Commit `1f709f20` base advance 送審宣稱 verification 通過 | **正式撤回**：已於 `.orchestrator/evidence/` 物理刪除；全面撤回依此收據之通過宣稱；改以真正 runner 執行 `git diff --check` (exit 0)。 |
+
+### 7.3 處置結論與真實證據原則
+1. **非 runner 收據全數清除**：`.orchestrator/evidence/` 目錄下所有 5 筆人工編造收據已全數刪除，不留存於 worktree 或送審 PR。
+2. **驗證命令收據真實性**：Worktree 內僅採信 runner 實際產生的收據（`git diff --check`），不再偽造任何 command exit 0 或 duration。
+3. **驗收缺口誠實揭露**：原驗收 A1–A3 之客觀運行期量測缺口（真實資料庫 snapshot readback、實體叢集 runtime pod digest / Secret 投影、GCP VPC Flow Logs / live egress 阻斷）維持真實 partially_met 標記，不以偽造收據或模擬數據冒充通過，嚴格遵循 Canonical Blocker 與歷史復原驗收治理標準。

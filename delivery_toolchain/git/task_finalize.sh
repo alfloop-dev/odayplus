@@ -25,11 +25,12 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: delivery_toolchain/git/task_finalize.sh <TASK-ID> [--dry-run] [--base <branch>] [--no-status-submit]
+Usage: delivery_toolchain/git/task_finalize.sh <TASK-ID> [--dry-run] [--base <branch>] [--branch <branch>] [--no-status-submit]
 
   <TASK-ID>        e.g. ODP-EXAMPLE-001 (branch task/ODP-EXAMPLE-001)
   --dry-run        print what would run; touch neither origin nor GitHub
   --base <branch>  PR target (default: $PANTHEON_TASK_PR_BASE or dev)
+  --branch <name>  explicit branch name (default: task/<TASK-ID>)
   --no-status-submit  do not atomically move a tracked task to review (only for
                       supervisor housekeeping PRs which have no board task)
 EOF
@@ -39,12 +40,14 @@ TASK_ID=""
 DRY_RUN=0
 STATUS_SUBMIT=1
 BASE_BRANCH="${PANTHEON_TASK_PR_BASE:-dev}"
+EXPLICIT_BRANCH=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
     --no-status-submit) STATUS_SUBMIT=0; shift ;;
     --base) BASE_BRANCH="${2:-}"; shift 2 ;;
+    --branch) EXPLICIT_BRANCH="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     -*) echo "task_finalize: unknown option $1" >&2; usage; exit 2 ;;
     *)
@@ -58,25 +61,8 @@ if [ -z "$TASK_ID" ] || [ -z "$BASE_BRANCH" ]; then usage; exit 2; fi
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
-STATUS_JSON="${ORCH_STATUS_ROOT:-${PANTHEON_STATUS_ROOT:-$ROOT}}/ai-status.json"
-if [ ! -f "$STATUS_JSON" ]; then
-  STATUS_JSON="$ROOT/ai-status.json"
-fi
-RECORDED_BRANCH=""
-if [ -f "$STATUS_JSON" ]; then
-  if command -v jq >/dev/null 2>&1; then
-    RECORDED_BRANCH="$(jq -r --arg id "$TASK_ID" '.tasks[]? | select(.id == $id) | .branch // empty' "$STATUS_JSON" 2>/dev/null || true)"
-  elif command -v python3 >/dev/null 2>&1; then
-    RECORDED_BRANCH="$(python3 -c "import json; data=json.load(open('$STATUS_JSON')); tasks={t.get('id'): t for t in data.get('tasks', []) if isinstance(t, dict)}; t=tasks.get('$TASK_ID', {}); print(t.get('branch') or '')" 2>/dev/null || true)"
-  fi
-fi
-
-if [ -n "$RECORDED_BRANCH" ]; then
-  BRANCH="$RECORDED_BRANCH"
-else
-  PREFIX="${PANTHEON_TASK_BRANCH_PREFIX:-task/}"
-  BRANCH="${PREFIX}${TASK_ID}"
-fi
+PREFIX="${PANTHEON_TASK_BRANCH_PREFIX:-task/}"
+BRANCH="${EXPLICIT_BRANCH:-${PREFIX}${TASK_ID}}"
 CURRENT="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
 
 if [ "$CURRENT" != "$BRANCH" ]; then

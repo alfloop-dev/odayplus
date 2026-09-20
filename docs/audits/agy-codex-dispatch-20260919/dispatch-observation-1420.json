@@ -1,0 +1,132 @@
+{
+  "observed_at": "2026-09-19T14:20:29.403258+00:00",
+  "task_count": 23,
+  "status_counts": {
+    "todo": 11,
+    "in_progress": 5,
+    "blocked": 4,
+    "review": 3
+  },
+  "dispatcher_enabled": true,
+  "role_policy": {
+    "enabled": true,
+    "rules": [
+      {
+        "roles": [
+          "reviewer"
+        ],
+        "providers": [
+          "codex"
+        ]
+      },
+      {
+        "roles": [
+          "owner",
+          "helper"
+        ],
+        "providers": [
+          "antigravity"
+        ]
+      }
+    ],
+    "unclassified_owned_work": [
+      "antigravity"
+    ]
+  },
+  "supervisor": {
+    "pid": 3854026,
+    "lifecycle": "running",
+    "mode_status": "active",
+    "last_heartbeat_at": "2026-09-19T14:19:43Z",
+    "loaded_config_digest": "b7cee72e2e449941",
+    "last_loop_error": null
+  },
+  "first_wave": [
+    {
+      "id": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+      "title": "歷史驗收續辦：ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+      "owner": "Antigravity3",
+      "reviewer": "Codex",
+      "status": "review",
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1314",
+      "run_count": 1,
+      "last_run": "antigravity-20260919T141000Z-bc91b3af",
+      "pid_alive": false,
+      "heartbeat_status": "completed",
+      "heartbeat_at": "2026-09-19T14:15:21Z",
+      "corrective_note_in_prompt": false
+    },
+    {
+      "id": "XR-EXT-OSS-FINAL-AUDIT-001",
+      "title": "歷史驗收續辦：XR-EXT-OSS-FINAL-AUDIT-001",
+      "owner": "Antigravity4",
+      "reviewer": "Codex",
+      "status": "review",
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1312",
+      "run_count": 1,
+      "last_run": "antigravity-20260919T141006Z-6ac97b6a",
+      "pid_alive": false,
+      "heartbeat_status": "completed",
+      "heartbeat_at": "2026-09-19T14:16:16Z",
+      "corrective_note_in_prompt": false
+    },
+    {
+      "id": "DPF-CAPTURE-RETENTION-RUNNER-001",
+      "title": "補齊既有真實擷取到受治理 raw retention 的唯一操作入口",
+      "owner": "Antigravity5",
+      "reviewer": "Codex",
+      "status": "in_progress",
+      "pr_url": null,
+      "run_count": 4,
+      "last_run": "antigravity-20260919T141917Z-00ad2864",
+      "pid_alive": true,
+      "heartbeat_status": "running",
+      "heartbeat_at": "2026-09-19T14:20:17Z",
+      "corrective_note_in_prompt": false
+    },
+    {
+      "id": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+      "title": "驗證 staging recovery storage 並承接失效歷史依賴",
+      "owner": "Antigravity6",
+      "reviewer": "Codex",
+      "status": "review",
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1343",
+      "run_count": 1,
+      "last_run": "antigravity-20260919T141022Z-dfb7a279",
+      "pid_alive": false,
+      "heartbeat_status": "completed",
+      "heartbeat_at": "2026-09-19T14:14:58Z",
+      "corrective_note_in_prompt": false
+    },
+    {
+      "id": "ODP-BRAND-CLASSIFICATION-SYNC-PRESERVATION-001",
+      "title": "修復資料同步覆寫既有品牌分類",
+      "owner": "Antigravity7",
+      "reviewer": "Codex",
+      "status": "in_progress",
+      "pr_url": null,
+      "run_count": 3,
+      "last_run": "antigravity-20260919T141922Z-f6fd1974",
+      "pid_alive": true,
+      "heartbeat_status": "running",
+      "heartbeat_at": "2026-09-19T14:20:22Z",
+      "corrective_note_in_prompt": false
+    },
+    {
+      "id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+      "title": "補齊 ephemeral staging 的受治理 foundation 與 durable state",
+      "owner": "Antigravity3",
+      "reviewer": "Codex",
+      "status": "in_progress",
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1046",
+      "run_count": 1,
+      "last_run": "antigravity-20260919T141650Z-3a360207",
+      "pid_alive": false,
+      "heartbeat_status": "completed",
+      "heartbeat_at": "2026-09-19T14:19:08Z",
+      "corrective_note_in_prompt": false
+    }
+  ],
+  "worktree_blocks": {},
+  "interpretation": "Historical observation at observed_at. Inline prompt scan did not include task-brief content; see corrective-handoff-readback.json for delivered instructions. Not a claim of current worker liveness or completed implementation."
+}

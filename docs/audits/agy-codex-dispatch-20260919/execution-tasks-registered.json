@@ -1,0 +1,212 @@
+[
+  {
+    "id": "DPF-CAPTURE-RETENTION-RUNNER-001",
+    "title": "補齊既有真實擷取到受治理 raw retention 的唯一操作入口",
+    "owner": "Antigravity5",
+    "reviewer": "Codex",
+    "status": "in_progress",
+    "depends_on": [
+      "DPF-ACQUISITION-RETENTION-BRIDGE-001",
+      "DPF-SITE-CONTEXT-REAL-COMPONENTS-001"
+    ],
+    "repository": "alfloop-dev/oday-data-platform",
+    "source_docs": [
+      "github://alfloop-dev/oday-data-platform@74f07cb09f263096ee9dc1db7132a058a1f17782/docs/runbooks/emgi-retained-raw-snapshots.md",
+      "github://alfloop-dev/oday-data-platform@74f07cb09f263096ee9dc1db7132a058a1f17782/src/oday_data_platform/external/acquisition/retained_import.py",
+      "github://alfloop-dev/oday-data-platform@74f07cb09f263096ee9dc1db7132a058a1f17782/scripts/capture_public_source_evidence.py",
+      "github://alfloop-dev/oday-data-platform@74f07cb09f263096ee9dc1db7132a058a1f17782/scripts/retain_emgi_raw_snapshots.py"
+    ],
+    "owned_paths": [
+      "scripts/capture_public_source_evidence.py",
+      "scripts/capture_and_retain_emgi_raw.py",
+      "tests/deploy/test_capture_retention_runner.py",
+      "docs/runbooks/emgi-retained-raw-snapshots.md",
+      "docs/evidence/completion/DPF-CAPTURE-RETENTION-RUNNER-001/"
+    ],
+    "forbidden_paths": [
+      "src/oday_data_platform/release_snapshot.py",
+      "deploy/",
+      "infra/",
+      ".github/",
+      "ai-status.json",
+      ".orchestrator/"
+    ],
+    "acceptance": [
+      "自己的真實 AI_NAME 經 $PANTHEON_STATUS_ROOT/scripts/ai-status.sh 操作 lifecycle；禁止直接寫 board/archive 或代簽 Human/Ops。",
+      "以乾淨 task worktree、真實可執行 verification、exact head 的 required CI、獨立 Codex review、正常 merge/finalize 交付。",
+      "公開文件不含 token、原始個資、完整受限資料或 secret；僅提交允許公開的程式與去敏 metadata/證據引用。",
+      "先讀 merged PR #68/#69 與目前 dev；只補 scripts/ 中沒有 export_retained_import_bundle 呼叫者的缺口。既有 adapters/kernel/compose/export/retention primitive 不重寫，不新增 registry/scheduler/第二套存取政策。",
+      "補單一操作入口：per-source authorization/preflight→LiveAcquisitionKernel→compose_full_retained_import→export_retained_import_bundle→既有 retain_emgi_raw_snapshots.py。若現有 capture_public_source_evidence.py 可直接延伸，優先延伸；新薄入口只負責編排，不複製業務邏輯。",
+      "支持明確 domain/snapshot/output 參數、先 dry-run、resume 和逐域進度；不得默認 network 或 cloud writes，不靠 production configmap enabled 解鎖工程準備。錯誤不得產生成功收據。",
+      "保留來源與控制面分離：受控 acquisition lane 才外連 provider；retention lane 僅吃 sealed bundle，不攜帶 provider secrets。生產來源仍 disabled。",
+      "正確綁 raw source/ref/time/classification/content hash/count，create-only retention 與 exact-generation readback 由既有 primitive 執行；8 域未齊不能宣稱 full release ready。",
+      "測試驗證 missing/unauthorized source、變造 hash/seal、partial domain、重跑不覆寫、subprocess 失敗傳播與 dry-run 零網路/GCS 寫入。fixture 明示 offline，不捏造 live/GCS 證據。",
+      "交付程式與完整執行指令；真實抓取/落地由 DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001 承接，masked transformation 僅由原 #63 負責。"
+    ],
+    "verification": [
+      "git diff --check",
+      "uv run pytest -q tests/deploy/test_capture_retention_runner.py tests/deploy/test_retained_raw_snapshots.py tests/external/test_acquisition_retained_import.py"
+    ]
+  },
+  {
+    "id": "DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001",
+    "title": "執行受控真實資料擷取並保存可讀回的八域 raw 快照",
+    "owner": "Antigravity6",
+    "reviewer": "Codex",
+    "status": "todo",
+    "depends_on": [
+      "DPF-CAPTURE-RETENTION-RUNNER-001"
+    ],
+    "repository": "alfloop-dev/oday-data-platform",
+    "source_docs": [
+      "github://alfloop-dev/oday-data-platform@74f07cb09f263096ee9dc1db7132a058a1f17782/docs/runbooks/emgi-retained-raw-snapshots.md",
+      "github://alfloop-dev/oday-data-platform@74f07cb09f263096ee9dc1db7132a058a1f17782/docs/runbooks/external-source-update-policy.md"
+    ],
+    "owned_paths": [
+      "docs/evidence/runtime/DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001/"
+    ],
+    "forbidden_paths": [
+      "src/",
+      "scripts/",
+      "deploy/",
+      "infra/",
+      ".github/",
+      "ai-status.json",
+      ".orchestrator/"
+    ],
+    "acceptance": [
+      "自己的真實 AI_NAME 經 $PANTHEON_STATUS_ROOT/scripts/ai-status.sh 操作 lifecycle；禁止直接寫 board/archive 或代簽 Human/Ops。",
+      "以乾淨 task worktree、真實可執行 verification、exact head 的 required CI、獨立 Codex review、正常 merge/finalize 交付。",
+      "公開文件不含 token、原始個資、完整受限資料或 secret；僅提交允許公開的程式與去敏 metadata/證據引用。",
+      "使用 runner 已合併版本與既有受控 engineering acquisition/retention lane，先讀取真實可用來源授權範圍和現有 identity 的權限，逐來源保存依據；不把 production activation 當所有工程擷取的前置，也不以本 task 代簽來源許可。",
+      "依 8 類 cwa_events/transport_osm_tdx/open_poi/mof_moi/ris_nlsc/listing_observations/mobility/site_market_context 分域執行；可先取得範圍已允許的來源。遇 endpoint/帳號/授權缺口需精確命名，交原責任者，不以 generic Human/Ops 放棄其他域。",
+      "使用既有經授權 bucket 與 create-only prefix；不得新建 IAM、資源、公共 ACL 或啟用 production 來源。不要將原始個資或受限制來源內容推上 GitHub。",
+      "逐域實際保存 raw bytes 後，記錄 gs URI、snapshot ID、真實 object generation、SHA256、record count、分類/遮蔽規則、抓取時間與來源版本；下載同 generation 驗證 hash/count，保留去敏命令收據及安全 raw-reference。",
+      "只有 8 域內容與 readback 全部滿足才可 done；partial progress 保存為 partial，不用樣本/合成資料補數，不複用 20260823 假常數。",
+      "以可供原 DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001 消費的動態 manifest 交接；不在本 task 重做 masking/release code。工程抓取完成不等於 production 來源已批准或 runtime rollout 完成。"
+    ],
+    "verification": [
+      "git diff --check"
+    ]
+  },
+  {
+    "id": "ODP-DEV-RELEASE-GATE-RECONCILIATION-004",
+    "title": "依已合併 foundation 重建 dev candidate 並修復 gate 實際證據承接",
+    "owner": "Antigravity7",
+    "reviewer": "Codex",
+    "status": "todo",
+    "depends_on": [
+      "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+      "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001"
+    ],
+    "repository": "alfloop-dev/odayplus",
+    "source_docs": [
+      "github://alfloop-dev/odayplus@c80247fb7d6623c288db1a646e6c6f9dda6c14a9/docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md"
+    ],
+    "owned_paths": [
+      "docs/evidence/gates/RELEASE_MANIFEST.json",
+      "docs/evidence/gates/RELEASE_GATE_REGISTRY.json",
+      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-004/"
+    ],
+    "forbidden_paths": [
+      "apps/",
+      "modules/",
+      "shared/",
+      "infra/",
+      "delivery_toolchain/",
+      ".orchestrator/",
+      ".github/",
+      "ai-status.json"
+    ],
+    "acceptance": [
+      "自己的真實 AI_NAME 經 $PANTHEON_STATUS_ROOT/scripts/ai-status.sh 操作 lifecycle；禁止直接寫 board/archive 或代簽 Human/Ops。",
+      "以乾淨 task worktree、真實可執行 verification、exact head 的 required CI、獨立 Codex review、正常 merge/finalize 交付。",
+      "公開文件不含 token、原始個資、完整受限資料或 secret；僅提交允許公開的程式與去敏 metadata/證據引用。",
+      "沿用既有 Runtime Release build-once、reconciliation 與 receipt contracts，不新建 workflow/validator、不降低 required checks、不重寫已完成的 candidate reconciliation 歷史。",
+      "foundation/bootstrap 完成後才選定 origin/dev candidate；核對既有最新 build 是否與實際 candidate 相符，不相符再用既有 build phase 產生 immutable artifacts。不得用未合併 task branch 當 canonical dev candidate。",
+      "釐清 gate-0/1 引用不存在的 ODP-PLAN-ENGINEERING-HARDENING-001，以及 gate-4 中缺失承接 ID；逐項對照實際 code/security/contract 證據與原驗收，只有已滿足者才能移除 blocker，其他實際缺口須有具名執行承接。",
+      "原 CODE/CONTRACT/SECURITY receipt tasks 已 done 但結論是 no-go；不得當作 passed。以新 candidate 的真實 code/contract/auth/export/IAM/SBOM/NOTICE 證據更新 registry/manifest 引用；不同 SHA 收據不得混用。",
+      "保留 dev 的 sources-off/default-deny 與 production legal/activation 邊界；不得把尚未核准的法務收據改為 approved，也不得把技術 gate 的 no-go 改為假人類 GO。遇 scope 互等須提交精確條款及證據，不代簽裁決。",
+      "從選 candidate 到 lease handoff 說明 stale 判定；若 dev 再前進有 product/build input 變更，候選須重新鑑別，不擅自 globally freeze fleet。交付後由原 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 依 signed lease 執行部署。",
+      "PR/收據清楚記真實候選/manifest/build run/時間/命令 exit；僅完成可重現 reconciliation，不宣稱已部署。"
+    ],
+    "verification": [
+      "git diff --check",
+      "uv run python delivery_toolchain/e2e/check_release_gate_registry.py --json"
+    ]
+  },
+  {
+    "id": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+    "title": "驗證 staging recovery storage 並承接失效歷史依賴",
+    "owner": "Antigravity6",
+    "reviewer": "Codex",
+    "status": "review",
+    "depends_on": [],
+    "repository": "alfloop-dev/odayplus",
+    "source_docs": [
+      "github://alfloop-dev/odayplus@c80247fb7d6623c288db1a646e6c6f9dda6c14a9/docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md"
+    ],
+    "owned_paths": [
+      "docs/evidence/runtime/ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001/"
+    ],
+    "forbidden_paths": [
+      "apps/",
+      "modules/",
+      "infra/",
+      "delivery_toolchain/",
+      ".orchestrator/",
+      ".github/",
+      "ai-status.json"
+    ],
+    "acceptance": [
+      "沿目前已合併 lifecycle/rollback-recovery 實作、原 staging plan 與 foundation 既有證據核對實際 storage contract；不得把 archive superseded 解釋為已完成，更不能重做 Terraform 或新建 bucket。",
+      "以 repo/workflow/runtime config 和已授權 GCP/GitHub 唯讀 metadata 查出 staging recovery bucket、prefix、deployer identity、必要 metadata 存取能力與 current env binding；不讀取或公開 secret/state bundle 內容。",
+      "重用 foundation 有效 readback；只補缺少或失效的 recovery storage 事實。驗證 CMEK/versioning/retention/PAP/UBLA/IAM 適用要求與無一般 artifact 外洩路徑，每項有原驗收來源和真實 command receipt。",
+      "不把尚未進行的 release rehearsal 所產 bundle 當作入場前必須存在的物件。分開 storage readiness 與 per-release bundle generation/hash/restore 實際驗收；後者必須由原 ODP-EPHEMERAL-STAGING-ROLLOUT-001 在 release rehearsal 中承接，不能消失。",
+      "只有 readiness 可核實且每一項餘下 bundle 驗收都有原 staging owner 與可執行流程時才送審；真缺權限/資源則精確記錄，禁止填通過或假 hash/generation。",
+      "獨立 Codex 審查、required CI、正常 merge/finalize。此 task 僅交當前 readiness 與原 rollout 驗收映射，不重寫歷史 archive。",
+      "自己的 AI_NAME 使用 canonical CLI；不得直接修改 ai-status/state/archive。"
+    ],
+    "verification": [
+      "git diff --check"
+    ]
+  },
+  {
+    "id": "ODP-BRAND-CLASSIFICATION-SYNC-PRESERVATION-001",
+    "title": "修復資料同步覆寫既有品牌分類",
+    "owner": "Antigravity7",
+    "reviewer": "Codex",
+    "status": "in_progress",
+    "depends_on": [],
+    "repository": "alfloop-dev/odayplus",
+    "source_docs": [
+      "github://alfloop-dev/odayplus@b095935e079f518dcdbb3fe94db899cd76d89710/apps/data_platform/store.py",
+      "github://alfloop-dev/odayplus@b095935e079f518dcdbb3fe94db899cd76d89710/shared/domain/models.py"
+    ],
+    "owned_paths": [
+      "apps/data_platform/store.py",
+      "apps/data_platform/tests/test_brand_classification_sync.py",
+      "docs/evidence/completion/ODP-BRAND-CLASSIFICATION-SYNC-PRESERVATION-001/"
+    ],
+    "forbidden_paths": [
+      "modules/sitescore/",
+      "shared/infrastructure/persistence/",
+      "infra/db/migrations/",
+      ".github/",
+      ".orchestrator/",
+      "ai-status.json"
+    ],
+    "acceptance": [
+      "先核對目前 DataPlaneStore._upsert_merchant 的實际 SQL 與既有 projection contract：ON CONFLICT 現固定 brand_type=owned。此 task 僅修沒有分類新證據時同步覆寫已存在分類的缺陷，不推測品牌對照表或轉移率。",
+      "同步更新名稱、狀態等欄位時保留現有明確 external/franchise/competitor 分類；只有具備來源契約中的明確有效分類時才可變更分類。不得建立依品牌名稱猜分類的新規則。",
+      "新增品牌在沒有分類來源時維持既有契約允許的初始行為，保留 tenant/brand identity 與重跑冪等；若現有 contract 禁止某種分類更新需引用原文，以證據决定最小修正，不自行改業務定義。",
+      "以實際 persistence/資料庫測試建立 external/franchise/competitor/owned 品牌，執行真正 _upsert_merchant，再確認分類與身份隔離保留、其他預期欄位更新及重跑結果。不能只比 SQL 字串或 mock 一個固定成功值。",
+      "品牌轉移率的分母、期間、資料範圍及實際業務資料仍由原 ODP-BRAND-TRANSFER-IMPLEMENTATION-001 承接；本修正不可宣稱品牌轉移功能完成。",
+      "不讀取 production、不更改 IAM、schema 或 SiteScore 指標；沿既有乾淨工作樹、真實 verification、獨立 Codex review、required CI、merge/finalize 交付。所有 status 命令用自己 AI_NAME 的 canonical CLI。"
+    ],
+    "verification": [
+      "git diff --check",
+      "uv run --frozen --python 3.12 pytest -q apps/data_platform/tests/test_brand_classification_sync.py"
+    ]
+  }
+]

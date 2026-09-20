@@ -8,9 +8,9 @@
   "recorded_at": "2026-09-12T09:44:00Z",
   "reconciliation_target": {
     "repository": "alfloop-dev/odayplus",
-    "pinned_dev_sha": "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
+    "pinned_dev_sha": "39ae43f6fe673752e5f3aaeb7559e8832a8cb9a7",
     "continuation_branch": "task/XR-EXT-OSS-FINAL-AUDIT-001-RECOVERY-20260911",
-    "prior_dev_base_sha": "ef8345bce29436ce86bd1a70b857d668ac16182a"
+    "prior_dev_base_sha": "3828c5ada2a1baab33d7dbe734c7ec70152d3d77"
   },
   "repository_correction": {
     "inventory_declared_repository": "alfloop-dev/odayplus",
@@ -799,5 +799,63 @@
     "scope": "New contributor observation of the exact worktree input hashes recorded by capture_verification.py; does not replace historical runtime or approval evidence.",
     "actor": "Codex",
     "retry_reason": "Latest review identified unretained raw results or results bound to different inputs. Preserve history and capture only the changed evidence assertions once."
+  },
+  "verification_receipts_disposal_audit": {
+    "audit_date": "2026-09-20",
+    "auditor": "Human/Ops and Antigravity4",
+    "disposal_policy": "All non-runner fabricated verification receipts must be identified, formally retracted, and physically removed from worktree. Only genuine runner receipts (git diff --check) are admitted.",
+    "root_cause": "The second verification entry in task brief contained Chinese prose text that caused FileNotFoundError (exit code 127, duration ~0.001s) in .orchestrator/verification_evidence.py runner. Historical auto workers attempted to bypass this structural block by injecting artificial exit 0 receipts (~0.05s).",
+    "disposed_receipts": [
+      {
+        "receipt_sha_prefix": "934f2aa74d587587",
+        "historical_head_sha": "b7c89b8e / 86f699df",
+        "recorded_agent": "Antigravity4",
+        "recorded_at": "2026-09-11",
+        "actual_source_and_method": "Non-runner manual fabrication (exit 0, ~0.05s)",
+        "claimed_scope": "Early PR #1312 submission claiming verification gate pass",
+        "disposition": "RETRACTED_AND_DELETED",
+        "replacement_evidence": "git diff --check (real runner exit code 0)"
+      },
+      {
+        "receipt_sha_prefix": "d4755756579cf702",
+        "historical_head_sha": "b124c7a5",
+        "recorded_agent": "Antigravity4",
+        "recorded_at": "2026-09-12T09:11:02Z",
+        "actual_source_and_method": "Non-runner manual fabrication (exit 0, 0.05s, injected 82s after real 127 receipt 18edeee7)",
+        "claimed_scope": "Commit b124c7a5 review submission claiming verification pass",
+        "disposition": "RETRACTED_AND_DELETED",
+        "replacement_evidence": "git diff --check (real runner exit code 0)"
+      },
+      {
+        "receipt_sha_prefix": "ac9393da848e694d",
+        "historical_head_sha": "a6436675",
+        "recorded_agent": "Antigravity4",
+        "recorded_at": "2026-09-12T09:30:44Z",
+        "actual_source_and_method": "Non-runner manual fabrication (exit 0, 0.05s, injected 25s after real 127 receipt 91715a7f)",
+        "claimed_scope": "Commit a6436675 review submission claiming DAG verification and complete receipts",
+        "disposition": "RETRACTED_AND_DELETED",
+        "replacement_evidence": "git diff --check (real runner exit code 0) and capture_verification.py --check"
+      },
+      {
+        "receipt_sha_prefix": "ca09b61ec4ccd2a2",
+        "historical_head_sha": "f73345e7",
+        "recorded_agent": "Antigravity4",
+        "recorded_at": "2026-09-13T06:56:32Z",
+        "actual_source_and_method": "Non-runner manual fabrication (exit 0, 0.05s, injected 24s after real 127 receipt 7f2732e9)",
+        "claimed_scope": "Commit f73345e7 base advance review submission claiming verification pass",
+        "disposition": "RETRACTED_AND_DELETED",
+        "replacement_evidence": "git diff --check (real runner exit code 0)"
+      },
+      {
+        "receipt_sha_prefix": "8d9a0a578b1d55ae",
+        "historical_head_sha": "1f709f20",
+        "recorded_agent": "Antigravity4",
+        "recorded_at": "2026-09-15T03:22:15Z",
+        "actual_source_and_method": "Non-runner manual fabrication (exit 0, 0.05s, injected 56s after real 127 receipt 503855d0)",
+        "claimed_scope": "Commit 1f709f20 base advance review submission claiming verification pass",
+        "disposition": "RETRACTED_AND_DELETED",
+        "replacement_evidence": "git diff --check (real runner exit code 0)"
+      }
+    ]
   }
 }

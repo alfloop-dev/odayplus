@@ -1,0 +1,301 @@
+{
+  "observed_at": "2026-09-19T14:28:04.643093+00:00",
+  "baseline": "tasks-before.json (local operational backup; not published)",
+  "changes": [
+    {
+      "task_id": "HUMAN-OSS-LEGAL-APPROVAL-001",
+      "changes": {
+        "reviewer": {
+          "before": "Claude2",
+          "after": "Codex"
+        }
+      }
+    },
+    {
+      "task_id": "XR-SOURCE-APPROVAL-ACTIVATION-001",
+      "changes": {
+        "reviewer": {
+          "before": "Claude",
+          "after": "Codex"
+        }
+      }
+    },
+    {
+      "task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+      "changes": {
+        "reviewer": {
+          "before": "Claude",
+          "after": "Codex"
+        },
+        "depends_on": {
+          "before": [
+            "ODP-EPHEMERAL-STAGING-IAC-001",
+            "ODP-DEV-ROLLOUT-001",
+            "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+            "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+            "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001"
+          ],
+          "after": [
+            "ODP-EPHEMERAL-STAGING-IAC-001",
+            "ODP-DEV-ROLLOUT-001",
+            "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+            "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+            "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+            "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001"
+          ]
+        },
+        "non_dispatchable": {
+          "before": true,
+          "after": false
+        }
+      }
+    },
+    {
+      "task_id": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+      "changes": {
+        "owner": {
+          "before": "Claude2",
+          "after": "Antigravity5"
+        },
+        "reviewer": {
+          "before": "Antigravity",
+          "after": "Codex"
+        },
+        "non_dispatchable": {
+          "before": true,
+          "after": false
+        }
+      }
+    },
+    {
+      "task_id": "ODP-POSTDEPLOY-WATCH-CLOSEOUT-001",
+      "changes": {
+        "reviewer": {
+          "before": "Claude",
+          "after": "Codex"
+        },
+        "non_dispatchable": {
+          "before": true,
+          "after": false
+        }
+      }
+    },
+    {
+      "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+      "changes": {
+        "reviewer": {
+          "before": "Claude",
+          "after": "Codex"
+        },
+        "depends_on": {
+          "before": [
+            "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+            "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+            "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+            "DPF-EMGI-LIVE-ROLLOUT-001",
+            "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+            "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+            "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+            "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+            "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+            "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
+          ],
+          "after": [
+            "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+            "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+            "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+            "DPF-EMGI-LIVE-ROLLOUT-001",
+            "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+            "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+            "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+            "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+            "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+            "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+            "ODP-DEV-RELEASE-GATE-RECONCILIATION-004"
+          ]
+        }
+      }
+    },
+    {
+      "task_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+      "changes": {
+        "owner": {
+          "before": "Antigravity2",
+          "after": "Antigravity3"
+        },
+        "reviewer": {
+          "before": "Claude",
+          "after": "Codex"
+        }
+      }
+    },
+    {
+      "task_id": "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+      "changes": {
+        "reviewer": {
+          "before": "Claude",
+          "after": "Codex"
+        },
+        "depends_on": {
+          "before": [
+            "DPF-EMGI-LIVE-ROLLOUT-001",
+            "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
+            "XR-SOURCE-APPROVAL-ACTIVATION-001"
+          ],
+          "after": [
+            "DPF-EMGI-LIVE-ROLLOUT-001",
+            "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
+            "DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001"
+          ]
+        }
+      }
+    },
+    {
+      "task_id": "ODP-STAGING-STATE-PLAN-QUARANTINE-CLEANUP-001",
+      "changes": {
+        "reviewer": {
+          "before": "Codex2",
+          "after": "Codex"
+        }
+      }
+    },
+    {
+      "task_id": "ODP-NFR-RUNTIME-EVIDENCE-001",
+      "changes": {
+        "reviewer": {
+          "before": "Claude",
+          "after": "Codex"
+        }
+      }
+    },
+    {
+      "task_id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+      "changes": {
+        "reviewer": {
+          "before": "Claude",
+          "after": "Codex"
+        }
+      }
+    },
+    {
+      "task_id": "HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001",
+      "changes": {
+        "reviewer": {
+          "before": "Claude2",
+          "after": "Codex"
+        }
+      }
+    },
+    {
+      "task_id": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+      "changes": {
+        "owner": {
+          "before": "Claude2",
+          "after": "Antigravity3"
+        }
+      }
+    },
+    {
+      "task_id": "XR-EXT-OSS-FINAL-AUDIT-001",
+      "changes": {
+        "reviewer": {
+          "before": "Claude",
+          "after": "Codex"
+        }
+      }
+    },
+    {
+      "task_id": "ODP-BRAND-TRANSFER-IMPLEMENTATION-001",
+      "changes": {
+        "owner": {
+          "before": "Claude",
+          "after": "Antigravity"
+        },
+        "reviewer": {
+          "before": "Antigravity",
+          "after": "Codex"
+        },
+        "depends_on": {
+          "before": [
+            "ODP-BRAND-TRANSFER-CONTRACT-PREP-001"
+          ],
+          "after": [
+            "ODP-BRAND-TRANSFER-CONTRACT-PREP-001",
+            "ODP-BRAND-CLASSIFICATION-SYNC-PRESERVATION-001"
+          ]
+        }
+      }
+    },
+    {
+      "task_id": "ODP-FORMAT-CONVERSION-IMPLEMENTATION-001",
+      "changes": {
+        "owner": {
+          "before": "Claude2",
+          "after": "Antigravity6"
+        },
+        "reviewer": {
+          "before": "Antigravity",
+          "after": "Codex"
+        }
+      }
+    },
+    {
+      "task_id": "ODP-NET002-LEASE-IMPLEMENTATION-001",
+      "changes": {
+        "owner": {
+          "before": "Claude",
+          "after": "Antigravity7"
+        },
+        "reviewer": {
+          "before": "Antigravity",
+          "after": "Codex"
+        }
+      }
+    },
+    {
+      "task_id": "DPF-CAPTURE-RETENTION-RUNNER-001",
+      "changes": {
+        "registration": {
+          "before": null,
+          "after": "new separately scoped execution task"
+        }
+      }
+    },
+    {
+      "task_id": "DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001",
+      "changes": {
+        "registration": {
+          "before": null,
+          "after": "new separately scoped execution task"
+        }
+      }
+    },
+    {
+      "task_id": "ODP-DEV-RELEASE-GATE-RECONCILIATION-004",
+      "changes": {
+        "registration": {
+          "before": null,
+          "after": "new separately scoped execution task"
+        }
+      }
+    },
+    {
+      "task_id": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+      "changes": {
+        "registration": {
+          "before": null,
+          "after": "new separately scoped execution task"
+        }
+      }
+    },
+    {
+      "task_id": "ODP-BRAND-CLASSIFICATION-SYNC-PRESERVATION-001",
+      "changes": {
+        "registration": {
+          "before": null,
+          "after": "new separately scoped execution task"
+        }
+      }
+    }
+  ]
+}

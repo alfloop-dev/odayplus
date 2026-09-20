@@ -16,19 +16,22 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: delivery_toolchain/git/task_start.sh <TASK-ID> [--allow-dirty]
+Usage: delivery_toolchain/git/task_start.sh <TASK-ID> [--allow-dirty] [--branch <branch>]
 
   <TASK-ID>       e.g. ODP-EXAMPLE-001 (branch becomes task/ODP-EXAMPLE-001)
   --allow-dirty   do not refuse when tracked files are already modified
+  --branch <name> explicit branch name (default: task/<TASK-ID>)
 EOF
 }
 
 TASK_ID=""
 ALLOW_DIRTY=0
+EXPLICIT_BRANCH=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --allow-dirty) ALLOW_DIRTY=1; shift ;;
+    --branch) EXPLICIT_BRANCH="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     -*) echo "task_start: unknown option $1" >&2; usage; exit 2 ;;
     *)
@@ -42,25 +45,8 @@ if [ -z "$TASK_ID" ]; then usage; exit 2; fi
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
-STATUS_JSON="${ORCH_STATUS_ROOT:-${PANTHEON_STATUS_ROOT:-$ROOT}}/ai-status.json"
-if [ ! -f "$STATUS_JSON" ]; then
-  STATUS_JSON="$ROOT/ai-status.json"
-fi
-RECORDED_BRANCH=""
-if [ -f "$STATUS_JSON" ]; then
-  if command -v jq >/dev/null 2>&1; then
-    RECORDED_BRANCH="$(jq -r --arg id "$TASK_ID" '.tasks[]? | select(.id == $id) | .branch // empty' "$STATUS_JSON" 2>/dev/null || true)"
-  elif command -v python3 >/dev/null 2>&1; then
-    RECORDED_BRANCH="$(python3 -c "import json; data=json.load(open('$STATUS_JSON')); tasks={t.get('id'): t for t in data.get('tasks', []) if isinstance(t, dict)}; t=tasks.get('$TASK_ID', {}); print(t.get('branch') or '')" 2>/dev/null || true)"
-  fi
-fi
-
-if [ -n "$RECORDED_BRANCH" ]; then
-  BRANCH="$RECORDED_BRANCH"
-else
-  PREFIX="${PANTHEON_TASK_BRANCH_PREFIX:-task/}"
-  BRANCH="${PREFIX}${TASK_ID}"
-fi
+PREFIX="${PANTHEON_TASK_BRANCH_PREFIX:-task/}"
+BRANCH="${EXPLICIT_BRANCH:-${PREFIX}${TASK_ID}}"
 CURRENT="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
 
 # Tracked modifications only: per-task worktrees are seeded with gitignored

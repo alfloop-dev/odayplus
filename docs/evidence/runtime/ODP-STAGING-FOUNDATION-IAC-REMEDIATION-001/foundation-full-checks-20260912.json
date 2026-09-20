@@ -1,0 +1,22 @@
+{
+  "argv": [
+    "/home/lupin/odayplus/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/release/test_release_manifest.py",
+    "tests/release/test_foundation_egress_contract.py",
+    "infra/terraform/tests"
+  ],
+  "started_at": "2026-09-20T03:11:48.787584+00:00",
+  "finished_at": "2026-09-20T03:13:13.788781+00:00",
+  "exit_code": 0,
+  "stdout": "........................................................................ [ 46%]\n........................................................................ [ 92%]\n............                                                             [100%]\n",
+  "stderr": "",
+  "base_head": "213cdd17a0261b87def427115cb31cf61c9a237a",
+  "merge_parent": "45311bdc085288ecf2b6d228348d76c459eddc82",
+  "source_sha256": {
+    "delivery_toolchain/release/release_manifest.py": "4bc132ca69476cc97ae863c091cd3af4e0b753836f91afc52faa1ce958d678e8",
+    "tests/release/test_foundation_egress_contract.py": "1798186b4f983afcbd1f2562ced7520c0c839b5a9632461bd2bfa12c9f840eec"
+  }
+}
