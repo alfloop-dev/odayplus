@@ -32,6 +32,34 @@ backend 宣告；Phase 1 apply 完成後，才將該 local state 交給 canonica
 `main.tf` 遷移到 `oday-plus/bootstrap`。遷移成功後只刪除暫存與 local state
 檔案，GCS object 才是 durable source of truth。
 
+### 失敗與取消恢復
+
+腳本收到 `SIGINT`／`SIGTERM` 時會將訊號傳給目前 Terraform 的整個
+process group（包含 provider 子程序），等待它退出並完成 state 寫入，
+再以 `130`／`143` 結束。不會繼續下一個 plan、apply、output 或 migration。
+一般命令失敗則保留該命令的非零 exit code。
+
+Phase 1 失敗時，已產生的 `terraform.tfstate` 與 `.backup` 會複製回
+bootstrap 目錄，原暫存目錄也保留。若複製失敗，錯誤訊息會指出原檔位置，
+不能把複製失敗當成已保存。Phase 2 開始後，canonical bootstrap 目錄可能
+已經有較新的 migration state；此時保留該檔及 Phase 1 原副本，不以舊副本
+覆蓋它。先檢查 state、backend 初始化結果及實際資源，再依狀態恢復，
+避免在沒有 state 的情況重跑 apply。這些檔案可能含敏感資料，應維持受控
+存取，不上傳一般 artifacts 或 Git。
+
+只有 remote migration 命令成功後才清除 local state 與暫存目錄。
+Root Terraform 的 backend 片段取自 `backend_config_hcl_example`，
+依 `var.environment` 輸出 dev／staging／prod prefix；output 失敗會停止，
+不套用預設 staging 值。
+
+離線回歸測試會執行真正的 Bash 腳本，以 Terraform stub 覆蓋 shell-only
+及 process-group 取消、provider 結束、state flush、部分 apply／migration
+失敗、相對路徑與三種環境，測試不呼叫 GCP：
+
+```bash
+uv run pytest -q infra/terraform/tests/test_bootstrap.py
+```
+
 ### 方法 B：標準 CLI 分步執行
 
 ```bash

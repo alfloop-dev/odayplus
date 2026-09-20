@@ -1,5 +1,9 @@
 # ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001: Ephemeral Staging Foundation & Durable State Remediation
 
+最新程式修正與驗證索引見 [第14次審查修復](REVIEW14_REPAIR_20260920.md)。
+下列既有 live receipts 保留其原始執行時間與範圍；離線 bootstrap 測試不代表
+API/Web 已部署或已有 live ALL_TRAFFIC readback。
+
 ## 任務摘要
 
 本任務針對 ODay Plus Ephemeral Staging 缺乏受治理的底層基礎設施 (Foundation) 與遠端 Durable State 的缺口進行全面修復：
