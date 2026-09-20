@@ -2438,13 +2438,35 @@ def escalated_lease_block(state: dict[str, Any], task: dict[str, Any]) -> dict[s
 @_entrypoint
 
 def build_dispatch_event(task: dict[str, Any], target_agent: str, reason: str, task_map: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    task_id = str(task.get("id") or "").strip()
+    head = (
+        str(task.get("head") or "").strip() or None
+        if "head" in task
+        else resolve_task_progress_head(task_id)
+    )
+    def _nonneg(val: Any) -> int:
+        try:
+            return max(0, int(val or 0))
+        except (TypeError, ValueError):
+            return 0
+
     task_payload = {
-        **task_progress_snapshot(task),
+        "id": task_id,
+        "status": str(task.get("status") or "").strip().lower(),
+        "owner": normalize_agent_id(str(task.get("owner") or "")),
+        "reviewer": normalize_agent_id(str(task.get("reviewer") or "")),
+        "priority": str(task.get("priority") or "").strip().upper(),
+        "title": str(task.get("title") or task.get("summary") or "").strip(),
+        "task_class": str(task.get("task_class") or "").strip().lower(),
+        "review_reopen_count": _nonneg(task.get("review_reopen_count")),
+        "review_churn_reassigned_at_count": _nonneg(task.get("review_churn_reassigned_at_count")),
+        "next": " ".join(str(task.get("next") or "").split()),
+        "head": head,
+        "pr_url": str(task.get("pr_url") or task.get("pr") or "").strip() or None,
         "artifacts": list(task.get("artifacts", []) or []),
         "last_update": task.get("last_update"),
     }
     for key in (
-        "task_class",
         "auto_generated",
         "helper_parent",
         "helper_kind",

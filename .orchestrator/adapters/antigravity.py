@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import model_rotation
@@ -203,7 +204,7 @@ class AntigravityAdapter(BaseAdapter):
             provider_id=provider_id,
             mode="antigravity",
             display_name=display_name,
-            command=command,
+            command=[sys.executable, str(Path(__file__).resolve().parents[1] / "agy_session.py"), "--", *command],
             notes="Antigravity CLI wake-up started in the background.",
             workspace_root=workspace_root,
             env_overrides=env_overrides,

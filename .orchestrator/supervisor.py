@@ -276,6 +276,7 @@ _FAILURE_HELPER_FUNCTIONS = [
 "is_claude_session_limit_banner",
 "is_cloud_run_quota_error",
 "is_human_gate_agent",
+"is_interrupted_failure_kind",
 "is_provider_config_failure_kind",
 "is_provider_unavailable_failure_kind",
 "is_retryable_capacity_failure_kind",
@@ -325,6 +326,8 @@ _FAILURE_HELPER_FUNCTIONS = [
 "task_progress_snapshot",
 "update_worker_runtime_markers",
 "worker_dispatch_task_snapshot",
+"worker_has_terminated_background_tasks",
+"BACKGROUND_TASK_TERMINATED_PATTERN",
 "worker_heartbeat_is_stale",
 "worker_is_review_dispatch",
 "worker_lease_expiry",
@@ -613,6 +616,7 @@ WORKER_FAILURE_PATTERNS = (
     re.compile(r"^Error loading config\.toml\b", re.IGNORECASE),
     re.compile(r"^An unexpected critical error occurred", re.IGNORECASE),
     re.compile(r"^(?:Error|error|fatal):", re.IGNORECASE),
+    re.compile(r"^terminating \d+ background task\(s\) on exit\b", re.IGNORECASE),
     PROVIDER_LAUNCHER_MISSING_PATTERN,
 )
 WORKER_FAILURE_FALSE_POSITIVE_PATTERNS = (
@@ -2372,6 +2376,7 @@ def start_worker_for_request(
     attempt_count: int,
     event_id_for_log: str | None,
     parent_run_id: str | None = None,
+    retry_count: int = 0,
     delivery_mode_override: str | None = None,
     activity_type: str = "worker_started",
     activity_message: str | None = None,
@@ -2497,7 +2502,8 @@ def start_worker_for_request(
         "metadata": result_metadata,
         "request_snapshot": request_snapshot(request),
         "parent_run_id": parent_run_id,
-        "retry_count": 0,
+        # Replacement runs continue the same retry budget, even after a restart.
+        "retry_count": retry_count,
         "next_retry_at": None,
         "last_error": None,
     }
@@ -2555,6 +2561,16 @@ def start_worker_for_request(
         },
         emit_activity=False,
     )
+    # The replacement and its parent's handoff must be persisted together.
+    # Otherwise a restart (or stale caller reference after save) leaves the
+    # already-due parent eligible to spawn a duplicate replacement.
+    parent = state["workers"].get(parent_run_id)
+    if isinstance(parent, dict) and activity_type in {"worker_retried", "worker_fallback_started"}:
+        parent["status"] = "retried" if activity_type == "worker_retried" else "fallback"
+        successor_key = "superseded_by_run_id" if activity_type == "worker_retried" else "fallback_run_id"
+        parent[successor_key] = worker_run_id
+        parent["last_event_at"] = now
+        parent["next_retry_at"] = None
     # Persist immediately after launch so a supervisor crash cannot orphan
     # a live worker before the end-of-tick state save.
     save_runtime_state(config, state)
