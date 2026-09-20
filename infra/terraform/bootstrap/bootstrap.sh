@@ -75,9 +75,13 @@ cleanup() {
     echo "RECOVERY GUIDANCE:" >&2
     echo "  1. Inspect state/backup files in the retained workspace: $PHASE1_DIR" >&2
     echo "  2. Do NOT blindly re-run bootstrap without state; inspect existing resources and state." >&2
-    echo "  3. To resume or destroy partially created resources, use:" >&2
-    echo "     terraform -chdir=\"$PHASE1_DIR\" plan -var-file=\"$VAR_FILE\"" >&2
-    echo "     or resume migration once bucket/connectivity is restored." >&2
+    if [ "$PHASE2_STARTED" -eq 1 ]; then
+      echo "  3. Inspect canonical state/backend in $SCRIPT_DIR and the remote object before resuming migration." >&2
+      echo "     Do not resume apply using the older Phase 1 copy." >&2
+    else
+      echo "  3. After inspecting state and resources, review a recovery plan:" >&2
+      echo "     terraform -chdir=\"$PHASE1_DIR\" plan -var-file=\"$VAR_FILE\"" >&2
+    fi
     echo "  4. Temporary workdir retained at: $PHASE1_DIR" >&2
   else
     # Only a successful remote migration authorizes removal of local state.
