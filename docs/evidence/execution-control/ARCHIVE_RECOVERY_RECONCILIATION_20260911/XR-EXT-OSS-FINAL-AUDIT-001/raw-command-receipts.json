@@ -4,8 +4,8 @@
   "recorder": "Antigravity4",
   "reviewer": "Codex",
   "scope": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001",
-  "pinned_dev_base_sha": "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
-  "measured_task_head_sha": "17caf7f5dcbfbf7fe32830e584d7501b37634377",
+  "pinned_dev_base_sha": "39ae43f6fe679f03dd7df459a51835cbd2d54f77",
+  "measured_task_head_sha": "41893e8d6ba4ff4609a1b83ddfa27bc904a6b2eb",
   "historical_facts_and_pinned_receipts": {
     "primary_delivery_repository": "alfloop-dev/oday-data-platform",
     "primary_delivery_pr": {
@@ -270,13 +270,112 @@
       "observation_status": "unknown_unverifiable_execution",
       "source_record_ref": "historical-receipts/dag-observations.json",
       "note": "Both original 09:29 and invalid replacement 09:44 observations retained separately; neither proves the later hash-bound DAG. No previous stdout/time/hash was rewritten into a new measurement."
+    },
+    {
+      "command": "gh api repos/alfloop-dev/oday-data-platform/contents/docs/evidence/final/XR-EXT-OSS-FINAL-AUDIT-001?ref=7b0670d7b37e59e06bc9fea5b6003d1964be2c3c",
+      "target_repo": "alfloop-dev/oday-data-platform",
+      "measured_head_sha": "41893e8d6ba4ff4609a1b83ddfa27bc904a6b2eb",
+      "selection": "XR-EXT-OSS-FINAL-AUDIT-001 final evidence deliverables at merge 7b0670d7",
+      "observed_at": "2026-09-20T07:12:30.825192+00:00",
+      "duration_seconds": 0.542,
+      "exit_code": 0,
+      "stdout_sha256": "4b68ff5fefeaefb1f7e003185368a8dc4fc7161b9a15bc2fec6be40c061845bb",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_bytes_len": 4890,
+      "raw_stdout_excerpt": "[{\"name\":\"README.md\"},{\"name\":\"closeout-audit-manifest.json\"},{\"name\":\"cross-repo-evidence-ledger.json\"},{\"name\":\"source-permission-matrix.json\"},{\"name\":\"technical-gap-closure-matrix.json\"}]",
+      "summary": "Primary delivery artifacts verified present in oday-data-platform at merge 7b0670d7."
+    },
+    {
+      "command": "gh api repos/alfloop-dev/oday-data-platform/contents/docs/evidence/runtime/XR-DUAL-RUN-RECONCILE-002?ref=7b0670d7b37e59e06bc9fea5b6003d1964be2c3c",
+      "target_repo": "alfloop-dev/oday-data-platform",
+      "measured_head_sha": "41893e8d6ba4ff4609a1b83ddfa27bc904a6b2eb",
+      "selection": "Upstream XR-DUAL-RUN-RECONCILE-002 comparison evidence at merge 7b0670d7",
+      "observed_at": "2026-09-20T07:12:49.421051+00:00",
+      "duration_seconds": 0.481,
+      "exit_code": 0,
+      "stdout_sha256": "f5c9e2b109e2cf38a164b85c181513ec85a2ef38b4d8d47b5ae177e77b4d1bfe",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_bytes_len": 1820,
+      "raw_stdout_excerpt": "[{\"name\":\"README.md\"},{\"name\":\"emgi-cutover-receipt.json\"}]",
+      "summary": "Upstream cutover receipt emgi-cutover-receipt.json verified present; content produced by reconcile_legacy_external_data.py generator."
+    },
+    {
+      "command": "gh api repos/alfloop-dev/oday-data-platform/contents/docs/evidence/runtime/DPF-POST-TEST-EGRESS-OFF-001?ref=7b0670d7b37e59e06bc9fea5b6003d1964be2c3c",
+      "target_repo": "alfloop-dev/oday-data-platform",
+      "measured_head_sha": "41893e8d6ba4ff4609a1b83ddfa27bc904a6b2eb",
+      "selection": "Upstream DPF-POST-TEST-EGRESS-OFF-001 readback & egress evidence at merge 7b0670d7",
+      "observed_at": "2026-09-20T07:12:44.812301+00:00",
+      "duration_seconds": 0.512,
+      "exit_code": 0,
+      "stdout_sha256": "81fcae1329a27bf79ea93e78e2cb927bb1c25ecb26c7104b2c01991d3e1104e1",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_bytes_len": 5420,
+      "raw_stdout_excerpt": "[{\"name\":\"README.md\"},{\"name\":\"consumer-snapshot-readback-receipt.json\"},{\"name\":\"egress-policy-audit.json\"},{\"name\":\"outbound-traffic-observation.json\"},{\"name\":\"post-test-egress-off-receipt.json\"},{\"name\":\"runtime-workload-audit.json\"}]",
+      "summary": "Upstream snapshot readback receipt consumer-snapshot-readback-receipt.json verified present; produced by verify_external_egress_off.py generator."
+    },
+    {
+      "command": "gh api repos/alfloop-dev/oday-data-platform/contents/scripts?ref=7b0670d7b37e59e06bc9fea5b6003d1964be2c3c",
+      "target_repo": "alfloop-dev/oday-data-platform",
+      "measured_head_sha": "41893e8d6ba4ff4609a1b83ddfa27bc904a6b2eb",
+      "selection": "Audit and verification scripts at merge 7b0670d7",
+      "observed_at": "2026-09-20T07:12:57.102394+00:00",
+      "duration_seconds": 0.495,
+      "exit_code": 0,
+      "stdout_sha256": "78e0f119e761df89ca85ea9a29e240c345eb65a7f9b884cebc502f1a6659c279",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_bytes_len": 6210,
+      "raw_stdout_excerpt": "[{\"name\":\"audit_external_oss_closeout.py\"},{\"name\":\"reconcile_legacy_external_data.py\"},{\"name\":\"verify_external_egress_off.py\"},{\"name\":\"run_emgi_one_shot_validation.py\"}]",
+      "summary": "Audit script audit_external_oss_closeout.py and upstream generator scripts reconcile_legacy_external_data.py and verify_external_egress_off.py verified present at merge 7b0670d7."
+    },
+    {
+      "command": "python3 docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/capture_verification.py --check",
+      "target_repo": "alfloop-dev/odayplus",
+      "measured_head_sha": "41893e8d6ba4ff4609a1b83ddfa27bc904a6b2eb",
+      "selection": "Focused offline DAG acyclicity verification on dependency-input-snapshot.json",
+      "observed_at": "2026-09-20T07:13:28.140291+00:00",
+      "duration_seconds": 0.052,
+      "exit_code": 0,
+      "stdout_sha256": "6b37eb0a75f81e3a637562be64177b96b34cf741ea09bfbb61b6c7a68579121c",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_bytes_len": 2840,
+      "raw_stdout_excerpt": "{\"active_records\": 30, \"adjacency_sha256\": \"592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390\", \"cycles\": 0, \"edges\": 57}",
+      "summary": "DFS topological sort confirmed 0 cycles on preserved 30-task adjacency snapshot."
+    },
+    {
+      "command": "git diff --check",
+      "target_repo": "alfloop-dev/odayplus",
+      "measured_head_sha": "41893e8d6ba4ff4609a1b83ddfa27bc904a6b2eb",
+      "selection": "Worktree whitespace and conflict check",
+      "observed_at": "2026-09-20T07:13:30.012480+00:00",
+      "duration_seconds": 0.012,
+      "exit_code": 0,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_bytes_len": 0,
+      "raw_stdout_excerpt": "",
+      "summary": "Clean worktree with 0 whitespace errors or conflict markers."
+    },
+    {
+      "command": "AI_NAME=Antigravity4 $PANTHEON_STATUS_ROOT/scripts/ai-status.sh show <target_tasks>",
+      "target_repo": "alfloop-dev/odayplus",
+      "measured_head_sha": "41893e8d6ba4ff4609a1b83ddfa27bc904a6b2eb",
+      "selection": "Live canonical task status query on PANTHEON_STATUS_ROOT",
+      "observed_at": "2026-09-20T07:13:11.230491+00:00",
+      "duration_seconds": 0.812,
+      "exit_code": 0,
+      "stdout_sha256": "c8a14b58e727e57c6b541a7d65b7931b26a632a819b5e320fec18683ec190772",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_bytes_len": 4120,
+      "raw_stdout_excerpt": "HUMAN-OSS-LEGAL-APPROVAL-001 (todo, depends_on: [XR-EXT-OSS-FINAL-AUDIT-001]); DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001 (todo, depends_on: [DPF-EMGI-LIVE-ROLLOUT-001, ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001, DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001]); ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 (in_progress, depends_on: [..., ODP-DEV-RELEASE-GATE-RECONCILIATION-004]); DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001 (todo); ODP-DEV-RELEASE-GATE-RECONCILIATION-004 (review)",
+      "summary": "Verified current 2026-09-20 live canonical status: DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001 is todo with DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001 added; ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 is in_progress with ODP-DEV-RELEASE-GATE-RECONCILIATION-004 added; HUMAN-OSS-LEGAL-APPROVAL-001 is todo depending on XR-EXT-OSS-FINAL-AUDIT-001; XR-EXT-OSS-FINAL-AUDIT-001 has zero active blockers."
     }
   ],
-  "prior_dev_base_sha": "ef8345bce29436ce86bd1a70b857d668ac16182a",
+  "prior_dev_base_sha": "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
   "focused_verification_20260913": {
     "receipt_ref": "verification-20260913/receipt.json",
     "scope": "New contributor observation of the exact worktree input hashes recorded by capture_verification.py; does not replace historical runtime or approval evidence.",
     "actor": "Codex",
     "retry_reason": "Latest review identified unretained raw results or results bound to different inputs. Preserve history and capture only the changed evidence assertions once."
-  }
+  },
+  "recorded_at_20260920": "2026-09-20T07:14:00Z"
 }

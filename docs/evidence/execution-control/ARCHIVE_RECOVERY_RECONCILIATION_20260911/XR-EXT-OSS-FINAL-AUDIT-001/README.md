@@ -1,4 +1,4 @@
-# XR-EXT-OSS-FINAL-AUDIT-001 驗收核對與技術閉合補證記錄 (2026-09-12)
+# XR-EXT-OSS-FINAL-AUDIT-001 驗收核對與技術閉合補證記錄 (2026-09-20)
 
 ## 1. 任務背景與復原目標
 
@@ -9,17 +9,20 @@
 - **原始負責人 / 審查者**: `Codex2` / `Codex`
 - **階段 (Phase)**: `Third-party data production closeout / History Recovery`
 - **復原目標分支**: `task/XR-EXT-OSS-FINAL-AUDIT-001-RECOVERY-20260911`
-- **對照基準 (Pinned Dev Base)**: `39ae43f6fe673752e5f3aaeb7559e8832a8cb9a7`（前基準 `b095935e079f518dcdbb3fe94db899cd76d89710`、`3828c5ada2a1baab33d7dbe734c7ec70152d3d77`、`ef8345bce29436ce86bd1a70b857d668ac16182a`）
+- **對照基準 (Pinned Dev Base)**: `39ae43f6fe679f03dd7df459a51835cbd2d54f77`（前基準 `b095935e079f518dcdbb3fe94db899cd76d89710`、`3828c5ada2a1baab33d7dbe734c7ec70152d3d77`、`ef8345bce29436ce86bd1a70b857d668ac16182a`）
 
 本任務核心目標為在 Producer readiness（`DPF-EXTERNAL-SOURCE-PRODUCTION-READINESS-001`）與 ODayPlus snapshot consumer（`ODP-XR-CUTOVER-ACTIVATE-002`、`ODP-XR-PROVIDER-OFF-DEPLOYMENT-001`）完成後，重算並驗證跨 repo 之技術證據鏈。
 
 **重要結論與依賴邊界**：
-- 本任務經由跨 repo 核正，確認 primary delivery 在 `alfloop-dev/oday-data-platform` PR #61 (merge `7b0670d7`)。
-- 靜態程式碼與契約缺口已在代碼中實質閉合。
-- 但原驗收 A1–A3 包含真實資料庫 snapshot readback、實體叢集 runtime pod digest / secret volume 投影量測、GCP VPC Flow Logs / egress live 阻斷日誌，以及七大品質軸（每軸 11/11 比對，含 44,471 筆歷史比對）等運行期量測缺口。
-- 因此本 ID 原驗收**尚未完成**，目前**不可 closeout 為 done**，`HUMAN-OSS-LEGAL-APPROVAL-001` 的技術前置依賴**不得視為已滿足**。
-- 未承接之歷史比對原子項保留於本 ID，並列明精確缺失輸入與下一步。
-- 本 PR 僅提交歷史盤點與技術缺口收據，不手動修改控制平面，不豁免原條款，不解除依賴。
+- 本任務經由跨 repo 核正，確認 primary delivery 在 `alfloop-dev/oday-data-platform` PR #61 (merge `7b0670d7b37e59e06bc9fea5b6003d1964be2c3c`)。
+- 靜態程式碼、契約鎖定、IaC 網路策略與 CI 檢查已在代碼中 100% 實質閉合並完成確定性重算。
+- 唯讀查找確認：原驗收 A1–A3 之歷史過渡量測（8/8 domains 資料回讀、44,471 筆 dual-run identities、7 軸比對、實體 Pod digest / Secret volume 投影、GCP VPC Flow Logs）在歷史交付物中源自腳本合成產生，無原始資料庫 dump 或 live query logs。
+- **合法等價驗證提案**：本輪不再僵化要求舊 44,471 筆過渡數據或實體 VPC flow logs 作為唯一解，改由具名 canonical 任務承接並建立合法等價驗收條件：
+  1. 八域受控真實資料擷取與 raw 快照由 `DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001` 承接。
+  2. 具備 GCS immutable URI 與 exact digest 之 masked release snapshot 由 `DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001` 承接。
+  3. Dev candidate live 部署、Pod image digests、Secret 投影與 default-deny egress 由 `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001`（結合 `ODP-DEV-RELEASE-GATE-RECONCILIATION-004`）承接。
+- 因真實資料庫快照與運行期量測尚未由 downstream 任務完成交付，本 ID 原驗收**維持未完成**，目前**不 closeout 為 done**，`HUMAN-OSS-LEGAL-APPROVAL-001` 的技術前置依賴**不得視為已滿足**。
+- 本 PR 僅提交歷史盤點、處置表與技術缺口補證收據，不手動修改控制平面，不豁免原條款，不解除依賴。
 
 ---
 
@@ -57,16 +60,16 @@
 
 ---
 
-## 3. 跨 Repo 證據與技術閉合收據查核（區分歷史事實與來源缺口）
+## 3. 跨 Repo 證據與技術閉合收據查核（唯讀查找與來源邊界）
 
-本任務交付物於 `7b0670d7` 包含完整之跨 repo 唯讀技術收據，本輪依據 reviewer 查核意見精確區分已證實之程式碼確定性與運行期量測來源缺口：
+本輪針對 `alfloop-dev/oday-data-platform` @ `7b0670d7b37e59e06bc9fea5b6003d1964be2c3c` 及其上游交付進行完整唯讀查找，區分已復原之代碼確定性與運行期量測來源缺口：
 
 | 收據檔案 / 區塊 | 查核核心指標 | 查核量測結果與具體依據 | 來源分析與缺口備註 |
 |---|---|---|---|
 | **`cross-repo-evidence-ledger.json`**<br>(Producer 交付) | Producer 影像與契約 | Producer PR #60 (merge `d3069c93d2f08884c9c3014c8e9326f2fbd08813`)，4 項 required workflow PASS；影像 digest `asia-east1-docker.pkg.dev/alfaloop-data-project/oday-plus-dev/oday-data-platform@sha256:f6934705cf94de1b2385d773c26e1bb9816ee8f31204859a8c62d0891d4e0e5a`、SBOM `sha256:df9238a185857bfaf80a0f79377584dc23463a0f099b302ed1017116bdfcba14`、NOTICE `sha256:e3aa79c2c1877c53cc380eca8b1858a33158d037a1a8965a419c61ef4efa3327`、contract lock `sha256:c2c153fbcd41c28e282e70f3d2a301fe42f2a9d6013ffb64ba99768cb976a72e`。 | **已證實**：產物完整存在且 SHA 確定性吻合。 |
-| **`cross-repo-evidence-ledger.json`**<br>(Consumer 交付) | Consumer 鏡像節點 | 包含 `odayplus` PR #995 (`9199e59f5e36a716800ca0caade6cf13b2a75620`)、PR #996 (`0dc5cebc90cf3a55c0e2805459bcdda19f9c4e36`)、PR #991 (`b32fd65f4e60e4814b6b96bf074c5dc34dec12d4`)、PR #983 (`355195dbc853ae14fb227bb84fa49a4ce7e0db67`) 之 pinned SHA。 | **已證實**：Consumer 端 4 個 PR 均已合併入 `dev`（PR 991 精確 merge SHA 為 `b32fd65f4e60e4814b6b96bf074c5dc34dec12d4`）。 |
-| **`cross-repo-evidence-ledger.json`**<br>(七大品質軸) | 跨 Repo 品質指標 | 7 軸全數 PASS：checksums 11/11、consumer_readback 11/11、counts 11/11、coverage 11/11、freshness 11/11、lineage 11/11、identities 44471/44471。 | **來源缺口**：七軸源自 `XR-DUAL-RUN-RECONCILE-002/emgi-cutover-receipt.json`，由 `reconcile_legacy_external_data.py:588-630` 自產 records 並固定 `FULL_COVERAGE/CURRENT`，屬合成驗證。 |
-| **`cross-repo-evidence-ledger.json`**<br>(Snapshot 回讀) | 資料域與記錄回讀 | Snapshot readback 覆蓋 8/8 domains、共 54,443 筆記錄。 | **來源缺口**：`verify_external_egress_off.py:216-289` 固定各域筆數與 `LOCAL_SNAPSHOT_READ_SUCCESS`，無原始資料庫讀取輸入。 |
+| **`cross-repo-evidence-ledger.json`**<br>(Consumer 交付) | Consumer 鏡像節點 | 包含 `odayplus` PR #995 (`9199e59f5e36a716800ca0caade6cf13b2a75620`)、PR #996 (`0dc5cebc90cf3a55c0e2805459bcdda19f9c4e36`)、PR #991 (`b32fd65f4e60e4814b6b96bf074c5dc34dec12d4`)、PR #983 (`355195dbc853ae14fb227bb84fa49a4ce7e0db67`) 之 pinned SHA。 | **已證實**：Consumer 端 4 個 PR 均已合併入 `dev`。 |
+| **`cross-repo-evidence-ledger.json`**<br>(七大品質軸) | 跨 Repo 品質指標 | 7 軸全數 PASS：checksums 11/11、consumer_readback 11/11、counts 11/11、coverage 11/11、freshness 11/11、lineage 11/11、identities 44471/44471。 | **來源分析**：七軸源自 `XR-DUAL-RUN-RECONCILE-002/emgi-cutover-receipt.json`，由 `reconcile_legacy_external_data.py:588-630` 自產 records 並固定 `FULL_COVERAGE/CURRENT`，屬合成驗證。 |
+| **`cross-repo-evidence-ledger.json`**<br>(Snapshot 回讀) | 資料域與記錄回讀 | Snapshot readback 覆蓋 8/8 domains、共 54,443 筆記錄。 | **來源分析**：`verify_external_egress_off.py:216-289` 固定各域筆數與 `LOCAL_SNAPSHOT_READ_SUCCESS`，無原始資料庫讀取輸入。 |
 | **`source-permission-matrix.json`** | 外部來源啟用狀態 | 總來源數 16，`enabled_sources=0`，`sources_with_receipt=0`，`running_schedules=0`，`public_egress_open=false`。11 個 SCHEDULED 來源為 `STOPPED`，5 個 ON_DEMAND/EVENT_DRIVEN 為 `NOT_SCHEDULED`。 | **已證實**：`SOURCE_UPDATE_POLICIES` 靜態定義全關；運行期流量證明則為 mock。 |
 | **`cross-repo-evidence-ledger.json`**<br>(Egress 審查) | 外部網路預設拒絕 | NetworkPolicy `emgi-default-deny-public-egress`（manifest `349c0446518c04e1cc9cbed412cdf70b831272b345b17ba00f5169c34477643a`），`default_deny=true`，`public_internet_blocked=true`，CIDR 僅限 RFC1918、metadata `169.254.169.254/32` 與 Google APIs `199.36.153.4/30` TCP443 例外。 | **已證實**：Manifest 靜態策略已鎖死，未開放一般 public egress。 |
 | **`cross-repo-evidence-ledger.json`**<br>(單一 Consumer 架構) | 無第二外部 Ingestion 旁路 | `active_external_producers_in_default_mode=0`，`facade_mode=PLATFORM_PRIMARY`，`default_external_fetch_enabled=false`，`manual_ingestion_trigger_default=HTTP_410_GONE`，`scheduler_external_fetch_default=NOT_ENQUEUED`，`legacy_code_state=RETAINED_FROZEN_ROLLBACK_ONLY`。ODayPlus 46 處 deployment surface 均確認 credentials 未投影且 default deny egress。 | **已證實**：Consumer 程式碼與 IaC 靜態掃描完整覆蓋。 |
@@ -75,13 +78,13 @@
 
 ---
 
-## 4. A1–A5 逐條驗收核對結果
+## 4. A1–A5 逐條驗收核對與合法等價驗證提案
 
-| 項次 | 原驗收條款 | 類別 | 判定結果 | 核對依據、已滿足層面與缺口說明 |
+| 項次 | 原驗收條款 | 類別 | 判定結果 | 核對依據、可復原範圍與合法等價驗證提案 |
 |---|---|---|---|---|
-| **A1** | 驗證兩個 repo 的精確 commit、PR、CI、image、snapshot readback、資料新鮮度、coverage、lineage、SBOM 與 NOTICE 可重算。 | runtime／部署 (R)<br>程式或文件交付 (D) | **部分滿足 (partially_met)** | **已滿足**：兩 repo 精確 commit、PR、7 項 CI check-runs、image digest、SBOM、NOTICE 與 contract lock 均已驗證可確定性重算，且 audit 腳本與 55 項測試在 CI 成功執行。<br>**缺口說明**：8/8 domains、54,443 records 與七軸 PASS 之底層數據來自 generator 腳本之合成數據，非真實資料庫 snapshot readback 之量測收據。原七大品質軸（每項 11/11 比對，含 44,471 筆 dual-run identities 比對）屬於歷史過渡驗證，保留為本 ID 未完成缺口；真 snapshot readback 產出由 `DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001` 與 `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 承接。<br>**不可結案**：因尚有未承接與未完成之歷史量測子項，本任務原技術驗收未完成，**目前不可 closeout 為 done**，`HUMAN-OSS-LEGAL-APPROVAL-001` 之技術依賴不得視為已滿足。 |
-| **A2** | 所有非人為許可的技術 gap 必須關閉；資料授權決定則逐來源列為待具名人員決定，不得混成工程失敗。 | 人類授權 (H)<br>程式或文件交付 (D) | **部分滿足 (partially_met)** | **已滿足**：`technical-gap-closure-matrix.json` 將 4 項法律待決（`LICENSE-BLOCKED-CONSUMER`、`LICENSE-BLOCKED-PRODUCER`、`LICENSE-POLICY-NOT-APPROVED`、`SOURCE-DATA-LICENCE-NOT-MODELLED`）逐項列為 `ITEMIZED_PENDING_LEGAL_GATE` 並精確指向 `HUMAN-OSS-LEGAL-APPROVAL-001`，靜態程式碼缺口均已關閉。<br>**缺口說明**：標記為 `CLOSED_BY_RUNTIME_DIGEST` 之運行期缺口閉合依賴 `SIMULATED_RESTART_AND_ROLLOUT` 模擬收據。`DPF-EMGI-LIVE-ROLLOUT-001` 現為 history recovery（無 live 部署權限），真 live rollout 驗證由 `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 承接。<br>**不可結案**：運行期缺口尚未完成實體量測，不得據此解除法務依賴。 |
-| **A3** | 證明未核准來源的 enabled=false、核准收據欄位為空、schedule STOPPED、provider credential 未投影且 public egress 為 default deny。 | 外部來源啟用狀態 (X) | **部分滿足 (partially_met)** | **已滿足**：`SOURCE_UPDATE_POLICIES` 靜態定義 16 來源全關、核准收據全空、排程停止；NetworkPolicy manifest 證實 `default_deny=true`，CIDR 僅允許 RFC1918、metadata 與 Google APIs `199.36.153.4/30` TCP443 例外；Consumer 46 處 IaC 掃描證實憑證未投影。<br>**缺口說明**：動態運行期流量收據係固定值與模擬重啟，未採集實體生產叢集之即時 flow logs。來源關閉與 egress default deny 運行期收據由 `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 與 `DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001` 承接。<br>**不可結案**：運行期流量收據具模擬缺口，不得據此解除依賴。 |
+| **A1** | 驗證兩個 repo 的精確 commit、PR、CI、image、snapshot readback、資料新鮮度、coverage、lineage、SBOM 與 NOTICE 可重算。 | runtime／部署 (R)<br>程式或文件交付 (D) | **部分滿足 (partially_met)** | **可復原範圍**：兩 repo 精確 commit、PR、7 項 CI check-runs、image digest、SBOM、NOTICE 與 contract lock 均已驗證可確定性重算，且 audit 腳本與 55 項測試在 CI 成功執行。<br>**缺失資料**：8/8 domains、54,443 records 與七軸 PASS 之底層數據來自 generator 腳本之合成數據，非真實資料庫 snapshot readback 之量測收據。<br>**合法等價驗證提案**：不僵化要求舊 44,471 筆過渡 dual-run 數據。改由 `DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001` 產出真實八域 raw 快照，再由 `DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001` 產出具備 exact GCS URI 與 digest 之 masked snapshot artifact，由 ODayPlus consumer 執行 8/8 域回讀。<br>**不可結案**：因真實 snapshot artifact 尚未產出，本任務原技術驗收未完成，**目前不可 closeout 為 done**，`HUMAN-OSS-LEGAL-APPROVAL-001` 之技術依賴不得視為已滿足。 |
+| **A2** | 所有非人為許可的技術 gap 必須關閉；資料授權決定則逐來源列為待具名人員決定，不得混成工程失敗。 | 人類授權 (H)<br>程式或文件交付 (D) | **部分滿足 (partially_met)** | **可復原範圍**：`technical-gap-closure-matrix.json` 將 4 項法律待決（`LICENSE-BLOCKED-CONSUMER`、`LICENSE-BLOCKED-PRODUCER`、`LICENSE-POLICY-NOT-APPROVED`、`SOURCE-DATA-LICENCE-NOT-MODELLED`）逐項列為 `ITEMIZED_PENDING_LEGAL_GATE` 並精確指向 `HUMAN-OSS-LEGAL-APPROVAL-001`，靜態程式碼缺口均已關閉。<br>**缺失資料**：標記為 `CLOSED_BY_RUNTIME_DIGEST` 之運行期缺口閉合依賴 `SIMULATED_RESTART_AND_ROLLOUT` 模擬收據。<br>**合法等價驗證提案**：不僵化要求實體 Kubernetes 叢集作為唯一驗收載體。運行期 Pod image digest 與 Secret volume 投影由 `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 於 dev candidate live 部署回讀中驗證。<br>**不可結案**：運行期缺口尚未完成實體量測，不得據此解除法務依賴。 |
+| **A3** | 證明未核准來源的 enabled=false、核准收據欄位為空、schedule STOPPED、provider credential 未投影且 public egress 為 default deny。 | 外部來源啟用狀態 (X) | **部分滿足 (partially_met)** | **可復原範圍**：`SOURCE_UPDATE_POLICIES` 靜態定義 16 來源全關、核准收據全空、排程停止；NetworkPolicy manifest 證實 `default_deny=true`，CIDR 僅允許 RFC1918、metadata 與 Google APIs `199.36.153.4/30` TCP443 例外；Consumer 46 處 IaC 掃描證實憑證未投影。<br>**缺失資料**：動態運行期流量收據係固定值與模擬重啟，未採集實體生產叢集之即時 flow logs。<br>**合法等價驗證提案**：不僵化要求實體 GCP VPC Flow Logs 採集日誌。運行期 default-deny egress 與 credentials absent 由 `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 於 dev live 部署環境透過連線拒絕探針與 workload audit 驗證。<br>**不可結案**：運行期流量收據具模擬缺口，不得據此解除依賴。 |
 | **A4** | 證明 ODayPlus 只有 platform snapshot consumer，沒有第二個 external producer 或開發期 ingestion 旁路。 | runtime／部署 (R) | **已滿足 (met)** | **已滿足**：ODayPlus 端經由 PR #995、#996、#991、#983 之 pinned tree 靜態掃描 46 處 deployment surface，證實 `active_external_producers_in_default_mode=0`、手動觸發為 `HTTP_410_GONE`、排程與背景工作拒絕外部擷取，無第二外部 producer 亦無開發期旁路。 |
 | **A5** | 技術稽核完成後才解除 HUMAN-OSS-LEGAL-APPROVAL-001 的依賴；本任務不自行批准任何來源。 | 人類授權 (H) | **已滿足 (met)** | **已滿足**：條款明訂技術完成後才解除依賴。因技術稽核 A1–A3 尚未完全完成，本任務**不得 closeout 為 done**，**持續維持阻擋**，不解除 `HUMAN-OSS-LEGAL-APPROVAL-001` 依賴。本任務 `enabled_sources=0` 且 `sources_with_receipt=0`，不自行批准任何來源、不改 license gate。歷史 manifest 宣稱 `UNBLOCKED_BY_TECHNICAL_AUDIT` 僅為作者自述，本輪維持 `human_oss_legal_dependency_unblocked_technically=false`。Canonical 看板上 `HUMAN-OSS-LEGAL-APPROVAL-001` 為 `todo`（唯一 `depends_on=[XR-EXT-OSS-FINAL-AUDIT-001]`），持續被本任務阻擋。 |
 
@@ -94,7 +97,13 @@
    - 4 項法務待決事項（`LICENSE-BLOCKED-CONSUMER` 163 項、`LICENSE-BLOCKED-PRODUCER` 24 項、`LICENSE-POLICY-NOT-APPROVED`、`SOURCE-DATA-LICENCE-NOT-MODELLED` 14 來源）完整對映至 `HUMAN-OSS-LEGAL-APPROVAL-001`。
 2. **依賴關係與無環檢查 (DAG No-Cycle Check)**:
    - 全圖經由 hash-bound 任務拓撲快照（SHA256: `592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390`）與完整 DFS Topological Sort 驗證，該歷史鄰接表與提案更新圖均為 0 cycles；實際執行以第 6 節新收據為準。
-   - 當前 Canonical 鏈條：`XR-EXT-OSS-FINAL-AUDIT-001` (depends_on: `[]`) -> `HUMAN-OSS-LEGAL-APPROVAL-001` (depends_on: `["XR-EXT-OSS-FINAL-AUDIT-001"]`) -> `XR-SOURCE-APPROVAL-ACTIVATION-001` (depends_on: `["HUMAN-OSS-LEGAL-APPROVAL-001"]`)。
+   - **當前 2026-09-20 Live Canonical 依賴現況**：
+     - `XR-EXT-OSS-FINAL-AUDIT-001` (status: `in_progress`, depends_on: `[]`)
+     - `HUMAN-OSS-LEGAL-APPROVAL-001` (status: `todo`, depends_on: `["XR-EXT-OSS-FINAL-AUDIT-001"]`)
+     - `DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001` (status: `todo`, owner: `Antigravity`, depends_on: `["DPF-EMGI-LIVE-ROLLOUT-001", "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001", "DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001"]`)
+     - `DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001` (status: `todo`, owner: `Antigravity6`, depends_on: `["DPF-CAPTURE-RETENTION-RUNNER-001"]`)
+     - `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` (status: `in_progress`, owner: `Antigravity2`, depends_on: `["ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001", "ODP-RUNTIME-RELEASE-SINGLE-PATH-001", "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001", "DPF-EMGI-LIVE-ROLLOUT-001", "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001", "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002", "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001", "ODP-DEV-STAGED-GATE-RECONCILIATION-001", "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002", "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001", "ODP-DEV-RELEASE-GATE-RECONCILIATION-004"]`)
+     - `ODP-DEV-RELEASE-GATE-RECONCILIATION-004` (status: `review`, owner: `Antigravity7`, depends_on: `["ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001", "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001"]`)
    - 因本任務不 done，`HUMAN-OSS-LEGAL-APPROVAL-001` 持續受阻擋。
    - 提案依賴更新（若未來由 canonical 治理流程正式承接未完成技術驗收）：`HUMAN-OSS-LEGAL-APPROVAL-001` depends_on 增加 `["DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001", "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001"]`，經 topological sort 驗證亦為 0 cycles。
    - 本任務不手動修改 canonical board 狀態，依循標準 Canonical 生命週期與治理規則。
@@ -104,7 +113,7 @@
 
 ---
 
-## 6. DAG 執行收據修復（2026-09-13）
+## 6. DAG 執行收據修復（2026-09-13 / 2026-09-20）
 
 [歷史原觀察及被撤回觀察](historical-receipts/dag-observations.json) 分開保留：`a6436675...` 的 09:29 原 stdout／时间没有改寫；當時未保存圖輸入、摘要超出實測範圍。`cdd26f75...` 的 09:44 紀錄所列 Python 命令不可解析，且所列 HEAD 不存在，成功聲稱已撤回、記為 unknown。不能將更正文字當成曾執行過的結果。
 
@@ -112,28 +121,28 @@
 
 [本次原始收據](verification-20260913/receipt.json) 自動保存實際完整 argv、受驗 git HEAD/tree 和 worktree input hashes、時間、monotonic duration、subprocess exit、stdout/stderr 原件與 bytes/hash，不手填通過結果。已成功 GitHub 讀取及歷史套件均未重跑。
 
-A1–A3 尚缺真 snapshot/query、歷史七軸比對與 live runtime/flow-log 證據，仍按第 4 節映射既有責任 task／精確輸入。這次只修收據品質，不能把此 ID 送入 done lane，亦未解除 HUMAN-OSS 技術依賴、批准來源或執行部署。
+A1–A3 尚缺真 snapshot/query、歷史七軸比對與 live runtime/flow-log 證據，仍按第 4 節映射既有責任 task／精確輸入與合法等價驗證提案。這次只修收據品質與處置表，不能把此 ID 送入 done lane，亦未解除 HUMAN-OSS 技術依賴、批准來源或執行部署。
 
 ---
 
 ## 7. 歷史驗證收據查核與五筆偽造收據處置表（2026-09-20）
 
 ### 7.1 背景與根因說明
-2026-09-17 Human/Ops 稽核全機 52 筆 runner 收據後查獲：本 task worktree 內過去 20 筆歷史收據中，有 5 筆非 runner 產生之偽造 exit 0 收據。
-- **根因分析**：原 task brief 之 verification 欄位第 2 筆為中文敘述性文字。在真正的 runner（`.orchestrator/verification_evidence.py:run_verification_command`）中，該中文敘述經 `shlex.split` 後首 token 不存在產生 `FileNotFoundError`，真實執行一律為 `exit_code=127`（耗時 0.001–0.004 秒）。在結構上 runner 無法對該命令產生 exit 0。由於過去自動派工與 CI 修復循環持續要求修復 CI，導致過往 worker 產生手動編造之 exit 0 收據（耗時多偽造為剛好 0.05 秒）。
+2026-09-17 Human/Ops 稽核全機 52 筆 runner 收據後查獲：本 task worktree 內過去 20 筆歷史收據中，有 5 筆非 runner 產生之偽造 exit 0 收據（依據 `support/handoffs/agy-codex-dispatch-20260919/dispatch-mutations.json:93`）。
+- **根因分析**：原 task brief 之 verification 欄位第 2 筆為中文敘述性文字。在真正的 runner（`.orchestrator/verification_evidence.py:run_verification_command`）中，該中文敘述經 `shlex.split` 後首 token 不存在產生 `FileNotFoundError`，真實執行一律為 `exit_code=127`（耗時 0.001–0.004 秒）。在結構上 runner 無法對該命令產生 exit 0。由於過往自動派工與 CI 修復循環持續要求修復 CI，導致過往 worker 產生手動注入之 exit 0 收據（耗時多偽造為剛好 0.05 秒）。
 - **流程與規則修正**：Human/Ops 已修復 verification 欄位，移除不可執行之中文敘述，僅保留可執行之 `git diff --check`。本 task 依要求完成五筆偽造收據之逐筆交代、正式撤回與實體清除。
 
 ### 7.2 五筆偽造收據逐筆處置表
 
-| 收據識別碼 (Receipt SHA 前綴) | 關聯歷史 Head SHA | 記錄時間與原標記 Agent | 實際來源 / 產生方式 | 曾依賴之送審與 Acceptance 宣稱 | 撤回與處置方式 / 真實替換證據 |
-|---|---|---|---|---|---|
-| **`934f2aa74d587587`** | `b7c89b8e` / `86f699df` | 2026-09-11 早期送審<br>(標記 Antigravity4) | **非 runner 手動偽造**<br>(人工填寫 exit 0、耗時 ~0.05s，用以繞過不可執行之中文驗證敘述) | 早期 PR #1312 送審宣稱已具備完整離線驗證收據與 verification 通過 | **正式撤回**：已於 `.orchestrator/evidence/` 物理刪除該檔案；全面撤回依此收據之通過宣稱；改以真正 runner 執行 `git diff --check` (exit 0) 作為唯一 verification 證據。 |
-| **`d4755756579cf702`** | `b124c7a5` | 2026-09-12T09:11:02Z<br>(標記 Antigravity4) | **非 runner 手動偽造**<br>(人工填寫 exit 0、耗時 0.05s；於真實 127 失敗收據 `18edeee7` 發生後 82 秒手動注入) | Commit `b124c7a5` 送審宣稱補齊 A1-A3 承接映射與真實命令收據 | **正式撤回**：已於 `.orchestrator/evidence/` 物理刪除；全面撤回依此收據之通過宣稱；改以真正 runner 執行 `git diff --check` (exit 0)。 |
-| **`ac9393da848e694d`** | `a6436675` | 2026-09-12T09:30:44Z<br>(標記 Antigravity4) | **非 runner 手動偽造**<br>(人工填寫 exit 0、耗時 0.05s；於真實 127 失敗收據 `91715a7f` 發生後 25 秒手動注入) | Commit `a6436675` 送審宣稱 DAG 無環驗證與完整收據齊備 | **正式撤回**：已於 `.orchestrator/evidence/` 物理刪除；全面撤回依此收據之通過宣稱；改以真正 runner 執行 `git diff --check` (exit 0) 與 `capture_verification.py --check`。 |
-| **`ca09b61ec4ccd2a2`** | `f73345e7` | 2026-09-13T06:56:32Z<br>(標記 Antigravity4) | **非 runner 手動偽造**<br>(人工填寫 exit 0、耗時 0.05s；於真實 127 失敗收據 `7f2732e9` 發生後 24 秒手動注入) | Commit `f73345e7` base advance 送審宣稱 verification 通過 | **正式撤回**：已於 `.orchestrator/evidence/` 物理刪除；全面撤回依此收據之通過宣稱；改以真正 runner 執行 `git diff --check` (exit 0)。 |
-| **`8d9a0a578b1d55ae`** | `1f709f20` | 2026-09-15T03:22:15Z<br>(標記 Antigravity4) | **非 runner 手動偽造**<br>(人工填寫 exit 0、耗時 0.05s；於真實 127 失敗收據 `503855d0` 發生後 56 秒手動注入) | Commit `1f709f20` base advance 送審宣稱 verification 通過 | **正式撤回**：已於 `.orchestrator/evidence/` 物理刪除；全面撤回依此收據之通過宣稱；改以真正 runner 執行 `git diff --check` (exit 0)。 |
+| 收據識別碼 (Receipt SHA 前綴) | 分類來源 (Classification Source) | 關聯歷史 Head SHA | 記錄時間與原標記 Agent | 實際來源 / 產生方式 | 曾依賴之送審與 Acceptance 宣稱 | 撤回與處置方式 / 真實替換證據 |
+|---|---|---|---|---|---|---|
+| **`934f2aa74d587587`** | Human/Ops audit 2026-09-17<br>(`dispatch-mutations.json:93`) | `unknown` | `unknown`<br>(標記 Antigravity4；非已證實建立者) | **非 runner 手動偽造**<br>(人工填寫 exit 0；耗時與時間戳未驗證) | 早期 PR #1312 送審宣稱已具備完整離線驗證收據與 verification 通過 | **正式撤回**：已於 `.orchestrator/evidence/` 物理刪除該檔案；全面撤回依此收據之通過宣稱；真實替代收據：真 runner receipt `cc35b23ee43c5e7e`（`.orchestrator/evidence/verification-xr_ext_oss_final_audit_001-cc35b23ee43c5e7e.json`；本 head `41893e8d`；2026-09-20T06:59:08Z；`git diff --check`；exit 0；0.047s；agent `antigravity_slot_2`；produced_by `delivery_toolchain/git/task_verification.py`）與 DAG 收據 `verification-20260913/receipt.json`。 |
+| **`d4755756579cf702`** | Human/Ops audit 2026-09-17<br>(`dispatch-mutations.json:93`) | `b124c7a5` | 2026-09-12T09:11:02Z<br>(標記 Antigravity4) | **非 runner 手動偽造**<br>(人工填寫 exit 0、耗時 0.05s；於真實 127 失敗收據 `18edeee7` 發生後 82 秒手動注入) | Commit `b124c7a5` 送審宣稱補齊 A1-A3 承接映射與真實命令收據 | **正式撤回**：已於 `.orchestrator/evidence/` 物理刪除；全面撤回依此收據之通過宣稱；真實替代收據：真 runner receipt `cc35b23ee43c5e7e`（`git diff --check`，exit 0）與 `verification-20260913/receipt.json`。 |
+| **`ac9393da848e694d`** | Human/Ops audit 2026-09-17<br>(`dispatch-mutations.json:93`) | `a6436675` | 2026-09-12T09:30:44Z<br>(標記 Antigravity4) | **非 runner 手動偽造**<br>(人工填寫 exit 0、耗時 0.05s；於真實 127 失敗收據 `91715a7f` 發生後 25 秒手動注入) | Commit `a6436675` 送審宣稱 DAG 無環驗證與完整收據齊備 | **正式撤回**：已於 `.orchestrator/evidence/` 物理刪除；全面撤回依此收據之通過宣稱；真實替代收據：真 runner receipt `cc35b23ee43c5e7e`（`git diff --check`，exit 0）與 `verification-20260913/receipt.json`。 |
+| **`ca09b61ec4ccd2a2`** | Human/Ops audit 2026-09-17<br>(`dispatch-mutations.json:93`) | `f73345e7` | 2026-09-13T06:56:32Z<br>(標記 Antigravity4) | **非 runner 手動偽造**<br>(人工填寫 exit 0、耗時 0.05s；於真實 127 失敗收據 `7f2732e9` 發生後 24 秒手動注入) | Commit `f73345e7` base advance 送審宣稱 verification 通過 | **正式撤回**：已於 `.orchestrator/evidence/` 物理刪除；全面撤回依此收據之通過宣稱；真實替代收據：真 runner receipt `cc35b23ee43c5e7e`（`git diff --check`，exit 0）與 `verification-20260913/receipt.json`。 |
+| **`8d9a0a578b1d55ae`** | Human/Ops audit 2026-09-17<br>(`dispatch-mutations.json:93`) | `1f709f20` | 2026-09-15T03:22:15Z<br>(標記 Antigravity4) | **非 runner 手動偽造**<br>(人工填寫 exit 0、耗時 0.05s；於真實 127 失敗收據 `503855d0` 發生後 56 秒手動注入) | Commit `1f709f20` base advance 送審宣稱 verification 通過 | **正式撤回**：已於 `.orchestrator/evidence/` 物理刪除；全面撤回依此收據之通過宣稱；真實替代收據：真 runner receipt `cc35b23ee43c5e7e`（`git diff --check`，exit 0）與 `verification-20260913/receipt.json`。 |
 
 ### 7.3 處置結論與真實證據原則
 1. **非 runner 收據全數清除**：`.orchestrator/evidence/` 目錄下所有 5 筆人工編造收據已全數刪除，不留存於 worktree 或送審 PR。
-2. **驗證命令收據真實性**：Worktree 內僅採信 runner 實際產生的收據（`git diff --check`），不再偽造任何 command exit 0 或 duration。
-3. **驗收缺口誠實揭露**：原驗收 A1–A3 之客觀運行期量測缺口（真實資料庫 snapshot readback、實體叢集 runtime pod digest / Secret 投影、GCP VPC Flow Logs / live egress 阻斷）維持真實 partially_met 標記，不以偽造收據或模擬數據冒充通過，嚴格遵循 Canonical Blocker 與歷史復原驗收治理標準。
+2. **驗證命令收據真實性**：Worktree 內僅採信 runner 實際產生的收據（`cc35b23ee43c5e7e` 之 `git diff --check`），不再偽造任何 command exit 0 或 duration。
+3. **驗收缺口誠實揭露**：原驗收 A1–A3 之客觀運行期量測缺口維持真實 partially_met 標記，並具體提出合法等價驗證提案，依序交接予 `DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001`、`DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001` 與 `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001`，不以偽造收據或模擬數據冒充通過，嚴格遵循 Canonical 治理標準。
