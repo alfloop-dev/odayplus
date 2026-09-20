@@ -22,7 +22,9 @@ if str(SCRIPTS_DIR) not in sys.path:
 import runtime_state
 import supervisor
 import worker_failure_policy
+import worker_runner
 import worker_workspace
+import worktree_cleanliness
 from adapters.base import DeliveryRequest
 from worktree_cleanliness import inspect_worktree
 
@@ -3177,6 +3179,877 @@ while True:
             "After crash + reload, handoff_authorization must be present in the task record"
         )
         self.assertEqual(reloaded_auth.get("authorized_successor"), reassigned_to)
+
+
+class AgyBackgroundExitRecoveryTests(unittest.TestCase):
+    """Regression tests for agy background task termination, snapshot stability, and failure classification."""
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.status_file = Path(self.tmpdir.name) / "ai-status.json"
+        self.status_file.write_text(json.dumps({"tasks": []}), encoding="utf-8")
+        self.config: dict[str, Any] = {
+            "paths": {
+                "status_file": str(self.status_file),
+                "activity_log": str(Path(self.tmpdir.name) / "activity.jsonl"),
+            },
+            "worker_retry": {
+                "max_attempts": 3,
+                "transient_error_patterns": ["retryablequotaerror", "resource_exhausted"],
+            },
+            "provider_guardrails": {
+                "pause_on_capacity_failure": True,
+                "pause_on_auth_failure": True,
+                "generic_exit_reassign_after": 2,
+            },
+            "providers": {
+                "antigravity": {"dispatch_group": "antigravity"},
+                "codex": {"dispatch_group": "codex"},
+                "claude": {"dispatch_group": "claude"},
+            },
+            "agents": {
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity", "account_pool": "antigravity"},
+                "antigravity2": {"display_name": "Antigravity2", "provider": "antigravity", "account_pool": "antigravity"},
+                "antigravity3": {"display_name": "Antigravity3", "provider": "antigravity", "account_pool": "antigravity"},
+                "antigravity7": {"display_name": "Antigravity7", "provider": "antigravity", "account_pool": "antigravity"},
+                "codex": {"display_name": "Codex", "provider": "codex", "account_pool": "codex"},
+                "codex2": {"display_name": "Codex2", "provider": "codex", "account_pool": "codex"},
+                "claude": {"display_name": "Claude", "provider": "claude", "account_pool": "claude"},
+            },
+            "account_pools": {
+                "antigravity": {
+                    "enabled": True,
+                    "max_concurrent": 2,
+                    "providers": ["antigravity"],
+                },
+                "codex": {
+                    "enabled": True,
+                    "max_concurrent": 2,
+                    "providers": ["codex"],
+                },
+            },
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 2,
+                "reassign_on_terminal_failure": True,
+                "eligible_statuses": ["todo", "in_progress", "review", "review_approved"],
+            },
+        }
+
+    def tearDown(self) -> None:
+        self.tmpdir.cleanup()
+
+    def _make_worker_log(self, text: str) -> tuple[tempfile.TemporaryDirectory, dict[str, Any]]:
+        tmpdir = tempfile.TemporaryDirectory()
+        log_path = Path(tmpdir.name) / "worker.log"
+        log_path.write_text(text, encoding="utf-8")
+        worker = {
+            "run_id": "run-agy-test-001",
+            "task_id": "ODP-AGY-BACKGROUND-EXIT-RECOVERY-001",
+            "provider": "antigravity",
+            "agent_id": "Antigravity7",
+            "log_path": str(log_path),
+            "pid": 999999,
+        }
+        return tmpdir, worker
+
+    def test_worker_with_terminated_background_tasks_is_interrupted_not_success(self) -> None:
+        """A worker exiting 0 whose log contains background task termination must be detected as interrupted failure."""
+        log_text = (
+            "I have launched the test command and am waiting for it to complete.\n"
+            "root agent idle; waiting up to 5s for 1 background task(s)\n"
+            "terminating 1 background task(s) on exit\n"
+        )
+        tmpdir, worker = self._make_worker_log(log_text)
+        try:
+            worker["exit_code"] = 0
+            worker["runner_status"] = "completed"
+            self.assertTrue(worker_failure_policy.worker_has_terminated_background_tasks(worker))
+            self.assertFalse(worker_failure_policy.is_structured_successful_worker(worker))
+            self.assertFalse(worker_failure_policy.worker_log_scan_should_be_skipped(worker))
+
+            reason = worker_failure_policy.detect_worker_failure(worker)
+            self.assertIsNotNone(reason)
+            self.assertIn("agy background lifecycle interrupted:", reason)
+
+            failure = worker_failure_policy.classify_worker_failure(self.config, worker, reason)
+            self.assertEqual(failure.get("kind"), "interrupted")
+            self.assertTrue(failure.get("transient"))
+            self.assertTrue(worker_failure_policy.is_interrupted_failure_kind(failure.get("kind")))
+            self.assertFalse(worker_failure_policy.should_pause_dispatch_for_failure_kind(failure.get("kind")))
+        finally:
+            tmpdir.cleanup()
+
+    def test_stream_session_errors_are_authoritative_but_tool_quotes_are_not(self) -> None:
+        for error in ("authentication failed", "quota exceeded", "You have exhausted your capacity on this model."):
+            with self.subTest(error=error):
+                tmpdir, worker = self._make_worker_log(json.dumps({
+                    "event": "result", "result": {"status": "ERROR", "error": error},
+                }) + "\n")
+                try:
+                    worker.update(runner_status="failed", exit_code=1)
+                    reason = worker_failure_policy.detect_worker_failure(worker)
+                    self.assertEqual(reason, "Error: " + error)
+                finally:
+                    tmpdir.cleanup()
+        for event in (
+            {"event": "step_update", "step_update": {"tool_info": {"output": "quota exceeded"}}},
+            {"event": "result", "result": {"status": "SUCCESS", "response": "Earlier log: quota exceeded"}},
+        ):
+            tmpdir, worker = self._make_worker_log(json.dumps(event) + "\n")
+            try:
+                worker.update(runner_status="failed", exit_code=1)
+                self.assertIsNone(worker_failure_policy.detect_worker_failure(worker))
+            finally:
+                tmpdir.cleanup()
+
+    def test_absent_or_invalid_session_receipt_preserves_legacy_authority(self) -> None:
+        marker = Path(self.tmpdir.name) / 'runner.json'
+        session = Path(str(marker) + '.agy.json')
+        log = Path(self.tmpdir.name) / 'legacy.log'
+        for content in (None, '{broken', '[]', 'null', '"scalar"'):
+            with self.subTest(content=content):
+                session.unlink(missing_ok=True)
+                if content is not None:
+                    session.write_text(content)
+                log.write_text('')
+                worker = {'provider': 'antigravity', 'status': 'running',
+                          'runner_status': 'failed', 'exit_code': 75,
+                          'runner_status_path': str(marker), 'log_path': str(log)}
+                self.assertFalse(supervisor.is_structured_successful_worker(worker))
+                worker.update(runner_status='completed', exit_code=0)
+                self.assertTrue(supervisor.is_structured_successful_worker(worker))
+                log.write_text('terminating 1 background task(s) on exit\n')
+                self.assertFalse(supervisor.is_structured_successful_worker(worker))
+                self.assertIn('agy background lifecycle interrupted', supervisor.detect_worker_failure(worker))
+        session.unlink()
+        session.mkdir()  # Unreadable as a receipt: IsADirectoryError.
+        self.assertTrue(supervisor.worker_has_terminated_background_tasks(worker))
+
+    def test_stream_receipt_overrides_prose_but_not_other_providers(self) -> None:
+        marker = Path(self.tmpdir.name) / "runner.json"
+        session = Path(str(marker) + ".agy.json")
+        session.write_text(json.dumps({"transport": "agy_stream_json", "status": "interrupted"}))
+        worker = {"provider": "antigravity", "runner_status_path": str(marker),
+                  "runner_status": "completed", "exit_code": 0}
+        self.assertFalse(worker_failure_policy.is_structured_successful_worker(worker))
+        reason = worker_failure_policy.detect_worker_failure(worker)
+        self.assertEqual(worker_failure_policy.classify_worker_failure(self.config, worker, reason)["kind"], "interrupted")
+        worker["provider"] = "codex"
+        self.assertTrue(worker_failure_policy.is_structured_successful_worker(worker))
+
+    def test_other_provider_quoting_plain_agy_marker_is_success(self) -> None:
+        tmpdir, worker = self._make_worker_log("terminating 1 background task(s) on exit\n")
+        try:
+            worker.update(provider="codex", runner_status="completed", exit_code=0)
+            self.assertTrue(worker_failure_policy.is_structured_successful_worker(worker))
+            self.assertIsNone(worker_failure_policy.detect_worker_failure(worker))
+        finally:
+            tmpdir.cleanup()
+
+    def test_dirty_handoff_budget_survives_owner_alias_change(self) -> None:
+        state = {}
+        worker = {"task_id": "TASK-ALIAS-DIRT", "run_id": "first"}
+        task = {"owner": "Antigravity"}
+        seal = worker_workspace.WorkerHandoffSeal(
+            accepted=False, reason="owner_dirty", detail="unchanged file",
+            head_sha="a" * 40, dirt_fingerprint="same-dirt",
+        )
+        for i, owner in enumerate(("Antigravity", "Antigravity2", "Antigravity3"), 1):
+            task["owner"] = owner
+            worker_workspace.record_unsealed_worker_handoff(self.config, state, worker, task, seal)
+            self.assertEqual(state["worker_worktrees"]["handoff_blocks"]["TASK-ALIAS-DIRT"]["rejection_count"], i)
+        changed = seal._replace(head_sha="b" * 40)
+        worker_workspace.record_unsealed_worker_handoff(self.config, state, worker, task, changed)
+        self.assertEqual(state["worker_worktrees"]["handoff_blocks"]["TASK-ALIAS-DIRT"]["rejection_count"], 1)
+
+    def test_task_progress_snapshot_ignores_ephemeral_fields_and_notes(self) -> None:
+        """task_progress_snapshot must only track durable progress (head, pr_url, artifacts), not notes or assignments."""
+        task_dispatched = {
+            "id": "TASK-TEST-001",
+            "head": "a" * 40,
+            "status": "todo",
+            "owner": "Antigravity7",
+            "reviewer": "Codex2",
+            "priority": "P1",
+            "title": "Old title",
+            "task_class": "ops",
+            "review_reopen_count": 0,
+            "review_churn_reassigned_at_count": 0,
+            "next": "Waiting for worker to start.",
+        }
+        task_autostarted_with_note = {
+            "id": "TASK-TEST-001",
+            "head": "a" * 40,
+            "status": "in_progress",
+            "owner": "Antigravity2",
+            "reviewer": "Codex",
+            "priority": "P2",
+            "title": "New title",
+            "task_class": "feature",
+            "review_reopen_count": 1,
+            "review_churn_reassigned_at_count": 1,
+            "next": "Supervisor auto-started TASK-TEST-001 after successful dispatch.",
+        }
+        snap_disp = worker_failure_policy.task_progress_snapshot(task_dispatched)
+        snap_curr = worker_failure_policy.task_progress_snapshot(task_autostarted_with_note)
+        self.assertEqual(snap_disp, snap_curr)
+        self.assertEqual(
+            worker_failure_policy.task_progress_fingerprint(task_dispatched),
+            worker_failure_policy.task_progress_fingerprint(task_autostarted_with_note),
+        )
+
+        worker = {
+            "request_snapshot": {
+                "reason": "owned_in_progress_dispatch",
+                "metadata": {"task": task_dispatched},
+            }
+        }
+        outcome = worker_failure_policy.successful_worker_exit_outcome(
+            worker,
+            task_autostarted_with_note,
+            terminal_statuses={"done", "review_approved"},
+        )
+        self.assertEqual(outcome, "no_progress")
+
+    def test_task_progress_snapshot_detects_head_pr_and_artifact_advancement(self) -> None:
+        """Durable changes like new git HEAD, PR URL, or artifacts must yield incremental_progress."""
+        task_dispatched = {
+            "id": "TASK-TEST-001",
+            "head": "a" * 40,
+            "status": "in_progress",
+        }
+        worker = {
+            "request_snapshot": {
+                "reason": "owned_in_progress_dispatch",
+                "metadata": {"task": task_dispatched},
+            }
+        }
+
+        # Case 1: New commit HEAD (e.g. anchor commit)
+        task_new_head = {"id": "TASK-TEST-001", "head": "b" * 40, "status": "in_progress"}
+        self.assertEqual(
+            worker_failure_policy.successful_worker_exit_outcome(
+                worker, task_new_head, terminal_statuses={"done", "review_approved"}
+            ),
+            "incremental_progress",
+        )
+
+        # Case 2: New PR URL
+        task_new_pr = {
+            "id": "TASK-TEST-001",
+            "head": "a" * 40,
+            "status": "in_progress",
+            "pr_url": "https://github.com/alfloop-dev/odayplus/pull/999",
+        }
+        self.assertEqual(
+            worker_failure_policy.successful_worker_exit_outcome(
+                worker, task_new_pr, terminal_statuses={"done", "review_approved"}
+            ),
+            "incremental_progress",
+        )
+
+        # Case 3: New artifact
+        task_new_artifact = {
+            "id": "TASK-TEST-001",
+            "head": "a" * 40,
+            "status": "in_progress",
+            "artifacts": ["services/new_feature.py"],
+        }
+        self.assertEqual(
+            worker_failure_policy.successful_worker_exit_outcome(
+                worker, task_new_artifact, terminal_statuses={"done", "review_approved"}
+            ),
+            "incremental_progress",
+        )
+
+    def test_subcommand_outcomes_and_classifications(self) -> None:
+        """Verify short success, >5s success, nonzero exit, and cancellation classification."""
+        # 1. Short command success
+        short_success_log = "Running quick check...\nCheck completed successfully in 0.4s.\n"
+        tmpdir, worker = self._make_worker_log(short_success_log)
+        try:
+            worker["exit_code"] = 0
+            worker["runner_status"] = "completed"
+            self.assertFalse(worker_failure_policy.worker_has_terminated_background_tasks(worker))
+            self.assertTrue(worker_failure_policy.is_structured_successful_worker(worker))
+            self.assertIsNone(worker_failure_policy.detect_worker_failure(worker))
+        finally:
+            tmpdir.cleanup()
+
+        # 2. >5s command success (e.g. 25s test suite)
+        long_success_log = (
+            "Running full test suite...\n"
+            "manage_task(Action=status) -> RUNNING\n"
+            "manage_task(Action=status) -> DONE\n"
+            "77 passed, 20 subtests passed in 25.23s\n"
+        )
+        tmpdir, worker = self._make_worker_log(long_success_log)
+        try:
+            worker["exit_code"] = 0
+            worker["runner_status"] = "completed"
+            self.assertFalse(worker_failure_policy.worker_has_terminated_background_tasks(worker))
+            self.assertTrue(worker_failure_policy.is_structured_successful_worker(worker))
+            self.assertIsNone(worker_failure_policy.detect_worker_failure(worker))
+        finally:
+            tmpdir.cleanup()
+
+        # 3. Nonzero exit
+        nonzero_log = "Running test suite...\nError: test execution failed with exit code 1\n"
+        tmpdir, worker = self._make_worker_log(nonzero_log)
+        try:
+            worker["exit_code"] = 1
+            worker["runner_status"] = "failed"
+            self.assertFalse(worker_failure_policy.is_structured_successful_worker(worker))
+            reason = worker_failure_policy.detect_worker_failure(worker)
+            self.assertIsNotNone(reason)
+            self.assertIn("Error: test execution failed", reason)
+        finally:
+            tmpdir.cleanup()
+
+        # 4. Context canceled / background task terminated on exit
+        canceled_log = (
+            "Running long command...\n"
+            "root agent idle; waiting up to 5s for 1 background task(s)\n"
+            "terminating 1 background task(s) on exit\n"
+        )
+        tmpdir, worker = self._make_worker_log(canceled_log)
+        try:
+            worker["exit_code"] = 0
+            worker["runner_status"] = "completed"
+            self.assertTrue(worker_failure_policy.worker_has_terminated_background_tasks(worker))
+            self.assertFalse(worker_failure_policy.is_structured_successful_worker(worker))
+            reason = worker_failure_policy.detect_worker_failure(worker)
+            self.assertIsNotNone(reason)
+            failure = worker_failure_policy.classify_worker_failure(self.config, worker, reason)
+            self.assertEqual(failure.get("kind"), "interrupted")
+            self.assertTrue(failure.get("transient"))
+        finally:
+            tmpdir.cleanup()
+
+    def test_successful_worker_exit_outcome_review_and_lifecycle_decisions(self) -> None:
+        """Verify review decisions, owner-to-review transitions, and terminal lifecycle completions."""
+        review_worker = {
+            "request_snapshot": {
+                "reason": "status:review",
+                "metadata": {"task": {"id": "TASK-REV-001", "status": "review"}},
+            }
+        }
+        # Reviewer reopens to in_progress -> review_decided
+        self.assertEqual(
+            worker_failure_policy.successful_worker_exit_outcome(
+                review_worker,
+                {"id": "TASK-REV-001", "status": "in_progress"},
+                terminal_statuses={"done", "review_approved"},
+            ),
+            "review_decided",
+        )
+        # Reviewer blocks task -> review_decided
+        self.assertEqual(
+            worker_failure_policy.successful_worker_exit_outcome(
+                review_worker,
+                {"id": "TASK-REV-001", "status": "blocked"},
+                terminal_statuses={"done", "review_approved"},
+            ),
+            "review_decided",
+        )
+        # Reviewer leaves task in review (no decision) -> no_progress
+        self.assertEqual(
+            worker_failure_policy.successful_worker_exit_outcome(
+                review_worker,
+                {"id": "TASK-REV-001", "status": "review"},
+                terminal_statuses={"done", "review_approved"},
+            ),
+            "no_progress",
+        )
+
+        owner_worker = {
+            "request_snapshot": {
+                "reason": "owned_in_progress_dispatch",
+                "metadata": {"task": {"id": "TASK-OWN-001", "status": "in_progress"}},
+            }
+        }
+        # Owner submits to review -> lifecycle_complete
+        self.assertEqual(
+            worker_failure_policy.successful_worker_exit_outcome(
+                owner_worker,
+                {"id": "TASK-OWN-001", "status": "review"},
+                terminal_statuses={"done", "review_approved"},
+            ),
+            "lifecycle_complete",
+        )
+        # Owner reaches review_approved -> lifecycle_complete
+        self.assertEqual(
+            worker_failure_policy.successful_worker_exit_outcome(
+                owner_worker,
+                {"id": "TASK-OWN-001", "status": "review_approved"},
+                terminal_statuses={"done", "review_approved"},
+            ),
+            "lifecycle_complete",
+        )
+        # Owner reaches done -> lifecycle_complete
+        self.assertEqual(
+            worker_failure_policy.successful_worker_exit_outcome(
+                owner_worker,
+                {"id": "TASK-OWN-001", "status": "done"},
+                terminal_statuses={"done", "review_approved"},
+            ),
+            "lifecycle_complete",
+        )
+
+    def test_real_subcommand_lifecycle_and_duration_receipts(self) -> None:
+        """Run real subprocess commands via worker_runner to verify exit code, duration, and terminal receipts."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            heartbeat_path = temp_path / "heartbeat.json"
+            status_path = temp_path / "status.json"
+
+            # 1. Real short command success
+            cmd_short = [sys.executable, "-c", "import sys, time; time.sleep(0.05); sys.exit(0)"]
+            ret = worker_runner.main([
+                "--run-id", "test-run-short",
+                "--heartbeat-path", str(heartbeat_path),
+                "--status-path", str(status_path),
+                "--heartbeat-interval-seconds", "1.0",
+                "--", *cmd_short,
+            ])
+            self.assertEqual(ret, 0)
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            self.assertEqual(status.get("status"), "completed")
+            self.assertEqual(status.get("exit_code"), 0)
+            self.assertIsNotNone(status.get("duration_seconds"))
+            self.assertGreaterEqual(status.get("duration_seconds", 0), 0.04)
+
+            # 2. Real >5s command success
+            cmd_long = [sys.executable, "-c", "import sys, time; time.sleep(5.1); sys.exit(0)"]
+            ret = worker_runner.main([
+                "--run-id", "test-run-long",
+                "--heartbeat-path", str(heartbeat_path),
+                "--status-path", str(status_path),
+                "--heartbeat-interval-seconds", "1.0",
+                "--", *cmd_long,
+            ])
+            self.assertEqual(ret, 0)
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            self.assertEqual(status.get("status"), "completed")
+            self.assertEqual(status.get("exit_code"), 0)
+            self.assertGreaterEqual(status.get("duration_seconds", 0), 5.0)
+
+            # 3. Real nonzero exit command
+            cmd_fail = [sys.executable, "-c", "import sys, time; time.sleep(0.05); sys.exit(42)"]
+            ret = worker_runner.main([
+                "--run-id", "test-run-fail",
+                "--heartbeat-path", str(heartbeat_path),
+                "--status-path", str(status_path),
+                "--heartbeat-interval-seconds", "1.0",
+                "--", *cmd_fail,
+            ])
+            self.assertEqual(ret, 42)
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            self.assertEqual(status.get("status"), "failed")
+            self.assertEqual(status.get("exit_code"), 42)
+
+    def test_log_quotation_provenance_filtering(self) -> None:
+        """Verify user/tool/fixture quotations of termination markers do not override real structured success."""
+        # 1. Log with user JSON record quoting background task termination
+        user_quoted_log = (
+            '{"type": "user", "message": {"role": "user", "content": "Fix: terminating 1 background task(s) on exit"}}\n'
+            '{"type": "assistant", "message": {"role": "assistant", "content": "I fixed the issue."}}\n'
+        )
+        tmpdir, worker = self._make_worker_log(user_quoted_log)
+        try:
+            worker["exit_code"] = 0
+            worker["runner_status"] = "completed"
+            # Provenance filtering ignores user quotation
+            self.assertFalse(worker_failure_policy.worker_has_terminated_background_tasks(worker))
+            self.assertTrue(worker_failure_policy.is_structured_successful_worker(worker))
+            self.assertIsNone(worker_failure_policy.detect_worker_failure(worker))
+        finally:
+            tmpdir.cleanup()
+
+        # 2. Log with tool command output quoting termination marker
+        tool_quoted_log = (
+            "exited 0 in 1.2s:\n"
+            "stdout: log shows terminating 2 background task(s) on exit in old test run\n"
+        )
+        tmpdir, worker = self._make_worker_log(tool_quoted_log)
+        try:
+            worker["exit_code"] = 0
+            worker["runner_status"] = "completed"
+            self.assertFalse(worker_failure_policy.worker_has_terminated_background_tasks(worker))
+            self.assertTrue(worker_failure_policy.is_structured_successful_worker(worker))
+            self.assertIsNone(worker_failure_policy.detect_worker_failure(worker))
+        finally:
+            tmpdir.cleanup()
+
+        # 3. Real authoritative CLI background task termination line
+        real_termination_log = (
+            "root agent idle; waiting up to 5s for 1 background task(s)\n"
+            "terminating 1 background task(s) on exit\n"
+        )
+        tmpdir, worker = self._make_worker_log(real_termination_log)
+        try:
+            worker["exit_code"] = 0
+            worker["runner_status"] = "completed"
+            self.assertTrue(worker_failure_policy.worker_has_terminated_background_tasks(worker))
+            self.assertFalse(worker_failure_policy.is_structured_successful_worker(worker))
+            reason = worker_failure_policy.detect_worker_failure(worker)
+            self.assertIsNotNone(reason)
+            failure = worker_failure_policy.classify_worker_failure(self.config, worker, reason)
+            self.assertEqual(failure.get("kind"), "interrupted")
+            self.assertTrue(failure.get("transient"))
+        finally:
+            tmpdir.cleanup()
+
+    def test_two_due_retries_persist_handoffs_before_another_tick(self) -> None:
+        from datetime import UTC, datetime
+
+        from adapters.base import DeliveryResult
+
+        self.config['paths'].update(state_file=str(Path(self.tmpdir.name) / 'state.json'),
+                                    event_queue=str(Path(self.tmpdir.name) / 'queue.jsonl'))
+        state = {'workers': {}}
+        for index in range(2):
+            request = DeliveryRequest(agent_id='antigravity', provider='antigravity',
+                                      delivery_mode='antigravity', message='fixture',
+                                      task_id=f'TASK-RETRY-{index}', reason='owned_in_progress_dispatch')
+            event_id = f'event-{index}'
+            runtime_state.enqueue_event(self.config, {
+                'event_id': event_id, 'target_agent': 'antigravity', 'provider': 'antigravity',
+                'task_id': request.task_id, 'reason': request.reason, 'message': request.message})
+            state['workers'][f'parent-{index}'] = {
+                'run_id': f'parent-{index}', 'provider': 'antigravity',
+                'task_id': request.task_id, 'queue_event_id': event_id,
+                'request_snapshot': supervisor.request_snapshot(request),
+                'status': 'retry_backoff', 'retry_count': 1, 'attempt_count': 1,
+                'next_retry_at': '2000-01-01T00:00:00Z',
+            }
+        with (
+            mock.patch.object(supervisor, 'build_adapter') as adapter,
+            mock.patch.object(supervisor, 'provider_auth_identity_hash', return_value='fixture'),
+            mock.patch.object(supervisor, 'save_runtime_state', side_effect=runtime_state.save_runtime_state),
+            mock.patch.object(supervisor, 'write_activity_log'),
+            mock.patch.object(supervisor, 'record_worker_runtime_measurement'),
+        ):
+            adapter.return_value.deliver.side_effect = [
+                DeliveryResult(ok=True, adapter='antigravity', mode='antigravity', target='fixture',
+                               auto_delivered=True, manual_confirmation_required=False,
+                               run_id=f'child-{index}') for index in range(2)]
+            self.assertTrue(supervisor.retry_due_workers(self.config, state, {}, datetime.now(UTC)))
+            # Read the file written during child launch, before any outer tick save.
+            persisted = json.loads(Path(self.config['paths']['state_file']).read_text())
+            for index in range(2):
+                parent = persisted['workers'][f'parent-{index}']
+                self.assertEqual(parent['status'], 'retried')
+                self.assertEqual(parent['superseded_by_run_id'], f'child-{index}')
+                self.assertIsNone(parent['next_retry_at'])
+                self.assertEqual(persisted['workers'][f'child-{index}']['retry_count'], 1)
+            state = runtime_state.load_runtime_state(self.config)
+            for _ in range(3):
+                self.assertFalse(supervisor.retry_due_workers(self.config, state, {}, datetime.now(UTC)))
+            self.assertEqual(adapter.return_value.deliver.call_count, 2)
+
+    def test_real_retry_replacements_exhaust_across_aliases_and_restart(self) -> None:
+        from datetime import UTC, datetime, timedelta
+        from types import SimpleNamespace
+
+        from adapters.base import DeliveryResult
+
+        task = {'id': 'TASK-RETRY-CHAIN', 'owner': 'Antigravity',
+                'reviewer': 'Codex2', 'status': 'in_progress'}
+        aliases = ['antigravity', 'antigravity2', 'antigravity3']
+        self.config['worker_retry'].update(max_attempts=2, fallback_mode='file_inbox')
+        self.config['paths'].update(state_file=str(Path(self.tmpdir.name) / 'state.json'),
+                                    event_queue=str(Path(self.tmpdir.name) / 'queue.jsonl'))
+        for agent in self.config['agents'].values():
+            agent['adapter'] = 'antigravity'
+        for alias in aliases:
+            runtime_state.enqueue_event(self.config, {
+                'event_id': f'event-{alias}', 'target_agent': alias, 'provider': 'antigravity',
+                'task_id': task['id'], 'reason': 'owned_in_progress_dispatch', 'message': 'fixture'})
+        state = {'workers': {}}
+        reason = 'agy background lifecycle interrupted: command_exit_unknown'
+        deliveries = []
+
+        def deliver(request, mode):
+            deliveries.append(request.agent_id)
+            return DeliveryResult(ok=True, adapter=mode, mode=mode,
+                                  target='fixture', auto_delivered=mode != 'file_inbox',
+                                  manual_confirmation_required=mode == 'file_inbox',
+                                  run_id=f'run-{len(deliveries)}')
+
+        def persist(_config, **kwargs):
+            task.update(owner=kwargs['new_owner'], reviewer=kwargs['new_reviewer'],
+                        status=kwargs.get('new_status') or task['status'])
+            return True
+
+        with (
+            mock.patch.object(supervisor, 'build_adapter', side_effect=lambda mode, **kw:
+                              SimpleNamespace(deliver=lambda req: deliver(req, mode))),
+            mock.patch.object(supervisor, 'provider_auth_identity_hash', return_value='fixture'),
+            mock.patch.object(supervisor, 'save_runtime_state', side_effect=runtime_state.save_runtime_state),
+            mock.patch.object(supervisor, 'write_activity_log'),
+            mock.patch.object(supervisor, 'record_worker_runtime_measurement'),
+            mock.patch.object(supervisor, 'load_status', return_value={'tasks': [task]}),
+            mock.patch.object(supervisor, 'persist_task_reassignment', side_effect=persist),
+            mock.patch.object(supervisor, 'get_agent_reassignment_candidates',
+                              return_value=['Antigravity', 'Antigravity2', 'Antigravity3']),
+        ):
+            for alias in aliases:
+                self.assertEqual(task['owner'].lower(), alias)
+                task['status'] = 'in_progress'
+                request = DeliveryRequest(agent_id=alias, provider='antigravity',
+                                          delivery_mode='antigravity', message='fixture',
+                                          task_id=task['id'], reason='owned_in_progress_dispatch')
+                ok, run_id, _ = supervisor.start_worker_for_request(
+                    self.config, state, {}, request, queue_event_id=f'event-{alias}',
+                    attempt_count=1, event_id_for_log=None)
+                self.assertTrue(ok)
+                for generation in range(3):
+                    worker = state['workers'][run_id]
+                    self.assertEqual(worker['retry_count'], generation)
+                    worker_failure_policy.record_task_failure_streak(
+                        state, worker, reason, failure_kind='interrupted')
+                    outcome = supervisor.maybe_trigger_retry_or_fallback(
+                        self.config, state, {}, worker, reason)
+                    worker = state['workers'][run_id]
+                    if generation < 2:
+                        self.assertEqual(outcome, (True, True))
+                        self.assertEqual(worker['status'], 'retry_backoff')
+                        # A supervisor restart must not give the next run a fresh budget.
+                        state = json.loads(json.dumps(state))
+                        self.assertTrue(supervisor.retry_due_workers(
+                            self.config, state, {}, datetime.now(UTC) + timedelta(days=1)))
+                        parent = state['workers'][run_id]
+                        self.assertEqual(parent['status'], 'retried')
+                        run_id = parent['superseded_by_run_id']
+                    elif alias != aliases[-1]:
+                        self.assertEqual(outcome, (True, True))
+                        self.assertEqual(worker['status'], 'reassigned')
+                    else:
+                        self.assertEqual(outcome, (True, True))
+                        self.assertEqual(worker['status'], 'fallback')
+                        fallback_id = worker['fallback_run_id']
+                        self.assertEqual(state['workers'][fallback_id]['retry_count'], 2)
+                        self.assertEqual(state['workers'][fallback_id]['status'], 'manual_pending')
+                self.assertEqual(len(deliveries), 3 * (aliases.index(alias) + 1) + (alias == aliases[-1]))
+            self.assertFalse(supervisor.retry_due_workers(
+                self.config, state, {}, datetime.now(UTC) + timedelta(days=1)))
+            report = {'agent_adapters': {alias: {'can_auto_deliver': True,
+                                                'delivery_mode': 'antigravity'} for alias in aliases}}
+            fresh_inbox = {**state['workers'][fallback_id], 'retry_count': 0}
+            self.assertTrue(supervisor.manual_pending_inbox_can_auto_redeliver(
+                self.config, state, report, fresh_inbox))
+            persisted = json.loads(Path(self.config['paths']['state_file']).read_text())
+            self.assertEqual(persisted['workers'][run_id]['status'], 'fallback')
+            self.assertEqual(persisted['workers'][run_id]['fallback_run_id'], fallback_id)
+            # Exercise deployed poll -> inbox recovery -> queue repeatedly with
+            # actual save/reload (which replaces nested state dictionaries).
+            with mock.patch.object(supervisor, 'load_approval_state', return_value={'pending': [], 'history': []}):
+                for _ in range(3):
+                    supervisor.poll_workers(self.config, state, report)
+                    supervisor.process_queue(self.config, state, report)
+                    runtime_state.save_runtime_state(self.config, state)
+                    state = runtime_state.load_runtime_state(self.config)
+                    self.assertEqual(state['workers'][fallback_id]['status'], 'manual_pending')
+                    self.assertEqual(state['workers'][run_id]['status'], 'fallback')
+                    self.assertEqual(len(deliveries), 10)
+        self.assertEqual(deliveries, [alias for alias in aliases for _ in range(3)] + [aliases[-1]])
+        streaks = state['provider_guardrails']['task_failure_streaks']
+        self.assertEqual([streaks[f"{task['id']}:{alias}"]['count'] for alias in aliases], [3, 3, 3])
+
+    def test_cross_alias_repeated_failure_exhaustion(self) -> None:
+        """Verify cross-alias failures accumulate durable task streaks and cleanly exhaust fallback candidates."""
+        state: dict[str, Any] = {"provider_guardrails": {"task_failure_streaks": {}, "dispatch_pauses": {}}}
+        task_id = "TASK-ALIAS-001"
+        task = {
+            "id": task_id,
+            "status": "in_progress",
+            "owner": "Antigravity",
+            "reviewer": "Codex2",
+        }
+        status_data = {"tasks": [task]}
+        self.status_file.write_text(json.dumps(status_data), encoding="utf-8")
+
+        # 1. Antigravity fails
+        w1 = {"task_id": task_id, "provider": "antigravity", "logical_agent_id": "antigravity", "run_id": "run-1"}
+        worker_failure_policy.record_task_failure_streak(state, w1, "terminating 1 background task(s) on exit", failure_kind="interrupted")
+        worker_failure_policy.record_task_failure_streak(state, w1, "terminating 1 background task(s) on exit", failure_kind="interrupted")
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"][f"{task_id}:antigravity"]["count"], 2)
+
+        with (
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+            mock.patch("status_transition.sync_status_pipeline", return_value=True),
+        ):
+            # Reassignment triggers from Antigravity -> Antigravity2
+            reassigned_owner = worker_failure_policy.maybe_reassign_task_after_worker_failure(
+                self.config, state, w1, "terminating 1 background task(s) on exit", terminal=True
+            )
+            self.assertEqual(reassigned_owner, "Antigravity2")
+            # Streak for antigravity is preserved (not cleared)
+            self.assertIn(f"{task_id}:antigravity", state["provider_guardrails"]["task_failure_streaks"])
+
+            # 2. Antigravity2 fails on same unprogressed task
+            task["owner"] = "Antigravity2"
+            self.status_file.write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+            w2 = {"task_id": task_id, "provider": "antigravity", "logical_agent_id": "antigravity2", "run_id": "run-2"}
+            worker_failure_policy.record_task_failure_streak(state, w2, "terminating 1 background task(s) on exit", failure_kind="interrupted")
+            worker_failure_policy.record_task_failure_streak(state, w2, "terminating 1 background task(s) on exit", failure_kind="interrupted")
+            self.assertEqual(state["provider_guardrails"]["task_failure_streaks"][f"{task_id}:antigravity2"]["count"], 2)
+
+            # Reassignment from Antigravity2: Antigravity is excluded because it already failed
+            reassigned_owner_2 = worker_failure_policy.maybe_reassign_task_after_worker_failure(
+                self.config, state, w2, "terminating 1 background task(s) on exit", terminal=True
+            )
+            self.assertNotIn(reassigned_owner_2, {"Antigravity", "Antigravity2"})
+            self.assertEqual(reassigned_owner_2, "Antigravity3")
+
+    def test_same_dirty_fingerprint_redispatch_and_handoff_bounds(self) -> None:
+        """Verify unsealed handoff recording, same dirty fingerprint redispatch, and rejection boundaries."""
+        state: dict[str, Any] = {"worker_worktrees": {"handoff_blocks": {}}}
+        worker = {
+            "run_id": "run-dirty-001",
+            "task_id": "TASK-DIRTY-001",
+            "workspace_path": "/tmp/test-worktree",
+            "workspace_branch": "task/TASK-DIRTY-001",
+        }
+        task = {"id": "TASK-DIRTY-001", "owner": "Antigravity7", "status": "in_progress"}
+        seal = worker_workspace.WorkerHandoffSeal(
+            accepted=False,
+            reason="owner_dirty",
+            detail="1 dirty change: modified_file.py",
+            head_sha="a" * 40,
+            dirt_fingerprint="fingerprint-xyz-123",
+        )
+        worker_workspace.record_unsealed_worker_handoff(self.config, state, worker, task, seal)
+        self.assertIn("TASK-DIRTY-001", state["worker_worktrees"]["handoff_blocks"])
+        block = state["worker_worktrees"]["handoff_blocks"]["TASK-DIRTY-001"]
+        self.assertEqual(block["dirt_fingerprint"], "fingerprint-xyz-123")
+        self.assertEqual(block["head_sha"], "a" * 40)
+        self.assertEqual(block["owner"], "Antigravity7")
+
+        req_same_owner = DeliveryRequest(
+            task_id="TASK-DIRTY-001",
+            agent_id="Antigravity7",
+            provider="antigravity",
+            delivery_mode="antigravity",
+            message="wake",
+            reason="owned_in_progress_dispatch",
+        )
+        fake_path = Path("/tmp/test-worktree")
+        mock_insp = mock.Mock(kind="owner_dirty", fingerprint="fingerprint-xyz-123")
+        with (
+            mock.patch.object(worktree_cleanliness, "inspect_worktree", return_value=mock_insp),
+            mock.patch.object(worker_workspace, "inspect_worktree", return_value=mock_insp),
+            mock.patch.object(worker_workspace, "_git_commit_oid", return_value="a" * 40),
+            mock.patch.object(supervisor, "_git_commit_oid", return_value="a" * 40),
+        ):
+            # 1. Same owner, matching dirty fingerprint & HEAD -> allowed
+            allowed, detail = worker_workspace.sealed_owner_continuation_allowed(
+                self.config,
+                state,
+                req_same_owner,
+                task,
+                target_agent="Antigravity7",
+                worktree_path=fake_path,
+                branch="task/TASK-DIRTY-001",
+            )
+            self.assertTrue(allowed, f"Expected allowed, got detail: {detail}")
+            self.assertEqual(detail, "1 dirty change: modified_file.py")
+
+            # 2. Different target agent (alias or another agent) -> rejected
+            allowed, detail = worker_workspace.sealed_owner_continuation_allowed(
+                self.config,
+                state,
+                req_same_owner,
+                task,
+                target_agent="Codex2",
+                worktree_path=fake_path,
+                branch="task/TASK-DIRTY-001",
+            )
+            self.assertFalse(allowed)
+            self.assertEqual(detail, "not_same_owner")
+
+        # 3. Changed dirt fingerprint -> rejected
+        mock_diff_insp = mock.Mock(kind="owner_dirty", fingerprint="different-fingerprint")
+        with (
+            mock.patch.object(worktree_cleanliness, "inspect_worktree", return_value=mock_diff_insp),
+            mock.patch.object(worker_workspace, "inspect_worktree", return_value=mock_diff_insp),
+            mock.patch.object(worker_workspace, "_git_commit_oid", return_value="a" * 40),
+            mock.patch.object(supervisor, "_git_commit_oid", return_value="a" * 40),
+        ):
+            allowed, detail = worker_workspace.sealed_owner_continuation_allowed(
+                self.config,
+                state,
+                req_same_owner,
+                task,
+                target_agent="Antigravity7",
+                worktree_path=fake_path,
+                branch="task/TASK-DIRTY-001",
+            )
+            self.assertFalse(allowed)
+            self.assertEqual(detail, "dirt_changed")
+
+    def test_repeated_unsealed_handoff_rejection_exhaustion(self) -> None:
+        """Verify repeated unsealed handoffs increment rejection_count and halt when exceeding bounds."""
+        state: dict[str, Any] = {"worker_worktrees": {"handoff_blocks": {}}}
+        worker = {
+            "run_id": "run-dirty-001",
+            "task_id": "TASK-DIRTY-BOUND-001",
+            "workspace_path": "/tmp/test-worktree",
+            "workspace_branch": "task/TASK-DIRTY-BOUND-001",
+        }
+        task = {"id": "TASK-DIRTY-BOUND-001", "owner": "Antigravity7", "status": "in_progress"}
+        seal = worker_workspace.WorkerHandoffSeal(
+            accepted=False,
+            reason="owner_dirty",
+            detail="1 dirty change: modified_file.py",
+            head_sha="b" * 40,
+            dirt_fingerprint="fingerprint-abc-456",
+        )
+
+        # 1st rejection
+        worker_workspace.record_unsealed_worker_handoff(self.config, state, worker, task, seal)
+        self.assertEqual(state["worker_worktrees"]["handoff_blocks"]["TASK-DIRTY-BOUND-001"]["rejection_count"], 1)
+
+        req = DeliveryRequest(
+            task_id="TASK-DIRTY-BOUND-001",
+            agent_id="Antigravity7",
+            provider="antigravity",
+            delivery_mode="antigravity",
+            message="wake",
+            reason="owned_in_progress_dispatch",
+        )
+        fake_path = Path("/tmp/test-worktree")
+        mock_insp = mock.Mock(kind="owner_dirty", fingerprint="fingerprint-abc-456")
+        with (
+            mock.patch.object(worktree_cleanliness, "inspect_worktree", return_value=mock_insp),
+            mock.patch.object(worker_workspace, "inspect_worktree", return_value=mock_insp),
+            mock.patch.object(worker_workspace, "_git_commit_oid", return_value="b" * 40),
+            mock.patch.object(supervisor, "_git_commit_oid", return_value="b" * 40),
+        ):
+            # Continuation allowed on 1st rejection
+            allowed, _ = worker_workspace.sealed_owner_continuation_allowed(
+                self.config, state, req, task, target_agent="Antigravity7", worktree_path=fake_path, branch="task/TASK-DIRTY-BOUND-001"
+            )
+            self.assertTrue(allowed)
+
+            # 2nd rejection (same dirt fingerprint & head)
+            worker_workspace.record_unsealed_worker_handoff(self.config, state, worker, task, seal)
+            self.assertEqual(state["worker_worktrees"]["handoff_blocks"]["TASK-DIRTY-BOUND-001"]["rejection_count"], 2)
+            allowed, _ = worker_workspace.sealed_owner_continuation_allowed(
+                self.config, state, req, task, target_agent="Antigravity7", worktree_path=fake_path, branch="task/TASK-DIRTY-BOUND-001"
+            )
+            self.assertTrue(allowed)
+
+            # 3rd rejection -> exceeds max_unsealed_handoff_attempts (default 2)
+            worker_workspace.record_unsealed_worker_handoff(self.config, state, worker, task, seal)
+            self.assertEqual(state["worker_worktrees"]["handoff_blocks"]["TASK-DIRTY-BOUND-001"]["rejection_count"], 3)
+            allowed, detail = worker_workspace.sealed_owner_continuation_allowed(
+                self.config, state, req, task, target_agent="Antigravity7", worktree_path=fake_path, branch="task/TASK-DIRTY-BOUND-001"
+            )
+            self.assertFalse(allowed)
+            self.assertIn("unsealed_handoff_limit_exceeded", detail)
 
 
 if __name__ == "__main__":

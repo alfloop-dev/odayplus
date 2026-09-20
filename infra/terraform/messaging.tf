@@ -1,25 +1,25 @@
 resource "google_pubsub_topic" "jobs" {
   name         = "${local.name_prefix}-jobs"
   labels       = local.labels
-  kms_key_name = google_kms_crypto_key.runtime.id
+  kms_key_name = module.runtime_foundation.kms_crypto_key_id
 
   message_storage_policy {
     allowed_persistence_regions = [var.region]
   }
 
-  depends_on = [google_kms_crypto_key_iam_member.pubsub]
+  depends_on = [module.runtime_foundation]
 }
 
 resource "google_pubsub_topic" "dead_letter" {
   name         = "${local.name_prefix}-jobs-dlq"
   labels       = local.labels
-  kms_key_name = google_kms_crypto_key.runtime.id
+  kms_key_name = module.runtime_foundation.kms_crypto_key_id
 
   message_storage_policy {
     allowed_persistence_regions = [var.region]
   }
 
-  depends_on = [google_kms_crypto_key_iam_member.pubsub]
+  depends_on = [module.runtime_foundation]
 }
 
 resource "google_pubsub_subscription" "jobs" {
@@ -67,13 +67,13 @@ resource "google_pubsub_subscription" "dead_letter" {
 resource "google_pubsub_topic_iam_member" "pubsub_service_agent_dlq_publisher" {
   topic  = google_pubsub_topic.dead_letter.name
   role   = "roles/pubsub.publisher"
-  member = "serviceAccount:${google_project_service_identity.pubsub.email}"
+  member = "serviceAccount:${module.runtime_foundation.pubsub_service_account_email}"
 }
 
 resource "google_pubsub_subscription_iam_member" "pubsub_service_agent_source_subscriber" {
   subscription = google_pubsub_subscription.jobs.name
   role         = "roles/pubsub.subscriber"
-  member       = "serviceAccount:${google_project_service_identity.pubsub.email}"
+  member       = "serviceAccount:${module.runtime_foundation.pubsub_service_account_email}"
 }
 
 resource "google_pubsub_topic_iam_member" "api_job_publisher" {
