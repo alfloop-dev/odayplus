@@ -1830,6 +1830,12 @@ def _independent_contract_repo(parent: Path) -> tuple[Path, str]:
         destination = root / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes((ROOT / relative).read_bytes())
+    foundation_dir = ROOT / "infra/terraform/modules/runtime_foundation"
+    if foundation_dir.is_dir():
+        for f in foundation_dir.glob("*.tf"):
+            dest = root / "infra/terraform/modules/runtime_foundation" / f.name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(f.read_bytes())
     return root, _commit_contract(root)
 
 
