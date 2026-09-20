@@ -27,14 +27,14 @@ record and the checklist is the explanation.
 
 **NO-GO.** All seven gates are `blocked`, none carries a receipt, and
 `release.decision` is `no-go` against candidate SHA
-`596b9c9a1788d952811a2bf8d4bba8a4e4d76b12`. Deterministic product-E2E readiness
+`39ae43f6fe679f03dd7df459a51835cbd2d54f77`. Deterministic product-E2E readiness
 (`docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md`) is not release readiness. The
 current state is `candidate-built` in `dev`, with admission target `dev`.
 
-The candidate was rebound from `ebc4fca5c2dd5871275aee39a18406dd67464f04` by
-ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002. `RELEASE_MANIFEST.json` is the byte-exact
+The candidate was rebound from `596b9c9a1788d952811a2bf8d4bba8a4e4d76b12` by
+ODP-DEV-RELEASE-GATE-RECONCILIATION-004. `RELEASE_MANIFEST.json` is the byte-exact
 `runtime-release-manifest` artifact of Runtime Release handoff run
-[34179791241](https://github.com/alfloop-dev/odayplus/actions/runs/34179791241),
+[35493018607](https://github.com/alfloop-dev/odayplus/actions/runs/35493018607),
 so it records `release_status: ready`, four `@sha256:`-pinned component images,
 four Cosign signature references, and four CycloneDX SBOM attestation
 references. `registry.candidate_rebind` records what that does *not* mean: no
@@ -48,16 +48,14 @@ and the Runtime Release deploy phase to present a signed Supervisor lease bound
 to `manifest_digest`. Both are absent, so the release stays fail-closed:
 `check_release_gate_registry.py --require-go` exits non-zero.
 
-Image producer run [34179207603](https://github.com/alfloop-dev/odayplus/actions/runs/34179207603)
+Image producer run [35492613570](https://github.com/alfloop-dev/odayplus/actions/runs/35492613570)
 built, pushed, signed, and attested the four images; it failed in the later
-handoff step. Run `34179791241` reused those digests, performed in-run
+handoff step. Run `35493018607` reused those digests, performed in-run
 `cosign verify`, and published the six manifest/handoff/receipt artifacts.
 The recorded verification used bundle SET verification without live Rekor
-network queries. Existing raw-byte comparison receipts and provenance are
-indexed in [the candidate evidence README](../runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/README.md).
-This documentation continuation does not perform a new artifact download,
-registry probe, signature verification, or runtime readback. Sources-off build
-contract evidence and target-absence receipts do not establish live egress
+network queries. Raw-byte comparison receipts and provenance are
+indexed in [the candidate evidence README](../runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-004/README.md).
+Sources-off build contract evidence and target-absence receipts do not establish live egress
 behavior; those runtime observations remain outstanding for the applicable gates.
 
 ## Gate 0-6
