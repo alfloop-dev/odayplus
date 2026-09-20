@@ -206,9 +206,9 @@
     "read_only_search_findings": {
       "target_repo_and_ref": "alfloop-dev/oday-data-platform @ 7b0670d7b37e59e06bc9fea5b6003d1964be2c3c",
       "deliverables_status": "All declared deliverables (docs/evidence/final/XR-EXT-OSS-FINAL-AUDIT-001/, scripts/audit_external_oss_closeout.py, tests/integration/test_external_oss_closeout.py) exist and verified.",
-      "bounded_search_scope": "Surveyed repository root (19 entries), docs/, docs/evidence/, docs/evidence/completion/ (26 subdirectories), docs/evidence/gap-audits/, docs/evidence/final/XR-EXT-OSS-FINAL-AUDIT-001/, docs/evidence/runtime/*, scripts/, and GitHub Actions CI runs & artifacts at merge 7b0670d7b37e59e06bc9fea5b6003d1964be2c3c.",
-      "upstream_comparison_inputs_audit": "Bounded search across repository directories and CI artifacts confirms that historical dual-run comparison metrics (44,471 records, 7 quality axes) and domain counts were generated via synthetic mock in scripts/reconcile_legacy_external_data.py and scripts/verify_external_egress_off.py. Within the bounded search scope, the repository contains no raw database query logs, database dumps, or raw external payload captures; GitHub Actions CI artifacts returned total_count=0. Any unqueried external systems retain status unknown.",
-      "recoverable_vs_missing_boundary": "100% of code, contracts, manifests, IaC, CI check-runs, and deterministic verification scripts are recovered and verified. Raw pre-incident live database query logs and dual-run dump states are absent from git and CI, and are itemized as missing inputs under XR-EXT-OSS-FINAL-AUDIT-001 with a formal equivalent verification proposal pending canonical governance adoption."
+      "bounded_search_scope": "Surveyed repository root (19 entries), docs/, docs/evidence/, docs/evidence/completion/ (26 direct directory entries), docs/evidence/gap-audits/, docs/evidence/final/XR-EXT-OSS-FINAL-AUDIT-001/, docs/evidence/runtime/*, scripts/, and GitHub Actions CI runs (PR head b1824c97: 4 runs / merge 7b0670d7: 1 run) & artifacts at merge 7b0670d7b37e59e06bc9fea5b6003d1964be2c3c.",
+      "upstream_comparison_inputs_audit": "Bounded search across repository directory listings and CI artifacts confirms that dual-run comparison metrics (44,471 records, 7 quality axes) and domain counts in receipts were generated via synthetic mock in scripts/reconcile_legacy_external_data.py and scripts/verify_external_egress_off.py. Within the specifically queried direct directory listings and API responses, raw database query logs and dual-run dump payloads were not located; GitHub Actions CI artifacts returned total_count=0 at query time (demonstrating no retrievable artifacts at that endpoint during query, without proving historical artifacts were never produced). Unqueried subtrees and external environments retain status unknown.",
+      "recoverable_vs_missing_boundary": "100% of code, contracts, manifests, IaC, CI check-runs, and deterministic verification scripts are recovered and verified. Raw pre-incident live database query logs and dual-run dump states are absent from queried git directories and CI endpoints, and are itemized as missing inputs under XR-EXT-OSS-FINAL-AUDIT-001 with a formal equivalent verification proposal pending canonical governance adoption."
     }
   },
   "acceptance_criteria_reconciliation": [
@@ -410,6 +410,94 @@
                 "title": "以真實 artifact 完成 dev live rollout 並取代 false-done 前提",
                 "status": "in_progress",
                 "owner": "Antigravity2"
+              }
+            },
+            {
+              "item_index": 4,
+              "item_name": "資料新鮮度獨立比對 (Data Freshness Verification)",
+              "bilateral_inputs": {
+                "input_a": "來源端點即時觀察時間戳記 T_observed (來自 Provider API Response / Crawl Runner Receipt)",
+                "input_b": "快照資料內各實體產生/更新時間戳記 T_data"
+              },
+              "exact_provenance": "DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001 擷取之原始 payload metadata log 與 HTTP Headers",
+              "independent_comparison_baseline": "各領域定義之新鮮度容忍門檻 Delta_T_threshold（動態資料 <= 24h，週報表 <= 7d）",
+              "pass_criteria": [
+                "8/8 領域中，max(T_observed - T_data) <= Delta_T_threshold",
+                "無未來時間戳記 (T_data <= T_observed)",
+                "過期資料集 fail-closed 觸發告警並停止對 consumer 發布"
+              ],
+              "required_inputs_and_status": "歷史快照此欄位為腳本固定 CURRENT（真實狀態 unknown），需等待真實 raw 擷取時間戳記輸入",
+              "responsible_canonical_task": {
+                "task_id": "XR-EXT-OSS-FINAL-AUDIT-001",
+                "title": "第三方與 OSS 技術閉合稽核（品質軸新鮮度比對驗收）",
+                "status": "in_progress",
+                "owner": "Antigravity4"
+              }
+            },
+            {
+              "item_index": 5,
+              "item_name": "資料覆蓋度與實體分母比對 (Data Coverage & Universe Denominator Verification)",
+              "bilateral_inputs": {
+                "input_a": "快照中實際收錄之實體主鍵集合 E_snapshot",
+                "input_b": "官方/外部來源全體實體母體清冊 E_universe (例如全國行政區劃/登記法人母體)"
+              },
+              "exact_provenance": "官方主管機關公開目錄與各域 schema 定義之母體分母清單",
+              "independent_comparison_baseline": "各域分母基準集合 E_universe 與預期分區表",
+              "pass_criteria": [
+                "覆蓋率 |E_snapshot 交集 E_universe| / |E_universe| >= 目標覆蓋門檻（定義之必備分區與核心實體達標率 100%）",
+                "分母與分子實體主鍵完全解析對齊",
+                "缺失實體清單完整具名輸出並符合 schema 規範"
+              ],
+              "required_inputs_and_status": "歷史快照此欄位為腳本固定 FULL_COVERAGE（真實狀態 unknown），需各域獨立母體清單輸入",
+              "responsible_canonical_task": {
+                "task_id": "XR-EXT-OSS-FINAL-AUDIT-001",
+                "title": "第三方與 OSS 技術閉合稽核（品質軸覆蓋度比對驗收）",
+                "status": "in_progress",
+                "owner": "Antigravity4"
+              }
+            },
+            {
+              "item_index": 6,
+              "item_name": "資料血統與轉換對應比對 (Data Lineage & Traceability Mapping)",
+              "bilateral_inputs": {
+                "input_a": "上游原始資料 Payload Object ID / Record Hash H_raw",
+                "input_b": "去敏快照記錄之父節點參照 (H_parent_raw, transformation_run_id)"
+              },
+              "exact_provenance": "去敏管線產出之 Masking Transformation Lineage Manifest",
+              "independent_comparison_baseline": "定義之資料轉換規則映射函數 f: Raw -> Masked",
+              "pass_criteria": [
+                "去敏後 100% 記錄均可反向解析至唯一有效之原始 raw payload ID",
+                "轉換規則與欄位遮蔽符合 Masking Policy 宣告",
+                "血統圖無孤兒節點與循環映射"
+              ],
+              "required_inputs_and_status": "歷史快照無獨立血統日誌（真實狀態 unknown），需去敏管線之血統 manifest 輸入",
+              "responsible_canonical_task": {
+                "task_id": "XR-EXT-OSS-FINAL-AUDIT-001",
+                "title": "第三方與 OSS 技術閉合稽核（品質軸血統追溯比對驗收）",
+                "status": "in_progress",
+                "owner": "Antigravity4"
+              }
+            },
+            {
+              "item_index": 7,
+              "item_name": "識別碼與校驗和雙邊比對 (Identities & Bit-Exact Checksum Verification)",
+              "bilateral_inputs": {
+                "input_a": "原始擷取端計算之實體識別碼集合 K_raw 與欄位 Hash",
+                "input_b": "Consumer 端資料庫回讀計算之識別碼集合 K_consumer 與欄位 Hash"
+              },
+              "exact_provenance": "原始 Immutable Raw Artifact 與 Consumer 實體資料庫讀回資料",
+              "independent_comparison_baseline": "雙邊獨立比對 key-set bijection 與去敏欄位確定性轉換 hash",
+              "pass_criteria": [
+                "雙邊識別碼在扣除過濾規則後完全雙射 (|K_raw| = |K_consumer|)",
+                "非敏感欄位內容 checksum 100% 一致",
+                "敏感欄位確認遮蔽且無 plaintext 洩漏"
+              ],
+              "required_inputs_and_status": "歷史 44,471 筆為過渡合成資料（真實狀態 unknown），需真實 snapshot 與 consumer 回讀資料輸入",
+              "responsible_canonical_task": {
+                "task_id": "XR-EXT-OSS-FINAL-AUDIT-001",
+                "title": "第三方與 OSS 技術閉合稽核（品質軸識別碼校驗和比對驗收）",
+                "status": "in_progress",
+                "owner": "Antigravity4"
               }
             }
           ]

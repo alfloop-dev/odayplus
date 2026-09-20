@@ -186,3 +186,41 @@ A1–A3 尚缺真 snapshot/query、歷史七軸比對與 live runtime/flow-log �
    - 當前即時圖（2026-09-20，24 active tasks，SHA256: `7ab7e86e8578e237656c4d69150092b3e44db436d2e98c6f186805e07ecfcb38`）從 `$PANTHEON_STATUS_ROOT/ai-status.json` 現場讀取，涵蓋 `DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001` 與 `ODP-DEV-RELEASE-GATE-RECONCILIATION-004` 等新增依賴。
    - `capture_verification.py` 同時驗證歷史與當前兩組圖之 Topological Sort，均確認 0 cycles。
 
+---
+
+## 9. Review-12 (2026-09-20T14:12Z) 審查退回項目核正與精確補證
+
+### 9.1 命令收據與保存結果精確一致性校正
+1. **GitHub Actions CI Runs 查詢校核**：
+   - 校正 `raw-command-receipts.json` 中 CI runs 查詢命令為 `gh api repos/alfloop-dev/oday-data-platform/actions/runs?head_sha=b1824c979aca008da10aed01fbc0c0a269c581dc`，對齊 `requery-20260920/gh-api-ci-runs.stdout.json` 之 `total_count: 4`（EMGI task manifest、Container、Cross-repo contract、Source test suite，全數 success）。
+   - 明確區分：PR head commit `b1824c97` 於 Actions API 具 4 個 workflow runs（涵蓋 7 個 check-runs），而 merge commit `7b0670d7` 於 Actions API 具 1 個 workflow run（Source test suite #32695225238），不再將 7 個 check-runs 與 workflow runs 混淆。
+2. **DAG 驗證收據分離與歷史未知撤回**：
+   - 歷史 2026-09-20T07:13:28 執行之 `capture_verification.py --check` 因未保存原始 stdout/stderr stream，正式標記為 `historical_stdout_not_preserved_withdrawn_as_receipt`，不以新產物倒填。
+   - 新增獨立條目記錄 2026-09-20T13:47:35 抽取與驗證 live canonical 24 任務即時 active DAG 之收據，精確綁定 `requery-20260920/fresh-canonical-dag.stdout.json`。
+3. **Canonical Show 命令對齊**：
+   - 修正 canonical show 命令為 `AI_NAME=Antigravity4 /home/lupin/odayplus/scripts/ai-status.sh show XR-EXT-OSS-FINAL-AUDIT-001`，準確反映 live writer `command_show` 僅輸出 `args[0]` 之單一任務 stdout，其他任務狀態與依賴關係由即時 DAG 完整抽樣證明。
+
+### 9.2 原 Artifact 恢復查找範圍與結論嚴格收斂
+1. **目錄查詢與子樹範圍精確限定**：
+   - `docs/evidence/completion/` API 查詢確認包含 26 個直接目錄項目（`type=dir`），明確記載本 API 僅證實目錄存在，未對各子樹進行遞迴查詢，未查詢子樹內容保留 `unknown` 狀態。
+   - 結論嚴格收斂至已查範圍：在已查之目錄項目與腳本中，歷史比對數據為合成過渡產物；未擴大宣稱全 repo 或歷史全期絕對無資料。
+   - CI artifacts `total_count=0` 僅表示查詢當下該端點無可下載 artifacts，不外推為歷史從未產出。
+
+### 9.3 等價驗證提案完整覆蓋原品質比較原子項
+1. **逐原子項獨立基準、雙邊輸入與責任劃分**：
+   - **新鮮度比對 (Freshness)**：雙邊輸入為來源端點即時觀察時間 $T_{\text{observed}}$ 與快照記錄時間 $T_{\text{data}}$；基準為各域容忍門檻 $\Delta T_{\text{threshold}}$（動態 $\le 24\text{h}$，週報 $\le 7\text{d}$）；通過條件為 $\max(T_{\text{observed}} - T_{\text{data}}) \le \Delta T_{\text{threshold}}$；真實數據待 `DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001` 擷取，比對驗收責任留本 ID。
+   - **覆蓋度比對 (Coverage)**：雙邊輸入為快照實體集合 $E_{\text{snapshot}}$ 與官方全體母體清冊 $E_{\text{universe}}$；基準為各域分母基準集合；通過條件為分母覆蓋率達標 100%；母體清單由 `DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001` 提供，比對驗收責任留本 ID。
+   - **血統追溯比對 (Lineage)**：雙邊輸入為原始 Payload Hash $H_{\text{raw}}$ 與去敏記錄父節點參照 $(H_{\text{parent\_raw}}, \text{transformation\_run\_id})$；基準為資料轉換映射函數 $f: \text{Raw} \to \text{Masked}$；通過條件為 100% 記錄具可解析父節點；血統 manifest 由 `DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001` 產出，比對驗收責任留本 ID。
+   - **識別碼與校驗和比對 (Identities/Checksums)**：雙邊輸入為原始擷取識別碼集合 $K_{\text{raw}}$ 與 Consumer 回讀集合 $K_{\text{consumer}}$ 及校驗和；基準為雙射比對與 checksum 比對；通過條件為扣除過濾後雙射且 checksum 一致；Consumer 運行環境由 `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 提供，比對驗收責任留本 ID。
+2. **提案法律與治理定位**：
+   - 等價方案維持 `PROPOSAL_PENDING_FORMAL_GOVERNANCE_ADOPTION`，未正式採納前不冒充已替代歷史驗收。
+
+### 9.4 依賴生命周期與具名 Canonical Blocker 登記
+1. **不冒充 Done、落實 Blocker 規範**：
+   - 因原驗收條款 A1–A3 仍為 `partially_met`，`can_closeout_as_done=false`，不可送入 done/approval lane。
+   - 本輪完成可做的補證後，依規範由 owner 透過 Canonical CLI (`scripts/ai-status.sh blocker`) 登記具名 Blocker，明確指明待決事項與責任任務：
+     - `DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001` (Antigravity6)：八域受控真實 raw 擷取；
+     - `DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001` (Antigravity)：Masked snapshot 產生、去敏校驗與血統 manifest；
+     - `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` (Antigravity2)：Consumer 真實 runtime 回讀、憑證未投影與公網 egress 預設拒絕；
+     - `XR-EXT-OSS-FINAL-AUDIT-001` (Antigravity4)：未正式承接之獨立品質/歷史比對驗收。
+   - `HUMAN-OSS-LEGAL-APPROVAL-001` 維持 `todo` 並持續依賴本任務，法務許可閘嚴格閉合。
