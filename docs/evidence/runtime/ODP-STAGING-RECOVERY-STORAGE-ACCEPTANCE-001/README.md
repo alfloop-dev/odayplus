@@ -134,7 +134,7 @@ Recovery Storage 規範要求與 2026-09-20 現場讀結果核對如下（安全
    - Recovery Bundle sidecars（`*.tfvars.json`、`*.inventory.json`、`*.lifecycle.json`、`staging-terraform-outputs.json`）僅上傳至專屬 Recovery Storage (`gs://${ODP_STAGING_RECOVERY_BUNDLE_BUCKET}/.../bundle`)，絕不上傳為 Actions artifact。
    - Binary plan 與 Secret 敏感值絕不進入任何 artifact。
 3. **收據去敏化契約 (Receipt Redaction Invariant)**：
-   - 所有產出收據的腳本均保證 `secret_values_redacted: true`（僅記錄檢查名稱、通過狀態與變數名稱，不輸出實際密鑰值），並經 `tests/ops/test_deploy_workflow_contract.py` 與 `tests/release/test_release_environment_precheck.py` 測試鎖定。
+   - 環境預檢與部署驗證收據產出腳本（`check_release_environment.py`、deploy-dev.yml 中的 validation report 產生步驟）保證 `secret_values_redacted: true`（僅記錄檢查名稱、通過狀態與變數名稱，不輸出實際密鑰值），並經 `tests/ops/test_deploy_workflow_contract.py` 與 `tests/release/test_release_environment_precheck.py` 測試鎖定。Lifecycle create/cleanup 收據本身不攜帶 `secret_values_redacted` 旗標，但其內容設計為 intentionally secret-free 的已驗證資源輸出，不包含 secret 值。未發現實際 secret 洩露。
 
 ---
 
@@ -208,8 +208,8 @@ flowchart TD
     end
 
     subgraph STAGE_B["Stage B: Release Rehearsal 執行期驗收 (由 ODP-EPHEMERAL-STAGING-ROLLOUT-001 承接)"]
-        B1["CRIT-07: Ephemeral Staging 部署時自動生成 sidecars 並上傳至 recovery bundle URI，包含 hold 重寫"]
-        B2["CRIT-08: 驗證 GCS object generation、SHA-256 雜湊與不可變輸出結構，涵蓋 hold generation 追蹤"]
+        B1["CRIT-07: Ephemeral Staging 部署時自動生成 sidecars 並上傳至 recovery bundle URI，涵蓋最終 lifecycle 持久化"]
+        B2["CRIT-08: 驗證 GCS object generation、SHA-256 雜湊與不可變輸出結構，涵蓋最終 lifecycle generation 追蹤"]
         B3["CRIT-09: 演練 Cloud SQL backup/restore、Cloud Run rollback 與 Rerun identity guard (snapshot-pointer 為顯式缺口)"]
         B4["CRIT-10: Watch window 後依 exact labels 自動清理 (24h debug TTL)"]
     end
@@ -234,8 +234,10 @@ flowchart TD
        done
        gcloud storage cp "${STAGING_OUTPUTS_FILE}" "${STAGING_BUNDLE_URI}/staging-terraform-outputs.json"
        ```
-   - **Hold 狀態重寫接點**：`.github/workflows/deploy-dev.yml:1324-1334`
-     - 當 staging 演練失敗觸發 hold (lines 1306-1323) 時，`staging_lifecycle.py hold` 更新 `*.lifecycle.json`（設定 24h debug TTL 與保留原因），並透過 `gcloud storage cp` 重新持久化上傳至 `${STAGING_BUNDLE_URI}/`。
+   - **最終 Lifecycle 持久化接點（涵蓋成功 verified 與失敗 hold 兩條路徑）**：`.github/workflows/deploy-dev.yml:1324-1334`（`always()` 條件執行）
+      - **成功路徑**：`staging_lifecycle.py verify` (lines 1272-1291) 於驗證通過後由 `_write_lifecycle_state` (staging_lifecycle.py:3322-3342) 將 `*.lifecycle.json` 狀態更新為 `"verified"`；`deploy-dev.yml:1324-1334` 以 `always()` 條件將更新後的 `*.lifecycle.json` 透過 `gcloud storage cp` 重新持久化上傳至 `${STAGING_BUNDLE_URI}/`。此路徑之最終 lifecycle 內容/generation 與初次 create 時不同，必須重取 hash/generation 並更新收據（見 CRIT-08 步驟 5a）。
+      - **失敗/Hold 路徑**：當 staging 演練失敗觸發 hold (lines 1306-1323) 時，`staging_lifecycle.py hold` 更新 `*.lifecycle.json`（設定 24h debug TTL 與保留原因），同樣由 `always()` 步驟透過 `gcloud storage cp` 重新持久化上傳至 `${STAGING_BUNDLE_URI}/`。
+      - **初次 Create Lineage 保留**：初次 `create` 階段產生的 lifecycle content hash/generation 須作為 lineage 基線記錄保留於收據中；最終持久化（無論 verified 或 hold）產生的新 hash/generation 為獨立收據欄位，兩者共存以追蹤完整演變。
    - **必要權限**：Deployer SA (`github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com`) 於 Recovery Bucket 具備 `roles/storage.objectUser`。
    - **注意**：Rehearsal bundle 係於演練建立環境時產生，不要求於演練前已存在。
 2. **CRIT-08 (GCS Object Generation 與 SHA-256 雜湊驗證)**：
@@ -243,9 +245,14 @@ flowchart TD
    - **Stage B 可執行驗收程序 (`ODP-EPHEMERAL-STAGING-ROLLOUT-001`)**：
      1. **本地 Content SHA-256 計算**：在各 sidecar（`*.tfvars.json`、`*.inventory.json`、`*.lifecycle.json`、`staging-terraform-outputs.json`）上傳前，以 `sha256sum "${sidecar}" | awk '{print $1}'` 或 python `hashlib.sha256(path.read_bytes()).hexdigest()` 計算本地內容 SHA-256。
      2. **上傳並捕捉 Generation**：透過 `gcloud storage cp` 上傳各 sidecar 至 `${STAGING_BUNDLE_URI}/`，隨即以 `gcloud storage objects describe "${STAGING_BUNDLE_URI}/$(basename "${sidecar}")" --format='value(generation)'` 抓取真實 GCS 正整數 `generation`，斷言非空且大於 0。
-     3. **指定 Generation 遠端一致性校驗**：使用指定 generation 讀回遠端物件（`gsutil cp "${STAGING_BUNDLE_URI}/$(basename "${sidecar}")#${generation}" /tmp/verify_sidecar` 或串流讀取），計算遠端內容 SHA-256，並嚴格斷言 `remote_sha256 == local_sha256`。
+     3. **指定 Generation 遠端一致性校驗**：使用受既有 WIF 支援的 `gcloud storage cp` 搭配 generation precondition 讀回遠端物件（`gcloud storage cp "gs://${ODP_STAGING_RECOVERY_BUNDLE_BUCKET}/${STAGING_BACKEND_PREFIX}/bundle/$(basename "${sidecar}")#${generation}" /tmp/verify_sidecar`），計算遠端內容 SHA-256，並嚴格斷言 `remote_sha256 == local_sha256`。`gcloud storage cp` 支援 `#generation` 語法且使用 `google-github-actions/auth@v2` 匯出的 WIF 認證（見 auth@v2 README：gsutil 不使用此 Action 匯出之 credentials）。
      4. **保存每物件收據**：將 `{object_uri, generation, content_sha256, size_bytes, uploaded_at, secret_values_redacted: true}` 寫入 `staging-lifecycle-create.json` 與 `staging-rehearsal-receipt.json`。
-     5. **Hold 狀態重寫 generation 追蹤 (`deploy-dev.yml:1324-1334`)**：若演練失敗進入 hold，`staging_lifecycle.py hold` 更新 `*.lifecycle.json`；重新計算本地 SHA-256、重新上傳至 `${STAGING_BUNDLE_URI}/`、捕捉新 GCS generation（斷言 `new_generation > initial_generation`）、驗證新 generation 之遠端 SHA-256，並更新收據記錄 generation 演變。
+     5. **每次最終 Lifecycle 持久化之 Generation/Hash 追蹤 (`deploy-dev.yml:1324-1334`, `always()` 條件)**：`staging_lifecycle.py` 於驗證成功（`_write_lifecycle_state` 寫入 `"verified"`, staging_lifecycle.py:3322-3342）或失敗 hold（`staging_lifecycle.py hold`, lines 1306-1323, 設定 24h debug TTL）後均會更新 `*.lifecycle.json`；`deploy-dev.yml:1324-1334` 以 `always()` 條件將更新後的 `*.lifecycle.json` 透過 `gcloud storage cp` 重新持久化上傳至 `${STAGING_BUNDLE_URI}/`。無論是 verified 或 hold 路徑，每次最終 lifecycle 寫入後都必須：
+         - 重新計算更新後 `*.lifecycle.json` 之本地 SHA-256。
+         - 重新上傳至 `${STAGING_BUNDLE_URI}/` 並捕捉新 GCS generation（斷言 `new_generation` 為非空正整數且 `new_generation != initial_generation`；以 `gcloud storage cp --if-generation-match=${initial_generation}` 作為 precondition guard 確認更新目標為預期的前一版本，而非依賴 generation 數值大小排序，因 GCS 僅保證 generation 唯一、不保證遞增）。
+         - 以指定 new generation 驗證遠端 SHA-256。
+         - 更新收據：記錄 `{initial_create_generation, initial_create_content_sha256, final_generation, final_content_sha256, final_status: "verified"|"hold", uploaded_at}`，保留初次 create lineage 與最終狀態雙欄位以追蹤完整演變。
+         - 於 lifecycle receipt artifact upload (`deploy-dev.yml:1336-1344`) 前完成上述收據更新，確保正常成功路徑不會靜默接受未經驗證的最終物件、亦不會將正常的 verified rewrite 誤報為未授權漂移。
      6. **必要權限**：Deployer SA 於 Recovery Bucket 具備 `roles/storage.objectUser`。
      7. **Fail-Closed 條件**：若任一 sidecar 缺失、generation 為空/0、SHA-256 雜湊不符或發生未預期之 generation 漂移，Rehearsal 必須 Fail-Closed。禁止偽造假 hash 或假 generation。
      8. **邊界說明**：上述步驟屬未來 Stage B 演練授權範圍，本任務不要求演練前預先存在 bundle 物件，亦不讀取私密內容。
@@ -283,7 +290,7 @@ flowchart TD
 
 ## 9. 審查歷史與 Reopen 處置紀錄 (Review History & Reopen Disposition)
 
-本任務經歷 3 次實質審查迭代與第 4 次外部登入解除後之控制面續辦：
+本任務經歷 4 次實質審查迭代與外部登入解除後之控制面續辦：
 
 1. **Review 1 / Reopen 1 (2026-09-19)**: 修正探針收據記錄與環境變數映射。
 2. **Review 2 / Reopen 2 (2026-09-19)**: 補正執行身分、區隔 dev-runtime SA 與 github-deployer SA。
@@ -292,6 +299,13 @@ flowchart TD
    - 使用者恢復 `admin@dev.cctech-support.com` 與專案 owner `deborah.lu@dev.cctech-support.com` 登入。
    - 2026-09-20T06:53Z 至 07:18Z 成功讀回 Recovery Bucket metadata (exit 0)、KMS metadata (exit 0)、Recovery Bucket IAM policy (exit 0, deployer roles/storage.objectUser)、KMS IAM policy (exit 0, GCS SA roles/cloudkms.cryptoKeyEncrypterDecrypter) 及專案 IAM policy (exit 0, 確認 deployer SA 無 storage.admin/owner/editor)。
    - 將所有 5 份去敏收據與 hash 納入交付產物，Stage A 正式推進至 `VERIFIED_READY`，保留三次 substantive review 歷史與 Stage B dependency。
+5. **Review 4 / Reopen 4 & Stage B Procedure Corrections (2026-09-20T13:34Z - 14:05Z)**:
+   - 審查確認 Stage A 之 5 份現場 GCP metadata/IAM 讀回收據完全支持，Stage A 前置儲存契約正式確認通過。
+   - 逐條修復 Stage B 之 3 項程序規範缺陷：
+     1. **WIF 支援之 GCS 讀取**：將 CRIT-08 中唯一具體指定 generation 讀取指令由 `gsutil cp` 改為受 `google-github-actions/auth@v2` 匯出認證支援之 `gcloud storage cp`（搭配 `#${generation}` 語法）。
+     2. **Generation 唯一性與 Precondition 校驗**：移除 `new_generation > initial_generation` 之數值排序假定（依 GCS 規範 generation 僅保證唯一但不保證單調遞增），改為斷言非空正整數且 `new_generation != initial_generation`，並以 `--if-generation-match=${initial_generation}` 前置條件保護預期前一版本更新。
+     3. **涵蓋 Verified 與 Hold 之全量最終 Lifecycle 持久化**：對應現行 `staging_lifecycle.py:3322-3342`（成功時更新為 `verified`）與 `deploy-dev.yml:1324-1334`（`always()` 持久化上傳），將 hash/generation 捕捉、指定 generation 驗證與收據更新明確映射至成功 verified 與失敗 hold 兩條路徑，保留初次 create lineage 與 final state 雙欄位。
+     4. **收據去敏審計精確化**：修正全面帶有 `secret_values_redacted` 旗標之不準確敘述，精確區隔環境預檢/驗證報告與本質 secret-free 之 lifecycle create/cleanup 收據。
 
 ---
 

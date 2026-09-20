@@ -166,7 +166,7 @@
         "Recovery bundle sidecars (*.tfvars.json, *.inventory.json, *.lifecycle.json, staging-terraform-outputs.json) are stored exclusively in GCS recovery bucket gs://oday-staging-recovery-odayplus-runtime-20260825/... and never published as Actions artifacts",
         "Binary plans and secret values are never staged or uploaded"
       ],
-      "redaction_contract": "All receipt-generating scripts enforce secret_values_redacted: true (emitting check names, outcomes, and env variable names only, never bound values)."
+      "redaction_contract": "Environment precheck and deployment validation receipt writers (check_release_environment.py, deploy-dev.yml validation report steps) enforce secret_values_redacted: true, emitting check names, outcomes, and env variable names only, never bound values. Lifecycle create/cleanup receipts do not carry the secret_values_redacted flag but are intentionally secret-free validated resource outputs by design. No actual secret leakage found."
     }
   },
   "environment_coordinates": {
@@ -252,7 +252,7 @@
       "target_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
       "owner": "Antigravity5",
       "reviewer": "Codex",
-      "summary": "Release-scoped recovery bundle creation, content SHA-256 computation, GCS generation capture, readback hash verification, hold state regeneration, Cloud SQL backup/restore, Cloud Run traffic rollback drills, and snapshot-pointer restore gap disclosure are fully specified and handed off to Stage B."
+      "summary": "Release-scoped recovery bundle creation, content SHA-256 computation, GCS generation capture, readback hash verification via WIF-supported gcloud storage cp, final lifecycle persistence (verified and hold) generation and hash tracking with initial create lineage preservation, Cloud SQL backup/restore, Cloud Run traffic rollback drills, and snapshot-pointer restore gap disclosure are fully specified and handed off to Stage B."
     }
   },
   "authority_and_governance_boundaries": {
