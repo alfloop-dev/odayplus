@@ -1,7 +1,7 @@
 {
   "task_id": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
   "schema_version": 1,
-  "generated_at_utc": "2026-09-19T16:28:00Z",
+  "generated_at_utc": "2026-09-20T07:22:00Z",
   "executor_worker": "Antigravity2",
   "reviewer": "Codex",
   "title": "Staging Recovery Storage 驗收與 Rollout 映射矩陣",
@@ -12,8 +12,8 @@
       "owner_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
       "owner": "Antigravity2",
       "reviewer": "Codex",
-      "scope": "核對已合併儲存契約、分離守門規則、GitHub staging 環境變數與身分座標、CMEK/Versioning/Retention/PAP/UBLA/IAM 安全基準、唯讀審計收據及環境綁定前置條件。不執行雲端資源建立或修改。因 active auto worker 服務帳號 (oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com) 跨專案缺少 staging 專案 (odayplus-runtime-20260825) 之 IAM 權限 (storage.buckets.get, storage.buckets.getIamPolicy, cloudkms.cryptoKeys.get)，GCP 雲端探針返回 IAM_DENIED。依驗收標準與 review 要求，Stage A 保持 INCOMPLETE/BLOCKED，等待 Human/Ops 提供授權唯讀身分或資源 owner 簽署之 metadata 收據，不假造通過亦不推斷儲存桶缺失。",
-      "status": "STAGE_A_INCOMPLETE_BLOCKED_ON_EXTERNAL_GCP_IAM_READBACK_AUTHORITY"
+      "scope": "核對已合併儲存契約、分離守門規則、GitHub staging 環境變數與身分座標、CMEK/Versioning/Retention/PAP/UBLA/IAM 安全基準、唯讀審計收據及環境綁定前置條件。2026-09-20 透過授權之 admin@dev.cctech-support.com 與專案 owner deborah.lu@dev.cctech-support.com 登入讀回所有必要之 GCP 儲存桶 metadata、KMS metadata、儲存桶 IAM 與 KMS IAM policy，確認 Stage A 所有 6 項前置安全基準與契約條件完全滿足。",
+      "status": "VERIFIED_READY"
     },
     "stage_b_release_rehearsal_bundle_lifecycle": {
       "phase_name": "Stage B: Release Rehearsal Bundle Lifecycle & Drill",
@@ -32,7 +32,7 @@
       "historical_pr": "#1208",
       "stage_assignment": "Stage A",
       "responsible_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
-      "verification_evidence": "check_release_environment.py:285-298, deploy-dev.yml:1218-1222, 1487-1491, tests/release/test_release_environment_precheck.py, RCPT-GH-ENV-VARS-STAGING-002 (distinct bound bucket names)",
+      "verification_evidence": "check_release_environment.py:285-298, deploy-dev.yml:1218-1222, 1487-1491, tests/release/test_release_environment_precheck.py, RCPT-GH-ENV-VARS-STAGING-002 (distinct bound bucket names: oday-tfstate-staging-odayplus-runtime-20260825 vs. oday-staging-recovery-odayplus-runtime-20260825)",
       "status": "VERIFIED_READY"
     },
     {
@@ -53,8 +53,8 @@
       "specification_reference": "docs/evidence/runtime/ODP-STAGING-FOUNDATION-REFS-MAPPING-001/binding-proposal.json:80, docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:99",
       "stage_assignment": "Stage A",
       "responsible_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
-      "verification_evidence": "ODP_STAGING_KMS_KEY_ID bound in staging env (RCPT-GH-ENV-VARS-STAGING-002); Live GCP KMS describe probe via runtime SA returned exit 1 (RCPT-GCP-KMS-DESCRIBE-001, cloudkms.cryptoKeys.get denied). Stage A is BLOCKED pending Human/Ops authorized readback credentials or owner metadata receipts.",
-      "status": "STAGE_A_BLOCKED_ON_EXTERNAL_IAM_READBACK"
+      "verification_evidence": "ODP_STAGING_KMS_KEY_ID bound in staging env (RCPT-GH-ENV-VARS-STAGING-002); Live GCP KMS metadata readback RCPT-GCP-KMS-METADATA-20260920 (state=ENABLED, purpose=ENCRYPT_DECRYPT, rotationPeriod=7776000s / 90d, nextRotationTime=2026-11-25T08:29:35Z); Live GCP KMS IAM readback RCPT-GCP-KMS-IAM-20260920 (GCS service-agent serviceAccount:service-767864276141@gs-project-accounts.iam.gserviceaccount.com bound to roles/cloudkms.cryptoKeyEncrypterDecrypter). Note: prevent_destroy is an IaC code/lifecycle contract in Terraform.",
+      "status": "VERIFIED_READY"
     },
     {
       "criterion_id": "CRIT-04-SECURITY-BASELINE-GOVERNANCE",
@@ -64,8 +64,8 @@
       "specification_reference": "docs/evidence/runtime/ODP-STAGING-FOUNDATION-REFS-MAPPING-001/binding-proposal.json:80, docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:104",
       "stage_assignment": "Stage A",
       "responsible_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
-      "verification_evidence": "Security governance baseline specified in binding-proposal.json:80; Live GCP bucket describe probe via runtime SA returned exit 1 (RCPT-GCP-RECOVERY-BUCKET-DESCRIBE-001, storage.buckets.get denied). Stage A is BLOCKED pending Human/Ops authorized readback credentials or owner metadata receipts.",
-      "status": "STAGE_A_BLOCKED_ON_EXTERNAL_IAM_READBACK"
+      "verification_evidence": "Live GCP recovery bucket metadata readback RCPT-GCP-RECOVERY-BUCKET-METADATA-20260920: uniform_bucket_level_access=true, public_access_prevention=enforced, versioning_enabled=true, retentionPeriod=2592000s (30 days); bucket location=ASIA-EAST1.",
+      "status": "VERIFIED_READY"
     },
     {
       "criterion_id": "CRIT-05-LEAST-PRIVILEGE-IAM",
@@ -75,8 +75,8 @@
       "specification_reference": "docs/evidence/runtime/ODP-STAGING-FOUNDATION-REFS-MAPPING-001/binding-proposal.json:81, docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:248",
       "stage_assignment": "Stage A",
       "responsible_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
-      "verification_evidence": "ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT bound in staging env (RCPT-GH-ENV-VARS-STAGING-002); roles/storage.objectUser frozen in deploy contracts; Live GCP bucket IAM policy probe via runtime SA returned exit 1 (RCPT-GCP-RECOVERY-BUCKET-IAM-001, storage.buckets.getIamPolicy denied). Stage A is BLOCKED pending Human/Ops authorized readback credentials or owner metadata receipts.",
-      "status": "STAGE_A_BLOCKED_ON_EXTERNAL_IAM_READBACK"
+      "verification_evidence": "ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT bound in staging env (RCPT-GH-ENV-VARS-STAGING-002); Live GCP bucket IAM policy readback RCPT-GCP-RECOVERY-BUCKET-IAM-20260920 confirms serviceAccount:github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com bound to roles/storage.objectUser; Live project IAM policy readback RCPT-GCP-DEPLOYER-PROJECT-IAM-FILTERED-20260920 confirms deployer SA does NOT possess roles/storage.admin, roles/owner, or roles/editor on project or bucket.",
+      "status": "VERIFIED_READY"
     },
     {
       "criterion_id": "CRIT-06-SECRET-FREE-RECEIPTS",
@@ -131,10 +131,10 @@
   ],
   "summary_disposition": {
     "total_criteria": 10,
-    "stage_a_verified_ready": 3,
-    "stage_a_blocked_on_external_iam": 3,
+    "stage_a_verified_ready": 6,
+    "stage_a_blocked_on_external_iam": 0,
     "stage_b_mapped_to_rollout": 4,
     "unmapped_criteria": 0,
-    "conclusion": "前置 Storage Readiness（Stage A）中，代碼契約、分離守門規則、GitHub staging 環境變數座標（2026-09-19 live readback 驗證全部 BOUND）與收據去敏化契約已完成核對（CRIT-01, CRIT-02, CRIT-06 為 VERIFIED_READY）。然而，針對 runtime 服務帳號執行 GCP 唯讀探針因跨專案缺乏 staging 權限遭遇 IAM_DENIED（CRIT-03, CRIT-04, CRIT-05），依驗收規範與審查判定，Stage A 保持 INCOMPLETE / BLOCKED，等待 Human/Ops 提供授權唯讀身分或 signed metadata 收據，不假造通過。Stage B 之 Release Rehearsal 執行期驗收項目（CRIT-07 至 CRIT-10）已具備可執行命令、流程接點（包含 CRIT-08 完整之本地 content SHA-256 計算、GCS generation 捕捉、指定 generation 遠端 SHA-256 比對、hold 狀態重寫後之 generation 追蹤與 fail-closed 條件；CRIT-09 之 Cloud SQL backup/restore 與 Cloud Run rollback）、權限要求、pass/fail 條件與 snapshot-pointer restore 顯式缺口揭露，完整映射至 ODP-EPHEMERAL-STAGING-ROLLOUT-001（Owner: Antigravity5, Reviewer: Codex）。"
+    "conclusion": "前置 Storage Readiness（Stage A）中所有 6 項準則（CRIT-01 至 CRIT-06）均已完成核對並確認 VERIFIED_READY：代碼契約與守門邏輯已合併；GitHub staging 環境變數座標已綁定；2026-09-20 由 admin@dev.cctech-support.com 與專案 owner deborah.lu@dev.cctech-support.com 讀回之 GCP 儲存桶 metadata (CMEK, versioning, 30d retention, PAP=enforced, UBLA=enabled)、KMS key metadata (ENABLED, 90d rotation)、KMS IAM (GCS service agent roles/cloudkms.cryptoKeyEncrypterDecrypter) 及 Recovery Bucket IAM (deployer SA roles/storage.objectUser，且無 storage.admin) 均成功驗證 (exit 0)。Stage B 之 Release Rehearsal 執行期驗收項目（CRIT-07 至 CRIT-10）已具備完整可執行接點、CRIT-08 之本地 content SHA-256 計算、GCS generation 捕捉、指定 generation 遠端 SHA-256 比對、hold 重寫追蹤與 fail-closed 條件；CRIT-09 之 Cloud SQL backup/restore、Cloud Run rollback 與 snapshot-pointer restore 顯式缺口揭露，完整映射至 ODP-EPHEMERAL-STAGING-ROLLOUT-001（Owner: Antigravity5, Reviewer: Codex）。"
   }
 }

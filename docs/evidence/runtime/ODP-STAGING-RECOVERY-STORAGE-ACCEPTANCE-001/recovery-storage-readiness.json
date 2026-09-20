@@ -1,7 +1,7 @@
 {
   "task_id": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
   "schema_version": 1,
-  "generated_at_utc": "2026-09-19T16:28:00Z",
+  "generated_at_utc": "2026-09-20T07:22:00Z",
   "executor_worker": "Antigravity2",
   "reviewer": "Codex",
   "title": "驗證 staging recovery storage 並承接失效歷史依賴",
@@ -68,40 +68,46 @@
       "key_resource_id": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime",
       "rotation_period": "7776000s (90 days)",
       "prevent_destroy": true,
-      "verification_status": "CONTRACT_FROZEN_STAGE_A_BLOCKED_ON_EXTERNAL_IAM_READBACK",
-      "specification_reference": "docs/evidence/runtime/ODP-STAGING-FOUNDATION-REFS-MAPPING-001/binding-proposal.json:80",
-      "evidence_ref": "RCPT-GCP-KMS-DESCRIBE-001"
+      "verification_status": "VERIFIED_READY",
+      "specification_reference": "docs/evidence/runtime/ODP-STAGING-FOUNDATION-REFS-MAPPING-001/binding-proposal.json:80, docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:99",
+      "evidence_ref": "RCPT-GCP-KMS-METADATA-20260920, RCPT-GCP-KMS-IAM-20260920",
+      "verified_details": "KMS key state ENABLED, purpose ENCRYPT_DECRYPT, rotation period 7776000s (90 days), next rotation 2026-11-25T08:29:35Z. GCS service agent (serviceAccount:service-767864276141@gs-project-accounts.iam.gserviceaccount.com) bound to roles/cloudkms.cryptoKeyEncrypterDecrypter. Note: prevent_destroy is an IaC code/lifecycle contract in Terraform."
     },
     "versioning": {
       "required": true,
       "purpose": "Preserve all historical recovery bundle revisions against accidental overwrites or corruption.",
-      "verification_status": "CONTRACT_FROZEN_STAGE_A_BLOCKED_ON_EXTERNAL_IAM_READBACK",
-      "specification_reference": "docs/evidence/runtime/ODP-STAGING-FOUNDATION-REFS-MAPPING-001/binding-proposal.json:80",
-      "evidence_ref": "RCPT-GCP-RECOVERY-BUCKET-DESCRIBE-001"
+      "verification_status": "VERIFIED_READY",
+      "specification_reference": "docs/evidence/runtime/ODP-STAGING-FOUNDATION-REFS-MAPPING-001/binding-proposal.json:80, docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:104",
+      "evidence_ref": "RCPT-GCP-RECOVERY-BUCKET-METADATA-20260920",
+      "verified_details": "versioning_enabled = true verified live on gs://oday-staging-recovery-odayplus-runtime-20260825."
     },
     "retention_policy": {
       "required": true,
       "retention_period_days": 30,
+      "retention_period_seconds": 2592000,
       "purpose": "Align with 24h default ephemeral debug TTL, maximum 7d extension, and post-deployment audit window.",
-      "verification_status": "CONTRACT_FROZEN_STAGE_A_BLOCKED_ON_EXTERNAL_IAM_READBACK",
-      "specification_reference": "docs/evidence/runtime/ODP-STAGING-FOUNDATION-REFS-MAPPING-001/binding-proposal.json:80",
-      "evidence_ref": "RCPT-GCP-RECOVERY-BUCKET-DESCRIBE-001"
+      "verification_status": "VERIFIED_READY",
+      "specification_reference": "docs/evidence/runtime/ODP-STAGING-FOUNDATION-REFS-MAPPING-001/binding-proposal.json:80, docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:104",
+      "evidence_ref": "RCPT-GCP-RECOVERY-BUCKET-METADATA-20260920",
+      "verified_details": "retentionPeriod = 2592000 seconds (30 days) verified live on gs://oday-staging-recovery-odayplus-runtime-20260825."
     },
     "public_access_prevention": {
       "required": true,
       "setting": "enforced",
       "purpose": "Prevent public object exposure at bucket level.",
-      "verification_status": "CONTRACT_FROZEN_STAGE_A_BLOCKED_ON_EXTERNAL_IAM_READBACK",
-      "specification_reference": "docs/evidence/runtime/ODP-STAGING-FOUNDATION-REFS-MAPPING-001/binding-proposal.json:80",
-      "evidence_ref": "RCPT-GCP-RECOVERY-BUCKET-DESCRIBE-001"
+      "verification_status": "VERIFIED_READY",
+      "specification_reference": "docs/evidence/runtime/ODP-STAGING-FOUNDATION-REFS-MAPPING-001/binding-proposal.json:80, docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:104",
+      "evidence_ref": "RCPT-GCP-RECOVERY-BUCKET-METADATA-20260920",
+      "verified_details": "public_access_prevention = enforced verified live on gs://oday-staging-recovery-odayplus-runtime-20260825."
     },
     "uniform_bucket_level_access": {
       "required": true,
       "setting": "enabled",
       "purpose": "Enforce IAM-only access control and disable per-object ACLs.",
-      "verification_status": "CONTRACT_FROZEN_STAGE_A_BLOCKED_ON_EXTERNAL_IAM_READBACK",
-      "specification_reference": "docs/evidence/runtime/ODP-STAGING-FOUNDATION-REFS-MAPPING-001/binding-proposal.json:80",
-      "evidence_ref": "RCPT-GCP-RECOVERY-BUCKET-DESCRIBE-001"
+      "verification_status": "VERIFIED_READY",
+      "specification_reference": "docs/evidence/runtime/ODP-STAGING-FOUNDATION-REFS-MAPPING-001/binding-proposal.json:80, docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:104",
+      "evidence_ref": "RCPT-GCP-RECOVERY-BUCKET-METADATA-20260920",
+      "verified_details": "uniform_bucket_level_access = true verified live on gs://oday-staging-recovery-odayplus-runtime-20260825."
     },
     "least_privilege_iam": {
       "required": true,
@@ -112,10 +118,10 @@
         "roles/owner",
         "roles/editor"
       ],
-      "admin_principal": "user:admin@dev.cctech-support.com (roles/storage.admin reserved for human administrator)",
-      "verification_status": "CONTRACT_FROZEN_STAGE_A_BLOCKED_ON_EXTERNAL_IAM_READBACK",
-      "specification_reference": "docs/evidence/runtime/ODP-STAGING-FOUNDATION-REFS-MAPPING-001/binding-proposal.json:81",
-      "evidence_ref": "RCPT-GCP-RECOVERY-BUCKET-IAM-001"
+      "verification_status": "VERIFIED_READY",
+      "specification_reference": "docs/evidence/runtime/ODP-STAGING-FOUNDATION-REFS-MAPPING-001/binding-proposal.json:81, docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:248",
+      "evidence_ref": "RCPT-GCP-RECOVERY-BUCKET-IAM-20260920, RCPT-GCP-DEPLOYER-PROJECT-IAM-FILTERED-20260920",
+      "verified_details": "Deployer SA serviceAccount:github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com granted roles/storage.objectUser on recovery bucket. Project-level policy confirms deployer SA possesses only scheduler, cloudsql, run, and serviceusage roles; storage.admin, owner, and editor are absent."
     },
     "artifact_leakage_protection": {
       "mechanism": "workflow_artifact_allowlist_and_secret_redaction",
@@ -225,27 +231,21 @@
       }
     },
     "historical_preflight_observation": {
-      "observation": "On 2026-09-08 (RCPT-GH-ENV-VARS-STAGING-001), ODP_STAGING_TERRAFORM_STATE_BUCKET and ODP_STAGING_RECOVERY_BUNDLE_BUCKET were UNSET. They were subsequent bound on 2026-09-12 and verified live on 2026-09-19."
+      "observation": "On 2026-09-08 (RCPT-GH-ENV-VARS-STAGING-001), ODP_STAGING_TERRAFORM_STATE_BUCKET and ODP_STAGING_RECOVERY_BUNDLE_BUCKET were UNSET. They were subsequently bound on 2026-09-12 and verified live on 2026-09-19."
     }
   },
   "readiness_verdict": {
     "code_and_contracts": "READY_MERGED",
     "pipeline_fail_closed_guards": "ACTIVE_VERIFIED",
     "github_environment_bindings": "BOUND_VERIFIED",
-    "gcp_bucket_infrastructure": "METADATA_UNVERIFIED_IAM_PERMISSION_DENIED",
-    "stage_a_status": "STAGE_A_INCOMPLETE_BLOCKED_ON_EXTERNAL_GCP_IAM_READBACK_AUTHORITY",
-    "overall_status": "STAGE_A_INCOMPLETE_BLOCKED_ON_EXTERNAL_GCP_IAM_READBACK_AUTHORITY",
+    "gcp_bucket_infrastructure": "VERIFIED_READY",
+    "stage_a_status": "VERIFIED_READY",
+    "overall_status": "STAGE_A_STORAGE_READINESS_VERIFIED_READY",
     "blocker_details": {
-      "blocker_id": "BLOCKER-EXTERNAL-GCP-IAM-READBACK-001",
-      "waiting_for": "Human/Ops",
-      "reason": "Stage A storage readiness cannot be completed without authorized GCP readback identity or owner-supplied metadata receipts. The active auto worker service account (oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com) is in a separate dev project and was denied IAM access on staging resources (storage.buckets.get, storage.buckets.getIamPolicy, cloudkms.cryptoKeys.get). In accordance with acceptance rules and review findings, Stage A is held INCOMPLETE/BLOCKED rather than claiming readiness, and no unauthorized IAM grants, bucket creation, or terraform reruns are performed.",
-      "unblocking_requirements": [
-        "1. Human/Ops or Resource Owner provides authorized readback credentials (e.g. temporary metadata viewer identity) or authoritative signed metadata receipts for gs://oday-staging-recovery-odayplus-runtime-20260825 and KMS key oday-staging-runtime.",
-        "2. Verify CMEK encryption key binding (projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime).",
-        "3. Verify bucket governance: Object Versioning enabled, Retention Policy = 30 days, Public Access Prevention = enforced, Uniform Bucket-Level Access = enabled.",
-        "4. Verify least-privilege IAM: Deployer SA (github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com) granted roles/storage.objectUser.",
-        "5. Transition Stage A to VERIFIED_READY upon receipt verification."
-      ]
+      "blocker_id": "BLOCKER-EXTERNAL-GCP-IAM-READBACK-001-RESOLVED",
+      "status": "RESOLVED",
+      "resolved_at_utc": "2026-09-20T07:19:00Z",
+      "resolution_summary": "External login and readback blocker resolved via admin and project owner Deborah logins. Storage bucket metadata (CMEK, versioning, 30d retention, PAP=enforced, UBLA=enabled), KMS key metadata (ENABLED, 90d rotation), recovery bucket IAM (deployer SA roles/storage.objectUser), KMS IAM (GCS service-agent roles/cloudkms.cryptoKeyEncrypterDecrypter), and project IAM policy were successfully read and verified."
     },
     "stage_b_rehearsal_handoff": {
       "status": "MAPPED_TO_ROLLOUT_TASK",

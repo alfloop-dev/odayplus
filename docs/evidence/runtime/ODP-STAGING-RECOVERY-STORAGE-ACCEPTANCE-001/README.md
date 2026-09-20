@@ -9,7 +9,7 @@
 - **Phase**: Staging recovery storage acceptance & contract mapping
 - **Branch**: `task/ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001`
 - **Target Branch**: `dev`
-- **Date**: 2026-09-19
+- **Date**: 2026-09-20
 - **Summary**: 具名承接已 superseded 的 recovery-bundle 歷史依賴，核實當前 staging recovery storage readiness 與環境座標；不重建 foundation、不重做 Terraform、不新建 bucket，亦不冒稱歷史任務已於 runtime 驗證完成。
 
 ---
@@ -26,8 +26,8 @@
    - **Stage A (Storage Readiness - 本任務核實範圍)**：
      - 代碼與合約狀態：**VERIFIED / READY**（守門規則、Fail-closed 機制、收據去敏化契約已收斂）。
      - GitHub 環境座標狀態：**BOUND / VERIFIED**（2026-09-19 live readback 確認 State/Recovery Bucket、Deployer SA、KMS Key、VPC Network 皆已綁定）。
-     - Live GCP 雲端 Metadata 狀態：**METADATA UNPROBED / IAM_BLOCKED**。主機 OAuth token 獲取探針（`oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com`）成功（exit 0，無 token 留存）；但現場執行 `storage buckets describe`、`get-iam-policy` 與 `kms keys describe` 因該 SA 跨專案缺少 staging 專案 (`odayplus-runtime-20260825`) 之 IAM 讀取權限返回 exit 1 (`storage.buckets.get` / `storage.buckets.getIamPolicy` / `cloudkms.cryptoKeys.get` denied）。
-     - Stage A 總體判定：**STAGE_A_INCOMPLETE_BLOCKED_ON_EXTERNAL_GCP_IAM_READBACK_AUTHORITY**。依任務驗收標準與審查要求，在取得 Human/Ops 授權唯讀身分或 signed metadata 收據前，Stage A 保持 INCOMPLETE/BLOCKED，不假造通過，亦不推斷 bucket 缺失。
+     - Live GCP 雲端 Metadata 與 IAM 狀態：**VERIFIED / READY**（2026-09-20 透過授權之 `admin@dev.cctech-support.com` 與專案 owner `deborah.lu@dev.cctech-support.com` 讀回之 GCP 儲存桶 metadata、KMS metadata、儲存桶 IAM 與 KMS IAM policy，所有探針 exit code 0，確認 CMEK 加密、Object Versioning、30 天 Retention、PAP=enforced、UBLA=enabled 及 Deployer SA `roles/storage.objectUser` 綁定完全滿足）。
+     - Stage A 總體判定：**STAGE_A_STORAGE_READINESS_VERIFIED_READY**。
    - **Stage B (Release Rehearsal - 由 `ODP-EPHEMERAL-STAGING-ROLLOUT-001` 承接)**：
      - 在建立 ephemeral staging 演練時實際生成 bundle、計算本地 content SHA-256、上傳至 GCS、捕捉真實 object generation、以指定 generation 驗證遠端內容 SHA-256 一致性、涵蓋 hold 狀態重寫後之 new generation 追蹤、執行 Cloud SQL backup/restore drill 與 Cloud Run traffic rollback drill，並驗證 rerun identity guard。
      - 不得把尚未執行的 release rehearsal 所產生的 bundle 當作入場前已存在的物件，亦不得偽造物件 hash。
@@ -39,13 +39,19 @@
 
 ## 3. 交付產物索引 (Artifacts Index)
 
-本任務產出的所有結構化 JSON 產物與索引清單如下：
+本任務產出的所有結構化 JSON 產物、去敏收據與索引清單如下：
 
 | 產物檔案 | 說明 |
 |---|---|
-| [recovery-storage-readiness.json](recovery-storage-readiness.json) | Staging Recovery Storage 契約規範、安全基準（CMEK、Versioning、Retention、PAP、UBLA、IAM）、GitHub Actions runner 產物上傳邊界、GCP/GitHub 座標盤點、Stage A 外部權限 Blocker 記錄與解鎖前置條件。 |
-| [rollout-acceptance-mapping.json](rollout-acceptance-mapping.json) | 歷史 10 項驗收條件逐項映射矩陣，清晰區隔 Stage A（前置 Readiness，狀態為 INCOMPLETE/BLOCKED）與 Stage B（Release Rehearsal 由 `ODP-EPHEMERAL-STAGING-ROLLOUT-001` 承接），提供 CRIT-08 完整之可執行 SHA-256/Generation/Hold 流程接點、權限要求、收據欄位、失敗條件與顯式缺口揭露。 |
-| [readback-receipts-index.json](readback-receipts-index.json) | 索引所有引用之唯讀 metadata 收據、PR 合併紀錄、2026-09-19 GitHub 變數讀取收據、GCP 探針認證與 IAM 阻擋收據、外部權限 Blocker 紀錄與審計雜湊。 |
+| [README.md](README.md) | 本任務完整報告、決策邊界、安全基準核實、CRIT-08 流程規範與審查歷史紀錄。 |
+| [recovery-storage-readiness.json](recovery-storage-readiness.json) | Staging Recovery Storage 契約規範、安全基準（CMEK、Versioning、Retention、PAP、UBLA、IAM）、GitHub Actions runner 產物上傳邊界、GCP/GitHub 座標盤點、Stage A 驗證判定與 Blocker 解鎖紀錄。 |
+| [rollout-acceptance-mapping.json](rollout-acceptance-mapping.json) | 歷史 10 項驗收條件逐項映射矩陣，清晰區隔 Stage A（前置 Readiness，狀態為 VERIFIED_READY）與 Stage B（Release Rehearsal 由 `ODP-EPHEMERAL-STAGING-ROLLOUT-001` 承接），提供 CRIT-08 完整之可執行 SHA-256/Generation/Hold 流程接點、權限要求、收據欄位、失敗條件與顯式缺口揭露。 |
+| [readback-receipts-index.json](readback-receipts-index.json) | 索引所有引用之唯讀 metadata 收據、PR 合併紀錄、GitHub 變數讀取收據、2026-09-20 授權登入讀回收據、歷史探針紀錄與審計雜湊。 |
+| [rcpt-gcp-recovery-bucket-metadata-20260920.json](rcpt-gcp-recovery-bucket-metadata-20260920.json) | 2026-09-20T06:53:16Z admin 讀回之 gs://oday-staging-recovery-odayplus-runtime-20260825 儲存桶 metadata 收據 (exit 0, SHA: `6aa9a1b7...`)。 |
+| [rcpt-gcp-kms-metadata-20260920.json](rcpt-gcp-kms-metadata-20260920.json) | 2026-09-20T06:53:16Z admin 讀回之 oday-staging-runtime KMS 金鑰 metadata 收據 (exit 0, SHA: `d3bd138a...`)。 |
+| [rcpt-gcp-recovery-bucket-iam-20260920.json](rcpt-gcp-recovery-bucket-iam-20260920.json) | 2026-09-20T07:18:09Z project owner Deborah 讀回之 Recovery Bucket IAM policy 收據 (exit 0, SHA: `ce82bf19...`)。 |
+| [rcpt-gcp-kms-iam-20260920.json](rcpt-gcp-kms-iam-20260920.json) | 2026-09-20T07:18:09Z project owner Deborah 讀回之 KMS Key IAM policy 收據 (exit 0, SHA: `91268b63...`)。 |
+| [rcpt-gcp-deployer-project-iam-filtered-20260920.json](rcpt-gcp-deployer-project-iam-filtered-20260920.json) | 2026-09-20T06:54:11Z admin 讀回之 Deployer SA 專案層級 IAM 綁定去敏收據 (exit 0, SHA: `1fb2807a...`)。 |
 
 ---
 
@@ -94,16 +100,16 @@
 
 ## 5. Staging Recovery Storage 安全基準與現況核對 (Security Baseline Status)
 
-Recovery Storage 規範要求與現場唯讀探針結果如下（安全基準規範引用自 `origin/dev:docs/evidence/runtime/ODP-STAGING-FOUNDATION-REFS-MAPPING-001/binding-proposal.json:78-87` 及 `docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:99,104,248`）：
+Recovery Storage 規範要求與 2026-09-20 現場讀結果核對如下（安全基準規範引用自 `origin/dev:docs/evidence/runtime/ODP-STAGING-FOUNDATION-REFS-MAPPING-001/binding-proposal.json:78-87` 及 `docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:99,104,248`）：
 
-| 安全基準項目 | 規範要求 | 驗收依據 / 規範來源 | 當前核實狀態 |
-|---|---|---|---|
-| **CMEK 加密** | 使用客戶自管金鑰加密，綁定 `oday-staging-runtime` Key (90d rotation, `prevent_destroy=true`) | `binding-proposal.json:80`, `EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:99`, `ODP_STAGING_KMS_KEY_ID` 已綁定 (`RCPT-GH-ENV-VARS-STAGING-002`) | **CONTRACT_FROZEN_STAGE_A_BLOCKED_ON_EXTERNAL_IAM_READBACK**：規範已凍結；現場 KMS describe 探針返回 exit 1 (`cloudkms.cryptoKeys.get` denied)，Stage A 保持 BLOCKED 等待外部授權 |
-| **Object Versioning** | 強制啟用版本控制，防止誤刪或覆寫 | `binding-proposal.json:80`, `EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:104` | **CONTRACT_FROZEN_STAGE_A_BLOCKED_ON_EXTERNAL_IAM_READBACK**：規範已凍結；GCP 現場探針 exit 1 (`storage.buckets.get` denied) |
-| **Retention Policy** | 30 天保留期限，涵蓋 24h debug TTL 與事後稽核 | `binding-proposal.json:80`, `EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:104` | **CONTRACT_FROZEN_STAGE_A_BLOCKED_ON_EXTERNAL_IAM_READBACK**：規範已凍結；GCP 現場探針 exit 1 (`storage.buckets.get` denied) |
-| **Public Access Prevention** | 強制 `enforced`，阻斷所有公網存取路徑 | `binding-proposal.json:80`, `EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:104` | **CONTRACT_FROZEN_STAGE_A_BLOCKED_ON_EXTERNAL_IAM_READBACK**：規範已凍結；GCP 現場探針 exit 1 (`storage.buckets.get` denied) |
-| **Uniform Bucket-Level Access** | 強制 `enabled`，統一由 IAM 控制 | `binding-proposal.json:80`, `EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:104` | **CONTRACT_FROZEN_STAGE_A_BLOCKED_ON_EXTERNAL_IAM_READBACK**：規範已凍結；GCP 現場探針 exit 1 (`storage.buckets.get` denied) |
-| **Least-Privilege IAM** | Deployer SA 僅授予 `roles/storage.objectUser`；禁止 `roles/storage.admin` | `binding-proposal.json:81`, `EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:248`, `ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT` 已綁定 (`RCPT-GH-ENV-VARS-STAGING-002`) | **CONTRACT_FROZEN_STAGE_A_BLOCKED_ON_EXTERNAL_IAM_READBACK**：權限模型凍結；GCP 現場 get-iam-policy 探針返回 exit 1 (`storage.buckets.getIamPolicy` denied) |
+| 安全基準項目 | 規範要求 | 驗收依據 / 規範來源 | 2026-09-20 現場核實結果 | 判定狀態 |
+|---|---|---|---|---|
+| **CMEK 加密** | 使用客戶自管金鑰加密，綁定 `oday-staging-runtime` Key (90d rotation, `prevent_destroy=true`) | `binding-proposal.json:80`, `EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:99`, `ODP_STAGING_KMS_KEY_ID` 已綁定 (`RCPT-GH-ENV-VARS-STAGING-002`) | **PASS**：`default_kms_key` 指向 `projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime`；KMS key state 為 `ENABLED`，purpose 為 `ENCRYPT_DECRYPT`，rotation period 為 `7776000s` (90 天)；GCS service agent (`service-767864276141@gs-project-accounts.iam.gserviceaccount.com`) 已被授予 `roles/cloudkms.cryptoKeyEncrypterDecrypter`（`RCPT-GCP-KMS-METADATA-20260920`, `RCPT-GCP-KMS-IAM-20260920`）。註：`prevent_destroy` 係 Terraform IaC 程式碼與生命週期契約。 | **VERIFIED_READY** |
+| **Object Versioning** | 強制啟用版本控制，防止誤刪或覆寫 | `binding-proposal.json:80`, `EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:104` | **PASS**：`versioning_enabled: true` (`RCPT-GCP-RECOVERY-BUCKET-METADATA-20260920`) | **VERIFIED_READY** |
+| **Retention Policy** | 30 天保留期限，涵蓋 24h debug TTL 與事後稽核 | `binding-proposal.json:80`, `EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:104` | **PASS**：`retentionPeriod: "2592000"` 秒 (30 天) (`RCPT-GCP-RECOVERY-BUCKET-METADATA-20260920`) | **VERIFIED_READY** |
+| **Public Access Prevention** | 強制 `enforced`，阻斷所有公網存取路徑 | `binding-proposal.json:80`, `EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:104` | **PASS**：`public_access_prevention: "enforced"` (`RCPT-GCP-RECOVERY-BUCKET-METADATA-20260920`) | **VERIFIED_READY** |
+| **Uniform Bucket-Level Access** | 強制 `enabled`，統一由 IAM 控制 | `binding-proposal.json:80`, `EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:104` | **PASS**：`uniform_bucket_level_access: true` (`RCPT-GCP-RECOVERY-BUCKET-METADATA-20260920`) | **VERIFIED_READY** |
+| **Least-Privilege IAM** | Deployer SA 僅授予 `roles/storage.objectUser`；禁止 `roles/storage.admin` | `binding-proposal.json:81`, `EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md:248`, `ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT` 已綁定 (`RCPT-GH-ENV-VARS-STAGING-002`) | **PASS**：Deployer SA `serviceAccount:github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com` 於 Recovery Bucket 綁定 `roles/storage.objectUser` (`RCPT-GCP-RECOVERY-BUCKET-IAM-20260920`)；專案與儲存桶層級均無 `roles/storage.admin`、`roles/owner` 或 `roles/editor` (`RCPT-GCP-DEPLOYER-PROJECT-IAM-FILTERED-20260920`) | **VERIFIED_READY** |
 
 ---
 
@@ -134,7 +140,7 @@ Recovery Storage 規範要求與現場唯讀探針結果如下（安全基準規
 
 ## 7. 當前環境座標與 Readiness 判定 (Environment Coordinates & Readiness Status)
 
-依據 2026-09-19T14:48:43Z 之即時 GitHub 環境變數讀取收據 `RCPT-GH-ENV-VARS-STAGING-002`：
+依據 GitHub 環境變數讀取收據 `RCPT-GH-ENV-VARS-STAGING-002` 與 2026-09-20 GCP metadata 讀回收據：
 
 | 座標 / 變數名稱 | 當前 GitHub `staging` 狀態 | 綁定值 | 判定說明 |
 |---|---|---|---|
@@ -142,44 +148,47 @@ Recovery Storage 規範要求與現場唯讀探針結果如下（安全基準規
 | `GCP_REGION` | **BOUND** | `asia-east1` | 區域正確綁定 |
 | `GCP_SERVICE_ACCOUNT` | **BOUND** | `github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com` | Deployer SA 正確綁定 |
 | `ODP_STAGING_TERRAFORM_STATE_BUCKET` | **BOUND** | `oday-tfstate-staging-odayplus-runtime-20260825` | State 儲存桶已綁定 (2026-09-12) |
-| `ODP_STAGING_RECOVERY_BUNDLE_BUCKET` | **BOUND** | `oday-staging-recovery-odayplus-runtime-20260825` | Recovery 儲存桶已綁定 (2026-09-12) |
-| `ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT` | **BOUND** | `github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com` | Staging Deployer SA 已綁定 (2026-09-12) |
-| `ODP_STAGING_KMS_KEY_ID` | **BOUND** | `projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime` | Staging KMS Key 已綁定 (2026-09-12) |
+| `ODP_STAGING_RECOVERY_BUNDLE_BUCKET` | **BOUND / VERIFIED** | `oday-staging-recovery-odayplus-runtime-20260825` | Recovery 儲存桶已綁定且雲端 metadata 驗證通過 |
+| `ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT` | **BOUND / VERIFIED** | `github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com` | Staging Deployer SA 已綁定且 IAM 權限已驗證 |
+| `ODP_STAGING_KMS_KEY_ID` | **BOUND / VERIFIED** | `projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime` | Staging KMS Key 已綁定且金鑰狀態已驗證 |
 | `ODP_STAGING_VPC_NETWORK` | **BOUND** | `oday-staging-runtime` | VPC 網路已綁定 (2026-09-12) |
 | `ODP_STAGING_VPC_SUBNETWORK` | **BOUND** | `oday-staging-runtime` | VPC 子網路已綁定 (2026-09-12) |
 
-### 7.1 Live GCP 探針紀錄 (GCP Live Probe Receipts)
-- **Token 獲取探針** (`RCPT-GCP-AUTH-TOKEN-PROBE-001`):
-  - Command: `gcloud auth print-access-token --account=oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com > /dev/null`
-  - Exit Code: `0`
-  - Active Account: `oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com`
-  - Result: 成功獲取 token（stdout 丟棄，無 token 儲存），證實本地環境與 SA 認證機制正常。
-- **Bucket Describe 探針** (`RCPT-GCP-RECOVERY-BUCKET-DESCRIBE-001`):
-  - Command: `gcloud --quiet --account=oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com storage buckets describe gs://oday-staging-recovery-odayplus-runtime-20260825 ...`
-  - Exit Code: `1`
-  - Result: `Permission 'storage.buckets.get' denied on resource '//storage.googleapis.com/projects/_/buckets/oday-staging-recovery-odayplus-runtime-20260825'`（IAM 權限拒絕，非 token 逾期）。
-- **Bucket IAM Policy 探針** (`RCPT-GCP-RECOVERY-BUCKET-IAM-001`):
-  - Command: `gcloud --quiet --account=oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com storage buckets get-iam-policy gs://oday-staging-recovery-odayplus-runtime-20260825 ...`
-  - Exit Code: `1`
-  - Result: `Permission 'storage.buckets.getIamPolicy' denied on resource ...`
-- **KMS Key Describe 探針** (`RCPT-GCP-KMS-DESCRIBE-001`):
-  - Command: `gcloud --quiet --account=oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com kms keys describe oday-staging-runtime ...`
-  - Exit Code: `1`
-  - Result: `PERMISSION_DENIED: Permission 'cloudkms.cryptoKeys.get' denied on resource ...`
+### 7.1 2026-09-20 GCP 現場讀回收據 (GCP Live Readback Receipts)
 
-### 7.2 Readiness 總體結論與 Blocker 說明
-- **代碼與合約狀態 (Code & Contracts)**：**READY / MERGED**
-- **管線守門狀態 (Pipeline Guards)**：**ACTIVE / VERIFIED**
-- **環境變數綁定 (GitHub Environment Variables)**：**BOUND / VERIFIED**
-- **GCP 現場 Metadata 狀態 (GCP Storage Probe)**：**METADATA UNPROBED / IAM_BLOCKED**
-- **Stage A 狀態**：**STAGE_A_INCOMPLETE_BLOCKED_ON_EXTERNAL_GCP_IAM_READBACK_AUTHORITY**
-- **外部權限 Blocker 詳情 (`BLOCKER-EXTERNAL-GCP-IAM-READBACK-001`)**：
-  - **Waiting For**: `Human/Ops`
-  - **Reason**: 本機執行環境僅具備 `alfaloop-data-project-2` 專案之 `oday-dev-runtime` 服務帳號認證，對跨專案 `odayplus-runtime-20260825` 資源遭遇 GCP IAM 權限拒絕。依任務驗收規則與審查判定，Stage A 前置條件保持 INCOMPLETE/BLOCKED，不假造通過，亦不執行未授權之雲端修改。
-  - **Unblocking 前置要求**：
-    1. Human/Ops 或資源負責人提供已授權之唯讀身分（具備 staging 專案之 `storage.buckets.get`、`storage.buckets.getIamPolicy` 與 `cloudkms.cryptoKeys.get`）或簽署之 metadata 讀回收據。
-    2. 核對 CMEK 金鑰、Versioning、30d Retention、PAP (enforced)、UBLA (enabled) 與 Deployer SA `roles/storage.objectUser`。
-    3. 核實無誤後，Stage A 方可推進至 `VERIFIED_READY`。
+1. **Recovery Bucket Metadata 收據** (`RCPT-GCP-RECOVERY-BUCKET-METADATA-20260920`):
+   - Command: `gcloud --quiet --account=admin@dev.cctech-support.com storage buckets describe gs://oday-staging-recovery-odayplus-runtime-20260825 '--format=json(name,location,default_kms_key,versioning_enabled,retention_policy,public_access_prevention,uniform_bucket_level_access,creation_time,update_time)'`
+   - Exit Code: `0` (Duration: `2.633s`)
+   - Source SHA256: `6aa9a1b7a48253d140af708ba118177c3d0a0a0bc49c85ef4260fb2754e1d005`
+   - Verified: bucket location `ASIA-EAST1`, default KMS key `projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime`, `versioning_enabled=true`, `uniform_bucket_level_access=true`, `public_access_prevention=enforced`, `retentionPeriod=2592000` (30 days).
+2. **KMS Key Metadata 收據** (`RCPT-GCP-KMS-METADATA-20260920`):
+   - Command: `gcloud --quiet --account=admin@dev.cctech-support.com kms keys describe oday-staging-runtime --keyring=oday-staging-runtime --location=asia-east1 --project=odayplus-runtime-20260825 '--format=json(name,purpose,primary.state,rotationPeriod,nextRotationTime)'`
+   - Exit Code: `0` (Duration: `2.106s`)
+   - Source SHA256: `d3bd138a1e2126ae8597766412f1ac3a8398159f9d84c995f31e420185c0f04e`
+   - Verified: key state `ENABLED`, purpose `ENCRYPT_DECRYPT`, rotation period `7776000s` (90 days), next rotation `2026-11-25T08:29:35Z`.
+3. **Recovery Bucket IAM Policy 收據** (`RCPT-GCP-RECOVERY-BUCKET-IAM-20260920`):
+   - Command: `gcloud --quiet --account=deborah.lu@dev.cctech-support.com storage buckets get-iam-policy gs://oday-staging-recovery-odayplus-runtime-20260825 --format=json`
+   - Exit Code: `0` (Duration: `1.985s`)
+   - Source SHA256: `ce82bf19dc0151f8c80a42898a51893263ed83320ef36039076ed7144cd539f1`
+   - Verified: `serviceAccount:github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com` bound to `roles/storage.objectUser`.
+4. **KMS Key IAM Policy 收據** (`RCPT-GCP-KMS-IAM-20260920`):
+   - Command: `gcloud --quiet --account=deborah.lu@dev.cctech-support.com kms keys get-iam-policy oday-staging-runtime --keyring=oday-staging-runtime --location=asia-east1 --project=odayplus-runtime-20260825 --format=json`
+   - Exit Code: `0` (Duration: `1.890s`)
+   - Source SHA256: `91268b63e0f626515423ce2ddf82e37201a1109d0f4d3cfc4ae0e363a9683c9a`
+   - Verified: GCS service agent `serviceAccount:service-767864276141@gs-project-accounts.iam.gserviceaccount.com` bound to `roles/cloudkms.cryptoKeyEncrypterDecrypter`.
+5. **Filtered Deployer Project IAM Policy 收據** (`RCPT-GCP-DEPLOYER-PROJECT-IAM-FILTERED-20260920`):
+   - Command: `gcloud --quiet --account=admin@dev.cctech-support.com projects get-iam-policy odayplus-runtime-20260825 --format=json`
+   - Exit Code: `0` (Duration: `2.476s`)
+   - Source SHA256: `1fb2807a89bd8a5917406ad3bc8e07bfd7178db917eb9ca992e3be2ecaa9b0bc`
+   - Verified: Deployer SA only possesses project roles `roles/cloudscheduler.admin`, `roles/cloudsql.client`, `roles/run.admin`, `roles/serviceusage.serviceUsageConsumer`; `roles/storage.admin`, `roles/owner`, `roles/editor` are absent.
+
+### 7.2 歷史探針觀察與 Blocker 解除紀錄
+
+- **歷史探針觀察 (Historical Observations on 2026-09-19)**：
+  - `RCPT-HISTORICAL-GCP-PROBE-AUTH-TOKEN-001` (exit 0): 證實主機 gcloud 認證機制正常。
+  - `RCPT-HISTORICAL-GCP-PROBE-BUCKET-DESCRIBE-001` (exit 1), `RCPT-HISTORICAL-GCP-PROBE-BUCKET-IAM-001` (exit 1), `RCPT-HISTORICAL-GCP-PROBE-KMS-DESCRIBE-001` (exit 1): 紀錄 dev SA 因跨專案權限不足遭遇 IAM denied，當時忠實記錄為外部 Blocker `BLOCKER-EXTERNAL-GCP-IAM-READBACK-001`。
+- **Blocker 解除 (`BLOCKER-EXTERNAL-GCP-IAM-READBACK-001-RESOLVED`)**：
+  - 2026-09-20 使用者完成 `admin@dev.cctech-support.com` 與專案 owner `deborah.lu@dev.cctech-support.com` 登入，成功讀回所有 5 項 metadata 與 IAM 收據，Blocker 正式標記為 **RESOLVED**。
 
 ---
 
@@ -189,12 +198,12 @@ Recovery Storage 規範要求與現場唯讀探針結果如下（安全基準規
 
 ```mermaid
 flowchart TD
-    subgraph STAGE_A["Stage A: 前置 Storage Readiness (代碼/座標核實，GCP 雲端探針 IAM 阻擋 - INCOMPLETE/BLOCKED)"]
+    subgraph STAGE_A["Stage A: 前置 Storage Readiness (代碼/座標/GCP 雲端 Metadata 與 IAM 均核實 - VERIFIED_READY)"]
         A1["CRIT-01: 儲存邊界嚴格分離 (check_release_environment & deploy-dev.yml) - VERIFIED_READY"]
         A2["CRIT-02: State-Only 儲存桶合約 (禁止混放一般產物或 recovery bundle) - VERIFIED_READY"]
-        A3["CRIT-03: CMEK 金鑰基準 (oday-staging-runtime KMS bound, GCP probe IAM-blocked)"]
-        A4["CRIT-04: UBLA / PAP / Versioning / 30d Retention (Contract frozen, GCP probe IAM-blocked)"]
-        A5["CRIT-05: Deployer SA 最小權限 (roles/storage.objectUser bound, GCP probe IAM-blocked)"]
+        A3["CRIT-03: CMEK 金鑰基準 (oday-staging-runtime KMS ENABLED, 90d rotation, GCS SA bound) - VERIFIED_READY"]
+        A4["CRIT-04: UBLA / PAP / Versioning / 30d Retention (GCP metadata readback verified) - VERIFIED_READY"]
+        A5["CRIT-05: Deployer SA 最小權限 (roles/storage.objectUser bound, no storage.admin) - VERIFIED_READY"]
         A6["CRIT-06: 收據與日誌 Redaction (secret_values_redacted=true) - VERIFIED_READY"]
     end
 
@@ -208,7 +217,7 @@ flowchart TD
     STAGE_A -->|提供核實之儲存契約、環境座標與映射關係| STAGE_B
 ```
 
-- **Stage A 項目 (CRIT-01 至 CRIT-06)**：已完成代碼合約、守門邏輯、GitHub 環境座標核對，並誠實記錄 GCP 唯讀探針之 IAM 權限拒絕收據，狀態為 INCOMPLETE/BLOCKED。
+- **Stage A 項目 (CRIT-01 至 CRIT-06)**：已完成代碼合約、守門邏輯、GitHub 環境座標核對與 2026-09-20 GCP 雲端 metadata/IAM 現場讀回核實，全部 6 項狀態為 **VERIFIED_READY**。
 - **Stage B 項目 (CRIT-07 至 CRIT-10)**：正式映射至 parent task `ODP-EPHEMERAL-STAGING-ROLLOUT-001`（Owner: `Antigravity5`，Reviewer: `Codex`）。
 
 ### 8.1 Stage B 可執行流程與接點規範 (Executable Stage B Entrypoints)
@@ -272,7 +281,21 @@ flowchart TD
 
 ---
 
-## 9. 權限界線與治理防護 (Authority Boundaries & Human Gates)
+## 9. 審查歷史與 Reopen 處置紀錄 (Review History & Reopen Disposition)
+
+本任務經歷 3 次實質審查迭代與第 4 次外部登入解除後之控制面續辦：
+
+1. **Review 1 / Reopen 1 (2026-09-19)**: 修正探針收據記錄與環境變數映射。
+2. **Review 2 / Reopen 2 (2026-09-19)**: 補正執行身分、區隔 dev-runtime SA 與 github-deployer SA。
+3. **Review 3 / Reopen 3 (2026-09-19)**: 補正 CRIT-08 詳細流程（本地 SHA-256、GCS generation 捕捉、指定 generation 遠端 SHA-256 比對、hold generation 追蹤）並記錄 Stage A 外部 IAM 權限阻擋狀態。
+4. **Dispatch 4 / Readback Blocker Resolution (2026-09-20T07:19Z)**:
+   - 使用者恢復 `admin@dev.cctech-support.com` 與專案 owner `deborah.lu@dev.cctech-support.com` 登入。
+   - 2026-09-20T06:53Z 至 07:18Z 成功讀回 Recovery Bucket metadata (exit 0)、KMS metadata (exit 0)、Recovery Bucket IAM policy (exit 0, deployer roles/storage.objectUser)、KMS IAM policy (exit 0, GCS SA roles/cloudkms.cryptoKeyEncrypterDecrypter) 及專案 IAM policy (exit 0, 確認 deployer SA 無 storage.admin/owner/editor)。
+   - 將所有 5 份去敏收據與 hash 納入交付產物，Stage A 正式推進至 `VERIFIED_READY`，保留三次 substantive review 歷史與 Stage B dependency。
+
+---
+
+## 10. 權限界線與治理防護 (Authority Boundaries & Human Gates)
 
 1. **唯讀界限 (Read-Only Boundary)**：
    - 本任務僅進行唯讀代碼審計、收據核對、環境變數驗證與結構化映射報告產出。
@@ -285,7 +308,7 @@ flowchart TD
 
 ---
 
-## 10. 驗證記錄 (Verification Receipts)
+## 11. 驗證記錄 (Verification Receipts)
 
 本任務交付產物已通過宣告驗證：
 
@@ -300,7 +323,12 @@ names=[
   "docs/evidence/runtime/ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001/README.md",
   "docs/evidence/runtime/ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001/recovery-storage-readiness.json",
   "docs/evidence/runtime/ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001/rollout-acceptance-mapping.json",
-  "docs/evidence/runtime/ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001/readback-receipts-index.json"
+  "docs/evidence/runtime/ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001/readback-receipts-index.json",
+  "docs/evidence/runtime/ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001/rcpt-gcp-recovery-bucket-metadata-20260920.json",
+  "docs/evidence/runtime/ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001/rcpt-gcp-kms-metadata-20260920.json",
+  "docs/evidence/runtime/ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001/rcpt-gcp-recovery-bucket-iam-20260920.json",
+  "docs/evidence/runtime/ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001/rcpt-gcp-kms-iam-20260920.json",
+  "docs/evidence/runtime/ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001/rcpt-gcp-deployer-project-iam-filtered-20260920.json"
 ]
 for n in names:
   p=Path(n); assert p.is_file() and p.stat().st_size, n
