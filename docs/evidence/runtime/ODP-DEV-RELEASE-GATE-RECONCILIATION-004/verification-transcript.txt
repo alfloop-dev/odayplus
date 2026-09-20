@@ -1,3 +1,49 @@
+ODP-DEV-RELEASE-GATE-RECONCILIATION-004 Verification Transcript
+Recorded At: 2026-09-20T06:43:22.104523+00:00
+Task Worktree Branch: task/ODP-DEV-RELEASE-GATE-RECONCILIATION-004
+Task Worktree HEAD: d0c8f94f10888475daf83f99e6528acdb887fb5d
+Candidate SHA: 39ae43f6fe679f03dd7df459a51835cbd2d54f77
+Candidate Worktree: /tmp/candidate-39ae43f6
+Downloaded Artifacts Dir: /tmp/run-35493018607 (GitHub Actions Run 35493018607)
+================================================================================
+
+COMMAND: git diff --check
+START_TIME_UTC: 2026-09-20T06:43:22.104580+00:00
+TERMINAL_EXIT_CODE: 0
+WALL_DURATION_SEC: 0.019314s
+--- STDOUT ---
+================================================================================
+
+COMMAND: uv run python delivery_toolchain/e2e/check_release_gate_registry.py --json
+START_TIME_UTC: 2026-09-20T06:43:22.123923+00:00
+TERMINAL_EXIT_CODE: 0
+WALL_DURATION_SEC: 0.442601s
+--- STDOUT ---
+{
+  "registry_id": "ODP-RELEASE-GATE-REGISTRY",
+  "candidate_sha": "39ae43f6fe679f03dd7df459a51835cbd2d54f77",
+  "manifest_digest": "sha256:ebe7d305e930471d2e7492a1fffced10dbaa05a710bb5f6573f370e7bfa8ae8a",
+  "stage": "candidate-built",
+  "environment": "dev",
+  "admission_target": "dev",
+  "decision": "no-go",
+  "gate_count": 7,
+  "cleared_gates": [],
+  "blocking_gates": [
+    "gate-0",
+    "gate-1",
+    "gate-4"
+  ],
+  "integrity_errors": [],
+  "release_state": "NO-GO"
+}
+================================================================================
+
+COMMAND: bash docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-004/verify_live_artifact_binding.sh /tmp/run-35493018607 /tmp/candidate-39ae43f6
+START_TIME_UTC: 2026-09-20T06:43:22.566570+00:00
+TERMINAL_EXIT_CODE: 0
+WALL_DURATION_SEC: 0.992335s
+--- STDOUT ---
 candidate: 39ae43f6fe679f03dd7df459a51835cbd2d54f77  build run: 35493018607
 
 [PASS] manifest raw SHA-256 matches build artifact (ID 10600115848) -- 10acdfc1460de9a9bc72c816dea6f81d0ec88778c2f2e23c727e05f9bd06d5de
@@ -32,3 +78,4 @@ candidate: 39ae43f6fe679f03dd7df459a51835cbd2d54f77  build run: 35493018607
 [PASS] registry decision is no-go
 
 Summary: 0 failures.
+================================================================================

@@ -65,7 +65,7 @@
       "receipts": [],
       "blockers": [
         "No Code Gate receipt is bound to release candidate 39ae43f6fe679f03dd7df459a51835cbd2d54f77; a green CI run on an earlier commit is not a receipt for this candidate.",
-        "Full product unit and component test execution receipts in CI (and packages workspace typecheck) on the exact release candidate commit remain open; downstream execution responsibility tracked by ODP-DEV-CANDIDATE-CODE-RECEIPT-001 / Platform & QA Team (clarified from legacy unmapped ODP-PLAN-ENGINEERING-HARDENING-001 reference)."
+        "Historical receipt task ODP-DEV-CANDIDATE-CODE-RECEIPT-001 is archived done (2026-09-11) with conclusion no-go for candidate 596b9c9a. For candidate 39ae43f6fe679f03dd7df459a51835cbd2d54f77, full product unit and component test execution receipts in CI (and packages workspace typecheck on packages/design-tokens, domain-types, openapi-client, ui-domain, ui) remain open; active execution responsibility for candidate CI verification is assigned to gate owner Codex2 / ODP-DEV-ROLLOUT-001 with acceptance requiring clean execution receipts on candidate 39ae43f6 prior to dev admission (clarified from legacy unmapped ODP-PLAN-ENGINEERING-HARDENING-001 reference)."
       ]
     },
     {
@@ -108,7 +108,7 @@
       "receipts": [],
       "blockers": [
         "No Contract Gate receipt is bound to release candidate 39ae43f6fe679f03dd7df459a51835cbd2d54f77.",
-        "Cross-version breaking diff baseline proof, event schema proposed-vs-implementation compatibility (additionalProperties: false vs dual publication), and data contract transition window verification remain open; downstream execution responsibility tracked by ODP-DEV-CANDIDATE-CONTRACT-RECEIPT-001 / Platform Team (clarified from legacy unmapped ODP-PLAN-ENGINEERING-HARDENING-001 reference)."
+        "Historical receipt task ODP-DEV-CANDIDATE-CONTRACT-RECEIPT-001 is archived done (2026-09-11) with conclusion no-go for candidate 596b9c9a. For candidate 39ae43f6fe679f03dd7df459a51835cbd2d54f77, cross-version breaking diff baseline proof (reconciled under initial-release absence posture with delete-candidate-zero-traffic rollback), event schema proposed-vs-implementation compatibility (additionalProperties: false in payload schema vs dual publication in docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml), and data contract v0.4.1 transition window & pin migration verification remain open; active execution responsibility is assigned to gate owner Claude / ODP-DEV-ROLLOUT-001 (and ODP-EPHEMERAL-STAGING-ROLLOUT-001 for multi-version event replay in staging) with acceptance requiring schema alignment and zero-drift verification (clarified from legacy unmapped ODP-PLAN-ENGINEERING-HARDENING-001 reference)."
       ]
     },
     {
@@ -232,8 +232,8 @@
       "receipts": [],
       "blockers": [
         "No Security and Privacy Gate receipt is bound to release candidate 39ae43f6fe679f03dd7df459a51835cbd2d54f77.",
-        "Exact-candidate RBAC/ABAC tests, sensitive export and audit controls, and IAM least-privilege review receipts remain open; downstream execution responsibility tracked by ODP-DEV-CANDIDATE-SECURITY-RECEIPT-001 / Security Engineering & Identity Team.",
-        "Legal approval gate HUMAN-OSS-LEGAL-APPROVAL-001 (named sign-off H01, external authority reference) remains pending human action, and docs/security/license_policy.json remains proposed."
+        "Historical receipt task ODP-DEV-CANDIDATE-SECURITY-RECEIPT-001 is archived done (2026-09-11) with conclusion no-go for candidate 596b9c9a. For candidate 39ae43f6fe679f03dd7df459a51835cbd2d54f77, technical verification gaps (exact-candidate RBAC/ABAC dynamic test execution in tests/security/, live runtime public egress readback, candidate GCP IAM least-privilege review, and NOTICE script execution receipt) remain open; active technical execution responsibility is assigned to gate owner Claude / ODP-DEV-ROLLOUT-001 with acceptance requiring clean dynamic security receipts.",
+        "Authority blocker HUMAN-OSS-LEGAL-APPROVAL-001 (named sign-off H01: display_name, principal_id, role, approval_reference from external authority system) remains pending human action by Human/Ops (Legal Counsel / Product Owner) to approve docs/security/license_policy.json (currently proposed) and sign license_exemptions.json; AI workers strictly forbidden from fabricating or signing legal authority receipts."
       ]
     },
     {
