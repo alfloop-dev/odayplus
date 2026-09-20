@@ -1,0 +1,303 @@
+{
+  "task_id": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+  "schema_version": 1,
+  "generated_at_utc": "2026-09-20T07:22:00Z",
+  "executor_worker": "Antigravity2",
+  "reviewer": "Codex",
+  "purpose": "Index of all historical receipts, merged code commits, live environment readbacks, resolved blockers, and authorized GCP metadata receipts establishing staging recovery storage readiness and rollout mapping.",
+  "authority_boundary": {
+    "permitted_actions": [
+      "Read immutable existing foundation metadata and state receipts",
+      "Read immutable preflight, CI collection, and PR merge receipts",
+      "Perform authorized read-only GitHub API and GCP metadata readbacks",
+      "Verify code contracts, fail-closed prechecks, and workflow boundaries",
+      "Map historical criteria to current readiness and future rollout tasks"
+    ],
+    "prohibited_actions": [
+      "No reading secret versions, tokens, or plaintext keys",
+      "No reading raw Terraform binary state plans or signing keys",
+      "No creating, modifying, or deleting cloud resources or GCS buckets",
+      "No modifying IAM policy bindings or enabling GCP APIs",
+      "No running terraform init, plan, apply, import, or state commands against live cloud",
+      "No running gh variable set or releasing dispatch triggers",
+      "No modifying or deleting quarantined security state objects"
+    ]
+  },
+  "receipts_index": [
+    {
+      "receipt_id": "RCPT-GCP-RECOVERY-BUCKET-METADATA-20260920",
+      "source_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+      "timestamp_utc": "2026-09-20T06:53:16.708413+00:00",
+      "command": "gcloud --quiet --account=admin@dev.cctech-support.com storage buckets describe gs://oday-staging-recovery-odayplus-runtime-20260825 '--format=json(name,location,default_kms_key,versioning_enabled,retention_policy,public_access_prevention,uniform_bucket_level_access,creation_time,update_time)'",
+      "exit_code": 0,
+      "duration_seconds": 2.633,
+      "evidence_kind": "gcp_recovery_bucket_metadata_readback",
+      "source_file": "docs/evidence/runtime/ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001/rcpt-gcp-recovery-bucket-metadata-20260920.json",
+      "source_sha256": "6aa9a1b7a48253d140af708ba118177c3d0a0a0bc49c85ef4260fb2754e1d005",
+      "verified_facts": {
+        "bucket_name": "oday-staging-recovery-odayplus-runtime-20260825",
+        "location": "ASIA-EAST1",
+        "default_kms_key": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime",
+        "versioning_enabled": true,
+        "uniform_bucket_level_access": true,
+        "public_access_prevention": "enforced",
+        "retention_period_seconds": 2592000,
+        "retention_period_days": 30
+      }
+    },
+    {
+      "receipt_id": "RCPT-GCP-KMS-METADATA-20260920",
+      "source_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+      "timestamp_utc": "2026-09-20T06:53:16.710155+00:00",
+      "command": "gcloud --quiet --account=admin@dev.cctech-support.com kms keys describe oday-staging-runtime --keyring=oday-staging-runtime --location=asia-east1 --project=odayplus-runtime-20260825 '--format=json(name,purpose,primary.state,rotationPeriod,nextRotationTime)'",
+      "exit_code": 0,
+      "duration_seconds": 2.106,
+      "evidence_kind": "gcp_kms_key_metadata_readback",
+      "source_file": "docs/evidence/runtime/ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001/rcpt-gcp-kms-metadata-20260920.json",
+      "source_sha256": "d3bd138a1e2126ae8597766412f1ac3a8398159f9d84c995f31e420185c0f04e",
+      "verified_facts": {
+        "key_name": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime",
+        "primary_state": "ENABLED",
+        "purpose": "ENCRYPT_DECRYPT",
+        "rotation_period": "7776000s (90 days)",
+        "next_rotation_time": "2026-11-25T08:29:35.629640Z"
+      }
+    },
+    {
+      "receipt_id": "RCPT-GCP-RECOVERY-BUCKET-IAM-20260920",
+      "source_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+      "timestamp_utc": "2026-09-20T07:18:09.628941+00:00",
+      "command": "gcloud --quiet --account=deborah.lu@dev.cctech-support.com storage buckets get-iam-policy gs://oday-staging-recovery-odayplus-runtime-20260825 --format=json",
+      "exit_code": 0,
+      "duration_seconds": 1.985,
+      "evidence_kind": "gcp_recovery_bucket_iam_policy_readback",
+      "source_file": "docs/evidence/runtime/ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001/rcpt-gcp-recovery-bucket-iam-20260920.json",
+      "source_sha256": "ce82bf19dc0151f8c80a42898a51893263ed83320ef36039076ed7144cd539f1",
+      "verified_facts": {
+        "deployer_principal": "serviceAccount:github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+        "deployer_bucket_role": "roles/storage.objectUser",
+        "no_direct_storage_admin_on_bucket": true
+      }
+    },
+    {
+      "receipt_id": "RCPT-GCP-KMS-IAM-20260920",
+      "source_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+      "timestamp_utc": "2026-09-20T07:18:09.630033+00:00",
+      "command": "gcloud --quiet --account=deborah.lu@dev.cctech-support.com kms keys get-iam-policy oday-staging-runtime --keyring=oday-staging-runtime --location=asia-east1 --project=odayplus-runtime-20260825 --format=json",
+      "exit_code": 0,
+      "duration_seconds": 1.890,
+      "evidence_kind": "gcp_kms_key_iam_policy_readback",
+      "source_file": "docs/evidence/runtime/ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001/rcpt-gcp-kms-iam-20260920.json",
+      "source_sha256": "91268b63e0f626515423ce2ddf82e37201a1109d0f4d3cfc4ae0e363a9683c9a",
+      "verified_facts": {
+        "gcs_service_agent": "serviceAccount:service-767864276141@gs-project-accounts.iam.gserviceaccount.com",
+        "gcs_service_agent_role": "roles/cloudkms.cryptoKeyEncrypterDecrypter"
+      }
+    },
+    {
+      "receipt_id": "RCPT-GCP-DEPLOYER-PROJECT-IAM-FILTERED-20260920",
+      "source_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+      "timestamp_utc": "2026-09-20T06:54:11.284050+00:00",
+      "command": "gcloud --quiet --account=admin@dev.cctech-support.com projects get-iam-policy odayplus-runtime-20260825 --format=json",
+      "exit_code": 0,
+      "duration_seconds": 2.476,
+      "evidence_kind": "gcp_deployer_project_iam_filtered_readback",
+      "source_file": "docs/evidence/runtime/ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001/rcpt-gcp-deployer-project-iam-filtered-20260920.json",
+      "source_sha256": "1fb2807a89bd8a5917406ad3bc8e07bfd7178db917eb9ca992e3be2ecaa9b0bc",
+      "verified_facts": {
+        "deployer_principal": "serviceAccount:github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+        "observed_roles": [
+          "roles/cloudscheduler.admin",
+          "roles/cloudsql.client",
+          "roles/run.admin",
+          "roles/serviceusage.serviceUsageConsumer"
+        ],
+        "prohibited_roles_absent": [
+          "roles/storage.admin",
+          "roles/owner",
+          "roles/editor"
+        ],
+        "no_direct_storage_admin_on_project": true
+      }
+    },
+    {
+      "receipt_id": "BLOCKER-EXTERNAL-GCP-IAM-READBACK-001-RESOLVED",
+      "source_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+      "timestamp_utc": "2026-09-20T07:19:00Z",
+      "evidence_kind": "durable_task_blocker_resolution_record",
+      "status": "RESOLVED",
+      "resolution_summary": "External login and readback blocker resolved via admin@dev.cctech-support.com and project owner deborah.lu@dev.cctech-support.com logins. All required recovery bucket metadata, KMS key metadata, recovery bucket IAM (deployer roles/storage.objectUser), KMS IAM (GCS service-agent roles/cloudkms.cryptoKeyEncrypterDecrypter), and project IAM policies successfully read with exit code 0."
+    },
+    {
+      "receipt_id": "RCPT-GH-ENV-VARS-STAGING-002",
+      "source_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+      "timestamp_utc": "2026-09-19T14:48:43Z",
+      "command": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables",
+      "exit_code": 0,
+      "evidence_kind": "github_environment_variables_readback",
+      "verified_bindings": {
+        "ODP_STAGING_TERRAFORM_STATE_BUCKET": {
+          "value": "oday-tfstate-staging-odayplus-runtime-20260825",
+          "updated_at": "2026-09-12T14:23:28Z",
+          "status": "BOUND"
+        },
+        "ODP_STAGING_RECOVERY_BUNDLE_BUCKET": {
+          "value": "oday-staging-recovery-odayplus-runtime-20260825",
+          "updated_at": "2026-09-12T15:37:03Z",
+          "status": "BOUND"
+        },
+        "ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT": {
+          "value": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+          "updated_at": "2026-09-12T14:23:27Z",
+          "status": "BOUND"
+        },
+        "ODP_STAGING_KMS_KEY_ID": {
+          "value": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime",
+          "updated_at": "2026-09-12T14:23:27Z",
+          "status": "BOUND"
+        },
+        "ODP_STAGING_VPC_NETWORK": {
+          "value": "oday-staging-runtime",
+          "updated_at": "2026-09-12T14:23:25Z",
+          "status": "BOUND"
+        },
+        "ODP_STAGING_VPC_SUBNETWORK": {
+          "value": "oday-staging-runtime",
+          "updated_at": "2026-09-12T14:23:26Z",
+          "status": "BOUND"
+        },
+        "GCP_PROJECT_ID": {
+          "value": "odayplus-runtime-20260825",
+          "updated_at": "2026-08-25T15:41:39Z",
+          "status": "BOUND"
+        },
+        "GCP_REGION": {
+          "value": "asia-east1",
+          "updated_at": "2026-08-25T15:41:40Z",
+          "status": "BOUND"
+        },
+        "GCP_SERVICE_ACCOUNT": {
+          "value": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+          "updated_at": "2026-08-25T15:41:43Z",
+          "status": "BOUND"
+        },
+        "GCP_WORKLOAD_IDENTITY_PROVIDER": {
+          "value": "projects/767864276141/locations/global/workloadIdentityPools/github-actions/providers/odayplus",
+          "updated_at": "2026-08-25T15:41:42Z",
+          "status": "BOUND"
+        }
+      }
+    },
+    {
+      "receipt_id": "RCPT-HISTORICAL-GCP-PROBE-AUTH-TOKEN-001",
+      "source_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+      "timestamp_utc": "2026-09-19T16:12:38Z",
+      "command": "gcloud auth print-access-token --account=oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com > /dev/null",
+      "exit_code": 0,
+      "evidence_kind": "historical_gcp_service_account_token_probe",
+      "active_account": "oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com",
+      "finding": "Historical observation (2026-09-19): OAuth token acquisition succeeded for dev SA, proving host gcloud mechanism was functional."
+    },
+    {
+      "receipt_id": "RCPT-HISTORICAL-GCP-PROBE-BUCKET-DESCRIBE-001",
+      "source_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+      "timestamp_utc": "2026-09-19T16:12:49Z",
+      "command": "gcloud --quiet --account=oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com storage buckets describe gs://oday-staging-recovery-odayplus-runtime-20260825 ...",
+      "exit_code": 1,
+      "evidence_kind": "historical_gcp_storage_bucket_describe_probe",
+      "active_account": "oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com",
+      "error_message": "ERROR: Permission 'storage.buckets.get' denied on resource '//storage.googleapis.com/projects/_/buckets/oday-staging-recovery-odayplus-runtime-20260825'",
+      "finding": "Historical observation (2026-09-19): Dev SA lacked cross-project read permissions on staging bucket. Superseded by authorized admin readback RCPT-GCP-RECOVERY-BUCKET-METADATA-20260920 on 2026-09-20."
+    },
+    {
+      "receipt_id": "RCPT-HISTORICAL-GCP-PROBE-BUCKET-IAM-001",
+      "source_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+      "timestamp_utc": "2026-09-19T16:12:52Z",
+      "command": "gcloud --quiet --account=oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com storage buckets get-iam-policy gs://oday-staging-recovery-odayplus-runtime-20260825 ...",
+      "exit_code": 1,
+      "evidence_kind": "historical_gcp_storage_bucket_iam_probe",
+      "active_account": "oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com",
+      "error_message": "ERROR: Permission 'storage.buckets.getIamPolicy' denied on resource '//storage.googleapis.com/projects/_/buckets/oday-staging-recovery-odayplus-runtime-20260825'",
+      "finding": "Historical observation (2026-09-19): Dev SA lacked getIamPolicy permission. Superseded by authorized owner readback RCPT-GCP-RECOVERY-BUCKET-IAM-20260920 on 2026-09-20."
+    },
+    {
+      "receipt_id": "RCPT-HISTORICAL-GCP-PROBE-KMS-DESCRIBE-001",
+      "source_task": "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001",
+      "timestamp_utc": "2026-09-19T16:12:56Z",
+      "command": "gcloud --quiet --account=oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com kms keys describe oday-staging-runtime ...",
+      "exit_code": 1,
+      "evidence_kind": "historical_gcp_kms_key_describe_probe",
+      "active_account": "oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com",
+      "error_message": "ERROR: PERMISSION_DENIED: Permission 'cloudkms.cryptoKeys.get' denied on resource 'projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime'",
+      "finding": "Historical observation (2026-09-19): Dev SA lacked cloudkms.cryptoKeys.get permission. Superseded by authorized admin readback RCPT-GCP-KMS-METADATA-20260920 on 2026-09-20."
+    },
+    {
+      "receipt_id": "RCPT-HISTORICAL-PR-1208",
+      "source_task": "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
+      "source_pr": "#1208",
+      "head_sha": "a5e6a2f7074b6c5e679cbf7f0c6d03f9e6141a5a",
+      "merge_commit": "b9dd2e7b337e4bab8236cd15b5df07092685100b",
+      "merged_at_utc": "2026-09-05T16:02:58Z",
+      "evidence_kind": "merged_code_and_contract_tests",
+      "key_deliverables": [
+        "check_release_environment.py: ODP_STAGING_RECOVERY_BUNDLE_BUCKET presence check and state bucket separation guard",
+        "deploy-dev.yml: deploy and staging_closeout jobs wired to dedicated recovery bucket",
+        "test_release_environment_precheck.py: fail-closed rejection tests for identical bucket and placeholder bucket",
+        "test_deploy_workflow_contract.py: staging foundation contract tests"
+      ]
+    },
+    {
+      "receipt_id": "RCPT-LIVE-FOUNDATION-READBACK-001",
+      "source_task": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+      "source_pr": "#1046",
+      "source_commit_sha": "494d09145b2932d5bbc27682e918b1afa176a140",
+      "verified_at_utc": "2026-08-30T15:52:48Z",
+      "evidence_kind": "historical_aggregate_receipt",
+      "target_project": "odayplus-runtime-20260825",
+      "target_region": "asia-east1",
+      "verified_facts": [
+        "State bucket oday-tfstate-staging-odayplus-runtime-20260825 configured with CMEK, versioning, PAP=enforced, UBLA=enabled, 30d retention",
+        "Deployer SA github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com bound with roles/storage.objectUser on state bucket",
+        "KMS KeyRing oday-staging-runtime with CryptoKey oday-staging-runtime converged in remote state",
+        "Quarantine plan object 1787822664931431 retention expires at 2026-09-26T09:24:24Z (no early deletion)"
+      ]
+    },
+    {
+      "receipt_id": "RCPT-GH-ENV-VARS-STAGING-001",
+      "source_task": "ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003",
+      "source_pr": "#1245",
+      "source_commit_sha": "6ee658a0bd65ab79303fdfd75baa09c14410a220",
+      "timestamp_utc": "2026-09-08T11:46:08Z",
+      "command": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables",
+      "exit_code": 0,
+      "evidence_kind": "historical_github_environment_variables_readback",
+      "findings": [
+        "Historical observation (2026-09-08): ODP_STAGING_TERRAFORM_STATE_BUCKET was UNSET",
+        "Historical observation (2026-09-08): ODP_STAGING_RECOVERY_BUNDLE_BUCKET was UNSET",
+        "Superseded by live binding readback RCPT-GH-ENV-VARS-STAGING-002 on 2026-09-19"
+      ]
+    },
+    {
+      "receipt_id": "RCPT-STAGING-IAC-CI-COLLECTION-PR-1291",
+      "source_task": "ODP-STAGING-IAC-CI-COLLECTION-001",
+      "source_pr": "#1291",
+      "exact_commit_sha": "726065c3aec57147f37902b94d754234dd55e25f",
+      "evidence_kind": "ci_pipeline_collection",
+      "verified_facts": [
+        "18 ephemeral staging offline Terraform/contract tests integrated into CI orchestrator job",
+        "Offline fail-closed test harness with pinned Terraform 1.9.8"
+      ]
+    },
+    {
+      "receipt_id": "RCPT-STAGING-LIFECYCLE-INTEGRATION-PR-1041",
+      "source_task": "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+      "source_pr": "#1041",
+      "merge_commit": "462c8cd4588e3fa0ae34f1ecbb066bfdaae3e1c6",
+      "evidence_kind": "workflow_lifecycle_integration",
+      "verified_facts": [
+        "Ephemeral staging lifecycle and receipt paths unified to RELEASE_RECEIPT_DIR in .github/workflows/deploy-dev.yml",
+        "Lifecycle contract tests incorporated into release verification"
+      ]
+    }
+  ]
+}
