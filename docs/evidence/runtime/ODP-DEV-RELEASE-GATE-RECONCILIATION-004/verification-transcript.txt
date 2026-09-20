@@ -1,23 +1,24 @@
 ODP-DEV-RELEASE-GATE-RECONCILIATION-004 Verification Transcript
-Recorded At: 2026-09-20T06:43:22.104523+00:00
+Recorded At: 2026-09-20T06:58:12.866117+00:00
 Task Worktree Branch: task/ODP-DEV-RELEASE-GATE-RECONCILIATION-004
-Task Worktree HEAD: d0c8f94f10888475daf83f99e6528acdb887fb5d
+Task Worktree HEAD: f5d358fa4f2c05e228d30711bbf716fd14a4644a
 Candidate SHA: 39ae43f6fe679f03dd7df459a51835cbd2d54f77
 Candidate Worktree: /tmp/candidate-39ae43f6
 Downloaded Artifacts Dir: /tmp/run-35493018607 (GitHub Actions Run 35493018607)
 ================================================================================
 
 COMMAND: git diff --check
-START_TIME_UTC: 2026-09-20T06:43:22.104580+00:00
+START_TIME_UTC: 2026-09-20T06:58:12.866170+00:00
 TERMINAL_EXIT_CODE: 0
-WALL_DURATION_SEC: 0.019314s
+WALL_DURATION_SEC: 0.037622s
 --- STDOUT ---
+
 ================================================================================
 
 COMMAND: uv run python delivery_toolchain/e2e/check_release_gate_registry.py --json
-START_TIME_UTC: 2026-09-20T06:43:22.123923+00:00
+START_TIME_UTC: 2026-09-20T06:58:12.903854+00:00
 TERMINAL_EXIT_CODE: 0
-WALL_DURATION_SEC: 0.442601s
+WALL_DURATION_SEC: 0.947784s
 --- STDOUT ---
 {
   "registry_id": "ODP-RELEASE-GATE-REGISTRY",
@@ -40,9 +41,9 @@ WALL_DURATION_SEC: 0.442601s
 ================================================================================
 
 COMMAND: bash docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-004/verify_live_artifact_binding.sh /tmp/run-35493018607 /tmp/candidate-39ae43f6
-START_TIME_UTC: 2026-09-20T06:43:22.566570+00:00
+START_TIME_UTC: 2026-09-20T06:58:13.851696+00:00
 TERMINAL_EXIT_CODE: 0
-WALL_DURATION_SEC: 0.992335s
+WALL_DURATION_SEC: 1.717907s
 --- STDOUT ---
 candidate: 39ae43f6fe679f03dd7df459a51835cbd2d54f77  build run: 35493018607
 

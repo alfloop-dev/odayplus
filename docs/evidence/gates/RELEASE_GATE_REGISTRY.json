@@ -64,8 +64,8 @@
       ],
       "receipts": [],
       "blockers": [
-        "No Code Gate receipt is bound to release candidate 39ae43f6fe679f03dd7df459a51835cbd2d54f77; a green CI run on an earlier commit is not a receipt for this candidate.",
-        "Historical receipt task ODP-DEV-CANDIDATE-CODE-RECEIPT-001 is archived done (2026-09-11) with conclusion no-go for candidate 596b9c9a. For candidate 39ae43f6fe679f03dd7df459a51835cbd2d54f77, full product unit and component test execution receipts in CI (and packages workspace typecheck on packages/design-tokens, domain-types, openapi-client, ui-domain, ui) remain open; active execution responsibility for candidate CI verification is assigned to gate owner Codex2 / ODP-DEV-ROLLOUT-001 with acceptance requiring clean execution receipts on candidate 39ae43f6 prior to dev admission (clarified from legacy unmapped ODP-PLAN-ENGINEERING-HARDENING-001 reference)."
+        "No Code Gate receipt is bound to release candidate 39ae43f6fe679f03dd7df459a51835cbd2d54f77 in this registry; a green CI run on an earlier commit is not a receipt for this candidate.",
+        "Historical receipt task ODP-DEV-CANDIDATE-CODE-RECEIPT-001 is archived done (2026-09-11) with conclusion no-go for candidate 596b9c9a. For candidate 39ae43f6fe679f03dd7df459a51835cbd2d54f77, candidate pre-deployment CI verification was completed and succeeded in merge queue CI run 35491368925 (all jobs completed/success: product-lint-unit, product-node, product-api-contract, product-security, product-db, product-e2e-gate, performance-gate, orchestrator, product); formal Code Gate receipt binding in the registry remains blocked pending dev admission execution, with active dev live rollout assigned to ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 (owner Antigravity2) and gate ownership by Codex2 (reviewer Claude) (clarified from legacy unmapped ODP-PLAN-ENGINEERING-HARDENING-001 reference)."
       ]
     },
     {
@@ -107,8 +107,8 @@
       ],
       "receipts": [],
       "blockers": [
-        "No Contract Gate receipt is bound to release candidate 39ae43f6fe679f03dd7df459a51835cbd2d54f77.",
-        "Historical receipt task ODP-DEV-CANDIDATE-CONTRACT-RECEIPT-001 is archived done (2026-09-11) with conclusion no-go for candidate 596b9c9a. For candidate 39ae43f6fe679f03dd7df459a51835cbd2d54f77, cross-version breaking diff baseline proof (reconciled under initial-release absence posture with delete-candidate-zero-traffic rollback), event schema proposed-vs-implementation compatibility (additionalProperties: false in payload schema vs dual publication in docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml), and data contract v0.4.1 transition window & pin migration verification remain open; active execution responsibility is assigned to gate owner Claude / ODP-DEV-ROLLOUT-001 (and ODP-EPHEMERAL-STAGING-ROLLOUT-001 for multi-version event replay in staging) with acceptance requiring schema alignment and zero-drift verification (clarified from legacy unmapped ODP-PLAN-ENGINEERING-HARDENING-001 reference)."
+        "No Contract Gate receipt is bound to release candidate 39ae43f6fe679f03dd7df459a51835cbd2d54f77 in this registry.",
+        "Historical receipt task ODP-DEV-CANDIDATE-CONTRACT-RECEIPT-001 is archived done (2026-09-11) with conclusion no-go for candidate 596b9c9a. For candidate 39ae43f6fe679f03dd7df459a51835cbd2d54f77, static API contract drift check was verified by CI run 35491368925 (product-api-contract, job 106026784677), with initial-release absence posture and delete-candidate-zero-traffic rollback posture recorded; live runtime event schema compatibility and data contract pin migration verification remain open until live dev deployment by active task ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 (owner Antigravity2) and ephemeral staging rehearsal by active task ODP-EPHEMERAL-STAGING-ROLLOUT-001 (owner Antigravity5); gate ownership by Claude (reviewer Codex2) (clarified from legacy unmapped ODP-PLAN-ENGINEERING-HARDENING-001 reference)."
       ]
     },
     {
@@ -151,8 +151,8 @@
       ],
       "receipts": [],
       "blockers": [
-        "No Data Gate receipt is bound to release candidate 39ae43f6fe679f03dd7df459a51835cbd2d54f77.",
-        "check_live_production_data.py has not been run against a live deployment of this candidate; deterministic fixtures and source stubs do not satisfy the Data Gate."
+        "No Data Gate receipt is bound to release candidate 39ae43f6fe679f03dd7df459a51835cbd2d54f77 in this registry.",
+        "check_live_production_data.py has not been run against a live deployment of this candidate; deterministic fixtures and source stubs do not satisfy the Data Gate. Live dev data-plane verification is assigned to active task ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 (owner Antigravity2) and masked snapshot artifact generation is assigned to active task DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001 (owner Antigravity); gate ownership by Codex2 (reviewer Claude)."
       ]
     },
     {
@@ -190,10 +190,9 @@
       ],
       "receipts": [],
       "blockers": [
-        "No Model and Solver Gate receipt is bound to release candidate 39ae43f6fe679f03dd7df459a51835cbd2d54f77.",
-        "ODP-PLAN-FORECAST-RELEASE-EVIDENCE-001 (ForecastOps formal model release evidence) is open.",
-        "ODP-PLAN-SITESCORE-OUTCOME-001 and ODP-PLAN-AVM-OUTCOME-001 remain open; ForecastOps history and an approved production alias are still unverified.",
-        "ODP-PLAN-SOLVER-RUNTIME-COMPAT-001, ODP-PLAN-HEATZONE-OUTCOME-001, and ODP-PLAN-NETPLAN-ACCEPTANCE-001 are archived done, but task completion is not an exact-candidate Gate 3 receipt or Human/Ops model approval."
+        "No Model and Solver Gate receipt is bound to release candidate 39ae43f6fe679f03dd7df459a51835cbd2d54f77 in this registry.",
+        "Reconciled from legacy references: formal model release evidence and human risk acceptance are tracked under canonical task HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001 (owner Human/Ops); staging model and solver execution rehearsal is exercised under active task ODP-EPHEMERAL-STAGING-ROLLOUT-001 (owner Antigravity5). Any standalone model evidence task is a scoped proposal for the coordinator, not an active task on the board.",
+        "Solver domain tasks (ODP-BRAND-TRANSFER-IMPLEMENTATION-001, ODP-FORMAT-CONVERSION-IMPLEMENTATION-001, ODP-NET002-LEASE-IMPLEMENTATION-001) remain blocked on upstream dependencies; gate ownership by Codex2 (reviewer Antigravity2)."
       ]
     },
     {
@@ -231,9 +230,9 @@
       ],
       "receipts": [],
       "blockers": [
-        "No Security and Privacy Gate receipt is bound to release candidate 39ae43f6fe679f03dd7df459a51835cbd2d54f77.",
-        "Historical receipt task ODP-DEV-CANDIDATE-SECURITY-RECEIPT-001 is archived done (2026-09-11) with conclusion no-go for candidate 596b9c9a. For candidate 39ae43f6fe679f03dd7df459a51835cbd2d54f77, technical verification gaps (exact-candidate RBAC/ABAC dynamic test execution in tests/security/, live runtime public egress readback, candidate GCP IAM least-privilege review, and NOTICE script execution receipt) remain open; active technical execution responsibility is assigned to gate owner Claude / ODP-DEV-ROLLOUT-001 with acceptance requiring clean dynamic security receipts.",
-        "Authority blocker HUMAN-OSS-LEGAL-APPROVAL-001 (named sign-off H01: display_name, principal_id, role, approval_reference from external authority system) remains pending human action by Human/Ops (Legal Counsel / Product Owner) to approve docs/security/license_policy.json (currently proposed) and sign license_exemptions.json; AI workers strictly forbidden from fabricating or signing legal authority receipts."
+        "No Security and Privacy Gate receipt is bound to release candidate 39ae43f6fe679f03dd7df459a51835cbd2d54f77 in this registry.",
+        "Historical receipt task ODP-DEV-CANDIDATE-SECURITY-RECEIPT-001 is archived done (2026-09-11) with conclusion no-go for candidate 596b9c9a. For candidate 39ae43f6fe679f03dd7df459a51835cbd2d54f77, pre-deployment technical security checks (secret scanning, npm dependency audit with 0 prod vulnerabilities in npm-audit-receipt.json, SAST, static RBAC policy tests) are verified via merge queue CI run 35491368925 (product-security, job 106026784697), container images Cosign signatures and CycloneDX SBOM attestations (runs 35492613570 / 35493018607), and D05 unlicensed workspace declarations; live runtime public egress probe (public-egress-probe.json confirming default-deny) and candidate GCP IAM least-privilege review are assigned to active dev live rollout task ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 (owner Antigravity2); gate ownership by Claude (reviewer Antigravity2).",
+        "Authority blocker HUMAN-OSS-LEGAL-APPROVAL-001 (named sign-off H01: display_name, principal_id, role, approval_reference from external authority system) remains pending human action by Human/Ops (Legal Counsel / Product Owner) to approve docs/security/license_policy.json (currently proposed) and sign license_exemptions.json; active OSS final audit is tracked under XR-EXT-OSS-FINAL-AUDIT-001 (owner Antigravity4) and source approval activation under XR-SOURCE-APPROVAL-ACTIVATION-001 (owner Antigravity); AI workers strictly forbidden from fabricating or signing legal authority receipts."
       ]
     },
     {
@@ -280,10 +279,9 @@
       ],
       "receipts": [],
       "blockers": [
-        "No E2E, Performance and UAT Gate receipt is bound to release candidate 39ae43f6fe679f03dd7df459a51835cbd2d54f77.",
-        "ODP-PLAN-ACCEPTANCE-REAL-EXEC-001 and ODP-PLAN-CANONICAL-SHELL-LIVE-001 are archived done, but those implementation receipts do not prove this exact release candidate in staging or UAT.",
-        "ODP-PLAN-LIVE-STAGING-PROOF-001 must produce exact-SHA live staging end-to-end proof.",
-        "ODP-PLAN-UAT-SIGNOFF-001 (cross-role UAT defect closeout and formal sign-off) is open."
+        "No E2E, Performance and UAT Gate receipt is bound to release candidate 39ae43f6fe679f03dd7df459a51835cbd2d54f77 in this registry.",
+        "Reconciled from legacy references: exact-SHA live ephemeral staging end-to-end rehearsal, backup/restore drill, and rollback rehearsal are assigned to active task ODP-EPHEMERAL-STAGING-ROLLOUT-001 (owner Antigravity5).",
+        "Runtime NFR measurement (SHARED-008, PERF/BATCH/AVAIL/RPO) is assigned to active task ODP-NFR-RUNTIME-EVIDENCE-001 (owner Antigravity3); cross-role UAT defect closeout and formal sign-off require human/ops decision when staging is live (proposal submitted to coordinator); gate ownership by Codex2 (reviewer Human/Ops)."
       ]
     },
     {
@@ -337,10 +335,9 @@
       ],
       "receipts": [],
       "blockers": [
-        "No Ops, Release and Audit Gate receipt is bound to release candidate 39ae43f6fe679f03dd7df459a51835cbd2d54f77.",
-        "ODP-PLAN-OBSERVABILITY-LIVE-001 (production observability and on-call route) is open.",
-        "Every Human/Ops row in docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md is still pending-human.",
-        "ODP-PLAN-FINAL-GATE-AUDIT-001 has not re-run the Stage 0-7 / Gate 0-6 RTM audit."
+        "No Ops, Release and Audit Gate receipt is bound to release candidate 39ae43f6fe679f03dd7df459a51835cbd2d54f77 in this registry.",
+        "Reconciled from legacy references: production watch window, staging cleanup, and release archive are assigned to active task ODP-POSTDEPLOY-WATCH-CLOSEOUT-001 (owner Antigravity5).",
+        "Structural remediation ledger closeout is assigned to active task ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001 (owner Antigravity5); every Human/Ops row in docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md remains pending-human; on-call route and final gate audit to be coordinated prior to production admission; gate ownership by Claude (reviewer Human/Ops)."
       ]
     }
   ],
