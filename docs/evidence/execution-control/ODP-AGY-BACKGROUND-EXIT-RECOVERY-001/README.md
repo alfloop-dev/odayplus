@@ -77,6 +77,16 @@ in 12.106 seconds; pytest reported 10.60 seconds. The test reads the on-disk
 parent handoff before an outer tick save, and repeated poll/queue cycles do not
 create new deliveries after exhaustion.
 
+Legacy workers and CLI startup failures can have a runner marker without the
+new session sidecar. Nullable/malformed/unreadable sidecars now fall back to
+existing runner and authoritative-log handling instead of raising during boot
+or terminal polling. Coverage includes missing, invalid JSON, non-object and
+unreadable receipts, a real CLI launch failure, and dead-worker boot/poll
+reconciliation. The initial targeted run passed 30 tests but exposed a missing
+approval-queue path in the new integration fixture; after fixing that fixture,
+the affected integration test passed with both subtests (exit 0, 9.177 seconds).
+Both original results are retained in `local-verification.json`.
+
 ## Deployment
 
 Merge the existing PR #1347 using the repository's pure-development-tooling scope

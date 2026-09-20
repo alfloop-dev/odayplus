@@ -3303,6 +3303,29 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
             finally:
                 tmpdir.cleanup()
 
+    def test_absent_or_invalid_session_receipt_preserves_legacy_authority(self) -> None:
+        marker = Path(self.tmpdir.name) / 'runner.json'
+        session = Path(str(marker) + '.agy.json')
+        log = Path(self.tmpdir.name) / 'legacy.log'
+        for content in (None, '{broken', '[]', 'null', '"scalar"'):
+            with self.subTest(content=content):
+                session.unlink(missing_ok=True)
+                if content is not None:
+                    session.write_text(content)
+                log.write_text('')
+                worker = {'provider': 'antigravity', 'status': 'running',
+                          'runner_status': 'failed', 'exit_code': 75,
+                          'runner_status_path': str(marker), 'log_path': str(log)}
+                self.assertFalse(supervisor.is_structured_successful_worker(worker))
+                worker.update(runner_status='completed', exit_code=0)
+                self.assertTrue(supervisor.is_structured_successful_worker(worker))
+                log.write_text('terminating 1 background task(s) on exit\n')
+                self.assertFalse(supervisor.is_structured_successful_worker(worker))
+                self.assertIn('agy background lifecycle interrupted', supervisor.detect_worker_failure(worker))
+        session.unlink()
+        session.mkdir()  # Unreadable as a receipt: IsADirectoryError.
+        self.assertTrue(supervisor.worker_has_terminated_background_tasks(worker))
+
     def test_stream_receipt_overrides_prose_but_not_other_providers(self) -> None:
         marker = Path(self.tmpdir.name) / "runner.json"
         session = Path(str(marker) + ".agy.json")

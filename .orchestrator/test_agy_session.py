@@ -146,3 +146,15 @@ def test_cli_death_with_retained_pipes_is_bounded(tmp_path):
     pid = int((tmp_path / 'runner.json.descendant').read_text())
     stat = Path(f'/proc/{pid}/stat')
     assert not stat.exists() or stat.read_text().split(') ', 1)[1][0] == 'Z'
+
+
+def test_native_cli_startup_failure_has_real_nonzero_exit(tmp_path):
+    marker = tmp_path / 'startup.json'
+    result = subprocess.run(
+        [sys.executable, str(SESSION), '--', str(tmp_path / 'missing-agy'), '--prompt', 'fixture'],
+        env={**os.environ, 'ORCH_RUNNER_STATUS_PATH': str(marker)},
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 75
+    assert 'FileNotFoundError' in result.stderr
+    assert not Path(str(marker) + '.agy.json').exists()

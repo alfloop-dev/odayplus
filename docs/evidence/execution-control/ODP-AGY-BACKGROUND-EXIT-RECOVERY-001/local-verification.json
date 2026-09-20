@@ -100,5 +100,53 @@
       ".orchestrator/test_worker_failure_policy.py": "b1c5f7d0a1a37088d090f3d6160058e8713e096e7a0247609823a199b3142184"
     },
     "log_sha256": "aac25f6750d507ed8d36171f4d57cfbd4b9419c5e21f826fa17b868496cd96d5"
+  },
+  "legacy_reconciliation_verification": {
+    "recorded_at": "2026-09-20T00:10:39.691993+00:00",
+    "base_commit": "09372ca331ddf4a23f14de528b5d44019ab84f14",
+    "finding": "Absent session receipt raises during dead legacy worker reconciliation",
+    "checks": [
+      {
+        "command": [
+          "uv",
+          "run",
+          "--python",
+          "3.12",
+          "pytest",
+          ".orchestrator/test_worker_failure_policy.py",
+          ".orchestrator/test_supervisor.py",
+          ".orchestrator/test_agy_session.py",
+          "-k",
+          "AgyBackgroundExitRecoveryTests or reconcile_dead_agy or test_agy_session"
+        ],
+        "exit_code": 1,
+        "duration_seconds": 49.125,
+        "summary": "30 passed; 2 subtest failures in new fixture due to missing isolated approval_queue path, corrected before the focused rerun"
+      },
+      {
+        "command": [
+          "uv",
+          "run",
+          "--python",
+          "3.12",
+          "pytest",
+          ".orchestrator/test_supervisor.py::RuntimeLeaseReconciliationTests::test_reconcile_dead_agy_without_session_receipt"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 9.177,
+        "retry_reason": "Corrected missing isolated approval_queue fixture path; rerun only affected integration test",
+        "summary": "1 passed, 2 subtests passed in 7.72s"
+      }
+    ],
+    "source_sha256": {
+      ".orchestrator/worker_failure_policy.py": "c530d1991142ebfa709f669340c670f753c0fcdd7b3577ea620a99ec356ef1f1",
+      ".orchestrator/test_worker_failure_policy.py": "ba7365927a339145c9b544bf3b96dee11d42109fd116190bcb7f071385a8815e",
+      ".orchestrator/test_supervisor.py": "02d49a6e57ffed8483499fa6887b7a70a83966f540f1bfaeb79e17b4023e4910",
+      ".orchestrator/test_agy_session.py": "b77ea895dd3a4083c24f7db55a637fe2f228bd51b81f6cfc87fa331edd97a5e1"
+    },
+    "log_sha256": {
+      "odp-legacy-session-receipt-tests.log": "0ec8954a72ab7608f5895daf0070b7297671191f870b7d019c26950924e24954",
+      "odp-legacy-reconciliation-recheck.log": "bd27ed7c55e2e864d025d2015501ef7efa97b77c7c4a54df64a096f6f1835f7b"
+    }
   }
 }

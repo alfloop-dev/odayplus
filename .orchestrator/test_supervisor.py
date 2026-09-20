@@ -13331,6 +13331,39 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
             self.assertEqual(active_for_task[0]["run_id"], "claude-run-live")
             queue_delivery_event.assert_not_called()
 
+    def test_reconcile_dead_agy_without_session_receipt(self) -> None:
+        for receipt in (None, '{broken'):
+            with self.subTest(receipt=receipt), tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                config = self._config(root)
+                config['worker_reassignment'] = {'enabled': False}
+                config['paths']['approval_queue'] = str(root / 'approval-queue.json')
+                (root / 'ai-status.json').write_text(json.dumps({'tasks': [{
+                    'id': 'AGY-LEGACY', 'status': 'in_progress', 'owner': 'Antigravity',
+                    'reviewer': 'Codex', 'depends_on': [],
+                }]}))
+                (root / 'event-queue.jsonl').write_text(json.dumps({
+                    'event_id': 'evt-legacy', 'task_id': 'AGY-LEGACY', 'target_agent': 'antigravity',
+                }) + '\n')
+                marker = root / 'runner.json'
+                marker.write_text(json.dumps({'status': 'failed', 'exit_code': 75}))
+                if receipt is not None:
+                    Path(str(marker) + '.agy.json').write_text(receipt)
+                worker = {'run_id': 'agy-dead', 'provider': 'antigravity',
+                          'agent_id': 'antigravity', 'task_id': 'AGY-LEGACY',
+                          'queue_event_id': 'evt-legacy', 'status': 'running',
+                          'runner_status_path': str(marker), 'pid': None}
+                state = {'workers': {'agy-dead': worker}, 'queue': {'events': {
+                    'evt-legacy': {'status': 'started', 'run_id': 'agy-dead'}}}}
+                with mock.patch.object(supervisor, 'write_activity_log'):
+                    self.assertTrue(supervisor.reconcile_runtime_on_boot(config, state))
+                    self.assertEqual(state['workers']['agy-dead']['status'], 'failed')
+                    self.assertEqual(state['queue']['events']['evt-legacy']['status'], 'failed')
+                    # The same terminal shape must not abort ordinary polling.
+                    state['workers']['agy-dead']['status'] = 'running'
+                    supervisor.poll_workers(config, state, {})
+                    self.assertNotEqual(state['workers']['agy-dead']['status'], 'completed')
+
     def test_reconcile_runtime_fails_running_worker_when_pid_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

@@ -203,7 +203,7 @@ def worker_has_terminated_background_tasks(worker: dict[str, Any] | None) -> boo
     marker_path = worker.get("runner_status_path") or metadata.get("runner_status_path")
     if marker_path:
         session = _load_runtime_marker(str(marker_path) + ".agy.json")
-        if session.get("transport") == "agy_stream_json":
+        if isinstance(session, dict) and session.get("transport") == "agy_stream_json":
             return session.get("status") == "interrupted"
     log_path_value = worker.get("log_path")
     if not log_path_value:
