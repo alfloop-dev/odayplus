@@ -37,6 +37,19 @@ class TerraformBootstrapContractTests(unittest.TestCase):
         self.assertIn("-migrate-state", script)
         self.assertIn("-backend-config=", script)
         self.assertIn("output -raw state_bucket_name", script)
+        # Absolute path resolution & failure state preservation contract
+        self.assertIn("RAW_VAR_FILE=", script)
+        self.assertIn("VAR_FILE=", script)
+        self.assertIn("BOOTSTRAP_SUCCESS=", script)
+        self.assertIn("Preserving phase 1", script)
+        self.assertIn("RECOVERY GUIDANCE", script)
+
+    def test_bootstrap_script_relative_path_and_failure_trap_logic(self) -> None:
+        script = (BOOT_DIR / "bootstrap.sh").read_text(encoding="utf-8")
+        # Ensure cleanup checks BOOTSTRAP_SUCCESS before rm -rf
+        self.assertIn('if [ "$BOOTSTRAP_SUCCESS" -ne 1 ]; then', script)
+        self.assertIn('cp "$PHASE1_DIR/terraform.tfstate" "$SCRIPT_DIR/terraform.tfstate"', script)
+        self.assertIn('trap cleanup EXIT INT TERM', script)
 
     def test_bootstrap_declares_the_same_gcs_backend_contract_as_root(self) -> None:
         main_tf = (BOOT_DIR / "main.tf").read_text(encoding="utf-8")

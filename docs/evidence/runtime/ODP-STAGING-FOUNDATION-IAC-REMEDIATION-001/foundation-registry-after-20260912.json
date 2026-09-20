@@ -4,15 +4,15 @@
     "delivery_toolchain/e2e/check_release_gate_registry.py",
     "--json"
   ],
-  "started_at": "2026-09-17T01:45:00.000000+00:00",
-  "finished_at": "2026-09-17T01:45:01.000000+00:00",
-  "exit_code": 1,
-  "stdout": "{\n  \"registry_id\": \"ODP-RELEASE-GATE-REGISTRY\",\n  \"candidate_sha\": \"596b9c9a1788d952811a2bf8d4bba8a4e4d76b12\",\n  \"manifest_digest\": \"sha256:509a9ea3cfedf661f8c5a319f36844b1818bd1c461639d701b06bf4fe9ad2ea5\",\n  \"stage\": \"candidate-built\",\n  \"environment\": \"dev\",\n  \"admission_target\": \"dev\",\n  \"decision\": \"no-go\",\n  \"gate_count\": 7,\n  \"cleared_gates\": [],\n  \"blocking_gates\": [\n    \"gate-0\",\n    \"gate-1\",\n    \"gate-4\"\n  ],\n  \"integrity_errors\": [\n    \"release manifest: manifest.sources_off_attestation.egress_evidence cannot be verified for candidate 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12: failed to read infra/terraform/modules/runtime_foundation/database.tf at candidate 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12: fatal: path 'infra/terraform/modules/runtime_foundation/database.tf' exists on disk, but not in '596b9c9a1788d952811a2bf8d4bba8a4e4d76b12'\",\n    \"release manifest: sources-off egress contract file infra/terraform/modules/runtime_foundation/main.tf cannot be read for candidate 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12: fatal: path 'infra/terraform/modules/runtime_foundation/main.tf' exists on disk, but not in '596b9c9a1788d952811a2bf8d4bba8a4e4d76b12'\"\n  ],\n  \"release_state\": \"NO-GO\"\n}\n",
+  "started_at": "2026-09-20T03:13:13.790740+00:00",
+  "finished_at": "2026-09-20T03:13:14.078784+00:00",
+  "exit_code": 0,
+  "stdout": "{\n  \"registry_id\": \"ODP-RELEASE-GATE-REGISTRY\",\n  \"candidate_sha\": \"596b9c9a1788d952811a2bf8d4bba8a4e4d76b12\",\n  \"manifest_digest\": \"sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c\",\n  \"stage\": \"candidate-built\",\n  \"environment\": \"dev\",\n  \"admission_target\": \"dev\",\n  \"decision\": \"no-go\",\n  \"gate_count\": 7,\n  \"cleared_gates\": [],\n  \"blocking_gates\": [\n    \"gate-0\",\n    \"gate-1\",\n    \"gate-4\"\n  ],\n  \"integrity_errors\": [],\n  \"release_state\": \"NO-GO\"\n}\n",
   "stderr": "",
-  "base_head": "fc4f7529ff8425d57b15dbe39f824c13dbfa2ff4",
-  "merge_parent": "581899518fdfd095e2420d41d5e5a3d27b68ae66",
+  "base_head": "213cdd17a0261b87def427115cb31cf61c9a237a",
+  "merge_parent": "45311bdc085288ecf2b6d228348d76c459eddc82",
   "source_sha256": {
-    "delivery_toolchain/release/release_manifest.py": "dfc93891a36a87b2c0b9eb1806d000a96cdd12972ecbabc634a9780cb4885d44",
-    "tests/release/test_foundation_egress_contract.py": "9a27488ee035900d686f4f4facc792e7364ba4829e3db95b51fd86dc9405d225"
+    "delivery_toolchain/release/release_manifest.py": "4bc132ca69476cc97ae863c091cd3af4e0b753836f91afc52faa1ce958d678e8",
+    "tests/release/test_foundation_egress_contract.py": "1798186b4f983afcbd1f2562ced7520c0c839b5a9632461bd2bfa12c9f840eec"
   }
 }

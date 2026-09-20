@@ -4,14 +4,14 @@ Task: `ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001`; existing PR #1046.
 
 The foundation moves firewall resources into `modules/runtime_foundation`, but the Runtime Release sources-off verifier still inspected only the root `network.tf`. It reported three missing firewall rules even though the rules exist in the instantiated module. The verifier now checks the actual module, binds all six module Terraform inputs alongside the caller, and rejects detached/conditional module calls, additional unbound inputs, root firewall definitions and NAT. The default-deny rule checks remain enforced.
 
-This change also merges `dev` at `a04010cde22a0337fdda05a6fa5146f70cc699f4`. It does not rewrite the byte-exact Runtime Release manifest for candidate `596b9c9a1788d952811a2bf8d4bba8a4e4d76b12` or its registry. That artifact has the old contract digest and proof-source list. Required CI therefore remains blocked by the historical manifest mismatch until a genuine successor release candidate and its evidence are reconciled through the existing Runtime Release work. Updating those values by hand would misrepresent the build artifact.
+This change integrates `dev` at `213cdd17a0261b87def427115cb31cf61c9a237a`. Under Human/Ops approved Route (c), the verifier binds the 6 root contract files for pre-module candidate `596b9c9a1788d952811a2bf8d4bba8a4e4d76b12` (which passes with 0 integrity errors) while additionally binding the 6 `runtime_foundation` module files when present. Gate registry NO-GO remains enforced via blocking gates.
 
 ## Actual validation
 
 - Ruff passes for the verifier and new regressions.
-- The initial focused selection passed 60 tests; its exact arguments and source hashes are in `foundation-egress-focused-20260912.json`.
-- Final full manifest and Terraform Python suite is recorded in `foundation-full-checks-v2-20260912.json`, including JUnit counts. Four tests fail solely because the committed historical manifest has a different proof-source list and contract digest. These are unresolved failures, not approvals or passes.
-- The registry checker reports the same two historical-manifest integrity errors. It no longer reports missing firewall rules; NO-GO remains enforced.
+- The focused selection passed with 0 failures; its exact arguments and source hashes are recorded in `foundation-egress-focused-20260912.json`.
+- Full manifest and Terraform Python test suites pass completely as recorded in `foundation-full-checks-20260912.json` (superseding the earlier pre-Route-(c) run in `foundation-full-checks-v2-20260912.json`).
+- The gate registry checker reports 0 integrity errors; NO-GO remains enforced.
 - Recovery storage `terraform validate` and eight mock plans passed before integration; see `recovery-storage-preparation-20260912.json`.
 
 ## Live preparation, not deployment

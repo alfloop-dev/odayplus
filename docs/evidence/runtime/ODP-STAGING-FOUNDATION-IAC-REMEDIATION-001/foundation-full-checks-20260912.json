@@ -8,15 +8,15 @@
     "tests/release/test_foundation_egress_contract.py",
     "infra/terraform/tests"
   ],
-  "started_at": "2026-09-15T04:48:41.946176+00:00",
-  "finished_at": "2026-09-15T04:49:53.640302+00:00",
+  "started_at": "2026-09-20T03:11:48.787584+00:00",
+  "finished_at": "2026-09-20T03:13:13.788781+00:00",
   "exit_code": 0,
-  "stdout": "........................................................................ [ 47%]\n........................................................................ [ 94%]\n.........                                                                [100%]\n",
+  "stdout": "........................................................................ [ 46%]\n........................................................................ [ 92%]\n............                                                             [100%]\n",
   "stderr": "",
-  "base_head": "fc4f7529ff8425d57b15dbe39f824c13dbfa2ff4",
-  "merge_parent": "581899518fdfd095e2420d41d5e5a3d27b68ae66",
+  "base_head": "213cdd17a0261b87def427115cb31cf61c9a237a",
+  "merge_parent": "45311bdc085288ecf2b6d228348d76c459eddc82",
   "source_sha256": {
-    "delivery_toolchain/release/release_manifest.py": "dfc93891a36a87b2c0b9eb1806d000a96cdd12972ecbabc634a9780cb4885d44",
-    "tests/release/test_foundation_egress_contract.py": "9a27488ee035900d686f4f4facc792e7364ba4829e3db95b51fd86dc9405d225"
+    "delivery_toolchain/release/release_manifest.py": "4bc132ca69476cc97ae863c091cd3af4e0b753836f91afc52faa1ce958d678e8",
+    "tests/release/test_foundation_egress_contract.py": "1798186b4f983afcbd1f2562ced7520c0c839b5a9632461bd2bfa12c9f840eec"
   }
 }
