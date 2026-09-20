@@ -1,5 +1,10 @@
 # 2026-09-12 核准作業完成摘要
 
+本頁保留當時已執行作業的摘要；下述日期、任務進度及測試屬歷史紀錄。
+2026-09-20 bootstrap 修復與最新送審驗證見
+[第14次審查修復](REVIEW14_REPAIR_20260920.md)，current task 狀態以 canonical
+task／GitHub PR 為準。
+
 本摘要只公開執行結果；完整 live resource/IAM metadata 與原始收據保留在本機 operational handoff。
 
 - 使用者已核准限時 IAM 計畫；指定 recovery Terraform root 實際套用 **2 新增、0 修改、0 刪除**。

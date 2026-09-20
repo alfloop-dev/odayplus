@@ -40,3 +40,11 @@ Human/Ops 核准的 Route (c) 保持：root 6 個檔案永遠綁定，module can
 registry 的既有 blocking gates 仍維持 NO-GO。本輪沒有新增 live apply、
 API/Web deployment 或 ALL_TRAFFIC readback。retention 到期清理由原有獨立
 任務追蹤；不能拿離線測試或 PR 合併取代這些 release 驗收。
+
+## 本輪實測結果
+
+- Tested source commit：`9edf17f41637e83150c376045aed07edfa59386c`。
+- 完整 Terraform／release manifest suite：160 passed、15 subtests passed，原命令 exit 0，86.885 秒；命令與起訖時間見 `review14-full-checks-20260920.json`。
+- Ruff、Bash syntax、1177 檔案 code boundary 全數通過。
+- Registry：`integrity_errors=[]`，既有 blocking gates 維持 `release_state=NO-GO`。
+- `*-before-guidance.json` 保留首次綠燈量測；恢復指引補充 Phase 2 canonical state 後，以上新收據完整取代該次量測。

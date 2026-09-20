@@ -1,5 +1,11 @@
 # Foundation integration and recovery preparation — 2026-09-12
 
+Historical preparation snapshot: the live preparation blockers below describe
+the pre-apply investigation. Subsequent authorized results are recorded in
+`RECOVERY_COMPLETION_PUBLIC_20260912.md`; the latest bootstrap repair and
+verification index is `REVIEW14_REPAIR_20260920.md`. This document does not
+declare the current task owner, review outcome, or live deployment status.
+
 Task: `ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001`; existing PR #1046.
 
 The foundation moves firewall resources into `modules/runtime_foundation`, but the Runtime Release sources-off verifier still inspected only the root `network.tf`. It reported three missing firewall rules even though the rules exist in the instantiated module. The verifier now checks the actual module, binds all six module Terraform inputs alongside the caller, and rejects detached/conditional module calls, additional unbound inputs, root firewall definitions and NAT. The default-deny rule checks remain enforced.
