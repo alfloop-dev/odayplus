@@ -1,0 +1,39 @@
+{
+  "receipt_id": "RCPT-GCP-KMS-IAM-20260920",
+  "name": "owner-kms-iam",
+  "started_at_utc": "2026-09-20T07:18:09.630033+00:00",
+  "duration_seconds": 1.89,
+  "command": "gcloud --quiet --account=deborah.lu@dev.cctech-support.com kms keys get-iam-policy oday-staging-runtime --keyring=oday-staging-runtime --location=asia-east1 --project=odayplus-runtime-20260825 --format=json",
+  "argv": [
+    "gcloud",
+    "--quiet",
+    "--account=deborah.lu@dev.cctech-support.com",
+    "kms",
+    "keys",
+    "get-iam-policy",
+    "oday-staging-runtime",
+    "--keyring=oday-staging-runtime",
+    "--location=asia-east1",
+    "--project=odayplus-runtime-20260825",
+    "--format=json"
+  ],
+  "exit_code": 0,
+  "stdout": {
+    "bindings": [
+      {
+        "members": [
+          "serviceAccount:service-767864276141@gcp-sa-cloud-sql.iam.gserviceaccount.com",
+          "serviceAccount:service-767864276141@gcp-sa-pubsub.iam.gserviceaccount.com",
+          "serviceAccount:service-767864276141@gs-project-accounts.iam.gserviceaccount.com"
+        ],
+        "role": "roles/cloudkms.cryptoKeyEncrypterDecrypter"
+      }
+    ],
+    "etag": "BwZaAyNo_wo=",
+    "version": 1
+  },
+  "stderr": "",
+  "source_path": "/tmp/odp-recovery-readback-audit-20260920/owner-login-20260920T071809Z/owner-kms-iam.json",
+  "source_sha256": "91268b63e0f626515423ce2ddf82e37201a1109d0f4d3cfc4ae0e363a9683c9a",
+  "scope": "read-only resource IAM metadata; no object, state, secret or bundle access; no resource or IAM changes"
+}
