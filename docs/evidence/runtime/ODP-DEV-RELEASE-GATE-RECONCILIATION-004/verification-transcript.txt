@@ -1,0 +1,81 @@
+ODP-DEV-RELEASE-GATE-RECONCILIATION-004 Verification Transcript
+Recorded At: 2026-09-20T11:36:59.167460+00:00
+Task Worktree Branch: task/ODP-DEV-RELEASE-GATE-RECONCILIATION-004
+Task Worktree HEAD: 96994375384148e8f72330ec864a5f1651549840
+Candidate SHA: 39ae43f6fe679f03dd7df459a51835cbd2d54f77
+Candidate Worktree: /tmp/candidate-39ae43f6
+Downloaded Artifacts Dir: /tmp/run-35493018607 (GitHub Actions Run 35493018607)
+================================================================================
+
+COMMAND: git diff --check
+START_TIME_UTC: 2026-09-20T11:36:59.167539+00:00
+TERMINAL_EXIT_CODE: 0
+WALL_DURATION_SEC: 0.014849s
+--- STDOUT ---
+================================================================================
+
+COMMAND: uv run python delivery_toolchain/e2e/check_release_gate_registry.py --json
+START_TIME_UTC: 2026-09-20T11:36:59.182457+00:00
+TERMINAL_EXIT_CODE: 0
+WALL_DURATION_SEC: 0.420323s
+--- STDOUT ---
+{
+  "registry_id": "ODP-RELEASE-GATE-REGISTRY",
+  "candidate_sha": "39ae43f6fe679f03dd7df459a51835cbd2d54f77",
+  "manifest_digest": "sha256:ebe7d305e930471d2e7492a1fffced10dbaa05a710bb5f6573f370e7bfa8ae8a",
+  "stage": "candidate-built",
+  "environment": "dev",
+  "admission_target": "dev",
+  "decision": "no-go",
+  "gate_count": 7,
+  "cleared_gates": [],
+  "blocking_gates": [
+    "gate-0",
+    "gate-1",
+    "gate-4"
+  ],
+  "integrity_errors": [],
+  "release_state": "NO-GO"
+}
+================================================================================
+
+COMMAND: bash docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-004/verify_live_artifact_binding.sh /tmp/run-35493018607 /tmp/candidate-39ae43f6
+START_TIME_UTC: 2026-09-20T11:36:59.602830+00:00
+TERMINAL_EXIT_CODE: 0
+WALL_DURATION_SEC: 0.965627s
+--- STDOUT ---
+candidate: 39ae43f6fe679f03dd7df459a51835cbd2d54f77  build run: 35493018607
+
+[PASS] manifest raw SHA-256 matches build artifact (ID 10600115848) -- 10acdfc1460de9a9bc72c816dea6f81d0ec88778c2f2e23c727e05f9bd06d5de
+[PASS] runtime-release-images raw SHA-256 matches build artifact (ID 10600485125) -- 43310488a7530c38623fbc1f24a4457ccd05d8e2162806939166f7fa18a490bf
+[PASS] initial-release-absence-readback raw SHA-256 matches build artifact (ID 10600440351) -- f117e1af58cb513d849cde9afd98d85fbb8209e15fa61060e1da4567568980a5
+[PASS] release-environment-receipt raw SHA-256 matches build artifact (ID 10599681970) -- 8cbb0f5618719d27ef139908dfcd4ae3de2c138fcc2cc607f33a13219718a200
+[PASS] release-npm-audit-receipt raw SHA-256 matches build artifact (ID 10600055709) -- e6e6c5978360278980842d462d0d60814d51bf6745fb60b1a8b39885ad45c02b
+[PASS] release-phase-receipt raw SHA-256 matches build artifact (ID 10600290348) -- 94e7587615a27f2d3cf5b1c92b2731ddb8e5500f2b62c8be0fd0748aeb6e3fb0
+[PASS] downloaded artifact file is present: RELEASE_MANIFEST.json -- /tmp/run-35493018607/runtime-release-manifest-39ae43f6fe679f03dd7df459a51835cbd2d54f77/RELEASE_MANIFEST.json
+[PASS] downloaded artifact file is present: runtime-release-images.json -- /tmp/run-35493018607/runtime-release-images-39ae43f6fe679f03dd7df459a51835cbd2d54f77/runtime-release-images.json
+[PASS] downloaded artifact file is present: initial-release-absence-readback.json -- /tmp/run-35493018607/initial-release-absence-readback-39ae43f6fe679f03dd7df459a51835cbd2d54f77/initial-release-absence-readback.json
+[PASS] downloaded artifact file is present: release-environment-receipt.json -- /tmp/run-35493018607/release-environment-receipt-dev-build/release-environment-receipt.json
+[PASS] downloaded artifact file is present: npm-audit-receipt.json -- /tmp/run-35493018607/release-npm-audit-receipt-dev/npm-audit-receipt.json
+[PASS] downloaded artifact file is present: release-phase-receipt.json -- /tmp/run-35493018607/release-phase-receipt-dev-build/release-phase-receipt.json
+[PASS] downloaded RELEASE_MANIFEST.json matches repo bytes exactly
+[PASS] downloaded runtime-release-images.json matches repo bytes exactly
+[PASS] downloaded initial-release-absence-readback.json matches repo bytes exactly
+[PASS] downloaded release-environment-receipt.json matches repo bytes exactly
+[PASS] downloaded npm-audit-receipt.json matches repo bytes exactly
+[PASS] downloaded release-phase-receipt.json matches repo bytes exactly
+[PASS] validate_manifest reports zero errors -- []
+[PASS] manifest digest is self-verifying
+[PASS] migration_digest recomputed from candidate matches manifest -- sha256:9ee2d278321bcd5358500a3feb93a7c22c201adde76698f57b7dfcbaa3377375 == sha256:9ee2d278321bcd5358500a3feb93a7c22c201adde76698f57b7dfcbaa3377375
+[PASS] data_contract_digest recomputed from candidate matches manifest -- sha256:05e2cb05619f1c524b0f9578e4ceba9ec863d143d5e64b0eeac97539ce8e7c73 == sha256:05e2cb05619f1c524b0f9578e4ceba9ec863d143d5e64b0eeac97539ce8e7c73
+[PASS] source_policy_digest recomputed from candidate matches manifest -- sha256:f3cd9557c11f63721300914c31fbceb97250cc76e0c5dcfbe89c9249c93dfcbf == sha256:f3cd9557c11f63721300914c31fbceb97250cc76e0c5dcfbe89c9249c93dfcbf
+[PASS] egress_contract_digest recomputed from candidate matches manifest -- sha256:8492ae19fa623fba6db903f3a1b92bb209e5f6e898814ecfcff422b134fa8cd5 == sha256:8492ae19fa623fba6db903f3a1b92bb209e5f6e898814ecfcff422b134fa8cd5
+[PASS] component_binding_errors against runtime-release-images.json is empty -- []
+[PASS] validate_release_admission reports zero errors -- []
+[PASS] validate_registry reports zero errors -- []
+[PASS] registry release.candidate_sha matches candidate
+[PASS] registry release.manifest_digest matches manifest
+[PASS] registry decision is no-go
+
+Summary: 0 failures.
+================================================================================
