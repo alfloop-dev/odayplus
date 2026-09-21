@@ -248,6 +248,7 @@
       {
         "id": "FIRST-PARTY-UNLICENSED",
         "license": "UNKNOWN",
+        "$license_comment": "The observed state before the decision recorded below. Deliberately left as UNKNOWN: this field feeds the gate's review_required license set, so writing UNLICENSED here would route any third party that declares that string to review instead of failing it closed.",
         "scope": "internal",
         "packages": [
           {
@@ -276,7 +277,16 @@
           }
         ],
         "why_it_matters": "These 8 are our own workspace packages with no license field. They are not third-party risk, but a scanner cannot tell that apart from a genuinely unlicensed dependency.",
-        "decision_needed": "Declare a license (or an explicit UNLICENSED marker) on first-party workspace packages so the gate can distinguish first-party from unknown-third-party."
+        "decision": {
+          "decision_id": "D05",
+          "choice": "B: mark first-party workspace packages UNLICENSED",
+          "source": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md section 2.1, case detail in docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/case-matrix.json",
+          "landed_by": "ODP-OSS-POLICY-NOTICE-IMPLEMENTATION-001",
+          "landed": "All eight manifests above, and their package-lock.json workspace entries, declare license UNLICENSED.",
+          "first_party_proof": "Membership is the @oday-plus scope or the exact root name oday-plus, tested by is_first_party() in generate_oss_notice.py and generate_sbom.py. A bare name prefix is not proof of identity: it also matches an unrelated registry package such as oday-plus-anything.",
+          "does_not_grant": "UNLICENSED is a first-party identity marker, not an allowed license and not a grant of rights in our source to anyone else. A third-party component declaring UNLICENSED is still classified unknown and fails closed.",
+          "still_pending": "This case only. The policy as a whole remains proposed and carries no force until an authoritative external receipt resolves ODP-PLAN-OSS-LEGAL-POLICY-001. D06, H01 and H02 are untouched, and no exception or waiver was created."
+        }
       }
     ]
   },

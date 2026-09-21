@@ -1,0 +1,232 @@
+{
+  "handoff_id": "ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001",
+  "title": "HUMAN-GCP-WEB-OAUTH-CLIENTS-001 Standby Handoff Update",
+  "created_at": "2026-09-08T17:24:45Z",
+  "created_by": "Claude",
+  "reviewer": "Codex2",
+  "decision_ref": "D15",
+  "stage": "A",
+  "inspected_head": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+  "evidence_basis": "docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/auth-mode-evidence-matrix.json -- 15 controls, 12 pass, 3 unknown, 0 fail, with 35 read-only collection receipts carrying original exit codes.",
+  "target_human_task": "HUMAN-GCP-WEB-OAUTH-CLIENTS-001",
+  "current_status_of_target": "todo",
+  "current_owner_of_target": "Human/Ops",
+  "target_lookup_receipt": "ai-status.sh show HUMAN-GCP-WEB-OAUTH-CLIENTS-001 returned exit 0; status 'todo', owner 'Human/Ops', reviewer 'Codex' (matrix receipt R29).",
+  "recommendation": "standby",
+  "context": {
+    "decision_d15": "Google OIDC disabled; password-first is the default. OIDC is an optional provider, required only when explicitly enabled.",
+    "prior_next_field": "2026-08-30 產品決策已改為「帳密為預設、OIDC 可選」。此 human OAuth task 暫不再是 dev/staging/prod 部署前置；待 ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001 合併並由 ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-001 驗證後，改為僅在啟用 Google OIDC 時才需執行。不得在新機制完成前將其標記完成或略過 provider 驗證。",
+    "oidc_optional_deployment_pr": "#1074",
+    "oidc_optional_deployment_merge_sha": "840081001084ad9586421de908530a41f3a17333",
+    "oidc_optional_deployment_merged_into_dev": true,
+    "oidc_optional_deployment_canonical_record": "absent -- ai-status.sh show returned exit 1 'Unknown task'; completion is evidenced by the merged PR and commit ancestry only",
+    "password_first_security_e2e_001_branch": "task/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-001",
+    "password_first_security_e2e_001_status": "superseded_after_discovering_throttle_blockers",
+    "login_throttle_remediation_pr": "#1085",
+    "login_throttle_remediation_merge_sha": "595e7501e73ff4cbb5894c27e199e02a06c2a509",
+    "login_throttle_remediation_merged_at": "2026-09-01T06:37:24Z",
+    "password_first_security_e2e_002_pr": "#1096",
+    "password_first_security_e2e_002_pr_head_sha": "69422d71e8d5ac572ade58562c0aeca28d123648",
+    "password_first_security_e2e_002_merge_sha": "2377168c2cc07cd2470dd8f43de0486fe8d8fc08",
+    "password_first_security_e2e_002_merged_at": "2026-09-01T09:10:24Z",
+    "password_first_security_e2e_002_merged_at_source": "matrix receipt R31 (gh pr view 1096 --json number,url,state,headRefOid,mergeCommit,mergedAt)",
+    "password_first_security_e2e_002_merge_commit_created_at": "2026-09-01T08:51:28Z",
+    "password_first_security_e2e_002_merge_commit_created_at_source": "matrix receipt R07 (git log -1 --format=%H %P %cI %s 2377168c)",
+    "password_first_security_e2e_002_merged_into_dev": true,
+    "password_first_security_e2e_002_canonical_record": "absent -- ai-status.sh show returned exit 1 'Unknown task'",
+    "e2e_receipt_verdict": "pass",
+    "e2e_receipt_date": "2026-09-01 UTC",
+    "e2e_receipt_composition_base_sha": "d0c81635df8e842f7910d40873b3886d4237cee8",
+    "e2e_receipt_composition_merge_sha": "f3095a0ee3ca3dde63d98f35ae8cfedf090fd529",
+    "e2e_receipt_run_head_sha": "unknown",
+    "e2e_receipt_original_exit_codes": "unknown",
+    "sha_correction_note": "The previous revision of this handoff recorded the composition base as d0c81635df8e48dc803272e5ee6fc1fca3fa32cb and treated merge commit 2377168c as the verified run HEAD. Both were wrong. The receipt abbreviates its SHAs ('d0c81635df8e...', 'f3095a0e') and records a date, a composition base/merge and prose outcomes -- not a run HEAD and not exit codes. The full SHAs above come from object resolution, not from expanding the abbreviations. 2377168c cannot be the run head: the pass text was committed in d3e6d64a at 2026-09-01T08:13:31Z, before 2377168c was created at 2026-09-01T08:51:28Z. The prior revision also labelled that creation timestamp as the PR merged_at; GitHub records mergedAt as 2026-09-01T09:10:24Z (matrix receipt R31), and the two values are now recorded under separate keys."
+  },
+  "updated_next_recommendation": "Prerequisite implementation work is merged into dev: ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001 (PR #1074, merge 840081001084ad9586421de908530a41f3a17333) and ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 (PR #1096, merge 2377168c2cc07cd2470dd8f43de0486fe8d8fc08), after the throttle remediation in PR #1085 (merge 595e7501e73ff4cbb5894c27e199e02a06c2a509). Static inspection at 95646a5c2bd598b7e219ee51efa7e410cb9fe0f4 confirms password-first / OIDC-off resolver precedence, an OIDC-button-free login page and a fail-closed callback, and the product CI job at that exact head is green (run 34252508138, job 102150167268). The historical E2E-002 receipt is dated 2026-09-01 and records a pass; its run HEAD and original exit codes are unknown. Live deployment readback and OAuth provider readiness remain unknown -- neither was probed. This Human OAuth task therefore moves from 'deployment blocker' to 'standby for explicit OIDC enablement'. Execute it only when the business decides to enable Google OIDC login; it is not done, not waived, and not superseded.",
+  "condition_dependencies": [
+    {
+      "condition": "Business decides to enable Google OIDC login",
+      "status": "not_requested",
+      "note": "D15 keeps OIDC disabled by default. This task activates only on an explicit enablement decision by Product Authority."
+    },
+    {
+      "condition": "ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001 merged",
+      "status": "satisfied",
+      "evidence": "PR #1074, merge commit 840081001084ad9586421de908530a41f3a17333, ancestor of 95646a5c (git merge-base --is-ancestor exit 0, matrix receipt R10)."
+    },
+    {
+      "condition": "Password-first security E2E verified for its own version",
+      "status": "satisfied_for_2026-09-01_version",
+      "evidence": "PR #1096, merge commit 2377168c2cc07cd2470dd8f43de0486fe8d8fc08 (ancestor of 95646a5c, receipt R11); receipt verdict pass, dated 2026-09-01 UTC, applying to the tree composed on d0c81635df8e842f7910d40873b3886d4237cee8 via merge f3095a0ee3ca3dde63d98f35ae8cfedf090fd529.",
+      "qualification": "The receipt's run HEAD and original exit codes are unknown, so this is dated historical evidence, not a claim about the current head. Current-head coverage comes from the separate exact-head CI observation below."
+    },
+    {
+      "condition": "Password-first controls still green at the current base",
+      "status": "satisfied_at_95646a5c",
+      "evidence": "GitHub Actions run 34252508138 (event merge_group, head_sha 95646a5c2bd598b7e219ee51efa7e410cb9fe0f4, conclusion success), job 102150167268 'product', conclusion success, completed 2026-09-08T17:05:24Z. Steps 'Test product code' and 'Run Node workspace checks' both success (matrix receipts R33, R34).",
+      "qualification": "Job-level CI status with a workflow-sourced command scope. No per-test outcome is claimed."
+    },
+    {
+      "condition": "Live deployment resolves to local mode in dev/staging/prod",
+      "status": "unknown",
+      "note": "Not probed by this documentation task. An unset ODP_AUTH_MODE with a configured ODP_WEB_OIDC_ISSUER resolves to 'oidc', so live compliance cannot be inferred from source.",
+      "responsible_party": "Release / Ops Engineer"
+    },
+    {
+      "condition": "Google OAuth provider credentials exist and are verified",
+      "status": "unknown",
+      "note": "B-stage. No live GCP project or provider was contacted.",
+      "responsible_party": "Human/Ops"
+    }
+  ],
+  "what_this_handoff_does_not_do": [
+    "Does not mark HUMAN-GCP-WEB-OAUTH-CLIENTS-001 as done, waived or superseded",
+    "Does not claim the OAuth provider has been verified or is ready",
+    "Does not claim live deployment D15 compliance without a live readback",
+    "Does not modify the human task's acceptance criteria",
+    "Does not create, read, or store any OAuth client secret",
+    "Does not change any deployment configuration or infrastructure",
+    "Does not remove HUMAN-GCP-WEB-OAUTH-CLIENTS-001 as a dependency for OIDC-enabled deployments",
+    "Does not itself write the human task's next field -- see wp90 handoff below"
+  ],
+  "identified_regression_evidence": [
+    {
+      "suite": "tests/e2e/test_password_first_security_e2e.py",
+      "description": "Cross-runtime password-first, OIDC-off boundary and audit journey",
+      "exists_at_inspected_head": true,
+      "in_exact_head_ci_selection": true,
+      "historical_result": "part of the 2026-09-01 receipt line '151 passed, 22 skipped'; original exit code unknown",
+      "current_result": "covered by run 34252508138 job 102150167268 step 'Test product code' = success at 95646a5c; per-test outcome not retrieved",
+      "receipt_ref": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md"
+    },
+    {
+      "suite": "tests/security/test_login_throttle_wiring.py",
+      "description": "Login throttle production wiring (closes blocker B1)",
+      "exists_at_inspected_head": true,
+      "in_exact_head_ci_selection": true,
+      "historical_result": "part of the 2026-09-01 receipt line '151 passed, 22 skipped'; original exit code unknown",
+      "current_result": "covered by run 34252508138 job 102150167268 step 'Test product code' = success at 95646a5c",
+      "receipt_ref": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md"
+    },
+    {
+      "suite": "tests/ops/test_conditional_oidc_deployment.py",
+      "description": "Pins the shell and Python auth-mode resolvers to the same matrix of environments",
+      "exists_at_inspected_head": true,
+      "in_exact_head_ci_selection": true,
+      "historical_result": "part of the 2026-09-01 receipt line '151 passed, 22 skipped'; original exit code unknown",
+      "current_result": "covered by run 34252508138 job 102150167268 step 'Test product code' = success at 95646a5c",
+      "receipt_ref": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md"
+    },
+    {
+      "suite": "apps/web/src/lib/auth/__tests__/callback.test.ts",
+      "description": "Callback route unit tests, including the OIDC-off fail-closed path",
+      "exists_at_inspected_head": true,
+      "in_exact_head_ci_selection": true,
+      "historical_result": "inside the 2026-09-01 receipt line '53 files, 474 tests passed'; that line is a suite total and is not attributable to this file alone",
+      "current_result": "covered by run 34252508138 job 102150167268 step 'Run Node workspace checks' = success at 95646a5c",
+      "receipt_ref": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md"
+    },
+    {
+      "suite": "apps/web/src/lib/auth/__tests__/login.test.ts",
+      "description": "Login route unit tests, including OIDC button suppression",
+      "exists_at_inspected_head": true,
+      "in_exact_head_ci_selection": true,
+      "historical_result": "inside the same 474-test suite total; not individually attributed",
+      "current_result": "covered by run 34252508138 job 102150167268 step 'Run Node workspace checks' = success at 95646a5c",
+      "receipt_ref": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md"
+    },
+    {
+      "suite": "apps/web/src/lib/auth/__tests__/session.test.ts",
+      "description": "Session sealing, cookie options and idle timeout",
+      "exists_at_inspected_head": true,
+      "in_exact_head_ci_selection": true,
+      "historical_result": "inside the same 474-test suite total; not individually attributed",
+      "current_result": "covered by run 34252508138 job 102150167268 step 'Run Node workspace checks' = success at 95646a5c",
+      "receipt_ref": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md"
+    },
+    {
+      "suite": "apps/web/src/lib/auth/__tests__/loginThrottleRoute.test.ts",
+      "description": "Throttle behaviour as exercised through the login route",
+      "exists_at_inspected_head": true,
+      "in_exact_head_ci_selection": true,
+      "historical_result": "inside the same 474-test suite total; not individually attributed",
+      "current_result": "covered by run 34252508138 job 102150167268 step 'Run Node workspace checks' = success at 95646a5c",
+      "receipt_ref": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md"
+    },
+    {
+      "suite": "apps/web/src/lib/auth/__tests__/runtime.test.ts",
+      "description": "Auth-mode resolver precedence and verifyCsrfOrigin",
+      "exists_at_inspected_head": true,
+      "in_exact_head_ci_selection": true,
+      "historical_result": "inside the same 474-test suite total; not individually attributed",
+      "current_result": "covered by run 34252508138 job 102150167268 step 'Run Node workspace checks' = success at 95646a5c",
+      "receipt_ref": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md"
+    },
+    {
+      "suite": "apps/web/tests/login-route.test.ts",
+      "description": "The browser-side login journey named by the original receipt (section 1)",
+      "exists_at_inspected_head": true,
+      "in_exact_head_ci_selection": true,
+      "historical_result": "inside the same 474-test suite total; not individually attributed",
+      "current_result": "covered by run 34252508138 job 102150167268 step 'Run Node workspace checks' = success at 95646a5c",
+      "receipt_ref": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md"
+    }
+  ],
+  "withdrawn_regression_references": [
+    {
+      "path": "apps/web/src/lib/auth/__tests__/securityE2E.test.ts",
+      "reason": "Does not exist. git cat-file -e 95646a5c:<path> returned exit 128 (matrix receipt R19). Cited in error by the previous revision."
+    },
+    {
+      "path": "apps/web/src/app/auth/callback/route.test.ts",
+      "reason": "Does not exist. git cat-file -e 95646a5c:<path> returned exit 128 (matrix receipt R20). The previous revision additionally attributed '474 passed' to this non-existent file; the real callback tests live at apps/web/src/lib/auth/__tests__/callback.test.ts."
+    }
+  ],
+  "true_gaps": [
+    {
+      "gap": "canonical_task_archive_missing",
+      "description": "ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001 and ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 both return exit 1 ('Unknown task') from the canonical writer and are absent from ai-task-archive. E2E-001 was never a merged standalone PR.",
+      "severity": "documentation",
+      "mitigation": "The merged PRs and their merge commits are verifiable ancestors of dev, and the immutable E2E receipt is in the repository tree. A missing canonical record is a history gap, not evidence the work was not done; no same-named task should be recreated."
+    },
+    {
+      "gap": "historical_run_head_and_exit_codes_unknown",
+      "description": "The 2026-09-01 E2E-002 receipt records a date, a composition base/merge and prose outcomes. The head the commands ran against and their original exit codes are not recorded anywhere that could be found.",
+      "severity": "medium",
+      "mitigation": "Recorded as unknown rather than reconstructed. Current-head coverage is supplied separately by the exact-head CI observation. The 2026-09-01 suite must not be re-run to manufacture historical provenance."
+    },
+    {
+      "gap": "auth_surface_drift_after_e2e_002",
+      "description": "git diff --stat 2377168c 95646a5c -- modules/opsboard/auth shared/auth reports 5 files changed, 379 insertions(+), 25 deletions(-): claims.py, __init__.py, abac.py, rbac.py, tenant.py.",
+      "severity": "low",
+      "mitigation": "None of the seven D15 control files changed across the same range (git diff --quiet exit 0, matrix receipt R13), and the product CI job at 95646a5c is green."
+    },
+    {
+      "gap": "live_deployment_readback_unknown",
+      "description": "Whether the deployed dev/staging/prod revisions actually resolve to local mode is not verified.",
+      "severity": "medium",
+      "mitigation": "Recorded as unknown and assigned to Release / Ops during deployment readback."
+    },
+    {
+      "gap": "oauth_provider_readiness_unknown",
+      "description": "Google OAuth client credentials and the live callback handshake are unverified.",
+      "severity": "low",
+      "mitigation": "D15 keeps OIDC off, so provider verification is only needed if the business activates OIDC. B-stage concern."
+    }
+  ],
+  "handoff_and_entry_conditions": {
+    "wp90_canonical_writer_handoff": "On A-stage review approval, WP-90 / the canonical writer sets the HUMAN-GCP-WEB-OAUTH-CLIENTS-001 next field to updated_next_recommendation above. The task stays status 'todo' with owner 'Human/Ops'. This evidence task does not write that field itself and does not unblock, close or waive the human task.",
+    "oauth_enablement_entry_conditions": [
+      "1. Product Authority issues an explicit business decision to enable Google OIDC login.",
+      "2. Human/Ops executes HUMAN-GCP-WEB-OAUTH-CLIENTS-001: create the dev, staging and production Google Web OAuth clients with the callback URLs in that task's acceptance criteria, and store the client secrets in the existing Secret Manager entries. Secret values are never written into a task, PR or log.",
+      "3. Release / Ops Engineer deploys with explicit ODP_AUTH_MODE=oidc, performs the live environment readback that closes live_deployment_auth_mode_readback, and runs the live provider handshake that closes oauth_provider_verification."
+    ],
+    "explicitly_not_entry_conditions": [
+      "Approval of this A-stage evidence package is not an OIDC enablement decision and does not start step 1.",
+      "Green CI at 95646a5c is not evidence about any deployed environment."
+    ]
+  },
+  "code_defects_found": [],
+  "minimum_repair_handoff": [],
+  "defect_search_scope": "Inspected for D15 defects at 95646a5c: shared/auth/mode.py, apps/web/src/lib/auth/runtime.ts, apps/web/src/app/login/route.ts, apps/web/src/app/auth/callback/route.ts, apps/web/src/lib/auth/localAuth.ts, apps/web/src/lib/auth/session.ts, apps/web/src/lib/auth/loginThrottle.ts, modules/opsboard/auth/config.py, product_ops/deployment/validate_cloud_run_live_deployment.py and infra/terraform/checks.tf. No defect was found, so code_defects_found and minimum_repair_handoff are empty. An empty list here means 'none found in that scope', not 'the whole product is defect-free'."
+}

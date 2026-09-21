@@ -27,6 +27,7 @@ _TEST_CONFIG = THIS_DIR / "config.example.json"
 
 import ai_status
 import supervisor
+import task_archive
 from task_archive import TaskResolver
 
 
@@ -416,6 +417,59 @@ class DependencyDispatchGateTests(unittest.TestCase):
 
         self.assertTrue(changed)
         self.assertEqual(state["queue"]["events"][event["event_id"]]["skip_reason"], "stale_dispatch_event")
+
+
+class ArchiveRecoveryDependencyGateTests(unittest.TestCase):
+    def test_invalidated_archived_task_blocks_dependency_satisfaction(self) -> None:
+        target_task = {
+            "id": "DOWNSTREAM-GATE-001",
+            "status": "todo",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "depends_on": ["UPSTREAM-ARCHIVED-001"],
+        }
+        done_statuses = {"done", "completed"}
+
+        # 1. Archived task is done without correction
+        with (
+            mock.patch.object(
+                task_archive,
+                "load_archived_task",
+                return_value={"id": "UPSTREAM-ARCHIVED-001", "status": "done", "terminal_outcome": "completed"},
+            ),
+            mock.patch.object(
+                ai_status,
+                "load_archived_snapshot",
+                return_value={"task_id": "UPSTREAM-ARCHIVED-001", "terminal_status": "done"},
+            ),
+        ):
+            resolver = TaskResolver([target_task])
+            self.assertTrue(resolver.dependency_satisfied("UPSTREAM-ARCHIVED-001"))
+            self.assertEqual(resolver.dependency_status("UPSTREAM-ARCHIVED-001"), "done")
+            self.assertTrue(supervisor.dependencies_satisfied(target_task, resolver, done_statuses))
+
+        # 2. Archived task has correction -> status is blocked
+        with (
+            mock.patch.object(
+                task_archive,
+                "load_archived_task",
+                return_value={
+                    "id": "UPSTREAM-ARCHIVED-001",
+                    "status": "blocked",
+                    "terminal_outcome": None,
+                    "blocked_by_invalidation": True,
+                },
+            ),
+            mock.patch.object(
+                ai_status,
+                "load_archived_snapshot",
+                return_value={"task_id": "UPSTREAM-ARCHIVED-001", "terminal_status": "done"},
+            ),
+        ):
+            resolver = TaskResolver([target_task])
+            self.assertFalse(resolver.dependency_satisfied("UPSTREAM-ARCHIVED-001"))
+            self.assertEqual(resolver.dependency_status("UPSTREAM-ARCHIVED-001"), "blocked")
+            self.assertFalse(supervisor.dependencies_satisfied(target_task, resolver, done_statuses))
 
 
 if __name__ == "__main__":

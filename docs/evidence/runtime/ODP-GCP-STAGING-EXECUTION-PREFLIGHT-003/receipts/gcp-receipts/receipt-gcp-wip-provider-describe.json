@@ -1,0 +1,24 @@
+{
+  "command": "gcloud --quiet iam workload-identity-pools providers describe odayplus --workload-identity-pool=github-actions --project=odayplus-runtime-20260825 --location=global --format=json",
+  "argv": [
+    "gcloud",
+    "--quiet",
+    "iam",
+    "workload-identity-pools",
+    "providers",
+    "describe",
+    "odayplus",
+    "--workload-identity-pool=github-actions",
+    "--project=odayplus-runtime-20260825",
+    "--location=global",
+    "--format=json"
+  ],
+  "exit_code": 1,
+  "timestamp_utc": "2026-09-08T11:46:20Z",
+  "executor_account": "oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com",
+  "target": "odayplus-provider",
+  "readback_masked": false,
+  "stdout": "",
+  "stderr": "ERROR: (gcloud.iam.workload-identity-pools.providers.describe) PERMISSION_DENIED: Permission 'iam.workloadIdentityPoolProviders.get' denied on resource '//iam.googleapis.com/projects/odayplus-runtime-20260825/locations/global/workloadIdentityPools/github-actions/providers/odayplus' (or it may not exist). Remediate access with this Troubleshooter URL or share it with your administrator - https://console.cloud.google.com/iam-admin/troubleshooter/summary;errorId=CiQwMWEwODBkNy0zMzA2LTcxMGUtYTcwNS02ZTQ5YTg0Y2ZjNDISa3Byb2plY3RzL29kYXlwbHVzLXJ1bnRpbWUtMjAyNjA4MjUvbG9jYXRpb25zL2dsb2JhbC93b3JrbG9hZElkZW50aXR5UG9vbHMvZ2l0aHViLWFjdGlvbnMvcHJvdmlkZXJzL29kYXlwbHVz . This command is authenticated as oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com which is the active account specified by the [core/account] property.\n- '@type': type.googleapis.com/google.rpc.ErrorInfo\n  domain: iam.googleapis.com\n  metadata:\n    error_info_id: CiQwMWEwODBkNy0zMzA2LTcxMGUtYTcwNS02ZTQ5YTg0Y2ZjNDISa3Byb2plY3RzL29kYXlwbHVzLXJ1bnRpbWUtMjAyNjA4MjUvbG9jYXRpb25zL2dsb2JhbC93b3JrbG9hZElkZW50aXR5UG9vbHMvZ2l0aHViLWFjdGlvbnMvcHJvdmlkZXJzL29kYXlwbHVz\n    permission: iam.workloadIdentityPoolProviders.get\n    resource: projects/odayplus-runtime-20260825/locations/global/workloadIdentityPools/github-actions/providers/odayplus\n    troubleshooter_url: https://console.cloud.google.com/iam-admin/troubleshooter/summary;errorId=CiQwMWEwODBkNy0zMzA2LTcxMGUtYTcwNS02ZTQ5YTg0Y2ZjNDISa3Byb2plY3RzL29kYXlwbHVzLXJ1bnRpbWUtMjAyNjA4MjUvbG9jYXRpb25zL2dsb2JhbC93b3JrbG9hZElkZW50aXR5UG9vbHMvZ2l0aHViLWFjdGlvbnMvcHJvdmlkZXJzL29kYXlwbHVz\n  reason: IAM_PERMISSION_DENIED",
+  "finding": "PERMISSION_DENIED (exit 1). Active caller lacks IAM permissions on target odayplus-provider."
+}

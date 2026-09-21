@@ -2230,6 +2230,16 @@
   font-family: 'IBM Plex Mono', monospace;
 }
 
+.avmQualityNotice {
+  font-size: 10.5px;
+  line-height: 1.45;
+  border: 1px solid #efb4ae;
+  background: #fff1ef;
+  color: #8f231d;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
 .avmReserveNote {
   font-size: 10.5px;
   color: #4a7c86;

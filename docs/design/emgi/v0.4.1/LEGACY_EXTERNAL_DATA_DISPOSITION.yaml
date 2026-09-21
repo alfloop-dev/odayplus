@@ -457,6 +457,19 @@ frozen_surfaces:
       - packages/schemas/source_contracts/external/geocode_result_snapshot.json
       - packages/schemas/source_contracts/external/listing_raw_snapshot.json
       - packages/schemas/source_contracts/external/poi_snapshot.json
+      # ODP-SCHEMA-STORE-OPENING-AUTHORITY-001 — inventory amendment, not growth.
+      # This is not a new source. The `store_opening_authority` provider, its
+      # connector and its manual-attestation credential are already inventoried
+      # under `legacy_source_connectors`, and provider_registry.py has named this
+      # contract id since ODP-STORE-OPENING-001 — the id simply resolved to
+      # nothing, recorded as a registry inconsistency in
+      # docs/evidence/ODP_INT001_CDC_SOURCE_EVIDENCE_2026-09-03.md §7.
+      # Publishing the schema adds no provider, connector, credential, endpoint
+      # or egress: it makes an existing frozen reference resolvable and puts a
+      # fail-closed validation gate in front of records the engine already
+      # accepts. The freeze mechanism is unchanged — any other new file under
+      # this surface still fails.
+      - packages/schemas/source_contracts/external/store_opening_authority_snapshot.json
       - packages/schemas/source_contracts/external/weather_daily_snapshot.json
 
 # ---------------------------------------------------------------------------

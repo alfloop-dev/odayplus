@@ -1,0 +1,22 @@
+{
+  "observed_at": "2026-09-09T16:29:26.268281+00:00",
+  "actor": "Codex",
+  "supervisor": {
+    "pid": 1789757,
+    "loaded_code_sha": "50581b3b180aedaf76fbe4aaffb3bf7e2d120050",
+    "last_heartbeat_at": "2026-09-09T16:29:00Z",
+    "last_successful_loop_at": "2026-09-09T16:25:59Z",
+    "last_loop_error": null
+  },
+  "resumed_worker": {
+    "run_id": "antigravity-20260909T162911Z-4dcaa1d1",
+    "task_id": "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
+    "logical_agent_id": "antigravity3",
+    "status": "running",
+    "pid": 1794752,
+    "child_pid": null,
+    "workspace_path": "/tmp/pantheon-worker-worktrees/pantheon/orch-archive-history-execute-003",
+    "last_event_at": "2026-09-09T16:29:11Z"
+  },
+  "meaning": "Existing historical-recovery closeout resumed after canonical reopen; not a newly released business task."
+}

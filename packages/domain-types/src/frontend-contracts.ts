@@ -176,7 +176,10 @@ export type InterventionTimelineStep =
   | "Observation started"
   | "Outcome collected"
   | "Effect evaluated"
-  | "Closed";
+  | "Closed"
+  | "Adjusted"
+  | "Stopped"
+  | "Rolled back";
 
 export type TimelineEvent = {
   timestamp: string;

@@ -1,0 +1,3 @@
+Listing items under project odayplus-runtime-20260825, location asia-east1.
+
+ERROR: (gcloud.artifacts.repositories.list) 'TokenRefreshError' object has no attribute 'content'

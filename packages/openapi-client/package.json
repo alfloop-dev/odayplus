@@ -2,6 +2,7 @@
   "name": "@oday-plus/openapi-client",
   "version": "0.1.0",
   "private": true,
+  "license": "UNLICENSED",
   "description": "ODay Plus typed client for the FastAPI backend (server-side / test usage only)",
   "type": "module",
   "main": "src/index.ts",

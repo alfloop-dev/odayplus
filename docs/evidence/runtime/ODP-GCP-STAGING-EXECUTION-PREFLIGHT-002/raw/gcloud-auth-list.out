@@ -1,0 +1,42 @@
+[
+  {
+    "account": "accountdepartment@dev.cctech-support.com",
+    "status": ""
+  },
+  {
+    "account": "admin.dep@dev.cctech-support.com",
+    "status": ""
+  },
+  {
+    "account": "admin@dev.cctech-support.com",
+    "status": ""
+  },
+  {
+    "account": "chloe.ong@dev.cctech-support.com",
+    "status": ""
+  },
+  {
+    "account": "deborah.lu@dev.cctech-support.com",
+    "status": "ACTIVE"
+  },
+  {
+    "account": "elainechen@dev.cctech-support.com",
+    "status": ""
+  },
+  {
+    "account": "evan.chen@dev.cctech-support.com",
+    "status": ""
+  },
+  {
+    "account": "joe.tsai@dev.cctech-support.com",
+    "status": ""
+  },
+  {
+    "account": "oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com",
+    "status": ""
+  },
+  {
+    "account": "sean.liao@dev.cctech-support.com",
+    "status": ""
+  }
+]

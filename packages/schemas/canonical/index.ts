@@ -31,6 +31,27 @@ export interface AddressLocation {
   h3_res_9: string;
   h3_res_10: string;
   manual_override_flag: boolean;
+  tenant_id?: string;
+  revision?: number;
+}
+
+export interface ManualCorrection {
+  correction_id: string;
+  entity_type: string;
+  entity_id: string;
+  tenant_id: string;
+  field_name: string;
+  old_value: unknown;
+  new_value: unknown;
+  reason: string;
+  actor_id: string;
+  occurred_at: string; // ISO 8601 DateTime
+  source_revision: number;
+  applied_revision: number;
+  status: 'applied' | 'rolled_back';
+  correlation_id?: string | null;
+  decision_card_hash?: string | null;
+  audit_event_id?: string | null;
 }
 
 export interface Store {
@@ -170,7 +191,7 @@ export interface Poi {
   address_id: string;
   geo_cell_id: string;
   status: 'active' | 'closed' | 'unknown';
-  confidence: number;
+  confidence: number | null;
   snapshot_id: string;
 }
 
@@ -183,7 +204,7 @@ export interface CompetitorStore {
   estimated_capacity: number;
   distance_to_nearest_oday_m: number;
   status: 'active' | 'closed' | 'unknown';
-  confidence: number;
+  confidence: number | null;
   last_verified_at: string | null;
 }
 
@@ -206,7 +227,7 @@ export interface Listing {
   utility_gas_flag: boolean;
   available_from: string | null;
   snapshot_id: string;
-  confidence: number;
+  confidence: number | null;
 }
 
 export interface CandidateSite {
@@ -252,7 +273,7 @@ export interface Prediction {
   p90_value: number;
   unit: string;
   explanation_json: Record<string, any>;
-  confidence: number;
+  confidence: number | null;
 }
 
 export interface Decision {
@@ -288,7 +309,7 @@ export interface HeatZoneScore {
   cannibalization_risk_score: number;
   rent_feasibility_score: number;
   heatzone_state: 'untouched' | 'partially_absorbed' | 'saturated' | 'under_realized' | 'still_expandable';
-  confidence: number;
+  confidence: number | null;
 }
 
 export interface SiteScoreRun {
@@ -351,6 +372,9 @@ export interface Intervention {
   observation_start_time: string;
   observation_end_time: string;
   status: 'proposed' | 'approved' | 'executing' | 'observing' | 'evaluated' | 'stopped' | 'rolled_back';
+  predecessor_id?: string | null;
+  replacement_id?: string | null;
+  adjustment_json?: Record<string, any> | null;
 }
 
 /** ADR-0004: single authority for evidence strength, per ODP-ML-05 §5. */
@@ -453,6 +477,6 @@ export interface DataSnapshot {
   storage_uri: string;
   schema_version: string;
   row_count: number;
-  quality_score: number;
+  quality_score: number | null;
   created_by_run_id: string;
 }

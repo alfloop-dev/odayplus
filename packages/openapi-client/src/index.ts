@@ -43,6 +43,7 @@ export * from "./generated/types";
 export * as AssistedListingIntakeV1 from "./generated/assisted_listing_intake";
 
 import type {
+  AVMCasePayload as GeneratedAVMCasePayload,
   IntakeCorrectPayload as GeneratedIntakeCorrectPayload,
   IntakeDecidePayload as GeneratedIntakeDecidePayload,
   IntakePromotePayload as GeneratedIntakePromotePayload,
@@ -97,11 +98,19 @@ export type CreateAvmCaseInput = {
   forecast_gm_next_12m: number;
   asset_book_value: number;
   equipment_fair_value: number;
+  equipment_depreciation_basis?: string | null;
+  equipment_original_cost?: number | null;
+  asset_book_value_includes_equipment?: boolean | null;
+  useful_life_months?: number | null;
+  residual_value_ratio?: number | null;
+  depreciation_method?: string | null;
+  depreciation_effective_date?: string | null;
+  asset_in_service_date?: string | null;
   lease_liability?: number;
   working_capital?: number;
   comparable_multiples?: number[];
   liquidity_discount?: number;
-  quality_score?: number;
+  quality_score?: number | null;
   source_snapshot_ids?: string[];
   prediction_origin_time?: string | null;
   created_by: string;
@@ -230,7 +239,7 @@ export type HeatZoneScore = {
   score: number;
   rank: number;
   unmet_demand: number;
-  confidence: number;
+  confidence: number | null;
   state: string;
   [key: string]: unknown;
 };
@@ -321,7 +330,16 @@ export type SiteScoreReportSummary = {
   candidateSiteId: string;
   reportVersion: number;
   recommendation: string;
+  /**
+   * The scoring figure, which stays numeric even when the site abstained:
+   * an unmeasured site is scored with the widest band and the lowest
+   * recommendation tier rather than dropped. Read confidenceStatus before
+   * presenting this as a measurement -- "unmeasured" means the 0 below was
+   * never measured, and the canonical Prediction this report produced
+   * carries null rather than 0.
+   */
   confidence: number;
+  confidenceStatus: "measured" | "unmeasured";
   modelVersion: string;
   featureSnapshotTime: string;
   cannibalizationRisk: string;
@@ -2124,6 +2142,10 @@ type _PinListingActor = AssertAssignable<
 type _PinListingMerge = AssertAssignable<
   NetworkListingMergePayload,
   GeneratedNetworkListingMergePayload
+>;
+type _PinCreateAvmCase = AssertAssignable<
+  CreateAvmCaseInput,
+  GeneratedAVMCasePayload
 >;
 
 /**

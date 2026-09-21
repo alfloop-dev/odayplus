@@ -1,0 +1,952 @@
+{
+  "schema_version": 1,
+  "type": "task_history_recovery_dependency_release_analysis",
+  "task_id": "ORCH-ARCHIVE-HISTORY-RESTORE-002",
+  "produced_by": "Claude",
+  "reviewer": "Codex",
+  "produced_at": "2026-09-07T15:15:23Z",
+  "authoritative": false,
+  "canonical_writes": 0,
+  "archive_mutated": false,
+  "task_status_mutated": false,
+  "method": "以 live board 與 live archive 為輸入，直接呼叫既有 .orchestrator/supervisor.py 的 dependencies_satisfied() 與 blocked_task_auto_recovery_eligible()，以及 .orchestrator/task_archive.py 的 task_satisfies_dependency()，對三種假設 task_map 求值。純函式求值，未寫入 board、archive 或任何 canonical 檔案。",
+  "inputs": {
+    "board": "/home/lupin/odayplus/ai-status.json",
+    "archive_tasks_dir": "/home/lupin/odayplus/ai-task-archive/tasks",
+    "config": "/home/lupin/odayplus/.orchestrator/config.json",
+    "dependency_done_statuses": [
+      "done"
+    ]
+  },
+  "key_finding": "依 ready_dispatcher.dependency_done_statuses=[\"done\"] 與 task_archive.task_satisfies_dependency()（要求 status==done 且非 superseded），blocked 佔位不滿足依賴。因此已提交批次的「38 筆全 blocked 佔位」方案，把 38 個依賴目標從 missing 變成 blocked，對派送而言等價：0 個任務因此變成可排程。只有 reconstructable_done 記錄能真正解開依賴閘。",
+  "scenarios": {
+    "before": {
+      "description": "今日 live board（38 個依賴目標 missing）",
+      "newly_schedulable": [],
+      "rows": [
+        {
+          "id": "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+          "status": "blocked",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "HUMAN-GCP-WEB-OAUTH-CLIENTS-001",
+          "status": "todo",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": true
+        },
+        {
+          "id": "HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001",
+          "status": "todo",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "HUMAN-OSS-LEGAL-APPROVAL-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-AVM-DEPRECIATION-INTEGRATION-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-AVM-QUALITY-NULLABLE-001",
+          "status": "blocked",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-CODEX-CLI-ASTRA-COMPAT-UPGRADE-001",
+          "status": "blocked",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-CODEX-ULTRA-DRIFT-REPAIR-001",
+          "status": "review",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+          "status": "review",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "status": "blocked",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-DRIFT-SECURITY-VERIFY-003",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+          "status": "blocked",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-INTV006-ADJUST-WORKFLOW-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-NFR-RUNTIME-EVIDENCE-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-POSTDEPLOY-WATCH-CLOSEOUT-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-ROLE-PROVIDER-CODEX-LIVE-ROLLOUT-001",
+          "status": "review",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+          "status": "blocked",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-STAGING-STATE-PLAN-QUARANTINE-CLEANUP-001",
+          "status": "todo",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ORCH-ARCHIVE-HISTORY-RESTORE-002",
+          "status": "in_progress",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": true
+        },
+        {
+          "id": "XR-SOURCE-APPROVAL-ACTIVATION-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        }
+      ]
+    },
+    "A_all_blocked_placeholders": {
+      "description": "已提交批次（PR #1231）的方案：38 筆全部 active blocked + non_dispatchable 佔位",
+      "newly_schedulable": [],
+      "newly_deps_satisfied": [],
+      "newly_blocked_recovery_eligible": [],
+      "rows": [
+        {
+          "id": "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+          "status": "blocked",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "HUMAN-GCP-WEB-OAUTH-CLIENTS-001",
+          "status": "todo",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": true
+        },
+        {
+          "id": "HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001",
+          "status": "todo",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "HUMAN-OSS-LEGAL-APPROVAL-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-AVM-DEPRECIATION-INTEGRATION-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-AVM-QUALITY-NULLABLE-001",
+          "status": "blocked",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-CODEX-CLI-ASTRA-COMPAT-UPGRADE-001",
+          "status": "blocked",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-CODEX-ULTRA-DRIFT-REPAIR-001",
+          "status": "review",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+          "status": "review",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "status": "blocked",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-DRIFT-SECURITY-VERIFY-003",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+          "status": "blocked",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-INTV006-ADJUST-WORKFLOW-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-NFR-RUNTIME-EVIDENCE-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-POSTDEPLOY-WATCH-CLOSEOUT-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-ROLE-PROVIDER-CODEX-LIVE-ROLLOUT-001",
+          "status": "review",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+          "status": "blocked",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-STAGING-STATE-PLAN-QUARANTINE-CLEANUP-001",
+          "status": "todo",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ORCH-ARCHIVE-HISTORY-RESTORE-002",
+          "status": "in_progress",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": true
+        },
+        {
+          "id": "XR-SOURCE-APPROVAL-ACTIVATION-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        }
+      ]
+    },
+    "B_attested_done_plus_blocked": {
+      "description": "本任務 attestations 草案的方案：23 筆 reconstructable_done + 15 筆 blocked 佔位（待 Codex 裁定）",
+      "newly_schedulable": [
+        "ODP-DRIFT-SECURITY-VERIFY-003"
+      ],
+      "newly_deps_satisfied": [
+        "ODP-AVM-QUALITY-NULLABLE-001",
+        "ODP-DRIFT-SECURITY-VERIFY-003"
+      ],
+      "newly_blocked_recovery_eligible": [],
+      "rows": [
+        {
+          "id": "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+          "status": "blocked",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "HUMAN-GCP-WEB-OAUTH-CLIENTS-001",
+          "status": "todo",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": true
+        },
+        {
+          "id": "HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001",
+          "status": "todo",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "HUMAN-OSS-LEGAL-APPROVAL-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-AVM-DEPRECIATION-INTEGRATION-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-AVM-QUALITY-NULLABLE-001",
+          "status": "blocked",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-CODEX-CLI-ASTRA-COMPAT-UPGRADE-001",
+          "status": "blocked",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-CODEX-ULTRA-DRIFT-REPAIR-001",
+          "status": "review",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+          "status": "review",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "status": "blocked",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-DRIFT-SECURITY-VERIFY-003",
+          "status": "todo",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": true
+        },
+        {
+          "id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+          "status": "blocked",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-INTV006-ADJUST-WORKFLOW-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-NFR-RUNTIME-EVIDENCE-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-POSTDEPLOY-WATCH-CLOSEOUT-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-ROLE-PROVIDER-CODEX-LIVE-ROLLOUT-001",
+          "status": "review",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+          "status": "blocked",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-STAGING-STATE-PLAN-QUARANTINE-CLEANUP-001",
+          "status": "todo",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ORCH-ARCHIVE-HISTORY-RESTORE-002",
+          "status": "in_progress",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": true
+        },
+        {
+          "id": "XR-SOURCE-APPROVAL-ACTIVATION-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        }
+      ]
+    },
+    "C_upper_bound_all_done": {
+      "description": "上界對照：38 筆全部 done。本輪不主張此形狀——12 筆缺 acceptance/runtime 證據，2 筆跨 repo 無法在 pinned ref 驗證。",
+      "not_proposed": true,
+      "newly_schedulable": [
+        "HUMAN-OSS-LEGAL-APPROVAL-001",
+        "ODP-DRIFT-SECURITY-VERIFY-003"
+      ],
+      "newly_deps_satisfied": [
+        "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+        "HUMAN-OSS-LEGAL-APPROVAL-001",
+        "ODP-AVM-QUALITY-NULLABLE-001",
+        "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+        "ODP-DRIFT-SECURITY-VERIFY-003",
+        "ODP-ROLE-PROVIDER-CODEX-LIVE-ROLLOUT-001"
+      ],
+      "newly_blocked_recovery_eligible": [],
+      "rows": [
+        {
+          "id": "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+          "status": "blocked",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "HUMAN-GCP-WEB-OAUTH-CLIENTS-001",
+          "status": "todo",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": true
+        },
+        {
+          "id": "HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001",
+          "status": "todo",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "HUMAN-OSS-LEGAL-APPROVAL-001",
+          "status": "todo",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": true
+        },
+        {
+          "id": "ODP-AVM-DEPRECIATION-INTEGRATION-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-AVM-QUALITY-NULLABLE-001",
+          "status": "blocked",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-CODEX-CLI-ASTRA-COMPAT-UPGRADE-001",
+          "status": "blocked",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-CODEX-ULTRA-DRIFT-REPAIR-001",
+          "status": "review",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+          "status": "review",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "status": "blocked",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-DRIFT-SECURITY-VERIFY-003",
+          "status": "todo",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": true
+        },
+        {
+          "id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+          "status": "blocked",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-INTV006-ADJUST-WORKFLOW-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-NFR-RUNTIME-EVIDENCE-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-POSTDEPLOY-WATCH-CLOSEOUT-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-ROLE-PROVIDER-CODEX-LIVE-ROLLOUT-001",
+          "status": "review",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+          "status": "blocked",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-STAGING-STATE-PLAN-QUARANTINE-CLEANUP-001",
+          "status": "todo",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        },
+        {
+          "id": "ORCH-ARCHIVE-HISTORY-RESTORE-002",
+          "status": "in_progress",
+          "deps_satisfied": true,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": true
+        },
+        {
+          "id": "XR-SOURCE-APPROVAL-ACTIVATION-001",
+          "status": "todo",
+          "deps_satisfied": false,
+          "blocked_auto_recovery_eligible": false,
+          "schedulable_now": false
+        }
+      ]
+    }
+  },
+  "newly_schedulable_under_B": [
+    "ODP-DRIFT-SECURITY-VERIFY-003"
+  ],
+  "dependency_gate_released_but_still_blocked_under_B": [
+    {
+      "id": "ODP-AVM-QUALITY-NULLABLE-001",
+      "deps_satisfied_after": true,
+      "blocked_task_auto_recovery_eligible": false,
+      "reason": "該任務的 blocked prose 命中 supervisor 的 hard_gate_markers（human/ops）：「escalated to human/ops after 11 reviewer reopens…」。這是 archive 事故之前就存在的審查升級，與本次復原無關。依賴閘已解開，但仍需人類裁決才會恢復派送。"
+    }
+  ],
+  "grading_by_merged_planner": {
+    "DPF-EMGI-LIVE-ROLLOUT-001": {
+      "tier": "merge_claimed",
+      "action": "active_blocked_placeholder",
+      "gaps": [
+        "merge_not_verifiable_on_ref",
+        "acceptance",
+        "runtime"
+      ]
+    },
+    "ODP-AVM-DEPRECIATION-CONTRACT-001": {
+      "tier": "reconstructable_done",
+      "action": "archive_reconstructed_done",
+      "gaps": []
+    },
+    "ODP-CANONICAL-LEGACY-LINEAGE-001": {
+      "tier": "reconstructable_done",
+      "action": "archive_reconstructed_done",
+      "gaps": []
+    },
+    "ODP-DEV-ROLLOUT-001": {
+      "tier": "merge_verified",
+      "action": "active_blocked_placeholder",
+      "gaps": [
+        "acceptance",
+        "runtime"
+      ]
+    },
+    "ODP-DEV-STAGED-GATE-RECONCILIATION-001": {
+      "tier": "merge_verified",
+      "action": "active_blocked_placeholder",
+      "gaps": [
+        "acceptance"
+      ]
+    },
+    "ODP-DRIFT-DEP-REMOVE-002": {
+      "tier": "reconstructable_done",
+      "action": "archive_reconstructed_done",
+      "gaps": []
+    },
+    "ODP-EPHEMERAL-STAGING-IAC-001": {
+      "tier": "merge_verified",
+      "action": "active_blocked_placeholder",
+      "gaps": [
+        "acceptance"
+      ]
+    },
+    "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001": {
+      "tier": "reconstructable_done",
+      "action": "archive_reconstructed_done",
+      "gaps": []
+    },
+    "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001": {
+      "tier": "merge_verified",
+      "action": "active_blocked_placeholder",
+      "gaps": [
+        "acceptance",
+        "runtime"
+      ]
+    },
+    "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001": {
+      "tier": "reconstructable_done",
+      "action": "archive_reconstructed_done",
+      "gaps": []
+    },
+    "ODP-INT-MANUAL-CORRECTION-AUDIT-001": {
+      "tier": "reconstructable_done",
+      "action": "archive_reconstructed_done",
+      "gaps": []
+    },
+    "ODP-INT001-CDC-DISPOSITION-001": {
+      "tier": "merge_verified",
+      "action": "active_blocked_placeholder",
+      "gaps": [
+        "runtime"
+      ]
+    },
+    "ODP-JOB-PARTIAL-DISPOSITION-001": {
+      "tier": "merge_verified",
+      "action": "active_blocked_placeholder",
+      "gaps": [
+        "runtime"
+      ]
+    },
+    "ODP-LH-PREDICTION-DRIFT-001": {
+      "tier": "reconstructable_done",
+      "action": "archive_reconstructed_done",
+      "gaps": []
+    },
+    "ODP-LH003-BACKTEST-RELEASE-GATE-001": {
+      "tier": "reconstructable_done",
+      "action": "archive_reconstructed_done",
+      "gaps": []
+    },
+    "ODP-MEASUREMENT-CROSSLAYER-GATE-001": {
+      "tier": "reconstructable_done",
+      "action": "archive_reconstructed_done",
+      "gaps": []
+    },
+    "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001": {
+      "tier": "reconstructable_done",
+      "action": "archive_reconstructed_done",
+      "gaps": []
+    },
+    "ODP-MODELREADY-QUALITY-NULLABLE-001": {
+      "tier": "reconstructable_done",
+      "action": "archive_reconstructed_done",
+      "gaps": []
+    },
+    "ODP-NET002-LEASE-DISPOSITION-001": {
+      "tier": "merge_verified",
+      "action": "active_blocked_placeholder",
+      "gaps": [
+        "runtime"
+      ]
+    },
+    "ODP-NETPLAN-DISCLOSURE-UI-E2E-001": {
+      "tier": "reconstructable_done",
+      "action": "archive_reconstructed_done",
+      "gaps": []
+    },
+    "ODP-OPS002-DECISION-COMMENTS-001": {
+      "tier": "reconstructable_done",
+      "action": "archive_reconstructed_done",
+      "gaps": []
+    },
+    "ODP-PRICE006-BANDIT-GATED-001": {
+      "tier": "reconstructable_done",
+      "action": "archive_reconstructed_done",
+      "gaps": []
+    },
+    "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001": {
+      "tier": "reconstructable_done",
+      "action": "archive_reconstructed_done",
+      "gaps": []
+    },
+    "ODP-RELEASE-GATE-FIXTURE-STAGING-002": {
+      "tier": "reconstructable_done",
+      "action": "archive_reconstructed_done",
+      "gaps": []
+    },
+    "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001": {
+      "tier": "reconstructable_done",
+      "action": "archive_reconstructed_done",
+      "gaps": []
+    },
+    "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001": {
+      "tier": "reconstructable_done",
+      "action": "archive_reconstructed_done",
+      "gaps": []
+    },
+    "ODP-REQ-DISPOSITION-GOVERNANCE-001": {
+      "tier": "reconstructable_done",
+      "action": "archive_reconstructed_done",
+      "gaps": []
+    },
+    "ODP-ROLE-PROVIDER-CODEX-REVIEW-001": {
+      "tier": "merge_verified",
+      "action": "active_blocked_placeholder",
+      "gaps": [
+        "acceptance"
+      ]
+    },
+    "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001": {
+      "tier": "reconstructable_done",
+      "action": "archive_reconstructed_done",
+      "gaps": []
+    },
+    "ODP-RUNTIME-RELEASE-SINGLE-PATH-001": {
+      "tier": "merge_verified",
+      "action": "active_blocked_placeholder",
+      "gaps": [
+        "acceptance"
+      ]
+    },
+    "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001": {
+      "tier": "merge_verified",
+      "action": "active_blocked_placeholder",
+      "gaps": [
+        "acceptance"
+      ]
+    },
+    "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001": {
+      "tier": "merge_verified",
+      "action": "active_blocked_placeholder",
+      "gaps": [
+        "runtime"
+      ]
+    },
+    "ODP-SITESCORE-QUALITY-NULLABLE-001": {
+      "tier": "reconstructable_done",
+      "action": "archive_reconstructed_done",
+      "gaps": []
+    },
+    "ODP-SPEC-SOURCE-PROVENANCE-001": {
+      "tier": "reconstructable_done",
+      "action": "archive_reconstructed_done",
+      "gaps": []
+    },
+    "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001": {
+      "tier": "merge_verified",
+      "action": "active_blocked_placeholder",
+      "gaps": [
+        "runtime"
+      ]
+    },
+    "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001": {
+      "tier": "reconstructable_done",
+      "action": "archive_reconstructed_done",
+      "gaps": []
+    },
+    "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002": {
+      "tier": "merge_verified",
+      "action": "active_blocked_placeholder",
+      "gaps": [
+        "acceptance"
+      ]
+    },
+    "XR-EXT-OSS-FINAL-AUDIT-001": {
+      "tier": "merge_claimed",
+      "action": "active_blocked_placeholder",
+      "gaps": [
+        "merge_not_verifiable_on_ref",
+        "runtime"
+      ]
+    }
+  }
+}

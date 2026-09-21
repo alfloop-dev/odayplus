@@ -1,0 +1,81 @@
+{
+  "case_id": "categorical_new_label_chisquare",
+  "description": "Current window introduces a label absent from the reference window.",
+  "kind": "data_drift",
+  "metrics_index": {
+    "columns": {
+      "region": {
+        "id": "2708ace58123adf42173b117178e45db",
+        "method": "chi-square p_value",
+        "metric_name": "ValueDrift(column=region,method=chi-square p_value,threshold=0.05)",
+        "threshold": 0.05,
+        "value": 0.0
+      }
+    },
+    "drifted_columns_count": {
+      "count": 1.0,
+      "drift_share_argument": 0.5,
+      "id": "15e89f895b482f9b84ba7274ed18a106",
+      "metric_name": "DriftedColumnsCount(drift_share=0.5)",
+      "share": 1.0
+    }
+  },
+  "outcome": "completed",
+  "result": {
+    "cohort_key": null,
+    "current_snapshot_id": null,
+    "decision_policy_version_id": null,
+    "drift_detected": true,
+    "drift_share": 1.0,
+    "drifted_column_names": [
+      "region"
+    ],
+    "drifted_columns": 1,
+    "engine": "evidently",
+    "model_name": null,
+    "model_version": null,
+    "prediction_columns": [],
+    "prediction_output_types": null,
+    "reference_snapshot_id": null,
+    "snapshot_id": "baseline-cat-new-label"
+  },
+  "routing_expectation": "N<=1000, Categorical, merged unique>2 -> chi_stat_test",
+  "to_dict": {
+    "drift_detected": true,
+    "drift_share": 1.0,
+    "drifted_column_names": [
+      "region"
+    ],
+    "drifted_columns": 1,
+    "engine": "evidently",
+    "report": {
+      "metrics": [
+        {
+          "config": {
+            "drift_share": 0.5,
+            "type": "evidently:metric_v2:DriftedColumnsCount"
+          },
+          "id": "15e89f895b482f9b84ba7274ed18a106",
+          "metric_name": "DriftedColumnsCount(drift_share=0.5)",
+          "value": {
+            "count": 1.0,
+            "share": 1.0
+          }
+        },
+        {
+          "config": {
+            "column": "region",
+            "method": "chi-square p_value",
+            "threshold": 0.05,
+            "type": "evidently:metric_v2:ValueDrift"
+          },
+          "id": "2708ace58123adf42173b117178e45db",
+          "metric_name": "ValueDrift(column=region,method=chi-square p_value,threshold=0.05)",
+          "value": 0.0
+        }
+      ],
+      "tests": []
+    },
+    "snapshot_id": "baseline-cat-new-label"
+  }
+}

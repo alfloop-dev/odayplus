@@ -1,4 +1,4 @@
-"""Evidently-backed drift snapshots for released model inputs."""
+"""Native drift snapshots, retaining the public EvidentlyDriftMonitor API."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from uuid import uuid4
 import pandas as pd
 
 from models.shared_ml import OssCapability, require_oss_capability
+from modules.learninghub.infrastructure.native_drift import ENGINE_NAME, NativeDriftEngine
 
 
 @dataclass(frozen=True)
@@ -21,7 +22,7 @@ class EvidentlyDriftResult:
     drifted_columns: int
     drift_share: float
     report_json: str
-    engine: str = "evidently"
+    engine: str = ENGINE_NAME
     reference_snapshot_id: str | None = None
     current_snapshot_id: str | None = None
     model_name: str | None = None
@@ -72,15 +73,13 @@ class EvidentlyDriftMonitor:
         if not reference_rows or not current_rows:
             raise ValueError("Evidently drift monitoring requires reference and current rows")
         require_oss_capability(OssCapability.MODEL_MONITORING)
-        from evidently import Report
-        from evidently.presets import DataDriftPreset
 
         reference = pd.DataFrame(reference_rows)
         current = pd.DataFrame(current_rows)
         if set(reference.columns) != set(current.columns):
             raise ValueError("reference and current drift datasets must have identical columns")
 
-        evaluation = Report([DataDriftPreset(drift_share=drift_share_threshold)]).run(
+        evaluation = NativeDriftEngine(drift_share=drift_share_threshold).run(
             current, reference
         )
         return self._result(
@@ -108,8 +107,7 @@ class EvidentlyDriftMonitor:
     ) -> EvidentlyDriftResult:
         """Evaluate only prediction outputs within one governed cohort.
 
-        Evidently 0.7 does not provide a dedicated prediction preset. Prediction
-        drift is therefore represented by a ``DataDriftPreset`` over an
+        Prediction drift uses the native engine over an
         explicitly selected output-only frame. The caller must provide a
         versioned policy (or an already-resolved threshold for low-level
         tooling); the application production entry requires the policy.
@@ -158,8 +156,6 @@ class EvidentlyDriftMonitor:
             requested=drift_share_threshold,
         )
         require_oss_capability(OssCapability.MODEL_MONITORING)
-        from evidently import Report
-        from evidently.presets import DataDriftPreset
 
         reference = pd.DataFrame(
             [{column: row[column] for column in columns} for row in reference_rows],
@@ -169,7 +165,7 @@ class EvidentlyDriftMonitor:
             [{column: row[column] for column in columns} for row in current_rows],
             columns=list(columns),
         )
-        evaluation = Report([DataDriftPreset(drift_share=threshold)]).run(
+        evaluation = NativeDriftEngine(drift_share=threshold).run(
             current, reference
         )
         return self._result(

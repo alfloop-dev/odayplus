@@ -25,11 +25,12 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: delivery_toolchain/git/task_finalize.sh <TASK-ID> [--dry-run] [--base <branch>] [--no-status-submit]
+Usage: delivery_toolchain/git/task_finalize.sh <TASK-ID> [--dry-run] [--base <branch>] [--branch <branch>] [--no-status-submit]
 
   <TASK-ID>        e.g. ODP-EXAMPLE-001 (branch task/ODP-EXAMPLE-001)
   --dry-run        print what would run; touch neither origin nor GitHub
   --base <branch>  PR target (default: $PANTHEON_TASK_PR_BASE or dev)
+  --branch <name>  explicit branch name (default: task/<TASK-ID>)
   --no-status-submit  do not atomically move a tracked task to review (only for
                       supervisor housekeeping PRs which have no board task)
 EOF
@@ -39,12 +40,14 @@ TASK_ID=""
 DRY_RUN=0
 STATUS_SUBMIT=1
 BASE_BRANCH="${PANTHEON_TASK_PR_BASE:-dev}"
+EXPLICIT_BRANCH=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
     --no-status-submit) STATUS_SUBMIT=0; shift ;;
     --base) BASE_BRANCH="${2:-}"; shift 2 ;;
+    --branch) EXPLICIT_BRANCH="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     -*) echo "task_finalize: unknown option $1" >&2; usage; exit 2 ;;
     *)
@@ -59,7 +62,7 @@ ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
 PREFIX="${PANTHEON_TASK_BRANCH_PREFIX:-task/}"
-BRANCH="${PREFIX}${TASK_ID}"
+BRANCH="${EXPLICIT_BRANCH:-${PREFIX}${TASK_ID}}"
 CURRENT="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
 
 if [ "$CURRENT" != "$BRANCH" ]; then
@@ -88,6 +91,34 @@ if ! cleanliness_out="$(python3 "$cleanliness_tool" --repo "$ROOT" 2>&1)"; then
   exit 1
 fi
 
+# gh resolution mirrors delivery_toolchain/github/check_pr_merge_eligibility.py:
+# .orchestrator/bin/gh is a broker shim, not the real CLI.
+resolve_gh() {
+  if [ -n "${GH:-}" ]; then
+    if command -v "$GH" >/dev/null 2>&1; then
+      echo "$GH"
+      return 0
+    fi
+    return 1
+  fi
+  local found
+  found="$(command -v gh 2>/dev/null || true)"
+  case "$found" in
+    */.orchestrator/bin/gh)
+      for candidate in /usr/bin/gh /usr/local/bin/gh; do
+        [ -x "$candidate" ] && { echo "$candidate"; return 0; }
+      done
+      ;;
+  esac
+  if [ -n "$found" ]; then echo "$found"; return 0; fi
+  for candidate in /usr/bin/gh /usr/local/bin/gh; do
+    [ -x "$candidate" ] && { echo "$candidate"; return 0; }
+  done
+  return 1
+}
+
+GH="$(resolve_gh || true)"
+
 git fetch --quiet origin "$BASE_BRANCH" 2>/dev/null || \
   echo "task_finalize: warning: could not fetch origin/$BASE_BRANCH" >&2
 
@@ -95,6 +126,113 @@ BASE_REF="origin/$BASE_BRANCH"
 git show-ref --verify --quiet "refs/remotes/$BASE_REF" || BASE_REF="$BASE_BRANCH"
 
 if git merge-base --is-ancestor HEAD "$BASE_REF" 2>/dev/null; then
+  echo "task_finalize: HEAD is already an ancestor of $BASE_REF -- checking PR status."
+  PR_NUMBER=""
+  FOUND_CLOSED=0
+  if [ -n "$GH" ] && command -v "$GH" >/dev/null 2>&1; then
+    # R3/R4: Iterate all PRs for this head/base pair and find the MERGED one.
+    # Fail explicitly on nonzero exit (transport/server error) instead of swallowing.
+    LIST_OUT="$("$GH" pr list --head "$BRANCH" --base "$BASE_BRANCH" --state all \
+      --json number --jq '.[].number' 2>&1)" || {
+      LIST_RC=$?
+      case "$LIST_OUT" in
+        *[Nn]o\ pull\ requests\ found*|*[Nn]o\ open\ pull\ requests*)
+          LIST_OUT="" ;;
+        *)
+          if [ "$DRY_RUN" -eq 1 ]; then
+            case "$LIST_OUT" in
+              *[Kk]nown\ GitHub\ host*|*[Nn]o\ git\ remotes*|*[Nn]one\ of\ the\ git\ remotes*|*[Nn]o\ default\ remote*|*[Cc]ould\ not\ determine\ a\ default\ remote*|*GH_TOKEN*|*[Gg]it[Hh]ub\ [Aa]ctions\ workflow*|*github.token*|*[Aa]uthenticat*|*[Nn]ot\ logged\ in*|*[Nn]o\ account*|*[Nn]o\ accounts*|*[Nn]o\ credential*)
+                LIST_OUT="" ;;
+              *)
+                echo "task_finalize: error: gh pr list failed ($LIST_RC): $LIST_OUT" >&2
+                exit 1 ;;
+            esac
+          else
+            echo "task_finalize: error: gh pr list failed ($LIST_RC): $LIST_OUT" >&2
+            exit 1
+          fi
+          ;;
+      esac
+    }
+    ALL_PR_NUMBERS="$LIST_OUT"
+    for CANDIDATE_PR in $ALL_PR_NUMBERS; do
+      VIEW_OUT="$("$GH" pr view "$CANDIDATE_PR" --json state --jq '.state' 2>&1)" || {
+        VIEW_RC=$?
+        echo "task_finalize: error: gh pr view #$CANDIDATE_PR failed ($VIEW_RC): $VIEW_OUT" >&2
+        exit 1
+      }
+      CANDIDATE_STATE="$VIEW_OUT"
+      if [ "$CANDIDATE_STATE" = "MERGED" ]; then
+        PR_NUMBER="$CANDIDATE_PR"
+        break
+      fi
+      if [ "$CANDIDATE_STATE" = "CLOSED" ]; then
+        FOUND_CLOSED=1
+      fi
+    done
+    if [ -z "$PR_NUMBER" ] && [ -z "$ALL_PR_NUMBERS" ]; then
+      VIEW_BRANCH_OUT="$("$GH" pr view "$BRANCH" --json number,state --jq '{number: .number, state: .state}' 2>&1)" || {
+        VIEW_BRANCH_RC=$?
+        case "$VIEW_BRANCH_OUT" in
+          *[Nn]o\ pull\ requests\ found*|*[Nn]o\ open\ pull\ requests*|*[Nn]o\ pull\ request*)
+            VIEW_BRANCH_OUT="" ;;
+          *)
+            if [ "$DRY_RUN" -eq 1 ]; then
+              case "$VIEW_BRANCH_OUT" in
+                *[Kk]nown\ GitHub\ host*|*[Nn]o\ git\ remotes*|*[Nn]one\ of\ the\ git\ remotes*|*[Nn]o\ default\ remote*|*[Cc]ould\ not\ determine\ a\ default\ remote*|*GH_TOKEN*|*[Gg]it[Hh]ub\ [Aa]ctions\ workflow*|*github.token*|*[Aa]uthenticat*|*[Nn]ot\ logged\ in*|*[Nn]o\ account*|*[Nn]o\ accounts*|*[Nn]o\ credential*)
+                  VIEW_BRANCH_OUT="" ;;
+                *)
+                  echo "task_finalize: error: gh pr view $BRANCH failed ($VIEW_BRANCH_RC): $VIEW_BRANCH_OUT" >&2
+                  exit 1 ;;
+              esac
+            else
+              echo "task_finalize: error: gh pr view $BRANCH failed ($VIEW_BRANCH_RC): $VIEW_BRANCH_OUT" >&2
+              exit 1
+            fi
+            ;;
+        esac
+      }
+      if [ -n "$VIEW_BRANCH_OUT" ]; then
+        BRANCH_PR_NUM="$(echo "$VIEW_BRANCH_OUT" | jq -r '.number // empty' 2>/dev/null || true)"
+        BRANCH_PR_STATE="$(echo "$VIEW_BRANCH_OUT" | jq -r '.state // empty' 2>/dev/null || true)"
+        if [ "$BRANCH_PR_STATE" = "MERGED" ]; then
+          PR_NUMBER="$BRANCH_PR_NUM"
+        fi
+      fi
+    fi
+  else
+    if [ "$DRY_RUN" -eq 0 ]; then
+      echo "task_finalize: error: GitHub CLI ('gh') not found; cannot verify merged PR status." >&2
+      exit 1
+    fi
+  fi
+  if [ -n "$PR_NUMBER" ]; then
+    PR_URL="$("$GH" pr view "$PR_NUMBER" --json url --jq '.url' 2>/dev/null || true)"
+    echo "task_finalize: PR #$PR_NUMBER for $BRANCH is already MERGED into $BASE_BRANCH"
+    if [ "$DRY_RUN" -eq 1 ]; then
+      echo "dry-run: would record review submission for merged PR #$PR_NUMBER"
+      echo "task_finalize: dry-run complete"
+      exit 0
+    fi
+    if [ "$STATUS_SUBMIT" -eq 1 ]; then
+      if [ -z "${AI_NAME:-}" ]; then
+        echo "task_finalize: PR exists but review was NOT recorded: AI_NAME is required for the atomic status submission." >&2
+        echo "task_finalize: re-run with AI_NAME=<task-owner>, or use --no-status-submit only for untracked housekeeping PRs." >&2
+        exit 1
+      fi
+      AI_NAME="$AI_NAME" "${PANTHEON_STATUS_ROOT:-$ROOT}/scripts/ai-status.sh" submit_review "$TASK_ID" "$PR_NUMBER" \
+        "Remote PR #$PR_NUMBER is merged into $BASE_BRANCH: ${PR_URL:-GitHub URL unavailable}"
+      echo "task_finalize: review submission recorded atomically for $TASK_ID"
+    fi
+    echo "task_finalize: awaiting reviewer approval; once approved, close the task out with:"
+    echo "  AI_NAME=<Owner> ./scripts/ai-status.sh done \"$TASK_ID\" \"<checkpoint>\""
+    exit 0
+  fi
+  if [ "$FOUND_CLOSED" -eq 1 ] 2>/dev/null; then
+    echo "task_finalize: HEAD is an ancestor of $BASE_REF but only CLOSED (unmerged) PRs found for $BRANCH." >&2
+    echo "task_finalize: the valid MERGED PR could not be discovered. Check GitHub for the correct PR number." >&2
+    exit 1
+  fi
   echo "task_finalize: HEAD is already an ancestor of $BASE_REF -- the work has landed."
   echo "task_finalize: no PR needed. Close the task out with:"
   echo "  AI_NAME=<Owner> ./scripts/ai-status.sh done \"$TASK_ID\" \"<checkpoint>\""
@@ -203,27 +341,7 @@ if [ -f "$verification_tool" ]; then
   fi
 fi
 
-# gh resolution mirrors delivery_toolchain/github/check_pr_merge_eligibility.py:
-# .orchestrator/bin/gh is a broker shim, not the real CLI.
-resolve_gh() {
-  local found
-  found="$(command -v gh 2>/dev/null || true)"
-  case "$found" in
-    */.orchestrator/bin/gh)
-      for candidate in /usr/bin/gh /usr/local/bin/gh; do
-        [ -x "$candidate" ] && { echo "$candidate"; return 0; }
-      done
-      ;;
-  esac
-  if [ -n "$found" ]; then echo "$found"; return 0; fi
-  for candidate in /usr/bin/gh /usr/local/bin/gh; do
-    [ -x "$candidate" ] && { echo "$candidate"; return 0; }
-  done
-  return 1
-}
-
-GH="$(resolve_gh || true)"
-if [ -z "$GH" ] && [ "$DRY_RUN" -eq 0 ]; then
+if ( [ -z "$GH" ] || ! command -v "$GH" >/dev/null 2>&1 ) && [ "$DRY_RUN" -eq 0 ]; then
   echo "task_finalize: GitHub CLI ('gh') not found; cannot open the task PR." >&2
   exit 1
 fi
@@ -236,15 +354,14 @@ SUBJECT="$(git log --no-merges --format=%s "$BASE_REF..HEAD" 2>/dev/null | tail 
 BODY_FILE="$(mktemp "${TMPDIR:-/tmp}/task-finalize-${TASK_ID}-body.XXXXXX")"
 trap 'rm -f "$BODY_FILE"' EXIT
 {
-  echo "Task: \`$TASK_ID\`"
+  echo "任務：\`$TASK_ID\`"
   echo
-  echo "Branch \`$BRANCH\` -> \`$BASE_BRANCH\` ($AHEAD commit(s))."
+  echo "分支 \`$BRANCH\` -> \`$BASE_BRANCH\` ($AHEAD 個提交)。"
   echo
-  echo "Commits:"
+  echo "提交記錄："
   git log --no-merges --format='- %h %s' "$BASE_REF..HEAD"
   echo
-  echo "Opened by \`delivery_toolchain/git/task_finalize.sh\`. Merging still requires the"
-  echo "assigned reviewer's \`task-review-gate\` status plus required CI."
+  echo "由 \`delivery_toolchain/git/task_finalize.sh\` 開啟。合併仍需指派審查者的 \`task-review-gate\` 狀態與必要 CI 通過。"
 } > "$BODY_FILE"
 
 run() {

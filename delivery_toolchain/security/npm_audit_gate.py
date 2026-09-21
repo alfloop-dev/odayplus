@@ -1,0 +1,466 @@
+#!/usr/bin/env python3
+"""Production npm dependency audit gate.
+
+Background (ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001)
+------------------------------------------------------
+``npm audit`` resolves advisories through the registry.  ``@npmcli/arborist``
+(``lib/audit-report.js``) asks ``POST /-/npm/v1/security/advisories/bulk``
+first and only falls back to the deprecated
+``POST /-/npm/v1/security/audits/quick`` endpoint when the bulk request
+throws.  A ``quick`` response therefore always means the bulk request already
+failed, and the body it returns -- including
+``Invalid package tree, run npm install to rebuild your package-lock.json`` --
+is registry output, not a local verdict on the lockfile.
+
+The previous gate (``npm audit --omit=dev --audit-level=high``) collapsed both
+outcomes into "exit non-zero", so a registry hiccup was indistinguishable from
+a real vulnerability and a single transient 400/503 reddened every
+product-scoped PR.
+
+This gate keeps the same security threshold but separates the two states:
+
+* a parsed audit report decides pass/fail purely on severity counts, so
+  vulnerabilities at or above the threshold always fail;
+* a registry transport failure is retried a bounded number of times and, if it
+  never resolves, fails with a distinct exit code.
+
+A transport failure is never reported as a pass: without a report we have no
+vulnerability data, so the gate stays closed.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+import subprocess
+import sys
+import tempfile
+import time
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from delivery_toolchain.release.release_receipts import redact
+
+# Ordered least to most severe; the threshold selects this level and above.
+SEVERITY_ORDER = ("info", "low", "moderate", "high", "critical")
+DEFAULT_THRESHOLD = "high"
+
+EXIT_OK = 0
+EXIT_VULNERABLE = 1
+EXIT_AUDIT_UNAVAILABLE = 2
+
+# A transient registry error resolves on a retry; an outage does not. Three
+# attempts keep the gate responsive while absorbing the observed single-shot
+# 400/503 responses.
+DEFAULT_ATTEMPTS = 3
+DEFAULT_BACKOFF_SECONDS = 5.0
+# The dev baseline observed a single registry audit taking 13m42s. Keep a
+# finite 15-minute ceiling so a slow but healthy registry is not misclassified
+# as unavailable; three attempts still fit the product job's 60-minute cap.
+DEFAULT_TIMEOUT_SECONDS = 900.0
+
+REPORT = "report"
+UNAVAILABLE = "unavailable"
+
+
+@dataclass(frozen=True)
+class AuditOutcome:
+    """Result of one ``npm audit`` invocation.
+
+    ``kind`` is ``REPORT`` when the registry returned advisory data (and
+    ``counts`` holds the per-severity totals), or ``UNAVAILABLE`` when the
+    request never produced a report.
+
+    ``retryable`` is True only for a failure a later attempt could plausibly
+    resolve: a request timeout, a connection error or a transient upstream
+    status. A missing ``npm``, unparsable output or a report without severity
+    counts is deterministic, so retrying it only burns the release budget
+    before failing closed anyway.
+    """
+
+    kind: str
+    counts: dict[str, int] | None
+    detail: str
+    retryable: bool = False
+
+    @property
+    def has_report(self) -> bool:
+        return self.kind == REPORT
+
+
+def validate_threshold(threshold: str) -> str:
+    if threshold not in SEVERITY_ORDER:
+        raise ValueError(f"unknown severity threshold: {threshold!r}")
+    if SEVERITY_ORDER.index(threshold) > SEVERITY_ORDER.index(DEFAULT_THRESHOLD):
+        raise ValueError(
+            f"production audit threshold cannot be lowered to {threshold!r}; "
+            f"must be '{DEFAULT_THRESHOLD}' or stricter"
+        )
+    return threshold
+
+
+def severities_at_or_above(threshold: str) -> tuple[str, ...]:
+    threshold = validate_threshold(threshold)
+    return SEVERITY_ORDER[SEVERITY_ORDER.index(threshold) :]
+
+
+def _loads(text: str) -> object | None:
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
+# Statuses the registry returns while it is unhealthy rather than while it is
+# rejecting us. A 401/403/404 against the bulk endpoint is a standing condition
+# a retry cannot clear.
+TRANSIENT_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
+
+# Node/npm surface transport failures as these codes in the error message.
+TRANSIENT_ERROR_TOKENS = (
+    "econnreset",
+    "econnrefused",
+    "etimedout",
+    "enotfound",
+    "eai_again",
+    "socket hang up",
+    "network timeout",
+)
+
+# ``@npmcli/arborist`` only calls the deprecated ``audits/quick`` endpoint after
+# the bulk advisory request has already thrown, so any error naming it is a
+# symptom of that first failure -- which is exactly the transient 400/503 class
+# this gate was built to absorb -- rather than a verdict on the lockfile.
+QUICK_FALLBACK_ENDPOINT = "/-/npm/v1/security/audits/quick"
+
+
+def _is_transient_registry_error(status: object, message: str) -> bool:
+    """Decide whether a registry error is worth another bounded attempt."""
+    if isinstance(status, bool):
+        return False
+    if isinstance(status, int) and status in TRANSIENT_STATUS_CODES:
+        return True
+    if isinstance(status, str) and status.isdigit() and int(status) in TRANSIENT_STATUS_CODES:
+        return True
+    lowered = message.lower()
+    if QUICK_FALLBACK_ENDPOINT in lowered:
+        return True
+    return any(token in lowered for token in TRANSIENT_ERROR_TOKENS)
+
+
+def classify_audit_output(stdout: str, stderr: str) -> AuditOutcome:
+    """Decide whether ``npm audit --json`` produced advisory data.
+
+    The discriminator is structural rather than textual. A real report always
+    carries ``auditReportVersion`` plus ``metadata.vulnerabilities``. When the
+    registry fails, npm's ``auditError`` helper instead emits an error object
+    (``message``/``statusCode``/``body``) and never sets
+    ``auditReportVersion``. Matching on that shape keeps registry wording --
+    "Invalid package tree", "This endpoint is being retired", a 503 -- out of
+    the decision.
+    """
+    payload = _loads(stdout)
+
+    if isinstance(payload, dict) and "auditReportVersion" in payload:
+        metadata = payload.get("metadata")
+        raw_counts = metadata.get("vulnerabilities") if isinstance(metadata, dict) else None
+        if isinstance(raw_counts, dict):
+            counts = {level: int(raw_counts.get(level, 0) or 0) for level in SEVERITY_ORDER}
+            return AuditOutcome(REPORT, counts, "npm returned an audit report")
+        # A report without severity counts cannot be evaluated; treat it as no
+        # data rather than as a pass.
+        return AuditOutcome(UNAVAILABLE, None, "audit report is missing metadata.vulnerabilities")
+
+    if isinstance(payload, dict):
+        status = payload.get("statusCode")
+        message = payload.get("message") or payload.get("body") or ""
+        text = str(message).strip()
+        detail = f"registry error (statusCode={status}): {text[:400]}"
+        return AuditOutcome(
+            UNAVAILABLE, None, detail, retryable=_is_transient_registry_error(status, text)
+        )
+
+    combined = f"{stdout}\n{stderr}".strip()
+    return AuditOutcome(
+        UNAVAILABLE, None, f"npm audit produced no parsable report: {combined[:400]}"
+    )
+
+
+def run_npm_audit(cwd: Path = ROOT, timeout: float = DEFAULT_TIMEOUT_SECONDS) -> AuditOutcome:
+    """Run the production audit once and classify its output."""
+    try:
+        res = subprocess.run(
+            ["npm", "audit", "--omit=dev", "--json"],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        # A hung registry request is the canonical transient failure.
+        return AuditOutcome(
+            UNAVAILABLE, None, f"npm audit timed out after {timeout:.0f}s", retryable=True
+        )
+    except FileNotFoundError:
+        # A missing npm is an environment defect, not an outage: every further
+        # attempt fails identically.
+        return AuditOutcome(UNAVAILABLE, None, "npm executable not found")
+
+    # The return code is deliberately ignored when a report is present: with
+    # --json npm exits non-zero merely because findings exist, and the severity
+    # counts are the authoritative signal.
+    return classify_audit_output(res.stdout, res.stderr)
+
+
+def audit_with_retry(
+    cwd: Path = ROOT,
+    attempts: int = DEFAULT_ATTEMPTS,
+    backoff: float = DEFAULT_BACKOFF_SECONDS,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    sleep=time.sleep,
+) -> AuditOutcome:
+    """Run the audit until it yields a report or the retry budget is spent.
+
+    Only a failure classified as transient earns another attempt. A missing
+    ``npm``, unparsable output or a report without severity counts is
+    deterministic: retrying it cannot change the verdict, and spending the
+    backoff budget on it only delays a failure that is already certain.
+    """
+    total = max(1, attempts)
+    outcome = AuditOutcome(UNAVAILABLE, None, "no audit attempt was made")
+    for attempt in range(1, total + 1):
+        outcome = run_npm_audit(cwd=cwd, timeout=timeout)
+        if outcome.has_report:
+            return outcome
+        print(
+            f"npm audit attempt {attempt}/{total} did not return advisory data: "
+            f"{outcome.detail}",
+            file=sys.stderr,
+        )
+        if not outcome.retryable:
+            print(
+                "Failure is not a transient transport/service error; failing closed "
+                "without further attempts.",
+                file=sys.stderr,
+            )
+            return outcome
+        if attempt < total:
+            sleep(backoff * attempt)
+    return outcome
+
+
+def evaluate(outcome: AuditOutcome, threshold: str = DEFAULT_THRESHOLD) -> tuple[int, str]:
+    """Map an outcome onto an exit code and a human-readable verdict."""
+    try:
+        valid_threshold = validate_threshold(threshold)
+    except ValueError as exc:
+        return (
+            EXIT_AUDIT_UNAVAILABLE,
+            f"AUDIT UNAVAILABLE: invalid severity threshold: {exc}",
+        )
+
+    if not outcome.has_report:
+        return (
+            EXIT_AUDIT_UNAVAILABLE,
+            "AUDIT UNAVAILABLE: the npm registry never returned advisory data, so this run "
+            f"proves nothing about production dependencies. Last error: {redact(outcome.detail)}",
+        )
+
+    counts = outcome.counts or {}
+    blocking = severities_at_or_above(valid_threshold)
+    failing = {level: counts.get(level, 0) for level in blocking if counts.get(level, 0)}
+    if failing:
+        summary = ", ".join(f"{count} {level}" for level, count in failing.items())
+        return (
+            EXIT_VULNERABLE,
+            f"VULNERABILITIES FOUND at or above '{valid_threshold}' in production dependencies: "
+            f"{summary}. Run 'npm audit --omit=dev' for details.",
+        )
+
+    total = counts.get("total", sum(counts.get(level, 0) for level in SEVERITY_ORDER))
+    return (
+        EXIT_OK,
+        f"PASS: no production vulnerabilities at or above '{valid_threshold}' "
+        f"({total} finding(s) below the threshold).",
+    )
+
+
+def build_audit_receipt(
+    outcome: AuditOutcome,
+    code: int,
+    verdict: str,
+    threshold: str = DEFAULT_THRESHOLD,
+) -> dict[str, Any]:
+    """Construct a redacted, schema-compliant audit receipt dictionary."""
+    receipt: dict[str, Any] = {
+        "schema_version": 1,
+        "receipt_kind": "npm_audit",
+        "gate": "npm_audit_gate",
+        "secret_values_redacted": True,
+        "status": "passed" if code == EXIT_OK else "failed",
+        "result": "pass" if code == EXIT_OK else "fail",
+        "exit_code": code,
+        "threshold": threshold,
+        "omit_dev": True,
+        "outcome_kind": outcome.kind,
+        "counts": outcome.counts,
+        "detail": redact(outcome.detail),
+        "verdict": redact(verdict),
+        "candidate_sha": os.environ.get("ODAY_RELEASE_SHA", ""),
+        "recorded_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    }
+    return redact(receipt)
+
+
+def write_audit_receipt(
+    path: Path,
+    outcome: AuditOutcome,
+    code: int,
+    verdict: str,
+    threshold: str = DEFAULT_THRESHOLD,
+) -> None:
+    """Write the redacted audit receipt atomically to disk."""
+    receipt = build_audit_receipt(outcome, code, verdict, threshold)
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=target.parent,
+        prefix=f".{target.name}.",
+        delete=False,
+    ) as handle:
+        temporary = Path(handle.name)
+        json.dump(receipt, handle, ensure_ascii=False, indent=2, sort_keys=True)
+        handle.write("\n")
+    temporary.replace(target)
+
+
+def require_positive_finite(label: str, value: float) -> float:
+    """Reject NaN, infinity and non-positive values for a timeout-like parameter.
+
+    ``float("inf")`` and ``float("nan")`` both parse successfully and both slip
+    past a plain ``value <= 0`` check, because every comparison against NaN is
+    False and infinity is greater than zero. Either one reaching
+    ``subprocess.run(timeout=...)`` removes the per-attempt execution bound this
+    gate exists to enforce.
+    """
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{label} must be a positive finite number of seconds, got {value!r}")
+    return value
+
+
+def require_non_negative_finite(label: str, value: float) -> float:
+    """Reject NaN, infinity and negative values for a backoff-like parameter."""
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(f"{label} must be a non-negative finite number of seconds, got {value!r}")
+    return value
+
+
+def _parse_env_float(name: str, default: float) -> float:
+    if name in os.environ:
+        val = os.environ[name]
+        try:
+            return float(val)
+        except ValueError as exc:
+            raise ValueError(f"Invalid float for {name}: {val!r}") from exc
+    return default
+
+
+def _parse_env_int(name: str, default: int) -> int:
+    if name in os.environ:
+        val = os.environ[name]
+        try:
+            return int(val)
+        except ValueError as exc:
+            raise ValueError(f"Invalid integer for {name}: {val!r}") from exc
+    return default
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Production npm audit security gate.")
+    parser.add_argument(
+        "--receipt",
+        type=Path,
+        default=None,
+        help="Path to write the redacted audit receipt JSON.",
+    )
+    parser.add_argument(
+        "--threshold",
+        default=os.environ.get("ODP_NPM_AUDIT_LEVEL", DEFAULT_THRESHOLD),
+        help=f"Severity threshold (default: {DEFAULT_THRESHOLD}). Cannot be lowered below 'high'.",
+    )
+    parser.add_argument(
+        "--attempts",
+        type=int,
+        default=None,
+        help=f"Retry attempts (default: {DEFAULT_ATTEMPTS}).",
+    )
+    parser.add_argument(
+        "--backoff",
+        type=float,
+        default=None,
+        help=f"Backoff seconds between retries (default: {DEFAULT_BACKOFF_SECONDS}).",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        help=f"Timeout seconds per attempt (default: {DEFAULT_TIMEOUT_SECONDS}).",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        threshold = validate_threshold(args.threshold)
+        attempts = (
+            args.attempts
+            if args.attempts is not None
+            else _parse_env_int("ODP_NPM_AUDIT_ATTEMPTS", DEFAULT_ATTEMPTS)
+        )
+        backoff = (
+            args.backoff
+            if args.backoff is not None
+            else _parse_env_float("ODP_NPM_AUDIT_BACKOFF_SECONDS", DEFAULT_BACKOFF_SECONDS)
+        )
+        timeout = (
+            args.timeout
+            if args.timeout is not None
+            else _parse_env_float("ODP_NPM_AUDIT_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)
+        )
+        require_positive_finite("timeout", timeout)
+        require_non_negative_finite("backoff", backoff)
+        if attempts <= 0:
+            raise ValueError(f"attempts must be a positive integer, got {attempts!r}")
+    except ValueError as exc:
+        print(f"[FAIL CLOSED] Invalid configuration: {exc}", file=sys.stderr)
+        if args.receipt:
+            outcome = AuditOutcome(UNAVAILABLE, None, f"invalid configuration: {exc}")
+            write_audit_receipt(
+                args.receipt, outcome, EXIT_AUDIT_UNAVAILABLE, str(exc), args.threshold
+            )
+        return EXIT_AUDIT_UNAVAILABLE
+
+    outcome = audit_with_retry(
+        attempts=attempts,
+        backoff=backoff,
+        timeout=timeout,
+    )
+    code, verdict = evaluate(outcome, threshold)
+    print(verdict, file=sys.stderr if code else sys.stdout)
+
+    if args.receipt:
+        write_audit_receipt(args.receipt, outcome, code, verdict, threshold)
+
+    return code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

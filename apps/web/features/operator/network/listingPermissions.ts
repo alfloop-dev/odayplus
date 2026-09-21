@@ -28,3 +28,20 @@ export function canMergeListing(roleId: OperatorRoleId): boolean {
 
 export const MERGE_DENIED_NOTE =
   "你的角色不可標記重複；請切換為展店經理，或洽平台維運調整角色權限。";
+
+// Role gating for HeatZone composition decisions (ODP-FR-HZ-006).
+//
+// Mirrors the server's `require_permission("heatzone", OVERRIDE)`. Of the
+// console's roles, `expansion-manager` (backed by platform role site_reviewer / executive)
+// holds heatzone OVERRIDE and ROLLBACK in shared/auth/rbac.py ROLE_PERMISSIONS.
+// Presentation only: the API re-derives the operator from the authenticated
+// principal and re-checks the permission on every write.
+
+const COMPOSITION_DECISION_ROLES: readonly OperatorRoleId[] = ["expansion-manager"];
+
+export function canDecideHeatZoneComposition(roleId: OperatorRoleId): boolean {
+  return COMPOSITION_DECISION_ROLES.includes(roleId);
+}
+
+export const COMPOSITION_DECISION_DENIED_NOTE =
+  "你的角色不可核准或拒絕熱區合併／拆分提案；請切換為展店經理，或洽平台維運調整角色權限。";

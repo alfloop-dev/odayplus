@@ -355,6 +355,17 @@ class MongoSource:
         client.admin.command("ping")
         return client[config.mongo_database]
 
+    @property
+    def database(self) -> MongoDatabase:
+        """Return the validated database handle for the approved source.
+
+        Exposed so the CDC adapter can open a change stream against the same
+        connection this reader already validated, rather than building a second
+        client with its own URI parsing and its own chance of pointing somewhere
+        else.
+        """
+        return self._database
+
     @staticmethod
     def _cursor_value(value: str | None) -> Any:
         if not value:

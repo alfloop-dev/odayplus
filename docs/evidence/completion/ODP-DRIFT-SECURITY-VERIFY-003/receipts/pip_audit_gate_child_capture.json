@@ -1,0 +1,75 @@
+{
+  "child_invocation_count": 1,
+  "child_invocations": [
+    {
+      "argv": [
+        "uv",
+        "run",
+        "--with",
+        "pip-audit",
+        "pip-audit",
+        "--path",
+        ".venv/lib/python3.12/site-packages",
+        "--format",
+        "json",
+        "--timeout",
+        "15"
+      ],
+      "attempt": 1,
+      "capture_output": true,
+      "command_line": "uv run --with pip-audit pip-audit --path .venv/lib/python3.12/site-packages --format json --timeout 15",
+      "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-drift-security-verify-003",
+      "duration_seconds": 2.87,
+      "finished_at_utc": "2026-09-08T02:43:15.968435+00:00",
+      "returncode": 0,
+      "started_at_utc": "2026-09-08T02:43:13.098192+00:00",
+      "stderr_bytes": 31,
+      "stderr_receipt": "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_attempt1_stderr.txt",
+      "stderr_sha256": "15950a68a7ed99c59779717acefdceb3f69cfd31bde67d2c954f2a3cea4d7955",
+      "stderr_text": "No known vulnerabilities found\n",
+      "stdout_bytes": 12357,
+      "stdout_receipt": "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_attempt1_stdout.json",
+      "stdout_sha256": "f32d534e0612b51171bc2b83c5d051acf9ee1e6a5ea44b50a044434962c21cd9",
+      "text_mode": true,
+      "timeout_seconds": 300.0
+    }
+  ],
+  "duration_seconds": 2.874,
+  "environment_overrides": {
+    "VIRTUAL_ENV": "/tmp/pantheon-worker-worktrees/pantheon/odp-drift-security-verify-003/.venv"
+  },
+  "finished_at_utc": "2026-09-08T02:43:15.973377+00:00",
+  "gate_exit_code": 0,
+  "gate_exit_code_source": "return value of pip_audit_gate.main()",
+  "gate_forwarded_argv": [],
+  "gate_module_file": "delivery_toolchain/security/pip_audit_gate.py",
+  "gate_module_sha256": "7116063f67c6c8310e2d165787f934a9eea4642fcd3d968a657afb51182a7c64",
+  "gate_resolved_defaults": {
+    "attempts": 3,
+    "installation_path": ".venv/lib/python3.12/site-packages",
+    "process_timeout": 300.0,
+    "service": "pypi",
+    "socket_timeout": 15.0
+  },
+  "gate_verdict_stderr": "",
+  "gate_verdict_stdout": "PASS: no Python package vulnerabilities found (215 dependencies audited).\n",
+  "pip_audit_version_probe": {
+    "command": [
+      "uv",
+      "run",
+      "--with",
+      "pip-audit",
+      "pip-audit",
+      "--version"
+    ],
+    "command_line": "uv run --with pip-audit pip-audit --version",
+    "observed_at_utc": "2026-09-08T02:43:13.097211+00:00",
+    "returncode": 0,
+    "stderr": "",
+    "stdout": "pip-audit 2.10.1"
+  },
+  "purpose": "Raw subprocess evidence for the authoritative pip_audit_gate run (reopen #3 item 1). The gate is imported and unmodified; only its documented runner seam is injected.",
+  "python_executable": "/tmp/pantheon-worker-worktrees/pantheon/odp-drift-security-verify-003/.venv/bin/python3",
+  "python_version": "3.12.14 (main, Aug 14 2026, 15:34:45) [Clang 22.1.3 ]",
+  "started_at_utc": "2026-09-08T02:43:13.097257+00:00"
+}

@@ -71,6 +71,8 @@ done < <(
   } | sort -u
 )
 
+"${PYTHON_COMMAND[@]}" delivery_toolchain/e2e/check_chromium_prerequisites.py
+
 "${COMPOSE[@]}" down --remove-orphans --volumes
 "${COMPOSE[@]}" up -d --build
 

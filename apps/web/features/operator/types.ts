@@ -262,7 +262,7 @@ export type OperatorHeatZone = {
   competitionIndex: number;
   cannibalizationRisk: RiskLevel;
   rentBand: string;
-  confidence: number;
+  confidence: number | null;
   recommendedLens: HeatZoneLens;
   reasons: string[];
   risks: string[];
@@ -413,6 +413,8 @@ export type RebalanceStore = {
   avmP50?: number;
   avmP90?: number;
   avmConf?: string;
+  avmQualityScoreStatus?: string;
+  avmQualityDisposition?: string;
   avmReserve?: string;
   avmModelVersion?: string;
   avmSnapshotId?: string;

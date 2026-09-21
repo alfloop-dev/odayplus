@@ -1,0 +1,12 @@
+{
+  "case_id": "failure_prediction_non_finite_output",
+  "description": "A numeric output carries +inf, which must be refused rather than cleaned away the way Evidently cleans feature columns.",
+  "failure": {
+    "exception_message": "current output 'prediction' must be finite numeric data",
+    "exception_module": "builtins",
+    "exception_type": "ValueError"
+  },
+  "kind": "prediction_drift",
+  "outcome": "raised",
+  "routing_expectation": "_validate_prediction_rows guard"
+}

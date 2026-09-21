@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from common import display_name_for, normalize_agent_id
+from task_archive import load_archived_task
 
 THIS_DIR = Path(__file__).resolve().parent
 ROOT_DIR = THIS_DIR.parent
@@ -593,6 +594,7 @@ def sidecar_candidates(
     }
     schema = config.get("schema", {}) or {}
     task_id_field = schema.get("task_id_field", "id")
+    existing_ids = {str(task.get(task_id_field) or task.get("id") or "") for task in tasks}
 
     candidates: list[dict[str, Any]] = []
     for template in templates:
@@ -627,6 +629,8 @@ def sidecar_candidates(
             if parent_status == "blocked" and any(marker in prose for marker in HARD_GATE_MARKERS):
                 continue
             sidecar_id = build_sidecar_task_id(parent_id, kind)
+            if sidecar_id in existing_ids or load_archived_task(sidecar_id) is not None:
+                continue
             variables = {
                 "parent_task_id": parent_id,
                 "sidecar_task_id": sidecar_id,

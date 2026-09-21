@@ -15,9 +15,15 @@ import copy
 import hashlib
 import json
 import re
+import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 SUPPORTED_SCHEMA_VERSIONS = (1, 2)
 CURRENT_SCHEMA_VERSION = 2
@@ -244,6 +250,15 @@ SOURCES_OFF_EGRESS_CONTRACT_FILES = (
     "product_ops/deployment/cloud_run_job_entrypoint.py",
 )
 
+RUNTIME_FOUNDATION_MODULE_FILES = (
+    "infra/terraform/modules/runtime_foundation/main.tf",
+    "infra/terraform/modules/runtime_foundation/variables.tf",
+    "infra/terraform/modules/runtime_foundation/network.tf",
+    "infra/terraform/modules/runtime_foundation/outputs.tf",
+    "infra/terraform/modules/runtime_foundation/kms.tf",
+    "infra/terraform/modules/runtime_foundation/database.tf",
+)
+
 
 # ---------------------------------------------------------------------------
 # Initial-release recovery admission
@@ -359,6 +374,81 @@ def is_exact_sha(value: Any) -> bool:
     """Return whether *value* is a lowercase 40-character git SHA."""
 
     return isinstance(value, str) and bool(re.fullmatch(r"[0-9a-f]{40}", value))
+
+
+def ensure_candidate_commit(candidate_sha: str, *, root: Path = ROOT) -> bool:
+    """Ensure candidate commit object and its tree/blobs are present locally.
+
+    In a shallow or fresh depth-1 clone (e.g. Runtime Release build runner),
+    a predecessor/rollback candidate commit may not be in the local object store.
+    This helper attempts to fetch the exact candidate SHA from git remotes.
+    Returns True if the commit object is available locally, False otherwise.
+    """
+    if not is_exact_sha(candidate_sha):
+        return False
+
+    try:
+        res = subprocess.run(
+            ["git", "cat-file", "-e", f"{candidate_sha}^{{commit}}"],
+            cwd=root,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if res.returncode == 0:
+            return True
+    except Exception:
+        return False
+
+    remotes: list[str] = []
+    try:
+        out = (
+            subprocess.check_output(
+                ["git", "remote"],
+                cwd=root,
+                stderr=subprocess.DEVNULL,
+            )
+            .decode("utf-8")
+            .strip()
+            .split()
+        )
+        remotes = [r.strip() for r in out if r.strip()]
+    except Exception:
+        remotes = []
+
+    if "origin" in remotes:
+        remotes.remove("origin")
+        remotes.insert(0, "origin")
+    elif not remotes:
+        remotes = ["origin"]
+
+    for remote in remotes:
+        for fetch_cmd in (
+            ["git", "fetch", "--depth=1", remote, candidate_sha],
+            ["git", "fetch", remote, candidate_sha],
+        ):
+            try:
+                fetch_res = subprocess.run(
+                    fetch_cmd,
+                    cwd=root,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+                if fetch_res.returncode == 0:
+                    check_res = subprocess.run(
+                        ["git", "cat-file", "-e", f"{candidate_sha}^{{commit}}"],
+                        cwd=root,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                    )
+                    if check_res.returncode == 0:
+                        return True
+            except Exception:
+                pass
+
+    return False
 
 
 def release_candidate_job_name(base_name: Any, candidate_sha: Any) -> str:
@@ -548,6 +638,7 @@ def build_sources_off_attestation(
     provider_mode: str,
     sources_inventory: list[dict[str, Any]],
     egress_evidence: dict[str, Any] | None = None,
+    root: Path = ROOT,
 ) -> dict[str, Any]:
     """Seal an observed sources-off posture into a bound attestation.
 
@@ -565,7 +656,10 @@ def build_sources_off_attestation(
     ]
     inventory.sort(key=lambda entry: str(entry.get("source_id")))
     if egress_evidence is None:
-        egress_evidence = build_sources_off_egress_evidence()
+        egress_evidence = build_sources_off_egress_evidence(
+            root=root,
+            candidate_sha=candidate_sha,
+        )
     attestation: dict[str, Any] = {
         "provider_mode": provider_mode,
         "egress_posture": _derived_egress_posture(inventory),
@@ -609,6 +703,7 @@ def sources_off_attestation_errors(
     components: Any = None,
     source_policy_digest: Any = None,
     label: str = "manifest.sources_off_attestation",
+    root: Path = ROOT,
 ) -> list[str]:
     """Return why *attestation* is not admissible sources-off data-plane evidence.
 
@@ -716,13 +811,23 @@ def sources_off_attestation_errors(
     for field in SOURCES_OFF_EGRESS_EVIDENCE_FIELDS:
         if field not in evidence:
             errors.append(f"{label}.egress_evidence missing required field: {field}")
-    expected_evidence = build_sources_off_egress_evidence()
-    for field in SOURCES_OFF_EGRESS_EVIDENCE_FIELDS:
-        if evidence.get(field) != expected_evidence.get(field):
-            errors.append(
-                f"{label}.egress_evidence.{field} is not the checked-in Runtime "
-                "Release egress contract"
-            )
+    expected_evidence = None
+    try:
+        expected_evidence = build_sources_off_egress_evidence(
+            root=root,
+            candidate_sha=candidate_sha,
+        )
+    except Exception as exc:
+        errors.append(
+            f"{label}.egress_evidence cannot be verified for candidate {candidate_sha}: {exc}"
+        )
+    if expected_evidence is not None:
+        for field in SOURCES_OFF_EGRESS_EVIDENCE_FIELDS:
+            if evidence.get(field) != expected_evidence.get(field):
+                errors.append(
+                    f"{label}.egress_evidence.{field} is not the checked-in Runtime "
+                    "Release egress contract"
+                )
     if evidence.get("resolved_cloud_run_egress") != evidence.get("cloud_run_egress"):
         errors.append(
             f"{label}.egress_evidence.resolved_cloud_run_egress must match the "
@@ -735,7 +840,7 @@ def sources_off_attestation_errors(
             f"{label}.egress_evidence.runtime_probe_receipt_content_digest must "
             "bind the expected probe receipt content"
         )
-    errors.extend(_sources_off_egress_contract_errors())
+    errors.extend(_sources_off_egress_contract_errors(root=root, candidate_sha=candidate_sha))
 
     recorded_binding = attestation.get("binding_digest")
     if not is_sha256_digest(recorded_binding):
@@ -1113,6 +1218,7 @@ def validate_manifest(
     *,
     expected_candidate_sha: str | None = None,
     expected_digest: str | None = None,
+    root: Path = ROOT,
 ) -> list[str]:
     """Return all manifest integrity errors; an empty list means valid.
 
@@ -1190,6 +1296,7 @@ def validate_manifest(
                 candidate_sha=manifest.get("candidate_sha"),
                 components=manifest.get("components"),
                 source_policy_digest=manifest.get("source_policy_digest"),
+                root=root,
             )
         )
 
@@ -1412,7 +1519,10 @@ def validate_manifest(
 
 
 def validate_release_admission(
-    manifest: Any, *, environment: str | None = None
+    manifest: Any,
+    *,
+    environment: str | None = None,
+    root: Path = ROOT,
 ) -> list[str]:
     """Return why a structurally valid manifest cannot be deployed.
 
@@ -1429,7 +1539,7 @@ def validate_release_admission(
     it and gets the record validated on its own terms.
     """
 
-    errors = validate_manifest(manifest)
+    errors = validate_manifest(manifest, root=root)
     if not isinstance(manifest, dict):
         return errors
     # Manifests created before the status field was introduced remain
@@ -1564,6 +1674,7 @@ def load_manifest(
     *,
     expected_candidate_sha: str | None = None,
     expected_digest: str | None = None,
+    root: Path = ROOT,
 ) -> tuple[dict[str, Any] | None, list[str]]:
     """Load and validate one manifest, returning errors instead of guessing."""
 
@@ -1577,6 +1688,7 @@ def load_manifest(
         payload,
         expected_candidate_sha=expected_candidate_sha,
         expected_digest=expected_digest,
+        root=root,
     )
     return (payload if isinstance(payload, dict) else None), errors
 
@@ -1598,11 +1710,123 @@ def compute_file_set_digest(paths: Any, *, root: Path = ROOT) -> str:
     return "sha256:" + h.hexdigest()
 
 
-def compute_sources_off_egress_contract_digest(root: Path = ROOT) -> str:
+def _wired_env_value(workflow_text: str, name: str) -> str | None:
+    """回傳 workflow 實際接到 runtime 的 env 值；未接線時回傳 ``None``。
+
+    只認 YAML 的 ``NAME: value`` 形式，因此註解裡提到變數名稱不會被誤判成接線。
+    """
+
+    pattern = re.compile(rf"^[ \t]*{re.escape(name)}:[ \t]*(.*?)[ \t]*$", re.MULTILINE)
+    values = [match.group(1).strip().strip('"').strip("'") for match in pattern.finditer(workflow_text)]
+    wired = [value for value in values if value]
+    if not wired:
+        return None
+    return wired[0]
+
+
+def _wired_env_names(workflow_text: str) -> tuple[str, ...]:
+    """回傳 workflow 真正接到 runtime 的環境變數名稱（去重、排序）。
+
+    和 :func:`_wired_env_value` 同一個判準：只認 ``NAME: value`` 且值非空，所以
+    註解裡提到的變數名稱不算接線。列舉名稱而不是逐一查已知清單，release
+    toolchain 才不需要自己記住任何 provider 的變數叫什麼。
+    """
+
+    pattern = re.compile(r"^[ \t]*([A-Z][A-Z0-9_]*):[ \t]*(.*?)[ \t]*$", re.MULTILINE)
+    names = {
+        match.group(1)
+        for match in pattern.finditer(workflow_text)
+        if match.group(2).strip().strip('"').strip("'")
+    }
+    return tuple(sorted(names))
+
+
+def resolve_sources_off_egress_contract_files(
+    root: Path = ROOT,
+    candidate_sha: str | None = None,
+) -> tuple[str, ...]:
+    """Resolve the active sources-off contract files for candidate or worktree."""
+    network_content = ""
+    if candidate_sha is not None:
+        if is_exact_sha(candidate_sha):
+            ensure_candidate_commit(candidate_sha, root=root)
+            try:
+                network_content = subprocess.check_output(
+                    ["git", "show", f"{candidate_sha}:infra/terraform/network.tf"],
+                    cwd=root,
+                    stderr=subprocess.PIPE,
+                ).decode("utf-8")
+            except subprocess.CalledProcessError:
+                network_content = ""
+    else:
+        network_path = root / "infra/terraform/network.tf"
+        if network_path.is_file():
+            try:
+                network_content = network_path.read_text(encoding="utf-8")
+            except OSError:
+                network_content = ""
+
+    if 'module "runtime_foundation"' in network_content:
+        return SOURCES_OFF_EGRESS_CONTRACT_FILES + RUNTIME_FOUNDATION_MODULE_FILES
+    return SOURCES_OFF_EGRESS_CONTRACT_FILES
+
+
+def read_sources_off_contract_file(
+    relative: str, *, root: Path = ROOT, candidate_sha: str | None = None,
+) -> str:
+    """Read contract posture from one exact candidate, or explicit worktree mode."""
+    contract_files = resolve_sources_off_egress_contract_files(root=root, candidate_sha=candidate_sha)
+    if relative not in contract_files:
+        raise ValueError(f"not a sources-off contract file: {relative}")
+    if candidate_sha is None:
+        return (root / relative).read_text(encoding="utf-8")
+    if not is_exact_sha(candidate_sha):
+        raise ValueError(f"candidate_sha {candidate_sha!r} is not an exact 40-character SHA")
+    ensure_candidate_commit(candidate_sha, root=root)
+    try:
+        return subprocess.check_output(
+            ["git", "show", f"{candidate_sha}:{relative}"],
+            cwd=root, stderr=subprocess.PIPE,
+        ).decode("utf-8")
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"failed to read {relative} at candidate {candidate_sha}: "
+            + exc.stderr.decode("utf-8", errors="replace").strip()
+        ) from exc
+
+
+def compute_sources_off_egress_contract_digest(
+    root: Path = ROOT,
+    candidate_sha: str | None = None,
+) -> str:
     """Hash the checked-in Runtime Release egress contract inputs."""
+    contract_files = resolve_sources_off_egress_contract_files(root=root, candidate_sha=candidate_sha)
+    if candidate_sha is not None:
+        if not is_exact_sha(candidate_sha):
+            raise ValueError(
+                f"candidate_sha {candidate_sha!r} is not an exact 40-character SHA"
+            )
+        ensure_candidate_commit(candidate_sha, root=root)
+        h = hashlib.sha256()
+        for rel in sorted(contract_files):
+            try:
+                content = subprocess.check_output(
+                    ["git", "show", f"{candidate_sha}:{rel}"],
+                    cwd=root,
+                    stderr=subprocess.PIPE,
+                )
+            except subprocess.CalledProcessError as exc:
+                raise RuntimeError(
+                    f"failed to read {rel} at candidate {candidate_sha}: {exc.stderr.decode('utf-8', errors='replace').strip()}"
+                ) from exc
+            h.update(rel.encode("utf-8"))
+            h.update(b"\x00")
+            h.update(content)
+            h.update(b"\x00")
+        return "sha256:" + h.hexdigest()
 
     return compute_file_set_digest(
-        (root / relative_path for relative_path in SOURCES_OFF_EGRESS_CONTRACT_FILES),
+        (root / relative_path for relative_path in contract_files),
         root=root,
     )
 
@@ -1615,6 +1839,7 @@ def build_sources_off_egress_evidence(
     resolved_cloud_run_egress: str = SOURCES_OFF_CLOUD_RUN_EGRESS,
     provider_credentials_runtime: str = SOURCES_OFF_PROVIDER_CREDENTIALS,
     root: Path = ROOT,
+    candidate_sha: str | None = None,
 ) -> dict[str, Any]:
     """Derive the secret-free proof attached to a sources-off attestation.
 
@@ -1628,6 +1853,7 @@ def build_sources_off_egress_evidence(
     receipt_digest = compute_sources_off_probe_receipt_content_digest(
         resolved_cloud_run_egress=resolved_egress,
     )
+    contract_files = resolve_sources_off_egress_contract_files(root=root, candidate_sha=candidate_sha)
     return {
         "kind": SOURCES_OFF_EGRESS_EVIDENCE_KIND,
         "cloud_run_egress": (
@@ -1648,8 +1874,10 @@ def build_sources_off_egress_evidence(
         "resolved_cloud_run_egress": resolved_egress,
         "runtime_probe_receipt_content_digest": receipt_digest,
         "provider_credentials_runtime": provider_credentials_runtime,
-        "proof_source": list(SOURCES_OFF_EGRESS_CONTRACT_FILES),
-        "contract_digest": compute_sources_off_egress_contract_digest(root=root),
+        "proof_source": list(contract_files),
+        "contract_digest": compute_sources_off_egress_contract_digest(
+            root=root, candidate_sha=candidate_sha
+        ),
     }
 
 
@@ -1772,18 +2000,77 @@ def validate_sources_off_probe_receipt(
     return errors
 
 
-def _sources_off_egress_contract_errors(root: Path = ROOT) -> list[str]:
+def _sources_off_egress_contract_errors(
+    root: Path = ROOT,
+    candidate_sha: str | None = None,
+) -> list[str]:
     """Check the concrete VPC/firewall contract behind a posture receipt."""
 
     errors: list[str] = []
-    paths = {relative: root / relative for relative in SOURCES_OFF_EGRESS_CONTRACT_FILES}
-    missing = [relative for relative, path in paths.items() if not path.is_file()]
-    if missing:
-        return [
-            "sources-off egress contract is incomplete; missing: " + ", ".join(missing)
-        ]
+    file_contents: dict[str, str] = {}
+    contract_files = resolve_sources_off_egress_contract_files(root=root, candidate_sha=candidate_sha)
+    if candidate_sha is not None:
+        if not is_exact_sha(candidate_sha):
+            return [
+                f"candidate_sha {candidate_sha!r} is not an exact 40-character SHA"
+            ]
+        ensure_candidate_commit(candidate_sha, root=root)
+        for relative in contract_files:
+            try:
+                content = subprocess.check_output(
+                    ["git", "show", f"{candidate_sha}:{relative}"],
+                    cwd=root,
+                    stderr=subprocess.PIPE,
+                ).decode("utf-8")
+                file_contents[relative] = content
+            except subprocess.CalledProcessError as exc:
+                return [
+                    f"sources-off egress contract file {relative} cannot be read for candidate {candidate_sha}: {exc.stderr.decode('utf-8', errors='replace').strip()}"
+                ]
+            except UnicodeDecodeError as exc:
+                return [
+                    f"sources-off egress contract file {relative} is not valid UTF-8 for candidate {candidate_sha}: {exc}"
+                ]
+        # Check for unbound runtime_foundation module inputs in candidate
+        try:
+            tree_output = subprocess.check_output(
+                ["git", "ls-tree", "-r", "--name-only", candidate_sha, "infra/terraform/modules/runtime_foundation"],
+                cwd=root,
+                stderr=subprocess.PIPE,
+            ).decode("utf-8")
+            candidate_module_files = [
+                f.strip() for f in tree_output.splitlines()
+                if f.strip().endswith(".tf") or f.strip().endswith(".tf.json")
+            ]
+            extra_candidate_inputs = sorted(
+                f for f in candidate_module_files if f not in file_contents
+            )
+            if extra_candidate_inputs:
+                errors.append("unbound runtime_foundation inputs: " + ", ".join(extra_candidate_inputs))
+        except subprocess.CalledProcessError:
+            pass
+    else:
+        paths = {relative: root / relative for relative in contract_files}
+        missing = [relative for relative, path in paths.items() if not path.is_file()]
+        if missing:
+            return [
+                "sources-off egress contract is incomplete; missing: " + ", ".join(missing)
+            ]
+        for relative, path in paths.items():
+            file_contents[relative] = path.read_text(encoding="utf-8")
 
-    workflow = paths[".github/workflows/deploy-dev.yml"].read_text(encoding="utf-8")
+        module_dir = root / "infra/terraform/modules/runtime_foundation"
+        if module_dir.is_dir():
+            extra_inputs = sorted(
+                path.relative_to(root).as_posix()
+                for path in module_dir.glob("*.tf*")
+                if (path.suffix == ".tf" or path.name.endswith(".tf.json"))
+                and path.relative_to(root).as_posix() not in paths
+            )
+            if extra_inputs:
+                errors.append("unbound runtime_foundation inputs: " + ", ".join(extra_inputs))
+
+    workflow = file_contents[".github/workflows/deploy-dev.yml"]
     if "ODP_EXTERNAL_PROVIDER_MODE: disabled" not in workflow:
         errors.append("deploy workflow does not fix ODP_EXTERNAL_PROVIDER_MODE to disabled")
     if "ODP_CLOUD_RUN_VPC_CONNECTOR:" not in workflow:
@@ -1796,9 +2083,21 @@ def _sources_off_egress_contract_errors(root: Path = ROOT) -> list[str]:
     ):
         errors.append("deploy workflow does not retain the public egress probe receipt")
 
-    deploy = paths["product_ops/deployment/deploy_cloud_run_waji.sh"].read_text(
-        encoding="utf-8"
-    )
+    # Re-derive credential, endpoint and status observations independently of
+    # the submitted inventory. A matching digest cannot make a clean inventory
+    # truthful when the exact candidate wires provider access.
+    for env_var in _wired_env_names(workflow):
+        if not any(env_var_belongs_to_source(env_var, sid) for sid in EXTERNAL_SOURCE_INVENTORY):
+            continue
+        kind = classify_source_env_var(env_var)
+        if kind == "credential":
+            errors.append(f"deploy workflow wires provider credential {env_var}")
+        elif kind == "endpoint":
+            errors.append(f"deploy workflow wires provider endpoint {env_var}")
+        elif kind == "status" and _wired_env_value(workflow, env_var) != SOURCE_STATUS_DISABLED:
+            errors.append(f"deploy workflow does not disable source status {env_var}")
+
+    deploy = file_contents["product_ops/deployment/deploy_cloud_run_waji.sh"]
     if '"--vpc-connector=${ODP_CLOUD_RUN_VPC_CONNECTOR}"' not in deploy:
         errors.append("deploy entrypoint does not pass the VPC connector to Cloud Run")
     if '"--vpc-egress=${ODP_CLOUD_RUN_VPC_EGRESS}"' not in deploy:
@@ -1821,29 +2120,59 @@ def _sources_off_egress_contract_errors(root: Path = ROOT) -> list[str]:
         if probe_pos > promote_pos:
             errors.append("public egress deny probe must run before service traffic promotion")
 
-    lifecycle = paths["product_ops/deployment/staging_lifecycle.py"].read_text(
-        encoding="utf-8"
-    )
+    lifecycle = file_contents["product_ops/deployment/staging_lifecycle.py"]
     if "public_egress_denied_probe" not in lifecycle:
         errors.append("staging lifecycle does not retain the public egress deny probe stage")
 
-    probe_entrypoint = paths["product_ops/deployment/cloud_run_job_entrypoint.py"].read_text(
-        encoding="utf-8"
-    )
+    probe_entrypoint = file_contents["product_ops/deployment/cloud_run_job_entrypoint.py"]
     if "def run_public_egress_probe" not in probe_entrypoint:
         errors.append("Cloud Run Job entrypoint does not expose the public egress deny probe")
 
-    cloud_run = paths["infra/terraform/cloud_run.tf"].read_text(encoding="utf-8")
+    cloud_run = file_contents["infra/terraform/cloud_run.tf"]
     if 'egress = "ALL_TRAFFIC"' not in cloud_run:
         errors.append("cloud_run.tf does not enforce ALL_TRAFFIC VPC egress")
 
-    network = paths["infra/terraform/network.tf"].read_text(encoding="utf-8")
+    network = file_contents["infra/terraform/network.tf"]
+    foundation_network = None
+    if 'module "runtime_foundation"' in network:
+        foundation_call = re.search(
+            r'^module\s+"runtime_foundation"\s*\{(?P<body>.*?)^\}',
+            network,
+            re.MULTILINE | re.DOTALL,
+        )
+        if foundation_call is None or not re.search(
+            r'^\s*source\s*=\s*"\./modules/runtime_foundation"\s*$',
+            foundation_call.group("body"),
+            re.MULTILINE,
+        ):
+            errors.append("network.tf must instantiate the local runtime_foundation module")
+        elif re.search(
+            r'^\s*(count|for_each)\s*=', foundation_call.group("body"), re.MULTILINE
+        ):
+            errors.append("runtime_foundation must be unconditional (no count or for_each)")
+        if "google_compute_router" in network:
+            errors.append("network.tf must not define a Cloud NAT router")
+        if re.search(r'resource\s+"google_compute_firewall"', network):
+            errors.append("network.tf must keep firewall resources in runtime_foundation")
+
+        foundation_network = file_contents.get("infra/terraform/modules/runtime_foundation/network.tf")
+
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
     try:
         from infra.terraform.validate_contract import validate_egress_contract
     except ImportError as exc:  # pragma: no cover - repository packaging failure
         errors.append(f"cannot load Terraform egress contract verifier: {exc}")
     else:
-        errors.extend(validate_egress_contract(network))
+        if foundation_network is not None:
+            errors.extend(
+                validate_egress_contract(
+                    foundation_network,
+                    source_name="modules/runtime_foundation/network.tf",
+                )
+            )
+        else:
+            errors.extend(validate_egress_contract(network))
     return errors
 
 
@@ -1922,9 +2251,11 @@ def build_release_manifest(
     return manifest
 
 
-def extract_rollback_release_binding(prev_manifest: dict[str, Any]) -> dict[str, Any]:
+def extract_rollback_release_binding(
+    prev_manifest: dict[str, Any], *, root: Path = ROOT,
+) -> dict[str, Any]:
     """Extract verifiable rollback binding from an approved previous manifest."""
-    admission_errors = validate_release_admission(prev_manifest)
+    admission_errors = validate_release_admission(prev_manifest, root=root)
     if admission_errors:
         raise ValueError(
             "Cannot extract rollback binding from a non-admissible manifest: "
@@ -1975,14 +2306,17 @@ def validate_rollback_manifest(
     *,
     current_candidate_sha: str | None = None,
     current_release_id: str | None = None,
+    root: Path = ROOT,
 ) -> list[str]:
     """Validate an entire admissible previous manifest before extracting it."""
     if not isinstance(prev_manifest, dict):
         return ["rollback manifest must be a JSON object"]
 
-    errors = validate_manifest(prev_manifest)
+    errors = validate_manifest(prev_manifest, root=root)
     errors.extend(
-        err for err in validate_release_admission(prev_manifest) if err not in errors
+        err
+        for err in validate_release_admission(prev_manifest, root=root)
+        if err not in errors
     )
 
     candidate_sha = prev_manifest.get("candidate_sha")
@@ -2032,6 +2366,8 @@ __all__ = [
     "SNAPSHOT_FIELDS",
     "SOURCES_OFF_ATTESTATION_FIELDS",
     "SOURCES_OFF_EGRESS_CONTRACT_FILES",
+    "RUNTIME_FOUNDATION_MODULE_FILES",
+    "resolve_sources_off_egress_contract_files",
     "SOURCES_OFF_EGRESS_EVIDENCE_FIELDS",
     "SOURCES_OFF_EGRESS_EVIDENCE_KIND",
     "SOURCES_OFF_EGRESS_POSTURE",
@@ -2060,6 +2396,7 @@ __all__ = [
     "compute_sources_off_egress_contract_digest",
     "compute_sources_off_probe_receipt_content_digest",
     "compute_sources_off_binding_digest",
+    "ensure_candidate_commit",
     "extract_rollback_release_binding",
     "INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS",
     "INITIAL_RELEASE_PROBE_COMMAND",

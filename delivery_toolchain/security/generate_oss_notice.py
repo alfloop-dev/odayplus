@@ -51,9 +51,21 @@ NODE_MODULES = ROOT / "node_modules"
 UV_LOCK = ROOT / "uv.lock"
 PACKAGE_LOCK = ROOT / "package-lock.json"
 
-# Workspace packages are ours. They carry no licence field, and a scanner
-# cannot otherwise tell them apart from a third party of unknown licence.
-FIRST_PARTY_PREFIXES = ("@oday-plus/", "oday-plus")
+# Workspace packages are ours: the `@oday-plus` scope plus the monorepo root
+# package. They declare `UNLICENSED` so a scanner can tell them apart from a
+# third party whose licence is genuinely unknown.
+#
+# Membership is a scope test and an exact-name test, never a bare string
+# prefix. A prefix also matches an unrelated registry package called
+# `oday-plus-anything`, which would drop a third party of unknown licence out
+# of both this notice and the policy gate that reads from it.
+FIRST_PARTY_SCOPE = "@oday-plus/"
+FIRST_PARTY_ROOT_NAMES = frozenset({"oday-plus"})
+
+
+def is_first_party(name: str) -> bool:
+    """True only for our own packages: the @oday-plus scope or the root name."""
+    return name.startswith(FIRST_PARTY_SCOPE) or name in FIRST_PARTY_ROOT_NAMES
 
 # Licences whose terms require more than keeping a copyright line. Recorded so
 # the notice states the obligation instead of leaving a reader to look it up.
@@ -144,7 +156,7 @@ def collect_npm(base: Path | None = None) -> list[Component]:
                 except (json.JSONDecodeError, OSError):
                     data = {}
                 name = str(data.get("name") or entry.name)
-                if not name.startswith(FIRST_PARTY_PREFIXES):
+                if not is_first_party(name):
                     licence = _normalise_license(
                         data.get("license") or data.get("licenses")
                     )
@@ -178,7 +190,7 @@ def collect_npm(base: Path | None = None) -> list[Component]:
             if pkg_path.startswith("node_modules/"):
                 pkg_name = pkg_path.split("node_modules/")[-1]
                 is_optional = info.get("optional", False)
-                if not pkg_name.startswith(FIRST_PARTY_PREFIXES):
+                if not is_first_party(pkg_name):
                     if pkg_name not in found_names and not is_optional:
                         missing.add(pkg_name)
         if missing:

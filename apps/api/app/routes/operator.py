@@ -34,7 +34,7 @@ Backward-compat note:
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel
@@ -46,6 +46,9 @@ from modules.opsboard.application.operator_live_repository import (
 )
 from modules.opsboard.application.operator_state import OperatorStateService
 from shared.audit import InMemoryAuditLog
+
+if TYPE_CHECKING:
+    from modules.avm.application import DepreciationRollbackReceipt
 
 # ---------------------------------------------------------------------------
 # Legacy DTO aliases (backward compat — do not add new fields here)
@@ -126,6 +129,8 @@ def create_operator_router(
     priceops_repository_for_tenant: Any | None = None,
     model_runtime: Any | None = None,
     avm_production_executor: Any | None = None,
+    avm_depreciation_version_pin: str | None = None,
+    avm_rollback_receipt: DepreciationRollbackReceipt | None = None,
     netplan_production_executor: Any | None = None,
     netplan_policy_repository: Any | None = None,
     netplan_approval_verifier: Any | None = None,
@@ -649,6 +654,7 @@ def create_operator_router(
                 # test-reset gate (ODP_E2E_MODE): production keeps the durable
                 # listing aggregate fail-closed empty until real intake writes.
                 seed_fixtures=allow_test_reset,
+                tenant_id=tenant_id,
             ),
             exporter=lambda service: service.export_state(),
             mutating_methods={
@@ -762,6 +768,8 @@ def create_operator_router(
                 netplan_policy_repository=netplan_policy_repository,
                 netplan_approval_verifier=netplan_approval_verifier,
                 avm_production_executor=avm_production_executor,
+                avm_depreciation_version_pin=avm_depreciation_version_pin,
+                avm_rollback_receipt=avm_rollback_receipt,
                 netplan_production_executor=netplan_production_executor,
                 runtime_mode="production",
                 tenant_id=tenant_id,

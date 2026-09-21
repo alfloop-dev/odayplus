@@ -1,0 +1,480 @@
+{
+  "source_sha": "9b64631dfea6390ab0e665eab58e18d47f2a72ba",
+  "recorded_at": "2026-09-06T06:00:50.200073+00:00",
+  "installed_count": 215,
+  "audited_count": 215,
+  "installed_audited_name_version_sets_equal": true,
+  "prerequisite_merge_receipts": [
+    {
+      "baseRefName": "dev",
+      "headRefOid": "05164662abb41f75fdb6cf40ae25ea9df40371a1",
+      "mergeCommit": {
+        "oid": "14821fd8c2f716dcf01f358f9d7408a9c1b9c528"
+      },
+      "mergedAt": "2026-09-06T03:35:16Z",
+      "number": 1217,
+      "state": "MERGED",
+      "statusCheckRollup": [
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T02:42:13Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34007143285/job/101416343888",
+          "name": "change-scope",
+          "startedAt": "2026-09-06T02:42:03Z",
+          "status": "COMPLETED",
+          "workflowName": "CI"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T02:42:05Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34007143255/job/101416343676",
+          "name": "boundary",
+          "startedAt": "2026-09-06T02:41:55Z",
+          "status": "COMPLETED",
+          "workflowName": "EMGI consumer repository boundary"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T02:42:02Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34007143266/job/101416343678",
+          "name": "classify",
+          "startedAt": "2026-09-06T02:41:55Z",
+          "status": "COMPLETED",
+          "workflowName": "Tooling scope review gate"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T02:45:24Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34007143285/job/101416343740",
+          "name": "orchestrator",
+          "startedAt": "2026-09-06T02:41:56Z",
+          "status": "COMPLETED",
+          "workflowName": "CI"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T03:04:09Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34007143285/job/101416381072",
+          "name": "product",
+          "startedAt": "2026-09-06T02:42:15Z",
+          "status": "COMPLETED",
+          "workflowName": "CI"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T02:43:22Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34007143285/job/101416381090",
+          "name": "performance-gate",
+          "startedAt": "2026-09-06T02:42:15Z",
+          "status": "COMPLETED",
+          "workflowName": "CI"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T02:47:42Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34007143285/job/101416381058",
+          "name": "product-e2e-gate",
+          "startedAt": "2026-09-06T02:42:15Z",
+          "status": "COMPLETED",
+          "workflowName": "CI"
+        },
+        {
+          "__typename": "StatusContext",
+          "context": "task-review-gate",
+          "startedAt": "2026-09-06T03:10:25Z",
+          "state": "SUCCESS",
+          "targetUrl": ""
+        }
+      ],
+      "url": "https://github.com/alfloop-dev/odayplus/pull/1217"
+    },
+    {
+      "baseRefName": "dev",
+      "headRefOid": "3ef557769d670c73ccc0c36b7ba5cc90b6635200",
+      "mergeCommit": {
+        "oid": "d0bbb76392e9d8a366354876d1f9302146eb1483"
+      },
+      "mergedAt": "2026-09-06T04:16:42Z",
+      "number": 1218,
+      "state": "MERGED",
+      "statusCheckRollup": [
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T03:17:18Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34008607575/job/101420279288",
+          "name": "change-scope",
+          "startedAt": "2026-09-06T03:17:11Z",
+          "status": "COMPLETED",
+          "workflowName": "CI"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T03:17:18Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34008607569/job/101420279116",
+          "name": "boundary",
+          "startedAt": "2026-09-06T03:17:10Z",
+          "status": "COMPLETED",
+          "workflowName": "EMGI consumer repository boundary"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T03:17:26Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34008607565/job/101420279162",
+          "name": "classify",
+          "startedAt": "2026-09-06T03:17:12Z",
+          "status": "COMPLETED",
+          "workflowName": "Tooling scope review gate"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T03:20:30Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34008607575/job/101420279219",
+          "name": "orchestrator",
+          "startedAt": "2026-09-06T03:17:11Z",
+          "status": "COMPLETED",
+          "workflowName": "CI"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T03:42:08Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34008607575/job/101420297635",
+          "name": "product",
+          "startedAt": "2026-09-06T03:17:22Z",
+          "status": "COMPLETED",
+          "workflowName": "CI"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T03:18:36Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34008607575/job/101420297626",
+          "name": "performance-gate",
+          "startedAt": "2026-09-06T03:17:21Z",
+          "status": "COMPLETED",
+          "workflowName": "CI"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T03:22:58Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34008607575/job/101420297616",
+          "name": "product-e2e-gate",
+          "startedAt": "2026-09-06T03:17:20Z",
+          "status": "COMPLETED",
+          "workflowName": "CI"
+        },
+        {
+          "__typename": "StatusContext",
+          "context": "task-review-gate",
+          "startedAt": "2026-09-06T03:49:55Z",
+          "state": "SUCCESS",
+          "targetUrl": ""
+        }
+      ],
+      "url": "https://github.com/alfloop-dev/odayplus/pull/1218"
+    },
+    {
+      "baseRefName": "dev",
+      "headRefOid": "dc047bb22db0a98b54e731a99f398dce613e0257",
+      "mergeCommit": {
+        "oid": "c929a24759b15c16ecae21c46d86b7ca1e702776"
+      },
+      "mergedAt": "2026-09-06T04:53:06Z",
+      "number": 1219,
+      "state": "MERGED",
+      "statusCheckRollup": [
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T03:50:24Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34009985306/job/101423991270",
+          "name": "change-scope",
+          "startedAt": "2026-09-06T03:50:13Z",
+          "status": "COMPLETED",
+          "workflowName": "CI"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T03:50:23Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34009985317/job/101423991305",
+          "name": "boundary",
+          "startedAt": "2026-09-06T03:50:13Z",
+          "status": "COMPLETED",
+          "workflowName": "EMGI consumer repository boundary"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T03:50:26Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34009985320/job/101423991369",
+          "name": "classify",
+          "startedAt": "2026-09-06T03:50:14Z",
+          "status": "COMPLETED",
+          "workflowName": "Tooling scope review gate"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T03:53:12Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34009985306/job/101423991324",
+          "name": "orchestrator",
+          "startedAt": "2026-09-06T03:50:13Z",
+          "status": "COMPLETED",
+          "workflowName": "CI"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T04:15:13Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34009985306/job/101424017851",
+          "name": "product",
+          "startedAt": "2026-09-06T03:50:26Z",
+          "status": "COMPLETED",
+          "workflowName": "CI"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T03:51:36Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34009985306/job/101424017855",
+          "name": "performance-gate",
+          "startedAt": "2026-09-06T03:50:26Z",
+          "status": "COMPLETED",
+          "workflowName": "CI"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T03:56:09Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34009985306/job/101424017865",
+          "name": "product-e2e-gate",
+          "startedAt": "2026-09-06T03:50:26Z",
+          "status": "COMPLETED",
+          "workflowName": "CI"
+        },
+        {
+          "__typename": "StatusContext",
+          "context": "task-review-gate",
+          "startedAt": "2026-09-06T04:25:49Z",
+          "state": "SUCCESS",
+          "targetUrl": ""
+        }
+      ],
+      "url": "https://github.com/alfloop-dev/odayplus/pull/1219"
+    },
+    {
+      "baseRefName": "dev",
+      "headRefOid": "6d438486c8645e476fcf86b5f675a5ca20592b9d",
+      "mergeCommit": {
+        "oid": "66244b30c2615dcad8373e03fff096e298d21e98"
+      },
+      "mergedAt": "2026-09-06T05:56:17Z",
+      "number": 1222,
+      "state": "MERGED",
+      "statusCheckRollup": [
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T04:56:15Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34012730173/job/101431198187",
+          "name": "change-scope",
+          "startedAt": "2026-09-06T04:56:09Z",
+          "status": "COMPLETED",
+          "workflowName": "CI"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T04:56:17Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34012730175/job/101431198058",
+          "name": "boundary",
+          "startedAt": "2026-09-06T04:56:08Z",
+          "status": "COMPLETED",
+          "workflowName": "EMGI consumer repository boundary"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T04:56:17Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34012730170/job/101431198040",
+          "name": "classify",
+          "startedAt": "2026-09-06T04:56:09Z",
+          "status": "COMPLETED",
+          "workflowName": "Tooling scope review gate"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T04:59:45Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34012730173/job/101431198035",
+          "name": "orchestrator",
+          "startedAt": "2026-09-06T04:56:08Z",
+          "status": "COMPLETED",
+          "workflowName": "CI"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T05:20:31Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34012730173/job/101431214665",
+          "name": "product",
+          "startedAt": "2026-09-06T04:56:18Z",
+          "status": "COMPLETED",
+          "workflowName": "CI"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T04:57:25Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34012730173/job/101431214738",
+          "name": "performance-gate",
+          "startedAt": "2026-09-06T04:56:18Z",
+          "status": "COMPLETED",
+          "workflowName": "CI"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-06T05:01:41Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/34012730173/job/101431214677",
+          "name": "product-e2e-gate",
+          "startedAt": "2026-09-06T04:56:17Z",
+          "status": "COMPLETED",
+          "workflowName": "CI"
+        },
+        {
+          "__typename": "StatusContext",
+          "context": "task-review-gate",
+          "startedAt": "2026-09-06T05:31:36Z",
+          "state": "SUCCESS",
+          "targetUrl": ""
+        }
+      ],
+      "url": "https://github.com/alfloop-dev/odayplus/pull/1222"
+    },
+    {
+      "baseRefName": "dev",
+      "headRefOid": "24899e86f04a0b0e70a92e451317e17f93931b93",
+      "mergeCommit": null,
+      "mergedAt": null,
+      "number": 1188,
+      "state": "OPEN",
+      "statusCheckRollup": [
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-05T14:57:56Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/33973348636/job/101325650010",
+          "name": "change-scope",
+          "startedAt": "2026-09-05T14:57:46Z",
+          "status": "COMPLETED",
+          "workflowName": "CI"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-05T14:57:53Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/33973348616/job/101325649791",
+          "name": "boundary",
+          "startedAt": "2026-09-05T14:57:45Z",
+          "status": "COMPLETED",
+          "workflowName": "EMGI consumer repository boundary"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-05T14:57:55Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/33973348667/job/101325649878",
+          "name": "classify",
+          "startedAt": "2026-09-05T14:57:45Z",
+          "status": "COMPLETED",
+          "workflowName": "Tooling scope review gate"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-05T15:01:21Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/33973348636/job/101325650099",
+          "name": "orchestrator",
+          "startedAt": "2026-09-05T14:57:46Z",
+          "status": "COMPLETED",
+          "workflowName": "CI"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-05T15:15:44Z",
+          "conclusion": "FAILURE",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/33973348636/job/101325677647",
+          "name": "product",
+          "startedAt": "2026-09-05T14:58:34Z",
+          "status": "COMPLETED",
+          "workflowName": "CI"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-05T14:59:02Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/33973348636/job/101325677654",
+          "name": "performance-gate",
+          "startedAt": "2026-09-05T14:57:58Z",
+          "status": "COMPLETED",
+          "workflowName": "CI"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-09-05T15:03:18Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/33973348636/job/101325677667",
+          "name": "product-e2e-gate",
+          "startedAt": "2026-09-05T14:57:58Z",
+          "status": "COMPLETED",
+          "workflowName": "CI"
+        },
+        {
+          "__typename": "StatusContext",
+          "context": "task-review-gate",
+          "startedAt": "2026-09-06T04:58:18Z",
+          "state": "PENDING",
+          "targetUrl": ""
+        }
+      ],
+      "url": "https://github.com/alfloop-dev/odayplus/pull/1188"
+    }
+  ],
+  "files": {
+    ".github/workflows/ci.yml": "550ccc833a772ea1bb4607a957325797d256f86625ecb589cd668f431e536d0f",
+    ".orchestrator/test_source_document_router.py": "8609af2446677c302b5c2716e2c3bd13d83e09358e9132aa855e74d41b7a1ece",
+    "Makefile": "e7f51eb7b2d98eaf33dd41561174358720663733646dfdec1d2537f865394b27",
+    "delivery_toolchain/security/npm_audit_gate.py": "c271444e4b3c7f04a745836ec00d947ef6ac211497dc4d8723f64302d5435e26",
+    "delivery_toolchain/security/pip_audit_gate.py": "7116063f67c6c8310e2d165787f934a9eea4642fcd3d968a657afb51182a7c64",
+    "docs/audits/code-boundary-inventory.csv": "a89a25aa413e28de8b85689a8a149df8f91abe07e0c171fd43d6352460627804",
+    "tests/security/test_supply_chain_security_gate.py": "3db48de627c1fb2a941e325f17f33e63b90ffbd966130d20b9de5d3913b3589d",
+    "tests/tooling/test_dependency_audit_boundary.py": "84df86c96136cde3d1075771c2fc144b0c67eb2265d3fa39cfee6feb23bd04ff"
+  },
+  "lock_sha256": "ba5c393e49538e4da9e59de001cffc28c4cadfab8aebacf6dbf1503eb3a49a5d",
+  "pyproject_sha256": "130f024b80d55f439aa5467f4f469bb127aec955ef71444d2951a93d0f5d0391",
+  "active_sbom_sha256": "266ba703b50ba1ce37e525aa6c8c88eea2ea89cdc07f64204b5e10ae56775fb7",
+  "evidence_files": {
+    "authorship-provenance.md": "7fffbd61c4d59071779bdde188ebe363705753546779c524aa98860613b97124",
+    "repaired-audit.json": "cb98a7240d764a16855ea255149b9565f47e8b327419f588d416e2e4526ac337",
+    "repaired-focused-command.json": "8ab8357339ff7be3a99ab24507d3add02eef83a9c53ab833078506f6ef0a2044",
+    "repaired-focused-tests.txt": "34b6f8867165ed0fb7271a7c6251b9d420c718d19bafd5e14f453e2205f20e8e",
+    "repaired-pip-audit-1.stderr.txt": "15950a68a7ed99c59779717acefdceb3f69cfd31bde67d2c954f2a3cea4d7955",
+    "repaired-pip-audit-1.stdout.txt": "f32d534e0612b51171bc2b83c5d051acf9ee1e6a5ea44b50a044434962c21cd9",
+    "verification.md": "0fe270eb4b2e4c9fa1aaeb6c18b1c61a8dddf458f7064c40b4305eca769b1661"
+  },
+  "status": "Committed integration validated locally; final evidence follow-up, required CI, independent review and merge remain pending."
+}

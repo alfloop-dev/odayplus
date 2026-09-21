@@ -40,6 +40,7 @@ _REQUIRED_RELATIONS = (
     "odp_runtime.durable_audit_events",
     "odp_runtime.durable_documents",
     "odp_runtime.operator_comments",
+    "odp_runtime.durable_manual_corrections",
     "odp_runtime.durable_evidence_bundles",
     "odp_runtime.durable_jobs",
     "odp_runtime.durable_outbox_events",

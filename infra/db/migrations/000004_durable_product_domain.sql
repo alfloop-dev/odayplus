@@ -308,6 +308,39 @@ CREATE TABLE IF NOT EXISTS network_plans (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS interventions (
+    intervention_id TEXT PRIMARY KEY,
+    store_id TEXT NOT NULL REFERENCES stores(store_id),
+    intervention_type TEXT NOT NULL DEFAULT 'price',
+    trigger_alert_id TEXT,
+    eligibility_status TEXT NOT NULL DEFAULT 'eligible',
+    action_set_json TEXT NOT NULL DEFAULT '{}',
+    approved_action_json TEXT NOT NULL DEFAULT '{}',
+    start_time TEXT NOT NULL,
+    end_time TEXT NOT NULL,
+    observation_start_time TEXT NOT NULL,
+    observation_end_time TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'proposed',
+    predecessor_id TEXT REFERENCES interventions(intervention_id),
+    replacement_id TEXT REFERENCES interventions(intervention_id),
+    adjustment_json TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS intervention_outcomes (
+    outcome_id TEXT PRIMARY KEY,
+    intervention_id TEXT NOT NULL REFERENCES interventions(intervention_id),
+    outcome_time TEXT NOT NULL,
+    incremental_revenue REAL NOT NULL DEFAULT 0.00,
+    incremental_gross_margin REAL NOT NULL DEFAULT 0.00,
+    method TEXT NOT NULL DEFAULT 'synthetic',
+    evidence_level TEXT NOT NULL DEFAULT 'medium',
+    side_effect_json TEXT,
+    label_maturity_time TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_address_locations_h3_res_9 ON address_locations(h3_res_9);
 CREATE INDEX IF NOT EXISTS idx_data_snapshots_source_time ON data_snapshots(source_id, snapshot_time);
 CREATE INDEX IF NOT EXISTS idx_stores_tenant_status ON stores(tenant_id, store_status);
@@ -349,3 +382,8 @@ CREATE INDEX IF NOT EXISTS idx_valuation_runs_store_date ON valuation_runs(store
 CREATE INDEX IF NOT EXISTS idx_valuation_runs_prediction ON valuation_runs(prediction_run_id);
 CREATE INDEX IF NOT EXISTS idx_network_plans_period ON network_plans(planning_period_start, planning_period_end);
 CREATE INDEX IF NOT EXISTS idx_network_plans_snapshot ON network_plans(data_snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_interventions_store ON interventions(store_id);
+CREATE INDEX IF NOT EXISTS idx_interventions_predecessor_id ON interventions(predecessor_id);
+CREATE INDEX IF NOT EXISTS idx_interventions_replacement_id ON interventions(replacement_id);
+CREATE INDEX IF NOT EXISTS idx_intervention_outcomes_intervention ON intervention_outcomes(intervention_id);
+

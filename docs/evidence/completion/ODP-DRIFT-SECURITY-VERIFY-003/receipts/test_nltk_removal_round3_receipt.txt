@@ -1,0 +1,16 @@
+............                                                             [100%]
+==================================== PASSES ====================================
+=========================== short test summary info ============================
+PASSED tests/security/test_nltk_dependency_removal.py::test_banned_packages_not_installed
+PASSED tests/security/test_nltk_dependency_removal.py::test_pyproject_does_not_declare_evidently
+PASSED tests/security/test_nltk_dependency_removal.py::test_uv_lock_does_not_contain_banned_packages
+PASSED tests/security/test_nltk_dependency_removal.py::test_no_evidently_imports_in_production_code
+PASSED tests/security/test_nltk_dependency_removal.py::test_native_drift_engine_is_used
+PASSED tests/security/test_nltk_dependency_removal.py::test_native_drift_engine_does_not_depend_on_banned_packages
+PASSED tests/security/test_nltk_dependency_removal.py::test_sbom_does_not_contain_banned_packages
+PASSED tests/security/test_nltk_dependency_removal.py::test_sbom_missing_is_failure
+PASSED tests/security/test_nltk_dependency_removal.py::test_lock_consistency
+PASSED tests/security/test_nltk_dependency_removal.py::test_production_monitoring_entry_points_survive_the_removal
+PASSED tests/security/test_nltk_dependency_removal.py::test_prediction_and_data_drift_entries_route_to_the_native_engine
+PASSED tests/security/test_nltk_dependency_removal.py::test_baseline_reference_stack_stays_out_of_the_audited_scope
+12 passed in 0.27s

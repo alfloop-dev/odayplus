@@ -1,0 +1,21 @@
+{
+  "command": "gcloud --quiet sql instances describe oday-dev-sql --project=odayplus-runtime-20260825 --format=json",
+  "argv": [
+    "gcloud",
+    "--quiet",
+    "sql",
+    "instances",
+    "describe",
+    "oday-dev-sql",
+    "--project=odayplus-runtime-20260825",
+    "--format=json"
+  ],
+  "exit_code": 1,
+  "timestamp_utc": "2026-09-08T11:46:15Z",
+  "executor_account": "oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com",
+  "target": "oday-dev-sql",
+  "readback_masked": false,
+  "stdout": "",
+  "stderr": "ERROR: (gcloud.sql.instances.describe) There was no instance found at projects/odayplus-runtime-20260825/instances/oday-dev-sql or you are not authorized to access it.",
+  "finding": "Command failed (exit 1): ERROR: (gcloud.sql.instances.describe) There was no instance found at projects/odayplus-runtime-20260825/instances/oday-"
+}

@@ -8,6 +8,15 @@ from typing import Any, Protocol
 
 from shared.infrastructure.persistence.job_queue import DurableJobQueue
 from shared.jobs.queue import JobDeliveryState, JobRecord, JobRequest, JobStatus
+from shared.jobs.receipts import (
+    DurableJobReceipt,
+    ItemError,
+    ItemReceipt,
+    ItemStatus,
+    JobSummary,
+    apply_item_result,
+    derive_batch_status_and_summary,
+)
 
 
 class JobQueue(Protocol):
@@ -57,6 +66,18 @@ class TenantScopedJobReceiptStore:
 
     def get(self, tenant_id: str, job_id: str) -> dict[str, Any] | None:
         return self._receipt(self.queue.get(job_id), tenant_id)
+
+    def get_durable_receipt(self, tenant_id: str, job_id: str) -> dict[str, Any] | None:
+        """Read a multi-item batch DurableJobReceipt from the job payload."""
+        record = self.queue.get(job_id)
+        if record is None:
+            return None
+        if str(record.payload.get("tenant_id") or "") != tenant_id:
+            return None
+        receipt = record.payload.get("receipt")
+        if not isinstance(receipt, dict):
+            return None
+        return dict(receipt)
 
     def put_completed(
         self,
@@ -124,7 +145,14 @@ class TenantScopedJobReceiptStore:
 
 
 __all__ = [
+    "DurableJobReceipt",
+    "ItemError",
+    "ItemReceipt",
+    "ItemStatus",
     "JobQueue",
     "JobReceiptIncompleteError",
+    "JobSummary",
     "TenantScopedJobReceiptStore",
+    "apply_item_result",
+    "derive_batch_status_and_summary",
 ]

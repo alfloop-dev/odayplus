@@ -1,0 +1,27 @@
+{
+  "type": "archive_recovery_invalidation_maintenance",
+  "actor": "Codex",
+  "coordination_task_id": "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
+  "plan_sha256": "9edb88c60dbe490b8f3a04b835dd32456739e9668127a536e51d96a8698daea8",
+  "runtime_sha": "50581b3b180aedaf76fbe4aaffb3bf7e2d120050",
+  "runtime_path": "/home/lupin/oday-plus-supervisor-runtime-50581b3b180a",
+  "supervisor_pid_before": 1788626,
+  "started_at": "2026-09-09T16:22:55.891767+00:00",
+  "status": "applied_and_verified",
+  "targets_applied": [
+    "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+    "ODP-MODELREADY-QUALITY-NULLABLE-001"
+  ],
+  "supervisor_stopped_at": "2026-09-09T16:22:56.795597+00:00",
+  "singleton_lock_held": true,
+  "active_workers": [],
+  "dry_runs_preserved_canonical_files": true,
+  "verified_at": "2026-09-09T16:23:45.639647+00:00",
+  "original_archives_unchanged": 88,
+  "immutable_evidence_unchanged": true,
+  "placeholders_unchanged": true,
+  "named_gates_unchanged": true,
+  "unaffected_reconstructed_unchanged": true,
+  "restart_command_succeeded": true,
+  "finished_at": "2026-09-09T16:23:46.504109+00:00"
+}

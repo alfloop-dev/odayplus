@@ -10,6 +10,10 @@
   "integration_mode": "batch_snapshot",
   "envelope": "batch",
   "acquisition_method": "api",
+  "data_owner": "unconfirmed",
+  "target_latency_sla": "unconfirmed",
+  "contact_channel": "unconfirmed",
+  "runtime_capability": "unverified",
   "fields": [
     {"name": "source_poi_id", "type": "string", "required": true, "description": "Provider POI id."},
     {"name": "poi_name", "type": "string", "required": true, "description": "POI name."},

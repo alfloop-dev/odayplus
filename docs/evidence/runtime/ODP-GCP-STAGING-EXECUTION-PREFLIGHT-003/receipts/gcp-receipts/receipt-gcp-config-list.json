@@ -1,0 +1,18 @@
+{
+  "command": "gcloud --quiet config list --format=json",
+  "argv": [
+    "gcloud",
+    "--quiet",
+    "config",
+    "list",
+    "--format=json"
+  ],
+  "exit_code": 0,
+  "timestamp_utc": "2026-09-08T11:46:11Z",
+  "executor_account": "oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com",
+  "target": "gcp-config",
+  "readback_masked": false,
+  "stdout": "{\n  \"core\": {\n    \"account\": \"oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com\",\n    \"disable_prompts\": \"True\",\n    \"disable_usage_reporting\": \"True\",\n    \"project\": \"alfaloop-data-project-2\",\n    \"universe_domain\": \"googleapis.com\"\n  }\n}",
+  "stderr": "",
+  "finding": "Command succeeded (exit 0). Target gcp-config inspected."
+}

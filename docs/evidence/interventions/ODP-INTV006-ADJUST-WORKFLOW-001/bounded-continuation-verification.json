@@ -1,0 +1,65 @@
+{
+  "pr": 1159,
+  "source_sha256": {
+    "apps/api/app/routes/interventions.py": "768a0e91e9c06dee8321f83ce2fd1be6b48c8d74f5da556eb6727ba354c3446f",
+    "shared/infrastructure/persistence/repositories.py": "4b5747daa0fd6016d7d610f01d3a9828dc3632ea08f8cc387f578dc540c28623",
+    "tests/integration/test_intervention_workflow.py": "4997990cff5483594727f3fd11153c3cabb3da9949d74d956a995ced4c686e1b",
+    "tests/integration/test_official_real_estate_postgresql.py": "17810dc8db4b59d05a29d865c4979d34a53786c2365cde2befc31493731e8a02"
+  },
+  "receipts": [
+    {
+      "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-intv006-adjust-workflow-001",
+      "head_sha": "0c1763d387c8b44cc8a5b4bc8bc6d7f7229d2f50",
+      "tracked_diff_sha256": "86c3b78daa42b04b8e2338b13d8b0b168caeaa2ec3a5c317fac71501eec7c7aa",
+      "argv": [
+        "uv",
+        "run",
+        "pytest",
+        "-q",
+        "tests/integration/test_intervention_workflow.py"
+      ],
+      "started_at": "2026-09-11T12:36:51.116649+00:00",
+      "duration_seconds": 154.4526435160078,
+      "exit_code": 1,
+      "output": "1159-green.log"
+    },
+    {
+      "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-intv006-adjust-workflow-001",
+      "head_sha": "0c1763d387c8b44cc8a5b4bc8bc6d7f7229d2f50",
+      "tracked_diff_sha256": "86c3b78daa42b04b8e2338b13d8b0b168caeaa2ec3a5c317fac71501eec7c7aa",
+      "argv": [
+        "uv",
+        "run",
+        "pytest",
+        "-q",
+        "tests/integration/test_official_real_estate_postgresql.py",
+        "-k",
+        "adjust"
+      ],
+      "started_at": "2026-09-11T12:37:17.336599+00:00",
+      "duration_seconds": 90.64000822603703,
+      "exit_code": 1,
+      "output": "1159-pg.log"
+    },
+    {
+      "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-intv006-adjust-workflow-001",
+      "head_sha": "0c1763d387c8b44cc8a5b4bc8bc6d7f7229d2f50",
+      "tracked_diff_sha256": "559df93a87541c825e7158107477c90989d4c3ab4ca5a5ca595409baa9aac706",
+      "argv": [
+        "uv",
+        "run",
+        "pytest",
+        "-q",
+        "tests/integration/test_intervention_workflow.py",
+        "tests/integration/test_official_real_estate_postgresql.py",
+        "-k",
+        "invalid_date_returns_422 or interleaved_with_stop"
+      ],
+      "started_at": "2026-09-12T14:15:50.407798+00:00",
+      "duration_seconds": 76.58706120104762,
+      "exit_code": 0,
+      "output": "1159-audit-green.log"
+    }
+  ],
+  "interpretation": "Full SQLite workflow and PostgreSQL Adjust runs initially failed only the new audit assertions, which incorrectly included security.authorization records. The final affected-test run passes all six with lifecycle-only comparison. All other selected tests passed in the full runs; no implementation change followed those runs."
+}

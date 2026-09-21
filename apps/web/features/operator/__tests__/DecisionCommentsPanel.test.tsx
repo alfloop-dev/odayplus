@@ -47,7 +47,7 @@ describe("DecisionCommentsPanel", () => {
       target: { value: "Review evidence" },
     });
     fireEvent.click(screen.getByTestId("decision-comments-create"));
-    expect(await screen.findByText("Review evidence")).toBeInTheDocument();
+    expect(await screen.findByText("Review evidence", { selector: "p" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "編輯" }));
     fireEvent.change(screen.getByRole("textbox", { name: "編輯留言 cmt-1" }), {

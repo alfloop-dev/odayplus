@@ -1,0 +1,165 @@
+{
+  "$schema_note": "Source-to-consumer path map for BRAND_TRANSFER within ODP-FR-SITE-001",
+  "task_id": "ODP-BRAND-TRANSFER-CONTRACT-PREP-001",
+  "inspected_source_sha": "9048161e058becff5a53593a773d3c42238213fb",
+  "inspected_at_utc": "2026-09-08T15:23Z",
+  "requirement_id": "ODP-FR-SITE-001",
+  "member": "BRAND_TRANSFER",
+  "layers": [
+    {
+      "layer": "L0_external_producer",
+      "label": "External Data Source / Producer",
+      "status": "ABSENT",
+      "components": [],
+      "finding": "No external consumer panel, POS cross-brand log, loyalty crossover feed, or any other real brand-transfer data producer exists in the repository. No ingestion pipeline, adapter, or scheduled batch job references brand transfer data.",
+      "evidence_commands": [
+        {
+          "command": "rg -n 'BRAND_TRANSFER|brand_transfer' modules pipelines packages models",
+          "source_sha": "9048161e058becff5a53593a773d3c42238213fb",
+          "executed_at_utc": "2026-09-08T15:23Z",
+          "exit_code": 0,
+          "match_count": 2,
+          "matches": [
+            "pipelines/dbt/models/model_ready/brand_transfer_view.sql:11",
+            "pipelines/dbt/models/model_ready/schema.yml:606"
+          ]
+        }
+      ]
+    },
+    {
+      "layer": "L1_persistent_storage",
+      "label": "PostgreSQL / Persistent Layer",
+      "status": "STATIC_METADATA_ONLY",
+      "components": [
+        {
+          "path": "infra/db/migrations/000001_baseline_canonical_schema.sql",
+          "entity": "core.brands",
+          "columns": ["brand_id", "brand_code", "brand_name", "brand_type", "brand_capture_group", "status", "created_at"],
+          "role": "Static brand master table — no temporal transfer matrix",
+          "gap": "No core.brand_transfer_observations or core.brand_transfer_matrices table exists"
+        },
+        {
+          "path": "infra/db/migrations/000001_baseline_canonical_schema.sql",
+          "entity": "geo.competitor_stores",
+          "columns": ["competitor_store_id", "brand_name", "store_name", "address_id", "geo_cell_id", "estimated_capacity", "distance_to_nearest_oday_m", "status", "confidence"],
+          "role": "Competitor location data — brand_name is text, NOT linked to core.brands.brand_id",
+          "gap": "No cross-brand transaction or transfer data"
+        }
+      ],
+      "finding": "core.brands contains brand metadata only. No migration in the repo creates a transfer observation or transfer matrix table."
+    },
+    {
+      "layer": "L2_model_ready_view",
+      "label": "dbt Model-Ready Layer",
+      "status": "SYNTHETIC_MOCK",
+      "components": [
+        {
+          "path": "pipelines/dbt/models/model_ready/brand_transfer_view.sql",
+          "role": "Synthetic mock view — CROSS JOIN of core.brands with hardcoded constants",
+          "hardcoded_values": {
+            "transfer_ratio": 0.15,
+            "data_quality_score": "1.0 (conditional on brand_id NOT NULL, which is always true)",
+            "confidence": null,
+            "location_type": "urban",
+            "store_format_code": "ODAY_G2",
+            "store_age_bucket": "0_6m"
+          },
+          "gap": "Entire view is a cartesian product placeholder. MODEL_READY_VIEWS_BASELINE.md explicitly calls it a 'safe, predictable mock baseline'.",
+          "upstream_source": "core.brands (static metadata only)"
+        },
+        {
+          "path": "pipelines/dbt/models/model_ready/schema.yml",
+          "lines": "606-674",
+          "role": "dbt schema contract for brand_transfer_view",
+          "note": "Describes columns including transfer_ratio as 'Benchmark constant brand transfer ratio (0.15)' — acknowledging it is a constant, not a measurement."
+        }
+      ],
+      "finding": "The dbt view exists syntactically but produces only synthetic data from a CROSS JOIN with fixed constants. No real upstream source feeds into it."
+    },
+    {
+      "layer": "L3_signal_store",
+      "label": "Signal Store Client",
+      "status": "MOCK_PAYLOAD_ONLY",
+      "components": [
+        {
+          "path": "services/signal-store/client.py",
+          "line": 319,
+          "role": "Mock payload in example code",
+          "value": "brand_transfer_confidence: 0.76",
+          "gap": "This value appears only in a mock payload. No production module references or consumes it."
+        }
+      ],
+      "finding": "Signal store client contains a mock brand_transfer_confidence value in an example payload. It is not consumed by any production service."
+    },
+    {
+      "layer": "L4_domain_consumer",
+      "label": "SiteScore Domain / Scoring Engine",
+      "status": "NOT_WIRED",
+      "components": [
+        {
+          "path": "modules/sitescore/domain/scoring.py",
+          "entity": "SiteScoreFeatureInput",
+          "lines": "65-94",
+          "role": "Feature input dataclass for site scoring",
+          "gap": "No brand_transfer_ratio, brand_transfer_confidence, or any brand-transfer-related field exists in SiteScoreFeatureInput. The scoring engine has NEVER consumed brand_transfer_view.",
+          "existing_fields": [
+            "candidate_site_id", "tenant_id", "target_format_code", "feature_snapshot_time",
+            "view_version", "heat_zone_id", "h3_index", "latitude", "longitude",
+            "geocode_confidence", "prior_90d_cell_net_revenue", "prior_90d_cell_transaction_count",
+            "prior_90d_cell_store_count", "heat_zone_score", "poi_demand_index",
+            "monthly_rent", "area_ping", "frontage_m", "competitor_count",
+            "own_store_count_nearby", "comparable_store_count", "comparable_monthly_revenue_p50",
+            "buildout_capex", "gross_margin_ratio", "average_confidence",
+            "data_quality_score", "source_snapshot_ids"
+          ]
+        },
+        {
+          "path": "modules/sitescore/v3/application/service.py",
+          "role": "SiteScore v3 application service",
+          "gap": "No reference to brand transfer in the service layer."
+        }
+      ],
+      "finding": "SiteScore scoring engine has no brand transfer fields or consumption logic. The domain layer is completely unwired from brand_transfer_view."
+    },
+    {
+      "layer": "L5_documentation",
+      "label": "Documentation & Baseline References",
+      "status": "MOCK_ACKNOWLEDGED",
+      "components": [
+        {
+          "path": "docs/data/MODEL_READY_VIEWS_BASELINE.md",
+          "lines": "21, 25",
+          "finding": "Explicitly lists brand_transfer_view as a 'safe, predictable mock baseline' wired using baseline core tables."
+        },
+        {
+          "path": "docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md",
+          "finding": "Formal disposition: BLOCKED_BY_EVIDENCE. Refusal to wire synthetic mock into production scoring."
+        },
+        {
+          "path": "docs/evidence/ODP_SITE001_DATA_READINESS_2026-09-03.md",
+          "finding": "Full-chain audit confirming no real producer, no transfer matrix table, synthetic mock view, and zero consumer integration."
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "end_to_end_status": "BROKEN — no real data flows through any layer",
+    "total_layers": 6,
+    "layers_with_real_data": 0,
+    "layers_with_mock_or_absent": 6,
+    "critical_gaps": [
+      "No external data producer or ingestion pipeline",
+      "No persistent storage table for transfer observations",
+      "dbt view is a CROSS JOIN mock with hardcoded 0.15 transfer_ratio",
+      "SiteScore consumer has zero brand-transfer fields",
+      "Signal store mock payload is unused"
+    ],
+    "required_for_phase_b": [
+      "Real external data source contracted and ingested (H03 response)",
+      "core.brand_transfer_observations migration created",
+      "brand_transfer_view.sql rewritten to query real upstream table",
+      "SiteScoreFeatureInput.brand_transfer_ratio field added",
+      "End-to-end integration test with real data"
+    ]
+  }
+}

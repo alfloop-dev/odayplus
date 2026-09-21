@@ -1,0 +1,242 @@
+=== ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002 Verification Transcript ===
+Timestamp: 2026-09-08T05:05:00Z
+Candidate SHA: 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12
+Manifest Digest: sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c
+GHA Run ID: 34179791241
+Delivered By: ODP-DEV-BUILD-ARTIFACT-HANDOFF-003 (PR #1237)
+
+================================================================================
+1. bash docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/verify_live_artifact_binding.sh /tmp/odp-run-34179791241 /tmp/odp-candidate-c
+Exit code: 0
+Output:
+candidate: 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12  build run: 34179791241
+
+[PASS] manifest raw SHA-256 matches build artifact (ID 10038569478) -- 8bb6e72ed1306862ddb4c40d48c851b31ecf8c4ab5f361ac5cc7e1856537f56d
+[PASS] runtime-release-images raw SHA-256 matches build artifact (ID 10038569219) -- 612507f59edb8e09807dfa5a9f15fafaa622fb03473e2eff4015dda64494fa12
+[PASS] initial-release-absence-readback raw SHA-256 matches build artifact (ID 10038569730) -- ec316739eecd6c0438582a29c3803acad38fe283aa4167ca30db9dc481ffa283
+[PASS] release-environment-receipt raw SHA-256 matches build artifact (ID 10038486296) -- a5fc3cc7847bbbec3bb0dbd651428b9a6fcebb18db770ff2abd09cd2b850f9bb
+[PASS] release-npm-audit-receipt raw SHA-256 matches build artifact (ID 10038492941) -- 49c5c659e9b08dab23ec0e9aee390d814f8d8e2c0f78c3a4d922cedb4de96224
+[PASS] release-phase-receipt raw SHA-256 matches build artifact (ID 10038482325) -- af1f1d5d1be169187a054a83d09b47e5978d4018d1c366144a99fe8f88deb8c7
+[PASS] downloaded artifact file is present: RELEASE_MANIFEST.json -- /tmp/odp-run-34179791241/runtime-release-manifest-596b9c9a1788d952811a2bf8d4bba8a4e4d76b12/RELEASE_MANIFEST.json
+[PASS] downloaded artifact file is present: runtime-release-images.json -- /tmp/odp-run-34179791241/runtime-release-images-596b9c9a1788d952811a2bf8d4bba8a4e4d76b12/runtime-release-images.json
+[PASS] downloaded artifact file is present: initial-release-absence-readback.json -- /tmp/odp-run-34179791241/initial-release-absence-readback-596b9c9a1788d952811a2bf8d4bba8a4e4d76b12/initial-release-absence-readback.json
+[PASS] downloaded artifact file is present: release-environment-receipt.json -- /tmp/odp-run-34179791241/release-environment-receipt-dev-build/release-environment-receipt.json
+[PASS] downloaded artifact file is present: release-npm-audit-receipt.json -- /tmp/odp-run-34179791241/release-npm-audit-receipt-dev/npm-audit-receipt.json
+[PASS] downloaded artifact file is present: release-phase-receipt.json -- /tmp/odp-run-34179791241/release-phase-receipt-dev-build/release-phase-receipt.json
+[PASS] cmp byte-exact: RELEASE_MANIFEST.json against downloaded artifact
+[PASS] cmp byte-exact: runtime-release-images.json against downloaded artifact
+[PASS] cmp byte-exact: initial-release-absence-readback.json against downloaded artifact
+[PASS] cmp byte-exact: release-environment-receipt.json against downloaded artifact
+[PASS] cmp byte-exact: release-npm-audit-receipt.json against downloaded artifact
+[PASS] cmp byte-exact: release-phase-receipt.json against downloaded artifact
+[PASS] manifest schema is valid -- []
+[PASS] manifest_digest equals the SHA-256 of its own canonical payload -- sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c
+[PASS] manifest.candidate_sha is the exact build candidate -- 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12
+[PASS] manifest was created by the deploy-dev workflow at the candidate SHA -- github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@596b9c9a1788d952811a2bf8d4bba8a4e4d76b12
+[PASS] migration_digest recomputes from candidate tree 596b9c9a1788 -- sha256:17794de9afb84681aabff9ed0966dedde83d950aef132de519fdc193099e620b
+[PASS] data_contract_digest recomputes from candidate tree 596b9c9a1788 -- sha256:05e2cb05619f1c524b0f9578e4ceba9ec863d143d5e64b0eeac97539ce8e7c73
+[PASS] source_policy_digest recomputes from candidate tree 596b9c9a1788 -- sha256:0a34bb128b5b5b26201b7f014f4b4f8e631e841c8f205f38dfc09c9eb682d824
+[PASS] six-file egress contract_digest recomputes from candidate tree 596b9c9a1788 -- recorded=sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09, actual=sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09
+[PASS] the four build-handoff images are exactly the manifest components -- []
+[PASS] handoff covers every deployable component -- ['api', 'scheduler', 'web', 'worker']
+[PASS] migration reuses the worker image rather than introducing a fifth artifact
+[PASS] sbom_refs: one reference per component repository -- ['asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api', 'asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler', 'asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web', 'asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker']
+[PASS] sbom_refs: every reference is digest-pinned
+[PASS] sbom_refs: no reference reuses an image digest
+[PASS] signature_refs: one reference per component repository -- ['asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api', 'asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler', 'asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web', 'asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker']
+[PASS] signature_refs: every reference is digest-pinned
+[PASS] signature_refs: no reference reuses an image digest
+[PASS] no external source is enabled for this release
+[PASS] sources_off_attestation is valid and bound -- []
+[PASS] initial_release_recovery is valid and bound -- []
+[PASS] registry validates with zero errors under staged admission rules -- []
+[PASS] registry candidate SHA matches the manifest -- 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12
+[PASS] registry manifest_digest matches the manifest -- sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c
+[PASS] registry manifest_ref points at the manifest this script verified -- docs/evidence/gates/RELEASE_MANIFEST.json
+[PASS] registry still records seven gates -- 7
+[PASS] every gate is re-opened against the live candidate
+[PASS] no gate carries a receipt
+[PASS] every gate is blocked and names a blocker
+[PASS] release decision is fail-closed -- no-go
+[PASS] gate stages, environments, and admission targets follow rollout plan §6.1 -- {'gate-0': ('candidate-built', 'dev', 'dev'), 'gate-1': ('candidate-built', 'dev', 'dev'), 'gate-2': ('dev-verified', 'dev', 'staging'), 'gate-3': ('staging-verified', 'staging', 'production'), 'gate-4': ('candidate-built', 'dev', 'dev'), 'gate-5': ('staging-verified', 'staging', 'production'), 'gate-6': ('staging-verified', 'staging', 'production')}
+[PASS] the artifact itself is complete (admission is still blocked by the registry, not by a broken artifact) -- []
+
+既有下載 artifact 與 C 的內容綁定通過；未證明獨立驗章或 runtime，release 仍為 NO-GO。
+
+================================================================================
+2. python3 delivery_toolchain/e2e/check_release_gate_registry.py
+Exit code: 0
+Output:
+Release gate registry: ODP-RELEASE-GATE-REGISTRY
+Release candidate SHA: 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12
+Admission boundary: candidate-built / dev -> dev
+Recorded decision: no-go
+Gates cleared: 0/7
+- [OPEN] gate-0 Code Gate: blocked
+    blocker: No Code Gate receipt is bound to release candidate 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12; a green CI run on an earlier commit is not a receipt for this candidate.
+    blocker: ODP-PLAN-ENGINEERING-HARDENING-001 (OpenAPI, frontend dependency, and documentation hardening) is open.
+- [OPEN] gate-1 Contract Gate: blocked
+    blocker: No Contract Gate receipt is bound to release candidate 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12.
+    blocker: ODP-PLAN-ENGINEERING-HARDENING-001 must close the OpenAPI and frontend dependency hardening gap before contract compatibility can be attested.
+- [OPEN] gate-2 Data Gate: blocked
+    blocker: No Data Gate receipt is bound to release candidate 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12.
+    blocker: check_live_production_data.py has not been run against a live deployment of this candidate; deterministic fixtures and source stubs do not satisfy the Data Gate.
+- [OPEN] gate-3 Model and Solver Gate: blocked
+    blocker: No Model and Solver Gate receipt is bound to release candidate 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12.
+    blocker: ODP-PLAN-FORECAST-RELEASE-EVIDENCE-001 (ForecastOps formal model release evidence) is open.
+    blocker: ODP-PLAN-SITESCORE-OUTCOME-001 and ODP-PLAN-AVM-OUTCOME-001 remain open; ForecastOps history and an approved production alias are still unverified.
+    blocker: ODP-PLAN-SOLVER-RUNTIME-COMPAT-001, ODP-PLAN-HEATZONE-OUTCOME-001, and ODP-PLAN-NETPLAN-ACCEPTANCE-001 are archived done, but task completion is not an exact-candidate Gate 3 receipt or Human/Ops model approval.
+- [OPEN] gate-4 Security and Privacy Gate: blocked
+    blocker: No Security and Privacy Gate receipt is bound to release candidate 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12.
+    blocker: ODP-PLAN-OSS-LICENSE-GATE-001 and ODP-PLAN-DEFERRED-OSS-ADR-001 are archived done, but no exact-candidate Gate 4 receipt or Human/Ops legal approval is recorded.
+- [OPEN] gate-5 E2E, Performance and UAT Gate: blocked
+    blocker: No E2E, Performance and UAT Gate receipt is bound to release candidate 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12.
+    blocker: ODP-PLAN-ACCEPTANCE-REAL-EXEC-001 and ODP-PLAN-CANONICAL-SHELL-LIVE-001 are archived done, but those implementation receipts do not prove this exact release candidate in staging or UAT.
+    blocker: ODP-PLAN-LIVE-STAGING-PROOF-001 must produce exact-SHA live staging end-to-end proof.
+    blocker: ODP-PLAN-UAT-SIGNOFF-001 (cross-role UAT defect closeout and formal sign-off) is open.
+- [OPEN] gate-6 Ops, Release and Audit Gate: blocked
+    blocker: No Ops, Release and Audit Gate receipt is bound to release candidate 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12.
+    blocker: ODP-PLAN-OBSERVABILITY-LIVE-001 (production observability and on-call route) is open.
+    blocker: Every Human/Ops row in docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md is still pending-human.
+    blocker: ODP-PLAN-FINAL-GATE-AUDIT-001 has not re-run the Stage 0-7 / Gate 0-6 RTM audit.
+RELEASE STATE: NO-GO
+Release gate registry checks passed.
+
+===============================================================================
+3. python3 delivery_toolchain/e2e/check_release_gate_registry.py --require-go
+Exit code: 1 (expected fail-closed behavior)
+Output:
+Release is NO-GO: --require-go was requested but the registry does not record a cleared GO state.
+
+===============================================================================
+4. python3 delivery_toolchain/governance/check_code_boundaries.py
+Exit code: 0
+Output:
+Code boundary checks passed for 1126 files.
+- archived: 14
+- development_delivery_tooling: 73
+- development_platform_system: 65
+- evidence_artifact: 26
+- product_operations_tooling: 43
+- product_system: 522
+- verification: 383
+
+
+################################################################################
+# 第二次紀錄 (2026-09-08, Claude2 接手 owner 後)
+# 目的：修正 provenance 誤述、補齊 C04 歷史封存，並如實記錄 C->E ancestry 未達成。
+# 以下 5-9 節在 registry 被編輯「之後」重跑，因此綁定的是編輯後的內容。
+################################################################################
+
+===============================================================================
+5. C04 歷史封存的 byte-exactness（git blob id 對照）
+命令:
+  git show 972cad87:<path> > historical-run-33942097235/<archived>
+  git rev-parse 972cad87:<path>   /   git hash-object <archived>
+Output:
+  README-C04-run33942097235.md
+    source blob   6b19005d61979e8a8bcc3a0c16d883174be7270b
+    archived blob 6b19005d61979e8a8bcc3a0c16d883174be7270b   -> MATCH
+  verification-transcript-C04-run33942097235.txt
+    source blob   2e88c8fa844627c0e2e71bf65514b6289e6ad433
+    archived blob 2e88c8fa844627c0e2e71bf65514b6289e6ad433   -> MATCH
+  verify_live_artifact_binding-C04-run33942097235.sh
+    source blob   75369cbb8f1a03e574fe51dec74c685e393e4484
+    archived blob 75369cbb8f1a03e574fe51dec74c685e393e4484   -> MATCH
+結論: 三份 C04 時期文件為 byte-exact 封存，非改寫摘要。C04 的 API archive digest 表、
+artifact ID 索引與逐字命令輸出因此完整保留。
+
+===============================================================================
+6. C04 六份原始 artifact 對照 run 33942097235（該 run artifact 尚未過期）
+命令:
+  gh api repos/alfloop-dev/odayplus/actions/runs/33942097235 --jq '{conclusion,head_sha}'
+  gh run download 33942097235 --repo alfloop-dev/odayplus --dir /tmp/odp-run-33942097235
+  cmp historical-run-33942097235/<file> /tmp/odp-run-33942097235/<artifact>/<file>
+Output:
+  run 33942097235: conclusion=success, head_sha=04e1572f802a54c2646ba678fe2975226dfbd7c4
+  （注意：舊 run 的 head_sha 本身就等於候選 C04；新 run 並非如此，見第 7 節）
+  artifacts expired=false ×6
+  cmp RELEASE_MANIFEST.json                  -> EXIT=0
+  cmp runtime-release-images.json            -> EXIT=0
+  cmp initial-release-absence-readback.json  -> EXIT=0
+  cmp release-environment-receipt.json       -> EXIT=0
+  cmp npm-audit-receipt.json                 -> EXIT=0
+  cmp release-phase-receipt.json             -> EXIT=0
+  OVERALL_CMP_RC=0
+
+===============================================================================
+7. 候選 C 的 provenance 重新量測（更正先前誤述）
+命令:
+  gh api repos/alfloop-dev/odayplus/actions/runs/{34179207603,34179791241} \
+    --jq '{conclusion,head_sha,created_at,updated_at}'
+  gh api repos/alfloop-dev/odayplus/actions/runs/34179791241/artifacts \
+    --jq '.artifacts[] | {id,name,workflow_run.head_sha}'
+  gh run view --repo alfloop-dev/odayplus --job {101914686431,101916404681} --log
+Output:
+  run 34179207603  conclusion=failure  head_sha=8c570a56353abdcc8ba70fe0a3fdd9b963902391
+                   created=2026-09-08T02:11:41Z  updated=2026-09-08T02:20:27Z
+    job 101914686431 "Build once and publish the immutable artifact handoff"
+      conclusion=failure  started=02:12:00Z  completed=02:20:25Z
+      step "Build, publish, sign, and attest immutable container images":
+        02:16:58Z oday-api       digest sha256:5e1a152e839cbfa7a2bf422b924928b56fad89f35e44243619a3f2fe98802cee
+        02:17:35Z oday-worker    digest sha256:b2c0e4473ad529ad71f215b76fc125115d8ba0b4e845a87e532d10ebdb8ddba3
+        02:18:07Z oday-scheduler digest sha256:f3fd22c00478d730273494c23c512a87c807de645a8b759d0af4908d82cd4cc9
+        02:19:39Z oday-web       digest sha256:38c716462b569b7420fe95788a84f8a1b3778e2e7c938d535a1dc13288a78971
+        "Pushing signature to: ..." ×4  -> 簽章由「這個」run 產生
+      step "Write the build-once artifact handoff":
+        02:20:20Z ##[error]Process completed with exit code 1.  -> 沒有發布 manifest/handoff
+
+  run 34179791241  conclusion=success  head_sha=8c570a56353abdcc8ba70fe0a3fdd9b963902391
+                   created=2026-09-08T02:21:49Z  updated=2026-09-08T02:26:33Z
+    job 101916404681 conclusion=success  started=02:22:03Z  completed=02:26:31Z
+      02:25:47Z "Immutable images already exist for 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12;
+                 reusing their digests."          -> 未重新 build / push / 簽章
+      02:25:47Z-02:26:01Z cosign verify ×4        -> 每筆皆 "Verification PASSED."
+        檢查項: cosign claims validated
+                Existence of the claims in the transparency log was verified OFFLINE
+                code-signing certificate verified using trusted CA certificates
+        憑證欄位 githubWorkflowSha = 8c570a56353abdcc8ba70fe0a3fdd9b963902391
+        oday-api Rekor logIndex=2754425715 integratedTime=1788833821
+
+  六個 artifact 的 workflow_run.head_sha 皆為 8c570a56353abdcc8ba70fe0a3fdd9b963902391
+
+更正三處:
+  (a) README 原稱六個 artifact「head SHA 596b9c9a」——誤。596b9c9a 是 release_sha 輸入所
+      checkout 的樹，run 的 head_sha 是 8c570a56。
+  (b) README 原稱「Rekor 透明日誌登錄完整」——過度宣稱。透明日誌是離線驗證，且簽章由
+      34179207603 產生，34179791241 只做 cosign verify。
+  (c) registry candidate_rebind.build_run.completed_at 原為 2026-09-08T02:22:45Z——與任何
+      實測時間都不符。已改為 run updated_at 02:26:33Z，並另記 build job completed_at
+      02:26:31Z，同時新增 producer_run(34179207603) 區塊。
+
+===============================================================================
+8. C -> E ancestry：未達成（acceptance 明列要求）
+命令與逐字輸出見:
+  docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/candidate-ancestry-probe.txt
+摘要:
+  check_candidate_ancestry("596b9c9a...", "ddf10054...") -> 1 error, 203 個非 evidence 路徑
+  Exit code: 1
+  成因: 三次 base advance merge 把 C 之後的 dev 產品碼帶進第一父鏈；validator 取
+        「最終樹差異」與「第一父鏈 -m 觸碰路徑」的聯集，補 commit 無法移除。
+  本 owner 不自行處理的理由: 重建乾淨 E 需新分支/force-push（acceptance 與 reviewer 明文
+        禁止且要求先由 root 安排）；換候選需 root 重跑 build；放寬 validator 被 acceptance
+        明文禁止，且會同時拆掉 deploy-dev.yml 的部署前 ancestry 閘門。
+  注意: 先前 transcript 第 2 節「不帶 --expected-sha、EXIT=0」並未涵蓋這項檢查。
+
+===============================================================================
+9. registry 編輯後重跑既有驗證（確認未破壞任何既有結論）
+命令: bash docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/verify_live_artifact_binding.sh /tmp/odp-run-34179791241 <C worktree>
+Exit code: 0
+Output: [PASS] ×49，無 [FAIL]
+  尾行: 既有下載 artifact 與 C 的內容綁定通過；未證明獨立驗章或 runtime，release 仍為 NO-GO。
+
+命令: python3 delivery_toolchain/e2e/check_release_gate_registry.py
+Exit code: 0
+  Gates cleared: 0/7   RELEASE STATE: NO-GO   Release gate registry checks passed.
+
+命令: python3 delivery_toolchain/e2e/check_release_gate_registry.py --require-go
+Exit code: 1 (expected fail-closed behavior)
+  Release is NO-GO: --require-go was requested but the registry does not record a cleared GO state.
+
+命令: git diff --stat -- docs/evidence/gates/RELEASE_MANIFEST.json
+Output: (empty) -- byte-exact manifest 未被本輪修改

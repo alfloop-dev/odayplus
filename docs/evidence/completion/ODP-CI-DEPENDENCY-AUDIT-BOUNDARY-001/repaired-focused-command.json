@@ -1,0 +1,15 @@
+{
+  "source_sha": "9b64631dfea6390ab0e665eab58e18d47f2a72ba",
+  "command": [
+    ".venv/bin/python",
+    "-m",
+    "pytest",
+    "tests/tooling/test_dependency_audit_boundary.py",
+    "tests/security/test_supply_chain_security_gate.py",
+    ".orchestrator/test_source_document_router.py",
+    "-q"
+  ],
+  "started_at": "2026-09-06T05:58:26.293306+00:00",
+  "completed_at": "2026-09-06T06:00:07.393843+00:00",
+  "exit_code": 0
+}

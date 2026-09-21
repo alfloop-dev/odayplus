@@ -1,0 +1,35 @@
+{
+  "diff": {
+    "command": "git diff --check",
+    "head": "cc031c6e35c853cf4524c7ef7b86c1fc5f294f3c",
+    "selection": "current worktree diff",
+    "start": "2026-09-11T03:50:39.291Z",
+    "end": "2026-09-11T03:50:39.407Z",
+    "chunk_id": "20bb79",
+    "wall_time_seconds": 0.000005472,
+    "exit_code": 0,
+    "original_token_count": 0,
+    "output": ""
+  },
+  "focused": {
+    "command": "uv run pytest -q tests/tooling/test_ci_product_parallel.py",
+    "head": "cc031c6e35c853cf4524c7ef7b86c1fc5f294f3c",
+    "selection": "tests/tooling/test_ci_product_parallel.py",
+    "retry_reason": "Independent review of revised submitted head; owner local receipts omit measured SHA and duration.",
+    "start": "2026-09-11T03:50:39.292Z",
+    "end": "2026-09-11T03:50:40.499Z",
+    "chunk_id": "e867c6",
+    "wall_time_seconds": 1.001221806,
+    "session_id": 4200,
+    "original_token_count": 0,
+    "output": "",
+    "completion_confirmed_at": "2026-09-11T03:50:48.565Z",
+    "completion": {
+      "chunk_id": "17a60d",
+      "wall_time_seconds": 0.000045777,
+      "exit_code": 0,
+      "original_token_count": 20,
+      "output": ".................................................                        [100%]\n"
+    }
+  }
+}

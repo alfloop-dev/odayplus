@@ -1,0 +1,157 @@
+........................................................................ [ 55%]
+.........................................................                [100%]
+=============================== warnings summary ===============================
+tests/models/test_native_drift.py::test_native_engine_matches_reference_report[cat_str_new_category]
+tests/models/test_native_drift.py::test_native_engine_matches_reference_report[cat_str_new_category]
+tests/models/test_native_drift.py::test_chi_square_drives_a_new_category_to_zero
+  /tmp/pantheon-worker-worktrees/pantheon/odp-drift-security-verify-003/.venv/lib/python3.12/site-packages/scipy/stats/_stats_py.py:7277: RuntimeWarning: divide by zero encountered in divide
+    terms = (f_obs - f_exp)**2 / f_exp
+
+tests/models/test_native_drift.py::test_native_engine_matches_reference_report[inf_reference_shifted_divergence]
+tests/models/test_native_drift.py::test_native_engine_matches_reference_report[num_float_n1001_inf_only_reference]
+tests/models/test_native_drift.py::test_counted_pass_leaves_an_inf_only_column_uncleaned
+  /tmp/pantheon-worker-worktrees/pantheon/odp-drift-security-verify-003/.venv/lib/python3.12/site-packages/pandas/core/nanops.py:1016: RuntimeWarning: invalid value encountered in subtract
+    sqr = _ensure_numeric((avg - values) ** 2)
+
+tests/models/test_native_drift.py::test_native_engine_matches_reference_report[mixed_num_cat_text]
+tests/models/test_native_drift.py::test_native_engine_matches_reference_report[mixed_num_cat_text]
+tests/models/test_native_drift.py::test_native_engine_matches_reference_report[prediction_column_high_cardinality_text]
+tests/models/test_native_drift.py::test_native_engine_matches_reference_report[prediction_column_high_cardinality_text]
+tests/models/test_native_drift.py::test_native_engine_matches_reference_report[text_high_cardinality_n100]
+tests/models/test_native_drift.py::test_native_engine_matches_reference_report[text_high_cardinality_n100]
+  /tmp/pantheon-worker-worktrees/pantheon/odp-drift-security-verify-003/.venv/lib/python3.12/site-packages/sklearn/linear_model/_stochastic_gradient.py:741: ConvergenceWarning: Maximum number of iteration reached before convergence. Consider increasing max_iter to improve the fit.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+==================================== PASSES ====================================
+=========================== short test summary info ============================
+PASSED tests/models/test_native_drift.py::test_reference_capture_is_the_pinned_engine
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[cat_bool]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[cat_str_dropped_category]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[cat_str_n1001_js]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[cat_str_new_category]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[cat_str_unique_2]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[cat_str_unique_3]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[constant_different]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[constant_identical]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[constant_n1001_different]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[constant_n1001_identical]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[constant_reference_wasserstein_norm_floor]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[dtype_mismatch_between_frames]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[explicit_method_jensenshannon]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[explicit_method_ks_above_1000]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[explicit_method_wasserstein]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[explicit_num_threshold]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[explicit_per_column_threshold]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[explicit_threshold_all]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[inf_in_current]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[inf_reference_shifted_divergence]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[int_symmetric_frequency_swap]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[int_unique_10]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[mixed_num_cat_text]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[mixed_with_datetime_column]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[nan_all_current]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[nan_all_reference]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[nan_in_both]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[num_float_combined_unique_2]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[num_float_combined_unique_2_shifted]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[num_float_combined_unique_3]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[num_float_combined_unique_5]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[num_float_combined_unique_6]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[num_float_combined_unique_6_split]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[num_float_ks_identical]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[num_float_ks_shifted]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[num_float_n1000_ks]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[num_float_n1001_inf_only_reference]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[num_float_n1001_nan_cleans_to_1000]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[num_float_n1001_unique_2_js]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[num_float_n1001_unique_5_js]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[num_float_n1001_unique_6_wasserstein]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[num_float_n1001_wasserstein]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[num_float_n1001_wasserstein_shifted]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[num_float_n200_ks]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[num_int_unique_11]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[num_int_unique_2]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[num_int_unique_6]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[order_cat_before_num]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[prediction_column_high_cardinality_text]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[prediction_column_numeric]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[prediction_column_numeric_shifted]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[prediction_column_probability]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[prediction_column_string_labels]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[prediction_column_two_unique]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[real_datetime_column]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[share_below_threshold]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[share_equals_threshold]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[share_threshold_one]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[str_unique_exactly_half]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[str_unique_just_over_half]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[target_and_prediction_columns]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[text_high_cardinality_n100]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[text_high_cardinality_n1001]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[text_high_cardinality_n100_shifted]
+PASSED tests/models/test_native_drift.py::test_native_engine_matches_reference_report[unknown_object_column]
+PASSED tests/models/test_native_drift.py::test_known_name_divergences_agree_with_the_drifted_column_count[explicit_method_ks_above_1000]
+PASSED tests/models/test_native_drift.py::test_known_name_divergences_agree_with_the_drifted_column_count[text_high_cardinality_n100_shifted]
+PASSED tests/models/test_native_drift.py::test_dtype_mismatch_raises_a_diagnosable_error_instead_of_dividing_by_zero
+PASSED tests/models/test_native_drift.py::test_report_declares_the_native_engine_and_never_claims_evidently
+PASSED tests/models/test_native_drift.py::test_report_json_round_trips_and_carries_stable_metric_ids
+PASSED tests/models/test_native_drift.py::test_native_module_does_not_import_evidently_or_nltk
+PASSED tests/models/test_native_drift.py::test_importing_the_native_module_loads_neither_engine
+PASSED tests/models/test_native_drift.py::test_infer_column_type[series0-num]
+PASSED tests/models/test_native_drift.py::test_infer_column_type[series1-cat]
+PASSED tests/models/test_native_drift.py::test_infer_column_type[series2-num]
+PASSED tests/models/test_native_drift.py::test_infer_column_type[series3-cat]
+PASSED tests/models/test_native_drift.py::test_infer_column_type[series4-cat]
+PASSED tests/models/test_native_drift.py::test_infer_column_type[series5-text]
+PASSED tests/models/test_native_drift.py::test_infer_column_type[series6-cat]
+PASSED tests/models/test_native_drift.py::test_infer_column_type[series7-datetime]
+PASSED tests/models/test_native_drift.py::test_infer_column_type[series8-unknown]
+PASSED tests/models/test_native_drift.py::test_infer_column_type[series9-list]
+PASSED tests/models/test_native_drift.py::test_infer_column_type[series10-unknown]
+PASSED tests/models/test_native_drift.py::test_integer_cardinality_limit_is_the_boundary_not_a_range
+PASSED tests/models/test_native_drift.py::test_text_ratio_is_strictly_greater_than_half
+PASSED tests/models/test_native_drift.py::test_default_stat_test_dispatch[100-2-num-expected0]
+PASSED tests/models/test_native_drift.py::test_default_stat_test_dispatch[100-3-num-expected1]
+PASSED tests/models/test_native_drift.py::test_default_stat_test_dispatch[100-5-num-expected2]
+PASSED tests/models/test_native_drift.py::test_default_stat_test_dispatch[100-6-num-expected3]
+PASSED tests/models/test_native_drift.py::test_default_stat_test_dispatch[1000-6-num-expected4]
+PASSED tests/models/test_native_drift.py::test_default_stat_test_dispatch[1001-2-num-expected5]
+PASSED tests/models/test_native_drift.py::test_default_stat_test_dispatch[1001-5-num-expected6]
+PASSED tests/models/test_native_drift.py::test_default_stat_test_dispatch[1001-6-num-expected7]
+PASSED tests/models/test_native_drift.py::test_default_stat_test_dispatch[100-2-cat-expected8]
+PASSED tests/models/test_native_drift.py::test_default_stat_test_dispatch[100-3-cat-expected9]
+PASSED tests/models/test_native_drift.py::test_default_stat_test_dispatch[100-6-cat-expected10]
+PASSED tests/models/test_native_drift.py::test_default_stat_test_dispatch[1001-2-cat-expected11]
+PASSED tests/models/test_native_drift.py::test_default_stat_test_dispatch[1001-6-cat-expected12]
+PASSED tests/models/test_native_drift.py::test_default_stat_test_dispatch_for_text[1000-expected0]
+PASSED tests/models/test_native_drift.py::test_default_stat_test_dispatch_for_text[1001-expected1]
+PASSED tests/models/test_native_drift.py::test_dispatch_boundary_is_taken_on_the_cleaned_reference_length
+PASSED tests/models/test_native_drift.py::test_dispatch_rejects_a_column_type_that_has_no_test
+PASSED tests/models/test_native_drift.py::test_kolmogorov_smirnov_drifts_when_the_p_value_equals_the_threshold
+PASSED tests/models/test_native_drift.py::test_p_value_tests_other_than_ks_are_strict_at_the_threshold[stat_test0]
+PASSED tests/models/test_native_drift.py::test_p_value_tests_other_than_ks_are_strict_at_the_threshold[stat_test1]
+PASSED tests/models/test_native_drift.py::test_distance_tests_drift_when_the_distance_equals_the_threshold[stat_test0]
+PASSED tests/models/test_native_drift.py::test_distance_tests_drift_when_the_distance_equals_the_threshold[stat_test1]
+PASSED tests/models/test_native_drift.py::test_absolute_text_content_drift_is_strict_at_the_threshold
+PASSED tests/models/test_native_drift.py::test_declared_comparison_directions_match_the_implementations
+PASSED tests/models/test_native_drift.py::test_wasserstein_normaliser_is_floored_for_a_constant_reference
+PASSED tests/models/test_native_drift.py::test_chi_square_rescales_reference_counts_to_the_current_sample_size
+PASSED tests/models/test_native_drift.py::test_chi_square_drives_a_new_category_to_zero
+PASSED tests/models/test_native_drift.py::test_z_test_short_circuits_for_two_identical_constant_samples
+PASSED tests/models/test_native_drift.py::test_jensen_shannon_bins_high_cardinality_numerical_columns
+PASSED tests/models/test_native_drift.py::test_jensen_shannon_leaves_empty_buckets_at_zero
+PASSED tests/models/test_native_drift.py::test_text_drift_separates_disjoint_vocabularies
+PASSED tests/models/test_native_drift.py::test_clean_column_strips_infinities_and_nulls
+PASSED tests/models/test_native_drift.py::test_counted_pass_leaves_an_inf_only_column_uncleaned
+PASSED tests/models/test_native_drift.py::test_share_denominator_excludes_untyped_columns
+PASSED tests/models/test_native_drift.py::test_dataset_drift_triggers_when_the_share_equals_the_threshold
+PASSED tests/models/test_native_drift.py::test_unknown_method_name_is_rejected
+PASSED tests/models/test_native_drift.py::test_method_rejects_an_incompatible_column_type
+PASSED tests/models/test_native_drift.py::test_missing_column_in_the_reference_frame_is_rejected
+PASSED tests/models/test_native_drift.py::test_numerical_column_with_non_numeric_reference_values_is_rejected
+PASSED tests/models/test_native_drift.py::test_non_dataframe_input_is_rejected
+PASSED tests/models/test_native_drift.py::test_every_registered_test_declares_the_column_types_it_accepts
+PASSED tests/models/test_native_drift.py::test_evaluation_exposes_every_field_the_production_consumers_read
+PASSED tests/models/test_native_drift.py::test_engine_argument_order_matches_the_engine_it_replaces
+129 passed, 12 warnings in 40.69s

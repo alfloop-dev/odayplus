@@ -98,6 +98,8 @@ def _run_deploy_config_gate(
     *,
     forecast_engine: str | None,
     forecast_model: str | None,
+    deploy_env: str = "staging",
+    extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     for command in ("python3", "uv", "gcloud", "docker"):
         stub = tmp_path / command
@@ -127,10 +129,13 @@ def _run_deploy_config_gate(
         "ODP_SCHEDULED_INGESTION_TENANT_ID": "tenant-dev",
         "ODP_TENANT_ID": "tenant-dev",
     }
+    env["ODP_DEPLOY_ENV"] = deploy_env
     if forecast_engine is not None:
         env["ODP_FORECAST_ENGINE"] = forecast_engine
     if forecast_model is not None:
         env["ODP_FORECAST_MODEL"] = forecast_model
+    if extra_env:
+        env.update(extra_env)
     return subprocess.run(
         ["/bin/bash", str(DEPLOY_SCRIPT)],
         cwd=ROOT,
@@ -180,6 +185,279 @@ def test_deploy_accepts_supported_forecast_binding_and_enters_preflight(
 
     assert result.returncode == 97
     assert "PREFLIGHT_REACHED" in result.stderr
+
+
+# --------------------------------------------------------------------------
+# Cloud Run VPC binding modes (ODP-PROD-RUNTIME-RELEASE-PATH-001)
+#
+# Production attaches to the VPC with Direct VPC egress (`infra/terraform/
+# cloud_run.tf` declares `vpc_access.network_interfaces` and creates no
+# Serverless VPC Access connector), so the sources-off guard must admit
+# `ODP_PROD_VPC_NETWORK` + `ODP_PROD_VPC_SUBNETWORK` as the network half of the
+# binding. These run the real script with every external tool stubbed: reaching
+# the stub (exit 97, PREFLIGHT_REACHED) proves the up-front guards admitted the
+# configuration; exit 1 without PREFLIGHT_REACHED proves they refused it before
+# any tool, and therefore any Cloud Run mutation, could run.
+# --------------------------------------------------------------------------
+
+_SOURCES_OFF_MANIFEST_DIGEST = "sha256:" + "0" * 64
+
+_VPC_BINDING_VARIABLES = (
+    "ODP_CLOUD_RUN_VPC_CONNECTOR",
+    "ODP_PROD_VPC_NETWORK",
+    "ODP_PROD_VPC_SUBNETWORK",
+    "ODP_CLOUD_RUN_VPC_EGRESS",
+)
+
+
+def _direct_vpc_sources_off_env(**overrides: str) -> dict[str, str]:
+    """The production shape: Direct VPC, ALL_TRAFFIC egress, providers disabled."""
+    env = {
+        "ODP_CLOUD_RUN_VPC_CONNECTOR": "",
+        "ODP_PROD_VPC_NETWORK": "oday-prod-runtime",
+        "ODP_PROD_VPC_SUBNETWORK": "oday-prod-runtime",
+        "ODP_CLOUD_RUN_VPC_EGRESS": "all-traffic",
+        "ODP_EXTERNAL_PROVIDER_MODE": "disabled",
+        "MANIFEST_DIGEST": _SOURCES_OFF_MANIFEST_DIGEST,
+    }
+    env.update(overrides)
+    return env
+
+
+def _supported_forecast_gate(tmp_path: Path, **kwargs) -> subprocess.CompletedProcess[str]:
+    return _run_deploy_config_gate(
+        tmp_path,
+        forecast_engine="statsforecast",
+        forecast_model="seasonal_naive",
+        **kwargs,
+    )
+
+
+def test_sources_off_deploy_admits_direct_vpc_egress_without_a_connector(
+    tmp_path: Path,
+) -> None:
+    result = _supported_forecast_gate(tmp_path, extra_env=_direct_vpc_sources_off_env())
+
+    assert result.returncode == 97, result.stderr
+    assert "PREFLIGHT_REACHED" in result.stderr
+    assert "Cloud Run VPC binding mode: direct-vpc" in result.stdout
+    assert "Error" not in result.stderr
+
+
+def test_sources_off_deploy_still_admits_the_connector_mode(tmp_path: Path) -> None:
+    result = _supported_forecast_gate(
+        tmp_path,
+        extra_env=_direct_vpc_sources_off_env(
+            ODP_CLOUD_RUN_VPC_CONNECTOR="projects/p/locations/l/connectors/c",
+            ODP_PROD_VPC_NETWORK="",
+            ODP_PROD_VPC_SUBNETWORK="",
+        ),
+    )
+
+    assert result.returncode == 97, result.stderr
+    assert "PREFLIGHT_REACHED" in result.stderr
+    assert "Cloud Run VPC binding mode: connector" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("present", "missing"),
+    [
+        ("ODP_PROD_VPC_NETWORK", "ODP_PROD_VPC_SUBNETWORK"),
+        ("ODP_PROD_VPC_SUBNETWORK", "ODP_PROD_VPC_NETWORK"),
+    ],
+)
+def test_deploy_refuses_a_half_configured_direct_vpc_binding_before_preflight(
+    tmp_path: Path, present: str, missing: str
+) -> None:
+    result = _supported_forecast_gate(
+        tmp_path, extra_env=_direct_vpc_sources_off_env(**{missing: ""})
+    )
+
+    assert result.returncode == 1
+    assert f"{missing} is required with {present}" in result.stderr
+    assert "PREFLIGHT_REACHED" not in result.stderr
+
+
+def test_deploy_refuses_a_connector_and_a_direct_vpc_binding_together(
+    tmp_path: Path,
+) -> None:
+    """`--vpc-connector` and `--network` are mutually exclusive on Cloud Run."""
+    result = _supported_forecast_gate(
+        tmp_path,
+        extra_env=_direct_vpc_sources_off_env(
+            ODP_CLOUD_RUN_VPC_CONNECTOR="projects/p/locations/l/connectors/c"
+        ),
+    )
+
+    assert result.returncode == 1
+    assert "are mutually exclusive; configure exactly one VPC binding mode" in result.stderr
+    assert "PREFLIGHT_REACHED" not in result.stderr
+
+
+def test_sources_off_deploy_refuses_to_run_with_no_vpc_binding_at_all(
+    tmp_path: Path,
+) -> None:
+    result = _supported_forecast_gate(
+        tmp_path,
+        extra_env=_direct_vpc_sources_off_env(
+            ODP_PROD_VPC_NETWORK="",
+            ODP_PROD_VPC_SUBNETWORK="",
+            ODP_CLOUD_RUN_VPC_EGRESS="",
+        ),
+    )
+
+    assert result.returncode == 1
+    assert (
+        "sources-off deploy requires a VPC binding: ODP_CLOUD_RUN_VPC_CONNECTOR or "
+        "ODP_PROD_VPC_NETWORK+ODP_PROD_VPC_SUBNETWORK" in result.stderr
+    )
+    assert "PREFLIGHT_REACHED" not in result.stderr
+
+
+def test_sources_off_deploy_refuses_direct_vpc_with_private_ranges_only_egress(
+    tmp_path: Path,
+) -> None:
+    """Direct VPC changes how the VPC is reached, not what sources-off demands of egress."""
+    result = _supported_forecast_gate(
+        tmp_path,
+        extra_env=_direct_vpc_sources_off_env(ODP_CLOUD_RUN_VPC_EGRESS="private-ranges-only"),
+    )
+
+    assert result.returncode == 1
+    assert "sources-off deploy requires ALL_TRAFFIC VPC egress" in result.stderr
+    assert "PREFLIGHT_REACHED" not in result.stderr
+
+
+def test_a_direct_vpc_binding_requires_the_egress_mode_even_outside_sources_off(
+    tmp_path: Path,
+) -> None:
+    result = _supported_forecast_gate(
+        tmp_path,
+        extra_env=_direct_vpc_sources_off_env(
+            ODP_CLOUD_RUN_VPC_EGRESS="", ODP_EXTERNAL_PROVIDER_MODE=""
+        ),
+    )
+
+    assert result.returncode == 1
+    assert "ODP_CLOUD_RUN_VPC_EGRESS is required with the direct-vpc VPC binding" in result.stderr
+    assert "PREFLIGHT_REACHED" not in result.stderr
+
+
+# --------------------------------------------------------------------------
+# Production live E2E origins (ODP-PROD-RUNTIME-RELEASE-PATH-001 AC-2)
+#
+# A production deploy must resolve its live E2E origins from the production
+# variables and must never fall back to the dev service URL. The `:?` and HTTPS
+# guards below run before the first tool invocation, so an unset or non-HTTPS
+# production URL cannot reach a Cloud Run mutation.
+# --------------------------------------------------------------------------
+
+
+def _production_origins(**overrides: str) -> dict[str, str]:
+    env = {
+        "ODP_PROD_DEPLOY_URL": "https://console.oday-plus.example",
+        "ODP_PROD_API_URL": "https://api.oday-plus.example",
+    }
+    env.update(overrides)
+    return env
+
+
+@pytest.mark.parametrize("missing", ["ODP_PROD_DEPLOY_URL", "ODP_PROD_API_URL"])
+def test_a_production_deploy_refuses_to_start_without_its_production_origin(
+    tmp_path: Path, missing: str
+) -> None:
+    result = _supported_forecast_gate(
+        tmp_path,
+        deploy_env="production",
+        extra_env=_production_origins(**{missing: ""}),
+    )
+
+    assert result.returncode == 1
+    assert f"{missing} is required for production live E2E" in result.stderr
+    assert "PREFLIGHT_REACHED" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    "bad_origin",
+    [
+        "http://console.oday-plus.example",
+        "console.oday-plus.example",
+        "https://console.oday-plus.example with-a-space",
+    ],
+)
+def test_a_production_deploy_refuses_a_non_https_production_origin(
+    tmp_path: Path, bad_origin: str
+) -> None:
+    result = _supported_forecast_gate(
+        tmp_path,
+        deploy_env="production",
+        extra_env=_production_origins(ODP_PROD_DEPLOY_URL=bad_origin),
+    )
+
+    assert result.returncode == 1
+    assert "production live E2E URLs must be HTTPS custom domains" in result.stderr
+    assert "PREFLIGHT_REACHED" not in result.stderr
+
+
+def test_a_production_deploy_with_https_origins_and_direct_vpc_enters_preflight(
+    tmp_path: Path,
+) -> None:
+    result = _supported_forecast_gate(
+        tmp_path,
+        deploy_env="production",
+        extra_env={**_production_origins(), **_direct_vpc_sources_off_env()},
+    )
+
+    assert result.returncode == 97, result.stderr
+    assert "PREFLIGHT_REACHED" in result.stderr
+    assert "Cloud Run VPC binding mode: direct-vpc" in result.stdout
+
+
+def test_a_dev_deploy_does_not_require_the_production_origins(tmp_path: Path) -> None:
+    """The production guard is scoped on `ODP_DEPLOY_ENV`, not a global requirement."""
+    result = _supported_forecast_gate(tmp_path, deploy_env="dev")
+
+    assert result.returncode == 97, result.stderr
+    assert "PREFLIGHT_REACHED" in result.stderr
+
+
+def test_live_e2e_origins_come_from_the_production_variables_with_no_dev_fallback() -> None:
+    """The production branch is explicit; nothing resolves production to the dev URL.
+
+    The earlier workflow `url:` ternary (removed by c35ffe05) resolved
+    `staging ? staging : dev`, so `production` silently received the dev URL.
+    The script branches on `ODP_DEPLOY_ENV == production` and reads only the
+    production variables there; the non-production branch reads the Cloud Run
+    service snapshot. No other environment's URL variable appears in the
+    script at all, so there is nothing for production to fall back to.
+    """
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    production_branch = text.index(
+        'if [ "${ODP_DEPLOY_ENV}" = "production" ]; then\n'
+        '  LIVE_E2E_API_URL="${ODP_PROD_API_URL}"\n'
+        '  LIVE_E2E_WEB_URL="${ODP_PROD_DEPLOY_URL}"\n'
+        "else\n"
+        '  LIVE_E2E_API_URL="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"\n'
+        '  LIVE_E2E_WEB_URL="$(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")"\n'
+        "fi\n"
+    )
+    empty_guard = text.index('if [[ -z "${LIVE_E2E_API_URL}" || -z "${LIVE_E2E_WEB_URL}" ]]; then')
+    gate = text.index("delivery_toolchain/e2e/check_live_e2e_gate.py")
+    assert production_branch < empty_guard < gate
+
+    # The production origins are demanded, and required to be HTTPS, before
+    # the first Cloud Run call of any kind.
+    first_cloud_run_call = text.index("gcloud run ")
+    web_precheck = text.index(': "${ODP_PROD_DEPLOY_URL:?')
+    api_precheck = text.index(': "${ODP_PROD_API_URL:?')
+    https_guard = text.index("production live E2E URLs must be HTTPS custom domains")
+    assert web_precheck < api_precheck < https_guard < first_cloud_run_call
+
+    assert text.count('LIVE_E2E_WEB_URL="${ODP_PROD_DEPLOY_URL}"') == 1
+    assert text.count('LIVE_E2E_API_URL="${ODP_PROD_API_URL}"') == 1
+    for other in ("ODP_DEV_DEPLOY_URL", "ODP_STAGING_DEPLOY_URL", "ODP_STAGING_API_URL"):
+        assert other not in text, f"{other} would be a fallback origin for production"
 
 
 def test_deploy_script_runs_repository_validators_with_locked_python() -> None:

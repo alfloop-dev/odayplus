@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StoreFormatConversionEvent",
+  "description": "Draft event contract for store format conversion (brownfield remodeling) business events. This schema is a Stage A engineering preparation deliverable — it describes the target contract shape but does NOT assert that any producer, data source, or runtime capability currently exists. Stage B (real data integration) requires H04 human input and formal financial parameter approval.",
+  "version": "0.1.0-draft",
+  "status": "DRAFT_STAGE_A",
+  "source_task": "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001",
+  "source_requirement": "ODP-FR-SITE-001 / FORMAT_CONVERSION",
+  "source_refs": [
+    "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md §WP-31",
+    "docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md §3",
+    "docs/evidence/ODP_SITE001_DATA_READINESS_2026-09-03.md §4"
+  ],
+  "type": "object",
+  "required": [
+    "event_id",
+    "event_type",
+    "store_id",
+    "tenant_id",
+    "from_format_code",
+    "to_format_code",
+    "conversion_start_date",
+    "remodeling_capex",
+    "downtime_days",
+    "event_source",
+    "event_source_version",
+    "recorded_at"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this conversion event. Used for idempotent replay — replaying the same event_id MUST NOT cause duplicate cost/revenue entries."
+    },
+    "event_type": {
+      "type": "string",
+      "const": "FORMAT_CONVERSION",
+      "description": "Discriminator for event routing. Always FORMAT_CONVERSION for this contract."
+    },
+    "store_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "References core.stores(store_id). The existing store undergoing format conversion."
+    },
+    "tenant_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Tenant identifier for multi-tenant isolation."
+    },
+    "from_format_code": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Original store format code before conversion (e.g., ODAY_G1, ODAY_G2, ODAY_G3_COMPACT). Must reference a registered format in TargetFormatRegistry.",
+      "examples": ["ODAY_G1", "ODAY_G2", "ODAY_G3_COMPACT"]
+    },
+    "to_format_code": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Target store format code after conversion (e.g., ODAY_G2, ODAY_FLAGSHIP). Must differ from from_format_code. Must reference a registered format in TargetFormatRegistry.",
+      "examples": ["ODAY_G2", "ODAY_FLAGSHIP"]
+    },
+    "conversion_start_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Date when remodeling/conversion work begins. Store is assumed closed for business from this date for downtime_days."
+    },
+    "conversion_completed_date": {
+      "type": ["string", "null"],
+      "format": "date",
+      "description": "Date when remodeling is completed and the store reopens in the new format. Optional — null if conversion is in progress or planned but not yet completed."
+    },
+    "remodeling_capex": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Total capital expenditure for the remodeling/conversion, in the tenant's base currency. Includes demolition, construction, equipment, fixtures, and fitout for the new format. Does NOT include the original greenfield capex (that belongs to the original store opening event)."
+    },
+    "downtime_days": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of calendar days the store is closed during remodeling. Revenue loss = daily_baseline_revenue × downtime_days. Zero is valid only when conversion requires no closure (e.g., overnight equipment swap documented in the playbook)."
+    },
+    "residual_value": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Salvage/residual value of equipment and fixtures from the old format that can be recovered (sold, reused, or transferred). Optional — null means the value is unknown and MUST NOT be assumed to be zero."
+    },
+    "disposal_cost": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Cost of disposing of old-format equipment and fixtures that cannot be salvaged. Optional — null means the cost is unknown and MUST NOT be assumed to be zero."
+    },
+    "effective_date": {
+      "type": ["string", "null"],
+      "format": "date",
+      "description": "Date when the store starts operating in the new format for financial reporting purposes. May differ from conversion_completed_date if there is a soft-opening or regulatory delay. Optional."
+    },
+    "closure_start_date": {
+      "type": ["string", "null"],
+      "format": "date",
+      "description": "Date when the store ceases revenue-generating operations. Defaults to conversion_start_date if not provided separately. Exists to support cases where a store stops trading before physical remodeling begins."
+    },
+    "closure_end_date": {
+      "type": ["string", "null"],
+      "format": "date",
+      "description": "Date when the store resumes revenue-generating operations in the new format. May differ from conversion_completed_date if there is a ramp/soft-launch period."
+    },
+    "ramp_months": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Number of months for the converted store to reach steady-state revenue in the new format. During ramp, revenue follows the format-specific ramp curve (RampCurveSpec). Optional — null means ramp parameters are unknown and must be requested via H04."
+    },
+    "ramp_curve_id": {
+      "type": ["string", "null"],
+      "description": "Reference to the applicable RampCurveSpec for the post-conversion ramp-up period. Optional — null means the conversion ramp curve is unknown/unspecified and MUST NOT default to greenfield curves. Missing curve remains unquantified unless an explicit approved conversion-compatible curve reference is provided."
+    },
+    "daily_baseline_revenue": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Pre-conversion average daily revenue for downtime loss calculation. Optional — if null, the simulator must use the store's historical revenue record or mark the loss as unquantified."
+    },
+    "conversion_reason": {
+      "type": ["string", "null"],
+      "description": "Business justification category for the conversion. Optional.",
+      "examples": ["UPGRADE", "DOWNSIZE", "REBRAND", "REGULATORY", "LEASE_RENEWAL"]
+    },
+    "approved_by": {
+      "type": ["string", "null"],
+      "description": "Identity of the human authority who approved the conversion project. Required for Stage B production events; null in draft/planned events."
+    },
+    "event_source": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Identifier of the system or process that produced this event (e.g., 'store_ops_erp', 'manual_entry', 'migration_backfill'). Required for lineage tracking."
+    },
+    "event_source_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Version of the event source system or schema at the time the event was produced."
+    },
+    "recorded_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC timestamp when this event was recorded in the system. Used for ordering and deduplication."
+    },
+    "idempotency_key": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "description": "Optional SECONDARY deduplication key. It participates in deduplication only when supplied as a valid non-null, non-empty string. An empty string is invalid and MUST be rejected at validation; it MUST NOT be treated as a key value and MUST NOT be normalised to null. When idempotency_key is null or omitted, the event is deduplicated on event_id alone and MUST remain distinct from every other event. Two events are secondary-duplicates only when BOTH carry the same valid non-null key; a shared null/omitted key NEVER makes two events duplicates."
+    },
+    "metadata": {
+      "type": ["object", "null"],
+      "description": "Extensible metadata for future fields. Must not contain fields that belong in the top-level schema."
+    }
+  },
+  "additionalProperties": false,
+  "_design_notes": {
+    "new_store_vs_conversion": "This contract is strictly for brownfield format conversion of EXISTING stores. New store openings (greenfield) use the existing SimulationInput contract in modules/site_economics/domain/simulator.py. The two MUST NOT be conflated.",
+    "replay_idempotency": "Deduplication has exactly two rules and no others. (1) PRIMARY: replaying the same event_id must not cause duplicate cost entries, duplicate revenue loss calculations, or duplicate ramp applications; consumers must implement at-least-once idempotent processing keyed on event_id. (2) SECONDARY: two events with DIFFERENT event_id collapse to one only when both carry the same valid non-null, non-empty idempotency_key. Events whose idempotency_key is null, omitted, or absent do not participate in secondary deduplication and must be preserved as distinct events even when several of them carry null; collapsing them would silently discard real conversion costs. Empty-string keys are a validation error, not a dedup participant.",
+    "missing_vs_zero": "Null/missing values mean 'unknown — do not assume any value or substitute any greenfield/system default'. Zero means 'explicitly measured and confirmed to be zero'. This distinction applies to residual_value, disposal_cost, ramp_months, ramp_curve_id, and daily_baseline_revenue.",
+    "stage_b_prerequisites": "Before this contract can be used in production: (1) H04 real conversion events (or planned-event specifications) and financial parameters must be provided, (2) cross-source/consumer contract review completed, (3) simulator.py must support ConversionSimulationInput, (4) core.store_format_conversions migration created in Stage B, (5) event replay tests must pass."
+  }
+}

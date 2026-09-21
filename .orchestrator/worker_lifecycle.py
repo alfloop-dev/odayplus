@@ -711,6 +711,8 @@ def process_queue(
             attempt_count=record["attempt_count"],
             event_id_for_log=event_id,
         )
+        # Successful launch persists and replaces nested state records.
+        record = queue_event_record(state, event_id)
         if not ok:
             failure_worker = {
                 "provider": request_provider,
@@ -872,7 +874,28 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
         "supersede_deferrals": 0,
     }
     workers = state.setdefault("workers", {})
-    for run_id, worker in list(workers.items()):
+    for run_id in list(workers):
+        # Retry/fallback launch can replace the nested worker map on save.
+        workers = state.setdefault("workers", {})
+        worker = workers.get(run_id)
+        if not isinstance(worker, dict):
+            continue
+        pending_fence = worker.get("pending_fence")
+        if isinstance(pending_fence, dict):
+            if worker_writers_are_alive(worker):
+                terminate_worker_writers(worker)
+            if not worker_writers_are_alive(worker):
+                settled = _settle_fenced_sibling_worker(
+                    config,
+                    state,
+                    worker,
+                    str(pending_fence.get("pool_id") or ""),
+                    str(pending_fence.get("reason") or ""),
+                )
+                if settled:
+                    changed = True
+                    continue
+            continue
         # These records already have a durable terminal disposition. Re-reading
         # their old marker/log after a later re-review or reviewer reopen must
         # never count the same run again or reassign the current lifecycle.
@@ -1677,6 +1700,32 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             if is_terminal_quota_failure_kind(failure_kind):
                 fence_account_pool_workers(config, state, worker, failure_reason)
             if is_terminal_quota_failure_kind(failure_kind):
+                # `fence_account_pool_workers` skips the triggering run, so this
+                # is the one worker in the fenced pool that never received the
+                # deferred handoff its siblings get. Changing the canonical owner
+                # while this run's writers are still mutating the worktree
+                # strands the final bytes: the successor is granted a lease whose
+                # dirt fingerprint no longer matches, and `finalize_queue_event_record`
+                # below marks the event completed, so no later poll comes back for
+                # it. Fence it exactly like a sibling instead and let the
+                # `pending_fence` path in `poll_workers` / `reconcile_runtime_on_boot`
+                # preserve, reseal and transfer once the writers are confirmed dead.
+                if worker_writers_are_alive(worker):
+                    terminate_worker_writers(worker)
+                if worker_writers_are_alive(worker):
+                    worker["pending_fence"] = {
+                        "pool_id": agent_account_pool_id(
+                            config, worker_logical_dispatch_agent_id(config, worker)
+                        ),
+                        "reason": failure_reason,
+                        "fenced_at": (worker.get("pending_fence") or {}).get("fenced_at")
+                        or utc_now(),
+                    }
+                    worker["last_error"] = failure_summary.get("summary") or failure_reason
+                    worker["last_error_raw_ref"] = raw_ref
+                    worker["last_event_at"] = utc_now()
+                    changed = True
+                    continue
                 reassigned_to = None
                 if not antigravity_pool_fallback_available(
                     config, str(worker.get("provider") or worker.get("agent_id") or "")
@@ -1880,6 +1929,41 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                             changed = True
                             continue
                     record_unsealed_worker_handoff(config, state, worker, current_task, handoff_seal)
+                    block = ((state.get("worker_worktrees") or {}).get("handoff_blocks") or {}).get(worker.get("task_id"))
+                    rejection_count = int((block or {}).get("rejection_count", 1))
+                    max_rejections = int(
+                        (config.get("worker_reassignment") or {}).get("after_attempts", 2)
+                    )
+                    record_task_failure_streak(
+                        state,
+                        worker,
+                        f"Handoff seal rejected: {handoff_seal.reason}: {handoff_seal.detail}",
+                        failure_kind="handoff_seal_rejected",
+                    )
+                    if rejection_count > max_rejections:
+                        worker["status"] = "failed"
+                        worker["last_event_at"] = utc_now()
+                        worker["progress_outcome"] = "handoff_seal_rejected"
+                        worker["last_error"] = (
+                            f"Handoff seal rejected repeated {rejection_count} times exceeding limit "
+                            f"({max_rejections}): {handoff_seal.reason}: {handoff_seal.detail}"
+                        )
+                        finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "worker_handoff_rejected",
+                                "provider": worker.get("provider"),
+                                "task_id": worker.get("task_id"),
+                                "message": worker["last_error"],
+                                "worker_run_id": worker.get("run_id"),
+                                "handoff_reason": handoff_seal.reason,
+                                "handoff_detail": handoff_seal.detail,
+                                "rejection_count": rejection_count,
+                            },
+                        )
+                        changed = True
+                        continue
                     worker["status"] = "completed"
                     worker["last_event_at"] = utc_now()
                     worker["progress_outcome"] = "handoff_seal_rejected"
@@ -1895,6 +1979,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                             "worker_run_id": worker.get("run_id"),
                             "handoff_reason": handoff_seal.reason,
                             "handoff_detail": handoff_seal.detail,
+                            "rejection_count": rejection_count,
                         },
                     )
                     changed = True
@@ -1904,7 +1989,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 worker["status"] = "completed"
                 worker["last_event_at"] = utc_now()
                 worker["progress_outcome"] = success_outcome
-                clear_task_failure_streak(state, worker=worker)
+                clear_task_failure_streaks_for_task(state, worker.get("task_id"))
                 message = (
                     "Background worker process exited after recording meaningful incremental progress; task remains dispatchable."
                     if success_outcome == "incremental_progress"
@@ -1923,6 +2008,15 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                         "progress_outcome": success_outcome,
                     },
                 )
+                # A real task run that reached its postcondition is the
+                # authenticated canary the cooldown was waiting for. Without
+                # this, only a discussion-planning exit could ever end a
+                # `recovering` pool, so an account whose next dispatch happened
+                # to be ordinary task work stayed capped at one slot forever.
+                # The failure branches above all `continue` before reaching
+                # here, so a non-zero exit, a signal termination, a quota
+                # fence, or a rejected handoff seal can never restore capacity.
+                record_account_pool_canary_success(config, state, worker)
                 finalize_queue_event_record(config, state, worker, "completed")
             elif task_status in redispatch_statuses:
                 failure_reason = NO_PROGRESS_WORKER_EXIT_REASON

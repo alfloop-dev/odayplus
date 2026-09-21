@@ -10,6 +10,10 @@
   "integration_mode": "batch_snapshot",
   "envelope": "batch",
   "acquisition_method": "file",
+  "data_owner": "unconfirmed",
+  "target_latency_sla": "unconfirmed",
+  "contact_channel": "unconfirmed",
+  "runtime_capability": "unverified",
   "fields": [
     {"name": "h3_index", "type": "string", "required": true, "description": "H3 cell index (typically resolution 9)."},
     {"name": "population_total", "type": "number", "required": true, "minimum": 0, "description": "Total population in the cell."},

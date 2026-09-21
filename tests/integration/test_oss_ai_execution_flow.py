@@ -201,7 +201,7 @@ def test_governed_training_registry_and_monitoring_flow_uses_real_oss(
         drift_share_threshold=0.5,
         snapshot_id="drift-oss-e2e",
     )
-    assert drift.engine == "evidently"
+    assert drift.engine == "native_drift"
     assert drift.drift_detected is True
     assert drift.to_dict()["report"]["metrics"]
 

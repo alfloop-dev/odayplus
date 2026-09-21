@@ -20,19 +20,44 @@ import pytest
 from delivery_toolchain.release.check_release_environment import (
     REQUIRED_VARIABLES,
     SCOPES,
+    VPC_BINDING_MODES,
+    VPC_BINDING_SCOPES,
+    VPC_BINDING_VARIABLES,
     binding_errors,
+    declared_variables,
     main,
     missing_variables,
     required_variables,
+    resolved_vpc_binding_mode,
 )
 
 SHA = "b" * 40
 
 
 def resolved(scope: str, **overrides: str) -> dict[str, str]:
-    """Every variable this scope needs, resolved to a plausible non-empty value."""
+    """Every variable this scope needs, resolved to a plausible non-empty value.
+
+    A scope that deploys to Cloud Run also needs exactly one VPC binding mode.
+    The connector is the default here because `dev` still deploys through one;
+    the Direct VPC tests below override it explicitly.
+    """
 
     values = {name: f"resolved-{name.lower()}" for name in required_variables(scope)}
+    if scope in VPC_BINDING_SCOPES:
+        for name in VPC_BINDING_MODES["connector"]:
+            values[name] = f"resolved-{name.lower()}"
+    values.update(overrides)
+    return values
+
+
+def direct_vpc(scope: str = "deploy", **overrides: str) -> dict[str, str]:
+    """A production-shaped deploy resolution: Direct VPC egress, no connector."""
+
+    values = resolved(scope)
+    for name in VPC_BINDING_MODES["connector"]:
+        values[name] = ""
+    for name in VPC_BINDING_MODES["direct_vpc"]:
+        values[name] = "oday-prod-runtime"
     values.update(overrides)
     return values
 
@@ -73,7 +98,7 @@ def test_a_fully_resolved_scope_is_admitted(scope: str) -> None:
 def test_an_unbound_job_sees_every_variable_empty_and_is_refused(scope: str) -> None:
     """This is exactly what an unbound job observes: empty strings, no error."""
 
-    unbound = dict.fromkeys(required_variables(scope), "")
+    unbound = dict.fromkeys(declared_variables(scope), "")
     errors = errors_for(scope, values=unbound)
     assert errors
     joined = "\n".join(errors)
@@ -169,6 +194,134 @@ def test_admission_needs_the_shared_lease_store_not_the_registry() -> None:
 def test_no_scope_requires_a_variable_twice() -> None:
     for scope, names in REQUIRED_VARIABLES.items():
         assert len(names) == len(set(names)), f"{scope} lists a variable twice"
+    for scope in SCOPES:
+        names = declared_variables(scope)
+        assert len(names) == len(set(names)), f"{scope} declares a variable twice"
+
+
+# --------------------------------------------------------------------------
+# Cloud Run VPC binding: a connector or Direct VPC egress, exactly one
+#
+# `infra/terraform/cloud_run.tf` attaches production to the VPC with
+# `vpc_access.network_interfaces` (Direct VPC egress) and creates no Serverless
+# VPC Access connector. A gate that demanded `ODP_CLOUD_RUN_VPC_CONNECTOR`
+# unconditionally could therefore only ever be satisfied by inventing a
+# resource the IaC does not produce (ODP-PROD-NETWORK-PARITY-PLAN-001 §4).
+# --------------------------------------------------------------------------
+
+
+def test_the_build_scope_needs_no_vpc_network_binding_but_still_resolves_the_egress_mode() -> None:
+    """The build never opens a network; the handoff does record the egress mode.
+
+    `build_release_handoff.py` reads `ODP_CLOUD_RUN_VPC_EGRESS` from the build
+    job and refuses a sources-off handoff whose egress is unresolved, so the
+    egress mode stays in the build gate where a missing value is refused with
+    a receipt naming the `<environment>-build` twin to fix.
+    """
+
+    for name in VPC_BINDING_VARIABLES:
+        assert name not in declared_variables("build"), name
+    assert "ODP_CLOUD_RUN_VPC_EGRESS" in required_variables("build")
+
+
+def test_the_deploy_scope_declares_both_binding_modes_and_requires_neither_unconditionally() -> None:
+    for name in VPC_BINDING_VARIABLES:
+        assert name in declared_variables("deploy"), name
+        assert name not in required_variables("deploy"), name
+    assert "ODP_CLOUD_RUN_VPC_EGRESS" in required_variables("deploy")
+    assert set(VPC_BINDING_MODES) == {"connector", "direct_vpc"}
+    assert VPC_BINDING_MODES["direct_vpc"] == ("ODP_PROD_VPC_NETWORK", "ODP_PROD_VPC_SUBNETWORK")
+
+
+def test_scopes_that_never_deploy_do_not_read_a_vpc_binding() -> None:
+    for scope in ("build", "admission", "staging"):
+        assert scope not in VPC_BINDING_SCOPES
+        assert declared_variables(scope) == required_variables(scope)
+
+
+def test_a_direct_vpc_production_deploy_without_a_connector_is_admitted() -> None:
+    values = direct_vpc()
+    assert values["ODP_CLOUD_RUN_VPC_CONNECTOR"] == ""
+    assert (
+        errors_for(
+            "deploy",
+            environment="production",
+            github_environment="production",
+            values=values,
+        )
+        == []
+    )
+    assert resolved_vpc_binding_mode(values) == "direct_vpc"
+
+
+def test_a_connector_deploy_is_still_admitted() -> None:
+    values = resolved("deploy")
+    assert errors_for("deploy", github_environment="dev", values=values) == []
+    assert resolved_vpc_binding_mode(values) == "connector"
+
+
+@pytest.mark.parametrize(
+    ("present", "missing"),
+    [
+        ("ODP_PROD_VPC_NETWORK", "ODP_PROD_VPC_SUBNETWORK"),
+        ("ODP_PROD_VPC_SUBNETWORK", "ODP_PROD_VPC_NETWORK"),
+    ],
+)
+def test_a_half_configured_direct_vpc_binding_is_refused_naming_the_missing_half(
+    present: str, missing: str
+) -> None:
+    """gcloud would reject `--network` without `--subnet` only at the first mutation."""
+
+    values = direct_vpc(**{missing: ""})
+    errors = errors_for(
+        "deploy", environment="production", github_environment="production", values=values
+    )
+    assert errors
+    joined = "\n".join(errors)
+    assert missing in joined
+    assert present in joined
+    assert "一半" in joined
+    assert resolved_vpc_binding_mode(values) is None
+
+
+def test_both_vpc_binding_modes_at_once_are_refused() -> None:
+    """`--vpc-connector` and `--network/--subnet` are mutually exclusive on Cloud Run."""
+
+    values = direct_vpc(ODP_CLOUD_RUN_VPC_CONNECTOR="projects/p/locations/l/connectors/c")
+    errors = errors_for(
+        "deploy", environment="production", github_environment="production", values=values
+    )
+    assert errors
+    joined = "\n".join(errors)
+    assert "互斥" in joined
+    assert "connector" in joined and "direct_vpc" in joined
+    assert resolved_vpc_binding_mode(values) is None
+
+
+def test_no_vpc_binding_at_all_is_refused_naming_both_options() -> None:
+    values = resolved("deploy", ODP_CLOUD_RUN_VPC_CONNECTOR="")
+    for name in VPC_BINDING_MODES["direct_vpc"]:
+        values[name] = ""
+    errors = errors_for(
+        "deploy", environment="production", github_environment="production", values=values
+    )
+    assert errors
+    joined = "\n".join(errors)
+    assert "二擇一" in joined
+    for name in VPC_BINDING_VARIABLES:
+        assert name in joined, f"a refusal that does not name {name} is not actionable"
+    assert resolved_vpc_binding_mode(values) is None
+
+
+def test_a_direct_vpc_deploy_still_requires_the_egress_mode() -> None:
+    """Direct VPC without an egress mode would leave public destinations on public egress."""
+
+    values = direct_vpc(ODP_CLOUD_RUN_VPC_EGRESS="")
+    errors = errors_for(
+        "deploy", environment="production", github_environment="production", values=values
+    )
+    assert errors
+    assert "ODP_CLOUD_RUN_VPC_EGRESS" in "\n".join(errors)
 
 
 # --------------------------------------------------------------------------
@@ -272,3 +425,212 @@ def test_the_receipt_reports_the_scope_it_checked(tmp_path: Path) -> None:
     assert receipt["scope"] == "deploy"
     assert receipt["environment"] == "production"
     assert receipt["github_environment"] == "production"
+
+
+def test_a_direct_vpc_deploy_receipt_records_the_mode_but_never_the_network_name(
+    tmp_path: Path,
+) -> None:
+    network = "secret-prod-network-name-777"
+    values = direct_vpc(ODP_PROD_VPC_NETWORK=network, ODP_PROD_VPC_SUBNETWORK=network)
+    code, receipt = _run(
+        tmp_path,
+        values,
+        "--scope",
+        "deploy",
+        "--environment",
+        "production",
+        "--github-environment",
+        "production",
+        "--release-sha",
+        SHA,
+        "--task-id",
+        "ODP-PROD-RUNTIME-RELEASE-PATH-001",
+    )
+    assert code == 0
+    assert receipt["admitted"] is True
+    assert receipt["missing_variables"] == []
+    assert receipt["vpc_binding"]["mode"] == "direct_vpc"
+    assert receipt["vpc_binding"]["modes"]["direct_vpc"] == {
+        "ODP_PROD_VPC_NETWORK": True,
+        "ODP_PROD_VPC_SUBNETWORK": True,
+    }
+    assert receipt["vpc_binding"]["modes"]["connector"] == {
+        "ODP_CLOUD_RUN_VPC_CONNECTOR": False,
+    }
+    assert set(receipt["variables_resolved"]) == set(declared_variables("deploy"))
+    assert receipt["variables_resolved"]["ODP_CLOUD_RUN_VPC_CONNECTOR"] is False
+    assert "direct_vpc" in receipt["summary_zh_tw"]
+    assert network not in json.dumps(receipt, ensure_ascii=False)
+
+
+def test_a_deploy_refused_for_a_missing_vpc_binding_writes_a_receipt_with_no_mode(
+    tmp_path: Path,
+) -> None:
+    values = resolved("deploy", ODP_CLOUD_RUN_VPC_CONNECTOR="")
+    for name in VPC_BINDING_MODES["direct_vpc"]:
+        values[name] = ""
+    code, receipt = _run(
+        tmp_path,
+        values,
+        "--scope",
+        "deploy",
+        "--environment",
+        "production",
+        "--github-environment",
+        "production",
+    )
+    assert code == 1
+    assert receipt["admitted"] is False
+    # Every unconditional variable resolved; the refusal is the binding alone.
+    assert receipt["missing_variables"] == []
+    assert receipt["vpc_binding"]["mode"] is None
+    assert any("二擇一" in blocker for blocker in receipt["blockers_zh_tw"])
+    assert "網路綁定" in receipt["summary_zh_tw"]
+
+
+def test_a_build_receipt_carries_no_vpc_binding_section(tmp_path: Path) -> None:
+    code, receipt = _run(
+        tmp_path,
+        resolved("build"),
+        "--scope",
+        "build",
+        "--environment",
+        "production",
+        "--github-environment",
+        "production-build",
+    )
+    assert code == 0
+    assert receipt["vpc_binding"] is None
+    assert "ODP_CLOUD_RUN_VPC_CONNECTOR" not in receipt["variables_resolved"]
+
+
+# --------------------------------------------------------------------------
+# Staging scope storage boundary validation
+# --------------------------------------------------------------------------
+
+
+def test_staging_scope_requires_foundation_variables_including_recovery_bundle_bucket() -> None:
+    required = required_variables("staging")
+    assert "ODP_STAGING_TERRAFORM_STATE_BUCKET" in required
+    assert "ODP_STAGING_RECOVERY_BUNDLE_BUCKET" in required
+    assert "ODP_STAGING_KMS_KEY_ID" in required
+    assert "ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT" in required
+
+
+def test_staging_scope_fails_closed_when_recovery_and_state_buckets_are_identical() -> None:
+    errors = errors_for(
+        "staging",
+        environment="staging",
+        github_environment="staging",
+        values=resolved(
+            "staging",
+            ODP_STAGING_TERRAFORM_STATE_BUCKET="odayplus-staging-bucket",
+            ODP_STAGING_RECOVERY_BUNDLE_BUCKET="odayplus-staging-bucket",
+        ),
+    )
+    assert errors
+    joined = "\n".join(errors)
+    assert "ODP_STAGING_RECOVERY_BUNDLE_BUCKET" in joined
+    assert "ODP_STAGING_TERRAFORM_STATE_BUCKET" in joined
+    assert "不得與" in joined
+    assert "相同" in joined
+
+
+@pytest.mark.parametrize("placeholder", ["placeholder", "changeme", "dummy", "todo", "PLACEHOLDER"])
+def test_staging_scope_fails_closed_on_placeholder_recovery_bucket(placeholder: str) -> None:
+    errors = errors_for(
+        "staging",
+        environment="staging",
+        github_environment="staging",
+        values=resolved(
+            "staging",
+            ODP_STAGING_TERRAFORM_STATE_BUCKET="odayplus-staging-state-bucket",
+            ODP_STAGING_RECOVERY_BUNDLE_BUCKET=placeholder,
+        ),
+    )
+    assert errors
+    joined = "\n".join(errors)
+    assert "placeholder" in joined or "佔位值" in joined
+
+
+def test_staging_scope_admits_distinct_valid_buckets() -> None:
+    errors = errors_for(
+        "staging",
+        environment="staging",
+        github_environment="staging",
+        values=resolved(
+            "staging",
+            ODP_STAGING_TERRAFORM_STATE_BUCKET="odayplus-staging-state-bucket",
+            ODP_STAGING_RECOVERY_BUNDLE_BUCKET="odayplus-staging-recovery-bucket",
+        ),
+    )
+    assert errors == []
+
+
+def test_staging_scope_refusal_receipt_redacts_identical_bucket_values(tmp_path: Path) -> None:
+    secret_bucket = "secret-staging-shared-bucket-name-999"
+    values = resolved(
+        "staging",
+        ODP_STAGING_TERRAFORM_STATE_BUCKET=secret_bucket,
+        ODP_STAGING_RECOVERY_BUNDLE_BUCKET=secret_bucket,
+    )
+    code, receipt = _run(
+        tmp_path,
+        values,
+        "--scope",
+        "staging",
+        "--environment",
+        "staging",
+        "--github-environment",
+        "staging",
+        "--release-sha",
+        SHA,
+        "--task-id",
+        "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
+    )
+    assert code == 1
+    assert receipt["admitted"] is False
+    assert receipt["secret_values_redacted"] is True
+    assert receipt["blockers_zh_tw"]
+
+    # Presence-only guarantee: raw bucket values must never appear in the serialized receipt.
+    serialized = json.dumps(receipt, ensure_ascii=False)
+    assert secret_bucket not in serialized
+    for name, value in values.items():
+        if name == "ODP_CLOUD_RUN_VPC_EGRESS":
+            continue
+        assert value not in serialized
+
+
+def test_staging_scope_refusal_receipt_redacts_placeholder_bucket_values(tmp_path: Path) -> None:
+    secret_state_bucket = "secret-staging-state-bucket-only-888"
+    placeholder_val = "changeme"
+    values = resolved(
+        "staging",
+        ODP_STAGING_TERRAFORM_STATE_BUCKET=secret_state_bucket,
+        ODP_STAGING_RECOVERY_BUNDLE_BUCKET=placeholder_val,
+    )
+    code, receipt = _run(
+        tmp_path,
+        values,
+        "--scope",
+        "staging",
+        "--environment",
+        "staging",
+        "--github-environment",
+        "staging",
+        "--release-sha",
+        SHA,
+        "--task-id",
+        "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
+    )
+    assert code == 1
+    assert receipt["admitted"] is False
+    assert receipt["secret_values_redacted"] is True
+    assert receipt["blockers_zh_tw"]
+
+    serialized = json.dumps(receipt, ensure_ascii=False)
+    assert secret_state_bucket not in serialized
+    assert placeholder_val not in serialized
+    assert "佔位值" in receipt["blockers_zh_tw"][0]
+

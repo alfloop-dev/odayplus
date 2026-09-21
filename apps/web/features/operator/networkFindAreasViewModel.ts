@@ -36,7 +36,7 @@ export type NetworkFindAreasZoneViewModel = {
   cannibalizationScore: number;
   rentBand: string;
   rentScore: number;
-  confidence: number;
+  confidence: number | null;
   confidenceLabel: string;
   trafficScore: number;
   trafficLabel: string;
@@ -192,6 +192,8 @@ export type RebalanceQueueRow = {
   avmP50?: number;
   avmP90?: number;
   avmConf?: string;
+  avmQualityScoreStatus?: string;
+  avmQualityDisposition?: string;
   avmReserve?: string;
   avmModelVersion?: string;
   avmSnapshotId?: string;
@@ -441,7 +443,12 @@ export function buildNetworkFindAreasViewModel({
     selectedZone,
     siteScoreLab,
     totals: {
-      averageConfidence: formatPercent(average(zoneModels.map((zone) => zone.confidence))),
+      averageConfidence: (() => {
+        const measured = zoneModels
+          .map((zone) => zone.confidence)
+          .filter((c): c is number => c !== null);
+        return measured.length > 0 ? formatPercent(average(measured)) : "未評估";
+      })(),
       candidates: candidates.length,
       heatZones: zoneModels.length,
       listings: listings.length,
@@ -553,7 +560,7 @@ function buildSiteScoreLab(candidates: Candidate[], zoneLabelById: Map<string, s
     });
 }
 
-const COMPARE_METRICS: Array<{ key: string; label: string; pick: (zone: NetworkFindAreasZoneViewModel) => number }> = [
+const COMPARE_METRICS: Array<{ key: string; label: string; pick: (zone: NetworkFindAreasZoneViewModel) => number | null }> = [
   { key: "demand", label: "Demand Gap", pick: (zone) => zone.demandGap },
   { key: "fit", label: "Brand Fit", pick: (zone) => zone.fitScore },
   { key: "competition", label: "Competition (low better)", pick: (zone) => 1 - zone.competitionIndex },
@@ -573,15 +580,19 @@ function buildCompareViewModel(rankedZones: NetworkFindAreasZoneViewModel[]): Ne
   }));
 
   const metrics: CompareMetricRow[] = COMPARE_METRICS.map((metric) => {
-    const raw = rankedZones.map((zone) => ({ value: clamp01(metric.pick(zone)), zoneId: zone.id }));
-    const maxValue = raw.reduce((max, entry) => Math.max(max, entry.value), 0);
+    const raw = rankedZones.map((zone) => {
+      const val = metric.pick(zone);
+      return { value: val == null ? null : clamp01(val), zoneId: zone.id };
+    });
+    const validValues = raw.map((r) => r.value).filter((v): v is number => v !== null);
+    const maxValue = validValues.length > 0 ? validValues.reduce((max, entry) => Math.max(max, entry), 0) : 0;
     return {
       key: metric.key,
       label: metric.label,
       values: raw.map((entry) => ({
-        isLeader: rankedZones.length > 1 && entry.value === maxValue && maxValue > 0,
-        label: formatPercent(entry.value),
-        value: entry.value,
+        isLeader: rankedZones.length > 1 && entry.value !== null && entry.value === maxValue && maxValue > 0,
+        label: entry.value !== null ? formatPercent(entry.value) : "未評估",
+        value: entry.value ?? 0,
         zoneId: entry.zoneId,
       })),
     };
@@ -656,6 +667,8 @@ function buildRebalanceQueue(rebalanceStores: RebalanceStore[]): RebalanceQueueR
     avmP50: typeof store.avmP50 === "number" ? store.avmP50 : undefined,
     avmP90: typeof store.avmP90 === "number" ? store.avmP90 : undefined,
     avmConf: store.avmConf,
+    avmQualityScoreStatus: store.avmQualityScoreStatus,
+    avmQualityDisposition: store.avmQualityDisposition,
     avmReserve: store.avmReserve,
     netPlanScenarios: store.netPlanScenarios,
   }));
@@ -691,7 +704,8 @@ function buildZoneViewModel({
   const cannibalizationWeight = RISK_WEIGHT[zone.cannibalizationRisk] ?? RISK_WEIGHT.medium;
   const cannibalizationScore = clamp01(1 - cannibalizationWeight);
   const rentScore = rentOpportunityScore(zone.rentBand, minRent, maxRent);
-  const confidence = clamp01(zone.confidence);
+  const confidence = zone.confidence !== null && zone.confidence !== undefined ? clamp01(zone.confidence) : null;
+  const effectiveConfidence = confidence ?? 0;
   const trafficScore = deterministicScore(`${zone.id}:traffic`, 0.52, 0.95);
   const lifeScore = deterministicScore(`${zone.id}:life`, 0.48, 0.9);
   const unmetScore = clamp01(demandGap * (1 - competitionIndex * 0.42));
@@ -701,12 +715,12 @@ function buildZoneViewModel({
       cannibalizationScore * 0.16 +
       rentScore * 0.12 +
       trafficScore * 0.12 +
-      confidence * 0.1,
+      effectiveConfidence * 0.1,
   );
   const lensScore = lensValue(activeLens, {
     cannibalizationScore,
     competitionScore: 1 - competitionIndex,
-    confidence,
+    confidence: effectiveConfidence,
     demandGap,
     fitScore,
     lifeScore,
@@ -730,7 +744,7 @@ function buildZoneViewModel({
     competitionIndex,
     competitionLabel: formatPercent(competitionIndex),
     confidence,
-    confidenceLabel: formatPercent(confidence),
+    confidenceLabel: confidence !== null ? formatPercent(confidence) : "未評估",
     demandGap,
     demandLabel: formatPercent(demandGap),
     fitLabel: formatPercent(fitScore),

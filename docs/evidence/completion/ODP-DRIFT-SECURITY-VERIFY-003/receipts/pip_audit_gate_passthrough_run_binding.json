@@ -1,0 +1,140 @@
+{
+  "code_tree_matches_commit_throughout": true,
+  "collected_outputs": [],
+  "command": [
+    "uv",
+    "run",
+    "--frozen",
+    "python3",
+    "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/tools/pip_audit_gate_passthrough.py"
+  ],
+  "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-drift-security-verify-003",
+  "duration_seconds": 4.453,
+  "exit_code": 0,
+  "exit_code_source": "child process returncode",
+  "finished_at_utc": "2026-09-08T02:43:16.059623+00:00",
+  "input_trees": [],
+  "inputs": [
+    {
+      "bytes": 19916,
+      "exists": true,
+      "path": "delivery_toolchain/security/pip_audit_gate.py",
+      "sha256": "7116063f67c6c8310e2d165787f934a9eea4642fcd3d968a657afb51182a7c64"
+    },
+    {
+      "bytes": 888830,
+      "exists": true,
+      "path": "uv.lock",
+      "sha256": "ba5c393e49538e4da9e59de001cffc28c4cadfab8aebacf6dbf1503eb3a49a5d"
+    },
+    {
+      "bytes": 3296,
+      "exists": true,
+      "path": "pyproject.toml",
+      "sha256": "130f024b80d55f439aa5467f4f469bb127aec955ef71444d2951a93d0f5d0391"
+    }
+  ],
+  "label": "pip_audit_gate_passthrough",
+  "outputs": [
+    {
+      "bytes": 74,
+      "exists": true,
+      "path": "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_stdout.txt",
+      "sha256": "9f364760f972e0b2bf612fabe8b5d9c39905adce14a24a91f470799f8b214927"
+    },
+    {
+      "bytes": 0,
+      "exists": true,
+      "path": "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_stderr.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 2,
+      "exists": true,
+      "path": "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_exit_code.txt",
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "bytes": 2994,
+      "exists": true,
+      "path": "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_capture.json",
+      "sha256": "1e7dbcea2a84bee3097122af77aa6b2307952aaa75b64a8878e6a0055fbe7196"
+    },
+    {
+      "bytes": 12357,
+      "exists": true,
+      "path": "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_attempt1_stdout.json",
+      "sha256": "f32d534e0612b51171bc2b83c5d051acf9ee1e6a5ea44b50a044434962c21cd9"
+    },
+    {
+      "bytes": 31,
+      "exists": true,
+      "path": "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_attempt1_stderr.txt",
+      "sha256": "15950a68a7ed99c59779717acefdceb3f69cfd31bde67d2c954f2a3cea4d7955"
+    }
+  ],
+  "purpose": "Re-run the merged PR #1188 pip_audit_gate through a pass-through recorder so the per-package advisory payload it judged is preserved (reopen #3 item 1).",
+  "recorded_by": "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/tools/bound_run.py",
+  "repo_state_after": {
+    "code_tree_matches_commit": true,
+    "deviations_outside_receipts": [],
+    "head_sha": "d6514b049996747aba378a9380851f98594c12af",
+    "head_subject": "ODP-DRIFT-SECURITY-VERIFY-003: sharpen provenance tool checks",
+    "porcelain": "?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_exit_code.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_report.json\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_run_binding.json\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_stderr.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_stdout.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_exit_code.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_junit.xml\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_run_binding.json\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_stderr.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_stdout.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_attempt1_stderr.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_attempt1_stdout.json\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_capture.json\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_exit_code.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_run_binding.json\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_stderr.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_stdout.txt\n",
+    "tracked_files_modified": [],
+    "untracked_files": [
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_exit_code.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_report.json",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_run_binding.json",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_stderr.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_stdout.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_exit_code.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_junit.xml",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_run_binding.json",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_stderr.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_stdout.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_attempt1_stderr.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_attempt1_stdout.json",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_capture.json",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_exit_code.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_run_binding.json",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_stderr.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_stdout.txt"
+    ],
+    "worktree_clean": false
+  },
+  "repo_state_before": {
+    "code_tree_matches_commit": true,
+    "deviations_outside_receipts": [],
+    "head_sha": "d6514b049996747aba378a9380851f98594c12af",
+    "head_subject": "ODP-DRIFT-SECURITY-VERIFY-003: sharpen provenance tool checks",
+    "porcelain": "?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_exit_code.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_report.json\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_run_binding.json\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_stderr.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_stdout.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_exit_code.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_junit.xml\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_run_binding.json\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_stderr.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_stdout.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_attempt1_stderr.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_attempt1_stdout.json\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_capture.json\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_exit_code.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_run_binding.json\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_stderr.txt\n?? docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_stdout.txt\n",
+    "tracked_files_modified": [],
+    "untracked_files": [
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_exit_code.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_report.json",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_run_binding.json",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_stderr.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/audit_scope_crosscheck_stdout.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_exit_code.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_junit.xml",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_run_binding.json",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_stderr.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/baseline_equivalence_bound_stdout.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_attempt1_stderr.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_attempt1_stdout.json",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_child_capture.json",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_exit_code.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_run_binding.json",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_stderr.txt",
+      "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/pip_audit_gate_passthrough_stdout.txt"
+    ],
+    "worktree_clean": false
+  },
+  "run_sha": "d6514b049996747aba378a9380851f98594c12af",
+  "run_sha_stable": true,
+  "started_at_utc": "2026-09-08T02:43:11.606590+00:00",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stdout_sha256": "9f364760f972e0b2bf612fabe8b5d9c39905adce14a24a91f470799f8b214927",
+  "worktree_clean_throughout": false
+}

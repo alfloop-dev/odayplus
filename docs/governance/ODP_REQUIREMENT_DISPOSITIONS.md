@@ -131,39 +131,66 @@ stateDiagram-v2
   現行採用商圈內開店數上限（`max_open_per_dilution_zone`）作為稀釋約束。完整的門市配對稀釋形式需引入 $O(n^2)$ 輔助變數，且配對稀釋係數本身帶有實質不確定性，對其過度優化屬於製造假精度。投資於 `ODP-FR-HZ-004` 熱區吸收率的真實量測是更優路徑。
 
 #### 成員：`LEASE`（租約條件限制）
-- **處置狀態**：`BLOCKED_BY_EVIDENCE`（待 Batch 0 確認資料源）
-- **待確認證據 (Evidence Needed)**: 租約檔期與解約金懲罰條件之資料源是否存在於上游系統。
-- **證據負責人 (Evidence Owner)**: `Data Operations Lead`
+- **處置狀態**：`BLOCKED_BY_EVIDENCE`（已確認實作方向 D18；A 階段工程準備已交付；等待 H05 真實租約資料）
+- **Formal Handback Ref**: `docs/evidence/ODP_NET002_LEASE_DISPOSITION_2026-09-03.md#2-人類授權移交單human-authority-handback-package`
+- **Evidence Request Ref**: `docs/evidence/ODP_NET002_LEASE_DATA_READINESS_2026-09-03.md#六決策記錄與重啟觸發條件-disposition--reopen-triggers`
+- **Handback Package ID**: `HB-NET002-LEASE-001`
+- **2026-09-08 人工決策更新 (Decision D18)**:
+  使用者確認選擇「選項 A：實作／補齊租約契約」，不刪除需求、不建立 Waiver。
+- **A 階段交付成果 (Stage 32A)**:
+  `ODP-NET002-LEASE-CONTRACT-PREP-001` (PR [#1256](https://github.com/alfloop-dev/odayplus/pull/1256)，Approved HEAD `d70563166e344e2d560ea7cac2eb236ddd118892`，已合併入 `dev`)，交付目錄：[`docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/`](../evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/)。
+  包含 `lease-contract-draft.json`、`field-dictionary.md`、`solver-acceptance-matrix.md`、`human-input-request-H05.md` 與 `implementation-handoff.md`。
+- **待確認證據 (Evidence Needed / H05 請求)**: 門市租約合約主檔（`core.store_leases` 或 CLM 系統，含 `lease_expiry_date`、解約金公式與續約權）及具備生產新鮮度保證與簽約截止日之候選新址 Feed 生產者。
+- **證據／風險負責人 (Evidence & Risk Owner)**: `Store Operations Lead / Real Estate Finance Lead / Data Platform Lead`
 - **下次檢視日期 (Next Review Date)**: `2026-10-01`
-- **理由 (Rationale)**: 待 Batch 0 確認資料源後，決定轉為實作或正式申請 Waiver。
+- **B 階段接續實作任務 (Stage 32B)**: `ODP-NET002-LEASE-IMPLEMENTATION-001`（目前處於 `blocked`，待收到 H05 授權匯出資料後入場）。
+- **重啟條件 (Reopen Trigger)**:
+  1. 企業建立或導入門市租約合約主檔 (`core.store_leases`)，提供每家門市之 `lease_expiry_date`、解約違約金公式與續約狀態。
+  2. 建立具備生產新鮮度保證之候選新址 Feed 生產者（如完成 `listing.partner_feed` 簽約配置），並擴展資料模型納入簽約截止日 (`signing_deadline`) 與免租裝潢期。
+  3. 財務與法務部門建立門市提前解約違約金與 MOVE 雙側檔期重疊試算服務 (`LeaseAdmissibilityChecker`) 並通過生產驗證。
+- **裁決理由 (Rationale)**:
+  Batch 0 查證確認生產系統無門市合約檔（`core.stores` 無 lease 到期日、解約金、續約權），候選新址雖有 `expansion.listings` Schema 定義，但外部來源受策略與安全閘門限制僅能人工單筆進件，`partner_feed` 未簽約配置，無任何自動化生產管線與新鮮度保證，且簽約截止日與租期條件完全缺失。
+  若在無資料情況下強行實作限制，只能依賴常數或將 `None` 當作 `0.0`，將製造裝飾性限制並導致誤將關店視為零成本之重大決策風險。因此維持 `ConstraintClass.LEASE` 於 `unmodelled_constraint_classes`，以誠實宣告替代虛構限制，向 `Human/Ops` 與 `Architecture Board` 提交移交單 `HB-NET002-LEASE-001`，並依 D18 完成 A 階段契約與驗收矩陣準備。
 
 ---
 
 ### 4.2 `ODP-FR-SITE-001`：SiteScore 需求因子
 
 #### 成員：`BRAND_TRANSFER`（品牌移轉）
-- **處置狀態**：`BLOCKED_BY_EVIDENCE`（已移交人類治理授權）
+- **處置狀態**：`BLOCKED_BY_EVIDENCE`（已確認實作方向 D16；A 階段工程準備已交付；等待 H03 真實跨品牌資料）
 - **Formal Handback Ref**: `docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md#2-member-1brand-transfer既有品牌客群移轉處置`
 - **Evidence Request Ref**: `docs/evidence/ODP_SITE001_DATA_READINESS_2026-09-03.md#34-待查證需求單evidence-request`（`ER-SITE001-BRAND-TRANSFER-001`）
 - **Handback Package ID**: `HB-SITE001-BRAND-TRANSFER-001`
-- **待確認證據 (Evidence Needed)**: 外部會員跨店消費數據/市調發票面板數據接入協議、資料綱要與特徵提取規格。
+- **2026-09-08 人工決策更新 (Decision D16)**:
+  使用者確認選擇「選項 A：實作／補齊真實資料與契約」，不刪除需求、不建立 Waiver。
+- **A 階段交付成果 (Stage 30A)**:
+  `ODP-BRAND-TRANSFER-CONTRACT-PREP-001` (PR [#1254](https://github.com/alfloop-dev/odayplus/pull/1254)，Approved HEAD `961225f63afc462cd55e474eda7fc4b0e300faa9`，已合併入 `dev`)，交付目錄：[`docs/evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/`](../evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/)。
+  包含 `contract-draft.json`、`field-dictionary.md`、`source-consumer-map.json`、`human-input-request-H03.md` 與 `implementation-handoff.md`。
+- **待確認證據 (Evidence Needed / H03 請求)**: 外部會員跨店消費數據/市調發票面板數據接入協議、資料綱要與特徵提取規格。
 - **證據／風險負責人 (Evidence & Risk Owner)**: `Market Intelligence Lead / Commercial Strategy Lead`
 - **下次檢視日期 (Next Review Date)**: `2026-10-01`
+- **B 階段接續實作任務 (Stage 30B)**: `ODP-BRAND-TRANSFER-IMPLEMENTATION-001`（目前處於 `blocked`，待收到 H03 真實資料後入場）。
 - **重啟條件 (Reopen Trigger)**: 外部消費者面板數據源或跨品牌 POS 會員數據庫正式簽約並接入 raw data platform，具備可驗證之生產 SLA 與特徵規格。
 - **裁決理由 (Rationale)**:
-  Repo 內僅有 `core.brands` 靜態代碼主檔；`brand_transfer_view.sql` 僅為基於笛卡兒積的 mock 視圖（`transfer_ratio = 0.15`），無真實生產者與消費路徑。為避免注入裝飾性固定常數與偽造假精度，拒絕將合成視圖接進生產評分模型。已建立人類授權移交單提報至 `Human/Ops`、`Architecture Board` 與 `Commercial Strategy Lead`，待資料源確立後轉為 `IMPLEMENTATION_READY` 或由人類授權人簽署正式修訂／豁免。
+  Repo 內僅有 `core.brands` 靜態代碼主檔；`brand_transfer_view.sql` 僅為基於笛卡兒積的 mock 視圖（`transfer_ratio = 0.15`），無真實生產者與消費路徑。為避免注入裝飾性固定常數與偽造假精度，拒絕將合成視圖接進生產評分模型。已建立人類授權移交單提報至 `Human/Ops`、`Architecture Board` 與 `Commercial Strategy Lead`，並依 D16 完成 A 階段契約草案與資料字典準備。
 
 #### 成員：`FORMAT_CONVERSION`（店型轉換）
-- **處置狀態**：`BLOCKED_BY_EVIDENCE`（已移交人類治理授權）
+- **處置狀態**：`BLOCKED_BY_EVIDENCE`（已確認實作方向 D17；A 階段工程準備已交付；等待 H04 真實轉型事件與財務定義）
 - **Formal Handback Ref**: `docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md#3-member-2format-conversion店型轉換業務事件處置`
 - **Evidence Request Ref**: `docs/evidence/ODP_SITE001_DATA_READINESS_2026-09-03.md#44-待查證需求單evidence-request`（`ER-SITE001-FORMAT-CONVERSION-001`）
 - **Handback Package ID**: `HB-SITE001-FORMAT-CONVERSION-001`
-- **待確認證據 (Evidence Needed)**: 門市營運端之既有店型改裝轉型（Brownfield Conversion）標準作業手冊（Playbook）、停業期營收折損與改裝財務模型參數。
+- **2026-09-08 人工決策更新 (Decision D17)**:
+  使用者確認選擇「選項 A：實作／補齊真實資料與流程」，不刪除需求、不建立 Waiver。
+- **A 階段交付成果 (Stage 31A)**:
+  `ODP-FORMAT-CONVERSION-CONTRACT-PREP-001` (PR [#1252](https://github.com/alfloop-dev/odayplus/pull/1252)，Approved HEAD `a64b26c4b11a8cc8d3170eda9dd9e970ff4538d3`，已合併入 `dev`)，交付目錄：[`docs/evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/`](../evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/)。
+  包含 `event-contract-draft.json`、`field-dictionary.md`、`source-consumer-map.json`、`human-input-request-H04.md` 與 `implementation-handoff.md`。
+- **待確認證據 (Evidence Needed / H04 請求)**: 門市營運端之既有店型改裝轉型（Brownfield Conversion）標準作業手冊（Playbook）、停業期營收折損與改裝財務模型參數。
 - **證據／風險負責人 (Evidence & Risk Owner)**: `Retail Operations Lead / Site Economics Lead`
 - **下次檢視日期 (Next Review Date)**: `2026-10-01`
+- **B 階段接續實作任務 (Stage 31B)**: `ODP-FORMAT-CONVERSION-IMPLEMENTATION-001`（目前處於 `blocked`，待收到 H04 轉型事件與財務參數後入場）。
 - **重啟條件 (Reopen Trigger)**: 門市營運端正式核准 Brownfield 店型改裝轉型作業規範與改裝成本/停業損失排程，且資料庫完成 `core.store_format_conversions` 轉型履歷表之 schema migration。
 - **裁決理由 (Rationale)**:
-  PostgreSQL（`000001`）與 SQLite（`000004`）Schema 僅存靜態 `store_format_code`，無改裝轉型歷程表；`TargetFormatRegistry` 僅依坪數推薦新設店型（選型非轉型）；`simulator.py` 僅模擬 Greenfield 新店經濟效益，無 Brownfield 停業損失與設備殘值折抵邏輯。已明確排除房源流轉與證據等級遷移註記等非店型語境假陽性。已建立人類授權移交單提報至 `Human/Ops`、`Architecture Board` 與 `Retail Operations Lead`，待業務規範與財務參數確立後轉為 `IMPLEMENTATION_READY` 或由人類授權人簽署正式修訂／豁免。
+  PostgreSQL（`000001`）與 SQLite（`000004`）Schema 僅存靜態 `store_format_code`，無改裝轉型歷程表；`TargetFormatRegistry` 僅依坪數推薦新設店型（選型非轉型）；`simulator.py` 僅模擬 Greenfield 新店經濟效益，無 Brownfield 停業損失與設備殘值折抵邏輯。已明確排除房源流轉與證據等級遷移註記等非店型語境假陽性。已建立人類授權移交單提報至 `Human/Ops`、`Architecture Board` 與 `Retail Operations Lead`，並依 D17 完成 A 階段事件契約與來源地圖準備。
 
 ---
 
@@ -181,23 +208,45 @@ stateDiagram-v2
 ### 4.4 `ODP-FR-INTV-006`：介入處置生命週期
 
 #### 成員：`ADJUST`（調整中途狀態）
-- **處置狀態**：`OPEN`
-- **負責人 (Assigned To)**: `Intervention Workflow Lead`
-- **下次檢視日期 (Next Review Date)**: `2026-10-01`
-- **理由 (Rationale)**: AdLift 目前採 Continue/Scale/Stop/Change_Channel 詞彙；評估是否需增加 Adjust 或維持關聯重建。
+- **處置狀態**：`BLOCKED_BY_EVIDENCE`（已交付 stop-plus-recreate 技術準備與 durable lineage 實作；待門市營運實務確認或正式業務決策）
+- **Evidence Needed**: 依據 `docs/plans/ODP_OPEN_DECISIONS_2026-09-03.md` 項目 16，需確認門市營運端目前針對進行中介入之實際調整做法（直接就地調整或停舊開新），並由業務權責人做成具備適用範圍與日期之正式業務決策。
+- **Evidence Owner**: Operations Lead / Product Lead
+- **Next Review Date**: 2026-10-01
+- **實作證據 (Evidence)**:
+  - `modules/intervention/application/workflow.py::InterventionWorkflow.adjust_case`
+  - `modules/intervention/infrastructure/repositories.py::InMemoryInterventionRepository`
+  - `shared/infrastructure/persistence/repositories.py::DurableInterventionRepository`
+  - `infra/db/migrations/000004_durable_product_domain.sql`
+  - `infra/db/migrations/000025_intervention_adjust_lineage.sql`
+- **驗證證據 (Verification Evidence)**:
+  - `tests/integration/test_intervention_workflow.py`（涵蓋 production-entry API、storage CAS、concurrent barrier、SQLite commit failure rollback、pre-upgrade relational backfill、explicit rollback plan consistency）
+  - `tests/integration/test_official_real_estate_postgresql.py`（涵蓋 PostgreSQL 雙引擎受控交錯、API 409 STALE_UPDATE_CONFLICT、雙向 lineage 一致性與 audit 斷言）
+- **理由 (Rationale)**: 依循 ODP Remediation Plan 之工程條件建議實作具 lineage 之 stop-plus-recreate replacement/adjust action，停止前置介入並建立繼承/調整之新介入案例，具備 predecessor_id、replacement_id 與 adjustment_json 之 durable lineage，保留原介入參數、理由、actor、policy version 與 rollback plan；未誤用 AdLift Change Channel 詞彙；透過 storage-level CAS、row lock、RLock 與引擎級 transaction 提供 API、In-Memory、SQLite 與 PostgreSQL 交易原子性、並行衝突拒絕（STALE_UPDATE_CONFLICT）、回滾一致性與既有 document 資料庫升級 backfill 保證。
+- **實務決策缺口說明 (Open Decision Gap)**: 依據 `docs/plans/ODP_OPEN_DECISIONS_2026-09-03.md` 項目 16（「先問實務：現在要調整的介入人是怎麼做的」）與 `docs/plans/ODP_REMEDIATION_PLAN_2026-09-03.md` 第 247 行（「若是『停掉再開一個』，可能只需要把兩者關聯記下來」），目前僅有工程條件建議，尚無可追溯之門市營運實務確認或正式業務決策（缺乏正式決策人、決策日期、適用門市/介入範圍與可追溯來源證據）。在取得正式實務確認前，此實作係作為條件建議之技術準備，誠實記錄 open decision gap，不虛構決策人、日期或來源，亦不將條件建議改述為已獲確認之現行門市營運實務。
 
 ---
 
 ### 4.5 `ODP-FR-SHARED-001`：工作狀態回報
 
 #### 成員：`PARTIAL`（部分成功狀態）
-- **處置狀態**：`BLOCKED_BY_EVIDENCE`（自 `OPEN` 轉入；靜態 producer 查證已完成）
-- **前一狀態 (Previous State)**: `OPEN`
-- **待確認證據 (Evidence Needed)**: 兩項，都不是讀 code 能回答的。(1) live production queue／scheduler／worker receipt inventory，用來判定已部署的 job 是否曾回報過 `JobStatus.PARTIAL`；repo trace 只能證明「沒有任何程式路徑會寫入」。(2) 產品裁決：現存的 partial-shaped command outcome（批次 intake 的 207 逐列 receipt、XLSX 部分 commit、external ingestion 的 accepted／quarantined counts）是否應升格為帶 member receipt 與 member retry contract 的 durable job。
-- **證據負責人 (Evidence Owner)**: `Platform Infrastructure Lead`
+- **處置狀態**：`BLOCKED_BY_EVIDENCE`（已確認實作方向 D19；A 階段工程準備已交付；前置 PR #1280 審查中；等待 H06 業務 job 選定）
+- **Formal Handback Ref**: `docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md#3-人類授權移交單human-authority-handback-package`
+- **Evidence Request Ref**: `docs/evidence/ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md`
+- **Handback Package ID**: `HB-SHARED001-PARTIAL-001`
+- **2026-09-08 人工決策更新 (Decision D19)**:
+  使用者確認選擇「選項 A：實作 partial／receipt／retry」，不刪除需求、不建立 Waiver。
+- **A 階段交付成果 (Stage 33A)**:
+  `ODP-DURABLE-PARTIAL-CONTRACT-PREP-001` (PR [#1257](https://github.com/alfloop-dev/odayplus/pull/1257)，Approved HEAD `57019d8d94ab1df9111046061b4be04190dce7bf`，已合併入 `dev`)，交付目錄：[`docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/`](../evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/)。
+  包含 `producer-inventory.json`、`partial-retry-contract-draft.json`、`human-input-request-H06.md` 與 `implementation-handoff.md`。
+- **前置佇列修復 (Prerequisite Task)**:
+  `ODP-JOB-DELIVERY-STATE-CLEAR-001` (PR #1280 · review)，修復 `PARTIAL`/`CANCELLED` 終態清除 `delivery_state` 之寫入語意。
+- **待確認證據 (Evidence Needed / H06 請求)**: 兩項非代碼庫可獨立判定之證據。(1) live production queue／scheduler／worker receipt inventory；(2) 產品裁決：核定至少一項業務長任務（工程推薦 `batch-listing-intake`）採用 PARTIAL 與成員重試契約。
+- **證據／風險負責人 (Evidence & Risk Owner)**: `Platform Infrastructure Lead`
 - **下次檢視日期 (Next Review Date)**: `2026-10-01`
-- **證據文件 (Evidence Ref)**: [`docs/evidence/ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md`](../evidence/ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md)
-- **理由 (Rationale)**: `JobStatus` 詞彙已納入 `PARTIAL`，但系統中尚未有會產出部分成功狀態的長任務；不強行假實作。`ODP-JOB-PARTIAL-PRODUCER-EVIDENCE-001` 走完 default registry（`forecast`、`external-fetch`、`assisted-listing-intake`）與所有 module worker entry point，皆無 `JobStatus.PARTIAL` write，因此「缺口是否存在」這一題已經關閉；為了把六個成員湊滿而硬接任一 command receipt，正是本閘要防的假實作。
+- **B 階段接續實作任務 (Stage 33B)**: `ODP-DURABLE-PARTIAL-IMPL-001`（目前處於 `blocked`，待收到 H06 業務 job 選定後入場）。
+- **重啟條件 (Reopen Trigger)**: (1) Production worker registry 新增具備可達 `JobStatus.PARTIAL` 狀態轉移之多工作項目批次任務 handler；或 (2) 同步指令操作（批次房源寫入/外部資料攝取）正式排程昇格為具備成員明細收據與成員級重試契約之 durable jobs；或 (3) 線上執行期隊列/worker 審計日誌出現回報 `PARTIAL` 之部署任務。
+- **裁決理由 (Rationale)**:
+  `JobStatus` 詞彙與 `JobDeliveryState` 交付狀態已完成型別分離，但代碼庫中現行 default worker registry 與所有模組 worker entry points 皆無任何寫入 `JobStatus.PARTIAL` 的生產者。批次房源 207 收據、XLSX commit 與外部資料攝取隔離計數皆屬同步指令或資料層品質標記，而非隊列任務成果；隊列的 `RETRYING` 與 `DEAD_LETTER` 亦屬傳遞狀態而非業務成果。嚴禁為湊齊成員而進行偽實作。已建立結構化人類授權移交單提報至 `Human/Ops`、`Architecture Board` 與 `Platform Infrastructure Lead`，並依 D19 完成 A 階段明細收據與重試契約準備。
 
 ---
 
@@ -236,18 +285,22 @@ stateDiagram-v2
   `machine_status_event` 契約宣告了 `integration_mode: event_stream` 與 `envelope: event`，但在生產環境中 `core.machine_status_events` 係透過 `SourceKind.DEVICE_LOG` 走批次水位線落地。目前全樹無事件 Broker / Stream Consumer 生產者。待架構與平台團隊評估補建生產者或修訂契約 taxonomy。
 
 #### 成員：`CDC`（異動資料擷取）
-- **處置狀態**：`OPEN`（不適用；維持 absent 並提交人類治理修訂/豁免 Handback）
+- **處置狀態**：`OPEN`（已確認實作方向 D20；A 階段工程準備已交付；跟進任務派發中；Stage 34B 等待 H07 串流來源確認）
 - **負責人 (Assigned To)**: `Data Platform Lead`
 - **下次檢視日期 (Next Review Date)**: `2026-10-01`
 - **正式移交文件 (Formal Handback Ref)**: `docs/evidence/ODP_INT001_CDC_DISPOSITION_2026-09-03.md`
+- **2026-09-08 人工決策更新 (Decision D20)**:
+  使用者確認選擇「選項 A：實作／補齊 CDC 適用性與契約」，不刪除需求、不建立 Waiver。
+- **A 階段交付成果 (Stage 34A)**:
+  `ODP-CDC-SOURCE-CONTRACT-PREP-001` (PR [#1258](https://github.com/alfloop-dev/odayplus/pull/1258)，Approved HEAD `ec3a218805ff1ccbd176262c3c76d70a62034eac`，已合併入 `dev`)，交付目錄：[`docs/evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/`](../evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/)。
+  包含 `source-applicability-matrix.json`、`event-contract-draft.json`、`human-input-request-H07.md` 與 `implementation-handoff.md`。
+- **獨立跟進任務 (Follow-up Tasks)**:
+  - `ODP-DATA-PLANE-DELETE-PROPAGATION-001`: 資料落地層刪除與墓碑傳播引擎 (`todo`)。
+  - `ODP-SCHEMA-STORE-OPENING-AUTHORITY-001`: 補齊 `store_opening_authority_snapshot` 來源契約 (`todo`)。
+  - `ODP-DATA-CATALOG-METADATA-ALIGNMENT-001`: 來源契約表達 Data Owner 與延遲 SLA (`todo`)。
+- **B 階段接續實作任務 (Stage 34B)**: `ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001`（目前處於 `blocked`，待收到 H07 確認候選來源如 orders/device_log 後入場）。
 - **處置依據與查證結論**:
-  依 `docs/evidence/ODP_INT001_CDC_SOURCE_EVIDENCE_2026-09-03.md` 與 `docs/evidence/ODP_INT001_CDC_DISPOSITION_2026-09-03.md` 之查證：
-  1. **無真實上游需求**：唯一內部來源為 MongoDB `fongniao_prod`，外部來源均為快照。無任何生產上游需要 Change Stream / oplog 讀取。
-  2. **延遲與排程已匹配**：下游資產為日粒度（DailyPartitions），上游已有 15 分鐘 Sensor 輪詢，無 sub-15m 延遲需求。
-  3. **順序性與冪等保證**：透過 deterministic `_id` cursor 與基於 content hash 之冪等鍵達成，不依賴 CDC 全域變更順序。
-  4. **下游無刪除傳播路徑**：上游實體刪除無法由 CDC 解決（因 PostgreSQL 落地層皆為 upsert，無 delete / tombstone 路徑）。
-  5. **憑證邊界收斂**：Change Stream 需擴大資料庫權限至 cluster 級別，未經安全核准前嚴格 fail-closed。
-  6. **AI 禁止自簽 Waiver**：依本政策 §3.2，AI 代理人嚴禁自簽豁免。本項目維持 `absent` 索引並將處置 Handback 提交人類治理負責人（`Data Platform Lead` / `Human/Ops`），待正式 Amendment / Waiver 裁決後再行更新。
+  依 `docs/evidence/ODP_INT001_CDC_SOURCE_EVIDENCE_2026-09-03.md` 與 `docs/evidence/ODP_INT001_CDC_DISPOSITION_2026-09-03.md` 之查證，全樹 15 個內部集合中僅 `orders` 與 `device_log` 具近即時 CDC 串流價值，外部來源均為快照。依 D20 完成 A 階段契約與 21 個來源適用性評估，建立資料落地層刪除修補任務，並於 H07 請求中向架構與業務方確認目標來源與 SLA。
 ### 4.8 `ODP-FR-FCT-004`：ForecastOps 預測特徵與根因契約
 
 #### 成員：`ROOT_CAUSE_CANDIDATE`（根因候選）
@@ -259,6 +312,29 @@ stateDiagram-v2
   `WorkOrder.root_cause`、`RootCauseEvidenceCardContract.causeCandidate` 與資料庫欄位，並在各契約明確標示為 `RESERVED (unproduced)`；不得製造裝飾性 Heuristic 假生產者。
 - **裁決狀態 (Decision Status)**:
   `ODP_OPEN_DECISIONS_2026-09-03.md` § 8 仍為 `OPEN`。本項是已具備 owner／target phase 的工程實作準備，不是本任務代替人類治理角色建立 Waiver 或 Requirement Amendment。
+
+---
+
+### 4.9 `ODP-FR-AVM-001`：AVM 估值組成
+
+#### 成員：`DEPRECIATION`（資產折舊）
+- **處置狀態**：`IMPLEMENTATION_READY`
+- **負責人 (Assigned To)**: `AVM Domain Lead / Finance Analytics Lead`
+- **目標交付批次 (Target Phase)**: `Batch 1 (ODP Remediation Plan) — AVM 估值`
+- **契約文件 (Contract Ref)**: [`docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md`](../design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md)
+- **處置證據 (Evidence Ref)**: [`docs/evidence/ODP_AVM001_DEPRECIATION_DISPOSITION_2026-09-04.md`](../evidence/ODP_AVM001_DEPRECIATION_DISPOSITION_2026-09-04.md)
+- **驗收標準 (Acceptance Criteria)**: `modules/avm/tests/test_avm_depreciation_contract.py` 的八條 `xfail(strict=True)` 契約規格（C-1 基數判別、C-2 輸入欄位、C-3 直線折舊計算、C-4 evidence 與版本欄位、C-5 缺席 fail-closed、L-1／L-2 舊估值卡、L-4 校準分版本、R-1 逐位元回滾）。`strict=True` 使實作落地後這些規格會以 XPASS 判紅，強迫實作者回來移除標記——本狀態因此帶有機械式到期機制。
+- **工程處置 (Engineering Disposition)**:
+  修復計畫第 1 批要求先回答「AVM 資產折舊與 `site_economics` 門市現金流折舊是否同一概念」。判定為**不是**，四項證據：被量測的對象不同（format catalog 的全新機型組合 vs. 已使用 N 個月的特定門市設備）、輸出去向不同（稅盾，從未調低任何資產帳面價值 vs. 直接進 asset lens）、時鐘原點相反（開店月往後 vs. 投入使用日往回）、殘值語意不同（期末退場現金流入 vs. 折舊下限）。因此採 **AVM-specific model**，且**連直線折舊純函式都不抽出共用**——為三行算式建立 `modules/avm` → `modules/site_economics` 依賴，換到的是「兩邊折舊政策一致」的假象。要對齊的是參數（`useful_life_months` 與 `residual_value_ratio` 的 catalog 假設），不是程式碼。
+- **為何不是其他狀態**:
+  - 不是 `VERIFIED`：`modules/avm` 內沒有任何折舊計算，且依 §3.1 `absent` 不得冒充 `VERIFIED`。
+  - 不是 `DECIDED`：沒有任何人類裁決「不納入折舊」。要通過 `DECIDED` 閘就必須編造 `decider`，正是 §3.2 禁止的 AI 自簽豁免。本處置不攜帶任何法定裁決欄位。
+  - 不是 `BLOCKED_BY_EVIDENCE`：判定已做出、驗收標準已可執行，實作現在就能開始。欠的是工，不是證據——把它記成阻塞會讓一份寫完的契約看起來像在等別人。
+- **仍屬人類治理、本次不代簽**:
+  1. 契約 R-4 的三個回滾門檻（數值／結構／校準）由財務 owner 填入，**門檻未填不得 cutover**；
+  2. `ODP-FR-AVM-001` 的 canonical 需求 bytes 依 [`ODP_SPEC_SOURCE_PROVENANCE_2026-09-03.md`](../evidence/ODP_SPEC_SOURCE_PROVENANCE_2026-09-03.md) 仍為 `BLOCKED_BY_EVIDENCE`，manifest `_source_provenance` 已記錄。本處置只宣稱「依目前轉錄內容」成立。
+- **轉為 `VERIFIED` 的條件**: 八條 xfail 標記被實作而非改寫地移除且全數通過、`status` 轉為 `satisfied` 且 `evidence` 指向可解析符號、R-4 門檻已填。
+- **回歸測試**: `tests/governance/test_avm001_disposition.py`（含三條負向測試：冒充 `VERIFIED`、AI 簽署的 `DECIDED`、移除 `disposition` 區塊，checker 均須拒絕）。
 
 ---
 

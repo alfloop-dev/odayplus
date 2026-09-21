@@ -1,0 +1,12 @@
+{
+  "case_id": "failure_prediction_reference_cohort_mismatch",
+  "description": "A reference row belongs to a cohort other than the requested one.",
+  "failure": {
+    "exception_message": "reference row 0 has cohort_key outside the requested cohort",
+    "exception_module": "builtins",
+    "exception_type": "ValueError"
+  },
+  "kind": "prediction_drift",
+  "outcome": "raised",
+  "routing_expectation": "_validate_prediction_rows guard"
+}

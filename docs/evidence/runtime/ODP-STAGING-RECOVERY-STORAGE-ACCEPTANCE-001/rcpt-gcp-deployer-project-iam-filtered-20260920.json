@@ -1,0 +1,25 @@
+{
+  "receipt_id": "RCPT-GCP-DEPLOYER-PROJECT-IAM-FILTERED-20260920",
+  "name": "admin-project-iam-filtered-deployer",
+  "started_at_utc": "2026-09-20T06:54:11.284050+00:00",
+  "duration_seconds": 2.476,
+  "command": "gcloud --quiet --account=admin@dev.cctech-support.com projects get-iam-policy odayplus-runtime-20260825 --format=json",
+  "exit_code": 0,
+  "deployer_principal": "serviceAccount:github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+  "observed_deployer_project_roles": [
+    "roles/cloudscheduler.admin",
+    "roles/cloudsql.client",
+    "roles/run.admin",
+    "roles/serviceusage.serviceUsageConsumer"
+  ],
+  "prohibited_roles_absent": [
+    "roles/storage.admin",
+    "roles/owner",
+    "roles/editor"
+  ],
+  "no_direct_storage_admin_in_observed_project_or_bucket_policy": true,
+  "source_path": "/tmp/odp-recovery-readback-audit-20260920/post-login/admin-project-iam.json",
+  "source_sha256": "1fb2807a89bd8a5917406ad3bc8e07bfd7178db917eb9ca992e3be2ecaa9b0bc",
+  "filter_note": "Filtered derivative containing only deployer SA project-level IAM bindings and confirming absence of storage.admin/owner/editor; unrelated project principals omitted for redaction.",
+  "scope": "read-only IAM metadata supplemental after admin login; no IAM mutation or credential contents"
+}

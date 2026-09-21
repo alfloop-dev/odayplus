@@ -2,6 +2,7 @@
   "name": "@oday-plus/schemas",
   "version": "0.1.0",
   "private": true,
+  "license": "UNLICENSED",
   "main": "src/index.ts",
   "scripts": {},
   "dependencies": {},

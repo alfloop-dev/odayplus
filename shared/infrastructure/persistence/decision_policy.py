@@ -9,6 +9,13 @@ from typing import Any
 
 from shared.governance import DecisionPolicy
 
+_POLICY_COLUMNS = (
+    "policy_version_id, policy_label, policy_id, policy_version, "
+    "policy_kind, tenant_id, effective_from, effective_to, "
+    "change_reason, rollback_policy_version, parameters, "
+    "declared_inputs, approved_by, owner_role"
+)
+
 
 class SqlDecisionPolicyRepository:
     """Resolve policies from the canonical PostgreSQL registry.
@@ -47,30 +54,54 @@ class SqlDecisionPolicyRepository:
         )
         if row is None:
             return None
-        return DecisionPolicy(
-            policy_version_id=str(row["policy_version_id"]),
-            policy_label=str(row["policy_label"]),
-            policy_id=str(row["policy_id"]),
-            policy_version=str(row["policy_version"]),
-            policy_kind=str(row["policy_kind"]),
-            tenant_id=str(row["tenant_id"]),
-            effective_from=_parse_datetime(row["effective_from"]),
-            effective_to=(
-                _parse_datetime(row["effective_to"])
-                if row.get("effective_to") is not None
-                else None
-            ),
-            parameters=_parse_parameters(row["parameters"]),
-            declared_inputs=_parse_declared_inputs(row["declared_inputs"]),
-            change_reason=str(row.get("change_reason") or ""),
-            rollback_policy_version=(
-                str(row["rollback_policy_version"])
-                if row.get("rollback_policy_version") is not None
-                else None
-            ),
-            approved_by=str(row.get("approved_by") or ""),
-            owner_role=str(row.get("owner_role") or ""),
+        return _row_to_policy(row)
+
+    def find_version(self, policy_version_id: str) -> DecisionPolicy | None:
+        normalized = str(policy_version_id or "").strip()
+        if not normalized:
+            return None
+        row = self._engine.query_one(
+            """
+            SELECT policy_version_id, policy_label, policy_id, policy_version,
+                   policy_kind, tenant_id, effective_from, effective_to,
+                   change_reason, rollback_policy_version, parameters,
+                   declared_inputs, approved_by, owner_role
+            FROM workflow.decision_policies
+            WHERE policy_version_id = ?
+            LIMIT 1
+            """,
+            (normalized,),
         )
+        if row is None:
+            return None
+        return _row_to_policy(row)
+
+
+def _row_to_policy(row: Any) -> DecisionPolicy:
+    return DecisionPolicy(
+        policy_version_id=str(row["policy_version_id"]),
+        policy_label=str(row["policy_label"]),
+        policy_id=str(row["policy_id"]),
+        policy_version=str(row["policy_version"]),
+        policy_kind=str(row["policy_kind"]),
+        tenant_id=str(row["tenant_id"]),
+        effective_from=_parse_datetime(row["effective_from"]),
+        effective_to=(
+            _parse_datetime(row["effective_to"])
+            if row["effective_to"] is not None
+            else None
+        ),
+        parameters=_parse_parameters(row["parameters"]),
+        declared_inputs=_parse_declared_inputs(row["declared_inputs"]),
+        change_reason=str(row["change_reason"] or ""),
+        rollback_policy_version=(
+            str(row["rollback_policy_version"])
+            if row["rollback_policy_version"] is not None
+            else None
+        ),
+        approved_by=str(row["approved_by"] or ""),
+        owner_role=str(row["owner_role"] or ""),
+    )
 
 
 def _parse_datetime(value: Any) -> datetime:

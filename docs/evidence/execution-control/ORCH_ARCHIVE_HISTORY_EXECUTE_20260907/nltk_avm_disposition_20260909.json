@@ -1,0 +1,207 @@
+{
+  "measured_at": "2026-09-09T00:21:02Z",
+  "nltk_final_verification": {
+    "question": "驗收要求「NLTK 最終驗證可派送與否明列」。",
+    "answer": "NOT_DISPATCHABLE_BECAUSE_ALREADY_DONE（不是被擋住）。",
+    "task_id": "ODP-DRIFT-SECURITY-VERIFY-003",
+    "task_title": "驗證原生監控與 NLTK 移除的最終安全證據",
+    "terminal_status": "done",
+    "terminal_outcome": "completed",
+    "archived_at": "2026-09-08T04:55:07Z",
+    "pr": "https://github.com/alfloop-dev/odayplus/pull/1241",
+    "approved_head": "15bb7a6bd527285a202f0b8f3601ab2884aca67d",
+    "merged_into_dev_at_commit": "961934d7",
+    "on_live_board": false,
+    "why_not_dispatchable": "它已是終局任務、不在 active board 上，因此結構上不可能被派送。這與 apply 無關：2026-09-08T00:52:15Z Codex 用 dependency_update 將懸空的 ODP-DRIFT-DEP-REMOVE-002 邊移除（依當時 live 查核 PR #1222 已 MERGED），該任務隨即在 04:55:07Z 收尾，早於 23:56 的 apply 約 19 小時。",
+    "residual_nltk_work_on_board": "本輪在 live board 逐筆掃描 nltk 字樣，只有 ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002 命中，而該命中是 candidate gate 路徑清單裡的 tests/security/test_nltk_dependency_removal.py 檔名，不是待辦的 NLTK 處置工作；該任務本身 blocked 於 Human/Ops（6 次 reviewer reopen 後升級），與 NLTK 無關。",
+    "not_claimed": "本收據不宣稱 NLTK 相關的上游供應鏈稽核門檻已全部通過，也不宣稱 PR #1188 的 pip-audit gate 已解；只陳述「NLTK 最終驗證任務」這一件事的可派送狀態。"
+  },
+  "avm_human_only_review_churn": {
+    "question": "驗收要求 AVM 的 Human-only review-churn continuation 獨立保留。",
+    "task_id": "ODP-AVM-QUALITY-NULLABLE-001",
+    "status": "blocked",
+    "waiting_for": "Human/Ops",
+    "review_reopen_count": 11,
+    "what_the_apply_changed": "只有依賴閘：唯一依賴 ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001 由 missing 變成 archive 解析的 done，dependencies_satisfied 由 false 變 true。",
+    "what_the_apply_did_not_change": "status 仍是 blocked、waiting_for 仍是 Human/Ops、review_reopen_count 仍是 11、blocked_task_auto_recovery_eligible 仍是 false（task_is_human_gate 對 waiting_for=Human/Ops 直接否決）。本任務未對 AVM 做任何狀態寫入，也未宣稱 churn 已解除。",
+    "measured_evidence": "dependency_release_analysis_20260908_post_apply.json 的 BEFORE/AFTER dependency_detail 與 blocked_auto_recovery_eligible_true（兩情境皆為空集合）。"
+  },
+  "independent_reverification_of_named_entries": {
+    "measured_at": "2026-09-09T00:21:02Z",
+    "method": "對驗收特別點名的兩筆重建記錄，用 gh 對 GitHub 重新獨立量測，不引用重建記錄自帶的欄位；再與磁碟上的重建記錄逐欄比對。",
+    "entries": [
+      {
+        "task_id": "ODP-DRIFT-DEP-REMOVE-002",
+        "live_measurement": {
+          "pull_request": {
+            "headRefOid": "6d438486c8645e476fcf86b5f675a5ca20592b9d",
+            "mergeCommit": {
+              "oid": "66244b30c2615dcad8373e03fff096e298d21e98"
+            },
+            "mergedAt": "2026-09-06T05:56:17Z",
+            "number": 1222,
+            "state": "MERGED",
+            "title": "[ReviewBus] ODP-DRIFT-DEP-REMOVE-002 原子切換原生監控並移除 Evidently／NLTK 生產依賴"
+          },
+          "commit_status": {
+            "state": "success",
+            "task_review_gate": [
+              {
+                "description": "Approved by assigned reviewer Antigravity4",
+                "state": "success",
+                "updated_at": "2026-09-06T05:31:36Z"
+              }
+            ]
+          },
+          "check_runs": {
+            "conclusions": {
+              "success": 7
+            },
+            "total": 7
+          }
+        },
+        "record_on_disk": {
+          "terminal_status": "done",
+          "record_kind": "reconstructed_done",
+          "evidence_tier": "reconstructable_done",
+          "gaps": [],
+          "historical_actors": {
+            "owner": "UNKNOWN-HISTORICAL",
+            "reviewer": "UNKNOWN-HISTORICAL",
+            "human_go": "UNKNOWN-HISTORICAL"
+          },
+          "claimed_head_oid": "6d438486c8645e476fcf86b5f675a5ca20592b9d",
+          "claimed_merge_commit": "66244b30c2615dcad8373e03fff096e298d21e98",
+          "claimed_ci": {
+            "success": 7
+          },
+          "claimed_approval": {
+            "head_sha": "6d438486c8645e476fcf86b5f675a5ca20592b9d",
+            "state": "success",
+            "updated_at": "2026-09-06T05:31:36Z",
+            "description": "Approved by assigned reviewer Antigravity4",
+            "approver_named_in_gate": "Antigravity4",
+            "approver_differs_from_owner": true
+          },
+          "acceptance_confidence": "medium",
+          "disclosed_gaps": [
+            "盤點觀察：宣告 artifact tests/models/evidently_baseline_support.py 在 merge commit 與其第一父皆不存在；該 artifact 條目與實際交付不符（疑為改名或未建立）。",
+            "盤點觀察：Acceptance 第 7 條明文本 task 不能代替 PR1188 的 approval/merge，該部分本質上在此任務範圍外。"
+          ]
+        },
+        "agreement": {
+          "pr_state_merged": true,
+          "head_oid_matches_record": true,
+          "merge_commit_matches_record": true,
+          "ci_matches_record": true,
+          "review_gate_state_matches": true,
+          "review_gate_reviewer_matches": true,
+          "reviewer_differs_from_recorded_owner": true
+        }
+      },
+      {
+        "task_id": "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+        "live_measurement": {
+          "pull_request": {
+            "headRefOid": "0585dd49976ebf269248067d4adfd56e278157ae",
+            "mergeCommit": {
+              "oid": "eed8d51bb8a18c677baa25ab30a536cc576ae5fe"
+            },
+            "mergedAt": "2026-09-05T16:07:23Z",
+            "number": 1170,
+            "state": "MERGED",
+            "title": "[ReviewBus] ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001 依 HZ-004 實績契約實作 heat-zone merge／split"
+          },
+          "commit_status": {
+            "state": "success",
+            "task_review_gate": [
+              {
+                "description": "Approved by assigned reviewer Claude",
+                "state": "success",
+                "updated_at": "2026-09-05T15:43:12Z"
+              }
+            ]
+          },
+          "check_runs": {
+            "conclusions": {
+              "success": 7
+            },
+            "total": 7
+          }
+        },
+        "record_on_disk": {
+          "terminal_status": "done",
+          "record_kind": "reconstructed_done",
+          "evidence_tier": "reconstructable_done",
+          "gaps": [],
+          "historical_actors": {
+            "owner": "UNKNOWN-HISTORICAL",
+            "reviewer": "UNKNOWN-HISTORICAL",
+            "human_go": "UNKNOWN-HISTORICAL"
+          },
+          "claimed_head_oid": "0585dd49976ebf269248067d4adfd56e278157ae",
+          "claimed_merge_commit": "eed8d51bb8a18c677baa25ab30a536cc576ae5fe",
+          "claimed_ci": {
+            "success": 7
+          },
+          "claimed_approval": {
+            "head_sha": "0585dd49976ebf269248067d4adfd56e278157ae",
+            "state": "success",
+            "updated_at": "2026-09-05T15:43:12Z",
+            "description": "Approved by assigned reviewer Claude",
+            "approver_named_in_gate": "Claude",
+            "approver_differs_from_owner": true
+          },
+          "acceptance_confidence": "high",
+          "disclosed_gaps": [
+            "盤點觀察：Acceptance『Operator approval 的 production-entry 測試通過』屬測試語意，本盤點未重跑測試，僅依精確 head 的 7/7 CI success。",
+            "第 4 輪補查（結論不變）：A2／A4 的測試檔帶 requires_live_env 標記，被 product job 主 step 的 marker 運算式排除，但由同 job 的資料庫 step 與具名 PostgreSQL 16 step 跑回來，已補上 step 層綁定。"
+          ]
+        },
+        "agreement": {
+          "pr_state_merged": true,
+          "head_oid_matches_record": true,
+          "merge_commit_matches_record": true,
+          "ci_matches_record": true,
+          "review_gate_state_matches": true,
+          "review_gate_reviewer_matches": true,
+          "reviewer_differs_from_recorded_owner": true
+        }
+      }
+    ]
+  },
+  "dependency_edge_tally": {
+    "BEFORE": {
+      "edges": 70,
+      "by_status": {
+        "blocked": 6,
+        "done": 14,
+        "missing": 43,
+        "todo": 7
+      },
+      "tasks_with_dangling_edges": [
+        "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+        "HUMAN-OSS-LEGAL-APPROVAL-001",
+        "ODP-AVM-DEPRECIATION-INTEGRATION-001",
+        "ODP-AVM-QUALITY-NULLABLE-001",
+        "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+        "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+        "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+        "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+        "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+        "ODP-ROLE-PROVIDER-CODEX-LIVE-ROLLOUT-001",
+        "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001"
+      ]
+    },
+    "AFTER": {
+      "edges": 70,
+      "by_status": {
+        "blocked": 24,
+        "done": 39,
+        "todo": 7
+      },
+      "tasks_with_dangling_edges": []
+    },
+    "interpretation": "懸空邊由 43 降到 0（14→39 解析為 done、6→24 解析為 blocked），11 個帶懸空邊的任務降到 0。但這不是成功判準：blocked 佔位對依賴閘與 missing 等價，真正的判準是「新變成可派送的任務名單」，本次為 0（見 dependency_release_analysis）。"
+  }
+}

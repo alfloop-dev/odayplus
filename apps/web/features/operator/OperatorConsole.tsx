@@ -173,6 +173,7 @@ const commandPageTargets: Array<{ href: string; keywords: string[]; subtitle: st
   { title: "任務中心", subtitle: "個人與團隊待辦", href: "/operator", keywords: ["tasks", "todo"] },
   { title: "全域搜尋", subtitle: "門市、候選點、決策、模型版本", href: "/operator", keywords: ["search"] },
   { title: "營運監控", subtitle: "四燈、預測帶與根因證據", href: "/operator?ws=store", keywords: ["operations"] },
+  { title: "空間治理", subtitle: "HeatZone 合併／拆分提案審批與 Lineage", href: "/operator?ws=network&tab=composition", keywords: ["composition", "merge", "split", "heatzone", "lineage"] },
   { title: "展店選址", subtitle: "HeatZone、Listing、SiteScore", href: "/operator?ws=network", keywords: ["expansion"] },
   { title: "干預決策", subtitle: "干預建議與觀察窗", href: "/operator?ws=store", keywords: ["interventions"] },
   { title: "定價", subtitle: "調價方案與保護線", href: "/operator?ws=growth", keywords: ["pricing"] },

@@ -3,17 +3,33 @@ from __future__ import annotations
 """Worker failure policy helpers extracted from legacy supervisor."""
 # ruff: noqa: F401,F821,F841,I001
 
+import json
+import os
+from pathlib import Path
+import re
+import signal
+from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
 
 from adapters.base import DeliveryRequest
 from common import (
     claude_model_selection_args,
+    load_json,
     parse_iso_timestamp,
     spawn_background_process,
     substantive_review_reopen_count,
 )
-from provider_runtime import configured_provider_binary
+from dispatch_policy import (
+    ROLE_HELPER,
+    ROLE_OWNER,
+    ROLE_REVIEWER,
+    dispatch_reason_role,
+    role_provider_block_reason,
+)
+from dispatch_policy import DEFAULT_FROZEN_CLOSEOUT_STATUSES, task_closeout_is_frozen, task_submitted_author
+from dispatch_policy import agent_provider_identity_ids as dispatch_policy_agent_provider_identity_ids
+from provider_runtime import configured_provider_binary, provider_config_entry
 import status_transition
 
 
@@ -28,7 +44,18 @@ def _sync_supervisor_scope() -> None:
     excluded = {
         "__name__", "__doc__", "__package__", "__loader__", "__spec__", "__file__", "__cached__", "__builtins__",
         "Any", "_supervisor_module", "_sync_supervisor_scope", "_entrypoint", "_sync_scope_guard", "status_transition",
-        "claude_model_selection_args", "configured_provider_binary", "spawn_background_process",
+        "claude_model_selection_args", "configured_provider_binary", "provider_config_entry", "spawn_background_process",
+        # The role/provider policy is a leaf that both this module and the
+        # supervisor import from `dispatch_policy`. Listing the names keeps this
+        # module's own bindings authoritative rather than depending on the two
+        # copies happening to be the same object.
+        "ROLE_HELPER", "ROLE_OWNER", "ROLE_REVIEWER", "dispatch_reason_role",
+        "role_provider_block_reason", "dispatch_policy_agent_provider_identity_ids",
+        "task_closeout_is_frozen", "DEFAULT_FROZEN_CLOSEOUT_STATUSES", "task_submitted_author",
+        "worker_writer_pids", "worker_writers_are_alive", "terminate_worker_writers",
+        "_settle_fenced_sibling_worker", "fence_account_pool_workers",
+        "BACKGROUND_TASK_TERMINATED_PATTERN", "worker_has_terminated_background_tasks",
+        "is_interrupted_failure_kind",
     }
     module_exports = {
         "__all__",
@@ -77,6 +104,126 @@ def _has_runner_signal(value: Any) -> bool:
     return value != 0
 
 
+BACKGROUND_TASK_TERMINATED_PATTERN = re.compile(
+    r"^terminating [1-9]\d* background task\(s\) on exit$",
+    re.IGNORECASE,
+)
+
+
+@_entrypoint
+def is_captured_orchestrator_record(payload: dict[str, Any]) -> bool:
+    if payload.get("event_id") or payload.get("event_key"):
+        return True
+    if payload.get("queue_event_id") or payload.get("worker_run_id"):
+        return True
+    if payload.get("target_agent") or payload.get("target_display_name"):
+        return True
+    if isinstance(payload.get("metadata"), dict) and isinstance(payload.get("context_files"), list):
+        return True
+    return False
+
+
+@_entrypoint
+def is_allowed_rate_limit_event(payload: dict[str, Any]) -> bool:
+    if payload.get("type") != "rate_limit_event":
+        return False
+    info = payload.get("rate_limit_info")
+    if not isinstance(info, dict):
+        return False
+    return str(info.get("status") or "").strip().lower() == "allowed"
+
+
+@_entrypoint
+def is_tool_command_output_failure_line(lines: list[str], idx: int) -> bool:
+    for prev_idx in range(idx - 1, max(idx - 5, -1), -1):
+        previous = lines[prev_idx].strip()
+        if not previous:
+            continue
+        return bool(COMMAND_OUTPUT_EXIT_LINE_PATTERN.search(previous))
+    return False
+
+
+def _is_authoritative_log_line(lines: list[str], idx: int) -> tuple[bool, str]:
+    """Return (True, stripped_line) only for authoritative CLI/system lines, ignoring quotations and fixtures."""
+    line = lines[idx]
+    stripped = line.strip()
+    if not stripped:
+        return False, ""
+    if '"ts":' in stripped and '"type":' in stripped:
+        return False, ""
+    try:
+        stream_payload = json.loads(stripped)
+    except json.JSONDecodeError:
+        stream_payload = None
+    if isinstance(stream_payload, dict):
+        # agy stream events carry tool stdout and assistant prose as nested
+        # data. Only a failed session result is provider failure authority.
+        if stream_payload.get("event") in {"init", "step_update", "result"}:
+            result = stream_payload.get("result")
+            if (
+                stream_payload.get("event") == "result"
+                and isinstance(result, dict)
+                and str(result.get("status") or "").upper() in {"ERROR", "FAILED"}
+            ):
+                error = result.get("error")
+                if isinstance(error, str) and error.strip():
+                    return True, "Error: " + error.strip()
+                return True, "Error: agy session failed without a diagnostic"
+            return False, ""
+        if is_captured_orchestrator_record(stream_payload):
+            return False, ""
+        if is_allowed_rate_limit_event(stream_payload):
+            return False, ""
+        message = stream_payload.get("message")
+        role = message.get("role") if isinstance(message, dict) else None
+        if stream_payload.get("type") == "user" or role == "user":
+            return False, ""
+    if SEARCH_RESULT_JSON_FIELD_PATTERN.search(stripped):
+        return False, ""
+    if JSON_FIELD_LINE_PATTERN.search(stripped):
+        return False, ""
+    if SEARCH_RESULT_LOG_JSON_PATTERN.search(stripped):
+        return False, ""
+    if is_tool_command_output_failure_line(lines, idx):
+        return False, ""
+    if any(pattern.search(stripped) for pattern in WORKER_FAILURE_FALSE_POSITIVE_PATTERNS):
+        return False, ""
+    return True, stripped
+
+
+@_entrypoint
+def worker_has_terminated_background_tasks(worker: dict[str, Any] | None) -> bool:
+    """Return whether the authoritative worker CLI log recorded background task termination on exit."""
+    if not isinstance(worker, dict):
+        return False
+    provider = str(worker.get("provider") or worker.get("agent_id") or "").lower()
+    if provider and not provider.startswith("antigravity"):
+        return False
+    metadata = worker.get("metadata") if isinstance(worker.get("metadata"), dict) else {}
+    marker_path = worker.get("runner_status_path") or metadata.get("runner_status_path")
+    if marker_path:
+        session = _load_runtime_marker(str(marker_path) + ".agy.json")
+        if isinstance(session, dict) and session.get("transport") == "agy_stream_json":
+            return session.get("status") == "interrupted"
+    log_path_value = worker.get("log_path")
+    if not log_path_value:
+        return False
+    log_path = Path(log_path_value)
+    if not log_path.exists():
+        return False
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return False
+    for idx in range(len(lines) - 1, -1, -1):
+        is_auth, stripped = _is_authoritative_log_line(lines, idx)
+        if not is_auth:
+            continue
+        if BACKGROUND_TASK_TERMINATED_PATTERN.search(stripped):
+            return True
+    return False
+
+
 @_entrypoint
 def worker_was_terminated(worker: dict[str, Any] | None) -> bool:
     """Return whether the runner recorded an operator/signal termination.
@@ -121,6 +268,8 @@ def is_structured_successful_worker(worker: dict[str, Any] | None) -> bool:
     postcondition transition.
     """
     if not isinstance(worker, dict) or worker_was_terminated(worker):
+        return False
+    if worker_has_terminated_background_tasks(worker):
         return False
     runner_status = str(worker.get("runner_status") or "").strip().lower()
     if runner_status in {"completed", "success", "succeeded"}:
@@ -190,6 +339,8 @@ def worker_log_scan_should_be_skipped(worker: dict[str, Any] | None) -> bool:
         return False
     if worker_was_terminated(worker):
         return True
+    if worker_has_terminated_background_tasks(worker):
+        return False
     if _has_explicit_failure_evidence(worker):
         return False
     if is_structured_successful_worker(worker):
@@ -204,6 +355,8 @@ def worker_log_scan_should_be_skipped(worker: dict[str, Any] | None) -> bool:
 def detect_worker_failure(worker: dict[str, Any]) -> str | None:
     if worker_log_scan_should_be_skipped(worker):
         return None
+    if worker_has_terminated_background_tasks(worker):
+        return "agy background lifecycle interrupted: command cancelled or terminal result missing"
     log_path_value = worker.get("log_path")
     if not log_path_value:
         return None
@@ -217,34 +370,8 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
 
     fallback: str | None = None
     for idx in range(len(lines) - 1, -1, -1):
-        line = lines[idx]
-        stripped = line.strip()
-        if not stripped:
-            continue
-        if '"ts":' in stripped and '"type":' in stripped:
-            continue
-        try:
-            stream_payload = json.loads(stripped)
-        except json.JSONDecodeError:
-            stream_payload = None
-        if isinstance(stream_payload, dict):
-            if is_captured_orchestrator_record(stream_payload):
-                continue
-            if is_allowed_rate_limit_event(stream_payload):
-                continue
-            message = stream_payload.get("message")
-            role = message.get("role") if isinstance(message, dict) else None
-            if stream_payload.get("type") == "user" or role == "user":
-                continue
-        if SEARCH_RESULT_JSON_FIELD_PATTERN.search(stripped):
-            continue
-        if JSON_FIELD_LINE_PATTERN.search(stripped):
-            continue
-        if SEARCH_RESULT_LOG_JSON_PATTERN.search(stripped):
-            continue
-        if is_tool_command_output_failure_line(lines, idx):
-            continue
-        if any(pattern.search(stripped) for pattern in WORKER_FAILURE_FALSE_POSITIVE_PATTERNS):
+        is_auth, stripped = _is_authoritative_log_line(lines, idx)
+        if not is_auth:
             continue
         if any(pattern.search(stripped) for pattern in WORKER_FAILURE_PATTERNS):
             normalized = stripped.lower()
@@ -258,36 +385,6 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
                 continue
             return stripped
     return fallback
-
-@_entrypoint
-def is_captured_orchestrator_record(payload: dict[str, Any]) -> bool:
-    if payload.get("event_id") or payload.get("event_key"):
-        return True
-    if payload.get("queue_event_id") or payload.get("worker_run_id"):
-        return True
-    if payload.get("target_agent") or payload.get("target_display_name"):
-        return True
-    if isinstance(payload.get("metadata"), dict) and isinstance(payload.get("context_files"), list):
-        return True
-    return False
-
-@_entrypoint
-def is_allowed_rate_limit_event(payload: dict[str, Any]) -> bool:
-    if payload.get("type") != "rate_limit_event":
-        return False
-    info = payload.get("rate_limit_info")
-    if not isinstance(info, dict):
-        return False
-    return str(info.get("status") or "").strip().lower() == "allowed"
-
-@_entrypoint
-def is_tool_command_output_failure_line(lines: list[str], idx: int) -> bool:
-    for prev_idx in range(idx - 1, max(idx - 5, -1), -1):
-        previous = lines[prev_idx].strip()
-        if not previous:
-            continue
-        return bool(COMMAND_OUTPUT_EXIT_LINE_PATTERN.search(previous))
-    return False
 
 @_entrypoint
 def is_antigravity_provider(config: dict[str, Any] | None, provider: str | None) -> bool:
@@ -411,6 +508,8 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         return {"kind": "provider_config", "transient": False, "label": "provider config"}
     if any(marker in normalized for marker in auth_markers):
         return {"kind": "auth", "transient": False, "label": "auth"}
+    if normalized.startswith("agy background lifecycle interrupted:") or BACKGROUND_TASK_TERMINATED_PATTERN.fullmatch(normalized):
+        return {"kind": "interrupted", "transient": True, "label": "background task terminated on exit"}
     if is_antigravity_quota_banner(config, provider, reason):
         return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
     if is_claude_session_limit_banner(config, provider, reason):
@@ -756,7 +855,48 @@ def mark_account_pool_cooldown(
     )
     if not same_failure:
         entry["generation"] = int(previous.get("generation", 0) or 0) + 1
-    bucket[pool_id] = entry
+    persisted_worker = _lookup_worker_record(state, worker_run_id) or {}
+    current_auth = configured_account_pool_auth_hash(config, pool_id, execution_id)
+    auth_identity_hash = (
+        (worker or {}).get("auth_identity_hash")
+        or persisted_worker.get("auth_identity_hash")
+        or current_auth
+    )
+    if auth_identity_hash:
+        entry["auth_identity_hash"] = auth_identity_hash
+        # Fence any sibling pools sharing the same auth identity
+        for other_id, other_entry in bucket.items():
+            if other_id == pool_id or not isinstance(other_entry, dict):
+                continue
+            other_auth = other_entry.get("auth_identity_hash")
+            if not other_auth:
+                other_auth = configured_account_pool_auth_hash(config, other_id)
+                if other_auth:
+                    other_entry["auth_identity_hash"] = other_auth
+            if other_auth == auth_identity_hash:
+                other_state = str(other_entry.get("state") or "").lower()
+                if other_state in {"recovering", "healthy"}:
+                    other_entry.update(
+                        {
+                            "state": "cooldown",
+                            "effective_concurrency": 0,
+                            "reason": entry.get("reason") or failure_kind,
+                            "failure_kind": failure_kind,
+                            "last_failure_at": entry["last_failure_at"],
+                            "next_probe_at": chosen_until.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                            "last_worker_run_id": worker_run_id or None,
+                            "generation": entry["generation"],
+                        }
+                    )
+    # A late failure belongs to its dispatched identity. Preserve a pool
+    # already rebound to another account; matching old-account siblings above
+    # still receive the failure fence.
+    if (
+        not current_auth
+        or not auth_identity_hash
+        or current_auth == auth_identity_hash
+    ):
+        bucket[pool_id] = entry
     if not same_failure:
         write_activity_log(
             config,
@@ -781,19 +921,106 @@ def record_account_pool_canary_success(config: dict[str, Any], state: dict[str, 
     entry = _account_pool_runtime_bucket(state).get(pool_id)
     if not pool_id or not isinstance(entry, dict) or str(entry.get("state") or "") != "recovering":
         return False
+
+    run_id = str(worker.get("run_id") or "")
+    persisted_worker = (state.get("workers") or {}).get(run_id) if run_id and isinstance(state.get("workers"), dict) else None
+    effective_worker = persisted_worker if isinstance(persisted_worker, dict) else worker
+
+    recovery_epochs = effective_worker.get("dispatched_recovery_epochs")
+    if isinstance(recovery_epochs, dict) and recovery_epochs.get(pool_id) != account_pool_recovery_epoch(entry):
+        return False
+
+    # Validate recovery generation / admission:
+    # A worker dispatched when pool was healthy or in an earlier recovery generation cannot certify current recovery.
+    worker_rec_gen = effective_worker.get("recovery_generation")
+    pool_gen = entry.get("generation")
+    if worker_rec_gen is not None and pool_gen is not None:
+        if int(worker_rec_gen) < int(pool_gen):
+            return False
+    elif persisted_worker is not None and pool_gen is not None and int(pool_gen) > 0:
+        if effective_worker.get("dispatched_pool_state") != "recovering":
+            return False
+
+    # Validate timing: worker must have started at or after recovery / probe initiation
+    worker_started = _parse_iso_utc(
+        str(effective_worker.get("started_at") or effective_worker.get("lease_acquired_at") or effective_worker.get("created_at") or "")
+    )
+    probe_started = _parse_iso_utc(str(entry.get("last_probe_at") or entry.get("last_failure_at") or ""))
+    if worker_started is not None and probe_started is not None and worker_started < probe_started:
+        return False
+
+    # Validate auth identity: use persisted dispatch auth provenance if available
+    worker_auth = str(effective_worker.get("auth_identity_hash") or "")
+    if not worker_auth and isinstance(state.get("workers"), dict):
+        worker_auth = str(state["workers"].get(run_id, {}).get("auth_identity_hash") or "")
+    pool_auth = str(entry.get("auth_identity_hash") or "")
+    if not pool_auth:
+        pool_auth = str(configured_account_pool_auth_hash(config, pool_id, str(worker.get("logical_agent_id") or worker.get("agent_id") or "")) or "")
+    current_auth = str(
+        configured_account_pool_auth_hash(
+            config,
+            pool_id,
+            str(worker.get("logical_agent_id") or worker.get("agent_id") or worker.get("provider") or ""),
+        ) or ""
+    )
+    if (worker_auth or pool_auth or current_auth) and not (
+        worker_auth and worker_auth == pool_auth == current_auth
+    ):
+        return False
+
     try:
         configured = max(0, int(pool.get("max_concurrent")))
     except (TypeError, ValueError):
         configured = quota_group_concurrency_limit(config, str(worker.get("logical_agent_id") or worker.get("agent_id") or ""))
+    recovered_at = utc_now()
     entry.update(
         {
             "state": "healthy",
             "effective_concurrency": configured,
-            "last_recovered_at": utc_now(),
+            "last_recovered_at": recovered_at,
             "last_canary_run_id": worker.get("run_id"),
+            "auth_identity_hash": worker_auth or pool_auth or None,
             "reason": None,
         }
     )
+    canary_auth = worker_auth or pool_auth
+    if canary_auth:
+        for other_id, other_entry in _account_pool_runtime_bucket(state).items():
+            if other_id == pool_id or not isinstance(other_entry, dict):
+                continue
+            other_auth = other_entry.get("auth_identity_hash")
+            if not other_auth:
+                other_auth = configured_account_pool_auth_hash(config, other_id)
+            if other_auth == canary_auth and str(other_entry.get("state") or "") == "recovering":
+                # Legacy own-pool admission cannot attest a sibling epoch.
+                # Promotion requires the sibling snapshot captured at dispatch.
+                if not isinstance(recovery_epochs, dict) or recovery_epochs.get(other_id) != account_pool_recovery_epoch(other_entry):
+                    continue
+                other_fk = str(other_entry.get("failure_kind") or "").strip().lower()
+                if other_fk and not (
+                    is_terminal_quota_failure_kind(other_fk)
+                    or is_retryable_capacity_failure_kind(other_fk)
+                ):
+                    continue
+                other_probe = _parse_iso_utc(str(other_entry.get("last_probe_at") or other_entry.get("last_failure_at") or ""))
+                if other_probe is not None and worker_started is not None and worker_started < other_probe:
+                    continue
+                _, other_pool = account_pool_settings(config, other_id)
+                try:
+                    other_conf = max(0, int(other_pool.get("max_concurrent")))
+                except (TypeError, ValueError):
+                    other_conf = quota_group_concurrency_limit(config, other_id) or 1
+                other_entry.update(
+                    {
+                        "state": "healthy",
+                        "effective_concurrency": other_conf,
+                        "generation": int(other_entry.get("generation", 0) or 0) + 1,
+                        "last_recovered_at": recovered_at,
+                        "last_canary_run_id": worker.get("run_id"),
+                        "auth_identity_hash": canary_auth,
+                        "reason": None,
+                    }
+                )
     write_activity_log(
         config,
         {
@@ -821,7 +1048,12 @@ def provider_auth_identity_hash(config: dict[str, Any], provider: str | None) ->
     provider_cfg = provider_config(config, provider_id) or provider_config(config, "codex")
     codex_profile = provider_section(config, provider_id=provider_id, section="codex", default="codex")
     configured_home = str(codex_profile.get("codex_home") or provider_cfg.get("codex_home") or "").strip()
-    codex_home = Path(configured_home).expanduser() if configured_home else Path.home() / ".codex"
+    if configured_home:
+        codex_home = Path(configured_home).expanduser()
+    elif os.environ.get("CODEX_HOME"):
+        codex_home = Path(os.environ["CODEX_HOME"]).expanduser()
+    else:
+        codex_home = Path.home() / ".codex"
     auth = load_json(codex_home / "auth.json", default={})
     if not isinstance(auth, dict):
         return None
@@ -833,8 +1065,158 @@ def provider_auth_identity_hash(config: dict[str, Any], provider: str | None) ->
     return hashlib.sha256(f"{auth_mode}:{account_id}".encode()).hexdigest()
 
 @_entrypoint
+def configured_account_pool_auth_hash(
+    config: dict[str, Any], pool_id: str | None, agent_id: str | None = None
+) -> str | None:
+    """Resolve configured auth identity hash for an account pool or agent."""
+    if agent_id:
+        h = provider_auth_identity_hash(config, agent_id)
+        if h:
+            return h
+        agent_cfg = (config.get("agents") or {}).get(agent_id)
+        if isinstance(agent_cfg, dict):
+            prov = agent_cfg.get("provider") or agent_cfg.get("adapter")
+            if prov:
+                h = provider_auth_identity_hash(config, prov)
+                if h:
+                    return h
+    if not pool_id:
+        return None
+    norm_pool = normalize_agent_id(pool_id)
+    for aid, acfg in (config.get("agents") or {}).items():
+        if not isinstance(acfg, dict):
+            continue
+        p_name = normalize_agent_id(str(acfg.get("account_pool") or ""))
+        s_name = normalize_agent_id(str(acfg.get("dispatch_slot_for_pool") or ""))
+        if norm_pool in (p_name, s_name):
+            prov = agent_provider_id(config, aid) or aid
+            h = provider_auth_identity_hash(config, prov)
+            if h:
+                return h
+    return provider_auth_identity_hash(config, pool_id)
+
+@_entrypoint
 def _failure_streak_key(task_id: str, provider: str) -> str:
     return f"{task_id}:{provider}"
+
+def _is_pause_entry_cleared(
+    clearance: dict[str, Any] | None, pause_entry: dict[str, Any]
+) -> bool:
+    if not isinstance(clearance, dict) or not isinstance(pause_entry, dict):
+        return False
+    c_prov = normalize_agent_id(str(clearance.get("provider") or clearance.get("trigger_provider") or ""))
+    p_prov = normalize_agent_id(str(pause_entry.get("provider") or pause_entry.get("trigger_provider") or ""))
+    if c_prov and p_prov and c_prov != p_prov:
+        return False
+
+    c_at = str(clearance.get("cleared_at") or "")
+    c_p_at = str(clearance.get("cleared_paused_at") or "")
+    c_run = str(clearance.get("worker_run_id") or "")
+    c_auth = str(clearance.get("auth_identity_hash") or "")
+
+    p_at = str(pause_entry.get("paused_at") or "")
+    p_run = str(pause_entry.get("worker_run_id") or "")
+    p_auth = str(pause_entry.get("auth_identity_hash") or "")
+
+    # Check auth identity match if both present
+    if c_auth and p_auth and c_auth != p_auth:
+        return False
+
+    # A newer observation records the exact predecessor it replaced, including
+    # legacy records without a logical clock. Clearing it also retires those
+    # known predecessors, so their stale snapshots cannot resurrect a pause.
+    predecessors = clearance.get("failure_predecessors")
+    if isinstance(predecessors, list):
+        identity = {key: pause_entry.get(key) for key in (
+            "paused_at", "worker_run_id", "auth_identity_hash", "failure_epoch"
+        )}
+        if identity in predecessors:
+            return True
+
+    # Modern producers carry a durable, subsecond logical failure clock.
+    # An older targeted clear cannot retire a later incident, even if the wall
+    # clock moved backward. Legacy records retain their existing matching rules.
+    c_epoch = clearance.get("failure_epoch")
+    p_epoch = pause_entry.get("failure_epoch")
+    if isinstance(c_epoch, int) and isinstance(p_epoch, int):
+        if p_epoch != c_epoch:
+            return p_epoch < c_epoch
+    elif isinstance(p_epoch, int):
+        if c_run and p_run and c_run != p_run:
+            return False
+        from runtime_state import provider_clearance_epoch
+        if p_epoch > provider_clearance_epoch(clearance):
+            return False
+
+    # 1. Clearance targeted a specific pause timestamp
+    if c_p_at:
+        if p_at == c_p_at:
+            if c_run and p_run and c_run != p_run:
+                return False
+            return True
+        elif p_at < c_p_at:
+            return True
+        else:
+            # Newer pause saved after the cleared pause epoch must not be cleared
+            return False
+
+    # 2. Clearance did not specify cleared_paused_at (blind clearance by cleared_at)
+    if c_at:
+        if p_at < c_at:
+            return True
+        elif p_at == c_at:
+            if c_run and p_run and c_run == p_run:
+                return True
+            return False
+        else:
+            return False
+
+    return False
+
+
+def _record_clearance_tombstone(
+    cleared_bucket: dict[str, Any],
+    pause_id: str,
+    entry: dict[str, Any] | None,
+    auth_hash: str | None,
+    cleared_at: str,
+    *,
+    trigger_provider: str | None = None,
+    task_id: str | None = None,
+    worker_run_id: str | None = None,
+    clear_reason: str | None = None,
+) -> dict[str, Any]:
+    p_at = entry.get("paused_at") if isinstance(entry, dict) else None
+    run_id = (entry.get("worker_run_id") if isinstance(entry, dict) else None) or worker_run_id
+    t_id = (entry.get("task_id") if isinstance(entry, dict) else None) or task_id
+    auth = (
+        entry.get("auth_identity_hash")
+        if isinstance(entry, dict) and entry.get("auth_identity_hash")
+        else auth_hash
+    )
+    clearance: dict[str, Any] = {
+        "provider": pause_id,
+        "trigger_provider": trigger_provider or pause_id,
+        "cleared_at": cleared_at,
+        "cleared_paused_at": p_at,
+        "auth_identity_hash": auth,
+        "worker_run_id": run_id,
+        "task_id": t_id,
+    }
+    if clear_reason:
+        clearance["clear_reason"] = clear_reason
+    if isinstance(entry, dict) and isinstance(entry.get("failure_epoch"), int):
+        clearance["failure_epoch"] = entry["failure_epoch"]
+        if isinstance(entry.get("failure_predecessors"), list):
+            clearance["failure_predecessors"] = deepcopy(entry["failure_predecessors"])
+
+    cleared_bucket[pause_id] = deepcopy(clearance)
+    epoch_key = f"{pause_id}::{auth or '*'}::{run_id or '*'}::{p_at or '*'}::{cleared_at}"
+    if "failure_epoch" in clearance:
+        epoch_key += f"::{clearance['failure_epoch']}"
+    cleared_bucket[epoch_key] = deepcopy(clearance)
+    return clearance
+
 
 @_entrypoint
 def current_provider_dispatch_pause(
@@ -846,11 +1228,38 @@ def current_provider_dispatch_pause(
     if not provider_id:
         return None
     bucket = _dispatch_pause_bucket(state)
+    cleared_bucket = _provider_guardrail_bucket(state).get("cleared_pauses") or {}
     group_id = provider_dispatch_group_id(config, provider) if config is not None else provider_id
     for pause_id in dict.fromkeys([group_id, provider_id]):
         entry = bucket.get(pause_id)
         if not isinstance(entry, dict):
             continue
+        if any(
+            _is_pause_entry_cleared(c, entry)
+            for c in cleared_bucket.values()
+            if isinstance(c, dict)
+        ):
+            bucket.pop(pause_id, None)
+            continue
+        if config is not None:
+            recorded_identity = str(entry.get("auth_identity_hash") or "")
+            current_identity = provider_auth_identity_hash(
+                config,
+                str(entry.get("trigger_provider") or pause_id),
+            )
+            if recorded_identity and current_identity and recorded_identity != current_identity:
+                cleared_b = _provider_guardrail_bucket(state).setdefault("cleared_pauses", {})
+                _record_clearance_tombstone(
+                    cleared_b,
+                    pause_id,
+                    entry,
+                    entry.get("auth_identity_hash"),
+                    utc_now(),
+                    trigger_provider=str(entry.get("trigger_provider") or pause_id),
+                    clear_reason="provider account identity changed",
+                )
+                bucket.pop(pause_id, None)
+                continue
         blocked_until = _parse_iso_utc(str(entry.get("blocked_until") or ""))
         now = datetime.now(UTC)
         if blocked_until is not None and blocked_until <= now:
@@ -896,6 +1305,10 @@ def is_provider_unavailable_failure_kind(kind: str | None) -> bool:
     return str(kind or "").strip().lower() == "provider_unavailable"
 
 @_entrypoint
+def is_interrupted_failure_kind(kind: str | None) -> bool:
+    return str(kind or "").strip().lower() == "interrupted"
+
+@_entrypoint
 def should_pause_dispatch_for_failure_kind(kind: str | None) -> bool:
     return (
         is_terminal_quota_failure_kind(kind)
@@ -920,6 +1333,32 @@ def _lookup_worker_record(state: dict[str, Any], worker_run_id: str | None) -> d
     worker = (state.get("workers") or {}).get(run_id)
     return worker if isinstance(worker, dict) else None
 
+def _current_utc_now() -> datetime:
+    sup = sys.modules.get("supervisor")
+    if sup is not None:
+        dt = getattr(sup, "datetime", datetime)
+        if dt is not datetime and hasattr(dt, "now"):
+            try:
+                res = dt.now(UTC)
+                if isinstance(res, datetime):
+                    return res
+            except Exception:
+                pass
+        un = getattr(sup, "utc_now", None)
+        if un is not None:
+            try:
+                import common as _c
+                if un != getattr(_c, "utc_now", None):
+                    val = un()
+                    if isinstance(val, str) and val:
+                        parsed = _parse_iso_utc(val)
+                        if parsed is not None:
+                            return parsed
+            except Exception:
+                pass
+    return datetime.now(UTC)
+
+
 @_entrypoint
 def mark_provider_dispatch_paused(
     config: dict[str, Any],
@@ -942,7 +1381,7 @@ def mark_provider_dispatch_paused(
     if not provider_id:
         return False
     pause_provider_id = provider_dispatch_group_id(config, provider) or provider_id
-    now = datetime.now(UTC)
+    now = _current_utc_now()
     effective_pause_kind = str(pause_kind or failure_kind or "").strip().lower()
     if not should_pause_dispatch_for_failure_kind(effective_pause_kind):
         return False
@@ -1050,17 +1489,50 @@ def mark_provider_dispatch_paused(
     actual_pause_seconds = max(1, int((blocked_until - now).total_seconds()))
     bucket = _dispatch_pause_bucket(state)
     previous = bucket.get(pause_provider_id)
+    from runtime_state import provider_clearance_epoch, provider_failure_epoch, provider_failure_identity
+    failure_worker = worker if isinstance(worker, dict) else (_lookup_worker_record(state, worker_run_id) or {})
+    auth_identity_hash = failure_worker.get("auth_identity_hash") or provider_auth_identity_hash(config, provider_id)
+    previous_epoch = provider_failure_epoch(previous)
+    # A formal clear removes the active pause, but its failure clock must not
+    # reset. Retained matching clearances remain the clock floor across reloads.
+    clearances = _provider_guardrail_bucket(state).get("cleared_pauses") or {}
+    for clearance in clearances.values():
+        if not isinstance(clearance, dict):
+            continue
+        cleared_provider = normalize_agent_id(str(
+            clearance.get("provider") or clearance.get("trigger_provider") or ""
+        ))
+        if cleared_provider and cleared_provider != pause_provider_id:
+            continue
+        cleared_auth = clearance.get("auth_identity_hash")
+        if cleared_auth and auth_identity_hash and cleared_auth != auth_identity_hash:
+            continue
+        previous_epoch = max(previous_epoch, provider_clearance_epoch(clearance))
+    failure_epoch = max(
+        provider_failure_epoch({"paused_at": now.isoformat()}),
+        previous_epoch + 1,
+    )
+    predecessors = []
+    if isinstance(previous, dict):
+        prior = previous.get("failure_predecessors")
+        predecessors = deepcopy(prior) if isinstance(prior, list) else []
+        identity = provider_failure_identity(previous)
+        if identity not in predecessors:
+            predecessors.append(identity)
     summary = summarize_failure_reason(reason, pause_provider_id)
     changed = (
         not isinstance(previous, dict)
         or str(previous.get("blocked_until") or "") != blocked_until_iso
         or str(previous.get("summary") or "") != summary.get("summary")
         or str(previous.get("raw_ref") or "") != str(raw_ref or "")
+        or previous.get("worker_run_id") != worker_run_id
+        or previous.get("auth_identity_hash") != auth_identity_hash
     )
     bucket[pause_provider_id] = {
         "provider": pause_provider_id,
         "trigger_provider": provider_id,
         "paused_at": now.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "failure_epoch": failure_epoch,
         "blocked_until": blocked_until_iso,
         "reason": summary.get("summary"),
         "summary": summary.get("summary"),
@@ -1072,9 +1544,10 @@ def mark_provider_dispatch_paused(
         "task_id": task_id,
         "worker_run_id": worker_run_id,
     }
-    auth_identity_hash = provider_auth_identity_hash(config, provider_id)
     if auth_identity_hash:
         bucket[pause_provider_id]["auth_identity_hash"] = auth_identity_hash
+    if predecessors:
+        bucket[pause_provider_id]["failure_predecessors"] = predecessors
     if hinted_blocked_until:
         bucket[pause_provider_id]["hint_blocked_until"] = hinted_blocked_until
         bucket[pause_provider_id]["hint_capped"] = hint_capped
@@ -1127,11 +1600,26 @@ def clear_provider_dispatch_pause(config: dict[str, Any], state: dict[str, Any],
         return False
     pause_provider_id = provider_dispatch_group_id(config, provider_id) or provider_id
     bucket = _dispatch_pause_bucket(state)
+    cleared_bucket = _provider_guardrail_bucket(state).setdefault("cleared_pauses", {})
     removed: list[tuple[str, dict[str, Any]]] = []
+    cleared_at_iso = utc_now()
     for pause_id in dict.fromkeys([pause_provider_id, provider_id]):
         entry = bucket.pop(pause_id, None)
         if isinstance(entry, dict):
             removed.append((pause_id, entry))
+        auth_hash = (
+            entry.get("auth_identity_hash")
+            if isinstance(entry, dict) and entry.get("auth_identity_hash")
+            else provider_auth_identity_hash(config, pause_id)
+        )
+        _record_clearance_tombstone(
+            cleared_bucket,
+            pause_id,
+            entry,
+            auth_hash,
+            cleared_at_iso,
+            trigger_provider=provider_id,
+        )
     for pause_id, entry in removed:
         write_activity_log(
             config,
@@ -1145,13 +1633,228 @@ def clear_provider_dispatch_pause(config: dict[str, Any], state: dict[str, Any],
                 "cleared_pause": entry,
             },
         )
-    return bool(removed)
+
+    # Recover matching same-epoch cooldown account pools into canary mode
+    target_pause_ids = set([pause_provider_id, provider_id])
+    account_pools_bucket = _account_pool_runtime_bucket(state)
+    target_pools: set[str] = set()
+
+    for pool_name, pool_cfg in (config.get("account_pools") or {}).items():
+        if not isinstance(pool_cfg, dict):
+            continue
+        pool_norm = normalize_agent_id(pool_name)
+        if pool_norm in target_pause_ids or provider_dispatch_group_id(config, pool_norm) in target_pause_ids:
+            target_pools.add(pool_name)
+    for agent_name, agent_cfg in (config.get("agents") or {}).items():
+        if not isinstance(agent_cfg, dict):
+            continue
+        agent_prov = agent_provider_id(config, agent_name)
+        agent_group = provider_dispatch_group_id(config, agent_prov or agent_name)
+        if agent_prov in target_pause_ids or agent_group in target_pause_ids or normalize_agent_id(agent_name) in target_pause_ids:
+            pool_id, _ = account_pool_settings(config, agent_name)
+            if pool_id:
+                target_pools.add(pool_id)
+            quota_group = agent_quota_group_id(config, agent_name)
+            if quota_group:
+                target_pools.add(quota_group)
+
+    pools_recovered: list[str] = []
+    recovered_auth_hashes: set[str] = set()
+    allocated_canary_auths: set[str] = set()
+
+    # Consider all target pools and any pools currently in cooldown in the bucket
+    candidate_pools = list(dict.fromkeys(list(target_pools) + list(account_pools_bucket.keys())))
+
+    for pool_id in candidate_pools:
+        pool_entry = account_pools_bucket.get(pool_id)
+        if not isinstance(pool_entry, dict):
+            continue
+        if str(pool_entry.get("state") or "").strip().lower() != "cooldown":
+            continue
+
+        # Preserve non-quota failures (e.g. auth failures, task errors)
+        pool_failure_kind = str(pool_entry.get("failure_kind") or "").strip().lower()
+        if pool_failure_kind and not (
+            is_terminal_quota_failure_kind(pool_failure_kind)
+            or is_retryable_capacity_failure_kind(pool_failure_kind)
+        ):
+            continue
+
+        matched_clearance: dict[str, Any] | None = None
+        for _, rem_pause in removed:
+            rem_auth = rem_pause.get("auth_identity_hash")
+            pool_auth = pool_entry.get("auth_identity_hash")
+            rem_run = str(rem_pause.get("worker_run_id") or "")
+            pool_run = str(pool_entry.get("last_worker_run_id") or "")
+            rem_paused_at = str(rem_pause.get("paused_at") or "")
+            pool_failure_at = str(pool_entry.get("last_failure_at") or "")
+
+            # If pool_auth is missing, attempt provenance resolution
+            if not pool_auth:
+                if pool_run and rem_run and pool_run == rem_run:
+                    if rem_auth:
+                        pool_auth = rem_auth
+                        pool_entry["auth_identity_hash"] = rem_auth
+                elif pool_run and pool_run in state.get("workers", {}):
+                    w = state["workers"][pool_run]
+                    w_prov = w.get("provider") or w.get("logical_agent_id") or w.get("agent_id")
+                    h = provider_auth_identity_hash(config, w_prov)
+                    if h:
+                        pool_auth = h
+                        pool_entry["auth_identity_hash"] = h
+                else:
+                    for aid, acfg in (config.get("agents") or {}).items():
+                        if isinstance(acfg, dict) and normalize_agent_id(str(acfg.get("account_pool") or "")) == normalize_agent_id(pool_id):
+                            h = provider_auth_identity_hash(config, agent_provider_id(config, aid))
+                            if h:
+                                pool_auth = h
+                                pool_entry["auth_identity_hash"] = h
+                                break
+
+            # If rem_auth is missing, attempt provenance resolution
+            if not rem_auth and provider_id:
+                h = provider_auth_identity_hash(config, provider_id)
+                if h:
+                    rem_auth = h
+
+            # Positive auth verification:
+            if rem_auth and pool_auth:
+                if rem_auth != pool_auth:
+                    continue
+            elif not rem_auth and not pool_auth:
+                # If both are absent, must have exact matching worker run ID
+                if not (rem_run and pool_run and rem_run == pool_run):
+                    continue
+            else:
+                # One has auth, one does not, and could not be resolved -> require exact run match
+                if not (rem_run and pool_run and rem_run == pool_run):
+                    continue
+
+            # Positive failure epoch verification:
+            epoch_matched = False
+            if rem_run and pool_run:
+                if rem_run == pool_run:
+                    epoch_matched = True
+                else:
+                    epoch_matched = False
+            elif rem_paused_at and pool_failure_at and rem_paused_at == pool_failure_at:
+                if (rem_auth and pool_auth and rem_auth == pool_auth) or (pool_id in target_pools):
+                    epoch_matched = True
+
+            if not epoch_matched:
+                continue
+
+            matched_clearance = rem_pause
+            break
+
+        if matched_clearance is None:
+            continue
+
+        _, pool_cfg = account_pool_settings(config, pool_id)
+        try:
+            configured_limit = max(0, int(pool_cfg.get("max_concurrent", 1) or 0))
+        except (TypeError, ValueError):
+            configured_limit = quota_group_concurrency_limit(config, pool_id) or 0
+        if pool_cfg.get("enabled") is False or configured_limit == 0 or str(pool_cfg.get("state") or "").lower() == "disabled":
+            continue
+
+        auth_hash = pool_entry.get("auth_identity_hash") or matched_clearance.get("auth_identity_hash")
+        if auth_hash:
+            recovered_auth_hashes.add(auth_hash)
+
+        if auth_hash and auth_hash in allocated_canary_auths:
+            canary_limit = 0
+        else:
+            canary_limit = min(1, configured_limit)
+            if auth_hash and canary_limit > 0:
+                allocated_canary_auths.add(auth_hash)
+
+        pool_entry["state"] = "recovering"
+        pool_entry["effective_concurrency"] = canary_limit
+        pool_entry["generation"] = int(pool_entry.get("generation", 0) or 0) + 1
+        pool_entry["last_probe_at"] = cleared_at_iso
+        pool_entry["probe_attempts"] = int(pool_entry.get("probe_attempts", 0)) + 1
+        pool_entry["recovery_reason"] = f"provider pause cleared for {provider_id}"
+        pool_entry.pop("next_probe_at", None)
+        pools_recovered.append(pool_id)
+
+        write_activity_log(
+            config,
+            {
+                "type": "account_pool_canary_started",
+                "account_pool": pool_id,
+                "provider": provider_id,
+                "task_id": pool_entry.get("task_id"),
+                "worker_run_id": pool_entry.get("last_worker_run_id"),
+                "effective_concurrency": canary_limit,
+                "message": (
+                    f"Account pool {pool_id} cooldown cleared after provider pause reset; "
+                    f"entering recovering canary state with concurrency {canary_limit}."
+                ),
+            },
+        )
+
+    # Shared-auth recovery/admission fence: ensure sibling pools on the same auth cannot bypass canary limit
+    if recovered_auth_hashes:
+        all_pool_ids = set(account_pools_bucket.keys()) | set((config.get("account_pools") or {}).keys())
+        for acfg in (config.get("agents") or {}).values():
+            if isinstance(acfg, dict):
+                ap = str(acfg.get("account_pool") or "").strip()
+                if ap:
+                    all_pool_ids.add(ap)
+
+        for p_id in all_pool_ids:
+            if p_id in pools_recovered and account_pools_bucket.get(p_id, {}).get("effective_concurrency", 0) > 0:
+                continue
+            p_auth = None
+            p_entry = account_pools_bucket.get(p_id)
+            if isinstance(p_entry, dict):
+                p_auth = p_entry.get("auth_identity_hash")
+            if not p_auth:
+                for aid, acfg in (config.get("agents") or {}).items():
+                    if isinstance(acfg, dict) and normalize_agent_id(str(acfg.get("account_pool") or "")) == normalize_agent_id(p_id):
+                        p_auth = provider_auth_identity_hash(config, agent_provider_id(config, aid))
+                        if p_auth:
+                            break
+            if not p_auth:
+                for p_name in (config.get("account_pools") or {}).keys():
+                    if normalize_agent_id(p_name) == normalize_agent_id(p_id):
+                        p_auth = provider_auth_identity_hash(config, p_name)
+                        if p_auth:
+                            break
+
+            if p_auth in recovered_auth_hashes:
+                if isinstance(p_entry, dict):
+                    p_state = str(p_entry.get("state") or "").lower()
+                    # Do NOT modify cooldown pools (which belong to a distinct newer failure or auth failure)
+                    if p_state in {"healthy", "recovering"}:
+                        p_entry["state"] = "recovering"
+                        p_entry["effective_concurrency"] = 0
+                        p_entry["generation"] = int(p_entry.get("generation", 0) or 0) + 1
+                        p_entry["last_probe_at"] = cleared_at_iso
+                        p_entry["recovery_reason"] = f"shared auth recovering via canary on {', '.join(pools_recovered)}"
+                        p_entry["auth_identity_hash"] = p_auth
+                else:
+                    _, p_cfg = account_pool_settings(config, p_id)
+                    if p_cfg.get("enabled") is not False and str(p_cfg.get("state") or "").lower() != "disabled":
+                        account_pools_bucket[p_id] = {
+                            "state": "recovering",
+                            "effective_concurrency": 0,
+                            "generation": 1,
+                            "auth_identity_hash": p_auth,
+                            "last_probe_at": cleared_at_iso,
+                            "recovery_reason": f"shared auth recovering via canary on {', '.join(pools_recovered)}",
+                        }
+
+    return bool(removed or pools_recovered)
+
 
 @_entrypoint
 def expire_provider_dispatch_pauses(config: dict[str, Any], state: dict[str, Any]) -> bool:
     bucket = _dispatch_pause_bucket(state)
     if not bucket:
         return False
+    cleared_bucket = _provider_guardrail_bucket(state).setdefault("cleared_pauses", {})
     now = datetime.now(UTC)
     expired: list[tuple[str, dict[str, Any], str]] = []
     for provider_id, entry in list(bucket.items()):
@@ -1164,12 +1867,30 @@ def expire_provider_dispatch_pauses(config: dict[str, Any], state: dict[str, Any
         )
         if recorded_identity and current_identity and recorded_identity != current_identity:
             expired.append((provider_id, dict(entry), "provider account identity changed"))
+            _record_clearance_tombstone(
+                cleared_bucket,
+                provider_id,
+                entry,
+                entry.get("auth_identity_hash"),
+                utc_now(),
+                trigger_provider=str(entry.get("trigger_provider") or provider_id),
+                clear_reason="provider account identity changed",
+            )
             bucket.pop(provider_id, None)
             continue
         blocked_until = _parse_iso_utc(str(entry.get("blocked_until") or ""))
         if blocked_until is None or blocked_until > now:
             continue
         expired.append((provider_id, dict(entry), f"pause expired at {entry.get('blocked_until')}"))
+        _record_clearance_tombstone(
+            cleared_bucket,
+            provider_id,
+            entry,
+            entry.get("auth_identity_hash"),
+            utc_now(),
+            trigger_provider=str(entry.get("trigger_provider") or provider_id),
+            clear_reason=f"pause expired at {entry.get('blocked_until')}",
+        )
         bucket.pop(provider_id, None)
 
     for provider_id, entry, resume_reason in expired:
@@ -1195,7 +1916,9 @@ def record_task_failure_streak(
     failure_kind: str | None = None,
 ) -> int:
     task_id = str(worker.get("task_id") or "").strip()
-    provider_id = normalize_agent_id(str(worker.get("provider") or worker.get("agent_id") or ""))
+    provider_id = normalize_agent_id(
+        str(worker.get("logical_agent_id") or worker.get("agent_id") or worker.get("provider") or "")
+    )
     if not task_id or not provider_id:
         return 0
     bucket = _task_failure_streak_bucket(state)
@@ -1246,7 +1969,7 @@ def clear_task_failure_streak(
 ) -> None:
     if worker is not None:
         task_id = str(worker.get("task_id") or task_id or "")
-        provider = str(worker.get("provider") or worker.get("agent_id") or provider or "")
+        provider = str(worker.get("logical_agent_id") or worker.get("agent_id") or worker.get("provider") or provider or "")
     task_id = str(task_id or "").strip()
     provider_id = normalize_agent_id(provider or "")
     if not task_id or not provider_id:
@@ -1284,25 +2007,21 @@ def _nonnegative_int(value: Any) -> int:
 
 @_entrypoint
 def task_progress_snapshot(task: dict[str, Any] | None) -> dict[str, Any]:
-    """Return durable task state; timestamps alone are not meaningful progress."""
+    """Return durable task progress state; metadata, notes and assignments are not meaningful progress."""
     task = task if isinstance(task, dict) else {}
+    task_id = str(task.get("id") or "").strip()
     head = (
         str(task.get("head") or "").strip() or None
         if "head" in task
-        else resolve_task_progress_head(str(task.get("id") or ""))
+        else resolve_task_progress_head(task_id)
     )
+    pr_url = str(task.get("pr_url") or task.get("pr") or "").strip() or None
+    artifacts = tuple(sorted(str(a) for a in (task.get("artifacts") or []) if str(a).strip()))
     return {
-        "id": str(task.get("id") or "").strip(),
-        "status": str(task.get("status") or "").strip().lower(),
-        "owner": normalize_agent_id(str(task.get("owner") or "")),
-        "reviewer": normalize_agent_id(str(task.get("reviewer") or "")),
-        "priority": str(task.get("priority") or "").strip().upper(),
-        "title": str(task.get("title") or task.get("summary") or "").strip(),
-        "task_class": str(task.get("task_class") or "").strip().lower(),
-        "review_reopen_count": _nonnegative_int(task.get("review_reopen_count")),
-        "review_churn_reassigned_at_count": _nonnegative_int(task.get("review_churn_reassigned_at_count")),
-        "next": " ".join(str(task.get("next") or "").split()),
+        "id": task_id,
         "head": head,
+        "pr_url": pr_url,
+        "artifacts": list(artifacts),
     }
 
 @_entrypoint
@@ -1620,7 +2339,13 @@ def agent_dispatch_disabled(config: dict[str, Any], agent_name: str | None) -> b
     return False
 
 @_entrypoint
-def agent_can_take_task(config: dict[str, Any], agent_name: str | None, task: dict[str, Any] | None) -> bool:
+def agent_can_take_task(
+    config: dict[str, Any],
+    agent_name: str | None,
+    task: dict[str, Any] | None,
+    *,
+    role: str | None = None,
+) -> bool:
     name = str(agent_name or "").strip()
     if not name:
         return False
@@ -1638,11 +2363,22 @@ def agent_can_take_task(config: dict[str, Any], agent_name: str | None, task: di
     if agent_dispatch_disabled(config, name):
         return False
     if not isinstance(task, dict):
-        return True
+        # No task to read a `task_class` from. Role-wide rules -- the ones that
+        # say a role belongs to a provider regardless of what the work is --
+        # still apply; class-scoped ones cannot be evaluated and are skipped
+        # rather than guessed at.
+        return not role_provider_block_reason(config, name, role=role, task_class=None)
     # This is the shared eligibility predicate for owned dispatch, helper
     # claims, and quota failover. A non-dispatchable or human-gate task must
     # never become executable merely because an automated lane is idle.
     if task_is_human_gate(task) or bool(task.get("non_dispatchable")):
+        return False
+    # Role/provider eligibility is asked here, once, for every lane that can
+    # take work: initial assignment, repair, failover, churn rotation and
+    # helper claims all funnel through this predicate. Putting it anywhere else
+    # would mean one of those paths could still hand review to a lane the
+    # policy excludes.
+    if role_provider_block_reason(config, name, role=role, task=task):
         return False
     if task_is_sidecar(task):
         return True
@@ -1678,6 +2414,357 @@ def agent_open_task_counts(
             counts[agent] = counts.get(agent, 0) + 1
     return counts
 
+#: Where the single owner-provider preference group is configured. It lives
+#: under `ready_dispatcher` because it answers the same question that block
+#: already answers -- which lane should take this work next -- rather than
+#: introducing a second scheduler with its own settings.
+OWNER_PROVIDER_PREFERENCE_KEY = "owner_provider_preference"
+#: The preference is an implementation-lane policy. Deployment/integration
+#: classes such as `runtime_release`, review work, `human_gate` approvals and
+#: `sidecar` helpers keep whatever owner the existing rules choose.
+DEFAULT_OWNER_PREFERENCE_TASK_CLASSES = ["implementation", "remediation", "documentation"]
+#: Statuses whose owner is frozen no matter how the fleet is configured.
+#: Entering `review_approved` pins an exact reviewed PR head, and closeout from
+#: there is read-only with respect to the branch, so the owner is not a choice
+#: about who should implement -- it is the identity of whoever already did.
+#: Kept as a name here, derived from the leaf definition the freeze predicate
+#: itself reads, so the two cannot drift apart.
+DEFAULT_OWNER_PREFERENCE_FROZEN_STATUSES = list(DEFAULT_FROZEN_CLOSEOUT_STATUSES)
+
+
+@_entrypoint
+def owner_provider_preference_settings(config: dict[str, Any]) -> dict[str, Any]:
+    """Return the owner-provider preference block with its defaults applied.
+
+    `preferred_providers` deliberately defaults to empty: an operator who has
+    not configured a group gets exactly the previous selector behaviour, and
+    the whole preference path -- including its capacity probe -- stays off.
+    """
+    raw = (config.get("ready_dispatcher", {}) or {}).get(OWNER_PROVIDER_PREFERENCE_KEY, {}) or {}
+    settings = dict(raw) if isinstance(raw, dict) else {}
+    settings.setdefault("enabled", True)
+    settings.setdefault("preferred_providers", [])
+    settings.setdefault("task_classes", list(DEFAULT_OWNER_PREFERENCE_TASK_CLASSES))
+    return settings
+
+
+@_entrypoint
+def preferred_owner_provider_ids(config: dict[str, Any]) -> set[str]:
+    settings = owner_provider_preference_settings(config)
+    if settings.get("enabled") is False:
+        return set()
+    values = settings.get("preferred_providers")
+    if isinstance(values, str):
+        values = [values]
+    return {
+        normalize_agent_id(str(value))
+        for value in list(values or [])
+        if normalize_agent_id(str(value))
+    }
+
+
+@_entrypoint
+def agent_provider_identity_ids(config: dict[str, Any], agent_name: str | None) -> set[str]:
+    """Every configured provider/adapter id that names the model behind an agent.
+
+    A display name is not model identity. `Antigravity2` runs on the
+    `antigravity2` provider alias, whose `delivery_mode` and whose agent
+    `adapter` are both `antigravity`; guessing from the name would either miss
+    that alias or start matching on spelling. Resolving through the configured
+    provider entry keeps the preference group a statement about providers.
+
+    The body lives in `dispatch_policy` so the hard role/provider gate and this
+    soft preference read identity from one resolver, and so the canonical CLI
+    can ask the same question without importing the supervisor. This wrapper
+    keeps the name in the supervisor scope its callers already use.
+    """
+    return dispatch_policy_agent_provider_identity_ids(config, agent_name)
+
+
+@_entrypoint
+def agent_is_preferred_owner_provider(config: dict[str, Any], agent_name: str | None) -> bool:
+    preferred = preferred_owner_provider_ids(config)
+    if not preferred:
+        return False
+    return bool(agent_provider_identity_ids(config, agent_name) & preferred)
+
+
+@_entrypoint
+def task_closeout_owner_is_frozen(config: dict[str, Any], task: dict[str, Any] | None) -> bool:
+    """Whether an approved or merging head has already fixed this task's owner.
+
+    The body lives in `dispatch_policy` as `task_closeout_is_frozen`, because the
+    hard role/provider gate needs the same exemption this preference does: on a
+    frozen closeout neither one is choosing who should do the work. Keeping one
+    definition is what stops the two from disagreeing about when a head is
+    pinned.
+    """
+    return task_closeout_is_frozen(config, task)
+
+
+@_entrypoint
+def owner_preference_applies_to_task(
+    config: dict[str, Any],
+    task: dict[str, Any] | None,
+    role: str = "owner",
+) -> bool:
+    """Whether the owner preference may influence this selection at all.
+
+    Reviewer selection, human gates and non-dispatchable records are outside
+    the policy by construction, and a caller that cannot show the task cannot
+    show its `task_class` either -- so the preference stays off rather than
+    guessing that an unknown task is implementation work.
+
+    A frozen closeout is outside it for a stronger reason: there the preference
+    would not be choosing an implementer at all, it would be handing somebody
+    else's reviewed commit to a lane that never wrote it. Ordinary owned work
+    that has not been approved keeps its normal fallback.
+    """
+    if str(role or "").lower() != "owner":
+        return False
+    if not preferred_owner_provider_ids(config):
+        return False
+    if not isinstance(task, dict):
+        return False
+    if task_is_human_gate(task) or bool(task.get("non_dispatchable")):
+        return False
+    if task_closeout_owner_is_frozen(config, task):
+        return False
+    task_class = str(task.get("task_class") or "").strip().lower()
+    if not task_class:
+        return False
+    values = owner_provider_preference_settings(config).get("task_classes")
+    if isinstance(values, str):
+        values = [values]
+    eligible = {str(value).strip().lower() for value in list(values or []) if str(value).strip()}
+    return task_class in eligible
+
+
+@_entrypoint
+def dispatch_slot_loads(config: dict[str, Any], state: dict[str, Any] | None) -> dict[str, list[int]] | None:
+    """Active-plus-undelivered dispatch load per logical agent, or None.
+
+    This is the ready dispatcher's own accounting (`agent_dispatch_loads`), not
+    a second one: it counts running workers and queue events that have not been
+    delivered yet. None means "not measurable from here" -- no runtime state,
+    or no readable event queue -- which callers must treat as "no known
+    capacity" rather than as an empty lane.
+    """
+    if not isinstance(state, dict):
+        return None
+    try:
+        return agent_dispatch_loads(config, state, active_worker_statuses(config))
+    except (KeyError, OSError, TypeError, ValueError):
+        return None
+
+
+@_entrypoint
+def dispatch_pool_usage(config: dict[str, Any], state: dict[str, Any] | None) -> dict[str, int] | None:
+    """Active-plus-pending dispatch count per real account pool, or None.
+
+    `dispatch_slot_loads` answers "how busy is this logical agent". That is a
+    different question from "can this real account start another process" the
+    moment aliases share one pool: Antigravity, Antigravity2 and Antigravity3
+    are three logical agents on one account, so five queue events targeting
+    Antigravity2 leave Antigravity's own load at zero while the shared pool has
+    nothing left to run.
+
+    Both halves are the ready dispatcher's own quota accounting rather than a
+    second one, and `queued_quota_group_counts` already drops queue events whose
+    worker is counted as active -- so a single dispatch is never charged twice.
+    None means "not measurable from here", which callers must treat as no known
+    capacity rather than as an idle pool.
+    """
+    if not isinstance(state, dict):
+        return None
+    try:
+        # `queued_quota_group_counts` answers "zero pending" for a queue it
+        # never read: `load_jsonl` returns [] for a missing file, and that is
+        # indistinguishable from an idle pool. Resolving the configured path is
+        # not enough to tell those apart -- a path can be set and point at
+        # nothing -- so the queue is opened here. Reading it is still
+        # `load_event_queue`'s job; this only establishes that there is
+        # something readable to read, which is what "measured zero" requires.
+        # Missing, unreadable, or not a file all raise OSError and become None.
+        with config_path(config, "event_queue").open("rb"):
+            pass
+        active = active_quota_group_counts(config, state, active_worker_statuses(config))
+        pending = queued_quota_group_counts(config, state)
+    except (KeyError, OSError, TypeError, ValueError):
+        return None
+    usage: dict[str, int] = {}
+    for counts in (active, pending):
+        for group_id, count in (counts or {}).items():
+            try:
+                usage[group_id] = usage.get(group_id, 0) + int(count)
+            except (TypeError, ValueError):
+                return None
+    return usage
+
+
+@_entrypoint
+def account_pool_physical_capacity(config: dict[str, Any], agent_name: str | None) -> int:
+    """How many workers can run at once on the real account behind this agent.
+
+    `agent_dispatch_capacity` answers this for one logical name, but its answer
+    is neither additive across a pool nor a per-name budget:
+    `logical_worker_slot_ids` resolves every alias sharing an account onto the
+    same `dispatch_slot_for_pool` slots, so Antigravity, Antigravity2 and
+    Antigravity3 each report five while five processes exist between them.
+    Counting the distinct slot identities once is what turns three answers of
+    five into the single physical ceiling of five.
+
+    A logical agent that declares no slots contributes itself, which is exactly
+    the one process `agent_dispatch_capacity` grants it. A genuinely unpooled
+    configuration therefore gets one slot per identity and its pool ceiling is
+    the sum of the per-agent ones, so it can never bind tighter than the check
+    that was already there; the pool bound only bites where slots are shared.
+    """
+    pool_id = agent_quota_group_id(config, agent_name)
+    if not pool_id:
+        return 0
+    agents = config.get("agents", {}) or {}
+    members = [
+        normalize_agent_id(name)
+        for name, agent in agents.items()
+        if not agent_is_dispatch_slot(agent if isinstance(agent, dict) else {})
+        and agent_quota_group_id(config, name) == pool_id
+    ]
+    agent_id = normalize_agent_id(agent_name or "")
+    # An agent absent from `agents` still occupies its own process; without this
+    # it would report a capacity of zero and be permanently unpreferred.
+    if agent_id and agent_id not in members and not agent_is_dispatch_slot(agents.get(agent_id)):
+        members.append(agent_id)
+    slots: set[str] = set()
+    for member in members:
+        if not member:
+            continue
+        slots.update(logical_worker_slot_ids(config, member) or [member])
+    return len(slots)
+
+
+@_entrypoint
+def account_pool_has_free_dispatch_slot(
+    config: dict[str, Any],
+    state: dict[str, Any] | None,
+    agent_name: str | None,
+    pool_usage: dict[str, int] | None,
+) -> bool:
+    """Whether the real account behind this agent can start another worker.
+
+    `agent_auto_dispatch_block_reason` does not already answer this. It compares
+    the pool's *active* workers against the limit, so a pool whose last slots
+    are spoken for by undelivered queue events still passes it, and it skips the
+    comparison entirely whenever the effective limit is falsy.
+
+    Two independent ceilings bound one account and the lower one is the truth:
+    how many processes it has (`account_pool_physical_capacity`) and how many it
+    is currently permitted to use (`account_pool_effective_concurrency`). A
+    dynamic quota is not a grant of hardware -- a pool of five slots allowed ten
+    can still only run five -- and an absent quota is not an absent pool, which
+    is why the missing limit is answered by the slot count rather than by yes.
+    """
+    if pool_usage is None:
+        return False
+    agent_id = normalize_agent_id(agent_name or "")
+    if not agent_id:
+        return False
+    quota_group = agent_quota_group_id(config, agent_id)
+    if not quota_group:
+        # No resolvable account is no evidence about a shared budget.
+        return False
+    effective_limit = account_pool_effective_concurrency(config, state, agent_id)
+    # 0 is a stated answer, not a missing one: a disabled, paused, exhausted or
+    # cooled-down pool reports it, and reading it as "no limit" would prefer the
+    # one lane that certainly cannot run.
+    if effective_limit is not None and effective_limit <= 0:
+        return False
+    ceiling = account_pool_physical_capacity(config, agent_id)
+    if ceiling <= 0:
+        # A pool with no countable process is not an idle one.
+        return False
+    if effective_limit is not None:
+        ceiling = min(ceiling, effective_limit)
+    return pool_usage.get(quota_group, 0) < ceiling
+
+
+@_entrypoint
+def agent_has_free_dispatch_slot(
+    config: dict[str, Any],
+    agent_name: str | None,
+    loads: dict[str, list[int]] | None,
+    *,
+    state: dict[str, Any] | None,
+    pool_usage: dict[str, int] | None,
+) -> bool:
+    """Whether a worker for this agent could actually start right now.
+
+    Open task count is board bookkeeping, not capacity. An agent holding nine
+    open tasks with two idle slots can start immediately; an agent holding one
+    open task with its only slot busy cannot.
+
+    Its own slots are not the whole of capacity either. The logical agent and
+    the account pool behind it are two independent ceilings and the lower one
+    decides, so both are asked here. Dispatch pauses and account-pool lifecycle
+    blocks stay where they are -- every candidate reaching this point has
+    already passed `agent_auto_dispatch_block_reason` -- but that check counts
+    only active workers, which is why the shared-pool arithmetic cannot be
+    inherited from it. The final dispatcher still repeats both checks before it
+    queues anything.
+    """
+    if loads is None:
+        return False
+    agent_id = normalize_agent_id(agent_name or "")
+    if not agent_id:
+        return False
+    used = len(loads.get(display_name_for(config, agent_id), []) or [])
+    if used >= agent_dispatch_capacity(config, agent_id):
+        return False
+    return account_pool_has_free_dispatch_slot(config, state, agent_id, pool_usage)
+
+
+@_entrypoint
+def owner_preference_ranks(
+    config: dict[str, Any],
+    agent_names: list[str],
+    *,
+    state: dict[str, Any] | None,
+    task: dict[str, Any] | None,
+    role: str = "owner",
+) -> dict[str, int]:
+    """Rank 0 for a preferred-provider owner with a free slot, 1 for everyone else.
+
+    Both owner selection paths -- `first_viable_agent` and the paused-owner
+    failover in `dispatch_engine.reassign_unavailable_reviewers` -- rank through
+    this one function, so they cannot drift into two different preferences. The
+    rank is only ever a leading sort key: everything after it stays whatever the
+    caller already did, and a rank of 1 for every candidate reproduces the
+    previous ordering exactly.
+    """
+    names = [str(name) for name in agent_names]
+    if not owner_preference_applies_to_task(config, task, role):
+        return dict.fromkeys(names, 1)
+    loads = dispatch_slot_loads(config, state)
+    pool_usage = dispatch_pool_usage(config, state)
+    if loads is None or pool_usage is None:
+        # Preferring a lane whose capacity cannot be measured would move work
+        # onto an agent that may have nothing free to run it. Both pictures are
+        # taken once per selection so every candidate is ranked against the same
+        # instant, and so the shared pool is counted once rather than per name.
+        return dict.fromkeys(names, 1)
+    return {
+        name: (
+            0
+            if agent_is_preferred_owner_provider(config, name)
+            and agent_has_free_dispatch_slot(
+                config, name, loads, state=state, pool_usage=pool_usage
+            )
+            else 1
+        )
+        for name in names
+    }
+
+
 @_entrypoint
 def first_viable_agent(
     config: dict[str, Any],
@@ -1696,9 +2783,10 @@ def first_viable_agent(
     seen: set[str] = set()
     viable: list[str] = []
     excluded_pool_ids = {normalize_agent_id(pool) for pool in (exclude_pools or set()) if normalize_agent_id(pool)}
+    excluded_agent_ids = set(exclude) | {normalize_agent_id(ex) for ex in exclude if normalize_agent_id(ex)}
     for candidate in preferred:
         name = str(candidate or "").strip()
-        if not name or name in seen or name in exclude:
+        if not name or name in seen or name in exclude or normalize_agent_id(name) in excluded_agent_ids:
             continue
         seen.add(name)
         if is_human_gate_agent(name):
@@ -1711,7 +2799,7 @@ def first_viable_agent(
                 continue
             if agent_account_pool_id(config, name) in excluded_pool_ids:
                 continue
-            if task is not None and not agent_can_take_task(config, name, task):
+            if task is not None and not agent_can_take_task(config, name, task, role=role):
                 continue
             viable.append(name)
 
@@ -1724,8 +2812,22 @@ def first_viable_agent(
     # among them is free. Take the least loaded and keep the caller's ordering
     # as the tie-break, which preserves the configured preference whenever the
     # load is equal.
+    #
+    # The owner preference group leads that ordering, and only for owners with a
+    # genuinely free slot. Load balancing alone cannot express "this provider
+    # should implement" -- a busy-but-idle-slotted Antigravity lane always sorts
+    # behind a Codex lane holding one fewer open task -- while a bare reordering
+    # of the fallback list cannot either, because load is compared before order.
     counts = agent_open_task_counts(config, status, role=role)
-    return min(viable, key=lambda name: (counts.get(normalize_agent_id(name), 0), viable.index(name)))
+    ranks = owner_preference_ranks(config, viable, state=state, task=task, role=role)
+    return min(
+        viable,
+        key=lambda name: (
+            ranks.get(name, 1),
+            counts.get(normalize_agent_id(name), 0),
+            viable.index(name),
+        ),
+    )
 
 @_entrypoint
 def has_configured_reassignment_candidates(
@@ -1735,7 +2837,17 @@ def has_configured_reassignment_candidates(
     *,
     task: dict[str, Any] | None = None,
     exclude_pools: set[str] | None = None,
+    role: str = "owner",
 ) -> bool:
+    """Whether any *role-eligible* alternative is configured for this search.
+
+    Callers use this to tell "the lane is momentarily busy, wait" apart from
+    "there is nobody who could ever take this, block". That distinction is what
+    keeps a role restricted to one provider waiting for that provider instead of
+    escalating to a human the moment it is saturated -- so this has to apply the
+    same role filter `first_viable_agent` applies, or a policy-excluded lane
+    would be counted as an alternative that will never actually be selected.
+    """
     known = known_agent_display_names(config)
     seen: set[str] = set()
     excluded_pool_ids = {normalize_agent_id(pool) for pool in (exclude_pools or set()) if normalize_agent_id(pool)}
@@ -1749,7 +2861,7 @@ def has_configured_reassignment_candidates(
         if name in known:
             if agent_account_pool_id(config, name) in excluded_pool_ids:
                 continue
-            if not agent_can_take_task(config, name, task):
+            if not agent_can_take_task(config, name, task, role=role):
                 continue
             return True
     return False
@@ -1781,7 +2893,7 @@ def agent_auto_dispatch_block_reason(
     if state is not None:
         quota_limit = account_pool_effective_concurrency(config, state, normalized_agent)
         quota_group = agent_quota_group_id(config, normalized_agent)
-        if quota_limit and quota_group:
+        if quota_limit is not None and quota_group:
             active_quota_counts = active_quota_group_counts(config, state, active_statuses)
             active_count = active_quota_counts.get(quota_group, 0)
             if active_count >= quota_limit:
@@ -2157,6 +3269,7 @@ def reassign_tasks_after_review_churn(
                 exclude=set(epoch_failed_owners) | {owner, reviewer},
                 task=snapshot,
                 exclude_pools=excluded_pools,
+                role=ROLE_OWNER,
             ):
                 continue
             # Fail closed: no viable alternative owner available in this review churn epoch
@@ -2196,6 +3309,12 @@ def reassign_tasks_after_review_churn(
                 changed = True
             continue
 
+        submitted_author = task_submitted_author(config, snapshot)
+        author_pool_exclusions = (
+            {agent_account_pool_id(config, submitted_author)}
+            if submitted_author and not is_human_gate_agent(submitted_author)
+            else set()
+        )
         reviewer_candidates: list[str] = []
         if is_human_gate_agent(reviewer):
             new_reviewer = reviewer
@@ -2204,14 +3323,14 @@ def reassign_tasks_after_review_churn(
                 first_viable_agent(
                     config,
                     [reviewer],
-                    exclude={new_owner},
+                    exclude={new_owner} | ({submitted_author} if submitted_author else set()),
                     state=state,
                     task=snapshot,
                     provider_report=provider_report,
                     status=status,
                     balance_load=False,
                     role="reviewer",
-                    exclude_pools={agent_account_pool_id(config, new_owner)},
+                    exclude_pools={agent_account_pool_id(config, new_owner)} | author_pool_exclusions,
                 )
                 if reviewer
                 else None
@@ -2223,23 +3342,24 @@ def reassign_tasks_after_review_churn(
                 new_reviewer = first_viable_agent(
                     config,
                     reviewer_candidates,
-                    exclude={new_owner},
+                    exclude={new_owner} | ({submitted_author} if submitted_author else set()),
                     state=state,
                     task=snapshot,
                     provider_report=provider_report,
                     status=status,
                     role="reviewer",
-                    exclude_pools={agent_account_pool_id(config, new_owner)},
+                    exclude_pools={agent_account_pool_id(config, new_owner)} | author_pool_exclusions,
                 )
         if not new_reviewer:
-            reviewer_pool_exclusions = {agent_account_pool_id(config, new_owner)}
+            reviewer_pool_exclusions = {agent_account_pool_id(config, new_owner)} | author_pool_exclusions
             all_reviewer_candidates = ([reviewer] if reviewer else []) + reviewer_candidates
             if has_configured_reassignment_candidates(
                 config,
                 all_reviewer_candidates,
-                exclude={new_owner},
+                exclude={new_owner} | ({submitted_author} if submitted_author else set()),
                 task=snapshot,
                 exclude_pools=reviewer_pool_exclusions,
+                role=ROLE_REVIEWER,
             ):
                 continue
             # Fail closed: no viable reviewer available for new owner
@@ -2358,14 +3478,14 @@ def maybe_reassign_task_after_worker_failure(
     if task_is_human_gate(task) or bool(task.get("non_dispatchable")):
         return None
 
-    task_status = str(task.get("status") or "").lower()
-    if task_status not in {str(value).lower() for value in settings.get("eligible_statuses", [])}:
-        return None
-
     dispatch_settings = ready_dispatch_settings(config)
     review_statuses = {str(value).lower() for value in dispatch_settings.get("review_statuses", ["review"])}
     finalize_statuses = {str(value).lower() for value in dispatch_settings.get("finalize_statuses", ["review_approved"])}
     owned_statuses = {str(value).lower() for value in dispatch_settings.get("owned_statuses", ["in_progress", "todo"])}
+
+    task_status = str(task.get("status") or "").lower()
+    if task_status not in {str(value).lower() for value in settings.get("eligible_statuses", [])}:
+        return None
 
     failing_agent = display_name_for(
         config,
@@ -2381,19 +3501,30 @@ def maybe_reassign_task_after_worker_failure(
     reviewer = str(task.get("reviewer") or "")
     failed_pool = agent_account_pool_id(config, failing_agent)
     quota_exclusions = {failed_pool} if is_terminal_quota_failure_kind(str(failure.get("kind") or "")) and failed_pool else set()
+    submitted_author = task_submitted_author(config, task)
+    author_pool_exclusions = (
+        {agent_account_pool_id(config, submitted_author)}
+        if submitted_author and not is_human_gate_agent(submitted_author)
+        else set()
+    )
 
     if task_status in review_statuses and reviewer == failing_agent:
         if is_human_gate_agent(reviewer):
             return None
         candidates = get_agent_reassignment_candidates(config, failing_agent, role="reviewer", task=task)
+        failed_reviewers = {
+            normalize_agent_id(str(entry.get("provider") or key.split(":", 1)[1]))
+            for key, entry in (_task_failure_streak_bucket(state) or {}).items()
+            if key.startswith(f"{task_id}:") and int(entry.get("count", 0)) > 0
+        }
         new_reviewer = first_viable_agent(
             config,
             candidates,
-            exclude={owner, reviewer},
+            exclude={owner, reviewer} | failed_reviewers | ({submitted_author} if submitted_author else set()),
             state=state,
             task=task,
             role="reviewer",
-            exclude_pools=quota_exclusions | {agent_account_pool_id(config, owner)},
+            exclude_pools=quota_exclusions | {agent_account_pool_id(config, owner)} | author_pool_exclusions,
         )
         if not new_reviewer or is_human_gate_agent(new_reviewer):
             return None
@@ -2421,7 +3552,6 @@ def maybe_reassign_task_after_worker_failure(
                 "worker_run_id": worker.get("run_id"),
             },
         )
-        clear_task_failure_streaks_for_task(state, task_id)
         console_log(
             f"reassigned review: task={task_id} from={reviewer} to={new_reviewer} kind={failure_label}",
             quiet=SUPERVISOR_LOG_QUIET,
@@ -2432,10 +3562,15 @@ def maybe_reassign_task_after_worker_failure(
         if is_human_gate_agent(owner):
             return None
         candidates = get_agent_reassignment_candidates(config, failing_agent, role="owner", task=task)
+        failed_owners = {
+            normalize_agent_id(str(entry.get("provider") or key.split(":", 1)[1]))
+            for key, entry in (_task_failure_streak_bucket(state) or {}).items()
+            if key.startswith(f"{task_id}:") and int(entry.get("count", 0)) > 0
+        }
         new_owner = first_viable_agent(
             config,
             candidates,
-            exclude={owner, reviewer},
+            exclude={owner, reviewer} | failed_owners,
             state=state,
             task=task,
             role="owner",
@@ -2459,11 +3594,11 @@ def maybe_reassign_task_after_worker_failure(
                 first_viable_agent(
                     config,
                     [reviewer],
-                    exclude={new_owner},
+                    exclude={new_owner} | ({submitted_author} if submitted_author else set()),
                     state=state,
                     task=task,
                     balance_load=False,
-                    exclude_pools={agent_account_pool_id(config, new_owner)},
+                    exclude_pools={agent_account_pool_id(config, new_owner)} | author_pool_exclusions,
                     role="reviewer",
                 )
                 if reviewer
@@ -2475,11 +3610,11 @@ def maybe_reassign_task_after_worker_failure(
                 new_reviewer = first_viable_agent(
                     config,
                     reviewer_candidates,
-                    exclude={new_owner},
+                    exclude={new_owner} | ({submitted_author} if submitted_author else set()),
                     state=state,
                     task=task,
                     role="reviewer",
-                    exclude_pools=quota_exclusions | {agent_account_pool_id(config, new_owner)},
+                    exclude_pools=quota_exclusions | {agent_account_pool_id(config, new_owner)} | author_pool_exclusions,
                 )
             if not new_reviewer or is_human_gate_agent(new_reviewer):
                 return None
@@ -2498,8 +3633,54 @@ def maybe_reassign_task_after_worker_failure(
             new_status="todo" if requeue_for_fresh_dispatch else None,
             handoff_to=new_owner,
             handoff_from=owner,
+            # Carry handoff authorization in the same atomic canonical write
+            # so a crash between actor-change and seal-update cannot leave the
+            # successor owning the task with no durable authorization.
+            task_updates={"handoff_authorization": {
+                "authorized_successor": new_owner,
+                "transferred_from": owner,
+                "transfer_reason": reason,
+                "source_run_id": str(worker.get("run_id") or ""),
+            }} if str(worker.get("workspace_path") or "") else None,
         ):
             return None
+        # Verify all source writers are stopped before transferring the seal.
+        # The quota-triggering worker bypasses the sibling fence guard; without
+        # this check the original child can survive handoff and mutate the
+        # dirty fingerprint after the successor is granted a sealed_owner_dirt
+        # lease.
+        if worker_writers_are_alive(worker):
+            terminate_worker_writers(worker)
+        writers_stopped = not worker_writers_are_alive(worker)
+        handoff_block = ((state.get("worker_worktrees") or {}).get("handoff_blocks") or {}).get(task_id)
+        worker_run_id = str(worker.get("run_id") or "")
+        worker_workspace_path = str(worker.get("workspace_path") or "")
+        worker_workspace_branch = str(worker.get("workspace_branch") or "")
+        if (
+            writers_stopped
+            and isinstance(handoff_block, dict)
+            and worker_run_id
+            and worker_workspace_path
+            and normalize_agent_id(str(handoff_block.get("owner") or "")) == normalize_agent_id(owner)
+            and str(handoff_block.get("source_run_id") or "") == worker_run_id
+            and str(handoff_block.get("workspace_path") or "") == worker_workspace_path
+            and (not worker_workspace_branch or str(handoff_block.get("workspace_branch") or "") == worker_workspace_branch)
+        ):
+            handoff_block["original_owner"] = handoff_block.get("original_owner") or handoff_block.get("owner") or owner
+            handoff_block["owner"] = new_owner
+            handoff_block["authorized_successor"] = new_owner
+            handoff_block["transferred_from"] = owner
+            handoff_block["transferred_to"] = new_owner
+            handoff_block["transfer_reason"] = reason
+            handoff_block["transferred_at"] = utc_now()
+            handoff_block["transfer_source_run_id"] = worker_run_id
+            handoff_block["writers_verified_stopped"] = True
+        elif isinstance(handoff_block, dict) and not writers_stopped:
+            # Writers are still alive — record the situation but do NOT
+            # transfer the seal.  The deferred pending_fence mechanism will
+            # settle the worker once its writers die.
+            handoff_block["handoff_deferred_writer_alive"] = True
+            handoff_block["handoff_deferred_at"] = utc_now()
         write_activity_log(
             config,
             {
@@ -2511,9 +3692,9 @@ def maybe_reassign_task_after_worker_failure(
                 "from_reviewer": reviewer,
                 "to_reviewer": new_reviewer,
                 "worker_run_id": worker.get("run_id"),
+                "writers_verified_stopped": writers_stopped,
             },
         )
-        clear_task_failure_streaks_for_task(state, task_id)
         console_log(
             f"reassigned owner: task={task_id} from={owner} to={new_owner} kind={failure_label}",
             quiet=SUPERVISOR_LOG_QUIET,
@@ -2521,6 +3702,314 @@ def maybe_reassign_task_after_worker_failure(
         return new_owner
 
     return None
+
+
+@_entrypoint
+def worker_writer_pids(worker: dict[str, Any] | None) -> set[int]:
+    """Return all active process IDs associated with writing to worker workspace.
+
+    Includes the runner PID, child CLI PID, any known/tracked descendant
+    processes in their process tree, any process whose working directory
+    is inside the worker's workspace, and any process holding open file
+    descriptors inside the worker's workspace.
+    """
+    if not isinstance(worker, dict):
+        return set()
+    initial_pids: set[int] = set()
+    for key in ("pid", "child_pid"):
+        val = worker.get(key)
+        try:
+            val_int = int(val)
+            if val_int > 0:
+                initial_pids.add(val_int)
+        except (TypeError, ValueError):
+            pass
+    for tracked in worker.get("tracked_writer_pids") or ():
+        try:
+            t_int = int(tracked)
+            if t_int > 0:
+                initial_pids.add(t_int)
+        except (TypeError, ValueError):
+            pass
+    pending_fence = worker.get("pending_fence")
+    if isinstance(pending_fence, dict):
+        for tracked in pending_fence.get("tracked_writer_pids") or ():
+            try:
+                t_int = int(tracked)
+                if t_int > 0:
+                    initial_pids.add(t_int)
+            except (TypeError, ValueError):
+                pass
+    metadata = worker.get("metadata") if isinstance(worker.get("metadata"), dict) else {}
+    for tracked in metadata.get("tracked_writer_pids") or ():
+        try:
+            t_int = int(tracked)
+            if t_int > 0:
+                initial_pids.add(t_int)
+        except (TypeError, ValueError):
+            pass
+    status_path = worker.get("runner_status_path") or metadata.get("runner_status_path")
+    heartbeat_path = worker.get("heartbeat_path") or metadata.get("heartbeat_path")
+    for marker_path in (status_path, heartbeat_path):
+        if not marker_path:
+            continue
+        try:
+            marker = load_json(Path(str(marker_path)), default={}) or {}
+            if isinstance(marker, dict):
+                for key in ("pid", "child_pid"):
+                    val = marker.get(key)
+                    if val is not None:
+                        try:
+                            val_int = int(val)
+                            if val_int > 0:
+                                initial_pids.add(val_int)
+                        except (TypeError, ValueError):
+                            pass
+                for tracked in marker.get("tracked_writer_pids") or ():
+                    try:
+                        t_int = int(tracked)
+                        if t_int > 0:
+                            initial_pids.add(t_int)
+                    except (TypeError, ValueError):
+                        pass
+        except Exception:
+            pass
+
+    proc = Path("/proc")
+    if not proc.exists():
+        live = {p for p in initial_pids if pid_is_alive(p)}
+        if live:
+            worker["tracked_writer_pids"] = sorted(live)
+        return live
+
+    children_map: dict[int, set[int]] = {}
+    all_proc_pids: set[int] = set()
+    try:
+        for entry in proc.iterdir():
+            if not entry.name.isdigit():
+                continue
+            p = int(entry.name)
+            all_proc_pids.add(p)
+            stat_file = entry / "stat"
+            try:
+                content = stat_file.read_text(encoding="utf-8", errors="ignore")
+                rparen = content.rfind(")")
+                if rparen != -1:
+                    rest = content[rparen + 1:].split()
+                    if len(rest) >= 2:
+                        ppid = int(rest[1])
+                        children_map.setdefault(ppid, set()).add(p)
+            except (OSError, ValueError):
+                continue
+    except OSError:
+        pass
+
+    collected: set[int] = set()
+    to_visit = list(initial_pids)
+    while to_visit:
+        curr = to_visit.pop()
+        if curr not in collected:
+            collected.add(curr)
+            for child in children_map.get(curr, ()):
+                if child not in collected:
+                    to_visit.append(child)
+
+    workspace_path_str = str(worker.get("workspace_path") or "")
+    if workspace_path_str:
+        try:
+            workspace_resolved = Path(workspace_path_str).resolve()
+            workspace_prefix = str(workspace_resolved) + "/"
+            for p in all_proc_pids:
+                if p in collected or p <= 1:
+                    continue
+                try:
+                    cwd = (proc / str(p) / "cwd").resolve()
+                    if cwd == workspace_resolved or str(cwd).startswith(workspace_prefix):
+                        collected.add(p)
+                        continue
+                except (OSError, PermissionError):
+                    pass
+                fd_dir = proc / str(p) / "fd"
+                try:
+                    for fd_entry in fd_dir.iterdir():
+                        try:
+                            target = os.readlink(fd_entry)
+                            if target == str(workspace_resolved) or target.startswith(workspace_prefix):
+                                collected.add(p)
+                                break
+                        except (OSError, PermissionError):
+                            continue
+                except (OSError, PermissionError):
+                    pass
+        except Exception:
+            pass
+
+    live = {p for p in collected if pid_is_alive(p)}
+    if live or "tracked_writer_pids" in worker:
+        worker["tracked_writer_pids"] = sorted(live)
+    if isinstance(worker.get("pending_fence"), dict):
+        worker["pending_fence"]["tracked_writer_pids"] = sorted(live)
+    return live
+
+
+@_entrypoint
+def worker_writers_are_alive(worker: dict[str, Any] | None) -> bool:
+    """Return True if the worker runner or any descendant writer process is alive."""
+    if not isinstance(worker, dict):
+        return False
+    pid = worker.get("pid")
+    if pid_is_alive(pid):
+        return True
+    child_pid = worker.get("child_pid")
+    if pid_is_alive(child_pid):
+        return True
+    pids = worker_writer_pids(worker)
+    return any(pid_is_alive(p) for p in pids)
+
+
+@_entrypoint
+def terminate_worker_writers(worker: dict[str, Any] | None, sig: int = signal.SIGTERM) -> bool:
+    """Send termination signal to runner wrapper and all descendant processes."""
+    if not isinstance(worker, dict):
+        return False
+    killed_any = False
+    pids = worker_writer_pids(worker)
+    if not pids:
+        direct_pid = worker.get("pid")
+        if direct_pid:
+            return terminate_worker_pid(direct_pid)
+        return False
+    for p in pids:
+        try:
+            try:
+                os.killpg(p, sig)
+            except (OSError, PermissionError):
+                pass
+            if terminate_worker_pid(p):
+                killed_any = True
+            else:
+                try:
+                    os.kill(p, sig)
+                    killed_any = True
+                except OSError:
+                    pass
+        except OSError:
+            pass
+    return killed_any
+
+
+@_entrypoint
+def _settle_fenced_sibling_worker(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    sibling: dict[str, Any],
+    pool_id: str,
+    reason: str,
+) -> bool:
+    """Settle a dead sibling worker after account pool fencing.
+
+    Preserves worktree uncommitted changes before any owner reassignment.
+    If preservation succeeds or worktree was clean, reassigns the task
+    and transfers handoff seal provenance to the authorized successor.
+    If preservation fails on dirty work, preserves retryable/blocker recovery
+    for the original owner and does not transfer responsibility.
+    """
+    if worker_writers_are_alive(sibling):
+        sibling["pending_fence"] = {
+            "pool_id": pool_id,
+            "reason": reason,
+            "fenced_at": (sibling.get("pending_fence") or {}).get("fenced_at") or utc_now(),
+        }
+        return False
+
+    task_id = str(sibling.get("task_id") or "")
+    task_record = canonical_task_record(config, task_id) if task_id else None
+    outcome = preserve_dead_worker_worktree(
+        config,
+        state,
+        sibling,
+        task=task_record,
+        trigger="sibling_fenced",
+    )
+    is_clean = getattr(outcome, "reason", "") in {
+        "worktree_clean",
+        "nothing_to_preserve",
+        "worker_had_no_workspace",
+        "no_worktree_path",
+    }
+    preservation_succeeded = bool(outcome) or getattr(outcome, "preserved", False)
+
+    if preservation_succeeded or is_clean:
+        reassigned_to = maybe_reassign_task_after_worker_failure(
+            config,
+            state,
+            sibling,
+            reason,
+            terminal=True,
+            force=True,
+        )
+        sibling["status"] = "reassigned" if reassigned_to else "failed"
+        sibling["reassigned_to"] = reassigned_to
+        sibling["last_event_at"] = utc_now()
+        sibling["last_error"] = (
+            f"Account pool {pool_id} fenced after a sibling quota failure. "
+            f"{reason}"
+        )
+        # Use explicit None sentinel instead of pop() so that
+        # _merge_worker_record's dict.update() overwrites the disk copy.
+        # pop() removes the key from memory, but update() only sets keys
+        # present in the source dict, so the disk's pending_fence survives.
+        sibling["pending_fence"] = None
+        finalize_queue_event_record(
+            config,
+            state,
+            sibling,
+            "completed" if reassigned_to else "failed",
+            sibling["last_error"],
+        )
+        write_activity_log(
+            config,
+            {
+                "type": "account_pool_worker_fenced",
+                "account_pool": pool_id,
+                "task_id": sibling.get("task_id"),
+                "worker_run_id": sibling.get("run_id"),
+                "reassigned_to": reassigned_to,
+                "message": sibling["last_error"],
+            },
+        )
+        return True
+
+    preservation_reason = getattr(outcome, "reason", "") or "preservation_failed"
+    preservation_detail = getattr(outcome, "detail", "")
+    detail_str = f" ({preservation_reason}: {preservation_detail})" if preservation_detail else f" ({preservation_reason})"
+    sibling["last_error"] = (
+        f"Account pool {pool_id} fenced after a sibling quota failure. "
+        f"Worktree preservation failed{detail_str}. "
+        f"Responsibility not reassigned; pending preservation retry. {reason}"
+    )
+    sibling["pending_fence"] = {
+        "pool_id": pool_id,
+        "reason": reason,
+        "fenced_at": (sibling.get("pending_fence") or {}).get("fenced_at") or utc_now(),
+        "preservation_failed": True,
+        "preservation_reason": preservation_reason,
+    }
+    write_activity_log(
+        config,
+        {
+            "type": "account_pool_worker_fenced",
+            "account_pool": pool_id,
+            "task_id": sibling.get("task_id"),
+            "worker_run_id": sibling.get("run_id"),
+            "reassigned_to": None,
+            "preservation_failed": True,
+            "preservation_reason": preservation_reason,
+            "message": sibling["last_error"],
+        },
+    )
+    return False
+
 
 @_entrypoint
 def fence_account_pool_workers(
@@ -2554,41 +4043,20 @@ def fence_account_pool_workers(
         sibling_identity = worker_logical_dispatch_agent_id(config, sibling)
         if agent_account_pool_id(config, sibling_identity) != pool_id:
             continue
-        if pid_is_alive(sibling.get("pid")):
-            terminate_worker_pid(sibling.get("pid"))
-        reassigned_to = maybe_reassign_task_after_worker_failure(
-            config,
-            state,
-            sibling,
-            reason,
-            terminal=True,
-            force=True,
-        )
-        sibling["status"] = "reassigned" if reassigned_to else "failed"
-        sibling["reassigned_to"] = reassigned_to
-        sibling["last_event_at"] = utc_now()
-        sibling["last_error"] = (
-            f"Account pool {pool_id} fenced after a sibling quota failure. "
-            f"{reason}"
-        )
-        finalize_queue_event_record(
-            config,
-            state,
-            sibling,
-            "completed" if reassigned_to else "failed",
-            sibling["last_error"],
-        )
-        write_activity_log(
-            config,
-            {
-                "type": "account_pool_worker_fenced",
-                "account_pool": pool_id,
-                "task_id": sibling.get("task_id"),
-                "worker_run_id": sibling.get("run_id"),
-                "reassigned_to": reassigned_to,
-                "message": sibling["last_error"],
-            },
-        )
+        if worker_writers_are_alive(sibling):
+            terminate_worker_writers(sibling)
+        if worker_writers_are_alive(sibling):
+            # Process is still alive / shutdown in progress, or termination failed.
+            # Defer actor change and terminal settlement until confirmed death.
+            sibling["pending_fence"] = {
+                "pool_id": pool_id,
+                "reason": reason,
+                "fenced_at": utc_now(),
+            }
+            fenced += 1
+            continue
+
+        _settle_fenced_sibling_worker(config, state, sibling, pool_id, reason)
         fenced += 1
     return fenced
 
@@ -2649,6 +4117,11 @@ def manual_pending_inbox_can_auto_redeliver(
     if worker.get("status") != "manual_pending":
         return False
     if worker.get("mode") != "file_inbox":
+        return False
+    # Exhausted fallback is a manual escalation, not provider-unavailable
+    # inbox delivery. Automatic requeue would delete its consumed budget.
+    retry = worker_retry_settings(config, worker.get("provider"))
+    if int(worker.get("retry_count", 0)) >= int(retry.get("max_attempts", 5)):
         return False
     if pid_is_alive(worker.get("pid")):
         return False
@@ -2732,14 +4205,6 @@ def maybe_trigger_retry_or_fallback(
     request = request_for_worker(config, worker)
     if request is None:
         return False, False
-    reassigned_to = maybe_reassign_task_after_worker_failure(config, state, worker, reason)
-    if reassigned_to:
-        worker["status"] = "reassigned"
-        worker["reassigned_to"] = reassigned_to
-        worker["last_error"] = reason
-        worker["last_event_at"] = utc_now()
-        finalize_queue_event_record(config, state, worker, "completed")
-        return True, True
     if retry_count < max_attempts:
         schedule_worker_retry(config, worker, reason)
         write_activity_log(
@@ -2757,6 +4222,21 @@ def maybe_trigger_retry_or_fallback(
             f"retry scheduled: provider={worker.get('provider')} task={worker.get('task_id')} kind={failure.get('label')} next={worker.get('next_retry_at')}",
             quiet=SUPERVISOR_LOG_QUIET,
         )
+        return True, True
+
+    reassigned_to = maybe_reassign_task_after_worker_failure(
+        config,
+        state,
+        worker,
+        reason,
+        terminal=True,
+    )
+    if reassigned_to:
+        worker["status"] = "reassigned"
+        worker["reassigned_to"] = reassigned_to
+        worker["last_error"] = reason
+        worker["last_event_at"] = utc_now()
+        finalize_queue_event_record(config, state, worker, "completed")
         return True, True
 
     if retry.get("fallback_mode") == "file_inbox":
@@ -2780,11 +4260,13 @@ def maybe_trigger_retry_or_fallback(
                 attempt_count=int(worker.get("attempt_count", 0)) + 1,
                 event_id_for_log=worker.get("queue_event_id"),
                 parent_run_id=worker["run_id"],
+                retry_count=int(worker.get("retry_count", 0)),
                 delivery_mode_override="file_inbox",
                 activity_type="worker_fallback_started",
                 activity_message=f"Worker fell back to file inbox after transient failures: {reason}",
             )
             if ok:
+                worker = state["workers"][worker["run_id"]]
                 worker["status"] = "fallback"
                 worker["fallback_run_id"] = outcome
                 worker["last_event_at"] = utc_now()
@@ -2799,7 +4281,14 @@ def retry_due_workers(
     now: datetime,
 ) -> bool:
     changed = False
-    for worker in list(state.get("workers", {}).values()):
+    for run_id in list(state.get("workers", {})):
+        # Launch persistence replaces nested state records; never retain the
+        # previous iteration's worker objects across that boundary.
+        worker = state.get("workers", {}).get(run_id)
+        if not isinstance(worker, dict):
+            continue
+        if worker.get("pending_fence"):
+            continue
         if worker.get("status") != "retry_backoff":
             continue
         next_retry_at = _parse_iso_utc(worker.get("next_retry_at"))
@@ -2830,9 +4319,11 @@ def retry_due_workers(
             attempt_count=int(worker.get("attempt_count", 0)) + 1,
             event_id_for_log=worker.get("queue_event_id"),
             parent_run_id=worker["run_id"],
+            retry_count=int(worker.get("retry_count", 0)),
             activity_type="worker_retried",
             activity_message=f"Worker retry launched after backoff from {worker['run_id']}",
         )
+        worker = state["workers"][run_id]
         if ok:
             worker["status"] = "retried"
             worker["superseded_by_run_id"] = outcome

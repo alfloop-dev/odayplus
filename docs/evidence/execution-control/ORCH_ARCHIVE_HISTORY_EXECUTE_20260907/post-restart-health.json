@@ -1,0 +1,81 @@
+{
+  "observed_at": "2026-09-09T16:24:23.358511+00:00",
+  "actor": "Codex",
+  "supervisor": {
+    "pid": 1789757,
+    "started_at": "2026-09-09T16:23:46Z",
+    "last_heartbeat_at": "2026-09-09T16:24:04Z",
+    "lifecycle": "running",
+    "last_successful_loop_at": "2026-09-09T16:24:04Z",
+    "last_loop_started_at": "2026-09-09T16:23:47Z",
+    "last_loop_finished_at": "2026-09-09T16:24:04Z",
+    "last_loop_duration_ms": 17000,
+    "last_loop_error": null,
+    "focus_mode": "execution",
+    "mode_status": "idle",
+    "mode_switch_requested": null,
+    "last_mode_switch_at": null,
+    "mode_occupancy": {
+      "planning": {
+        "running": 0,
+        "pending": 0,
+        "queued": 0
+      },
+      "execution": {
+        "running": 0,
+        "pending": 0,
+        "queued": 0
+      },
+      "coordination": {
+        "running": 0,
+        "pending": 0,
+        "queued": 0
+      }
+    },
+    "last_stage_timings_ms": {
+      "boot_and_provider": 5289,
+      "scan_coordination_and_poll": 209,
+      "dispatch_and_queue": 0,
+      "post_dispatch_poll": 210,
+      "github_bus": 10055,
+      "branch_drift": 759,
+      "retention_and_maintenance": 0
+    },
+    "slowest_stage": "github_bus",
+    "slowest_stage_duration_ms": 10055,
+    "branch_drift_alarms": [
+      "dev_main_diverged:2026-06-26T09:04:38+00:00",
+      "task_pr_stale:1014",
+      "task_pr_stale:1046",
+      "task_pr_stale:1052",
+      "task_pr_stale:1107",
+      "task_pr_stale:1149",
+      "task_pr_stale:1159",
+      "task_pr_stale:1205",
+      "task_pr_stale:1223",
+      "task_pr_stale:1243",
+      "task_pr_stale:1245",
+      "task_pr_stale:1278",
+      "task_pr_stale:1282",
+      "task_pr_stale:1285",
+      "task_pr_stale:970"
+    ],
+    "branch_drift_checked_at": "2026-09-09T16:18:57Z",
+    "code_sha": "50581b3b180aedaf76fbe4aaffb3bf7e2d120050",
+    "config_digest": "54110ea0cef280a8",
+    "loaded_code_sha": "50581b3b180aedaf76fbe4aaffb3bf7e2d120050",
+    "loaded_config_digest": "54110ea0cef280a8"
+  },
+  "process_cwd": "/home/lupin/oday-plus-supervisor-runtime-50581b3b180a",
+  "watchdog": {
+    "safe_mode_until": "2026-09-09T16:25:45Z",
+    "safe_mode_reason": "missing_pid",
+    "safe_mode_started_at": "2026-09-09T16:23:45Z",
+    "last_decision": "restart_supervisor",
+    "last_safe_mode_observed_until": "2026-09-09T16:25:45Z"
+  },
+  "watchdog_cron": [
+    "# PAUSED ODP_ARCHIVE_INCIDENT_20260906_0643: * * * * * /home/lupin/odayplus/scripts/run-supervisor-watchdog-live.sh >> /home/lupin/odayplus/.orchestrator/logs/supervisor-watchdog-cron.log 2>&1 # pantheon-supervisor-watchdog"
+  ],
+  "active_workers": []
+}

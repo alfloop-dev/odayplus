@@ -1,0 +1,453 @@
+{
+  "measured_at": "2026-09-09T00:18:24Z",
+  "purpose": "證明維護窗口確實成立（Supervisor 真的退出）、apply 後派工已恢復，且窗口的開關都不是由本 worker 執行。",
+  "window_facts": {
+    "supervisor_sigterm_at": "2026-09-08T23:54:57Z",
+    "supervisor_pid_before_window": 1257037,
+    "batch_generated_at": "2026-09-08T23:55:11Z",
+    "hold_declared_and_batch_approved_at": "2026-09-08T23:55:31Z",
+    "apply_started_at": "2026-09-08T23:56:44Z",
+    "apply_finished_at": "2026-09-08T23:57:20Z",
+    "supervisor_restarted_at": "2026-09-08T23:58:07Z",
+    "supervisor_pid_after_window": 1325203,
+    "restart_performed_by": "supervisor_watchdog（事件 supervisor_restart_attempted，decision=restart_supervisor，reason=missing_pid）",
+    "watchdog_safe_mode_until": "2026-09-09T00:00:06Z",
+    "hold_expires_at": "2026-09-09T01:55:31Z",
+    "worker_did_not_signal_supervisor": "activity log 未記錄任何由 worker 發出的 supervisor 停止／恢復動作；23:54:57Z 的 SIGTERM 由前景協調者開窗時發出（本收據不宣稱能證明發送者身分，只記錄 log 所載事實），23:58:07Z 的重啟由 watchdog 自主決策執行。"
+  },
+  "supervisor_process": "1325203 Tue Sep  8 23:58:06 2026       20:17 python3 -u .orchestrator/supervisor.py --verbose",
+  "window_timeline": [
+    {
+      "ts": "2026-09-08T23:54:57Z",
+      "type": "supervisor_terminated",
+      "task_id": null,
+      "agent": "Orchestrator",
+      "target_agent": null,
+      "detail": {
+        "signal": "SIGTERM",
+        "pid": 1257037
+      },
+      "message": "Supervisor received SIGTERM; shutting down."
+    },
+    {
+      "ts": "2026-09-08T23:56:44Z",
+      "type": "archive_history_recovery_apply",
+      "task_id": null,
+      "agent": "Claude2",
+      "target_agent": null,
+      "detail": {},
+      "message": "Applied recovery batch recovery_batch_window.json: 23 reconstructed archive snapshot(s), 15 blocked recovery placeholder(s). Reconstructed records are labelled and are not original archive bytes."
+    },
+    {
+      "ts": "2026-09-08T23:58:07Z",
+      "type": "supervisor_restart_attempted",
+      "task_id": null,
+      "agent": "Orchestrator",
+      "target_agent": null,
+      "detail": {
+        "new_pid": 1325203,
+        "decision": "restart_supervisor",
+        "reason": "missing_pid"
+      },
+      "message": "Watchdog decision restart_supervisor: missing_pid"
+    },
+    {
+      "ts": "2026-09-08T23:58:13Z",
+      "type": "watchdog_safe_mode_dispatch_suppressed",
+      "task_id": null,
+      "agent": "Orchestrator",
+      "target_agent": null,
+      "detail": {
+        "reason": "missing_pid",
+        "safe_mode_until": "2026-09-09T00:00:06Z"
+      },
+      "message": "Watchdog safe mode suppresses new supervisor dispatch until 2026-09-09T00:00:06Z."
+    },
+    {
+      "ts": "2026-09-08T23:59:07Z",
+      "type": "reopen",
+      "task_id": "ODP-CODEX-CLI-ASTRA-COMPAT-UPGRADE-001",
+      "agent": "Codex",
+      "target_agent": null,
+      "detail": {
+        "reason": "control_plane_recovery"
+      },
+      "message": "2026-09-09 canonical control-plane recovery：本任務 09-06 next 明載唯一未完成項為解除 ODP-ROLE-PROVIDER-CODEX-LIVE-ROLLOUT-001 的 non_dispatchable。現讀回該任務 non_dispatchable=false、status=in_progress、last_update=2026-09-"
+    },
+    {
+      "ts": "2026-09-09T00:03:05Z",
+      "type": "wake_queued",
+      "task_id": "ODP-CODEX-CLI-ASTRA-COMPAT-UPGRADE-001",
+      "agent": "Orchestrator",
+      "target_agent": "Claude",
+      "detail": {},
+      "message": "Wake-up queued for supervisor: owned_in_progress_dispatch"
+    },
+    {
+      "ts": "2026-09-09T00:03:10Z",
+      "type": "worker_started",
+      "task_id": "ODP-CODEX-CLI-ASTRA-COMPAT-UPGRADE-001",
+      "agent": "Orchestrator",
+      "target_agent": "claude_slot_1",
+      "detail": {
+        "provider": "claude",
+        "worker_run_id": "claude-20260909T000309Z-6e4a93f5"
+      },
+      "message": "Worker started via claude_cli: owned_in_progress_dispatch"
+    },
+    {
+      "ts": "2026-09-09T00:03:32Z",
+      "type": "task_dispatch_synced",
+      "task_id": "ODP-CODEX-CLI-ASTRA-COMPAT-UPGRADE-001",
+      "agent": "Orchestrator",
+      "target_agent": "Claude",
+      "detail": {},
+      "message": "Supervisor re-dispatched ODP-CODEX-CLI-ASTRA-COMPAT-UPGRADE-001; task remains in progress."
+    },
+    {
+      "ts": "2026-09-09T00:07:40Z",
+      "type": "reopen",
+      "task_id": "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
+      "agent": "Codex",
+      "target_agent": null,
+      "detail": {
+        "reason": "control_plane_recovery"
+      },
+      "message": "維護窗口內已完成 canonical archive_recovery_apply；checkpoint history-recovery-checkpoint-20260908T235531Z 已讀回 23 筆 reconstructed archive、15 筆 blocked placeholder，現由原 owner Claude2 依驗收補齊 apply receipt、readback"
+    },
+    {
+      "ts": "2026-09-09T00:07:53Z",
+      "type": "wake_queued",
+      "task_id": "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
+      "agent": "Orchestrator",
+      "target_agent": "Claude2",
+      "detail": {},
+      "message": "Wake-up queued for supervisor: owned_in_progress_dispatch"
+    },
+    {
+      "ts": "2026-09-09T00:07:56Z",
+      "type": "worker_started",
+      "task_id": "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
+      "agent": "Orchestrator",
+      "target_agent": "claude_slot_2",
+      "detail": {
+        "provider": "claude",
+        "worker_run_id": "claude-20260909T000755Z-0b1b15f4"
+      },
+      "message": "Worker started via claude_cli: owned_in_progress_dispatch"
+    },
+    {
+      "ts": "2026-09-09T00:08:21Z",
+      "type": "task_dispatch_synced",
+      "task_id": "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
+      "agent": "Orchestrator",
+      "target_agent": "Claude2",
+      "detail": {},
+      "message": "Supervisor re-dispatched ORCH-ARCHIVE-HISTORY-EXECUTE-003; task remains in progress."
+    },
+    {
+      "ts": "2026-09-09T00:12:15Z",
+      "type": "wake_queued",
+      "task_id": "ODP-OSS-POLICY-NOTICE-IMPLEMENTATION-001",
+      "agent": "Orchestrator",
+      "target_agent": "Claude",
+      "detail": {},
+      "message": "Wake-up queued for supervisor: owned_ready_dispatch"
+    },
+    {
+      "ts": "2026-09-09T00:12:25Z",
+      "type": "worker_started",
+      "task_id": "ODP-OSS-POLICY-NOTICE-IMPLEMENTATION-001",
+      "agent": "Orchestrator",
+      "target_agent": "claude_slot_1",
+      "detail": {
+        "provider": "claude",
+        "worker_run_id": "claude-20260909T001225Z-8455d489"
+      },
+      "message": "Worker started via claude_cli: owned_ready_dispatch"
+    },
+    {
+      "ts": "2026-09-09T00:12:55Z",
+      "type": "task_dispatch_sync_failed",
+      "task_id": "ODP-OSS-POLICY-NOTICE-IMPLEMENTATION-001",
+      "agent": "Orchestrator",
+      "target_agent": "Claude",
+      "detail": {},
+      "message": "Dispatch status sync timed out after 30s."
+    },
+    {
+      "ts": "2026-09-09T00:13:58Z",
+      "type": "wake_queued",
+      "task_id": "ODP-DATA-PLANE-DELETE-PROPAGATION-001",
+      "agent": "Orchestrator",
+      "target_agent": "Claude",
+      "detail": {},
+      "message": "Wake-up queued for supervisor: owned_ready_dispatch"
+    },
+    {
+      "ts": "2026-09-09T00:14:00Z",
+      "type": "wake_queued",
+      "task_id": "ODP-JOB-DELIVERY-STATE-CLEAR-001",
+      "agent": "Orchestrator",
+      "target_agent": "Claude2",
+      "detail": {},
+      "message": "Wake-up queued for supervisor: owned_ready_dispatch"
+    },
+    {
+      "ts": "2026-09-09T00:14:01Z",
+      "type": "wake_queued",
+      "task_id": "ODP-SCHEMA-STORE-OPENING-AUTHORITY-001",
+      "agent": "Orchestrator",
+      "target_agent": "Claude2",
+      "detail": {},
+      "message": "Wake-up queued for supervisor: owned_ready_dispatch"
+    },
+    {
+      "ts": "2026-09-09T00:14:02Z",
+      "type": "wake_queued",
+      "task_id": "ODP-CODEX-CLI-ASTRA-COMPAT-UPGRADE-001",
+      "agent": "Orchestrator",
+      "target_agent": "Codex",
+      "detail": {},
+      "message": "Wake-up queued for supervisor: review_ready_dispatch"
+    },
+    {
+      "ts": "2026-09-09T00:14:09Z",
+      "type": "worker_started",
+      "task_id": "ODP-DATA-PLANE-DELETE-PROPAGATION-001",
+      "agent": "Orchestrator",
+      "target_agent": "claude_slot_3",
+      "detail": {
+        "provider": "claude",
+        "worker_run_id": "claude-20260909T001408Z-785812ed"
+      },
+      "message": "Worker started via claude_cli: owned_ready_dispatch"
+    },
+    {
+      "ts": "2026-09-09T00:14:39Z",
+      "type": "task_dispatch_sync_failed",
+      "task_id": "ODP-DATA-PLANE-DELETE-PROPAGATION-001",
+      "agent": "Orchestrator",
+      "target_agent": "Claude",
+      "detail": {},
+      "message": "Dispatch status sync timed out after 30s."
+    },
+    {
+      "ts": "2026-09-09T00:14:46Z",
+      "type": "worker_started",
+      "task_id": "ODP-JOB-DELIVERY-STATE-CLEAR-001",
+      "agent": "Orchestrator",
+      "target_agent": "claude_slot_4",
+      "detail": {
+        "provider": "claude",
+        "worker_run_id": "claude-20260909T001445Z-39c4d6e3"
+      },
+      "message": "Worker started via claude_cli: owned_ready_dispatch"
+    },
+    {
+      "ts": "2026-09-09T00:15:16Z",
+      "type": "task_dispatch_sync_failed",
+      "task_id": "ODP-JOB-DELIVERY-STATE-CLEAR-001",
+      "agent": "Orchestrator",
+      "target_agent": "Claude2",
+      "detail": {},
+      "message": "Dispatch status sync timed out after 30s."
+    },
+    {
+      "ts": "2026-09-09T00:15:21Z",
+      "type": "worker_started",
+      "task_id": "ODP-SCHEMA-STORE-OPENING-AUTHORITY-001",
+      "agent": "Orchestrator",
+      "target_agent": "claude_slot_5",
+      "detail": {
+        "provider": "claude",
+        "worker_run_id": "claude-20260909T001520Z-5a3a55ac"
+      },
+      "message": "Worker started via claude_cli: owned_ready_dispatch"
+    },
+    {
+      "ts": "2026-09-09T00:15:51Z",
+      "type": "task_dispatch_sync_failed",
+      "task_id": "ODP-SCHEMA-STORE-OPENING-AUTHORITY-001",
+      "agent": "Orchestrator",
+      "target_agent": "Claude2",
+      "detail": {},
+      "message": "Dispatch status sync timed out after 30s."
+    },
+    {
+      "ts": "2026-09-09T00:15:53Z",
+      "type": "wake_skipped",
+      "task_id": "ODP-CODEX-CLI-ASTRA-COMPAT-UPGRADE-001",
+      "agent": "Orchestrator",
+      "target_agent": "Codex",
+      "detail": {},
+      "message": "Skipped stale queued wake event for ODP-CODEX-CLI-ASTRA-COMPAT-UPGRADE-001: task is no longer eligible for review_ready_dispatch."
+    }
+  ],
+  "post_restart_dispatch": {
+    "worker_started_count": 6,
+    "worker_started": [
+      {
+        "ts": "2026-09-09T00:03:10Z",
+        "type": "worker_started",
+        "task_id": "ODP-CODEX-CLI-ASTRA-COMPAT-UPGRADE-001",
+        "agent": "Orchestrator",
+        "target_agent": "claude_slot_1",
+        "detail": {
+          "provider": "claude",
+          "worker_run_id": "claude-20260909T000309Z-6e4a93f5"
+        },
+        "message": "Worker started via claude_cli: owned_in_progress_dispatch"
+      },
+      {
+        "ts": "2026-09-09T00:07:56Z",
+        "type": "worker_started",
+        "task_id": "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
+        "agent": "Orchestrator",
+        "target_agent": "claude_slot_2",
+        "detail": {
+          "provider": "claude",
+          "worker_run_id": "claude-20260909T000755Z-0b1b15f4"
+        },
+        "message": "Worker started via claude_cli: owned_in_progress_dispatch"
+      },
+      {
+        "ts": "2026-09-09T00:12:25Z",
+        "type": "worker_started",
+        "task_id": "ODP-OSS-POLICY-NOTICE-IMPLEMENTATION-001",
+        "agent": "Orchestrator",
+        "target_agent": "claude_slot_1",
+        "detail": {
+          "provider": "claude",
+          "worker_run_id": "claude-20260909T001225Z-8455d489"
+        },
+        "message": "Worker started via claude_cli: owned_ready_dispatch"
+      },
+      {
+        "ts": "2026-09-09T00:14:09Z",
+        "type": "worker_started",
+        "task_id": "ODP-DATA-PLANE-DELETE-PROPAGATION-001",
+        "agent": "Orchestrator",
+        "target_agent": "claude_slot_3",
+        "detail": {
+          "provider": "claude",
+          "worker_run_id": "claude-20260909T001408Z-785812ed"
+        },
+        "message": "Worker started via claude_cli: owned_ready_dispatch"
+      },
+      {
+        "ts": "2026-09-09T00:14:46Z",
+        "type": "worker_started",
+        "task_id": "ODP-JOB-DELIVERY-STATE-CLEAR-001",
+        "agent": "Orchestrator",
+        "target_agent": "claude_slot_4",
+        "detail": {
+          "provider": "claude",
+          "worker_run_id": "claude-20260909T001445Z-39c4d6e3"
+        },
+        "message": "Worker started via claude_cli: owned_ready_dispatch"
+      },
+      {
+        "ts": "2026-09-09T00:15:21Z",
+        "type": "worker_started",
+        "task_id": "ODP-SCHEMA-STORE-OPENING-AUTHORITY-001",
+        "agent": "Orchestrator",
+        "target_agent": "claude_slot_5",
+        "detail": {
+          "provider": "claude",
+          "worker_run_id": "claude-20260909T001520Z-5a3a55ac"
+        },
+        "message": "Worker started via claude_cli: owned_ready_dispatch"
+      }
+    ],
+    "task_dispatch_synced_count": 2,
+    "task_dispatch_sync_failed_count": 4,
+    "task_dispatch_sync_failed": [
+      {
+        "ts": "2026-09-09T00:12:55Z",
+        "type": "task_dispatch_sync_failed",
+        "task_id": "ODP-OSS-POLICY-NOTICE-IMPLEMENTATION-001",
+        "agent": "Orchestrator",
+        "target_agent": "Claude",
+        "detail": {},
+        "message": "Dispatch status sync timed out after 30s."
+      },
+      {
+        "ts": "2026-09-09T00:14:39Z",
+        "type": "task_dispatch_sync_failed",
+        "task_id": "ODP-DATA-PLANE-DELETE-PROPAGATION-001",
+        "agent": "Orchestrator",
+        "target_agent": "Claude",
+        "detail": {},
+        "message": "Dispatch status sync timed out after 30s."
+      },
+      {
+        "ts": "2026-09-09T00:15:16Z",
+        "type": "task_dispatch_sync_failed",
+        "task_id": "ODP-JOB-DELIVERY-STATE-CLEAR-001",
+        "agent": "Orchestrator",
+        "target_agent": "Claude2",
+        "detail": {},
+        "message": "Dispatch status sync timed out after 30s."
+      },
+      {
+        "ts": "2026-09-09T00:15:51Z",
+        "type": "task_dispatch_sync_failed",
+        "task_id": "ODP-SCHEMA-STORE-OPENING-AUTHORITY-001",
+        "agent": "Orchestrator",
+        "target_agent": "Claude2",
+        "detail": {},
+        "message": "Dispatch status sync timed out after 30s."
+      }
+    ]
+  },
+  "live_workers_now": [
+    {
+      "task_id": "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
+      "agent_id": "claude_slot_2",
+      "status": "running",
+      "pid": 1335731,
+      "pid_alive": true,
+      "started_at": null
+    },
+    {
+      "task_id": "ODP-OSS-POLICY-NOTICE-IMPLEMENTATION-001",
+      "agent_id": "claude_slot_1",
+      "status": "running",
+      "pid": 1341079,
+      "pid_alive": true,
+      "started_at": null
+    },
+    {
+      "task_id": "ODP-DATA-PLANE-DELETE-PROPAGATION-001",
+      "agent_id": "claude_slot_3",
+      "status": "running",
+      "pid": 1343686,
+      "pid_alive": true,
+      "started_at": null
+    },
+    {
+      "task_id": "ODP-JOB-DELIVERY-STATE-CLEAR-001",
+      "agent_id": "claude_slot_4",
+      "status": "running",
+      "pid": 1344300,
+      "pid_alive": true,
+      "started_at": null
+    },
+    {
+      "task_id": "ODP-SCHEMA-STORE-OPENING-AUTHORITY-001",
+      "agent_id": "claude_slot_5",
+      "status": "running",
+      "pid": 1345047,
+      "pid_alive": true,
+      "started_at": null
+    }
+  ],
+  "dispatch_recovery_verdict": {
+    "supervisor_process_alive_now": true,
+    "worker_started_since_restart": 6,
+    "live_workers_with_alive_pid": 5,
+    "task_dispatch_sync_failed_count": 4,
+    "sync_failure_interpretation": "4 筆 task_dispatch_sync_failed（Dispatch status sync timed out after 30s）是 dispatch 後的看板同步逾時，不是派工失敗：這 4 個 task 現在都有 status=running 且 PID 存活的 worker。這是既有的看板寫入競爭，與本次歷史回填無因果關係。"
+  }
+}

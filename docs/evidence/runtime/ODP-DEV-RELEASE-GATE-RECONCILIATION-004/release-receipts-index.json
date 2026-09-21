@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-DEV-RELEASE-GATE-RECONCILIATION-004",
+  "candidate_sha": "39ae43f6fe679f03dd7df459a51835cbd2d54f77",
+  "build_run_id": 35493018607,
+  "producer_run_id": 35492613570,
+  "recorded_at": "2026-09-20T06:03:10Z",
+  "artifacts": [
+    {
+      "artifact_name": "runtime-release-manifest-39ae43f6fe679f03dd7df459a51835cbd2d54f77",
+      "artifact_id": 10600115848,
+      "raw_sha256": "10acdfc1460de9a9bc72c816dea6f81d0ec88778c2f2e23c727e05f9bd06d5de",
+      "size_bytes": 9481,
+      "repo_path": "docs/evidence/gates/RELEASE_MANIFEST.json",
+      "description": "Canonical release manifest binding exact candidate SHA, component images, migration/data-contract/source-policy digests, SBOM and signature refs"
+    },
+    {
+      "artifact_name": "runtime-release-images-39ae43f6fe679f03dd7df459a51835cbd2d54f77",
+      "artifact_id": 10600485125,
+      "raw_sha256": "43310488a7530c38623fbc1f24a4457ccd05d8e2162806939166f7fa18a490bf",
+      "size_bytes": 657,
+      "repo_path": "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-004/runtime-release-images.json",
+      "description": "Immutable image handoff mapping api, web, worker, scheduler, and migration components to exact digest references"
+    },
+    {
+      "artifact_name": "initial-release-absence-readback-39ae43f6fe679f03dd7df459a51835cbd2d54f77",
+      "artifact_id": 10600440351,
+      "raw_sha256": "f117e1af58cb513d849cde9afd98d85fbb8209e15fa61060e1da4567568980a5",
+      "size_bytes": 1226,
+      "repo_path": "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-004/initial-release-absence-readback.json",
+      "description": "Live GCP target absence readback confirming dev Cloud Run services/jobs do not exist prior to initial deployment"
+    },
+    {
+      "artifact_name": "release-environment-receipt-dev-build",
+      "artifact_id": 10599681970,
+      "raw_sha256": "8cbb0f5618719d27ef139908dfcd4ae3de2c138fcc2cc607f33a13219718a200",
+      "size_bytes": 1114,
+      "repo_path": "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-004/release-environment-receipt.json",
+      "description": "Build environment binding receipt verifying all required GCP/GitHub environment variables are resolved"
+    },
+    {
+      "artifact_name": "release-npm-audit-receipt-dev",
+      "artifact_id": 10600055709,
+      "raw_sha256": "e6e6c5978360278980842d462d0d60814d51bf6745fb60b1a8b39885ad45c02b",
+      "size_bytes": 605,
+      "repo_path": "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-004/npm-audit-receipt.json",
+      "description": "Production npm audit receipt proving 0 vulnerabilities across production web frontend dependencies"
+    },
+    {
+      "artifact_name": "release-phase-receipt-dev-build",
+      "artifact_id": 10600290348,
+      "raw_sha256": "94e7587615a27f2d3cf5b1c92b2731ddb8e5500f2b62c8be0fd0748aeb6e3fb0",
+      "size_bytes": 770,
+      "repo_path": "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-004/release-phase-receipt.json",
+      "description": "Release phase input validation receipt confirming phase=build, target_environment=dev, and exact candidate checkout"
+    }
+  ]
+}

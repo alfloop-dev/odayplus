@@ -131,6 +131,11 @@ class RebalanceStore(BaseModel):
     avmP50: float | int | None = None
     avmP90: float | int | None = None
     avmConf: str | None = None
+    # Named quality disposition of the card. `avmConf` alone cannot distinguish
+    # "high confidence" from "the report behind this card is unverifiable", so
+    # the disposition travels with it rather than being inferred downstream.
+    avmQualityScoreStatus: str | None = None
+    avmQualityDisposition: str | None = None
     avmReserve: str | None = None
     avmModelVersion: str | None = None
     avmSnapshotId: str | None = None

@@ -38,6 +38,7 @@ from cross_repo_issue_mapper import (
 )
 from github_cloud_relay import pull_commands, push_status_digest
 from github_command_parser import GitHubCommand, parse_command
+from github_reconciliation import poll_merge_group_runs
 from multi_repo_registry import (
     coordination_enabled,
     repository_slug,
@@ -91,6 +92,7 @@ def default_bus_state() -> dict[str, Any]:
         "last_error": None,
         "processed_review_ids": [],
         "processed_comment_ids": [],
+        "processed_merge_group_run_ids": [],
         "poll_cursors": {
             "pr_reviews": 0,
             "issue_comments": 0,
@@ -109,6 +111,7 @@ def load_bus_state(config: dict[str, Any]) -> dict[str, Any]:
     merged.setdefault("tasks", {})
     merged.setdefault("processed_review_ids", [])
     merged.setdefault("processed_comment_ids", [])
+    merged.setdefault("processed_merge_group_run_ids", [])
     merged.setdefault("poll_cursors", {})
     merged["poll_cursors"].setdefault("pr_reviews", 0)
     merged["poll_cursors"].setdefault("issue_comments", 0)
@@ -126,6 +129,7 @@ def save_bus_state(config: dict[str, Any], state: dict[str, Any]) -> None:
                 entry.get("ops_issue"),
                 entry.get("last_review_hash"),
                 entry.get("last_issue_hash"),
+                entry.get("last_merge_group_failure"),
             )
         ):
             pruned_tasks[task_id] = entry
@@ -139,6 +143,7 @@ def save_bus_state(config: dict[str, Any], state: dict[str, Any]) -> None:
     state["last_sync_at"] = utc_now()
     state["processed_review_ids"] = state.get("processed_review_ids", [])[-MAX_PROCESSED_IDS:]
     state["processed_comment_ids"] = state.get("processed_comment_ids", [])[-MAX_PROCESSED_IDS:]
+    state["processed_merge_group_run_ids"] = state.get("processed_merge_group_run_ids", [])[-MAX_PROCESSED_IDS:]
     write_json(config_path(config, "github_bus_state"), state)
 
 
@@ -605,6 +610,19 @@ def task_id_matches_branch(task_id: str, branch: str) -> bool:
         return False
     task_ref = task_id.strip("/").lower().replace("_", "-")
     branch_ref = branch.strip("/").lower().replace("_", "-")
+    return (
+        branch_ref == task_ref
+        or branch_ref.endswith(f"/{task_ref}")
+        or branch_ref.startswith(f"{task_ref}-")
+        or branch_ref.startswith(f"task/{task_ref}-")
+    )
+
+
+def task_id_exact_matches_branch(task_id: str, branch: str) -> bool:
+    if not task_id or not branch:
+        return False
+    task_ref = task_id.strip("/").lower().replace("_", "-")
+    branch_ref = branch.strip("/").lower().replace("_", "-")
     return branch_ref == task_ref or branch_ref.endswith(f"/{task_ref}")
 
 
@@ -641,11 +659,11 @@ def review_branch_for_task(config: dict[str, Any], status: dict[str, Any], task:
 
     # An exact task-matching agent branch is useful when a deployment uses a
     # non-canonical prefix, but substring-related task IDs are not equivalent.
-    if agent_branch and agent_branch != "HEAD" and (not task_id or task_id_matches_branch(task_id, agent_branch)) and (remote_branch_exists(agent_branch) or branch_exists(agent_branch)):
+    if agent_branch and agent_branch != "HEAD" and (not task_id or task_id_exact_matches_branch(task_id, agent_branch)) and (remote_branch_exists(agent_branch) or branch_exists(agent_branch)):
         return agent_branch
 
     branch = current_branch()
-    if branch and branch != "HEAD" and branch != default_branch(config) and (not task_id or task_id_matches_branch(task_id, branch)) and (remote_branch_exists(branch) or branch_exists(branch)):
+    if branch and branch != "HEAD" and branch != default_branch(config) and (not task_id or task_id_exact_matches_branch(task_id, branch)) and (remote_branch_exists(branch) or branch_exists(branch)):
         return branch
 
     return None
@@ -1298,6 +1316,11 @@ PR_MERGE_QUEUE_GRAPHQL_QUERY = """
 query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
+      number
+      state
+      merged
+      mergedAt
+      headRefOid
       isInMergeQueue
       mergeQueueEntry {
         position
@@ -1324,10 +1347,18 @@ def auto_merge_request_present(pr: Any) -> bool:
 
 
 def fetch_pr_merge_queue_status(repo: str, number: int) -> dict[str, Any] | None:
-    """Query GitHub GraphQL API for the PR's merge queue status.
+    """Query GitHub GraphQL API for the PR's merge queue status and head facts.
 
     `gh pr view --json` does not support `isInMergeQueue` or `mergeQueueEntry`;
     GraphQL repository.pullRequest is the canonical source for queue enrollment.
+    The same node also carries `state`, `merged`/`mergedAt` and `headRefOid`, so
+    every consumer that needs "is this PR still open on the reviewed head, and is
+    it queued" reads one node from one reader. A second CLI-side PR reader would
+    answer the same question from a weaker source that cannot see the queue at
+    all, and the two would drift.
+
+    Returns None whenever GitHub's answer is unusable. None means unknown, never
+    "not queued" and never "not open".
     """
 
     owner, _, name = repo.partition("/")
@@ -2503,6 +2534,8 @@ def sync_github_bus(config: dict[str, Any], runtime_state: dict[str, Any]) -> bo
         changed = sync_coordination_outbound(config, bus_state, runtime_state) or changed
         status = load_status(config)
         changed = poll_pr_reviews(config, bus_state, status, repo) or changed
+        status = load_status(config)
+        changed = poll_merge_group_runs(config, bus_state, status, repo) or changed
         status = load_status(config)
         changed = poll_issue_comments(config, bus_state, status, repo) or changed
         status = load_status(config)

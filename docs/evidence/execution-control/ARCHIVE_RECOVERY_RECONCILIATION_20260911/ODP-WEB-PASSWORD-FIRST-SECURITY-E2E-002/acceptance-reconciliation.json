@@ -1,0 +1,737 @@
+{
+  "task_id": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+  "reconciliation_phase": "ARCHIVE_RECOVERY_RECONCILIATION_20260911",
+  "reconciliation_timestamp": "2026-09-11T12:20:00Z",
+  "reconciled_by": "Antigravity7",
+  "assigned_reviewer": "Codex2",
+  "target_branch": "task/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002-RECOVERY-20260911",
+  "base_sha": "4b35121031d0738ff7c529810cf1b2e267161083",
+  "historical_delivery": {
+    "repository": "alfloop-dev/odayplus",
+    "pr_number": 1096,
+    "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1096",
+    "pr_title": "[ReviewBus] ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 在登入節流修正合併後驗收帳密預設與可選 OIDC 的安全端對端行為",
+    "head_ref": "task/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+    "head_sha": "69422d71e8d5ac572ade58562c0aeca28d123648",
+    "merge_sha": "2377168c2cc07cd2470dd8f43de0486fe8d8fc08",
+    "created_at": "2026-09-01T08:14:40Z",
+    "merge_commit_created_at": "2026-09-01T08:51:28Z",
+    "merged_at": "2026-09-01T09:10:24Z",
+    "author": "ajoe734",
+    "historical_owner": "Codex",
+    "historical_reviewer": "Codex2",
+    "task_review_gate": {
+      "context": "task-review-gate",
+      "state": "success",
+      "updated_at": "2026-09-01T08:45:28Z",
+      "description": "Approved by assigned reviewer Codex2",
+      "approver": "Codex2",
+      "statuses_history_note": "Historical approval at 2026-09-01T08:45:28Z confirmed via GitHub commit statuses history; subsequent recovery review gate revocation does not erase historical approval fact."
+    },
+    "exact_head_ci": {
+      "head_sha": "69422d71e8d5ac572ade58562c0aeca28d123648",
+      "total_checks": 7,
+      "success_count": 7,
+      "check_runs": [
+        {
+          "name": "product-e2e-gate",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-01T08:38:11Z",
+          "individual_step_exit_code": "unknown_in_rollup_receipt"
+        },
+        {
+          "name": "product",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-01T08:49:57Z",
+          "individual_step_exit_code": "unknown_in_rollup_receipt"
+        },
+        {
+          "name": "performance-gate",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-01T08:33:27Z",
+          "individual_step_exit_code": "unknown_in_rollup_receipt"
+        },
+        {
+          "name": "boundary",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-01T08:32:22Z",
+          "individual_step_exit_code": "unknown_in_rollup_receipt"
+        },
+        {
+          "name": "classify",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-01T08:32:20Z",
+          "individual_step_exit_code": "unknown_in_rollup_receipt"
+        },
+        {
+          "name": "change-scope",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-01T08:32:19Z",
+          "individual_step_exit_code": "unknown_in_rollup_receipt"
+        },
+        {
+          "name": "orchestrator",
+          "status": "completed",
+          "conclusion": "success",
+          "completed_at": "2026-09-01T08:34:29Z",
+          "individual_step_exit_code": "unknown_in_rollup_receipt"
+        }
+      ]
+    },
+    "delivered_files": [
+      "apps/web/tests/login-route.test.ts",
+      "docs/deployment/AUTH_MIGRATION_ROLLOUT_CHECKLIST.md",
+      "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md",
+      "tests/e2e/test_password_first_security_e2e.py",
+      "tests/security/test_login_throttle_wiring.py"
+    ]
+  },
+  "upstream_pr_references": [
+    {
+      "task_id": "ODP-WEB-LOGIN-THROTTLE-REMEDIATION-001",
+      "pr_number": 1085,
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1085",
+      "head_sha": "94e93af9e7611d5c70dc38247db6942f0bccfad6",
+      "merge_sha": "595e7501e73ff4cbb5894c27e199e02a06c2a509",
+      "merged_at": "2026-09-01T06:37:24Z",
+      "title": "[ReviewBus] ODP-WEB-LOGIN-THROTTLE-REMEDIATION-001 將登入節流接入正式路徑並持久化",
+      "source_receipt_ref": "RC-11 (R30 in auth-mode-evidence-matrix.json) & RC-07 (git show 595e7501e73ff4cbb5894c27e199e02a06c2a509)"
+    },
+    {
+      "task_id": "ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001",
+      "pr_number": 1074,
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1074",
+      "head_sha": "6e810a9f366ea6994062f6c61820cea2f7b51b4f",
+      "merge_sha": "840081001084ad9586421de908530a41f3a17333",
+      "merged_at": "2026-08-30T11:52:38Z",
+      "title": "[ReviewBus] ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001 移除部署對 Google OAuth 的硬依賴並保留可選 OIDC",
+      "source_receipt_ref": "RC-12 (R32 in auth-mode-evidence-matrix.json) & RC-07 (git show 840081001084ad9586421de908530a41f3a17333)"
+    },
+    {
+      "task_id": "ODP-WEB-LOCAL-IDENTITY-CORE-001",
+      "pr_number": 1073,
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1073",
+      "head_sha": "821fbd9d707f83f4ef9ec83a639ba068ae5df1df",
+      "merge_sha": "47c876b564a9a62cdab6421288e4507333300889",
+      "merged_at": "2026-08-30T10:41:57Z",
+      "title": "[ReviewBus] ODP-WEB-LOCAL-IDENTITY-CORE-001 實作本地帳號、密碼憑證與可撤銷 session 核心",
+      "source_receipt_ref": "RC-07 (git show 47c876b564a9a62cdab6421288e4507333300889)"
+    },
+    {
+      "task_id": "ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001",
+      "pr_number": 1253,
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1253",
+      "head_sha": "9fc7e2a8a59085a02ea030f02fdfb3dfb4eee47d",
+      "merge_sha": "0af51e04ea5cb6a0a5266b84bc8f7a606d3cb993",
+      "merged_at": "2026-09-08T19:07:27Z",
+      "title": "ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001: deliver Stage A password-first / OIDC-off auth mode evidence matrix",
+      "source_receipt_ref": "RC-06 (gh pr view 1253)"
+    },
+    {
+      "task_id": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+      "pr_number": 1096,
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1096",
+      "head_sha": "69422d71e8d5ac572ade58562c0aeca28d123648",
+      "merge_sha": "2377168c2cc07cd2470dd8f43de0486fe8d8fc08",
+      "merged_at": "2026-09-01T09:10:24Z",
+      "title": "[ReviewBus] ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 在登入節流修正合併後驗收帳密預設與可選 OIDC 的安全端對端行為",
+      "source_receipt_ref": "RC-09 (R31 in auth-mode-evidence-matrix.json) & RC-10 (R07 in auth-mode-evidence-matrix.json)"
+    }
+  ],
+  "governance_and_decision_alignment": {
+    "decision_id": "D15",
+    "decision_source": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md §2.3 (lines 59-63), §9 WP-20 (line 284)",
+    "decision_summary": "帳密為預設，Google OIDC 不啟用",
+    "pinned_observation": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md @ 0af51e04ea5cb6a0a5266b84bc8f7a606d3cb993 §2.3: 'D15: Google OIDC | A: 帳密為預設，Google OIDC 不啟用 | 核實 password-first／optional-OIDC 實作與證據，調整待命任務說明；不宣告 OAuth provider 已驗證'",
+    "downstream_alignment_task": "ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001 (PR #1253, merge 0af51e04ea5cb6a0a5266b84bc8f7a606d3cb993)",
+    "human_standby_task": "HUMAN-GCP-WEB-OAUTH-CLIENTS-001",
+    "policy_ruling": "D15 已明確裁定密碼登入為預設且 Google OIDC 關閉，不再要求使用者建立 Google OAuth clients；A3 條款為軟體與架構層級之可選登入回歸測試，不得擅自升格為真實外部 provider 啟用要求。"
+  },
+  "dependency_reconciliation": {
+    "task_id": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+    "snapshot_timestamp": "2026-09-11T12:15:56Z",
+    "snapshot_source": "canonical ai-status.json via jq query receipt (RC-08)",
+    "task_projection": {
+      "id": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+      "status": "review",
+      "owner": "Antigravity7",
+      "reviewer": "Codex2",
+      "branch": "task/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002-RECOVERY-20260911",
+      "review_gate_sha": "0ffddb44bc6751389374e52a49a0124b9ccef09b",
+      "depends_on_before": [],
+      "depends_on_after": [],
+      "depends_on_diff": "unchanged"
+    },
+    "downstream_dependents": [
+      {
+        "id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+        "status_before": "blocked",
+        "status_after": "blocked",
+        "status_diff": "unchanged",
+        "owner": "Antigravity2",
+        "reviewer": "Codex2",
+        "branch": "task/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+        "review_gate_sha": "045575b0d73bfef29b337fabb7c07408bbcbe670",
+        "depends_on_before": [
+          "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+          "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+          "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+          "DPF-EMGI-LIVE-ROLLOUT-001",
+          "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+          "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+          "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+          "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+          "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+          "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
+        ],
+        "depends_on_after": [
+          "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+          "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+          "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+          "DPF-EMGI-LIVE-ROLLOUT-001",
+          "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+          "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+          "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+          "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+          "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+          "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001"
+        ],
+        "depends_on_diff": "unchanged (10 items intact)",
+        "relationship": "depends_on ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+        "rollout_gate_retained": true,
+        "note": "Dev live rollout remediation remains blocked pending live deployment gate; not unblocked by acceptance reconciliation."
+      },
+      {
+        "id": "HUMAN-GCP-WEB-OAUTH-CLIENTS-001",
+        "status_before": "todo",
+        "status_after": "todo",
+        "status_diff": "unchanged",
+        "owner": "Human/Ops",
+        "reviewer": "Codex",
+        "branch": null,
+        "review_gate_sha": null,
+        "depends_on_before": [],
+        "depends_on_after": [],
+        "depends_on_diff": "unchanged",
+        "relationship": "standby task under D15; depends_on []",
+        "rollout_gate_retained": true,
+        "note": "Maintained in standby status; only activated if human ops explicitly enables Google OAuth in future."
+      }
+    ],
+    "cycle_check": {
+      "has_cycle": false,
+      "nodes": [
+        "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+        "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+        "HUMAN-GCP-WEB-OAUTH-CLIENTS-001"
+      ],
+      "edges": [
+        {
+          "from": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+          "to": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001"
+        }
+      ],
+      "graph_structure": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 -> ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+      "verdict": "acyclic_dag_verified"
+    }
+  },
+  "acceptance_criteria_reconciliation": [
+    {
+      "index": 1,
+      "criterion": "帳密登入成功失敗與 account threshold 的正式 TypeScript route 證據正確",
+      "acceptance_layer": "code_and_test",
+      "criterion_class": "T",
+      "criterion_class_zh": "可由測試證明",
+      "verdict": "VERIFIED",
+      "verdict_zh": "已通過驗證",
+      "rationale": "PR #1096 交付了完整的 TypeScript route 測試套件 (apps/web/tests/login-route.test.ts，共 861 行 vitest)，涵蓋：1. 正確帳密回傳 HTTP 200 並建立 opaque session cookie；2. 無效憑證固定回傳 HTTP 401 且無 set-cookie；3. 帳號 15 分鐘閾值與 IP 閾值觸發 HTTP 429 AUTH_RATE_LIMITED；4. Throttle gate 嚴格先於 credential verification 執行；5. 整合 tests/security/test_login_throttle_wiring.py 驗證 identity.login_attempts 持久化。在 PR #1096 精確 head 69422d71e8d5 上，product check-run 執行 node-check (npm run test --workspaces) 並取得 success。",
+      "primary_evidence": [
+        {
+          "kind": "test_suite",
+          "ref": "apps/web/tests/login-route.test.ts @ 2377168c2cc07cd2470dd8f43de0486fe8d8fc08",
+          "description": "861 行 TypeScript vitest 完整覆蓋 login route 各種成功/失敗/節流邊界情境"
+        },
+        {
+          "kind": "wiring_test",
+          "ref": "tests/security/test_login_throttle_wiring.py @ 2377168c2cc07cd2470dd8f43de0486fe8d8fc08",
+          "description": "驗證 throttle gate 與 identity.login_attempts 之持久化"
+        },
+        {
+          "kind": "receipt_document",
+          "ref": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md §2, §4",
+          "description": "記載 474 個 Web tests 通過及 151 個 Python tests 通過之分層驗證收據"
+        },
+        {
+          "kind": "ci_check",
+          "ref": "check-run product @ 69422d71e8d5ac572ade58562c0aeca28d123648",
+          "description": "conclusion=success, completed_at=2026-09-01T08:49:57Z"
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "criterion": "未設定 OIDC 時 deploy validation 可通過且 OIDC 路由 fail closed",
+      "acceptance_layer": "deployment_and_test",
+      "criterion_class": "T",
+      "criterion_class_zh": "可由測試證明",
+      "verdict": "VERIFIED",
+      "verdict_zh": "已通過驗證",
+      "rationale": "PR #1096 交付了 tests/e2e/test_password_first_security_e2e.py (test_password_first_preflight_passes_without_oidc, test_local_mode_rejects_oidc_token_and_records_failure) 以及 apps/web/tests/login-route.test.ts (L520-553 測試)。在無 OIDC 環境變數時，deploy validation preflight 順利通過 (auth-mode='local')；若嘗試調用 OIDC 路由或使用 OIDC token，系統嚴格 fail closed (回傳 503 WEB_AUTH_PROVIDER_DISABLED 或拒絕 token 並記錄 failure audit)。PR #1253 亦跨模組審查了 validator、shared/auth 及 Terraform 配置，確認無 OIDC 時 fail-closed 契約完整成立。",
+      "primary_evidence": [
+        {
+          "kind": "test_cases",
+          "ref": "tests/e2e/test_password_first_security_e2e.py:206-244",
+          "description": "test_password_first_preflight_passes_without_oidc 與 test_local_mode_rejects_oidc_token_and_records_failure"
+        },
+        {
+          "kind": "web_route_tests",
+          "ref": "apps/web/tests/login-route.test.ts:520-553",
+          "description": "預設 local 模式不渲染 OIDC 按鈕、未配置 OIDC 時 GET /login?provider=oidc 回 503 WEB_AUTH_PROVIDER_DISABLED"
+        },
+        {
+          "kind": "ops_test",
+          "ref": "tests/ops/test_conditional_oidc_deployment.py",
+          "description": "驗證 conditional OIDC 部署 preflight 與 fail closed 行為"
+        },
+        {
+          "kind": "ci_check",
+          "ref": "check-run product @ 69422d71e8d5ac572ade58562c0aeca28d123648",
+          "description": "conclusion=success, completed_at=2026-09-01T08:49:57Z"
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "criterion": "完整 OIDC 設定時可選登入不回歸",
+      "acceptance_layer": "regression_test_matrix",
+      "criterion_class": "T",
+      "criterion_class_zh": "可由測試證明（軟體回歸矩陣層）",
+      "verdict": "VERIFIED",
+      "verdict_zh": "已通過驗證",
+      "rationale": "依據原始任務 brief、架構契約與 D15 人工決策判讀：本條款之本質為「在系統配置完整 OIDC 設定時，既有的帳密登入與可選 OIDC 路由架構不發生回歸，兩者共存並能正確解析至同一個 authoritative principal」。PR #1096 已由 apps/web/tests/login-route.test.ts (L576-608: '完整 OIDC 配置時 login 頁面顯示 OIDC 按鈕、密碼表單共存'、'OIDC 模式下密碼登入依然可用（不回歸）') 與 tests/e2e/test_password_first_security_e2e.py (L246-269: 'test_complete_oidc_and_local_tokens_resolve_one_principal') 完整實作並在 exact-head CI 中通過。原始收據 §5 載明之 Limitations (未接觸真實 GCP 或外部 live OIDC provider) 係真實反映測試範圍邊界，而非驗收收據缺失。依據 2026-09-08 人工決策 D15 及交接指引，不得將此 regression 條款擅自升格為外部真實 provider 啟用要求；其 live deployment 與 OAuth clients 需求已由 HUMAN-GCP-WEB-OAUTH-CLIENTS-001 與 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 承接（且 D15 已確立不啟用）。因此在原任務所屬之程式與測試回歸層面，本條款已完全滿足。",
+      "primary_evidence": [
+        {
+          "kind": "web_regression_test",
+          "ref": "apps/web/tests/login-route.test.ts:576-608",
+          "description": "驗證完整 OIDC 配置下密碼表單與 OIDC 按鈕並存，且密碼登入依然正常運作不回歸 (HTTP 200 + session cookie)"
+        },
+        {
+          "kind": "e2e_principal_resolution_test",
+          "ref": "tests/e2e/test_password_first_security_e2e.py:246-269",
+          "description": "test_complete_oidc_and_local_tokens_resolve_one_principal 驗證 local password 與 OIDC 憑證解析至相同 account_id、roles、tenant_id 與 scope"
+        },
+        {
+          "kind": "receipt_statement",
+          "ref": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md §2 (complete OIDC optional path), §5 (Limitations)",
+          "description": "收據揭露測試矩陣結果與離線驗證邊界，與 D15 決策一致"
+        },
+        {
+          "kind": "ci_check",
+          "ref": "check-run product @ 69422d71e8d5ac572ade58562c0aeca28d123648",
+          "description": "conclusion=success, completed_at=2026-09-01T08:49:57Z"
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "criterion": "RBAC tenant isolation audit event 有整合測試",
+      "acceptance_layer": "integration_test",
+      "criterion_class": "T",
+      "criterion_class_zh": "可由測試證明",
+      "verdict": "VERIFIED",
+      "verdict_zh": "已通過驗證",
+      "rationale": "PR #1096 在 tests/e2e/test_password_first_security_e2e.py (L271-301) 中交付了 RBAC tenant isolation 整合測試 test_cross_tenant_read_is_denied_and_audited。測試建立了跨 tenant 的請求，驗證跨 tenant API 請求嚴格回傳 HTTP 403，並寫入 operator.tenant_isolation 之 deny audit event (event_type='security.authorization', outcome='deny', metadata={'policy_id': 'operator.tenant_isolation'})。在 exact-head CI 中通過 product check-run。原驗收條款由既有跨 tenant 403 及 deny audit event 整合測試完整支持。",
+      "primary_evidence": [
+        {
+          "kind": "integration_test_case",
+          "ref": "tests/e2e/test_password_first_security_e2e.py:271-301",
+          "description": "test_cross_tenant_read_is_denied_and_audited 驗證跨租戶 403 拒絕並發布 operator.tenant_isolation deny audit event"
+        },
+        {
+          "kind": "receipt_section",
+          "ref": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md §2 (RBAC tenant isolation)",
+          "description": "記錄跨 tenant 403 與 operator.tenant_isolation deny audit event 驗證結果"
+        },
+        {
+          "kind": "ci_check",
+          "ref": "check-run product @ 69422d71e8d5ac572ade58562c0aeca28d123648",
+          "description": "conclusion=success, completed_at=2026-09-01T08:49:57Z"
+        }
+      ]
+    },
+    {
+      "index": 5,
+      "criterion": "無 secret value 寫入 logs receipts 或 PR",
+      "acceptance_layer": "security_hygiene_and_test",
+      "criterion_class": "D",
+      "criterion_class_zh": "程式與文件交付／專門安全測試證明",
+      "verdict": "VERIFIED",
+      "verdict_zh": "已通過驗證",
+      "rationale": "PR #1096 在 tests/e2e/test_password_first_security_e2e.py (L303-332) 交付了專門的機敏資料遮蔽測試 test_receipt_and_rollout_checklist_are_present_and_redacted，透過多重正規表達式嚴格檢驗 ODP_WEB_SESSION_SECRET、ODP_WEB_OIDC_CLIENT_SECRET、ODP_IDENTITY_TOKEN_SIGNING_KEY、ODP_IDENTITY_BOOTSTRAP_SECRET、ODP_AUTH_PRINCIPAL_MAP、ODAY_DATABASE_URL、Google OAuth secrets (GOCSPX-*)、Argon2id hashes、JWT tokens 及 postgresql URL 均未洩漏於 receipt 或 checklist 中。此外，收據 docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md 標註 secret_values_redacted: true，§3 明訂所有 secret 僅以變數名稱或 Secret Manager reference 出現；docs/deployment/AUTH_MIGRATION_ROLLOUT_CHECKLIST.md §6 亦包含機敏遮蔽宣告；Head commit 69422d71e8d5 之 commit trailer 載明 Verified: python3 delivery_toolchain/security/secret_scan.py。",
+      "primary_evidence": [
+        {
+          "kind": "security_redaction_test",
+          "ref": "tests/e2e/test_password_first_security_e2e.py:303-332",
+          "description": "test_receipt_and_rollout_checklist_are_present_and_redacted 執行 regex 掃描確保無機敏值洩漏"
+        },
+        {
+          "kind": "receipt_frontmatter_and_content",
+          "ref": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md frontmatter & §3",
+          "description": "secret_values_redacted: true 與機敏資訊遮蔽規範"
+        },
+        {
+          "kind": "rollout_checklist",
+          "ref": "docs/deployment/AUTH_MIGRATION_ROLLOUT_CHECKLIST.md §6",
+          "description": "明確聲明 receipt 與 checklist 不含 secret payload"
+        },
+        {
+          "kind": "commit_trailer_and_scan",
+          "ref": "commit 69422d71e8d5ac572ade58562c0aeca28d123648 trailers",
+          "description": "Verified: python3 delivery_toolchain/security/secret_scan.py"
+        }
+      ]
+    },
+    {
+      "index": 6,
+      "criterion": "所有變更完成後只跑一次完整分層 suite且 PR 中文",
+      "acceptance_layer": "process_and_format",
+      "criterion_class": "P",
+      "criterion_class_zh": "執行過程約束／交付格式",
+      "verdict": "PROCESS_CONSTRAINT_UNVERIFIABLE",
+      "verdict_zh": "格式已驗證；執行次數屬歷史過程約束無法獨立追溯",
+      "rationale": "本條款包含兩部分：1. 『PR 中文』為已驗證之交付事實（VERIFIED）：PR #1096 標題為繁體中文 ('[ReviewBus] ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 在登入節流修正合併後驗收帳密預設與可選 OIDC 的安全端對端行為')，PR body 亦為標準繁體中文並包含 ReviewBus 區塊與交付摘要。2. 『所有變更完成後只跑一次完整分層 suite』：收據 §4 記錄 2026-09-01 UTC 變更完成後之最終一次 7 層驗證結果 (Web test 53 files/474 tests、typecheck、lint、Python pytest 151 passed/22 skipped、ruff、Terraform contract 14 files、Terraform unit 32 tests)。然而，歷史開發過程中的測試執行次數屬於不可從靜態交付物或 GitHub API 重建之歷史過程約束 (process_constraint_unverifiable)。此 process unknown 記錄客觀事實，不代表違規或失敗，亦不自動阻塞原任務驗收；依規定不得透過重跑測試套件嘗試補證歷史執行次數。",
+      "primary_evidence": [
+        {
+          "kind": "pr_metadata",
+          "ref": "PR #1096 title and body @ 2377168c2cc07cd2470dd8f43de0486fe8d8fc08",
+          "description": "繁體中文標題與內文，ReviewBus 格式完整 (VERIFIED)"
+        },
+        {
+          "kind": "receipt_verification_record",
+          "ref": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md §4",
+          "description": "最終完整 7 層驗證命令與結果記錄 (VERIFIED)"
+        },
+        {
+          "kind": "historical_process_limitation",
+          "ref": "original_evidence.json / task_evidence_inventory.json A6 entry",
+          "description": "只跑一次之執行次數屬不可獨立追溯之過程約束 (process_constraint_unverifiable)"
+        }
+      ]
+    }
+  ],
+  "criteria_summary": {
+    "total": 6,
+    "verified": 5,
+    "process_constraint_unverifiable": 1,
+    "unmet": 0,
+    "blocked": 0,
+    "reconciliation_verdict": "RECONCILIATION_COMPLETE_WITH_PROCESS_UNKNOWN"
+  },
+  "raw_command_receipts": [
+    {
+      "receipt_id": "RC-01",
+      "purpose": "reviewer_diff_check",
+      "argv": [
+        "git",
+        "diff",
+        "--check",
+        "b42b1f82321825ad2c34486418fe2aebab58ef0e...0ffddb44bc6751389374e52a49a0124b9ccef09b"
+      ],
+      "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-web-password-first-security-e2e-002",
+      "started_at": "2026-09-11T12:15:53.499359+00:00",
+      "duration_seconds": 0.011607,
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "",
+      "provenance": "review-0ffddb44-evidence.json receipt 1 (Codex2 independent review observation)"
+    },
+    {
+      "receipt_id": "RC-02",
+      "purpose": "reviewer_worktree_status",
+      "argv": [
+        "git",
+        "status",
+        "--porcelain"
+      ],
+      "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-web-password-first-security-e2e-002",
+      "started_at": "2026-09-11T12:15:53.511022+00:00",
+      "duration_seconds": 0.042652,
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "",
+      "provenance": "review-0ffddb44-evidence.json receipt 2 (Codex2 independent review observation)"
+    },
+    {
+      "receipt_id": "RC-03",
+      "purpose": "pr1311_recovery_pr_ci_status",
+      "argv": [
+        "gh",
+        "pr",
+        "view",
+        "1311",
+        "--repo",
+        "alfloop-dev/odayplus",
+        "--json",
+        "number,url,state,headRefOid,headRefName,baseRefName,statusCheckRollup"
+      ],
+      "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-web-password-first-security-e2e-002",
+      "started_at": "2026-09-11T12:15:53.553721+00:00",
+      "duration_seconds": 0.716932,
+      "exit_code": 0,
+      "stdout": "{\"baseRefName\":\"dev\",\"headRefName\":\"task/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002-RECOVERY-20260911\",\"headRefOid\":\"0ffddb44bc6751389374e52a49a0124b9ccef09b\",\"number\":1311,\"state\":\"OPEN\",\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"completedAt\":\"2026-09-11T12:08:47Z\",\"conclusion\":\"SUCCESS\",\"detailsUrl\":\"https://github.com/alfloop-dev/odayplus/actions/runs/34597414213/job/103256317135\",\"name\":\"change-scope\",\"startedAt\":\"2026-09-11T12:08:39Z\",\"status\":\"COMPLETED\",\"workflowName\":\"CI\"},{\"__typename\":\"CheckRun\",\"completedAt\":\"2026-09-11T12:08:54Z\",\"conclusion\":\"SUCCESS\",\"detailsUrl\":\"https://github.com/alfloop-dev/odayplus/actions/runs/34597414198/job/103256317306\",\"name\":\"boundary\",\"startedAt\":\"2026-09-11T12:08:40Z\",\"status\":\"COMPLETED\",\"workflowName\":\"EMGI consumer repository boundary\"},{\"__typename\":\"CheckRun\",\"completedAt\":\"2026-09-11T12:08:52Z\",\"conclusion\":\"SUCCESS\",\"detailsUrl\":\"https://github.com/alfloop-dev/odayplus/actions/runs/34597414138/job/103256317216\",\"name\":\"classify\",\"startedAt\":\"2026-09-11T12:08:40Z\",\"status\":\"COMPLETED\",\"workflowName\":\"Tooling scope review gate\"},{\"__typename\":\"CheckRun\",\"completedAt\":\"2026-09-11T12:12:24Z\",\"conclusion\":\"SUCCESS\",\"detailsUrl\":\"https://github.com/alfloop-dev/odayplus/actions/runs/34597414213/job/103256317423\",\"name\":\"orchestrator\",\"startedAt\":\"2026-09-11T12:08:39Z\",\"status\":\"COMPLETED\",\"workflowName\":\"CI\"},{\"__typename\":\"CheckRun\",\"completedAt\":\"2026-09-11T12:08:48Z\",\"conclusion\":\"SKIPPED\",\"detailsUrl\":\"https://github.com/alfloop-dev/odayplus/actions/runs/34597414213/job/103256364491\",\"name\":\"product-lint-unit\",\"startedAt\":\"2026-09-11T12:08:48Z\",\"status\":\"COMPLETED\",\"workflowName\":\"CI\"},{\"__typename\":\"CheckRun\",\"completedAt\":\"2026-09-11T12:08:48Z\",\"conclusion\":\"SKIPPED\",\"detailsUrl\":\"https://github.com/alfloop-dev/odayplus/actions/runs/34597414213/job/103256364938\",\"name\":\"product-db\",\"startedAt\":\"2026-09-11T12:08:48Z\",\"status\":\"COMPLETED\",\"workflowName\":\"CI\"},{\"__typename\":\"CheckRun\",\"completedAt\":\"2026-09-11T12:08:48Z\",\"conclusion\":\"SKIPPED\",\"detailsUrl\":\"https://github.com/alfloop-dev/odayplus/actions/runs/34597414213/job/103256364818\",\"name\":\"product-api-contract\",\"startedAt\":\"2026-09-11T12:08:48Z\",\"status\":\"COMPLETED\",\"workflowName\":\"CI\"},{\"__typename\":\"CheckRun\",\"completedAt\":\"2026-09-11T12:08:48Z\",\"conclusion\":\"SKIPPED\",\"detailsUrl\":\"https://github.com/alfloop-dev/odayplus/actions/runs/34597414213/job/103256364893\",\"name\":\"product-security\",\"startedAt\":\"2026-09-11T12:08:48Z\",\"status\":\"COMPLETED\",\"workflowName\":\"CI\"},{\"__typename\":\"CheckRun\",\"completedAt\":\"2026-09-11T12:08:48Z\",\"conclusion\":\"SKIPPED\",\"detailsUrl\":\"https://github.com/alfloop-dev/odayplus/actions/runs/34597414213/job/103256364737\",\"name\":\"product-node\",\"startedAt\":\"2026-09-11T12:08:48Z\",\"status\":\"COMPLETED\",\"workflowName\":\"CI\"},{\"__typename\":\"CheckRun\",\"completedAt\":\"2026-09-11T12:08:48Z\",\"conclusion\":\"SKIPPED\",\"detailsUrl\":\"https://github.com/alfloop-dev/odayplus/actions/runs/34597414213/job/103256364076\",\"name\":\"performance-gate\",\"startedAt\":\"2026-09-11T12:08:48Z\",\"status\":\"COMPLETED\",\"workflowName\":\"CI\"},{\"__typename\":\"CheckRun\",\"completedAt\":\"2026-09-11T12:08:48Z\",\"conclusion\":\"SKIPPED\",\"detailsUrl\":\"https://github.com/alfloop-dev/odayplus/actions/runs/34597414213/job/103256364747\",\"name\":\"product-e2e-gate\",\"startedAt\":\"2026-09-11T12:08:48Z\",\"status\":\"COMPLETED\",\"workflowName\":\"CI\"},{\"__typename\":\"CheckRun\",\"completedAt\":\"2026-09-11T12:08:57Z\",\"conclusion\":\"SUCCESS\",\"detailsUrl\":\"https://github.com/alfloop-dev/odayplus/actions/runs/34597414213/job/103256364077\",\"name\":\"product\",\"startedAt\":\"2026-09-11T12:08:50Z\",\"status\":\"COMPLETED\",\"workflowName\":\"CI\"},{\"__typename\":\"StatusContext\",\"context\":\"task-review-gate\",\"startedAt\":\"2026-09-11T12:08:52Z\",\"state\":\"PENDING\",\"targetUrl\":\"\"}],\"url\":\"https://github.com/alfloop-dev/odayplus/pull/1311\"}\n",
+      "stderr": "",
+      "provenance": "review-0ffddb44-evidence.json receipt 3 (Codex2 independent review observation)"
+    },
+    {
+      "receipt_id": "RC-04",
+      "purpose": "historical_pr1096_exact_head_check_runs",
+      "argv": [
+        "gh",
+        "api",
+        "repos/alfloop-dev/odayplus/commits/69422d71e8d5ac572ade58562c0aeca28d123648/check-runs"
+      ],
+      "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-web-password-first-security-e2e-002",
+      "started_at": "2026-09-11T12:15:54.270701+00:00",
+      "duration_seconds": 0.717581,
+      "exit_code": 0,
+      "stdout": "{\"total_count\":7,\"check_runs\":[{\"id\":99791041575,\"name\":\"product-e2e-gate\",\"node_id\":\"CR_kwDOTFqC4s8AAAAXPAJ0Jw\",\"head_sha\":\"69422d71e8d5ac572ade58562c0aeca28d123648\",\"external_id\":\"69ce1e17-17bf-50b2-bca3-a0c94cccd3b2\",\"url\":\"https://api.github.com/repos/alfloop-dev/odayplus/check-runs/99791041575\",\"html_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/33487530897/job/99791041575\",\"details_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/33487530897/job/99791041575\",\"status\":\"completed\",\"conclusion\":\"success\",\"started_at\":\"2026-09-01T08:32:21Z\",\"completed_at\":\"2026-09-01T08:38:11Z\",\"output\":{\"title\":null,\"summary\":null,\"text\":null,\"annotations_count\":1,\"annotations_url\":\"https://api.github.com/repos/alfloop-dev/odayplus/check-runs/99791041575/annotations\"},\"check_suite\":{\"id\":90739561169},\"app\":{\"id\":15368,\"client_id\":\"Iv1.05c79e9ad1f6bdfa\",\"slug\":\"github-actions\",\"node_id\":\"MDM6QXBwMTUzNjg=\",\"owner\":{\"login\":\"github\",\"id\":9919,\"node_id\":\"MDEyOk9yZ2FuaXphdGlvbjk5MTk=\",\"avatar_url\":\"https://avatars.githubusercontent.com/u/9919?v=4\",\"gravatar_id\":\"\",\"url\":\"https://api.github.com/users/github\",\"html_url\":\"https://github.com/github\",\"followers_url\":\"https://api.github.com/users/github/followers\",\"following_url\":\"https://api.github.com/users/github/following{/other_user}\",\"gists_url\":\"https://api.github.com/users/github/gists{/gist_id}\",\"starred_url\":\"https://api.github.com/users/github/starred{/owner}{/repo}\",\"subscriptions_url\":\"https://api.github.com/users/github/subscriptions\",\"organizations_url\":\"https://api.github.com/users/github/orgs\",\"repos_url\":\"https://api.github.com/users/github/repos\",\"events_url\":\"https://api.github.com/users/github/events{/privacy}\",\"received_events_url\":\"https://api.github.com/users/github/received_events\",\"type\":\"Organization\",\"user_view_type\":\"public\",\"site_admin\":false},\"name\":\"GitHub Actions\",\"description\":\"Automate your workflow from idea to production\",\"external_url\":\"https://help.github.com/en/actions\",\"html_url\":\"https://github.com/apps/github-actions\",\"created_at\":\"2018-07-30T09:30:17Z\",\"updated_at\":\"2026-06-18T16:17:48Z\",\"permissions\":{\"actions\":\"write\",\"administration\":\"read\",\"artifact_metadata\":\"write\",\"attestations\":\"write\",\"checks\":\"write\",\"code_quality\":\"write\",\"contents\":\"write\",\"copilot_requests\":\"write\",\"deployments\":\"write\",\"discussions\":\"write\",\"drives\":\"write\",\"issues\":\"write\",\"merge_queues\":\"write\",\"metadata\":\"read\",\"models\":\"read\",\"packages\":\"write\",\"pages\":\"write\",\"pull_requests\":\"write\",\"repository_hooks\":\"write\",\"repository_projects\":\"write\",\"security_events\":\"write\",\"statuses\":\"write\",\"vulnerability_alerts\":\"read\"},\"events\":[\"branch_protection_rule\",\"check_run\",\"check_suite\",\"create\",\"delete\",\"deployment\",\"deployment_status\",\"discussion\",\"discussion_comment\",\"fork\",\"gollum\",\"issues\",\"issue_comment\",\"label\",\"merge_group\",\"milestone\",\"page_build\",\"public\",\"pull_request\",\"pull_request_review\",\"pull_request_review_comment\",\"push\",\"registry_package\",\"release\",\"repository\",\"repository_dispatch\",\"status\",\"watch\",\"workflow_dispatch\",\"workflow_run\"]},\"pull_requests\":[]},{\"id\":99791041539,\"name\":\"product\",\"node_id\":\"CR_kwDOTFqC4s8AAAAXPAJ0Aw\",\"head_sha\":\"69422d71e8d5ac572ade58562c0aeca28d123648\",\"external_id\":\"3887b5e9-2ae0-52d6-80f8-f008d41f1cf9\",\"url\":\"https://api.github.com/repos/alfloop-dev/odayplus/check-runs/99791041539\",\"html_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/33487530897/job/99791041539\",\"details_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/33487530897/job/99791041539\",\"status\":\"completed\",\"conclusion\":\"success\",\"started_at\":\"2026-09-01T08:32:21Z\",\"completed_at\":\"2026-09-01T08:49:57Z\",\"output\":{\"title\":null,\"summary\":null,\"text\":null,\"annotations_count\":1,\"annotations_url\":\"https://api.github.com/repos/alfloop-dev/odayplus/check-runs/99791041539/annotations\"},\"check_suite\":{\"id\":90739561169},\"app\":{\"id\":15368,\"client_id\":\"Iv1.05c79e9ad1f6bdfa\",\"slug\":\"github-actions\",\"node_id\":\"MDM6QXBwMTUzNjg=\",\"owner\":{\"login\":\"github\",\"id\":9919,\"node_id\":\"MDEyOk9yZ2FuaXphdGlvbjk5MTk=\",\"avatar_url\":\"https://avatars.githubusercontent.com/u/9919?v=4\",\"gravatar_id\":\"\",\"url\":\"https://api.github.com/users/github\",\"html_url\":\"https://github.com/github\",\"followers_url\":\"https://api.github.com/users/github/followers\",\"following_url\":\"https://api.github.com/users/github/following{/other_user}\",\"gists_url\":\"https://api.github.com/users/github/gists{/gist_id}\",\"starred_url\":\"https://api.github.com/users/github/starred{/owner}{/repo}\",\"subscriptions_url\":\"https://api.github.com/users/github/subscriptions\",\"organizations_url\":\"https://api.github.com/users/github/orgs\",\"repos_url\":\"https://api.github.com/users/github/repos\",\"events_url\":\"https://api.github.com/users/github/events{/privacy}\",\"received_events_url\":\"https://api.github.com/users/github/received_events\",\"type\":\"Organization\",\"user_view_type\":\"public\",\"site_admin\":false},\"name\":\"GitHub Actions\",\"description\":\"Automate your workflow from idea to production\",\"external_url\":\"https://help.github.com/en/actions\",\"html_url\":\"https://github.com/apps/github-actions\",\"created_at\":\"2018-07-30T09:30:17Z\",\"updated_at\":\"2026-06-18T16:17:48Z\",\"permissions\":{\"actions\":\"write\",\"administration\":\"read\",\"artifact_metadata\":\"write\",\"attestations\":\"write\",\"checks\":\"write\",\"code_quality\":\"write\",\"contents\":\"write\",\"copilot_requests\":\"write\",\"deployments\":\"write\",\"discussions\":\"write\",\"drives\":\"write\",\"issues\":\"write\",\"merge_queues\":\"write\",\"metadata\":\"read\",\"models\":\"read\",\"packages\":\"write\",\"pages\":\"write\",\"pull_requests\":\"write\",\"repository_hooks\":\"write\",\"repository_projects\":\"write\",\"security_events\":\"write\",\"statuses\":\"write\",\"vulnerability_alerts\":\"read\"},\"events\":[\"branch_protection_rule\",\"check_run\",\"check_suite\",\"create\",\"delete\",\"deployment\",\"deployment_status\",\"discussion\",\"discussion_comment\",\"fork\",\"gollum\",\"issues\",\"issue_comment\",\"label\",\"merge_group\",\"milestone\",\"page_build\",\"public\",\"pull_request\",\"pull_request_review\",\"pull_request_review_comment\",\"push\",\"registry_package\",\"release\",\"repository\",\"repository_dispatch\",\"status\",\"watch\",\"workflow_dispatch\",\"workflow_run\"]},\"pull_requests\":[]},{\"id\":99791041369,\"name\":\"performance-gate\",\"node_id\":\"CR_kwDOTFqC4s8AAAAXPAJzWQ\",\"head_sha\":\"69422d71e8d5ac572ade58562c0aeca28d123648\",\"external_id\":\"99fd7141-b967-5850-8275-5d47fda23886\",\"url\":\"https://api.github.com/repos/alfloop-dev/odayplus/check-runs/99791041369\",\"html_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/33487530897/job/99791041369\",\"details_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/33487530897/job/99791041369\",\"status\":\"completed\",\"conclusion\":\"success\",\"started_at\":\"2026-09-01T08:32:21Z\",\"completed_at\":\"2026-09-01T08:33:27Z\",\"output\":{\"title\":null,\"summary\":null,\"text\":null,\"annotations_count\":1,\"annotations_url\":\"https://api.github.com/repos/alfloop-dev/odayplus/check-runs/99791041369/annotations\"},\"check_suite\":{\"id\":90739561169},\"app\":{\"id\":15368,\"client_id\":\"Iv1.05c79e9ad1f6bdfa\",\"slug\":\"github-actions\",\"node_id\":\"MDM6QXBwMTUzNjg=\",\"owner\":{\"login\":\"github\",\"id\":9919,\"node_id\":\"MDEyOk9yZ2FuaXphdGlvbjk5MTk=\",\"avatar_url\":\"https://avatars.githubusercontent.com/u/9919?v=4\",\"gravatar_id\":\"\",\"url\":\"https://api.github.com/users/github\",\"html_url\":\"https://github.com/github\",\"followers_url\":\"https://api.github.com/users/github/followers\",\"following_url\":\"https://api.github.com/users/github/following{/other_user}\",\"gists_url\":\"https://api.github.com/users/github/gists{/gist_id}\",\"starred_url\":\"https://api.github.com/users/github/starred{/owner}{/repo}\",\"subscriptions_url\":\"https://api.github.com/users/github/subscriptions\",\"organizations_url\":\"https://api.github.com/users/github/orgs\",\"repos_url\":\"https://api.github.com/users/github/repos\",\"events_url\":\"https://api.github.com/users/github/events{/privacy}\",\"received_events_url\":\"https://api.github.com/users/github/received_events\",\"type\":\"Organization\",\"user_view_type\":\"public\",\"site_admin\":false},\"name\":\"GitHub Actions\",\"description\":\"Automate your workflow from idea to production\",\"external_url\":\"https://help.github.com/en/actions\",\"html_url\":\"https://github.com/apps/github-actions\",\"created_at\":\"2018-07-30T09:30:17Z\",\"updated_at\":\"2026-06-18T16:17:48Z\",\"permissions\":{\"actions\":\"write\",\"administration\":\"read\",\"artifact_metadata\":\"write\",\"attestations\":\"write\",\"checks\":\"write\",\"code_quality\":\"write\",\"contents\":\"write\",\"copilot_requests\":\"write\",\"deployments\":\"write\",\"discussions\":\"write\",\"drives\":\"write\",\"issues\":\"write\",\"merge_queues\":\"write\",\"metadata\":\"read\",\"models\":\"read\",\"packages\":\"write\",\"pages\":\"write\",\"pull_requests\":\"write\",\"repository_hooks\":\"write\",\"repository_projects\":\"write\",\"security_events\":\"write\",\"statuses\":\"write\",\"vulnerability_alerts\":\"read\"},\"events\":[\"branch_protection_rule\",\"check_run\",\"check_suite\",\"create\",\"delete\",\"deployment\",\"deployment_status\",\"discussion\",\"discussion_comment\",\"fork\",\"gollum\",\"issues\",\"issue_comment\",\"label\",\"merge_group\",\"milestone\",\"page_build\",\"public\",\"pull_request\",\"pull_request_review\",\"pull_request_review_comment\",\"push\",\"registry_package\",\"release\",\"repository\",\"repository_dispatch\",\"status\",\"watch\",\"workflow_dispatch\",\"workflow_run\"]},\"pull_requests\":[]},{\"id\":99790997728,\"name\":\"boundary\",\"node_id\":\"CR_kwDOTFqC4s8AAAAXPAHI4A\",\"head_sha\":\"69422d71e8d5ac572ade58562c0aeca28d123648\",\"external_id\":\"b82f3b07-7e81-5fc3-a858-819d8ffb957d\",\"url\":\"https://api.github.com/repos/alfloop-dev/odayplus/check-runs/99790997728\",\"html_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/33487531249/job/99790997728\",\"details_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/33487531249/job/99790997728\",\"status\":\"completed\",\"conclusion\":\"success\",\"started_at\":\"2026-09-01T08:32:12Z\",\"completed_at\":\"2026-09-01T08:32:22Z\",\"output\":{\"title\":null,\"summary\":null,\"text\":null,\"annotations_count\":1,\"annotations_url\":\"https://api.github.com/repos/alfloop-dev/odayplus/check-runs/99790997728/annotations\"},\"check_suite\":{\"id\":90739562103},\"app\":{\"id\":15368,\"client_id\":\"Iv1.05c79e9ad1f6bdfa\",\"slug\":\"github-actions\",\"node_id\":\"MDM6QXBwMTUzNjg=\",\"owner\":{\"login\":\"github\",\"id\":9919,\"node_id\":\"MDEyOk9yZ2FuaXphdGlvbjk5MTk=\",\"avatar_url\":\"https://avatars.githubusercontent.com/u/9919?v=4\",\"gravatar_id\":\"\",\"url\":\"https://api.github.com/users/github\",\"html_url\":\"https://github.com/github\",\"followers_url\":\"https://api.github.com/users/github/followers\",\"following_url\":\"https://api.github.com/users/github/following{/other_user}\",\"gists_url\":\"https://api.github.com/users/github/gists{/gist_id}\",\"starred_url\":\"https://api.github.com/users/github/starred{/owner}{/repo}\",\"subscriptions_url\":\"https://api.github.com/users/github/subscriptions\",\"organizations_url\":\"https://api.github.com/users/github/orgs\",\"repos_url\":\"https://api.github.com/users/github/repos\",\"events_url\":\"https://api.github.com/users/github/events{/privacy}\",\"received_events_url\":\"https://api.github.com/users/github/received_events\",\"type\":\"Organization\",\"user_view_type\":\"public\",\"site_admin\":false},\"name\":\"GitHub Actions\",\"description\":\"Automate your workflow from idea to production\",\"external_url\":\"https://help.github.com/en/actions\",\"html_url\":\"https://github.com/apps/github-actions\",\"created_at\":\"2018-07-30T09:30:17Z\",\"updated_at\":\"2026-06-18T16:17:48Z\",\"permissions\":{\"actions\":\"write\",\"administration\":\"read\",\"artifact_metadata\":\"write\",\"attestations\":\"write\",\"checks\":\"write\",\"code_quality\":\"write\",\"contents\":\"write\",\"copilot_requests\":\"write\",\"deployments\":\"write\",\"discussions\":\"write\",\"drives\":\"write\",\"issues\":\"write\",\"merge_queues\":\"write\",\"metadata\":\"read\",\"models\":\"read\",\"packages\":\"write\",\"pages\":\"write\",\"pull_requests\":\"write\",\"repository_hooks\":\"write\",\"repository_projects\":\"write\",\"security_events\":\"write\",\"statuses\":\"write\",\"vulnerability_alerts\":\"read\"},\"events\":[\"branch_protection_rule\",\"check_run\",\"check_suite\",\"create\",\"delete\",\"deployment\",\"deployment_status\",\"discussion\",\"discussion_comment\",\"fork\",\"gollum\",\"issues\",\"issue_comment\",\"label\",\"merge_group\",\"milestone\",\"page_build\",\"public\",\"pull_request\",\"pull_request_review\",\"pull_request_review_comment\",\"push\",\"registry_package\",\"release\",\"repository\",\"repository_dispatch\",\"status\",\"watch\",\"workflow_dispatch\",\"workflow_run\"]},\"pull_requests\":[]},{\"id\":99790997003,\"name\":\"classify\",\"node_id\":\"CR_kwDOTFqC4s8AAAAXPAHGCw\",\"head_sha\":\"69422d71e8d5ac572ade58562c0aeca28d123648\",\"external_id\":\"a00466fd-ed98-5995-b8c4-9627114d50d0\",\"url\":\"https://api.github.com/repos/alfloop-dev/odayplus/check-runs/99790997003\",\"html_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/33487530982/job/99790997003\",\"details_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/33487530982/job/99790997003\",\"status\":\"completed\",\"conclusion\":\"success\",\"started_at\":\"2026-09-01T08:32:12Z\",\"completed_at\":\"2026-09-01T08:32:20Z\",\"output\":{\"title\":null,\"summary\":null,\"text\":null,\"annotations_count\":1,\"annotations_url\":\"https://api.github.com/repos/alfloop-dev/odayplus/check-runs/99790997003/annotations\"},\"check_suite\":{\"id\":90739561373},\"app\":{\"id\":15368,\"client_id\":\"Iv1.05c79e9ad1f6bdfa\",\"slug\":\"github-actions\",\"node_id\":\"MDM6QXBwMTUzNjg=\",\"owner\":{\"login\":\"github\",\"id\":9919,\"node_id\":\"MDEyOk9yZ2FuaXphdGlvbjk5MTk=\",\"avatar_url\":\"https://avatars.githubusercontent.com/u/9919?v=4\",\"gravatar_id\":\"\",\"url\":\"https://api.github.com/users/github\",\"html_url\":\"https://github.com/github\",\"followers_url\":\"https://api.github.com/users/github/followers\",\"following_url\":\"https://api.github.com/users/github/following{/other_user}\",\"gists_url\":\"https://api.github.com/users/github/gists{/gist_id}\",\"starred_url\":\"https://api.github.com/users/github/starred{/owner}{/repo}\",\"subscriptions_url\":\"https://api.github.com/users/github/subscriptions\",\"organizations_url\":\"https://api.github.com/users/github/orgs\",\"repos_url\":\"https://api.github.com/users/github/repos\",\"events_url\":\"https://api.github.com/users/github/events{/privacy}\",\"received_events_url\":\"https://api.github.com/users/github/received_events\",\"type\":\"Organization\",\"user_view_type\":\"public\",\"site_admin\":false},\"name\":\"GitHub Actions\",\"description\":\"Automate your workflow from idea to production\",\"external_url\":\"https://help.github.com/en/actions\",\"html_url\":\"https://github.com/apps/github-actions\",\"created_at\":\"2018-07-30T09:30:17Z\",\"updated_at\":\"2026-06-18T16:17:48Z\",\"permissions\":{\"actions\":\"write\",\"administration\":\"read\",\"artifact_metadata\":\"write\",\"attestations\":\"write\",\"checks\":\"write\",\"code_quality\":\"write\",\"contents\":\"write\",\"copilot_requests\":\"write\",\"deployments\":\"write\",\"discussions\":\"write\",\"drives\":\"write\",\"issues\":\"write\",\"merge_queues\":\"write\",\"metadata\":\"read\",\"models\":\"read\",\"packages\":\"write\",\"pages\":\"write\",\"pull_requests\":\"write\",\"repository_hooks\":\"write\",\"repository_projects\":\"write\",\"security_events\":\"write\",\"statuses\":\"write\",\"vulnerability_alerts\":\"read\"},\"events\":[\"branch_protection_rule\",\"check_run\",\"check_suite\",\"create\",\"delete\",\"deployment\",\"deployment_status\",\"discussion\",\"discussion_comment\",\"fork\",\"gollum\",\"issues\",\"issue_comment\",\"label\",\"merge_group\",\"milestone\",\"page_build\",\"public\",\"pull_request\",\"pull_request_review\",\"pull_request_review_comment\",\"push\",\"registry_package\",\"release\",\"repository\",\"repository_dispatch\",\"status\",\"watch\",\"workflow_dispatch\",\"workflow_run\"]},\"pull_requests\":[]},{\"id\":99790996139,\"name\":\"change-scope\",\"node_id\":\"CR_kwDOTFqC4s8AAAAXPAHCqw\",\"head_sha\":\"69422d71e8d5ac572ade58562c0aeca28d123648\",\"external_id\":\"9ea67feb-ec2a-52f7-8414-64dbddee80f8\",\"url\":\"https://api.github.com/repos/alfloop-dev/odayplus/check-runs/99790996139\",\"html_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/33487530897/job/99790996139\",\"details_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/33487530897/job/99790996139\",\"status\":\"completed\",\"conclusion\":\"success\",\"started_at\":\"2026-09-01T08:32:11Z\",\"completed_at\":\"2026-09-01T08:32:19Z\",\"output\":{\"title\":null,\"summary\":null,\"text\":null,\"annotations_count\":1,\"annotations_url\":\"https://api.github.com/repos/alfloop-dev/odayplus/check-runs/99790996139/annotations\"},\"check_suite\":{\"id\":90739561169},\"app\":{\"id\":15368,\"client_id\":\"Iv1.05c79e9ad1f6bdfa\",\"slug\":\"github-actions\",\"node_id\":\"MDM6QXBwMTUzNjg=\",\"owner\":{\"login\":\"github\",\"id\":9919,\"node_id\":\"MDEyOk9yZ2FuaXphdGlvbjk5MTk=\",\"avatar_url\":\"https://avatars.githubusercontent.com/u/9919?v=4\",\"gravatar_id\":\"\",\"url\":\"https://api.github.com/users/github\",\"html_url\":\"https://github.com/github\",\"followers_url\":\"https://api.github.com/users/github/followers\",\"following_url\":\"https://api.github.com/users/github/following{/other_user}\",\"gists_url\":\"https://api.github.com/users/github/gists{/gist_id}\",\"starred_url\":\"https://api.github.com/users/github/starred{/owner}{/repo}\",\"subscriptions_url\":\"https://api.github.com/users/github/subscriptions\",\"organizations_url\":\"https://api.github.com/users/github/orgs\",\"repos_url\":\"https://api.github.com/users/github/repos\",\"events_url\":\"https://api.github.com/users/github/events{/privacy}\",\"received_events_url\":\"https://api.github.com/users/github/received_events\",\"type\":\"Organization\",\"user_view_type\":\"public\",\"site_admin\":false},\"name\":\"GitHub Actions\",\"description\":\"Automate your workflow from idea to production\",\"external_url\":\"https://help.github.com/en/actions\",\"html_url\":\"https://github.com/apps/github-actions\",\"created_at\":\"2018-07-30T09:30:17Z\",\"updated_at\":\"2026-06-18T16:17:48Z\",\"permissions\":{\"actions\":\"write\",\"administration\":\"read\",\"artifact_metadata\":\"write\",\"attestations\":\"write\",\"checks\":\"write\",\"code_quality\":\"write\",\"contents\":\"write\",\"copilot_requests\":\"write\",\"deployments\":\"write\",\"discussions\":\"write\",\"drives\":\"write\",\"issues\":\"write\",\"merge_queues\":\"write\",\"metadata\":\"read\",\"models\":\"read\",\"packages\":\"write\",\"pages\":\"write\",\"pull_requests\":\"write\",\"repository_hooks\":\"write\",\"repository_projects\":\"write\",\"security_events\":\"write\",\"statuses\":\"write\",\"vulnerability_alerts\":\"read\"},\"events\":[\"branch_protection_rule\",\"check_run\",\"check_suite\",\"create\",\"delete\",\"deployment\",\"deployment_status\",\"discussion\",\"discussion_comment\",\"fork\",\"gollum\",\"issues\",\"issue_comment\",\"label\",\"merge_group\",\"milestone\",\"page_build\",\"public\",\"pull_request\",\"pull_request_review\",\"pull_request_review_comment\",\"push\",\"registry_package\",\"release\",\"repository\",\"repository_dispatch\",\"status\",\"watch\",\"workflow_dispatch\",\"workflow_run\"]},\"pull_requests\":[]},{\"id\":99790995820,\"name\":\"orchestrator\",\"node_id\":\"CR_kwDOTFqC4s8AAAAXPAHBbA\",\"head_sha\":\"69422d71e8d5ac572ade58562c0aeca28d123648\",\"external_id\":\"65799238-e488-5076-af5a-628135be27d0\",\"url\":\"https://api.github.com/repos/alfloop-dev/odayplus/check-runs/99790995820\",\"html_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/33487530897/job/99790995820\",\"details_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/33487530897/job/99790995820\",\"status\":\"completed\",\"conclusion\":\"success\",\"started_at\":\"2026-09-01T08:32:13Z\",\"completed_at\":\"2026-09-01T08:34:29Z\",\"output\":{\"title\":null,\"summary\":null,\"text\":null,\"annotations_count\":1,\"annotations_url\":\"https://api.github.com/repos/alfloop-dev/odayplus/check-runs/99790995820/annotations\"},\"check_suite\":{\"id\":90739561169},\"app\":{\"id\":15368,\"client_id\":\"Iv1.05c79e9ad1f6bdfa\",\"slug\":\"github-actions\",\"node_id\":\"MDM6QXBwMTUzNjg=\",\"owner\":{\"login\":\"github\",\"id\":9919,\"node_id\":\"MDEyOk9yZ2FuaXphdGlvbjk5MTk=\",\"avatar_url\":\"https://avatars.githubusercontent.com/u/9919?v=4\",\"gravatar_id\":\"\",\"url\":\"https://api.github.com/users/github\",\"html_url\":\"https://github.com/github\",\"followers_url\":\"https://api.github.com/users/github/followers\",\"following_url\":\"https://api.github.com/users/github/following{/other_user}\",\"gists_url\":\"https://api.github.com/users/github/gists{/gist_id}\",\"starred_url\":\"https://api.github.com/users/github/starred{/owner}{/repo}\",\"subscriptions_url\":\"https://api.github.com/users/github/subscriptions\",\"organizations_url\":\"https://api.github.com/users/github/orgs\",\"repos_url\":\"https://api.github.com/users/github/repos\",\"events_url\":\"https://api.github.com/users/github/events{/privacy}\",\"received_events_url\":\"https://api.github.com/users/github/received_events\",\"type\":\"Organization\",\"user_view_type\":\"public\",\"site_admin\":false},\"name\":\"GitHub Actions\",\"description\":\"Automate your workflow from idea to production\",\"external_url\":\"https://help.github.com/en/actions\",\"html_url\":\"https://github.com/apps/github-actions\",\"created_at\":\"2018-07-30T09:30:17Z\",\"updated_at\":\"2026-06-18T16:17:48Z\",\"permissions\":{\"actions\":\"write\",\"administration\":\"read\",\"artifact_metadata\":\"write\",\"attestations\":\"write\",\"checks\":\"write\",\"code_quality\":\"write\",\"contents\":\"write\",\"copilot_requests\":\"write\",\"deployments\":\"write\",\"discussions\":\"write\",\"drives\":\"write\",\"issues\":\"write\",\"merge_queues\":\"write\",\"metadata\":\"read\",\"models\":\"read\",\"packages\":\"write\",\"pages\":\"write\",\"pull_requests\":\"write\",\"repository_hooks\":\"write\",\"repository_projects\":\"write\",\"security_events\":\"write\",\"statuses\":\"write\",\"vulnerability_alerts\":\"read\"},\"events\":[\"branch_protection_rule\",\"check_run\",\"check_suite\",\"create\",\"delete\",\"deployment\",\"deployment_status\",\"discussion\",\"discussion_comment\",\"fork\",\"gollum\",\"issues\",\"issue_comment\",\"label\",\"merge_group\",\"milestone\",\"page_build\",\"public\",\"pull_request\",\"pull_request_review\",\"pull_request_review_comment\",\"push\",\"registry_package\",\"release\",\"repository\",\"repository_dispatch\",\"status\",\"watch\",\"workflow_dispatch\",\"workflow_run\"]},\"pull_requests\":[]}]}",
+      "stderr": "",
+      "provenance": "review-0ffddb44-evidence.json receipt 4 (Codex2 independent review observation)"
+    },
+    {
+      "receipt_id": "RC-05",
+      "purpose": "historical_pr1096_exact_head_task_review_gate_statuses",
+      "argv": [
+        "gh",
+        "api",
+        "repos/alfloop-dev/odayplus/commits/69422d71e8d5ac572ade58562c0aeca28d123648/statuses?per_page=100"
+      ],
+      "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-web-password-first-security-e2e-002",
+      "started_at": "2026-09-11T12:15:54.988327+00:00",
+      "duration_seconds": 0.526486,
+      "exit_code": 0,
+      "stdout": "[{\"url\":\"https://api.github.com/repos/alfloop-dev/odayplus/statuses/69422d71e8d5ac572ade58562c0aeca28d123648\",\"avatar_url\":\"https://avatars.githubusercontent.com/oa/1157143?v=4\",\"id\":53980381682,\"node_id\":\"SC_kwDOTFqC4s8AAAAMkXtB8g\",\"state\":\"failure\",\"description\":\"Review gate revoked pending current HEAD verification\",\"target_url\":null,\"context\":\"task-review-gate\",\"created_at\":\"2026-09-11T10:56:58Z\",\"updated_at\":\"2026-09-11T10:56:58Z\",\"creator\":{\"login\":\"ajoe734\",\"id\":169176954,\"node_id\":\"U_kgDOChVveg\",\"avatar_url\":\"https://avatars.githubusercontent.com/u/169176954?v=4\",\"gravatar_id\":\"\",\"url\":\"https://api.github.com/users/ajoe734\",\"html_url\":\"https://github.com/ajoe734\",\"followers_url\":\"https://api.github.com/users/ajoe734/followers\",\"following_url\":\"https://api.github.com/users/ajoe734/following{/other_user}\",\"gists_url\":\"https://api.github.com/users/ajoe734/gists{/gist_id}\",\"starred_url\":\"https://api.github.com/users/ajoe734/starred{/owner}{/repo}\",\"subscriptions_url\":\"https://api.github.com/users/ajoe734/subscriptions\",\"organizations_url\":\"https://api.github.com/users/ajoe734/orgs\",\"repos_url\":\"https://api.github.com/users/ajoe734/repos\",\"events_url\":\"https://api.github.com/users/ajoe734/events{/privacy}\",\"received_events_url\":\"https://api.github.com/users/ajoe734/received_events\",\"type\":\"User\",\"user_view_type\":\"public\",\"site_admin\":false}},{\"url\":\"https://api.github.com/repos/alfloop-dev/odayplus/statuses/69422d71e8d5ac572ade58562c0aeca28d123648\",\"avatar_url\":\"https://avatars.githubusercontent.com/oa/1157143?v=4\",\"id\":53782465443,\"node_id\":\"SC_kwDOTFqC4s8AAAAMha9Low\",\"state\":\"failure\",\"description\":\"Review rejected or reopened. Task status is blocked\",\"target_url\":null,\"context\":\"task-review-gate\",\"created_at\":\"2026-09-08T23:57:17Z\",\"updated_at\":\"2026-09-08T23:57:17Z\",\"creator\":{\"login\":\"ajoe734\",\"id\":169176954,\"node_id\":\"U_kgDOChVveg\",\"avatar_url\":\"https://avatars.githubusercontent.com/u/169176954?v=4\",\"gravatar_id\":\"\",\"url\":\"https://api.github.com/users/ajoe734\",\"html_url\":\"https://github.com/ajoe734\",\"followers_url\":\"https://api.github.com/users/ajoe734/followers\",\"following_url\":\"https://api.github.com/users/ajoe734/following{/other_user}\",\"gists_url\":\"https://api.github.com/users/ajoe734/gists{/gist_id}\",\"starred_url\":\"https://api.github.com/users/ajoe734/starred{/owner}{/repo}\",\"subscriptions_url\":\"https://api.github.com/users/ajoe734/subscriptions\",\"organizations_url\":\"https://api.github.com/users/ajoe734/orgs\",\"repos_url\":\"https://api.github.com/users/ajoe734/repos\",\"events_url\":\"https://api.github.com/users/ajoe734/events{/privacy}\",\"received_events_url\":\"https://api.github.com/users/ajoe734/received_events\",\"type\":\"User\",\"user_view_type\":\"public\",\"site_admin\":false}},{\"url\":\"https://api.github.com/repos/alfloop-dev/odayplus/statuses/69422d71e8d5ac572ade58562c0aeca28d123648\",\"avatar_url\":\"https://avatars.githubusercontent.com/oa/1157143?v=4\",\"id\":53282949601,\"node_id\":\"SC_kwDOTFqC4s8AAAAMZ-lJ4Q\",\"state\":\"success\",\"description\":\"Approved by assigned reviewer Codex2\",\"target_url\":null,\"context\":\"task-review-gate\",\"created_at\":\"2026-09-01T08:45:28Z\",\"updated_at\":\"2026-09-01T08:45:28Z\",\"creator\":{\"login\":\"ajoe734\",\"id\":169176954,\"node_id\":\"U_kgDOChVveg\",\"avatar_url\":\"https://avatars.githubusercontent.com/u/169176954?v=4\",\"gravatar_id\":\"\",\"url\":\"https://api.github.com/users/ajoe734\",\"html_url\":\"https://github.com/ajoe734\",\"followers_url\":\"https://api.github.com/users/ajoe734/followers\",\"following_url\":\"https://api.github.com/users/ajoe734/following{/other_user}\",\"gists_url\":\"https://api.github.com/users/ajoe734/gists{/gist_id}\",\"starred_url\":\"https://api.github.com/users/ajoe734/starred{/owner}{/repo}\",\"subscriptions_url\":\"https://api.github.com/users/ajoe734/subscriptions\",\"organizations_url\":\"https://api.github.com/users/ajoe734/orgs\",\"repos_url\":\"https://api.github.com/users/ajoe734/repos\",\"events_url\":\"https://api.github.com/users/ajoe734/events{/privacy}\",\"received_events_url\":\"https://api.github.com/users/ajoe734/received_events\",\"type\":\"User\",\"user_view_type\":\"public\",\"site_admin\":false}},{\"url\":\"https://api.github.com/repos/alfloop-dev/odayplus/statuses/69422d71e8d5ac572ade58562c0aeca28d123648\",\"avatar_url\":\"https://avatars.githubusercontent.com/oa/1157143?v=4\",\"id\":53282840724,\"node_id\":\"SC_kwDOTFqC4s8AAAAMZ-eglA\",\"state\":\"success\",\"description\":\"Approved by assigned reviewer Codex2\",\"target_url\":null,\"context\":\"task-review-gate\",\"created_at\":\"2026-09-01T08:43:30Z\",\"updated_at\":\"2026-09-01T08:43:30Z\",\"creator\":{\"login\":\"ajoe734\",\"id\":169176954,\"node_id\":\"U_kgDOChVveg\",\"avatar_url\":\"https://avatars.githubusercontent.com/u/169176954?v=4\",\"gravatar_id\":\"\",\"url\":\"https://api.github.com/users/ajoe734\",\"html_url\":\"https://github.com/ajoe734\",\"followers_url\":\"https://api.github.com/users/ajoe734/followers\",\"following_url\":\"https://api.github.com/users/ajoe734/following{/other_user}\",\"gists_url\":\"https://api.github.com/users/ajoe734/gists{/gist_id}\",\"starred_url\":\"https://api.github.com/users/ajoe734/starred{/owner}{/repo}\",\"subscriptions_url\":\"https://api.github.com/users/ajoe734/subscriptions\",\"organizations_url\":\"https://api.github.com/users/ajoe734/orgs\",\"repos_url\":\"https://api.github.com/users/ajoe734/repos\",\"events_url\":\"https://api.github.com/users/ajoe734/events{/privacy}\",\"received_events_url\":\"https://api.github.com/users/ajoe734/received_events\",\"type\":\"User\",\"user_view_type\":\"public\",\"site_admin\":false}},{\"url\":\"https://api.github.com/repos/alfloop-dev/odayplus/statuses/69422d71e8d5ac572ade58562c0aeca28d123648\",\"avatar_url\":\"https://avatars.githubusercontent.com/oa/1157143?v=4\",\"id\":53282740591,\"node_id\":\"SC_kwDOTFqC4s8AAAAMZ-YZbw\",\"state\":\"success\",\"description\":\"Approved by assigned reviewer Codex2\",\"target_url\":null,\"context\":\"task-review-gate\",\"created_at\":\"2026-09-01T08:41:48Z\",\"updated_at\":\"2026-09-01T08:41:48Z\",\"creator\":{\"login\":\"ajoe734\",\"id\":169176954,\"node_id\":\"U_kgDOChVveg\",\"avatar_url\":\"https://avatars.githubusercontent.com/u/169176954?v=4\",\"gravatar_id\":\"\",\"url\":\"https://api.github.com/users/ajoe734\",\"html_url\":\"https://github.com/ajoe734\",\"followers_url\":\"https://api.github.com/users/ajoe734/followers\",\"following_url\":\"https://api.github.com/users/ajoe734/following{/other_user}\",\"gists_url\":\"https://api.github.com/users/ajoe734/gists{/gist_id}\",\"starred_url\":\"https://api.github.com/users/ajoe734/starred{/owner}{/repo}\",\"subscriptions_url\":\"https://api.github.com/users/ajoe734/subscriptions\",\"organizations_url\":\"https://api.github.com/users/ajoe734/orgs\",\"repos_url\":\"https://api.github.com/users/ajoe734/repos\",\"events_url\":\"https://api.github.com/users/ajoe734/events{/privacy}\",\"received_events_url\":\"https://api.github.com/users/ajoe734/received_events\",\"type\":\"User\",\"user_view_type\":\"public\",\"site_admin\":false}},{\"url\":\"https://api.github.com/repos/alfloop-dev/odayplus/statuses/69422d71e8d5ac572ade58562c0aeca28d123648\",\"avatar_url\":\"https://avatars.githubusercontent.com/oa/1157143?v=4\",\"id\":53282216671,\"node_id\":\"SC_kwDOTFqC4s8AAAAMZ94a3w\",\"state\":\"pending\",\"description\":\"Pending review by Codex2\",\"target_url\":null,\"context\":\"task-review-gate\",\"created_at\":\"2026-09-01T08:32:21Z\",\"updated_at\":\"2026-09-01T08:32:21Z\",\"creator\":{\"login\":\"ajoe734\",\"id\":169176954,\"node_id\":\"U_kgDOChVveg\",\"avatar_url\":\"https://avatars.githubusercontent.com/u/169176954?v=4\",\"gravatar_id\":\"\",\"url\":\"https://api.github.com/users/ajoe734\",\"html_url\":\"https://github.com/ajoe734\",\"followers_url\":\"https://api.github.com/users/ajoe734/followers\",\"following_url\":\"https://api.github.com/users/ajoe734/following{/other_user}\",\"gists_url\":\"https://api.github.com/users/ajoe734/gists{/gist_id}\",\"starred_url\":\"https://api.github.com/users/ajoe734/starred{/owner}{/repo}\",\"subscriptions_url\":\"https://api.github.com/users/ajoe734/subscriptions\",\"organizations_url\":\"https://api.github.com/users/ajoe734/orgs\",\"repos_url\":\"https://api.github.com/users/ajoe734/repos\",\"events_url\":\"https://api.github.com/users/ajoe734/events{/privacy}\",\"received_events_url\":\"https://api.github.com/users/ajoe734/received_events\",\"type\":\"User\",\"user_view_type\":\"public\",\"site_admin\":false}},{\"url\":\"https://api.github.com/repos/alfloop-dev/odayplus/statuses/69422d71e8d5ac572ade58562c0aeca28d123648\",\"avatar_url\":\"https://avatars.githubusercontent.com/oa/1157143?v=4\",\"id\":53282205903,\"node_id\":\"SC_kwDOTFqC4s8AAAAMZ93wzw\",\"state\":\"failure\",\"description\":\"Review rejected or reopened. Task status is in_progress\",\"target_url\":null,\"context\":\"task-review-gate\",\"created_at\":\"2026-09-01T08:32:10Z\",\"updated_at\":\"2026-09-01T08:32:10Z\",\"creator\":{\"login\":\"ajoe734\",\"id\":169176954,\"node_id\":\"U_kgDOChVveg\",\"avatar_url\":\"https://avatars.githubusercontent.com/u/169176954?v=4\",\"gravatar_id\":\"\",\"url\":\"https://api.github.com/users/ajoe734\",\"html_url\":\"https://github.com/ajoe734\",\"followers_url\":\"https://api.github.com/users/ajoe734/followers\",\"following_url\":\"https://api.github.com/users/ajoe734/following{/other_user}\",\"gists_url\":\"https://api.github.com/users/ajoe734/gists{/gist_id}\",\"starred_url\":\"https://api.github.com/users/ajoe734/starred{/owner}{/repo}\",\"subscriptions_url\":\"https://api.github.com/users/ajoe734/subscriptions\",\"organizations_url\":\"https://api.github.com/users/ajoe734/orgs\",\"repos_url\":\"https://api.github.com/users/ajoe734/repos\",\"events_url\":\"https://api.github.com/users/ajoe734/events{/privacy}\",\"received_events_url\":\"https://api.github.com/users/ajoe734/received_events\",\"type\":\"User\",\"user_view_type\":\"public\",\"site_admin\":false}}]",
+      "stderr": "",
+      "provenance": "review-0ffddb44-evidence.json receipt 5 (Codex2 independent review observation; confirms historical approval by Codex2 at 2026-09-01T08:45:28Z)"
+    },
+    {
+      "receipt_id": "RC-06",
+      "purpose": "pr1253_auth_mode_alignment_metadata",
+      "argv": [
+        "gh",
+        "pr",
+        "view",
+        "1253",
+        "--repo",
+        "alfloop-dev/odayplus",
+        "--json",
+        "number,headRefOid,mergeCommit,mergedAt,files"
+      ],
+      "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-web-password-first-security-e2e-002",
+      "started_at": "2026-09-11T12:15:55.514852+00:00",
+      "duration_seconds": 0.660233,
+      "exit_code": 0,
+      "stdout": "{\"files\":[{\"path\":\"docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/README.md\",\"additions\":324,\"deletions\":0,\"changeType\":\"ADDED\"},{\"path\":\"docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/auth-mode-evidence-matrix.json\",\"additions\":1868,\"deletions\":0,\"changeType\":\"ADDED\"},{\"path\":\"docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/human-task-handoff.json\",\"additions\":232,\"deletions\":0,\"changeType\":\"ADDED\"}],\"headRefOid\":\"9fc7e2a8a59085a02ea030f02fdfb3dfb4eee47d\",\"mergeCommit\":{\"oid\":\"0af51e04ea5cb6a0a5266b84bc8f7a606d3cb993\"},\"mergedAt\":\"2026-09-08T19:07:27Z\",\"number\":1253}\n",
+      "stderr": "",
+      "provenance": "review-0ffddb44-evidence.json receipt 6 (Codex2 independent review observation)"
+    },
+    {
+      "receipt_id": "RC-07",
+      "purpose": "upstream_merge_commits_inspection",
+      "argv": [
+        "git",
+        "show",
+        "--no-patch",
+        "--format=fuller",
+        "595e7501e73ff4cbb5894c27e199e02a06c2a509",
+        "840081001084ad9586421de908530a41f3a17333",
+        "47c876b564a9a62cdab6421288e4507333300889"
+      ],
+      "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-web-password-first-security-e2e-002",
+      "started_at": "2026-09-11T12:15:56.175133+00:00",
+      "duration_seconds": 0.020704,
+      "exit_code": 0,
+      "stdout": "commit 595e7501e73ff4cbb5894c27e199e02a06c2a509\nMerge: 4b1dce35 94e93af9\nAuthor:     ajoe734 <bjoe734@gmail.com>\nAuthorDate: Tue Sep 1 06:17:42 2026 +0000\nCommit:     GitHub <noreply@github.com>\nCommitDate: Tue Sep 1 06:17:42 2026 +0000\n\n    Merge pull request #1085 from alfloop-dev/task/ODP-WEB-LOGIN-THROTTLE-REMEDIATION-001\n    \n    [ReviewBus] ODP-WEB-LOGIN-THROTTLE-REMEDIATION-001 將登入節流接入正式路徑並持久化\n\ncommit 840081001084ad9586421de908530a41f3a17333\nMerge: 47c876b5 6e810a9f\nAuthor:     ajoe734 <bjoe734@gmail.com>\nAuthorDate: Sun Aug 30 11:33:54 2026 +0000\nCommit:     GitHub <noreply@github.com>\nCommitDate: Sun Aug 30 11:33:54 2026 +0000\n\n    Merge pull request #1074 from alfloop-dev/task/ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001\n    \n    [ReviewBus] ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001 移除部署對 Google OAuth 的硬依賴並保留可選 OIDC\n\ncommit 47c876b564a9a62cdab6421288e4507333300889\nMerge: 4d7b4e22 821fbd9d\nAuthor:     ajoe734 <bjoe734@gmail.com>\nAuthorDate: Sun Aug 30 10:41:57 2026 +0000\nCommit:     GitHub <noreply@github.com>\nCommitDate: Sun Aug 30 10:41:57 2026 +0000\n\n    Merge pull request #1073 from alfloop-dev/task/ODP-WEB-LOCAL-IDENTITY-CORE-001\n    \n    [ReviewBus] ODP-WEB-LOCAL-IDENTITY-CORE-001 實作本地帳號、密碼憑證與可撤銷 session 核心\n",
+      "stderr": "",
+      "provenance": "review-0ffddb44-evidence.json receipt 7 (Codex2 independent review observation)"
+    },
+    {
+      "receipt_id": "RC-08",
+      "purpose": "canonical_status_projection_query",
+      "argv": [
+        "jq",
+        ".tasks[] | select(.id==\"ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002\" or .id==\"ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001\" or .id==\"HUMAN-GCP-WEB-OAUTH-CLIENTS-001\") | {id,status,owner,reviewer,depends_on,branch,review_gate_sha,last_update}",
+        "/home/lupin/odayplus/ai-status.json"
+      ],
+      "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-web-password-first-security-e2e-002",
+      "started_at": "2026-09-11T12:15:56.195890+00:00",
+      "duration_seconds": 0.036518,
+      "exit_code": 0,
+      "stdout": "{\n  \"id\": \"HUMAN-GCP-WEB-OAUTH-CLIENTS-001\",\n  \"status\": \"todo\",\n  \"owner\": \"Human/Ops\",\n  \"reviewer\": \"Codex\",\n  \"depends_on\": [],\n  \"branch\": null,\n  \"review_gate_sha\": null,\n  \"last_update\": \"2026-09-08T23:57:58Z\"\n}\n{\n  \"id\": \"ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001\",\n  \"status\": \"blocked\",\n  \"owner\": \"Antigravity2\",\n  \"reviewer\": \"Codex2\",\n  \"depends_on\": [\n    \"ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001\",\n    \"ODP-RUNTIME-RELEASE-SINGLE-PATH-001\",\n    \"ODP-GITHUB-GCP-ENV-BOOTSTRAP-001\",\n    \"DPF-EMGI-LIVE-ROLLOUT-001\",\n    \"ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001\",\n    \"ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002\",\n    \"ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001\",\n    \"ODP-DEV-STAGED-GATE-RECONCILIATION-001\",\n    \"ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002\",\n    \"ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001\"\n  ],\n  \"branch\": \"task/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001\",\n  \"review_gate_sha\": \"045575b0d73bfef29b337fabb7c07408bbcbe670\",\n  \"last_update\": \"2026-09-11T03:37:40Z\"\n}\n{\n  \"id\": \"ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002\",\n  \"status\": \"review\",\n  \"owner\": \"Antigravity7\",\n  \"reviewer\": \"Codex2\",\n  \"depends_on\": [],\n  \"branch\": \"task/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002-RECOVERY-20260911\",\n  \"review_gate_sha\": \"0ffddb44bc6751389374e52a49a0124b9ccef09b\",\n  \"last_update\": \"2026-09-11T12:08:49Z\"\n}\n",
+      "stderr": "",
+      "provenance": "review-0ffddb44-evidence.json receipt 8 (Codex2 independent review observation)"
+    },
+    {
+      "receipt_id": "RC-09",
+      "purpose": "reused_r31_pr1096_github_state",
+      "argv": [
+        "gh",
+        "pr",
+        "view",
+        "1096",
+        "--repo",
+        "alfloop-dev/odayplus",
+        "--json",
+        "number,url,state,headRefOid,mergeCommit,mergedAt"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "started_at": "2026-09-08T17:14:27Z",
+      "duration_seconds": null,
+      "exit_code": 0,
+      "stdout": "{\"headRefOid\":\"69422d71e8d5ac572ade58562c0aeca28d123648\",\"mergeCommit\":{\"oid\":\"2377168c2cc07cd2470dd8f43de0486fe8d8fc08\"},\"mergedAt\":\"2026-09-01T09:10:24Z\",\"number\":1096,\"state\":\"MERGED\",\"url\":\"https://github.com/alfloop-dev/odayplus/pull/1096\"}",
+      "stderr": "",
+      "provenance": "docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/auth-mode-evidence-matrix.json collection_receipts R31 (PR #1253 merge 0af51e04)"
+    },
+    {
+      "receipt_id": "RC-10",
+      "purpose": "reused_r07_pr1096_merge_commit_parents",
+      "argv": [
+        "git",
+        "log",
+        "-1",
+        "--format=%H %P %cI %s",
+        "2377168c2cc07cd2470dd8f43de0486fe8d8fc08"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "started_at": "2026-09-08T17:14:24Z",
+      "duration_seconds": null,
+      "exit_code": 0,
+      "stdout": "2377168c2cc07cd2470dd8f43de0486fe8d8fc08 35a28741e627055369920b09984ca8c004b229c6 69422d71e8d5ac572ade58562c0aeca28d123648 2026-09-01T08:51:28+00:00 Merge pull request #1096 from alfloop-dev/task/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+      "stderr": "",
+      "provenance": "docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/auth-mode-evidence-matrix.json collection_receipts R07 (PR #1253 merge 0af51e04)"
+    },
+    {
+      "receipt_id": "RC-11",
+      "purpose": "reused_r30_pr1085_github_state",
+      "argv": [
+        "gh",
+        "pr",
+        "view",
+        "1085",
+        "--repo",
+        "alfloop-dev/odayplus",
+        "--json",
+        "number,url,state,headRefOid,mergeCommit,mergedAt"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "started_at": "2026-09-08T17:14:27Z",
+      "duration_seconds": null,
+      "exit_code": 0,
+      "stdout": "{\"headRefOid\":\"94e93af9e7611d5c70dc38247db6942f0bccfad6\",\"mergeCommit\":{\"oid\":\"595e7501e73ff4cbb5894c27e199e02a06c2a509\"},\"mergedAt\":\"2026-09-01T06:37:24Z\",\"number\":1085,\"state\":\"MERGED\",\"url\":\"https://github.com/alfloop-dev/odayplus/pull/1085\"}",
+      "stderr": "",
+      "provenance": "docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/auth-mode-evidence-matrix.json collection_receipts R30 (PR #1253 merge 0af51e04)"
+    },
+    {
+      "receipt_id": "RC-12",
+      "purpose": "reused_r32_pr1074_github_state",
+      "argv": [
+        "gh",
+        "pr",
+        "view",
+        "1074",
+        "--repo",
+        "alfloop-dev/odayplus",
+        "--json",
+        "number,url,state,headRefOid,mergeCommit,mergedAt"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "started_at": "2026-09-08T17:14:28Z",
+      "duration_seconds": null,
+      "exit_code": 0,
+      "stdout": "{\"headRefOid\":\"6e810a9f366ea6994062f6c61820cea2f7b51b4f\",\"mergeCommit\":{\"oid\":\"840081001084ad9586421de908530a41f3a17333\"},\"mergedAt\":\"2026-08-30T11:52:38Z\",\"number\":1074,\"state\":\"MERGED\",\"url\":\"https://github.com/alfloop-dev/odayplus/pull/1074\"}",
+      "stderr": "",
+      "provenance": "docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/auth-mode-evidence-matrix.json collection_receipts R32 (PR #1253 merge 0af51e04)"
+    },
+    {
+      "receipt_id": "RC-13",
+      "purpose": "reused_r01_resolve_receipt_base_sha",
+      "argv": [
+        "git",
+        "rev-parse",
+        "--verify",
+        "d0c81635df8e^{commit}"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "started_at": "2026-09-08T17:14:24Z",
+      "duration_seconds": null,
+      "exit_code": 0,
+      "stdout": "d0c81635df8e842f7910d40873b3886d4237cee8",
+      "stderr": "",
+      "provenance": "docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/auth-mode-evidence-matrix.json collection_receipts R01 (PR #1253 merge 0af51e04)"
+    },
+    {
+      "receipt_id": "RC-14",
+      "purpose": "reused_r03_resolve_receipt_merge_sha",
+      "argv": [
+        "git",
+        "rev-parse",
+        "--verify",
+        "f3095a0e^{commit}"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "started_at": "2026-09-08T17:14:24Z",
+      "duration_seconds": null,
+      "exit_code": 0,
+      "stdout": "f3095a0ee3ca3dde63d98f35ae8cfedf090fd529",
+      "stderr": "",
+      "provenance": "docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/auth-mode-evidence-matrix.json collection_receipts R03 (PR #1253 merge 0af51e04)"
+    },
+    {
+      "receipt_id": "RC-15",
+      "purpose": "reused_r27_canonical_lookup_e2e_002",
+      "argv": [
+        "/home/lupin/odayplus/scripts/ai-status.sh",
+        "show",
+        "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002"
+      ],
+      "cwd": "repo root (task worktree)",
+      "source_sha": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+      "started_at": "2026-09-08T17:14:25Z",
+      "duration_seconds": null,
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Unknown task: ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+      "provenance": "docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/auth-mode-evidence-matrix.json collection_receipts R27 (PR #1253 merge 0af51e04)"
+    },
+    {
+      "receipt_id": "RC-16",
+      "classification": "historical_document_declaration",
+      "purpose": "historical_immutable_e2e_receipt_statement",
+      "document_path": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md",
+      "pinned_historical_head_sha": "69422d71e8d5ac572ade58562c0aeca28d123648",
+      "pinned_historical_merge_sha": "2377168c2cc07cd2470dd8f43de0486fe8d8fc08",
+      "historical_verification_date_precision": "2026-09-01 UTC (date precision per receipt §4; exact execution timestamp not recorded in deliverable)",
+      "execution_metadata_status": "unknown_unretained_in_archive",
+      "per_command_exit_codes": "unknown_in_rollup_receipt",
+      "statement_summary": "verdict: pass; verification date: 2026-09-01 UTC; composition base: d0c81635df8e842f7910d40873b3886d4237cee8; composition merge: f3095a0ee3ca3dde63d98f35ae8cfedf090fd529; 7-layer verification: Web test 53 files/474 passed, typecheck passed, lint passed, Python pytest 151 passed/22 skipped, ruff passed, Terraform contract 14 files passed, Terraform unit 32 tests passed",
+      "provenance": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md (immutable historical deliverable in PR #1096 head 69422d71e8d5, merge 2377168c2cc0; historical per-command terminal logs not retained in archive)"
+    }
+  ],
+  "overall_reconciliation_verdict": {
+    "status": "RECONCILIATION_COMPLETE",
+    "recommendation": "ready_for_review_approval",
+    "summary": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 原交付物 (PR #1096, head 69422d71e8d5, merge 2377168c2cc0) 之 6 項驗收條款中，A1–A5 共 5 項在程式、測試矩陣、安全掃描、CI 綠燈層面完整驗證 (VERIFIED)；A6 之 PR 中文交付格式已驗證 (VERIFIED)，『只跑一次』執行次數依據歷史庫存客觀標註為不可獨立追溯之過程約束 (process_constraint_unverifiable)，不阻礙驗收。A3 軟體回歸矩陣已由 vitest 與 Python E2E 充分覆蓋，依 D15 決策不升格為真實 GCP provider 啟用。無任何虛構測試名稱，所有證據均綁定真實 exact-SHA 與 pinned 檔案，下游 rollout gate 與 dependency 完全維持原狀 (depends_on: [])。"
+  }
+}

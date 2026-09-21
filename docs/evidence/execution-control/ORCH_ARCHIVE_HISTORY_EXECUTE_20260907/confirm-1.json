@@ -1,0 +1,21 @@
+{
+  "started_at": "2026-09-09T16:22:58.880425+00:00",
+  "finished_at": "2026-09-09T16:23:20.896857+00:00",
+  "argv": [
+    "/home/lupin/odayplus/scripts/ai-status.sh",
+    "archive_recovery_invalidate",
+    "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+    "--coordination-task",
+    "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
+    "--reason",
+    "撤回錯誤歷史完成判定：原驗收要求缺少權威裁決時保持 blocked；目前沒有適用的 Human/Ops 裁決證據。",
+    "--evidence-ref",
+    "https://github.com/alfloop-dev/odayplus/blob/af6b027439f2525cd03e78b5720f6cef855869ff/docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_disposition_corrections_20260909.json",
+    "--expected-sha256",
+    "2f1436d107dd1b13111db3550b1b7566c2db69e90bd8a757cf33a085a1237114",
+    "--confirm"
+  ],
+  "exit_code": 0,
+  "stdout": "{\n  \"status\": \"applied\",\n  \"action\": \"archive_recovery_invalidation\",\n  \"task_id\": \"ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001\",\n  \"correction_path\": \"ai-task-archive/corrections/ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001.json\",\n  \"correction\": {\n    \"schema_version\": 1,\n    \"type\": \"archive_recovery_invalidation\",\n    \"task_id\": \"ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001\",\n    \"snapshot_sha256\": \"2f1436d107dd1b13111db3550b1b7566c2db69e90bd8a757cf33a085a1237114\",\n    \"invalidated_at\": \"2026-09-09T16:22:59Z\",\n    \"actor\": \"Codex\",\n    \"coordination_task_id\": \"ORCH-ARCHIVE-HISTORY-EXECUTE-003\",\n    \"reason\": \"撤回錯誤歷史完成判定：原驗收要求缺少權威裁決時保持 blocked；目前沒有適用的 Human/Ops 裁決證據。\",\n    \"evidence_ref\": \"https://github.com/alfloop-dev/odayplus/blob/af6b027439f2525cd03e78b5720f6cef855869ff/docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_disposition_corrections_20260909.json\",\n    \"effective_status\": \"blocked\",\n    \"dependency_satisfied\": false\n  },\n  \"effective_status\": \"blocked\",\n  \"dependency_satisfied\": false\n}\n",
+  "stderr": ""
+}

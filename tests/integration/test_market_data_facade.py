@@ -62,6 +62,8 @@ from shared.auth import (
     Principal,
     Role,
     Scope,
+    TenantAccessWaiver,
+    TenantAccessWaiverRegistry,
 )
 from shared.auth.engine import AuthorizationEngine
 
@@ -384,6 +386,7 @@ def sample_property_observation_payload() -> dict[str, Any]:
             }
         ],
         "status_histories": [],
+        "metadata": {"tenant_id": "tenant-alpha"},
     }
 
 
@@ -867,14 +870,50 @@ def test_facade_cross_tenant_isolation_denied(facade, foreign_tenant_principal):
     assert exc_info.value.code == "cross_tenant_access_denied"
 
 
-def test_facade_platform_admin_can_bypass_tenant_isolation(facade, platform_admin_principal):
-    ctx = facade.get_site_market_context(
+def test_facade_platform_admin_denied_cross_tenant_without_waiver(
+    facade, platform_admin_principal
+):
+    """PLATFORM_ADMIN must fail closed on cross-tenant access without an approved waiver."""
+    with pytest.raises(MarketDataAuthorizationError) as exc_info:
+        facade.get_site_market_context(
+            "site-taipei-001",
+            tenant_id="tenant-alpha",
+            principal=platform_admin_principal,
+        )
+    assert exc_info.value.code in {"cross_tenant_access_denied", "missing_tenant"}
+
+
+def test_facade_platform_admin_allowed_cross_tenant_with_waiver(
+    facade, platform_admin_principal
+):
+    """PLATFORM_ADMIN with a formal, time-bounded waiver is permitted and audited."""
+    from datetime import UTC, datetime, timedelta
+
+    waiver = TenantAccessWaiver(
+        waiver_id="WAIVER-ADMIN-TEST",
+        principal_id="admin-platform-1",
+        target_tenant_id="tenant-alpha",
+        approved_by="ciso",
+        reason="Security audit",
+        expires_at=datetime.now(UTC) + timedelta(days=1),
+    )
+    registry = TenantAccessWaiverRegistry()
+    registry.register(waiver)
+    authorized_facade = MarketDataFacade(
+        client=facade.client,
+        auth_engine=facade.auth_engine,
+        enforce_auth=True,
+        waiver_registry=registry,
+    )
+    ctx = authorized_facade.get_site_market_context(
         "site-taipei-001",
         tenant_id="tenant-alpha",
         principal=platform_admin_principal,
+        waiver=waiver,
     )
     assert isinstance(ctx, SiteMarketContext)
     assert ctx.identity.site_id == "site-taipei-001"
+
 
 
 def test_facade_insufficient_clearance_denied(facade):
@@ -1051,6 +1090,7 @@ def test_t1_t2_two_tenant_isolation_and_default_scoping(
     prop_beta_payload = {
         "created_at": "2026-08-14T00:00:00Z",
         "contract_id": "emgi.property-observation.v1",
+        "metadata": {"tenant_id": "tenant-beta"},
         "tenant_id": "tenant-beta",
         "properties": [
             {
@@ -1081,6 +1121,7 @@ def test_t1_t2_two_tenant_isolation_and_default_scoping(
 
     prop_alpha_payload = {
         **sample_property_observation_payload,
+        "metadata": {"tenant_id": "tenant-alpha"},
         "tenant_id": "tenant-alpha",
     }
 
@@ -1113,11 +1154,22 @@ def test_t1_t2_two_tenant_isolation_and_default_scoping(
         authenticated=True,
     )
 
-    # T2: Omitting tenant_id defaults to principal.tenant_id
+    # T2: Missing tenant_id fails closed with missing_tenant
+    with pytest.raises(MarketDataAuthorizationError) as exc_info:
+        facade.get_site_market_context(
+            "site-taipei-001",
+            period_grain=PeriodGrain.MONTHLY,
+            period_key="2026-08",
+            principal=principal_alpha,
+        )
+    assert exc_info.value.code == "missing_tenant"
+
+    # T2: Explicit matching tenant_id succeeds
     ctx_alpha = facade.get_site_market_context(
         "site-taipei-001",
         period_grain=PeriodGrain.MONTHLY,
         period_key="2026-08",
+        tenant_id="tenant-alpha",
         principal=principal_alpha,
     )
     assert ctx_alpha.identity.site_id == "site-taipei-001"
@@ -1126,6 +1178,7 @@ def test_t1_t2_two_tenant_isolation_and_default_scoping(
         "site-beta-001",
         period_grain=PeriodGrain.MONTHLY,
         period_key="2026-08",
+        tenant_id="tenant-beta",
         principal=principal_beta,
     )
     assert ctx_beta.identity.site_id == "site-beta-001"
@@ -1141,36 +1194,31 @@ def test_t1_t2_two_tenant_isolation_and_default_scoping(
         )
     assert exc_info.value.code == "cross_tenant_access_denied"
 
-    # T2: Attempting to read foreign site without tenant_id raises NotFound in own tenant (no cross-tenant leak)
-    with pytest.raises(MarketDataNotFoundError):
-        facade.get_site_market_context(
-            "site-beta-001",
-            period_grain=PeriodGrain.MONTHLY,
-            period_key="2026-08",
-            principal=principal_alpha,
-        )
-
     # T1: Property Entity and Listing Observation isolation
-    prop_a = facade.get_property_entity("prop-tw-001", principal=principal_alpha)
+    prop_a = facade.get_property_entity("prop-tw-001", tenant_id="tenant-alpha", principal=principal_alpha)
     assert prop_a.property_id == "prop-tw-001"
 
-    prop_b = facade.get_property_entity("prop-beta-001", principal=principal_beta)
+    prop_b = facade.get_property_entity("prop-beta-001", tenant_id="tenant-beta", principal=principal_beta)
     assert prop_b.property_id == "prop-beta-001"
 
-    # Principal Alpha querying Principal Beta's property entity raises NotFound (does not leak)
-    with pytest.raises(MarketDataNotFoundError):
-        facade.get_property_entity("prop-beta-001", principal=principal_alpha)
+    # Principal Alpha querying Principal Beta's property entity with foreign tenant is denied
+    with pytest.raises(MarketDataAuthorizationError) as exc_info:
+        facade.get_property_entity("prop-beta-001", tenant_id="tenant-beta", principal=principal_alpha)
+    assert exc_info.value.code == "cross_tenant_access_denied"
 
-    # Principal Beta querying Principal Alpha's property entity raises NotFound (does not leak)
-    with pytest.raises(MarketDataNotFoundError):
-        facade.get_property_entity("prop-tw-001", principal=principal_beta)
+    # Principal Beta querying Principal Alpha's property entity with foreign tenant is denied
+    with pytest.raises(MarketDataAuthorizationError) as exc_info:
+        facade.get_property_entity("prop-tw-001", tenant_id="tenant-alpha", principal=principal_beta)
+    assert exc_info.value.code == "cross_tenant_access_denied"
 
     # Listing observation isolation
-    listing_a = facade.get_listing_observation("list-obs-001", principal=principal_alpha)
+    listing_a = facade.get_listing_observation("list-obs-001", tenant_id="tenant-alpha", principal=principal_alpha)
     assert listing_a.listing_obs_id == "list-obs-001"
 
-    with pytest.raises(MarketDataNotFoundError):
-        facade.get_listing_observation("list-beta-001", principal=principal_alpha)
+    with pytest.raises(MarketDataAuthorizationError) as exc_info:
+        facade.get_listing_observation("list-beta-001", tenant_id="tenant-beta", principal=principal_alpha)
+    assert exc_info.value.code == "cross_tenant_access_denied"
+
 
 
 def test_m1_m2_authorization_engine_security_audit_events(facade, foreign_tenant_principal):
@@ -1234,5 +1282,4 @@ def test_t3_transport_explicit_requirement_and_rejection_of_silent_defaults(seed
         principal=expansion_principal,
     )
     assert ctx.identity.site_id == "site-taipei-001"
-
 

@@ -259,6 +259,20 @@ def test_rollback_probe_reads_the_platform_by_default() -> None:
     assert probe["writes"] == 0
 
 
+def test_rollback_probe_double_uses_document_contract_with_resource_tenant() -> None:
+    client = facade_module._RollbackProbeClient()
+
+    document = client.get_site_market_context_document(
+        site_id=facade_module.ROLLBACK_PROBE_SITE_ID,
+        tenant_id="caller-controlled-tenant",
+    )
+
+    assert document.tenant_id == "rollback-probe-tenant"
+    assert isinstance(document, facade_module.SiteMarketContextDocument)
+    assert document.contexts[0].identity.site_id == facade_module.ROLLBACK_PROBE_SITE_ID
+    assert document.contexts[0].period_grain.value == "MONTHLY"
+
+
 def test_rollback_probe_reads_legacy_when_configured() -> None:
     probe = rollback_probe(LEGACY_ENV)
 

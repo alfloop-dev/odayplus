@@ -40,6 +40,7 @@ class QuarantineReason(StrEnum):
     STATUS_MAPPING_UNAPPROVED = "STATUS_MAPPING_UNAPPROVED"
     MISSING_AUTHORITATIVE_PAYMENT = "MISSING_AUTHORITATIVE_PAYMENT"
     SOURCE_SUPERSEDED = "SOURCE_SUPERSEDED"
+    SOURCE_DELETED = "SOURCE_DELETED"
     OPERATION_MAPPING_UNAPPROVED = "OPERATION_MAPPING_UNAPPROVED"
     TYPE_MAPPING_UNAPPROVED = "TYPE_MAPPING_UNAPPROVED"
     CONNECTION_MAPPING_UNAPPROVED = "CONNECTION_MAPPING_UNAPPROVED"
@@ -127,6 +128,9 @@ class ReconciliationResult:
     valid_checksum: str
     canonical_checksum: str
     quarantine_reason_counts: dict[str, int] = field(default_factory=dict)
+    #: Lineage rows re-projected after a tombstone already removed the entity.
+    #: Non-zero means an upstream delete did not stay propagated downstream.
+    sink_delete_drift: int = 0
 
     @property
     def reconciled(self) -> bool:
@@ -137,6 +141,7 @@ class ReconciliationResult:
             and self.source_checksum == self.raw_checksum
             and self.valid_checksum == self.canonical_checksum
             and sum(self.quarantine_reason_counts.values()) == self.quarantined_count
+            and self.sink_delete_drift == 0
         )
 
 
@@ -180,6 +185,7 @@ class RunSummary:
                 "quarantine_reason_counts": dict(
                     self.reconciliation.quarantine_reason_counts
                 ),
+                "sink_delete_drift": self.reconciliation.sink_delete_drift,
                 "reconciled": self.reconciliation.reconciled,
             },
         }

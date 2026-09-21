@@ -51,11 +51,27 @@ from packages.oday_data_product_contracts_client.models.property_observation imp
     PropertyListingObservation,
 )
 from packages.oday_data_product_contracts_client.models.site_market_context import (
+    DomainStatus,
     PeriodGrain,
+    ReadinessLevel,
+    SiteCatchment,
+    SiteCompetitor,
+    SiteCoverage,
+    SiteDemand,
+    SiteEvent,
+    SiteIdentity,
+    SiteListing,
     SiteMarketContext,
+    SiteMobility,
+    SitePOI,
+    SiteRent,
+    SiteTraffic,
+    SourceSupportSummary,
+    TravelMode,
 )
-from shared.audit.policy import build_security_event, requires_audit
+from shared.audit.policy import build_security_event
 from shared.auth import (
+    ANONYMOUS,
     AccessRequest,
     Action,
     DataClassification,
@@ -63,6 +79,9 @@ from shared.auth import (
     Principal,
     ResourceDescriptor,
     Role,
+    TenantAccessWaiver,
+    TenantAccessWaiverRegistry,
+    check_tenant_isolation,
 )
 from shared.auth.engine import AuthorizationEngine
 
@@ -116,6 +135,7 @@ _LEGACY_FETCH_MODES = frozenset({CUTOVER_MODE_LEGACY_ONLY, CUTOVER_MODE_DUAL_RUN
 _PLATFORM_READ_MODES = frozenset({CUTOVER_MODE_DUAL_RUN, CUTOVER_MODE_PLATFORM_PRIMARY})
 
 ROLLBACK_PROBE_SITE_ID = "cutover-probe-site"
+ROLLBACK_PROBE_TENANT_ID = "rollback-probe-tenant"
 
 #: Freshness SLA reported for a platform-sourced snapshot row. The published
 #: release carries no per-source SLA of its own, so the consumer states the one
@@ -176,6 +196,62 @@ class MarketDataValidationError(MarketDataFacadeError, ValueError):
 
     def __init__(self, message: str, *, details: Mapping[str, Any] | None = None) -> None:
         super().__init__(message, code="market_data_validation_error", details=details)
+
+
+def _extract_envelope_tenant(envelope: Any) -> str | None:
+    if envelope is None:
+        return None
+    if isinstance(envelope, Mapping):
+        tenant = (
+            envelope.get("tenant_id")
+            or envelope.get("tenantId")
+            or (
+                envelope.get("metadata", {}).get("tenant_id")
+                if isinstance(envelope.get("metadata"), Mapping)
+                else None
+            )
+        )
+        if tenant is not None:
+            return str(tenant).strip() if str(tenant).strip() else None
+        return None
+
+    tenant = getattr(envelope, "tenant_id", None)
+    if tenant is not None:
+        return str(tenant).strip() if str(tenant).strip() else None
+
+    metadata = getattr(envelope, "metadata", None)
+    if isinstance(metadata, Mapping):
+        meta_tenant = metadata.get("tenant_id") or metadata.get("tenantId")
+        if meta_tenant is not None:
+            return str(meta_tenant).strip() if str(meta_tenant).strip() else None
+
+    # Check properties in property observation document
+    properties = getattr(envelope, "properties", None)
+    if isinstance(properties, (list, tuple)):
+        for prop in properties:
+            p_tenant = getattr(prop, "tenant_id", None)
+            if p_tenant is not None:
+                return str(p_tenant).strip() if str(p_tenant).strip() else None
+            p_meta = getattr(prop, "metadata", None)
+            if isinstance(p_meta, Mapping):
+                p_meta_t = p_meta.get("tenant_id") or p_meta.get("tenantId")
+                if p_meta_t is not None:
+                    return str(p_meta_t).strip() if str(p_meta_t).strip() else None
+
+    # Check listing observations
+    listings = getattr(envelope, "listing_observations", None)
+    if isinstance(listings, (list, tuple)):
+        for list_obs in listings:
+            l_tenant = getattr(list_obs, "tenant_id", None)
+            if l_tenant is not None:
+                return str(l_tenant).strip() if str(l_tenant).strip() else None
+            l_meta = getattr(list_obs, "metadata", None)
+            if isinstance(l_meta, Mapping):
+                l_meta_t = l_meta.get("tenant_id") or l_meta.get("tenantId")
+                if l_meta_t is not None:
+                    return str(l_meta_t).strip() if str(l_meta_t).strip() else None
+
+    return None
 
 
 def _env_source(env: Mapping[str, str] | None) -> Mapping[str, str]:
@@ -257,6 +333,15 @@ def cutover_state(env: Mapping[str, str] | None = None) -> dict[str, Any]:
     }
 
 
+_GLOBAL_FOUNDATION_RESOURCE_TYPES = frozenset({
+    "platform_foundation_config",
+    "store_reference",
+    "store_coverage",
+    "store_performance",
+    "operational_start",
+})
+
+
 class MarketDataFacade:
     """Application facade providing unified, authorized read access to EMGI data platform products.
 
@@ -270,6 +355,7 @@ class MarketDataFacade:
         *,
         transport: DataPlatformTransport | None = None,
         enforce_auth: bool = True,
+        waiver_registry: TenantAccessWaiverRegistry | None = None,
     ) -> None:
         if client is not None:
             self._client = client
@@ -282,6 +368,7 @@ class MarketDataFacade:
             )
         self._auth_engine = auth_engine if auth_engine is not None else AuthorizationEngine()
         self._enforce_auth = enforce_auth
+        self._waiver_registry = waiver_registry
 
     @property
     def client(self) -> DataPlatformClient:
@@ -311,16 +398,16 @@ class MarketDataFacade:
         tenant_id: str | None = None,
         principal: Principal | None = None,
         classification: DataClassification = DataClassification.CONFIDENTIAL,
+        waiver: TenantAccessWaiver | str | None = None,
+        record_allow_audit: bool = True,
     ) -> str | None:
         """Enforce odayplus product authorization and tenant isolation rules.
 
         Returns:
             The effective tenant_id to be forwarded to downstream client queries.
         """
-        effective_tenant_id = tenant_id or (principal.tenant_id if principal is not None else None)
-
         if not self._enforce_auth and principal is None:
-            return effective_tenant_id
+            return tenant_id
 
         if principal is None:
             raise MarketDataAuthorizationError(
@@ -329,13 +416,14 @@ class MarketDataFacade:
                 details={"resource_type": resource_type, "resource_id": resource_id},
             )
 
+        clean_tenant = str(tenant_id).strip() if tenant_id else ""
         access = AccessRequest(
             principal=principal,
             action=Action.VIEW,
             resource=ResourceDescriptor(
                 type=resource_type,
                 resource_id=resource_id,
-                tenant_id=effective_tenant_id,
+                tenant_id=clean_tenant or None,
                 data_classification=classification,
             ),
         )
@@ -350,25 +438,36 @@ class MarketDataFacade:
                 details={"subject_id": principal.subject_id, "resource_type": resource_type},
             )
 
-        # 1. Tenant Isolation Check:
-        # Default effective_tenant_id to principal.tenant_id if not explicitly provided.
-        # If an explicit tenant_id is provided and differs from principal.tenant_id,
-        # require PLATFORM_ADMIN role.
-        if effective_tenant_id and principal.tenant_id and principal.tenant_id != effective_tenant_id:
-            if not principal.has_role(Role.PLATFORM_ADMIN):
-                decision = Decision.deny(
-                    f"Cross-tenant access denied: principal tenant {principal.tenant_id!r} cannot access resource tenant {effective_tenant_id!r}",
-                    policy_id="tenant_isolation",
-                )
+        # 1. Tenant Isolation using the shared fail-closed guard
+        is_foundation = resource_type in _GLOBAL_FOUNDATION_RESOURCE_TYPES
+        tenant_decision = None
+        if not (is_foundation and not clean_tenant):
+            tenant_decision = check_tenant_isolation(
+                principal=principal,
+                resource_tenant_id=clean_tenant or None,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                waiver=waiver,
+                waiver_registry=self._waiver_registry,
+            )
+            if not tenant_decision.allowed:
                 if hasattr(self._auth_engine, "audit_log"):
-                    self._auth_engine.audit_log.record(build_security_event(access, decision))
+                    self._auth_engine.audit_log.record(
+                        build_security_event(access, tenant_decision)
+                    )
+                code = (
+                    "missing_tenant"
+                    if "missing" in tenant_decision.reason.lower()
+                    else "cross_tenant_access_denied"
+                )
                 raise MarketDataAuthorizationError(
-                    f"Cross-tenant access denied: principal tenant {principal.tenant_id!r} cannot access resource tenant {effective_tenant_id!r}",
-                    code="cross_tenant_access_denied",
+                    tenant_decision.reason,
+                    code=code,
                     details={
                         "principal_tenant_id": principal.tenant_id,
-                        "resource_tenant_id": effective_tenant_id,
+                        "resource_tenant_id": clean_tenant or None,
                         "resource_id": resource_id,
+                        "policy_id": tenant_decision.policy_id,
                     },
                 )
 
@@ -402,12 +501,121 @@ class MarketDataFacade:
                 details={"clearance": principal.scope.clearance.value, "required": classification.value},
             )
 
-        # 4. Audit recording for authorized reads
-        decision = Decision.allow("authorized")
-        if requires_audit(Action.VIEW, classification) and hasattr(self._auth_engine, "audit_log"):
-            self._auth_engine.audit_log.record(build_security_event(access, decision))
+        # 4. Mandatory immutable audit recording for authorized reads (when requested)
+        if record_allow_audit:
+            decision = (
+                tenant_decision
+                if (tenant_decision and "cross_tenant_waiver" in tenant_decision.obligations)
+                else Decision.allow("authorized")
+            )
+            if hasattr(self._auth_engine, "audit_log"):
+                self._auth_engine.audit_log.record(build_security_event(access, decision))
 
-        return effective_tenant_id
+        return clean_tenant or None
+
+    def _verify_envelope_and_audit(
+        self,
+        resource_type: str,
+        resource_id: str | None,
+        envelope: Any,
+        *,
+        requested_tenant_id: str | None = None,
+        principal: Principal | None = None,
+        classification: DataClassification = DataClassification.CONFIDENTIAL,
+        waiver: TenantAccessWaiver | str | None = None,
+    ) -> None:
+        """Derive tenant from the target resource envelope and enforce fail-closed tenant isolation."""
+        if not self._enforce_auth and principal is None:
+            return
+
+        envelope_tenant = _extract_envelope_tenant(envelope)
+        clean_envelope_tenant = str(envelope_tenant).strip() if envelope_tenant else ""
+        is_foundation = resource_type in _GLOBAL_FOUNDATION_RESOURCE_TYPES
+
+        # Fail closed: non-foundation product resources must have a verified tenant in their envelope
+        if not is_foundation and not clean_envelope_tenant:
+            access = AccessRequest(
+                principal=principal if principal is not None else ANONYMOUS,
+                action=Action.VIEW,
+                resource=ResourceDescriptor(
+                    type=resource_type,
+                    resource_id=resource_id,
+                    tenant_id=None,
+                    data_classification=classification,
+                ),
+            )
+            decision = Decision.deny(
+                "Resource tenant missing or undefined in target envelope: tenant isolation requires verified resource tenant",
+                policy_id="tenant_isolation",
+            )
+            if hasattr(self._auth_engine, "audit_log"):
+                self._auth_engine.audit_log.record(build_security_event(access, decision))
+            raise MarketDataAuthorizationError(
+                decision.reason,
+                code="missing_tenant",
+                details={
+                    "resource_type": resource_type,
+                    "resource_id": resource_id,
+                    "policy_id": decision.policy_id,
+                },
+            )
+
+        if not (is_foundation and not clean_envelope_tenant):
+            tenant_decision = check_tenant_isolation(
+                principal=principal,
+                resource_tenant_id=clean_envelope_tenant or None,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                waiver=waiver,
+                waiver_registry=self._waiver_registry,
+            )
+            if not tenant_decision.allowed:
+                access = AccessRequest(
+                    principal=principal if principal is not None else ANONYMOUS,
+                    action=Action.VIEW,
+                    resource=ResourceDescriptor(
+                        type=resource_type,
+                        resource_id=resource_id,
+                        tenant_id=clean_envelope_tenant or None,
+                        data_classification=classification,
+                    ),
+                )
+                if hasattr(self._auth_engine, "audit_log"):
+                    self._auth_engine.audit_log.record(
+                        build_security_event(access, tenant_decision)
+                    )
+                code = (
+                    "missing_tenant"
+                    if "missing" in tenant_decision.reason.lower()
+                    else "cross_tenant_access_denied"
+                )
+                raise MarketDataAuthorizationError(
+                    tenant_decision.reason,
+                    code=code,
+                    details={
+                        "principal_tenant_id": principal.tenant_id if principal else None,
+                        "resource_tenant_id": clean_envelope_tenant or None,
+                        "resource_id": resource_id,
+                        "policy_id": tenant_decision.policy_id,
+                    },
+                )
+            access = AccessRequest(
+                principal=principal if principal is not None else ANONYMOUS,
+                action=Action.VIEW,
+                resource=ResourceDescriptor(
+                    type=resource_type,
+                    resource_id=resource_id,
+                    tenant_id=clean_envelope_tenant or None,
+                    data_classification=classification,
+                ),
+            )
+            decision = (
+                tenant_decision
+                if "cross_tenant_waiver" in tenant_decision.obligations
+                else Decision.allow("authorized")
+            )
+            if hasattr(self._auth_engine, "audit_log"):
+                self._auth_engine.audit_log.record(build_security_event(access, decision))
 
     # -----------------------------------------------------------------------
     # Product Reads: Site Market Context (emgi.site-market-context.v1)
@@ -421,22 +629,64 @@ class MarketDataFacade:
         period_key: str | None = None,
         tenant_id: str | None = None,
         principal: Principal | None = None,
+        waiver: TenantAccessWaiver | str | None = None,
     ) -> SiteMarketContext:
         """Authorized read of a single SiteMarketContext for a site."""
-        effective_tenant_id = self._authorize_read("site_market_context", site_id, tenant_id=tenant_id, principal=principal)
+        effective_tenant_id = self._authorize_read(
+            "site_market_context",
+            site_id,
+            tenant_id=tenant_id,
+            principal=principal,
+            waiver=waiver,
+            record_allow_audit=False,
+        )
         try:
-            return self._client.get_site_market_context(
-                site_id,
+            doc = self._client.get_site_market_context_document(
+                site_id=site_id,
                 period_grain=period_grain,
                 period_key=period_key,
                 tenant_id=effective_tenant_id,
             )
+            self._verify_envelope_and_audit(
+                "site_market_context",
+                site_id,
+                doc,
+                requested_tenant_id=tenant_id,
+                principal=principal,
+                waiver=waiver,
+            )
+            normalized_grain = (
+                PeriodGrain(period_grain) if isinstance(period_grain, str) else period_grain
+            )
+            for ctx in doc.contexts:
+                if ctx.identity.site_id == site_id:
+                    if ctx.period_grain != normalized_grain:
+                        continue
+                    if period_key is not None and ctx.period_key != period_key:
+                        continue
+                    return ctx
+
+            raise DataPlatformDocumentNotFoundError(
+                f"SiteMarketContext not found for site_id={site_id}, period_grain={normalized_grain.value}, period_key={period_key}",
+                details={
+                    "site_id": site_id,
+                    "period_grain": normalized_grain.value,
+                    "period_key": period_key,
+                    "tenant_id": effective_tenant_id,
+                },
+            )
         except DataPlatformDocumentNotFoundError as err:
-            raise MarketDataNotFoundError(f"Site market context not found for site_id={site_id}: {err}", details=err.details) from err
+            raise MarketDataNotFoundError(
+                f"Site market context not found for site_id={site_id}: {err}", details=err.details
+            ) from err
         except DataPlatformValidationError as err:
-            raise MarketDataValidationError(f"Invalid site market context schema: {err}", details=err.details) from err
+            raise MarketDataValidationError(
+                f"Invalid site market context schema: {err}", details=err.details
+            ) from err
         except DataPlatformClientError as err:
-            raise MarketDataFacadeError(f"Data platform client error: {err}", details=err.details) from err
+            raise MarketDataFacadeError(
+                f"Data platform client error: {err}", details=err.details
+            ) from err
 
     def get_site_market_context_document(
         self,
@@ -447,23 +697,46 @@ class MarketDataFacade:
         period_key: str | None = None,
         tenant_id: str | None = None,
         principal: Principal | None = None,
+        waiver: TenantAccessWaiver | str | None = None,
     ) -> SiteMarketContextDocument:
         """Authorized read of a complete SiteMarketContextDocument."""
-        effective_tenant_id = self._authorize_read("site_market_context_document", document_id or site_id, tenant_id=tenant_id, principal=principal)
+        effective_tenant_id = self._authorize_read(
+            "site_market_context_document",
+            document_id or site_id,
+            tenant_id=tenant_id,
+            principal=principal,
+            waiver=waiver,
+            record_allow_audit=False,
+        )
         try:
-            return self._client.get_site_market_context_document(
+            doc = self._client.get_site_market_context_document(
                 document_id=document_id,
                 site_id=site_id,
                 period_grain=period_grain,
                 period_key=period_key,
                 tenant_id=effective_tenant_id,
             )
+            self._verify_envelope_and_audit(
+                "site_market_context_document",
+                document_id or site_id,
+                doc,
+                requested_tenant_id=tenant_id,
+                principal=principal,
+                waiver=waiver,
+            )
+            return doc
         except DataPlatformDocumentNotFoundError as err:
-            raise MarketDataNotFoundError(f"Site market context document not found: {err}", details=err.details) from err
+            raise MarketDataNotFoundError(
+                f"Site market context document not found: {err}", details=err.details
+            ) from err
         except DataPlatformValidationError as err:
-            raise MarketDataValidationError(f"Invalid site market context document schema: {err}", details=err.details) from err
+            raise MarketDataValidationError(
+                f"Invalid site market context document schema: {err}", details=err.details
+            ) from err
         except DataPlatformClientError as err:
-            raise MarketDataFacadeError(f"Data platform client error: {err}", details=err.details) from err
+            raise MarketDataFacadeError(
+                f"Data platform client error: {err}", details=err.details
+            ) from err
 
     # -----------------------------------------------------------------------
     # Product Reads: Market Cell Profile (emgi.market-cell-profile.v1)
@@ -477,22 +750,64 @@ class MarketDataFacade:
         period_key: str | None = None,
         tenant_id: str | None = None,
         principal: Principal | None = None,
+        waiver: TenantAccessWaiver | str | None = None,
     ) -> MarketCellProfile:
         """Authorized read of a single MarketCellProfile for an H3 cell."""
-        effective_tenant_id = self._authorize_read("market_cell_profile", cell_id, tenant_id=tenant_id, principal=principal)
+        effective_tenant_id = self._authorize_read(
+            "market_cell_profile",
+            cell_id,
+            tenant_id=tenant_id,
+            principal=principal,
+            waiver=waiver,
+            record_allow_audit=False,
+        )
         try:
-            return self._client.get_market_cell_profile(
-                cell_id,
+            doc = self._client.get_market_cell_profile_document(
+                cell_id=cell_id,
                 period_grain=period_grain,
                 period_key=period_key,
                 tenant_id=effective_tenant_id,
             )
+            self._verify_envelope_and_audit(
+                "market_cell_profile",
+                cell_id,
+                doc,
+                requested_tenant_id=tenant_id,
+                principal=principal,
+                waiver=waiver,
+            )
+            normalized_grain = (
+                PeriodGrain(period_grain) if isinstance(period_grain, str) else period_grain
+            )
+            for cell in doc.cells:
+                if cell.cell_id == cell_id or cell.h3_index == cell_id:
+                    if cell.period_grain != normalized_grain:
+                        continue
+                    if period_key is not None and cell.period_key != period_key:
+                        continue
+                    return cell
+
+            raise DataPlatformDocumentNotFoundError(
+                f"MarketCellProfile not found for cell_id={cell_id}, period_grain={normalized_grain.value}, period_key={period_key}",
+                details={
+                    "cell_id": cell_id,
+                    "period_grain": normalized_grain.value,
+                    "period_key": period_key,
+                    "tenant_id": effective_tenant_id,
+                },
+            )
         except DataPlatformDocumentNotFoundError as err:
-            raise MarketDataNotFoundError(f"Market cell profile not found for cell_id={cell_id}: {err}", details=err.details) from err
+            raise MarketDataNotFoundError(
+                f"Market cell profile not found for cell_id={cell_id}: {err}", details=err.details
+            ) from err
         except DataPlatformValidationError as err:
-            raise MarketDataValidationError(f"Invalid market cell profile schema: {err}", details=err.details) from err
+            raise MarketDataValidationError(
+                f"Invalid market cell profile schema: {err}", details=err.details
+            ) from err
         except DataPlatformClientError as err:
-            raise MarketDataFacadeError(f"Data platform client error: {err}", details=err.details) from err
+            raise MarketDataFacadeError(
+                f"Data platform client error: {err}", details=err.details
+            ) from err
 
     def get_market_cell_profile_document(
         self,
@@ -503,23 +818,46 @@ class MarketDataFacade:
         period_key: str | None = None,
         tenant_id: str | None = None,
         principal: Principal | None = None,
+        waiver: TenantAccessWaiver | str | None = None,
     ) -> MarketCellProfileDocument:
         """Authorized read of a complete MarketCellProfileDocument."""
-        effective_tenant_id = self._authorize_read("market_cell_profile_document", document_id or cell_id, tenant_id=tenant_id, principal=principal)
+        effective_tenant_id = self._authorize_read(
+            "market_cell_profile_document",
+            document_id or cell_id,
+            tenant_id=tenant_id,
+            principal=principal,
+            waiver=waiver,
+            record_allow_audit=False,
+        )
         try:
-            return self._client.get_market_cell_profile_document(
+            doc = self._client.get_market_cell_profile_document(
                 document_id=document_id,
                 cell_id=cell_id,
                 period_grain=period_grain,
                 period_key=period_key,
                 tenant_id=effective_tenant_id,
             )
+            self._verify_envelope_and_audit(
+                "market_cell_profile_document",
+                document_id or cell_id,
+                doc,
+                requested_tenant_id=tenant_id,
+                principal=principal,
+                waiver=waiver,
+            )
+            return doc
         except DataPlatformDocumentNotFoundError as err:
-            raise MarketDataNotFoundError(f"Market cell profile document not found: {err}", details=err.details) from err
+            raise MarketDataNotFoundError(
+                f"Market cell profile document not found: {err}", details=err.details
+            ) from err
         except DataPlatformValidationError as err:
-            raise MarketDataValidationError(f"Invalid market cell profile document schema: {err}", details=err.details) from err
+            raise MarketDataValidationError(
+                f"Invalid market cell profile document schema: {err}", details=err.details
+            ) from err
         except DataPlatformClientError as err:
-            raise MarketDataFacadeError(f"Data platform client error: {err}", details=err.details) from err
+            raise MarketDataFacadeError(
+                f"Data platform client error: {err}", details=err.details
+            ) from err
 
     # -----------------------------------------------------------------------
     # Product Reads: Catchment Profile (emgi.catchment-profile.v1)
@@ -533,22 +871,65 @@ class MarketDataFacade:
         period_key: str | None = None,
         tenant_id: str | None = None,
         principal: Principal | None = None,
+        waiver: TenantAccessWaiver | str | None = None,
     ) -> CatchmentProfile:
         """Authorized read of a single CatchmentProfile."""
-        effective_tenant_id = self._authorize_read("catchment_profile", catchment_id, tenant_id=tenant_id, principal=principal)
+        effective_tenant_id = self._authorize_read(
+            "catchment_profile",
+            catchment_id,
+            tenant_id=tenant_id,
+            principal=principal,
+            waiver=waiver,
+            record_allow_audit=False,
+        )
         try:
-            return self._client.get_catchment_profile(
-                catchment_id,
+            doc = self._client.get_catchment_profile_document(
+                catchment_id=catchment_id,
                 period_grain=period_grain,
                 period_key=period_key,
                 tenant_id=effective_tenant_id,
             )
+            self._verify_envelope_and_audit(
+                "catchment_profile",
+                catchment_id,
+                doc,
+                requested_tenant_id=tenant_id,
+                principal=principal,
+                waiver=waiver,
+            )
+            normalized_grain = (
+                PeriodGrain(period_grain) if isinstance(period_grain, str) else period_grain
+            )
+            for prof in doc.profiles:
+                if prof.profile_id == catchment_id or prof.boundary.catchment_id == catchment_id:
+                    if prof.period_grain != normalized_grain:
+                        continue
+                    if period_key is not None and prof.period_key != period_key:
+                        continue
+                    return prof
+
+            raise DataPlatformDocumentNotFoundError(
+                f"CatchmentProfile not found for catchment_id={catchment_id}, period_grain={normalized_grain.value}, period_key={period_key}",
+                details={
+                    "catchment_id": catchment_id,
+                    "period_grain": normalized_grain.value,
+                    "period_key": period_key,
+                    "tenant_id": effective_tenant_id,
+                },
+            )
         except DataPlatformDocumentNotFoundError as err:
-            raise MarketDataNotFoundError(f"Catchment profile not found for catchment_id={catchment_id}: {err}", details=err.details) from err
+            raise MarketDataNotFoundError(
+                f"Catchment profile not found for catchment_id={catchment_id}: {err}",
+                details=err.details,
+            ) from err
         except DataPlatformValidationError as err:
-            raise MarketDataValidationError(f"Invalid catchment profile schema: {err}", details=err.details) from err
+            raise MarketDataValidationError(
+                f"Invalid catchment profile schema: {err}", details=err.details
+            ) from err
         except DataPlatformClientError as err:
-            raise MarketDataFacadeError(f"Data platform client error: {err}", details=err.details) from err
+            raise MarketDataFacadeError(
+                f"Data platform client error: {err}", details=err.details
+            ) from err
 
     def get_catchment_profile_document(
         self,
@@ -559,23 +940,46 @@ class MarketDataFacade:
         period_key: str | None = None,
         tenant_id: str | None = None,
         principal: Principal | None = None,
+        waiver: TenantAccessWaiver | str | None = None,
     ) -> CatchmentProfileDocument:
         """Authorized read of a complete CatchmentProfileDocument."""
-        effective_tenant_id = self._authorize_read("catchment_profile_document", document_id or catchment_id, tenant_id=tenant_id, principal=principal)
+        effective_tenant_id = self._authorize_read(
+            "catchment_profile_document",
+            document_id or catchment_id,
+            tenant_id=tenant_id,
+            principal=principal,
+            waiver=waiver,
+            record_allow_audit=False,
+        )
         try:
-            return self._client.get_catchment_profile_document(
+            doc = self._client.get_catchment_profile_document(
                 document_id=document_id,
                 catchment_id=catchment_id,
                 period_grain=period_grain,
                 period_key=period_key,
                 tenant_id=effective_tenant_id,
             )
+            self._verify_envelope_and_audit(
+                "catchment_profile_document",
+                document_id or catchment_id,
+                doc,
+                requested_tenant_id=tenant_id,
+                principal=principal,
+                waiver=waiver,
+            )
+            return doc
         except DataPlatformDocumentNotFoundError as err:
-            raise MarketDataNotFoundError(f"Catchment profile document not found: {err}", details=err.details) from err
+            raise MarketDataNotFoundError(
+                f"Catchment profile document not found: {err}", details=err.details
+            ) from err
         except DataPlatformValidationError as err:
-            raise MarketDataValidationError(f"Invalid catchment profile document schema: {err}", details=err.details) from err
+            raise MarketDataValidationError(
+                f"Invalid catchment profile document schema: {err}", details=err.details
+            ) from err
         except DataPlatformClientError as err:
-            raise MarketDataFacadeError(f"Data platform client error: {err}", details=err.details) from err
+            raise MarketDataFacadeError(
+                f"Data platform client error: {err}", details=err.details
+            ) from err
 
     # -----------------------------------------------------------------------
     # Product Reads: Property & Listing Observation (emgi.property-observation.v1)
@@ -587,17 +991,51 @@ class MarketDataFacade:
         *,
         tenant_id: str | None = None,
         principal: Principal | None = None,
+        waiver: TenantAccessWaiver | str | None = None,
     ) -> PropertyEntity:
         """Authorized read of a canonical real estate property entity."""
-        effective_tenant_id = self._authorize_read("property_entity", property_id, tenant_id=tenant_id, principal=principal)
+        effective_tenant_id = self._authorize_read(
+            "property_entity",
+            property_id,
+            tenant_id=tenant_id,
+            principal=principal,
+            waiver=waiver,
+            record_allow_audit=False,
+        )
         try:
-            return self._client.get_property_entity(property_id, tenant_id=effective_tenant_id)
+            doc = self._client.get_property_observation_document(
+                property_id=property_id,
+                tenant_id=effective_tenant_id,
+            )
+            self._verify_envelope_and_audit(
+                "property_entity",
+                property_id,
+                doc,
+                requested_tenant_id=tenant_id,
+                principal=principal,
+                waiver=waiver,
+            )
+            for prop in doc.properties:
+                if prop.property_id == property_id:
+                    return prop
+
+            raise DataPlatformDocumentNotFoundError(
+                f"PropertyEntity not found for property_id={property_id}",
+                details={"property_id": property_id, "tenant_id": effective_tenant_id},
+            )
         except DataPlatformDocumentNotFoundError as err:
-            raise MarketDataNotFoundError(f"Property entity not found for property_id={property_id}: {err}", details=err.details) from err
+            raise MarketDataNotFoundError(
+                f"Property entity not found for property_id={property_id}: {err}",
+                details=err.details,
+            ) from err
         except DataPlatformValidationError as err:
-            raise MarketDataValidationError(f"Invalid property entity schema: {err}", details=err.details) from err
+            raise MarketDataValidationError(
+                f"Invalid property entity schema: {err}", details=err.details
+            ) from err
         except DataPlatformClientError as err:
-            raise MarketDataFacadeError(f"Data platform client error: {err}", details=err.details) from err
+            raise MarketDataFacadeError(
+                f"Data platform client error: {err}", details=err.details
+            ) from err
 
     def get_listing_observation(
         self,
@@ -605,17 +1043,51 @@ class MarketDataFacade:
         *,
         tenant_id: str | None = None,
         principal: Principal | None = None,
+        waiver: TenantAccessWaiver | str | None = None,
     ) -> PropertyListingObservation:
         """Authorized read of a property listing observation."""
-        effective_tenant_id = self._authorize_read("listing_observation", listing_id, tenant_id=tenant_id, principal=principal)
+        effective_tenant_id = self._authorize_read(
+            "listing_observation",
+            listing_id,
+            tenant_id=tenant_id,
+            principal=principal,
+            waiver=waiver,
+            record_allow_audit=False,
+        )
         try:
-            return self._client.get_listing_observation(listing_id, tenant_id=effective_tenant_id)
+            doc = self._client.get_property_observation_document(
+                listing_id=listing_id,
+                tenant_id=effective_tenant_id,
+            )
+            self._verify_envelope_and_audit(
+                "listing_observation",
+                listing_id,
+                doc,
+                requested_tenant_id=tenant_id,
+                principal=principal,
+                waiver=waiver,
+            )
+            for obs in doc.listing_observations:
+                if obs.listing_obs_id == listing_id or obs.source_listing_id == listing_id:
+                    return obs
+
+            raise DataPlatformDocumentNotFoundError(
+                f"PropertyListingObservation not found for listing_id={listing_id}",
+                details={"listing_id": listing_id, "tenant_id": effective_tenant_id},
+            )
         except DataPlatformDocumentNotFoundError as err:
-            raise MarketDataNotFoundError(f"Listing observation not found for listing_id={listing_id}: {err}", details=err.details) from err
+            raise MarketDataNotFoundError(
+                f"Listing observation not found for listing_id={listing_id}: {err}",
+                details=err.details,
+            ) from err
         except DataPlatformValidationError as err:
-            raise MarketDataValidationError(f"Invalid listing observation schema: {err}", details=err.details) from err
+            raise MarketDataValidationError(
+                f"Invalid listing observation schema: {err}", details=err.details
+            ) from err
         except DataPlatformClientError as err:
-            raise MarketDataFacadeError(f"Data platform client error: {err}", details=err.details) from err
+            raise MarketDataFacadeError(
+                f"Data platform client error: {err}", details=err.details
+            ) from err
 
     def get_property_observation_document(
         self,
@@ -625,22 +1097,46 @@ class MarketDataFacade:
         listing_id: str | None = None,
         tenant_id: str | None = None,
         principal: Principal | None = None,
+        waiver: TenantAccessWaiver | str | None = None,
     ) -> PropertyObservationDocument:
         """Authorized read of a complete PropertyObservationDocument."""
-        effective_tenant_id = self._authorize_read("property_observation_document", document_id or property_id or listing_id, tenant_id=tenant_id, principal=principal)
+        effective_tenant_id = self._authorize_read(
+            "property_observation_document",
+            document_id or property_id or listing_id,
+            tenant_id=tenant_id,
+            principal=principal,
+            waiver=waiver,
+            record_allow_audit=False,
+        )
         try:
-            return self._client.get_property_observation_document(
+            doc = self._client.get_property_observation_document(
                 document_id=document_id,
                 property_id=property_id,
                 listing_id=listing_id,
                 tenant_id=effective_tenant_id,
             )
+            self._verify_envelope_and_audit(
+                "property_observation_document",
+                document_id or property_id or listing_id,
+                doc,
+                requested_tenant_id=tenant_id,
+                principal=principal,
+                waiver=waiver,
+            )
+            return doc
         except DataPlatformDocumentNotFoundError as err:
-            raise MarketDataNotFoundError(f"Property observation document not found: {err}", details=err.details) from err
+            raise MarketDataNotFoundError(
+                f"Property observation document not found: {err}", details=err.details
+            ) from err
         except DataPlatformValidationError as err:
-            raise MarketDataValidationError(f"Invalid property observation document schema: {err}", details=err.details) from err
+            raise MarketDataValidationError(
+                f"Invalid property observation document schema: {err}", details=err.details
+            ) from err
         except DataPlatformClientError as err:
-            raise MarketDataFacadeError(f"Data platform client error: {err}", details=err.details) from err
+            raise MarketDataFacadeError(
+                f"Data platform client error: {err}", details=err.details
+            ) from err
+
 
     # -----------------------------------------------------------------------
     # Foundation Reads: Platform Configuration & Store Performance
@@ -875,15 +1371,83 @@ class _RollbackProbeClient:
     The production facade receives a generated ``DataPlatformClient``. The probe
     intentionally supplies a tiny client double so it can run without
     credentials or network access while still exercising the same
-    ``MarketDataFacade`` authorization and read dispatch path.
+    ``MarketDataFacade`` authorization and document read dispatch path.
+
+    The document envelope carries its own tenant instead of echoing a query
+    tenant. This keeps the probe-shaped input aligned with the production
+    resource-derived tenant boundary, even though the probe deliberately runs
+    with authorization disabled.
     """
 
-    def get_site_market_context(self, site_id: str, **_: Any) -> dict[str, Any]:
-        return {
-            "contract": "emgi.site-market-context.v1",
-            "site_id": site_id,
-            "value": 42,
-        }
+    def get_site_market_context_document(
+        self,
+        document_id: str | None = None,
+        *,
+        site_id: str | None = None,
+        period_grain: PeriodGrain | str | None = None,
+        period_key: str | None = None,
+        tenant_id: str | None = None,
+    ) -> SiteMarketContextDocument:
+        """Return a deterministic document-shaped read without network access.
+
+        ``MarketDataFacade.get_site_market_context`` now consumes the generated
+        client's document API before selecting a context. These tiny objects
+        provide only the attributes that route needs, including a
+        resource-owned tenant envelope; ``tenant_id`` is intentionally ignored
+        so a caller cannot make the probe resource belong to its own tenant.
+        """
+        del tenant_id
+        resolved_site_id = site_id or ROLLBACK_PROBE_SITE_ID
+        resolved_grain = (
+            PeriodGrain(period_grain) if isinstance(period_grain, str) else period_grain
+        ) or PeriodGrain.MONTHLY
+        resolved_period_key = period_key or "2026-08"
+        support = SourceSupportSummary(observation_count=0, sample_count=0)
+        context = SiteMarketContext(
+            catchment=SiteCatchment(
+                catchment_id="rollback-probe-catchment",
+                cutoff_seconds=0,
+                geom={},
+                graph_version="rollback-probe",
+                routing_engine="rollback-probe",
+                status=DomainStatus.unavailable,
+                travel_mode=TravelMode.pedestrian,
+            ),
+            competitor=SiteCompetitor(status=DomainStatus.unavailable),
+            context_id="rollback-probe-context",
+            coverage=SiteCoverage(
+                domain_coverage={},
+                overall_readiness=ReadinessLevel.unknown,
+            ),
+            demand=SiteDemand(status=DomainStatus.unavailable),
+            event=SiteEvent(status=DomainStatus.unavailable),
+            identity=SiteIdentity(
+                h3_resolution=0,
+                latitude=0.0,
+                longitude=0.0,
+                primary_h3_index="rollback-probe",
+                site_id=resolved_site_id,
+            ),
+            listing=SiteListing(status=DomainStatus.unavailable),
+            mobility=SiteMobility(status=DomainStatus.unavailable),
+            period_grain=resolved_grain,
+            period_key=resolved_period_key,
+            poi=SitePOI(status=DomainStatus.unavailable),
+            rent=SiteRent(status=DomainStatus.unavailable),
+            source_support=support,
+            traffic=SiteTraffic(status=DomainStatus.unavailable),
+            metadata={"probe_value": 42},
+        )
+        return SiteMarketContextDocument(
+            contexts=[context],
+            document_id=document_id or "rollback-probe-document",
+            generated_at="2026-08-01T00:00:00Z",
+            period_grain=resolved_grain,
+            period_key=resolved_period_key,
+            source_support=support,
+            metadata={"probe": True},
+            tenant_id=ROLLBACK_PROBE_TENANT_ID,
+        )
 
     def verify_integrity(self) -> dict[str, Any]:
         return {
@@ -931,8 +1495,11 @@ def rollback_probe(env: Mapping[str, str] | None = None) -> dict[str, Any]:
         }
 
     facade = MarketDataFacade(client=_RollbackProbeClient(), enforce_auth=False)
+    platform_context = facade.get_site_market_context(ROLLBACK_PROBE_SITE_ID)
     platform_payload = {
-        **facade.get_site_market_context(ROLLBACK_PROBE_SITE_ID),
+        "contract": "emgi.site-market-context.v1",
+        "site_id": platform_context.identity.site_id,
+        "value": platform_context.metadata["probe_value"],
         "source": "platform",
     }
     if mode == CUTOVER_MODE_PLATFORM_PRIMARY:

@@ -1,0 +1,22 @@
+{
+  "source_sha": "ad709b8a05d3cd2905fc5d2edb04335b27a14e89",
+  "implementation_file_sha256": {
+    "pyproject.toml": "130f024b80d55f439aa5467f4f469bb127aec955ef71444d2951a93d0f5d0391",
+    "uv.lock": "ba5c393e49538e4da9e59de001cffc28c4cadfab8aebacf6dbf1503eb3a49a5d",
+    "modules/learninghub/infrastructure/evidently_monitor.py": "7f4a6d5f4a4f64cf2bd169ecef1405dde5a757b1795957484ca1a2314faf4e66",
+    "modules/learninghub/infrastructure/native_drift.py": "88e4c37d6c63683106a4c5fd3f27f5d8b462d25f3f0bcf2c7653221a71cc721d",
+    "models/shared_ml/oss_capabilities.py": "a603ff8515a85840acca8d8a41a85979e6466860fd57094578265f51b15bbb42",
+    "delivery_toolchain/security/generate_sbom.py": "4b384a28405619764d1d5bb277c30246fe10e8e31e87c8b69c8b5431154e4742",
+    "delivery_toolchain/security/attestation.py": "404945e1366a3c414686a3f3ed79b9872aaa79e85dbb9b8054853051f60eca46",
+    ".github/workflows/deploy-dev.yml": "bd326d199676f3d784fcff6a6be19b54a25876f9d1dce41435c5db889b2c36da"
+  },
+  "sbom_generated_from_source_sha": "ad709b8a05d3cd2905fc5d2edb04335b27a14e89",
+  "sbom_sha256": "266ba703b50ba1ce37e525aa6c8c88eea2ea89cdc07f64204b5e10ae56775fb7",
+  "notice_sha256": "31898c4a05022b9ecc239d79085ab06c07d56c21b5b0fd293605acf8cc518d5d",
+  "prerequisites_merged": [
+    1217,
+    1218,
+    1219
+  ],
+  "status": "PR publication, required CI and independent review pending"
+}

@@ -1,0 +1,34 @@
+{
+  "started_at": "2026-09-09T16:22:42.029082+00:00",
+  "actor": "Codex",
+  "args": [
+    "python3",
+    "/tmp/odayplus-invalidation-rollout-source-50581b3b180a/scripts/orchestrator/rollout_supervisor_runtime.py",
+    "--source-root",
+    "/tmp/odayplus-invalidation-rollout-source-50581b3b180a",
+    "--runtime-link",
+    "/home/lupin/oday-plus-supervisor-runtime-current",
+    "--runtime-parent",
+    "/home/lupin",
+    "--status-root",
+    "/home/lupin/odayplus",
+    "--config-path",
+    "/home/lupin/odayplus/.orchestrator/config.json",
+    "--watchdog-pid-file",
+    "/home/lupin/odayplus/.orchestrator/supervisor.pid"
+  ],
+  "worker_exit_readback": [
+    {
+      "run_id": "antigravity-20260909T161817Z-aaabb770",
+      "state_status": "running",
+      "runner_status": "completed",
+      "exit_code": 0,
+      "finished_at": "2026-09-09T16:19:39Z",
+      "processes_exited": true
+    }
+  ],
+  "finished_at": "2026-09-09T16:22:45.922311+00:00",
+  "exit_code": 0,
+  "stdout": "watchdog decision=restart_supervisor reason=missing_pid pid=None new_pid=1788626\ntarget=/home/lupin/oday-plus-supervisor-runtime-50581b3b180a sha=50581b3b180aedaf76fbe4aaffb3bf7e2d120050 branch=runtime-live-50581b3b180a\nprevious=/home/lupin/oday-plus-supervisor-runtime-ef76cf6d295c\nstatus_launcher=/home/lupin/odayplus/scripts/ai-status.sh writer=/home/lupin/oday-plus-supervisor-runtime-current/scripts/ai_status.py\nrollout complete: /home/lupin/oday-plus-supervisor-runtime-current -> /home/lupin/oday-plus-supervisor-runtime-50581b3b180a\n",
+  "stderr": ""
+}

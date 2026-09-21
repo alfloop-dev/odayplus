@@ -112,7 +112,7 @@ def test_deferred_oss_adr_claimed_locked_packages_resolve() -> None:
         "or-tools": "ortools",
         "statsforecast": "statsforecast",
         "mlforecast": "mlforecast",
-        "evidently": "evidently",
+        "scipy": "scipy",
         "fastapi": "fastapi",
         "dagster": "dagster",
         "mlflow": "mlflow",
@@ -216,7 +216,7 @@ def test_deferred_oss_adr_cited_symbols_and_signatures_resolve() -> None:
     evidently_code = evidently_file.read_text(encoding="utf-8")
     assert "EvidentlyDriftMonitor" in evidently_code
     assert "drift_share_threshold" in evidently_code
-    assert "DataDriftPreset" in evidently_code
+    assert "NativeDriftEngine" in evidently_code
     assert "evidently_monitor.py" in content
     assert "drift-share thresholding" in content
 

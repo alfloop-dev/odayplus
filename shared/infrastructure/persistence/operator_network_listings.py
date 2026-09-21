@@ -34,8 +34,18 @@ class DurableAssistedIntakeRepository:
     def list_intakes(self) -> list[dict[str, Any]]:
         return self._store.list_all(self._INTAKES)
 
+    def get_intake(self, intake_id: str) -> dict[str, Any] | None:
+        return self._store.get(self._INTAKES, intake_id)
+
     def save_intake(self, intake: dict[str, Any]) -> None:
         self._store.put(self._INTAKES, intake["id"], intake)
+
+    def create_intake_if_absent(self, intake: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        inserted = self._store.put_if_absent(self._INTAKES, intake["id"], intake)
+        if inserted:
+            return intake, True
+        existing = self._store.get(self._INTAKES, intake["id"])
+        return (existing if existing is not None else intake), False
 
     def list_idempotency_records(self) -> list[IntakeIdempotencyRecord]:
         return self._store.list_all(self._IDEMPOTENCY)

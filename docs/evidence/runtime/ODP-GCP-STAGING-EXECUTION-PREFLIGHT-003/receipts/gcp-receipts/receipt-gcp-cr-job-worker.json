@@ -1,0 +1,22 @@
+{
+  "command": "gcloud --quiet run jobs describe oday-worker --project=odayplus-runtime-20260825 --region=asia-east1 --format=json",
+  "argv": [
+    "gcloud",
+    "--quiet",
+    "run",
+    "jobs",
+    "describe",
+    "oday-worker",
+    "--project=odayplus-runtime-20260825",
+    "--region=asia-east1",
+    "--format=json"
+  ],
+  "exit_code": 1,
+  "timestamp_utc": "2026-09-08T11:46:29Z",
+  "executor_account": "oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com",
+  "target": "oday-worker-job",
+  "readback_masked": false,
+  "stdout": "",
+  "stderr": "ERROR: (gcloud.run.jobs.describe) PERMISSION_DENIED: Permission 'run.jobs.get' denied on resource 'namespaces/odayplus-runtime-20260825/jobs/oday-worker' (or resource may not exist). This command is authenticated as oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com which is the active account specified by the [core/account] property.",
+  "finding": "PERMISSION_DENIED (exit 1). Active caller lacks IAM permissions on target oday-worker-job."
+}

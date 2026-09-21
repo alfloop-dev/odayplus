@@ -1,0 +1,22 @@
+{
+  "command": "gcloud --quiet artifacts repositories describe oday-plus-dev --project=odayplus-runtime-20260825 --location=asia-east1 --format=json",
+  "argv": [
+    "gcloud",
+    "--quiet",
+    "artifacts",
+    "repositories",
+    "describe",
+    "oday-plus-dev",
+    "--project=odayplus-runtime-20260825",
+    "--location=asia-east1",
+    "--format=json"
+  ],
+  "exit_code": 1,
+  "timestamp_utc": "2026-09-08T11:46:14Z",
+  "executor_account": "oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com",
+  "target": "oday-plus-dev",
+  "readback_masked": false,
+  "stdout": "",
+  "stderr": "ERROR: (gcloud.artifacts.repositories.describe) PERMISSION_DENIED: Permission 'artifactregistry.repositories.get' denied on resource '//artifactregistry.googleapis.com/projects/odayplus-runtime-20260825/locations/asia-east1/repositories/oday-plus-dev' (or it may not exist). Remediate access with this Troubleshooter URL or share it with your administrator - https://console.cloud.google.com/iam-admin/troubleshooter/summary;errorId=CiQwMWEwODBkNy0xOWQyLTdhYTgtOTg0My00NDkyNjFjODZkN2ISUnByb2plY3RzL29kYXlwbHVzLXJ1bnRpbWUtMjAyNjA4MjUvbG9jYXRpb25zL2FzaWEtZWFzdDEvcmVwb3NpdG9yaWVzL29kYXktcGx1cy1kZXY%3D . This command is authenticated as oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com which is the active account specified by the [core/account] property.\n- '@type': type.googleapis.com/google.rpc.ErrorInfo\n  domain: artifactregistry.googleapis.com\n  metadata:\n    error_info_id: CiQwMWEwODBkNy0xOWQyLTdhYTgtOTg0My00NDkyNjFjODZkN2ISUnByb2plY3RzL29kYXlwbHVzLXJ1bnRpbWUtMjAyNjA4MjUvbG9jYXRpb25zL2FzaWEtZWFzdDEvcmVwb3NpdG9yaWVzL29kYXktcGx1cy1kZXY=\n    permission: artifactregistry.repositories.get\n    resource: projects/odayplus-runtime-20260825/locations/asia-east1/repositories/oday-plus-dev\n    troubleshooter_url: https://console.cloud.google.com/iam-admin/troubleshooter/summary;errorId=CiQwMWEwODBkNy0xOWQyLTdhYTgtOTg0My00NDkyNjFjODZkN2ISUnByb2plY3RzL29kYXlwbHVzLXJ1bnRpbWUtMjAyNjA4MjUvbG9jYXRpb25zL2FzaWEtZWFzdDEvcmVwb3NpdG9yaWVzL29kYXktcGx1cy1kZXY%3D\n  reason: IAM_PERMISSION_DENIED",
+  "finding": "PERMISSION_DENIED (exit 1). Active caller lacks IAM permissions on target oday-plus-dev."
+}

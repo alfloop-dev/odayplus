@@ -1,0 +1,19 @@
+{
+  "type": "task_history_recovery_maintenance_hold__TEMPLATE_NOT_A_HOLD",
+  "_warning": "這是欄位樣板，不是 hold。type 刻意寫成不合法值，live writer 會直接拒絕本檔。真正的 hold 必須由 Codex 出具，type 改為 'task_history_recovery_maintenance_hold'。本 worker 未簽署、也不得簽署任何 hold。",
+  "_field_requirements_source": "scripts/ai_status.py::_archive_recovery_hold（與 live runtime byte-identical）",
+  "hold_id": "<字串，非空>",
+  "declared_by": "<字串，非空：實際建立窗口的人／角色>",
+  "declared_at": "<UTC ISO8601，不得晚於執行時刻>",
+  "expires_at": "<UTC ISO8601，執行時必須尚未到期>",
+  "scope": "<字串，非空：窗口涵蓋範圍>",
+  "dispatch_paused": true,
+  "batch_sha256": "<窗口內重新規劃出的批次檔 sha256；必須逐字元等於該檔>",
+  "batch_approval": {
+    "reviewer": "Codex",
+    "approved_batch_sha256": "<同上 batch_sha256>",
+    "approved_at": "<UTC ISO8601>",
+    "source": "<批准來源：PR 留言 URL／canonical note 等，非空>",
+    "_constraint": "reviewer 必須等於批次的 recovery_actors.reviewer（Codex），且不得等於執行 apply 的 actor（Claude2）。"
+  }
+}

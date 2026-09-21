@@ -1,0 +1,148 @@
+{
+  "schema_version": 1,
+  "observed_at": "2026-09-08T15:23:43.854808+00:00",
+  "observation_sources": [
+    "/home/lupin/odayplus/ai-status.json",
+    "/home/lupin/odayplus/.orchestrator/state.json"
+  ],
+  "supervisor": {
+    "pid": 945494,
+    "lifecycle": "running",
+    "loaded_code_sha": "9048161e058becff5a53593a773d3c42238213fb",
+    "loaded_config_digest": "54110ea0cef280a8",
+    "last_heartbeat_at": "2026-09-08T15:23:25Z",
+    "last_successful_loop_at": "2026-09-08T15:23:25Z"
+  },
+  "pool_capacity": {
+    "configured_slots_total": 14,
+    "effective_execution_concurrency": 5,
+    "effective_review_concurrency": 3,
+    "effective_total_concurrency": 8,
+    "account_pools": {
+      "claude_main": {
+        "state": "cooldown",
+        "effective_concurrency": 0,
+        "failure_kind": "quota_terminal",
+        "next_probe_at": "2026-09-08T16:00:00Z"
+      },
+      "antigravity_main": {
+        "state": "healthy",
+        "effective_concurrency": 5,
+        "last_recovered_at": "2026-09-08T15:21:14Z"
+      },
+      "codex_bjoe": {
+        "state": "recovering",
+        "effective_concurrency": 1
+      },
+      "codex_lupin": {
+        "state": "healthy",
+        "effective_concurrency": 2
+      }
+    }
+  },
+  "summary_metrics": {
+    "total_first_wave_tasks": 8,
+    "running_tasks_count": 4,
+    "review_tasks_count": 1,
+    "queued_tasks_count": 3,
+    "blocked_tasks_count": 0
+  },
+  "tasks": [
+    {
+      "task_id": "ODP-BRAND-TRANSFER-CONTRACT-PREP-001",
+      "work_package": "WP-30A",
+      "actual_status": "in_progress",
+      "dispatch_state": "running",
+      "owner": "Antigravity2",
+      "reviewer": "Codex",
+      "worker_run_id": "antigravity2-20260908T152240Z-455a7d76",
+      "worker_pid": 959932,
+      "worker_status": "running",
+      "unassigned_reason": null
+    },
+    {
+      "task_id": "ODP-CDC-SOURCE-CONTRACT-PREP-001",
+      "work_package": "WP-34A",
+      "actual_status": "todo",
+      "dispatch_state": "queued",
+      "owner": "Antigravity2",
+      "reviewer": "Codex",
+      "worker_run_id": null,
+      "worker_pid": null,
+      "worker_status": null,
+      "unassigned_reason": "Awaiting available worker execution slot in pool (Claude in cooldown until 16UTC; Antigravity concurrency bounded)"
+    },
+    {
+      "task_id": "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001",
+      "work_package": "WP-33A",
+      "actual_status": "todo",
+      "dispatch_state": "queued",
+      "owner": "Antigravity2",
+      "reviewer": "Codex2",
+      "worker_run_id": null,
+      "worker_pid": null,
+      "worker_status": null,
+      "unassigned_reason": "Awaiting available worker execution slot in pool (Claude in cooldown until 16UTC; Antigravity concurrency bounded)"
+    },
+    {
+      "task_id": "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001",
+      "work_package": "WP-31A",
+      "actual_status": "in_progress",
+      "dispatch_state": "running",
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "worker_run_id": "antigravity-20260908T152140Z-777c479d",
+      "worker_pid": 955528,
+      "worker_status": "running",
+      "unassigned_reason": null
+    },
+    {
+      "task_id": "ODP-MERGE-QUEUE-BATCH-DESIGN-001",
+      "work_package": "WP-35A",
+      "actual_status": "review",
+      "dispatch_state": "review",
+      "owner": "Antigravity3",
+      "reviewer": "Codex2",
+      "worker_run_id": "antigravity-20260908T150400Z-c0f23cc0",
+      "worker_pid": 941199,
+      "worker_status": "completed",
+      "unassigned_reason": null
+    },
+    {
+      "task_id": "ODP-NET002-LEASE-CONTRACT-PREP-001",
+      "work_package": "WP-32A",
+      "actual_status": "todo",
+      "dispatch_state": "queued",
+      "owner": "Antigravity2",
+      "reviewer": "Codex",
+      "worker_run_id": null,
+      "worker_pid": null,
+      "worker_status": null,
+      "unassigned_reason": "Awaiting available worker execution slot in pool (Claude in cooldown until 16UTC; Antigravity concurrency bounded)"
+    },
+    {
+      "task_id": "ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001",
+      "work_package": "WP-20",
+      "actual_status": "in_progress",
+      "dispatch_state": "running",
+      "owner": "Antigravity2",
+      "reviewer": "Codex2",
+      "worker_run_id": "antigravity2-20260908T152224Z-205e85ef",
+      "worker_pid": 957012,
+      "worker_status": "running",
+      "unassigned_reason": null
+    },
+    {
+      "task_id": "ODP-OSS-DECISION-PACK-001",
+      "work_package": "WP-10",
+      "actual_status": "in_progress",
+      "dispatch_state": "running",
+      "owner": "Antigravity2",
+      "reviewer": "Codex",
+      "worker_run_id": "antigravity2-20260908T152208Z-90d16773",
+      "worker_pid": 956143,
+      "worker_status": "running",
+      "unassigned_reason": null
+    }
+  ]
+}

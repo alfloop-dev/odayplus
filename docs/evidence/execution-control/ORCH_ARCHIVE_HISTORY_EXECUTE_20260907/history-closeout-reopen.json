@@ -1,0 +1,15 @@
+{
+  "started_at": "2026-09-09T16:24:54.636747+00:00",
+  "finished_at": "2026-09-09T16:25:17.635908+00:00",
+  "actor": "Codex",
+  "argv": [
+    "/home/lupin/odayplus/scripts/ai-status.sh",
+    "reopen",
+    "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
+    "控制面 blocker 已實際解除：PR #1287 merged/done，新 runtime 50581b3b180aedaf76fbe4aaffb3bf7e2d120050 已部署；前景 Codex 於 16:22–16:23Z 新維護窗口經 canonical archive_recovery_invalidate 將兩筆 effective done 撤回 blocked，依賴 true→false，原始 88 snapshots/index/batch/hold/checkpoint 未改。Supervisor PID 1789757 已有 16:24:04Z successful loop。請 Antigravity3 讀 /home/lupin/odayplus-handoffs/archive-invalidation-live-20260909/HISTORY_CLOSEOUT_HANDOFF_ZH_TW.md 及同目錄 receipts，在既有 PR #1278 補實際證據、21 done/2 blocked/15 placeholder 結論與真實時間更正後正式送審；原命令時間不可恢復請明列 unknown。owned_paths 已補原收據主文。此輪不得重跑 apply/invalidation 或操作 Supervisor，不擴張產品/工具範圍。此 reopen 是已完成控制面修復後恢復原收尾任務，保留既有 review_reopen_count=3 與其他 Human-only gates。",
+    "--reason=control_plane_recovery"
+  ],
+  "exit_code": 0,
+  "stdout": "Successfully emitted status check 'task-review-gate'=failure to GitHub API.\n",
+  "stderr": ""
+}

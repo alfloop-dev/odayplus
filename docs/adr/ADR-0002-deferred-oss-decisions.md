@@ -63,7 +63,7 @@ review_trigger: "Review when production data scale, sub-10ms online feature late
 - **決策**: `defer`（延後） / `replace`（替換）
 - **需求映射**: 時間序列結構性斷層/變性點檢測 (Change-point Detection) 與營收趨勢突變識別 (`ODP-HLR-INT-004`，ForecastOps)。
 - **可驗證替代能力**:
-  - `modules/learninghub/infrastructure/evidently_monitor.py` (Line 42, 56, 72) 提供 Evidently AI 分佈偏移與特徵漂移門檻告警 (drift-share thresholding)，搭配 `modules/forecastops/infrastructure/forecast_engines.py` 之 StatsForecast / MLForecast。
+  - `modules/learninghub/infrastructure/evidently_monitor.py` (Line 42, 56, 72) 提供原生統計引擎（NumPy／pandas／SciPy／scikit-learn）分佈偏移與特徵漂移門檻告警 (drift-share thresholding)，搭配 `modules/forecastops/infrastructure/forecast_engines.py` 之 StatsForecast / MLForecast。
 - **替代限制**: 離線複雜變化點分割演算法 (Pelt / Dynp with custom cost functions) 未作為獨立 Python 服務執行；改以 Evidently 分佈漂移告警與 StatsForecast / MLForecast 窗格模型作為替代。
 - **元件 Owner**: ForecastOps ML Engineering
 - **重新評估觸發條件 (Revisit Trigger)**: 當歷史多年度營收/客流斷點分析需要無監督 Pelts/Dynp 動態規劃分段演算法且既有 Evidently/StatsForecast 窗格統計無法滿足精度需求時。
@@ -142,7 +142,7 @@ review_trigger: "Review when production data scale, sub-10ms online feature late
 | 元件名稱 | 決策狀態 | 映射需求編號 | 替代/現行實作能力 | 元件 Owner | 未安裝/Deferred 治理規則 | 重新評估觸發條件 (Revisit Trigger) |
 |---|---|---|---|---|---|---|
 | **GeoPandas** | `replace` / `defer` | `ODP-HLR-INT-001` | PostGIS SQL (planned surface) + H3-py | Data Platform | In-memory Heavy Join 下推 SQL | 需要大型向量圖層 Python 批次幾何運算 |
-| **ruptures** | `replace` / `defer` | `ODP-HLR-INT-004` | Evidently AI (`evidently_monitor.py:42,56,72` drift-share thresholding) + StatsForecast / MLForecast | ForecastOps ML | 不宣稱為 Pelt/Dynp 離線分割 | 歷史多年度斷點無監督動態規劃需求 |
+| **ruptures** | `replace` / `defer` | `ODP-HLR-INT-004` | 原生統計引擎 (`evidently_monitor.py` drift-share thresholding) + StatsForecast / MLForecast | ForecastOps ML | 不宣稱為 Pelt/Dynp 離線分割 | 歷史多年度斷點無監督動態規劃需求 |
 | **Superset** | `replace` | `ODP-HLR-GOV-001/002` | Next.js (`@deck.gl/core`, `maplibre-gl`, `h3-js`) OpsBoard + FastAPI RBAC APIs | Frontend Team | 不開放任意 SQL 拖拉 UI | 業務分析師需要開放式 SQL 自訂 BI 視圖 |
 | **Temporal** | `replace` | `ODP-HLR-GOV-005/006` | Dagster + Postgres Job Queue (`job_queue.py`) + Worker backoff (`worker.py:220,262`) + Intake quarantine (`intake_states.py`) | Infra & Ops | 長任務休眠由 DB 狀態機管理 | 跨服務多日人工 Signal 異步 Saga 需求 |
 | **OPA** | `replace` | `ODP-HLR-GOV-009/010` | FastAPI Auth Middleware + DB RLS | Security Arch | 規則由 Python / Schema 控管 | 政策需由非開發者 Hot-reload 編輯 |
@@ -156,7 +156,7 @@ review_trigger: "Review when production data scale, sub-10ms online feature late
 
 ## 驗證與可追溯性 (Verification and Traceability)
 
-1. **套件鎖定驗證**: 現行整合之替代套件 (`statsmodels`, `lifelines`, `pymoo`, `ortools`, `cvxpy`, `statsforecast`, `mlflow`, `evidently`, `dagster`, `great_expectations`, `h3`, `pyomo`) 皆在 `pyproject.toml` 鎖定版本。
+1. **套件鎖定驗證**: 現行整合之替代套件 (`statsmodels`, `lifelines`, `pymoo`, `ortools`, `cvxpy`, `statsforecast`, `mlflow`, `scipy`, `dagster`, `great_expectations`, `h3`, `pyomo`) 皆在 `pyproject.toml` 鎖定版本。
 2. **能力測試 API**: `GET /api/v1/learninghub/oss-capabilities` 動態回報目前可載入之 OSS 能力，對未安裝套件正確暴露停用狀態。
 3. **自動化驗證指令**:
    ```bash
