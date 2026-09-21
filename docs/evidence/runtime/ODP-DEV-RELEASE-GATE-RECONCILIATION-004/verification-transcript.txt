@@ -58,24 +58,36 @@ candidate: 39ae43f6fe679f03dd7df459a51835cbd2d54f77  build run: 35493018607
 [PASS] downloaded artifact file is present: release-environment-receipt.json -- /tmp/run-35493018607/release-environment-receipt-dev-build/release-environment-receipt.json
 [PASS] downloaded artifact file is present: npm-audit-receipt.json -- /tmp/run-35493018607/release-npm-audit-receipt-dev/npm-audit-receipt.json
 [PASS] downloaded artifact file is present: release-phase-receipt.json -- /tmp/run-35493018607/release-phase-receipt-dev-build/release-phase-receipt.json
-[PASS] downloaded RELEASE_MANIFEST.json matches repo bytes exactly
-[PASS] downloaded runtime-release-images.json matches repo bytes exactly
-[PASS] downloaded initial-release-absence-readback.json matches repo bytes exactly
-[PASS] downloaded release-environment-receipt.json matches repo bytes exactly
-[PASS] downloaded npm-audit-receipt.json matches repo bytes exactly
-[PASS] downloaded release-phase-receipt.json matches repo bytes exactly
-[PASS] validate_manifest reports zero errors -- []
-[PASS] manifest digest is self-verifying
-[PASS] migration_digest recomputed from candidate matches manifest -- sha256:9ee2d278321bcd5358500a3feb93a7c22c201adde76698f57b7dfcbaa3377375 == sha256:9ee2d278321bcd5358500a3feb93a7c22c201adde76698f57b7dfcbaa3377375
-[PASS] data_contract_digest recomputed from candidate matches manifest -- sha256:05e2cb05619f1c524b0f9578e4ceba9ec863d143d5e64b0eeac97539ce8e7c73 == sha256:05e2cb05619f1c524b0f9578e4ceba9ec863d143d5e64b0eeac97539ce8e7c73
-[PASS] source_policy_digest recomputed from candidate matches manifest -- sha256:f3cd9557c11f63721300914c31fbceb97250cc76e0c5dcfbe89c9249c93dfcbf == sha256:f3cd9557c11f63721300914c31fbceb97250cc76e0c5dcfbe89c9249c93dfcbf
-[PASS] egress_contract_digest recomputed from candidate matches manifest -- sha256:8492ae19fa623fba6db903f3a1b92bb209e5f6e898814ecfcff422b134fa8cd5 == sha256:8492ae19fa623fba6db903f3a1b92bb209e5f6e898814ecfcff422b134fa8cd5
-[PASS] component_binding_errors against runtime-release-images.json is empty -- []
-[PASS] validate_release_admission reports zero errors -- []
-[PASS] validate_registry reports zero errors -- []
-[PASS] registry release.candidate_sha matches candidate
-[PASS] registry release.manifest_digest matches manifest
-[PASS] registry decision is no-go
 
-Summary: 0 failures.
+================================================================================
+Round 8 addendum (2026-09-21 Gate 0 circular clearance repair):
+Task Worktree HEAD: (new commit, exact SHA recorded after commit)
+Verification re-executed after removing circular dev-admission prerequisite from Gate 0:
+
+COMMAND: git diff --check
+START_TIME_UTC: 2026-09-21T10:22:01Z
+TERMINAL_EXIT_CODE: 0
+
+COMMAND: uv run python delivery_toolchain/e2e/check_release_gate_registry.py --json
+START_TIME_UTC: 2026-09-21T10:22:03Z
+TERMINAL_EXIT_CODE: 0
+--- STDOUT ---
+{
+  "registry_id": "ODP-RELEASE-GATE-REGISTRY",
+  "candidate_sha": "39ae43f6fe679f03dd7df459a51835cbd2d54f77",
+  "manifest_digest": "sha256:ebe7d305e930471d2e7492a1fffced10dbaa05a710bb5f6573f370e7bfa8ae8a",
+  "stage": "candidate-built",
+  "environment": "dev",
+  "admission_target": "dev",
+  "decision": "no-go",
+  "gate_count": 7,
+  "cleared_gates": [],
+  "blocking_gates": [
+    "gate-0",
+    "gate-1",
+    "gate-4"
+  ],
+  "integrity_errors": [],
+  "release_state": "NO-GO"
+}
 ================================================================================
