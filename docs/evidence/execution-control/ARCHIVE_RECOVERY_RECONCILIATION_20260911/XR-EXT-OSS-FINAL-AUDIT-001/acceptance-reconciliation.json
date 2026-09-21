@@ -283,7 +283,7 @@
         ],
         "uncovered_historical_items_note": "原七大品質軸（每軸 11/11 比對）與 44,471 筆 dual-run identities 歷史比對屬於遷移期過渡驗證，在歷史 git 中係由腳本合成產生。重讀同一 artifact 不等於對歷史 legacy 數據之獨立品質比對，該未涵蓋歷史比對仍留本 task ID。本任務提出之合法等價驗證方案維持 proposal 狀態（待 Canonical 治理流程正式採納），由 DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001 承接受控真實擷取、DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001 承接不可變 masked 快照產出與 readback 驗證、ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 承接 dev live rollout 與 runtime 閘門。",
         "closeout_blocker_note": "因真實資料庫快照與運行期量測尚未由 downstream 任務完成交付，本任務 XR-EXT-OSS-FINAL-AUDIT-001 維持原驗收未完成狀態，目前不 closeout 為 done，HUMAN-OSS-LEGAL-APPROVAL-001 之技術依賴不得視為已滿足。",
-        "next_step": "本 ID 完成本輪可執行補證與處置表後重新送審；待 DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001 產出真實八域快照、解鎖 DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001，並由 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 完成 dev live rollout 後，經由正常 canonical 治理流程進行後續驗收或依賴調整。",
+        "next_step": "本 ID 完成本輪可執行補證與處置表後，由 owner Antigravity4 登記具名 Canonical Blocker 阻塞於真實 raw 擷取（DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001 / Antigravity6）、Masked 快照產出與血統（DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001 / Antigravity）、dev live runtime 閘門（ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 / Antigravity2）及獨立品質比對驗收；等價驗證方案維持 proposal 狀態，等待下游交付或治理裁決，不反覆送入 approval。",
         "dependency_before_after": {
           "current_canonical_20260920": {
             "XR-EXT-OSS-FINAL-AUDIT-001": {
@@ -346,7 +346,7 @@
           "GCS immutable URI and exact digest verification gate"
         ],
         "recoverable_scope": "兩 repo 之精確 commit、PR、7 項 CI check-runs、image digest、SBOM、NOTICE、contract lock 及 audit 腳本均 100% 完整復原並可確定性重算。",
-        "unrecoverable_raw_scope": "事故前生產/預發環境實體資料庫原始 query logs 與舊 44,471 筆 dual-run 過渡比對資料無法由 git 歷史還原。",
+        "unrecoverable_raw_scope": "於本次列明之查詢路徑與端點（oday-data-platform @ 7b0670d7 之 repo 根目錄、docs/、docs/evidence/、scripts/ 及 GitHub Actions CI 端點）未找到事故前生產/預發環境實體資料庫原始 query logs 與舊 44,471 筆 dual-run 過渡比對資料；未查詢之 git 歷史、子樹及外部系統一律維持 unknown。",
         "legitimate_equivalent_verification_proposal": {
           "proposal_status": "PROPOSAL_PENDING_FORMAL_GOVERNANCE_ADOPTION",
           "proposal_principle": "不僵化要求舊 44,471 筆過渡 dual-run 數據作為唯一驗收依據（該數據屬已過去之 dual-run 遷移期合成過渡產物）。",
@@ -1260,8 +1260,8 @@
     }
   },
   "fresh_canonical_dag_snapshot_20260920": {
-    "captured_at": "2026-09-21T01:07:27.000000Z",
-    "source": "$PANTHEON_STATUS_ROOT/ai-status.json",
+    "captured_at": "2026-09-21T10:26:17.000000Z",
+    "source": "/home/lupin/odayplus/ai-status.json",
     "active_records": 23,
     "adjacency_sha256": "8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af",
     "cycles_detected": false,

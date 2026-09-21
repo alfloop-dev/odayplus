@@ -98,8 +98,8 @@ def check():
         result["proposed_topological_order"] = topological_order(proposed)
         result["adjacency_sha256"] = adjacency_hash
 
-        # Fresh 2026-09-20 live Canonical DAG verification
-        fresh_path = EVIDENCE / "requery-20260920/fresh-canonical-dag.stdout.json"
+        # Fresh live Canonical DAG verification (2026-09-21 capture)
+        fresh_path = EVIDENCE / "requery-20260920/fresh-canonical-dag-20260921.stdout.json"
         fresh_data = json.loads(fresh_path.read_bytes())
         assert data["fresh_canonical_dag_snapshot_20260920"]["tasks"] == fresh_data["adjacency"]
         assert data["fresh_canonical_dag_snapshot_20260920"]["adjacency_sha256"] == fresh_data["adjacency_sha256"] == "8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af"

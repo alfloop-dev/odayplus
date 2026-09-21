@@ -34,5 +34,41 @@
       "summary": "Validated acceptance-reconciliation.json schema, SHA256 digests, egress CIDR rules, canonical task DAG acyclicity (0 cycles across 30 tasks from hash-bound snapshot), proposed DAG acyclicity (0 cycles), and criteria verdicts."
     },
     "interpretation": "Claimed command contains invalid Python compound statements after semicolons; measured SHA does not resolve. Claimed successful execution is unverifiable and withdrawn, not repaired retroactively."
+  },
+  "observation_20260920_withdrawn": {
+    "source_commit": "622b2a3d613168d31b94f0f41fba7cbd56a78b62",
+    "record": {
+      "command": "python3 docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/capture_verification.py --check",
+      "target_repo": "alfloop-dev/odayplus",
+      "measured_head_sha": "41893e8d6ba4ff4609a1b83ddfa27bc904a6b2eb",
+      "selection": "Focused offline DAG acyclicity verification on dependency-input-snapshot.json and live canonical DAG requery",
+      "observed_at": "2026-09-20T13:47:35.839303Z",
+      "duration_seconds": 0.045,
+      "exit_code": 0,
+      "stdout_sha256": "fccd9f56d50c145397d207666f1d7e5d93909a763a25326bbb63845ca8e3654b",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_bytes_len": 5792,
+      "raw_stdout_excerpt": "{\"active_records\": 24, \"adjacency_sha256\": \"7ab7e86e8578e237656c4d69150092b3e44db436d2e98c6f186805e07ecfcb38\", \"captured_at\": \"2026-09-20T13:47:35.839303Z\", \"source\": \"$PANTHEON_STATUS_ROOT/ai-status.json\"}",
+      "summary": "Re-queried live canonical ai-status.json to compute and verify fresh 24-task active DAG (5792 bytes, SHA256 fccd9f56d50c145397d207666f1d7e5d93909a763a25326bbb63845ca8e3654b)."
+    },
+    "interpretation": "Original 2026-09-20 observation preserved and formally withdrawn: source path contained unexpanded literal $PANTHEON_STATUS_ROOT, and topological sort was mixed with file extraction rather than executed as a distinct verifiable command. Replaced by the 2026-09-21 fresh live capture."
+  },
+  "observation_20260921_010727_withdrawn": {
+    "source_commit": "41893e8d6ba4ff4609a1b83ddfa27bc904a6b2eb",
+    "record": {
+      "command": "python3 -c 'import json, hashlib, os; status_root = os.environ.get(\"PANTHEON_STATUS_ROOT\", \"/home/lupin/odayplus\"); data = json.load(open(os.path.join(status_root, \"ai-status.json\"))); adj = {t[\"id\"]: {\"depends_on\": sorted(t.get(\"depends_on\", [])), \"status\": t.get(\"status\")} for t in data.get(\"tasks\", [])}; adj_json = json.dumps(adj, indent=2, sort_keys=True); out = {\"captured_at\": \"2026-09-21T01:07:27.000000Z\", \"source\": \"/home/lupin/odayplus/ai-status.json\", \"active_records\": len(adj), \"adjacency_sha256\": hashlib.sha256(adj_json.encode()).hexdigest(), \"adjacency\": adj}; print(json.dumps(out, indent=2))'",
+      "target_repo": "alfloop-dev/odayplus",
+      "measured_head_sha": "41893e8d6ba4ff4609a1b83ddfa27bc904a6b2eb",
+      "selection": "Live canonical 23-task active dependency DAG snapshot and acyclicity verification from PANTHEON_STATUS_ROOT",
+      "observed_at": "2026-09-21T01:07:27.000000Z",
+      "duration_seconds": 0.045,
+      "exit_code": 0,
+      "stdout_sha256": "f1fe26c989197a48a2b09bf5774fe07c2615c99112862b6b7f172063834141a9",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_bytes_len": 5632,
+      "raw_stdout_excerpt": "{\"active_records\": 23, \"adjacency_sha256\": \"8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af\", \"captured_at\": \"2026-09-21T01:07:27.000000Z\", \"source\": \"/home/lupin/odayplus/ai-status.json\"}",
+      "summary": "Live canonical 23-task active dependency DAG snapshot (5632 bytes, SHA256 f1fe26c989197a48a2b09bf5774fe07c2615c99112862b6b7f172063834141a9)."
+    },
+    "interpretation": "Original 2026-09-21T01:07:27Z observation preserved and formally withdrawn: command only processed a previously saved file into stdout rather than real-time read from canonical ai-status.json; provenance was not independently verifiable. Replaced by fresh-canonical-dag-20260921."
   }
 }
