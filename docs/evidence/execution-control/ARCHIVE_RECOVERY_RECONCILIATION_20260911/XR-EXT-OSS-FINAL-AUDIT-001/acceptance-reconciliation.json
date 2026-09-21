@@ -206,9 +206,9 @@
     "read_only_search_findings": {
       "target_repo_and_ref": "alfloop-dev/oday-data-platform @ 7b0670d7b37e59e06bc9fea5b6003d1964be2c3c",
       "deliverables_status": "All declared deliverables (docs/evidence/final/XR-EXT-OSS-FINAL-AUDIT-001/, scripts/audit_external_oss_closeout.py, tests/integration/test_external_oss_closeout.py) exist and verified.",
-      "bounded_search_scope": "Surveyed repository root (19 entries), docs/, docs/evidence/, docs/evidence/completion/ (26 direct directory entries), docs/evidence/gap-audits/, docs/evidence/final/XR-EXT-OSS-FINAL-AUDIT-001/, docs/evidence/runtime/*, scripts/, and GitHub Actions CI runs (PR head b1824c97: 4 runs / merge 7b0670d7: 1 run) & artifacts at merge 7b0670d7b37e59e06bc9fea5b6003d1964be2c3c.",
-      "upstream_comparison_inputs_audit": "Bounded search across repository directory listings and CI artifacts confirms that dual-run comparison metrics (44,471 records, 7 quality axes) and domain counts in receipts were generated via synthetic mock in scripts/reconcile_legacy_external_data.py and scripts/verify_external_egress_off.py. Within the specifically queried direct directory listings and API responses, raw database query logs and dual-run dump payloads were not located; GitHub Actions CI artifacts returned total_count=0 at query time (demonstrating no retrievable artifacts at that endpoint during query, without proving historical artifacts were never produced). Unqueried subtrees and external environments retain status unknown.",
-      "recoverable_vs_missing_boundary": "100% of code, contracts, manifests, IaC, CI check-runs, and deterministic verification scripts are recovered and verified. Raw pre-incident live database query logs and dual-run dump states are absent from queried git directories and CI endpoints, and are itemized as missing inputs under XR-EXT-OSS-FINAL-AUDIT-001 with a formal equivalent verification proposal pending canonical governance adoption."
+      "bounded_search_scope": "Surveyed repository root (19 entries), docs/, docs/evidence/ (completion/ with 26 task directories, gap-audits/XR-EXT-OSS-INVENTORY-002/gap-manifest.json, runtime/DPF-ONE-SHOT-LIVE-VERIFY-001/{disabled-sources-policy,one-shot-live-receipt}.json, runtime/DPF-POST-TEST-EGRESS-OFF-001/{post-test-egress-off-receipt,runtime-workload-audit,consumer-snapshot-readback-receipt}.json, runtime/XR-DUAL-RUN-RECONCILE-002/emgi-cutover-receipt.json, final/XR-EXT-OSS-FINAL-AUDIT-001/), scripts/, and GitHub Actions CI runs (PR head b1824c97: 4 runs / merge 7b0670d7: 1 run) & artifacts endpoint at merge 7b0670d7b37e59e06bc9fea5b6003d1964be2c3c.",
+      "upstream_comparison_inputs_audit": "Bounded search across exact-ref upstream audit inputs (disabled-sources-policy.json, one-shot-live-receipt.json, gap-manifest.json, post-test-egress-off-receipt.json, runtime-workload-audit.json, consumer-snapshot-readback-receipt.json, emgi-cutover-receipt.json) and CI artifacts confirms that: (1) static policy files, contracts, manifests, and deterministic test scripts are present and verified in oday-data-platform @ 7b0670d7; (2) dual-run comparison metrics (44,471 records, 7 quality axes) and domain snapshot readback counts were generated via synthetic mock scripts (scripts/reconcile_legacy_external_data.py and scripts/verify_external_egress_off.py); (3) raw pre-incident live database query logs and full raw PostgreSQL dumps were not located in queried git directories or CI artifact endpoints (GitHub Actions artifacts returned total_count=0 at query time, showing no retrievable artifacts at that endpoint); (4) unqueried subtrees and external environments retain status unknown.",
+      "recoverable_vs_missing_boundary": "100% of code, contracts, manifests, IaC, CI check-runs, deterministic verification scripts, and direct upstream audit files (disabled-sources-policy.json, one-shot-live-receipt.json, gap-manifest.json, etc.) are recovered and verified. Raw pre-incident live database query logs and dual-run dump states are absent from queried git directories and CI endpoints, and are itemized as missing inputs under XR-EXT-OSS-FINAL-AUDIT-001 with a formal equivalent verification proposal pending canonical governance adoption."
     }
   },
   "acceptance_criteria_reconciliation": [
@@ -339,7 +339,7 @@
             }
           }
         },
-        "no_cycle_evidence": "經由 hash-bound 歷史快照 (SHA256: 592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390) 及 2026-09-20 當前 live Canonical 鄰接表 (SHA256: 7ab7e86e8578e237656c4d69150092b3e44db436d2e98c6f186805e07ecfcb38) 執行完整 DFS topological sort 驗證，當前 Canonical 圖與提案更新圖均為 0 cycles。",
+        "no_cycle_evidence": "經由 hash-bound 歷史快照 (SHA256: 592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390) 及當前 live Canonical 鄰接表 (SHA256: 8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af) 執行 DFS topological sort 驗證，當前 active 任務鄰接子圖與提案更新圖均為單向有向無環圖 (DAG)，0 cycles（遍歷 64 個參照任務節點）。無環結論限於保存之 active adjacency 子圖。",
         "retained_gates": [
           "Live snapshot generation gate (DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001)",
           "Supervisor signed lease gate",
@@ -622,7 +622,7 @@
             }
           }
         },
-        "no_cycle_evidence": "經由 hash-bound 歷史快照 (SHA256: 592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390) 及 2026-09-20 當前 live Canonical 鄰接表 (SHA256: 7ab7e86e8578e237656c4d69150092b3e44db436d2e98c6f186805e07ecfcb38) 執行完整 DFS topological sort 驗證，當前 Canonical 圖與提案更新圖均為 0 cycles。",
+        "no_cycle_evidence": "經由 hash-bound 歷史快照 (SHA256: 592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390) 及當前 live Canonical 鄰接表 (SHA256: 8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af) 執行 DFS topological sort 驗證，當前 active 任務鄰接子圖與提案更新圖均為單向有向無環圖 (DAG)，0 cycles（遍歷 64 個參照任務節點）。無環結論限於保存之 active adjacency 子圖。",
         "retained_gates": [
           "Live rollout authorization and deployment gate (ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001)",
           "Named Human GO / Legal approval gate (HUMAN-OSS-LEGAL-APPROVAL-001)"
@@ -760,7 +760,7 @@
             }
           }
         },
-        "no_cycle_evidence": "經由 hash-bound 歷史快照 (SHA256: 592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390) 及 2026-09-20 當前 live Canonical 鄰接表 (SHA256: 7ab7e86e8578e237656c4d69150092b3e44db436d2e98c6f186805e07ecfcb38) 執行完整 DFS topological sort 驗證，當前 Canonical 圖與提案更新圖均為 0 cycles。",
+        "no_cycle_evidence": "經由 hash-bound 歷史快照 (SHA256: 592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390) 及當前 live Canonical 鄰接表 (SHA256: 8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af) 執行 DFS topological sort 驗證，當前 active 任務鄰接子圖與提案更新圖均為單向有向無環圖 (DAG)，0 cycles（遍歷 64 個參照任務節點）。無環結論限於保存之 active adjacency 子圖。",
         "retained_gates": [
           "Egress default-deny live probe verification gate",
           "Provider credentials absence verification gate",
@@ -894,7 +894,7 @@
     "sources_disabled_and_stopped_in_static_policy": true,
     "canonical_dag_acyclicity_verified": true,
     "dag_snapshot_sha256": "592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390",
-    "fresh_dag_snapshot_sha256": "7ab7e86e8578e237656c4d69150092b3e44db436d2e98c6f186805e07ecfcb38",
+    "fresh_dag_snapshot_sha256": "8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af",
     "dag_snapshot_historical_sha256": "592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390"
   },
   "canonical_task_dag_snapshot": {
@@ -1258,10 +1258,10 @@
     }
   },
   "fresh_canonical_dag_snapshot_20260920": {
-    "captured_at": "2026-09-20T13:47:35.839303Z",
+    "captured_at": "2026-09-21T01:07:27.000000Z",
     "source": "$PANTHEON_STATUS_ROOT/ai-status.json",
-    "active_records": 24,
-    "adjacency_sha256": "7ab7e86e8578e237656c4d69150092b3e44db436d2e98c6f186805e07ecfcb38",
+    "active_records": 23,
+    "adjacency_sha256": "8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af",
     "cycles_detected": false,
     "edge_count": 61,
     "tasks": {
@@ -1279,9 +1279,9 @@
       },
       "ODP-EPHEMERAL-STAGING-ROLLOUT-001": {
         "depends_on": [
-          "ODP-EPHEMERAL-STAGING-IAC-001",
-          "ODP-DEV-ROLLOUT-001",
           "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "ODP-DEV-ROLLOUT-001",
+          "ODP-EPHEMERAL-STAGING-IAC-001",
           "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
           "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
           "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001"
@@ -1308,25 +1308,25 @@
       },
       "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001": {
         "depends_on": [
-          "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
-          "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
-          "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
           "DPF-EMGI-LIVE-ROLLOUT-001",
-          "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
-          "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
-          "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
-          "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
           "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+          "ODP-DEV-RELEASE-GATE-RECONCILIATION-004",
+          "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+          "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+          "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+          "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+          "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
           "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
-          "ODP-DEV-RELEASE-GATE-RECONCILIATION-004"
+          "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+          "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002"
         ],
         "status": "in_progress"
       },
       "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001": {
         "depends_on": [
+          "DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001",
           "DPF-EMGI-LIVE-ROLLOUT-001",
-          "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
-          "DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001"
+          "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001"
         ],
         "status": "todo"
       },
@@ -1342,23 +1342,23 @@
       },
       "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001": {
         "depends_on": [
-          "ODP-REQ-DISPOSITION-GOVERNANCE-001",
-          "ODP-SPEC-SOURCE-PROVENANCE-001",
           "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
-          "ODP-LH-PREDICTION-DRIFT-001",
-          "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001",
-          "ODP-JOB-PARTIAL-DISPOSITION-001",
-          "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
-          "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
-          "ODP-NET002-LEASE-DISPOSITION-001",
           "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
-          "ODP-PRICE006-BANDIT-GATED-001",
           "ODP-INT001-CDC-DISPOSITION-001",
           "ODP-INTV006-ADJUST-WORKFLOW-001",
+          "ODP-JOB-PARTIAL-DISPOSITION-001",
+          "ODP-LH-PREDICTION-DRIFT-001",
           "ODP-LH003-BACKTEST-RELEASE-GATE-001",
-          "ODP-OPS002-DECISION-COMMENTS-001",
           "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
-          "ODP-NFR-RUNTIME-EVIDENCE-001"
+          "ODP-NET002-LEASE-DISPOSITION-001",
+          "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+          "ODP-NFR-RUNTIME-EVIDENCE-001",
+          "ODP-OPS002-DECISION-COMMENTS-001",
+          "ODP-PRICE006-BANDIT-GATED-001",
+          "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+          "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+          "ODP-SPEC-SOURCE-PROVENANCE-001",
+          "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001"
         ],
         "status": "todo"
       },
@@ -1372,8 +1372,8 @@
       },
       "ODP-BRAND-TRANSFER-IMPLEMENTATION-001": {
         "depends_on": [
-          "ODP-BRAND-TRANSFER-CONTRACT-PREP-001",
-          "ODP-BRAND-CLASSIFICATION-SYNC-PRESERVATION-001"
+          "ODP-BRAND-CLASSIFICATION-SYNC-PRESERVATION-001",
+          "ODP-BRAND-TRANSFER-CONTRACT-PREP-001"
         ],
         "status": "blocked"
       },
@@ -1404,19 +1404,15 @@
       },
       "ODP-DEV-RELEASE-GATE-RECONCILIATION-004": {
         "depends_on": [
-          "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
-          "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001"
+          "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+          "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001"
         ],
-        "status": "in_progress"
-      },
-      "ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001": {
-        "depends_on": [],
-        "status": "in_progress"
+        "status": "review"
       },
       "DPF-NLSC-OFFICIAL-ZIP-PREPROCESSOR-001": {
         "depends_on": [
-          "DPF-OFFICIAL-SOURCE-ENDPOINT-INTEGRATION-001",
-          "DPF-CAPTURE-RETENTION-RUNNER-001"
+          "DPF-CAPTURE-RETENTION-RUNNER-001",
+          "DPF-OFFICIAL-SOURCE-ENDPOINT-INTEGRATION-001"
         ],
         "status": "todo"
       },
@@ -1430,13 +1426,13 @@
         "depends_on": [
           "DPF-TRANSPORT-POI-RELEASE-INTEGRATION-001"
         ],
-        "status": "todo"
+        "status": "in_progress"
       },
       "DPF-EIGHT-DOMAIN-CAPTURE-WIRING-001": {
         "depends_on": [
           "DPF-CAPTURE-RETENTION-RUNNER-001",
-          "DPF-OVERTURE-BOUNDED-RECORD-READER-001",
           "DPF-NLSC-OFFICIAL-ZIP-PREPROCESSOR-001",
+          "DPF-OVERTURE-BOUNDED-RECORD-READER-001",
           "DPF-TDX-OAUTH-ACQUISITION-INTEGRATION-001"
         ],
         "status": "todo"

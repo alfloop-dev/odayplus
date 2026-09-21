@@ -96,7 +96,7 @@
    - 人類決策 D01–D14 已選定內部 OSS 政策方向（D01–D04 個案附條件/允許、D05 第一方標示 `UNLICENSED`、D06–D14 共通政策）。
    - 4 項法務待決事項（`LICENSE-BLOCKED-CONSUMER` 163 項、`LICENSE-BLOCKED-PRODUCER` 24 項、`LICENSE-POLICY-NOT-APPROVED`、`SOURCE-DATA-LICENCE-NOT-MODELLED` 14 來源）完整對映至 `HUMAN-OSS-LEGAL-APPROVAL-001`。
 2. **依賴關係與無環檢查 (DAG No-Cycle Check)**:
-   - 歷史拓撲快照（2026-09-12，30 tasks，SHA256: `592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390`）與 2026-09-20 當前 live Canonical 拓撲快照（24 active tasks，SHA256: `7ab7e86e8578e237656c4d69150092b3e44db436d2e98c6f186805e07ecfcb38`）均由 `capture_verification.py --check` 執行完整 DFS Topological Sort 驗證為 0 cycles。
+   - 歷史拓撲快照（2026-09-12，30 tasks，SHA256: `592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390`）與 當前 live Canonical 拓撲快照（23 active tasks，SHA256: `8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af`）由 `capture_verification.py --check` 執行 DFS Topological Sort 驗證為 0 cycles（遍歷 64 個參照任務節點）。無環結論限於保存之 active adjacency 子圖。
    - **當前 2026-09-20 Live Canonical 依賴現況**：
      - `XR-EXT-OSS-FINAL-AUDIT-001` (status: `in_progress`, depends_on: `[]`)
      - `HUMAN-OSS-LEGAL-APPROVAL-001` (status: `todo`, depends_on: `["XR-EXT-OSS-FINAL-AUDIT-001"]`)
@@ -183,7 +183,7 @@ A1–A3 尚缺真 snapshot/query、歷史七軸比對與 live runtime/flow-log �
 ### 8.3 P2 歷史 DAG 與當前 Canonical 圖嚴格區分
 1. **歷史快照與當前即時圖並存驗證**：
    - 歷史快照（2026-09-12，30 tasks，SHA256: `592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390`）嚴格標記為歷史記錄。
-   - 當前即時圖（2026-09-20，24 active tasks，SHA256: `7ab7e86e8578e237656c4d69150092b3e44db436d2e98c6f186805e07ecfcb38`）從 `$PANTHEON_STATUS_ROOT/ai-status.json` 現場讀取，涵蓋 `DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001` 與 `ODP-DEV-RELEASE-GATE-RECONCILIATION-004` 等新增依賴。
+   - 當前即時圖（23 active tasks，SHA256: `8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af`）從 `$PANTHEON_STATUS_ROOT/ai-status.json` 現場讀取，涵蓋 `DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001` 與 `ODP-DEV-RELEASE-GATE-RECONCILIATION-004` 等新增依賴。
    - `capture_verification.py` 同時驗證歷史與當前兩組圖之 Topological Sort，均確認 0 cycles。
 
 ---
@@ -196,7 +196,7 @@ A1–A3 尚缺真 snapshot/query、歷史七軸比對與 live runtime/flow-log �
    - 明確區分：PR head commit `b1824c97` 於 Actions API 具 4 個 workflow runs（涵蓋 7 個 check-runs），而 merge commit `7b0670d7` 於 Actions API 具 1 個 workflow run（Source test suite #32695225238），不再將 7 個 check-runs 與 workflow runs 混淆。
 2. **DAG 驗證收據分離與歷史未知撤回**：
    - 歷史 2026-09-20T07:13:28 執行之 `capture_verification.py --check` 因未保存原始 stdout/stderr stream，正式標記為 `historical_stdout_not_preserved_withdrawn_as_receipt`，不以新產物倒填。
-   - 新增獨立條目記錄 2026-09-20T13:47:35 抽取與驗證 live canonical 24 任務即時 active DAG 之收據，精確綁定 `requery-20260920/fresh-canonical-dag.stdout.json`。
+   - 新增獨立條目記錄抽取與驗證 live canonical 23 任務即時 active DAG 之收據，精確綁定 `requery-20260920/fresh-canonical-dag.stdout.json`（SHA256: `f1fe26c989197a48a2b09bf5774fe07c2615c99112862b6b7f172063834141a9`，5632 bytes），無環結論限於 active adjacency 子圖。
 3. **Canonical Show 命令對齊**：
    - 修正 canonical show 命令為 `AI_NAME=Antigravity4 /home/lupin/odayplus/scripts/ai-status.sh show XR-EXT-OSS-FINAL-AUDIT-001`，準確反映 live writer `command_show` 僅輸出 `args[0]` 之單一任務 stdout，其他任務狀態與依賴關係由即時 DAG 完整抽樣證明。
 
@@ -223,4 +223,41 @@ A1–A3 尚缺真 snapshot/query、歷史七軸比對與 live runtime/flow-log �
      - `DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001` (Antigravity)：Masked snapshot 產生、去敏校驗與血統 manifest；
      - `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` (Antigravity2)：Consumer 真實 runtime 回讀、憑證未投影與公網 egress 預設拒絕；
      - `XR-EXT-OSS-FINAL-AUDIT-001` (Antigravity4)：未正式承接之獨立品質/歷史比對驗收。
+   - `HUMAN-OSS-LEGAL-APPROVAL-001` 維持 `todo` 並持續依賴本任務，法務許可閘嚴格閉合。
+
+---
+
+## 10. Review-13 (2026-09-21) 審查退回項目核正與精確補證
+
+### 10.1 DAG 命令與收據精確一致性校正與無環範圍限定
+1. **命令執行與保存檔案字節級一致**：
+   - 修正 `raw-command-receipts.json` 中 DAG 抽取命令為完整 python 抽取指令，直接讀取 `$PANTHEON_STATUS_ROOT/ai-status.json` 並輸出完整 DAG JSON。
+   - 輸出 exact stdout SHA256 (`f1fe26c989197a48a2b09bf5774fe07c2615c99112862b6b7f172063834141a9`)、長度 (5632 bytes)、exit code 0 與 `requery-20260920/fresh-canonical-dag.stdout.json` 達成字節級 100% 一致。
+2. **無環結論範圍限定**：
+   - 明確記錄：Topological Sort 無環驗證係針對保存之 23 active tasks 之 active adjacency 子圖（遍歷 64 個參照任務節點，0 cycles）。不宣稱涵蓋未保存出邊節點的完整 canonical 歷史全圖。
+
+### 10.2 上游直接輸入有界查讀保存與邊界收斂
+1. **精確參照原 Audit 腳本直接輸入鏈**：
+   - 沿 PR61@`7b0670d7` 之 `scripts/audit_external_oss_closeout.py:130-138,160-162` 引用鏈，執行 7 筆精確路徑之唯讀查讀並保存完整原始 stdout 至 `requery-20260920/`：
+     - `docs/evidence/runtime/DPF-ONE-SHOT-LIVE-VERIFY-001/disabled-sources-policy.json` (SHA256: `cc430891...`, 18198 bytes)
+     - `docs/evidence/runtime/DPF-ONE-SHOT-LIVE-VERIFY-001/one-shot-live-receipt.json` (SHA256: `6c5d20a3...`, 4571 bytes)
+     - `docs/evidence/gap-audits/XR-EXT-OSS-INVENTORY-002/gap-manifest.json` (SHA256: `15e19df6...`, 165622 bytes)
+     - `docs/evidence/runtime/DPF-POST-TEST-EGRESS-OFF-001/post-test-egress-off-receipt.json` (SHA256: `1d258f45...`, 4976 bytes)
+     - `docs/evidence/runtime/DPF-POST-TEST-EGRESS-OFF-001/runtime-workload-audit.json` (SHA256: `69682648...`, 4922 bytes)
+     - `docs/evidence/runtime/DPF-POST-TEST-EGRESS-OFF-001/consumer-snapshot-readback-receipt.json` (SHA256: `79f0e3a2...`, 6580 bytes)
+     - `docs/evidence/runtime/XR-DUAL-RUN-RECONCILE-002/emgi-cutover-receipt.json` (SHA256: `1ca9ecb8...`, 27785 bytes)
+2. **原子項精確邊界區分**：
+   - 靜態政策、契約與決定清單（16 來源關閉政策、default-deny NetworkPolicy、10 項技術 gap 關閉、4 項法務待決清單）100% 存在且可驗證。
+   - 事故前生產/預發環境實體資料庫原始 query logs 與舊 44,471 筆 dual-run dump 數據在查詢之 git 目錄與 CI artifacts 端點中未保存（GitHub Actions artifacts 於查詢時回傳 `total_count=0`，僅證實查詢當下端點無可取得 artifact）。
+   - 結論嚴格收斂至已查範圍，未查詢之子樹與外部系統維持 `unknown`。
+
+### 10.3 驗收未齊之具名責任與 Blocker 登記說明
+1. **維持未結案與提案性質**：
+   - 條款 A1–A3 仍為 `partially_met`，`can_closeout_as_done=false`，不可送入 approval/done lane。
+   - 等價驗證維持 `PROPOSAL_PENDING_FORMAL_GOVERNANCE_ADOPTION`，等待真實依賴產出或正式治理裁決。
+2. **具名責任劃分與後續任務映射**：
+   - **A1 受控真 raw 快照**：`DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001` (Antigravity6)
+   - **Masked 快照產出、去敏校驗與血統 manifest**：`DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001` (Antigravity)
+   - **A2/A3 真 runtime 回讀、憑證未投影與 egress default deny**：`ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` (Antigravity2)
+   - **未正式承接之獨立品質／歷史比對驗收**：本 task ID `XR-EXT-OSS-FINAL-AUDIT-001` (Antigravity4)
    - `HUMAN-OSS-LEGAL-APPROVAL-001` 維持 `todo` 並持續依賴本任務，法務許可閘嚴格閉合。

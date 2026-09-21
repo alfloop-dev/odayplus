@@ -102,8 +102,8 @@ def check():
         fresh_path = EVIDENCE / "requery-20260920/fresh-canonical-dag.stdout.json"
         fresh_data = json.loads(fresh_path.read_bytes())
         assert data["fresh_canonical_dag_snapshot_20260920"]["tasks"] == fresh_data["adjacency"]
-        assert data["fresh_canonical_dag_snapshot_20260920"]["adjacency_sha256"] == fresh_data["adjacency_sha256"] == "7ab7e86e8578e237656c4d69150092b3e44db436d2e98c6f186805e07ecfcb38"
-        assert len(fresh_data["adjacency"]) == 24
+        assert data["fresh_canonical_dag_snapshot_20260920"]["adjacency_sha256"] == fresh_data["adjacency_sha256"] == "8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af"
+        assert len(fresh_data["adjacency"]) == 23
         fresh_adj = {k: v["depends_on"] for k, v in fresh_data["adjacency"].items()}
         result["fresh_canonical_topological_order"] = topological_order(fresh_adj)
         assert len(result["fresh_canonical_topological_order"]) == 64
