@@ -780,6 +780,103 @@
       "requery_stdout_sha256": "1ca9ecb80b5cea737f4d32c79758a12ac730dd64822d01d1be1b828f46571741",
       "requery_stdout_bytes_len": 27785,
       "requery_reason": "Review-13 bounded direct upstream audit input search: verify emgi-cutover-receipt.json contents."
+    },
+    {
+      "command": "python3 docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/capture_verification.py --capture-dir verification-20260921 --actor Claude --retry-reason \"Review-17 P1: the 2026-09-21T10:48:08Z DFS observation preserved only an excerpt; complete stdout/stderr, terminal exit, argv and execution-time input hashes cannot be recovered from any commit; single narrow re-capture of capture_verification.py --check with full stream retention. No historical suites rerun.\"",
+      "executed_argv": [
+        [
+          "git",
+          "diff",
+          "--check",
+          "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
+          "--",
+          "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001"
+        ],
+        [
+          "/usr/bin/python3",
+          "/tmp/pantheon-worker-worktrees/pantheon/xr-ext-oss-final-audit-001/docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/capture_verification.py",
+          "--check"
+        ]
+      ],
+      "target_repo": "alfloop-dev/odayplus",
+      "measured_head_sha": "0b292ab298223cce9700ca2d5ca3aa04bd335cf3",
+      "measured_head_tree": "082a1e22a11a6e50eaec586a579b271c87b7d742",
+      "worktree_status_at_capture": [],
+      "selection": "Single narrow re-capture: git diff --check on the evidence directory, then capture_verification.py --check (DFS topological sort over the preserved 30-task snapshot and the fresh 23-task canonical DAG file), complete stdout/stderr retained",
+      "observed_at": "2026-09-21T13:12:50.761532+00:00",
+      "completed_at": "2026-09-21T13:12:50.829094+00:00",
+      "duration_seconds": 0.067540356,
+      "duration_source": "time.monotonic_ns around subprocess.run",
+      "exit_code": 0,
+      "stdout_sha256": "6f8a8d7a09709b3f1afad7360bc3527d4f81fd4e109ae7ce12d533ae76ebc706",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_bytes_len": 12241,
+      "stdout_raw_result_ref": "verification-20260921/command-2.stdout.txt",
+      "stderr_raw_result_ref": "verification-20260921/command-2.stderr.txt",
+      "raw_stdout_excerpt": "{\"active_records\": 30, \"adjacency_sha256\": \"592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390\", \"cycles\": 0, \"edges\": 57, \"fresh_adjacency_sha256\": \"8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af\"} (excerpt only; full stdout at stdout_raw_result_ref)",
+      "companion_command": {
+        "argv": [
+          "git",
+          "diff",
+          "--check",
+          "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
+          "--",
+          "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001"
+        ],
+        "exit_code": 0,
+        "duration_seconds": 0.018360739,
+        "stdout_bytes_len": 0,
+        "stdout_raw_result_ref": "verification-20260921/command-1.stdout.txt"
+      },
+      "receipt_ref": "verification-20260921/receipt.json",
+      "receipt_commit": "b5e971dc7af7d1b9049f9c0132b71c1de769878a",
+      "tool": {
+        "path": "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/capture_verification.py",
+        "sha256": "781e714255be6fe556881f5c1e6f7c22b5c70c8f7efac3aae09ff15e71ac7c2e",
+        "bytes": 11093,
+        "worktree_blob_oid": "1c37469b46daea7f46d28ef7a1f69315360ed768",
+        "head_blob_oid": "1c37469b46daea7f46d28ef7a1f69315360ed768",
+        "committed_at_head": true
+      },
+      "interpreter": {
+        "executable": "/usr/bin/python3",
+        "version": "3.12.3"
+      },
+      "check_inputs_bound": {
+        "capture_verification.py": {
+          "sha256": "781e714255be6fe556881f5c1e6f7c22b5c70c8f7efac3aae09ff15e71ac7c2e",
+          "bytes": 11093,
+          "head_blob_oid": "1c37469b46daea7f46d28ef7a1f69315360ed768",
+          "committed_at_head": true
+        },
+        "acceptance-reconciliation.json": {
+          "sha256": "902745d5d3802c324546f1256c523ceb26372c571c200bfc380f31411d0c8aa3",
+          "bytes": 85481,
+          "head_blob_oid": "3802d5bc27e29505efb867ee2f8b29bc29af6f8a",
+          "committed_at_head": true
+        },
+        "dependency-input-snapshot.json": {
+          "sha256": "540e4c56a43c3cf0b27ed01261f85d8445a7ef127fc5bfccd9822d672cbf2db6",
+          "bytes": 4231,
+          "head_blob_oid": "e45b3127bb65d00d353d3ab9a3499aa3d461f6f5",
+          "committed_at_head": true
+        },
+        "requery-20260920/fresh-canonical-dag-20260921.stdout.json": {
+          "sha256": "6b8fa315fdb1d7b32a962f6ec8d636a2b97c6dbe7219d7956802342c538b70c0",
+          "bytes": 5631,
+          "head_blob_oid": "2951e7788461d7ef100d8ce921c2740b3ab46144",
+          "committed_at_head": true
+        }
+      },
+      "inputs_unchanged_after_execution": true,
+      "retry_reason": "Review-17 P1: the 2026-09-21T10:48:08Z DFS observation preserved only an excerpt; complete stdout/stderr, terminal exit, argv and execution-time input hashes cannot be recovered from any commit; single narrow re-capture of capture_verification.py --check with full stream retention. No historical suites rerun.",
+      "relation_to_withdrawn_observation": "stdout SHA256 and byte count equal the withdrawn 2026-09-21T10:48:08Z excerpt's claim (6f8a8d7a..., 12241 bytes). The equality corroborates that claim's hash but does not reinstate it as a receipt; the withdrawn record keeps its withdrawn status.",
+      "receipt_caveats": [
+        "receipt.input_files additionally lists a gitignored __pycache__/capture_verification.cpython-312.pyc with committed_at_head=false: a bytecode cache created by the pre-commit py_compile syntax check, not tracked, not read by --check, deleted after capture; all 32 tracked inputs are committed_at_head=true.",
+        "README.md and raw-command-receipts.json are not --check inputs and were annotated after the capture (this entry); their receipt hashes (README.md a12a84903c258824d55ffbc4b53a39915041184d20b8539f861b478712f2a2b1 / 47736 bytes; raw-command-receipts.json 63fb5aa14c4f0eb2b8bd701af9493a9a677bb652cbfdcf639d42ee6a92b1ffba / 267862 bytes) match commit 0b292ab298223cce9700ca2d5ca3aa04bd335cf3, not the submitted head. The four --check inputs are byte-identical between the receipt and the submitted head."
+      ],
+      "summary": "Independent DFS topological sort: preserved 30-task snapshot 57 edges 0 cycles; fresh 23-task active DAG 61 edges over 64 referenced nodes 0 cycles; acyclicity is bounded to the saved active adjacency subgraph. Full stdout/stderr, original-tool terminal exit, full argv, tool hash and per-input HEAD blob binding are preserved in verification-20260921/.",
+      "observation_status": "fresh_dfs_receipt_source_bound_20260921"
     }
   ],
   "prior_dev_base_sha": "3828c5ada2a1baab33d7dbe734c7ec70152d3d77",
@@ -790,5 +887,19 @@
     "retry_reason": "Latest review identified unretained raw results or results bound to different inputs. Preserve history and capture only the changed evidence assertions once."
   },
   "recorded_at_20260920": "2026-09-20T07:14:00Z",
-  "recorded_at_20260921": "2026-09-21T01:07:30Z"
+  "recorded_at_20260921": "2026-09-21T01:07:30Z",
+  "focused_verification_20260921": {
+    "receipt_ref": "verification-20260921/receipt.json",
+    "receipt_commit": "b5e971dc7af7d1b9049f9c0132b71c1de769878a",
+    "measured_head_sha": "0b292ab298223cce9700ca2d5ca3aa04bd335cf3",
+    "actor": "Claude",
+    "scope": "Single narrow re-capture of capture_verification.py --check with complete streams and per-input HEAD blob binding; replaces the withdrawn 2026-09-21T10:48:08Z excerpt-only observation; does not replace historical runtime or approval evidence.",
+    "retry_reason": "Review-17 P1: the 2026-09-21T10:48:08Z DFS observation preserved only an excerpt; complete stdout/stderr, terminal exit, argv and execution-time input hashes cannot be recovered from any commit; single narrow re-capture of capture_verification.py --check with full stream retention. No historical suites rerun.",
+    "exit_codes": [
+      0,
+      0
+    ],
+    "inputs_unchanged_after_execution": true
+  },
+  "recorded_at_20260921_review17": "2026-09-21T13:12:50.829094+00:00"
 }
