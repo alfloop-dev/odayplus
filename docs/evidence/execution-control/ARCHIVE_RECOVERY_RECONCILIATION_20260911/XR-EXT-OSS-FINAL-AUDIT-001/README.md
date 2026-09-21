@@ -96,7 +96,7 @@
    - 人類決策 D01–D14 已選定內部 OSS 政策方向（D01–D04 個案附條件/允許、D05 第一方標示 `UNLICENSED`、D06–D14 共通政策）。
    - 4 項法務待決事項（`LICENSE-BLOCKED-CONSUMER` 163 項、`LICENSE-BLOCKED-PRODUCER` 24 項、`LICENSE-POLICY-NOT-APPROVED`、`SOURCE-DATA-LICENCE-NOT-MODELLED` 14 來源）完整對映至 `HUMAN-OSS-LEGAL-APPROVAL-001`。
 2. **依賴關係與無環檢查 (DAG No-Cycle Check)**:
-   - 歷史拓撲快照（2026-09-12，30 tasks，SHA256: `592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390`）與 當前 live Canonical 拓撲快照（23 active tasks，SHA256: `8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af`）由 `capture_verification.py --check` 執行 DFS Topological Sort 驗證為 0 cycles（遍歷 64 個參照任務節點）。無環結論限於保存之 active adjacency 子圖。
+   - 歷史拓撲快照（2026-09-12，30 tasks，SHA256: `592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390`）與 當前 live Canonical 拓撲快照（23 active tasks，SHA256: `8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af`）由 `capture_verification.py --check` 執行 DFS Topological Sort 驗證為 0 cycles（遍歷 64 個參照任務節點）。無環結論限於保存之 active adjacency 子圖。執行收據（完整 stdout/stderr、terminal exit、argv、各輸入 HEAD blob 綁定）：`verification-20260921/receipt.json`，見 §12.1。
    - **當前 2026-09-20 Live Canonical 依賴現況**：
      - `XR-EXT-OSS-FINAL-AUDIT-001` (status: `in_progress`, depends_on: `[]`)
      - `HUMAN-OSS-LEGAL-APPROVAL-001` (status: `todo`, depends_on: `["XR-EXT-OSS-FINAL-AUDIT-001"]`)
@@ -185,7 +185,7 @@ A1–A3 尚缺真 snapshot/query、歷史七軸比對與 live runtime/flow-log �
 1. **歷史快照與當前即時圖並存驗證**：
    - 歷史快照（2026-09-12，30 tasks，SHA256: `592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390`）嚴格標記為歷史記錄。
    - 當前即時圖（23 active tasks，SHA256: `8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af`）從 `$PANTHEON_STATUS_ROOT/ai-status.json` 現場讀取（`fresh-canonical-dag-20260921.stdout.json`），涵蓋 `DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001` 與 `ODP-DEV-RELEASE-GATE-RECONCILIATION-004` 等新增依賴。
-   - `capture_verification.py` 同時驗證歷史與當前兩組圖之 Topological Sort，均確認 0 cycles。
+   - `capture_verification.py` 同時驗證歷史與當前兩組圖之 Topological Sort，均確認 0 cycles（執行收據 `verification-20260921/receipt.json`，見 §12.1；2026-09-21T10:48:08Z 之摘錄式觀察已撤回）。
 
 ---
 
@@ -270,10 +270,10 @@ A1–A3 尚缺真 snapshot/query、歷史七軸比對與 live runtime/flow-log �
 ### 11.1 DAG 執行收據分立與歷史撤回保全
 1. **抽取與無環驗證獨立綁定真實執行收據**：
    - **抽取與序列化**：`raw-command-receipts.json` 中獨立記錄 python 抽取命令，產出 `requery-20260920/fresh-canonical-dag-20260921.stdout.json`（5631 bytes，SHA256: `6b8fa315fdb1d7b32a962f6ec8d636a2b97c6dbe7219d7956802342c538b70c0`），exit code 0。
-   - **DFS 無環驗證**：透過 `capture_verification.py --check` 執行獨立 Topological Sort 驗證（涵蓋歷史 30 任務快照 57 edges 及當前 23 任務即時 active DAG 61 edges，遍歷 64 個參照節點，0 cycles），並於 `raw-command-receipts.json` 交付真實 exit code 0、執行時長 (0.04s)、stdout SHA256 (`6f8a8d7a...`) 與 12,241 bytes 輸出收據。無環結論限於保存之 active adjacency 子圖。
+   - **DFS 無環驗證**：透過 `capture_verification.py --check` 執行獨立 Topological Sort 驗證（涵蓋歷史 30 任務快照 57 edges 及當前 23 任務即時 active DAG 61 edges，遍歷 64 個參照節點，0 cycles），並於 `raw-command-receipts.json` 記錄 2026-09-21T10:48:08Z 之觀察（宣稱 exit 0、0.04s、stdout SHA256 `6f8a8d7a...`、12,241 bytes）。**該筆觀察已於 Review-17 後正式撤回**：僅保存摘錄，完整 stdout/stderr、原工具 terminal exit 收據、完整 argv 與執行時腳本/輸入 hash 均未保存於任何 commit，無法恢復、不倒填（保全於 `historical-receipts/dag-observations.json#observation_20260921_104808_withdrawn`）。由 §12.1 之 `verification-20260921/receipt.json` 取代。無環結論限於保存之 active adjacency 子圖。
    - **校正驗證腳本輸入**：`capture_verification.py:102` 改讀現行 `fresh-canonical-dag-20260921.stdout.json`，不再引用已撤回之舊檔。
 2. **完整保全歷史觀察並明確標記撤回**：
-   - `historical-receipts/dag-observations.json` 正式保全 2026-09-20T13:47:35 觀察（commit `622b2a3d`，5792 bytes，SHA256: `fccd9f56...`）與 2026-09-21T01:07:27Z 觀察（commit `41893e8d`，5632 bytes，SHA256: `f1fe26c9...`），逐筆標記來源 commit 與撤回理由，同步所有現行摘要。
+   - `historical-receipts/dag-observations.json` 正式保全 2026-09-20T13:47:35 觀察（commit `622b2a3d`，5792 bytes，SHA256: `fccd9f56...`）與 2026-09-21T01:07:27Z 觀察（來源 commit `8c18005f`，5632 bytes，SHA256: `f1fe26c9...`），逐筆標記來源 commit 與撤回理由，同步所有現行摘要。（Review-17 P2 更正：該觀察來源 commit 原誤記為 `41893e8d`；`41893e8d` 提交於 2026-09-20T06:58:23Z、早於該觀察且其 `raw-command-receipts.json` 不含任何 09-21 記錄，記錄與 DAG 檔首次可回讀於 `8c18005f`。`record.measured_head_sha` 維持原記錄者宣稱之 `41893e8d`，與可回讀之 `source_commit` 分開記錄，見 §12.2。）
 
 ### 11.2 前輪查找邊界與技術 Gap 摘要收斂
 1. **查找邊界精確限定**：
@@ -287,3 +287,26 @@ A1–A3 尚缺真 snapshot/query、歷史七軸比對與 live runtime/flow-log �
      - 阻塞對象：`Antigravity6`（`DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001` 八域受控真實 raw 擷取）
      - 關聯依賴責任：`Antigravity`（`DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001` Masked snapshot 產出、去敏校驗與血統 manifest）、`Antigravity2`（`ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` Consumer 真實 runtime 回讀、憑證未投影與 default-deny egress）、`Antigravity4`（`XR-EXT-OSS-FINAL-AUDIT-001` 未正式承接之獨立品質/歷史比對驗收）
      - 等價方案維持 `PROPOSAL_PENDING_FORMAL_GOVERNANCE_ADOPTION`，等待具體依賴產物或正式治理裁決。
+
+---
+
+## 12. Review-17 (2026-09-21T11:01Z) 審查退回項目核正：DFS 執行收據回讀、歷史來源 commit 更正與依賴 Blocker 保全
+
+本輪由 owner Claude 依 2026-09-21T12:23Z Human/Ops 一次性續辦核准（範圍僅限：完整 source-bound DFS 收據、歷史來源 commit 更正、保全真實依賴 blocker）執行；不構成驗收通過、來源許可或部署授權。Base 已先合併 `origin/dev` `cb910b0f`（PR #1352）；兩個 delivery_toolchain shell 檔對 `origin/dev` 維持零 diff。
+
+### 12.1 P1：DFS 執行收據不可回讀 → 撤回摘錄式觀察，單次窄範圍重新捕捉
+1. **無法恢復者如實撤回**：2026-09-21T10:48:08Z 之 `capture_verification.py --check` 觀察僅保存摘錄；宣稱之 12,241 bytes stdout（SHA256 `6f8a8d7a...`）、stderr、原工具 terminal exit 收據、完整 argv 與執行時腳本/輸入 hash 於 `ca322e9c`／`1a3ee662` 任一 commit 皆不存在，無法由 git 歷史恢復。該記錄原樣保全於 `historical-receipts/dag-observations.json#observation_20260921_104808_withdrawn`（`source_commit` = `1a3ee662`，首次可回讀處），`raw-command-receipts.json` 對應條目標記 `withdrawn_full_stdout_not_preserved_20260921`；原欄位保留為原記錄者宣稱，不倒填、不改寫。
+2. **重新捕捉之具名 retry reason**：「Review-17 P1：該觀察僅保存摘錄，完整串流與執行時輸入 hash 無法自任何 commit 恢復，故以完整串流保存重跑一次」。僅重跑缺有效收據之 `--check`（毫秒級、無網路、無 canonical 寫入），不重跑任何既有成功套件。
+3. **收據綁定方式（`capture_verification.py` 本輪修改）**：`capture()` 新增 `--capture-dir`／`--actor`／`--retry-reason` 參數（`--check` 邏輯未動），並對 evidence 目錄每個輸入檔記錄 `worktree_blob_oid`／`head_blob_oid`／`committed_at_head`，另記 `worktree_status_at_capture`、`tool`（腳本路徑與 hash）與 interpreter，使「HEAD 已提交之輸入」與「當時 worktree 變更」可逐檔分辨。完整 stdout/stderr 以獨立檔案保存並記 SHA256 與 bytes；exit code 為 `subprocess.run` 回傳之原工具 terminal exit。
+4. **執行結果**：見本節 12.1.5（capture 後補記）。
+
+### 12.2 P2：2026-09-21T01:07:27Z 觀察之 `source_commit` 錯置更正
+- `historical-receipts/dag-observations.json#observation_20260921_010727_withdrawn.source_commit` 由 `41893e8d` 更正為 `8c18005f`，並新增 `source_commit_correction`（原值、更正時間、更正者、查證方式、欄位語意）。
+- 查證：`git show 41893e8d:<evidence>/raw-command-receipts.json` 含 0 筆 `2026-09-21T01:07:27` 且無 `requery-20260920/fresh-canonical-dag*.json`；`git show 8c18005f:<同路徑>` 含該記錄與 DAG 檔（blob `2e7105e5`）；`41893e8d` 提交時間 2026-09-20T06:58:23Z 早於該觀察。
+- `record.measured_head_sha` 維持 `41893e8d`（原記錄者之歷史宣稱），不與 `source_commit`（可回讀處）混為一欄；§11.1 第 2 點與 §8.1 之引用同步更正。
+
+### 12.3 真實依賴 Blocker 保全（原驗收與排程狀態分開處置）
+- 原驗收 A1–A3 維持 `partially_met`、`can_closeout_as_done=false`；本輪不送 approval/done。
+- 前輪 owner 於 2026-09-21T10:51:29Z 登記之具名 blocker（waiting_for `Antigravity6`）於 10:53:37Z 被 `resolution_ref=scheduler_reassignment` 自動 resolved。經唯讀核對 live orchestrator 判定式：`blocked_task_auto_recovery_eligible` 在 `depends_on` 為空時改以 prose 關鍵字判定，該 blocker 訊息含「credentials absent」命中可自動恢復之 `credential` 標記，因而被視為過期路由狀態而非真實依賴閘。此為 control-plane 判定問題，非 owner 漏登。
+- 本輪處置：送審記錄（PR #1312 exact head）原子更新後，owner 以真實 `AI_NAME=Claude` 經 live canonical `blocker` 重新登記具名 blocker，waiting_for 維持 `Antigravity6`（`DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001` 受控真實 raw 擷取，為 A1 外部資料集之上游）；訊息逐條列 A1–A3 剩餘條款、精確所需輸入、責任 task/owner（`DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001`／`Antigravity`、`ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001`／`Antigravity2`、未正式承接之獨立品質/歷史比對留本 ID）與下一步，並以英文明示其為 external-data／dataset／human acceptance ruling 閘，避免再被誤判為可自動恢復之路由狀態。不手改 `depends_on`、不自簽人類決策、等價方案維持 `PROPOSAL_PENDING_FORMAL_GOVERNANCE_ADOPTION`。
+- 註：`submit_review` 會將同 task 既有 open blocker 標為 resolved（live `ai_status.py` `mark_blockers_resolved`），故登記順序必須在送審之後；此順序已記錄於本節供 Supervisor 核對。

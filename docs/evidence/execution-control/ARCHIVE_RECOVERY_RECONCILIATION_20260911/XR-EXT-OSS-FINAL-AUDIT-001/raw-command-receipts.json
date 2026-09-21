@@ -431,7 +431,11 @@
       "stdout_bytes_len": 12241,
       "raw_stdout_excerpt": "{\"active_records\": 30, \"adjacency_sha256\": \"592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390\", \"cycles\": 0, \"edges\": 57, \"fresh_adjacency_sha256\": \"8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af\"}",
       "summary": "Independent DFS topological sort on preserved 30-task snapshot (57 edges, 0 cycles) and fresh 23-task active DAG (61 edges, traversing 64 referenced task nodes, 0 cycles). Acyclicity conclusion is strictly bounded to the active adjacency subgraph as recorded; does not claim coverage of nodes outside the saved graph.",
-      "observation_status": "fresh_canonical_dag_dfs_verified_20260921"
+      "observation_status": "withdrawn_full_stdout_not_preserved_20260921",
+      "withdrawn_at": "2026-09-21T13:10:12Z",
+      "withdrawn_by": "Claude",
+      "withdrawal_reason": "Review-17 P1: only an excerpt of the claimed 12241-byte stdout was kept; no complete stdout/stderr reference, original-tool terminal exit receipt, full argv, or script/input hashes at execution time were preserved in any commit (first readable at 1a3ee66252dc6c07b423424724ccb6901c7ef0a0; absent at ca322e9c86b71e8348df6b702b61529f3329b150). The exit code, duration, hashes and byte count above are retained verbatim as the original recorder's claim and are not asserted as verified. At the claimed measured_head_sha ca322e9c capture_verification.py:102 still read the withdrawn fresh-canonical-dag.stdout.json, so that head cannot show which input was verified. Replacement: the verification-20260921 entry appended to this list after the re-capture.",
+      "preserved_in": "historical-receipts/dag-observations.json#observation_20260921_104808_withdrawn"
     },
     {
       "command": "git diff --check",

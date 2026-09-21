@@ -11,6 +11,9 @@ from pathlib import Path
 EVIDENCE = Path(__file__).resolve().parent
 REPO = EVIDENCE.parents[4]
 TASK = EVIDENCE.name
+DEFAULT_CAPTURE_DIR = "verification-20260913"
+DEFAULT_ACTOR = "Codex contributor"
+DEFAULT_RETRY_REASON = "Required narrow capture after correcting unretained or mixed-revision raw receipts; no historical product suites rerun."
 
 
 def digest(content):
@@ -116,16 +119,30 @@ def check():
     print(json.dumps(result, indent=2, sort_keys=True))
 
 
-def capture():
-    output = EVIDENCE / "verification-20260913"
+def git_output(argv):
+    return subprocess.check_output(["git", *argv], cwd=REPO, text=True).strip()
+
+
+def head_binding(rel_path):
+    """Bind a worktree file to HEAD: equal blob oids mean these exact bytes are committed at HEAD."""
+    worktree_oid = git_output(["hash-object", "--", rel_path])
+    probe = subprocess.run(["git", "rev-parse", "--verify", "-q", f"HEAD:{rel_path}"], cwd=REPO, capture_output=True, text=True, check=False)
+    head_oid = probe.stdout.strip() if probe.returncode == 0 else None
+    return {"worktree_blob_oid": worktree_oid, "head_blob_oid": head_oid, "committed_at_head": head_oid == worktree_oid}
+
+
+def capture(output_name=DEFAULT_CAPTURE_DIR, actor=DEFAULT_ACTOR, retry_reason=DEFAULT_RETRY_REASON):
+    output = EVIDENCE / output_name
     output.mkdir(exist_ok=False)
-    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
-    tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=REPO, text=True).strip()
+    head = git_output(["rev-parse", "HEAD"])
+    tree = git_output(["rev-parse", "HEAD^{tree}"])
     inputs = {}
     for path in sorted(EVIDENCE.rglob("*")):
         if path.is_file() and output not in path.parents:
             content = path.read_bytes()
-            inputs[str(path.relative_to(REPO))] = {"sha256": digest(content), "bytes": len(content)}
+            rel = str(path.relative_to(REPO))
+            inputs[rel] = {"sha256": digest(content), "bytes": len(content), **head_binding(rel)}
+    script_rel = str(Path(__file__).resolve().relative_to(REPO))
     base = "a04010cde22a0337fdda05a6fa5146f70cc699f4" if TASK == "ODP-DEV-ROLLOUT-001" else "3828c5ada2a1baab33d7dbe734c7ec70152d3d77"
     commands = [["git", "diff", "--check", base, "--", str(EVIDENCE.relative_to(REPO))]]
     if TASK == "ODP-DEV-ROLLOUT-001":
@@ -138,14 +155,17 @@ def capture():
         commands.append(["cmp", "-s", str(EVIDENCE / "original-evidence.json"), str(canonical_copy)])
     receipt = {
         "task_id": TASK,
-        "actor": "Codex contributor",
+        "actor": actor,
         "repository": "alfloop-dev/odayplus",
         "cwd": str(REPO),
         "measured_head_sha": head,
         "measured_head_tree": tree,
-        "revision_semantics": "The parent HEAD identifies repository ancestry. Changed evidence is bound by actual worktree input hashes, not claimed committed at HEAD.",
+        "revision_semantics": "The parent HEAD identifies repository ancestry. Changed evidence is bound by actual worktree input hashes, not claimed committed at HEAD. Each input additionally records its worktree blob oid against HEAD so committed and uncommitted inputs are distinguishable.",
+        "worktree_status_at_capture": git_output(["status", "--porcelain", "--", str(EVIDENCE.relative_to(REPO))]).splitlines(),
+        "tool": {"path": script_rel, **inputs[script_rel]},
+        "interpreter": {"executable": sys.executable, "version": sys.version.split()[0]},
         "input_files": inputs,
-        "retry_reason": "Required narrow capture after correcting unretained or mixed-revision raw receipts; no historical product suites rerun.",
+        "retry_reason": retry_reason,
         "commands": [],
     }
     for index, argv in enumerate(commands, 1):
@@ -167,10 +187,19 @@ def capture():
     return 0 if receipt["all_commands_succeeded"] and receipt["inputs_unchanged_after_execution"] else 1
 
 
+USAGE = "usage: capture_verification.py [--check | [--capture-dir NAME] [--actor NAME] [--retry-reason TEXT]]"
+
+
 if __name__ == "__main__":
-    if sys.argv[1:] == ["--check"]:
+    argv = sys.argv[1:]
+    if argv == ["--check"]:
         check()
-    elif sys.argv[1:]:
-        raise SystemExit("usage: capture_verification.py [--check]")
     else:
-        raise SystemExit(capture())
+        options = {}
+        flags = {"--capture-dir": "output_name", "--actor": "actor", "--retry-reason": "retry_reason"}
+        while argv:
+            flag = argv.pop(0)
+            if flag not in flags or not argv:
+                raise SystemExit(USAGE)
+            options[flags[flag]] = argv.pop(0)
+        raise SystemExit(capture(**options))

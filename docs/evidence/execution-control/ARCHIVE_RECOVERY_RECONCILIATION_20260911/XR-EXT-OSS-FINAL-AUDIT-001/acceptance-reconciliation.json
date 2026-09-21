@@ -339,7 +339,7 @@
             }
           }
         },
-        "no_cycle_evidence": "歷史快照 (2026-09-12, 30 tasks, SHA256: 592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390) 及 2026-09-21 fresh canonical DAG (23 active tasks, SHA256: 8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af, captured requery-20260920/fresh-canonical-dag-20260921.stdout.json) 分別執行 DFS topological sort 驗證，各自 active adjacency 子圖 0 cycles。歷史圖僅證明歷史快照時之無環性；當前 fresh 圖驗證 23 active tasks 所宣告依賴（遍歷 64 個參照節點）之無環性，但不涵蓋該圖未保存之出邊節點。",
+        "no_cycle_evidence": "歷史快照 (2026-09-12, 30 tasks, SHA256: 592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390) 及 2026-09-21 fresh canonical DAG (23 active tasks, SHA256: 8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af, captured requery-20260920/fresh-canonical-dag-20260921.stdout.json) 分別執行 DFS topological sort 驗證，各自 active adjacency 子圖 0 cycles。歷史圖僅證明歷史快照時之無環性；當前 fresh 圖驗證 23 active tasks 所宣告依賴（遍歷 64 個參照節點）之無環性，但不涵蓋該圖未保存之出邊節點。DFS 執行收據（完整 stdout/stderr、terminal exit、argv、各輸入 HEAD blob 綁定）見 verification-20260921/receipt.json；2026-09-21T10:48:08Z 之摘錄式觀察已撤回（historical-receipts/dag-observations.json#observation_20260921_104808_withdrawn）。",
         "retained_gates": [
           "Live snapshot generation gate (DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001)",
           "Supervisor signed lease gate",
@@ -622,7 +622,7 @@
             }
           }
         },
-        "no_cycle_evidence": "歷史快照 (2026-09-12, 30 tasks, SHA256: 592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390) 及 2026-09-21 fresh canonical DAG (23 active tasks, SHA256: 8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af, captured requery-20260920/fresh-canonical-dag-20260921.stdout.json) 分別執行 DFS topological sort 驗證，各自 active adjacency 子圖 0 cycles。歷史圖僅證明歷史快照時之無環性；當前 fresh 圖驗證 23 active tasks 所宣告依賴（遍歷 64 個參照節點）之無環性，但不涵蓋該圖未保存之出邊節點。",
+        "no_cycle_evidence": "歷史快照 (2026-09-12, 30 tasks, SHA256: 592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390) 及 2026-09-21 fresh canonical DAG (23 active tasks, SHA256: 8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af, captured requery-20260920/fresh-canonical-dag-20260921.stdout.json) 分別執行 DFS topological sort 驗證，各自 active adjacency 子圖 0 cycles。歷史圖僅證明歷史快照時之無環性；當前 fresh 圖驗證 23 active tasks 所宣告依賴（遍歷 64 個參照節點）之無環性，但不涵蓋該圖未保存之出邊節點。DFS 執行收據（完整 stdout/stderr、terminal exit、argv、各輸入 HEAD blob 綁定）見 verification-20260921/receipt.json；2026-09-21T10:48:08Z 之摘錄式觀察已撤回（historical-receipts/dag-observations.json#observation_20260921_104808_withdrawn）。",
         "retained_gates": [
           "Live rollout authorization and deployment gate (ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001)",
           "Named Human GO / Legal approval gate (HUMAN-OSS-LEGAL-APPROVAL-001)"
@@ -760,7 +760,7 @@
             }
           }
         },
-        "no_cycle_evidence": "歷史快照 (2026-09-12, 30 tasks, SHA256: 592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390) 及 2026-09-21 fresh canonical DAG (23 active tasks, SHA256: 8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af, captured requery-20260920/fresh-canonical-dag-20260921.stdout.json) 分別執行 DFS topological sort 驗證，各自 active adjacency 子圖 0 cycles。歷史圖僅證明歷史快照時之無環性；當前 fresh 圖驗證 23 active tasks 所宣告依賴（遍歷 64 個參照節點）之無環性，但不涵蓋該圖未保存之出邊節點。",
+        "no_cycle_evidence": "歷史快照 (2026-09-12, 30 tasks, SHA256: 592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390) 及 2026-09-21 fresh canonical DAG (23 active tasks, SHA256: 8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af, captured requery-20260920/fresh-canonical-dag-20260921.stdout.json) 分別執行 DFS topological sort 驗證，各自 active adjacency 子圖 0 cycles。歷史圖僅證明歷史快照時之無環性；當前 fresh 圖驗證 23 active tasks 所宣告依賴（遍歷 64 個參照節點）之無環性，但不涵蓋該圖未保存之出邊節點。DFS 執行收據（完整 stdout/stderr、terminal exit、argv、各輸入 HEAD blob 綁定）見 verification-20260921/receipt.json；2026-09-21T10:48:08Z 之摘錄式觀察已撤回（historical-receipts/dag-observations.json#observation_20260921_104808_withdrawn）。",
         "retained_gates": [
           "Egress default-deny live probe verification gate",
           "Provider credentials absence verification gate",
@@ -870,7 +870,7 @@
       "cycle_check": {
         "is_acyclic": true,
         "chain": "XR-EXT-OSS-FINAL-AUDIT-001 (depends_on: []) -> HUMAN-OSS-LEGAL-APPROVAL-001 (depends_on: [XR-EXT-OSS-FINAL-AUDIT-001]) -> XR-SOURCE-APPROVAL-ACTIVATION-001 (depends_on: [HUMAN-OSS-LEGAL-APPROVAL-001])",
-        "evidence": "歷史快照 (2026-09-12, 30 tasks, SHA256: 592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390) 及 2026-09-21 fresh canonical DAG (23 active tasks, SHA256: 8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af, captured requery-20260920/fresh-canonical-dag-20260921.stdout.json) 分別執行 DFS topological sort 驗證，各自 active adjacency 子圖 0 cycles。本直鏈 XR-EXT → HUMAN-OSS → XR-SOURCE 在兩圖中均無環。"
+        "evidence": "歷史快照 (2026-09-12, 30 tasks, SHA256: 592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390) 及 2026-09-21 fresh canonical DAG (23 active tasks, SHA256: 8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af, captured requery-20260920/fresh-canonical-dag-20260921.stdout.json) 分別執行 DFS topological sort 驗證，各自 active adjacency 子圖 0 cycles。本直鏈 XR-EXT → HUMAN-OSS → XR-SOURCE 在兩圖中均無環。DFS 執行收據（完整 stdout/stderr、terminal exit、argv、各輸入 HEAD blob 綁定）見 verification-20260921/receipt.json；2026-09-21T10:48:08Z 之摘錄式觀察已撤回（historical-receipts/dag-observations.json#observation_20260921_104808_withdrawn）。"
       },
       "canonical_mutation_policy": "不手改 ai-status.json，不豁免原條款，依循 Canonical 治理與生命週期規則。"
     }
@@ -1440,5 +1440,17 @@
         "status": "todo"
       }
     }
+  },
+  "focused_verification_20260921": {
+    "receipt_ref": "verification-20260921/receipt.json",
+    "scope": "Single narrow re-capture of capture_verification.py --check (DFS topological sort over the preserved 30-task snapshot and the fresh 23-task canonical DAG file) with complete stdout/stderr, terminal exit, full argv and per-input HEAD blob binding; replaces the withdrawn 2026-09-21T10:48:08Z excerpt-only observation. Does not replace historical runtime or approval evidence.",
+    "actor": "Claude",
+    "retry_reason": "Review-17 P1: the 2026-09-21T10:48:08Z DFS observation preserved only an excerpt; its complete streams and execution-time input hashes cannot be recovered from any commit, so the check is re-run once with full stream retention.",
+    "inputs_read_by_check": [
+      "capture_verification.py",
+      "acceptance-reconciliation.json",
+      "dependency-input-snapshot.json",
+      "requery-20260920/fresh-canonical-dag-20260921.stdout.json"
+    ]
   }
 }

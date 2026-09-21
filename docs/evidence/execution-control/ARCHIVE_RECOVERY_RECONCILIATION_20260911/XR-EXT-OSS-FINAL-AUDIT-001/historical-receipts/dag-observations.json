@@ -54,7 +54,7 @@
     "interpretation": "Original 2026-09-20 observation preserved and formally withdrawn: source path contained unexpanded literal $PANTHEON_STATUS_ROOT, and topological sort was mixed with file extraction rather than executed as a distinct verifiable command. Replaced by the 2026-09-21 fresh live capture."
   },
   "observation_20260921_010727_withdrawn": {
-    "source_commit": "41893e8d6ba4ff4609a1b83ddfa27bc904a6b2eb",
+    "source_commit": "8c18005fb71c4d6b93584d077596fd4add7c4471",
     "record": {
       "command": "python3 -c 'import json, hashlib, os; status_root = os.environ.get(\"PANTHEON_STATUS_ROOT\", \"/home/lupin/odayplus\"); data = json.load(open(os.path.join(status_root, \"ai-status.json\"))); adj = {t[\"id\"]: {\"depends_on\": sorted(t.get(\"depends_on\", [])), \"status\": t.get(\"status\")} for t in data.get(\"tasks\", [])}; adj_json = json.dumps(adj, indent=2, sort_keys=True); out = {\"captured_at\": \"2026-09-21T01:07:27.000000Z\", \"source\": \"/home/lupin/odayplus/ai-status.json\", \"active_records\": len(adj), \"adjacency_sha256\": hashlib.sha256(adj_json.encode()).hexdigest(), \"adjacency\": adj}; print(json.dumps(out, indent=2))'",
       "target_repo": "alfloop-dev/odayplus",
@@ -69,6 +69,32 @@
       "raw_stdout_excerpt": "{\"active_records\": 23, \"adjacency_sha256\": \"8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af\", \"captured_at\": \"2026-09-21T01:07:27.000000Z\", \"source\": \"/home/lupin/odayplus/ai-status.json\"}",
       "summary": "Live canonical 23-task active dependency DAG snapshot (5632 bytes, SHA256 f1fe26c989197a48a2b09bf5774fe07c2615c99112862b6b7f172063834141a9)."
     },
-    "interpretation": "Original 2026-09-21T01:07:27Z observation preserved and formally withdrawn: command only processed a previously saved file into stdout rather than real-time read from canonical ai-status.json; provenance was not independently verifiable. Replaced by fresh-canonical-dag-20260921."
+    "interpretation": "Original 2026-09-21T01:07:27Z observation preserved and formally withdrawn: command only processed a previously saved file into stdout rather than real-time read from canonical ai-status.json; provenance was not independently verifiable. Replaced by fresh-canonical-dag-20260921.",
+    "source_commit_correction": {
+      "previous_source_commit": "41893e8d6ba4ff4609a1b83ddfa27bc904a6b2eb",
+      "corrected_at": "2026-09-21T13:10:12Z",
+      "corrected_by": "Claude",
+      "verification": "git show 41893e8d:<evidence>/raw-command-receipts.json contains 0 occurrences of 2026-09-21T01:07:27 and no requery-20260920/fresh-canonical-dag*.json; git show 8c18005f:<same path> contains the record and the DAG file (blob 2e7105e5). 41893e8d was committed 2026-09-20T06:58:23Z, before this observation.",
+      "semantics": "source_commit is the commit where the preserved record can be read back. record.measured_head_sha is kept unchanged as the historical claim made by the original recorder; the two are deliberately separate fields."
+    }
+  },
+  "observation_20260921_104808_withdrawn": {
+    "source_commit": "1a3ee66252dc6c07b423424724ccb6901c7ef0a0",
+    "record": {
+      "command": "python3 docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/capture_verification.py --check",
+      "target_repo": "alfloop-dev/odayplus",
+      "measured_head_sha": "ca322e9c86b71e8348df6b702b61529f3329b150",
+      "selection": "DFS topological sort acyclicity verification on preserved 30-task snapshot and fresh 23-task canonical DAG input",
+      "observed_at": "2026-09-21T10:48:08.000000Z",
+      "duration_seconds": 0.04,
+      "exit_code": 0,
+      "stdout_sha256": "6f8a8d7a09709b3f1afad7360bc3527d4f81fd4e109ae7ce12d533ae76ebc706",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_bytes_len": 12241,
+      "raw_stdout_excerpt": "{\"active_records\": 30, \"adjacency_sha256\": \"592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390\", \"cycles\": 0, \"edges\": 57, \"fresh_adjacency_sha256\": \"8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af\"}",
+      "summary": "Independent DFS topological sort on preserved 30-task snapshot (57 edges, 0 cycles) and fresh 23-task active DAG (61 edges, traversing 64 referenced task nodes, 0 cycles). Acyclicity conclusion is strictly bounded to the active adjacency subgraph as recorded; does not claim coverage of nodes outside the saved graph.",
+      "observation_status": "fresh_canonical_dag_dfs_verified_20260921"
+    },
+    "interpretation": "Preserved and formally withdrawn as a verifiable receipt on 2026-09-21T13:10:12Z (review-17 P1). The recorder kept only an excerpt: the claimed 12241-byte stdout (SHA256 6f8a8d7a09709b3f1afad7360bc3527d4f81fd4e109ae7ce12d533ae76ebc706), the stderr stream, the original tool's terminal exit receipt, the full argv and the script/input hashes at execution time are not preserved in any commit, so they cannot be recovered and are not backfilled. measured_head_sha ca322e9c is kept as the historical claim; at that head capture_verification.py:102 still read the withdrawn fresh-canonical-dag.stdout.json, so the head alone cannot show which input was verified. Replaced by verification-20260921/receipt.json: one narrow re-capture with complete streams, terminal exit, full argv and HEAD-bound per-input blob oids."
   }
 }
