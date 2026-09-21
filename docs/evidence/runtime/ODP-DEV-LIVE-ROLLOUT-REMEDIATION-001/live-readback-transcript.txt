@@ -77,3 +77,120 @@ No Runtime Release deploy dispatch was made. No Cloud Run service/job deployment
 execution, worker/scheduler one-shot, traffic switch, authenticated smoke, provider credential
 read, provider activation, or public-egress probe was run. No DNS/custom-domain/certificate
 mutation was made. No historical ODP-DEV-ROLLOUT-001 file was changed.
+
+=== ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 current-base reconciliation transcript (round 2) ===
+Captured: 2026-09-21T13:45:02Z .. 2026-09-21T13:50:56Z (UTC, clock readings)
+Worker: Claude2 (auto worker; owner auto-reassigned from Antigravity2 at 2026-09-21T13:21:06Z)
+Task: ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001
+Note: the round-1 transcript above is retained unchanged; this section supersedes its conclusions.
+
+[1] Branch/base composition
+Command: git merge --no-edit origin/dev
+Result: merge commit 5414f909b74557b71efbae669850289c2be75c11; parents
+727cdedb7924a4549c0925b069102a1b8935fd2e (prior task head, previously unpushed) and
+cb910b0f45fa340c45c3e965e78ba17f379ffff6 (origin/dev). No conflict.
+Check: git merge-tree --write-tree HEAD origin/dev (run before the merge) printed
+22393df79a1395689411d9fc4ba24f29d0686b0d; git rev-parse HEAD^{tree} after the merge is
+22393df79a1395689411d9fc4ba24f29d0686b0d (equal). git merge-base --is-ancestor origin/dev HEAD: yes.
+Check: git diff --name-only origin/dev HEAD lists only docs/audits/code-boundary-inventory.csv and
+the four files under docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/.
+Check: git diff --stat origin/dev HEAD over the forbidden paths (ODP-DEV-ROLLOUT-001 receipts,
+.github/workflows/, .orchestrator/, product_ops/deployment/, delivery_toolchain/release/) is empty.
+
+[2] Canonical candidate readback (merged tree == origin/dev for these files)
+docs/evidence/gates/RELEASE_GATE_REGISTRY.json: task_id ODP-DEV-RELEASE-GATE-RECONCILIATION-004,
+generated_at 2026-09-20, release.candidate_sha 39ae43f6fe679f03dd7df459a51835cbd2d54f77,
+release.manifest_digest sha256:ebe7d305e930471d2e7492a1fffced10dbaa05a710bb5f6573f370e7bfa8ae8a,
+stage candidate-built, environment dev, admission_target dev, decision no-go (Human/Ops, 2026-09-20).
+candidate_rebind: 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12 -> 39ae43f6fe679f03dd7df459a51835cbd2d54f77,
+build_run 35493018607, producer_run 35492613570.
+Gates: gate-0 blocked (dev, Codex2), gate-1 blocked (dev, Claude), gate-2 blocked (staging),
+gate-3 blocked (production), gate-4 blocked (dev, Claude), gate-5/6 blocked (production); receipts 0 each.
+docs/evidence/gates/RELEASE_MANIFEST.json: release_id odp-39ae43f6fe67, schema_version 2,
+release_status ready, created_at 2026-09-20T05:18:56+00:00, manifest_digest as above,
+sources_off_attestation.sources_inventory: 16 entries, all status=disabled, credentials_present=false,
+provider_mode disabled, egress_posture default-deny, cloud_run_egress ALL_TRAFFIC.
+
+[3] Candidate vs origin/dev
+Command: git merge-base --is-ancestor 39ae43f6fe679f03dd7df459a51835cbd2d54f77 origin/dev -> yes
+Command: git rev-list --count 39ae43f6fe679f03dd7df459a51835cbd2d54f77..origin/dev -> 24
+Command: git diff --name-only 39ae43f6fe679f03dd7df459a51835cbd2d54f77 origin/dev
+Result: 23 paths, all under docs/evidence/ (gates/README.md, gates/RELEASE_GATE_REGISTRY.json,
+gates/RELEASE_MANIFEST.json, runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-004/* x11,
+runtime/ODP-STAGING-RECOVERY-STORAGE-ACCEPTANCE-001/* x9). Product/build-input filter
+(apps/ modules/ packages/ shared/ product_ops/ infra/ pipelines/ pyproject.toml uv.lock package.json
+package-lock.json .github/workflows/deploy-dev.yml): empty.
+Decision: no rebuild required; no build phase was dispatched this round.
+
+[4] Hosted run readback
+Command: gh run view 35493018607 --json jobs,conclusion,headSha
+Result: conclusion success, headSha 39ae43f6fe679f03dd7df459a51835cbd2d54f77; jobs:
+Validate release phase inputs=success, Build once and publish the immutable artifact handoff=success,
+Verify the Supervisor lease authorises this deploy=skipped,
+Verify production watch and clean up ephemeral staging=skipped,
+Deploy the admitted artifact by immutable digest=skipped.
+Command: gh run view 35492613570 --json jobs,conclusion,headSha
+Result: conclusion failure (build job failure at the handoff step); deploy/lease/watch jobs skipped.
+Command: gh run list --workflow=deploy-dev.yml --limit 6 + per-run job scan
+Result: in every listed run the lease-verification and deploy jobs are skipped; no deploy phase has
+ever run for dev.
+
+[5] Artifact re-download and hashing
+Command: gh run download 35493018607 --repo alfloop-dev/odayplus -D $ORCH_SCRATCH_DIR/run35493018607
+Window: 2026-09-21T13:45:02Z .. 2026-09-21T13:45:07Z
+sha256:
+  10acdfc1460de9a9bc72c816dea6f81d0ec88778c2f2e23c727e05f9bd06d5de  runtime-release-manifest-39ae43f6…/RELEASE_MANIFEST.json (artifact 10600115848)
+  43310488a7530c38623fbc1f24a4457ccd05d8e2162806939166f7fa18a490bf  runtime-release-images-39ae43f6…/runtime-release-images.json (10600485125)
+  f117e1af58cb513d849cde9afd98d85fbb8209e15fa61060e1da4567568980a5  initial-release-absence-readback-39ae43f6…/initial-release-absence-readback.json (10600440351)
+  94e7587615a27f2d3cf5b1c92b2731ddb8e5500f2b62c8be0fd0748aeb6e3fb0  release-phase-receipt-dev-build/release-phase-receipt.json (10600290348)
+  8cbb0f5618719d27ef139908dfcd4ae3de2c138fcc2cc607f33a13219718a200  release-environment-receipt-dev-build/release-environment-receipt.json (10599681970)
+  e6e6c5978360278980842d462d0d60814d51bf6745fb60b1a8b39885ad45c02b  release-npm-audit-receipt-dev/npm-audit-receipt.json (10600055709)
+Check: git show origin/dev:docs/evidence/gates/RELEASE_MANIFEST.json | sha256sum ->
+10acdfc1460de9a9bc72c816dea6f81d0ec88778c2f2e23c727e05f9bd06d5de (byte-identical to the artifact).
+Check: image handoff api/web/worker/scheduler refs equal RELEASE_MANIFEST.json components.
+Absence readback content: project odayplus-runtime-20260825, region asia-east1, target dev;
+oday-api, oday-web, oday-migration-r-39ae43f6fe67, oday-worker-r-39ae43f6fe67,
+oday-scheduler-r-39ae43f6fe67 all exists=false, serving_traffic=false.
+
+[6] Build job log readback
+Command: gh run view --repo alfloop-dev/odayplus --job 106031101660 --log
+Window: 2026-09-21T13:46:27Z .. 2026-09-21T13:46:30Z; 6039 lines.
+grep -c counts: e03442186309…=5, d4202a96e0ab…=5, 6935ab7eb49e…=5, 9d1267ad5a0c…=5,
+ebe7d305e930…=1; "Running: cosign verify --certificate-identity-regexp" lines: 4.
+
+[7] Canonical board readback (read-only, live PANTHEON_STATUS_ROOT)
+task status in_progress, owner Claude2, reviewer Codex, review_reopen_count 5,
+last reopen 2026-09-19T14:05:28Z by Codex (control_plane_recovery), review_submission.remote_sha
+045575b0d73bfef29b337fabb7c07408bbcbe670 (PR #1107).
+depends_on (11 entries) all absent from the live board and present in ai-task-archive: done.
+release_lease_request: approval_id HUMANOPS-DEV-FIRST-RELEASE-20260917, approved_by Human/Ops,
+candidate 307e6e7286c5ca89e72572e4462eb45a57e8888d, manifest sha256:903ca10919b7…c0d4,
+manifest_run_id 35231472494, approved_at 2026-09-17T23:26:33.665542Z.
+release_lease_issuance: state blocked, admitted false, updated_at 2026-09-17T23:26:51+00:00,
+dispatch_ref_sha dc0eb370b29e50f2fc916e008bdab3d08e0a3ddc, 17 errors (listed in the audit JSON).
+live .orchestrator/config.json release_lease_issuer: enabled true, workflow
+.github/workflows/deploy-dev.yml, dispatch_ref dev, ttl_seconds 600.
+Blockers for this task: all resolved (the three 2026-09-17/18 records were resolved by the
+2026-09-19 control-plane reopen); no open blocker at window start.
+Board search: no task owns the gate-0 C1 repair or the gate-1 event-schema repair;
+HUMAN-OSS-LEGAL-APPROVAL-001 is todo with depends_on [XR-EXT-OSS-FINAL-AUDIT-001];
+XR-EXT-OSS-FINAL-AUDIT-001 is blocked and names this task as successor for live measurements.
+
+[8] Historical receipt immutability after base composition
+Command: sha256sum over docs/evidence/runtime/ODP-DEV-ROLLOUT-001/{README.md,
+data-platform-dev-deployment.json,dev-integration-readback.json,dev-rollout-manifest-binding.json,
+external-sources-provider-off-audit.json,odayplus-dev-deployment.json,release-receipts-index.json}
+Result: fc9cfc04…, 5f0fc298…, 25add1cc…, 223b35cb…, 72cd51e8…, 2ac66384…, 5b1e4101… — identical to
+the 2026-09-04 audit and to origin/dev. git log origin/dev -- that directory: last change 49d64c10
+(ODP-DEV-ROLLOUT-001 itself).
+
+[9] Repository preflights on the merged tree
+Command: uv run --quiet --frozen --python 3.12 python delivery_toolchain/governance/check_code_boundaries.py
+Result: exit 0; inventory contains the task verifier once; sort | uniq -d over the CSV: 0 duplicates.
+Command: uv run --quiet --frozen --python 3.12 ruff check docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/
+Result: All checks passed (baseline before rewrite; re-run after rewrite is recorded in the commit trailer).
+
+[10] Actions deliberately not taken
+No gh workflow run (build or deploy). No release_lease_request written. No gcloud. No lease.
+No edits outside docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/ (the boundary
+inventory CSV is regenerated by the mandatory checker, not hand-edited).
