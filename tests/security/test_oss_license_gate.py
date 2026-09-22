@@ -6,6 +6,7 @@ import hashlib
 import json
 import subprocess
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -305,10 +306,34 @@ def test_third_party_unlicensed_is_not_admitted_by_the_first_party_marker() -> N
     assert not result["allowed"] and not result["allowed_with_obligations"]
 
 
-def test_license_policy_evaluation_fails_on_unadjudicated_cases() -> None:
+def _registered_exemption_packages() -> set[str]:
+    register = json.loads(EXEMPTIONS_PATH.read_text(encoding="utf-8"))
+    return {entry["package"] for entry in register["exemptions"]}
+
+
+def test_license_policy_evaluation_passes_with_registered_exemptions() -> None:
+    """ODP-OSS-LICENSE-EXEMPTION-REGISTER-001 registered the four adjudicated LGPL
+    cases (eight packages). With the register in place the gate must reconcile with
+    nothing left in review_required, and every registered package must land in
+    allowed_with_obligations -- an exemption never promotes a component to plain allow."""
     eval_result = evaluate_policy(policy_path=POLICY_PATH)
-    assert eval_result["status"] == "FAIL", "Gate should fail while LGPL cases are un-adjudicated"
-    assert len(eval_result["review_required"]) > 0, "Should have review_required components"
+    assert eval_result["status"] == "PASS", eval_result["review_required"]
+    assert eval_result["review_required"] == []
+    assert eval_result["violations"] == []
+    obligated = {component.name for component in eval_result["allowed_with_obligations"]}
+    assert _registered_exemption_packages() <= obligated
+
+
+def test_license_policy_evaluation_fails_closed_without_exemptions(tmp_path: Path) -> None:
+    """The register is the only thing moving the LGPL cases out of review_required.
+    An empty register must still fail closed, and the set it fails on must be exactly
+    the set the register covers -- no over-registration and no under-registration."""
+    empty_register = tmp_path / "empty-exemptions.json"
+    empty_register.write_text(json.dumps({"exemptions": []}), encoding="utf-8")
+    eval_result = evaluate_policy(policy_path=POLICY_PATH, exemptions_path=empty_register)
+    assert eval_result["status"] == "FAIL", "Gate must fail closed with no exemptions"
+    unadjudicated = {item["component"].name for item in eval_result["review_required"]}
+    assert unadjudicated == _registered_exemption_packages()
 
 
 def test_compound_expression_respects_parentheses_and_obligations() -> None:
@@ -380,7 +405,28 @@ def test_policy_and_exemptions_remain_proposed() -> None:
     assert exemptions.get("status") == "proposed", (
         "exemptions status must remain 'proposed'; approval requires external authoritative receipt"
     )
-    assert exemptions.get("exemptions") == [], "exemptions register must start empty in proposal"
+    register = exemptions["exemptions"]
+    assert register, "register must hold the adjudicated LGPL cases"
+    ids = [entry["exemption_id"] for entry in register]
+    assert len(ids) == len(set(ids)), "exemption ids must be unique"
+
+    required = exemptions["rules"]["required_binding"]["fields"]
+    scope_values = set(exemptions["rules"]["scope_values"])
+    max_days = exemptions["rules"]["max_duration"]["proposed_days"]
+    case_ids = {case["id"] for case in policy["review_required"]["cases"]}
+    for entry in register:
+        missing = [field for field in required if field not in entry]
+        assert not missing, f"{entry['exemption_id']} misses required binding {missing}"
+        assert entry["scope"] in scope_values, entry["exemption_id"]
+        assert entry["policy_case_id"] in case_ids, (
+            f"{entry['exemption_id']} is not bound to a policy review case"
+        )
+        issued = datetime.fromisoformat(entry["issued_at"].replace("Z", "+00:00"))
+        expires = datetime.fromisoformat(entry["expires_at"].replace("Z", "+00:00"))
+        assert issued.tzinfo is not None and issued <= datetime.now(UTC), entry["exemption_id"]
+        assert timedelta(0) < expires - issued <= timedelta(days=max_days), (
+            f"{entry['exemption_id']} exceeds the {max_days}-day ceiling or is not time-bound"
+        )
 
 
 def test_no_false_claim_of_prior_human_ops_approval() -> None:
@@ -407,24 +453,26 @@ def test_no_false_claim_of_prior_human_ops_approval() -> None:
 def test_attestation_contract_valid_and_integrity_readback() -> None:
     attestation = generate_attestation(ROOT)
     valid, errors = verify_attestation(attestation, ROOT)
-    assert not valid, (
-        "Attestation readback should fail because of unadjudicated review_required components"
-    )
+    assert valid, f"Attestation readback must pass once the LGPL cases are registered: {errors}"
     assert attestation["task_id"] == "ODP-OSS-LICENSE-GATE-002"
     assert attestation["status"] == "proposed"
-    assert attestation["gate_summary"]["gate_decision"] == "FAIL"
+    assert attestation["gate_summary"]["gate_decision"] == "PASS"
+    assert attestation["gate_summary"]["review_required_count"] == 0
 
 
 def test_attestation_check_cli_fails() -> None:
+    """The committed GATE-002 attestation is a frozen completion artifact generated
+    before the register was populated. --check must keep failing closed on that
+    drift; a stale committed attestation must never read as a live PASS."""
     res = subprocess.run(
         [sys.executable, "delivery_toolchain/security/attestation.py", "--check"],
         cwd=ROOT,
         capture_output=True,
         text=True,
     )
-    assert res.returncode == 1, (
-        "attestation.py --check should fail due to unadjudicated review_required cases"
-    )
+    assert res.returncode == 1, "attestation.py --check must fail closed on the stale artifact"
+    assert "Hash drift on docs/security/license_exemptions.json" in res.stderr
+    assert "Attestation gate decision is not PASS: FAIL" in res.stderr
 
 
 # -----------------------------------------------------------------------------
