@@ -1435,6 +1435,12 @@ def _create_egress_candidate(tmp_path: Path, *, missing_file: str | None = None)
         destination = repo / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes((ROOT / relative).read_bytes())
+    foundation_dir = ROOT / "infra/terraform/modules/runtime_foundation"
+    if foundation_dir.is_dir():
+        for f in foundation_dir.glob("*.tf"):
+            dest = repo / "infra/terraform/modules/runtime_foundation" / f.name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(f.read_bytes())
     subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
     subprocess.run(
         ["git", "-c", "user.name=ODP Test Fixture", "-c", "user.email=fixture@example.invalid",

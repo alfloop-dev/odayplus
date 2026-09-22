@@ -1,0 +1,17 @@
+# Proposed identity: refresh live inventory and confirm absence or exclusive ownership before apply.
+project_id               = "odayplus-runtime-20260825"
+region                   = "asia-east1"
+bucket_name              = "oday-staging-recovery-odayplus-runtime-20260825"
+state_bucket_name        = "oday-tfstate-staging-odayplus-runtime-20260825"
+kms_key_id               = "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime"
+deployer_service_account = "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com"
+
+# 2026-09-11 inventory: these destinations cannot hold recovery bundles.
+protected_bucket_names = [
+  "oday-dev-source-snapshots-odayplus-runtime-20260825",
+  "oday-staging-source-snapshots-odayplus-runtime-20260825",
+  "odayplus-runtime-20260825-emgi",
+  "odayplus-runtime-20260825-model-artifacts",
+  "odayplus-runtime-20260825-release-leases",
+  "odayplus-runtime-20260825-staging-mlflow-artifacts",
+]

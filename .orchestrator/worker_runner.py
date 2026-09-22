@@ -178,6 +178,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         publish("starting")
+        start_monotonic = time.monotonic()
         child = subprocess.Popen(command, text=True)
         status["child_pid"] = child.pid
         publish("running")
@@ -186,6 +187,7 @@ def main(argv: list[str] | None = None) -> int:
             exit_code = child.poll()
             if exit_code is not None:
                 status["exit_code"] = exit_code
+                status["duration_seconds"] = round(time.monotonic() - start_monotonic, 3)
                 status["finished_at"] = utc_now()
                 publish("completed" if exit_code == 0 else "failed")
                 if exit_code < 0:

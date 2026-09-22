@@ -1,0 +1,47 @@
+{
+  "task_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+  "author": "Codex",
+  "scope": "Recovery storage code preparation; not live convergence or deployment",
+  "base_sha": "494d09145b2932d5bbc27682e918b1afa176a140",
+  "recorded_at_utc": "2026-09-12T14:28:22.929830+00:00",
+  "verification": [
+    {
+      "argv": [
+        "terraform",
+        "validate",
+        "-no-color"
+      ],
+      "cwd": "/tmp/odp-foundation-completion-20260912/infra/terraform/recovery",
+      "started_at_utc": "2026-09-12T14:26:18.992819+00:00",
+      "finished_at_utc": "2026-09-12T14:26:20.697676+00:00",
+      "exit_code": 0,
+      "stdout": "Success! The configuration is valid.\n\n",
+      "stderr": "",
+      "verification_scope": "offline mock provider; no GCP readback or apply"
+    },
+    {
+      "argv": [
+        "terraform",
+        "test",
+        "-no-color"
+      ],
+      "cwd": "/tmp/odp-foundation-completion-20260912/infra/terraform/recovery",
+      "started_at_utc": "2026-09-12T14:26:20.698106+00:00",
+      "finished_at_utc": "2026-09-12T14:26:24.873876+00:00",
+      "exit_code": 0,
+      "stdout": "tests/boundary.tftest.hcl... in progress\n  run \"protected_recovery_plan\"... pass\n  run \"reject_state_destination\"... pass\n  run \"reject_snapshot_destination\"... pass\n  run \"reject_model_destination\"... pass\n  run \"reject_lease_destination\"... pass\n  run \"reject_wrong_key_project\"... pass\n  run \"reject_wrong_deployer_project\"... pass\n  run \"reject_uri_alias\"... pass\ntests/boundary.tftest.hcl... tearing down\ntests/boundary.tftest.hcl... pass\n\nSuccess! 8 passed, 0 failed.\n",
+      "stderr": "",
+      "verification_scope": "offline mock provider; no GCP readback or apply"
+    }
+  ],
+  "files_sha256": {
+    "infra/terraform/recovery/.terraform.lock.hcl": "0223e411ea644af4775cabfc316afa7882e93f956b762780db7d2d47940d7448",
+    "infra/terraform/recovery/README.md": "7740587b83102b8834644b8246646ba5c9417fa340681edc0463d7d08e44a32f",
+    "infra/terraform/recovery/backend.hcl.example": "40afb42f0aa043dad2b71cf0cd015238c1c4bc053da9fb38fe60cf3e3118b4a6",
+    "infra/terraform/recovery/main.tf": "02d9befbbd3d21e0b159bf50318f2e5a45a8477952e32a342333d86f75c44722",
+    "infra/terraform/recovery/staging.tfvars.example": "a24824a76951d55e7bf0744c23f5c389abb99f390847cd4750fe7b81bc1849bf",
+    "infra/terraform/recovery/tests/boundary.tftest.hcl": "e23d122a8be56fd9616dfee1076583f511c4f4a01ef5266eeb95a6925cd877d2",
+    "infra/terraform/recovery/variables.tf": "caaf194a8ad8c43b25109ff6a36a8d13bed946b3308e7213f90092f6c06d2efa"
+  },
+  "live_status": "NOT_APPLIED: current GCP login requires reauthentication; refresh bucket inventory and IAM before live plan/apply."
+}

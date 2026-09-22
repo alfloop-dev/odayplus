@@ -1,0 +1,59 @@
+{
+  "receipt_id": "RCPT-GCP-RECOVERY-BUCKET-IAM-20260920",
+  "name": "owner-bucket-iam",
+  "started_at_utc": "2026-09-20T07:18:09.628941+00:00",
+  "duration_seconds": 1.985,
+  "command": "gcloud --quiet --account=deborah.lu@dev.cctech-support.com storage buckets get-iam-policy gs://oday-staging-recovery-odayplus-runtime-20260825 --format=json",
+  "argv": [
+    "gcloud",
+    "--quiet",
+    "--account=deborah.lu@dev.cctech-support.com",
+    "storage",
+    "buckets",
+    "get-iam-policy",
+    "gs://oday-staging-recovery-odayplus-runtime-20260825",
+    "--format=json"
+  ],
+  "exit_code": 0,
+  "stdout": {
+    "bindings": [
+      {
+        "members": [
+          "projectEditor:odayplus-runtime-20260825",
+          "projectOwner:odayplus-runtime-20260825"
+        ],
+        "role": "roles/storage.legacyBucketOwner"
+      },
+      {
+        "members": [
+          "projectViewer:odayplus-runtime-20260825"
+        ],
+        "role": "roles/storage.legacyBucketReader"
+      },
+      {
+        "members": [
+          "projectEditor:odayplus-runtime-20260825",
+          "projectOwner:odayplus-runtime-20260825"
+        ],
+        "role": "roles/storage.legacyObjectOwner"
+      },
+      {
+        "members": [
+          "projectViewer:odayplus-runtime-20260825"
+        ],
+        "role": "roles/storage.legacyObjectReader"
+      },
+      {
+        "members": [
+          "serviceAccount:github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com"
+        ],
+        "role": "roles/storage.objectUser"
+      }
+    ],
+    "etag": "CAI="
+  },
+  "stderr": "",
+  "source_path": "/tmp/odp-recovery-readback-audit-20260920/owner-login-20260920T071809Z/owner-bucket-iam.json",
+  "source_sha256": "ce82bf19dc0151f8c80a42898a51893263ed83320ef36039076ed7144cd539f1",
+  "scope": "read-only resource IAM metadata; no object, state, secret or bundle access; no resource or IAM changes"
+}
