@@ -20,12 +20,16 @@ from delivery_toolchain.security.attestation import (
     verify_attestation,
 )
 from delivery_toolchain.security.generate_oss_notice import (
+    AuthoritativeReceiptVerification,
+    AuthoritativeReceiptVerifier,
     Component,
+    FixedAuthoritativeReceiptVerifier,
     collect_npm,
     collect_python,
     evaluate_compound_expression,
     evaluate_policy,
     exemption_content_sha256,
+    validate_exemption,
 )
 from delivery_toolchain.security.generate_sbom import generate_sbom, get_repo_release_digests
 
@@ -649,9 +653,10 @@ def test_negative_tampered_integrity_rejected() -> None:
 #
 # An exemption discharges a review_required component only when it binds the
 # exact installed purl, names the policy case that adjudicated this package,
-# covers the pinned release, and carries a complete, sealed receipt from an
-# external source system. Each negative test below deviates from the honoured
-# fixture in exactly one field and must be refused for that reason.
+# covers the pinned release, carries a complete, sealed receipt, and resolves
+# against a verified external authoritative source system. Each negative test
+# below deviates from the honoured fixture in exactly one requirement and must
+# be refused for that reason.
 # -----------------------------------------------------------------------------
 
 PSYCOPG3_COMPONENT = Component("pypi", "psycopg", "3.3.4", "LGPL-3.0-only")
@@ -701,12 +706,53 @@ def _receipt_bound_exemption(**overrides: object) -> dict:
     return _sealed(entry)
 
 
+def _default_verifier_for(exemption: dict) -> FixedAuthoritativeReceiptVerifier:
+    principal = (
+        exemption.get("approved_by", {}).get("principal_id", "legal-user-123")
+        if isinstance(exemption.get("approved_by"), dict)
+        else "legal-user-123"
+    )
+    hashes = (
+        list(exemption.get("evidence_hashes", []))
+        if isinstance(exemption.get("evidence_hashes"), list)
+        else []
+    )
+    src = str(exemption.get("source_system") or "corp-legal-tracker")
+    ref = str(exemption.get("approval_reference") or "LEGAL-DECISION-0042")
+    return FixedAuthoritativeReceiptVerifier(
+        {
+            (src, ref): {
+                "principal_id": principal,
+                "evidence_hashes": hashes,
+                "status": "APPROVED",
+            }
+        }
+    )
+
+
+_SENTINEL = object()
+
+
 def _evaluate_with(
-    exemption: dict, tmp_path: Path, component: Component = PSYCOPG3_COMPONENT
+    exemption: dict,
+    tmp_path: Path,
+    component: Component = PSYCOPG3_COMPONENT,
+    *,
+    authoritative_verifier: Any = _SENTINEL,
 ) -> dict:
-    register = tmp_path / f"{exemption['exemption_id']}.json"
+    ex_id = str(exemption.get("exemption_id") or "test-exemption")
+    register = tmp_path / f"{ex_id}.json"
     register.write_text(json.dumps({"exemptions": [exemption]}), encoding="utf-8")
-    return evaluate_policy(components=[component], exemptions_path=register)
+    verifier = (
+        _default_verifier_for(exemption)
+        if authoritative_verifier is _SENTINEL
+        else authoritative_verifier
+    )
+    return evaluate_policy(
+        components=[component],
+        exemptions_path=register,
+        authoritative_verifier=verifier,
+    )
 
 
 def _refusals(result: dict) -> list[str]:
@@ -736,6 +782,104 @@ def test_exemption_refusal_names_the_candidate_and_the_reason(tmp_path: Path) ->
             "reason": "scope mismatch: case LGPL-PSYCOPG3 is scoped 'prod', exemption claims 'dev'",
         }
     ]
+
+
+# -----------------------------------------------------------------------------
+# Authoritative readback boundary tests (P1 R1)
+# -----------------------------------------------------------------------------
+
+
+def test_negative_authoritative_verification_missing_fails_closed(tmp_path: Path) -> None:
+    """Offline evaluation without an authoritative readback verifier must fail closed."""
+    result = _evaluate_with(_receipt_bound_exemption(), tmp_path, authoritative_verifier=None)
+    assert result["status"] == "FAIL"
+    assert result["allowed_with_obligations"] == []
+    reasons = _refusals(result)
+    assert len(reasons) == 1 and "authoritative approval verification missing" in reasons[0], reasons
+
+
+def test_negative_authoritative_source_unreachable_rejected(tmp_path: Path) -> None:
+    """An unreachable source system must fail closed."""
+    verifier = FixedAuthoritativeReceiptVerifier(
+        {
+            ("corp-legal-tracker", "LEGAL-DECISION-0042"): {
+                "principal_id": "legal-user-123",
+                "evidence_hashes": [hashlib.sha256(b"LEGAL-DECISION-0042").hexdigest()],
+                "status": "APPROVED",
+            }
+        },
+        unreachable_sources={"corp-legal-tracker"},
+    )
+    result = _evaluate_with(_receipt_bound_exemption(), tmp_path, authoritative_verifier=verifier)
+    assert result["status"] == "FAIL"
+    reasons = _refusals(result)
+    assert len(reasons) == 1 and "authoritative source system unreachable" in reasons[0], reasons
+
+
+def test_negative_authoritative_reference_unresolvable_rejected(tmp_path: Path) -> None:
+    """An unresolvable approval reference must fail closed."""
+    verifier = FixedAuthoritativeReceiptVerifier({})  # Empty record registry
+    result = _evaluate_with(_receipt_bound_exemption(), tmp_path, authoritative_verifier=verifier)
+    assert result["status"] == "FAIL"
+    reasons = _refusals(result)
+    assert len(reasons) == 1 and "authoritative approval reference unresolvable" in reasons[0], reasons
+
+
+def test_negative_authoritative_evidence_hash_mismatch_rejected(tmp_path: Path) -> None:
+    """Mismatched evidence hashes between exemption and authoritative system fail closed."""
+    verifier = FixedAuthoritativeReceiptVerifier(
+        {
+            ("corp-legal-tracker", "LEGAL-DECISION-0042"): {
+                "principal_id": "legal-user-123",
+                "evidence_hashes": ["0" * 64],  # Mismatched hash
+                "status": "APPROVED",
+            }
+        }
+    )
+    result = _evaluate_with(_receipt_bound_exemption(), tmp_path, authoritative_verifier=verifier)
+    assert result["status"] == "FAIL"
+    reasons = _refusals(result)
+    assert len(reasons) == 1 and "authoritative evidence hash mismatch" in reasons[0], reasons
+
+
+def test_negative_authoritative_approver_mismatch_rejected(tmp_path: Path) -> None:
+    """Mismatched approver principal between exemption and authoritative system fails closed."""
+    verifier = FixedAuthoritativeReceiptVerifier(
+        {
+            ("corp-legal-tracker", "LEGAL-DECISION-0042"): {
+                "principal_id": "different-legal-principal",
+                "evidence_hashes": [hashlib.sha256(b"LEGAL-DECISION-0042").hexdigest()],
+                "status": "APPROVED",
+            }
+        }
+    )
+    result = _evaluate_with(_receipt_bound_exemption(), tmp_path, authoritative_verifier=verifier)
+    assert result["status"] == "FAIL"
+    reasons = _refusals(result)
+    assert len(reasons) == 1 and "authoritative approver mismatch" in reasons[0], reasons
+
+
+def test_negative_authoritative_revoked_or_rejected_status_fails_closed(tmp_path: Path) -> None:
+    """Revoked or non-approved status in authoritative system fails closed."""
+    for bad_status in ("REVOKED", "REJECTED", "PENDING"):
+        verifier = FixedAuthoritativeReceiptVerifier(
+            {
+                ("corp-legal-tracker", "LEGAL-DECISION-0042"): {
+                    "principal_id": "legal-user-123",
+                    "evidence_hashes": [hashlib.sha256(b"LEGAL-DECISION-0042").hexdigest()],
+                    "status": bad_status,
+                }
+            }
+        )
+        result = _evaluate_with(_receipt_bound_exemption(), tmp_path, authoritative_verifier=verifier)
+        assert result["status"] == "FAIL"
+        reasons = _refusals(result)
+        assert len(reasons) == 1 and f"authoritative approval status is {bad_status}" in reasons[0], reasons
+
+
+# -----------------------------------------------------------------------------
+# Binding and Adjudication negative tests
+# -----------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -776,7 +920,7 @@ def test_exemption_refusal_names_the_candidate_and_the_reason(tmp_path: Path) ->
             id="release-list-empty",
         ),
         pytest.param(
-            {"policy_case_id": None},
+            {"policy_case_id": "LGPL-NONEXISTENT"},
             PSYCOPG3_COMPONENT,
             "does not name a review_required case",
             id="no-policy-case",
@@ -833,6 +977,123 @@ def test_negative_unadjudicated_package_cannot_borrow_a_case(
     assert len(reasons) == 1 and expected_reason in reasons[0], reasons
 
 
+# -----------------------------------------------------------------------------
+# Receipt Fields Completeness & Negative Tests (P2 R2)
+# -----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("field", "bad_value", "expected_reason"),
+    [
+        pytest.param("exemption_id", "", "exemption_id is missing or empty", id="exemption_id-empty"),
+        pytest.param("exemption_id", "   ", "exemption_id is missing or empty", id="exemption_id-whitespace"),
+        pytest.param("exemption_id", None, "missing required field(s)", id="exemption_id-missing"),
+        pytest.param("task_id", "", "task_id is missing or empty", id="task_id-empty"),
+        pytest.param("task_id", "   ", "task_id is missing or empty", id="task_id-whitespace"),
+        pytest.param("task_id", None, "missing required field(s)", id="task_id-missing"),
+        pytest.param("package", "", "package is missing or empty", id="package-empty"),
+        pytest.param("package", None, "missing required field(s)", id="package-missing"),
+        pytest.param("purl", "", "purl is missing or empty", id="purl-empty"),
+        pytest.param("purl", None, "missing required field(s)", id="purl-missing"),
+        pytest.param("license_or_finding", "", "license_or_finding is missing or empty", id="license-empty"),
+        pytest.param("license_or_finding", None, "missing required field(s)", id="license-missing"),
+        pytest.param("rationale", "", "rationale is missing or empty", id="rationale-empty"),
+        pytest.param("rationale", "   ", "rationale is missing or empty", id="rationale-whitespace"),
+        pytest.param("rationale", None, "missing required field(s)", id="rationale-missing"),
+        pytest.param("policy_case_id", "", "policy_case_id is missing or empty", id="policy_case_id-empty"),
+        pytest.param("policy_case_id", None, "missing required field(s)", id="policy_case_id-missing"),
+        pytest.param("review_at", "", "review_at must be a UTC timestamp", id="review_at-empty"),
+        pytest.param("review_at", "not-a-timestamp", "review_at must be a UTC timestamp", id="review_at-invalid"),
+        pytest.param("review_at", "2026-01-01T00:00:00", "review_at must be a UTC timestamp", id="review_at-naive"),
+        pytest.param("review_at", None, "missing required field(s)", id="review_at-missing"),
+        pytest.param("approved_by", None, "missing required field(s)", id="approved_by-missing"),
+        pytest.param("approved_by", {}, "missing required approver field(s)", id="approved_by-empty-dict"),
+        pytest.param("approved_by.principal_id", "", "approved_by.principal_id is missing or empty", id="approver-principal-empty"),
+        pytest.param("approved_by.principal_id", "   ", "approved_by.principal_id is missing or empty", id="approver-principal-whitespace"),
+        pytest.param("approved_by.principal_id", None, "missing required approver field(s)", id="approver-principal-missing"),
+        pytest.param("approved_by.display_name", "", "approved_by.display_name is missing or empty", id="approver-display_name-empty"),
+        pytest.param("approved_by.display_name", "   ", "approved_by.display_name is missing or empty", id="approver-display_name-whitespace"),
+        pytest.param("approved_by.display_name", None, "missing required approver field(s)", id="approver-display_name-missing"),
+        pytest.param("approved_by.role", "", "approved_by.role is missing or empty", id="approver-role-empty"),
+        pytest.param("approved_by.role", "   ", "approved_by.role is missing or empty", id="approver-role-whitespace"),
+        pytest.param("approved_by.role", None, "missing required approver field(s)", id="approver-role-missing"),
+        pytest.param("approval_reference", "", "approval_reference is empty", id="approval_reference-empty"),
+        pytest.param("approval_reference", "   ", "approval_reference is empty", id="approval_reference-whitespace"),
+        pytest.param("approval_reference", None, "missing required field(s)", id="approval_reference-missing"),
+        pytest.param("source_system", "", "offers no external authoritative readback", id="source_system-empty"),
+        pytest.param("source_system", "   ", "offers no external authoritative readback", id="source_system-whitespace"),
+        pytest.param("source_system", None, "missing required field(s)", id="source_system-missing"),
+        pytest.param("evidence_hashes", [], "evidence_hashes is empty", id="evidence_hashes-empty-list"),
+        pytest.param("evidence_hashes", None, "missing required field(s)", id="evidence_hashes-missing"),
+        pytest.param("integrity", None, "missing required field(s)", id="integrity-missing"),
+    ],
+)
+def test_negative_required_receipt_fields_missing_or_blank_rejected(
+    field: str, bad_value: object, expected_reason: str, tmp_path: Path
+) -> None:
+    entry: dict = {
+        "exemption_id": "EX-TEST-PSYCOPG3",
+        "task_id": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+        "package": "psycopg",
+        "purl": "pkg:pypi/psycopg@3.3.4",
+        "license_or_finding": "LGPL-3.0-only",
+        "scope": "prod",
+        "applicable_releases": [get_repo_release_digests(ROOT)["alfloop-dev/odayplus"]],
+        "rationale": "test only",
+        "policy_case_id": "LGPL-PSYCOPG3",
+        "approved_by": {
+            "principal_id": "legal-user-123",
+            "display_name": "Alice Legal",
+            "role": "Legal Counsel",
+        },
+        "approval_reference": "LEGAL-DECISION-0042",
+        "source_system": "corp-legal-tracker",
+        "issued_at": "2026-01-01T00:00:00Z",
+        "expires_at": "2030-01-01T00:00:00Z",
+        "review_at": "2026-02-01T00:00:00Z",
+        "conditions": ["dynamic linking only"],
+        "evidence_hashes": [hashlib.sha256(b"LEGAL-DECISION-0042").hexdigest()],
+    }
+    if "." in field:
+        parent, child = field.split(".", 1)
+        if bad_value is None:
+            entry[parent].pop(child, None)
+        else:
+            entry[parent][child] = bad_value
+    else:
+        if bad_value is None:
+            entry.pop(field, None)
+        else:
+            entry[field] = bad_value
+
+    sealed_entry = _sealed(entry)
+    if field == "integrity" and bad_value is None:
+        sealed_entry.pop("integrity", None)
+    if field == "package":
+        review_cases = {
+            "LGPL-PSYCOPG3": {
+                "id": "LGPL-PSYCOPG3",
+                "license": "LGPL-3.0-only",
+                "scope": "prod",
+                "packages": [{"package": "psycopg"}],
+            }
+        }
+        reason = validate_exemption(
+            sealed_entry,
+            PSYCOPG3_COMPONENT,
+            PSYCOPG3_COMPONENT.license,
+            review_cases=review_cases,
+            release_digest=get_repo_release_digests(ROOT)["alfloop-dev/odayplus"],
+            authoritative_verifier=_default_verifier_for(sealed_entry),
+        )
+        assert reason is not None and expected_reason in reason, reason
+        return
+    result = _evaluate_with(sealed_entry, tmp_path)
+    assert result["status"] == "FAIL"
+    reasons = _refusals(result)
+    assert len(reasons) == 1 and expected_reason in reasons[0], reasons
+
+
 @pytest.mark.parametrize(
     ("overrides", "expected_reason"),
     [
@@ -841,11 +1102,6 @@ def test_negative_unadjudicated_package_cannot_borrow_a_case(
             "offers no external authoritative readback",
             id="source-repository-local",
         ),
-        pytest.param(
-            {"source_system": ""}, "offers no external authoritative readback", id="source-empty"
-        ),
-        pytest.param({"approval_reference": ""}, "approval_reference is empty", id="reference-empty"),
-        pytest.param({"evidence_hashes": []}, "evidence_hashes is empty", id="evidence-empty"),
         pytest.param(
             {"evidence_hashes": ["not-a-digest"]},
             "must all be lowercase sha256 hex digests",
@@ -927,3 +1183,4 @@ def test_reconcile_cli_names_components_awaiting_adjudication() -> None:
     assert res.returncode == 1
     assert "components awaiting adjudication" in res.stderr
     assert "psycopg (3.3.4): Review required license: LGPL-3.0-only" in res.stderr
+

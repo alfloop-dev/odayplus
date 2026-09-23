@@ -40,15 +40,16 @@ Claude 代為謄錄、非簽核人本人的數位簽署，且該檔不在任何 
 本 task 同時把 `delivery_toolchain/security/generate_oss_notice.py` 的豁免驗證改成 `validate_exemption()`，
 對每個 review_required 元件逐筆核對候選條目，任一項不符即拒絕並在 gate 輸出寫明理由：
 
-1. 必要綁定欄位齊全；package、license 相符；**purl 必須等於 SBOM 為安裝版本鑄的 purl**（`psycopg@3.3.4` 的豁免不涵蓋 `3.3.5`）。
+1. 必要 receipt 與綁定欄位齊全（含 `exemption_id`、`task_id`、`review_at`、`rationale` 非空，`approved_by` 具名 `principal_id`、`display_name`、`role`）；package、license 相符；**purl 必須等於 SBOM 為安裝版本鑄的 purl**（`psycopg@3.3.4` 的豁免不涵蓋 `3.3.5`）。
 2. `policy_case_id` 必須指向 `license_policy.json` 內 license、scope 相符且**列有該套件**的 review case——沒被裁示過的套件不能類推。
 3. `applicable_releases` 必須包含 `release_bindings.json` 釘住的 release digest。
-4. `issued_at` 為 UTC 且不在未來；`expires_at` 晚於 `issued_at` 且未過期。
-5. `approved_by` 為具名人類 principal。
+4. `issued_at`、`expires_at`、`review_at` 為 UTC 且不在未來；`expires_at` 晚於 `issued_at` 且未過期；`review_at` 不早於 `issued_at`。
+5. `approved_by` 為具名人類 principal（display_name 非 placeholder，role/principal 不含 AI）。
 6. `source_system` 非 repository-local、`approval_reference` 非空、`evidence_hashes` 為 sha256 digest、`integrity.content_sha256` 與條目內容相符。
+7. **權威回讀／核准驗證結果消費**：生效路徑必須消費可信的 `AuthoritativeReceiptVerifier` 驗證結果，缺少驗證結果（離線預設 fail-closed）、來源不可達、reference 無法解析、approver 不符、evidence hash 不符或 status 非 APPROVED 皆拒絕放行。
 
-外部回讀（到 `source_system` 實際查證 `approval_reference`）無法離線執行，仍是人類閘；其餘全部在此驗證。
-負向測試在 `tests/security/test_oss_license_gate.py` 的「Acceptance 5」段。
+外部回讀（到 `source_system` 實際查證 `approval_reference`）由 `AuthoritativeReceiptVerifier` 契約驗證；離線或無權威驗證結果時保持 fail-closed。
+完整正向 mock 與負向測試在 `tests/security/test_oss_license_gate.py` 的「Acceptance 5」段。
 
 ## 4. 簽核人要做的事（封存步驟）
 
