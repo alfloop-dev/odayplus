@@ -6,7 +6,9 @@ import hashlib
 import json
 import subprocess
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -20,10 +22,13 @@ from delivery_toolchain.security.attestation import (
 )
 from delivery_toolchain.security.generate_oss_notice import (
     Component,
+    FixedAuthoritativeReceiptVerifier,
     collect_npm,
     collect_python,
     evaluate_compound_expression,
     evaluate_policy,
+    exemption_content_sha256,
+    validate_exemption,
 )
 from delivery_toolchain.security.generate_sbom import generate_sbom, get_repo_release_digests
 
@@ -306,9 +311,16 @@ def test_third_party_unlicensed_is_not_admitted_by_the_first_party_marker() -> N
 
 
 def test_license_policy_evaluation_fails_on_unadjudicated_cases() -> None:
+    """With an empty register every LGPL case stays in review_required. The
+    python side of that set is pinned by uv.lock and therefore deterministic;
+    the npm side depends on which optional sharp binaries the install pulled."""
     eval_result = evaluate_policy(policy_path=POLICY_PATH)
     assert eval_result["status"] == "FAIL", "Gate should fail while LGPL cases are un-adjudicated"
-    assert len(eval_result["review_required"]) > 0, "Should have review_required components"
+    unadjudicated = {item["component"].name for item in eval_result["review_required"]}
+    assert {"psycopg", "psycopg-binary", "psycopg-pool", "psycopg2-binary", "moocore"} <= unadjudicated
+    assert all(item["exemption_rejections"] == [] for item in eval_result["review_required"]), (
+        "an empty register has no candidate to refuse"
+    )
 
 
 def test_compound_expression_respects_parentheses_and_obligations() -> None:
@@ -633,3 +645,541 @@ def test_negative_tampered_integrity_rejected() -> None:
     valid, errors = verify_attestation(attestation, ROOT)
     assert not valid, "Tampered content_sha256 must fail integrity check"
     assert any("Integrity check failed" in err for err in errors)
+
+
+# -----------------------------------------------------------------------------
+# Acceptance 5: receipt-bound exemptions (ODP-OSS-LICENSE-EXEMPTION-REGISTER-001)
+#
+# An exemption discharges a review_required component only when it binds the
+# exact installed purl, names the policy case that adjudicated this package,
+# covers the pinned release, carries a complete, sealed receipt, and resolves
+# against a verified external authoritative source system. Each negative test
+# below deviates from the honoured fixture in exactly one requirement and must
+# be refused for that reason.
+# -----------------------------------------------------------------------------
+
+PSYCOPG3_COMPONENT = Component("pypi", "psycopg", "3.3.4", "LGPL-3.0-only")
+SHARP_COMPOUND_LICENSE = "Apache-2.0 AND LGPL-3.0-or-later AND MIT"
+
+
+def _sealed(entry: dict) -> dict:
+    """Seal an entry the way a receipt is sealed: content hash over all but integrity."""
+    sealed = {key: value for key, value in entry.items() if key != "integrity"}
+    sealed["integrity"] = {
+        "algorithm": "sha256",
+        "content_sha256": exemption_content_sha256(sealed),
+    }
+    return sealed
+
+
+def _receipt_bound_exemption(**overrides: object) -> dict:
+    """A fully bound, sealed exemption for psycopg 3.3.4 under case LGPL-PSYCOPG3.
+
+    Test-only receipt: approver, reference and source system are synthetic and
+    prove nothing about the real cases. They exist so the positive path can be
+    shown to pass and each negative path can be shown to fail on one deviation."""
+    entry: dict = {
+        "exemption_id": "EX-TEST-PSYCOPG3",
+        "task_id": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+        "package": "psycopg",
+        "purl": "pkg:pypi/psycopg@3.3.4",
+        "license_or_finding": "LGPL-3.0-only",
+        "scope": "prod",
+        "applicable_releases": [get_repo_release_digests(ROOT)["alfloop-dev/odayplus"]],
+        "rationale": "test only",
+        "policy_case_id": "LGPL-PSYCOPG3",
+        "approved_by": {
+            "principal_id": "legal-user-123",
+            "display_name": "Alice Legal",
+            "role": "Legal Counsel",
+        },
+        "approval_reference": "LEGAL-DECISION-0042",
+        "source_system": "corp-legal-tracker",
+        "issued_at": "2026-01-01T00:00:00Z",
+        "expires_at": "2030-01-01T00:00:00Z",
+        "review_at": "2026-02-01T00:00:00Z",
+        "conditions": ["dynamic linking only"],
+        "evidence_hashes": [hashlib.sha256(b"LEGAL-DECISION-0042").hexdigest()],
+    }
+    entry.update(overrides)
+    return _sealed(entry)
+
+
+def _default_verifier_for(exemption: dict) -> FixedAuthoritativeReceiptVerifier:
+    principal = (
+        exemption.get("approved_by", {}).get("principal_id", "legal-user-123")
+        if isinstance(exemption.get("approved_by"), dict)
+        else "legal-user-123"
+    )
+    hashes = (
+        list(exemption.get("evidence_hashes", []))
+        if isinstance(exemption.get("evidence_hashes"), list)
+        else []
+    )
+    src = str(exemption.get("source_system") or "corp-legal-tracker")
+    ref = str(exemption.get("approval_reference") or "LEGAL-DECISION-0042")
+    return FixedAuthoritativeReceiptVerifier(
+        {
+            (src, ref): {
+                "principal_id": principal,
+                "evidence_hashes": hashes,
+                "status": "APPROVED",
+            }
+        }
+    )
+
+
+_SENTINEL = object()
+
+
+def _evaluate_with(
+    exemption: dict,
+    tmp_path: Path,
+    component: Component = PSYCOPG3_COMPONENT,
+    *,
+    authoritative_verifier: Any = _SENTINEL,
+) -> dict:
+    ex_id = str(exemption.get("exemption_id") or "test-exemption")
+    register = tmp_path / f"{ex_id}.json"
+    register.write_text(json.dumps({"exemptions": [exemption]}), encoding="utf-8")
+    verifier = (
+        _default_verifier_for(exemption)
+        if authoritative_verifier is _SENTINEL
+        else authoritative_verifier
+    )
+    return evaluate_policy(
+        components=[component],
+        exemptions_path=register,
+        authoritative_verifier=verifier,
+    )
+
+
+def _refusals(result: dict) -> list[str]:
+    return [
+        rejection["reason"]
+        for item in result["review_required"]
+        for rejection in item["exemption_rejections"]
+    ]
+
+
+def test_receipt_bound_exemption_is_honoured_as_obligated_not_allowed(tmp_path: Path) -> None:
+    result = _evaluate_with(_receipt_bound_exemption(), tmp_path)
+    assert result["status"] == "PASS", result["review_required"]
+    assert result["review_required"] == [] and result["violations"] == []
+    assert [component.name for component in result["allowed_with_obligations"]] == ["psycopg"]
+    assert result["allowed"] == [], "an exemption never promotes a component to plain allow"
+
+
+def test_exemption_refusal_names_the_candidate_and_the_reason(tmp_path: Path) -> None:
+    result = _evaluate_with(_receipt_bound_exemption(scope="dev"), tmp_path)
+    assert result["status"] == "FAIL"
+    (item,) = result["review_required"]
+    assert item["component"].name == "psycopg"
+    assert item["exemption_rejections"] == [
+        {
+            "exemption_id": "EX-TEST-PSYCOPG3",
+            "reason": "scope mismatch: case LGPL-PSYCOPG3 is scoped 'prod', exemption claims 'dev'",
+        }
+    ]
+
+
+# -----------------------------------------------------------------------------
+# Authoritative readback boundary tests (P1 R1)
+# -----------------------------------------------------------------------------
+
+
+def test_negative_authoritative_verification_missing_fails_closed(tmp_path: Path) -> None:
+    """Offline evaluation without an authoritative readback verifier must fail closed."""
+    result = _evaluate_with(_receipt_bound_exemption(), tmp_path, authoritative_verifier=None)
+    assert result["status"] == "FAIL"
+    assert result["allowed_with_obligations"] == []
+    reasons = _refusals(result)
+    assert len(reasons) == 1 and "authoritative approval verification missing" in reasons[0], reasons
+
+
+def test_negative_authoritative_source_unreachable_rejected(tmp_path: Path) -> None:
+    """An unreachable source system must fail closed."""
+    verifier = FixedAuthoritativeReceiptVerifier(
+        {
+            ("corp-legal-tracker", "LEGAL-DECISION-0042"): {
+                "principal_id": "legal-user-123",
+                "evidence_hashes": [hashlib.sha256(b"LEGAL-DECISION-0042").hexdigest()],
+                "status": "APPROVED",
+            }
+        },
+        unreachable_sources={"corp-legal-tracker"},
+    )
+    result = _evaluate_with(_receipt_bound_exemption(), tmp_path, authoritative_verifier=verifier)
+    assert result["status"] == "FAIL"
+    reasons = _refusals(result)
+    assert len(reasons) == 1 and "authoritative source system unreachable" in reasons[0], reasons
+
+
+def test_negative_authoritative_reference_unresolvable_rejected(tmp_path: Path) -> None:
+    """An unresolvable approval reference must fail closed."""
+    verifier = FixedAuthoritativeReceiptVerifier({})  # Empty record registry
+    result = _evaluate_with(_receipt_bound_exemption(), tmp_path, authoritative_verifier=verifier)
+    assert result["status"] == "FAIL"
+    reasons = _refusals(result)
+    assert len(reasons) == 1 and "authoritative approval reference unresolvable" in reasons[0], reasons
+
+
+def test_negative_authoritative_evidence_hash_mismatch_rejected(tmp_path: Path) -> None:
+    """Mismatched evidence hashes between exemption and authoritative system fail closed."""
+    verifier = FixedAuthoritativeReceiptVerifier(
+        {
+            ("corp-legal-tracker", "LEGAL-DECISION-0042"): {
+                "principal_id": "legal-user-123",
+                "evidence_hashes": ["0" * 64],  # Mismatched hash
+                "status": "APPROVED",
+            }
+        }
+    )
+    result = _evaluate_with(_receipt_bound_exemption(), tmp_path, authoritative_verifier=verifier)
+    assert result["status"] == "FAIL"
+    reasons = _refusals(result)
+    assert len(reasons) == 1 and "authoritative evidence hash mismatch" in reasons[0], reasons
+
+
+def test_negative_authoritative_approver_mismatch_rejected(tmp_path: Path) -> None:
+    """Mismatched approver principal between exemption and authoritative system fails closed."""
+    verifier = FixedAuthoritativeReceiptVerifier(
+        {
+            ("corp-legal-tracker", "LEGAL-DECISION-0042"): {
+                "principal_id": "different-legal-principal",
+                "evidence_hashes": [hashlib.sha256(b"LEGAL-DECISION-0042").hexdigest()],
+                "status": "APPROVED",
+            }
+        }
+    )
+    result = _evaluate_with(_receipt_bound_exemption(), tmp_path, authoritative_verifier=verifier)
+    assert result["status"] == "FAIL"
+    reasons = _refusals(result)
+    assert len(reasons) == 1 and "authoritative approver mismatch" in reasons[0], reasons
+
+
+def test_negative_authoritative_revoked_or_rejected_status_fails_closed(tmp_path: Path) -> None:
+    """Revoked or non-approved status in authoritative system fails closed."""
+    for bad_status in ("REVOKED", "REJECTED", "PENDING"):
+        verifier = FixedAuthoritativeReceiptVerifier(
+            {
+                ("corp-legal-tracker", "LEGAL-DECISION-0042"): {
+                    "principal_id": "legal-user-123",
+                    "evidence_hashes": [hashlib.sha256(b"LEGAL-DECISION-0042").hexdigest()],
+                    "status": bad_status,
+                }
+            }
+        )
+        result = _evaluate_with(_receipt_bound_exemption(), tmp_path, authoritative_verifier=verifier)
+        assert result["status"] == "FAIL"
+        reasons = _refusals(result)
+        assert len(reasons) == 1 and f"authoritative approval status is {bad_status}" in reasons[0], reasons
+
+
+# -----------------------------------------------------------------------------
+# Binding and Adjudication negative tests
+# -----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("overrides", "component", "expected_reason"),
+    [
+        pytest.param(
+            {},
+            Component("pypi", "psycopg", "3.3.5", "LGPL-3.0-only"),
+            "purl mismatch",
+            id="installed-version-differs",
+        ),
+        pytest.param(
+            {"purl": "pkg:pypi/psycopg@3.3.5"},
+            PSYCOPG3_COMPONENT,
+            "purl mismatch",
+            id="purl-pins-other-version",
+        ),
+        pytest.param(
+            {"purl": "pkg:npm/psycopg@3.3.4"},
+            PSYCOPG3_COMPONENT,
+            "purl mismatch",
+            id="purl-wrong-ecosystem",
+        ),
+        pytest.param({"scope": "dev"}, PSYCOPG3_COMPONENT, "scope mismatch", id="scope-dev-vs-prod"),
+        pytest.param(
+            {"scope": "prod,dev"}, PSYCOPG3_COMPONENT, "is not one of", id="scope-not-a-value"
+        ),
+        pytest.param(
+            {"applicable_releases": ["0" * 40]},
+            PSYCOPG3_COMPONENT,
+            "release mismatch",
+            id="release-not-pinned-one",
+        ),
+        pytest.param(
+            {"applicable_releases": []},
+            PSYCOPG3_COMPONENT,
+            "applicable_releases must be a non-empty list",
+            id="release-list-empty",
+        ),
+        pytest.param(
+            {"policy_case_id": "LGPL-NONEXISTENT"},
+            PSYCOPG3_COMPONENT,
+            "does not name a review_required case",
+            id="no-policy-case",
+        ),
+        pytest.param(
+            {"policy_case_id": "LGPL-MOOCORE"},
+            PSYCOPG3_COMPONENT,
+            "adjudicates 'LGPL-2.1-or-later', not 'LGPL-3.0-only'",
+            id="case-adjudicates-other-license",
+        ),
+    ],
+)
+def test_negative_binding_mismatch_rejected(
+    overrides: dict, component: Component, expected_reason: str, tmp_path: Path
+) -> None:
+    result = _evaluate_with(_receipt_bound_exemption(**overrides), tmp_path, component)
+    assert result["status"] == "FAIL"
+    assert result["allowed_with_obligations"] == []
+    reasons = _refusals(result)
+    assert len(reasons) == 1 and expected_reason in reasons[0], reasons
+
+
+@pytest.mark.parametrize(
+    ("component", "expected_reason"),
+    [
+        pytest.param(
+            Component("npm", "@img/sharp-wasm32", "0.35.4", SHARP_COMPOUND_LICENSE),
+            "case LGPL-SHARP-LIBVIPS adjudicates 'LGPL-3.0-or-later', not",
+            id="wasm32-compound-license-not-the-adjudicated-one",
+        ),
+        pytest.param(
+            Component("npm", "@img/sharp-linux-x64", "0.35.4", "LGPL-3.0-or-later"),
+            "is not among the packages adjudicated under case LGPL-SHARP-LIBVIPS",
+            id="package-not-listed-in-case",
+        ),
+    ],
+)
+def test_negative_unadjudicated_package_cannot_borrow_a_case(
+    component: Component, expected_reason: str, tmp_path: Path
+) -> None:
+    """A package the case never named is not exempted by analogy, whatever the
+    rationale says. This is what keeps @img/sharp-wasm32 out until it has a
+    ruling of its own."""
+    exemption = _receipt_bound_exemption(
+        exemption_id="EX-TEST-SHARP-BORROWED",
+        package=component.name,
+        purl=f"pkg:npm/{component.name}@{component.version}",
+        license_or_finding=component.license,
+        policy_case_id="LGPL-SHARP-LIBVIPS",
+    )
+    result = _evaluate_with(exemption, tmp_path, component)
+    assert result["status"] == "FAIL"
+    reasons = _refusals(result)
+    assert len(reasons) == 1 and expected_reason in reasons[0], reasons
+
+
+# -----------------------------------------------------------------------------
+# Receipt Fields Completeness & Negative Tests (P2 R2)
+# -----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("field", "bad_value", "expected_reason"),
+    [
+        pytest.param("exemption_id", "", "exemption_id is missing or empty", id="exemption_id-empty"),
+        pytest.param("exemption_id", "   ", "exemption_id is missing or empty", id="exemption_id-whitespace"),
+        pytest.param("exemption_id", None, "missing required field(s)", id="exemption_id-missing"),
+        pytest.param("task_id", "", "task_id is missing or empty", id="task_id-empty"),
+        pytest.param("task_id", "   ", "task_id is missing or empty", id="task_id-whitespace"),
+        pytest.param("task_id", None, "missing required field(s)", id="task_id-missing"),
+        pytest.param("package", "", "package is missing or empty", id="package-empty"),
+        pytest.param("package", None, "missing required field(s)", id="package-missing"),
+        pytest.param("purl", "", "purl is missing or empty", id="purl-empty"),
+        pytest.param("purl", None, "missing required field(s)", id="purl-missing"),
+        pytest.param("license_or_finding", "", "license_or_finding is missing or empty", id="license-empty"),
+        pytest.param("license_or_finding", None, "missing required field(s)", id="license-missing"),
+        pytest.param("rationale", "", "rationale is missing or empty", id="rationale-empty"),
+        pytest.param("rationale", "   ", "rationale is missing or empty", id="rationale-whitespace"),
+        pytest.param("rationale", None, "missing required field(s)", id="rationale-missing"),
+        pytest.param("policy_case_id", "", "policy_case_id is missing or empty", id="policy_case_id-empty"),
+        pytest.param("policy_case_id", None, "missing required field(s)", id="policy_case_id-missing"),
+        pytest.param("review_at", "", "review_at must be a UTC timestamp", id="review_at-empty"),
+        pytest.param("review_at", "not-a-timestamp", "review_at must be a UTC timestamp", id="review_at-invalid"),
+        pytest.param("review_at", "2026-01-01T00:00:00", "review_at must be a UTC timestamp", id="review_at-naive"),
+        pytest.param("review_at", None, "missing required field(s)", id="review_at-missing"),
+        pytest.param("approved_by", None, "missing required field(s)", id="approved_by-missing"),
+        pytest.param("approved_by", {}, "missing required approver field(s)", id="approved_by-empty-dict"),
+        pytest.param("approved_by.principal_id", "", "approved_by.principal_id is missing or empty", id="approver-principal-empty"),
+        pytest.param("approved_by.principal_id", "   ", "approved_by.principal_id is missing or empty", id="approver-principal-whitespace"),
+        pytest.param("approved_by.principal_id", None, "missing required approver field(s)", id="approver-principal-missing"),
+        pytest.param("approved_by.display_name", "", "approved_by.display_name is missing or empty", id="approver-display_name-empty"),
+        pytest.param("approved_by.display_name", "   ", "approved_by.display_name is missing or empty", id="approver-display_name-whitespace"),
+        pytest.param("approved_by.display_name", None, "missing required approver field(s)", id="approver-display_name-missing"),
+        pytest.param("approved_by.role", "", "approved_by.role is missing or empty", id="approver-role-empty"),
+        pytest.param("approved_by.role", "   ", "approved_by.role is missing or empty", id="approver-role-whitespace"),
+        pytest.param("approved_by.role", None, "missing required approver field(s)", id="approver-role-missing"),
+        pytest.param("approval_reference", "", "approval_reference is empty", id="approval_reference-empty"),
+        pytest.param("approval_reference", "   ", "approval_reference is empty", id="approval_reference-whitespace"),
+        pytest.param("approval_reference", None, "missing required field(s)", id="approval_reference-missing"),
+        pytest.param("source_system", "", "offers no external authoritative readback", id="source_system-empty"),
+        pytest.param("source_system", "   ", "offers no external authoritative readback", id="source_system-whitespace"),
+        pytest.param("source_system", None, "missing required field(s)", id="source_system-missing"),
+        pytest.param("evidence_hashes", [], "evidence_hashes is empty", id="evidence_hashes-empty-list"),
+        pytest.param("evidence_hashes", None, "missing required field(s)", id="evidence_hashes-missing"),
+        pytest.param("integrity", None, "missing required field(s)", id="integrity-missing"),
+    ],
+)
+def test_negative_required_receipt_fields_missing_or_blank_rejected(
+    field: str, bad_value: object, expected_reason: str, tmp_path: Path
+) -> None:
+    entry: dict = {
+        "exemption_id": "EX-TEST-PSYCOPG3",
+        "task_id": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+        "package": "psycopg",
+        "purl": "pkg:pypi/psycopg@3.3.4",
+        "license_or_finding": "LGPL-3.0-only",
+        "scope": "prod",
+        "applicable_releases": [get_repo_release_digests(ROOT)["alfloop-dev/odayplus"]],
+        "rationale": "test only",
+        "policy_case_id": "LGPL-PSYCOPG3",
+        "approved_by": {
+            "principal_id": "legal-user-123",
+            "display_name": "Alice Legal",
+            "role": "Legal Counsel",
+        },
+        "approval_reference": "LEGAL-DECISION-0042",
+        "source_system": "corp-legal-tracker",
+        "issued_at": "2026-01-01T00:00:00Z",
+        "expires_at": "2030-01-01T00:00:00Z",
+        "review_at": "2026-02-01T00:00:00Z",
+        "conditions": ["dynamic linking only"],
+        "evidence_hashes": [hashlib.sha256(b"LEGAL-DECISION-0042").hexdigest()],
+    }
+    if "." in field:
+        parent, child = field.split(".", 1)
+        if bad_value is None:
+            entry[parent].pop(child, None)
+        else:
+            entry[parent][child] = bad_value
+    else:
+        if bad_value is None:
+            entry.pop(field, None)
+        else:
+            entry[field] = bad_value
+
+    sealed_entry = _sealed(entry)
+    if field == "integrity" and bad_value is None:
+        sealed_entry.pop("integrity", None)
+    if field == "package":
+        review_cases = {
+            "LGPL-PSYCOPG3": {
+                "id": "LGPL-PSYCOPG3",
+                "license": "LGPL-3.0-only",
+                "scope": "prod",
+                "packages": [{"package": "psycopg"}],
+            }
+        }
+        reason = validate_exemption(
+            sealed_entry,
+            PSYCOPG3_COMPONENT,
+            PSYCOPG3_COMPONENT.license,
+            review_cases=review_cases,
+            release_digest=get_repo_release_digests(ROOT)["alfloop-dev/odayplus"],
+            authoritative_verifier=_default_verifier_for(sealed_entry),
+        )
+        assert reason is not None and expected_reason in reason, reason
+        return
+    result = _evaluate_with(sealed_entry, tmp_path)
+    assert result["status"] == "FAIL"
+    reasons = _refusals(result)
+    assert len(reasons) == 1 and expected_reason in reasons[0], reasons
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected_reason"),
+    [
+        pytest.param(
+            {"source_system": "repository-local-handoff-document"},
+            "offers no external authoritative readback",
+            id="source-repository-local",
+        ),
+        pytest.param(
+            {"evidence_hashes": ["not-a-digest"]},
+            "must all be lowercase sha256 hex digests",
+            id="evidence-not-a-digest",
+        ),
+        pytest.param(
+            {"issued_at": "2026-01-01T00:00:00"}, "issued_at must be a UTC timestamp", id="issued-naive"
+        ),
+        pytest.param(
+            {"issued_at": "2026-01-01T08:00:00+08:00"},
+            "issued_at must be a UTC timestamp",
+            id="issued-non-utc-offset",
+        ),
+        pytest.param(
+            {"issued_at": (datetime.now(UTC) + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")},
+            "issued_at is in the future",
+            id="issued-future",
+        ),
+        pytest.param(
+            {"expires_at": "2025-12-31T00:00:00Z"},
+            "expires_at must be later than issued_at",
+            id="expires-before-issued",
+        ),
+    ],
+)
+def test_negative_incomplete_receipt_rejected(
+    overrides: dict, expected_reason: str, tmp_path: Path
+) -> None:
+    result = _evaluate_with(_receipt_bound_exemption(**overrides), tmp_path)
+    assert result["status"] == "FAIL"
+    reasons = _refusals(result)
+    assert len(reasons) == 1 and expected_reason in reasons[0], reasons
+
+
+def test_negative_unsealed_or_tampered_receipt_rejected(tmp_path: Path) -> None:
+    """integrity.content_sha256 must be present, sha256, and match the entry it
+    seals; editing any field after sealing invalidates it."""
+    empty = _receipt_bound_exemption()
+    empty["integrity"]["content_sha256"] = ""
+    assert _refusals(_evaluate_with(empty, tmp_path)) == ["integrity.content_sha256 is empty"]
+
+    wrong_algorithm = _receipt_bound_exemption()
+    wrong_algorithm["integrity"]["algorithm"] = "md5"
+    assert _refusals(_evaluate_with(wrong_algorithm, tmp_path)) == [
+        "integrity.algorithm must be sha256"
+    ]
+
+    tampered = _receipt_bound_exemption()
+    tampered["rationale"] = "edited after sealing"
+    (reason,) = _refusals(_evaluate_with(tampered, tmp_path))
+    assert reason.startswith("receipt integrity check failed: recorded ")
+
+
+def test_negative_round_one_register_entry_shape_rejected(tmp_path: Path) -> None:
+    """The shape PR #1357 first submitted: a named approver but a repository-local
+    handoff document as source, no evidence hashes and an empty seal. The gate
+    must refuse it on the receipt, not wave it through on the approver."""
+    entry = _receipt_bound_exemption(
+        approval_reference="support/handoffs/remaining-inputs-20260913/OSS-LICENSE-4-CASES-FOR-SIGNOFF.md",
+        source_system="repository-local-handoff-document",
+        evidence_hashes=[],
+    )
+    entry["integrity"] = {"algorithm": "sha256", "content_sha256": ""}
+    result = _evaluate_with(entry, tmp_path)
+    assert result["status"] == "FAIL"
+    (reason,) = _refusals(result)
+    assert "offers no external authoritative readback" in reason
+
+
+def test_reconcile_cli_names_components_awaiting_adjudication() -> None:
+    """--reconcile must say which components keep the gate closed, not only
+    print a violation count of zero."""
+    res = subprocess.run(
+        [sys.executable, "delivery_toolchain/security/generate_oss_notice.py", "--reconcile"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 1
+    assert "components awaiting adjudication" in res.stderr
+    assert "psycopg (3.3.4): Review required license: LGPL-3.0-only" in res.stderr
+
