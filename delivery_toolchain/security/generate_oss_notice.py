@@ -28,6 +28,30 @@ Usage:
     generate_oss_notice.py            write NOTICE-THIRD-PARTY.md
     generate_oss_notice.py --check    exit 1 if the committed file is stale
     generate_oss_notice.py --reconcile evaluate installed components against license_policy.json
+
+Authoritative readback integration:
+    An entry in docs/security/license_exemptions.json only moves a
+    review_required component into allowed_with_obligations when
+    validate_exemption() accepts it, and its last step consumes an
+    AuthoritativeReceiptVerifier: a trusted readback of the approval in the
+    external system the entry names. Inject one through
+
+        evaluate_policy(authoritative_verifier=<AuthoritativeReceiptVerifier>)
+
+    The verifier must confirm an explicit APPROVED status (never inferred from
+    a missing or falsy one), the named approver, the evidence digests, and that
+    the content the source approved -- or its canonical digest,
+    exemption_content_sha256() -- is exactly the candidate entry in every
+    AUTHORITATIVE_BINDING_FIELDS field. Re-sealing an edited candidate locally
+    therefore cannot widen an approval.
+
+    The CLI (--reconcile) injects no verifier and refuses every candidate with
+    "authoritative approval verification missing": the gate is fail-closed by
+    default. FixedAuthoritativeReceiptVerifier is an in-memory readback for
+    offline tests and a reference for a real client. This repository ships no
+    client for a live authoritative system and obtains no live approval; the
+    real receipts, the readback client, and the register activation remain
+    Human/Ops inputs owned by ODP-OSS-LICENSE-EXEMPTION-REGISTER-001.
 """
 
 from __future__ import annotations
@@ -499,20 +523,70 @@ _REPOSITORY_LOCAL_SOURCE = re.compile(
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 
 
+# Fields of an approved entry that an authoritative readback binds. Each one
+# changes what the approval authorises, so a candidate that differs from the
+# approved content in any of them is a different exemption, whatever its own
+# (locally recomputable) integrity seal says. The canonical content digest then
+# covers every remaining field, rationale and approver included.
+AUTHORITATIVE_BINDING_FIELDS = (
+    "exemption_id",
+    "task_id",
+    "package",
+    "purl",
+    "license_or_finding",
+    "scope",
+    "applicable_releases",
+    "policy_case_id",
+    "conditions",
+    "issued_at",
+    "expires_at",
+    "review_at",
+)
+AUTHORITATIVE_APPROVED_STATUS = "APPROVED"
+
+
 @dataclass(frozen=True)
 class AuthoritativeReceiptVerification:
-    """Outcome of resolving an exemption receipt in an external authoritative system."""
+    """Outcome of resolving an exemption receipt in an external authoritative system.
+
+    ``verified`` is True only when the source answered for exactly this receipt
+    and the content it approved binds the candidate entry;
+    ``approved_content_sha256`` is then the canonical digest the source vouches
+    for. ``error`` says why verification was refused.
+    """
 
     verified: bool
     source_system: str
     approval_reference: str
     principal_id: str | None = None
     evidence_hashes: tuple[str, ...] = ()
+    approved_content_sha256: str | None = None
     error: str | None = None
 
 
 class AuthoritativeReceiptVerifier:
-    """Protocol for resolving exemption receipts against authoritative external systems."""
+    """Trusted readback boundary: resolve an exemption receipt in its authoritative system.
+
+    ``verify_exemption_receipt`` receives the receipt fields the candidate
+    carries plus the whole candidate entry and answers with an
+    ``AuthoritativeReceiptVerification``. An implementation must
+
+    - reach ``source_system`` and resolve ``approval_reference`` there;
+    - confirm the record is explicitly ``APPROVED`` (``authoritative_status_error``:
+      a missing, null, empty or non-string status is never approval), that
+      ``principal_id`` is the approver it names, and that ``evidence_hashes``
+      are the digests it holds;
+    - bind the approved content to the candidate
+      (``authoritative_content_binding_error``): the source returns the entry it
+      approved, or its canonical digest, and the candidate must match it in
+      every ``AUTHORITATIVE_BINDING_FIELDS`` field and in canonical digest.
+
+    Any failure, an unreachable source included, answers ``verified=False`` with
+    an ``error``; raising is treated as refusal by ``validate_exemption``. This
+    repository ships no client for a live authoritative system: the real
+    receipts and the production readback client are Human/Ops inputs owned by
+    the register task, and nothing here obtains or simulates them.
+    """
 
     def verify_exemption_receipt(
         self,
@@ -526,11 +600,107 @@ class AuthoritativeReceiptVerifier:
         raise NotImplementedError
 
 
-class FixedAuthoritativeReceiptVerifier:
-    """Deterministic verifier backed by an authoritative readback mapping.
+def authoritative_status_error(record: dict[str, Any]) -> str | None:
+    """Why ``record`` is not explicitly APPROVED, or None when it is.
 
-    Resolves (source_system, approval_reference) and confirms matching principal,
-    matching evidence digests, and APPROVED status.
+    Approval is never inferred: a missing, null, empty, whitespace or
+    non-string status refuses, as does any string other than exactly
+    ``APPROVED``.
+    """
+    if "status" not in record:
+        return "authoritative approval status missing, expected APPROVED"
+    status = record["status"]
+    if not isinstance(status, str):
+        return (
+            f"authoritative approval status has invalid type {type(status).__name__}, "
+            "expected the string APPROVED"
+        )
+    if not status.strip():
+        return "authoritative approval status is empty, expected APPROVED"
+    if status != AUTHORITATIVE_APPROVED_STATUS:
+        return f"authoritative approval status is {status!r}, expected APPROVED"
+    return None
+
+
+def authoritative_content_binding_error(
+    record: dict[str, Any], candidate: dict[str, Any]
+) -> tuple[str | None, str | None]:
+    """Bind the content an authoritative record approved to ``candidate``.
+
+    The record carries ``approved_content`` (the approved entry; ``integrity``
+    is ignored as in ``exemption_content_sha256``) and/or
+    ``approved_content_sha256`` (that entry's canonical digest). At least one is
+    required, both are checked when present, and they must agree. Returns
+    ``(error, approved_digest)``: ``error`` is None only when the candidate is
+    exactly the approved entry, and ``approved_digest`` is then the digest the
+    record vouches for. The candidate's own integrity seal plays no part: it is
+    recomputable locally and proves integrity, never authority.
+    """
+    approved = record.get("approved_content")
+    recorded_digest = record.get("approved_content_sha256")
+    if approved is None and recorded_digest is None:
+        return (
+            "authoritative record carries no approved content binding "
+            "(approved_content or approved_content_sha256)",
+            None,
+        )
+    if approved is not None and not isinstance(approved, dict):
+        return "authoritative approved_content is not an object", None
+    if recorded_digest is not None:
+        if not isinstance(recorded_digest, str) or not _SHA256_HEX.fullmatch(
+            recorded_digest.strip().lower()
+        ):
+            return "authoritative approved_content_sha256 is not a sha256 hex digest", None
+        recorded_digest = recorded_digest.strip().lower()
+    approved_digest = exemption_content_sha256(approved) if approved is not None else None
+    if approved_digest is not None and recorded_digest is not None and approved_digest != recorded_digest:
+        return (
+            f"authoritative record is inconsistent: approved_content digest {approved_digest} "
+            f"!= approved_content_sha256 {recorded_digest}",
+            None,
+        )
+    expected_digest = approved_digest or recorded_digest
+    if not isinstance(candidate, dict):
+        return "candidate exemption is not an object", None
+    if approved is not None:
+        for field in AUTHORITATIVE_BINDING_FIELDS:
+            if approved.get(field) != candidate.get(field):
+                return (
+                    f"authoritative approval binds {field}={approved.get(field)!r}; "
+                    f"candidate carries {candidate.get(field)!r}",
+                    None,
+                )
+    candidate_digest = exemption_content_sha256(candidate)
+    if candidate_digest != expected_digest:
+        return (
+            f"authoritative approved content digest mismatch: approved {expected_digest}, "
+            f"candidate {candidate_digest}",
+            None,
+        )
+    return None, expected_digest
+
+
+class FixedAuthoritativeReceiptVerifier:
+    """Deterministic verifier over an in-memory authoritative readback.
+
+    ``records`` maps ``(source_system, approval_reference)`` to what a readback
+    of that reference returns::
+
+        {
+            "status": "APPROVED",            # explicit; anything else refuses
+            "principal_id": "<approver id in the source's identity system>",
+            "evidence_hashes": ["<sha256 hex>", ...],
+            "approved_content": {<the approved exemption entry>},      # and/or
+            "approved_content_sha256": "<canonical digest of that entry>",
+        }
+
+    Checks run in order: reachability, resolvability, explicit APPROVED status,
+    approver principal, evidence digests, approved content binding
+    (``authoritative_content_binding_error``). Sources named in
+    ``unreachable_sources`` refuse every reference, which is how offline tests
+    exercise that branch. This class is a test double and a reference for real
+    clients; it consults nothing external and proves nothing about live
+    approvals.
     """
 
     def __init__(
@@ -551,61 +721,60 @@ class FixedAuthoritativeReceiptVerifier:
         evidence_hashes: list[str],
         exemption: dict[str, Any],
     ) -> AuthoritativeReceiptVerification:
+        def refuse(error: str) -> AuthoritativeReceiptVerification:
+            return AuthoritativeReceiptVerification(
+                verified=False,
+                source_system=source_system,
+                approval_reference=approval_reference,
+                error=error,
+            )
+
         if source_system in self._unreachable_sources:
-            return AuthoritativeReceiptVerification(
-                verified=False,
-                source_system=source_system,
-                approval_reference=approval_reference,
-                error=f"authoritative source system unreachable: {source_system}",
+            return refuse(f"authoritative source system unreachable: {source_system}")
+        record = self._records.get((source_system, approval_reference))
+        if not isinstance(record, dict):
+            return refuse(
+                f"authoritative approval reference unresolvable: "
+                f"{approval_reference} in {source_system}"
             )
-        key = (source_system, approval_reference)
-        record = self._records.get(key)
-        if record is None:
-            return AuthoritativeReceiptVerification(
-                verified=False,
-                source_system=source_system,
-                approval_reference=approval_reference,
-                error=(
-                    f"authoritative approval reference unresolvable: "
-                    f"{approval_reference} in {source_system}"
-                ),
-            )
-        status = str(record.get("status") or "APPROVED").upper()
-        if status != "APPROVED":
-            return AuthoritativeReceiptVerification(
-                verified=False,
-                source_system=source_system,
-                approval_reference=approval_reference,
-                error=f"authoritative approval status is {status}, expected APPROVED",
-            )
-        rec_principal = str(record.get("principal_id") or "").strip()
+
+        status_error = authoritative_status_error(record)
+        if status_error is not None:
+            return refuse(status_error)
+
+        rec_principal = record.get("principal_id")
+        if not isinstance(rec_principal, str) or not rec_principal.strip():
+            return refuse("authoritative record names no approver principal")
+        rec_principal = rec_principal.strip()
         if rec_principal != principal_id:
-            return AuthoritativeReceiptVerification(
-                verified=False,
-                source_system=source_system,
-                approval_reference=approval_reference,
-                error=(
-                    f"authoritative approver mismatch: expected principal "
-                    f"{rec_principal!r}, got {principal_id!r}"
-                ),
+            return refuse(
+                f"authoritative approver mismatch: expected principal "
+                f"{rec_principal!r}, got {principal_id!r}"
             )
-        rec_hashes = tuple(record.get("evidence_hashes") or ())
-        if tuple(evidence_hashes) != rec_hashes:
-            return AuthoritativeReceiptVerification(
-                verified=False,
-                source_system=source_system,
-                approval_reference=approval_reference,
-                error=(
-                    f"authoritative evidence hash mismatch: "
-                    f"{evidence_hashes} != {list(rec_hashes)}"
-                ),
+
+        rec_hashes = record.get("evidence_hashes")
+        if (
+            not isinstance(rec_hashes, list)
+            or not rec_hashes
+            or not all(isinstance(item, str) for item in rec_hashes)
+        ):
+            return refuse("authoritative record holds no evidence hashes")
+        if list(evidence_hashes) != rec_hashes:
+            return refuse(
+                f"authoritative evidence hash mismatch: {list(evidence_hashes)} != {rec_hashes}"
             )
+
+        binding_error, approved_digest = authoritative_content_binding_error(record, exemption)
+        if binding_error is not None:
+            return refuse(binding_error)
+
         return AuthoritativeReceiptVerification(
             verified=True,
             source_system=source_system,
             approval_reference=approval_reference,
             principal_id=principal_id,
-            evidence_hashes=rec_hashes,
+            evidence_hashes=tuple(rec_hashes),
+            approved_content_sha256=approved_digest,
         )
 
 
@@ -684,8 +853,11 @@ def validate_exemption(
     - receipt: an external ``source_system`` and non-empty
       ``approval_reference``, ``evidence_hashes`` as sha256 digests, and an
       ``integrity.content_sha256`` that matches the entry it seals;
-    - authoritative verification: consumes an external verification result;
-      missing, unreachable, unresolvable, or mismatched hashes fail closed.
+    - authoritative verification: consumes an external readback result; a
+      missing verifier, an unreachable source, an unresolvable reference, a
+      status that is not explicitly APPROVED, a mismatched approver or
+      evidence hash, or approved content that is not exactly this entry all
+      fail closed.
     """
     now = now or datetime.now(UTC)
     if not isinstance(exemption, dict):
@@ -868,21 +1040,46 @@ def validate_exemption(
     if recorded != actual:
         return f"receipt integrity check failed: recorded {recorded} != actual {actual}"
 
-    # 15. Authoritative verification / readback consumption
+    # 15. Authoritative verification / readback consumption. Everything above
+    # is decidable from the repository alone and therefore proves nothing about
+    # authority: the entry must also resolve, as APPROVED, in the external
+    # system it names, and the content that system approved must be exactly
+    # this entry. No verifier means no readback, which fails closed
+    # (rules.fail_closed_on: "authoritative source system unreachable or
+    # reference unresolvable"). A verifier that raises, answers for another
+    # receipt, or returns anything but a verified AuthoritativeReceiptVerification
+    # is refused the same way: a broken readback is not a readback.
     if authoritative_verifier is None:
         return (
             "authoritative approval verification missing: "
             "external authoritative readback required (fail-closed)"
         )
 
-    verification = authoritative_verifier.verify_exemption_receipt(
-        source_system=source_system,
-        approval_reference=approval_reference,
-        principal_id=principal,
-        evidence_hashes=evidence_hashes,
-        exemption=exemption,
-    )
-    if not verification.verified:
+    try:
+        verification = authoritative_verifier.verify_exemption_receipt(
+            source_system=source_system,
+            approval_reference=approval_reference,
+            principal_id=principal,
+            evidence_hashes=evidence_hashes,
+            exemption=exemption,
+        )
+    except Exception as exc:  # any readback failure refuses; none may surface as a pass
+        return f"authoritative approval verification raised {type(exc).__name__}: {exc}"
+    if not isinstance(verification, AuthoritativeReceiptVerification):
+        return (
+            "authoritative approval verification returned "
+            f"{type(verification).__name__}, not an AuthoritativeReceiptVerification"
+        )
+    if (
+        verification.source_system != source_system
+        or verification.approval_reference != approval_reference
+    ):
+        return (
+            "authoritative approval verification answered for "
+            f"{verification.approval_reference!r} in {verification.source_system!r}, "
+            f"not {approval_reference!r} in {source_system!r}"
+        )
+    if verification.verified is not True:
         return verification.error or "authoritative approval verification failed"
 
     return None
@@ -1089,14 +1286,23 @@ def main() -> int:
     parser.add_argument(
         "--reconcile",
         action="store_true",
-        help="evaluate installed components against license_policy.json and exit 1 on policy violation",
+        help=(
+            "evaluate installed components against license_policy.json and exit 1 on policy "
+            "violation; no authoritative readback is wired here, so every register entry is "
+            "refused until a verifier is injected through evaluate_policy()"
+        ),
     )
     args = parser.parse_args()
 
     content = build()
 
     if args.reconcile:
-        eval_result = evaluate_policy()
+        # The CLI wires no authoritative verifier on purpose: this repository
+        # has no client for the signer's external system, so every candidate
+        # exemption is refused with "authoritative approval verification
+        # missing" and the gate stays closed until a real readback client is
+        # injected through evaluate_policy(authoritative_verifier=...).
+        eval_result = evaluate_policy(authoritative_verifier=None)
         if eval_result["status"] != "PASS" or eval_result["violations"]:
             print(
                 f"Policy evaluation FAILED: {len(eval_result['violations'])} violations, "

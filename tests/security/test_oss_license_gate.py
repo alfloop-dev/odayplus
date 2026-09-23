@@ -21,6 +21,7 @@ from delivery_toolchain.security.attestation import (
     verify_attestation,
 )
 from delivery_toolchain.security.generate_oss_notice import (
+    AuthoritativeReceiptVerification,
     Component,
     FixedAuthoritativeReceiptVerifier,
     collect_npm,
@@ -28,6 +29,7 @@ from delivery_toolchain.security.generate_oss_notice import (
     evaluate_compound_expression,
     evaluate_policy,
     exemption_content_sha256,
+    main,
     validate_exemption,
 )
 from delivery_toolchain.security.generate_sbom import generate_sbom, get_repo_release_digests
@@ -648,14 +650,18 @@ def test_negative_tampered_integrity_rejected() -> None:
 
 
 # -----------------------------------------------------------------------------
-# Acceptance 5: receipt-bound exemptions (ODP-OSS-LICENSE-EXEMPTION-REGISTER-001)
+# Acceptance 5: receipt-bound exemptions (ODP-OSS-LICENSE-EXEMPTION-REGISTER-001,
+# evaluator and tests owned by ODP-OSS-RECEIPT-VERIFIER-HARDENING-001)
 #
 # An exemption discharges a review_required component only when it binds the
 # exact installed purl, names the policy case that adjudicated this package,
 # covers the pinned release, carries a complete, sealed receipt, and resolves
-# against a verified external authoritative source system. Each negative test
-# below deviates from the honoured fixture in exactly one requirement and must
-# be refused for that reason.
+# against a verified external authoritative source system whose approved
+# content is exactly this entry. Each negative test below deviates from the
+# honoured fixture in exactly one requirement and must be refused for that
+# reason. The authoritative readback is mocked explicitly with
+# FixedAuthoritativeReceiptVerifier: nothing here reaches a live source, and no
+# live approval exists or is claimed.
 # -----------------------------------------------------------------------------
 
 PSYCOPG3_COMPONENT = Component("pypi", "psycopg", "3.3.4", "LGPL-3.0-only")
@@ -705,27 +711,50 @@ def _receipt_bound_exemption(**overrides: object) -> dict:
     return _sealed(entry)
 
 
-def _default_verifier_for(exemption: dict) -> FixedAuthoritativeReceiptVerifier:
-    principal = (
-        exemption.get("approved_by", {}).get("principal_id", "legal-user-123")
-        if isinstance(exemption.get("approved_by"), dict)
-        else "legal-user-123"
-    )
-    hashes = (
-        list(exemption.get("evidence_hashes", []))
-        if isinstance(exemption.get("evidence_hashes"), list)
-        else []
-    )
-    src = str(exemption.get("source_system") or "corp-legal-tracker")
-    ref = str(exemption.get("approval_reference") or "LEGAL-DECISION-0042")
+# Fixed authoritative readback fixture. The record below is what the external
+# system holds for LEGAL-DECISION-0042 and never changes across tests; negative
+# cases mutate only the candidate entry and the installed component, so a
+# candidate can never regenerate the authority it is checked against.
+AUTHORITATIVE_SOURCE = "corp-legal-tracker"
+AUTHORITATIVE_REFERENCE = "LEGAL-DECISION-0042"
+AUTHORITATIVE_PRINCIPAL = "legal-user-123"
+AUTHORITATIVE_EVIDENCE_HASHES = [hashlib.sha256(b"LEGAL-DECISION-0042").hexdigest()]
+OFFLINE_REFUSAL = (
+    "authoritative approval verification missing: "
+    "external authoritative readback required (fail-closed)"
+)
+
+
+def _approved_content() -> dict:
+    """The entry the authoritative system approved: the honoured fixture, unsealed."""
+    return {key: value for key, value in _receipt_bound_exemption().items() if key != "integrity"}
+
+
+def _authoritative_record(**overrides: object) -> dict:
+    record: dict = {
+        "status": "APPROVED",
+        "principal_id": AUTHORITATIVE_PRINCIPAL,
+        "evidence_hashes": list(AUTHORITATIVE_EVIDENCE_HASHES),
+        "approved_content": _approved_content(),
+    }
+    record.update(overrides)
+    return record
+
+
+def _fixed_verifier(**record_overrides: object) -> FixedAuthoritativeReceiptVerifier:
     return FixedAuthoritativeReceiptVerifier(
-        {
-            (src, ref): {
-                "principal_id": principal,
-                "evidence_hashes": hashes,
-                "status": "APPROVED",
-            }
-        }
+        {(AUTHORITATIVE_SOURCE, AUTHORITATIVE_REFERENCE): _authoritative_record(**record_overrides)}
+    )
+
+
+def _verify(candidate: dict, verifier: Any = None) -> AuthoritativeReceiptVerification:
+    """Call the readback boundary directly for one candidate entry."""
+    return (verifier or _fixed_verifier()).verify_exemption_receipt(
+        source_system=str(candidate["source_system"]),
+        approval_reference=str(candidate["approval_reference"]),
+        principal_id=str(candidate["approved_by"]["principal_id"]),
+        evidence_hashes=list(candidate["evidence_hashes"]),
+        exemption=candidate,
     )
 
 
@@ -739,14 +768,14 @@ def _evaluate_with(
     *,
     authoritative_verifier: Any = _SENTINEL,
 ) -> dict:
+    """Evaluate one candidate entry against one installed component.
+
+    The verifier defaults to the fixed readback fixture; pass None to evaluate
+    offline, or an explicit verifier to exercise one readback deviation."""
     ex_id = str(exemption.get("exemption_id") or "test-exemption")
     register = tmp_path / f"{ex_id}.json"
     register.write_text(json.dumps({"exemptions": [exemption]}), encoding="utf-8")
-    verifier = (
-        _default_verifier_for(exemption)
-        if authoritative_verifier is _SENTINEL
-        else authoritative_verifier
-    )
+    verifier = _fixed_verifier() if authoritative_verifier is _SENTINEL else authoritative_verifier
     return evaluate_policy(
         components=[component],
         exemptions_path=register,
@@ -762,12 +791,45 @@ def _refusals(result: dict) -> list[str]:
     ]
 
 
+def _refused_once(result: dict) -> str:
+    """The gate stayed closed, nothing was obligated, and exactly one reason says why."""
+    assert result["status"] == "FAIL"
+    assert result["allowed_with_obligations"] == []
+    (reason,) = _refusals(result)
+    return reason
+
+
+def _clears_every_local_check(candidate: dict, tmp_path: Path, component: Component) -> None:
+    """Offline, the only refusal left is the missing readback: every repository-local
+    check, the locally recomputed integrity seal included, accepted the candidate."""
+    offline = _evaluate_with(candidate, tmp_path, component, authoritative_verifier=None)
+    assert _refusals(offline) == [OFFLINE_REFUSAL], (
+        "the candidate must clear every local check, or the test proves nothing about the readback"
+    )
+
+
 def test_receipt_bound_exemption_is_honoured_as_obligated_not_allowed(tmp_path: Path) -> None:
     result = _evaluate_with(_receipt_bound_exemption(), tmp_path)
     assert result["status"] == "PASS", result["review_required"]
     assert result["review_required"] == [] and result["violations"] == []
     assert [component.name for component in result["allowed_with_obligations"]] == ["psycopg"]
     assert result["allowed"] == [], "an exemption never promotes a component to plain allow"
+
+
+def test_verified_readback_reports_the_approved_content_digest() -> None:
+    """A positive readback echoes the receipt it answered for and the canonical
+    digest of the approved entry, which is the candidate's own seal."""
+    candidate = _receipt_bound_exemption()
+    verification = _verify(candidate)
+    assert verification.verified is True and verification.error is None
+    assert (verification.source_system, verification.approval_reference) == (
+        AUTHORITATIVE_SOURCE,
+        AUTHORITATIVE_REFERENCE,
+    )
+    assert verification.principal_id == AUTHORITATIVE_PRINCIPAL
+    assert list(verification.evidence_hashes) == AUTHORITATIVE_EVIDENCE_HASHES
+    assert verification.approved_content_sha256 == candidate["integrity"]["content_sha256"]
+    assert verification.approved_content_sha256 == exemption_content_sha256(_approved_content())
 
 
 def test_exemption_refusal_names_the_candidate_and_the_reason(tmp_path: Path) -> None:
@@ -784,96 +846,373 @@ def test_exemption_refusal_names_the_candidate_and_the_reason(tmp_path: Path) ->
 
 
 # -----------------------------------------------------------------------------
-# Authoritative readback boundary tests (P1 R1)
+# Authoritative readback boundary tests (Codex review of PR #1357, P1 R1)
 # -----------------------------------------------------------------------------
 
 
 def test_negative_authoritative_verification_missing_fails_closed(tmp_path: Path) -> None:
     """Offline evaluation without an authoritative readback verifier must fail closed."""
     result = _evaluate_with(_receipt_bound_exemption(), tmp_path, authoritative_verifier=None)
-    assert result["status"] == "FAIL"
-    assert result["allowed_with_obligations"] == []
-    reasons = _refusals(result)
-    assert len(reasons) == 1 and "authoritative approval verification missing" in reasons[0], reasons
+    assert _refused_once(result) == OFFLINE_REFUSAL
 
 
 def test_negative_authoritative_source_unreachable_rejected(tmp_path: Path) -> None:
-    """An unreachable source system must fail closed."""
+    """An unreachable source system must fail closed, however good the record is."""
     verifier = FixedAuthoritativeReceiptVerifier(
-        {
-            ("corp-legal-tracker", "LEGAL-DECISION-0042"): {
-                "principal_id": "legal-user-123",
-                "evidence_hashes": [hashlib.sha256(b"LEGAL-DECISION-0042").hexdigest()],
-                "status": "APPROVED",
-            }
-        },
-        unreachable_sources={"corp-legal-tracker"},
+        {(AUTHORITATIVE_SOURCE, AUTHORITATIVE_REFERENCE): _authoritative_record()},
+        unreachable_sources={AUTHORITATIVE_SOURCE},
     )
     result = _evaluate_with(_receipt_bound_exemption(), tmp_path, authoritative_verifier=verifier)
-    assert result["status"] == "FAIL"
-    reasons = _refusals(result)
-    assert len(reasons) == 1 and "authoritative source system unreachable" in reasons[0], reasons
+    assert _refused_once(result) == f"authoritative source system unreachable: {AUTHORITATIVE_SOURCE}"
 
 
 def test_negative_authoritative_reference_unresolvable_rejected(tmp_path: Path) -> None:
-    """An unresolvable approval reference must fail closed."""
-    verifier = FixedAuthoritativeReceiptVerifier({})  # Empty record registry
+    """An approval reference the source does not hold must fail closed."""
+    verifier = FixedAuthoritativeReceiptVerifier({})
     result = _evaluate_with(_receipt_bound_exemption(), tmp_path, authoritative_verifier=verifier)
-    assert result["status"] == "FAIL"
-    reasons = _refusals(result)
-    assert len(reasons) == 1 and "authoritative approval reference unresolvable" in reasons[0], reasons
+    assert _refused_once(result) == (
+        f"authoritative approval reference unresolvable: {AUTHORITATIVE_REFERENCE} in {AUTHORITATIVE_SOURCE}"
+    )
 
 
-def test_negative_authoritative_evidence_hash_mismatch_rejected(tmp_path: Path) -> None:
-    """Mismatched evidence hashes between exemption and authoritative system fail closed."""
-    verifier = FixedAuthoritativeReceiptVerifier(
-        {
-            ("corp-legal-tracker", "LEGAL-DECISION-0042"): {
-                "principal_id": "legal-user-123",
-                "evidence_hashes": ["0" * 64],  # Mismatched hash
-                "status": "APPROVED",
-            }
+def test_negative_candidate_evidence_hash_not_held_by_source_rejected(tmp_path: Path) -> None:
+    """The candidate cites a digest the source never recorded; the record is unchanged."""
+    candidate = _receipt_bound_exemption(evidence_hashes=["0" * 64])
+    assert _refused_once(_evaluate_with(candidate, tmp_path)) == (
+        f"authoritative evidence hash mismatch: {['0' * 64]} != {AUTHORITATIVE_EVIDENCE_HASHES}"
+    )
+
+
+def test_negative_candidate_approver_not_the_recorded_principal_rejected(tmp_path: Path) -> None:
+    """A named human who is not the approver the source recorded is refused."""
+    candidate = _receipt_bound_exemption(
+        approved_by={
+            "principal_id": "legal-user-999",
+            "display_name": "Alice Legal",
+            "role": "Legal Counsel",
         }
     )
-    result = _evaluate_with(_receipt_bound_exemption(), tmp_path, authoritative_verifier=verifier)
-    assert result["status"] == "FAIL"
-    reasons = _refusals(result)
-    assert len(reasons) == 1 and "authoritative evidence hash mismatch" in reasons[0], reasons
-
-
-def test_negative_authoritative_approver_mismatch_rejected(tmp_path: Path) -> None:
-    """Mismatched approver principal between exemption and authoritative system fails closed."""
-    verifier = FixedAuthoritativeReceiptVerifier(
-        {
-            ("corp-legal-tracker", "LEGAL-DECISION-0042"): {
-                "principal_id": "different-legal-principal",
-                "evidence_hashes": [hashlib.sha256(b"LEGAL-DECISION-0042").hexdigest()],
-                "status": "APPROVED",
-            }
-        }
+    assert _refused_once(_evaluate_with(candidate, tmp_path)) == (
+        "authoritative approver mismatch: expected principal 'legal-user-123', got 'legal-user-999'"
     )
-    result = _evaluate_with(_receipt_bound_exemption(), tmp_path, authoritative_verifier=verifier)
-    assert result["status"] == "FAIL"
-    reasons = _refusals(result)
-    assert len(reasons) == 1 and "authoritative approver mismatch" in reasons[0], reasons
 
 
-def test_negative_authoritative_revoked_or_rejected_status_fails_closed(tmp_path: Path) -> None:
-    """Revoked or non-approved status in authoritative system fails closed."""
-    for bad_status in ("REVOKED", "REJECTED", "PENDING"):
-        verifier = FixedAuthoritativeReceiptVerifier(
+# --- R1: the readback binds the approved content to the candidate -------------
+
+
+def test_negative_resealed_candidate_for_other_installed_version_rejected(tmp_path: Path) -> None:
+    """Codex R1 scenario. The authoritative record approves psycopg@3.3.4; the
+    candidate moves its purl to 3.3.5, re-seals itself locally and is evaluated
+    against an installed 3.3.5. Every repository-local check accepts it, the
+    recomputed integrity seal included, so only the readback binding can and
+    must refuse it."""
+    candidate = _receipt_bound_exemption(purl="pkg:pypi/psycopg@3.3.5")
+    installed = Component("pypi", "psycopg", "3.3.5", "LGPL-3.0-only")
+    _clears_every_local_check(candidate, tmp_path, installed)
+
+    assert _refused_once(_evaluate_with(candidate, tmp_path, installed)) == (
+        "authoritative approval binds purl='pkg:pypi/psycopg@3.3.4'; "
+        "candidate carries 'pkg:pypi/psycopg@3.3.5'"
+    )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected_prefix"),
+    [
+        pytest.param(
+            {"expires_at": "2031-01-01T00:00:00Z"},
+            "authoritative approval binds expires_at='2030-01-01T00:00:00Z'; "
+            "candidate carries '2031-01-01T00:00:00Z'",
+            id="expiry-extended",
+        ),
+        pytest.param(
+            {"issued_at": "2026-01-02T00:00:00Z"},
+            "authoritative approval binds issued_at='2026-01-01T00:00:00Z'; "
+            "candidate carries '2026-01-02T00:00:00Z'",
+            id="issued-moved",
+        ),
+        pytest.param(
+            {"review_at": "2026-03-01T00:00:00Z"},
+            "authoritative approval binds review_at='2026-02-01T00:00:00Z'; "
+            "candidate carries '2026-03-01T00:00:00Z'",
+            id="review-moved",
+        ),
+        pytest.param(
+            {"exemption_id": "EX-TEST-PSYCOPG3-COPY"},
+            "authoritative approval binds exemption_id='EX-TEST-PSYCOPG3'; "
+            "candidate carries 'EX-TEST-PSYCOPG3-COPY'",
+            id="exemption-id-changed",
+        ),
+        pytest.param(
+            {"task_id": "ODP-OTHER-TASK-001"},
+            "authoritative approval binds task_id='ODP-PLAN-OSS-LEGAL-POLICY-001'; "
+            "candidate carries 'ODP-OTHER-TASK-001'",
+            id="task-id-changed",
+        ),
+        pytest.param(
+            {"conditions": ["static linking permitted"]},
+            "authoritative approval binds conditions=['dynamic linking only']; "
+            "candidate carries ['static linking permitted']",
+            id="conditions-widened",
+        ),
+        pytest.param(
+            {"rationale": "edited after approval"},
+            "authoritative approved content digest mismatch: approved ",
+            id="rationale-edited",
+        ),
+        pytest.param(
             {
-                ("corp-legal-tracker", "LEGAL-DECISION-0042"): {
+                "approved_by": {
                     "principal_id": "legal-user-123",
-                    "evidence_hashes": [hashlib.sha256(b"LEGAL-DECISION-0042").hexdigest()],
-                    "status": bad_status,
+                    "display_name": "A. Legal",
+                    "role": "Legal Counsel",
                 }
-            }
+            },
+            "authoritative approved content digest mismatch: approved ",
+            id="approver-display-edited",
+        ),
+    ],
+)
+def test_negative_candidate_drift_from_approved_content_rejected(
+    overrides: dict, expected_prefix: str, tmp_path: Path
+) -> None:
+    """Each candidate is re-sealed and still binds the installed purl, the case and
+    the pinned release, so it clears every repository-local check; it is refused
+    only because it is not the entry the fixed authoritative record approved."""
+    candidate = _receipt_bound_exemption(**overrides)
+    _clears_every_local_check(candidate, tmp_path, PSYCOPG3_COMPONENT)
+
+    reason = _refused_once(_evaluate_with(candidate, tmp_path))
+    assert reason.startswith(expected_prefix), reason
+
+
+def test_negative_candidate_widening_applicable_releases_rejected(tmp_path: Path) -> None:
+    """Adding a release the approval never covered still contains the pinned one,
+    so the local release check passes; the readback refuses the widened list."""
+    pinned = get_repo_release_digests(ROOT)["alfloop-dev/odayplus"]
+    candidate = _receipt_bound_exemption(applicable_releases=[pinned, "0" * 40])
+    _clears_every_local_check(candidate, tmp_path, PSYCOPG3_COMPONENT)
+
+    assert _refused_once(_evaluate_with(candidate, tmp_path)) == (
+        f"authoritative approval binds applicable_releases={[pinned]!r}; "
+        f"candidate carries {[pinned, '0' * 40]!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "field"),
+    [
+        pytest.param({"package": "psycopg-binary"}, "package", id="package"),
+        pytest.param({"purl": "pkg:npm/psycopg@3.3.4"}, "purl", id="purl-ecosystem"),
+        pytest.param({"license_or_finding": "LGPL-2.1-or-later"}, "license_or_finding", id="license"),
+        pytest.param({"scope": "dev"}, "scope", id="scope"),
+        pytest.param({"policy_case_id": "LGPL-MOOCORE"}, "policy_case_id", id="policy-case"),
+    ],
+)
+def test_negative_readback_binds_fields_the_local_policy_also_checks(
+    overrides: dict, field: str
+) -> None:
+    """The readback boundary binds package, purl, license, scope and case on its
+    own, independently of the repository-local policy checks that would also
+    catch these; a verifier must not rely on its caller having done so."""
+    verification = _verify(_receipt_bound_exemption(**overrides))
+    assert verification.verified is False
+    assert verification.error is not None
+    assert verification.error.startswith(f"authoritative approval binds {field}=")
+    assert f"candidate carries {overrides[field]!r}" in verification.error
+
+
+def test_digest_only_readback_binds_the_candidate(tmp_path: Path) -> None:
+    """A source that returns only the canonical digest of the approved entry still
+    binds the candidate: the digest is fixed, so a re-sealed edit cannot match it."""
+    approved_digest = exemption_content_sha256(_approved_content())
+    verifier = _fixed_verifier(approved_content=None, approved_content_sha256=approved_digest)
+
+    honoured = _evaluate_with(_receipt_bound_exemption(), tmp_path, authoritative_verifier=verifier)
+    assert honoured["status"] == "PASS", honoured["review_required"]
+    assert [component.name for component in honoured["allowed_with_obligations"]] == ["psycopg"]
+
+    candidate = _receipt_bound_exemption(purl="pkg:pypi/psycopg@3.3.5")
+    installed = Component("pypi", "psycopg", "3.3.5", "LGPL-3.0-only")
+    _clears_every_local_check(candidate, tmp_path, installed)
+    result = _evaluate_with(candidate, tmp_path, installed, authoritative_verifier=verifier)
+    assert _refused_once(result) == (
+        f"authoritative approved content digest mismatch: approved {approved_digest}, "
+        f"candidate {candidate['integrity']['content_sha256']}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("record_overrides", "expected_prefix"),
+    [
+        pytest.param(
+            {"approved_content": None},
+            "authoritative record carries no approved content binding",
+            id="no-content-binding",
+        ),
+        pytest.param(
+            {"approved_content": "psycopg@3.3.4"},
+            "authoritative approved_content is not an object",
+            id="content-not-an-object",
+        ),
+        pytest.param(
+            {"approved_content_sha256": "not-a-digest"},
+            "authoritative approved_content_sha256 is not a sha256 hex digest",
+            id="digest-malformed",
+        ),
+        pytest.param(
+            {"approved_content_sha256": "0" * 64},
+            "authoritative record is inconsistent: approved_content digest ",
+            id="content-and-digest-disagree",
+        ),
+        pytest.param(
+            {"principal_id": ""},
+            "authoritative record names no approver principal",
+            id="no-principal",
+        ),
+        pytest.param(
+            {"evidence_hashes": []},
+            "authoritative record holds no evidence hashes",
+            id="no-evidence-hashes",
+        ),
+    ],
+)
+def test_negative_incomplete_authoritative_record_rejected(
+    record_overrides: dict, expected_prefix: str, tmp_path: Path
+) -> None:
+    """A readback that lacks what binding needs is a refusal, never a pass."""
+    verifier = _fixed_verifier(**record_overrides)
+    result = _evaluate_with(_receipt_bound_exemption(), tmp_path, authoritative_verifier=verifier)
+    reason = _refused_once(result)
+    assert reason.startswith(expected_prefix), reason
+
+
+# --- R2: approval is explicit, never defaulted -------------------------------
+
+_MISSING = object()
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_reason"),
+    [
+        pytest.param(_MISSING, "authoritative approval status missing, expected APPROVED", id="missing"),
+        pytest.param(
+            None,
+            "authoritative approval status has invalid type NoneType, expected the string APPROVED",
+            id="null",
+        ),
+        pytest.param("", "authoritative approval status is empty, expected APPROVED", id="empty"),
+        pytest.param("   ", "authoritative approval status is empty, expected APPROVED", id="whitespace"),
+        pytest.param(
+            False,
+            "authoritative approval status has invalid type bool, expected the string APPROVED",
+            id="false",
+        ),
+        pytest.param(
+            True,
+            "authoritative approval status has invalid type bool, expected the string APPROVED",
+            id="true",
+        ),
+        pytest.param(
+            0,
+            "authoritative approval status has invalid type int, expected the string APPROVED",
+            id="zero",
+        ),
+        pytest.param(
+            1,
+            "authoritative approval status has invalid type int, expected the string APPROVED",
+            id="one",
+        ),
+        pytest.param(
+            ["APPROVED"],
+            "authoritative approval status has invalid type list, expected the string APPROVED",
+            id="list",
+        ),
+        pytest.param(
+            {"value": "APPROVED"},
+            "authoritative approval status has invalid type dict, expected the string APPROVED",
+            id="object",
+        ),
+        pytest.param(
+            "approved", "authoritative approval status is 'approved', expected APPROVED", id="lowercase"
+        ),
+        pytest.param(
+            " APPROVED ", "authoritative approval status is ' APPROVED ', expected APPROVED", id="padded"
+        ),
+        pytest.param("REVOKED", "authoritative approval status is 'REVOKED', expected APPROVED", id="revoked"),
+        pytest.param("REJECTED", "authoritative approval status is 'REJECTED', expected APPROVED", id="rejected"),
+        pytest.param("PENDING", "authoritative approval status is 'PENDING', expected APPROVED", id="pending"),
+        pytest.param(
+            "APPROVED_PENDING_REVIEW",
+            "authoritative approval status is 'APPROVED_PENDING_REVIEW', expected APPROVED",
+            id="approved-prefix",
+        ),
+    ],
+)
+def test_negative_authoritative_status_must_be_explicit_approved(
+    status: object, expected_reason: str, tmp_path: Path
+) -> None:
+    """Only the exact string APPROVED approves. A missing, null, empty, falsy or
+    wrongly typed status is refused rather than defaulted, and so is any other
+    string, whatever the principal and hashes say."""
+    record = _authoritative_record()
+    if status is _MISSING:
+        del record["status"]
+    else:
+        record["status"] = status
+    verifier = FixedAuthoritativeReceiptVerifier(
+        {(AUTHORITATIVE_SOURCE, AUTHORITATIVE_REFERENCE): record}
+    )
+    result = _evaluate_with(_receipt_bound_exemption(), tmp_path, authoritative_verifier=verifier)
+    assert _refused_once(result) == expected_reason
+
+
+# --- A broken readback is a refusal, not a pass --------------------------------
+
+
+class _RaisingVerifier:
+    def verify_exemption_receipt(self, **_: Any) -> AuthoritativeReceiptVerification:
+        raise RuntimeError("readback transport failed")
+
+
+class _UntypedVerifier:
+    def verify_exemption_receipt(self, **_: Any) -> Any:
+        return True
+
+
+class _MisaddressedVerifier:
+    def verify_exemption_receipt(self, **_: Any) -> AuthoritativeReceiptVerification:
+        return AuthoritativeReceiptVerification(
+            verified=True, source_system="other-tracker", approval_reference="OTHER-1"
         )
-        result = _evaluate_with(_receipt_bound_exemption(), tmp_path, authoritative_verifier=verifier)
-        assert result["status"] == "FAIL"
-        reasons = _refusals(result)
-        assert len(reasons) == 1 and f"authoritative approval status is {bad_status}" in reasons[0], reasons
+
+
+@pytest.mark.parametrize(
+    ("verifier", "expected_reason"),
+    [
+        pytest.param(
+            _RaisingVerifier(),
+            "authoritative approval verification raised RuntimeError: readback transport failed",
+            id="raises",
+        ),
+        pytest.param(
+            _UntypedVerifier(),
+            "authoritative approval verification returned bool, not an AuthoritativeReceiptVerification",
+            id="untyped-result",
+        ),
+        pytest.param(
+            _MisaddressedVerifier(),
+            "authoritative approval verification answered for 'OTHER-1' in 'other-tracker', "
+            "not 'LEGAL-DECISION-0042' in 'corp-legal-tracker'",
+            id="answers-for-another-receipt",
+        ),
+    ],
+)
+def test_negative_broken_readback_is_not_a_pass(
+    verifier: Any, expected_reason: str, tmp_path: Path
+) -> None:
+    result = _evaluate_with(_receipt_bound_exemption(), tmp_path, authoritative_verifier=verifier)
+    assert _refused_once(result) == expected_reason
 
 
 # -----------------------------------------------------------------------------
@@ -1083,7 +1422,7 @@ def test_negative_required_receipt_fields_missing_or_blank_rejected(
             PSYCOPG3_COMPONENT.license,
             review_cases=review_cases,
             release_digest=get_repo_release_digests(ROOT)["alfloop-dev/odayplus"],
-            authoritative_verifier=_default_verifier_for(sealed_entry),
+            authoritative_verifier=_fixed_verifier(),
         )
         assert reason is not None and expected_reason in reason, reason
         return
@@ -1183,3 +1522,25 @@ def test_reconcile_cli_names_components_awaiting_adjudication() -> None:
     assert "components awaiting adjudication" in res.stderr
     assert "psycopg (3.3.4): Review required license: LGPL-3.0-only" in res.stderr
 
+
+def test_reconcile_cli_injects_no_verifier_and_refuses_a_complete_candidate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The CLI has no authoritative readback client. A register entry that passes
+    every repository-local check for the installed psycopg is still refused, the
+    gate stays FAIL, the refusal is printed, and nothing is written."""
+    register = tmp_path / "license_exemptions.json"
+    register.write_text(
+        json.dumps({"exemptions": [_receipt_bound_exemption()]}), encoding="utf-8"
+    )
+    notice = tmp_path / "NOTICE-THIRD-PARTY.md"
+    monkeypatch.setattr("delivery_toolchain.security.generate_oss_notice.EXEMPTIONS_PATH", register)
+    monkeypatch.setattr("delivery_toolchain.security.generate_oss_notice.OUTPUT_PATH", notice)
+    monkeypatch.setattr(sys, "argv", ["generate_oss_notice.py", "--reconcile"])
+
+    assert main() == 1
+    err = capsys.readouterr().err
+    assert "components awaiting adjudication" in err
+    assert "psycopg (3.3.4): Review required license: LGPL-3.0-only" in err
+    assert f"exemption EX-TEST-PSYCOPG3 refused: {OFFLINE_REFUSAL}" in err
+    assert not notice.exists()
