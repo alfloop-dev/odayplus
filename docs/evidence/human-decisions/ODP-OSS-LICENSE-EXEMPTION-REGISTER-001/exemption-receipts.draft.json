@@ -1,0 +1,285 @@
+{
+  "$comment": "DRAFT — NOT IN FORCE. 本檔不被 licence gate 讀取；docs/security/license_exemptions.json 的 exemptions 維持空白，直到每一筆由具名簽核人透過外部權威系統補齊並封存。AI agent 不得填寫 approval_reference、source_system、evidence_hashes 或 integrity。",
+  "schema_version": "1.0.0",
+  "prepared_by_task": "ODP-OSS-LICENSE-EXEMPTION-REGISTER-001",
+  "prepared_at": "2026-09-23T04:13:27Z",
+  "target_register": "docs/security/license_exemptions.json",
+  "validator": "delivery_toolchain/security/generate_oss_notice.py::validate_exemption",
+  "transcription_source": {
+    "path": "support/handoffs/remaining-inputs-20260913/OSS-LICENSE-4-CASES-FOR-SIGNOFF.md",
+    "tracked_in_git": false,
+    "sha256": "4378244ac13d1b7b0846d7e820f37f1dd8fec011c84bc216c6c7f4d19cd664ac",
+    "decision_date": "2026-09-18",
+    "note": "操作者於互動工作階段提供決定內容與具名，由 Claude 謄錄；該檔自述非簽核人本人的數位簽署，不能替代驗證憑據。此 sha256 只標識謄錄版本，不證明核准。"
+  },
+  "release_digest_at_preparation": "a4d81f0524fe72e73c4c46773da86f11edfe8ad2",
+  "excluded": [
+    {
+      "package": "@img/sharp-wasm32",
+      "version": "0.35.4",
+      "license": "Apache-2.0 AND LGPL-3.0-or-later AND MIT",
+      "reason": "2026-09-18 簽核表只列七個具名套件、policy case LGPL-SHARP-LIBVIPS 只列兩個 linux libvips 套件，皆未涵蓋 wasm32；其授權為複合表達式、使用形態亦非 native shared library，需要一筆明確涵蓋 wasm32／版本／使用形態的裁示（或 policy case 擴充）才能登記。validate_exemption 會拒絕借用該 case 的登記。"
+    }
+  ],
+  "drafts": [
+    {
+      "exemption_id": "OSS-LGPL-SHARP-LIBVIPS-01",
+      "task_id": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+      "package": "@img/sharp-libvips-linux-x64",
+      "purl": "pkg:npm/@img/sharp-libvips-linux-x64@1.3.3",
+      "license_or_finding": "LGPL-3.0-or-later",
+      "scope": "prod",
+      "applicable_releases": [
+        "<封存時 docs/security/release_bindings.json 之 alfloop-dev/odayplus digest（40 hex）>"
+      ],
+      "rationale": "Next.js 影像最佳化經 sharp 動態載入 libvips 預編譯共享函式庫，未修改上游。四案共通條件：未修改上游二進位、僅動態連結、保留 NOTICE 揭露、提供原始碼取得管道。",
+      "policy_case_id": "LGPL-SHARP-LIBVIPS",
+      "approved_by": {
+        "principal_id": "bjoe734@gmail.com",
+        "display_name": "蔡尚志",
+        "role": "負責人",
+        "$as_transcribed": "依 2026-09-18 謄錄；principal_id 須由簽核人確認為權威身分系統中的識別，而非 repo 使用者名稱"
+      },
+      "approval_reference": "<外部權威系統中的核准紀錄識別（ticket / decision ID / 可回讀 URL），由簽核人本人填寫>",
+      "source_system": "<可回讀並驗證該核准紀錄的外部權威系統名稱；不得是 repository-local>",
+      "issued_at": "<簽核人封存時的 UTC 時間，格式 YYYY-MM-DDTHH:MM:SSZ，不得為未來>",
+      "expires_at": "<issued_at 起至多 90 天（rules.max_duration.proposed_days）>",
+      "review_at": "<issued_at 起 30 天（rules.review_cadence.proposed_days）>",
+      "conditions": [
+        "僅以未修改之上游二進位形式使用",
+        "僅以動態連結／共享函式庫載入方式使用，不靜態連結",
+        "保留 NOTICE-THIRD-PARTY.md 揭露並隨依賴變更同步",
+        "提供原始碼取得管道"
+      ],
+      "evidence_hashes": [
+        "<外部核准紀錄內容的 sha256 hex digest，至少一筆>"
+      ],
+      "integrity": {
+        "algorithm": "sha256",
+        "content_sha256": "<封存時以 exemption_content_sha256 計算，見 README 第 4 節>"
+      }
+    },
+    {
+      "exemption_id": "OSS-LGPL-SHARP-LIBVIPS-02",
+      "task_id": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+      "package": "@img/sharp-libvips-linuxmusl-x64",
+      "purl": "pkg:npm/@img/sharp-libvips-linuxmusl-x64@1.3.3",
+      "license_or_finding": "LGPL-3.0-or-later",
+      "scope": "prod",
+      "applicable_releases": [
+        "<封存時 docs/security/release_bindings.json 之 alfloop-dev/odayplus digest（40 hex）>"
+      ],
+      "rationale": "Next.js 影像最佳化經 sharp 動態載入 libvips 預編譯共享函式庫，未修改上游。四案共通條件：未修改上游二進位、僅動態連結、保留 NOTICE 揭露、提供原始碼取得管道。",
+      "policy_case_id": "LGPL-SHARP-LIBVIPS",
+      "approved_by": {
+        "principal_id": "bjoe734@gmail.com",
+        "display_name": "蔡尚志",
+        "role": "負責人",
+        "$as_transcribed": "依 2026-09-18 謄錄；principal_id 須由簽核人確認為權威身分系統中的識別，而非 repo 使用者名稱"
+      },
+      "approval_reference": "<外部權威系統中的核准紀錄識別（ticket / decision ID / 可回讀 URL），由簽核人本人填寫>",
+      "source_system": "<可回讀並驗證該核准紀錄的外部權威系統名稱；不得是 repository-local>",
+      "issued_at": "<簽核人封存時的 UTC 時間，格式 YYYY-MM-DDTHH:MM:SSZ，不得為未來>",
+      "expires_at": "<issued_at 起至多 90 天（rules.max_duration.proposed_days）>",
+      "review_at": "<issued_at 起 30 天（rules.review_cadence.proposed_days）>",
+      "conditions": [
+        "僅以未修改之上游二進位形式使用",
+        "僅以動態連結／共享函式庫載入方式使用，不靜態連結",
+        "保留 NOTICE-THIRD-PARTY.md 揭露並隨依賴變更同步",
+        "提供原始碼取得管道"
+      ],
+      "evidence_hashes": [
+        "<外部核准紀錄內容的 sha256 hex digest，至少一筆>"
+      ],
+      "integrity": {
+        "algorithm": "sha256",
+        "content_sha256": "<封存時以 exemption_content_sha256 計算，見 README 第 4 節>"
+      }
+    },
+    {
+      "exemption_id": "OSS-LGPL-MOOCORE-03",
+      "task_id": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+      "package": "moocore",
+      "purl": "pkg:pypi/moocore@0.3.2",
+      "license_or_finding": "LGPL-2.1-or-later",
+      "scope": "prod",
+      "applicable_releases": [
+        "<封存時 docs/security/release_bindings.json 之 alfloop-dev/odayplus digest（40 hex）>"
+      ],
+      "rationale": "pymoo 多目標最佳化函式庫之編譯 C/C++ 核心，以擴充模組形式動態載入。條件同四案共通條件。",
+      "policy_case_id": "LGPL-MOOCORE",
+      "approved_by": {
+        "principal_id": "bjoe734@gmail.com",
+        "display_name": "蔡尚志",
+        "role": "負責人",
+        "$as_transcribed": "依 2026-09-18 謄錄；principal_id 須由簽核人確認為權威身分系統中的識別，而非 repo 使用者名稱"
+      },
+      "approval_reference": "<外部權威系統中的核准紀錄識別（ticket / decision ID / 可回讀 URL），由簽核人本人填寫>",
+      "source_system": "<可回讀並驗證該核准紀錄的外部權威系統名稱；不得是 repository-local>",
+      "issued_at": "<簽核人封存時的 UTC 時間，格式 YYYY-MM-DDTHH:MM:SSZ，不得為未來>",
+      "expires_at": "<issued_at 起至多 90 天（rules.max_duration.proposed_days）>",
+      "review_at": "<issued_at 起 30 天（rules.review_cadence.proposed_days）>",
+      "conditions": [
+        "僅以未修改之上游二進位形式使用",
+        "僅以動態連結／共享函式庫載入方式使用，不靜態連結",
+        "保留 NOTICE-THIRD-PARTY.md 揭露並隨依賴變更同步",
+        "提供原始碼取得管道"
+      ],
+      "evidence_hashes": [
+        "<外部核准紀錄內容的 sha256 hex digest，至少一筆>"
+      ],
+      "integrity": {
+        "algorithm": "sha256",
+        "content_sha256": "<封存時以 exemption_content_sha256 計算，見 README 第 4 節>"
+      }
+    },
+    {
+      "exemption_id": "OSS-LGPL-PSYCOPG3-04",
+      "task_id": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+      "package": "psycopg",
+      "purl": "pkg:pypi/psycopg@3.3.4",
+      "license_or_finding": "LGPL-3.0-only",
+      "scope": "prod",
+      "applicable_releases": [
+        "<封存時 docs/security/release_bindings.json 之 alfloop-dev/odayplus digest（40 hex）>"
+      ],
+      "rationale": "production 主要 PostgreSQL 驅動與連線池，直接依賴。LGPL-3.0-only 且無連結例外條款，故「提供原始碼取得管道」為實質義務而非形式。本豁免成立於「以未修改二進位動態連結於 production Python runtime」之前提；若改為靜態連結、修改上游、或隨產品散布給第三方，本豁免即不適用，須重新裁示。",
+      "policy_case_id": "LGPL-PSYCOPG3",
+      "approved_by": {
+        "principal_id": "bjoe734@gmail.com",
+        "display_name": "蔡尚志",
+        "role": "負責人",
+        "$as_transcribed": "依 2026-09-18 謄錄；principal_id 須由簽核人確認為權威身分系統中的識別，而非 repo 使用者名稱"
+      },
+      "approval_reference": "<外部權威系統中的核准紀錄識別（ticket / decision ID / 可回讀 URL），由簽核人本人填寫>",
+      "source_system": "<可回讀並驗證該核准紀錄的外部權威系統名稱；不得是 repository-local>",
+      "issued_at": "<簽核人封存時的 UTC 時間，格式 YYYY-MM-DDTHH:MM:SSZ，不得為未來>",
+      "expires_at": "<issued_at 起至多 90 天（rules.max_duration.proposed_days）>",
+      "review_at": "<issued_at 起 30 天（rules.review_cadence.proposed_days）>",
+      "conditions": [
+        "僅以未修改之上游二進位形式使用",
+        "僅以動態連結／共享函式庫載入方式使用，不靜態連結",
+        "保留 NOTICE-THIRD-PARTY.md 揭露並隨依賴變更同步",
+        "提供原始碼取得管道"
+      ],
+      "evidence_hashes": [
+        "<外部核准紀錄內容的 sha256 hex digest，至少一筆>"
+      ],
+      "integrity": {
+        "algorithm": "sha256",
+        "content_sha256": "<封存時以 exemption_content_sha256 計算，見 README 第 4 節>"
+      }
+    },
+    {
+      "exemption_id": "OSS-LGPL-PSYCOPG3-05",
+      "task_id": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+      "package": "psycopg-binary",
+      "purl": "pkg:pypi/psycopg-binary@3.3.4",
+      "license_or_finding": "LGPL-3.0-only",
+      "scope": "prod",
+      "applicable_releases": [
+        "<封存時 docs/security/release_bindings.json 之 alfloop-dev/odayplus digest（40 hex）>"
+      ],
+      "rationale": "production 主要 PostgreSQL 驅動與連線池，直接依賴。LGPL-3.0-only 且無連結例外條款，故「提供原始碼取得管道」為實質義務而非形式。本豁免成立於「以未修改二進位動態連結於 production Python runtime」之前提；若改為靜態連結、修改上游、或隨產品散布給第三方，本豁免即不適用，須重新裁示。",
+      "policy_case_id": "LGPL-PSYCOPG3",
+      "approved_by": {
+        "principal_id": "bjoe734@gmail.com",
+        "display_name": "蔡尚志",
+        "role": "負責人",
+        "$as_transcribed": "依 2026-09-18 謄錄；principal_id 須由簽核人確認為權威身分系統中的識別，而非 repo 使用者名稱"
+      },
+      "approval_reference": "<外部權威系統中的核准紀錄識別（ticket / decision ID / 可回讀 URL），由簽核人本人填寫>",
+      "source_system": "<可回讀並驗證該核准紀錄的外部權威系統名稱；不得是 repository-local>",
+      "issued_at": "<簽核人封存時的 UTC 時間，格式 YYYY-MM-DDTHH:MM:SSZ，不得為未來>",
+      "expires_at": "<issued_at 起至多 90 天（rules.max_duration.proposed_days）>",
+      "review_at": "<issued_at 起 30 天（rules.review_cadence.proposed_days）>",
+      "conditions": [
+        "僅以未修改之上游二進位形式使用",
+        "僅以動態連結／共享函式庫載入方式使用，不靜態連結",
+        "保留 NOTICE-THIRD-PARTY.md 揭露並隨依賴變更同步",
+        "提供原始碼取得管道"
+      ],
+      "evidence_hashes": [
+        "<外部核准紀錄內容的 sha256 hex digest，至少一筆>"
+      ],
+      "integrity": {
+        "algorithm": "sha256",
+        "content_sha256": "<封存時以 exemption_content_sha256 計算，見 README 第 4 節>"
+      }
+    },
+    {
+      "exemption_id": "OSS-LGPL-PSYCOPG3-06",
+      "task_id": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+      "package": "psycopg-pool",
+      "purl": "pkg:pypi/psycopg-pool@3.3.1",
+      "license_or_finding": "LGPL-3.0-only",
+      "scope": "prod",
+      "applicable_releases": [
+        "<封存時 docs/security/release_bindings.json 之 alfloop-dev/odayplus digest（40 hex）>"
+      ],
+      "rationale": "production 主要 PostgreSQL 驅動與連線池，直接依賴。LGPL-3.0-only 且無連結例外條款，故「提供原始碼取得管道」為實質義務而非形式。本豁免成立於「以未修改二進位動態連結於 production Python runtime」之前提；若改為靜態連結、修改上游、或隨產品散布給第三方，本豁免即不適用，須重新裁示。",
+      "policy_case_id": "LGPL-PSYCOPG3",
+      "approved_by": {
+        "principal_id": "bjoe734@gmail.com",
+        "display_name": "蔡尚志",
+        "role": "負責人",
+        "$as_transcribed": "依 2026-09-18 謄錄；principal_id 須由簽核人確認為權威身分系統中的識別，而非 repo 使用者名稱"
+      },
+      "approval_reference": "<外部權威系統中的核准紀錄識別（ticket / decision ID / 可回讀 URL），由簽核人本人填寫>",
+      "source_system": "<可回讀並驗證該核准紀錄的外部權威系統名稱；不得是 repository-local>",
+      "issued_at": "<簽核人封存時的 UTC 時間，格式 YYYY-MM-DDTHH:MM:SSZ，不得為未來>",
+      "expires_at": "<issued_at 起至多 90 天（rules.max_duration.proposed_days）>",
+      "review_at": "<issued_at 起 30 天（rules.review_cadence.proposed_days）>",
+      "conditions": [
+        "僅以未修改之上游二進位形式使用",
+        "僅以動態連結／共享函式庫載入方式使用，不靜態連結",
+        "保留 NOTICE-THIRD-PARTY.md 揭露並隨依賴變更同步",
+        "提供原始碼取得管道"
+      ],
+      "evidence_hashes": [
+        "<外部核准紀錄內容的 sha256 hex digest，至少一筆>"
+      ],
+      "integrity": {
+        "algorithm": "sha256",
+        "content_sha256": "<封存時以 exemption_content_sha256 計算，見 README 第 4 節>"
+      }
+    },
+    {
+      "exemption_id": "OSS-LGPL-PSYCOPG2-07",
+      "task_id": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+      "package": "psycopg2-binary",
+      "purl": "pkg:pypi/psycopg2-binary@2.9.12",
+      "license_or_finding": "LGPL with exceptions",
+      "scope": "prod",
+      "applicable_releases": [
+        "<封存時 docs/security/release_bindings.json 之 alfloop-dev/odayplus digest（40 hex）>"
+      ],
+      "rationale": "dlt[postgres] 使用之 PostgreSQL 驅動，上游 LGPL-3 附連結例外條款，裁示確認該例外條款可接受。條件同四案共通條件。",
+      "policy_case_id": "LGPL-PSYCOPG2",
+      "approved_by": {
+        "principal_id": "bjoe734@gmail.com",
+        "display_name": "蔡尚志",
+        "role": "負責人",
+        "$as_transcribed": "依 2026-09-18 謄錄；principal_id 須由簽核人確認為權威身分系統中的識別，而非 repo 使用者名稱"
+      },
+      "approval_reference": "<外部權威系統中的核准紀錄識別（ticket / decision ID / 可回讀 URL），由簽核人本人填寫>",
+      "source_system": "<可回讀並驗證該核准紀錄的外部權威系統名稱；不得是 repository-local>",
+      "issued_at": "<簽核人封存時的 UTC 時間，格式 YYYY-MM-DDTHH:MM:SSZ，不得為未來>",
+      "expires_at": "<issued_at 起至多 90 天（rules.max_duration.proposed_days）>",
+      "review_at": "<issued_at 起 30 天（rules.review_cadence.proposed_days）>",
+      "conditions": [
+        "僅以未修改之上游二進位形式使用",
+        "僅以動態連結／共享函式庫載入方式使用，不靜態連結",
+        "保留 NOTICE-THIRD-PARTY.md 揭露並隨依賴變更同步",
+        "提供原始碼取得管道"
+      ],
+      "evidence_hashes": [
+        "<外部核准紀錄內容的 sha256 hex digest，至少一筆>"
+      ],
+      "integrity": {
+        "algorithm": "sha256",
+        "content_sha256": "<封存時以 exemption_content_sha256 計算，見 README 第 4 節>"
+      }
+    }
+  ]
+}
