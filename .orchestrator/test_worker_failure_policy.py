@@ -1486,6 +1486,96 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
+    def _interrupted_merge_fixture(self):
+        (self.worktree / "task.py").write_text("value = 1\n")
+        _git_run(self.worktree, "add", "task.py")
+        _git_run(self.worktree, "commit", "-m", "task progress")
+        (self.repo / "upstream.py").write_text("upstream = 1\n")
+        _git_run(self.repo, "add", "upstream.py")
+        _git_run(self.repo, "commit", "-m", "upstream progress")
+        _git_run(self.repo, "push", "origin", "dev")
+        _git_run(self.worktree, "merge", "--no-commit", "dev")
+        (self.worktree / "README.md").write_text("unfinished owner change\n")
+        worker = {
+            "run_id": "run-merge", "provider": "antigravity2", "agent_id": "antigravity2",
+            "task_id": "TASK-SIBLING-001", "workspace_path": str(self.worktree.resolve()),
+            "workspace_branch": "task/TASK-SIBLING-001", "workspace_mode": "isolated_worktree",
+            "reason": "owned_ready_dispatch", "status": "running", "pid": 999999,
+            "queue_event_id": "evt-merge",
+        }
+        state = {"workers": {"run-merge": worker}, "queue": {"events": {"evt-merge": {"status": "started"}}}}
+        return worker, state
+
+    def test_interrupted_merge_fence_preserves_and_dispatches_successor(self):
+        worker, state = self._interrupted_merge_fixture()
+        original_head = _git_run(self.worktree, "rev-parse", "HEAD")
+        original_merge = _git_run(self.worktree, "rev-parse", "MERGE_HEAD")
+        original_index = _git_run(self.worktree, "ls-files", "--stage")
+        with (mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+              mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+              mock.patch("status_transition.sync_status_pipeline", return_value=True)):
+            settled = worker_failure_policy._settle_fenced_sibling_worker(
+                self.config, state, worker, "antigravity_main", "Individual quota reached")
+        self.assertTrue(settled)
+        self.assertEqual(worker["status"], "reassigned")
+        self.assertIsNone(worker.get("pending_fence"))
+        self.assertEqual(worker["reassigned_to"], "Codex")
+        self.assertEqual(_git_run(self.worktree, "rev-parse", "HEAD"), original_head)
+        self.assertEqual(_git_run(self.worktree, "rev-parse", "MERGE_HEAD"), original_merge)
+        self.assertEqual(_git_run(self.worktree, "ls-files", "--stage"), original_index)
+        backup = next((self.root / ".orchestrator/worktree-dirt-backups").iterdir())
+        self.assertEqual((backup / "git-state/MERGE_HEAD").read_text().strip(), original_merge)
+        self.assertTrue((backup / "git-state/index").is_file())
+        self.assertEqual((backup / "files/README.md").read_text(), "unfinished owner change\n")
+        request = DeliveryRequest(agent_id="codex", provider="codex", delivery_mode="codex", message="resume",
+                                  task_id="TASK-SIBLING-001", reason="owned_ready_dispatch")
+        ok, error = worker_workspace.prepare_worker_workspace(self.config, state, request, queue_event_id="evt-resume", target_agent="Codex")
+        self.assertTrue(ok, error)
+        self.assertEqual(request.metadata["worktree_continuation"], "sealed_owner_merge")
+        self.assertIn("INTERRUPTED MERGE RECOVERY", request.message)
+        self.assertEqual(_git_run(self.worktree, "rev-parse", "MERGE_HEAD"), original_merge)
+
+    def test_interrupted_merge_seal_rejects_changed_metadata_or_index(self):
+        worker, state = self._interrupted_merge_fixture()
+        task = self.status_data["tasks"][0]
+        outcome = worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=task)
+        self.assertTrue(outcome)
+        request = DeliveryRequest(agent_id="antigravity2", provider="antigravity2", delivery_mode="antigravity", message="resume",
+                                  task_id="TASK-SIBLING-001", reason="owned_ready_dispatch")
+        def allowed():
+            return worker_workspace.sealed_owner_continuation_allowed(self.config, state, request, task,
+                target_agent="Antigravity2", worktree_path=self.worktree, branch="task/TASK-SIBLING-001")
+        self.assertTrue(allowed()[0])
+        merge_msg = Path(_git_run(self.worktree, "rev-parse", "--git-path", "MERGE_MSG"))
+        original = merge_msg.read_bytes()
+        merge_msg.write_bytes(original + b"changed\n")
+        self.assertEqual(allowed(), (False, "merge_state_changed"))
+        merge_msg.write_bytes(original)
+        self.assertTrue(allowed()[0])
+        _git_run(self.worktree, "add", "README.md")
+        self.assertEqual(allowed(), (False, "merge_state_changed"))
+
+    def test_interrupted_merge_seal_rejects_reviewer_helper_and_foreign_owner(self):
+        worker, state = self._interrupted_merge_fixture()
+        task = self.status_data["tasks"][0]
+        self.assertTrue(worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=task))
+        for reason, target in [("review_ready_dispatch", "Antigravity2"), ("helper_claim_dispatch", "Antigravity2"), ("owned_ready_dispatch", "Claude")]:
+            with self.subTest(reason=reason, target=target):
+                request = DeliveryRequest(agent_id="antigravity2", provider="antigravity2", delivery_mode="antigravity", message="resume",
+                                          task_id="TASK-SIBLING-001", reason=reason)
+                allowed, _ = worker_workspace.sealed_owner_continuation_allowed(self.config, state, request, task,
+                    target_agent=target, worktree_path=self.worktree, branch="task/TASK-SIBLING-001")
+                self.assertFalse(allowed)
+
+    def test_interrupted_merge_with_index_lock_remains_blocked(self):
+        worker, state = self._interrupted_merge_fixture()
+        lock = Path(_git_run(self.worktree, "rev-parse", "--git-path", "index.lock"))
+        lock.write_text("writer still holds index")
+        outcome = worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=self.status_data["tasks"][0])
+        self.assertFalse(outcome)
+        self.assertEqual(outcome.reason, "git_operation_in_progress")
+        self.assertFalse(state.get("worker_worktrees", {}).get("handoff_blocks"))
+
     def test_sibling_quota_fence_preserves_dirty_worktree_and_authorizes_successor_lease_continuation(self) -> None:
         """E2E: Sibling worker dirty changes (staged, unstaged, untracked) are backed up, sealed, and handed off to authorized successor via prepare_worker_workspace."""
         # Create uncommitted staged, unstaged, and untracked work in the sibling's isolated worktree
