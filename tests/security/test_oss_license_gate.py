@@ -8,6 +8,7 @@ import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -20,8 +21,6 @@ from delivery_toolchain.security.attestation import (
     verify_attestation,
 )
 from delivery_toolchain.security.generate_oss_notice import (
-    AuthoritativeReceiptVerification,
-    AuthoritativeReceiptVerifier,
     Component,
     FixedAuthoritativeReceiptVerifier,
     collect_npm,
