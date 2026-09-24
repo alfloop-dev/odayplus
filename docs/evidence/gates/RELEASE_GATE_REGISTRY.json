@@ -400,6 +400,7 @@
       "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/35944616693",
       "event": "workflow_dispatch",
       "phase": "build",
+      "conclusion": "success",
       "release_sha_input": "1364363402900c800ec3ed033d38fd1d757c1f10",
       "deploy_jobs": "skipped (no Supervisor lease was supplied; nothing was deployed)"
     },

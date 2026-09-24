@@ -1,7 +1,7 @@
 # Gate 4 (Security and Privacy Gate) — receipt for candidate 1364363402900c800ec3ed033d38fd1d757c1f10
 
 - **Task**: `ODP-DEV-RELEASE-GATE-RECONCILIATION-005`
-- **Recorded by**: Claude (owner of this reconciliation task)
+- **Recorded by**: Antigravity7 (reconciliation owner; initially recorded by Claude)
 - **Gate owner of record**: Claude / reviewer Antigravity2
 - **Result**: pass, **with a recorded deviation** (see `deviation` on gate-4 in the registry)
 - **Candidate**: `1364363402900c800ec3ed033d38fd1d757c1f10`
@@ -10,13 +10,13 @@
 ## Measurement on this candidate
 
 `product-security` job [107457164906](https://github.com/alfloop-dev/odayplus/actions/runs/35943771029/job/107457164906):
-**464 passed** in 178.02s, job conclusion `success`. That suite carries secret scanning,
+**464 passed** in 172.13s, job conclusion `success`. That suite carries secret scanning,
 SAST, the RBAC/ABAC matrix, audit-retention and privacy tests, the SBOM/NOTICE tests, and
 the OSS licence gate tests.
 
 Production dependency audit, from the release build's own receipt
 (`npm-audit-receipt.json`, produced by Runtime Release run 35944616693 at
-2026-09-23T16:13:07Z with `omit_dev: true`):
+2026-09-24T01:50:33Z with `omit_dev: true`):
 
 ```
 critical 0, high 0, moderate 0, low 0, info 0

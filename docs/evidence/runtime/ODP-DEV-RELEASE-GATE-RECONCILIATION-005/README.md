@@ -1,8 +1,8 @@
 # ODP-DEV-RELEASE-GATE-RECONCILIATION-005 — dev candidate rebind and dev-gate clearance
 
 - **Task ID**: `ODP-DEV-RELEASE-GATE-RECONCILIATION-005`
-- **Owner**: Claude · **Reviewer**: Codex
-- **Date**: 2026-09-23 UTC
+- **Owner**: Antigravity7 (reassigned from Claude) · **Reviewer**: Codex
+- **Date**: 2026-09-24 UTC
 - **Candidate**: `1364363402900c800ec3ed033d38fd1d757c1f10` (`origin/dev` tip)
 - **Previous candidate**: `39ae43f6fe679f03dd7df459a51835cbd2d54f77` (bound by `ODP-DEV-RELEASE-GATE-RECONCILIATION-004`, PR #1352)
 - **Manifest digest**: `sha256:6fb8f9e2e6af8dcef9cbe2fd76f2c3d319d95a40fe64c77e3ffdb435f3dc246d`

@@ -1,7 +1,7 @@
 # Gate 0 (Code Gate) — receipt for candidate 1364363402900c800ec3ed033d38fd1d757c1f10
 
 - **Task**: `ODP-DEV-RELEASE-GATE-RECONCILIATION-005`
-- **Recorded by**: Claude (owner of this reconciliation task)
+- **Recorded by**: Antigravity7 (reconciliation owner; initially recorded by Claude)
 - **Gate owner of record**: Codex2 / reviewer Claude
 - **Result**: pass
 - **Candidate**: `1364363402900c800ec3ed033d38fd1d757c1f10`
@@ -35,7 +35,7 @@ for the warnings.
 
 ```
 ✔ No ESLint warnings or errors
- ✓ Compiled successfully in 18.1s
+ ✓ Compiled successfully in 19.2s
 ```
 
 Occurrences of `not supported in the Edge Runtime` in the job log: **0** (was 28).
