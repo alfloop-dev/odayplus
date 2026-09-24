@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import json
 import os
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -1905,6 +1907,226 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
         self.assertEqual(outcome.reason, "status_unreadable")
         self.assertFalse(state.get("worker_worktrees", {}).get("handoff_blocks"))
         _git_run(self.worktree, "config", "--unset", "status.showUntrackedFiles")
+
+    def _merge_snapshot_without_raw_index(self) -> dict[str, bytes]:
+        snapshot = worker_workspace._interrupted_merge_snapshot(self.worktree)
+        self.assertIsNotNone(snapshot)
+        return {name: data for name, data in snapshot.items() if name != "index"}
+
+    def test_interrupted_merge_seal_rejects_executable_mode_drift(self):
+        """R5: chmod +x on an already-dirty file leaves porcelain, HEAD, logical index, merge
+        metadata and bytes untouched; Git still records the mode change, so the seal must reject it."""
+        worker, state = self._interrupted_merge_fixture()
+        task = self.status_data["tasks"][0]
+        readme = self.worktree / "README.md"
+        hardlink = self.worktree / "hardlink_readme.md"
+        os.link(readme, hardlink)
+        mode_before = stat.S_IMODE(readme.lstat().st_mode)
+        self.assertFalse(mode_before & stat.S_IXUSR)
+
+        self.assertTrue(worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=task))
+        record = state["worker_worktrees"]["handoff_blocks"]["TASK-SIBLING-001"]
+        self.assertEqual(record["reason"], "interrupted_merge")
+        sealed_record = dict(record)
+        sealed_identity = self._worktree_identity()
+        sealed_snapshot = self._merge_snapshot_without_raw_index()
+        self.assertTrue(self._owner_seal_allowed(state, task)[0])
+        ok, error, request = self._owner_lease(state)
+        self.assertTrue(ok, error)
+        self.assertEqual(request.metadata["worktree_continuation"], "sealed_owner_merge")
+
+        for label, chmod_path in (("direct", readme), ("hardlink", hardlink)):
+            with self.subTest(drift=label):
+                os.chmod(chmod_path, mode_before | stat.S_IXUSR)
+                # Only the mode moved: same porcelain code, HEAD, logical index, bytes and merge metadata.
+                self.assertEqual(self._worktree_identity(), sealed_identity)
+                self.assertEqual(self._merge_snapshot_without_raw_index(), sealed_snapshot)
+                self.assertIn("mode change 100644 => 100755 README.md", _git_run(self.worktree, "diff", "--summary"))
+
+                self.assertEqual(self._owner_seal_allowed(state, task), (False, "merge_state_changed"))
+                ok, error, request = self._owner_lease(state)
+                self.assertFalse(ok)
+                self.assertNotIn("worktree_continuation", request.metadata)
+                self.assertEqual(state["worker_worktrees"]["handoff_blocks"]["TASK-SIBLING-001"], sealed_record)
+                self.assertEqual(self._worktree_identity(), sealed_identity)
+
+                os.chmod(chmod_path, mode_before)
+                self.assertEqual(_git_run(self.worktree, "diff", "--summary"), "")
+                self.assertTrue(self._owner_seal_allowed(state, task)[0])
+                ok, error, request = self._owner_lease(state)
+                self.assertTrue(ok, error)
+                self.assertEqual(request.metadata["worktree_continuation"], "sealed_owner_merge")
+
+        # A stat-cache refresh with neither content nor mode change must keep the seal:
+        # mtime, ctime and the raw index are intentionally not part of the binding.
+        os.utime(readme, None)
+        _git_run(self.worktree, "status", "--porcelain=v1")
+        self.assertTrue(self._owner_seal_allowed(state, task)[0])
+        ok, error, request = self._owner_lease(state)
+        self.assertTrue(ok, error)
+        self.assertEqual(request.metadata["worktree_continuation"], "sealed_owner_merge")
+
+    def test_interrupted_merge_seal_binds_nested_repository_head_and_dirt(self):
+        """A submodule keeps the porcelain code ` M` whether its HEAD moves or its own files change;
+        the seal binds the nested HEAD and dirty entries, and fails closed when they cannot be read."""
+        subrepo = self.root / "subrepo"
+        subrepo.mkdir()
+        _git_run(subrepo, "init", "--quiet")
+        _git_run(subrepo, "config", "user.email", "test@pantheon.local")
+        _git_run(subrepo, "config", "user.name", "Test Runner")
+        commits = []
+        for revision in range(3):
+            (subrepo / "lib.py").write_text(f"lib = {revision}\n")
+            _git_run(subrepo, "add", "lib.py")
+            _git_run(subrepo, "commit", "--quiet", "-m", f"lib {revision}")
+            commits.append(_git_run(subrepo, "rev-parse", "HEAD"))
+        _git_run(self.worktree, "-c", "protocol.file.allow=always", "submodule", "add", "--quiet", str(subrepo), "sub")
+        _git_run(self.worktree, "commit", "--quiet", "-m", "add submodule")
+        sub = self.worktree / "sub"
+        self.assertEqual(_git_run(sub, "rev-parse", "HEAD"), commits[2])
+
+        (self.repo / "upstream.py").write_text("upstream = 1\n")
+        _git_run(self.repo, "add", "upstream.py")
+        _git_run(self.repo, "commit", "-m", "upstream progress")
+        _git_run(self.repo, "push", "origin", "dev")
+        _git_run(self.worktree, "merge", "--no-commit", "dev")
+        _git_run(sub, "checkout", "--quiet", commits[1])
+        porcelain = subprocess.run(
+            ["git", "status", "--porcelain=v1"], cwd=self.worktree, capture_output=True, text=True, check=True
+        ).stdout
+        self.assertEqual(porcelain, " M sub\nA  upstream.py\n")
+
+        worker, state = self._sibling_worker_state()
+        task = self.status_data["tasks"][0]
+        self.assertTrue(worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=task))
+        record = state["worker_worktrees"]["handoff_blocks"]["TASK-SIBLING-001"]
+        self.assertEqual(record["reason"], "interrupted_merge")
+        sealed_record = dict(record)
+        sealed_identity = self._worktree_identity()
+        sealed_snapshot = self._merge_snapshot_without_raw_index()
+        self.assertTrue(self._owner_seal_allowed(state, task)[0])
+        ok, error, request = self._owner_lease(state)
+        self.assertTrue(ok, error)
+        self.assertEqual(request.metadata["worktree_continuation"], "sealed_owner_merge")
+
+        def restore_nested_checkout() -> None:
+            _git_run(sub, "checkout", "--quiet", "--", "lib.py")
+            _git_run(sub, "checkout", "--quiet", commits[1])
+
+        drifts = (
+            ("nested_head_moved", lambda: _git_run(sub, "checkout", "--quiet", commits[0])),
+            ("nested_file_edited", lambda: (sub / "lib.py").write_text("edited inside the submodule\n")),
+        )
+        for label, drift in drifts:
+            with self.subTest(drift=label):
+                drift()
+                # The superproject sees the same ` M sub`; HEAD, logical index and merge metadata are unchanged.
+                self.assertEqual(self._worktree_identity(), sealed_identity)
+                self.assertEqual(self._merge_snapshot_without_raw_index(), sealed_snapshot)
+
+                self.assertEqual(self._owner_seal_allowed(state, task), (False, "merge_state_changed"))
+                ok, error, request = self._owner_lease(state)
+                self.assertFalse(ok)
+                self.assertNotIn("worktree_continuation", request.metadata)
+                self.assertEqual(state["worker_worktrees"]["handoff_blocks"]["TASK-SIBLING-001"], sealed_record)
+
+                restore_nested_checkout()
+                self.assertTrue(self._owner_seal_allowed(state, task)[0])
+                ok, error, request = self._owner_lease(state)
+                self.assertTrue(ok, error)
+                self.assertEqual(request.metadata["worktree_continuation"], "sealed_owner_merge")
+
+    def test_interrupted_merge_seal_fails_closed_when_nested_repository_becomes_unreadable(self):
+        """An untracked nested checkout is one `??` entry to the superproject, whose status keeps
+        succeeding when the nested HEAD becomes unreadable; the seal must not treat that as unchanged."""
+        worker, state = self._interrupted_merge_fixture()
+        task = self.status_data["tasks"][0]
+        nested = self.worktree / "nested"
+        nested.mkdir()
+        _git_run(nested, "init", "--quiet")
+        _git_run(nested, "config", "user.email", "test@pantheon.local")
+        _git_run(nested, "config", "user.name", "Test Runner")
+        (nested / "lib.py").write_text("lib = 0\n")
+        _git_run(nested, "add", "lib.py")
+        _git_run(nested, "commit", "--quiet", "-m", "nested commit")
+        nested_branch = _git_run(nested, "symbolic-ref", "HEAD")
+        self.assertIn("?? nested/", _git_run(self.worktree, "status", "--porcelain=v1"))
+
+        self.assertTrue(worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=task))
+        record = state["worker_worktrees"]["handoff_blocks"]["TASK-SIBLING-001"]
+        self.assertEqual(record["reason"], "interrupted_merge")
+        sealed_record = dict(record)
+        sealed_identity = self._worktree_identity()
+        self.assertTrue(self._owner_seal_allowed(state, task)[0])
+        ok, error, request = self._owner_lease(state)
+        self.assertTrue(ok, error)
+        self.assertEqual(request.metadata["worktree_continuation"], "sealed_owner_merge")
+
+        _git_run(nested, "symbolic-ref", "HEAD", "refs/heads/unborn")
+        self.assertIsNone(worker_workspace._git_commit_oid(nested, "HEAD"))
+        self.assertEqual(self._worktree_identity(), sealed_identity)
+        self.assertEqual(inspect_worktree(self.worktree).kind, "owner_dirty")
+        self.assertIsNone(worker_workspace._interrupted_merge_worktree_fingerprint(self.worktree, inspect_worktree(self.worktree)))
+
+        self.assertEqual(self._owner_seal_allowed(state, task), (False, "merge_state_changed"))
+        ok, error, request = self._owner_lease(state)
+        self.assertFalse(ok)
+        self.assertNotIn("worktree_continuation", request.metadata)
+        self.assertEqual(state["worker_worktrees"]["handoff_blocks"]["TASK-SIBLING-001"], sealed_record)
+
+        _git_run(nested, "symbolic-ref", "HEAD", nested_branch)
+        self.assertTrue(self._owner_seal_allowed(state, task)[0])
+        ok, error, request = self._owner_lease(state)
+        self.assertTrue(ok, error)
+        self.assertEqual(request.metadata["worktree_continuation"], "sealed_owner_merge")
+
+    def test_interrupted_merge_backup_checksums_directory_symlink_by_target(self):
+        """Every preserved symlink is checksummed by target, including one that resolves to a
+        directory inside the backup, which os.walk lists under directory names and never descends."""
+        (self.worktree / "docs").mkdir()
+        (self.worktree / "docs" / "notes.md").write_text("tracked note\n")
+        _git_run(self.worktree, "add", "docs/notes.md")
+        _git_run(self.worktree, "commit", "--quiet", "-m", "add docs")
+        worker, state = self._interrupted_merge_fixture()
+        task = self.status_data["tasks"][0]
+        (self.worktree / "docs" / "notes.md").write_text("edited note\n")
+        (self.worktree / "docs_link").symlink_to("docs")
+        porcelain = _git_run(self.worktree, "status", "--porcelain=v1")
+        self.assertIn("M docs/notes.md", porcelain)
+        self.assertIn("?? docs_link", porcelain)
+
+        self.assertTrue(worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=task))
+        backup = next((self.root / ".orchestrator/worktree-dirt-backups").iterdir())
+        link_copy = backup / "files" / "docs_link"
+        self.assertTrue(os.path.islink(link_copy))
+        self.assertEqual(os.readlink(link_copy), "docs")
+        self.assertTrue((backup / "files" / "docs" / "notes.md").is_file())
+        self.assertTrue(link_copy.is_dir(), "the preserved link resolves to a directory inside the backup")
+        checksums = json.loads((backup / "backup_checksums.sha256").read_text(encoding="utf-8"))
+        self.assertEqual(checksums["files/docs_link"], "symlink:" + hashlib.sha256(b"docs").hexdigest())
+        self.assertEqual(checksums["files/docs/notes.md"], hashlib.sha256(b"edited note\n").hexdigest())
+        for rel_path, digest_value in checksums.items():
+            candidate = backup / rel_path
+            if digest_value.startswith("symlink:"):
+                self.assertTrue(os.path.islink(candidate), rel_path)
+            else:
+                self.assertTrue(candidate.is_file(), rel_path)
+
+    def test_interrupted_merge_seal_refuses_when_nested_repository_is_unreadable_at_seal_time(self):
+        """If a nested checkout's state cannot be read when the worker dies, no interrupted_merge
+        continuation seal is recorded; the plain git_operation_in_progress refusal stands."""
+        worker, state = self._interrupted_merge_fixture()
+        task = self.status_data["tasks"][0]
+        nested = self.worktree / "nested"
+        nested.mkdir()
+        _git_run(nested, "init", "--quiet")
+        self.assertIsNone(worker_workspace._git_commit_oid(nested, "HEAD"))
+        self.assertIn("?? nested/", _git_run(self.worktree, "status", "--porcelain=v1"))
+
+        outcome = worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=task)
+        self.assertTrue(outcome)
+        self.assertFalse(state.get("worker_worktrees", {}).get("handoff_blocks"))
+        self.assertEqual(self._owner_seal_allowed(state, task), (False, "no_handoff_block"))
 
     def test_sibling_quota_fence_preserves_dirty_worktree_and_authorizes_successor_lease_continuation(self) -> None:
         """E2E: Sibling worker dirty changes (staged, unstaged, untracked) are backed up, sealed, and handed off to authorized successor via prepare_worker_workspace."""

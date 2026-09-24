@@ -55,7 +55,7 @@ content edit after the seal, a stat-cache refresh, a revert in progress, and fen
 successor dispatch on a conflicted merge) behaved as this runbook describes. Details:
 `docs/evidence/completion/ODP-ORCH-AUTONOMOUS-RECOVERY-001/`.
 
-## Review fixes (2026-09-24, ODP-ORCH-AUTONOMOUS-RECOVERY-001, Codex2 findings R1/R2/R3/R4)
+## Review fixes (2026-09-24, ODP-ORCH-AUTONOMOUS-RECOVERY-001, Codex2 findings R1–R5)
 
 - An ordinary dirty seal (`owner_dirty`) never resumes a checkout that has a Git
   operation attached. A cherry-pick, revert or rebase started after the seal can
@@ -76,9 +76,21 @@ successor dispatch on a conflicted merge) behaved as this runbook describes. Det
   fallbacks. Symlink target drift and hardlinked file byte drift after sealing
   are detected and rejected, preserving strict state-drift rejection. Dirty tracked
   symlinks are also preserved and checksummed under `files/` during backup.
-- In `_interrupted_merge_worktree_fingerprint`, `inspection.kind` is explicitly bound
-  and `status_failed` returns a dedicated failure token rather than an empty digest.
-  Interrupted merge continuation and sealing fail closed on git status failure (`status_failed`),
-  preventing status read failures on empty porcelain merges from being mistakenly accepted
-  as exact clean state. Tracked directory symlinks are recorded in the manifest; file symlinks
-  under `files/` are checksummed.
+- `_interrupted_merge_worktree_fingerprint` binds `inspection.kind`, so an empty
+  porcelain listing and a failed `git status` never hash alike. Interrupted merge
+  sealing and continuation fail closed whenever the working-file state cannot be
+  read exactly (the fingerprint is `None`): no `interrupted_merge` seal is recorded
+  at worker death, and an existing seal answers `merge_state_changed`.
+- The seal binds every dirty entry the way Git tracks it: a regular file by its
+  Git mode (`100644` or `100755`, derived from the owner execute bit) and its bytes,
+  hardlinked inodes included; a symlink by its target; a nested repository
+  (a submodule gitlink or an untracked checkout) by its HEAD and its own dirty
+  entries. A `chmod +x` on an already-dirty file, or a submodule moved to another
+  commit, leaves the porcelain code unchanged and is still rejected. mtime, ctime
+  and the raw index stat cache are deliberately not bound, so a stat refresh keeps
+  a legitimate continuation.
+- Backup `files/`: dirty regular files are copied byte for byte; dirty symlinks are
+  re-created with their target and also recorded in the manifest.
+  `backup_checksums.sha256` covers every entry: file copies by content hash and
+  every symlink by its target, including a symlink that resolves to a directory
+  inside the backup (the checksum walk lists it but never descends into it).
