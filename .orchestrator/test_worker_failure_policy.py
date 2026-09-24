@@ -1576,6 +1576,193 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
         self.assertEqual(outcome.reason, "git_operation_in_progress")
         self.assertFalse(state.get("worker_worktrees", {}).get("handoff_blocks"))
 
+    # --- ODP-ORCH-AUTONOMOUS-RECOVERY-001 review findings R1 / R2 ---------------
+
+    def _sibling_worker_state(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        worker = {
+            "run_id": "run-merge", "provider": "antigravity2", "agent_id": "antigravity2",
+            "task_id": "TASK-SIBLING-001", "workspace_path": str(self.worktree.resolve()),
+            "workspace_branch": "task/TASK-SIBLING-001", "workspace_mode": "isolated_worktree",
+            "reason": "owned_ready_dispatch", "status": "running", "pid": 999999,
+            "queue_event_id": "evt-merge",
+        }
+        state = {"workers": {"run-merge": worker}, "queue": {"events": {"evt-merge": {"status": "started"}}}}
+        return worker, state
+
+    def _git_path(self, marker: str) -> Path:
+        raw = Path(_git_run(self.worktree, "rev-parse", "--git-path", marker))
+        return raw if raw.is_absolute() else self.worktree / raw
+
+    def _owner_request(self) -> DeliveryRequest:
+        return DeliveryRequest(agent_id="antigravity2", provider="antigravity2", delivery_mode="antigravity",
+                               message="resume", task_id="TASK-SIBLING-001", reason="owned_ready_dispatch")
+
+    def _owner_seal_allowed(self, state, task) -> tuple[bool, str]:
+        return worker_workspace.sealed_owner_continuation_allowed(
+            self.config, state, self._owner_request(), task, target_agent="Antigravity2",
+            worktree_path=self.worktree, branch="task/TASK-SIBLING-001")
+
+    def _owner_lease(self, state) -> tuple[bool, str | None, DeliveryRequest]:
+        request = self._owner_request()
+        ok, error = worker_workspace.prepare_worker_workspace(
+            self.config, state, request, queue_event_id="evt-resume", target_agent="Antigravity2")
+        return ok, error, request
+
+    def _worktree_identity(self) -> tuple[str, str, str, bytes]:
+        return (
+            _git_run(self.worktree, "rev-parse", "HEAD"),
+            _git_run(self.worktree, "ls-files", "--stage"),
+            _git_run(self.worktree, "status", "--porcelain=v1"),
+            (self.worktree / "README.md").read_bytes(),
+        )
+
+    def test_owner_dirty_seal_keeps_git_operation_started_after_seal_blocked(self):
+        """R1: a cherry-pick, revert or rebase that appears after an ordinary dirty seal can
+        leave HEAD, the index and every dirty byte untouched; the lease must stay refused."""
+        # The task branch already carries upstream.py; dev later gains an identical commit,
+        # so cherry-picking it onto the task branch stops as a real empty cherry-pick.
+        (self.worktree / "upstream.py").write_text("upstream = 1\n")
+        _git_run(self.worktree, "add", "upstream.py")
+        _git_run(self.worktree, "commit", "-m", "task adds upstream")
+        (self.repo / "upstream.py").write_text("upstream = 1\n")
+        _git_run(self.repo, "add", "upstream.py")
+        _git_run(self.repo, "commit", "-m", "dev adds upstream")
+        _git_run(self.repo, "push", "origin", "dev")
+        dev_commit = _git_run(self.repo, "rev-parse", "dev")
+        (self.worktree / "README.md").write_text("unfinished owner change\n")
+        worker, state = self._sibling_worker_state()
+        task = self.status_data["tasks"][0]
+        self.assertTrue(worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=task))
+        record = state["worker_worktrees"]["handoff_blocks"]["TASK-SIBLING-001"]
+        self.assertEqual(record["reason"], "owner_dirty")
+        sealed_identity = self._worktree_identity()
+        ok, error, request = self._owner_lease(state)
+        self.assertTrue(ok, error)
+        self.assertEqual(request.metadata["worktree_continuation"], "sealed_owner_dirt")
+
+        def start_cherry_pick() -> None:
+            proc = subprocess.run(["git", "cherry-pick", dev_commit], cwd=self.worktree,
+                                  capture_output=True, text=True, check=False)
+            self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertTrue(self._git_path("CHERRY_PICK_HEAD").is_file())
+
+        revert_head = self._git_path("REVERT_HEAD")
+        rebase_dir = self._git_path("rebase-merge")
+        operations = [
+            ("empty cherry-pick", start_cherry_pick, lambda: _git_run(self.worktree, "cherry-pick", "--quit")),
+            ("revert", lambda: revert_head.write_text(sealed_identity[0] + "\n"), revert_head.unlink),
+            ("rebase", rebase_dir.mkdir, rebase_dir.rmdir),
+        ]
+        for name, start, stop in operations:
+            with self.subTest(operation=name):
+                start()
+                self.assertEqual(self._worktree_identity(), sealed_identity,
+                                 "the operation must be invisible to HEAD, index and dirty bytes for this case to bite")
+                self.assertEqual(self._owner_seal_allowed(state, task), (False, "git_operation_in_progress"))
+                ok, error, request = self._owner_lease(state)
+                self.assertFalse(ok)
+                self.assertIn("unresolved_git_operation", str(error))
+                self.assertNotIn("worktree_continuation", request.metadata)
+                self.assertEqual(self._worktree_identity(), sealed_identity)
+                self.assertIs(state["worker_worktrees"]["handoff_blocks"]["TASK-SIBLING-001"], record)
+                stop()
+                ok, error, request = self._owner_lease(state)
+                self.assertTrue(ok, error)
+                self.assertEqual(request.metadata["worktree_continuation"], "sealed_owner_dirt")
+
+    def _interrupted_autostash_merge_fixture(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        (self.worktree / "task.py").write_text("value = 1\n")
+        _git_run(self.worktree, "add", "task.py")
+        _git_run(self.worktree, "commit", "-m", "task progress")
+        (self.repo / "upstream.py").write_text("upstream = 1\n")
+        _git_run(self.repo, "add", "upstream.py")
+        _git_run(self.repo, "commit", "-m", "upstream progress")
+        _git_run(self.repo, "push", "origin", "dev")
+        (self.worktree / "README.md").write_text("parked pre-merge owner change\n")
+        _git_run(self.worktree, "merge", "--no-commit", "--autostash", "dev")
+        return self._sibling_worker_state()
+
+    def test_interrupted_autostash_merge_backs_up_parked_work_and_seals_the_pointer(self):
+        """R2: `git merge --autostash` parks the pre-merge dirty work in a commit that only
+        MERGE_AUTOSTASH names; it is neither in the worktree nor in any patch, so the backup
+        must carry it and the seal must notice the pointer changing, vanishing or dangling."""
+        worker, state = self._interrupted_autostash_merge_fixture()
+        task = self.status_data["tasks"][0]
+        autostash_file = self._git_path("MERGE_AUTOSTASH")
+        autostash_oid = autostash_file.read_text().strip()
+        self.assertEqual(_git_run(self.worktree, "cat-file", "-t", autostash_oid), "commit")
+        self.assertEqual((self.worktree / "README.md").read_text(), "base repository content\n")
+        self.assertNotIn("README.md", _git_run(self.worktree, "status", "--porcelain=v1"))
+
+        self.assertTrue(worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=task))
+        self.assertEqual(state["worker_worktrees"]["handoff_blocks"]["TASK-SIBLING-001"]["reason"], "interrupted_merge")
+        backup = next((self.root / ".orchestrator/worktree-dirt-backups").iterdir())
+        self.assertEqual((backup / "git-state/MERGE_AUTOSTASH").read_bytes(), autostash_file.read_bytes())
+        worktree_patch = backup / "git-state/MERGE_AUTOSTASH-worktree.patch"
+        self.assertIn(b"parked pre-merge owner change", worktree_patch.read_bytes())
+        self.assertTrue((backup / "git-state/MERGE_AUTOSTASH-index.patch").is_file())
+        self.assertNotIn(b"parked pre-merge owner change", (backup / "unstaged.patch").read_bytes())
+        self.assertNotIn(b"parked pre-merge owner change", (backup / "staged.patch").read_bytes())
+        checksums = json.loads((backup / "backup_checksums.sha256").read_text(encoding="utf-8"))
+        for name in ("git-state/MERGE_AUTOSTASH", "git-state/MERGE_AUTOSTASH-worktree.patch",
+                     "git-state/MERGE_AUTOSTASH-index.patch"):
+            self.assertIn(name, checksums)
+
+        self.assertTrue(self._owner_seal_allowed(state, task)[0])
+        ok, error, request = self._owner_lease(state)
+        self.assertTrue(ok, error)
+        self.assertEqual(request.metadata["worktree_continuation"], "sealed_owner_merge")
+        self.assertEqual(autostash_file.read_text().strip(), autostash_oid)
+
+        original = autostash_file.read_bytes()
+        head_sha = _git_run(self.worktree, "rev-parse", "HEAD")
+
+        def as_symlink() -> None:
+            autostash_file.unlink()
+            autostash_file.symlink_to(self._git_path("MERGE_HEAD"))
+
+        drifts = [
+            ("pointer changed to another commit", lambda: autostash_file.write_text(head_sha + "\n")),
+            ("pointer deleted", autostash_file.unlink),
+            ("pointer dangling", lambda: autostash_file.write_text("0" * 40 + "\n")),
+            ("pointer replaced by symlink", as_symlink),
+        ]
+        for name, drift in drifts:
+            with self.subTest(drift=name):
+                drift()
+                self.assertEqual(self._owner_seal_allowed(state, task), (False, "merge_state_changed"))
+                ok, error, request = self._owner_lease(state)
+                self.assertFalse(ok)
+                self.assertNotIn("worktree_continuation", request.metadata)
+                if autostash_file.is_symlink() or autostash_file.exists():
+                    autostash_file.unlink()
+                autostash_file.write_bytes(original)
+                self.assertTrue(self._owner_seal_allowed(state, task)[0])
+
+        # Once git prunes the parked commit the merge can no longer be resumed exactly:
+        # the seal fails closed, and the backup still holds the parked content.
+        _git_run(self.worktree, "gc", "--prune=now", "--quiet")
+        pruned = subprocess.run(["git", "cat-file", "-e", autostash_oid], cwd=self.worktree,
+                                capture_output=True, check=False)
+        self.assertNotEqual(pruned.returncode, 0)
+        self.assertEqual(self._owner_seal_allowed(state, task), (False, "merge_state_changed"))
+        self.assertIn(b"parked pre-merge owner change", worktree_patch.read_bytes())
+
+    def test_interrupted_merge_seal_rejects_autostash_added_after_seal(self):
+        worker, state = self._interrupted_merge_fixture()
+        task = self.status_data["tasks"][0]
+        self.assertTrue(worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=task))
+        self.assertTrue(self._owner_seal_allowed(state, task)[0])
+        autostash_file = self._git_path("MERGE_AUTOSTASH")
+        self.assertFalse(autostash_file.exists())
+        autostash_file.write_text(_git_run(self.worktree, "rev-parse", "HEAD") + "\n")
+        self.assertEqual(self._owner_seal_allowed(state, task), (False, "merge_state_changed"))
+        ok, error, request = self._owner_lease(state)
+        self.assertFalse(ok)
+        self.assertNotIn("worktree_continuation", request.metadata)
+        autostash_file.unlink()
+        self.assertTrue(self._owner_seal_allowed(state, task)[0])
+
     def test_sibling_quota_fence_preserves_dirty_worktree_and_authorizes_successor_lease_continuation(self) -> None:
         """E2E: Sibling worker dirty changes (staged, unstaged, untracked) are backed up, sealed, and handed off to authorized successor via prepare_worker_workspace."""
         # Create uncommitted staged, unstaged, and untracked work in the sibling's isolated worktree
@@ -4032,7 +4219,9 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
             mock.patch.object(worktree_cleanliness, "inspect_worktree", return_value=mock_insp),
             mock.patch.object(worker_workspace, "inspect_worktree", return_value=mock_insp),
             mock.patch.object(worker_workspace, "_git_commit_oid", return_value="a" * 40),
+            mock.patch.object(worker_workspace, "_git_operation_in_progress", return_value=False),
             mock.patch.object(supervisor, "_git_commit_oid", return_value="a" * 40),
+            mock.patch.object(supervisor, "_git_operation_in_progress", return_value=False),
         ):
             # 1. Same owner, matching dirty fingerprint & HEAD -> allowed
             allowed, detail = worker_workspace.sealed_owner_continuation_allowed(
@@ -4066,7 +4255,9 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
             mock.patch.object(worktree_cleanliness, "inspect_worktree", return_value=mock_diff_insp),
             mock.patch.object(worker_workspace, "inspect_worktree", return_value=mock_diff_insp),
             mock.patch.object(worker_workspace, "_git_commit_oid", return_value="a" * 40),
+            mock.patch.object(worker_workspace, "_git_operation_in_progress", return_value=False),
             mock.patch.object(supervisor, "_git_commit_oid", return_value="a" * 40),
+            mock.patch.object(supervisor, "_git_operation_in_progress", return_value=False),
         ):
             allowed, detail = worker_workspace.sealed_owner_continuation_allowed(
                 self.config,
@@ -4116,7 +4307,9 @@ class AgyBackgroundExitRecoveryTests(unittest.TestCase):
             mock.patch.object(worktree_cleanliness, "inspect_worktree", return_value=mock_insp),
             mock.patch.object(worker_workspace, "inspect_worktree", return_value=mock_insp),
             mock.patch.object(worker_workspace, "_git_commit_oid", return_value="b" * 40),
+            mock.patch.object(worker_workspace, "_git_operation_in_progress", return_value=False),
             mock.patch.object(supervisor, "_git_commit_oid", return_value="b" * 40),
+            mock.patch.object(supervisor, "_git_operation_in_progress", return_value=False),
         ):
             # Continuation allowed on 1st rejection
             allowed, _ = worker_workspace.sealed_owner_continuation_allowed(

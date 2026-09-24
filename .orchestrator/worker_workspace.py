@@ -600,7 +600,7 @@ def _interrupted_merge_snapshot(worktree_path: Path) -> dict[str, bytes] | None:
             path = Path(name) if Path(name).is_absolute() else worktree_path / name
             if path.exists() or path.is_symlink():
                 return None
-        for marker in ("index", "MERGE_HEAD", "MERGE_MSG", "MERGE_MODE", "AUTO_MERGE", "ORIG_HEAD"):
+        for marker in ("index", "MERGE_HEAD", "MERGE_MSG", "MERGE_MODE", "AUTO_MERGE", "ORIG_HEAD", "MERGE_AUTOSTASH"):
             rc, name = _git_output(worktree_path, "rev-parse", "--git-path", marker)
             if rc or not name:
                 return None
@@ -611,6 +611,14 @@ def _interrupted_merge_snapshot(worktree_path: Path) -> dict[str, bytes] | None:
                 snapshot[marker] = path.read_bytes()
         if not snapshot.get("index") or not snapshot.get("MERGE_HEAD"):
             return None
+        if "MERGE_AUTOSTASH" in snapshot and _interrupted_merge_autostash_oid(worktree_path, snapshot) is None:
+            # `git merge --autostash` (or merge.autoStash) parks the pre-merge
+            # dirty work in a stash-like commit that only this file references,
+            # and git prunes that commit as soon as the file is gone.  A value
+            # that no longer names a commit means the parked work is already
+            # unrecoverable; refuse rather than seal a merge whose continuation
+            # would silently finish without it.
+            return None
         proc = subprocess.run(["git", "ls-files", "--stage", "-z"], cwd=worktree_path, capture_output=True, check=False)
         if proc.returncode:
             return None
@@ -618,6 +626,18 @@ def _interrupted_merge_snapshot(worktree_path: Path) -> dict[str, bytes] | None:
         return snapshot
     except OSError:
         return None
+
+
+def _interrupted_merge_autostash_oid(worktree_path: Path, snapshot: dict[str, bytes]) -> str | None:
+    """Return the commit parked by ``git merge --autostash``, or None if absent or unresolvable."""
+    raw = snapshot.get("MERGE_AUTOSTASH")
+    if raw is None:
+        return None
+    oid = raw.decode("ascii", errors="replace").strip()
+    if not re.fullmatch(r"[0-9a-fA-F]{40,64}", oid):
+        return None
+    resolved = _git_commit_oid(worktree_path, oid)
+    return resolved if resolved and resolved.lower() == oid.lower() else None
 
 
 def _interrupted_merge_fingerprint(snapshot: dict[str, bytes], inspection: WorktreeInspection) -> str:
@@ -1438,8 +1458,16 @@ def sealed_owner_continuation_allowed(
         snapshot = _interrupted_merge_snapshot(worktree_path)
         if snapshot is None or _interrupted_merge_fingerprint(snapshot, inspection) != record.get("dirt_fingerprint"):
             return False, "merge_state_changed"
-    elif inspection.kind != "owner_dirty" or inspection.fingerprint != record.get("dirt_fingerprint"):
-        return False, "dirt_changed"
+    else:
+        # An ordinary dirty seal binds porcelain status and dirty file bytes
+        # only.  A cherry-pick, revert or rebase started after the seal can
+        # leave HEAD, the index and every dirty byte untouched (an empty
+        # cherry-pick does exactly that), so the fingerprint cannot see it.
+        # Only a seal that captured the merge itself may resume one.
+        if _git_operation_in_progress(worktree_path):
+            return False, "git_operation_in_progress"
+        if inspection.kind != "owner_dirty" or inspection.fingerprint != record.get("dirt_fingerprint"):
+            return False, "dirt_changed"
     head_sha = _git_commit_oid(worktree_path, "HEAD")
     if not head_sha or head_sha != record.get("head_sha"):
         return False, "head_changed"
@@ -2171,7 +2199,15 @@ def prepare_worker_workspace(
             materialized_paths=materialized_paths,
             required_head=required_review_head,
         )
-        if not refresh_ok and (_is_skipped_dirty_worktree(refresh_status) or refresh_status == "unresolved_git_operation"):
+        handoff_record = ((state.get("worker_worktrees") or {}).get("handoff_blocks") or {}).get(workspace_task_id)
+        sealed_interrupted_merge = isinstance(handoff_record, dict) and handoff_record.get("reason") == "interrupted_merge"
+        # `unresolved_git_operation` becomes a continuation candidate only when
+        # the seal captured that exact merge.  An ordinary dirty seal never
+        # covered Git operation state, so for it the refresh verdict stands.
+        if not refresh_ok and (
+            _is_skipped_dirty_worktree(refresh_status)
+            or (refresh_status == "unresolved_git_operation" and sealed_interrupted_merge)
+        ):
             allowed, continuation_detail = sealed_owner_continuation_allowed(
                 config,
                 state,
@@ -2188,7 +2224,7 @@ def prepare_worker_workspace(
                 refresh_status = "sealed_owner_continuation"
                 base_relation = "sealed_owner_continuation"
                 request.metadata["worktree_continuation"] = "sealed_owner_dirt"
-                if (state.get("worker_worktrees", {}).get("handoff_blocks", {}).get(workspace_task_id) or {}).get("reason") == "interrupted_merge":
+                if sealed_interrupted_merge:
                     request.metadata["worktree_continuation"] = "sealed_owner_merge"
                     request.message = (
                         "INTERRUPTED MERGE RECOVERY: the previous writer has exited. The exact "
@@ -3563,6 +3599,23 @@ def _quarantine_and_preserve_dirty_worktree(
                 saved.write_bytes(payload)
                 if saved.read_bytes() != payload:
                     raise RuntimeError(f"merge state backup mismatch for {marker}")
+            autostash_oid = _interrupted_merge_autostash_oid(worktree_path, merge_snapshot)
+            if autostash_oid is not None:
+                # The parked pre-merge work lives in a commit no ref reaches;
+                # git gc prunes it once MERGE_AUTOSTASH is gone.  Keep its
+                # content as patches so the backup does not depend on the
+                # object store surviving.
+                for name, base_rev, target_rev in (
+                    ("MERGE_AUTOSTASH-worktree.patch", f"{autostash_oid}^1", autostash_oid),
+                    ("MERGE_AUTOSTASH-index.patch", f"{autostash_oid}^1", f"{autostash_oid}^2"),
+                ):
+                    patch_proc = subprocess.run(
+                        ["git", "diff", "--binary", base_rev, target_rev],
+                        cwd=worktree_path, capture_output=True, check=False,
+                    )
+                    if patch_proc.returncode != 0:
+                        raise RuntimeError(f"failed to capture autostash content ({name})")
+                    (merge_dir / name).write_bytes(patch_proc.stdout)
             # Patches cannot reproduce unmerged index entries alone. Preserve
             # actual dirty file bytes too, including conflict resolutions.
             for entry in inventory_files:

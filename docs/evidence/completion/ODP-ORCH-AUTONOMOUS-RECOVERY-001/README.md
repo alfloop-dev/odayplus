@@ -14,11 +14,15 @@ No product deployment is included.
 
 - Implementation commit `43d2fe8ca8e04b35a5049802169a01a5bc958678` was authored by the
   interactive Codex session (`LLM-Agent: Codex`, `Reviewer: Claude`) and opened as draft PR #1362.
-  It is adopted as-is: commit history, author and trailers are preserved; no file from that
-  commit is modified by this task.
+  Its commit history, author and trailers are preserved unchanged; nothing was rewritten.
 - Claude (this task's owner) inspected and probed the change independently; see
   `independent_assessment.md`. The prior green CI on `43d2fe8c` was not used as a substitute for
   that review, and no reviewer approval is claimed here.
+- Independent review round 1 (Codex2, board event `reopen` at `2026-09-24T07:57:35Z`) returned
+  two P2 findings against the adopted code. Both were reproduced and fixed by this task in a
+  separate commit on top of the adopted history, so the two Python deliverables are **not**
+  shipped as authored at `43d2fe8c` any more; the runbook was extended accordingly. Details in
+  `independent_assessment.md` (findings F5, F6) and below.
 - The existing clean task worktree discovered by the supervisor was reused. No other task
   worktree, no live supervisor and no worker was touched.
 
@@ -29,18 +33,37 @@ No product deployment is included.
 | Merge commit | `31dc1a65e3d813d9174852925d6e95feb237cdf7` |
 | Parents | `43d2fe8ca8e04b35a5049802169a01a5bc958678` (task) + `c4efabbbeba9e743fab8ee52125932137852c703` (`origin/dev`) |
 | Resulting tree | `1f74062138f6d2dbb23db4cb8c63c39feadd37a9` = tree predicted by `git merge-tree --write-tree` before merging |
-| Conflicts | none; `origin/dev` added no change under `.orchestrator/` or to the three deliverable files |
+| Conflicts | none; `origin/dev` added no change under `.orchestrator/` or to the deliverable files |
 | History | plain merge, no rebase, no reset; the previously pushed tip `43d2fe8c` remains an ancestor |
 
-The three deliverable blobs are byte-identical at `43d2fe8c`, at `31dc1a65` and at the head that
-carries this document (blob ids in `independent_assessment.md`).
+At `43d2fe8c` and at `31dc1a65` the two Python deliverable blobs are byte-identical
+(`596bd281…`, `905ae956…`). The review-fix commit that follows changes both; the blob ids at the
+head that carries this document are listed in `independent_assessment.md`.
+
+## Review round 1 (Codex2) and the fix
+
+| Finding | What Codex2 found | Reproduced as | Fix |
+|---|---|---|---|
+| R1 (P2) | `prepare_worker_workspace` routed `unresolved_git_operation` into `sealed_owner_continuation_allowed` without requiring an `interrupted_merge` seal. An ordinary `owner_dirty` seal only binds porcelain status, dirty bytes and HEAD, so a cherry-pick, revert or rebase started after the seal that leaves all three unchanged was leased as a success. | Real empty `git cherry-pick` on a sealed dirty checkout: `CHERRY_PICK_HEAD` present, HEAD / `ls-files --stage` / porcelain / dirty bytes unchanged; on the adopted code the seal returned `(True, "1 dirty change …")` and the lease succeeded. | `unresolved_git_operation` is a continuation candidate only when the recorded seal reason is `interrupted_merge`; the ordinary dirty path additionally refuses with `git_operation_in_progress` whenever any Git operation is attached. |
+| R2 (P2) | The merge-state snapshot whitelist omitted `MERGE_AUTOSTASH`. With `git merge --autostash` / `merge.autoStash=true` the pre-merge dirty work lives only in the stash-like commit that file names: not in the worktree, not in any patch, not in the seal, not in the backup. | Real `git merge --no-commit --autostash dev` with a dirty tracked file: the file is clean afterwards, `MERGE_AUTOSTASH` names a commit, the backup had no `git-state/MERGE_AUTOSTASH`, and adding / changing / deleting the pointer after sealing did not change the seal verdict. `git gc --prune=now` deletes that commit. | `MERGE_AUTOSTASH` joins the snapshot (symlink-refused like the other control files), hence the seal and the `git-state/` backup. The snapshot fails closed when the pointer no longer names a commit. The backup additionally stores the parked content as `MERGE_AUTOSTASH-worktree.patch` and `MERGE_AUTOSTASH-index.patch` so it does not depend on the object store. |
+| non-blocking | This README claimed three deliverables were unchanged. | — | Wording corrected above; only the two Python blobs were identical, and only up to `31dc1a65`. |
+
+Shipped regression tests (`QuotaSiblingFencingDirtyHandoffTests`):
+`test_owner_dirty_seal_keeps_git_operation_started_after_seal_blocked` (sub-cases: empty
+cherry-pick, revert, rebase; each proves the operation is invisible to HEAD/index/dirty bytes,
+then that seal and full `prepare_worker_workspace` refuse, then that clearing the operation
+leases again), `test_interrupted_autostash_merge_backs_up_parked_work_and_seals_the_pointer`
+(backup content, checksums, four pointer drifts, pruned-commit fail-closed) and
+`test_interrupted_merge_seal_rejects_autostash_added_after_seal`. Two pre-existing mock-only
+tests in `AgyBackgroundExitRecoveryTests` that model an ordinary dirty seal on a path that is not
+a Git repository now also patch `_git_operation_in_progress` to `False` (both in
+`worker_workspace` and `supervisor`, because `_sync_supervisor_scope` rebinds on every call);
+on a non-repository path that helper fails closed, which is the behaviour the fix relies on.
 
 ## Verification
 
-Environment: project `uv` environment rebuilt on CPython 3.12 (the default 3.14 has no
-`pgserver` wheel); pytest 9.1.1; git 2.43.0. All runs below completed before
-`2026-09-24T07:25:26Z` (UTC, read from `date -u` after the last run) on the merged tree
-`31dc1a65`, i.e. on source identical to the final head for every non-evidence file.
+Environment: project `uv` environment on CPython 3.12.14; pytest 9.1.1; git 2.43.0. All runs in
+this section completed before `2026-09-24T08:14:09Z` (UTC, read from `date -u` after the last run).
 
 ### Declared verification (receipt-bearing)
 
@@ -51,13 +74,23 @@ Python files, and the five-suite pytest selection) are executed once through
 and selection. Because a receipt binds the head that contains this document, its values cannot
 be copied into this document without invalidating it; the outcomes are posted to the task board
 (`note`) and appear in the PR body. The finalize gate (`task_verification check`) refuses to
-publish unless every declared command has a passing receipt at that head.
+publish unless every declared command has a passing receipt at that head. The receipts recorded
+at `c7982ae7` (before the review) are superseded by the ones at the new head.
 
-### Independent probes and the runbook's broader selection (this task's own validation)
+### Owner measurements for the review fix (this task's own validation, not receipt-bearing)
+
+| Run | Tree | Result |
+|---|---|---|
+| A/B: the three new tests against the adopted code | `git archive` copy of `c7982ae7` (`worker_workspace.py` sha256 `34dcd380…`, blob `596bd281`; module origin verified to be the copy) with only the new test file copied in | exit 1: R1 test fails in all three sub-cases (`(True, '1 dirty change (1 unstaged tracked): README.md')` instead of `(False, 'git_operation_in_progress')`); autostash backup test fails with `FileNotFoundError … git-state/MERGE_AUTOSTASH`; added-after-seal test fails with `(True, 'Resume the preserved interrupted merge …')` instead of `(False, 'merge_state_changed')` |
+| Same selection (`-k "interrupted_merge or autostash or git_operation_started_after_seal"`) | fixed worktree | exit 0, 7 tests |
+| Whole `test_worker_failure_policy.py` | fixed worktree | exit 0 (after the two mock-only tests were extended as described above; before that extension they failed with `git_operation_in_progress`, which is the fail-closed behaviour on a non-repository path) |
+| `ruff check` on both Python files; `git diff --check` | fixed worktree | exit 0 |
+
+### Earlier independent probes and the runbook's broader selection (before review round 1)
 
 | Run | Result | Exit | Duration (pytest) |
 |---|---|---|---|
-| Scratch probes on top of the `QuotaSiblingFencingDirtyHandoffTests` fixture: conflicted merge preserved and sealed (A); same-path content edit after the seal detected (B); stat-cache refresh keeps the seal (C); revert in progress stays blocked (D); fenced-sibling successor dispatch on a conflicted merge (E) | 29 passed, 1 skipped (cherry-pick sub-case of D: git leaves no `CHERRY_PICK_HEAD` for a conflicting `--no-commit` cherry-pick, so nothing to block), 4 subtests passed | 0 | 20.22 s |
+| Scratch probes on top of the `QuotaSiblingFencingDirtyHandoffTests` fixture: conflicted merge preserved and sealed (A); same-path content edit after the seal detected (B); stat-cache refresh keeps the seal (C); revert in progress stays blocked (D); fenced-sibling successor dispatch on a conflicted merge (E) | 29 passed, 1 skipped (cherry-pick sub-case of D; see F2/F5 in the assessment for why that skip hid R1), 4 subtests passed | 0 | 20.22 s |
 | `test_supervisor.py -k 'preserve or handoff or review_churn'` on the merged branch `31dc1a65` | 55 passed, 6 skipped, 0 failed (74 JUnit cases incl. subtests) | 0 | 5.75 s |
 | Same selection on an unmodified `git archive` copy of `origin/dev c4efabbb` (module origin verified to be the copy) | 55 passed, 6 skipped, 0 failed | 0 | 6.98 s |
 
@@ -70,12 +103,16 @@ the original text is kept.
 
 ### Genuine regressions
 
-None observed. No test was re-run for a count.
+The two review findings are genuine defects in the adopted code, both reproduced with real Git
+operations before the fix and covered by shipped tests. No test was re-run for a count.
 
 ## Live observation (log level only; no runtime paths, PIDs or dumps published)
 
 - The supervisor's runtime alias resolves to a runtime checkout at `43d2fe8c`; its
-  `.orchestrator/worker_workspace.py` is blob `596bd281…`, identical to the deliverable.
+  `.orchestrator/worker_workspace.py` is blob `596bd281…`, i.e. the adopted code **without**
+  the R1/R2 fix. Until the next controlled rollout the live fleet therefore still has both
+  exposures: an `owner_dirty` seal can be leased across a later cherry-pick/revert/rebase, and
+  an autostash merge is sealed and backed up without its parked work.
 - The canonical activity log shows the sealed-continuation path exercised after that rollout:
   `worker_worktree_preserved` (trigger `sibling_fenced`) at `2026-09-23T14:35:06Z`,
   `task_reassigned` Antigravity4 → Claude2 at `2026-09-23T14:35:15Z`, and
@@ -88,13 +125,13 @@ None observed. No test was re-run for a count.
 
 ## Rollout record
 
-The runtime already runs the exact original patch. After Codex2 approval, required CI and the
-normal merge into `dev`, the merged source for the next controlled runtime rollout is the `dev`
-merge commit of PR #1362. This task performs no rollout, no supervisor restart and no product
-deployment.
+The runtime runs the original patch only. After Codex2 approval, required CI and the normal
+merge into `dev`, the merged source for the next controlled runtime rollout is the `dev` merge
+commit of PR #1362, which now includes the R1/R2 fix. This task performs no rollout, no
+supervisor restart and no product deployment.
 
 ## Files in this directory
 
 - `README.md` — this record.
 - `independent_assessment.md` — Claude's source-bound code assessment, acceptance-item mapping,
-  findings F1–F4 (no code defect found).
+  findings F1–F6 (F5 and F6 are the review findings, fixed).

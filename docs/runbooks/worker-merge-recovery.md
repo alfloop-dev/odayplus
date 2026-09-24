@@ -54,3 +54,20 @@ baseline. Additional scratch probes (a conflicted merge with unmerged index entr
 content edit after the seal, a stat-cache refresh, a revert in progress, and fenced-sibling
 successor dispatch on a conflicted merge) behaved as this runbook describes. Details:
 `docs/evidence/completion/ODP-ORCH-AUTONOMOUS-RECOVERY-001/`.
+
+## Review fixes (2026-09-24, ODP-ORCH-AUTONOMOUS-RECOVERY-001, Codex2 findings R1/R2)
+
+- An ordinary dirty seal (`owner_dirty`) never resumes a checkout that has a Git
+  operation attached. A cherry-pick, revert or rebase started after the seal can
+  leave HEAD, the index and every dirty byte unchanged (an empty cherry-pick does
+  exactly that); the lease is refused with `git_operation_in_progress` regardless,
+  and the refresh verdict `unresolved_git_operation` only becomes a continuation
+  for a seal that captured the merge itself (`interrupted_merge`).
+- `MERGE_AUTOSTASH` is part of the merge seal and of the backup. With
+  `git merge --autostash` or `merge.autoStash=true` the pre-merge dirty work lives
+  only in the stash-like commit that file names; it is not in the worktree and not
+  in any patch. The backup now stores that content as
+  `git-state/MERGE_AUTOSTASH-worktree.patch` and `git-state/MERGE_AUTOSTASH-index.patch`
+  next to the pointer. A pointer that changes, disappears, dangles (git gc prunes
+  the parked commit once the file is gone) or becomes a symlink rejects the lease;
+  the resumed owner must not finish the merge without the parked work.
