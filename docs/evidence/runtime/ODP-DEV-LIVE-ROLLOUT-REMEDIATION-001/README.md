@@ -275,26 +275,52 @@ audit JSON 的 `superseded_unblock_requirements.previous_requirements`）：
 3. **部署與驗收執行**：一旦 workflow dispatch 觸發 `deploy-dev.yml` 完成部署，立即進行 live readback（Cloud Run URL/revisions、jobs one-shot、authenticated smoke、provider-off 16-source disabled、default-deny egress 與 live IAM），產出完整真實收據並滿足驗收條件 3–8 後正式送審。
 4. **終態**：持續維持 `in_progress` 與 fail-closed。
 
-## 9. Round 9（2026-09-24 16:30Z，owner Antigravity）
+## 10. Round 10（2026-09-24 16:38Z，owner Antigravity）
 
-### 9.1 環境與服務連線持續監控與驗證
+### 10.1 Hosted Workflow 簽發與 Deploy Phase 派發實況
 
-本輪延續執行環境與前置條件即時查驗：
+本輪即時捕捉到 Supervisor 對 candidate `136436340290` 正式簽發 lease 並觸發 GitHub Actions `deploy-dev.yml` deploy phase 流程：
 
-1. **Supervisor 執行環境與 Watchdog 狀態**：
-   - Watchdog 即時探針確認 Supervisor 穩定運行（pid 2704646，`decision: observe_only: supervisor_healthy`，資源充足）。
-2. **Secret Manager 密鑰讀取實測**：
-   - 透過 `deborah.lu@dev.cctech-support.com` 執行 `load_private_key_from_secret_reference("projects/767864276141/secrets/odp-release-lease-private-key")`：**解析 Ed25519PrivateKey 正常**，exit 0。
-3. **GCS LeaseStateStore 連線實測**：
-   - 執行 `LeaseStateStore("gs://odayplus-runtime-20260825-release-leases/leases", require_existing=True)`：**連線正常**，未見 403 異常。
-4. **GitHub Actions 流程狀態查證**：
-   - 查驗 `deploy-dev.yml` 最近 run 狀態：最近執行仍為 candidate `136436340290` 之 build phase（run 35944616693，conclusion `success`）。deploy phase 仍處於 pending 狀態，未有非授權之部署。
+1. **Workflow Dispatch 觸發資訊**：
+   - **Run ID**：`36027737089`（[GitHub Run #36027737089](https://github.com/alfloop-dev/odayplus/actions/runs/36027737089)）
+   - **Trigger Time**：`2026-09-24T16:29:34Z`
+   - **Workflow**：`.github/workflows/deploy-dev.yml`（Deploy Dev）
+   - **Event SHA / Tree**：`c4efabbbeba9e743fab8ee52125932137852c703`（`origin/dev` 最新 tip）
+   - **Release Candidate SHA**：`1364363402900c800ec3ed033d38fd1d757c1f10`
+   - **Manifest Digest**：`sha256:6fb8f9e2e6af8dcef9cbe2fd76f2c3d319d95a40fe64c77e3ffdb435f3dc246d`
+   - **Release Lease**：由 Supervisor 以 Ed25519 私鑰有效簽署之 lease（ID: `lease-8930f965fa0f05a9059bc94a6716f3d1`，nonce: `5d885ba14ddce715f84052f98e49f2e8`，TTL: `2026-09-24T16:39:20+00:00`）。
 
-### 9.2 狀態與處置準則
+2. **Hosted Workflow 執行結果與步驟拆解**：
+   - **Job 1: Validate release phase inputs**（ID `107728455752`）：**Success**（11s），參數驗證與 phase receipt 發布正常。
+   - **Job 2: Build once and publish the immutable artifact handoff**（ID `107728557945`）：**Skipped**（phase=deploy 正確略過重 build）。
+   - **Job 3: Verify the Supervisor lease authorises this deploy**（ID `107728563586`）：**Failure**（1m5s）。
+     - 前置步驟（WIF 認證、Cloud SDK 設定、candidate ancestry 檢驗、manifest digest 綁定、initial-release recovery 探針）**均全數通過**。
+     - 於 Step 15 `Validate supervisor release admission` 執行 `python3 delivery_toolchain/release/check_runtime_admission.py` 時中斷：
+       ```text
+       runtime admission blocked:
+       - google-cloud-storage is required for gs:// lease state
+       ##[error]Process completed with exit code 1.
+       ```
+   - **Job 4: Deploy the admitted artifact by immutable digest**（ID `107729024536`）：**Skipped**（因 admission job 失敗未執行）。
+   - **Job 5: Verify production watch and clean up ephemeral staging**（ID `107729024749`）：**Skipped**。
 
-- **維持 In Progress 與 Fail-Closed**：目前候選 SHA `136436340290`、Manifest `sha256:6fb8f9e2...`、Gate Registry (`decision=go`) 與 GCS / Secret Manager 基礎設施均已完全就緒。
-- **待辦依賴**：因前次 15:59:56Z 簽發受 CAS 衝突保護進入 `issuing` 終態且 GCS 臨時 lease 已於 16:09:56Z 自然過期，後續唯待 Human/Ops 登記帶全新 nonce 之 `release_lease_request`，即可由 supervisor 自動簽出並 dispatch Runtime Release deploy phase。
-- **後續閉環**：待 deploy phase 成功後，本 task 將立即進行 live readback 驗收（驗收條件 3–8）並提交 PR review。
+### 10.2 真因分析（Runner Python 環境缺失 `google-cloud-storage`）
+
+1. **Workflow 定義缺陷**：
+   - 在 `.github/workflows/deploy-dev.yml` 中，`build`（line 351）、`deploy`（line 1112）與 `staging-closeout`（line 1441）等 jobs 皆有宣告 `astral-sh/setup-uv@v5` 與 `uv sync --frozen` 來安裝專案 lockfile 依賴。
+   - 惟 `verify-release-admission` job（line 750–950）直接使用系統 Python `/usr/bin/python3` 執行 `check_runtime_admission.py`，未安裝 Python 虛擬環境或專案套件。
+   - 當 `check_runtime_admission.py` 依據 `RELEASE_LEASE_STATE_URI=gs://odayplus-runtime-20260825-release-leases/leases` 實例化 `LeaseStateStore` 時，因系統 Python 無 `google-cloud-storage` 模組而拋出 `google-cloud-storage is required for gs:// lease state` 並 exit 1。
+
+### 10.3 邊界與治理遵循（Fail-Closed 與獨立 Remediation Task 規範）
+
+依據本任務驗收條件第 10 條（*「若workflow或部署程式有缺陷則fail closed並另建獨立remediation task不得在rollout task內擴大修code」*）：
+
+1. **嚴守工作邊界**：本 task（`ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001`）僅持有 evidence scope，嚴禁越界修改 `.github/workflows/deploy-dev.yml`。
+2. **Fail-Closed 終態與獨立 Remediation 建議**：
+   - 建議建立/派發獨立 workflow 修復任務（例如 `ODP-DEPLOY-DEV-ADMISSION-UV-ENV-001`），於 `.github/workflows/deploy-dev.yml` 的 `verify-release-admission` job 中加入 `setup-uv` 與 `uv sync --frozen`（或使用 `uv run` 呼叫 `check_runtime_admission.py`）。
+   - 待該修復 PR 合併入 `dev` 後，Human/Ops 登記帶新 nonce 之 lease request，Supervisor 重新簽發 lease 即可順暢通過 hosted admission 並完成 deployment。
+3. **後續驗收**：待 deployment 成功落地後，本 task 立即採集真實 GCP live readback（驗收條件 3–8）完成收尾送審。
+
 
 
 
