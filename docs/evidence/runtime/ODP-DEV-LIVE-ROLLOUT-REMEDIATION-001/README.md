@@ -465,6 +465,34 @@ audit JSON 的 `superseded_unblock_requirements.previous_requirements`）：
 2. Supervisor 簽署 release lease 並啟動 dev deploy phase。
 3. 部署完成後採集真實 GCP live readback 證據，更新證據目錄後送審。
 
+## 17. Round 20（2026-09-24 18:00Z，owner Antigravity）
+
+### 17.1 Candidate 漂移分析與驗收條件 2 檢驗
+
+1. **Candidate 與 `origin/dev`（`419e6bf49582`）漂移實測**：
+   - 透過 `delivery_toolchain.release.check_runtime_admission.check_candidate_ancestry` 檢驗既有候選 `136436340290` 與 `origin/dev`：
+     - 回傳：`release.candidate_sha '1364363402900c800ec3ed033d38fd1d757c1f10' is an ancestor of expected SHA '419e6bf4958269c5b9e94efcb80770e28cd54dda', but intervening commits touch non-evidence paths: .github/workflows/deploy-dev.yml, tests/ops/test_deploy_workflow_contract.py`。
+   - 依據本任務驗收條件第 2 條（*「若 candidate 到 origin/dev 之間含任何 product 或 build input 變更則建立新 release 並重新 build once不得沿用舊 digest」*）：
+     - 因 PR #1369（commit `419e6bf4`）修改了 `.github/workflows/deploy-dev.yml`（屬於部署輸入及 pipeline 關鍵路徑），既有候選 SHA `136436340290` 與對應 manifest digest（`sha256:6fb8f9e2...`）已無法直接用於新 base。
+     - 必須由 Candidate Gate reconciliation 在新 `origin/dev` tip 上重新執行單次建置（build-once），重新產生 release manifest、SBOM、Cosign 簽章與 Gate Registry（`decision=go`）。
+
+2. **本地驗證與合約測試狀態**：
+   - 本任務分支 `task/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 與 `origin/dev`（`419e6bf49582`）保持完全同步，工作區乾淨。
+   - 本地證據套件驗證腳本 `verify_dev_live_rollout_remediation.py` 執行通過（exit 0）。
+   - 工作流程合約測試 `tests/ops/test_deploy_workflow_contract.py` 全數通過（90 passed in 9.04s）。
+
+3. **嚴守邊界與 Fail-Closed 防護**：
+   - 恪守驗收條件 1–10，不越界修改 workflow 或產品程式碼，維持 evidence-only scope。
+   - 維持 `in_progress` 狀態，待新 candidate 建置完成、Human/Ops 登記新 release lease request、Supervisor 簽發 release lease 且 hosted deploy phase 完成後，再行採集真實 GCP live readback 證據進行驗收結案。
+
+### 17.2 下一步執行順序
+
+1. 上游 Candidate Gate reconciliation 完成新 candidate 建置與 manifest 鎖定。
+2. Human/Ops 登記帶有全新 nonce 及新 candidate 之 `release_lease_request`。
+3. Supervisor 簽發 Ed25519 lease 並 dispatch `deploy-dev.yml` deploy phase。
+4. 部署落地後，本任務採集 GCP 實體環境狀態（Cloud Run URLs, jobs one-shot, authenticated smoke, 16-source disabled, default-deny egress, live IAM），滿足驗收條件 3–8 後送審。
+
+
 
 
 
