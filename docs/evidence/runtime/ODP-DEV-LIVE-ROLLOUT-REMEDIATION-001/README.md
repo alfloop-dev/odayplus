@@ -1138,3 +1138,31 @@ audit JSON 的 `superseded_unblock_requirements.previous_requirements`）：
 3. Supervisor 簽發 Ed25519 lease 並 dispatch `deploy-dev.yml` deploy phase。
 4. 部署落地後，本任務採集 GCP 實體環境狀態（Cloud Run URLs, jobs one-shot, authenticated smoke, 16-source disabled, default-deny egress, live IAM），滿足驗收條件 3–8 後送審。
 
+## 43. Round 53（2026-09-24 21:34Z，owner Antigravity）
+
+### 43.1 系統狀態複查與 Hosted Workflow 深度查核
+
+1. **分支基線與全套邊界檢驗**：
+   - 本任務分支 `task/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 與最新 `origin/dev`（`419e6bf4958269c5b9e94efcb80770e28cd54dda`）保持完全乾淨同步，工作樹無未追蹤或未授權修改，PR #1107 處於 OPEN 且 MERGEABLE。
+   - 本地證據套件驗證腳本 `verify_dev_live_rollout_remediation.py` 驗證通過（exit 0）。
+   - 部署工作流程契約測試 `tests/ops/test_deploy_workflow_contract.py` 全數通過（90 passed in 8.74s via `uv run`）。
+   - 程式碼邊界檢驗 `delivery_toolchain/governance/check_code_boundaries.py` 通過（1178 files passed, exit 0）。
+   - 外部資料邊界檢驗 `scripts/validate_external_data_boundary.py` 通過（3914 files passed, exit 0）。
+
+2. **Hosted Workflow 執行歷程與 Candidate Drift 深度分析**：
+   - 查核 hosted `Deploy Dev` 歷史：前一輪 workflow run 36027737089 於 job `Verify the Supervisor lease authorises this deploy` 失敗，真因為 runner 環境缺少 `google-cloud-storage` 套件導致 lease admission 驗證失敗。
+   - 該問題已由獨立修復任務 ODP-RELEASE-ADMISSION-JOB-DEPS-001 透過 PR #1369 合入 `dev`（`419e6bf4`），於 `.github/workflows/deploy-dev.yml` 補正相依套件與契約測試。
+   - 實測執行 `check_candidate_ancestry('1364363402900c800ec3ed033d38fd1d757c1f10', '419e6bf4958269c5b9e94efcb80770e28cd54dda', Path('.'))`：確認回傳錯誤 `release.candidate_sha '1364363402900c800ec3ed033d38fd1d757c1f10' is an ancestor of expected SHA '419e6bf4958269c5b9e94efcb80770e28cd54dda', but intervening commits touch non-evidence paths: .github/workflows/deploy-dev.yml, tests/ops/test_deploy_workflow_contract.py`。
+   - 依驗收條件 2（*「若 candidate 到 origin/dev 之間含任何 product 或 build input 變更則建立新 release 並重新 build once不得沿用舊 digest」*），舊 candidate digest 不得沿用，必須由上游 Candidate Gate reconciliation 於最新 tip 重新執行單次建置（build-once）。
+
+3. **邊界防護與 Fail-Closed in_progress 狀態維持**：
+   - 嚴格遵守驗收條件 10（*「若workflow或部署程式有缺陷則fail closed並另建獨立remediation task不得在rollout task內擴大修code」*），不越界修改 workflow 或產品程式碼。
+   - 保持 fail-closed `in_progress` 狀態，等待新 candidate 建置、Human/Ops 登記帶新 nonce 之 lease request、Supervisor 簽署 lease 並觸發 hosted `deploy-dev.yml` 部署落地後，再行採集真實 GCP live readback 證據進行驗收結案。
+
+### 43.2 下一步執行順序
+
+1. 上游 Candidate Gate reconciliation 完成新 candidate 建置與 manifest 鎖定。
+2. Human/Ops 登記帶有全新 nonce 及新 candidate 之 `release_lease_request`。
+3. Supervisor 簽發 Ed25519 lease 並 dispatch `deploy-dev.yml` deploy phase。
+4. 部署落地後，本任務採集 GCP 實體環境狀態（Cloud Run URLs, jobs one-shot, authenticated smoke, 16-source disabled, default-deny egress, live IAM），滿足驗收條件 3–8 後送審。
+
