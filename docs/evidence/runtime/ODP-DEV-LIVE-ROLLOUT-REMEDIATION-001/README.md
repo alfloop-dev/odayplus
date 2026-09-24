@@ -321,6 +321,28 @@ audit JSON 的 `superseded_unblock_requirements.previous_requirements`）：
    - 待該修復 PR 合併入 `dev` 後，Human/Ops 登記帶新 nonce 之 lease request，Supervisor 重新簽發 lease 即可順暢通過 hosted admission 並完成 deployment。
 3. **後續驗收**：待 deployment 成功落地後，本 task 立即採集真實 GCP live readback（驗收條件 3–8）完成收尾送審。
 
+## 11. Round 11（2026-09-24 16:43Z，owner Antigravity）
+
+### 11.1 獨立 Remediation Task 與 PR #1369 進度追蹤
+
+1. **獨立修復任務即時響應**：
+   - 依 Round 10 分析與驗收條件 10 規範，獨立修復任務 `ODP-RELEASE-ADMISSION-JOB-DEPS-001`（owner Claude，評審 Codex）已正式建立並提交 PR [#1369](https://github.com/alfloop-dev/odayplus/pull/1369)（head `@c17da220`）。
+   - **修復範圍**：於 `.github/workflows/deploy-dev.yml` 的 `verify-release-admission` job 中補齊 `setup-uv`、`uv python install 3.12` 與 `uv sync --frozen`，並將 `check_runtime_admission.py` 調用改為 `uv run python`。
+   - **測試與驗證**：新增 `tests/ops/test_deploy_workflow_contract.py` 合約測試（90 passed），PR 內 CI 閘道（`product-db`、`product-api-contract`、`product-node`、`product-security`、`performance-gate`）已全數通過。
+
+### 11.2 後續 Release 傳遞與 Rollout 鏈路
+
+1. **Dev 推進與 Candidate 重新鎖定**：
+   - 因 `.github/workflows/deploy-dev.yml` 屬於 `SOURCES_OFF_EGRESS_CONTRACT_FILES`，PR #1369 合併入 `dev` 後，既有候選 SHA `136436340290` 之 ancestry 將由新 tip 繼承，需透過 Candidate Gate reconciliation 於新 tip 重新執行單次建置（build-once）並重新綁定 `RELEASE_MANIFEST.json` 與 Gate Registry（`decision=go`）。
+2. **Lease 重新簽發與 Hosted Deploy Phase 派發**：
+   - Human/Ops 登記帶新 nonce 之 `release_lease_request`。
+   - Supervisor 自動簽發 Ed25519 lease 並 dispatch `deploy-dev.yml` 之 deploy phase。
+   - 修正後的 admission job 將具備完整 `google-cloud-storage` 與 `google-auth` 執行環境，順暢驗證 lease 後進入 Job 4（Deploy the admitted artifact by immutable digest），在 `odayplus-runtime-20260825` 實際部署 data platform 與 ODay Plus 各 workload。
+3. **Live Readback 採集與任務收尾**：
+   - 部署落地後，本 task 立即實施 live readback（Cloud Run URL/revisions、jobs one-shot、authenticated smoke、provider-off 16-source disabled、default-deny egress 與 live IAM），產出完整真實收據並滿足驗收條件 3–8 後送審。
+   - 目前本 task 維持 `in_progress` 與 fail-closed。
+
+
 
 
 
