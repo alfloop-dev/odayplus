@@ -930,6 +930,23 @@ jobs:
       # to C through `expected_candidate_sha`, which the verifier reads from the
       # registry rather than from `--sha`, so widening `--sha` to E does not
       # widen what the lease authorises.
+      # `check_runtime_admission.py` reads the durable lease state from the
+      # gs:// store, which needs google-cloud-storage. This job used to call the
+      # runner's bare python3, which has no project dependencies at all, so every
+      # gs://-backed admission failed with 'google-cloud-storage is required for
+      # gs:// lease state' before it could verify a single signature. The build and
+      # deploy jobs already provision the locked environment the same way.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install locked project dependencies
+        run: uv sync --frozen
+
       - name: Validate supervisor release admission
         env:
           EVENT_SHA: ${{ github.sha }}
@@ -947,7 +964,7 @@ jobs:
           set -euo pipefail
           umask 077
           printf '%s' "${RELEASE_LEASE}" | base64 -d > "${RUNNER_TEMP}/release-lease.json"
-          python3 delivery_toolchain/release/check_runtime_admission.py \
+          uv run python delivery_toolchain/release/check_runtime_admission.py \
             --sha "${EVENT_SHA}" \
             --environment "${RELEASE_ENVIRONMENT}" \
             --task-id "${RELEASE_TASK_ID}" \
