@@ -1115,7 +1115,26 @@ audit JSON 的 `superseded_unblock_requirements.previous_requirements`）：
 2. Human/Ops 登記帶有全新 nonce 及新 candidate 之 `release_lease_request`。
 3. Supervisor 簽發 Ed25519 lease 並 dispatch `deploy-dev.yml` deploy phase。
 4. 部署落地後，本任務採集 GCP 實體環境狀態（Cloud Run URLs, jobs one-shot, authenticated smoke, 16-source disabled, default-deny egress, live IAM），滿足驗收條件 3–8 後送審。
+## 42. Round 52（2026-09-24 21:28Z，owner Antigravity）
 
+### 42.1 系統狀態複查與全套邊界檢驗
 
+1. **分支基線與全套驗證**：
+   - 工作樹乾淨無殘留，分支 `task/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 與 `origin/dev`（`419e6bf4958269c5b9e94efcb80770e28cd54dda`）保持同步，PR #1107 保持 OPEN / MERGEABLE。
+   - 執行 `python3 docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/verify_dev_live_rollout_remediation.py`：PASS（exit 0）。
+   - 執行 `uv run pytest tests/ops/test_deploy_workflow_contract.py`：90 passed in 8.70s（exit 0）。
+   - 執行 `python3 delivery_toolchain/governance/check_code_boundaries.py`：1178 files passed（exit 0）。
+   - 執行 `python3 scripts/validate_external_data_boundary.py`：3914 files passed（exit 0）。
+   - 執行 `delivery_toolchain.release.check_runtime_admission.check_candidate_ancestry`：確認 candidate `136436340290` 到 `origin/dev`（`419e6bf4`）存在 PR #1369 之 non-evidence 變更（`.github/workflows/deploy-dev.yml`、`tests/ops/test_deploy_workflow_contract.py`），依驗收條件 2 需待重新 build-once。
 
+2. **維持 Fail-Closed 狀態**：
+   - 嚴格遵守驗收條件 10，不自行修改工作流程或產品代碼，保持 fail-closed `in_progress`。
+   - 等待上游 Candidate Gate reconciliation、Human/Ops lease request 簽核、Supervisor 簽署 lease 並執行 hosted rollout 落地後，採集真實 GCP readback 完成驗收。
+
+### 42.2 下一步執行順序
+
+1. 上游 Candidate Gate reconciliation 完成新 candidate 建置與 manifest 鎖定。
+2. Human/Ops 登記帶有全新 nonce 及新 candidate 之 `release_lease_request`。
+3. Supervisor 簽發 Ed25519 lease 並 dispatch `deploy-dev.yml` deploy phase。
+4. 部署落地後，本任務採集 GCP 實體環境狀態（Cloud Run URLs, jobs one-shot, authenticated smoke, 16-source disabled, default-deny egress, live IAM），滿足驗收條件 3–8 後送審。
 
