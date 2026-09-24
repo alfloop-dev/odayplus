@@ -5,7 +5,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from shared.domain.events import DomainEvent, validate_event
+from shared.domain.events import CONSUMER_MODE, DomainEvent, validate_event
 from shared.infrastructure.persistence.factory import PersistenceBundle
 
 logger = logging.getLogger(__name__)
@@ -36,8 +36,12 @@ class AssistedListingIntakeConsumer:
         self._handlers[event_type] = handler
 
     def consume(self, event: DomainEvent) -> None:
-        # Validate incoming event envelope and payload
-        errors = validate_event(event)
+        # Validate incoming event envelope and payload. Consumer mode ignores
+        # unknown payload fields so a newer producer that adds an optional field
+        # does not make this consumer DLQ every event -- the compatibility policy
+        # in docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml requires
+        # that "consumers must ignore unknown optional fields".
+        errors = validate_event(event, mode=CONSUMER_MODE)
         if errors:
             logger.error(f"Event validation failed: {errors}")
             self._send_to_dlq(event, f"Validation failed: {errors}")
