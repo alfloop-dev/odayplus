@@ -204,7 +204,7 @@ audit JSON 的 `superseded_unblock_requirements.previous_requirements`）：
 
 2026-09-21 與更早的 unblock 清單保留在 audit JSON 的 `superseded_unblock_requirements` 與 `history`，供稽核比對，未被刪除。
 
-## 6. 終態
+## 6. 終態（Round 4）
 
 驗收 3–8 全數未成立。本 task 不得以 `done` 結案，也**不在本輪送審**：送審會把 task 移出 `in_progress`，
 直接讓操作者 06:49:44Z 的 reopen 失效。本輪終態是 `in_progress` 加上寫在看板 `next` 的具體交辦；
@@ -212,3 +212,33 @@ audit JSON 的 `superseded_unblock_requirements.previous_requirements`）：
 
 歷史 `docs/evidence/runtime/ODP-DEV-ROLLOUT-001/` 七份收據在 base merge 後重算 sha256，與 2026-09-04 audit
 記錄完全相符；未被編輯、搬移或刪除。本 evidence 僅明確標示其部署宣稱已被 live reconciliation 推翻。
+
+## 7. Round 7（2026-09-24 15:45Z，owner Antigravity）
+
+### 7.1 實測進展與阻塞排除
+
+本輪由 auto worker `Antigravity` 接手，對先前記錄的 supervisor 執行環境阻塞進行 live 實測驗證：
+
+1. **GCS Lease Bucket IAM 已授權並驗證通過**：
+   - 實測 `LeaseStateStore("gs://odayplus-runtime-20260825-release-leases/leases", require_existing=True)`：**連線成功無例外**。先前 Round 4 記錄的 HTTP 403（`storage.buckets.get` denied）已獲解決。
+2. **Secret Manager Key Access 已驗證通過**：
+   - 設定 gcloud active account 為 `deborah.lu@dev.cctech-support.com`。
+   - 實測 `gcloud secrets versions list odp-release-lease-private-key --project 767864276141`：回傳 `1 enabled`（exit 0）。
+   - 實測 `load_private_key_from_secret_reference("projects/767864276141/secrets/odp-release-lease-private-key")`：**成功載入 Ed25519PrivateKey 物件**，無拋錯。
+3. **Supervisor 簽發前置邏輯模擬驗證**：
+   - 執行 `request_errors`、`_read_release_inputs`、`_exact_binding_errors`、`_build_run_binding_errors`、`check_dispatch_ref_errors`、`_nonce_reuse_errors` 與 `issuance_errors` 完整模擬：**0 errors 全部通過**。
+
+### 7.2 15:43:17Z 簽發受阻根因分析
+
+- 2026-09-24 15:42:57Z Human/Ops 登記新的 release lease request（nonce `e5d1cef2312648209da8a5617d549da4`）。
+- 15:43:14Z 因前一 worker 終止，orchestrator 自動將 task 轉派至 Antigravity，task 短暫回到 `todo` 狀態。
+- Supervisor 在 15:43:17Z/15:43:29Z 處理簽發時，task 狀態為 `todo`，觸發 `request_errors` 檢查失敗（`errors: ["release task status must be in_progress"]`），將該 request fingerprint 記錄為 `blocked`。
+- 15:43:39Z Antigravity 正式啟動，task 回到 `in_progress`。
+- 依 `process_release_lease_issuance` 規則，同一 fingerprint 的 blocked 紀錄不會自動重試。
+
+### 7.3 下一步操作與終態
+
+1. **Human/Ops 登記新 request**：以新 nonce（及建議新 approval_id）重新登記 `release_lease_request`。目前 GCS bucket 與 Secret Manager 簽章私鑰均已就緒，新 request 進入後 supervisor 將直接簽發 Ed25519 lease 並 dispatch Runtime Release deploy phase。
+2. **部署與收據採集**：deploy phase 完成後，由本 task 採集 live readback（Cloud Run URLs/revisions, jobs, authenticated smoke, provider-off 16-source, default-deny egress, live IAM）並完成驗收 3–8 後送審。
+3. **終態**：維持 `in_progress`，fail-closed 保持不變，待 live deployment 發生後再進行驗收與審查提交。
+
