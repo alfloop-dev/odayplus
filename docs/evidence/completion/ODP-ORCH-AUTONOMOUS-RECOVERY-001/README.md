@@ -1,7 +1,7 @@
 # ODP-ORCH-AUTONOMOUS-RECOVERY-001 — Completion evidence
 
 **Task:** ODP-ORCH-AUTONOMOUS-RECOVERY-001 (驗證並正式交付 supervisor 自動恢復修復)
-**Owner:** Claude · **Reviewer:** Codex2 · **PR:** #1362 · **Class:** remediation (tracked adoption of an already-running orchestrator fix)
+**Owner:** Antigravity7 (reassigned from Claude after review round 2) · **Reviewer:** Codex2 · **PR:** #1362 · **Class:** remediation (tracked adoption of an already-running orchestrator fix)
 
 ## Purpose
 
@@ -15,14 +15,13 @@ No product deployment is included.
 - Implementation commit `43d2fe8ca8e04b35a5049802169a01a5bc958678` was authored by the
   interactive Codex session (`LLM-Agent: Codex`, `Reviewer: Claude`) and opened as draft PR #1362.
   Its commit history, author and trailers are preserved unchanged; nothing was rewritten.
-- Claude (this task's owner) inspected and probed the change independently; see
-  `independent_assessment.md`. The prior green CI on `43d2fe8c` was not used as a substitute for
-  that review, and no reviewer approval is claimed here.
+- Claude inspected and probed the change independently; see `independent_assessment.md`.
+  The prior green CI on `43d2fe8c` was not used as a substitute for that review, and no reviewer approval is claimed here.
 - Independent review round 1 (Codex2, board event `reopen` at `2026-09-24T07:57:35Z`) returned
-  two P2 findings against the adopted code. Both were reproduced and fixed by this task in a
-  separate commit on top of the adopted history, so the two Python deliverables are **not**
-  shipped as authored at `43d2fe8c` any more; the runbook was extended accordingly. Details in
-  `independent_assessment.md` (findings F5, F6) and below.
+  two P2 findings against the adopted code (R1, R2). Both were reproduced and fixed.
+- Independent review round 2 (Codex2, board event `reopen` at `2026-09-24T08:45:02Z`) returned
+  one P2 finding (R3) regarding symlink target and hardlink byte drift. Reassigned to Antigravity7
+  at `2026-09-24T08:48:40Z`, reproduced and fixed in `worker_workspace.py` with shipped regression tests.
 - The existing clean task worktree discovered by the supervisor was reused. No other task
   worktree, no live supervisor and no worker was touched.
 
@@ -37,24 +36,24 @@ No product deployment is included.
 | History | plain merge, no rebase, no reset; the previously pushed tip `43d2fe8c` remains an ancestor |
 
 At `43d2fe8c` and at `31dc1a65` the two Python deliverable blobs are byte-identical
-(`596bd281…`, `905ae956…`). The review-fix commit that follows changes both; the blob ids at the
-head that carries this document are listed in `independent_assessment.md`.
+(`596bd281…`, `905ae956…`). The review-fix commits that follow change both; details in `independent_assessment.md`.
 
-## Review round 1 (Codex2) and the fix
+## Review rounds (Codex2) and fixes
 
 | Finding | What Codex2 found | Reproduced as | Fix |
 |---|---|---|---|
 | R1 (P2) | `prepare_worker_workspace` routed `unresolved_git_operation` into `sealed_owner_continuation_allowed` without requiring an `interrupted_merge` seal. An ordinary `owner_dirty` seal only binds porcelain status, dirty bytes and HEAD, so a cherry-pick, revert or rebase started after the seal that leaves all three unchanged was leased as a success. | Real empty `git cherry-pick` on a sealed dirty checkout: `CHERRY_PICK_HEAD` present, HEAD / `ls-files --stage` / porcelain / dirty bytes unchanged; on the adopted code the seal returned `(True, "1 dirty change …")` and the lease succeeded. | `unresolved_git_operation` is a continuation candidate only when the recorded seal reason is `interrupted_merge`; the ordinary dirty path additionally refuses with `git_operation_in_progress` whenever any Git operation is attached. |
 | R2 (P2) | The merge-state snapshot whitelist omitted `MERGE_AUTOSTASH`. With `git merge --autostash` / `merge.autoStash=true` the pre-merge dirty work lives only in the stash-like commit that file names: not in the worktree, not in any patch, not in the seal, not in the backup. | Real `git merge --no-commit --autostash dev` with a dirty tracked file: the file is clean afterwards, `MERGE_AUTOSTASH` names a commit, the backup had no `git-state/MERGE_AUTOSTASH`, and adding / changing / deleting the pointer after sealing did not change the seal verdict. `git gc --prune=now` deletes that commit. | `MERGE_AUTOSTASH` joins the snapshot (symlink-refused like the other control files), hence the seal and the `git-state/` backup. The snapshot fails closed when the pointer no longer names a commit. The backup additionally stores the parked content as `MERGE_AUTOSTASH-worktree.patch` and `MERGE_AUTOSTASH-index.patch` so it does not depend on the object store. |
-| non-blocking | This README claimed three deliverables were unchanged. | — | Wording corrected above; only the two Python blobs were identical, and only up to `31dc1a65`. |
+| R3 (P2) | `_interrupted_merge_fingerprint` relied on `inspection.fingerprint` from `worktree_cleanliness._worktree_fingerprint`, which delegates path validation to `is_safe_context_destination`. Because that helper rejects symlinks and hardlinks (`st_nlink != 1`), their content was hashed as static `unsafe-path`. A dirty symlink target change or hardlink content edit after seal did not change the seal fingerprint, allowing drift past continuation. | Dirty tracked symlink target changed from `task.py` to `README.md`, or hardlinked `README.md` content edited after seal: porcelain, HEAD, logical index and merge snapshot unchanged, seal accepted and lease granted. | Added `_interrupted_merge_worktree_fingerprint` in `worker_workspace.py` that directly reads symlink targets (`os.readlink`) and file bytes (including hardlinks with `nlink > 1`), and preserves dirty symlinks under `files/` during backup. |
+| non-blocking | Initial README claimed three deliverables were unchanged. | — | Wording corrected; only the two Python blobs were identical up to `31dc1a65`. |
 
 Shipped regression tests (`QuotaSiblingFencingDirtyHandoffTests`):
 `test_owner_dirty_seal_keeps_git_operation_started_after_seal_blocked` (sub-cases: empty
-cherry-pick, revert, rebase; each proves the operation is invisible to HEAD/index/dirty bytes,
-then that seal and full `prepare_worker_workspace` refuse, then that clearing the operation
-leases again), `test_interrupted_autostash_merge_backs_up_parked_work_and_seals_the_pointer`
-(backup content, checksums, four pointer drifts, pruned-commit fail-closed) and
-`test_interrupted_merge_seal_rejects_autostash_added_after_seal`. Two pre-existing mock-only
+cherry-pick, revert, rebase), `test_interrupted_autostash_merge_backs_up_parked_work_and_seals_the_pointer`
+(backup content, checksums, four pointer drifts, pruned-commit fail-closed),
+`test_interrupted_merge_seal_rejects_autostash_added_after_seal`,
+`test_interrupted_merge_seal_rejects_symlink_target_drift` (symlink target drift rejection), and
+`test_interrupted_merge_seal_rejects_hardlink_byte_drift` (hardlink byte drift rejection). Two pre-existing mock-only
 tests in `AgyBackgroundExitRecoveryTests` that model an ordinary dirty seal on a path that is not
 a Git repository now also patch `_git_operation_in_progress` to `False` (both in
 `worker_workspace` and `supervisor`, because `_sync_supervisor_scope` rebinds on every call);

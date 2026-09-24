@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import stat
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -640,9 +641,62 @@ def _interrupted_merge_autostash_oid(worktree_path: Path, snapshot: dict[str, by
     return resolved if resolved and resolved.lower() == oid.lower() else None
 
 
-def _interrupted_merge_fingerprint(snapshot: dict[str, bytes], inspection: WorktreeInspection) -> str:
+def _interrupted_merge_worktree_fingerprint(
+    worktree_path: Path | str,
+    inspection: WorktreeInspection,
+) -> str:
+    """Hash the exact dirty worktree entries, including symlink targets and hardlink bytes."""
+    digest = hashlib.sha256()
+    path_root = Path(worktree_path)
+    for code, path in inspection.entries:
+        digest.update(code.encode("utf-8", errors="surrogateescape"))
+        digest.update(b"\0")
+        digest.update(path.encode("utf-8", errors="surrogateescape"))
+        digest.update(b"\0")
+        candidate = path_root / path
+        try:
+            metadata = candidate.lstat()
+        except OSError:
+            digest.update(b"unreadable-or-absent\0")
+            continue
+        if stat.S_ISLNK(metadata.st_mode):
+            digest.update(b"symlink\0")
+            try:
+                target = os.readlink(candidate)
+                digest.update(target.encode("utf-8", errors="surrogateescape"))
+                digest.update(b"\0")
+            except OSError:
+                digest.update(b"readlink-failed\0")
+        elif stat.S_ISREG(metadata.st_mode):
+            digest.update(b"regular\0")
+            try:
+                with candidate.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        digest.update(chunk)
+            except OSError:
+                digest.update(b"read-failed\0")
+        elif stat.S_ISDIR(metadata.st_mode):
+            digest.update(b"dir\0")
+        else:
+            digest.update(f"mode:{metadata.st_mode:o}:size:{metadata.st_size}".encode("ascii"))
+    return digest.hexdigest()
+
+
+def _interrupted_merge_fingerprint(
+    snapshot: dict[str, bytes],
+    worktree_path: Path | str | WorktreeInspection,
+    inspection: WorktreeInspection | None = None,
+) -> str:
+    if isinstance(worktree_path, WorktreeInspection):
+        inspection = worktree_path
+        wt_path = None
+    else:
+        wt_path = Path(worktree_path)
     binding = {name: hashlib.sha256(data).hexdigest() for name, data in snapshot.items() if name != "index"}
-    binding["worktree"] = inspection.fingerprint
+    if wt_path is not None and inspection is not None:
+        binding["worktree"] = _interrupted_merge_worktree_fingerprint(wt_path, inspection)
+    elif inspection is not None:
+        binding["worktree"] = inspection.fingerprint
     return hashlib.sha256(json.dumps(binding, sort_keys=True).encode()).hexdigest()
 
 
@@ -1456,7 +1510,7 @@ def sealed_owner_continuation_allowed(
     inspection = inspect_worktree(worktree_path, materialized_paths=materialized_paths)
     if record.get("reason") == "interrupted_merge":
         snapshot = _interrupted_merge_snapshot(worktree_path)
-        if snapshot is None or _interrupted_merge_fingerprint(snapshot, inspection) != record.get("dirt_fingerprint"):
+        if snapshot is None or _interrupted_merge_fingerprint(snapshot, worktree_path, inspection) != record.get("dirt_fingerprint"):
             return False, "merge_state_changed"
     else:
         # An ordinary dirty seal binds porcelain status and dirty file bytes
@@ -3345,7 +3399,7 @@ def preserve_dead_worker_worktree(
                 handoff_seal = WorkerHandoffSeal(
                     False, "interrupted_merge", "Resume the preserved interrupted merge in this same checkout",
                     _git_commit_oid(Path(workspace_path), "HEAD"),
-                    _interrupted_merge_fingerprint(merge_snapshot, inspection),
+                    _interrupted_merge_fingerprint(merge_snapshot, Path(workspace_path), inspection),
                 )
         if (
             not handoff_seal.accepted
@@ -3625,6 +3679,12 @@ def _quarantine_and_preserve_dirty_worktree(
                     shutil.copy2(worktree_path / entry["path"], saved)
                     if hashlib.sha256(saved.read_bytes()).hexdigest() != entry["sha256"]:
                         raise RuntimeError(f"merge file backup mismatch for {entry['path']}")
+                elif entry.get("is_symlink") and entry.get("symlink_target") is not None:
+                    saved = task_backup_dir / "files" / entry["path"]
+                    saved.parent.mkdir(parents=True, exist_ok=True)
+                    if saved.exists() or os.path.islink(saved):
+                        saved.unlink()
+                    os.symlink(entry["symlink_target"], saved)
 
         checksums: dict[str, str] = {}
         for b_root, _, b_files in os.walk(task_backup_dir):

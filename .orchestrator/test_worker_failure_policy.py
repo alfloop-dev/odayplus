@@ -1763,6 +1763,70 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
         autostash_file.unlink()
         self.assertTrue(self._owner_seal_allowed(state, task)[0])
 
+    def test_interrupted_merge_seal_rejects_symlink_target_drift(self):
+        """R3: dirty symlink target drift after seal must be detected and rejected."""
+        worker, state = self._interrupted_merge_fixture()
+        task = self.status_data["tasks"][0]
+        link_path = self.worktree / "symlink.txt"
+        link_path.symlink_to("task.py")
+        _git_run(self.worktree, "add", "symlink.txt")
+
+        self.assertTrue(worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=task))
+        self.assertEqual(state["worker_worktrees"]["handoff_blocks"]["TASK-SIBLING-001"]["reason"], "interrupted_merge")
+
+        self.assertTrue(self._owner_seal_allowed(state, task)[0])
+        ok, error, request = self._owner_lease(state)
+        self.assertTrue(ok, error)
+        self.assertEqual(request.metadata["worktree_continuation"], "sealed_owner_merge")
+
+        # Mutate symlink target after seal
+        link_path.unlink()
+        link_path.symlink_to("README.md")
+
+        self.assertEqual(self._owner_seal_allowed(state, task), (False, "merge_state_changed"))
+        ok, error, request = self._owner_lease(state)
+        self.assertFalse(ok)
+        self.assertNotIn("worktree_continuation", request.metadata)
+
+        # Restore original symlink target
+        link_path.unlink()
+        link_path.symlink_to("task.py")
+        self.assertTrue(self._owner_seal_allowed(state, task)[0])
+        ok, error, request = self._owner_lease(state)
+        self.assertTrue(ok, error)
+        self.assertEqual(request.metadata["worktree_continuation"], "sealed_owner_merge")
+
+    def test_interrupted_merge_seal_rejects_hardlink_byte_drift(self):
+        """R3: dirty file content drift via hardlink or edit after seal must be detected and rejected."""
+        worker, state = self._interrupted_merge_fixture()
+        task = self.status_data["tasks"][0]
+        hardlink_path = self.worktree / "hardlink_readme.md"
+        os.link(self.worktree / "README.md", hardlink_path)
+        self.assertGreater(os.stat(self.worktree / "README.md").st_nlink, 1)
+
+        self.assertTrue(worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=task))
+        self.assertEqual(state["worker_worktrees"]["handoff_blocks"]["TASK-SIBLING-001"]["reason"], "interrupted_merge")
+
+        self.assertTrue(self._owner_seal_allowed(state, task)[0])
+        ok, error, request = self._owner_lease(state)
+        self.assertTrue(ok, error)
+        self.assertEqual(request.metadata["worktree_continuation"], "sealed_owner_merge")
+
+        # Mutate content of hardlinked README.md after seal
+        (self.worktree / "README.md").write_text("drifted hardlink content after seal\n")
+
+        self.assertEqual(self._owner_seal_allowed(state, task), (False, "merge_state_changed"))
+        ok, error, request = self._owner_lease(state)
+        self.assertFalse(ok)
+        self.assertNotIn("worktree_continuation", request.metadata)
+
+        # Restore original content
+        (self.worktree / "README.md").write_text("unfinished owner change\n")
+        self.assertTrue(self._owner_seal_allowed(state, task)[0])
+        ok, error, request = self._owner_lease(state)
+        self.assertTrue(ok, error)
+        self.assertEqual(request.metadata["worktree_continuation"], "sealed_owner_merge")
+
     def test_sibling_quota_fence_preserves_dirty_worktree_and_authorizes_successor_lease_continuation(self) -> None:
         """E2E: Sibling worker dirty changes (staged, unstaged, untracked) are backed up, sealed, and handed off to authorized successor via prepare_worker_workspace."""
         # Create uncommitted staged, unstaged, and untracked work in the sibling's isolated worktree

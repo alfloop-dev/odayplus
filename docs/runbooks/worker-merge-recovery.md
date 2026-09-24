@@ -55,7 +55,7 @@ content edit after the seal, a stat-cache refresh, a revert in progress, and fen
 successor dispatch on a conflicted merge) behaved as this runbook describes. Details:
 `docs/evidence/completion/ODP-ORCH-AUTONOMOUS-RECOVERY-001/`.
 
-## Review fixes (2026-09-24, ODP-ORCH-AUTONOMOUS-RECOVERY-001, Codex2 findings R1/R2)
+## Review fixes (2026-09-24, ODP-ORCH-AUTONOMOUS-RECOVERY-001, Codex2 findings R1/R2/R3)
 
 - An ordinary dirty seal (`owner_dirty`) never resumes a checkout that has a Git
   operation attached. A cherry-pick, revert or rebase started after the seal can
@@ -71,3 +71,8 @@ successor dispatch on a conflicted merge) behaved as this runbook describes. Det
   next to the pointer. A pointer that changes, disappears, dangles (git gc prunes
   the parked commit once the file is gone) or becomes a symlink rejects the lease;
   the resumed owner must not finish the merge without the parked work.
+- Working tree state binding in `interrupted_merge` seals binds exact dirty file
+  contents and symlink targets without relying on static context-materialization
+  fallbacks. Symlink target drift and hardlinked file byte drift after sealing
+  are detected and rejected, preserving strict state-drift rejection. Dirty tracked
+  symlinks are also preserved and checksummed under `files/` during backup.

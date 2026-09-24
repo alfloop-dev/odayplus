@@ -1,27 +1,20 @@
-# ODP-ORCH-AUTONOMOUS-RECOVERY-001 — Independent assessment (Claude)
+# ODP-ORCH-AUTONOMOUS-RECOVERY-001 — Independent assessment (Claude / Antigravity7)
 
 **Task:** ODP-ORCH-AUTONOMOUS-RECOVERY-001 (驗證並正式交付 supervisor 自動恢復修復)
-**Owner:** Claude · **Reviewer:** Codex2 · **PR:** #1362 (adopted draft)
+**Owner:** Antigravity7 (reassigned from Claude after review round 2) · **Reviewer:** Codex2 · **PR:** #1362 (adopted draft)
 
 ## Provenance and binding
 
 - Original implementation: commit `43d2fe8ca8e04b35a5049802169a01a5bc958678`, authored by the
   interactive Codex session (trailers `LLM-Agent: Codex`, `Reviewer: Claude`). That commit and
   its history are preserved unchanged. This adoption added a base-advance merge and evidence,
-  and — after review round 1 — one fix commit for findings F5/F6 below.
-- Blob identities:
-
-| File | At `43d2fe8c` and `31dc1a65` (adopted) | At the head that carries this document (review fix) |
-|---|---|---|
-| `.orchestrator/worker_workspace.py` | `596bd281f81bd331293dc1eb1ba1f41ebf446cf5` | `35d19146b111bbdef2507651e826ac50ef1dca73` |
-| `.orchestrator/test_worker_failure_policy.py` | `905ae95657fc967ee3316bbfeedbc96566c2aebd` | `9ec97912ed8e1e1e54ed7e65243fbc368518834e` |
-| `docs/runbooks/worker-merge-recovery.md` | `4df0a5a1dcd4c61d6dfa46275f1bb3fad239b0a6` (before the 2026-09-24 addenda) | see `git ls-tree HEAD` |
+  and — after review rounds 1 and 2 — fix commits for findings F5/F6/F7 below.
 
 Prior CI on `43d2fe8c` (all product/orchestrator checks green) was not treated as approval; the
 code was read and probed independently as recorded here, and the reviewer's findings were
 reproduced on real Git state before anything was changed.
 
-## What the code does (read-through of the diff against `origin/dev`, after the review fix)
+## What the code does (read-through of the diff against `origin/dev`, after review fixes)
 
 1. `_interrupted_merge_snapshot` reads, and never mutates, the state of a merge attached to a
    branch: it requires a symbolic `HEAD` and a resolvable `MERGE_HEAD`; it refuses when
@@ -33,8 +26,9 @@ reproduced on real Git state before anything was changed.
    the parked pre-merge work is already unrecoverable and a continuation would finish the merge
    without it. Only `rev-parse`, `symbolic-ref` and `ls-files` are invoked.
 2. `_interrupted_merge_fingerprint` hashes the control files (now including `MERGE_AUTOSTASH`)
-   and the logical index together with the content-aware worktree fingerprint from
-   `worktree_cleanliness._worktree_fingerprint`. The raw index is excluded because `git status`
+   and the logical index together with `_interrupted_merge_worktree_fingerprint`, which directly
+   hashes dirty entries including symlink targets (`os.readlink`) and regular file bytes (including
+   hardlinks with `nlink > 1`). The raw index is excluded because `git status`
    may rewrite its stat cache.
 3. `_quarantine_and_preserve_dirty_worktree` previously refused any in-progress Git operation.
    An attached merge (snapshot available) proceeds; every other operation still returns
@@ -70,7 +64,7 @@ reproduced on real Git state before anything was changed.
 | Preserve index, metadata and files exactly | `test_interrupted_merge_fence_preserves_and_dispatches_successor` (clean `--no-commit` merge; HEAD, `MERGE_HEAD`, `ls-files --stage` unchanged; `git-state/MERGE_HEAD`, `git-state/index`, `files/README.md` present); `test_interrupted_autostash_merge_backs_up_parked_work_and_seals_the_pointer` (`git-state/MERGE_AUTOSTASH` bytes, parked content present in `MERGE_AUTOSTASH-worktree.patch` and absent from `staged.patch`/`unstaged.patch`, all three in `backup_checksums.sha256`) | Probe A: real conflicted merge; `index-entries` contains stage 1/2/3 for the conflicted path, `files/README.md` keeps the conflict markers, manifest status `UU`; logical index unchanged after preservation; owner seal accepted |
 | Owner or authorised successor may resume | successor `Codex` via `_settle_fenced_sibling_worker` → `maybe_reassign_task_after_worker_failure`, which transfers the handoff block only when source run id, workspace path and branch match and writers are verified stopped; owner lease on an autostash merge tagged `sealed_owner_merge` | Probe E: same flow on a conflicted merge; `prepare_worker_workspace` succeeds with `sealed_owner_merge`, `MERGE_HEAD`, logical index and conflict markers intact |
 | Reject reviewer, helper, foreign owner | `test_interrupted_merge_seal_rejects_reviewer_helper_and_foreign_owner` (`review_ready_dispatch`, `helper_claim_dispatch`, foreign owner) — rejected by `not_owner_execution` / `not_same_owner` before the fingerprint is consulted | — |
-| Detect state drift | `test_interrupted_merge_seal_rejects_changed_metadata_or_index` (`MERGE_MSG` bytes; `git add` of a dirty file); autostash test: pointer changed to another commit, deleted, dangling (`0`×40), replaced by a symlink → `merge_state_changed` and lease refused each time, seal accepted again after restoring the bytes; after `git gc --prune=now` removes the parked commit the seal stays refused while the backup patch still holds the content; `test_interrupted_merge_seal_rejects_autostash_added_after_seal` | Probe B: same-path content edit that leaves porcelain status unchanged → `merge_state_changed`. Probe C: mtime touch + `git status` + `update-index --refresh` keeps the seal |
+| Detect state drift | `test_interrupted_merge_seal_rejects_changed_metadata_or_index` (`MERGE_MSG` bytes; `git add` of a dirty file); autostash test: pointer changed to another commit, deleted, dangling (`0`×40), replaced by a symlink → `merge_state_changed` and lease refused each time, seal accepted again after restoring the bytes; after `git gc --prune=now` removes the parked commit the seal stays refused while the backup patch still holds the content; `test_interrupted_merge_seal_rejects_autostash_added_after_seal`; `test_interrupted_merge_seal_rejects_symlink_target_drift` (dirty symlink target drift rejected); `test_interrupted_merge_seal_rejects_hardlink_byte_drift` (hardlink byte drift rejected) | Probe B: same-path content edit that leaves porcelain status unchanged → `merge_state_changed`. Probe C: mtime touch + `git status` + `update-index --refresh` keeps the seal |
 | Index lock, rebase, cherry-pick, revert stay blocked | `test_interrupted_merge_with_index_lock_remains_blocked` (`git_operation_in_progress`, no handoff block); `test_owner_dirty_seal_keeps_git_operation_started_after_seal_blocked`: on an `owner_dirty` seal a real empty `git cherry-pick`, a `REVERT_HEAD` and a `rebase-merge` directory — each verified to leave HEAD, `ls-files --stage`, porcelain and dirty bytes identical to the sealed state — make the seal answer `git_operation_in_progress` and `prepare_worker_workspace` refuse with `unresolved_git_operation` (no `worktree_continuation`, handoff block untouched, worktree untouched); clearing the operation leases again | Probe D: `REVERT_HEAD` on a merge → `git_operation_in_progress`, no handoff block. Rebase is refused by `_git_operation_in_progress` before the snapshot and again inside it |
 | No automatic discard, resolution, commit, approval or skipped checks | inspection: the added Git calls are read-only (`git diff` between two commits for the autostash patches writes only into the backup directory); backup copies leave the worktree; the resumed worker receives an instruction, not an action; review and CI gates are untouched | — |
 
@@ -126,9 +120,20 @@ Probe run (before review round 1): 5 probe methods on top of the 24 inherited fi
   a pointer that no longer names a commit refuses the snapshot, and the backup stores the parked
   content as two patches. Git behaviour reference: https://git-scm.com/docs/git-merge
   (`--autostash`).
+- **F7 — defect (Codex2 R3, P2), fixed.** `_interrupted_merge_fingerprint` relied on
+  `inspection.fingerprint` from `worktree_cleanliness._worktree_fingerprint`, which delegates path
+  safety checks to `is_safe_context_destination`. Because that helper rejects symlinks and
+  hardlinks (`metadata.st_nlink != 1`) to protect context materialization, their content was hashed
+  as static `unsafe-path`. A dirty symlink target change or hardlink content edit after seal did not
+  alter the seal fingerprint, allowing drift past continuation. Fix: `worker_workspace.py`
+  implements dedicated `_interrupted_merge_worktree_fingerprint` that directly reads symlink targets
+  (`os.readlink`) and file bytes (including hardlinks with `nlink > 1`), and preserves dirty symlinks
+  under `files/` during backup. Shipped regression tests:
+  `test_interrupted_merge_seal_rejects_symlink_target_drift` and
+  `test_interrupted_merge_seal_rejects_hardlink_byte_drift`.
 
-**Defects requiring a code change: two (F5, F6), both raised by the independent reviewer,
-both reproduced before the change and covered by shipped regression tests.** The earlier
+**Defects requiring a code change: three (F5, F6, F7), all raised by the independent reviewer,
+all reproduced before the change and covered by shipped regression tests.** The earlier
 statement in this file that none were found was wrong in the way F2 describes.
 
 ## Not verified here
