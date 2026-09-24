@@ -275,4 +275,26 @@ audit JSON 的 `superseded_unblock_requirements.previous_requirements`）：
 3. **部署與驗收執行**：一旦 workflow dispatch 觸發 `deploy-dev.yml` 完成部署，立即進行 live readback（Cloud Run URL/revisions、jobs one-shot、authenticated smoke、provider-off 16-source disabled、default-deny egress 與 live IAM），產出完整真實收據並滿足驗收條件 3–8 後正式送審。
 4. **終態**：持續維持 `in_progress` 與 fail-closed。
 
+## 9. Round 9（2026-09-24 16:30Z，owner Antigravity）
+
+### 9.1 環境與服務連線持續監控與驗證
+
+本輪延續執行環境與前置條件即時查驗：
+
+1. **Supervisor 執行環境與 Watchdog 狀態**：
+   - Watchdog 即時探針確認 Supervisor 穩定運行（pid 2704646，`decision: observe_only: supervisor_healthy`，資源充足）。
+2. **Secret Manager 密鑰讀取實測**：
+   - 透過 `deborah.lu@dev.cctech-support.com` 執行 `load_private_key_from_secret_reference("projects/767864276141/secrets/odp-release-lease-private-key")`：**解析 Ed25519PrivateKey 正常**，exit 0。
+3. **GCS LeaseStateStore 連線實測**：
+   - 執行 `LeaseStateStore("gs://odayplus-runtime-20260825-release-leases/leases", require_existing=True)`：**連線正常**，未見 403 異常。
+4. **GitHub Actions 流程狀態查證**：
+   - 查驗 `deploy-dev.yml` 最近 run 狀態：最近執行仍為 candidate `136436340290` 之 build phase（run 35944616693，conclusion `success`）。deploy phase 仍處於 pending 狀態，未有非授權之部署。
+
+### 9.2 狀態與處置準則
+
+- **維持 In Progress 與 Fail-Closed**：目前候選 SHA `136436340290`、Manifest `sha256:6fb8f9e2...`、Gate Registry (`decision=go`) 與 GCS / Secret Manager 基礎設施均已完全就緒。
+- **待辦依賴**：因前次 15:59:56Z 簽發受 CAS 衝突保護進入 `issuing` 終態且 GCS 臨時 lease 已於 16:09:56Z 自然過期，後續唯待 Human/Ops 登記帶全新 nonce 之 `release_lease_request`，即可由 supervisor 自動簽出並 dispatch Runtime Release deploy phase。
+- **後續閉環**：待 deploy phase 成功後，本 task 將立即進行 live readback 驗收（驗收條件 3–8）並提交 PR review。
+
+
 
