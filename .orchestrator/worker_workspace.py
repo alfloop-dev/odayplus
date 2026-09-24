@@ -651,14 +651,14 @@ def _interrupted_merge_worktree_fingerprint(
     records for that path: a regular file by its executable mode (100644 or
     100755, derived from the owner execute bit exactly as Git does) and its
     bytes (read through the path, so hardlinked inodes are covered); a symlink
-    by its target; a nested repository (submodule or untracked checkout) by its
-    HEAD and its own dirty entries.  mtime, ctime and the index stat cache are
-    deliberately not bound, so a stat refresh cannot break a legitimate
-    continuation.
+    by its target; a plain directory by type only. mtime, ctime and the index
+    stat cache are deliberately not bound, so a stat refresh cannot break a
+    legitimate continuation.
 
     Returns None when the state cannot be read exactly (``git status`` failed,
-    or a nested repository is unreadable).  Callers must fail closed on None:
-    neither seal nor resume a merge whose working files are not bound.
+    or a nested repository is present/unreadable). Callers must fail closed
+    on None: neither seal nor resume a merge whose working files cannot be
+    completely preserved and restored.
     """
     if inspection.kind == "status_failed":
         return None
@@ -712,25 +712,20 @@ def _interrupted_merge_directory_fingerprint(directory: Path) -> bytes | None:
     """Bind a directory entry of the porcelain listing.
 
     ``git status --untracked-files=all`` lists the files inside a plain
-    directory individually, so the entry itself carries no further state.  A
-    nested repository (a submodule gitlink, or an untracked checkout) is
-    listed as one entry whose porcelain code does not change when its HEAD
-    moves or its own files change; bind its HEAD and its dirty entries the
-    same way.  None means the nested state could not be read.
+    directory individually, so an ordinary directory entry carries no further
+    file state.
+
+    A nested git repository (a submodule gitlink, or an untracked checkout)
+    cannot be completely sealed, indexed, and backed up across repositories
+    by single-repository interrupted merge recovery. Return None so that
+    both seal creation and continuation fail closed.
     """
     try:
-        nested_repository = (directory / ".git").exists()
+        if (directory / ".git").exists():
+            return None
     except OSError:
         return None
-    if not nested_repository:
-        return b"dir\0"
-    head_sha = _git_commit_oid(directory, "HEAD")
-    if not head_sha:
-        return None
-    nested_fingerprint = _interrupted_merge_worktree_fingerprint(directory, inspect_worktree(directory))
-    if nested_fingerprint is None:
-        return None
-    return b"repository:" + head_sha.encode("ascii") + b":" + nested_fingerprint.encode("ascii") + b"\0"
+    return b"dir\0"
 
 
 def _interrupted_merge_fingerprint(
@@ -3650,6 +3645,13 @@ def _quarantine_and_preserve_dirty_worktree(
                     sha256_val = None
             elif full_p.is_dir():
                 is_dir = True
+                try:
+                    if (full_p / ".git").exists():
+                        if merge_snapshot is not None:
+                            return _quarantine_refused("nested_repository_not_supported")
+                except OSError:
+                    if merge_snapshot is not None:
+                        return _quarantine_refused("nested_repository_not_supported")
 
         inventory_files.append({
             "path": rel_path,

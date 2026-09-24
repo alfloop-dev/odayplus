@@ -55,7 +55,7 @@ content edit after the seal, a stat-cache refresh, a revert in progress, and fen
 successor dispatch on a conflicted merge) behaved as this runbook describes. Details:
 `docs/evidence/completion/ODP-ORCH-AUTONOMOUS-RECOVERY-001/`.
 
-## Review fixes (2026-09-24, ODP-ORCH-AUTONOMOUS-RECOVERY-001, Codex2 findings R1–R5)
+## Review fixes (2026-09-24, ODP-ORCH-AUTONOMOUS-RECOVERY-001, Codex2 findings R1–R7)
 
 - An ordinary dirty seal (`owner_dirty`) never resumes a checkout that has a Git
   operation attached. A cherry-pick, revert or rebase started after the seal can
@@ -83,14 +83,19 @@ successor dispatch on a conflicted merge) behaved as this runbook describes. Det
   at worker death, and an existing seal answers `merge_state_changed`.
 - The seal binds every dirty entry the way Git tracks it: a regular file by its
   Git mode (`100644` or `100755`, derived from the owner execute bit) and its bytes,
-  hardlinked inodes included; a symlink by its target; a nested repository
-  (a submodule gitlink or an untracked checkout) by its HEAD and its own dirty
-  entries. A `chmod +x` on an already-dirty file, or a submodule moved to another
-  commit, leaves the porcelain code unchanged and is still rejected. mtime, ctime
-  and the raw index stat cache are deliberately not bound, so a stat refresh keeps
-  a legitimate continuation.
+  hardlinked inodes included; a symlink by its target; an ordinary untracked directory
+  by type only. A `chmod +x` on an already-dirty file leaves the porcelain code
+  unchanged and is still rejected. mtime, ctime and the raw index stat cache are
+  deliberately not bound, so a stat refresh keeps a legitimate continuation.
 - Backup `files/`: dirty regular files are copied byte for byte; dirty symlinks are
   re-created with their target and also recorded in the manifest.
   `backup_checksums.sha256` covers every entry: file copies by content hash and
   every symlink by its target, including a symlink that resolves to a directory
   inside the backup (the checksum walk lists it but never descends into it).
+- Nested git repositories (tracked submodules and untracked checkouts) cannot be
+  completely sealed or backed up across repositories by single-repository interrupted
+  merge recovery without cross-repository index and file duplication. Interrupted merge
+  fingerprinting and quarantine fail closed on nested repositories: `preserve_dead_worker_worktree`
+  refuses quarantine (`nested_repository_not_supported`), no `interrupted_merge` seal is recorded,
+  and any nested checkout present or introduced post-seal yields a `None` fingerprint, refusing
+  continuation with `merge_state_changed`.

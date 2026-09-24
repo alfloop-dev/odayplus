@@ -4,6 +4,7 @@ import ctypes
 import hashlib
 import json
 import os
+import shutil
 import signal
 import socket
 import stat
@@ -1966,9 +1967,10 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
         self.assertTrue(ok, error)
         self.assertEqual(request.metadata["worktree_continuation"], "sealed_owner_merge")
 
-    def test_interrupted_merge_seal_binds_nested_repository_head_and_dirt(self):
-        """A submodule keeps the porcelain code ` M` whether its HEAD moves or its own files change;
-        the seal binds the nested HEAD and dirty entries, and fails closed when they cannot be read."""
+    def test_interrupted_merge_refuses_seal_and_quarantine_for_submodule(self):
+        """A tracked submodule in dirty entries cannot be completely sealed or backed up across repositories;
+        preserve_dead_worker_worktree refuses quarantine, no interrupted_merge seal is recorded, and
+        both seal creation and continuation fail closed."""
         subrepo = self.root / "subrepo"
         subrepo.mkdir()
         _git_run(subrepo, "init", "--quiet")
@@ -1996,49 +1998,32 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
         ).stdout
         self.assertEqual(porcelain, " M sub\nA  upstream.py\n")
 
+        # Direct fingerprint check must fail closed (return None)
+        inspection = inspect_worktree(self.worktree)
+        self.assertIsNone(worker_workspace._interrupted_merge_worktree_fingerprint(self.worktree, inspection))
+
+        snapshot = worker_workspace._interrupted_merge_snapshot(self.worktree)
+        self.assertIsNotNone(snapshot)
+        self.assertIsNone(worker_workspace._interrupted_merge_fingerprint(snapshot, self.worktree, inspection))
+
         worker, state = self._sibling_worker_state()
         task = self.status_data["tasks"][0]
-        self.assertTrue(worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=task))
-        record = state["worker_worktrees"]["handoff_blocks"]["TASK-SIBLING-001"]
-        self.assertEqual(record["reason"], "interrupted_merge")
-        sealed_record = dict(record)
-        sealed_identity = self._worktree_identity()
-        sealed_snapshot = self._merge_snapshot_without_raw_index()
-        self.assertTrue(self._owner_seal_allowed(state, task)[0])
-        ok, error, request = self._owner_lease(state)
-        self.assertTrue(ok, error)
-        self.assertEqual(request.metadata["worktree_continuation"], "sealed_owner_merge")
 
-        def restore_nested_checkout() -> None:
-            _git_run(sub, "checkout", "--quiet", "--", "lib.py")
-            _git_run(sub, "checkout", "--quiet", commits[1])
+        # Quarantine must be refused and no handoff block written
+        outcome = worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=task)
+        self.assertFalse(outcome)
+        self.assertEqual(getattr(outcome, "reason", ""), "nested_repository_not_supported")
+        self.assertFalse(state.get("worker_worktrees", {}).get("handoff_blocks"))
+        self.assertEqual(self._owner_seal_allowed(state, task), (False, "no_handoff_block"))
 
-        drifts = (
-            ("nested_head_moved", lambda: _git_run(sub, "checkout", "--quiet", commits[0])),
-            ("nested_file_edited", lambda: (sub / "lib.py").write_text("edited inside the submodule\n")),
-        )
-        for label, drift in drifts:
-            with self.subTest(drift=label):
-                drift()
-                # The superproject sees the same ` M sub`; HEAD, logical index and merge metadata are unchanged.
-                self.assertEqual(self._worktree_identity(), sealed_identity)
-                self.assertEqual(self._merge_snapshot_without_raw_index(), sealed_snapshot)
+        # No backup directory should have been created with incomplete contents
+        backup_parent = self.root / ".orchestrator" / "worktree-dirt-backups"
+        if backup_parent.exists():
+            self.assertEqual(list(backup_parent.iterdir()), [])
 
-                self.assertEqual(self._owner_seal_allowed(state, task), (False, "merge_state_changed"))
-                ok, error, request = self._owner_lease(state)
-                self.assertFalse(ok)
-                self.assertNotIn("worktree_continuation", request.metadata)
-                self.assertEqual(state["worker_worktrees"]["handoff_blocks"]["TASK-SIBLING-001"], sealed_record)
-
-                restore_nested_checkout()
-                self.assertTrue(self._owner_seal_allowed(state, task)[0])
-                ok, error, request = self._owner_lease(state)
-                self.assertTrue(ok, error)
-                self.assertEqual(request.metadata["worktree_continuation"], "sealed_owner_merge")
-
-    def test_interrupted_merge_seal_fails_closed_when_nested_repository_becomes_unreadable(self):
-        """An untracked nested checkout is one `??` entry to the superproject, whose status keeps
-        succeeding when the nested HEAD becomes unreadable; the seal must not treat that as unchanged."""
+    def test_interrupted_merge_refuses_seal_and_quarantine_for_untracked_nested_repo(self):
+        """An untracked nested git checkout in dirty entries cannot be completely sealed or backed up;
+        quarantine is refused, no continuation seal is recorded, and the fingerprint is None."""
         worker, state = self._interrupted_merge_fixture()
         task = self.status_data["tasks"][0]
         nested = self.worktree / "nested"
@@ -2049,36 +2034,91 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
         (nested / "lib.py").write_text("lib = 0\n")
         _git_run(nested, "add", "lib.py")
         _git_run(nested, "commit", "--quiet", "-m", "nested commit")
-        nested_branch = _git_run(nested, "symbolic-ref", "HEAD")
         self.assertIn("?? nested/", _git_run(self.worktree, "status", "--porcelain=v1"))
 
+        # Direct fingerprint check must return None
+        inspection = inspect_worktree(self.worktree)
+        self.assertIsNone(worker_workspace._interrupted_merge_worktree_fingerprint(self.worktree, inspection))
+        snapshot = worker_workspace._interrupted_merge_snapshot(self.worktree)
+        self.assertIsNone(worker_workspace._interrupted_merge_fingerprint(snapshot, self.worktree, inspection))
+
+        # Quarantine must be refused
+        outcome = worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=task)
+        self.assertFalse(outcome)
+        self.assertEqual(getattr(outcome, "reason", ""), "nested_repository_not_supported")
+        self.assertFalse(state.get("worker_worktrees", {}).get("handoff_blocks"))
+        self.assertEqual(self._owner_seal_allowed(state, task), (False, "no_handoff_block"))
+
+    def test_interrupted_merge_continuation_refuses_when_nested_repo_introduced_post_seal(self):
+        """If an untracked nested repository or submodule is introduced into a worktree after an
+        interrupted merge was sealed, continuation must fail closed with merge_state_changed."""
+        worker, state = self._interrupted_merge_fixture()
+        task = self.status_data["tasks"][0]
+
+        # Clean interrupted merge seals successfully initially
         self.assertTrue(worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=task))
         record = state["worker_worktrees"]["handoff_blocks"]["TASK-SIBLING-001"]
         self.assertEqual(record["reason"], "interrupted_merge")
         sealed_record = dict(record)
-        sealed_identity = self._worktree_identity()
         self.assertTrue(self._owner_seal_allowed(state, task)[0])
         ok, error, request = self._owner_lease(state)
         self.assertTrue(ok, error)
         self.assertEqual(request.metadata["worktree_continuation"], "sealed_owner_merge")
 
-        _git_run(nested, "symbolic-ref", "HEAD", "refs/heads/unborn")
-        self.assertIsNone(worker_workspace._git_commit_oid(nested, "HEAD"))
-        self.assertEqual(self._worktree_identity(), sealed_identity)
-        self.assertEqual(inspect_worktree(self.worktree).kind, "owner_dirty")
-        self.assertIsNone(worker_workspace._interrupted_merge_worktree_fingerprint(self.worktree, inspect_worktree(self.worktree)))
+        # Now introduce an untracked nested checkout
+        nested = self.worktree / "nested"
+        nested.mkdir()
+        _git_run(nested, "init", "--quiet")
+        _git_run(nested, "config", "user.email", "test@pantheon.local")
+        _git_run(nested, "config", "user.name", "Test Runner")
+        (nested / "lib.py").write_text("lib = 0\n")
+        _git_run(nested, "add", "lib.py")
+        _git_run(nested, "commit", "--quiet", "-m", "nested commit")
 
+        # Continuation must now be rejected
         self.assertEqual(self._owner_seal_allowed(state, task), (False, "merge_state_changed"))
         ok, error, request = self._owner_lease(state)
         self.assertFalse(ok)
         self.assertNotIn("worktree_continuation", request.metadata)
         self.assertEqual(state["worker_worktrees"]["handoff_blocks"]["TASK-SIBLING-001"], sealed_record)
 
-        _git_run(nested, "symbolic-ref", "HEAD", nested_branch)
+        # Removing the nested checkout restores continuation
+        shutil.rmtree(nested)
         self.assertTrue(self._owner_seal_allowed(state, task)[0])
         ok, error, request = self._owner_lease(state)
         self.assertTrue(ok, error)
         self.assertEqual(request.metadata["worktree_continuation"], "sealed_owner_merge")
+
+    def test_interrupted_merge_continuation_refuses_when_submodule_introduced_or_drifted_post_seal(self):
+        """If a submodule is added or has staged/unstaged changes (including MM->MM index changes)
+        after a clean interrupted merge was sealed, continuation must fail closed."""
+        worker, state = self._interrupted_merge_fixture()
+        task = self.status_data["tasks"][0]
+
+        # Clean interrupted merge seals successfully initially
+        self.assertTrue(worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=task))
+        record = state["worker_worktrees"]["handoff_blocks"]["TASK-SIBLING-001"]
+        self.assertEqual(record["reason"], "interrupted_merge")
+        sealed_record = dict(record)
+        self.assertTrue(self._owner_seal_allowed(state, task)[0])
+
+        # Add submodule after seal
+        subrepo = self.root / "subrepo2"
+        subrepo.mkdir()
+        _git_run(subrepo, "init", "--quiet")
+        _git_run(subrepo, "config", "user.email", "test@pantheon.local")
+        _git_run(subrepo, "config", "user.name", "Test Runner")
+        (subrepo / "lib.py").write_text("lib = 1\n")
+        _git_run(subrepo, "add", "lib.py")
+        _git_run(subrepo, "commit", "--quiet", "-m", "init sub")
+        _git_run(self.worktree, "-c", "protocol.file.allow=always", "submodule", "add", "--quiet", str(subrepo), "sub2")
+
+        # Continuation must fail closed
+        self.assertEqual(self._owner_seal_allowed(state, task), (False, "merge_state_changed"))
+        ok, error, request = self._owner_lease(state)
+        self.assertFalse(ok)
+        self.assertNotIn("worktree_continuation", request.metadata)
+        self.assertEqual(state["worker_worktrees"]["handoff_blocks"]["TASK-SIBLING-001"], sealed_record)
 
     def test_interrupted_merge_backup_checksums_directory_symlink_by_target(self):
         """Every preserved symlink is checksummed by target, including one that resolves to a
@@ -2111,22 +2151,6 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
                 self.assertTrue(os.path.islink(candidate), rel_path)
             else:
                 self.assertTrue(candidate.is_file(), rel_path)
-
-    def test_interrupted_merge_seal_refuses_when_nested_repository_is_unreadable_at_seal_time(self):
-        """If a nested checkout's state cannot be read when the worker dies, no interrupted_merge
-        continuation seal is recorded; the plain git_operation_in_progress refusal stands."""
-        worker, state = self._interrupted_merge_fixture()
-        task = self.status_data["tasks"][0]
-        nested = self.worktree / "nested"
-        nested.mkdir()
-        _git_run(nested, "init", "--quiet")
-        self.assertIsNone(worker_workspace._git_commit_oid(nested, "HEAD"))
-        self.assertIn("?? nested/", _git_run(self.worktree, "status", "--porcelain=v1"))
-
-        outcome = worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=task)
-        self.assertTrue(outcome)
-        self.assertFalse(state.get("worker_worktrees", {}).get("handoff_blocks"))
-        self.assertEqual(self._owner_seal_allowed(state, task), (False, "no_handoff_block"))
 
     def test_sibling_quota_fence_preserves_dirty_worktree_and_authorizes_successor_lease_continuation(self) -> None:
         """E2E: Sibling worker dirty changes (staged, unstaged, untracked) are backed up, sealed, and handed off to authorized successor via prepare_worker_workspace."""
