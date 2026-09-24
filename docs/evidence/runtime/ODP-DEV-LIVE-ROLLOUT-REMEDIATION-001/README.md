@@ -446,6 +446,26 @@ audit JSON 的 `superseded_unblock_requirements.previous_requirements`）：
 3. Supervisor 簽發 Ed25519 lease 並 dispatch `deploy-dev.yml` 之 deploy phase。
 4. 部署完成後，本任務立即實施 live readback 採集 GCP 實體環境狀態（Cloud Run URL、revision、jobs one-shot、authenticated smoke、provider-off 16-source disabled、default-deny egress 與 IAM 狀態），滿足驗收條件 3–8 後送審。
 
+## 16. Round 18（2026-09-24 17:40Z，owner Antigravity）
+
+### 16.1 鏈路整合驗證與 Fail-Closed 狀態維護
+
+1. **分支基線與契約驗證**：
+   - 本任務分支 `task/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 與 `origin/dev`（`419e6bf49582`）保持完全同步（HEAD `@2080a738`）。
+   - 本地證據套件驗證腳本 `verify_dev_live_rollout_remediation.py` 執行成功（exit 0）。
+   - 部署工作流程契約測試 `tests/ops/test_deploy_workflow_contract.py` 全數通過（90 passed in 9.06s）。
+
+2. **嚴格遵循驗收規範**：
+   - 恪守驗收條件 1–10，不建立第二套 workflow，不在 rollout 任務內越界修 code，不修改歷史收據。
+   - 維持 fail-closed `in_progress` 狀態，等待 Supervisor 簽發 release lease 及 hosted `deploy-dev.yml` 執行部署 phase。
+
+### 16.2 下一步執行動作
+
+1. 上游依賴完成 Candidate Gate reconciliation 及 release lease request 登記。
+2. Supervisor 簽署 release lease 並啟動 dev deploy phase。
+3. 部署完成後採集真實 GCP live readback 證據，更新證據目錄後送審。
+
+
 
 
 
