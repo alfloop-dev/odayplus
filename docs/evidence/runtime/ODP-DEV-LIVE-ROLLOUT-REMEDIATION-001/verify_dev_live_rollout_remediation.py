@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Verification script for ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001.
+"""Verification script for ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 (round 3, 2026-09-24).
 
-Validates the fail-closed evidence produced by the current-base round:
+Validates the fail-closed evidence produced against the current base:
 1. Evidence files exist and the audit JSON carries the required structure.
-2. The audit binds the same candidate SHA, manifest digest and component images
-   as the canonical repository manifest and gate registry.
+2. The audit binds the same candidate SHA, manifest digest, component images and
+   registry decision (go) as the canonical repository manifest and gate registry.
 3. The hosted build run and artifact digests are syntactically immutable.
-4. Lease authority, GCP readback and deployment findings claim no success.
-5. The seven historical ODP-DEV-ROLLOUT-001 receipts recompute to the hashes
-   the audit records (immutability is measured, not asserted).
+4. The fresh Human/Ops lease request is recorded without its nonce, the issuer's
+   refusal is recorded verbatim, and the root-cause reproduction is consistent.
+5. No deployment success is claimed anywhere.
+6. The seven historical ODP-DEV-ROLLOUT-001 receipts recompute to the hashes the
+   audit records (immutability is measured, not asserted).
 """
 
 from __future__ import annotations
@@ -31,12 +33,16 @@ HISTORICAL_DIR = ROOT / "docs/evidence/runtime/ODP-DEV-ROLLOUT-001"
 SHA256_DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 IMAGE_DIGEST_PATTERN = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
-EXPECTED_CURRENT_CANDIDATE = "39ae43f6fe679f03dd7df459a51835cbd2d54f77"
-EXPECTED_BUILD_RUN_ID = 35493018607
-EXPECTED_PRODUCER_RUN_ID = 35492613570
-EXPECTED_RELEASE_ID = "odp-39ae43f6fe67"
-EXPECTED_MANIFEST_DIGEST = "sha256:ebe7d305e930471d2e7492a1fffced10dbaa05a710bb5f6573f370e7bfa8ae8a"
+EXPECTED_CURRENT_CANDIDATE = "1364363402900c800ec3ed033d38fd1d757c1f10"
+EXPECTED_BUILD_RUN_ID = 35944616693
+EXPECTED_RELEASE_ID = "odp-136436340290"
+EXPECTED_MANIFEST_DIGEST = "sha256:6fb8f9e2e6af8dcef9cbe2fd76f2c3d319d95a40fe64c77e3ffdb435f3dc246d"
+EXPECTED_MANIFEST_ARTIFACT_ID = 10786198572
+EXPECTED_APPROVAL_ID = "HUMANOPS-DEV-FIRST-RELEASE-20260924"
+EXPECTED_ISSUER_ERROR = "durable GCS lease state is unavailable"
 COMPONENTS = ("api", "web", "worker", "scheduler")
+DEV_GATES = ("gate-0", "gate-1", "gate-4")
+CLEARED_STATUSES = {"passed", "passed-with-deviation"}
 HISTORICAL_FILES = (
     "README.md",
     "data-platform-dev-deployment.json",
@@ -60,27 +66,7 @@ def _load_json(path: Path, errors: list[str]) -> dict | None:
         return None
 
 
-def verify_evidence_bundle() -> list[str]:
-    errors: list[str] = []
-
-    for path, label in [
-        (AUDIT_JSON, "audit JSON"),
-        (README_MD, "README markdown"),
-        (TRANSCRIPT_TXT, "transcript text"),
-        (RELEASE_MANIFEST, "repository release manifest"),
-        (GATE_REGISTRY, "repository gate registry"),
-    ]:
-        if not path.is_file():
-            errors.append(f"Missing {label} file: {path}")
-    if errors:
-        return errors
-
-    audit = _load_json(AUDIT_JSON, errors)
-    manifest = _load_json(RELEASE_MANIFEST, errors)
-    registry = _load_json(GATE_REGISTRY, errors)
-    if errors or audit is None or manifest is None or registry is None:
-        return errors
-
+def _check_structure(audit: dict, errors: list[str]) -> None:
     for field in [
         "schema_version",
         "task_id",
@@ -90,6 +76,7 @@ def verify_evidence_bundle() -> list[str]:
         "historical_receipts_modified",
         "generated_at",
         "generated_by",
+        "collection_baseline",
         "readback_window_utc",
         "candidate_reconciliation",
         "hosted_build_execution",
@@ -100,12 +87,13 @@ def verify_evidence_bundle() -> list[str]:
         "historical_receipts_sha256",
         "unblock_requirements",
         "superseded_unblock_requirements",
+        "history",
     ]:
         if field not in audit:
             errors.append(f"audit JSON missing required field: {field}")
-    if errors:
-        return errors
 
+
+def _check_header(audit: dict, errors: list[str]) -> None:
     if audit.get("task_id") != "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001":
         errors.append(f"Unexpected task_id: {audit.get('task_id')}")
     if audit.get("release_status") != "blocked":
@@ -122,32 +110,49 @@ def verify_evidence_bundle() -> list[str]:
         errors.append("readback_window_utc must record an ordered start/end pair")
     if audit.get("generated_at") != window.get("end_utc"):
         errors.append("generated_at must equal the readback window end")
+    baseline = audit.get("collection_baseline", {})
+    for key in ("origin_dev_head_sha", "task_base_merge_sha", "task_base_merge_tree"):
+        if not SHA_PATTERN.fullmatch(str(baseline.get(key, ""))):
+            errors.append(f"collection_baseline.{key} is not a valid 40-char SHA")
+    parents = baseline.get("task_base_merge_parents", [])
+    if len(parents) != 2 or parents[1] != baseline.get("origin_dev_head_sha"):
+        errors.append("task_base_merge_parents must name origin/dev as the second parent")
+    if baseline.get("merge_tree_precheck_equal") is not True:
+        errors.append("merge tree must be recorded as equal to the merge-tree precheck")
+    if baseline.get("forbidden_path_diff_vs_origin_dev_empty") is not True:
+        errors.append("forbidden path diff must be recorded as empty")
 
-    # --- candidate reconciliation against the canonical repository files ---
+
+def _check_candidate(audit: dict, manifest: dict, registry: dict, errors: list[str]) -> None:
     cand = audit.get("candidate_reconciliation", {})
+    release = registry.get("release", {})
     if cand.get("authoritative_manifest_candidate_sha") != EXPECTED_CURRENT_CANDIDATE:
         errors.append("authoritative_manifest_candidate_sha does not match the canonical candidate")
     if cand.get("authoritative_manifest_digest") != EXPECTED_MANIFEST_DIGEST:
         errors.append("authoritative_manifest_digest does not match the canonical manifest digest")
+    if cand.get("release_id") != EXPECTED_RELEASE_ID or manifest.get("release_id") != (
+        EXPECTED_RELEASE_ID
+    ):
+        errors.append("release_id differs between audit, manifest and expectation")
     if manifest.get("candidate_sha") != cand.get("authoritative_manifest_candidate_sha"):
         errors.append("repository RELEASE_MANIFEST.json candidate_sha differs from the audit")
     if manifest.get("manifest_digest") != cand.get("authoritative_manifest_digest"):
         errors.append("repository RELEASE_MANIFEST.json manifest_digest differs from the audit")
-    release = registry.get("release", {})
     if release.get("candidate_sha") != cand.get("authoritative_manifest_candidate_sha"):
-        errors.append(
-            "repository RELEASE_GATE_REGISTRY.json release.candidate_sha differs from the audit"
-        )
+        errors.append("repository registry release.candidate_sha differs from the audit")
     if release.get("manifest_digest") != cand.get("authoritative_manifest_digest"):
-        errors.append(
-            "repository RELEASE_GATE_REGISTRY.json release.manifest_digest differs from the audit"
-        )
+        errors.append("repository registry release.manifest_digest differs from the audit")
     if release.get("decision") != cand.get("registry_decision"):
-        errors.append(
-            "registry decision recorded in the audit differs from the repository registry"
-        )
-    if cand.get("registry_decision") != "no-go":
-        errors.append("this fail-closed bundle must record registry decision no-go")
+        errors.append("registry decision recorded in the audit differs from the repository")
+    if cand.get("registry_decision") != "go":
+        errors.append("this round must record registry decision go (it was measured as go)")
+    signoff = release.get("human_signoff", {})
+    if not signoff.get("approver") or not signoff.get("date"):
+        errors.append("registry release.human_signoff must name an approver and a date")
+    if cand.get("registry_human_signoff") != signoff:
+        errors.append("registry_human_signoff recorded in the audit differs from the repository")
+    if release.get("admission_target") != "dev" or cand.get("registry_admission_target") != "dev":
+        errors.append("registry admission_target must be dev")
     if not SHA_PATTERN.fullmatch(str(cand.get("origin_dev_head_sha", ""))):
         errors.append("origin_dev_head_sha is not a valid 40-char SHA")
     if cand.get("candidate_is_ancestor_of_origin_dev") is not True:
@@ -155,9 +160,9 @@ def verify_evidence_bundle() -> list[str]:
     if cand.get("drift_status") != "evidence_only_descendant":
         errors.append("drift_status must be evidence_only_descendant for a current candidate")
     if cand.get("non_evidence_paths_changed") != []:
-        errors.append(
-            "non_evidence_paths_changed must be empty when no rebuild is claimed necessary"
-        )
+        errors.append("non_evidence_paths_changed must be empty when no rebuild is claimed")
+    if any(not p.startswith("docs/evidence/") for p in cand.get("paths_changed_between", [])):
+        errors.append("every path between candidate and origin/dev must be under docs/evidence/")
     if (
         cand.get("candidate_must_rebuild") is not False
         or cand.get("old_artifacts_reused") is not False
@@ -166,12 +171,20 @@ def verify_evidence_bundle() -> list[str]:
     repo_manifest = cand.get("repository_manifest", {})
     if repo_manifest.get("raw_sha256") != _sha256(RELEASE_MANIFEST):
         errors.append("repository_manifest.raw_sha256 does not match the repository manifest bytes")
-    if repo_manifest.get("byte_identical_to_hosted_artifact_10600115848") is not True:
-        errors.append(
-            "repository manifest must be recorded as byte-identical to the hosted artifact"
-        )
+    if repo_manifest.get("hosted_manifest_artifact_id") != EXPECTED_MANIFEST_ARTIFACT_ID:
+        errors.append("hosted_manifest_artifact_id must be the run's manifest artifact")
+    if repo_manifest.get("byte_identical_to_hosted_artifact") is not True:
+        errors.append("repository manifest must be recorded as byte-identical to the artifact")
+    rebind = registry.get("candidate_rebind", {})
+    if rebind.get("to_candidate_sha") != EXPECTED_CURRENT_CANDIDATE or (
+        rebind.get("build_run", {}).get("run_id") != EXPECTED_BUILD_RUN_ID
+    ):
+        errors.append("registry candidate_rebind must bind the candidate to the expected build run")
+    if cand.get("candidate_rebind", {}).get("build_run") != rebind.get("build_run"):
+        errors.append("candidate_rebind.build_run in the audit differs from the repository")
 
-    # --- hosted build execution ---
+
+def _check_build(audit: dict, manifest: dict, errors: list[str]) -> None:
     build_exec = audit.get("hosted_build_execution", {})
     if build_exec.get("run_id") != EXPECTED_BUILD_RUN_ID:
         errors.append(f"hosted build run must be {EXPECTED_BUILD_RUN_ID}")
@@ -188,10 +201,10 @@ def verify_evidence_bundle() -> list[str]:
         != f"https://github.com/alfloop-dev/odayplus/actions/runs/{EXPECTED_BUILD_RUN_ID}"
     ):
         errors.append("hosted build run_url does not match the expected run")
-    if build_exec.get("producer_run", {}).get("run_id") != EXPECTED_PRODUCER_RUN_ID:
-        errors.append(f"producer run must be {EXPECTED_PRODUCER_RUN_ID}")
     if build_exec.get("dispatched_by_this_task") is not False:
         errors.append("this round must not claim to have dispatched the canonical build")
+    if build_exec.get("single_run_build_and_handoff") is not True:
+        errors.append("this candidate was built and handed off in a single run")
     for flag in (
         "handoff_manifest_published",
         "image_handoff_published",
@@ -213,41 +226,40 @@ def verify_evidence_bundle() -> list[str]:
     for comp in COMPONENTS:
         ref = published_images.get(comp, "")
         if not IMAGE_DIGEST_PATTERN.fullmatch(ref):
-            errors.append(
-                f"published_images[{comp}] '{ref}' does not match immutable digest pattern"
-            )
+            errors.append(f"published_images[{comp}] '{ref}' is not an immutable digest ref")
         if manifest.get("components", {}).get(comp, {}).get("image") != ref:
-            errors.append(
-                f"published_images[{comp}] differs from the repository manifest component"
-            )
-    if build_exec.get("migration_component_image") != manifest.get("components", {}).get(
-        "migration", {}
-    ).get("image"):
+            errors.append(f"published_images[{comp}] differs from the repository manifest")
+    migration = manifest.get("components", {}).get("migration", {}).get("image")
+    if build_exec.get("migration_component_image") != migration:
         errors.append("migration component image differs from the repository manifest")
     for key in ("signature_refs", "sbom_refs"):
         refs = build_exec.get(key, [])
-        if len(refs) != 4:
-            errors.append(f"hosted build must record four {key}")
-        if refs != manifest.get(key):
-            errors.append(f"{key} differ from the repository manifest")
+        if len(refs) != 4 or refs != manifest.get(key):
+            errors.append(f"{key} must be the four refs recorded in the repository manifest")
         for ref in refs:
             if not IMAGE_DIGEST_PATTERN.fullmatch(ref):
-                errors.append(f"{key} entry '{ref}' does not match immutable digest pattern")
+                errors.append(f"{key} entry '{ref}' is not an immutable digest ref")
     artifacts = build_exec.get("uploaded_artifacts", [])
     if len(artifacts) != 6 or any(
         not re.fullmatch(r"[0-9a-f]{64}", str(a.get("sha256", ""))) for a in artifacts
     ):
         errors.append("six uploaded artifacts with sha256 values must be recorded")
+    manifest_artifacts = [a for a in artifacts if a.get("id") == EXPECTED_MANIFEST_ARTIFACT_ID]
+    if len(manifest_artifacts) != 1 or manifest_artifacts[0].get("sha256") != _sha256(
+        RELEASE_MANIFEST
+    ):
+        errors.append("the manifest artifact sha256 must equal the repository manifest bytes")
     log_readback = build_exec.get("build_job_log_readback", {})
     counts = log_readback.get("digest_occurrences", {})
     if any(counts.get(comp, 0) < 1 for comp in COMPONENTS) or counts.get("manifest_digest", 0) < 1:
-        errors.append(
-            "build job log readback must show every component digest and the manifest digest"
-        )
+        errors.append("build job log readback must show every component digest and the manifest")
     if log_readback.get("cosign_verify_invocations", 0) < 4:
         errors.append("build job log readback must show at least four cosign verify invocations")
+    if len(build_exec.get("rekor_tlog_indexes_in_log", [])) != 8:
+        errors.append("eight Rekor tlog entries (4 sign + 4 attest) must be recorded")
 
-    # --- source posture, cross-checked with the manifest attestation ---
+
+def _check_sources(audit: dict, manifest: dict, errors: list[str]) -> None:
     source_posture = audit.get("source_posture", {})
     attestation = manifest.get("sources_off_attestation", {})
     inventory = attestation.get("sources_inventory", [])
@@ -258,9 +270,7 @@ def verify_evidence_bundle() -> list[str]:
     if source_posture.get("zero_credentials_present") is not True or any(
         s.get("credentials_present") is not False for s in inventory
     ):
-        errors.append(
-            "source posture must record zero provider credentials and the manifest must agree"
-        )
+        errors.append("source posture must record zero provider credentials; manifest must agree")
     if source_posture.get("total_sources_audited") != 16 or len(inventory) != 16:
         errors.append("source posture must audit all 16 sources")
     if (
@@ -269,44 +279,124 @@ def verify_evidence_bundle() -> list[str]:
     ):
         errors.append("source posture must record default-deny egress")
 
-    # --- authorization ---
+
+def _check_authorization(audit: dict, registry: dict, errors: list[str]) -> None:
     authorization = audit.get("authorization_state", {})
+    release = registry.get("release", {})
     for field in (
         "supervisor_lease_issued",
         "private_signing_key_available_to_worker",
-        "admission_possible",
-        "new_lease_request_submitted_this_round",
+        "admission_possible_with_current_request",
+        "new_lease_request_authored_by_owner",
     ):
         if authorization.get(field) is not False:
             errors.append(f"authorization_state.{field} must be false")
+    if authorization.get("leases_ever_issued_fleet_wide") != 0:
+        errors.append("no lease has ever been issued; leases_ever_issued_fleet_wide must be 0")
     if authorization.get("canonical_registry_decision") != release.get("decision"):
         errors.append("canonical_registry_decision differs from the repository registry")
-    decision = authorization.get("latest_issuance_decision", {})
-    if decision.get("admitted") is not False:
-        errors.append("latest_issuance_decision.admitted must be false")
-    if (
-        decision.get("error_count") != len(decision.get("errors", []))
-        or decision.get("error_count", 0) < 1
-    ):
-        errors.append(
-            "latest_issuance_decision.error_count must equal the recorded error list length"
-        )
+    if authorization.get("admission_logic_satisfied_by_current_request") is not True:
+        errors.append("the issuer's blocked record proves admission logic passed; record it")
+
     dev_gates = authorization.get("dev_admission_gates", {})
     registry_dev_gates = {
         g["id"]: g for g in registry.get("gates", []) if g.get("admission_target") == "dev"
     }
-    if set(dev_gates) != set(registry_dev_gates):
-        errors.append(
-            "dev_admission_gates must list exactly the registry gates with admission_target dev"
-        )
+    if set(dev_gates) != set(registry_dev_gates) or set(dev_gates) != set(DEV_GATES):
+        errors.append("dev_admission_gates must list exactly gate-0, gate-1 and gate-4")
     for gate_id, gate in dev_gates.items():
         actual = registry_dev_gates.get(gate_id, {})
-        if gate.get("status") != actual.get("status") or gate.get("receipts") != len(
-            actual.get("receipts", [])
-        ):
+        receipts = actual.get("receipts", [])
+        if gate.get("status") != actual.get("status") or gate.get("receipts") != len(receipts):
             errors.append(f"{gate_id} status/receipt count differs from the repository registry")
+        if actual.get("status") not in CLEARED_STATUSES:
+            errors.append(f"{gate_id} is not cleared in the repository registry")
+        if len(receipts) != 1 or receipts[0].get("release_sha") != EXPECTED_CURRENT_CANDIDATE:
+            errors.append(f"{gate_id} must carry one receipt bound to the candidate")
+        if receipts and receipts[0].get("result") != "pass":
+            errors.append(f"{gate_id} receipt result must be pass")
+        if actual.get("blockers"):
+            errors.append(f"{gate_id} must have no blockers")
+        if gate.get("receipt_release_sha") != receipts[0].get("release_sha") if receipts else True:
+            errors.append(f"{gate_id} receipt_release_sha differs from the repository registry")
+    dry = authorization.get("registry_admission_errors_dry_run", {})
+    for key in ("release_sha_origin_dev_tip", "release_sha_candidate"):
+        entry = dry.get(key, {})
+        if not SHA_PATTERN.fullmatch(str(entry.get("sha", ""))) or entry.get("errors") != []:
+            errors.append(
+                f"registry_admission_errors_dry_run.{key} must record an empty error list"
+            )
 
-    # --- live runtime state ---
+    request = authorization.get("current_release_lease_request", {})
+    if request.get("approval_id") != EXPECTED_APPROVAL_ID:
+        errors.append("current_release_lease_request must be the 2026-09-24 Human/Ops request")
+    if "nonce" in request:
+        errors.append("the nonce value must never be recorded in evidence; only its digest")
+    if not SHA256_DIGEST_PATTERN.fullmatch(str(request.get("nonce_digest", ""))):
+        errors.append("current_release_lease_request.nonce_digest must be a sha256 digest")
+    if (
+        request.get("candidate_sha") != EXPECTED_CURRENT_CANDIDATE
+        or request.get("manifest_digest") != EXPECTED_MANIFEST_DIGEST
+        or request.get("manifest_run_id") != str(EXPECTED_BUILD_RUN_ID)
+        or request.get("target_environment") != "dev"
+        or request.get("action") != "deploy"
+    ):
+        errors.append("current_release_lease_request must bind the exact candidate/manifest/run")
+    if request.get("authored_by_owner") is not False:
+        errors.append("the owner must not have authored the lease request")
+    if not (request.get("approved_at") and request.get("expires_at")) or (
+        request["approved_at"] >= request["expires_at"]
+    ):
+        errors.append("current_release_lease_request must record approved_at < expires_at")
+
+    decision = authorization.get("latest_issuance_decision", {})
+    if decision.get("admitted") is not False or decision.get("state") != "blocked":
+        errors.append("latest_issuance_decision must be a blocked, non-admitted record")
+    if decision.get("approval_id") != EXPECTED_APPROVAL_ID:
+        errors.append("latest_issuance_decision must refer to the 2026-09-24 request")
+    if decision.get("errors") != [EXPECTED_ISSUER_ERROR] or decision.get("error_count") != 1:
+        errors.append("latest_issuance_decision must record the single verbatim issuer error")
+    baseline = audit.get("collection_baseline", {})
+    if decision.get("dispatch_ref_sha") != baseline.get("origin_dev_head_sha"):
+        errors.append("latest_issuance_decision.dispatch_ref_sha must equal the origin/dev head")
+    if not SHA256_DIGEST_PATTERN.fullmatch(str(decision.get("request_fingerprint", ""))):
+        errors.append("latest_issuance_decision.request_fingerprint must be a sha256 digest")
+
+    repro = authorization.get("root_cause_reproduction", {})
+    if repro.get("exception_type") != "LeaseStateError" or repro.get("cause_type") != (
+        "ModuleNotFoundError"
+    ):
+        errors.append(
+            "root cause reproduction must record LeaseStateError from ModuleNotFoundError"
+        )
+    if repro.get("integration_layer_message") != EXPECTED_ISSUER_ERROR:
+        errors.append("root cause reproduction must map to the issuer's recorded error")
+    if not str(repro.get("interpreter", "")).startswith("/"):
+        errors.append("root cause reproduction must name the supervisor interpreter path")
+    if repro.get("credential_path_not_reached") is not True:
+        errors.append("the reproduction must record that no credential was consulted")
+    latent = authorization.get("latent_blockers_after_dependency_repair", [])
+    if len(latent) < 2 or any(not b.get("expected_issuer_error_if_unrepaired") for b in latent):
+        errors.append("latent blockers must each name the issuer error they would produce")
+
+    preflight = authorization.get("owner_preflight_before_human_registration", {})
+    if preflight.get("hypothetical_request_written_to_board") is not False:
+        errors.append("the owner's preflight must not have written a request to the board")
+    results = preflight.get("results", {})
+    for key in (
+        "request_errors",
+        "read_release_inputs",
+        "exact_binding_errors",
+        "build_run_binding_errors",
+        "nonce_reuse_errors",
+    ):
+        if results.get(key) != []:
+            errors.append(f"owner preflight result {key} must be an empty error list")
+    if results.get("dispatch_ref", {}).get("errors") != []:
+        errors.append("owner preflight dispatch_ref errors must be empty")
+
+
+def _check_live_state(audit: dict, errors: list[str]) -> None:
     live_state = audit.get("live_gcp_runtime_state", {})
     if live_state.get("current_readback_result") != "predeploy_target_absence_verified":
         errors.append("current GCP readback must record hosted pre-deploy target absence")
@@ -323,6 +413,11 @@ def verify_evidence_bundle() -> list[str]:
     ):
         if live_state.get(key) != []:
             errors.append(f"live_gcp_runtime_state.{key} must be empty without a deployment")
+    source = live_state.get("readback_source", {})
+    if source.get("run_id") != EXPECTED_BUILD_RUN_ID or not re.fullmatch(
+        r"[0-9a-f]{64}", str(source.get("sha256", ""))
+    ):
+        errors.append("readback_source must be the hosted absence artifact of the build run")
     absence = live_state.get("target_absence_receipt", {})
     if absence.get("candidate_sha") != EXPECTED_CURRENT_CANDIDATE:
         errors.append("target absence readback must bind to the current candidate")
@@ -332,15 +427,27 @@ def verify_evidence_bundle() -> list[str]:
     ]
     if any(not isinstance(t, dict) or t.get("exists") is not False for t in targets):
         errors.append("all five release targets must be explicitly absent in pre-deploy readback")
+    direct = live_state.get("direct_gcloud_readback_this_round", {})
+    if direct.get("attempted") is not True or direct.get("succeeded") is not False:
+        errors.append("direct gcloud readback must be recorded as attempted and failed")
+    if any(c.get("exit_code") == 0 for c in direct.get("commands", [])):
+        errors.append("no direct gcloud readback command succeeded this round")
 
-    # --- findings ---
+
+def _check_findings(audit: dict, errors: list[str]) -> None:
     findings = audit.get("reconciliation_findings", [])
-    if len(findings) < 6:
-        errors.append(f"Expected at least 6 reconciliation findings, got {len(findings)}")
-    if not any(f.get("status") == "fail_closed" for f in findings):
+    if len(findings) < 10:
+        errors.append(f"Expected at least 10 reconciliation findings, got {len(findings)}")
+    statuses = [f.get("status") for f in findings]
+    if "fail_closed" not in statuses:
         errors.append("a fail_closed finding must be present")
+    if statuses.count("blocked") < 2:
+        errors.append("the dependency and credential blockers must both be recorded as blocked")
+    if not any("google" in str(f.get("finding", "")) for f in findings):
+        errors.append("a finding must name the missing google-cloud-storage dependency")
 
-    # --- historical receipt immutability, measured ---
+
+def _check_history(audit: dict, errors: list[str]) -> None:
     recorded = audit.get("historical_receipts_sha256", {})
     if sorted(recorded) != sorted(HISTORICAL_FILES):
         errors.append("historical_receipts_sha256 must contain all seven historical receipts")
@@ -351,11 +458,60 @@ def verify_evidence_bundle() -> list[str]:
             continue
         if recorded.get(name) != _sha256(path):
             errors.append(f"historical receipt {name} no longer matches the recorded sha256")
+    history = audit.get("history", {})
+    for key in ("round_2026_09_21", "hosted_build_execution_2026_09_04"):
+        if key not in history:
+            errors.append(f"history must retain {key}")
 
+
+def _check_readme(errors: list[str]) -> None:
     readme = README_MD.read_text(encoding="utf-8")
-    for token in (EXPECTED_CURRENT_CANDIDATE, EXPECTED_MANIFEST_DIGEST, "NO-GO"):
+    for token in (
+        EXPECTED_CURRENT_CANDIDATE,
+        EXPECTED_MANIFEST_DIGEST,
+        "decision=go",
+        EXPECTED_APPROVAL_ID,
+        EXPECTED_ISSUER_ERROR,
+        "google-cloud-storage",
+    ):
         if token not in readme:
             errors.append(f"README does not mention {token}")
+    transcript = TRANSCRIPT_TXT.read_text(encoding="utf-8")
+    if EXPECTED_ISSUER_ERROR not in transcript or "ModuleNotFoundError" not in transcript:
+        errors.append("transcript must record the issuer error and its reproduction")
+
+
+def verify_evidence_bundle() -> list[str]:
+    errors: list[str] = []
+    for path, label in [
+        (AUDIT_JSON, "audit JSON"),
+        (README_MD, "README markdown"),
+        (TRANSCRIPT_TXT, "transcript text"),
+        (RELEASE_MANIFEST, "repository release manifest"),
+        (GATE_REGISTRY, "repository gate registry"),
+    ]:
+        if not path.is_file():
+            errors.append(f"Missing {label} file: {path}")
+    if errors:
+        return errors
+
+    audit = _load_json(AUDIT_JSON, errors)
+    manifest = _load_json(RELEASE_MANIFEST, errors)
+    registry = _load_json(GATE_REGISTRY, errors)
+    if errors or audit is None or manifest is None or registry is None:
+        return errors
+    _check_structure(audit, errors)
+    if errors:
+        return errors
+    _check_header(audit, errors)
+    _check_candidate(audit, manifest, registry, errors)
+    _check_build(audit, manifest, errors)
+    _check_sources(audit, manifest, errors)
+    _check_authorization(audit, registry, errors)
+    _check_live_state(audit, errors)
+    _check_findings(audit, errors)
+    _check_history(audit, errors)
+    _check_readme(errors)
     return errors
 
 
