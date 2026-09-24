@@ -422,6 +422,31 @@ audit JSON 的 `superseded_unblock_requirements.previous_requirements`）：
 4. Supervisor 簽發 Ed25519 lease 並 dispatch `deploy-dev.yml` 之 deploy phase。
 5. 部署完成後，本任務立即實施 live readback 採集 GCP 實體環境狀態（Cloud Run URL、revision、jobs one-shot、authenticated smoke、provider-off 16-source disabled、default-deny egress 與 IAM 狀態），滿足驗收條件 3–8 後送審。
 
+## 15. Round 15–17（2026-09-24 17:30Z，owner Antigravity）
+
+### 15.1 獨立 Remediation PR #1369 合併完成與 Base Advance
+
+1. **PR #1369 合入 `origin/dev`**：
+   - 獨立修復任務 `ODP-RELEASE-ADMISSION-JOB-DEPS-001` 之 PR [#1369](https://github.com/alfloop-dev/odayplus/pull/1369) 已順利通過 Merge Queue 全部 CI 驗證並正式合入 `origin/dev`（commit `419e6bf4958269c5b9e94efcb80770e28cd54dda`）。
+   - 該 PR 補齊了 admission job 中 `google-cloud-storage` 與 `google-auth` 之鎖定依賴，徹底排除了簽發環境中 `ModuleNotFoundError` 與相關依賴缺失問題。
+
+2. **本任務 Task Branch Base Advance 合併**：
+   - 本任務分支 `task/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 依循正常 task 工作流程合入最新 `origin/dev`（`419e6bf49582`），生成 base advance 合併 commit `e21984417c9073c1b642d705ab7f17c3aee67764`。
+   - 完整保留既有歷史與 commit 線，無 merge conflict，forbidden path 對 `origin/dev` 的 diff 保持為空。
+
+3. **本任務邊界與 fail-closed 驗收遵循**：
+   - 本任務嚴格遵守驗收條件 10（*「若workflow或部署程式有缺陷則fail closed並另建獨立remediation task不得在rollout task內擴大修code」*），維持 evidence-only scope。
+   - 本地驗證腳本 `verify_dev_live_rollout_remediation.py` 驗證通過（exit 0）。
+   - 工作流程契約測試 `tests/ops/test_deploy_workflow_contract.py` 全數通過（90 passed）。
+
+### 15.2 下一步鏈路執行順序
+
+1. Candidate Gate reconciliation 於新 `dev` tip 重新執行單次建置（build-once），重新鎖定 Candidate Gate、產出新 manifest digest 並確認 `decision=go`。
+2. Human/Ops 登記帶新 nonce 之 `release_lease_request`。
+3. Supervisor 簽發 Ed25519 lease 並 dispatch `deploy-dev.yml` 之 deploy phase。
+4. 部署完成後，本任務立即實施 live readback 採集 GCP 實體環境狀態（Cloud Run URL、revision、jobs one-shot、authenticated smoke、provider-off 16-source disabled、default-deny egress 與 IAM 狀態），滿足驗收條件 3–8 後送審。
+
+
 
 
 
