@@ -646,7 +646,11 @@ def _interrupted_merge_worktree_fingerprint(
     inspection: WorktreeInspection,
 ) -> str:
     """Hash the exact dirty worktree entries, including symlink targets and hardlink bytes."""
+    if inspection.kind == "status_failed":
+        return "status_failed"
     digest = hashlib.sha256()
+    digest.update(inspection.kind.encode("utf-8"))
+    digest.update(b"\0")
     path_root = Path(worktree_path)
     for code, path in inspection.entries:
         digest.update(code.encode("utf-8", errors="surrogateescape"))
@@ -1509,6 +1513,8 @@ def sealed_owner_continuation_allowed(
         return False, "workspace_changed"
     inspection = inspect_worktree(worktree_path, materialized_paths=materialized_paths)
     if record.get("reason") == "interrupted_merge":
+        if inspection.kind == "status_failed":
+            return False, "merge_state_changed"
         snapshot = _interrupted_merge_snapshot(worktree_path)
         if snapshot is None or _interrupted_merge_fingerprint(snapshot, worktree_path, inspection) != record.get("dirt_fingerprint"):
             return False, "merge_state_changed"
@@ -3396,11 +3402,12 @@ def preserve_dead_worker_worktree(
             merge_snapshot = _interrupted_merge_snapshot(Path(workspace_path))
             if merge_snapshot is not None:
                 inspection = inspect_worktree(Path(workspace_path), materialized_paths=_worker_materialized_context_paths(state, worker))
-                handoff_seal = WorkerHandoffSeal(
-                    False, "interrupted_merge", "Resume the preserved interrupted merge in this same checkout",
-                    _git_commit_oid(Path(workspace_path), "HEAD"),
-                    _interrupted_merge_fingerprint(merge_snapshot, Path(workspace_path), inspection),
-                )
+                if inspection.kind != "status_failed":
+                    handoff_seal = WorkerHandoffSeal(
+                        False, "interrupted_merge", "Resume the preserved interrupted merge in this same checkout",
+                        _git_commit_oid(Path(workspace_path), "HEAD"),
+                        _interrupted_merge_fingerprint(merge_snapshot, Path(workspace_path), inspection),
+                    )
         if (
             not handoff_seal.accepted
             and handoff_seal.reason in {"owner_dirty", "interrupted_merge"}

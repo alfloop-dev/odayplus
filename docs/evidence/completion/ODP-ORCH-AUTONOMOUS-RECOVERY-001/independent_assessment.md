@@ -8,7 +8,7 @@
 - Original implementation: commit `43d2fe8ca8e04b35a5049802169a01a5bc958678`, authored by the
   interactive Codex session (trailers `LLM-Agent: Codex`, `Reviewer: Claude`). That commit and
   its history are preserved unchanged. This adoption added a base-advance merge and evidence,
-  and — after review rounds 1 and 2 — fix commits for findings F5/F6/F7 below.
+  and — after review rounds 1, 2, and 3 — fix commits for findings F5/F6/F7/F8 below.
 
 Prior CI on `43d2fe8c` (all product/orchestrator checks green) was not treated as approval; the
 code was read and probed independently as recorded here, and the reviewer's findings were
@@ -94,9 +94,10 @@ Probe run (before review round 1): 5 probe methods on top of the 24 inherited fi
   rewritten by the next merge, reset or rebase in that checkout, which correctly invalidates the
   continuation; a legitimate successor is leased before acting, so this does not block it
   (shipped test 1, probe E).
-- **F4 — design note, no change.** `files/` copies only regular files listed by `git status`;
-  symlinks are recorded by target in the manifest (untracked ones are recreated under
-  `untracked/`); paths come from `git status` relative to the worktree, so no traversal.
+- **F4 — design note, no change.** `files/` copies regular files and file symlinks listed by
+  `git status`; directory symlinks are recorded by target in the manifest (untracked ones are
+  recreated under `untracked/`); paths come from `git status` relative to the worktree, so no
+  traversal.
 - **F5 — defect (Codex2 R1, P2), fixed.** `prepare_worker_workspace` accepted
   `unresolved_git_operation` as a continuation candidate for *any* handoff record, and the
   ordinary `owner_dirty` branch of `sealed_owner_continuation_allowed` compared only the porcelain
@@ -131,8 +132,19 @@ Probe run (before review round 1): 5 probe methods on top of the 24 inherited fi
   under `files/` during backup. Shipped regression tests:
   `test_interrupted_merge_seal_rejects_symlink_target_drift` and
   `test_interrupted_merge_seal_rejects_hardlink_byte_drift`.
+- **F8 — defect (Codex2 R4, P2), fixed.** `_interrupted_merge_worktree_fingerprint` previously
+  only iterated over `inspection.entries` without binding `inspection.kind`. When `git status`
+  failed (`status_failed`) with `entries=()`, it hashed to `sha256(b"")`, identical to the clean
+  empty-porcelain merge status (`clean` with `entries=()`). In `sealed_owner_continuation_allowed`,
+  an in-progress clean merge with a status read failure and dirty drift after seal was erroneously
+  accepted as exact clean state. Fix: `_interrupted_merge_worktree_fingerprint` explicitly binds
+  `inspection.kind` (and returns `"status_failed"` on failure), and `sealed_owner_continuation_allowed`
+  explicitly fails closed on `status_failed`. Furthermore, `_quarantine_and_preserve_dead_worker`
+  guards against creating an `interrupted_merge` continuation seal on status failure. Shipped regression
+  tests: `test_interrupted_merge_seal_rejects_empty_porcelain_merge_status_failure_and_dirty_drift`
+  and `test_interrupted_merge_seal_refuses_when_status_fails_at_seal_time`.
 
-**Defects requiring a code change: three (F5, F6, F7), all raised by the independent reviewer,
+**Defects requiring a code change: four (F5, F6, F7, F8), all raised by the independent reviewer,
 all reproduced before the change and covered by shipped regression tests.** The earlier
 statement in this file that none were found was wrong in the way F2 describes.
 

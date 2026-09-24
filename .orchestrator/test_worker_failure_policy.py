@@ -1770,6 +1770,10 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
         link_path = self.worktree / "symlink.txt"
         link_path.symlink_to("task.py")
         _git_run(self.worktree, "add", "symlink.txt")
+        # Ensure porcelain code is AM before seal (staged as task.py, worktree points to README.md)
+        link_path.unlink()
+        link_path.symlink_to("README.md")
+        self.assertIn("AM symlink.txt", _git_run(self.worktree, "status", "--porcelain=v1"))
 
         self.assertTrue(worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=task))
         self.assertEqual(state["worker_worktrees"]["handoff_blocks"]["TASK-SIBLING-001"]["reason"], "interrupted_merge")
@@ -1779,9 +1783,10 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
         self.assertTrue(ok, error)
         self.assertEqual(request.metadata["worktree_continuation"], "sealed_owner_merge")
 
-        # Mutate symlink target after seal
+        # Mutate symlink target after seal (still AM in porcelain status!)
         link_path.unlink()
-        link_path.symlink_to("README.md")
+        link_path.symlink_to("upstream.py")
+        self.assertIn("AM symlink.txt", _git_run(self.worktree, "status", "--porcelain=v1"))
 
         self.assertEqual(self._owner_seal_allowed(state, task), (False, "merge_state_changed"))
         ok, error, request = self._owner_lease(state)
@@ -1790,7 +1795,7 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
 
         # Restore original symlink target
         link_path.unlink()
-        link_path.symlink_to("task.py")
+        link_path.symlink_to("README.md")
         self.assertTrue(self._owner_seal_allowed(state, task)[0])
         ok, error, request = self._owner_lease(state)
         self.assertTrue(ok, error)
@@ -1826,6 +1831,80 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
         ok, error, request = self._owner_lease(state)
         self.assertTrue(ok, error)
         self.assertEqual(request.metadata["worktree_continuation"], "sealed_owner_merge")
+
+    def test_interrupted_merge_seal_rejects_empty_porcelain_merge_status_failure_and_dirty_drift(self):
+        """R4: An interrupted merge with empty porcelain status must fail closed on git status failure and dirty drift."""
+        # Create divergent allow-empty commits so git merge creates MERGE_HEAD with clean porcelain
+        _git_run(self.repo, "commit", "--allow-empty", "-m", "upstream empty progress")
+        _git_run(self.repo, "push", "origin", "dev")
+        _git_run(self.worktree, "commit", "--allow-empty", "-m", "task empty progress")
+        _git_run(self.worktree, "merge", "--no-commit", "dev")
+
+        # Confirm MERGE_HEAD exists and porcelain status is clean
+        self.assertTrue(bool(_git_run(self.worktree, "rev-parse", "MERGE_HEAD")))
+        self.assertEqual(_git_run(self.worktree, "status", "--porcelain=v1"), "")
+
+        worker, state = self._sibling_worker_state()
+        task = self.status_data["tasks"][0]
+
+        # 1. Normal seal of clean porcelain merge succeeds and allows continuation
+        self.assertTrue(worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=task))
+        self.assertEqual(state["worker_worktrees"]["handoff_blocks"]["TASK-SIBLING-001"]["reason"], "interrupted_merge")
+
+        self.assertTrue(self._owner_seal_allowed(state, task)[0])
+        ok, error, request = self._owner_lease(state)
+        self.assertTrue(ok, error)
+        self.assertEqual(request.metadata["worktree_continuation"], "sealed_owner_merge")
+
+        # 2. Status failure + dirty drift after seal: fail closed
+        _git_run(self.worktree, "config", "status.showUntrackedFiles", "invalid")
+        (self.worktree / "README.md").write_text("dirty bytes after seal\n")
+        proc = subprocess.run(
+            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            cwd=self.worktree,
+            capture_output=True,
+            check=False,
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(worktree_cleanliness.inspect_worktree(self.worktree).kind, "status_failed")
+
+        self.assertEqual(self._owner_seal_allowed(state, task), (False, "merge_state_changed"))
+        ok, error, request = self._owner_lease(state)
+        self.assertFalse(ok)
+        self.assertNotIn("worktree_continuation", request.metadata)
+
+        # 3. Status succeeds, but sees dirty file added after seal -> rejects drift
+        _git_run(self.worktree, "config", "--unset", "status.showUntrackedFiles")
+        self.assertEqual(worktree_cleanliness.inspect_worktree(self.worktree).kind, "owner_dirty")
+        self.assertEqual(self._owner_seal_allowed(state, task), (False, "merge_state_changed"))
+        ok, error, request = self._owner_lease(state)
+        self.assertFalse(ok)
+        self.assertNotIn("worktree_continuation", request.metadata)
+
+        # 4. Restore dirty file to exact sealed clean state -> allows continuation again
+        (self.worktree / "README.md").write_text("base repository content\n", encoding="utf-8")
+        self.assertEqual(worktree_cleanliness.inspect_worktree(self.worktree).kind, "clean")
+        self.assertTrue(self._owner_seal_allowed(state, task)[0])
+        ok, error, request = self._owner_lease(state)
+        self.assertTrue(ok, error)
+        self.assertEqual(request.metadata["worktree_continuation"], "sealed_owner_merge")
+
+    def test_interrupted_merge_seal_refuses_when_status_fails_at_seal_time(self):
+        """R4: If git status cannot be read at preservation time, an interrupted_merge continuation seal is not created."""
+        _git_run(self.repo, "commit", "--allow-empty", "-m", "upstream empty progress 2")
+        _git_run(self.repo, "push", "origin", "dev")
+        _git_run(self.worktree, "commit", "--allow-empty", "-m", "task empty progress 2")
+        _git_run(self.worktree, "merge", "--no-commit", "dev")
+
+        _git_run(self.worktree, "config", "status.showUntrackedFiles", "invalid")
+        worker, state = self._sibling_worker_state()
+        task = self.status_data["tasks"][0]
+
+        outcome = worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=task)
+        self.assertFalse(outcome)
+        self.assertEqual(outcome.reason, "status_unreadable")
+        self.assertFalse(state.get("worker_worktrees", {}).get("handoff_blocks"))
+        _git_run(self.worktree, "config", "--unset", "status.showUntrackedFiles")
 
     def test_sibling_quota_fence_preserves_dirty_worktree_and_authorizes_successor_lease_continuation(self) -> None:
         """E2E: Sibling worker dirty changes (staged, unstaged, untracked) are backed up, sealed, and handed off to authorized successor via prepare_worker_workspace."""

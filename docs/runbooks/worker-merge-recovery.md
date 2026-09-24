@@ -55,7 +55,7 @@ content edit after the seal, a stat-cache refresh, a revert in progress, and fen
 successor dispatch on a conflicted merge) behaved as this runbook describes. Details:
 `docs/evidence/completion/ODP-ORCH-AUTONOMOUS-RECOVERY-001/`.
 
-## Review fixes (2026-09-24, ODP-ORCH-AUTONOMOUS-RECOVERY-001, Codex2 findings R1/R2/R3)
+## Review fixes (2026-09-24, ODP-ORCH-AUTONOMOUS-RECOVERY-001, Codex2 findings R1/R2/R3/R4)
 
 - An ordinary dirty seal (`owner_dirty`) never resumes a checkout that has a Git
   operation attached. A cherry-pick, revert or rebase started after the seal can
@@ -76,3 +76,9 @@ successor dispatch on a conflicted merge) behaved as this runbook describes. Det
   fallbacks. Symlink target drift and hardlinked file byte drift after sealing
   are detected and rejected, preserving strict state-drift rejection. Dirty tracked
   symlinks are also preserved and checksummed under `files/` during backup.
+- In `_interrupted_merge_worktree_fingerprint`, `inspection.kind` is explicitly bound
+  and `status_failed` returns a dedicated failure token rather than an empty digest.
+  Interrupted merge continuation and sealing fail closed on git status failure (`status_failed`),
+  preventing status read failures on empty porcelain merges from being mistakenly accepted
+  as exact clean state. Tracked directory symlinks are recorded in the manifest; file symlinks
+  under `files/` are checksummed.
