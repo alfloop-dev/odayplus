@@ -696,4 +696,31 @@ audit JSON 的 `superseded_unblock_requirements.previous_requirements`）：
 3. Supervisor 簽發 Ed25519 lease 並 dispatch `deploy-dev.yml` deploy phase。
 4. 部署落地後，本任務採集 GCP 實體環境狀態（Cloud Run URLs, jobs one-shot, authenticated smoke, 16-source disabled, default-deny egress, live IAM），滿足驗收條件 3–8 後送審。
 
+## 26. Round 32（2026-09-24 19:20Z，owner Antigravity）
+
+### 26.1 系統基線查核與 Fail-Closed 狀態錨定
+
+1. **分支基線與工作樹一致性**：
+   - 本任務分支 `task/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 與最新 `origin/dev`（`419e6bf4958269c5b9e94efcb80770e28cd54dda`）保持乾淨完全同步，工作樹無未追蹤或漂移修改，PR #1107 處於 OPEN 且 MERGEABLE。
+   - 本地證據套件驗證腳本 `verify_dev_live_rollout_remediation.py` 執行通過（exit 0）。
+   - 部署工作流程契約測試 `tests/ops/test_deploy_workflow_contract.py` 全數通過（90 passed in 14.77s）。
+   - 程式碼邊界檢驗 `delivery_toolchain/governance/check_code_boundaries.py` 通過（1178 files passed, exit 0）。
+   - 外部資料邊界檢驗 `scripts/validate_external_data_boundary.py` 通過（3914 files passed, exit 0）。
+
+2. **Candidate 漂移與 Build-Once 驗收條款實測確認**：
+   - 透過 `delivery_toolchain.release.check_runtime_admission.check_candidate_ancestry` 實測確認：候選 `1364363402900c800ec3ed033d38fd1d757c1f10` 到 `origin/dev`（`419e6bf49582`）存在 non-evidence 變更（`.github/workflows/deploy-dev.yml`、`tests/ops/test_deploy_workflow_contract.py`，由 PR #1369 併入）。
+   - 依據驗收條件 2（*「若 candidate 到 origin/dev 之間含任何 product 或 build input 變更則建立新 release 並重新 build once不得沿用舊 digest」*），舊 candidate digest 不得沿用，需由 upstream Candidate Gate reconciliation 在最新 tip 重新執行單次建置（build-once）。
+
+3. **邊界防護與 Fail-Closed in_progress 狀態維持**：
+   - 嚴格遵守驗收條件 10（*「若workflow或部署程式有缺陷則fail closed並另建獨立remediation task不得在rollout task內擴大修code」*），不越界修改 workflow 或產品程式碼。
+   - 保持 fail-closed `in_progress` 狀態，等待新 candidate 建置、Human/Ops 登記帶新 nonce 之 lease request、Supervisor 簽署 lease 並觸發 hosted `deploy-dev.yml` 部署落地後，再行採集真實 GCP live readback 證據進行驗收結案。
+
+### 26.2 下一步執行順序
+
+1. 上游 Candidate Gate reconciliation 完成新 candidate 建置與 manifest 鎖定。
+2. Human/Ops 登記帶有全新 nonce 及新 candidate 之 `release_lease_request`。
+3. Supervisor 簽發 Ed25519 lease 並 dispatch `deploy-dev.yml` deploy phase。
+4. 部署落地後，本任務採集 GCP 實體環境狀態（Cloud Run URLs, jobs one-shot, authenticated smoke, 16-source disabled, default-deny egress, live IAM），滿足驗收條件 3–8 後送審。
+
+
 
