@@ -365,3 +365,83 @@ No package installed into any interpreter, no supervisor restart, no config or c
 no file under .orchestrator/ touched. No gcloud mutation. No task_finalize / submit_review this round
 (it would set status=review, and the issuer requires in_progress). No edits outside
 docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/ except the checker-regenerated boundary inventory.
+
+=== Round 4 appended: 2026-09-24T07:28:37Z (worker Claude2; window 07:22:35Z-07:28:37Z) ===
+Trigger: owned_in_progress_dispatch at 07:20:56Z. Nothing installed, restarted, granted or written by this worker.
+
+[14] Board / PR / base delta since round 3 (read-only)
+Command: jq '.tasks[] | select(.id=="ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001")' $PANTHEON_STATUS_ROOT/ai-status.json
+Result: status in_progress, waiting_for null, blockers null; release_lease_request approval_id
+HUMANOPS-DEV-FIRST-RELEASE-20260924 (approved 06:59:52Z, expires 12:59:52Z) unchanged; release_lease_issuance
+state blocked, updated_at 2026-09-24T07:00:12+00:00, errors ["durable GCS lease state is unavailable"],
+dispatch_ref_sha c4efabbb unchanged.
+Command: grep -E 'release_lease|lease_issue' ai-activity-log.jsonl | tail -> last issuer events 07:00:11Z reserved,
+07:00:21Z blocked; nothing after.
+Command: git fetch origin dev; git rev-parse origin/dev HEAD -> c4efabbb / 9afaf1e9 (merge-base c4efabbb).
+Command: gh pr view 1107 --json state,headRefOid,mergeStateStatus -> OPEN, 9afaf1e978ec65a64d6c2da52d72ad7bc30767d3, BLOCKED.
+
+[15] Supervisor process recheck (read-only /proc)
+Command: readlink /proc/2220782/exe -> /usr/bin/python3.12 ; readlink /proc/2220782/cwd ->
+/home/lupin/oday-plus-supervisor-runtime-43d2fe8ca8e0 ; ps -o lstart= -p 2220782 -> Wed Sep 23 14:35:03 2026 (date +%Z = UTC)
+Command: tr '\0' '\n' < /proc/2220782/environ | grep -E '^(ODP_RELEASE_LEASE|GOOGLE_|CLOUDSDK_|PYTHON)' -> (none set)
+Command: grep -c '\.local/lib' /proc/2220782/maps -> 0
+Command: grep -n 'process_release_lease_issuance' runtime-current/.orchestrator/supervisor.py -> line 5535 (in-process call);
+release_lease_integration.py line 930 LeaseStateStore(settings["state_uri"], require_existing=True), lines 929-940 map any
+LeaseError to "durable GCS lease state is unavailable".
+Command: grep watchdog_probe ai-activity-log.jsonl (07:05Z-07:23Z) -> every minute "observe_only: supervisor_healthy"; no restart.
+
+[16] User-site change discovered (read-only stat/ls; this worker installed nothing)
+Command: /usr/bin/python3.12 -c "import google.cloud.storage, google.auth; print(...)" -> ok 3.14.1
+ (storage at /home/lupin/.local/lib/python3.12/site-packages/google/cloud/storage/__init__.py; google.auth 2.58.0)
+Command: stat --format='%n birth=%w mtime=%y' /home/lupin/.local/lib/python3.12 site-packages site-packages/google
+Result: /home/lupin/.local/lib/python3.12 birth=2026-09-24 07:09:29.146 +0000; site-packages birth=07:09:29.146,
+mtime=07:09:39.684; site-packages/google birth=07:09:30.239; site-packages/.lock birth=07:09:29.146.
+Command: cat google_cloud_storage-3.14.1.dist-info/INSTALLER google_auth-2.58.0.dist-info/INSTALLER -> uv ; uv --version -> uv 0.12.5
+Command: ls site-packages | grep -c '.dist-info$' -> 21 (certifi-2026.7.22 cffi-2.1.1 charset_normalizer-3.5.1
+cryptography-50.0.1 google_api_core-2.38.0 google_auth-2.58.0 google_cloud_core-2.7.0 google_cloud_storage-3.14.1
+google_crc32c-1.8.0 google_resumable_media-2.10.2 googleapis_common_protos-1.75.3 idna-3.20 opentelemetry_api-1.44.0
+proto_plus-1.28.4 protobuf-7.36.2 pyasn1-0.6.4 pyasn1_modules-0.4.2 pycparser-3.0 requests-2.34.2 typing_extensions-4.16.0
+urllib3-2.8.0)
+Command: awk '/07:0[5-9]|07:1[0-9]|07:2[0-9]/' ai-activity-log.jsonl | grep -iE 'google|pip|uv |install' -> no matching event;
+task notes: none. Actor of the installation is unrecorded.
+Command: env -i HOME=/home/lupin PATH=/usr/bin:/bin /usr/bin/python3.12 -s -c "import google.cloud.storage"
+Result: user_site_in_syspath False; ModuleNotFoundError No module named 'google'  (emulates a process whose user site
+did not exist at start). /usr/lib/python3.12/site.py line 358: "if ENABLE_USER_SITE and os.path.isdir(user_site):".
+Command: grep -n python scripts/run-supervisor-watchdog.sh (odayplus fc4f7529, runtime-current 43d2fe8c, origin/dev)
+Result: line 7 'exec python3 "$ROOT_DIR/.orchestrator/supervisor_watchdog.py" "$@"' in all three; no -s/-I; python3 on the
+supervisor PATH -> /usr/bin/python3. A restart through this path would add the user site.
+
+[17] Reproduction re-run after the package became importable (read-only; Bucket.exists is a GET)
+Command (2026-09-24T07:25:13Z and 07:28:36Z): cd /home/lupin/oday-plus-supervisor-runtime-current && env -i HOME=/home/lupin
+USER=lupin PATH=/home/lupin/.local/bin:/usr/local/bin:/usr/bin:/bin PYTHONPATH=$PWD /usr/bin/python3.12 -c
+"from delivery_toolchain.release.release_lease import LeaseStateStore;
+ LeaseStateStore('gs://odayplus-runtime-20260825-release-leases/leases', require_existing=True)"
+Result: user_site_in_syspath True; google.cloud.storage 3.14.1; google.auth 2.58.0.
+EXC TYPE LeaseStateError
+EXC MSG cannot access durable lease state bucket odayplus-runtime-20260825-release-leases: 403 GET
+https://storage.googleapis.com/storage/v1/b/odayplus-runtime-20260825-release-leases?fields=name&prettyPrint=false:
+oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com does not have storage.buckets.get access to the Google
+Cloud Storage bucket. Permission 'storage.buckets.get' denied on resource
+'//storage.googleapis.com/projects/_/buckets/odayplus-runtime-20260825-release-leases' (or it may not exist).
+CAUSE TYPE Forbidden ; CAUSE CODE 403 ; process exit 0 (exception caught and printed). Both runs identical.
+Interpretation: the credential path is now reached; google.auth.default() resolved the GCE metadata service account
+(no ADC file, no GOOGLE_APPLICATION_CREDENTIALS, no ODP_RELEASE_LEASE_GCS_ACCESS_TOKEN). The integration layer would
+still record "durable GCS lease state is unavailable" for this failure. Bucket existence is not determinable from a 403.
+Store operations (release_lease.py 360-470): Bucket.exists; Blob.reload; download_as_text(if_generation_match=...);
+upload with if_generation_match=0; overwrite with if_generation_match=<generation>.
+
+[18] Secret Manager credential recheck (names only; nothing printed from the secret)
+Command (2026-09-24T07:24:44Z): gcloud secrets versions list odp-release-lease-private-key --project 767864276141
+--format='value(name,state)'
+Result: EXIT=1 ; stderr: ERROR: (gcloud.secrets.versions.list) There was a problem refreshing your current auth tokens:
+Reauthentication failed. cannot prompt during non-interactive execution.
+Command: ls -la --time-style=full-iso ~/.config/gcloud/ -> access_tokens.db 2026-09-21 13:34:42Z, credentials.db
+2026-09-17 02:16:03Z, active_config 2026-08-17; application_default_credentials.json absent; GOOGLE_APPLICATION_CREDENTIALS unset.
+Command: cat ~/.config/gcloud/configurations/config_default -> account deborah.lu@dev.cctech-support.com,
+project odayplus-runtime-20260825.
+
+[19] Actions deliberately not taken (round 4)
+No supervisor restart. No IAM/bucket policy change. No ADC, credential file, gcloud login or environment change for the
+supervisor. No package installed or removed by this worker. No release_lease_request written or edited; the 07:00:12Z
+blocked issuance record untouched. No gh workflow run. No lease. No file under .orchestrator/ touched. No task_finalize /
+submit_review (status must stay in_progress for the issuer); no blocker opened.
