@@ -135,3 +135,40 @@ refused an attempt to register the exemptions (PR #1357, closed unmerged), is in
 - The `human_signoff` and `deviation.approver` fields record a named operator decision
   taken in an interactive session. They are release-admission decisions recorded in this
   repository, not external authoritative receipts.
+
+## 6. CI repair on the first submission
+
+The first submitted head `a9acabd8` failed one required check. CI run 35933577494
+(created 2026-09-23T23:26:06Z, `product-lint-unit` completed 2026-09-23T23:49:31Z) reported:
+
+```
+FAILED tests/release/test_release_manifest.py::test_legacy_migration_adds_identity_and_requires_re_attestation
+  release.decision is 'go' but these gates are not cleared: ['gate-2', 'gate-3', 'gate-5', 'gate-6']
+1 failed, 6191 passed, 23 skipped
+```
+
+The `product` lane failed only as the aggregate of that lane. Every other product lane,
+including `product-security`, `product-api-contract` and `product-e2e-gate`, passed on the
+same head.
+
+**Cause.** That test builds its v1 "legacy" fixture by loading the live registry and
+stripping `admission_target` from the release block and every gate, then migrates it.
+`migrate_registry` rebinds all seven gates to the `dev` boundary. A v1 registry had no
+admission target, so `decision: go` there meant all seven gates were cleared. This task is
+the first time the live registry records `go` scoped to one target while staging- and
+production-bound gates stay blocked; v1 cannot express that state, so the fixture carried a
+scoped `go` into a full-scope registry and the validator refused it. The validator and the
+migration module are behaving correctly; the fixture was calibrated on a registry that had
+only ever been `no-go`.
+
+**Fix.** `tests/release/test_release_manifest.py` now builds the fixture through one
+`legacy_registry()` helper that projects the live registry onto the v1 shape and sets the
+legacy decision to `no-go` whenever any gate is still open, which is what a real v1
+registry in that state would have recorded. Both legacy-migration tests use it. No change
+to `delivery_toolchain/e2e/check_release_gate_registry.py`, to
+`delivery_toolchain/release/migrate_gate_registry.py`, or to any registry or manifest field.
+
+**Measured locally (Python 3.12, `uv run --frozen`):** `ruff check` on the file passed;
+`pytest tests/release/test_release_manifest.py` reported 87 passed, 0 failed. The declared
+verification command `check_release_gate_registry.py` is re-run against the new head and its
+receipt is recorded through `task_verification.py` before resubmission.
