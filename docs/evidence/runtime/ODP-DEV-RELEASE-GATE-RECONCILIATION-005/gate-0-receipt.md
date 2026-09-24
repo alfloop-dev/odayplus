@@ -1,11 +1,11 @@
-# Gate 0 (Code Gate) — receipt for candidate 9694320fc8a9922cbfed9b63e647508db32ef26c
+# Gate 0 (Code Gate) — receipt for candidate 1364363402900c800ec3ed033d38fd1d757c1f10
 
 - **Task**: `ODP-DEV-RELEASE-GATE-RECONCILIATION-005`
 - **Recorded by**: Claude (owner of this reconciliation task)
 - **Gate owner of record**: Codex2 / reviewer Claude
 - **Result**: pass
-- **Candidate**: `9694320fc8a9922cbfed9b63e647508db32ef26c`
-- **CI run**: [35886760039](https://github.com/alfloop-dev/odayplus/actions/runs/35886760039) on that exact head
+- **Candidate**: `1364363402900c800ec3ed033d38fd1d757c1f10`
+- **CI run**: [35943771029](https://github.com/alfloop-dev/odayplus/actions/runs/35943771029) on that exact head
 
 ## Why this gate was blocked, and what changed
 
@@ -31,7 +31,7 @@ for the warnings.
 
 ## Measurement on this candidate
 
-`product-node` job [107268834882](https://github.com/alfloop-dev/odayplus/actions/runs/35886760039/job/107268834882):
+`product-node` job [107457164922](https://github.com/alfloop-dev/odayplus/actions/runs/35943771029/job/107457164922):
 
 ```
 ✔ No ESLint warnings or errors
@@ -48,7 +48,7 @@ Occurrences of `not supported in the Edge Runtime` in the job log: **0** (was 28
 | static/type checks pass | `npm run typecheck` inside `make node-check`: success |
 | unit tests pass for changed backend and domain logic | `product-lint-unit`: success |
 | component tests pass for changed frontend surfaces | `npm run test --workspace=apps/web` inside `make node-check`: success |
-| build artifacts immutable and traceable to the candidate SHA | Runtime Release run 35887115502 published `RELEASE_MANIFEST.json` with `candidate_sha` = this candidate and four image digests; see `runtime-release-images.json` |
+| build artifacts immutable and traceable to the candidate SHA | Runtime Release run 35944616693 published `RELEASE_MANIFEST.json` with `candidate_sha` = this candidate and four image digests; see `runtime-release-images.json` |
 | **C1: zero build warnings** | **0 Edge Runtime warnings, `✓ Compiled successfully`** |
 
 ## What this receipt does not claim

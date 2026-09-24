@@ -2,8 +2,8 @@
   "schema_version": "2.0.0",
   "registry_id": "ODP-RELEASE-GATE-REGISTRY",
   "task_id": "ODP-DEV-RELEASE-GATE-RECONCILIATION-005",
-  "generated_at": "2026-09-23",
-  "description": "ODay Plus release gate registry for candidate 9694320fc8a9922cbfed9b63e647508db32ef26c. Dev-admission gates (gate-0 Code, gate-1 Contract, gate-4 Security and Privacy) are cleared against this candidate; gate-4 carries a recorded deviation because the OSS licence gate's automated verdict stays FAIL until an external authoritative approval receipt exists (H01). Gates bound to staging and production admission targets are untouched and remain blocked.",
+  "generated_at": "2026-09-24",
+  "description": "ODay Plus release gate registry for candidate 1364363402900c800ec3ed033d38fd1d757c1f10. Dev-admission gates (gate-0 Code, gate-1 Contract, gate-4 Security and Privacy) are cleared against this candidate; gate-4 carries a recorded deviation because the OSS licence gate's automated verdict stays FAIL until an external authoritative approval receipt exists (H01). Gates bound to staging and production admission targets are untouched and remain blocked.",
   "migration": {
     "from_schema_version": "1.0.0",
     "source_registry_id": "ODP-RELEASE-GATE-REGISTRY",
@@ -12,20 +12,20 @@
     "re_attestation_required": true
   },
   "release": {
-    "candidate_sha": "9694320fc8a9922cbfed9b63e647508db32ef26c",
+    "candidate_sha": "1364363402900c800ec3ed033d38fd1d757c1f10",
     "candidate_ref": "refs/heads/dev",
     "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json",
-    "manifest_digest": "sha256:2b06be79cd9cd75dba0b785091cd44d22a825b09be159d9d1251978f6ffe3a61",
+    "manifest_digest": "sha256:6fb8f9e2e6af8dcef9cbe2fd76f2c3d319d95a40fe64c77e3ffdb435f3dc246d",
     "stage": "candidate-built",
     "environment": "dev",
     "admission_target": "dev",
     "decision": "go",
     "decision_owner": "蔡尚志",
-    "decision_date": "2026-09-23",
-    "decision_note": "GO for the dev admission boundary only. Candidate 9694320fc8a9922cbfed9b63e647508db32ef26c passes CI run 35886760039 on its exact head and is bound to the artifact handoff published by Runtime Release run 35887115502. gate-0 and gate-1 are passed on measured evidence; gate-4 is passed-with-deviation and the deviation is recorded on that gate. Gates bound to staging and production are unchanged and still blocked, so this GO admits nothing beyond dev.",
+    "decision_date": "2026-09-24",
+    "decision_note": "GO for the dev admission boundary only. Candidate 1364363402900c800ec3ed033d38fd1d757c1f10 passes CI run 35943771029 on its exact head and is bound to the artifact handoff published by Runtime Release run 35944616693. gate-0 and gate-1 are passed on measured evidence; gate-4 is passed-with-deviation and the deviation is recorded on that gate. Gates bound to staging and production are unchanged and still blocked, so this GO admits nothing beyond dev.",
     "human_signoff": {
       "approver": "蔡尚志",
-      "date": "2026-09-23",
+      "date": "2026-09-24",
       "scope": "dev admission boundary only",
       "note": "Named operator decision recorded in this repository. It is a release admission decision, not the external authoritative OSS approval receipt that H01 requires; see gate-4.deviation."
     }
@@ -39,8 +39,8 @@
       "owner": "Codex2",
       "reviewer": "Claude",
       "status": "passed",
-      "status_date": "2026-09-23",
-      "release_sha": "9694320fc8a9922cbfed9b63e647508db32ef26c",
+      "status_date": "2026-09-24",
+      "release_sha": "1364363402900c800ec3ed033d38fd1d757c1f10",
       "stage": "candidate-built",
       "environment": "dev",
       "admission_target": "dev",
@@ -70,14 +70,14 @@
       ],
       "receipts": [
         {
-          "receipt_id": "gate-0-9694320fc8a9",
-          "release_sha": "9694320fc8a9922cbfed9b63e647508db32ef26c",
+          "receipt_id": "gate-0-136436340290",
+          "release_sha": "1364363402900c800ec3ed033d38fd1d757c1f10",
           "result": "pass",
-          "recorded_at": "2026-09-23T16:30:00Z",
+          "recorded_at": "2026-09-24T02:00:00Z",
           "recorded_by": "Claude",
           "artifact": "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-005/gate-0-receipt.md",
           "gate_name": "Code Gate",
-          "summary": "CI run 35886760039 on exact head 9694320fc8a9922cbfed9b63e647508db32ef26c: all jobs success. C1 (zero build warnings) is satisfied: the product-node job reports 'Compiled successfully' with zero Edge Runtime warnings, down from 28 before PR #1358 pinned the middleware to the Node.js runtime.",
+          "summary": "CI run 35943771029 on exact head 1364363402900c800ec3ed033d38fd1d757c1f10: all jobs success. C1 (zero build warnings) is satisfied: the product-node job reports 'Compiled successfully' with zero Edge Runtime warnings, down from 28 before PR #1358 pinned the middleware to the Node.js runtime.",
           "recorded_under_task": "ODP-DEV-RELEASE-GATE-RECONCILIATION-005"
         }
       ],
@@ -91,8 +91,8 @@
       "owner": "Claude",
       "reviewer": "Codex2",
       "status": "passed",
-      "status_date": "2026-09-23",
-      "release_sha": "9694320fc8a9922cbfed9b63e647508db32ef26c",
+      "status_date": "2026-09-24",
+      "release_sha": "1364363402900c800ec3ed033d38fd1d757c1f10",
       "stage": "candidate-built",
       "environment": "dev",
       "admission_target": "dev",
@@ -122,14 +122,14 @@
       ],
       "receipts": [
         {
-          "receipt_id": "gate-1-9694320fc8a9",
-          "release_sha": "9694320fc8a9922cbfed9b63e647508db32ef26c",
+          "receipt_id": "gate-1-136436340290",
+          "release_sha": "1364363402900c800ec3ed033d38fd1d757c1f10",
           "result": "pass",
-          "recorded_at": "2026-09-23T16:30:00Z",
+          "recorded_at": "2026-09-24T02:00:00Z",
           "recorded_by": "Claude",
           "artifact": "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-005/gate-1-receipt.md",
           "gate_name": "Contract Gate",
-          "summary": "CI run 35886760039 on exact head 9694320fc8a9922cbfed9b63e647508db32ef26c: product-api-contract success with 0 unapproved breaking changes. The event-contract discrepancy that blocked this gate (16 payload schemas closed against a compatibility policy requiring consumers to ignore unknown optional fields) is resolved by PR #1359.",
+          "summary": "CI run 35943771029 on exact head 1364363402900c800ec3ed033d38fd1d757c1f10: product-api-contract success with 0 unapproved breaking changes. The event-contract discrepancy that blocked this gate (16 payload schemas closed against a compatibility policy requiring consumers to ignore unknown optional fields) is resolved by PR #1359.",
           "recorded_under_task": "ODP-DEV-RELEASE-GATE-RECONCILIATION-005"
         }
       ],
@@ -144,7 +144,7 @@
       "reviewer": "Claude",
       "status": "blocked",
       "status_date": "2026-09-20",
-      "release_sha": "9694320fc8a9922cbfed9b63e647508db32ef26c",
+      "release_sha": "1364363402900c800ec3ed033d38fd1d757c1f10",
       "stage": "dev-verified",
       "environment": "dev",
       "admission_target": "staging",
@@ -175,7 +175,7 @@
       ],
       "receipts": [],
       "blockers": [
-        "No Data Gate receipt is bound to release candidate 9694320fc8a9922cbfed9b63e647508db32ef26c in this registry.",
+        "No Data Gate receipt is bound to release candidate 1364363402900c800ec3ed033d38fd1d757c1f10 in this registry.",
         "check_live_production_data.py has not been run against a live deployment of this candidate; deterministic fixtures and source stubs do not satisfy the Data Gate. Live dev data-plane verification is assigned to active task ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 (owner Antigravity2) and masked snapshot artifact generation is assigned to active task DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001 (owner Antigravity); gate ownership by Codex2 (reviewer Claude)."
       ]
     },
@@ -188,7 +188,7 @@
       "reviewer": "Antigravity2",
       "status": "blocked",
       "status_date": "2026-09-20",
-      "release_sha": "9694320fc8a9922cbfed9b63e647508db32ef26c",
+      "release_sha": "1364363402900c800ec3ed033d38fd1d757c1f10",
       "stage": "staging-verified",
       "environment": "staging",
       "admission_target": "production",
@@ -214,7 +214,7 @@
       ],
       "receipts": [],
       "blockers": [
-        "No Model and Solver Gate receipt is bound to release candidate 9694320fc8a9922cbfed9b63e647508db32ef26c in this registry.",
+        "No Model and Solver Gate receipt is bound to release candidate 1364363402900c800ec3ed033d38fd1d757c1f10 in this registry.",
         "Reconciled from legacy references: canonical task HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001 (owner Human/Ops) covers specific BRAND_TRANSFER/FORMAT_CONVERSION/LEASE/PARTIAL/CDC/merge-queue dispositions, but does not own formal ForecastOps model release/history/production alias or general model-risk approval. Formal model release/history/production alias and general model-risk acceptance require unassigned proposal to coordinator (Authority: Product Owner + ML Risk Owner; Required Input: ForecastOps model card, SiteScore/AVM validation, production alias binding; Acceptance: named human signoff receipt). Staging model and solver execution rehearsal is exercised under active task ODP-EPHEMERAL-STAGING-ROLLOUT-001 (owner Antigravity5).",
         "Solver domain tasks (ODP-BRAND-TRANSFER-IMPLEMENTATION-001, ODP-FORMAT-CONVERSION-IMPLEMENTATION-001, ODP-NET002-LEASE-IMPLEMENTATION-001) remain blocked on upstream dependencies; gate ownership by Codex2 (reviewer Antigravity2)."
       ]
@@ -227,8 +227,8 @@
       "owner": "Claude",
       "reviewer": "Antigravity2",
       "status": "passed-with-deviation",
-      "status_date": "2026-09-23",
-      "release_sha": "9694320fc8a9922cbfed9b63e647508db32ef26c",
+      "status_date": "2026-09-24",
+      "release_sha": "1364363402900c800ec3ed033d38fd1d757c1f10",
       "stage": "candidate-built",
       "environment": "dev",
       "admission_target": "dev",
@@ -254,14 +254,14 @@
       ],
       "receipts": [
         {
-          "receipt_id": "gate-4-9694320fc8a9",
-          "release_sha": "9694320fc8a9922cbfed9b63e647508db32ef26c",
+          "receipt_id": "gate-4-136436340290",
+          "release_sha": "1364363402900c800ec3ed033d38fd1d757c1f10",
           "result": "pass",
-          "recorded_at": "2026-09-23T16:30:00Z",
+          "recorded_at": "2026-09-24T02:00:00Z",
           "recorded_by": "Claude",
           "artifact": "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-005/gate-4-receipt.md",
           "gate_name": "Security and Privacy Gate",
-          "summary": "CI run 35886760039 on exact head 9694320fc8a9922cbfed9b63e647508db32ef26c: product-security success. Secret scanning, SAST, RBAC/ABAC, sensitive-export and audit-retention checks pass; production dependencies carry 0 vulnerabilities. The licence-gate check does not pass and is covered by the recorded deviation on this gate.",
+          "summary": "CI run 35943771029 on exact head 1364363402900c800ec3ed033d38fd1d757c1f10: product-security success. Secret scanning, SAST, RBAC/ABAC, sensitive-export and audit-retention checks pass; production dependencies carry 0 vulnerabilities. The licence-gate check does not pass and is covered by the recorded deviation on this gate.",
           "recorded_under_task": "ODP-DEV-RELEASE-GATE-RECONCILIATION-005"
         }
       ],
@@ -269,7 +269,7 @@
       "deviation": {
         "description": "The OSS licence gate's automated verdict is still FAIL for this candidate, and by design: four LGPL cases (LGPL-SHARP-LIBVIPS, LGPL-PSYCOPG2, LGPL-PSYCOPG3, LGPL-MOOCORE) sit in review_required with an empty exemption register. They are adjudicated -- the named operator recorded 'allow with conditions' for all four, first on 2026-09-08 in docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/case-matrix.json (D01-D04) and again on 2026-09-18 in docs/evidence/human-decisions/ODP-HUMAN-DECISION-RECORDS-001/2026-09-18-oss-license-four-lgpl-cases.md -- but not by the external authoritative receipt that H01 and the project's own D14 decision require. No such external identity or receipt system is wired to this repository, so the licence gate cannot go green and license_policy.json stays 'proposed'. The dev-tool vulnerability findings (1 high, 2 moderate, all dev-only) carry a scope-limited risk acceptance recorded in docs/evidence/human-decisions/ODP-HUMAN-DECISION-RECORDS-001/2026-09-18-dev-toolchain-vulnerability-risk-acceptance.md. Two further required checks are deployment-time readbacks that cannot exist before a first deployment: the live default-deny egress probe and the live IAM state readback. Both stay assigned to ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 and are conditions on this deviation, not evidence for it. This deviation admits the dev boundary only; it does not clear gate-4 for staging or production.",
         "approver": "蔡尚志",
-        "review_by": "2026-12-22",
+        "review_by": "2026-12-23",
         "scope": "dev admission boundary only",
         "conditions": [
           "The exemption register stays empty and license_policy.json stays 'proposed' until an external authoritative approval receipt exists; no AI agent may edit either to close this deviation.",
@@ -288,7 +288,7 @@
       "reviewer": "Human/Ops",
       "status": "blocked",
       "status_date": "2026-09-20",
-      "release_sha": "9694320fc8a9922cbfed9b63e647508db32ef26c",
+      "release_sha": "1364363402900c800ec3ed033d38fd1d757c1f10",
       "stage": "staging-verified",
       "environment": "staging",
       "admission_target": "production",
@@ -323,7 +323,7 @@
       ],
       "receipts": [],
       "blockers": [
-        "No E2E, Performance and UAT Gate receipt is bound to release candidate 9694320fc8a9922cbfed9b63e647508db32ef26c in this registry.",
+        "No E2E, Performance and UAT Gate receipt is bound to release candidate 1364363402900c800ec3ed033d38fd1d757c1f10 in this registry.",
         "Reconciled from legacy references: exact-SHA live ephemeral staging end-to-end rehearsal, backup/restore drill, and rollback rehearsal are assigned to active task ODP-EPHEMERAL-STAGING-ROLLOUT-001 (owner Antigravity5).",
         "Runtime NFR measurement (SHARED-008, PERF/BATCH/AVAIL/RPO) is assigned to active task ODP-NFR-RUNTIME-EVIDENCE-001 (owner Antigravity3); cross-role UAT defect closeout and formal sign-off require human/ops decision when staging is live (proposal submitted to coordinator); gate ownership by Codex2 (reviewer Human/Ops)."
       ]
@@ -337,7 +337,7 @@
       "reviewer": "Human/Ops",
       "status": "blocked",
       "status_date": "2026-09-20",
-      "release_sha": "9694320fc8a9922cbfed9b63e647508db32ef26c",
+      "release_sha": "1364363402900c800ec3ed033d38fd1d757c1f10",
       "stage": "staging-verified",
       "environment": "staging",
       "admission_target": "production",
@@ -379,7 +379,7 @@
       ],
       "receipts": [],
       "blockers": [
-        "No Ops, Release and Audit Gate receipt is bound to release candidate 9694320fc8a9922cbfed9b63e647508db32ef26c in this registry.",
+        "No Ops, Release and Audit Gate receipt is bound to release candidate 1364363402900c800ec3ed033d38fd1d757c1f10 in this registry.",
         "Pre-production admission readiness (required prior to production admission): runbook review, deployment and rollback plan review, backup/DR review, decision-log retention proof (docs/evidence/AUDIT_EVIDENCE_RETENTION_PROOF.md), subsidy audit matrix (docs/evidence/SUBSIDY_EVIDENCE_MATRIX.md), on-call route assignment, and Stage 0-7 / Gate 0-6 final gate audit readiness require coordinator disposition / Human/Ops final go/no-go signoff in docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md (every Human/Ops row remains pending-human; gate ownership by Claude, reviewer Human/Ops).",
         "Post-production closeout (downstream of production rollout): post-deploy production watch window, staging cleanup, and final release archive are assigned to active task ODP-POSTDEPLOY-WATCH-CLOSEOUT-001 (owner Antigravity5, canonical depends_on ODP-PROD-BLUEGREEN-ROLLOUT-001). Structural remediation ledger closeout is assigned to active task ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001 (owner Antigravity5). Post-deploy activities do not block pre-production admission, resolving circular production-order dependency."
       ]
@@ -387,27 +387,27 @@
   ],
   "candidate_rebind": {
     "task_id": "ODP-DEV-RELEASE-GATE-RECONCILIATION-005",
-    "rebound_at": "2026-09-23",
+    "rebound_at": "2026-09-24",
     "from_candidate_sha": "39ae43f6fe679f03dd7df459a51835cbd2d54f77",
-    "to_candidate_sha": "9694320fc8a9922cbfed9b63e647508db32ef26c",
+    "to_candidate_sha": "1364363402900c800ec3ed033d38fd1d757c1f10",
     "from_manifest_digest": "sha256:ebe7d305e930471d2e7492a1fffced10dbaa05a710bb5f6573f370e7bfa8ae8a",
-    "to_manifest_digest": "sha256:2b06be79cd9cd75dba0b785091cd44d22a825b09be159d9d1251978f6ffe3a61",
+    "to_manifest_digest": "sha256:6fb8f9e2e6af8dcef9cbe2fd76f2c3d319d95a40fe64c77e3ffdb435f3dc246d",
     "re_attestation_required": true,
-    "note": "Rebind from 39ae43f6fe679f03dd7df459a51835cbd2d54f77 to 9694320fc8a9922cbfed9b63e647508db32ef26c. The previous candidate predates the gate-0 C1 repair (PR #1358, Edge Runtime build warnings) and the gate-1 event-contract repair (PR #1359); both change product paths, so the previous images could not be reused and the artifact handoff was rebuilt by Runtime Release run 35887115502. See docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-005/README.md.",
+    "note": "Rebind from 39ae43f6fe679f03dd7df459a51835cbd2d54f77 to 1364363402900c800ec3ed033d38fd1d757c1f10. The previous candidate predates the gate-0 C1 repair (PR #1358, Edge Runtime build warnings) and the gate-1 event-contract repair (PR #1359); both change product paths, so the previous images could not be reused and the artifact handoff was rebuilt by Runtime Release run 35944616693. See docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-005/README.md.",
     "build_run": {
       "workflow": "Runtime Release",
-      "run_id": 35887115502,
-      "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/35887115502",
+      "run_id": 35944616693,
+      "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/35944616693",
       "event": "workflow_dispatch",
       "phase": "build",
-      "release_sha_input": "9694320fc8a9922cbfed9b63e647508db32ef26c",
+      "release_sha_input": "1364363402900c800ec3ed033d38fd1d757c1f10",
       "deploy_jobs": "skipped (no Supervisor lease was supplied; nothing was deployed)"
     },
     "candidate_ci_run": {
       "workflow": "CI",
-      "run_id": 35886760039,
-      "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/35886760039",
-      "head_sha": "9694320fc8a9922cbfed9b63e647508db32ef26c"
+      "run_id": 35943771029,
+      "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/35943771029",
+      "head_sha": "1364363402900c800ec3ed033d38fd1d757c1f10"
     }
   }
 }

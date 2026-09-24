@@ -1,11 +1,11 @@
-# Gate 1 (Contract Gate) — receipt for candidate 9694320fc8a9922cbfed9b63e647508db32ef26c
+# Gate 1 (Contract Gate) — receipt for candidate 1364363402900c800ec3ed033d38fd1d757c1f10
 
 - **Task**: `ODP-DEV-RELEASE-GATE-RECONCILIATION-005`
 - **Recorded by**: Claude (owner of this reconciliation task)
 - **Gate owner of record**: Claude / reviewer Codex2
 - **Result**: pass
-- **Candidate**: `9694320fc8a9922cbfed9b63e647508db32ef26c`
-- **CI run**: [35886760039](https://github.com/alfloop-dev/odayplus/actions/runs/35886760039) on that exact head
+- **Candidate**: `1364363402900c800ec3ed033d38fd1d757c1f10`
+- **CI run**: [35943771029](https://github.com/alfloop-dev/odayplus/actions/runs/35943771029) on that exact head
 
 ## Why this gate was blocked, and what changed
 
@@ -38,7 +38,7 @@ producer side was not weakened.
 
 ## Measurement on this candidate
 
-`product-api-contract` job [107268834937](https://github.com/alfloop-dev/odayplus/actions/runs/35886760039/job/107268834937):
+`product-api-contract` job [107457164917](https://github.com/alfloop-dev/odayplus/actions/runs/35943771029/job/107457164917):
 
 ```
 uv run python delivery_toolchain/openapi/check_drift.py --base-ref origin/dev

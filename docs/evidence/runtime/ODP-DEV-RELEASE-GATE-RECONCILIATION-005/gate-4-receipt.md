@@ -1,21 +1,21 @@
-# Gate 4 (Security and Privacy Gate) — receipt for candidate 9694320fc8a9922cbfed9b63e647508db32ef26c
+# Gate 4 (Security and Privacy Gate) — receipt for candidate 1364363402900c800ec3ed033d38fd1d757c1f10
 
 - **Task**: `ODP-DEV-RELEASE-GATE-RECONCILIATION-005`
 - **Recorded by**: Claude (owner of this reconciliation task)
 - **Gate owner of record**: Claude / reviewer Antigravity2
 - **Result**: pass, **with a recorded deviation** (see `deviation` on gate-4 in the registry)
-- **Candidate**: `9694320fc8a9922cbfed9b63e647508db32ef26c`
-- **CI run**: [35886760039](https://github.com/alfloop-dev/odayplus/actions/runs/35886760039) on that exact head
+- **Candidate**: `1364363402900c800ec3ed033d38fd1d757c1f10`
+- **CI run**: [35943771029](https://github.com/alfloop-dev/odayplus/actions/runs/35943771029) on that exact head
 
 ## Measurement on this candidate
 
-`product-security` job [107268835108](https://github.com/alfloop-dev/odayplus/actions/runs/35886760039/job/107268835108):
+`product-security` job [107457164906](https://github.com/alfloop-dev/odayplus/actions/runs/35943771029/job/107457164906):
 **464 passed** in 178.02s, job conclusion `success`. That suite carries secret scanning,
 SAST, the RBAC/ABAC matrix, audit-retention and privacy tests, the SBOM/NOTICE tests, and
 the OSS licence gate tests.
 
 Production dependency audit, from the release build's own receipt
-(`npm-audit-receipt.json`, produced by Runtime Release run 35887115502 at
+(`npm-audit-receipt.json`, produced by Runtime Release run 35944616693 at
 2026-09-23T16:13:07Z with `omit_dev: true`):
 
 ```
@@ -38,7 +38,7 @@ Egress posture, from the manifest's `sources_off_attestation`: all 16 external s
 | dependency and SAST scans pass with no unresolved critical/high | pass; production dependencies 0 findings |
 | RBAC/ABAC tests pass for affected roles | pass (`product-security`) |
 | sensitive export and audit controls checked | pass (`product-security`) |
-| IAM and infrastructure changes reviewed | offline review carried over from the `39ae43f6` gate record: PASSED with unresolved exceptions (three project-level `roles/cloudsql.client` grants without IAM conditions). Unchanged by this candidate; no `infra/terraform` change between `39ae43f6` and `9694320f` |
+| IAM and infrastructure changes reviewed | offline review carried over from the `39ae43f6` gate record: PASSED with unresolved exceptions (three project-level `roles/cloudsql.client` grants without IAM conditions). Unchanged by this candidate; no `infra/terraform` change between `39ae43f6` and `13643634` |
 | **licence-aware SBOM produced and OSS licence gate passes** | SBOM produced; **the licence gate does not pass** — covered by the recorded deviation |
 
 ## The one criterion that does not pass
