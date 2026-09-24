@@ -41,3 +41,16 @@ has the same pre-existing missing temporary config failures on unmodified
 subcases of `test_return_to_review_transitions_clear_and_preserve_the_right_heads`.
 The failure is `common.ConfigError` for a removed fixture's config.json.
 This validation does not claim those broader checks passed.
+
+## Independent validation (2026-09-24, ODP-ORCH-AUTONOMOUS-RECOVERY-001)
+
+Claude re-ran the broader selection
+`test_supervisor.py -k 'preserve or handoff or review_churn'` on the adopted branch after its
+base advance to `origin/dev` (`c4efabbb`) and on an unmodified copy of that `origin/dev`:
+55 passed, 6 skipped, 0 failed on both trees. The `common.ConfigError` failures described in
+the 2026-09-23 section did not reproduce, and the three tests it names pass on both trees.
+Read that section as an observation from that session's environment, not as a known-failing
+baseline. Additional scratch probes (a conflicted merge with unmerged index entries, a same-path
+content edit after the seal, a stat-cache refresh, a revert in progress, and fenced-sibling
+successor dispatch on a conflicted merge) behaved as this runbook describes. Details:
+`docs/evidence/completion/ODP-ORCH-AUTONOMOUS-RECOVERY-001/`.
