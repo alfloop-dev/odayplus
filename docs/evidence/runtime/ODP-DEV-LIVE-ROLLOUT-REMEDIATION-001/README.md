@@ -1,6 +1,6 @@
 # ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001
 
-## 結論（2026-09-24 round 3，owner Claude2）
+## 結論（2026-09-24 round 4，owner Claude2；round 3 的量測保留，round 4 的增量標示為「07:20Z 後」）
 
 本輪先以正常 task workflow 合入最新 `origin/dev`：task branch 的 base merge commit 為
 `cecb7a0124b2b67d37b62c8b7cd92995bcf376f9`，第一 parent 是前一輪 task head
@@ -17,12 +17,13 @@ forbidden path 對 `origin/dev` 的 diff 為空。
 | 候選是否需要重 build | 已由 005 重 build（run 35944616693，單一 run 完成 build/sign/attest/handoff）；`13643634..origin/dev` 共 6 個 commit、11 個路徑，**全部在 `docs/evidence/`**，不需再 build |
 | task 有 `waiting_for=Human/Ops` 且 lease request 已過期 | **已清除**：操作者於 `06:49:44Z` reopen（owner_resume）；Human/Ops 於 `06:59:52Z` 登記新的 `release_lease_request`（approval_id `HUMANOPS-DEV-FIRST-RELEASE-20260924`，綁定上述候選、manifest、run 35944616693） |
 | **仍然阻塞** | 簽發器於 `07:00:12Z` 拒絕該請求，唯一錯誤 `durable GCS lease state is unavailable`。真因（本輪重現）：supervisor 跑在系統 `/usr/bin/python3.12`，該直譯器**沒有 `google` 套件**，`LeaseStateStore(gs://…, require_existing=True)` 在匯入 `google.cloud.storage` 時就拋 `ModuleNotFoundError`，尚未觸及任何憑證。修好後還有第二層：私鑰載入走 `gcloud secrets versions access`，而 supervisor 共用的 gcloud 設定目前無法非互動地更新 token |
+| **07:20Z 後（round 4）** | 套件已於 `07:09:29Z` 由 uv 裝進**新建的** user site（`google-cloud-storage 3.14.1`、`google-auth 2.58.0` 等 21 個 distribution；安裝者未留任何紀錄，非本 worker）。但 supervisor pid 2220782 於 `2026-09-23T14:35:03Z` 啟動時該目錄不存在，CPython 只在啟動時把存在的 user site 加進 `sys.path`，執行中的行程仍 import 不到，**必須重啟**。用同一直譯器、同一乾淨環境重跑重現指令（`07:25:13Z`、`07:28:36Z`）：不再是 `ModuleNotFoundError`，改為 GCS **HTTP 403**：`oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com` 對 `gs://odayplus-runtime-20260825-release-leases` 缺 `storage.buckets.get`。integration 層把這一步的任何 `LeaseError` 都記成同一句 `durable GCS lease state is unavailable`，所以**只重啟的話簽發器會再記一次一模一樣的錯誤**。gcloud 於 `07:24:44Z` 重測仍 `Reauthentication failed`（LATENT-1 未變） |
 
 因此本輪沒有執行 Cloud Run deploy、migration/worker/scheduler execution、traffic mutation 或
 authenticated smoke，也沒有產生成功部署收據。驗收 3–8 全數未成立。候選有效、registry `decision=go`、
 人類請求已登記、簽發器的准入邏輯全部通過，四者加起來仍不等於 rollout 成功。
 
-採集視窗（UTC）：`2026-09-24T06:54:50Z` 至 `2026-09-24T07:09:07Z`。所有時間都是實際時鐘讀值。
+採集視窗（UTC）：`2026-09-24T06:54:50Z` 至 `2026-09-24T07:28:37Z`（round 3 至 `07:09:07Z`；round 4 重測 `07:22:35Z`–`07:28:37Z`）。所有時間都是實際時鐘讀值。
 本文件的採集基準是上述 base merge commit；交付本文件的 commit 是它的 scope 受限後代，不在此引用。
 
 ## 1. Exact candidate 與 build-once handoff（canonical，非本 task dispatch）
@@ -123,16 +124,17 @@ ancestry、nonce reuse、`issuance_errors` 全部通過，失敗點是緊接其�
   `LeaseStateStore("gs://odayplus-runtime-20260825-release-leases/leases", require_existing=True)`：
   拋 `LeaseStateError: google-cloud-storage is required for gs:// lease state`，cause
   `ModuleNotFoundError: No module named 'google'`。integration 層把它包成 `durable GCS lease state is unavailable`。
-- `/usr/bin/python3.12` 沒有 pip；user site `/home/lupin/.local/lib/python3.12/site-packages` 沒有任何 google 套件。
+- `/usr/bin/python3.12` 沒有 pip；user site `/home/lupin/.local/lib/python3.12/site-packages` 沒有任何 google 套件
+  （**勘誤：此句只在 07:02:49Z 量測時成立**。該目錄於 07:09:29Z 才被建立並裝入套件，round 3 的 audit（07:09:07Z）與本文（07:12Z）沒有觀測到；見 4.5）。
   專案 uv 環境有 `google-cloud-storage 3.13.0`、`google-auth 2.56.2`（pyproject 釘 `google-cloud-storage>=2.19,<4`）。
 - 因為在 import 就失敗，**任何憑證都沒有被讀取**。全機至今只有這兩筆簽發器事件（reserved、blocked），從未簽出任何 lease。
 
-### 4.2 修好依賴後的下一層（LATENT）
+### 4.2 修好依賴後的下一層（round 3 標為 LATENT；LATENT-2 已於 round 4 實測，見 4.5）
 
 | id | 步驟 | 現況 | 若不修，簽發器會記 |
 |---|---|---|---|
 | LATENT-1 | `load_private_key_from_secret_reference` 以子行程執行 `gcloud secrets versions access latest --project 767864276141 --secret odp-release-lease-private-key`（stderr 丟棄） | supervisor `HOME=/home/lupin`、無 `CLOUDSDK_CONFIG`，與本機共用 gcloud 設定；該設定於 06:56:12Z–06:56:18Z 的唯讀呼叫全部 `Reauthentication failed`（exit 1） | `Secret Manager signing key is unavailable` |
-| LATENT-2 | `_GCSLeaseStateStore` 內 `storage.Client()` 用 `google.auth.default()` | 無 `GOOGLE_APPLICATION_CREDENTIALS`、無 ADC 檔，fallback 是 GCE metadata SA `oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com`（與 bucket 不同專案）；能否讀寫 lease bucket **未驗證**（worker 的 metadata token 探測被 harness 拒絕） | `cannot access durable lease state bucket …` |
+| LATENT-2 | `_GCSLeaseStateStore` 內 `storage.Client()` 用 `google.auth.default()` | 無 `GOOGLE_APPLICATION_CREDENTIALS`、無 ADC 檔，fallback 是 GCE metadata SA `oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com`（與 bucket 不同專案）；能否讀寫 lease bucket 於 round 3 **未驗證**；**round 4 已實測為 HTTP 403**（`storage.buckets.get` denied，07:25:13Z / 07:28:36Z，見 4.5） | `cannot access durable lease state bucket …` |
 
 ### 4.3 重試語意
 
@@ -146,27 +148,59 @@ ancestry、nonce reuse、`issuance_errors` 全部通過，失敗點是緊接其�
 `596b9c9a` / `no-go`；磁碟上的 registry 與 manifest 是**未提交的本機修改**，內容與 `origin/dev` byte-identical。
 今天的准入因此成立，但任何 checkout / stash / reset 都會讓簽發器無聲退回 no-go（fail closed，但難以排查）。
 
-## 5. 修正後的 unblock 順序
+### 4.5 Round 4（07:22:35Z–07:28:37Z）：套件已到位但執行中的 supervisor 看不到；下一層是 GCS 403
 
-1. 操作者讓執行 `.orchestrator/supervisor.py` 的直譯器能 import `google-cloud-storage`（與 `google-auth`）：
-   改用專案 uv 環境啟動 supervisor，或把釘住的套件裝進 supervisor 用的直譯器；之後依 fleet 既有程序重啟
-   supervisor（user site 只在直譯器啟動時加入 sys.path）。
-2. 操作者用同一重現指令驗證：結果不得再是 `ModuleNotFoundError`；若此時變成憑證錯誤，LATENT-2 即為真。
+觸發：`07:20:56Z` 的 `owned_in_progress_dispatch`。活動紀錄自 `07:00:21Z` 之後沒有任何 `release_lease_*` 事件，看板上的
+`release_lease_request`、`release_lease_issuance`（state `blocked`）、status `in_progress`、無 blocker、無 `waiting_for`
+都與 round 3 相同；PR #1107 head 仍是 `9afaf1e9`，`origin/dev` 仍是 `c4efabbb`。變的是 supervisor 的執行環境：
+
+| 量測 | 結果 |
+|---|---|
+| `stat --format=%w /home/lupin/.local/lib/python3.12`（及其 `site-packages`、`site-packages/.lock`） | birth **`2026-09-24T07:09:29Z`**，最後寫入 `07:09:39Z` |
+| `*.dist-info/INSTALLER` | `uv`（`/home/lupin/.local/bin/uv 0.12.5`）；共 21 個 distribution：`google_cloud_storage-3.14.1`、`google_auth-2.58.0`、`google_api_core-2.38.0`、`google_cloud_core-2.7.0`、`cryptography-50.0.1`、`requests-2.34.2` 等 |
+| 安裝者 | **無紀錄**：活動紀錄沒有事件、task 沒有 note；不是本 worker（round 3 的重現在 07:02:49Z，早於目錄建立，且 round 3 明載未安裝任何套件）。版本（3.14.1 / 2.58.0）與專案 uv 環境（3.13.0 / 2.56.2）不同，所以也不是從專案環境複製 |
+| pid 2220782 | 仍是 `/usr/bin/python3.12 -u .orchestrator/supervisor.py`，`ps -o lstart`（主機 TZ=UTC）`2026-09-23T14:35:03Z`，**未重啟**；environ 沒有 `PYTHONPATH`、`PYTHONNOUSERSITE`、`GOOGLE_APPLICATION_CREDENTIALS`、`CLOUDSDK_CONFIG`、`ODP_RELEASE_LEASE_GCS_ACCESS_TOKEN`；`/proc/2220782/maps` 沒有任何 `~/.local/lib` 下的檔案 |
+| 執行中的行程能否 import | **不能**。`/usr/lib/python3.12/site.py` 第 358 行 `addusersitepackages` 只在直譯器啟動時 `os.path.isdir(user_site)` 為真才加入 `sys.path`；目錄比行程晚 16 小時 34 分才出生。以 `/usr/bin/python3.12 -s -c "import google.cloud.storage"` 模擬（`-s` 停用 user site）→ `ModuleNotFoundError: No module named 'google'` |
+| 重啟會不會撿到 | **會**。`scripts/run-supervisor-watchdog-live.sh` → `scripts/run-supervisor-watchdog.sh` → `exec python3 .orchestrator/supervisor_watchdog.py`，沒有 `-s`/`-I`；supervisor PATH 上的 `python3` 是 `/usr/bin/python3`（3.12）。三份腳本（`/home/lupin/odayplus` fc4f7529、runtime-current 43d2fe8c、`origin/dev`）相同 |
+| 新的 `/usr/bin/python3.12` 重跑 round 3 的重現指令（同一 `env -i` 環境，07:25:13Z 與 07:28:36Z 各一次） | `sys.path` 含 user site；`google.cloud.storage 3.14.1`、`google.auth 2.58.0` 匯入成功；`LeaseStateStore(gs://…, require_existing=True)` 走到 `storage.Client()` → `Bucket.exists()`，拋 `LeaseStateError`，cause `google.api_core.exceptions.Forbidden`（HTTP **403**） |
+| 403 全文 | `cannot access durable lease state bucket odayplus-runtime-20260825-release-leases: 403 GET https://storage.googleapis.com/storage/v1/b/odayplus-runtime-20260825-release-leases?fields=name&prettyPrint=false: oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com does not have storage.buckets.get access to the Google Cloud Storage bucket. Permission 'storage.buckets.get' denied on resource '//storage.googleapis.com/projects/_/buckets/odayplus-runtime-20260825-release-leases' (or it may not exist).` |
+| 主體來源 | `google.auth.default()`：無 ADC 檔、無 `GOOGLE_APPLICATION_CREDENTIALS`、無 `ODP_RELEASE_LEASE_GCS_ACCESS_TOKEN` → GCE metadata SA `oday-dev-runtime@alfaloop-data-project-2`（與 bucket 不同專案）。這就是 supervisor 行程會解析到的同一個主體 |
+| 簽發器會記什麼 | `release_lease_integration.py` 第 929–940 行把 `LeaseStateStore(...)` 的任何 `LeaseError` 都記成 `durable GCS lease state is unavailable`。所以**重啟後若只做重啟**，下一次 Human/Ops 請求會得到與 07:00:12Z 一字不差的拒絕，但原因已從缺套件變成 403 |
+| bucket 是否存在 | 由 403 判斷不了（呼叫者沒有 list 權限時，GCS 對「被拒」與「不存在」都回 403） |
+| store 需要的權限 | `storage.buckets.get`（`Bucket.exists`）、`storage.objects.get`（`Blob.reload` / `download_as_text`）、`storage.objects.create`（`if_generation_match=0` 簽發）、`storage.objects.create` + `storage.objects.delete`（`if_generation_match=<generation>` 狀態轉移的覆寫） |
+| LATENT-1 重測（07:24:44Z） | `gcloud secrets versions list odp-release-lease-private-key --project 767864276141 --format='value(name,state)'` → exit 1，`Reauthentication failed. cannot prompt during non-interactive execution`；`credentials.db` 自 2026-09-17T02:16:03Z 未變、`access_tokens.db` 2026-09-21T13:34:42Z；無 ADC 檔。只列名稱，未讀任何 secret 內容 |
+
+本輪所有對 GCP 的呼叫都是唯讀（`Bucket.exists` 是 GET；`secrets versions list` 只列名稱且在憑證更新就失敗）。
+沒有重啟 supervisor、沒有改 IAM、沒有建立 ADC、沒有登入 gcloud、沒有裝或移除任何套件、沒有動 `.orchestrator/`。
+
+## 5. 修正後的 unblock 順序（round 4 改寫）
+
+round 3 的第 1–2 項假設套件到處都沒有；第 4 項「確認主體能讀寫 bucket」已在 round 4 量成 403。改寫如下（round 3 清單原文保留在
+audit JSON 的 `superseded_unblock_requirements.previous_requirements`）：
+
+1. 操作者依 fleet 既有程序**重啟 supervisor**（`scripts/run-supervisor-watchdog-live.sh` 的 `--restart` 路徑；它以 `python3`
+   啟動且無 `-s`/`-I`，新行程會看到 07:09:29Z 建立的 user site）。這一層**不需要再裝任何套件**；若要改動該直譯器的套件，請留下
+   安裝者紀錄。或改用專案 uv 環境（`google-cloud-storage 3.13.0`）啟動。驗證：`readlink /proc/<新 pid>/exe`，再跑同一重現指令，
+   結果不得再是 `ModuleNotFoundError`。
+2. 操作者讓 supervisor 解析到的主體能存取 `gs://odayplus-runtime-20260825-release-leases`。實測該主體是 GCE metadata SA
+   `oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com`（與 bucket 不同專案），缺 `storage.buckets.get`。store 需要
+   `storage.buckets.get` 加 `storage.objects.get` / `storage.objects.create` / `storage.objects.delete`（例如對該 bucket 授
+   `roles/storage.objectAdmin` 加 `roles/storage.legacyBucketReader`）。若要改用其他主體，就在 supervisor 環境提供 ADC
+   （`GOOGLE_APPLICATION_CREDENTIALS` 或 `~/.config/gcloud/application_default_credentials.json`）並**再重啟一次**（環境在啟動時讀取）。
+   `ODP_RELEASE_LEASE_GCS_ACCESS_TOKEN` 是短效的操作者逃生口，不適合常駐的 supervisor。驗證：同一重現指令必須**不拋例外**；
+   重啟後若再看到 `durable GCS lease state is unavailable`，開著的是這一項，不是套件。
 3. 操作者給 supervisor 一個非互動的 Secret Manager 憑證：更新 `/home/lupin` 的 gcloud 登入，或改用具
-   `secretmanager.versions.access` 的 service account；以非互動的 `gcloud secrets versions list` 對同一 secret
-   確認 exit 0（不印出內容）。
-4. 操作者確認 supervisor 內 `storage.Client()` 解析到的主體能讀寫
-   `gs://odayplus-runtime-20260825-release-leases/leases`；否則提供 ADC。
-5. （選配）把 `/home/lupin/odayplus` fast-forward 到 `origin/dev`，讓簽發器讀的是已提交的 registry。
-6. Human/Ops 以新 nonce、新 approval_id 重新登記 `release_lease_request`（candidate `13643634…`、manifest
-   `sha256:6fb8f9e2…`、`manifest_run_id=35944616693`、dev / deploy）。task 必須維持 `in_progress`、無 blocker、
-   無 `waiting_for`；**在 deploy 跑完之前不要送審**（`submit_review` 會把 status 設成 `review`，簽發器只接受
-   `in_progress`）。
-7. 簽發器簽出 Ed25519 lease（ttl 600s）並 dispatch 既有 deploy phase；若 deploy job 失敗，依驗收第 10 條 fail closed
-   並另建 remediation task。
-8. 本 task 收集部署後 Cloud Run URL/revision、migration/worker/scheduler execution、authenticated smoke、
-   provider-off/16-source、**live default-deny egress probe 與 live IAM readback**（gate-4 deviation 條件）、
-   exact manifest binding 收據（驗收 3–8）。
+   `secretmanager.versions.access` 的 service account；以非互動的 `gcloud secrets versions list` 對同一 secret 確認 exit 0
+   （不印出內容）。07:24:44Z 重測仍失敗。
+4. （選配）把 `/home/lupin/odayplus` fast-forward 到 `origin/dev`，讓簽發器讀的是已提交的 registry（目前是與 `origin/dev`
+   逐位元組相同的未提交本機修改；HEAD `fc4f7529` 落後 160 commit）。
+5. 第 1–3 項驗證通過後，Human/Ops 以**新 nonce、新 approval_id** 重新登記 `release_lease_request`（candidate `13643634…`、manifest
+   `sha256:6fb8f9e2…`、`manifest_run_id=35944616693`、dev / deploy）。07:00:12Z 那筆 blocked 紀錄永不重試，其 nonce digest 會被
+   `_nonce_reuse_errors` 判重用。task 必須維持 `in_progress`、無 blocker、無 `waiting_for`；**在 deploy 跑完之前不要送審**。
+6. 簽發器簽出 Ed25519 lease（ttl 600s）並 dispatch 既有 deploy phase；若 deploy job 失敗，依驗收第 10 條 fail closed 並另建
+   remediation task。
+7. 本 task 收集部署後 Cloud Run URL/revision、migration/worker/scheduler execution、authenticated smoke、provider-off/16-source、
+   **live default-deny egress probe 與 live IAM readback**（gate-4 deviation 條件）、exact manifest binding 收據（驗收 3–8），再送審。
 
 2026-09-21 與更早的 unblock 清單保留在 audit JSON 的 `superseded_unblock_requirements` 與 `history`，供稽核比對，未被刪除。
 
@@ -174,7 +208,7 @@ ancestry、nonce reuse、`issuance_errors` 全部通過，失敗點是緊接其�
 
 驗收 3–8 全數未成立。本 task 不得以 `done` 結案，也**不在本輪送審**：送審會把 task 移出 `in_progress`，
 直接讓操作者 06:49:44Z 的 reopen 失效。本輪終態是 `in_progress` 加上寫在看板 `next` 的具體交辦；
-阻塞在 supervisor 執行環境（缺套件、憑證過期），不在 release 資料面。
+阻塞在 supervisor 執行環境（執行中的行程缺套件且未重啟、lease bucket 對其解析到的主體回 403、gcloud 憑證過期），不在 release 資料面。
 
 歷史 `docs/evidence/runtime/ODP-DEV-ROLLOUT-001/` 七份收據在 base merge 後重算 sha256，與 2026-09-04 audit
 記錄完全相符；未被編輯、搬移或刪除。本 evidence 僅明確標示其部署宣稱已被 live reconciliation 推翻。
