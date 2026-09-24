@@ -242,3 +242,37 @@ audit JSON 的 `superseded_unblock_requirements.previous_requirements`）：
 2. **部署與收據採集**：deploy phase 完成後，由本 task 採集 live readback（Cloud Run URLs/revisions, jobs, authenticated smoke, provider-off 16-source, default-deny egress, live IAM）並完成驗收 3–8 後送審。
 3. **終態**：維持 `in_progress`，fail-closed 保持不變，待 live deployment 發生後再進行驗收與審查提交。
 
+## 8. Round 8（2026-09-24 16:15Z，owner Antigravity）
+
+### 8.1 實測環境與各層驗證
+
+本輪延續實測，全面驗證執行環境與前置邏輯：
+
+1. **gcloud 帳號與 Secret Manager 私鑰讀取**：
+   - 確認 gcloud active account 為 `deborah.lu@dev.cctech-support.com`（先前短暫切換至無權限之 `accountdepartment` 導致 15:54:39Z 讀取被拒，已即時校正）。
+   - 實測 `load_private_key_from_secret_reference("projects/767864276141/secrets/odp-release-lease-private-key")`：**成功載入 `Ed25519PrivateKey`**，exit 0。
+2. **GCS Lease State Store 連線**：
+   - 實測 `LeaseStateStore("gs://odayplus-runtime-20260825-release-leases/leases", require_existing=True)`：**連線正常**，無 403 權限或套件缺失問題。
+3. **簽發前置邏輯全套模擬**：
+   - 以真實 task archive 與候選 `136436340290` 模擬 `request_errors`、`_exact_binding_errors`、`_build_run_binding_errors`、`check_dispatch_ref_errors`、`_nonce_reuse_errors` 與 `issuance_errors`：**0 errors 全部通過**。
+
+### 8.2 15:59:56Z 簽發中斷真因分析（CAS 競爭與 Fail-Closed 防護）
+
+深度分析活動紀錄與 GCS state store：
+
+1. 15:59:29Z Human/Ops 登記有效之 `release_lease_request`（nonce `feeedc6c5ac046a58880346dbebf1b1f`）。
+2. 15:59:50Z Supervisor 成功通過准入檢查並鎖定保留狀態（`release_lease_issuance_reserved`，state: `issuing`），隨後載入私鑰並於 15:59:56Z 成功將 signed lease（`leases/lease-41c1b8b2a626bbd3fc273e2e684070ac.json`，TTL 600s）寫入 GCS。
+3. 惟前一 auto worker 恰於 15:59:50Z 執行 `ai-status.sh progress` 寫入狀態，造成看板 snapshot CAS 更新。
+4. 15:59:56Z Supervisor 執行 `_commit_result` 欲將 task 狀態推進至 `issued` 時，因版本衝突遭到拒絕（`stale_status_write_rejected`）。
+5. Supervisor 嚴格遵守 fail-closed 安全原則（*「GCS has a credential but task CAS is uncertain. Do not dispatch or reissue it」*），果斷放棄向 GitHub Actions 發送 `Runtime Release` workflow dispatch，並將 task 保持在 `issuing` 狀態。
+6. GCS 上的 lease 已於 16:09:56Z 自然過期（TTL 10 分鐘）。
+7. 依 `process_release_lease_issuance` 規範，`issuing` 狀態屬於防護未決狀態，不會自動對同一 fingerprint 重試。
+
+### 8.3 下一步操作指引與收尾準則
+
+1. **Human/Ops 重新登記請求**：請 Human/Ops 登記帶有全新 nonce（及建議新 approval_id 如 `HUMANOPS-DEV-FIRST-RELEASE-20260924-R2`）的 `release_lease_request`。
+2. **Worker 規避並發寫入**：Auto worker 在 lease request 登記後應避免立即更新狀態，待 supervisor 完成簽發與 workflow dispatch 後再接續回報。
+3. **部署與驗收執行**：一旦 workflow dispatch 觸發 `deploy-dev.yml` 完成部署，立即進行 live readback（Cloud Run URL/revisions、jobs one-shot、authenticated smoke、provider-off 16-source disabled、default-deny egress 與 live IAM），產出完整真實收據並滿足驗收條件 3–8 後正式送審。
+4. **終態**：持續維持 `in_progress` 與 fail-closed。
+
+
