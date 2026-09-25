@@ -3366,5 +3366,28 @@ audit JSON 的 `superseded_unblock_requirements.previous_requirements`）：
 3. Supervisor 簽發 Ed25519 lease 並 dispatch `deploy-dev.yml` deploy phase。
 4. 部署落地後，本任務採集 GCP 實體環境狀態（Cloud Run URLs, jobs one-shot, authenticated smoke, 16-source disabled, default-deny egress, live IAM），滿足驗收條件 3–8 後送審。
 
+## 129. Round 142（2026-09-25 06:52Z，owner Antigravity）
 
+### 129.1 系統狀態複查與全套邊界檢驗
 
+1. **分支基線與全套驗證**：
+   - 本任務分支 `task/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 與最新 `origin/dev`（`419e6bf4958269c5b9e94efcb80770e28cd54dda`）保持乾淨同步，工作樹無未追蹤或未授權修改，PR #1107 處於 OPEN 且 MERGEABLE。
+   - 執行 `python3 docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/verify_dev_live_rollout_remediation.py`：PASS（exit 0）。
+   - 執行 `uv run pytest tests/ops/test_deploy_workflow_contract.py`：90 passed in 8.82s（exit 0）。
+   - 執行 `python3 delivery_toolchain/governance/check_code_boundaries.py`：1178 files passed（exit 0）。
+   - 執行 `python3 scripts/validate_external_data_boundary.py`：3914 files passed（exit 0）。
+
+2. **最新 Build-Once Run 與 Candidate 追蹤實測確認**：
+   - 實測查核 GitHub Actions 工作流程，確認 hosted run 36080312679 於 `2026-09-25T01:03:15Z` 對 `origin/dev` tip（`419e6bf4958269c5b9e94efcb80770e28cd54dda`）完成單次建置（build-once），產出包含 `runtime-release-manifest-419e6bf4...`、`runtime-release-images-419e6bf4...` 等 6 份不可變 artifact。
+   - 查核 `origin/dev` 最新 `RELEASE_MANIFEST.json`（schema_version 2, release_id `odp-136436340290`）已完整鎖定 16 個外部來源全數關閉（`sources_off_attestation`）與 default-deny egress 宣告。
+
+3. **邊界防護與 Fail-Closed in_progress 狀態維持**：
+   - 嚴格遵守驗收條件 10（*「若workflow或部署程式有缺陷則fail closed並另建獨立remediation task不得在rollout task內擴大修code」*），不越界修改 workflow 或產品程式碼。
+   - 保持 fail-closed `in_progress` 狀態，持續等待新 candidate release lease 簽發與 hosted `deploy-dev.yml` 部署落地後，再行採集真實 GCP live readback 證據進行驗收結案。
+
+### 129.2 下一步執行順序
+
+1. 上游 Candidate Gate reconciliation 完成新 candidate 建置與 manifest 鎖定。
+2. Human/Ops 登記帶有全新 nonce 及新 candidate 之 `release_lease_request`。
+3. Supervisor 簽發 Ed25519 lease 並 dispatch `deploy-dev.yml` deploy phase。
+4. 部署落地後，本任務採集 GCP 實體環境狀態（Cloud Run URLs, jobs one-shot, authenticated smoke, 16-source disabled, default-deny egress, live IAM），滿足驗收條件 3–8 後送審。
