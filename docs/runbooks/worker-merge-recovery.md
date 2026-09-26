@@ -55,7 +55,7 @@ content edit after the seal, a stat-cache refresh, a revert in progress, and fen
 successor dispatch on a conflicted merge) behaved as this runbook describes. Details:
 `docs/evidence/completion/ODP-ORCH-AUTONOMOUS-RECOVERY-001/`.
 
-## Review fixes (2026-09-24, ODP-ORCH-AUTONOMOUS-RECOVERY-001, Codex2 findings R1–R7)
+## Review fixes (2026-09-24, ODP-ORCH-AUTONOMOUS-RECOVERY-001, Codex2 findings R1–R10)
 
 - An ordinary dirty seal (`owner_dirty`) never resumes a checkout that has a Git
   operation attached. A cherry-pick, revert or rebase started after the seal can
@@ -99,3 +99,11 @@ successor dispatch on a conflicted merge) behaved as this runbook describes. Det
   refuses quarantine (`nested_repository_not_supported`), no `interrupted_merge` seal is recorded,
   and any nested checkout present or introduced post-seal yields a `None` fingerprint, refusing
   continuation with `merge_state_changed`.
+- `--ignore-submodules=none` is passed to all worktree inspection and quarantine status queries,
+  overriding `submodule.<name>.ignore=dirty` or `ignore=all` configurations and ensuring all
+  submodule modifications trigger fail-closed rejection.
+- Porcelain parsing in `worktree_cleanliness.py` decodes NUL-delimited paths without trimming,
+  preserving exact whitespace pathnames and preventing distorted path lookups.
+- Unreadable files/symlinks (`chmod 000` / `PermissionError` on `lstat`, `open`, or `readlink`)
+  fail closed in `_interrupted_merge_worktree_fingerprint` (return `None`) and quarantine
+  (`unreadable_file`), distinguishing legitimately deleted files and preventing corrupted seals.

@@ -674,9 +674,11 @@ def _interrupted_merge_worktree_fingerprint(
         candidate = path_root / path
         try:
             metadata = candidate.lstat()
-        except OSError:
-            digest.update(b"unreadable-or-absent\0")
+        except FileNotFoundError:
+            digest.update(b"absent\0")
             continue
+        except OSError:
+            return None
         if stat.S_ISLNK(metadata.st_mode):
             digest.update(b"symlink\0")
             try:
@@ -684,7 +686,7 @@ def _interrupted_merge_worktree_fingerprint(
                 digest.update(target.encode("utf-8", errors="surrogateescape"))
                 digest.update(b"\0")
             except OSError:
-                digest.update(b"readlink-failed\0")
+                return None
         elif stat.S_ISREG(metadata.st_mode):
             # Git keeps exactly one permission bit for a regular file and
             # derives it from the owner execute bit; a mode change on an
@@ -697,7 +699,7 @@ def _interrupted_merge_worktree_fingerprint(
                     for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                         digest.update(chunk)
             except OSError:
-                digest.update(b"read-failed\0")
+                return None
         elif stat.S_ISDIR(metadata.st_mode):
             nested = _interrupted_merge_directory_fingerprint(candidate)
             if nested is None:
@@ -3584,7 +3586,7 @@ def _quarantine_and_preserve_dirty_worktree(
                 return _quarantine_refused("worktree_in_use_by_active_worker")
 
     status_proc = subprocess.run(
-        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"],
         cwd=worktree_path,
         capture_output=True,
         check=False,
@@ -3631,27 +3633,51 @@ def _quarantine_and_preserve_dirty_worktree(
             try:
                 symlink_target = os.readlink(full_p)
             except OSError:
+                if merge_snapshot is not None:
+                    return _quarantine_refused("unreadable_file", rel_path)
                 symlink_target = None
-        elif full_p.exists():
-            if full_p.is_file():
-                is_file = True
+        else:
+            try:
+                p_exists = full_p.exists()
+            except OSError:
+                if merge_snapshot is not None:
+                    return _quarantine_refused("unreadable_file", rel_path)
+                p_exists = False
+            if p_exists:
                 try:
-                    h = hashlib.sha256()
-                    with open(full_p, "rb") as f:
-                        while chunk := f.read(65536):
-                            h.update(chunk)
-                    sha256_val = h.hexdigest()
-                except OSError:
-                    sha256_val = None
-            elif full_p.is_dir():
-                is_dir = True
-                try:
-                    if (full_p / ".git").exists():
-                        if merge_snapshot is not None:
-                            return _quarantine_refused("nested_repository_not_supported")
+                    p_is_file = full_p.is_file()
                 except OSError:
                     if merge_snapshot is not None:
-                        return _quarantine_refused("nested_repository_not_supported")
+                        return _quarantine_refused("unreadable_file", rel_path)
+                    p_is_file = False
+                if p_is_file:
+                    is_file = True
+                    try:
+                        h = hashlib.sha256()
+                        with open(full_p, "rb") as f:
+                            while chunk := f.read(65536):
+                                h.update(chunk)
+                        sha256_val = h.hexdigest()
+                    except OSError:
+                        if merge_snapshot is not None:
+                            return _quarantine_refused("unreadable_file", rel_path)
+                        sha256_val = None
+                else:
+                    try:
+                        p_is_dir = full_p.is_dir()
+                    except OSError:
+                        if merge_snapshot is not None:
+                            return _quarantine_refused("unreadable_file", rel_path)
+                        p_is_dir = False
+                    if p_is_dir:
+                        is_dir = True
+                        try:
+                            if (full_p / ".git").exists():
+                                if merge_snapshot is not None:
+                                    return _quarantine_refused("nested_repository_not_supported")
+                        except OSError:
+                            if merge_snapshot is not None:
+                                return _quarantine_refused("nested_repository_not_supported")
 
         inventory_files.append({
             "path": rel_path,

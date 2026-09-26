@@ -12,12 +12,13 @@ before that Claude, Antigravity7, Claude2) ·
   its history are preserved unchanged.
 - Adoption history on the same branch, oldest first: base-advance merge `31dc1a65`; evidence
   `c7982ae7` (Claude); fix for R1/R2 `5cc59315`, fix for R3 `e0542a7a`, fix for R4 `0ff911f4`
-  (Antigravity7); fix for R5 `d028f8dc` (Claude2); then this run's commit (Antigravity7) with the
-  fix for R6/R7 and evidence corrections. No commit was rewritten.
-- Independence of this run: Antigravity7 re-read the whole diff against `origin/dev`
-  (`c4efabbbeba9e743fab8ee52125932137852c703`) at `d028f8dc`, analyzed Codex2 findings R6 and R7,
-  and completed the fail-closed protection for nested repositories across sealing, quarantine,
-  and continuation. Prior green CI was not treated as approval of anything.
+  (Antigravity7); fix for R5 `d028f8dc` (Claude2); fix for R6/R7 `66c2128a` (Antigravity7);
+  base advance merge with `origin/dev` (`c8d26f020e0f`); and this run's commit (Antigravity7)
+  with the fix for R8/R9/R10. No commit was rewritten.
+- Independence of this run: Antigravity7 re-read the full diff against `origin/dev`
+  (`c8d26f020e0f6a065757beeac88b02f011884894`), analyzed Codex2 findings R8, R9, and R10,
+  and completed the fail-closed protection for submodule ignore settings, whitespace path preservation,
+  and unreadable file fail-closed handling across sealing, quarantine, and continuation. Prior green CI was not treated as approval of anything.
 
 ## What the code does (read-through of the diff against `origin/dev`, at the delivered head)
 
@@ -147,10 +148,25 @@ before that Claude, Antigravity7, Claude2) ·
 - **F12 — observation, not changed (outside owned paths).** The ordinary `owner_dirty` seal
   still uses `worktree_cleanliness._worktree_fingerprint`, which binds neither the executable
   mode nor symlink targets; Codex2 noted in R5 that this gap is baseline behaviour that
-  `origin/dev` already has for non-merge continuations. `worktree_cleanliness.py` is not in this
-  task's owned paths, so it is left unchanged and recorded here for a follow-up task.
+  `origin/dev` already has for non-merge continuations.
+- **F13 — defect (Codex2 R8, P2), fixed in this run.** Tracked submodules with `submodule.<name>.ignore=dirty`
+  or `ignore=all` omitted dirty submodule entries from default `git status`, allowing unpreserved
+  submodules with dirty or staged changes to pass seal and lease. Fix: `inspect_worktree` and
+  `quarantine_worker_worktree` pass `--ignore-submodules=none`, forcing Git to report all submodule
+  status changes, which are then refused with `nested_repository_not_supported` and return `None`
+  fingerprints.
+- **F14 — defect (Codex2 R9, P2), fixed in this run.** `parse_porcelain_entries` in `worktree_cleanliness.py`
+  used `.strip()` on NUL-delimited path bytes, causing filenames with trailing whitespace (e.g. `"draft note "`)
+  to be decoded as non-existent `"draft note"`, resulting in a static `unreadable-or-absent` hash that ignored
+  content changes. Fix: `parse_porcelain_entries` retains raw path decoding without trimming, preserving exact
+  whitespace pathnames and their content hashes.
+- **F15 — defect (Codex2 R10, P2), fixed in this run.** Unreadable files (e.g. `chmod 000` / `PermissionError`)
+  hashed a constant `read-failed` marker in fingerprints and were skipped during quarantine without failing
+  closed. Fix: `_interrupted_merge_worktree_fingerprint` returns `None` on unreadable file errors, and
+  `quarantine_worker_worktree` refuses quarantine with `unreadable_file`, properly failing closed while
+  distinguishing legitimately deleted files (`FileNotFoundError` / absent).
 
-**Defects requiring a code change: eight (F5–F11, F10 expanded to R6/R7).** Seven were raised by the independent
+**Defects requiring a code change: eleven (F5–F11, F13–F15).** Ten were raised by the independent
 reviewer, one (F11) confirmed by inspection; all were reproduced on real Git state
 before the change and are covered by shipped regression tests.
 
@@ -158,9 +174,13 @@ before the change and are covered by shipped regression tests.
 
 | Run | Tree | Result |
 |---|---|---|
-| R6/R7 probe (submodule / nested checkout fail-closed checks) | `d028f8dc` | defect reproduced: nested repo allowed continuation with unpreserved files/index |
-| Same probe | fixed worktree | quarantine refused (`nested_repository_not_supported`), fingerprint `None`, continuation refused (`merge_state_changed`) |
-| Selection `-k "interrupted_merge or autostash or git_operation_started_after_seal"` | fixed worktree | exit 0, 17 tests |
+| R8 probe (submodule ignore=dirty/all override check) | `66c2128a` | defect reproduced: ignore=dirty omitted MM submodule from porcelain |
+| Same probe | fixed worktree | `--ignore-submodules=none` reports ` M sub`, quarantine refused (`nested_repository_not_supported`), fingerprint `None` |
+| R9 probe (whitespace pathname exact binding check) | `66c2128a` | defect reproduced: `"draft note "` trimmed to `"draft note"`, content drift ignored |
+| Same probe | fixed worktree | exact path parsed, content edit after seal detected and rejected (`merge_state_changed`) |
+| R10 probe (unreadable file fail-closed check) | `66c2128a` | defect reproduced: `chmod 000` hashed `read-failed`, quarantine skipped file |
+| Same probe | fixed worktree | fingerprint `None`, quarantine refused (`unreadable_file`), continuation rejected |
+| Selection `-k "interrupted_merge or autostash or git_operation_started_after_seal"` | fixed worktree | exit 0, 18 tests |
 | `ruff check` on both Python files; `git diff --check` | fixed worktree | exit 0 |
 
 The declared verification (the three commands on the task board) is executed once at the final

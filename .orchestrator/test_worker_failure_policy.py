@@ -2152,6 +2152,107 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
             else:
                 self.assertTrue(candidate.is_file(), rel_path)
 
+    def test_interrupted_merge_submodule_ignore_dirty_and_all_refuses_preservation_and_continuation(self):
+        """R8 regression: submodule.sub.ignore=dirty and ignore=all must be overridden with
+        --ignore-submodules=none in inspection and quarantine, refusing interrupted-merge seal and
+        continuation for submodules with dirty/staged changes."""
+        subrepo = self.root / "subrepo_ignore"
+        subrepo.mkdir()
+        _git_run(subrepo, "init", "--quiet")
+        _git_run(subrepo, "config", "user.email", "test@pantheon.local")
+        _git_run(subrepo, "config", "user.name", "Test Runner")
+        (subrepo / "lib.py").write_text("lib = 0\n")
+        _git_run(subrepo, "add", "lib.py")
+        _git_run(subrepo, "commit", "--quiet", "-m", "lib 0")
+
+        _git_run(self.worktree, "-c", "protocol.file.allow=always", "submodule", "add", "--quiet", str(subrepo), "sub_ignored")
+        _git_run(self.worktree, "config", "submodule.sub_ignored.ignore", "dirty")
+        _git_run(self.worktree, "commit", "--quiet", "-m", "add sub_ignored")
+
+        (self.repo / "upstream_r8.py").write_text("upstream = 1\n")
+        _git_run(self.repo, "add", "upstream_r8.py")
+        _git_run(self.repo, "commit", "-m", "upstream progress")
+        _git_run(self.repo, "push", "origin", "dev")
+        _git_run(self.worktree, "merge", "--no-commit", "dev")
+
+        # Dirty modification inside submodule (MM state in submodule)
+        (self.worktree / "sub_ignored" / "lib.py").write_text("lib = modified\n")
+
+        # inspect_worktree must detect dirty submodule despite ignore=dirty
+        inspection = inspect_worktree(self.worktree)
+        self.assertTrue(any(path == "sub_ignored" for _, path in inspection.entries))
+        self.assertIsNone(worker_workspace._interrupted_merge_worktree_fingerprint(self.worktree, inspection))
+
+        snapshot = worker_workspace._interrupted_merge_snapshot(self.worktree)
+        self.assertIsNone(worker_workspace._interrupted_merge_fingerprint(snapshot, self.worktree, inspection))
+
+        worker, state = self._sibling_worker_state()
+        task = self.status_data["tasks"][0]
+
+        outcome = worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=task)
+        self.assertFalse(outcome)
+        self.assertEqual(getattr(outcome, "reason", ""), "nested_repository_not_supported")
+        self.assertFalse(state.get("worker_worktrees", {}).get("handoff_blocks"))
+
+        # Test with ignore=all as well
+        _git_run(self.worktree, "config", "submodule.sub_ignored.ignore", "all")
+        inspection_all = inspect_worktree(self.worktree)
+        self.assertTrue(any(path == "sub_ignored" for _, path in inspection_all.entries))
+        self.assertIsNone(worker_workspace._interrupted_merge_worktree_fingerprint(self.worktree, inspection_all))
+
+    def test_interrupted_merge_whitespace_filename_exact_fingerprint_and_drift_detection(self):
+        """R9 regression: filenames with leading or trailing whitespace are parsed without trimming
+        and their exact bytes bound into the interrupted-merge fingerprint."""
+        worker, state = self._interrupted_merge_fixture()
+        task = self.status_data["tasks"][0]
+
+        # Create an untracked file with trailing whitespace in its name
+        ws_file = self.worktree / "draft note "
+        ws_file.write_text("original note content\n")
+
+        inspection = inspect_worktree(self.worktree)
+        ws_entry = [path for _, path in inspection.entries if "draft note" in path]
+        self.assertEqual(ws_entry, ["draft note "])
+
+        # Seal and preservation should capture the exact filename and content
+        self.assertTrue(worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=task))
+        record = state["worker_worktrees"]["handoff_blocks"]["TASK-SIBLING-001"]
+        self.assertEqual(record["reason"], "interrupted_merge")
+        self.assertTrue(self._owner_seal_allowed(state, task)[0])
+
+        # Modify the content of the trailing-whitespace file
+        ws_file.write_text("modified note content\n")
+
+        # Continuation must fail closed due to byte drift
+        self.assertEqual(self._owner_seal_allowed(state, task), (False, "merge_state_changed"))
+        ok, error, request = self._owner_lease(state)
+        self.assertFalse(ok)
+        self.assertNotIn("worktree_continuation", request.metadata)
+
+    def test_interrupted_merge_unreadable_file_fails_closed_without_corrupted_seal(self):
+        """R10 regression: unreadable files (e.g. PermissionError) fail closed during interrupted
+        merge preservation, seal calculation, and continuation check."""
+        worker, state = self._interrupted_merge_fixture()
+        task = self.status_data["tasks"][0]
+
+        unreadable = self.worktree / "private-note.txt"
+        unreadable.write_text("secret\n")
+        unreadable.chmod(000)
+        try:
+            inspection = inspect_worktree(self.worktree)
+            # Direct fingerprint must return None (fail closed) instead of fixed read-failed hash
+            self.assertIsNone(worker_workspace._interrupted_merge_worktree_fingerprint(self.worktree, inspection))
+            snapshot = worker_workspace._interrupted_merge_snapshot(self.worktree)
+            self.assertIsNone(worker_workspace._interrupted_merge_fingerprint(snapshot, self.worktree, inspection))
+
+            # Quarantine must refuse preservation
+            outcome = worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=task)
+            self.assertFalse(outcome)
+            self.assertEqual(getattr(outcome, "reason", ""), "unreadable_file")
+            self.assertFalse(state.get("worker_worktrees", {}).get("handoff_blocks"))
+        finally:
+            unreadable.chmod(0o644)
+
     def test_sibling_quota_fence_preserves_dirty_worktree_and_authorizes_successor_lease_continuation(self) -> None:
         """E2E: Sibling worker dirty changes (staged, unstaged, untracked) are backed up, sealed, and handed off to authorized successor via prepare_worker_workspace."""
         # Create uncommitted staged, unstaged, and untracked work in the sibling's isolated worktree

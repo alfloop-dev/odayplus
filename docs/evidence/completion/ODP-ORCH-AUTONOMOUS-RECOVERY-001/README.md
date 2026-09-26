@@ -25,19 +25,14 @@ No product deployment is included.
   Claude2 terminal exception). This run reused the existing clean task worktree discovered by the
   supervisor. No other task worktree, no live supervisor and no worker was touched.
 
-## Base advance (round 1, required by that dispatch)
+## Base advance (round 1 & round 6)
 
-| Item | Value |
-|---|---|
-| Merge commit | `31dc1a65e3d813d9174852925d6e95feb237cdf7` |
-| Parents | `43d2fe8ca8e04b35a5049802169a01a5bc958678` (task) + `c4efabbbeba9e743fab8ee52125932137852c703` (`origin/dev`) |
-| Resulting tree | `1f74062138f6d2dbb23db4cb8c63c39feadd37a9` = tree predicted by `git merge-tree --write-tree` before merging |
-| Conflicts | none; `origin/dev` added no change under `.orchestrator/` or to the deliverable files |
-| History | plain merge, no rebase, no reset; the previously pushed tip `43d2fe8c` remains an ancestor |
-
-At `43d2fe8c` and at `31dc1a65` the two Python deliverable blobs were byte-identical
-(`596bd281…`, `905ae956…`). Every later commit on the branch changes both. `origin/dev` is still
-`c4efabbb` at the time of this run, so no further base advance was needed.
+| Item | Round 1 Base Advance | Round 6 Base Advance |
+|---|---|---|
+| Merge commit | `31dc1a65e3d813d9174852925d6e95feb237cdf7` | (this run's merge commit) |
+| Parents | `43d2fe8c` (task) + `c4efabbb` (`origin/dev`) | `66c2128a` (task) + `c8d26f020e0f` (`origin/dev`) |
+| Conflicts | none | none |
+| History | plain merge, no rebase, no reset | plain merge, no rebase, no reset |
 
 ## Review rounds (Codex2) and fixes
 
@@ -48,7 +43,10 @@ At `43d2fe8c` and at `31dc1a65` the two Python deliverable blobs were byte-ident
 | R3 (P2, round 2) | The worktree part of the seal reused `worktree_cleanliness._worktree_fingerprint`, which hashes symlinks and hardlinks as the constant `unsafe-path`, so their drift after the seal was invisible. | Dirty tracked symlink retargeted, or hardlinked `README.md` edited, after the seal: porcelain, HEAD, logical index and merge snapshot unchanged, seal accepted. | Dedicated `_interrupted_merge_worktree_fingerprint` reads symlink targets and file bytes directly; dirty symlinks are re-created under `files/` in the backup (`e0542a7a`). |
 | R4 (P2, round 3) | That fingerprint hashed a failed `git status` (`entries=()`) exactly like a clean empty listing, so a status read failure passed as the exact sealed state. | Clean merge from divergent allow-empty commits sealed; invalid `status.showUntrackedFiles` plus a dirty file after the seal: `git status` exit 128, seal still accepted. | `inspection.kind` is part of the digest; seal creation and continuation fail closed on a failed status (`0ff911f4`). |
 | R5 (P2, round 4) | The regular-file branch bound type and bytes but not the Git executable mode; `chmod +x` on an already-dirty file leaves porcelain, HEAD, logical index, merge metadata and bytes untouched. | Real Git at `0ff911f4`: after the seal, `git diff --summary` = `mode change 100644 => 100755 README.md`, fingerprint unchanged, direct seal accepted, lease granted with `sealed_owner_merge`. | A regular file is bound as `100644` or `100755` from the owner execute bit, the rule Git applies; mtime, ctime and the raw index stay excluded (`d028f8dc`). |
-| R6/R7 (P2, round 5) | R6: Nested repository fingerprint in `d028f8dc` bound only HEAD and worktree files, omitting nested logical index (`git ls-files --stage -z`). R7: Preserving interrupted merges did not copy nested repository contents or index into backup. | Staged-only drift (MM->MM) in nested checkout/submodule kept identical fingerprint and was leased; backup lacked nested repo files/index. | Fail closed on nested repositories for single-repository interrupted merge recovery: `_interrupted_merge_directory_fingerprint` returns `None` for any directory with `.git`, ensuring `_interrupted_merge_worktree_fingerprint` and `_interrupted_merge_fingerprint` return `None`; `_quarantine_and_preserve_dirty_worktree` refuses quarantine (`nested_repository_not_supported`). Seal creation, quarantine, and continuation fail closed on nested repositories (this run's commit). |
+| R6/R7 (P2, round 5) | R6: Nested repository fingerprint in `d028f8dc` bound only HEAD and worktree files, omitting nested logical index (`git ls-files --stage -z`). R7: Preserving interrupted merges did not copy nested repository contents or index into backup. | Staged-only drift (MM->MM) in nested checkout/submodule kept identical fingerprint and was leased; backup lacked nested repo files/index. | Fail closed on nested repositories for single-repository interrupted merge recovery: `_interrupted_merge_directory_fingerprint` returns `None` for any directory with `.git`, ensuring `_interrupted_merge_worktree_fingerprint` and `_interrupted_merge_fingerprint` return `None`; `_quarantine_and_preserve_dirty_worktree` refuses quarantine (`nested_repository_not_supported`). Seal creation, quarantine, and continuation fail closed on nested repositories (`66c2128a`). |
+| R8 (P2, round 6) | `inspect_worktree` and `quarantine_worker_worktree` did not override submodule ignore settings (`submodule.<name>.ignore=dirty` or `ignore=all`), hiding dirty/staged submodule changes. | Tracked submodule with `ignore=dirty` and MM `lib.py`: default `git status` omitted submodule, seal and quarantine accepted unpreserved state. | Pass `--ignore-submodules=none` in all status invocations for worktree inspection and quarantine (this run's commit). |
+| R9 (P2, round 6) | `parse_porcelain_entries` in `worktree_cleanliness.py` stripped path bytes on NUL-delimited status output, distorting paths with leading/trailing whitespace (e.g. `"draft note "`). | `"draft note "` parsed as `"draft note"`, lstat failed, hashed static `unreadable-or-absent` and ignored content drift. | Decode NUL-delimited path bytes without stripping, preserving exact whitespace pathnames and content hashes (this run's commit). |
+| R10 (P2, round 6) | Unreadable files (`chmod 000` / `PermissionError`) hashed static `read-failed` in fingerprints and were skipped during quarantine without failing closed. | Untracked file `chmod 000`: fingerprint accepted, quarantine skipped file and reported `preserved=True` with null sha256. | `_interrupted_merge_worktree_fingerprint` returns `None` and `quarantine_worker_worktree` refuses with `unreadable_file` on unreadable files, properly failing closed while distinguishing legitimately absent files (this run's commit). |
 | Claude2 F11 (Codex2 non-blocking note in round 3, confirmed) | The backup checksum walk skipped symlinks that resolve to a directory inside the backup (`os.walk` lists them under directory names). | Dirty symlink `docs_link -> docs` next to a dirty tracked file under `docs/`: `files/docs_link` present, no entry in `backup_checksums.sha256` on `0ff911f4`. | The walk also records symlinks found among the directory names by target (`d028f8dc`). |
 | non-blocking wording | Earlier versions of this README carried stale text (three unchanged deliverables; "two findings"; F1–F6; a time-of-day bound; a function name that does not exist). | — | Corrected in this run; timing claims now live only in the verification receipts. |
 
@@ -66,7 +64,10 @@ hardlink; a mtime touch plus `git status` keeps the seal),
 `test_interrupted_merge_refuses_seal_and_quarantine_for_untracked_nested_repo`,
 `test_interrupted_merge_continuation_refuses_when_nested_repo_introduced_post_seal`,
 `test_interrupted_merge_continuation_refuses_when_submodule_introduced_or_drifted_post_seal`,
-`test_interrupted_merge_backup_checksums_directory_symlink_by_target`. Two pre-existing
+`test_interrupted_merge_backup_checksums_directory_symlink_by_target`,
+`test_interrupted_merge_submodule_ignore_dirty_and_all_refuses_preservation_and_continuation`,
+`test_interrupted_merge_whitespace_filename_exact_fingerprint_and_drift_detection`,
+`test_interrupted_merge_unreadable_file_fails_closed_without_corrupted_seal`. Two pre-existing
 mock-only tests in `AgyBackgroundExitRecoveryTests` that model an ordinary dirty seal on a path
 that is not a Git repository patch `_git_operation_in_progress` to `False` (in both
 `worker_workspace` and `supervisor`, because `_sync_supervisor_scope` rebinds on every call).
