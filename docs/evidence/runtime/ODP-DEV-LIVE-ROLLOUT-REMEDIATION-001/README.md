@@ -6794,3 +6794,29 @@ audit JSON 的 `superseded_unblock_requirements.previous_requirements`）：
 1. Human/Ops 登記帶有全新 nonce 及新 candidate `419e6bf4958269c5b9e94efcb80770e28cd54dda` 之 `release_lease_request`。
 2. Supervisor 簽發 Ed25519 lease 並 dispatch `deploy-dev.yml` deploy phase。
 3. 部署落地後，本任務採集 GCP 實體環境狀態（Cloud Run URLs, jobs one-shot, authenticated smoke, 16-source disabled, default-deny egress, live IAM），滿足驗收條件 3–8 後送審。
+
+## 260. Round 274 狀態追蹤與驗證實測（2026-09-26，Owner: Antigravity5）
+
+### 260.1 基線與候選一致性審核
+
+1. **候選與 Base 狀態比對**：
+   - 審核目前分支狀態，確認已完整融入 `origin/dev` 最新 tip（`c8d26f020e0f`，PR #1370 `ODP-DEV-RELEASE-GATE-RECONCILIATION-006`）。
+   - 確認權威候選維持 `419e6bf4958269c5b9e94efcb80770e28cd54dda`，對應 manifest digest `sha256:134cc712132155b0003d68063298d3044d5400d91244b8024b4448268c4fc678`，release_id 為 `odp-419e6bf49582`。
+   - 查核 PR #1107 維持 OPEN，分支為 `task/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001`。
+
+2. **全套獨立驗證實測通過**：
+   - 執行 `python3 docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/verify_dev_live_rollout_remediation.py`：PASS（exit code 0）。
+   - 執行 `/home/lupin/.local/bin/uv run pytest -q tests/ops/test_deploy_workflow_contract.py tests/release/test_release_manifest.py tests/release/test_runtime_admission.py`：100% passed（231 passed，exit code 0）。
+   - 執行 `python3 delivery_toolchain/governance/check_code_boundaries.py`：1178 files passed（exit code 0）。
+   - 執行 `python3 scripts/validate_external_data_boundary.py`：3923 files passed（exit code 0）。
+
+3. **維持 Fail-Closed in_progress 狀態防護**：
+   - 依據驗收條件 10，本任務嚴格維持 fail-closed `in_progress` 狀態，不越界修改 workflow 或產品程式碼。
+   - 待 Human/Ops 登記全新 `release_lease_request` 並由 Supervisor 簽署 Ed25519 lease 派發 `deploy-dev.yml` deploy phase 後，再行採集 GCP 實體環境 live readback 數據以完成驗收條件 3–8。
+
+### 260.2 下一步執行順序
+
+1. Human/Ops 登記帶有全新 nonce 及新 candidate `419e6bf4958269c5b9e94efcb80770e28cd54dda` 之 `release_lease_request`。
+2. Supervisor 簽發 Ed25519 lease 並 dispatch `deploy-dev.yml` deploy phase。
+3. 部署落地後，本任務採集 GCP 實體環境狀態（Cloud Run URLs, jobs one-shot, authenticated smoke, 16-source disabled, default-deny egress, live IAM），滿足驗收條件 3–8 後送審。
+
