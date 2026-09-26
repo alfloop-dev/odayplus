@@ -7210,5 +7210,34 @@ audit JSON 的 `superseded_unblock_requirements.previous_requirements`）：
 1. Supervisor 驗證 Human/Ops 登記之 `release_lease_request`（`HUMANOPS-DEV-FIRST-RELEASE-20260926T145227Z`，候選 `419e6bf4958269c5b9e94efcb80770e28cd54dda`），簽發 Ed25519 lease 並 dispatch `deploy-dev.yml` deploy phase。
 2. 部署落地後，本任務採集 GCP 實體環境狀態（Cloud Run URLs, jobs one-shot, authenticated smoke, 16-source disabled, default-deny egress, live IAM），滿足驗收條件 3–8 後送審。
 
+## 277. Round 291 狀態追蹤與驗證實測（2026-09-26，Owner: Antigravity5）
+
+### 277.1 基線、環境變數修復與候選一致性審核
+
+1. **候選與 Base 狀態比對**：
+   - 審核目前分支狀態，確認維持與 `origin/dev` 最新 tip（`c8d26f020e0f`，PR #1370 `ODP-DEV-RELEASE-GATE-RECONCILIATION-006`）完全一致。
+   - 確認權威候選維持 `419e6bf4958269c5b9e94efcb80770e28cd54dda`，對應 manifest digest `sha256:134cc712132155b0003d68063298d3044d5400d91244b8024b4448268c4fc678`，release_id 為 `odp-419e6bf49582`。
+   - 查核 PR #1107 維持 OPEN，分支為 `task/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001`，mergeable 狀態良好（MERGEABLE）。
+
+2. **部署環境變數就緒審核**：
+   - 查核先前 run 36250018645 於 preflight 階段回報缺失之環境變數，Human/Ops 已於 15:26:46Z 與 15:26:47Z 於 GitHub `dev` environment 補齊 `ODP_WEB_BASE_URL`（`https://oday-web-767864276141.asia-east1.run.app`）與 `ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET`（`oday-plus-dev-identity-token-signing-key:latest`）。
+   - 前次簽發之 lease `lease-2907ab3d99439940eeac49d683b86253` 已於 15:02:50Z 逾期；待 Supervisor 對仍屬有效之 Human/Ops 登記（`HUMANOPS-DEV-FIRST-RELEASE-20260926T145227Z`，有效至 20:52:27Z）重新簽發有效 Ed25519 lease 以重派 deploy phase。
+
+3. **全套獨立驗證實測通過**：
+   - 執行 `python3 docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/verify_dev_live_rollout_remediation.py`：PASS（exit code 0）。
+   - 執行 `/home/lupin/.local/bin/uv run pytest -q tests/ops/test_deploy_workflow_contract.py tests/release/test_release_manifest.py tests/release/test_runtime_admission.py`：100% passed（231 passed，exit code 0）。
+   - 執行 `python3 delivery_toolchain/governance/check_code_boundaries.py`：1178 files passed（exit code 0）。
+   - 執行 `python3 scripts/validate_external_data_boundary.py`：3923 files passed（exit code 0）。
+
+4. **維持 Fail-Closed in_progress 狀態防護**：
+   - 依據驗收條件 10，本任務嚴格維持 fail-closed `in_progress` 狀態，不越界修改 workflow 或產品程式碼。
+   - 待 Supervisor 驗證 Human/Ops 登記之 `release_lease_request` 並簽發新 Ed25519 lease 派發 `deploy-dev.yml` deploy phase 後，再行採集 GCP 實體環境 live readback 數據以完成驗收條件 3–8。
+
+### 277.2 下一步執行順序
+
+1. Supervisor 驗證 Human/Ops 登記之 `release_lease_request`（`HUMANOPS-DEV-FIRST-RELEASE-20260926T145227Z`，候選 `419e6bf4958269c5b9e94efcb80770e28cd54dda`），簽發 Ed25519 lease 並 dispatch `deploy-dev.yml` deploy phase。
+2. 部署落地後，本任務採集 GCP 實體環境狀態（Cloud Run URLs, jobs one-shot, authenticated smoke, 16-source disabled, default-deny egress, live IAM），滿足驗收條件 3–8 後送審。
+
+
 
 
