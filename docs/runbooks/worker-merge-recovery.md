@@ -55,7 +55,7 @@ content edit after the seal, a stat-cache refresh, a revert in progress, and fen
 successor dispatch on a conflicted merge) behaved as this runbook describes. Details:
 `docs/evidence/completion/ODP-ORCH-AUTONOMOUS-RECOVERY-001/`.
 
-## Review fixes (2026-09-24, ODP-ORCH-AUTONOMOUS-RECOVERY-001, Codex2 findings R1–R10)
+## Review fixes (2026-09-24, ODP-ORCH-AUTONOMOUS-RECOVERY-001, Codex2 findings R1–R11)
 
 - An ordinary dirty seal (`owner_dirty`) never resumes a checkout that has a Git
   operation attached. A cherry-pick, revert or rebase started after the seal can
@@ -82,11 +82,12 @@ successor dispatch on a conflicted merge) behaved as this runbook describes. Det
   read exactly (the fingerprint is `None`): no `interrupted_merge` seal is recorded
   at worker death, and an existing seal answers `merge_state_changed`.
 - The seal binds every dirty entry the way Git tracks it: a regular file by its
-  Git mode (`100644` or `100755`, derived from the owner execute bit) and its bytes,
-  hardlinked inodes included; a symlink by its target; an ordinary untracked directory
-  by type only. A `chmod +x` on an already-dirty file leaves the porcelain code
-  unchanged and is still rejected. mtime, ctime and the raw index stat cache are
-  deliberately not bound, so a stat refresh keeps a legitimate continuation.
+  Git mode (`100644` or `100755`, derived from the owner execute bit) and its
+  independent content hash, hardlinked inodes included; a symlink by its target
+  hash; an ordinary untracked directory by type only. A `chmod +x` on an
+  already-dirty file leaves the porcelain code unchanged and is still rejected.
+  mtime, ctime and the raw index stat cache are deliberately not bound, so a
+  stat refresh keeps a legitimate continuation.
 - Backup `files/`: dirty regular files are copied byte for byte; dirty symlinks are
   re-created with their target and also recorded in the manifest.
   `backup_checksums.sha256` covers every entry: file copies by content hash and
@@ -107,3 +108,6 @@ successor dispatch on a conflicted merge) behaved as this runbook describes. Det
 - Unreadable files/symlinks (`chmod 000` / `PermissionError` on `lstat`, `open`, or `readlink`)
   fail closed in `_interrupted_merge_worktree_fingerprint` (return `None`) and quarantine
   (`unreadable_file`), distinguishing legitimately deleted files and preventing corrupted seals.
+- `_interrupted_merge_worktree_fingerprint` hashes each regular file content independently and binds
+  all entries into an unambiguous canonical JSON structure with explicit entry count and typed
+  entry records, eliminating cross-entry byte stream serialization ambiguity.

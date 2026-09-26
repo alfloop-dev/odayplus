@@ -13,12 +13,12 @@ before that Claude, Antigravity7, Claude2) ·
 - Adoption history on the same branch, oldest first: base-advance merge `31dc1a65`; evidence
   `c7982ae7` (Claude); fix for R1/R2 `5cc59315`, fix for R3 `e0542a7a`, fix for R4 `0ff911f4`
   (Antigravity7); fix for R5 `d028f8dc` (Claude2); fix for R6/R7 `66c2128a` (Antigravity7);
-  base advance merge with `origin/dev` (`c8d26f020e0f`); and this run's commit (Antigravity7)
-  with the fix for R8/R9/R10. No commit was rewritten.
+  base advance merge with `origin/dev` (`c8d26f020e0f`); fix for R8/R9/R10 `914927f9` (Antigravity7);
+  and this run's commit (Antigravity7) with the fix for R11. No commit was rewritten.
 - Independence of this run: Antigravity7 re-read the full diff against `origin/dev`
-  (`c8d26f020e0f6a065757beeac88b02f011884894`), analyzed Codex2 findings R8, R9, and R10,
-  and completed the fail-closed protection for submodule ignore settings, whitespace path preservation,
-  and unreadable file fail-closed handling across sealing, quarantine, and continuation. Prior green CI was not treated as approval of anything.
+  (`c8d26f020e0f6a065757beeac88b02f011884894`), analyzed Codex2 finding R11, and implemented
+  independent content hashing and canonical JSON framing for worktree entries to eliminate cross-entry
+  serialization ambiguity. Prior green CI was not treated as approval of anything.
 
 ## What the code does (read-through of the diff against `origin/dev`, at the delivered head)
 
@@ -34,13 +34,15 @@ before that Claude, Antigravity7, Claude2) ·
    `_interrupted_merge_worktree_fingerprint`. That function binds every porcelain entry by its
    code and path and then by the state Git itself records for the path: a regular file by its Git
    mode (`100644` or `100755`, derived from the owner execute bit exactly as Git does) and its
-   bytes, read through the path so hardlinked inodes are covered; a symlink by its target; a
-   plain directory by type only, because `git status --untracked-files=all` lists the files inside
-   it individually. Any nested git repository (`(directory / ".git").exists()`) causes the
-   directory fingerprint to return `None`, failing closed on multi-repo / nested checkouts. It
-   returns `None` when the state cannot be read exactly (`git status` failed, or a nested
-   repository is present/unreadable). The raw index, mtime and ctime are
-   deliberately excluded so a stat-cache refresh cannot break a legitimate continuation.
+   independent content hash, read through the path so hardlinked inodes are covered; a symlink by
+   its target hash; a plain directory by type only, because `git status --untracked-files=all` lists
+   the files inside it individually. All entries and their digests are serialized into an unambiguous
+   structured canonical JSON payload to prevent cross-entry byte stream collision. Any nested git
+   repository (`(directory / ".git").exists()`) causes the directory fingerprint to return `None`,
+   failing closed on multi-repo / nested checkouts. It returns `None` when the state cannot be read
+   exactly (`git status` failed, an unreadable file was encountered, or a nested repository is
+   present/unreadable). The raw index, mtime and ctime are deliberately excluded so a stat-cache
+   refresh cannot break a legitimate continuation.
 3. `_quarantine_and_preserve_dirty_worktree`: an attached merge (snapshot available) proceeds;
    every other Git operation still returns `git_operation_in_progress`. If a nested repository is
    present in dirty entries during an interrupted merge, quarantine is refused with
@@ -77,7 +79,7 @@ before that Claude, Antigravity7, Claude2) ·
 | Preserve index, metadata and files exactly | `test_interrupted_merge_fence_preserves_and_dispatches_successor` (clean `--no-commit` merge; HEAD, `MERGE_HEAD`, `ls-files --stage` unchanged; `git-state/MERGE_HEAD`, `git-state/index`, `files/README.md` present); `test_interrupted_autostash_merge_backs_up_parked_work_and_seals_the_pointer` (pointer bytes, parked content in `MERGE_AUTOSTASH-worktree.patch`, all in `backup_checksums.sha256`); `test_interrupted_merge_backup_checksums_directory_symlink_by_target` (dirty symlink re-created under `files/`, checksummed by target even when it resolves to a directory inside the backup; every checksum entry names an existing copy) |
 | Owner or authorised successor may resume | successor `Codex` via `_settle_fenced_sibling_worker` → `maybe_reassign_task_after_worker_failure`, which transfers the handoff block only when source run id, workspace path and branch match and writers are verified stopped; owner lease tagged `sealed_owner_merge` in every drift test after the state is restored |
 | Reject reviewer, helper, foreign owner | `test_interrupted_merge_seal_rejects_reviewer_helper_and_foreign_owner` (`review_ready_dispatch`, `helper_claim_dispatch`, foreign owner) — rejected by `not_owner_execution` / `not_same_owner` before the fingerprint is consulted |
-| Detect state drift | `test_interrupted_merge_seal_rejects_changed_metadata_or_index` (`MERGE_MSG` bytes; `git add` of a dirty file); the autostash test (pointer changed, deleted, dangling, symlinked; pruned commit); `test_interrupted_merge_seal_rejects_autostash_added_after_seal`; `test_interrupted_merge_seal_rejects_symlink_target_drift`; `test_interrupted_merge_seal_rejects_hardlink_byte_drift`; `test_interrupted_merge_seal_rejects_empty_porcelain_merge_status_failure_and_dirty_drift`; `test_interrupted_merge_seal_rejects_executable_mode_drift` (chmod +x on an already-dirty file, directly and through a hardlink; a mtime touch plus `git status` keeps the seal); `test_interrupted_merge_refuses_seal_and_quarantine_for_submodule` (tracked submodule refuses quarantine and seal); `test_interrupted_merge_refuses_seal_and_quarantine_for_untracked_nested_repo` (untracked nested checkout refuses quarantine and seal); `test_interrupted_merge_continuation_refuses_when_nested_repo_introduced_post_seal` (nested checkout introduced post-seal rejects continuation); `test_interrupted_merge_continuation_refuses_when_submodule_introduced_or_drifted_post_seal` (submodule added or drifted post-seal rejects continuation) |
+| Detect state drift | `test_interrupted_merge_seal_rejects_changed_metadata_or_index` (`MERGE_MSG` bytes; `git add` of a dirty file); the autostash test (pointer changed, deleted, dangling, symlinked; pruned commit); `test_interrupted_merge_seal_rejects_autostash_added_after_seal`; `test_interrupted_merge_seal_rejects_symlink_target_drift`; `test_interrupted_merge_seal_rejects_hardlink_byte_drift`; `test_interrupted_merge_seal_rejects_empty_porcelain_merge_status_failure_and_dirty_drift`; `test_interrupted_merge_seal_rejects_executable_mode_drift` (chmod +x on an already-dirty file, directly and through a hardlink; a mtime touch plus `git status` keeps the seal); `test_interrupted_merge_refuses_seal_and_quarantine_for_submodule` (tracked submodule refuses quarantine and seal); `test_interrupted_merge_refuses_seal_and_quarantine_for_untracked_nested_repo` (untracked nested checkout refuses quarantine and seal); `test_interrupted_merge_continuation_refuses_when_nested_repo_introduced_post_seal` (nested checkout introduced post-seal rejects continuation); `test_interrupted_merge_continuation_refuses_when_submodule_introduced_or_drifted_post_seal` (submodule added or drifted post-seal rejects continuation); `test_interrupted_merge_framing_ambiguity_drift_and_stat_cache_refresh` (cross-entry framing forge drift rejected, stat-cache refresh on unchanged files preserved) |
 | Index lock, rebase, cherry-pick, revert stay blocked | `test_interrupted_merge_with_index_lock_remains_blocked`; `test_owner_dirty_seal_keeps_git_operation_started_after_seal_blocked` (empty cherry-pick, `REVERT_HEAD`, `rebase-merge` on an `owner_dirty` seal, each leaving HEAD, index, porcelain and bytes identical) |
 | No automatic discard, resolution, commit, approval or skipped checks | inspection: the added Git calls are read-only (`git diff` between two commits for the autostash patches writes only into the backup directory; `rev-parse` and `status` read only); backup copies leave the worktree alone; the resumed worker receives an instruction, not an action; a state that cannot be read or contains unsupported nested repositories yields no seal (`test_interrupted_merge_refuses_seal_and_quarantine_for_submodule`, `test_interrupted_merge_refuses_seal_and_quarantine_for_untracked_nested_repo`, `test_interrupted_merge_seal_refuses_when_status_fails_at_seal_time`); review and CI gates are untouched |
 
@@ -165,8 +167,15 @@ before that Claude, Antigravity7, Claude2) ·
   closed. Fix: `_interrupted_merge_worktree_fingerprint` returns `None` on unreadable file errors, and
   `quarantine_worker_worktree` refuses quarantine with `unreadable_file`, properly failing closed while
   distinguishing legitimately deleted files (`FileNotFoundError` / absent).
+- **F16 — defect (Codex2 R11, P2), fixed in this run.** `_interrupted_merge_worktree_fingerprint` continuously
+  streamed entry code, path, mode, and raw file bytes into a single SHA-256 digest without content length framing
+  or independent content hashes. A modified file whose binary content absorbed the encoded entry stream of a
+  deleted sibling file produced an identical digest. Fix: Each regular file's content is hashed independently
+  to its own SHA-256 digest, each symlink's target is hashed independently, and all entries are serialized into
+  an unambiguous canonical JSON structure with explicit entry count and sorted keys. Shipped regression:
+  `test_interrupted_merge_framing_ambiguity_drift_and_stat_cache_refresh`.
 
-**Defects requiring a code change: eleven (F5–F11, F13–F15).** Ten were raised by the independent
+**Defects requiring a code change: twelve (F5–F11, F13–F16).** Eleven were raised by the independent
 reviewer, one (F11) confirmed by inspection; all were reproduced on real Git state
 before the change and are covered by shipped regression tests.
 
@@ -180,7 +189,9 @@ before the change and are covered by shipped regression tests.
 | Same probe | fixed worktree | exact path parsed, content edit after seal detected and rejected (`merge_state_changed`) |
 | R10 probe (unreadable file fail-closed check) | `66c2128a` | defect reproduced: `chmod 000` hashed `read-failed`, quarantine skipped file |
 | Same probe | fixed worktree | fingerprint `None`, quarantine refused (`unreadable_file`), continuation rejected |
-| Selection `-k "interrupted_merge or autostash or git_operation_started_after_seal"` | fixed worktree | exit 0, 18 tests |
+| R11 probe (framing ambiguity & two-file drift check) | `914927f9` | defect reproduced: single file forged with absorbed encoding matched two-file fingerprint |
+| Same probe | fixed worktree | independent content hash + JSON framing changes fingerprint, continuation rejected (`merge_state_changed`) |
+| Selection `-k "interrupted_merge or autostash or git_operation_started_after_seal"` | fixed worktree | exit 0, 19 tests |
 | `ruff check` on both Python files; `git diff --check` | fixed worktree | exit 0 |
 
 The declared verification (the three commands on the task board) is executed once at the final

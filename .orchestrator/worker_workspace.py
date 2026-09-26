@@ -650,64 +650,92 @@ def _interrupted_merge_worktree_fingerprint(
     Every entry is bound by its porcelain code and path, then by the state Git
     records for that path: a regular file by its executable mode (100644 or
     100755, derived from the owner execute bit exactly as Git does) and its
-    bytes (read through the path, so hardlinked inodes are covered); a symlink
-    by its target; a plain directory by type only. mtime, ctime and the index
-    stat cache are deliberately not bound, so a stat refresh cannot break a
-    legitimate continuation.
+    independent content hash; a symlink by its target; a plain directory by type
+    only. mtime, ctime and the index stat cache are deliberately not bound, so a
+    stat refresh cannot break a legitimate continuation.
+
+    Entries and digests are serialized into an unambiguous structured payload to
+    prevent serialization ambiguity across entries.
 
     Returns None when the state cannot be read exactly (``git status`` failed,
-    or a nested repository is present/unreadable). Callers must fail closed
-    on None: neither seal nor resume a merge whose working files cannot be
-    completely preserved and restored.
+    an unreadable file was encountered, or a nested repository is present).
+    Callers must fail closed on None: neither seal nor resume a merge whose
+    working files cannot be completely preserved and restored.
     """
     if inspection.kind == "status_failed":
         return None
-    digest = hashlib.sha256()
-    digest.update(inspection.kind.encode("utf-8"))
-    digest.update(b"\0")
     path_root = Path(worktree_path)
+    entries: list[dict[str, Any]] = []
     for code, path in inspection.entries:
-        digest.update(code.encode("utf-8", errors="surrogateescape"))
-        digest.update(b"\0")
-        digest.update(path.encode("utf-8", errors="surrogateescape"))
-        digest.update(b"\0")
         candidate = path_root / path
         try:
             metadata = candidate.lstat()
         except FileNotFoundError:
-            digest.update(b"absent\0")
+            entries.append({
+                "code": code,
+                "path": path,
+                "type": "absent",
+            })
             continue
         except OSError:
             return None
         if stat.S_ISLNK(metadata.st_mode):
-            digest.update(b"symlink\0")
             try:
                 target = os.readlink(candidate)
-                digest.update(target.encode("utf-8", errors="surrogateescape"))
-                digest.update(b"\0")
             except OSError:
                 return None
+            target_hash = hashlib.sha256(target.encode("utf-8", errors="surrogateescape")).hexdigest()
+            entries.append({
+                "code": code,
+                "path": path,
+                "target_hash": target_hash,
+                "type": "symlink",
+            })
         elif stat.S_ISREG(metadata.st_mode):
             # Git keeps exactly one permission bit for a regular file and
             # derives it from the owner execute bit; a mode change on an
             # already-dirty file leaves the porcelain code untouched, so it
             # has to be bound here.
-            git_mode = b"100755" if metadata.st_mode & stat.S_IXUSR else b"100644"
-            digest.update(b"regular:" + git_mode + b"\0")
+            git_mode = "100755" if metadata.st_mode & stat.S_IXUSR else "100644"
+            content_digest = hashlib.sha256()
             try:
                 with candidate.open("rb") as handle:
                     for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                        digest.update(chunk)
+                        content_digest.update(chunk)
             except OSError:
                 return None
+            entries.append({
+                "code": code,
+                "content_hash": content_digest.hexdigest(),
+                "mode": git_mode,
+                "path": path,
+                "type": "regular",
+            })
         elif stat.S_ISDIR(metadata.st_mode):
             nested = _interrupted_merge_directory_fingerprint(candidate)
             if nested is None:
                 return None
-            digest.update(nested)
+            entries.append({
+                "code": code,
+                "path": path,
+                "type": "dir",
+            })
         else:
-            digest.update(f"mode:{metadata.st_mode:o}:size:{metadata.st_size}".encode("ascii"))
-    return digest.hexdigest()
+            entries.append({
+                "code": code,
+                "mode": f"{metadata.st_mode:o}",
+                "path": path,
+                "size": metadata.st_size,
+                "type": "special",
+            })
+
+    payload = {
+        "entries": entries,
+        "entry_count": len(entries),
+        "kind": inspection.kind,
+    }
+    payload_bytes = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8", errors="surrogatepass")
+    return hashlib.sha256(payload_bytes).hexdigest()
 
 
 def _interrupted_merge_directory_fingerprint(directory: Path) -> bytes | None:

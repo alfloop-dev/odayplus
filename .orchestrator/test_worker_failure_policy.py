@@ -2253,6 +2253,50 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
         finally:
             unreadable.chmod(0o644)
 
+    def test_interrupted_merge_framing_ambiguity_drift_and_stat_cache_refresh(self):
+        """R11 regression: cross-entry binary serialization ambiguity is eliminated by hashing
+        each file independently and using structured framing; drift across entries is detected
+        and rejected while stat-cache refresh on unchanged files preserves continuation."""
+        worker, state = self._interrupted_merge_fixture()
+        task = self.status_data["tasks"][0]
+
+        first = self.worktree / "a"
+        second = self.worktree / "b"
+        first.write_bytes(b"x")
+        second.write_bytes(b"y")
+        first.chmod(0o644)
+        second.chmod(0o644)
+
+        # Seal and preservation should capture the two untracked files
+        self.assertTrue(worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=task))
+        record = state["worker_worktrees"]["handoff_blocks"]["TASK-SIBLING-001"]
+        self.assertEqual(record["reason"], "interrupted_merge")
+        self.assertTrue(self._owner_seal_allowed(state, task)[0])
+
+        # Stat-cache refresh (mtime touch without content changes) must keep continuation valid
+        first.touch()
+        self.assertTrue(self._owner_seal_allowed(state, task)[0])
+        ok, error, request = self._owner_lease(state)
+        self.assertTrue(ok, error)
+        self.assertEqual(request.metadata.get("worktree_continuation"), "sealed_owner_merge")
+
+        # Framing drift attack: file b deleted, file a content forged to absorb old entry encoding
+        first.write_bytes(b"x??\0b\0regular:100644\0y")
+        second.unlink()
+
+        after_inspection = inspect_worktree(self.worktree)
+        after_snapshot = worker_workspace._interrupted_merge_snapshot(self.worktree)
+        after_fingerprint = worker_workspace._interrupted_merge_fingerprint(after_snapshot, self.worktree, after_inspection)
+        self.assertNotEqual(after_fingerprint, record["dirt_fingerprint"])
+
+        # Direct seal check must refuse continuation due to state drift
+        self.assertEqual(self._owner_seal_allowed(state, task), (False, "merge_state_changed"))
+
+        # Full prepare_worker_workspace lease must fail closed without continuation metadata
+        ok, error, request = self._owner_lease(state)
+        self.assertFalse(ok)
+        self.assertNotIn("worktree_continuation", request.metadata)
+
     def test_sibling_quota_fence_preserves_dirty_worktree_and_authorizes_successor_lease_continuation(self) -> None:
         """E2E: Sibling worker dirty changes (staged, unstaged, untracked) are backed up, sealed, and handed off to authorized successor via prepare_worker_workspace."""
         # Create uncommitted staged, unstaged, and untracked work in the sibling's isolated worktree
