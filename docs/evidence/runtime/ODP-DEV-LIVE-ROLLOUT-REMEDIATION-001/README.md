@@ -6695,4 +6695,34 @@ audit JSON 的 `superseded_unblock_requirements.previous_requirements`）：
 3. Supervisor 簽發 Ed25519 lease 並 dispatch `deploy-dev.yml` deploy phase。
 4. 部署落地後，本任務採集 GCP 實體環境狀態（Cloud Run URLs, jobs one-shot, authenticated smoke, 16-source disabled, default-deny egress, live IAM），滿足驗收條件 3–8 後送審。
 
+## 256. Round 269（2026-09-26 12:05Z，owner Antigravity5）
+
+### 256.1 系統狀態複查、Base Advance 與全套邊界檢驗
+
+1. **Base Advance 與分支歷史安全匯入**：
+   - 上游 PR #1370（`ODP-DEV-RELEASE-GATE-RECONCILIATION-006`）已合併至 `origin/dev`（`c8d26f020e0f`），將 candidate 正式重綁至 `419e6bf4958269c5b9e94efcb80770e28cd54dda`，並鎖定 manifest digest `sha256:134cc712132155b0003d68063298d3044d5400d91244b8024b4448268c4fc678`、release_id `odp-419e6bf49582` 與 gate-0/1/4 准入宣告。
+   - 本任務分支 `task/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 依標準 task workflow 執行 `git merge origin/dev`，將 `origin/dev`（`c8d26f020e0f`）完整匯入，無任何衝突，並保留所有任務歷史。
+
+2. **全套獨立驗證實測通過**：
+   - 執行 `uv run pytest -q tests/ops/test_deploy_workflow_contract.py`：90 passed（exit 0）。
+   - 執行 `uv run pytest -q tests/release/test_release_manifest.py tests/release/test_runtime_admission.py`：137 passed（exit 0）。
+   - 執行 `python3 delivery_toolchain/governance/check_code_boundaries.py`：1178 files passed（exit 0）。
+   - 執行 `python3 scripts/validate_external_data_boundary.py`：3914 files passed（exit 0）。
+
+3. **最新 Build-Once Run 與 Candidate 追蹤實測確認**：
+   - 實測查核 GitHub Actions 工作流程，確認 hosted run 36080312679 於 `origin/dev` tip（`419e6bf4958269c5b9e94efcb80770e28cd54dda`）完成單次建置（build-once），產出包含 `runtime-release-manifest-419e6bf4...`、`runtime-release-images-419e6bf4...` 等 6 份不可變 artifact。
+   - 查核 `origin/dev` 最新 `RELEASE_MANIFEST.json`（schema_version 2, release_id `odp-419e6bf49582`）已完整鎖定 16 個外部來源全數關閉（`sources_off_attestation`）與 default-deny egress 宣告。
+   - 確認 PR #1107 處於 OPEN 且 MERGEABLE。
+
+4. **邊界防護與 Fail-Closed in_progress 狀態維持**：
+   - 嚴格遵守驗收條件 10（*「若workflow或部署程式有缺陷則fail closed並另建獨立remediation task不得在rollout task內擴大修code」*），不越界修改 workflow 或產品程式碼。
+   - 保持 fail-closed `in_progress` 狀態，持續等待新 candidate release lease 簽發與 hosted `deploy-dev.yml` 部署落地後，再行採集真實 GCP live readback 證據進行驗收結案。
+
+### 256.2 下一步執行順序
+
+1. Human/Ops 登記帶有全新 nonce 及新 candidate `419e6bf4958269c5b9e94efcb80770e28cd54dda` 之 `release_lease_request`。
+2. Supervisor 簽發 Ed25519 lease 並 dispatch `deploy-dev.yml` deploy phase。
+3. 部署落地後，本任務採集 GCP 實體環境狀態（Cloud Run URLs, jobs one-shot, authenticated smoke, 16-source disabled, default-deny egress, live IAM），滿足驗收條件 3–8 後送審。
+
+
 
