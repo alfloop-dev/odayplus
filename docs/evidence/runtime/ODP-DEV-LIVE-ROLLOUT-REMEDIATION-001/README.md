@@ -7880,6 +7880,36 @@ audit JSON 的 `superseded_unblock_requirements.previous_requirements`）：
 2. Supervisor 驗證 Human/Ops 登記之 `release_lease_request`（`HUMANOPS-DEV-FIRST-RELEASE-20260926T145227Z`，候選 `419e6bf4958269c5b9e94efcb80770e28cd54dda`），簽發新 Ed25519 lease 並重新 dispatch `deploy-dev.yml` deploy phase。
 3. 部署落地後，本任務採集 GCP 實體環境狀態（Cloud Run URLs, jobs one-shot, authenticated smoke, 16-source disabled, default-deny egress, live IAM），滿足驗收條件 3–8 後送審。
 
+## 300. Round 314 狀態追蹤與驗證實測（2026-09-26，Owner: Antigravity5）
+
+### 300.1 候選一致性、CI 全綠與 IAM 阻擋狀態審核
+
+1. **候選與 Base 狀態比對**：
+   - 審核目前分支狀態，確認維持與 `origin/dev` 最新 tip（`c8d26f020e0f`，PR #1370 `ODP-DEV-RELEASE-GATE-RECONCILIATION-006`）完全一致。
+   - 確認權威候選維持 `419e6bf4958269c5b9e94efcb80770e28cd54dda`，對應 manifest digest `sha256:134cc712132155b0003d68063298d3044d5400d91244b8024b4448268c4fc678`，release_id 為 `odp-419e6bf49582`。
+   - 查核 PR #1107 維持 OPEN，分支為 `task/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001`，mergeable 狀態良好（MERGEABLE），PR CI checks 全數綠燈成功通過（EMGI consumer repos、CI/change-scope、Tooling scope review、CI/orchestrator、CI/product）。
+
+2. **部署狀態與 IAM Secret Accessor 權限缺口追蹤**：
+   - 查核先前 deploy phase 執行（Run 36252020646）確診之 GCP IAM 授權缺口：service account `gke-oday-dev-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com` 於部署 initial migration Cloud Run Job `oday-migration-r-419e6bf49582` 時，因缺失 secret `projects/767864276141/secrets/oday-plus-dev-identity-token-signing-key` 之 `roles/secretmanager.secretAccessor` 角色而被 GCP 拒絕。
+   - initial-release recovery 機制已妥善清理無殘留資源，維持零流量安全狀態。
+
+3. **全套獨立驗證實測通過**：
+   - 執行 `python3 docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/verify_dev_live_rollout_remediation.py`：PASS（exit code 0）。
+   - 執行 `/home/lupin/.local/bin/uv run pytest -q tests/ops/test_deploy_workflow_contract.py tests/release/test_release_manifest.py tests/release/test_runtime_admission.py`：100% passed（231 passed，exit code 0）。
+   - 執行 `python3 delivery_toolchain/governance/check_code_boundaries.py`：1178 files passed（exit code 0）。
+   - 執行 `python3 scripts/validate_external_data_boundary.py`：3923 files passed（exit code 0）。
+
+4. **維持 Fail-Closed in_progress 狀態防護**：
+   - 依據驗收條件 10，本任務嚴格維持 fail-closed `in_progress` 狀態，不越界修改 workflow 或產品程式碼。
+   - 待 Human/Ops 於 GCP 授權 service account `gke-oday-dev-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com` 具備 secret `oday-plus-dev-identity-token-signing-key` 之 `roles/secretmanager.secretAccessor` 角色後，由 Supervisor 簽發新 Ed25519 lease 重新派發 `deploy-dev.yml` deploy phase，再行採集 GCP 實體環境 live readback 數據以完成驗收條件 3–8。
+
+### 300.2 下一步執行順序
+
+1. Human/Ops 於 GCP 補齊 service account `gke-oday-dev-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com` 對 secret `projects/767864276141/secrets/oday-plus-dev-identity-token-signing-key` 之 `roles/secretmanager.secretAccessor` 權限。
+2. Supervisor 驗證 Human/Ops 登記之 `release_lease_request`（`HUMANOPS-DEV-FIRST-RELEASE-20260926T145227Z`，候選 `419e6bf4958269c5b9e94efcb80770e28cd54dda`），簽發新 Ed25519 lease 並重新 dispatch `deploy-dev.yml` deploy phase。
+3. 部署落地後，本任務採集 GCP 實體環境狀態（Cloud Run URLs, jobs one-shot, authenticated smoke, 16-source disabled, default-deny egress, live IAM），滿足驗收條件 3–8 後送審。
+
+
 
 
 
