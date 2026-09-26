@@ -6726,3 +6726,21 @@ audit JSON 的 `superseded_unblock_requirements.previous_requirements`）：
 
 
 
+
+## 257. Round 270 狀態追蹤與證據同步（2026-09-26，Owner: Antigravity5）
+
+### 257.1 證據庫與驗證器完整重整
+
+1. **證據檔案與候選綁定一致性驗證**：
+   - 依據 `origin/dev` 最新基線（`c8d26f020e0f`）與 PR #1370（`ODP-DEV-RELEASE-GATE-RECONCILIATION-006`），全面更新 `live-runtime-reconciliation-audit.json` 與 `verify_dev_live_rollout_remediation.py`，精確綁定 candidate `419e6bf4958269c5b9e94efcb80770e28cd54dda`、manifest digest `sha256:134cc712132155b0003d68063298d3044d5400d91244b8024b4448268c4fc678`、release_id `odp-419e6bf49582`、build run `36080312679` 及 6 份 hosted artifacts。
+   - 執行 `python3 docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/verify_dev_live_rollout_remediation.py`，全數項目通過（`PASS: ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 evidence bundle verified successfully.`）。
+
+2. **全套測試與治理邊界實測**：
+   - 執行 `uv run pytest tests/ops tests/release`：1293 passed, 22 skipped, 16 subtests passed（exit 0）。
+   - 執行 `python3 delivery_toolchain/governance/check_code_boundaries.py`：1178 files passed（exit 0）。
+   - 執行 `python3 scripts/validate_external_data_boundary.py`：3923 files passed（exit 0）。
+
+3. **維持 Fail-Closed in_progress 狀態**：
+   - 候選 `419e6bf4958269c5b9e94efcb80770e28cd54dda` 之 build artifact 與 dev gates（gate-0, gate-1, gate-4）均已備齊並由蔡尚志簽署 `decision=go`。
+   - 目前尚待 Human/Ops 登記針對此候選的全新 `release_lease_request`，並由 Supervisor 簽發 Ed25519 lease 派送 `deploy-dev.yml` deploy phase。
+   - 本任務嚴格保持 fail-closed `in_progress`，待部署完成後採集真實 GCP live readback 數據以完成驗收條件 3–8。

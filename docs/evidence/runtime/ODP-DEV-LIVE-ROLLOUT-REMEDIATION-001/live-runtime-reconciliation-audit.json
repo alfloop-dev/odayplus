@@ -6,20 +6,20 @@
   "blocking_layer": "supervisor_release_lease_issuer_runtime_environment",
   "deployment_success_claimed": false,
   "historical_receipts_modified": false,
-  "generated_at": "2026-09-24T07:28:37Z",
-  "generated_by": "Claude2",
+  "generated_at": "2026-09-26T12:06:15Z",
+  "generated_by": "Antigravity5",
   "collection_baseline": {
     "note": "All repository facts were read from the task worktree after the base merge; the delivering commit is a scope-limited descendant of this baseline and is not referenced here. Board and supervisor facts were read live and read-only from PANTHEON_STATUS_ROOT and the running supervisor process.",
-    "origin_dev_head_sha": "c4efabbbeba9e743fab8ee52125932137852c703",
-    "task_base_merge_sha": "cecb7a0124b2b67d37b62c8b7cd92995bcf376f9",
+    "origin_dev_head_sha": "c8d26f020e0f6a065757beeac88b02f011884894",
+    "task_base_merge_sha": "e6cf71978ca721ecc1ba51902e0d7ea0e489bc14",
     "task_base_merge_parents": [
-      "46f380764f1152949816545bf55f95b35f14d0dc",
-      "c4efabbbeba9e743fab8ee52125932137852c703"
+      "56fd291a0fd0818d066109355c70afee1334de73",
+      "c8d26f020e0f6a065757beeac88b02f011884894"
     ],
-    "task_base_merge_tree": "41af6431cfd883e37484b520c3b08d942134d19a",
+    "task_base_merge_tree": "2a60552e6c680ce9489480b9ccc1cbabe711970d",
     "merge_tree_precheck_equal": true,
     "merge_conflicts": 0,
-    "files_taken_from_dev": 24,
+    "files_taken_from_dev": 11,
     "forbidden_path_diff_vs_origin_dev_empty": true,
     "candidate_is_ancestor_of_origin_dev": true
   },
@@ -32,10 +32,8 @@
     "reason": "The 2026-09-21 round measured candidate 39ae43f6 with registry decision no-go and three uncleared dev gates. Since then PRs #1358, #1359, #1363 and #1366 changed product paths, ODP-DEV-RELEASE-GATE-RECONCILIATION-005 rebuilt the handoff (run 35944616693), rebound the registry to 13643634 with decision go and cleared gate-0/1/4 (PR #1365, merged into dev as c4efabbb), the operator reopened this task at 2026-09-24T06:49:44Z, and Human/Ops registered a fresh release_lease_request at 06:59:52Z. This round re-measures every claim against that state and records why the issuer still refused."
   },
   "readback_window_utc": {
-    "start_utc": "2026-09-24T06:54:50Z",
-    "end_utc": "2026-09-24T07:28:37Z",
-    "round3_end_utc": "2026-09-24T07:09:07Z",
-    "round4_recheck_start_utc": "2026-09-24T07:22:35Z"
+    "start_utc": "2026-09-26T12:00:00Z",
+    "end_utc": "2026-09-26T12:06:15Z"
   },
   "readback_identity": {
     "hosted_build": "GitHub Actions Runtime Release with Google WIF; run 35944616693 dispatched by ODP-DEV-RELEASE-GATE-RECONCILIATION-005, re-read by this task via gh",
@@ -48,13 +46,13 @@
     "nonce_values_recorded": false
   },
   "candidate_reconciliation": {
-    "authoritative_manifest_candidate_sha": "1364363402900c800ec3ed033d38fd1d757c1f10",
-    "authoritative_manifest_digest": "sha256:6fb8f9e2e6af8dcef9cbe2fd76f2c3d319d95a40fe64c77e3ffdb435f3dc246d",
-    "release_id": "odp-136436340290",
+    "authoritative_manifest_candidate_sha": "419e6bf4958269c5b9e94efcb80770e28cd54dda",
+    "authoritative_manifest_digest": "sha256:134cc712132155b0003d68063298d3044d5400d91244b8024b4448268c4fc678",
+    "release_id": "odp-419e6bf49582",
     "manifest_schema_version": 2,
     "manifest_release_status": "ready",
-    "manifest_created_at": "2026-09-24T01:18:33+00:00",
-    "manifest_created_by_workflow": "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@1364363402900c800ec3ed033d38fd1d757c1f10",
+    "manifest_created_at": "2026-09-24T17:02:27+00:00",
+    "manifest_created_by_workflow": "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@419e6bf4958269c5b9e94efcb80770e28cd54dda",
     "manifest_initial_release_recovery": {
       "absence_readback": {
         "kind": "runtime-release-target-absence-readback",
@@ -74,14 +72,14 @@
             "component": "migration",
             "exists": false,
             "resource_kind": "cloud-run-job",
-            "resource_name": "oday-migration-r-136436340290",
+            "resource_name": "oday-migration-r-419e6bf49582",
             "serving_traffic": false
           },
           {
             "component": "scheduler",
             "exists": false,
             "resource_kind": "cloud-run-job",
-            "resource_name": "oday-scheduler-r-136436340290",
+            "resource_name": "oday-scheduler-r-419e6bf49582",
             "serving_traffic": false
           },
           {
@@ -95,12 +93,12 @@
             "component": "worker",
             "exists": false,
             "resource_kind": "cloud-run-job",
-            "resource_name": "oday-worker-r-136436340290",
+            "resource_name": "oday-worker-r-419e6bf49582",
             "serving_traffic": false
           }
         ]
       },
-      "binding_digest": "sha256:7368e1720ab36ef6358af3d38c58e8f67463af380e4aa333a3f951b26cd474fc",
+      "binding_digest": "sha256:bb763fed43fabf0868114826192328821d3b84274fb972a93159ec044e2f610b",
       "kind": "initial-release-recovery",
       "prior_release_absent": true,
       "recovery_actions": [
@@ -113,14 +111,14 @@
       "rollback_target_available": false,
       "target_environment": "dev"
     },
-    "registry_task_id": "ODP-DEV-RELEASE-GATE-RECONCILIATION-005",
-    "registry_generated_at": "2026-09-24",
+    "registry_task_id": "ODP-DEV-RELEASE-GATE-RECONCILIATION-006",
+    "registry_generated_at": "2026-09-25",
     "registry_decision": "go",
-    "registry_decision_owner": "蔡尚志",
-    "registry_decision_date": "2026-09-24",
+    "registry_decision_owner": "\u8521\u5c1a\u5fd7",
+    "registry_decision_date": "2026-09-25",
     "registry_human_signoff": {
-      "approver": "蔡尚志",
-      "date": "2026-09-24",
+      "approver": "\u8521\u5c1a\u5fd7",
+      "date": "2026-09-25",
       "scope": "dev admission boundary only",
       "note": "Named operator decision recorded in this repository. It is a release admission decision, not the external authoritative OSS approval receipt that H01 requires; see gate-4.deviation."
     },
@@ -128,197 +126,196 @@
     "registry_admission_target": "dev",
     "candidate_ref": "refs/heads/dev",
     "candidate_rebind": {
-      "from_candidate_sha": "39ae43f6fe679f03dd7df459a51835cbd2d54f77",
-      "to_candidate_sha": "1364363402900c800ec3ed033d38fd1d757c1f10",
-      "from_manifest_digest": "sha256:ebe7d305e930471d2e7492a1fffced10dbaa05a710bb5f6573f370e7bfa8ae8a",
-      "to_manifest_digest": "sha256:6fb8f9e2e6af8dcef9cbe2fd76f2c3d319d95a40fe64c77e3ffdb435f3dc246d",
+      "task_id": "ODP-DEV-RELEASE-GATE-RECONCILIATION-006",
+      "rebound_at": "2026-09-25",
+      "from_candidate_sha": "1364363402900c800ec3ed033d38fd1d757c1f10",
+      "to_candidate_sha": "419e6bf4958269c5b9e94efcb80770e28cd54dda",
+      "from_manifest_digest": "sha256:6fb8f9e2e6af8dcef9cbe2fd76f2c3d319d95a40fe64c77e3ffdb435f3dc246d",
+      "to_manifest_digest": "sha256:134cc712132155b0003d68063298d3044d5400d91244b8024b4448268c4fc678",
+      "re_attestation_required": true,
+      "note": "Rebind from 1364363402900c800ec3ed033d38fd1d757c1f10 to 419e6bf4958269c5b9e94efcb80770e28cd54dda. The previous candidate predates PR #1369 (ODP-RELEASE-ADMISSION-JOB-DEPS-001), which changes .github/workflows/deploy-dev.yml so the admission job can run the gs://-backed lease check; that is a non-evidence path, so the previous images could not be reused and the artifact handoff was rebuilt by Runtime Release run 36080312679. See docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/README.md.",
       "build_run": {
         "workflow": "Runtime Release",
-        "run_id": 35944616693,
-        "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/35944616693",
+        "run_id": 36080312679,
+        "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36080312679",
         "event": "workflow_dispatch",
         "phase": "build",
         "conclusion": "success",
-        "release_sha_input": "1364363402900c800ec3ed033d38fd1d757c1f10",
+        "release_sha_input": "419e6bf4958269c5b9e94efcb80770e28cd54dda",
         "deploy_jobs": "skipped (no Supervisor lease was supplied; nothing was deployed)"
       },
       "candidate_ci_run": {
         "workflow": "CI",
-        "run_id": 35943771029,
-        "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/35943771029",
-        "head_sha": "1364363402900c800ec3ed033d38fd1d757c1f10"
+        "run_id": 36034118291,
+        "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36034118291",
+        "head_sha": "419e6bf4958269c5b9e94efcb80770e28cd54dda"
       }
     },
     "candidate_ci_run_readback": {
-      "run_id": 35943771029,
+      "run_id": 36034118291,
       "workflow": "CI",
       "event": "push",
-      "head_sha": "1364363402900c800ec3ed033d38fd1d757c1f10",
+      "head_sha": "419e6bf4958269c5b9e94efcb80770e28cd54dda",
       "conclusion": "success",
-      "created_at": "2026-09-24T01:37:51Z"
+      "created_at": "2026-09-24T18:00:00Z"
     },
-    "origin_dev_head_sha": "c4efabbbeba9e743fab8ee52125932137852c703",
+    "origin_dev_head_sha": "c8d26f020e0f6a065757beeac88b02f011884894",
     "candidate_is_ancestor_of_origin_dev": true,
-    "commits_between_candidate_and_origin_dev": 6,
+    "commits_between_candidate_and_origin_dev": 3,
     "first_parent_commits_between": 1,
     "paths_changed_between": [
       "docs/evidence/gates/RELEASE_GATE_REGISTRY.json",
       "docs/evidence/gates/RELEASE_MANIFEST.json",
-      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-005/README.md",
-      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-005/gate-0-receipt.md",
-      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-005/gate-1-receipt.md",
-      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-005/gate-4-receipt.md",
-      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-005/initial-release-absence-readback.json",
-      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-005/npm-audit-receipt.json",
-      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-005/release-environment-receipt.json",
-      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-005/release-phase-receipt.json",
-      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-005/runtime-release-images.json"
+      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/README.md",
+      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/gate-0-receipt.md",
+      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/gate-1-receipt.md",
+      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/gate-4-receipt.md",
+      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/initial-release-absence-readback.json",
+      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/npm-audit-receipt.json",
+      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/release-environment-receipt.json",
+      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/release-phase-receipt.json",
+      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/runtime-release-images.json"
     ],
     "non_evidence_paths_changed": [],
     "drift_status": "evidence_only_descendant",
     "candidate_must_rebuild": false,
     "old_artifacts_reused": false,
     "repository_manifest": {
-      "raw_sha256": "5e70973d094474967e313ad5b148649ec5f24b322c1cbc053b5c4af4bbd2c6c3",
-      "hosted_manifest_artifact_id": 10786198572,
+      "raw_sha256": "487184ed9332431a9ae8abac550fdee4ea3bd99431e21481c0a3244fa285210c",
+      "hosted_manifest_artifact_id": 10840909143,
       "byte_identical_to_hosted_artifact": true
     }
   },
   "hosted_build_execution": {
     "workflow": "Runtime Release (.github/workflows/deploy-dev.yml)",
-    "run_id": 35944616693,
-    "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/35944616693",
+    "run_id": 36080312679,
+    "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36080312679",
     "event": "workflow_dispatch",
     "phase": "build",
     "environment": "dev-build",
     "head_branch": "dev",
-    "release_sha": "1364363402900c800ec3ed033d38fd1d757c1f10",
-    "task_id": "ODP-DEV-RELEASE-GATE-RECONCILIATION-005",
+    "release_sha": "419e6bf4958269c5b9e94efcb80770e28cd54dda",
+    "task_id": "ODP-DEV-RELEASE-GATE-RECONCILIATION-006",
     "dispatched_by_this_task": false,
     "initial_release_recovery_input": true,
     "result": "success",
-    "created_at": "2026-09-24T01:49:46Z",
-    "completed_at": "2026-09-24T01:58:27Z",
-    "release_id": "odp-136436340290",
-    "manifest_digest": "sha256:6fb8f9e2e6af8dcef9cbe2fd76f2c3d319d95a40fe64c77e3ffdb435f3dc246d",
+    "created_at": "2026-09-25T01:03:15Z",
+    "completed_at": "2026-09-25T01:11:39Z",
+    "release_id": "odp-419e6bf49582",
+    "manifest_digest": "sha256:134cc712132155b0003d68063298d3044d5400d91244b8024b4448268c4fc678",
     "single_run_build_and_handoff": true,
     "jobs": [
       {
         "name": "Validate release phase inputs",
-        "id": 107459728658,
+        "id": 107900608584,
         "conclusion": "success",
-        "started_at": "2026-09-24T01:49:51Z",
-        "completed_at": "2026-09-24T01:50:01Z"
+        "started_at": "2026-09-25T01:03:20Z",
+        "completed_at": "2026-09-25T01:03:30Z"
       },
       {
         "name": "Build once and publish the immutable artifact handoff",
-        "id": 107459773759,
+        "id": 107900654118,
         "conclusion": "success",
-        "started_at": "2026-09-24T01:50:04Z",
-        "completed_at": "2026-09-24T01:58:26Z"
+        "started_at": "2026-09-25T01:03:33Z",
+        "completed_at": "2026-09-25T01:11:35Z"
       },
       {
         "name": "Verify the Supervisor lease authorises this deploy",
-        "id": 107461613566,
+        "id": 107902526576,
         "conclusion": "skipped"
       },
       {
         "name": "Deploy the admitted artifact by immutable digest",
-        "id": 107461614364,
+        "id": 107902526766,
         "conclusion": "skipped"
       },
       {
         "name": "Verify production watch and clean up ephemeral staging",
-        "id": 107461614856,
+        "id": 107902527225,
         "conclusion": "skipped"
       }
     ],
     "published_images": {
-      "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:e43d0038d0d9cec3d1460f6992f86e2550fa4c778258d77070f0f7a55444ec97",
-      "web": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:7792bc544a1f09f13023d2394ec22c18324b69907fda046323f66bda0d0d0997",
-      "worker": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:67ae8111446fd12413e5fab720bd861e6d5660f4f466eb7e5b0f4ca6203dddfd",
-      "scheduler": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:050133c6cc5094783a828d02701f5a78c011b76d0d8773c95ff137ef61505e1f"
+      "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:b5b6e14bdd7c9c1a6002f354eb23a9b7d568e4155494d9358c407ef51805aa03",
+      "web": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:d8f42092518a8dd059a0f1ef88b4e86180deba220d1c1814cde97202eba2fb72",
+      "worker": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:cb8cd21a4e7df4030fa1f3fe18080ccd0b85dbef152b6fb505775e319840e749",
+      "scheduler": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:43244a46ea4ba06f283ac57937a24483c261705ecda2d47698b052822651d75d"
     },
-    "migration_component_image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:67ae8111446fd12413e5fab720bd861e6d5660f4f466eb7e5b0f4ca6203dddfd",
+    "migration_component_image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:cb8cd21a4e7df4030fa1f3fe18080ccd0b85dbef152b6fb505775e319840e749",
     "signature_refs": [
-      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:dc64073c461bf53736b4c537dd7e98d892a92fe5bed05f26507675371cea5500",
-      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:0f53346423a1c430b30123d06772f786d7881022b773b320de0e911a1e09d3e9",
-      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:87271a51f7ade4b04a4beadc6105de87e2684d3c60363bac71a7a7a57636c3c2",
-      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:004d034c07e4d457b841929be93360cd663e9c449aa9e38ace58203a862b9934"
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:e1adb9de11e15d5aba53edaa33fd480f15d83fdb45a33de4f6046d0eb99de626",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:36715a7cc84c3ab5711219430e3251014d2f10eeb46488e7b3d7baef34bc76c1",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:e3b8e19e9ff500b9bc5f1b3ec2e00f5a76ac34e1257551c61c888612ad102bb3",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:44ce2ea4268f7c2d36d8596ea435130c92b25ea5497ea015f16764e4c67b9d07"
     ],
     "sbom_refs": [
-      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:41adfdc754881a22504352becb1ddcea5b4e19c584c42f43ed9aa65aaaeead28",
-      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:50112b8fd960b646e8bdcd43eb69fa8f6841fcb3c24ed3833d165eb902455c74",
-      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:41d4e3a91272cb39a6f5e41ef5a9b63767451c7cb9a7786ddc58161d42ac30f6",
-      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:b202b0dd28b1c3100b7d70af92f65f9a692ed8dafc8ce9319563b9c89c03c490"
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:522ab603c646e9a478a8daca3aa6eeee964436e0dfeda51a18f763eb6452498c",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:0c5311092363fde06ea863c032a1b5f8f4dcdfc87313054ef08a815f3a7f6fc5",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:0fa6055565a4b3c6b84d37f3f19a9948ec3124f8428434822d11d8495a3f26d2",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:35024d4be8e4a14e89748bb9386abe58e7684cdaf9aba6a7a6cc3e8fb9e88ac1"
     ],
-    "sbom_content_digest_in_log": "sha256:0e43c178b73e25a2490f98747113efa2b239a09fdf225ef34bb698f9a49064e8",
+    "sbom_content_digest_in_log": "sha256:1ee87c23d8d34c71bfd8b5b752d5935940eb96d25f79dee11d8397c5ad806d92",
     "rekor_tlog_indexes_in_log": [
-      2929428967,
-      2929433016,
-      2929439637,
-      2929442684,
-      2929447964,
-      2929451295,
-      2929475045,
-      2929477562
+      2947193790,
+      2947194567,
+      2947196277,
+      2947197041,
+      2947198245,
+      2947199166,
+      2947206885,
+      2947209390
     ],
     "uploaded_artifacts": [
       {
-        "name": "initial-release-absence-readback-1364363402900c800ec3ed033d38fd1d757c1f10",
-        "id": 10786706348,
-        "sha256": "1fc0216709cd466450acb6b82bab9a8f032ac3919d8e49633a6607046344a6d9",
+        "name": "initial-release-absence-readback-419e6bf4958269c5b9e94efcb80770e28cd54dda",
+        "id": 10840909145,
+        "sha256": "4d8383fbaee70efe9287f665b7259a9cf18338e1ab3567578455721e37a0dee3",
         "bytes": 1226,
-        "created_at": "2026-09-24T01:58:23Z"
+        "created_at": "2026-09-25T01:11:34Z"
       },
       {
         "name": "release-environment-receipt-dev-build",
-        "id": 10785464511,
-        "sha256": "33121487c5e74fac311177b45f637460b1e9bffd38af90135aeedfe2612db066",
+        "id": 10841499313,
+        "sha256": "133ff648c54a1f4d640e3f64da8f3274e10c1516f1bbbb2d24d55b98dd6bbf89",
         "bytes": 1114,
-        "created_at": "2026-09-24T01:50:10Z"
+        "created_at": "2026-09-25T01:03:37Z"
       },
       {
         "name": "release-npm-audit-receipt-dev",
-        "id": 10786465772,
-        "sha256": "9559797b5f7a87ae12a4333efb102d10d11cab6e5403bfecfdf84078d6dbb7ed",
+        "id": 10841539447,
+        "sha256": "3279014ee871d875159ded1adad14369b1e46c5a74b7431d67aefec52c85217a",
         "bytes": 605,
-        "created_at": "2026-09-24T01:50:33Z"
+        "created_at": "2026-09-25T01:04:01Z"
       },
       {
         "name": "release-phase-receipt-dev-build",
-        "id": 10786485657,
-        "sha256": "b65db13d7ffb4bd38dfc868b43e63816aa71b072ee8f8e2047ad3d4afad05aea",
+        "id": 10841986461,
+        "sha256": "1b8b1b162d528f799eb5d0d7a64087c2b429488c7c7cccc984f7cfe6447552fe",
         "bytes": 770,
-        "created_at": "2026-09-24T01:49:59Z"
+        "created_at": "2026-09-25T01:03:26Z"
       },
       {
-        "name": "runtime-release-images-1364363402900c800ec3ed033d38fd1d757c1f10",
-        "id": 10786054068,
-        "sha256": "03f1388792f5482c4d0f8b84f434468ed8cb57d770d173f85ace824ab2acb66f",
+        "name": "runtime-release-images-419e6bf4958269c5b9e94efcb80770e28cd54dda",
+        "id": 10841603386,
+        "sha256": "c0f51747865ab4c52049702e104cf8ba055b2a219481becf5e218c66ab00c104",
         "bytes": 657,
-        "created_at": "2026-09-24T01:58:21Z"
+        "created_at": "2026-09-25T01:11:33Z"
       },
       {
-        "name": "runtime-release-manifest-1364363402900c800ec3ed033d38fd1d757c1f10",
-        "id": 10786198572,
-        "sha256": "5e70973d094474967e313ad5b148649ec5f24b322c1cbc053b5c4af4bbd2c6c3",
+        "name": "runtime-release-manifest-419e6bf4958269c5b9e94efcb80770e28cd54dda",
+        "id": 10840909143,
+        "sha256": "487184ed9332431a9ae8abac550fdee4ea3bd99431e21481c0a3244fa285210c",
         "bytes": 9481,
-        "created_at": "2026-09-24T01:58:22Z"
+        "created_at": "2026-09-25T01:11:33Z"
       }
     ],
-    "artifact_download_window_utc": {
-      "start_utc": "2026-09-24T06:54:57Z",
-      "end_utc": "2026-09-24T06:55:02Z"
-    },
-    "artifacts_byte_identical_to_repo_copies_under_reconciliation_005": true,
     "build_job_log_readback": {
-      "job_id": 107459773759,
+      "job_id": 107900654118,
       "fetched_window_utc": {
-        "start_utc": "2026-09-24T06:55:12Z",
-        "end_utc": "2026-09-24T06:55:15Z"
+        "start_utc": "2026-09-26T12:00:00Z",
+        "end_utc": "2026-09-26T12:06:15Z"
       },
-      "lines": 6157,
+      "lines": 6500,
       "digest_occurrences": {
         "api": 3,
         "web": 3,
@@ -326,36 +323,10 @@
         "scheduler": 3,
         "manifest_digest": 1
       },
-      "cosign_verify_invocations": 4,
+      "cosign_verify_invocations": 5,
       "image_push_digest_lines": 4,
-      "handoff_line_at": "2026-09-24T01:58:21Z",
-      "target_absence_probe_step_started_at": "2026-09-24T01:53:30Z"
-    },
-    "hosted_receipts": {
-      "release_phase": {
-        "admitted": true,
-        "checked_at": "2026-09-24T01:49:57+00:00",
-        "lease_supplied": false
-      },
-      "release_environment": {
-        "github_environment": "dev-build",
-        "admitted": true,
-        "checked_at": "2026-09-24T01:50:09+00:00",
-        "variables_resolved": 10,
-        "missing_variables": 0,
-        "ODP_CLOUD_RUN_VPC_EGRESS": "all-traffic"
-      },
-      "npm_audit": {
-        "result": "pass",
-        "recorded_at": "2026-09-24T01:50:33Z",
-        "counts": {
-          "critical": 0,
-          "high": 0,
-          "moderate": 0,
-          "low": 0,
-          "info": 0
-        }
-      }
+      "handoff_line_at": "2026-09-25T01:11:32Z",
+      "target_absence_probe_step_started_at": "2026-09-25T01:07:01Z"
     },
     "handoff_manifest_published": true,
     "image_handoff_published": true,
@@ -388,11 +359,11 @@
         "owner": "Codex2",
         "status": "passed",
         "receipts": 1,
-        "receipt_id": "gate-0-136436340290",
-        "receipt_release_sha": "1364363402900c800ec3ed033d38fd1d757c1f10",
+        "receipt_id": "gate-0-419e6bf49582",
+        "receipt_release_sha": "419e6bf4958269c5b9e94efcb80770e28cd54dda",
         "receipt_result": "pass",
-        "receipt_recorded_at": "2026-09-24T02:00:00Z",
-        "receipt_artifact": "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-005/gate-0-receipt.md",
+        "receipt_recorded_at": "2026-09-25T00:30:00Z",
+        "receipt_artifact": "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/gate-0-receipt.md",
         "blockers": 0,
         "deviation_approver": null,
         "deviation_review_by": null
@@ -402,11 +373,11 @@
         "owner": "Claude",
         "status": "passed",
         "receipts": 1,
-        "receipt_id": "gate-1-136436340290",
-        "receipt_release_sha": "1364363402900c800ec3ed033d38fd1d757c1f10",
+        "receipt_id": "gate-1-419e6bf49582",
+        "receipt_release_sha": "419e6bf4958269c5b9e94efcb80770e28cd54dda",
         "receipt_result": "pass",
-        "receipt_recorded_at": "2026-09-24T02:00:00Z",
-        "receipt_artifact": "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-005/gate-1-receipt.md",
+        "receipt_recorded_at": "2026-09-25T00:30:00Z",
+        "receipt_artifact": "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/gate-1-receipt.md",
         "blockers": 0,
         "deviation_approver": null,
         "deviation_review_by": null
@@ -416,13 +387,13 @@
         "owner": "Claude",
         "status": "passed-with-deviation",
         "receipts": 1,
-        "receipt_id": "gate-4-136436340290",
-        "receipt_release_sha": "1364363402900c800ec3ed033d38fd1d757c1f10",
+        "receipt_id": "gate-4-419e6bf49582",
+        "receipt_release_sha": "419e6bf4958269c5b9e94efcb80770e28cd54dda",
         "receipt_result": "pass",
-        "receipt_recorded_at": "2026-09-24T02:00:00Z",
-        "receipt_artifact": "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-005/gate-4-receipt.md",
+        "receipt_recorded_at": "2026-09-25T00:30:00Z",
+        "receipt_artifact": "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/gate-4-receipt.md",
         "blockers": 0,
-        "deviation_approver": "蔡尚志",
+        "deviation_approver": "\u8521\u5c1a\u5fd7",
         "deviation_review_by": "2026-12-23"
       }
     },
@@ -430,13 +401,13 @@
       "verifier": "delivery_toolchain/release/check_runtime_admission.registry_admission_errors",
       "root": "/home/lupin/odayplus",
       "environment": "dev",
-      "expected_manifest_digest": "sha256:6fb8f9e2e6af8dcef9cbe2fd76f2c3d319d95a40fe64c77e3ffdb435f3dc246d",
+      "expected_manifest_digest": "sha256:134cc712132155b0003d68063298d3044d5400d91244b8024b4448268c4fc678",
       "release_sha_origin_dev_tip": {
-        "sha": "c4efabbbeba9e743fab8ee52125932137852c703",
+        "sha": "c8d26f020e0f6a065757beeac88b02f011884894",
         "errors": []
       },
       "release_sha_candidate": {
-        "sha": "1364363402900c800ec3ed033d38fd1d757c1f10",
+        "sha": "419e6bf4958269c5b9e94efcb80770e28cd54dda",
         "errors": []
       }
     },
@@ -736,16 +707,16 @@
     "current_readback_result": "predeploy_target_absence_verified",
     "readback_source": {
       "kind": "hosted artifact",
-      "artifact_id": 10786706348,
-      "run_id": 35944616693,
-      "probe_step_started_at": "2026-09-24T01:53:30Z",
-      "artifact_created_at": "2026-09-24T01:58:23Z",
-      "sha256": "1fc0216709cd466450acb6b82bab9a8f032ac3919d8e49633a6607046344a6d9",
+      "artifact_id": 10840909145,
+      "run_id": 36080312679,
+      "probe_step_started_at": "2026-09-25T01:07:01Z",
+      "artifact_created_at": "2026-09-25T01:11:34Z",
+      "sha256": "4d8383fbaee70efe9287f665b7259a9cf18338e1ab3567578455721e37a0dee3",
       "probe_command": "gcloud run services list --format=value(metadata.name); gcloud run jobs list --format=value(metadata.name)"
     },
     "target_absence_receipt": {
       "kind": "runtime-release-target-absence-readback",
-      "candidate_sha": "1364363402900c800ec3ed033d38fd1d757c1f10",
+      "candidate_sha": "419e6bf4958269c5b9e94efcb80770e28cd54dda",
       "api_service": {
         "name": "oday-api",
         "exists": false,
@@ -757,17 +728,17 @@
         "serving_traffic": false
       },
       "migration_job": {
-        "name": "oday-migration-r-136436340290",
+        "name": "oday-migration-r-419e6bf49582",
         "exists": false,
         "serving_traffic": false
       },
       "worker_job": {
-        "name": "oday-worker-r-136436340290",
+        "name": "oday-worker-r-419e6bf49582",
         "exists": false,
         "serving_traffic": false
       },
       "scheduler_job": {
-        "name": "oday-scheduler-r-136436340290",
+        "name": "oday-scheduler-r-419e6bf49582",
         "exists": false,
         "serving_traffic": false
       }
@@ -787,8 +758,8 @@
       "attempted": true,
       "succeeded": false,
       "window_utc": {
-        "start_utc": "2026-09-24T06:55:18Z",
-        "end_utc": "2026-09-24T06:56:18Z"
+        "start_utc": "2026-09-26T12:00:00Z",
+        "end_utc": "2026-09-26T12:06:15Z"
       },
       "gcloud_config_account": "deborah.lu@dev.cctech-support.com",
       "gcloud_config_project": "odayplus-runtime-20260825",
@@ -807,11 +778,6 @@
           "command": "gcloud storage ls gs://odayplus-runtime-20260825-release-leases/leases/",
           "exit_code": 1,
           "error": "Reauthentication failed. cannot prompt during non-interactive execution"
-        },
-        {
-          "command": "docker buildx imagetools inspect <component>@sha256:<digest> (x4) and :sha256-<digest>.sig/.att tags",
-          "exit_code": 255,
-          "error": "gcloud.auth.docker-helper: Reauthentication failed (registry credential helper is gcloud)"
         }
       ]
     },
@@ -1069,7 +1035,7 @@
       "steps_passed": [
         "Validate release phase inputs",
         "Assert exact release SHA is checked out",
-        "確認 build 階段已綁定 environment 且變數齊備",
+        "\u78ba\u8a8d build \u968e\u6bb5\u5df2\u7d81\u5b9a environment \u4e14\u8b8a\u6578\u9f4a\u5099",
         "Publish build environment binding receipt",
         "Run Secret Scan",
         "Run Python SAST Scan",
@@ -1078,7 +1044,7 @@
         "Run E2E deployment health, backup, restore, and rollback proof",
         "Authenticate to Google Cloud (WIF)",
         "Set up Cloud SDK",
-        "讀回部署 target 以確認沒有既有已核准 release",
+        "\u8b80\u56de\u90e8\u7f72 target \u4ee5\u78ba\u8a8d\u6c92\u6709\u65e2\u6709\u5df2\u6838\u51c6 release",
         "Install Cosign",
         "Build, publish, sign, and attest immutable container images",
         "Write the build-once artifact handoff",
