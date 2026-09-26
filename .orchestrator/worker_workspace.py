@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import stat
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -580,6 +581,178 @@ def _git_operation_in_progress(worktree_path: Path) -> bool:
         if marker_path.exists():
             return True
     return False
+
+def _interrupted_merge_snapshot(worktree_path: Path) -> dict[str, bytes] | None:
+    """Read only an attached merge's recovery state; never resolve or commit it.
+
+    The logical index is used for the seal because git status can rewrite index
+    stat-cache bytes without changing the staged tree. The raw index is also
+    backed up, together with all merge control files, for exact recovery.
+    """
+    branch_rc, branch = _git_output(worktree_path, "symbolic-ref", "--quiet", "HEAD")
+    if branch_rc or not branch or not _git_commit_oid(worktree_path, "MERGE_HEAD"):
+        return None
+    snapshot: dict[str, bytes] = {}
+    try:
+        for marker in ("index.lock", "rebase-merge", "rebase-apply", "sequencer", "CHERRY_PICK_HEAD", "REVERT_HEAD"):
+            rc, name = _git_output(worktree_path, "rev-parse", "--git-path", marker)
+            if rc or not name:
+                return None
+            path = Path(name) if Path(name).is_absolute() else worktree_path / name
+            if path.exists() or path.is_symlink():
+                return None
+        for marker in ("index", "MERGE_HEAD", "MERGE_MSG", "MERGE_MODE", "AUTO_MERGE", "ORIG_HEAD", "MERGE_AUTOSTASH"):
+            rc, name = _git_output(worktree_path, "rev-parse", "--git-path", marker)
+            if rc or not name:
+                return None
+            path = Path(name) if Path(name).is_absolute() else worktree_path / name
+            if path.is_symlink():
+                return None
+            if path.exists():
+                snapshot[marker] = path.read_bytes()
+        if not snapshot.get("index") or not snapshot.get("MERGE_HEAD"):
+            return None
+        if "MERGE_AUTOSTASH" in snapshot and _interrupted_merge_autostash_oid(worktree_path, snapshot) is None:
+            # `git merge --autostash` (or merge.autoStash) parks the pre-merge
+            # dirty work in a stash-like commit that only this file references,
+            # and git prunes that commit as soon as the file is gone.  A value
+            # that no longer names a commit means the parked work is already
+            # unrecoverable; refuse rather than seal a merge whose continuation
+            # would silently finish without it.
+            return None
+        proc = subprocess.run(["git", "ls-files", "--stage", "-z"], cwd=worktree_path, capture_output=True, check=False)
+        if proc.returncode:
+            return None
+        snapshot["index-entries"] = proc.stdout
+        return snapshot
+    except OSError:
+        return None
+
+
+def _interrupted_merge_autostash_oid(worktree_path: Path, snapshot: dict[str, bytes]) -> str | None:
+    """Return the commit parked by ``git merge --autostash``, or None if absent or unresolvable."""
+    raw = snapshot.get("MERGE_AUTOSTASH")
+    if raw is None:
+        return None
+    oid = raw.decode("ascii", errors="replace").strip()
+    if not re.fullmatch(r"[0-9a-fA-F]{40,64}", oid):
+        return None
+    resolved = _git_commit_oid(worktree_path, oid)
+    return resolved if resolved and resolved.lower() == oid.lower() else None
+
+
+def _interrupted_merge_worktree_fingerprint(
+    worktree_path: Path | str,
+    inspection: WorktreeInspection,
+) -> str | None:
+    """Hash the exact dirty worktree entries as Git itself tracks them.
+
+    Every entry is bound by its porcelain code and path, then by the state Git
+    records for that path: a regular file by its executable mode (100644 or
+    100755, derived from the owner execute bit exactly as Git does) and its
+    bytes (read through the path, so hardlinked inodes are covered); a symlink
+    by its target; a plain directory by type only. mtime, ctime and the index
+    stat cache are deliberately not bound, so a stat refresh cannot break a
+    legitimate continuation.
+
+    Returns None when the state cannot be read exactly (``git status`` failed,
+    or a nested repository is present/unreadable). Callers must fail closed
+    on None: neither seal nor resume a merge whose working files cannot be
+    completely preserved and restored.
+    """
+    if inspection.kind == "status_failed":
+        return None
+    digest = hashlib.sha256()
+    digest.update(inspection.kind.encode("utf-8"))
+    digest.update(b"\0")
+    path_root = Path(worktree_path)
+    for code, path in inspection.entries:
+        digest.update(code.encode("utf-8", errors="surrogateescape"))
+        digest.update(b"\0")
+        digest.update(path.encode("utf-8", errors="surrogateescape"))
+        digest.update(b"\0")
+        candidate = path_root / path
+        try:
+            metadata = candidate.lstat()
+        except OSError:
+            digest.update(b"unreadable-or-absent\0")
+            continue
+        if stat.S_ISLNK(metadata.st_mode):
+            digest.update(b"symlink\0")
+            try:
+                target = os.readlink(candidate)
+                digest.update(target.encode("utf-8", errors="surrogateescape"))
+                digest.update(b"\0")
+            except OSError:
+                digest.update(b"readlink-failed\0")
+        elif stat.S_ISREG(metadata.st_mode):
+            # Git keeps exactly one permission bit for a regular file and
+            # derives it from the owner execute bit; a mode change on an
+            # already-dirty file leaves the porcelain code untouched, so it
+            # has to be bound here.
+            git_mode = b"100755" if metadata.st_mode & stat.S_IXUSR else b"100644"
+            digest.update(b"regular:" + git_mode + b"\0")
+            try:
+                with candidate.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        digest.update(chunk)
+            except OSError:
+                digest.update(b"read-failed\0")
+        elif stat.S_ISDIR(metadata.st_mode):
+            nested = _interrupted_merge_directory_fingerprint(candidate)
+            if nested is None:
+                return None
+            digest.update(nested)
+        else:
+            digest.update(f"mode:{metadata.st_mode:o}:size:{metadata.st_size}".encode("ascii"))
+    return digest.hexdigest()
+
+
+def _interrupted_merge_directory_fingerprint(directory: Path) -> bytes | None:
+    """Bind a directory entry of the porcelain listing.
+
+    ``git status --untracked-files=all`` lists the files inside a plain
+    directory individually, so an ordinary directory entry carries no further
+    file state.
+
+    A nested git repository (a submodule gitlink, or an untracked checkout)
+    cannot be completely sealed, indexed, and backed up across repositories
+    by single-repository interrupted merge recovery. Return None so that
+    both seal creation and continuation fail closed.
+    """
+    try:
+        if (directory / ".git").exists():
+            return None
+    except OSError:
+        return None
+    return b"dir\0"
+
+
+def _interrupted_merge_fingerprint(
+    snapshot: dict[str, bytes],
+    worktree_path: Path | str | WorktreeInspection,
+    inspection: WorktreeInspection | None = None,
+) -> str | None:
+    """Seal an attached merge: control files, logical index and exact working files.
+
+    Returns None when the working files cannot be bound exactly; callers fail
+    closed on None.
+    """
+    if isinstance(worktree_path, WorktreeInspection):
+        inspection = worktree_path
+        wt_path = None
+    else:
+        wt_path = Path(worktree_path)
+    binding = {name: hashlib.sha256(data).hexdigest() for name, data in snapshot.items() if name != "index"}
+    if wt_path is not None and inspection is not None:
+        worktree_fingerprint = _interrupted_merge_worktree_fingerprint(wt_path, inspection)
+        if worktree_fingerprint is None:
+            return None
+        binding["worktree"] = worktree_fingerprint
+    elif inspection is not None:
+        binding["worktree"] = inspection.fingerprint
+    return hashlib.sha256(json.dumps(binding, sort_keys=True).encode()).hexdigest()
+
 
 @_entrypoint
 def _prune_worktree_lease_blocks(bucket: dict[str, Any]) -> None:
@@ -1389,8 +1562,25 @@ def sealed_owner_continuation_allowed(
     if recorded_path != worktree_path.resolve() or str(record.get("workspace_branch") or "") != branch:
         return False, "workspace_changed"
     inspection = inspect_worktree(worktree_path, materialized_paths=materialized_paths)
-    if inspection.kind != "owner_dirty" or inspection.fingerprint != record.get("dirt_fingerprint"):
-        return False, "dirt_changed"
+    if record.get("reason") == "interrupted_merge":
+        if inspection.kind == "status_failed":
+            return False, "merge_state_changed"
+        snapshot = _interrupted_merge_snapshot(worktree_path)
+        if snapshot is None:
+            return False, "merge_state_changed"
+        merge_fingerprint = _interrupted_merge_fingerprint(snapshot, worktree_path, inspection)
+        if merge_fingerprint is None or merge_fingerprint != record.get("dirt_fingerprint"):
+            return False, "merge_state_changed"
+    else:
+        # An ordinary dirty seal binds porcelain status and dirty file bytes
+        # only.  A cherry-pick, revert or rebase started after the seal can
+        # leave HEAD, the index and every dirty byte untouched (an empty
+        # cherry-pick does exactly that), so the fingerprint cannot see it.
+        # Only a seal that captured the merge itself may resume one.
+        if _git_operation_in_progress(worktree_path):
+            return False, "git_operation_in_progress"
+        if inspection.kind != "owner_dirty" or inspection.fingerprint != record.get("dirt_fingerprint"):
+            return False, "dirt_changed"
     head_sha = _git_commit_oid(worktree_path, "HEAD")
     if not head_sha or head_sha != record.get("head_sha"):
         return False, "head_changed"
@@ -2122,7 +2312,15 @@ def prepare_worker_workspace(
             materialized_paths=materialized_paths,
             required_head=required_review_head,
         )
-        if not refresh_ok and _is_skipped_dirty_worktree(refresh_status):
+        handoff_record = ((state.get("worker_worktrees") or {}).get("handoff_blocks") or {}).get(workspace_task_id)
+        sealed_interrupted_merge = isinstance(handoff_record, dict) and handoff_record.get("reason") == "interrupted_merge"
+        # `unresolved_git_operation` becomes a continuation candidate only when
+        # the seal captured that exact merge.  An ordinary dirty seal never
+        # covered Git operation state, so for it the refresh verdict stands.
+        if not refresh_ok and (
+            _is_skipped_dirty_worktree(refresh_status)
+            or (refresh_status == "unresolved_git_operation" and sealed_interrupted_merge)
+        ):
             allowed, continuation_detail = sealed_owner_continuation_allowed(
                 config,
                 state,
@@ -2139,6 +2337,15 @@ def prepare_worker_workspace(
                 refresh_status = "sealed_owner_continuation"
                 base_relation = "sealed_owner_continuation"
                 request.metadata["worktree_continuation"] = "sealed_owner_dirt"
+                if sealed_interrupted_merge:
+                    request.metadata["worktree_continuation"] = "sealed_owner_merge"
+                    request.message = (
+                        "INTERRUPTED MERGE RECOVERY: the previous writer has exited. The exact "
+                        "index, merge metadata and dirty files were preserved and sealed for you. "
+                        "Resume this same merge before further implementation; inspect staged upstream "
+                        "changes and task-owned unstaged work separately. Preserve both histories; "
+                        "do not reset, discard, or resubmit before verification.\n\n" + request.message
+                    )
                 request.message = (
                     "CLOSEOUT CONTINUATION: your prior worker exited after leaving the exact "
                     f"task worktree dirty ({continuation_detail}). You alone may finish this "
@@ -3244,9 +3451,24 @@ def preserve_dead_worker_worktree(
     )
     if outcome and _dead_owner_continuation_eligible(config, worker, record):
         handoff_seal = seal_worker_handoff(config, state, worker, record)
+        if handoff_seal.reason == "git_operation_in_progress":
+            merge_snapshot = _interrupted_merge_snapshot(Path(workspace_path))
+            if merge_snapshot is not None:
+                inspection = inspect_worktree(Path(workspace_path), materialized_paths=_worker_materialized_context_paths(state, worker))
+                merge_fingerprint = _interrupted_merge_fingerprint(merge_snapshot, Path(workspace_path), inspection)
+                # None means the exact working-file state could not be read
+                # (git status failed, or a nested repository is unreadable).
+                # Keep the plain refusal: a seal that cannot be verified later
+                # must not be recorded as a continuation.
+                if merge_fingerprint is not None:
+                    handoff_seal = WorkerHandoffSeal(
+                        False, "interrupted_merge", "Resume the preserved interrupted merge in this same checkout",
+                        _git_commit_oid(Path(workspace_path), "HEAD"),
+                        merge_fingerprint,
+                    )
         if (
             not handoff_seal.accepted
-            and handoff_seal.reason == "owner_dirty"
+            and handoff_seal.reason in {"owner_dirty", "interrupted_merge"}
             and handoff_seal.head_sha
             and handoff_seal.dirt_fingerprint
         ):
@@ -3337,8 +3559,11 @@ def _quarantine_and_preserve_dirty_worktree(
         return _quarantine_refused("detached_head")
     if expected_branch and current_branch != expected_branch:
         return _quarantine_refused("branch_mismatch")
+    merge_snapshot = None
     if _git_operation_in_progress(worktree_path):
-        return _quarantine_refused("git_operation_in_progress")
+        merge_snapshot = _interrupted_merge_snapshot(worktree_path)
+        if merge_snapshot is None:
+            return _quarantine_refused("git_operation_in_progress")
 
     local_head = _git_commit_oid(worktree_path, "HEAD")
     if not local_head:
@@ -3366,7 +3591,7 @@ def _quarantine_and_preserve_dirty_worktree(
     )
     if status_proc.returncode != 0:
         return _quarantine_refused("status_unreadable")
-    if not status_proc.stdout:
+    if not status_proc.stdout and merge_snapshot is None:
         # A clean worktree is the ordinary case at worker death, not a failure
         # to read it. Folding both into "status_unreadable" made the routine
         # outcome indistinguishable from a real one, and the single time it
@@ -3374,7 +3599,7 @@ def _quarantine_and_preserve_dirty_worktree(
         return _quarantine_refused("worktree_clean")
 
     raw_entries = [e for e in status_proc.stdout.split(b"\0") if e]
-    if not raw_entries:
+    if not raw_entries and merge_snapshot is None:
         return _quarantine_refused("nothing_to_preserve")
 
     inventory_files: list[dict[str, Any]] = []
@@ -3420,6 +3645,13 @@ def _quarantine_and_preserve_dirty_worktree(
                     sha256_val = None
             elif full_p.is_dir():
                 is_dir = True
+                try:
+                    if (full_p / ".git").exists():
+                        if merge_snapshot is not None:
+                            return _quarantine_refused("nested_repository_not_supported")
+                except OSError:
+                    if merge_snapshot is not None:
+                        return _quarantine_refused("nested_repository_not_supported")
 
         inventory_files.append({
             "path": rel_path,
@@ -3485,8 +3717,57 @@ def _quarantine_and_preserve_dirty_worktree(
                         if h_check.hexdigest() != file_entry["sha256"]:
                             raise RuntimeError(f"backup checksum mismatch for {rel_p}")
 
+        if merge_snapshot is not None:
+            merge_dir = task_backup_dir / "git-state"
+            merge_dir.mkdir()
+            for marker, payload in merge_snapshot.items():
+                saved = merge_dir / marker
+                saved.write_bytes(payload)
+                if saved.read_bytes() != payload:
+                    raise RuntimeError(f"merge state backup mismatch for {marker}")
+            autostash_oid = _interrupted_merge_autostash_oid(worktree_path, merge_snapshot)
+            if autostash_oid is not None:
+                # The parked pre-merge work lives in a commit no ref reaches;
+                # git gc prunes it once MERGE_AUTOSTASH is gone.  Keep its
+                # content as patches so the backup does not depend on the
+                # object store surviving.
+                for name, base_rev, target_rev in (
+                    ("MERGE_AUTOSTASH-worktree.patch", f"{autostash_oid}^1", autostash_oid),
+                    ("MERGE_AUTOSTASH-index.patch", f"{autostash_oid}^1", f"{autostash_oid}^2"),
+                ):
+                    patch_proc = subprocess.run(
+                        ["git", "diff", "--binary", base_rev, target_rev],
+                        cwd=worktree_path, capture_output=True, check=False,
+                    )
+                    if patch_proc.returncode != 0:
+                        raise RuntimeError(f"failed to capture autostash content ({name})")
+                    (merge_dir / name).write_bytes(patch_proc.stdout)
+            # Patches cannot reproduce unmerged index entries alone. Preserve
+            # actual dirty file bytes too, including conflict resolutions.
+            for entry in inventory_files:
+                if entry.get("is_file") and entry.get("sha256"):
+                    saved = task_backup_dir / "files" / entry["path"]
+                    saved.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(worktree_path / entry["path"], saved)
+                    if hashlib.sha256(saved.read_bytes()).hexdigest() != entry["sha256"]:
+                        raise RuntimeError(f"merge file backup mismatch for {entry['path']}")
+                elif entry.get("is_symlink") and entry.get("symlink_target") is not None:
+                    saved = task_backup_dir / "files" / entry["path"]
+                    saved.parent.mkdir(parents=True, exist_ok=True)
+                    if saved.exists() or os.path.islink(saved):
+                        saved.unlink()
+                    os.symlink(entry["symlink_target"], saved)
+
         checksums: dict[str, str] = {}
-        for b_root, _, b_files in os.walk(task_backup_dir):
+        for b_root, b_dirs, b_files in os.walk(task_backup_dir):
+            # os.walk lists a symlink that resolves to a directory under the
+            # directory names and does not descend into it; record its target
+            # the same way as a file symlink so every preserved link is covered.
+            for bd in b_dirs:
+                dp = Path(b_root) / bd
+                if os.path.islink(dp):
+                    rel_dp = dp.relative_to(task_backup_dir).as_posix()
+                    checksums[rel_dp] = "symlink:" + hashlib.sha256(os.readlink(dp).encode("utf-8")).hexdigest()
             for bf in b_files:
                 if bf == "backup_checksums.sha256":
                     continue
