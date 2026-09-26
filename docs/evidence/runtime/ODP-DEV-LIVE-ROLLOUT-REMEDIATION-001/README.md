@@ -6744,3 +6744,28 @@ audit JSON 的 `superseded_unblock_requirements.previous_requirements`）：
    - 候選 `419e6bf4958269c5b9e94efcb80770e28cd54dda` 之 build artifact 與 dev gates（gate-0, gate-1, gate-4）均已備齊並由蔡尚志簽署 `decision=go`。
    - 目前尚待 Human/Ops 登記針對此候選的全新 `release_lease_request`，並由 Supervisor 簽發 Ed25519 lease 派送 `deploy-dev.yml` deploy phase。
    - 本任務嚴格保持 fail-closed `in_progress`，待部署完成後採集真實 GCP live readback 數據以完成驗收條件 3–8。
+
+## 258. Round 271 審查反饋修復與 Fail-Closed 狀態錨定（2026-09-26，Owner: Antigravity5）
+
+### 258.1 審查意見 P1 & P2 全面處置
+
+1. **P2 證據內部一致性修正（Audit Internal Consistency Reconciliation）**：
+   - **來源態勢綁定雜湊校正**：將 `live-runtime-reconciliation-audit.json` 中 `source_posture.binding_digest` 自舊值 `sha256:5c180ab1...` 更新為 `origin/dev` 權威 `RELEASE_MANIFEST.json` 之 `sha256:7a25b02f4c51d41e832f777eb08743d7d8ee3c64267339c2e103967ad2fbfb6c`。
+   - **Lease 歷史簽發記錄勘誤**：修正 `authorization_state`，明確記錄全隊列已簽發歷史（前候選 `136436340290` 於 2026-09-24T16:29:34Z 已簽發並派發 lease `lease-8930f965fa0f05a9059bc94a6716f3d1`），並精確標註目前候選 `419e6bf4958269c5b9e94efcb80770e28cd54dda` 尚未簽發 lease（`supervisor_lease_issued: false`）。
+   - **候選與 Run 指向一致性重整**：全面校正 `readback_identity.hosted_build`、`what_the_issuer_does_after_repair`、`reconciliation_findings`（FINDING-001, FINDING-002, FINDING-012）、`actions_taken` 及 `unblock_requirements`（第 5 項），統一指向目前候選 `419e6bf4958269c5b9e94efcb80770e28cd54dda`、manifest `sha256:134cc712132155b0003d68063298d3044d5400d91244b8024b4448268c4fc678`、hosted build run `36080312679` 及 `origin/dev`（`c8d26f020e0f`），同時完整保留歷史觀測於 `history` 與歷史記錄中。
+
+2. **P1 狀態確認與 Fail-Closed 防護**：
+   - 確認 hosted Runtime Release run `36080312679` 為 `phase: build` 單次建置（`build=success`），其 `admission`、`deploy` 與 `watch` 工作依設計為 `skipped`。
+   - 本任務嚴格保持 fail-closed `in_progress` 狀態，不提早進入 review，待 Human/Ops 登記有效 `release_lease_request` 並由 Supervisor 完成 Ed25519 lease 簽發與 hosted `deploy-dev.yml` deploy phase 部署後，再行採集真實 GCP live readback 數據以完成驗收條件 3–8。
+
+3. **全套獨立驗證實測通過**：
+   - 執行 `python3 docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/verify_dev_live_rollout_remediation.py`：PASS。
+   - 執行 `uv run pytest -q tests/ops/test_deploy_workflow_contract.py`：90 passed（exit 0）。
+   - 執行 `python3 delivery_toolchain/governance/check_code_boundaries.py`：1178 files passed（exit 0）。
+   - 執行 `python3 scripts/validate_external_data_boundary.py`：3923 files passed（exit 0）。
+
+### 258.2 下一步執行順序
+
+1. Human/Ops 登記帶有全新 nonce 及新 candidate `419e6bf4958269c5b9e94efcb80770e28cd54dda` 之 `release_lease_request`。
+2. Supervisor 簽發 Ed25519 lease 並 dispatch `deploy-dev.yml` deploy phase。
+3. 部署落地後，本任務採集 GCP 實體環境狀態（Cloud Run URLs, jobs one-shot, authenticated smoke, 16-source disabled, default-deny egress, live IAM），滿足驗收條件 3–8 後送審。
