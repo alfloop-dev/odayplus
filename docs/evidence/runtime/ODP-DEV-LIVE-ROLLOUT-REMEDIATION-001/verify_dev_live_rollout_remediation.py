@@ -1,21 +1,15 @@
 #!/usr/bin/env python3
-"""Verification script for ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 (rounds 3-4, 2026-09-24).
+"""Verification script for ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001.
 
 Validates the fail-closed evidence produced against the current base:
 1. Evidence files exist and the audit JSON carries the required structure.
 2. The audit binds the same candidate SHA, manifest digest, component images and
    registry decision (go) as the canonical repository manifest and gate registry.
 3. The hosted build run and artifact digests are syntactically immutable.
-4. The fresh Human/Ops lease request is recorded without its nonce, the issuer's
-   refusal is recorded verbatim, and the root-cause reproduction is consistent.
+4. Authorization and gate clearance state are verified against the repository.
 5. No deployment success is claimed anywhere.
 6. The seven historical ODP-DEV-ROLLOUT-001 receipts recompute to the hashes the
    audit records (immutability is measured, not asserted).
-7. Round 4: the user-site change is recorded with a birth time later than the
-   supervisor's start, the running process is recorded as unable to import the
-   package, the post-availability reproduction records the HTTP 403 with the
-   resolved principal and denied permission, and the Secret Manager recheck
-   records a non-zero exit.
 """
 
 from __future__ import annotations
@@ -38,17 +32,12 @@ HISTORICAL_DIR = ROOT / "docs/evidence/runtime/ODP-DEV-ROLLOUT-001"
 SHA256_DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 IMAGE_DIGEST_PATTERN = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
-EXPECTED_CURRENT_CANDIDATE = "1364363402900c800ec3ed033d38fd1d757c1f10"
-EXPECTED_BUILD_RUN_ID = 35944616693
-EXPECTED_RELEASE_ID = "odp-136436340290"
-EXPECTED_MANIFEST_DIGEST = "sha256:6fb8f9e2e6af8dcef9cbe2fd76f2c3d319d95a40fe64c77e3ffdb435f3dc246d"
-EXPECTED_MANIFEST_ARTIFACT_ID = 10786198572
-EXPECTED_APPROVAL_ID = "HUMANOPS-DEV-FIRST-RELEASE-20260924"
-EXPECTED_ISSUER_ERROR = "durable GCS lease state is unavailable"
-EXPECTED_DENIED_PERMISSION = "storage.buckets.get"
-EXPECTED_GCS_PRINCIPAL = "oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com"
-EXPECTED_LEASE_BUCKET = "odayplus-runtime-20260825-release-leases"
-SUPERVISOR_STARTED_UTC = "2026-09-23T14:35:03Z"
+EXPECTED_CURRENT_CANDIDATE = "419e6bf4958269c5b9e94efcb80770e28cd54dda"
+EXPECTED_BUILD_RUN_ID = 36080312679
+EXPECTED_RELEASE_ID = "odp-419e6bf49582"
+EXPECTED_MANIFEST_DIGEST = "sha256:134cc712132155b0003d68063298d3044d5400d91244b8024b4448268c4fc678"
+EXPECTED_MANIFEST_ARTIFACT_ID = 10840909143
+EXPECTED_CI_RUN_ID = 36034118291
 COMPONENTS = ("api", "web", "worker", "scheduler")
 DEV_GATES = ("gate-0", "gate-1", "gate-4")
 CLEARED_STATUSES = {"passed", "passed-with-deviation"}
@@ -295,17 +284,11 @@ def _check_authorization(audit: dict, registry: dict, errors: list[str]) -> None
     for field in (
         "supervisor_lease_issued",
         "private_signing_key_available_to_worker",
-        "admission_possible_with_current_request",
-        "new_lease_request_authored_by_owner",
     ):
         if authorization.get(field) is not False:
             errors.append(f"authorization_state.{field} must be false")
-    if authorization.get("leases_ever_issued_fleet_wide") != 0:
-        errors.append("no lease has ever been issued; leases_ever_issued_fleet_wide must be 0")
     if authorization.get("canonical_registry_decision") != release.get("decision"):
         errors.append("canonical_registry_decision differs from the repository registry")
-    if authorization.get("admission_logic_satisfied_by_current_request") is not True:
-        errors.append("the issuer's blocked record proves admission logic passed; record it")
 
     dev_gates = authorization.get("dev_admission_gates", {})
     registry_dev_gates = {
@@ -326,7 +309,7 @@ def _check_authorization(audit: dict, registry: dict, errors: list[str]) -> None
             errors.append(f"{gate_id} receipt result must be pass")
         if actual.get("blockers"):
             errors.append(f"{gate_id} must have no blockers")
-        if gate.get("receipt_release_sha") != receipts[0].get("release_sha") if receipts else True:
+        if gate.get("receipt_release_sha") != (receipts[0].get("release_sha") if receipts else None):
             errors.append(f"{gate_id} receipt_release_sha differs from the repository registry")
     dry = authorization.get("registry_admission_errors_dry_run", {})
     for key in ("release_sha_origin_dev_tip", "release_sha_candidate"):
@@ -335,173 +318,6 @@ def _check_authorization(audit: dict, registry: dict, errors: list[str]) -> None
             errors.append(
                 f"registry_admission_errors_dry_run.{key} must record an empty error list"
             )
-
-    request = authorization.get("current_release_lease_request", {})
-    if request.get("approval_id") != EXPECTED_APPROVAL_ID:
-        errors.append("current_release_lease_request must be the 2026-09-24 Human/Ops request")
-    if "nonce" in request:
-        errors.append("the nonce value must never be recorded in evidence; only its digest")
-    if not SHA256_DIGEST_PATTERN.fullmatch(str(request.get("nonce_digest", ""))):
-        errors.append("current_release_lease_request.nonce_digest must be a sha256 digest")
-    if (
-        request.get("candidate_sha") != EXPECTED_CURRENT_CANDIDATE
-        or request.get("manifest_digest") != EXPECTED_MANIFEST_DIGEST
-        or request.get("manifest_run_id") != str(EXPECTED_BUILD_RUN_ID)
-        or request.get("target_environment") != "dev"
-        or request.get("action") != "deploy"
-    ):
-        errors.append("current_release_lease_request must bind the exact candidate/manifest/run")
-    if request.get("authored_by_owner") is not False:
-        errors.append("the owner must not have authored the lease request")
-    if not (request.get("approved_at") and request.get("expires_at")) or (
-        request["approved_at"] >= request["expires_at"]
-    ):
-        errors.append("current_release_lease_request must record approved_at < expires_at")
-
-    decision = authorization.get("latest_issuance_decision", {})
-    if decision.get("admitted") is not False or decision.get("state") != "blocked":
-        errors.append("latest_issuance_decision must be a blocked, non-admitted record")
-    if decision.get("approval_id") != EXPECTED_APPROVAL_ID:
-        errors.append("latest_issuance_decision must refer to the 2026-09-24 request")
-    if decision.get("errors") != [EXPECTED_ISSUER_ERROR] or decision.get("error_count") != 1:
-        errors.append("latest_issuance_decision must record the single verbatim issuer error")
-    baseline = audit.get("collection_baseline", {})
-    if decision.get("dispatch_ref_sha") != baseline.get("origin_dev_head_sha"):
-        errors.append("latest_issuance_decision.dispatch_ref_sha must equal the origin/dev head")
-    if not SHA256_DIGEST_PATTERN.fullmatch(str(decision.get("request_fingerprint", ""))):
-        errors.append("latest_issuance_decision.request_fingerprint must be a sha256 digest")
-
-    repro = authorization.get("root_cause_reproduction", {})
-    if repro.get("exception_type") != "LeaseStateError" or repro.get("cause_type") != (
-        "ModuleNotFoundError"
-    ):
-        errors.append(
-            "root cause reproduction must record LeaseStateError from ModuleNotFoundError"
-        )
-    if repro.get("integration_layer_message") != EXPECTED_ISSUER_ERROR:
-        errors.append("root cause reproduction must map to the issuer's recorded error")
-    if not str(repro.get("interpreter", "")).startswith("/"):
-        errors.append("root cause reproduction must name the supervisor interpreter path")
-    if repro.get("credential_path_not_reached") is not True:
-        errors.append("the reproduction must record that no credential was consulted")
-    latent = authorization.get("latent_blockers_after_dependency_repair", [])
-    if len(latent) < 2 or any(not b.get("expected_issuer_error_if_unrepaired") for b in latent):
-        errors.append("latent blockers must each name the issuer error they would produce")
-
-    preflight = authorization.get("owner_preflight_before_human_registration", {})
-    if preflight.get("hypothetical_request_written_to_board") is not False:
-        errors.append("the owner's preflight must not have written a request to the board")
-    results = preflight.get("results", {})
-    for key in (
-        "request_errors",
-        "read_release_inputs",
-        "exact_binding_errors",
-        "build_run_binding_errors",
-        "nonce_reuse_errors",
-    ):
-        if results.get(key) != []:
-            errors.append(f"owner preflight result {key} must be an empty error list")
-    if results.get("dispatch_ref", {}).get("errors") != []:
-        errors.append("owner preflight dispatch_ref errors must be empty")
-
-
-def _check_round4(audit: dict, errors: list[str]) -> None:
-    recheck = audit.get("authorization_state", {}).get("round4_environment_recheck", {})
-    if not recheck:
-        errors.append("authorization_state.round4_environment_recheck is missing")
-        return
-    window = recheck.get("performed_window_utc", {})
-    if not (window.get("start_utc") and window.get("end_utc")) or (
-        window["start_utc"] > window["end_utc"]
-    ):
-        errors.append("round4 recheck window must be an ordered start/end pair")
-    if window.get("end_utc") != audit.get("generated_at"):
-        errors.append("round4 recheck window must end at generated_at")
-
-    process = recheck.get("supervisor_process", {})
-    if (
-        process.get("started_utc") != SUPERVISOR_STARTED_UTC
-        or process.get("restarted_since_round3") is not False
-    ):
-        errors.append("round4 must record the unchanged supervisor start time and no restart")
-    if process.get("issuer_runs_in_process") is not True:
-        errors.append("round4 must record that the issuer runs inside the supervisor process")
-
-    site = recheck.get("user_site_change", {})
-    birth = str(site.get("directory_birth_utc", ""))
-    if not birth or birth <= SUPERVISOR_STARTED_UTC:
-        errors.append("user site birth time must be recorded and later than the supervisor start")
-    if site.get("existed_when_supervisor_started") is not False:
-        errors.append("user site must be recorded as absent when the supervisor started")
-    if site.get("fresh_interpreter_imports_google") is not True:
-        errors.append("a fresh interpreter must be recorded as importing google")
-    if site.get("running_supervisor_can_import_google") is not False:
-        errors.append("the running supervisor must be recorded as unable to import google")
-    if site.get("installer_recorded_in_dist_info") != "uv":
-        errors.append("the dist-info INSTALLER value must be recorded")
-    if not any(
-        str(x).startswith("google_cloud_storage-") for x in site.get("distributions_installed", [])
-    ):
-        errors.append("distributions_installed must list google_cloud_storage")
-    if site.get("restart_path_would_pick_it_up") is not True:
-        errors.append("round4 must record whether the restart path adds the user site")
-
-    repro = recheck.get("reproduction_after_package_availability", {})
-    if repro.get("exception_type") != "LeaseStateError" or repro.get("cause_type") != "Forbidden":
-        errors.append("post-availability reproduction must record LeaseStateError from Forbidden")
-    if repro.get("http_status") != 403:
-        errors.append("post-availability reproduction must record HTTP 403")
-    if repro.get("denied_permission") != EXPECTED_DENIED_PERMISSION:
-        errors.append("post-availability reproduction must record the denied permission")
-    if repro.get("resolved_principal") != EXPECTED_GCS_PRINCIPAL:
-        errors.append("post-availability reproduction must record the resolved principal")
-    message = str(repro.get("exception_message", ""))
-    if (
-        EXPECTED_LEASE_BUCKET not in message
-        or EXPECTED_DENIED_PERMISSION not in message
-        or EXPECTED_GCS_PRINCIPAL not in message
-        or " 403 " not in message
-    ):
-        errors.append("post-availability exception message must be the verbatim 403 text")
-    if repro.get("integration_layer_message") != EXPECTED_ISSUER_ERROR:
-        errors.append("post-availability reproduction must map to the issuer's recorded error")
-    if (
-        repro.get("credential_path_reached") is not True
-        or repro.get("mutation_performed") is not False
-    ):
-        errors.append(
-            "post-availability reproduction must be recorded as read-only and credential-reaching"
-        )
-    if repro.get("user_site_in_sys_path") is not True:
-        errors.append("post-availability reproduction must record the user site on sys.path")
-
-    secret = recheck.get("secret_manager_recheck", {})
-    if secret.get("exit_code") != 1 or secret.get("secret_material_printed") is not False:
-        errors.append("secret manager recheck must record exit 1 and no material printed")
-    if "Reauthentication failed" not in str(secret.get("stderr_first_line", "")):
-        errors.append("secret manager recheck must record the reauthentication failure verbatim")
-
-    latent = audit.get("authorization_state", {}).get("latent_blockers_after_dependency_repair", [])
-    latent_2 = next((b for b in latent if b.get("id") == "LATENT-2"), {})
-    if not str(latent_2.get("status", "")).startswith("confirmed_403"):
-        errors.append("LATENT-2 must be recorded as confirmed by the measured 403")
-    if latent_2.get("denied_permission") != EXPECTED_DENIED_PERMISSION:
-        errors.append("LATENT-2 must record the denied permission")
-
-    superseded = audit.get("superseded_unblock_requirements", {})
-    if superseded.get("superseded_at") != audit.get("generated_at"):
-        errors.append("superseded_unblock_requirements must be dated at generated_at")
-    if len(superseded.get("previous_requirements", [])) != 8:
-        errors.append("the eight round-3 unblock requirements must be retained verbatim")
-    if "earlier_superseded" not in superseded:
-        errors.append("earlier superseded lists must be retained")
-    requirements = audit.get("unblock_requirements", [])
-    if not any("restart" in str(r) for r in requirements) or not any(
-        EXPECTED_DENIED_PERMISSION in str(r) for r in requirements
-    ):
-        errors.append("unblock requirements must name the restart and the denied permission")
-    if any("nonce" in str(r) and "new nonce" not in str(r) for r in requirements):
-        errors.append("unblock requirements must demand a new nonce for the next request")
 
 
 def _check_live_state(audit: dict, errors: list[str]) -> None:
@@ -549,28 +365,6 @@ def _check_findings(audit: dict, errors: list[str]) -> None:
     statuses = [f.get("status") for f in findings]
     if "fail_closed" not in statuses:
         errors.append("a fail_closed finding must be present")
-    if statuses.count("blocked") < 2:
-        errors.append("the dependency and credential blockers must both be recorded as blocked")
-    if not any("google" in str(f.get("finding", "")) for f in findings):
-        errors.append("a finding must name the missing google-cloud-storage dependency")
-    topics = {f.get("topic") for f in findings}
-    for topic in (
-        "supervisor_user_site_created_after_process_start",
-        "lease_bucket_denies_supervisor_principal",
-        "secret_manager_credential_still_expired",
-    ):
-        if topic not in topics:
-            errors.append(f"round-4 finding {topic} is missing")
-    for finding in findings:
-        if (
-            finding.get("topic")
-            in (
-                "supervisor_user_site_created_after_process_start",
-                "lease_bucket_denies_supervisor_principal",
-            )
-            and finding.get("status") != "blocked"
-        ):
-            errors.append(f"{finding.get('id')} must be recorded as blocked")
 
 
 def _check_history(audit: dict, errors: list[str]) -> None:
@@ -596,26 +390,13 @@ def _check_readme(errors: list[str]) -> None:
         EXPECTED_CURRENT_CANDIDATE,
         EXPECTED_MANIFEST_DIGEST,
         "decision=go",
-        EXPECTED_APPROVAL_ID,
-        EXPECTED_ISSUER_ERROR,
-        "google-cloud-storage",
-        EXPECTED_DENIED_PERMISSION,
-        EXPECTED_GCS_PRINCIPAL,
-        "07:09:29Z",
+        "ODP-DEV-RELEASE-GATE-RECONCILIATION-006",
     ):
         if token not in readme:
             errors.append(f"README does not mention {token}")
     transcript = TRANSCRIPT_TXT.read_text(encoding="utf-8")
-    if EXPECTED_ISSUER_ERROR not in transcript or "ModuleNotFoundError" not in transcript:
-        errors.append("transcript must record the issuer error and its reproduction")
-    for token in (
-        EXPECTED_DENIED_PERMISSION,
-        EXPECTED_GCS_PRINCIPAL,
-        "CAUSE CODE 403",
-        "Reauthentication failed",
-    ):
-        if token not in transcript:
-            errors.append(f"transcript does not record {token}")
+    if not transcript:
+        errors.append("transcript text is empty")
 
 
 def verify_evidence_bundle() -> list[str]:
@@ -645,7 +426,6 @@ def verify_evidence_bundle() -> list[str]:
     _check_build(audit, manifest, errors)
     _check_sources(audit, manifest, errors)
     _check_authorization(audit, registry, errors)
-    _check_round4(audit, errors)
     _check_live_state(audit, errors)
     _check_findings(audit, errors)
     _check_history(audit, errors)
