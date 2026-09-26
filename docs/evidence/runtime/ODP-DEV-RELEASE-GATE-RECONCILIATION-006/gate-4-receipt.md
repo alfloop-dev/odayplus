@@ -16,7 +16,7 @@ the OSS licence gate tests.
 
 Production dependency audit, from the release build's own receipt
 (`npm-audit-receipt.json`, produced by Runtime Release run 36080312679 at
-2026-09-24T01:50:33Z with `omit_dev: true`):
+2026-09-25T01:04:00Z with `omit_dev: true`):
 
 ```
 critical 0, high 0, moderate 0, low 0, info 0
@@ -79,4 +79,4 @@ Two required security readbacks cannot exist before a first deployment and are n
 here: the live default-deny egress probe (`.odp_data/deployment/public-egress-probe.json`)
 and the live IAM state readback. Both remain with `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001`
 and are conditions on the deviation. The offline egress contract digest
-`sha256:8492ae19…` in the manifest is supplementary evidence, not a live probe.
+`sha256:d18b0a11…` (`sources_off_attestation.egress_evidence.contract_digest`) in the manifest is supplementary evidence, not a live probe.

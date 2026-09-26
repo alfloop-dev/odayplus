@@ -207,3 +207,35 @@ to `delivery_toolchain/e2e/check_release_gate_registry.py`, to
 `pytest tests/release/test_release_manifest.py` reported 87 passed, 0 failed. The declared
 verification command `check_release_gate_registry.py` is re-run against the new head and its
 receipt is recorded through `task_verification.py` before resubmission.
+
+## 7. Corrections after review of head `1f82a327` (PR #1370)
+
+Codex rejected head `1f82a327` on 2026-09-26. Corrected in the following head:
+
+- **`candidate_rebind.build_run.conclusion` restored to `success`.** The rebind to
+  `419e6bf4` had dropped the field that `origin/dev` carried since `4c1f0997`.
+  `.orchestrator/release_lease_integration.py` refuses a lease request with
+  `candidate_rebind.build_run must be successful` when it is absent, so the registry read
+  GO while lease issuance stayed blocked. `check_release_gate_registry.py` does not
+  check this field and stayed green on the defective head. The value is a readback, not an
+  assumption: `gh run view 36080312679` on 2026-09-26 returns `status: completed`,
+  `conclusion: success`, `headSha: 419e6bf4958269c5b9e94efcb80770e28cd54dda`,
+  `event: workflow_dispatch`.
+- **gate-4 receipt audit timestamp.** It named `2026-09-24T01:50:33Z`; the committed
+  `npm-audit-receipt.json` records `recorded_at: 2026-09-25T01:04:00Z`.
+- **gate-4 receipt egress digest.** It named `sha256:8492ae19…`; the manifest's
+  `sources_off_attestation.egress_evidence.contract_digest` for this candidate is
+  `sha256:d18b0a1178ed69442a92a9abe76e2c22f049d17ee0c86e34d39233cff244cd72`.
+- **`candidate_rebind.note`.** It said `1364363402900c800ec3ed033d38fd1d757c1f10`
+  predates PRs #1358 and #1359; it contains both. The actual reason for this rebind is
+  PR #1369 (`.github/workflows/deploy-dev.yml`), the only non-evidence change in
+  `1364363..419e6bf4`.
+
+One statement in section 1 is also inaccurate and is corrected here rather than rewritten:
+`1364363402900c800ec3ed033d38fd1d757c1f10` *did* reach `dev` as a bound candidate —
+`ODP-DEV-RELEASE-GATE-RECONCILIATION-005` merged via PR #1365 (`c4efabbb`), and the
+registry's `candidate_rebind.from_candidate_sha` / `from_manifest_digest` therefore name
+`1364363…` / `sha256:6fb8f9e2…`, not `39ae43f6`. The header's "Previous candidate" line
+describes the start of the chain, not the registry's immediate predecessor. The
+instruction not to deploy `1364363…` images stands: its admission job could never run the
+lease check, and it is superseded by `419e6bf4`.

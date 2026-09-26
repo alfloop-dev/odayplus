@@ -393,13 +393,14 @@
     "from_manifest_digest": "sha256:6fb8f9e2e6af8dcef9cbe2fd76f2c3d319d95a40fe64c77e3ffdb435f3dc246d",
     "to_manifest_digest": "sha256:134cc712132155b0003d68063298d3044d5400d91244b8024b4448268c4fc678",
     "re_attestation_required": true,
-    "note": "Rebind from 1364363402900c800ec3ed033d38fd1d757c1f10 to 419e6bf4958269c5b9e94efcb80770e28cd54dda. The previous candidate predates the gate-0 C1 repair (PR #1358, Edge Runtime build warnings) and the gate-1 event-contract repair (PR #1359); both change product paths, so the previous images could not be reused and the artifact handoff was rebuilt by Runtime Release run 36080312679. See docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/README.md.",
+    "note": "Rebind from 1364363402900c800ec3ed033d38fd1d757c1f10 to 419e6bf4958269c5b9e94efcb80770e28cd54dda. The previous candidate predates PR #1369 (ODP-RELEASE-ADMISSION-JOB-DEPS-001), which changes .github/workflows/deploy-dev.yml so the admission job can run the gs://-backed lease check; that is a non-evidence path, so the previous images could not be reused and the artifact handoff was rebuilt by Runtime Release run 36080312679. See docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/README.md.",
     "build_run": {
       "workflow": "Runtime Release",
       "run_id": 36080312679,
       "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36080312679",
       "event": "workflow_dispatch",
       "phase": "build",
+      "conclusion": "success",
       "release_sha_input": "419e6bf4958269c5b9e94efcb80770e28cd54dda",
       "deploy_jobs": "skipped (no Supervisor lease was supplied; nothing was deployed)"
     },
