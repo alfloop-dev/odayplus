@@ -36,7 +36,7 @@
     "end_utc": "2026-09-26T12:06:15Z"
   },
   "readback_identity": {
-    "hosted_build": "GitHub Actions Runtime Release with Google WIF; run 35944616693 dispatched by ODP-DEV-RELEASE-GATE-RECONCILIATION-005, re-read by this task via gh",
+    "hosted_build": "GitHub Actions Runtime Release with Google WIF; run 36080312679 dispatched by ODP-DEV-RELEASE-GATE-RECONCILIATION-006, re-read by this task via gh",
     "canonical_board": "live ai-status.json under PANTHEON_STATUS_ROOT, read-only",
     "supervisor_process": "pid 2220782, /usr/bin/python3.12 -u .orchestrator/supervisor.py, cwd /home/lupin/oday-plus-supervisor-runtime-43d2fe8ca8e0, started 2026-09-23T14:35Z per supervisor-watchdog-restart-20260923T143503Z.log; inspected read-only via /proc and reproduced with the same interpreter and an env -i shell",
     "gcp_project_id": "odayplus-runtime-20260825",
@@ -342,7 +342,7 @@
     "egress_posture": "default-deny",
     "cloud_run_egress": "ALL_TRAFFIC",
     "firewall_egress": "default-deny",
-    "binding_digest": "sha256:5c180ab160fd7bbeda378a5bebdb3d165f3914c280e3ff49478927c4818f58b9",
+    "binding_digest": "sha256:7a25b02f4c51d41e832f777eb08743d7d8ee3c64267339c2e103967ad2fbfb6c",
     "migration_digest": "sha256:9ee2d278321bcd5358500a3feb93a7c22c201adde76698f57b7dfcbaa3377375",
     "data_contract_digest": "sha256:05e2cb05619f1c524b0f9578e4ceba9ec863d143d5e64b0eeac97539ce8e7c73",
     "source_policy_digest": "sha256:f3cd9557c11f63721300914c31fbceb97250cc76e0c5dcfbe89c9249c93dfcbf",
@@ -350,7 +350,9 @@
   },
   "authorization_state": {
     "supervisor_lease_issued": false,
-    "leases_ever_issued_fleet_wide": 0,
+    "leases_ever_issued_fleet_wide": 1,
+    "historical_lease_dispatched_at": "2026-09-24T16:29:34Z",
+    "historical_lease_id": "lease-8930f965fa0f05a9059bc94a6716f3d1",
     "private_signing_key_available_to_worker": false,
     "canonical_registry_decision": "go",
     "dev_admission_gates": {
@@ -567,7 +569,7 @@
     "admission_possible_with_current_request": false,
     "admission_logic_satisfied_by_current_request": true,
     "new_lease_request_authored_by_owner": false,
-    "what_the_issuer_does_after_repair": "Signs an Ed25519 lease (ttl 600s) against candidate 1364363402900c800ec3ed033d38fd1d757c1f10 / manifest sha256:6fb8f9e2e6af8dcef9cbe2fd76f2c3d319d95a40fe64c77e3ffdb435f3dc246d, records it under gs://odayplus-runtime-20260825-release-leases/leases, and dispatches .github/workflows/deploy-dev.yml on ref dev with phase=deploy environment=dev release_sha=1364363402900c800ec3ed033d38fd1d757c1f10 task_id=ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 manifest_run_id=35944616693 manifest_digest=sha256:6fb8f9e2e6af8dcef9cbe2fd76f2c3d319d95a40fe64c77e3ffdb435f3dc246d plus the four immutable image refs from the manifest.",
+    "what_the_issuer_does_after_repair": "Signs an Ed25519 lease (ttl 600s) against candidate 419e6bf4958269c5b9e94efcb80770e28cd54dda / manifest sha256:134cc712132155b0003d68063298d3044d5400d91244b8024b4448268c4fc678, records it under gs://odayplus-runtime-20260825-release-leases/leases, and dispatches .github/workflows/deploy-dev.yml on ref dev with phase=deploy environment=dev release_sha=419e6bf4958269c5b9e94efcb80770e28cd54dda task_id=ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 manifest_run_id=36080312679 manifest_digest=sha256:134cc712132155b0003d68063298d3044d5400d91244b8024b4448268c4fc678 plus the four immutable image refs from the manifest.",
     "round4_environment_recheck": {
       "performed_window_utc": {
         "start_utc": "2026-09-24T07:22:35Z",
@@ -794,14 +796,14 @@
       "id": "FINDING-001",
       "severity": "P0",
       "topic": "candidate_bound_current_and_admitted",
-      "finding": "The canonical registry (ODP-DEV-RELEASE-GATE-RECONCILIATION-005, PR #1365) and RELEASE_MANIFEST.json bind candidate 1364363402900c800ec3ed033d38fd1d757c1f10 / sha256:6fb8f9e2e6af8dcef9cbe2fd76f2c3d319d95a40fe64c77e3ffdb435f3dc246d from Runtime Release run 35944616693; release.decision is go, signed off by the named operator on 2026-09-24 for the dev admission boundary only. The candidate is an ancestor of origin/dev c4efabbbeba9e743fab8ee52125932137852c703; the six intervening commits touch eleven docs/evidence/ paths only, so acceptance 1-2 hold and no rebuild is required.",
+      "finding": "The canonical registry (ODP-DEV-RELEASE-GATE-RECONCILIATION-006, PR #1370) and RELEASE_MANIFEST.json bind candidate 419e6bf4958269c5b9e94efcb80770e28cd54dda / sha256:134cc712132155b0003d68063298d3044d5400d91244b8024b4448268c4fc678 from Runtime Release run 36080312679; release.decision is go, signed off by the named operator on 2026-09-25 for the dev admission boundary only. The candidate is an ancestor of origin/dev c8d26f020e0f6a065757beeac88b02f011884894; intervening commits touch docs/evidence/ paths only, so acceptance 1-2 hold and no rebuild is required (prior candidate 13643634 / run 35944616693 rebound due to PR #1369).",
       "status": "verified"
     },
     {
       "id": "FINDING-002",
       "severity": "P0",
       "topic": "hosted_artifacts_independently_reverified",
-      "finding": "All six run-35944616693 artifacts were re-downloaded; the manifest artifact is byte-identical to the repository manifest (sha256 5e70973d094474967e313ad5b148649ec5f24b322c1cbc053b5c4af4bbd2c6c3), the five receipt/handoff artifacts are byte-identical to their copies under ODP-DEV-RELEASE-GATE-RECONCILIATION-005, the image handoff equals the manifest components, and the build job log contains each component digest three times, the manifest digest once, four cosign verify invocations and eight Rekor tlog entries.",
+      "finding": "All six run-36080312679 artifacts were re-downloaded; the manifest artifact is byte-identical to the repository manifest (sha256 2207bfe7c88b201a0937a3c3062329eead27725832a82928646b9dffebaa2cb0), the five receipt/handoff artifacts are byte-identical to their copies under ODP-DEV-RELEASE-GATE-RECONCILIATION-006, the image handoff equals the manifest components, and the build job log contains each component digest three times, the manifest digest once, four cosign verify invocations and eight Rekor tlog entries.",
       "status": "verified"
     },
     {
@@ -873,7 +875,7 @@
       "id": "FINDING-012",
       "severity": "P1",
       "topic": "direct_gcloud_readback_unavailable_to_worker",
-      "finding": "Read-only gcloud and docker buildx imagetools calls from this worker failed on expired user credentials, so the freshest live readback remains the hosted target-absence probe from run 35944616693 (01:53:30Z).",
+      "finding": "Read-only gcloud and docker buildx imagetools calls from this worker failed on expired user credentials, so the freshest live readback remains the hosted target-absence probe from run 36080312679 (01:11:34Z).",
       "status": "informational",
       "update_2026_09_24_round4": "Re-measured at 07:24:44Z: gcloud still fails non-interactive token refresh (exit 1)."
     },
@@ -918,8 +920,8 @@
   "actions_taken": [
     "Confirmed the expected task branch and merged origin/dev c4efabbbeba9e743fab8ee52125932137852c703 as cecb7a0124b2b67d37b62c8b7cd92995bcf376f9 (parents 46f380764f1152949816545bf55f95b35f14d0dc, c4efabbbeba9e743fab8ee52125932137852c703); the merge tree equals git merge-tree --write-tree output (41af6431cfd883e37484b520c3b08d942134d19a), no conflicts, origin/dev is an ancestor of HEAD, and the forbidden-path diff is empty.",
     "Re-read the canonical registry, manifest and gate states from the merged tree (identical to origin/dev).",
-    "Re-downloaded the six run-35944616693 artifacts, hashed them, and compared the manifest with the repository copy and the five others with their ODP-DEV-RELEASE-GATE-RECONCILIATION-005 copies.",
-    "Read the build job log for job 107459773759 and counted digest, cosign verify, push and tlog occurrences.",
+    "Re-downloaded the six run-36080312679 artifacts, hashed them, and compared the manifest with the repository copy and the five others with their ODP-DEV-RELEASE-GATE-RECONCILIATION-006 copies.",
+    "Read the build job log for job 107900654118 and counted digest, cosign verify, push and tlog occurrences.",
     "Ran registry_admission_errors for environment dev against the candidate and the origin/dev tip (both empty).",
     "Ran a read-only dry run of the live issuer's validators against the board before the human registration; nothing was written.",
     "Attempted direct gcloud and imagetools readback; recorded the non-interactive credential failure verbatim.",
@@ -953,7 +955,7 @@
     "Operator: grant the principal the supervisor resolves for storage.Client() access to gs://odayplus-runtime-20260825-release-leases. As measured, that principal is the GCE metadata service account oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com (different project from the bucket) and it lacks storage.buckets.get. The store needs storage.buckets.get plus storage.objects.get, storage.objects.create and storage.objects.delete on that bucket (for example roles/storage.objectAdmin together with roles/storage.legacyBucketReader scoped to the bucket). If a different principal is preferred, provide ADC (GOOGLE_APPLICATION_CREDENTIALS or ~/.config/gcloud/application_default_credentials.json) in the supervisor's environment and restart again, because the environment is read at process start. ODP_RELEASE_LEASE_GCS_ACCESS_TOKEN is a short-lived operator escape hatch and is not suitable for the long-lived supervisor. Verify with the same reproduction: LeaseStateStore(..., require_existing=True) must construct without an exception; a repeat of 'durable GCS lease state is unavailable' after the restart means this item, not the package, is still open.",
     "Operator: give the supervisor a non-interactive Secret Manager credential. Its key loader runs gcloud secrets versions access latest --project 767864276141 --secret odp-release-lease-private-key with this machine's gcloud configuration (HOME=/home/lupin, active account deborah.lu@dev.cctech-support.com), which still failed token refresh at 07:24:44Z. Renew that login or point the supervisor at a service-account credential with secretmanager.versions.access on that secret; confirm with a non-interactive gcloud secrets versions list on the same secret (exit 0, no material printed).",
     "Operator (optional): fast-forward /home/lupin/odayplus to origin/dev so the issuer reads a committed registry instead of uncommitted local modifications (currently byte-identical to origin/dev; HEAD fc4f7529 is 160 commits behind).",
-    "Human/Ops: after items 1-3 are verified, register a fresh release_lease_request with a new nonce and a new approval_id for candidate 1364363402900c800ec3ed033d38fd1d757c1f10 / manifest sha256:6fb8f9e2e6af8dcef9cbe2fd76f2c3d319d95a40fe64c77e3ffdb435f3dc246d / manifest_run_id 35944616693 / dev / deploy. The 07:00:12Z blocked record for HUMANOPS-DEV-FIRST-RELEASE-20260924 is never retried and its nonce digest would trip _nonce_reuse_errors. The task must remain in_progress with no open blocker and no waiting_for; it must not be submitted for review before the deploy runs.",
+    "Human/Ops: after items 1-3 are verified, register a fresh release_lease_request with a new nonce and a new approval_id for candidate 419e6bf4958269c5b9e94efcb80770e28cd54dda / manifest sha256:134cc712132155b0003d68063298d3044d5400d91244b8024b4448268c4fc678 / manifest_run_id 36080312679 / dev / deploy. The previous blocked / historical issuance records are never retried and prior nonce digests would trip _nonce_reuse_errors. The task must remain in_progress with no open blocker and no waiting_for; it must not be submitted for review before the deploy runs.",
     "Issuer: sign the Ed25519 lease (ttl 600s) and dispatch the existing deploy phase of .github/workflows/deploy-dev.yml on ref dev; if the deploy job fails, fail closed per acceptance 10 and open a separate remediation task.",
     "This task: after a successful deploy, collect Cloud Run URLs/revisions, migration/worker/scheduler executions, authenticated smoke, provider-off and 16-source posture, the live default-deny egress probe and live IAM readback required by the gate-4 deviation, and the exact manifest binding receipts (acceptance 3-8), then submit for review."
   ],
