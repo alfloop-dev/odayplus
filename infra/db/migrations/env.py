@@ -2,7 +2,8 @@ import os
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from alembic.script import ScriptDirectory
+from sqlalchemy import Column, MetaData, String, Table, engine_from_config, inspect, pool, select
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -21,6 +22,42 @@ if (
 # from myapp import mymodel
 # target_metadata = mymodel.Base.metadata
 target_metadata = None
+APPLICATION_VERSION_TABLE = "oday_plus_alembic_version"
+
+
+def version_table_for(connection) -> tuple[str, str | None]:
+    """Keep other applications' migration history intact on a shared database.
+
+    Existing ODay installations keep their recognized legacy history. New
+    installations use a separate table; we never stamp, rename or erase a
+    foreign revision to make an upgrade proceed. Ambiguous application state
+    requires diagnosis before any migration is applied.
+    """
+    schema = "public" if connection.dialect.name == "postgresql" else None
+    inspector = inspect(connection)
+    tables = set(inspector.get_table_names(schema=schema))
+    legacy_revisions = set()
+    if "alembic_version" in tables:
+        legacy = Table(
+            "alembic_version", MetaData(), Column("version_num", String), schema=schema
+        )
+        legacy_revisions = set(connection.execute(select(legacy.c.version_num)).scalars())
+    known_revisions = {
+        revision.revision for revision in ScriptDirectory.from_config(config).walk_revisions()
+    }
+    application_legacy_revisions = legacy_revisions & known_revisions
+    if application_legacy_revisions:
+        if application_legacy_revisions != legacy_revisions:
+            raise RuntimeError("Refusing mixed application and foreign legacy migration history")
+        if APPLICATION_VERSION_TABLE in tables:
+            raise RuntimeError("Refusing application history in both migration version tables")
+        return "alembic_version", schema
+    if APPLICATION_VERSION_TABLE not in tables and schema is not None:
+        if inspector.has_table("tenants", schema="core"):
+            raise RuntimeError(
+                "Untracked existing application schema; inspect migration history before upgrading"
+            )
+    return APPLICATION_VERSION_TABLE, schema
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
@@ -56,6 +93,8 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "pyformat"},
+        version_table=APPLICATION_VERSION_TABLE,
+        version_table_schema="public" if url.startswith("postgres") else None,
     )
 
     with context.begin_transaction():
@@ -76,9 +115,15 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
 
-    with connectable.connect() as connection:
+    # Inspection starts a transaction in SQLAlchemy 2. Own that transaction so
+    # version writes and PostgreSQL DDL commit or roll back together.
+    with connectable.begin() as connection:
+        version_table, version_schema = version_table_for(connection)
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection,
+            target_metadata=target_metadata,
+            version_table=version_table,
+            version_table_schema=version_schema,
         )
 
         with context.begin_transaction():

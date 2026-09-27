@@ -213,7 +213,7 @@ def test_root_cause_reserved_migration_round_trips_on_postgresql(
             "AND column_name = 'root_cause'"
         ).fetchone()
         current_revision = connection.execute(
-            "SELECT version_num FROM alembic_version"
+            "SELECT version_num FROM oday_plus_alembic_version"
         ).fetchone()
         column_still_exists = connection.execute(
             "SELECT 1 FROM information_schema.columns "
@@ -1058,7 +1058,7 @@ def test_alembic_head_installs_official_schema_and_both_view_branches(
         )
         with intake_blank_db.connect() as connection:
             current = connection.execute(
-                "SELECT version_num FROM alembic_version"
+                "SELECT version_num FROM oday_plus_alembic_version"
             ).fetchone()
         assert current == (heads[0],)
     finally:
