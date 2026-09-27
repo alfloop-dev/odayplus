@@ -89,7 +89,7 @@ Because gate-4 is blocked and candidate-specific Human/Ops release signoff is pe
    The registry does not copy or redate human signoff without a candidate-applicable decision from Human/Ops. Release decision remains fail-closed `no-go`.
 
 3. **OSS licence compliance**:
-   The four LGPL cases (LGPL-SHARP-LIBVIPS, LGPL-PSYCOPG2, LGPL-PSYCOPG3, LGPL-MOOCORE) are conditionally approved by the named operator in `docs/evidence/human-decisions/ODP-HUMAN-DECISION-RECORDS-001/2026-09-18-oss-license-four-lgpl-cases.md` with review date `2026-12-24`. An external authoritative receipt (H01) remains pending; `license_policy.json` remains `proposed` and `license_exemptions.json` remains empty.
+   The four LGPL cases (LGPL-SHARP-LIBVIPS, LGPL-PSYCOPG2, LGPL-PSYCOPG3, LGPL-MOOCORE) are conditionally approved by the named operator in `docs/evidence/human-decisions/ODP-HUMAN-DECISION-RECORDS-001/2026-09-18-oss-license-four-lgpl-cases.md`. An external authoritative receipt (H01) remains pending; `license_policy.json` remains `proposed` and `license_exemptions.json` remains empty.
 
 The full reasoning and measurement details are in [`gate-4-receipt.md`](gate-4-receipt.md).
 

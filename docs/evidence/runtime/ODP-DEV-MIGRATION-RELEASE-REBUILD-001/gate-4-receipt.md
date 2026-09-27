@@ -50,7 +50,7 @@ Egress posture, from the manifest's `sources_off_attestation`: all 16 external s
    Human/Ops release authorization for candidate `355a94b52b14badc236be4b3e52eb936a7075549` dev admission is pending.
 
 3. **OSS license external receipt**:
-   The four LGPL cases (LGPL-SHARP-LIBVIPS, LGPL-PSYCOPG2, LGPL-PSYCOPG3, LGPL-MOOCORE) carry conditional operator approval in `docs/evidence/human-decisions/ODP-HUMAN-DECISION-RECORDS-001/2026-09-18-oss-license-four-lgpl-cases.md` (review date 2026-12-24), but external authoritative receipt (H01) is pending. `license_policy.json` remains `proposed` and `license_exemptions.json` remains empty.
+   The four LGPL cases (LGPL-SHARP-LIBVIPS, LGPL-PSYCOPG2, LGPL-PSYCOPG3, LGPL-MOOCORE) carry conditional operator approval in `docs/evidence/human-decisions/ODP-HUMAN-DECISION-RECORDS-001/2026-09-18-oss-license-four-lgpl-cases.md`, but external authoritative receipt (H01) is pending. `license_policy.json` remains `proposed` and `license_exemptions.json` remains empty.
 
 ## What this receipt does not claim
 
