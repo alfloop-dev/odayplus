@@ -1,16 +1,14 @@
-# Rebuilt dev admission: awaiting exact new user decision
+# Rebuilt dev admission for a31
 
-Current candidate `a31e02ae391811a4c323ec4d834b70e200953366`, build `36333397898`, manifest `sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2`. Authoritative registry is **NO-GO**; gate4 is blocked. No lease or deployment was requested.
+Candidate `a31e02ae391811a4c323ec4d834b70e200953366`, Runtime Release build `36333397898`, manifest `sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2`. User decision `HUMANOPS-DEV-MIGRATION-20260927T225545Z` was recorded at `2026-09-27T22:55:45Z` and expires `2026-09-28T04:55:45Z`. The exact scope is in `a31-user-authorization.json`.
 
-Prepared by interactive Codex for Antigravity3 adoption and independent Codex2 review. `a31-dev-admission-request.json` is pending and does not record consent. All355 files below, including `user-authorization.json`, `release-lease-request.json` and `gate-4-receipt.md`, remain historical and MUST NOT be registered or interpreted as a31 approval. Preserve them when recording an actual new decision in separate a31 files.
+Gate0/1 evidence is described in their receipts: a31 docs-scope CI skipped product jobs; inherited355 full product CI is supported by11 identical product/build Git objects. Gate4 is a user-approved dev-only deviation. Registry is GO for dev only, subject to independent review and merge. Staging/production remain blocked.
 
-Actual hosted manifest is copied byte-for-byte; four images, four SBOM and four signature registry objects resolve by exact digest. This metadata readback is distinct from hosted build signing/verification. Production audit reports zero findings. Full development audit still has1 high and2 moderate findings from the unchanged lockfile; H01 external legal receipt remains pending. No staging/production permission or provider activation.
+The manifest is the actual hosted build artifact byte-for-byte. Twelve Artifact Registry references resolved at recording time. Build36333397898 succeeded and skipped all deploy jobs because no lease was supplied. No deployment claim is made.
 
-Candidate CI product jobs were skipped; prior355 full product CI is bound by the11 identical Git objects, as described in the new gate0/1 receipts. No historical test result or user decision is relabeled. Migration live diagnosis and two local full replays remain in reviewed PR1374; no live migration success is claimed.
+The original355 authorization and prepared request remain historical candidate-inapplicable evidence. `gate-4-receipt-355a94b5.md` preserves the prior355 receipt. The new a31 receipt is `a31-gate-4-receipt.md`.
 
-After actual new approval: record separate exact-candidate authorization/request, update gate4 and GO with truthful deviation, exact-head verification, CI and independent review/merge/done. Then authorized backup/CAS-sync of only two canonical release inputs; Supervisor alone issues and dispatches. Parent task remains responsible for live rollout and runtime evidence.
-
-## Historical355 admission
+## Historical355 records
 
 # ODP-DEV-MIGRATION-ADMISSION-001
 

@@ -3,7 +3,7 @@
   "registry_id": "ODP-RELEASE-GATE-REGISTRY",
   "task_id": "ODP-DEV-MIGRATION-ADMISSION-001",
   "generated_at": "2026-09-27",
-  "description": "Rebuilt a31 candidate: actual hosted manifest and same product/build inputs as tested355. Dev admission is NO-GO pending exact new user decision; no live deployment claimed.",
+  "description": "Candidate a31e02ae391811a4c323ec4d834b70e200953366 is admitted for dev only by explicit interactive user confirmation HUMANOPS-DEV-MIGRATION-20260927T225545Z; gates0/1 are evidence-passed and gate4 passed-with-deviation. Staging/production gates remain blocked.",
   "migration": {
     "from_schema_version": "1.0.0",
     "source_registry_id": "ODP-RELEASE-GATE-REGISTRY",
@@ -19,10 +19,18 @@
     "stage": "candidate-built",
     "environment": "dev",
     "admission_target": "dev",
-    "decision": "no-go",
+    "decision": "go",
     "decision_owner": "Human/Ops",
     "decision_date": "2026-09-27",
-    "decision_note": "New candidate and manifest require actual user approval. Prior355 approval is historical and cannot be transferred; see a31-dev-admission-request.json."
+    "decision_note": "Current user explicitly confirmed dev-only admission/deploy and post-merge backup/synchronization for exact candidate a31e02ae391811a4c323ec4d834b70e200953366, manifest sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2, Runtime Release build36333397898. Approval HUMANOPS-DEV-MIGRATION-20260927T225545Z expires 2026-09-28T04:55:45Z. See a31-user-authorization.json and gate4 deviation; this is not external legal approval or deployment success.",
+    "human_signoff": {
+      "approver": "Human/Ops",
+      "date": "2026-09-27",
+      "scope": "dev only; exact candidate a31e02ae391811a4c323ec4d834b70e200953366, manifest sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2, build 36333397898; expires 2026-09-28T04:55:45Z",
+      "approval_id": "HUMANOPS-DEV-MIGRATION-20260927T225545Z",
+      "artifact": "docs/evidence/runtime/ODP-DEV-MIGRATION-ADMISSION-001/a31-user-authorization.json",
+      "note": "The current user explicitly replied \"更新至新候選\" to the exact scoped request; transcribed by interactive Codex, not an external identity signature."
+    }
   },
   "gates": [
     {
@@ -220,7 +228,7 @@
       "scope": "All production or sensitive releases: secret scanning, dependency and SAST findings, RBAC/ABAC enforcement, sensitive export and audit controls, IAM/infrastructure review, and OSS licence compliance.",
       "owner": "Claude",
       "reviewer": "Antigravity2",
-      "status": "blocked",
+      "status": "passed-with-deviation",
       "status_date": "2026-09-27",
       "release_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
       "stage": "candidate-built",
@@ -246,10 +254,35 @@
           "description": "Dependency and static security scan target invoked by make ci."
         }
       ],
-      "receipts": [],
-      "blockers": [
-        "Exact a31 candidate-specific user approval remains pending for known development audit findings and missing external H01 receipt as dev-only deviation. Prior355 approval does not apply."
-      ]
+      "receipts": [
+        {
+          "receipt_id": "gate-4-a31e02ae3918-user-approved-0260927T225545Z",
+          "release_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
+          "result": "pass",
+          "recorded_at": "2026-09-27T22:55:45Z",
+          "recorded_by": "Codex",
+          "artifact": "docs/evidence/runtime/ODP-DEV-MIGRATION-ADMISSION-001/a31-gate-4-receipt.md",
+          "gate_name": "Security and Privacy Gate",
+          "summary": "User approved exact dev candidate and disclosed deviations under HUMANOPS-DEV-MIGRATION-20260927T225545Z: same1 high/2 moderate dev-tool findings; missing external H01 receipt for four LGPL conditional-use cases remains disclosed and dev-only. Build production npm audit has0 findings. No external legal signature claimed; no live deploy claimed.",
+          "recorded_under_task": "ODP-DEV-MIGRATION-ADMISSION-001"
+        }
+      ],
+      "blockers": [],
+      "deviation": {
+        "description": "Explicit candidate-specific user approval HUMANOPS-DEV-MIGRATION-20260927T225545Z accepts the already disclosed dev-only js-yaml and vitest/mocker findings on a31e02ae391811a4c323ec4d834b70e200953366, and the missing external authoritative H01 receipt for four conditionally-used LGPL cases as a dev-only deviation. Automated full audit and licence gate are not relabeled as passing. Live egress and IAM readbacks remain post-deploy conditions.",
+        "approver": "Human/Ops",
+        "review_by": "2026-09-27",
+        "scope": "Exact candidate a31e02ae391811a4c323ec4d834b70e200953366/dev; fresh release request must expire no later than 2026-09-28T04:55:45Z.",
+        "approval_artifact": "docs/evidence/runtime/ODP-DEV-MIGRATION-ADMISSION-001/a31-user-authorization.json",
+        "conditions": [
+          "Applies only to GHSA-2883-xcg3-v3hh and GHSA-82fw-gwwq-j7x9 via development-toolchain paths; lapses for production exposure, any critical finding, new advisories or changed candidate/manifest.",
+          "Retain prior remediation conditions: address js-yaml at next ESLint major update and Vitest at next existing lockfile update; immediately reassess production dependency exposure.",
+          "Retain LGPL conditional-use requirements: unmodified upstream binaries, dynamic loading, NOTICE disclosure and source availability. H01 remains pending; license_policy remains proposed and exemptions remain empty.",
+          "Capture actual runtime default-deny egress and IAM readbacks during rollout. Preserve all16 external sources disabled.",
+          "No staging/production admission; no database reset/stamp/foreign-history deletion.",
+          "Reassess or stop lease issuance at 2026-09-28T04:55:45Z."
+        ]
+      }
     },
     {
       "id": "gate-5",
@@ -365,7 +398,7 @@
     "from_manifest_digest": "sha256:a1e3fcf6b765861dc269e3fd395b7bec6ac4b2b6f3b3207a3ffb623c6ca6dfaa",
     "to_manifest_digest": "sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2",
     "re_attestation_required": true,
-    "note": "Existing guard inspects net diff and first-parent history; reviewed diagnostic inventory addition invalidated355 ancestry. No product/build input changed; actual a31 artifacts rebuilt once. Old authorization preserved but inapplicable.",
+    "note": "Existing guard inspects net diff and first-parent history; reviewed diagnostic inventory addition invalidated355 ancestry. No product/build input changed; actual a31 artifacts rebuilt once. Old authorization preserved but inapplicable. Exact user approval now recorded separately as HUMANOPS-DEV-MIGRATION-20260927T225545Z, expiry 2026-09-28T04:55:45Z; independent review remains required.",
     "build_run": {
       "workflow": "Runtime Release",
       "run_id": 36333397898,
@@ -387,6 +420,7 @@
       "run_id": 36311413006,
       "head_sha": "355a94b52b14badc236be4b3e52eb936a7075549",
       "basis": "docs/evidence/runtime/ODP-DEV-MIGRATION-ADMISSION-001/a31-candidate-comparison.json"
-    }
+    },
+    "approval_id": "HUMANOPS-DEV-MIGRATION-20260927T225545Z"
   }
 }

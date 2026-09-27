@@ -1,37 +1,16 @@
 {
-  "kind": "pending_interactive_user_approval_request",
-  "status": "awaiting_user",
+  "kind": "runtime_release_deploy_human_authorization",
+  "status": "approved_for_admission_only",
+  "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+  "authorization_id": "HUMANOPS-DEV-MIGRATION-20260927T225545Z",
+  "authorized_at": "2026-09-27T22:55:45Z",
+  "expires_at": "2026-09-28T04:55:45Z",
   "candidate_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
   "manifest_digest": "sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2",
   "manifest_run_id": "36333397898",
   "target_environment": "dev",
   "action": "deploy",
-  "approval_duration_hours": 6,
-  "workflow": "existing Runtime Release deploy through supervisor-signed lease only",
-  "risk_scope": [
-    "Same known dev tool findings: js-yaml GHSA-2883-xcg3-v3hh high, vitest and @vitest/mocker GHSA-82fw-gwwq-j7x9 moderate; no critical; production audit on this build has zero findings.",
-    "Existing four LGPL conditional-use obligations retained; external H01 legal receipt remains missing, accepted only as dev deviation if user agrees; no invented legal signature or licence policy/exemption modification."
-  ],
-  "data_scope": "16 external sources remain disabled; provider credentials absent; default-deny egress; no staging or production deployment; no database reset/stamp/deletion",
-  "local_sync_scope": [
-    "/home/lupin/odayplus/docs/evidence/gates/RELEASE_GATE_REGISTRY.json",
-    "/home/lupin/odayplus/docs/evidence/gates/RELEASE_MANIFEST.json"
-  ],
-  "local_sync_conditions": "Backup current values and CAS-protect against concurrent changes; synchronize only reviewed merged records for this exact new candidate, with GO only after actual user approval and independent review.",
-  "old_approval": "HUMANOPS-DEV-MIGRATION-20260927T161813Z remains historical and applies only to355a94b5; this packet does not record new user consent.",
-  "candidate_change_reason": "Strict release ancestry validation includes a docs/audits/code-boundary-inventory.csv entry introduced by reviewed diagnostic evidence. Product/build inputs are identical at all11 checked Git trees/files. No gate weakened.",
-  "evidence": [
-    "a31-candidate-comparison.json",
-    "a31-manifest-validation.json",
-    "a31-artifact-registry-readback.json",
-    "build-a31e02ae/"
-  ],
-  "preconditions_before_lease": [
-    "updated candidate-specific gate receipts",
-    "exact new user decision",
-    "independent review and required CI; admission PR merged and task done",
-    "reviewed canonical input synchronization",
-    "all rollout dependencies done and parent in_progress without blocker",
-    "current remote dev passes full candidate ancestry checks"
-  ]
+  "registration_status": "NOT_REGISTERED; canonical parent request is created only after PR merge, admission task done, input sync, dependency and issuer preflight checks. Supervisor alone issues lease and dispatches.",
+  "authorization_artifact": "docs/evidence/runtime/ODP-DEV-MIGRATION-ADMISSION-001/a31-user-authorization.json",
+  "scope": "See exact scope and limits in a31-user-authorization.json. No staging/production, DB reset/stamp/deletion, or deployment success claim."
 }
