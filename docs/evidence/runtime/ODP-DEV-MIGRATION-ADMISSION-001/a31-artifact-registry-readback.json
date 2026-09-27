@@ -1,0 +1,94 @@
+{
+  "recorded_at": "2026-09-27T16:38:42.549252+00:00",
+  "candidate_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
+  "manifest_digest": "sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2",
+  "build_run_id": "36333397898",
+  "verification_kind": "registry metadata readback; cryptographic verification is separate in successful hosted build",
+  "all_refs_resolved": true,
+  "objects": [
+    {
+      "reference": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:38d4d07031cfacf63b47d367d1b4872cdfe2be9e3f6ed213751d2daedd51d81a",
+      "exit_code": 0,
+      "resolved_digest": "sha256:38d4d07031cfacf63b47d367d1b4872cdfe2be9e3f6ed213751d2daedd51d81a",
+      "exact_digest_matches": true,
+      "error": null
+    },
+    {
+      "reference": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:42befd584d9ae443bb53ecb55a3fcce0bec7c168910a0b8fac5ef52abfe63fd3",
+      "exit_code": 0,
+      "resolved_digest": "sha256:42befd584d9ae443bb53ecb55a3fcce0bec7c168910a0b8fac5ef52abfe63fd3",
+      "exact_digest_matches": true,
+      "error": null
+    },
+    {
+      "reference": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:fee344d4b2e80a2e81306fa73d283a09777a2bf83f49fd5591d5b9d61c6984ab",
+      "exit_code": 0,
+      "resolved_digest": "sha256:fee344d4b2e80a2e81306fa73d283a09777a2bf83f49fd5591d5b9d61c6984ab",
+      "exact_digest_matches": true,
+      "error": null
+    },
+    {
+      "reference": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:03ef45f9b8794ff1ad8769762ede62afda7aacd88e4314339753c266f765397f",
+      "exit_code": 0,
+      "resolved_digest": "sha256:03ef45f9b8794ff1ad8769762ede62afda7aacd88e4314339753c266f765397f",
+      "exact_digest_matches": true,
+      "error": null
+    },
+    {
+      "reference": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:acb27e7084a7c9fc719c010b30ac10aa97dc69269e63b2cc652dd7bbee890996",
+      "exit_code": 0,
+      "resolved_digest": "sha256:acb27e7084a7c9fc719c010b30ac10aa97dc69269e63b2cc652dd7bbee890996",
+      "exact_digest_matches": true,
+      "error": null
+    },
+    {
+      "reference": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:f56671a18d3c633d385c5ec827d9230dd633e44377778295ff67fdcfdb8e4369",
+      "exit_code": 0,
+      "resolved_digest": "sha256:f56671a18d3c633d385c5ec827d9230dd633e44377778295ff67fdcfdb8e4369",
+      "exact_digest_matches": true,
+      "error": null
+    },
+    {
+      "reference": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:3f9afa013d47aa9e6cc09d2d0a89087bf2cad81a8caa3c0d2834922d301d85fe",
+      "exit_code": 0,
+      "resolved_digest": "sha256:3f9afa013d47aa9e6cc09d2d0a89087bf2cad81a8caa3c0d2834922d301d85fe",
+      "exact_digest_matches": true,
+      "error": null
+    },
+    {
+      "reference": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:52888bd94e0ad3e4387ce8a815c4a484cc5e2a91b9225e1fd756435b50c35292",
+      "exit_code": 0,
+      "resolved_digest": "sha256:52888bd94e0ad3e4387ce8a815c4a484cc5e2a91b9225e1fd756435b50c35292",
+      "exact_digest_matches": true,
+      "error": null
+    },
+    {
+      "reference": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:e50b502767823b741fd4f095c63dc41dd7cf64163853ff35bb7a9e996f29cc36",
+      "exit_code": 0,
+      "resolved_digest": "sha256:e50b502767823b741fd4f095c63dc41dd7cf64163853ff35bb7a9e996f29cc36",
+      "exact_digest_matches": true,
+      "error": null
+    },
+    {
+      "reference": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:95e2b1dc620064a2ed9d95e38a2c2b313aa09857ee77c710f97a899d768fa5e8",
+      "exit_code": 0,
+      "resolved_digest": "sha256:95e2b1dc620064a2ed9d95e38a2c2b313aa09857ee77c710f97a899d768fa5e8",
+      "exact_digest_matches": true,
+      "error": null
+    },
+    {
+      "reference": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:cfb8244c64950be88b805ffa77d9f06e9354244c3963079e5503bf00a38272b3",
+      "exit_code": 0,
+      "resolved_digest": "sha256:cfb8244c64950be88b805ffa77d9f06e9354244c3963079e5503bf00a38272b3",
+      "exact_digest_matches": true,
+      "error": null
+    },
+    {
+      "reference": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:fcaf3ba38f48c63431789ad19b9c027a157171b013dc34e2fbf6a281383120f0",
+      "exit_code": 0,
+      "resolved_digest": "sha256:fcaf3ba38f48c63431789ad19b9c027a157171b013dc34e2fbf6a281383120f0",
+      "exact_digest_matches": true,
+      "error": null
+    }
+  ]
+}

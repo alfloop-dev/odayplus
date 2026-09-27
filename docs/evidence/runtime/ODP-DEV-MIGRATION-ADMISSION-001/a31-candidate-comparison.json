@@ -1,0 +1,89 @@
+{
+  "at": "2026-09-27T16:30:13.985372+00:00",
+  "from_candidate": "355a94b52b14badc236be4b3e52eb936a7075549",
+  "to_candidate": "a31e02ae391811a4c323ec4d834b70e200953366",
+  "reason": "Existing ancestry guard rejects intervening docs/audits inventory change, including historical touches",
+  "changed_paths": [
+    "docs/audits/code-boundary-inventory.csv",
+    "docs/evidence/gates/RELEASE_GATE_REGISTRY.json",
+    "docs/evidence/gates/RELEASE_MANIFEST.json",
+    "docs/evidence/runtime/ODP-DEV-MIGRATION-LIVE-PREFLIGHT-001/README.md",
+    "docs/evidence/runtime/ODP-DEV-MIGRATION-LIVE-PREFLIGHT-001/candidate-npm-audit-summary.json",
+    "docs/evidence/runtime/ODP-DEV-MIGRATION-LIVE-PREFLIGHT-001/candidate-npm-audit.json",
+    "docs/evidence/runtime/ODP-DEV-MIGRATION-LIVE-PREFLIGHT-001/dev-admission-request.md",
+    "docs/evidence/runtime/ODP-DEV-MIGRATION-LIVE-PREFLIGHT-001/full-migration-replay-1.log",
+    "docs/evidence/runtime/ODP-DEV-MIGRATION-LIVE-PREFLIGHT-001/full-migration-replay-2.log",
+    "docs/evidence/runtime/ODP-DEV-MIGRATION-LIVE-PREFLIGHT-001/full-migration-replay.json",
+    "docs/evidence/runtime/ODP-DEV-MIGRATION-LIVE-PREFLIGHT-001/live-readback.json",
+    "docs/evidence/runtime/ODP-DEV-MIGRATION-LIVE-PREFLIGHT-001/preflight-summary.json",
+    "docs/evidence/runtime/ODP-DEV-MIGRATION-LIVE-PREFLIGHT-001/readback.py",
+    "docs/evidence/runtime/ODP-DEV-MIGRATION-RELEASE-REBUILD-001/README.md",
+    "docs/evidence/runtime/ODP-DEV-MIGRATION-RELEASE-REBUILD-001/gate-0-receipt.md",
+    "docs/evidence/runtime/ODP-DEV-MIGRATION-RELEASE-REBUILD-001/gate-1-receipt.md",
+    "docs/evidence/runtime/ODP-DEV-MIGRATION-RELEASE-REBUILD-001/gate-4-receipt.md",
+    "docs/evidence/runtime/ODP-DEV-MIGRATION-RELEASE-REBUILD-001/initial-release-absence-readback.json",
+    "docs/evidence/runtime/ODP-DEV-MIGRATION-RELEASE-REBUILD-001/npm-audit-receipt.json",
+    "docs/evidence/runtime/ODP-DEV-MIGRATION-RELEASE-REBUILD-001/release-environment-receipt.json",
+    "docs/evidence/runtime/ODP-DEV-MIGRATION-RELEASE-REBUILD-001/release-phase-receipt.json",
+    "docs/evidence/runtime/ODP-DEV-MIGRATION-RELEASE-REBUILD-001/runtime-release-images.json"
+  ],
+  "product_and_build_input_objects": {
+    "apps": {
+      "old_git_object": "3bf57e268949d90cd36c1f9a431dfc14a80773ea",
+      "new_git_object": "3bf57e268949d90cd36c1f9a431dfc14a80773ea",
+      "identical": true
+    },
+    "modules": {
+      "old_git_object": "05ec8b6dcc1d6a120f770cdb755deb9e032b2d55",
+      "new_git_object": "05ec8b6dcc1d6a120f770cdb755deb9e032b2d55",
+      "identical": true
+    },
+    "shared": {
+      "old_git_object": "5ff2b9da5749f0d7da8f5b882bb95ec2f4b15315",
+      "new_git_object": "5ff2b9da5749f0d7da8f5b882bb95ec2f4b15315",
+      "identical": true
+    },
+    "infra": {
+      "old_git_object": "b364e61a0b56515e5daa8e60a22ac715baa2caa5",
+      "new_git_object": "b364e61a0b56515e5daa8e60a22ac715baa2caa5",
+      "identical": true
+    },
+    "product_ops": {
+      "old_git_object": "beed84cbe4bb3c36db5db53214f0f33cce24724a",
+      "new_git_object": "beed84cbe4bb3c36db5db53214f0f33cce24724a",
+      "identical": true
+    },
+    "delivery_toolchain": {
+      "old_git_object": "0bb32e982958fcf7e71a936e7062355c7862059c",
+      "new_git_object": "0bb32e982958fcf7e71a936e7062355c7862059c",
+      "identical": true
+    },
+    ".github": {
+      "old_git_object": "76d233f95ac047590b218d6613824e5687dd85a8",
+      "new_git_object": "76d233f95ac047590b218d6613824e5687dd85a8",
+      "identical": true
+    },
+    "package.json": {
+      "old_git_object": "4b8827495124572a08f79685c197cd8861418aad",
+      "new_git_object": "4b8827495124572a08f79685c197cd8861418aad",
+      "identical": true
+    },
+    "package-lock.json": {
+      "old_git_object": "4d1d58b4858ccb9b9b7fd7a8977f9832b9f016d6",
+      "new_git_object": "4d1d58b4858ccb9b9b7fd7a8977f9832b9f016d6",
+      "identical": true
+    },
+    "pyproject.toml": {
+      "old_git_object": "f17f82e0d6d1aeb63981c9f923b146811aabebbc",
+      "new_git_object": "f17f82e0d6d1aeb63981c9f923b146811aabebbc",
+      "identical": true
+    },
+    "uv.lock": {
+      "old_git_object": "07cd9607d9ff396dbd978d0623ebde513d72dc2b",
+      "new_git_object": "07cd9607d9ff396dbd978d0623ebde513d72dc2b",
+      "identical": true
+    }
+  },
+  "old_user_approval_applies_to_new_candidate": false,
+  "new_candidate_approval": "pending until exact new manifest ready"
+}
