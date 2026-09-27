@@ -2297,6 +2297,101 @@ class QuotaSiblingFencingDirtyHandoffTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertNotIn("worktree_continuation", request.metadata)
 
+    def test_interrupted_merge_seal_rejects_renamed_branch_and_resumes_after_restore(self):
+        """R12 regression: symbolic HEAD branch is bound to interrupted-merge snapshot and seal,
+        and verified during continuation; renaming the worktree branch rejects direct seal and full
+        prepare_worker_workspace without continuation metadata, while restoring the branch resumes."""
+        worker, state = self._interrupted_merge_fixture()
+        task = self.status_data["tasks"][0]
+
+        # Seal and preservation should capture the interrupted merge
+        self.assertTrue(worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=task))
+        record = state["worker_worktrees"]["handoff_blocks"]["TASK-SIBLING-001"]
+        self.assertEqual(record["reason"], "interrupted_merge")
+        self.assertTrue(self._owner_seal_allowed(state, task)[0])
+        ok, error, request = self._owner_lease(state)
+        self.assertTrue(ok, error)
+        self.assertEqual(request.metadata.get("worktree_continuation"), "sealed_owner_merge")
+
+        # Rename the branch in the worktree
+        _git_run(self.worktree, "branch", "-m", "task/RENAMED-OTHER-TASK")
+
+        # Direct seal check must refuse continuation
+        allowed, reason = self._owner_seal_allowed(state, task)
+        self.assertFalse(allowed)
+        self.assertIn(reason, ("workspace_changed", "merge_state_changed"))
+
+        # Full prepare_worker_workspace must fail closed with no continuation metadata
+        ok, error, request = self._owner_lease(state)
+        self.assertFalse(ok)
+        self.assertNotIn("worktree_continuation", request.metadata)
+
+        # Restore original branch name
+        _git_run(self.worktree, "branch", "-m", "task/TASK-SIBLING-001")
+
+        # Direct seal check and full prepare must succeed again
+        self.assertTrue(self._owner_seal_allowed(state, task)[0])
+        ok, error, request = self._owner_lease(state)
+        self.assertTrue(ok, error)
+        self.assertEqual(request.metadata.get("worktree_continuation"), "sealed_owner_merge")
+
+    def test_interrupted_autostash_merge_preserves_and_replays_with_configured_textconv(self):
+        """R13 regression: autostash diff capture explicitly passes --no-textconv --no-ext-diff,
+        ensuring configured textconv filters do not suppress or distort raw parked bytes and
+        allowing exact backup patch replay."""
+        (self.worktree / "README.md").write_text("alpha\nbeta\n", encoding="utf-8")
+        (self.worktree / "task.py").write_text("value = 1\n")
+        _git_run(self.worktree, "add", "README.md", "task.py")
+        _git_run(self.worktree, "commit", "-m", "task progress")
+
+        (self.repo / "README.md").write_text("alpha\nbeta\n", encoding="utf-8")
+        (self.repo / "upstream.py").write_text("upstream = 1\n")
+        _git_run(self.repo, "add", "README.md", "upstream.py")
+        _git_run(self.repo, "commit", "-m", "upstream progress")
+        _git_run(self.repo, "push", "origin", "dev")
+
+        # Configure textconv for README.md that sorts lines
+        info_attr = self._git_path("info/attributes")
+        info_attr.parent.mkdir(parents=True, exist_ok=True)
+        info_attr.write_text("README.md diff=records\n", encoding="utf-8")
+        _git_run(self.worktree, "config", "diff.records.textconv", "sort")
+
+        # dev base has "alpha\nbeta\n"; worktree modifies to "beta\nalpha\n"
+        # Under `sort` textconv, both would sort to "alpha\nbeta\n" (0 diff lines)
+        (self.worktree / "README.md").write_text("beta\nalpha\n", encoding="utf-8")
+        _git_run(self.worktree, "merge", "--no-commit", "--autostash", "dev")
+
+        worker, state = self._sibling_worker_state()
+        task = self.status_data["tasks"][0]
+
+        # Preserve dead worker worktree
+        self.assertTrue(worker_workspace.preserve_dead_worker_worktree(self.config, state, worker, task=task))
+        record = state["worker_worktrees"]["handoff_blocks"]["TASK-SIBLING-001"]
+        self.assertEqual(record["reason"], "interrupted_merge")
+
+        backup = next((self.root / ".orchestrator/worktree-dirt-backups").iterdir())
+        worktree_patch = backup / "git-state" / "MERGE_AUTOSTASH-worktree.patch"
+        self.assertTrue(worktree_patch.is_file())
+        patch_bytes = worktree_patch.read_bytes()
+        self.assertGreater(len(patch_bytes), 0)
+        self.assertIn(b"beta", patch_bytes)
+        self.assertIn(b"alpha", patch_bytes)
+
+        # Verify patch replay against base restores exact parked bytes
+        apply_proc = subprocess.run(
+            ["git", "apply", "--check", str(worktree_patch)],
+            cwd=self.worktree,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(apply_proc.returncode, 0, apply_proc.stderr.decode("utf-8", errors="replace"))
+
+        # Seal and lease continuation must succeed
+        self.assertTrue(self._owner_seal_allowed(state, task)[0])
+        ok, error, request = self._owner_lease(state)
+        self.assertTrue(ok, error)
+        self.assertEqual(request.metadata.get("worktree_continuation"), "sealed_owner_merge")
+
     def test_sibling_quota_fence_preserves_dirty_worktree_and_authorizes_successor_lease_continuation(self) -> None:
         """E2E: Sibling worker dirty changes (staged, unstaged, untracked) are backed up, sealed, and handed off to authorized successor via prepare_worker_workspace."""
         # Create uncommitted staged, unstaged, and untracked work in the sibling's isolated worktree

@@ -592,7 +592,9 @@ def _interrupted_merge_snapshot(worktree_path: Path) -> dict[str, bytes] | None:
     branch_rc, branch = _git_output(worktree_path, "symbolic-ref", "--quiet", "HEAD")
     if branch_rc or not branch or not _git_commit_oid(worktree_path, "MERGE_HEAD"):
         return None
-    snapshot: dict[str, bytes] = {}
+    snapshot: dict[str, bytes] = {
+        "HEAD_BRANCH": branch.encode("utf-8"),
+    }
     try:
         for marker in ("index.lock", "rebase-merge", "rebase-apply", "sequencer", "CHERRY_PICK_HEAD", "REVERT_HEAD"):
             rc, name = _git_output(worktree_path, "rev-parse", "--git-path", marker)
@@ -3738,12 +3740,12 @@ def _quarantine_and_preserve_dirty_worktree(
         manifest_path = task_backup_dir / "manifest.json"
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
-        staged_proc = subprocess.run(["git", "diff", "--cached", "--binary"], cwd=worktree_path, capture_output=True, check=False)
+        staged_proc = subprocess.run(["git", "diff", "--cached", "--binary", "--no-textconv", "--no-ext-diff"], cwd=worktree_path, capture_output=True, check=False)
         if staged_proc.returncode != 0:
             raise RuntimeError("failed to capture staged diff")
         (task_backup_dir / "staged.patch").write_bytes(staged_proc.stdout)
 
-        unstaged_proc = subprocess.run(["git", "diff", "--binary"], cwd=worktree_path, capture_output=True, check=False)
+        unstaged_proc = subprocess.run(["git", "diff", "--binary", "--no-textconv", "--no-ext-diff"], cwd=worktree_path, capture_output=True, check=False)
         if unstaged_proc.returncode != 0:
             raise RuntimeError("failed to capture unstaged diff")
         (task_backup_dir / "unstaged.patch").write_bytes(unstaged_proc.stdout)
@@ -3790,7 +3792,7 @@ def _quarantine_and_preserve_dirty_worktree(
                     ("MERGE_AUTOSTASH-index.patch", f"{autostash_oid}^1", f"{autostash_oid}^2"),
                 ):
                     patch_proc = subprocess.run(
-                        ["git", "diff", "--binary", base_rev, target_rev],
+                        ["git", "diff", "--binary", "--no-textconv", "--no-ext-diff", base_rev, target_rev],
                         cwd=worktree_path, capture_output=True, check=False,
                     )
                     if patch_proc.returncode != 0:

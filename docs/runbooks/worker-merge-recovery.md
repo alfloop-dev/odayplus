@@ -55,7 +55,7 @@ content edit after the seal, a stat-cache refresh, a revert in progress, and fen
 successor dispatch on a conflicted merge) behaved as this runbook describes. Details:
 `docs/evidence/completion/ODP-ORCH-AUTONOMOUS-RECOVERY-001/`.
 
-## Review fixes (2026-09-24, ODP-ORCH-AUTONOMOUS-RECOVERY-001, Codex2 findings R1–R11)
+## Review fixes (2026-09-24..2026-09-27, ODP-ORCH-AUTONOMOUS-RECOVERY-001, Codex2 findings R1–R13)
 
 - An ordinary dirty seal (`owner_dirty`) never resumes a checkout that has a Git
   operation attached. A cherry-pick, revert or rebase started after the seal can
@@ -111,3 +111,12 @@ successor dispatch on a conflicted merge) behaved as this runbook describes. Det
 - `_interrupted_merge_worktree_fingerprint` hashes each regular file content independently and binds
   all entries into an unambiguous canonical JSON structure with explicit entry count and typed
   entry records, eliminating cross-entry byte stream serialization ambiguity.
+- Symbolic HEAD branch binding: `_interrupted_merge_snapshot` binds the observed symbolic HEAD
+  branch (`HEAD_BRANCH`) into the merge snapshot and seal, and `_is_sealed_owner_continuation_allowed`
+  explicitly verifies that the checked-out worktree HEAD matches the expected and recorded branch.
+  Renaming the branch in the worktree rejects direct seal and full prepare (`workspace_changed` /
+  `merge_state_changed`) with no continuation metadata; restoring the branch name allows continuation.
+- Diff capture drivers: `preserve_dead_worker_worktree` diff invocations for staged/unstaged patches
+  and `MERGE_AUTOSTASH-*.patch` explicitly pass `--no-textconv --no-ext-diff`. Configured display diff
+  drivers and textconv filters cannot distort or omit raw parked bytes, ensuring exact binary backup
+  preservation and replay.
