@@ -1,0 +1,44 @@
+{
+  "recorded_at": "2026-09-27T08:46:20.444445+00:00",
+  "base_commit": "af923aa58d33da4971e09f6e87ea2d1a026f6580",
+  "original_author": "interactive Codex; independent owner adoption and review pending",
+  "tested_files_sha256": {
+    "infra/db/migrations/env.py": "df26a3e3b708694a55c3cc724ecabdc919a22267ed27fe4732f9c2f8cea109c7",
+    "tests/ops/test_alembic_version_isolation.py": "8e2fa1f601a381426962c11b63e33a55aa4a5365a9cb20b307db968679510074"
+  },
+  "environment": "local isolated PostgreSQL 16 via tests/conftest.py intake_blank_db fixture; no live target database",
+  "baseline_reproduction": {
+    "selection": "tests/ops/test_alembic_version_isolation.py::test_foreign_version_and_data_survive_app_upgrade_and_downgrade",
+    "production_env": "unmodified env.py at base_commit",
+    "result": "1 failed; Can't locate revision identified by 29b539ebc72a",
+    "exec_session": 11446,
+    "completion_chunk": "7ef4e1",
+    "exit_code": 1
+  },
+  "verification": [
+    {
+      "command": "/home/lupin/odayplus/.venv/bin/python -m ruff check infra/db/migrations/env.py tests/ops/test_alembic_version_isolation.py",
+      "result": "All checks passed",
+      "exit_code": 0
+    },
+    {
+      "command": "/home/lupin/odayplus/.venv/bin/python -m pytest -q -o addopts= -m requires_live_env tests/ops/test_alembic_version_isolation.py",
+      "result": "9 passed in 3.80s",
+      "exec_session": 61650,
+      "completion_chunk": "9a53b4",
+      "exit_code": 0
+    },
+    {
+      "command": "/home/lupin/odayplus/.venv/bin/python -m pytest -q -o addopts= tests/ops/test_migration_backfill.py tests/ops/test_cloud_run_job_entrypoint.py",
+      "result": "41 passed in 0.86s",
+      "exec_session": 44364,
+      "completion_chunk": "bc000a",
+      "exit_code": 0
+    }
+  ],
+  "limits": [
+    "The version-isolation tests use the real env.py with a synthetic two-revision chain, not the entire PostGIS/product DDL.",
+    "These are observed local command results bound to file hashes, not exact-commit supervisor verification receipts.",
+    "Target database readback, full candidate build, live migration and deployment have not occurred."
+  ]
+}
