@@ -1,4 +1,4 @@
-# ODP-DEV-MIGRATION-RELEASE-REBUILD-001 — dev candidate rebuild and dev-gate clearance
+# ODP-DEV-MIGRATION-RELEASE-REBUILD-001 — dev candidate rebuild and release gate reconciliation
 
 - **Task ID**: `ODP-DEV-MIGRATION-RELEASE-REBUILD-001`
 - **Owner**: Antigravity3 · **Reviewer**: Codex2
@@ -19,7 +19,7 @@ The delta from `419e6bf4` to this candidate includes:
 | PR | Task | What it changed |
 |---|---|---|
 | #1362 | `ODP-ORCH-AUTONOMOUS-RECOVERY-001` | Worker failure policy, clean worktree preservation, and autonomous recovery enhancements |
-| #1372 | `ODP-MIGRATION-VERSION-TABLE-ISOLATION-001` | Alembic version table isolated from Dagster via `oday_alembic_version` in `infra/db/migrations/env.py` and regression contract tests |
+| #1372 | `ODP-MIGRATION-VERSION-TABLE-ISOLATION-001` | Alembic version table isolated from Dagster via `oday_plus_alembic_version` in `infra/db/migrations/env.py` and regression contract tests |
 
 Because `infra/db/migrations/env.py` is a product and build-input path, the images built for `419e6bf4` cannot be reused: `check_candidate_ancestry` only tolerates evidence-path drift between the candidate and the deployed head. The artifact handoff was therefore rebuilt.
 
@@ -66,35 +66,32 @@ recomputes from the canonical payload — not the SHA-256 of the file on disk (`
 
 ## 3. Gate disposition
 
-Only gates bound to `admission_target: dev` are touched. Gates 2, 3, 5 and 6 are bound to
-staging and production, keep their blockers, and stay `blocked`; their blocker prose was
-rewritten only to name the new candidate SHA `355a94b52b14badc236be4b3e52eb936a7075549`.
+Dev-admission gates gate-0 (Code) and gate-1 (Contract) are cleared against candidate `355a94b52b14badc236be4b3e52eb936a7075549`. Gate-4 (Security and Privacy) remains `blocked` pending candidate-specific human authorization and dev-toolchain vulnerability risk re-attestation. Gates 2, 3, 5, and 6 are bound to staging and production, keep their blockers, and stay `blocked`.
 
 | Gate | Status | Receipt |
 |---|---|---|
 | gate-0 Code | `passed` | [`gate-0-receipt.md`](gate-0-receipt.md) |
 | gate-1 Contract | `passed` | [`gate-1-receipt.md`](gate-1-receipt.md) |
-| gate-4 Security and Privacy | `passed-with-deviation` | [`gate-4-receipt.md`](gate-4-receipt.md) |
+| gate-4 Security and Privacy | `blocked` (dev) | [`gate-4-receipt.md`](gate-4-receipt.md) |
 | gate-2 Data | `blocked` (staging) | — |
 | gate-3 Model and Solver | `blocked` (production) | — |
 | gate-5 E2E/Performance/UAT | `blocked` (production) | — |
 | gate-6 Ops/Release/Audit | `blocked` (production) | — |
 
-`registry_admission_errors` only requires gates whose `admission_target` equals the
-environment being deployed, so clearing gate-0, gate-1 and gate-4 admits dev and nothing
-else.
+Because gate-4 is blocked and candidate-specific Human/Ops release signoff is pending, `release.decision` is fail-closed `no-go`.
 
-## 4. The gate-4 deviation, stated plainly
+## 4. The gate-4 disposition and authorization scope, stated plainly
 
-The OSS licence gate's automated verdict is still `FAIL` on this candidate and will stay
-that way. The four LGPL cases are adjudicated by a named operator but not by the external
-authoritative receipt that H01 and the project's own D14 decision require, and no external
-identity or receipt system is wired to this repository. Rather than edit the three tests
-that assert the un-adjudicated state, the decision is recorded as a deviation on gate-4,
-with conditions and a review date (`2026-10-15`). `license_policy.json` stays `proposed`
-and `license_exemptions.json` stays empty.
+1. **Dev-toolchain vulnerability risk acceptance**:
+   The risk acceptance recorded in `docs/evidence/human-decisions/ODP-HUMAN-DECISION-RECORDS-001/2026-09-18-dev-toolchain-vulnerability-risk-acceptance.md` (covering 1 high and 2 moderate dev-only findings) is explicitly scoped to baseline `dc0eb370b29e50f2fc916e008bdab3d08e0a3ddc` and excludes other baselines. Candidate `355a94b52b14badc236be4b3e52eb936a7075549` requires a candidate-applicable human risk acceptance / waiver before gate-4 can be cleared.
 
-The full reasoning is in [`gate-4-receipt.md`](gate-4-receipt.md).
+2. **Candidate-specific release authorization**:
+   The registry does not copy or redate human signoff without a candidate-applicable decision from Human/Ops. Release decision remains fail-closed `no-go`.
+
+3. **OSS licence compliance**:
+   The four LGPL cases (LGPL-SHARP-LIBVIPS, LGPL-PSYCOPG2, LGPL-PSYCOPG3, LGPL-MOOCORE) are conditionally approved by the named operator in `docs/evidence/human-decisions/ODP-HUMAN-DECISION-RECORDS-001/2026-09-18-oss-license-four-lgpl-cases.md` with review date `2026-12-24`. An external authoritative receipt (H01) remains pending; `license_policy.json` remains `proposed` and `license_exemptions.json` remains empty.
+
+The full reasoning and measurement details are in [`gate-4-receipt.md`](gate-4-receipt.md).
 
 ## 5. What this task did not do
 
@@ -102,5 +99,4 @@ The full reasoning is in [`gate-4-receipt.md`](gate-4-receipt.md).
 - No edit to `docs/security/`.
 - No change to any gate bound to staging or production.
 - No database mutation, revision stamp reset, or live traffic change.
-- The `human_signoff` and `deviation.approver` fields record a named operator decision
-  taken in an interactive session.
+- No fabricated or extended human approvals: `release.decision` is `no-go` and gate-4 is blocked pending candidate-specific human inputs.

@@ -19,7 +19,7 @@ Event contracts and schema forward compatibility:
 - Event contract test suite in `tests/contract/test_assisted_listing_intake_events.py` passes inside `product-lint-unit`.
 
 Database migration and version table isolation:
-- Alembic version table isolated from Dagster (`oday_alembic_version`) via PR #1372 (`ODP-MIGRATION-VERSION-TABLE-ISOLATION-001`).
+- Alembic version table isolated from Dagster (`oday_plus_alembic_version`) via PR #1372 (`ODP-MIGRATION-VERSION-TABLE-ISOLATION-001`).
 - Isolation contract verified by `tests/ops/test_alembic_version_isolation.py` in `product-db`.
 
 ## Required checks

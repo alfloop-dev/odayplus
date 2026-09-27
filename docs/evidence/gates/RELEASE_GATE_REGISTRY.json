@@ -3,7 +3,7 @@
   "registry_id": "ODP-RELEASE-GATE-REGISTRY",
   "task_id": "ODP-DEV-MIGRATION-RELEASE-REBUILD-001",
   "generated_at": "2026-09-27",
-  "description": "ODay Plus release gate registry for candidate 355a94b52b14badc236be4b3e52eb936a7075549. Dev-admission gates (gate-0 Code, gate-1 Contract, gate-4 Security and Privacy) are cleared against this candidate; gate-4 carries a recorded deviation because the OSS licence gate's automated verdict stays FAIL until an external authoritative approval receipt exists (H01). Gates bound to staging and production admission targets are untouched and remain blocked.",
+  "description": "ODay Plus release gate registry for candidate 355a94b52b14badc236be4b3e52eb936a7075549. Dev-admission gates gate-0 (Code) and gate-1 (Contract) are cleared against this candidate; gate-4 (Security and Privacy) remains blocked pending candidate-specific human/ops authorization and dev-toolchain vulnerability risk re-attestation (the prior 2026-09-18 risk acceptance was strictly scoped to baseline dc0eb370b29e50f2fc916e008bdab3d08e0a3ddc). Gates bound to staging and production admission targets remain blocked. Fail-closed NO-GO decision is preserved.",
   "migration": {
     "from_schema_version": "1.0.0",
     "source_registry_id": "ODP-RELEASE-GATE-REGISTRY",
@@ -19,16 +19,10 @@
     "stage": "candidate-built",
     "environment": "dev",
     "admission_target": "dev",
-    "decision": "go",
-    "decision_owner": "蔡尚志",
+    "decision": "no-go",
+    "decision_owner": "Human/Ops",
     "decision_date": "2026-09-27",
-    "decision_note": "GO for the dev admission boundary only. Candidate 355a94b52b14badc236be4b3e52eb936a7075549 passes CI run 36311413006 on its exact head and is bound to the artifact handoff published by Runtime Release run 36313147910. gate-0 and gate-1 are passed on measured evidence; gate-4 is passed-with-deviation and the deviation is recorded on that gate. Gates bound to staging and production are unchanged and still blocked, so this GO admits nothing beyond dev.",
-    "human_signoff": {
-      "approver": "蔡尚志",
-      "date": "2026-09-27",
-      "scope": "dev admission boundary only",
-      "note": "Named operator decision recorded in this repository. It is a release admission decision, not the external authoritative OSS approval receipt that H01 requires; see gate-4.deviation."
-    }
+    "decision_note": "NO-GO for candidate 355a94b52b14badc236be4b3e52eb936a7075549. Candidate CI run 36311413006 and build run 36313147910 succeeded on exact candidate. Dev gates gate-0 and gate-1 are passed; gate-4 is blocked pending candidate-applicable human/ops authorization and dev-toolchain vulnerability risk re-attestation (the 2026-09-18 risk acceptance was strictly scoped to baseline dc0eb370b29e50f2fc916e008bdab3d08e0a3ddc). Gates 2, 3, 5, 6 remain blocked. Fail-closed NO-GO state is preserved without fabricating human signoff."
   },
   "gates": [
     {
@@ -129,7 +123,7 @@
           "recorded_by": "Antigravity3",
           "artifact": "docs/evidence/runtime/ODP-DEV-MIGRATION-RELEASE-REBUILD-001/gate-1-receipt.md",
           "gate_name": "Contract Gate",
-          "summary": "CI run 36311413006 on exact head 355a94b52b14badc236be4b3e52eb936a7075549: product-api-contract success with 0 unapproved breaking changes. Consumer forward compatibility maintained; Alembic version table isolated from Dagster (oday_alembic_version) via PR #1372.",
+          "summary": "CI run 36311413006 on exact head 355a94b52b14badc236be4b3e52eb936a7075549: product-api-contract success with 0 unapproved breaking changes. Consumer forward compatibility maintained; Alembic version table isolated from Dagster (oday_plus_alembic_version) via PR #1372.",
           "recorded_under_task": "ODP-DEV-MIGRATION-RELEASE-REBUILD-001"
         }
       ],
@@ -226,7 +220,7 @@
       "scope": "All production or sensitive releases: secret scanning, dependency and SAST findings, RBAC/ABAC enforcement, sensitive export and audit controls, IAM/infrastructure review, and OSS licence compliance.",
       "owner": "Claude",
       "reviewer": "Antigravity2",
-      "status": "passed-with-deviation",
+      "status": "blocked",
       "status_date": "2026-09-27",
       "release_sha": "355a94b52b14badc236be4b3e52eb936a7075549",
       "stage": "candidate-built",
@@ -252,32 +246,14 @@
           "description": "Dependency and static security scan target invoked by make ci."
         }
       ],
-      "receipts": [
-        {
-          "receipt_id": "gate-4-355a94b52b14",
-          "release_sha": "355a94b52b14badc236be4b3e52eb936a7075549",
-          "result": "pass",
-          "recorded_at": "2026-09-27T10:46:00Z",
-          "recorded_by": "Antigravity3",
-          "artifact": "docs/evidence/runtime/ODP-DEV-MIGRATION-RELEASE-REBUILD-001/gate-4-receipt.md",
-          "gate_name": "Security and Privacy Gate",
-          "summary": "CI run 36311413006 on exact head 355a94b52b14badc236be4b3e52eb936a7075549: product-security success. Secret scanning, SAST, RBAC/ABAC, sensitive-export and audit-retention checks pass; production dependencies carry 0 vulnerabilities. The licence-gate check does not pass and is covered by the recorded deviation on this gate.",
-          "recorded_under_task": "ODP-DEV-MIGRATION-RELEASE-REBUILD-001"
-        }
-      ],
-      "blockers": [],
-      "deviation": {
-        "description": "The OSS licence gate's automated verdict is still FAIL for this candidate, and by design: four LGPL cases (LGPL-SHARP-LIBVIPS, LGPL-PSYCOPG2, LGPL-PSYCOPG3, LGPL-MOOCORE) sit in review_required with an empty exemption register. They are adjudicated -- the named operator recorded 'allow with conditions' for all four, first on 2026-09-08 in docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/case-matrix.json (D01-D04) and again on 2026-09-18 in docs/evidence/human-decisions/ODP-HUMAN-DECISION-RECORDS-001/2026-09-18-oss-license-four-lgpl-cases.md -- but not by the external authoritative receipt that H01 and the project's own D14 decision require. No such external identity or receipt system is wired to this repository, so the licence gate cannot go green and license_policy.json stays 'proposed'. The dev-tool vulnerability findings (1 high, 2 moderate, all dev-only) carry a scope-limited risk acceptance recorded in docs/evidence/human-decisions/ODP-HUMAN-DECISION-RECORDS-001/2026-09-18-dev-toolchain-vulnerability-risk-acceptance.md. Two further required checks are deployment-time readbacks that cannot exist before a first deployment: the live default-deny egress probe and the live IAM state readback. Both stay assigned to ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 and are conditions on this deviation, not evidence for it. This deviation admits the dev boundary only; it does not clear gate-4 for staging or production.",
-        "approver": "蔡尚志",
-        "review_by": "2026-12-24",
-        "scope": "dev admission boundary only",
-        "conditions": [
-          "The exemption register stays empty and license_policy.json stays 'proposed' until an external authoritative approval receipt exists; no AI agent may edit either to close this deviation.",
-          "The live default-deny egress probe readback and the live IAM state readback must be captured by ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 immediately after the dev deployment.",
-          "This deviation does not extend to staging or production admission; gate-4 must be re-adjudicated for those boundaries.",
-          "The dev-tool risk acceptance is bound to advisories GHSA-2883-xcg3-v3hh and GHSA-82fw-gwwq-j7x9 only, and lapses if any of those packages appears on a production dependency path."
-        ]
-      }
+      "receipts": [],
+      "blockers": [
+        "No cleared Security and Privacy Gate receipt is bound to release candidate 355a94b52b14badc236be4b3e52eb936a7075549 in this registry.",
+        "Dev-toolchain vulnerability risk acceptance (docs/evidence/human-decisions/ODP-HUMAN-DECISION-RECORDS-001/2026-09-18-dev-toolchain-vulnerability-risk-acceptance.md) was expressly scoped to baseline dc0eb370b29e50f2fc916e008bdab3d08e0a3ddc and excludes other baselines; candidate 355a94b52b14badc236be4b3e52eb936a7075549 requires candidate-applicable human risk acceptance / waiver or remediation for dev-toolchain vulnerability findings.",
+        "Candidate-specific Human/Ops release authorization for dev admission is pending for candidate 355a94b52b14badc236be4b3e52eb936a7075549.",
+        "Remaining runtime-only items: live public default-deny egress probe readback (.odp_data/deployment/public-egress-probe.json) and live IAM state readback are post-deployment artifacts assigned to ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 (owner Antigravity2). Offline egress contract digest (sha256:d18b0a1178ed69442a92a9abe76e2c22f049d17ee0c86e34d39233cff244cd72) is supplementary evidence.",
+        "Authority blocker HUMAN-OSS-LEGAL-APPROVAL-001 (named sign-off H01 from external authority system) remains pending human action by Human/Ops to approve docs/security/license_policy.json (proposed) and sign license_exemptions.json; four LGPL cases (LGPL-SHARP-LIBVIPS, LGPL-PSYCOPG2, LGPL-PSYCOPG3, LGPL-MOOCORE) carry conditional operator approval in docs/evidence/human-decisions/ODP-HUMAN-DECISION-RECORDS-001/2026-09-18-oss-license-four-lgpl-cases.md but external authoritative receipt is pending."
+      ]
     },
     {
       "id": "gate-5",
@@ -393,7 +369,7 @@
     "from_manifest_digest": "sha256:134cc712132155b0003d68063298d3044d5400d91244b8024b4448268c4fc678",
     "to_manifest_digest": "sha256:a1e3fcf6b765861dc269e3fd395b7bec6ac4b2b6f3b3207a3ffb623c6ca6dfaa",
     "re_attestation_required": true,
-    "note": "Rebind from 419e6bf4958269c5b9e94efcb80770e28cd54dda to 355a94b52b14badc236be4b3e52eb936a7075549. The candidate incorporates PR #1372 (ODP-MIGRATION-VERSION-TABLE-ISOLATION-001), which isolates ODay's Alembic migration version table (oday_alembic_version) from Dagster, resolving the migration history conflict during dev rollout. The artifact handoff was rebuilt by Runtime Release run 36313147910. See docs/evidence/runtime/ODP-DEV-MIGRATION-RELEASE-REBUILD-001/README.md.",
+    "note": "Rebind from 419e6bf4958269c5b9e94efcb80770e28cd54dda to 355a94b52b14badc236be4b3e52eb936a7075549. The candidate incorporates PR #1372 (ODP-MIGRATION-VERSION-TABLE-ISOLATION-001), which isolates ODay's Alembic migration version table (oday_plus_alembic_version) from Dagster, resolving the migration history conflict during dev rollout. The artifact handoff was rebuilt by Runtime Release run 36313147910. See docs/evidence/runtime/ODP-DEV-MIGRATION-RELEASE-REBUILD-001/README.md.",
     "build_run": {
       "workflow": "Runtime Release",
       "run_id": 36313147910,

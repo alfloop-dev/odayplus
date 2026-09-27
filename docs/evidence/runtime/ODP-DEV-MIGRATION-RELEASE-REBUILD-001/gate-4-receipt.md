@@ -3,7 +3,7 @@
 - **Task**: `ODP-DEV-MIGRATION-RELEASE-REBUILD-001`
 - **Recorded by**: Antigravity3 (rebuild owner)
 - **Gate owner of record**: Claude / reviewer Antigravity2
-- **Result**: pass, **with a recorded deviation** (see `deviation` on gate-4 in the registry)
+- **Result**: blocked (pending candidate-applicable human risk acceptance and release authorization)
 - **Candidate**: `355a94b52b14badc236be4b3e52eb936a7075549`
 - **CI run**: [36311413006](https://github.com/alfloop-dev/odayplus/actions/runs/36311413006) on that exact head
 - **Build run**: [36313147910](https://github.com/alfloop-dev/odayplus/actions/runs/36313147910)
@@ -35,37 +35,26 @@ Egress posture, from the manifest's `sources_off_attestation`: all 16 external s
 | Criterion | Status on this candidate |
 |---|---|
 | secret scan passes | pass (`product-security`) |
-| dependency and SAST scans pass with no unresolved critical/high | pass; production dependencies 0 findings |
+| dependency and SAST scans pass with no unresolved critical/high | pass for production dependencies (0 findings); dev-toolchain vulnerability waiver pending candidate-specific human signoff |
 | RBAC/ABAC tests pass for affected roles | pass (`product-security`) |
 | sensitive export and audit controls checked | pass (`product-security`) |
 | IAM and infrastructure changes reviewed | offline review carried over: PASSED with unresolved exceptions (three project-level `roles/cloudsql.client` grants without IAM conditions). Unchanged by this candidate; no `infra/terraform` change |
-| **licence-aware SBOM produced and OSS licence gate passes** | SBOM produced; **the licence gate does not pass** — covered by the recorded deviation |
+| **licence-aware SBOM produced and OSS licence gate passes** | SBOM produced; automated licence gate verdict is FAIL (0 violations, 4 LGPL cases in review_required; H01 external receipt pending) |
 
-## The one criterion that does not pass
+## Gate blockers and missing human inputs
 
-`evaluate_policy()` returns `status: FAIL` for this candidate with 0 violations and the
-four LGPL cases still in `review_required`, because `docs/security/license_exemptions.json`
-is empty and `docs/security/license_policy.json` is still `proposed`.
+1. **Dev-toolchain vulnerability risk acceptance scope**:
+   The dev-toolchain risk acceptance in `docs/evidence/human-decisions/ODP-HUMAN-DECISION-RECORDS-001/2026-09-18-dev-toolchain-vulnerability-risk-acceptance.md` was expressly limited to baseline `dc0eb370b29e50f2fc916e008bdab3d08e0a3ddc` and excludes other baselines. Candidate `355a94b52b14badc236be4b3e52eb936a7075549` requires a candidate-applicable human risk acceptance / waiver before gate-4 can be cleared.
 
-That is the designed state, not a defect. The four cases are adjudicated by a named
-operator — twice, on 2026-09-08 in
-`docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/case-matrix.json` (D01–D04) and
-again on 2026-09-18 in
-`docs/evidence/human-decisions/ODP-HUMAN-DECISION-RECORDS-001/2026-09-18-oss-license-four-lgpl-cases.md`
-— but not by an external authoritative receipt. The project's own D14 decision requires
-*External authoritative system with readback*, and
-`ODP-OSS-DECISION-PACK-001/missing-human-inputs.json` H01 states plainly that
-*Repo-internal JSON with self-calculated hash is not a verifiable authoritative source*.
-No such system is wired to this repository.
+2. **Candidate-specific release authorization**:
+   Human/Ops release authorization for candidate `355a94b52b14badc236be4b3e52eb936a7075549` dev admission is pending.
 
-The deviation recorded on gate-4 is therefore the honest form of this state: the decision
-exists and is named, the receipt does not, and the difference is written down rather than
-papered over.
+3. **OSS license external receipt**:
+   The four LGPL cases (LGPL-SHARP-LIBVIPS, LGPL-PSYCOPG2, LGPL-PSYCOPG3, LGPL-MOOCORE) carry conditional operator approval in `docs/evidence/human-decisions/ODP-HUMAN-DECISION-RECORDS-001/2026-09-18-oss-license-four-lgpl-cases.md` (review date 2026-12-24), but external authoritative receipt (H01) is pending. `license_policy.json` remains `proposed` and `license_exemptions.json` remains empty.
 
 ## What this receipt does not claim
 
 Two required security readbacks cannot exist before a first deployment and are not claimed
 here: the live default-deny egress probe (`.odp_data/deployment/public-egress-probe.json`)
-and the live IAM state readback. Both remain with `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001`
-and are conditions on the deviation. The offline egress contract digest
+and the live IAM state readback. Both remain with `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001`. The offline egress contract digest
 `sha256:d18b0a11…` (`sources_off_attestation.egress_evidence.contract_digest`) in the manifest is supplementary evidence, not a live probe.
