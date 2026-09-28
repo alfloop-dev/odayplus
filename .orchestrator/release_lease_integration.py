@@ -367,13 +367,7 @@ def _archive_current_issuance(task: dict[str, Any]) -> None:
 
 
 def _sanitize_errors(errors: list[str]) -> list[str]:
-    """Sanitize error messages to bounded safe error codes.
-
-    Uses positive-match sentinel mapping rather than blacklist/truncation.
-    Every error that matches a known diagnostic category is replaced with
-    a fixed safe code; unrecognised errors are truncated to a safe length
-    with all hex sequences >32 chars redacted to prevent signature leakage.
-    """
+    """Map diagnostics to fixed safe messages; never publish raw exception text."""
     _SENTINEL_MAP: list[tuple[Callable[[str], bool], str]] = [
         # Bearer / key material sentinels
         (lambda t: "BEGIN PRIVATE KEY" in t or "BEGIN ED25519 PRIVATE KEY" in t,
@@ -395,10 +389,38 @@ def _sanitize_errors(errors: list[str]) -> list[str]:
          "lease state store access denied"),
         (lambda t: "state store" in t.lower() and ("error" in t.lower() or "exception" in t.lower()),
          "lease state store error"),
+        (lambda t: "archived issuance" in t.lower(),
+         "release approval nonce was used by an archived issuance"),
+        (lambda t: "nonce" in t.lower() and ("already used" in t.lower() or "unavailable" in t.lower()),
+         "release approval nonce is unavailable or already used"),
+        (lambda t: "unreadable task snapshot" in t.lower(),
+         "release archive contains an unreadable task snapshot"),
+        (lambda t: "manifest_run_id does not match candidate_rebind.build_run.run_id" in t,
+         "manifest_run_id does not match candidate_rebind.build_run.run_id"),
+        (lambda t: "secret manager signing key is unavailable" in t.lower(),
+         "Secret Manager signing key is unavailable"),
+        (lambda t: "does not resolve to exactly one commit" in t.lower(),
+         "dispatch ref does not resolve to exactly one commit"),
+        (lambda t: "does not match current request" in t.lower(),
+         "durable lease does not match current request"),
+        (lambda t: "multiple conflicting" in t.lower(),
+         "multiple conflicting durable leases were found"),
+        (lambda t: "expected 'done'" in t.lower() or "dependency" in t.lower(),
+         "required dependency expected 'done'"),
+        (lambda t: "no durable lease record" in t.lower(),
+         "issuing reservation has no durable lease record"),
+        (lambda t: "no active issued lease" in t.lower(),
+         "issuing reservation has no active issued lease"),
+        (lambda t: "expired" in t.lower() or "expiry" in t.lower(),
+         "release request or lease expired"),
+        (lambda t: "non-evidence paths" in t.lower(),
+         "release manifest contains non-evidence paths"),
+        (lambda t: "not an ancestor" in t.lower(),
+         "dispatch ref is not an ancestor of the candidate"),
+        # Manifest format sentinel
+        (lambda t: "manifest_run_id" in t.lower() and "must be" in t.lower(),
+         "manifest_run_id format is invalid"),
     ]
-
-    # Redact long hex sequences that could be signatures or key material
-    _HEX_REDACT = re.compile(r'[0-9a-fA-F]{33,}')
 
     sanitized: list[str] = []
     for err in errors:
@@ -421,11 +443,7 @@ def _sanitize_errors(errors: list[str]) -> list[str]:
                 break
 
         if not matched:
-            # Redact long hex sequences and truncate
-            safe = _HEX_REDACT.sub("[REDACTED]", text)
-            if len(safe) > 256:
-                safe = safe[:253] + "..."
-            sanitized.append(safe)
+            sanitized.append("lease validation failed")
     return sanitized
 
 
@@ -798,6 +816,9 @@ def _status_still_reserved(
     *,
     task_id: str,
     fingerprint: str,
+    expected_state: str = "issuing",
+    expected_issuance: dict[str, Any] | None = None,
+    expected_request: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]] | None:
     latest = load_status(config)
     task = _task_index(latest, task_id, config=config)
@@ -809,11 +830,94 @@ def _status_still_reserved(
         not isinstance(request, dict)
         or request_fingerprint(task_id, request) != fingerprint
         or not isinstance(issuance, dict)
-        or issuance.get("state") != "issuing"
+        or issuance.get("state") != expected_state
         or issuance.get("request_fingerprint") != fingerprint
+        or (expected_issuance is not None and issuance != expected_issuance)
+        or (expected_request is not None and request != expected_request)
     ):
         return None
     return latest, task, request
+
+
+def _revalidate_reserved_admission(
+    config: dict[str, Any],
+    *,
+    task_id: str,
+    fingerprint: str,
+    settings: dict[str, Any],
+    root: Path,
+    archive_dir: Path,
+    registry: dict[str, Any],
+    manifest: dict[str, Any] | None,
+    input_errors: list[str],
+    ref_resolver: Callable[..., str | None],
+    current_time: Callable[[], datetime],
+    expected_state: str = "issuing",
+    expected_issuance: dict[str, Any] | None = None,
+    expected_request: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], str | None, list[str]] | None:
+    """Revalidate the exact live admission after callbacks that may be slow or mutate status."""
+    before = _status_still_reserved(
+        config,
+        task_id=task_id,
+        fingerprint=fingerprint,
+        expected_state=expected_state,
+        expected_issuance=expected_issuance,
+        expected_request=expected_request,
+    )
+    if before is None:
+        return None
+    _, _, request_before_ref = before
+    ref_sha, ref_errors = check_dispatch_ref_errors(
+        settings,
+        str(request_before_ref.get("candidate_sha") or ""),
+        root,
+        ref_resolver=ref_resolver,
+    )
+
+    # The resolver may block or invoke a callback that observes a newer board.
+    # Reload after it and bind all admission checks to that fresh canonical view.
+    latest = _status_still_reserved(
+        config,
+        task_id=task_id,
+        fingerprint=fingerprint,
+        expected_state=expected_state,
+        expected_issuance=expected_issuance,
+        expected_request=expected_request,
+    )
+    if latest is None:
+        return None
+    status, task, request = latest
+    now = current_time()
+    errors = request_errors(status, task, request, now=now)
+    errors.extend(input_errors)
+    errors.extend(_exact_binding_errors(request, registry, manifest))
+    errors.extend(_build_run_binding_errors(request, registry))
+    errors.extend(ref_errors)
+    errors.extend(
+        _nonce_reuse_errors(
+            status,
+            task_id,
+            fingerprint,
+            _safe_digest(request.get("nonce")),
+            archive_dir=archive_dir,
+            config=config,
+        )
+    )
+    errors.extend(
+        issuance_errors(
+            status=status,
+            registry=registry,
+            manifest=manifest,
+            manifest_errors=input_errors,
+            task_id=task_id,
+            target_environment=str(request.get("target_environment") or ""),
+            release_sha=str(request.get("candidate_sha") or ""),
+            archive_dir=archive_dir,
+            root=root,
+        )
+    )
+    return status, task, request, ref_sha, errors
 
 
 def _record_blocked(
@@ -920,12 +1024,14 @@ def process_release_lease_issuance(
     dispatch: Callable[..., None] = dispatch_runtime_release,
     ref_resolver: Callable[..., str | None] = resolve_ref_sha,
     now: datetime | None = None,
+    clock: Callable[[], datetime] | None = None,
 ) -> bool:
     """Run release issuance within the existing Supervisor cycle.
 
-    A failed or unknown step consumes no deploy capability. In particular, a
-    lease that reached GCS but could not be recorded in the task board is never
-    dispatched and is not retried automatically under the same approval nonce.
+    A failed or unknown step never dispatches without a canonical issued receipt.
+    A status-CAS rejection may receive one bounded retry and later exact-lease
+    recovery only while the same Human/Ops request remains valid; it never signs
+    a replacement lease under the old nonce.
     """
 
     settings, settings_errors = issuer_settings(config)
@@ -947,7 +1053,10 @@ def process_release_lease_issuance(
     status = load_status(config)
     if not isinstance(status, dict):
         return False
-    timestamp = _utc(now)
+    time_source = clock or (lambda: now)
+    def current_time() -> datetime:
+        return _utc(time_source())
+    timestamp = current_time()
     root = config_path(config, "status_file").parent
     archive_dir = root / "ai-task-archive/tasks"
 
@@ -1019,7 +1128,7 @@ def process_release_lease_issuance(
             continue
         status, task, request = reserved
         registry, manifest, input_errors = _read_release_inputs(root, str(request.get("candidate_sha") or ""))
-        errors = request_errors(status, task, request, now=_utc(now))
+        errors = request_errors(status, task, request, now=current_time())
         errors.extend(input_errors)
         errors.extend(_exact_binding_errors(request, registry, manifest))
         errors.extend(_build_run_binding_errors(request, registry))
@@ -1182,10 +1291,10 @@ def process_release_lease_issuance(
                 expected_request_fingerprint=fingerprint,
                 expected_approval_id=str(request.get("approval_id") or ""),
                 expected_approval_nonce_digest=_safe_digest(request.get("nonce")),
-                now=_utc(now),
+                now=current_time(),
             )
             req_exp_time = parse_iso_timestamp(request.get("expires_at") or "")
-            if req_exp_time is None or req_exp_time <= _utc(now):
+            if req_exp_time is None or req_exp_time <= current_time():
                 verify_errs.append("release_lease_request has expired or has invalid expiry")
             if isinstance(manifest, dict) and stored_lease.get("release_id") != manifest.get("release_id"):
                 verify_errs.append("durable lease release_id does not match manifest")
@@ -1243,7 +1352,7 @@ def process_release_lease_issuance(
                             expected_request_fingerprint=fingerprint,
                             expected_approval_id=str(request.get("approval_id") or ""),
                             expected_approval_nonce_digest=_safe_digest(request.get("nonce")),
-                            now=_utc(now),
+                            now=current_time(),
                         )
                         if not verify_errs:
                             lease = stored_lease
@@ -1291,7 +1400,7 @@ def process_release_lease_issuance(
                     continue
                 status, task, request = reserved
                 registry, manifest, input_errors = _read_release_inputs(root, str(request.get("candidate_sha") or ""))
-                post_errors = request_errors(status, task, request, now=_utc(now))
+                post_errors = request_errors(status, task, request, now=current_time())
                 post_errors.extend(input_errors)
                 post_errors.extend(_exact_binding_errors(request, registry, manifest))
                 post_errors.extend(_build_run_binding_errors(request, registry))
@@ -1346,7 +1455,7 @@ def process_release_lease_issuance(
                         ttl_seconds=settings["ttl_seconds"],
                         release_sha=str(request["candidate_sha"]),
                         archive_dir=archive_dir,
-                        issued_at=_utc(now),
+                        issued_at=current_time(),
                         root=root,
                         request_fingerprint=fingerprint,
                         approval_id=str(request.get("approval_id") or ""),
@@ -1376,7 +1485,7 @@ def process_release_lease_issuance(
 
         lease_exp = parse_iso_timestamp(lease.get("expires_at") or "")
         req_exp = parse_iso_timestamp(request.get("expires_at") or "")
-        if lease_exp is None or req_exp is None or lease_exp <= _utc(now) or req_exp <= _utc(now):
+        if lease_exp is None or req_exp is None or lease_exp <= current_time() or req_exp <= current_time():
             if _has_exact_lease_ownership(lease, task_id, request):
                 try:
                     state_store.revoke(lease, reason="lease or request expired or invalid before status receipt commit")
@@ -1396,32 +1505,27 @@ def process_release_lease_issuance(
             continue
 
         registry, manifest, final_input_errors = _read_release_inputs(root, str(request.get("candidate_sha") or ""))
-        final_errors = request_errors(status, task, request, now=_utc(now))
-        final_errors.extend(final_input_errors)
-        final_errors.extend(_exact_binding_errors(request, registry, manifest))
-        final_errors.extend(_build_run_binding_errors(request, registry))
-        final_ref_sha, final_ref_errors = check_dispatch_ref_errors(
-            settings, str(request.get("candidate_sha") or ""), root, ref_resolver=ref_resolver
+        admission = _revalidate_reserved_admission(
+            config,
+            task_id=task_id,
+            fingerprint=fingerprint,
+            settings=settings,
+            root=root,
+            archive_dir=archive_dir,
+            registry=registry,
+            manifest=manifest,
+            input_errors=final_input_errors,
+            ref_resolver=ref_resolver,
+            current_time=current_time,
         )
-        final_errors.extend(final_ref_errors)
-        final_errors.extend(
-            _nonce_reuse_errors(
-                status, task_id, fingerprint, _safe_digest(request.get("nonce")), archive_dir=archive_dir, config=config
-            )
-        )
-        final_errors.extend(
-            issuance_errors(
-                status=status,
-                registry=registry,
-                manifest=manifest,
-                manifest_errors=final_input_errors,
-                task_id=task_id,
-                target_environment=str(request.get("target_environment") or ""),
-                release_sha=str(request.get("candidate_sha") or ""),
-                archive_dir=archive_dir,
-                root=root,
-            )
-        )
+        if admission is None:
+            if _has_exact_lease_ownership(lease, task_id, request):
+                try:
+                    state_store.revoke(lease, reason="canonical reservation changed during final admission validation")
+                except Exception:
+                    pass
+            continue
+        status, task, request, final_ref_sha, final_errors = admission
         if final_errors:
             if _has_exact_lease_ownership(lease, task_id, request):
                 try:
@@ -1442,16 +1546,15 @@ def process_release_lease_issuance(
             continue
         ref_sha = final_ref_sha
 
-        # P1: Recheck both deadlines after slow validation before receipt commit.
-        # The ref lookup, input reads, and admission checks above may have taken
-        # seconds; if either deadline has elapsed the receipt must not commit.
+        # Re-read the clock after all input and ref callbacks before committing the receipt.
         pre_commit_lease_exp = parse_iso_timestamp(lease.get("expires_at") or "")
         pre_commit_req_exp = parse_iso_timestamp(request.get("expires_at") or "")
+        pre_commit_now = current_time()
         if (
             pre_commit_lease_exp is None
             or pre_commit_req_exp is None
-            or pre_commit_lease_exp <= _utc(now)
-            or pre_commit_req_exp <= _utc(now)
+            or pre_commit_lease_exp <= pre_commit_now
+            or pre_commit_req_exp <= pre_commit_now
         ):
             if _has_exact_lease_ownership(lease, task_id, request):
                 try:
@@ -1480,24 +1583,67 @@ def process_release_lease_issuance(
             receipt=_receipt(
                 lease,
                 errors=[],
-                issued_at=parse_iso_timestamp(lease.get("issued_at") or "") or _utc(now),
+                issued_at=parse_iso_timestamp(lease.get("issued_at") or "") or current_time(),
                 dispatch_ref=settings.get("dispatch_ref", DEFAULT_DISPATCH_REF),
                 dispatch_ref_sha=ref_sha,
             ),
-            updated_at=_utc(now),
+            updated_at=current_time(),
         )
         expected_issuance = deepcopy(issued_record)
         expected_request = deepcopy(request)
         if not _commit_result(config, status, task, issued_record, commit_status=commit_status):
-            # CAS rejected: a concurrent canonical writer advanced the status
-            # revision. Re-read the live snapshot; if the issuing reservation is
-            # still intact and the request has not changed, retry the issued
-            # commit exactly once against the refreshed snapshot. A second
-            # failure falls through to the next supervisor cycle.
-            retry_reserved = _status_still_reserved(config, task_id=task_id, fingerprint=fingerprint)
-            if retry_reserved is None:
+            # A revision conflict may also carry a revoked approval or changed blockers.
+            # Re-run the full admission checks after reloading, including after ref lookup.
+            retry_admission = _revalidate_reserved_admission(
+                config,
+                task_id=task_id,
+                fingerprint=fingerprint,
+                settings=settings,
+                root=root,
+                archive_dir=archive_dir,
+                registry=registry,
+                manifest=manifest,
+                input_errors=final_input_errors,
+                ref_resolver=ref_resolver,
+                current_time=current_time,
+            )
+            if retry_admission is None:
+                if _has_exact_lease_ownership(lease, task_id, request):
+                    try:
+                        state_store.revoke(lease, reason="canonical reservation changed after receipt CAS rejection")
+                    except Exception:
+                        pass
                 continue
-            status, task, request = retry_reserved
+            status, task, request, retry_ref_sha, retry_errors = retry_admission
+            retry_lease_exp = parse_iso_timestamp(lease.get("expires_at") or "")
+            retry_req_exp = parse_iso_timestamp(request.get("expires_at") or "")
+            retry_now = current_time()
+            if (
+                retry_errors
+                or retry_lease_exp is None
+                or retry_req_exp is None
+                or retry_lease_exp <= retry_now
+                or retry_req_exp <= retry_now
+            ):
+                retry_errors = retry_errors or ["lease or request expired before receipt CAS retry"]
+                if _has_exact_lease_ownership(lease, task_id, request):
+                    try:
+                        state_store.revoke(lease, reason="approval changed or expired after receipt CAS rejection")
+                    except Exception:
+                        pass
+                changed = _record_blocked(
+                    config,
+                    status,
+                    task,
+                    request,
+                    fingerprint,
+                    settings,
+                    retry_errors,
+                    commit_status=commit_status,
+                    dispatch_ref_sha=retry_ref_sha,
+                ) or changed
+                continue
+            ref_sha = retry_ref_sha
             issued_record = _issuance_record(
                 state="issued",
                 task_id=task_id,
@@ -1507,36 +1653,64 @@ def process_release_lease_issuance(
                 receipt=_receipt(
                     lease,
                     errors=[],
-                    issued_at=parse_iso_timestamp(lease.get("issued_at") or "") or _utc(now),
+                    issued_at=parse_iso_timestamp(lease.get("issued_at") or "") or current_time(),
                     dispatch_ref=settings.get("dispatch_ref", DEFAULT_DISPATCH_REF),
                     dispatch_ref_sha=ref_sha,
                 ),
-                updated_at=_utc(now),
+                updated_at=current_time(),
             )
             expected_issuance = deepcopy(issued_record)
             expected_request = deepcopy(request)
-            if not _commit_result(config, status, task, issued_record, commit_status=commit_status):
-                # Second CAS rejection: do not dispatch. The unexpired GCS lease
-                # will be reconciled by the next supervisor cycle.
+            if not _commit_result(
+                config,
+                status,
+                task,
+                issued_record,
+                commit_status=commit_status,
+            ):
+                # A second CAS rejection is terminal for this cycle: never dispatch.
                 continue
         changed = True
         _write_activity(config, "release_lease_issued", task_id=task_id, record=issued_record)
 
-        # P1: Recheck both deadlines immediately before dispatch after callback
-        # synchronization. _commit_result runs sync_status_pipeline (which may
-        # take additional time); if deadlines have elapsed, commit a terminal
-        # non-dispatchable outcome rather than dispatching after expiry.
+        # Revalidate after commit_status synchronization and the final ref callback.
+        # The callback can revoke approval or advance the canonical task revision.
+        post_admission = _revalidate_reserved_admission(
+            config,
+            task_id=task_id,
+            fingerprint=fingerprint,
+            settings=settings,
+            root=root,
+            archive_dir=archive_dir,
+            registry=registry,
+            manifest=manifest,
+            input_errors=final_input_errors,
+            ref_resolver=ref_resolver,
+            current_time=current_time,
+            expected_state="issued",
+            expected_issuance=expected_issuance,
+            expected_request=expected_request,
+        )
+        if post_admission is None:
+            if _has_exact_lease_ownership(lease, task_id, request):
+                try:
+                    state_store.revoke(lease, reason="canonical approval or issuance changed before dispatch")
+                except Exception:
+                    pass
+            continue
+        status, task, request, post_ref_sha, post_errors = post_admission
         post_commit_lease_exp = parse_iso_timestamp(lease.get("expires_at") or "")
         post_commit_req_exp = parse_iso_timestamp(request.get("expires_at") or "")
+        post_commit_now = current_time()
         if (
             post_commit_lease_exp is None
             or post_commit_req_exp is None
-            or post_commit_lease_exp <= _utc(now)
-            or post_commit_req_exp <= _utc(now)
+            or post_commit_lease_exp <= post_commit_now
+            or post_commit_req_exp <= post_commit_now
         ):
             expired_record = dict(issued_record)
             expired_record["state"] = "expired_before_dispatch"
-            expired_record["updated_at"] = _utc(now).replace(microsecond=0).isoformat()
+            expired_record["updated_at"] = current_time().replace(microsecond=0).isoformat()
             expired_record["dispatch"] = "expired"
             if _commit_result(
                 config, status, task, expired_record, commit_status=commit_status,
@@ -1552,6 +1726,36 @@ def process_release_lease_issuance(
                     pass
             continue
 
+        if post_errors:
+            if _has_exact_lease_ownership(lease, task_id, request):
+                try:
+                    state_store.revoke(lease, reason="approval or release preconditions changed before dispatch")
+                except Exception:
+                    pass
+            blocked_record = dict(issued_record)
+            blocked_record["state"] = "blocked"
+            blocked_record["updated_at"] = current_time().replace(microsecond=0).isoformat()
+            blocked_record["dispatch"] = "blocked"
+            blocked_record["receipt"] = _receipt(
+                lease,
+                errors=post_errors,
+                issued_at=parse_iso_timestamp(lease.get("issued_at") or "") or current_time(),
+                dispatch_ref=settings.get("dispatch_ref", DEFAULT_DISPATCH_REF),
+                dispatch_ref_sha=post_ref_sha,
+            )
+            if _commit_result(
+                config,
+                status,
+                task,
+                blocked_record,
+                commit_status=commit_status,
+                expected_issuance=expected_issuance,
+                expected_request=request,
+            ):
+                changed = True
+                _write_activity(config, "release_lease_blocked_before_dispatch", task_id=task_id, record=blocked_record)
+            continue
+
         try:
             if not isinstance(manifest, dict):
                 raise RuntimeReleaseDispatchError("manifest is unavailable")
@@ -1559,7 +1763,7 @@ def process_release_lease_issuance(
         except Exception:
             dispatch_record = dict(issued_record)
             dispatch_record["state"] = "dispatch_unknown"
-            dispatch_record["updated_at"] = _utc(now).replace(microsecond=0).isoformat()
+            dispatch_record["updated_at"] = current_time().replace(microsecond=0).isoformat()
             dispatch_record["dispatch"] = "not_confirmed"
             if _commit_result(
                 config, status, task, dispatch_record, commit_status=commit_status,
@@ -1573,7 +1777,7 @@ def process_release_lease_issuance(
 
         dispatched_record = dict(issued_record)
         dispatched_record["state"] = "dispatched"
-        dispatched_record["updated_at"] = _utc(now).replace(microsecond=0).isoformat()
+        dispatched_record["updated_at"] = current_time().replace(microsecond=0).isoformat()
         dispatched_record["dispatch"] = "accepted"
         if _commit_result(
             config, status, task, dispatched_record, commit_status=commit_status,

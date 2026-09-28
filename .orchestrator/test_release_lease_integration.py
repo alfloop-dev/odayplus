@@ -212,7 +212,7 @@ def _set_task_status(harness: dict, task_id: str, status: str) -> None:
     raise AssertionError(f"missing task {task_id}")
 
 
-def _run(harness: dict, dispatch, *, loader=None, public_loader=None, ref_resolver=None, now=NOW) -> bool:
+def _run(harness: dict, dispatch, *, loader=None, public_loader=None, ref_resolver=None, now=NOW, clock=None) -> bool:
     return bridge.process_release_lease_issuance(
         harness["config"],
         commit_status=harness["commit"],
@@ -222,6 +222,7 @@ def _run(harness: dict, dispatch, *, loader=None, public_loader=None, ref_resolv
         ref_resolver=ref_resolver
         or (lambda root, ref, *, repository=None: harness["request"]["candidate_sha"]),
         now=now,
+        clock=clock,
     )
 
 
@@ -274,7 +275,7 @@ def test_issues_cas_receipt_then_dispatches_existing_runtime_release(harness: di
         (
             lambda harness: _set_task_status(harness, DEPENDENCY_ID, "in_progress"),
             False,
-            "expected 'done'",
+            "required dependency expected 'done'",
         ),
         (lambda harness: None, True, "Secret Manager signing key is unavailable"),
     ],
@@ -827,7 +828,7 @@ def test_dispatch_ref_ancestry_real_git_non_evidence_drift_blocks(tmp_path: Path
     assert dispatched == []
     record = json.loads(status_path.read_text(encoding="utf-8"))["tasks"][1][bridge.ISSUANCE_FIELD]
     assert record["state"] == "blocked"
-    assert any("non-evidence paths" in error for error in record["receipt"]["errors"])
+    assert any("release manifest contains non-evidence paths" in error for error in record["receipt"]["errors"])
 
 
 
@@ -1058,7 +1059,8 @@ def test_terminal_publication_preserves_external_issuance_after_refresh(
             raise bridge.RuntimeReleaseDispatchError("fixture dispatch outcome unknown")
 
     assert _run(harness, dispatch)
-    assert dispatch_attempts == [True]
+    dispatch_expected = external_change == "history_only"
+    assert dispatch_attempts == ([True] if dispatch_expected else [])
     assert expected_task is not None
     snapshot = _read_status(harness)
     task = next((t for t in snapshot["tasks"] if t["id"] == TASK_ID), None)
@@ -1068,14 +1070,13 @@ def test_terminal_publication_preserves_external_issuance_after_refresh(
         assert task[bridge.ISSUANCE_HISTORY_FIELD] == expected_task[bridge.ISSUANCE_HISTORY_FIELD]
         assert task["external_writer_marker"] == "must-survive"
         assert task[bridge.REQUEST_FIELD] == expected_task[bridge.REQUEST_FIELD]
-        if external_change == "history_only" and callback_kind == "current":
+        if dispatch_expected:
             assert task[bridge.ISSUANCE_FIELD]["state"] == ("dispatch_unknown" if dispatch_fails else "dispatched")
         else:
             assert task[bridge.ISSUANCE_FIELD] == expected_task[bridge.ISSUANCE_FIELD]
-    if external_change != "history_only" or callback_kind == "legacy":
-        activity = harness["activity_path"].read_text()
-        assert '"type": "release_lease_runtime_release_dispatched"' not in activity
-        assert '"type": "release_lease_dispatch_unknown"' not in activity
+    activity = harness["activity_path"].read_text()
+    terminal_event = '"type": "release_lease_dispatch_unknown"' if dispatch_fails else '"type": "release_lease_runtime_release_dispatched"'
+    assert (terminal_event in activity) is dispatch_expected
 
 
 # ---------------------------------------------------------------------------
@@ -1345,7 +1346,7 @@ def test_stale_cas_issuing_recovery_with_failed_preconditions_revokes_and_blocks
     assert harness["store"].get(lease["lease_id"])["state"] == "revoked"
     task_after = _read_status(harness)["tasks"][1]
     assert task_after[bridge.ISSUANCE_FIELD]["state"] == "blocked"
-    assert any("expected 'done'" in err for err in task_after[bridge.ISSUANCE_FIELD]["receipt"]["errors"])
+    assert any("required dependency expected 'done'" in err for err in task_after[bridge.ISSUANCE_FIELD]["receipt"]["errors"])
 
 
 def test_issuing_without_gcs_lease_terminates_blocked_without_loading_key(harness: dict) -> None:
@@ -1373,7 +1374,7 @@ def test_issuing_without_gcs_lease_terminates_blocked_without_loading_key(harnes
 
     record = _read_status(harness)["tasks"][1][bridge.ISSUANCE_FIELD]
     assert record["state"] == "blocked"
-    assert any("no durable lease record" in err for err in record["receipt"]["errors"])
+    assert any("issuing reservation has no durable lease" in err for err in record["receipt"]["errors"])
 
 
 def test_issuing_with_consumed_or_revoked_gcs_lease_terminates_blocked_without_loading_key(harness: dict) -> None:
@@ -1418,7 +1419,7 @@ def test_issuing_with_consumed_or_revoked_gcs_lease_terminates_blocked_without_l
 
     record = _read_status(harness)["tasks"][1][bridge.ISSUANCE_FIELD]
     assert record["state"] == "blocked"
-    assert any("no active issued lease" in err for err in record["receipt"]["errors"])
+    assert any("issuing reservation has no active issued lease" in err for err in record["receipt"]["errors"])
 
 
 def test_issuing_recovery_with_invalid_signature_blocks_and_does_not_dispatch(harness: dict) -> None:
@@ -1733,14 +1734,18 @@ def test_eligibility_revoked_during_storage_revokes_lease_and_blocks(harness: di
     # Request status is 'approved' at start — valid
     harness["status_path"].write_text(json.dumps(current_status), encoding="utf-8")
 
+    resolver_calls = 0
     revocation_happened = False
 
     def revoking_ref_resolver(root, ref, *, repository=None):
-        nonlocal revocation_happened
-        if not revocation_happened:
-            # Concurrent writer revokes request during ref resolution
+        nonlocal resolver_calls, revocation_happened
+        resolver_calls += 1
+        if resolver_calls == 2:
+            # Revoke after the first admission check, during final ref resolution.
             disk = json.loads(harness["status_path"].read_text(encoding="utf-8"))
             disk["tasks"][1][bridge.REQUEST_FIELD]["status"] = "revoked"
+            disk["_status_write_revision"] = "concurrent-revocation"
+            disk["tasks"][0]["notes"] = ["preserve concurrent update"]
             harness["status_path"].write_text(json.dumps(disk), encoding="utf-8")
             revocation_happened = True
         return harness["request"]["candidate_sha"]
@@ -1753,10 +1758,66 @@ def test_eligibility_revoked_during_storage_revokes_lease_and_blocks(harness: di
     )
     assert dispatches == []
     assert revocation_happened
+    assert resolver_calls >= 2
 
-    record = _read_status(harness)["tasks"][1][bridge.ISSUANCE_FIELD]
+    final_status = _read_status(harness)
+    assert final_status["tasks"][0]["notes"] == ["preserve concurrent update"]
+    assert final_status["tasks"][1][bridge.REQUEST_FIELD]["status"] == "revoked"
+    record = final_status["tasks"][1][bridge.ISSUANCE_FIELD]
     assert record["state"] == "blocked"
     assert harness["store"].get(lease["lease_id"])["state"] == "revoked"
+
+
+def test_cas_retry_revalidates_revoked_approval_and_preserves_newer_state(harness: dict) -> None:
+    """A CAS rejection that concurrently revokes approval cannot reach retry dispatch."""
+    initial = _read_status(harness)
+    initial["_status_write_revision"] = "revision-before-race"
+    harness["status_path"].write_text(json.dumps(initial), encoding="utf-8")
+    issued_attempts = 0
+    current_revision = {"value": "revision-before-race"}
+
+    def revision_checking_commit(config, candidate):
+        nonlocal issued_attempts
+        disk = _read_status(harness)
+        if candidate.get("_status_write_revision") != current_revision["value"]:
+            return False
+        candidate_task = next(task for task in candidate["tasks"] if task["id"] == TASK_ID)
+        candidate_issuance = candidate_task.get(bridge.ISSUANCE_FIELD, {})
+        if candidate_issuance.get("state") == "issued" and issued_attempts == 0:
+            issued_attempts += 1
+            disk["tasks"][1][bridge.REQUEST_FIELD]["status"] = "revoked"
+            disk["tasks"][0]["notes"] = ["concurrent canonical update"]
+            disk["_status_write_revision"] = "revision-after-revocation"
+            harness["status_path"].write_text(json.dumps(disk), encoding="utf-8")
+            current_revision["value"] = "revision-after-revocation"
+            return False
+        next_revision = f"revision-{uuid.uuid4().hex}"
+        candidate["_status_write_revision"] = next_revision
+        harness["status_path"].write_text(json.dumps(candidate), encoding="utf-8")
+        current_revision["value"] = next_revision
+        return True
+
+    harness["commit"] = revision_checking_commit
+    dispatches: list[dict] = []
+    loader_calls: list[str] = []
+
+    def loader(reference: str):
+        loader_calls.append(reference)
+        return harness["private_key"]
+
+    assert _run(harness, lambda **kwargs: dispatches.append(kwargs), loader=loader)
+    final_status = _read_status(harness)
+    record = final_status["tasks"][1][bridge.ISSUANCE_FIELD]
+    assert dispatches == []
+    assert issued_attempts == 1
+    assert len(loader_calls) == 1
+    assert final_status["tasks"][1][bridge.REQUEST_FIELD]["status"] == "revoked"
+    assert final_status["tasks"][0]["notes"] == ["concurrent canonical update"]
+    assert final_status["_status_write_revision"] == current_revision["value"]
+    assert record["state"] == "blocked"
+    leases = harness["store"].find_leases_for_task(TASK_ID)
+    assert len(leases) == 1
+    assert leases[0]["state"] == "revoked"
 
 
 def test_state_store_list_or_read_failure_records_blocked_without_crashing_or_signing(
@@ -2010,33 +2071,91 @@ def test_full_revision_advancing_lifecycle_with_recovery_and_second_rejection(
 
 
 
-def test_request_expiry_during_fresh_issuance_validation_blocks_without_dispatch(
+def test_request_expiry_during_final_ref_validation_blocks_without_dispatch(
     harness: dict,
 ) -> None:
-    """Request expires between initial eligibility check and pre-receipt-commit recheck.
+    """A live clock catches request expiry caused by the final ref callback."""
+    fingerprint = bridge.request_fingerprint(TASK_ID, harness["request"])
+    lease = build_lease(
+        task_id=TASK_ID,
+        release_id=str(harness["manifest"]["release_id"]),
+        candidate_sha=CANDIDATE_SHA,
+        manifest_digest=harness["manifest"]["manifest_digest"],
+        target_environment="dev",
+        allowed_action="deploy",
+        private_key=harness["private_key"],
+        ttl_seconds=300,
+        issued_at=NOW,
+        request_fingerprint=fingerprint,
+        approval_id=str(harness["request"]["approval_id"]),
+        approval_nonce_digest=bridge._safe_digest(harness["request"]["nonce"]),
+    )
+    harness["store"].record_issued(lease)
+    status = _read_status(harness)
+    status["tasks"][1][bridge.ISSUANCE_FIELD] = bridge._issuance_record(
+        state="issuing",
+        task_id=TASK_ID,
+        request=harness["request"],
+        fingerprint=fingerprint,
+        settings=harness["config"]["release_lease_issuer"],
+        receipt=bridge._receipt(None, errors=[], issued_at=NOW),
+        updated_at=NOW,
+    )
+    harness["status_path"].write_text(json.dumps(status), encoding="utf-8")
 
-    Uses a request with 1-second remaining TTL and a ref-resolver that doesn't
-    actually delay (the fixed now is set to NOW+4m59s, 1 second before request
-    expiry at NOW+5m). The initial request_errors check passes, but the lease
-    issued_at=NOW with ttl=300 means expires_at=NOW+5m. At now=NOW+4m59s,
-    req_exp (NOW+5m) > now so the first check passes. But the test uses
-    now=NOW+5m+1s to demonstrate the pre-commit recheck catches it.
-    """
-    # Request expires at NOW + 5 minutes (default from _request)
-    # Use now just past request expiry
-    expired_now = NOW + timedelta(minutes=5, seconds=1)
+    clock_now = [NOW]
+    resolver_calls = 0
+
+    def advancing_ref_resolver(root, ref, *, repository=None):
+        nonlocal resolver_calls
+        resolver_calls += 1
+        if resolver_calls == 2:
+            clock_now[0] = NOW + timedelta(minutes=5, seconds=1)
+        return CANDIDATE_SHA
 
     dispatches: list[dict] = []
     assert _run(
         harness,
         lambda **kwargs: dispatches.append(kwargs),
-        now=expired_now,
+        ref_resolver=advancing_ref_resolver,
+        clock=lambda: clock_now[0],
     )
+    assert resolver_calls >= 2
     assert dispatches == []
-
     record = _read_status(harness)["tasks"][1][bridge.ISSUANCE_FIELD]
     assert record["state"] == "blocked"
-    assert any("expired" in err.lower() or "expir" in err.lower() for err in record["receipt"]["errors"])
+    assert any("expired" in error for error in record["receipt"]["errors"])
+    assert harness["store"].get(lease["lease_id"])["state"] == "revoked"
+
+
+def test_request_expiry_during_commit_sync_blocks_dispatch(harness: dict) -> None:
+    """A slow canonical sync that crosses request expiry cannot dispatch."""
+    clock_now = [NOW]
+    base_commit = harness["commit"]
+
+    def expiring_commit(config, candidate):
+        result = base_commit(config, candidate)
+        task = next(task for task in candidate["tasks"] if task["id"] == TASK_ID)
+        issuance = task.get(bridge.ISSUANCE_FIELD, {})
+        if issuance.get("state") == "issued" and result:
+            clock_now[0] = NOW + timedelta(minutes=5, seconds=1)
+        return result
+
+    harness["commit"] = expiring_commit
+    dispatches: list[dict] = []
+    assert _run(harness, lambda **kwargs: dispatches.append(kwargs), clock=lambda: clock_now[0])
+    assert dispatches == []
+    record = _read_status(harness)["tasks"][1][bridge.ISSUANCE_FIELD]
+    assert record["state"] == "expired_before_dispatch"
+    assert harness["store"].get(record["receipt"]["lease_id"])["state"] == "revoked"
+
+
+def test_unknown_diagnostic_maps_to_fixed_safe_message() -> None:
+    """Unrecognized non-hex bearer text is never copied or truncated into a receipt."""
+    sentinel = "Bearer.NonHexSecret!_short"
+    sanitized = bridge._sanitize_errors([f"provider response contained {sentinel}"])
+    assert sanitized == ["lease validation failed"]
+    assert sentinel not in json.dumps(bridge._receipt(None, errors=[f"error {sentinel}"], issued_at=NOW))
 
 
 def test_schema_version_bearing_signature_value_is_sanitized(
@@ -2147,14 +2266,12 @@ def test_durable_state_lookup_error_uses_safe_sentinel_not_raw_exception(
     assert any("durable lease state lookup failed" in err for err in record["receipt"]["errors"])
 
 
-def test_sanitize_errors_redacts_long_hex_sequences() -> None:
-    """_sanitize_errors redacts hex sequences >32 chars that could be signatures or key material."""
-    fake_sig = "abcdef0123456789" * 8  # 128-char hex
-    errors = [f"verification failed for value {fake_sig} in store"]
-    sanitized = bridge._sanitize_errors(errors)
-    assert len(sanitized) == 1
+def test_sanitize_errors_unknown_text_maps_to_fixed_message() -> None:
+    """Unknown diagnostics are replaced, not truncated or redacted in place."""
+    fake_sig = "abcdef0123456789" * 8
+    sanitized = bridge._sanitize_errors([f"verification failed for value {fake_sig} in store"])
+    assert sanitized == ["lease validation failed"]
     assert fake_sig not in sanitized[0]
-    assert "[REDACTED]" in sanitized[0]
 
 
 def test_sanitize_errors_state_store_sentinel_mapping() -> None:
