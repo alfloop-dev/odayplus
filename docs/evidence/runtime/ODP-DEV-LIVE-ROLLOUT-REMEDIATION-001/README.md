@@ -8801,7 +8801,7 @@ scheduler asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday
 migration 共用 worker image
 ```
 
-### 部署現況
+### 部署現況與 Blocker 路由 (Round 6)
 
 Release lease issuance remains **blocked** (state `issuing`, event `lease_issue_blocked`)
 since 2026-09-28T00:47:26Z. No signed lease, no `lease_id`, no `dispatch_ref_sha`,
@@ -8812,3 +8812,14 @@ Worker cannot sign or dispatch outside Supervisor (per acceptance criterion 2).
 
 No deployment, migration, traffic switch, or smoke test has been executed for the a31 candidate.
 `deployment_success_claimed` remains `false`.
+
+### Round 6 修正與驗證總結
+
+1. **證據重構與歷史隔離**：
+   - 審查報告 `live-runtime-reconciliation-audit.json` 完整重構為候選人 `a31e02ae391811a4c323ec4d834b70e200953366`、manifest `sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2` 及 hosted build run `36333397898`（Job 108659578847 success，Job 108660864789/108660864915/108660865313 skipped）。
+   - 舊候選人 `419e6bf4` 之歷史收據與失敗觀察已完全隔離至 `history` 與歷史宣告，當前觀測層不再混雜過期數值。
+2. **驗證腳本強化**：
+   - `verify_dev_live_rollout_remediation.py` 新增 component images、signature refs、sbom refs、job execution 狀態及 initial recovery binding 之跨欄位比對，確保 audit JSON 與 repository manifest / gate registry 嚴格一致。
+3. **Fail-Closed 阻塞與路由**：
+   - 任務維持 fail-closed `in_progress`，並已記錄 open blocker 路由至 Supervisor 修復 Lease issuer 授權與環境。
+
