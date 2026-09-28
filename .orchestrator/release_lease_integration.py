@@ -847,15 +847,20 @@ def _revalidate_reserved_admission(
     settings: dict[str, Any],
     root: Path,
     archive_dir: Path,
-    registry: dict[str, Any],
-    manifest: dict[str, Any] | None,
-    input_errors: list[str],
     ref_resolver: Callable[..., str | None],
     current_time: Callable[[], datetime],
     expected_state: str = "issuing",
     expected_issuance: dict[str, Any] | None = None,
     expected_request: dict[str, Any] | None = None,
-) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], str | None, list[str]] | None:
+) -> tuple[
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    str | None,
+    list[str],
+    Any,
+    dict[str, Any] | None,
+] | None:
     """Revalidate the exact live admission after callbacks that may be slow or mutate status."""
     before = _status_still_reserved(
         config,
@@ -877,6 +882,25 @@ def _revalidate_reserved_admission(
 
     # The resolver may block or invoke a callback that observes a newer board.
     # Reload after it and bind all admission checks to that fresh canonical view.
+    latest = _status_still_reserved(
+        config,
+        task_id=task_id,
+        fingerprint=fingerprint,
+        expected_state=expected_state,
+        expected_issuance=expected_issuance,
+        expected_request=expected_request,
+    )
+    if latest is None:
+        return None
+    status, task, request = latest
+    # Release inputs can change independently of canonical task status. A rejected
+    # receipt CAS may coincide with a gate or build update while the request
+    # fingerprint and reservation remain unchanged. Never reuse invocation-time
+    # registry/manifest snapshots for retry or post-sync admission.
+    registry, manifest, input_errors = _read_release_inputs(
+        root, str(request.get("candidate_sha") or "")
+    )
+    # Bind authorization to a fresh status snapshot after reading those inputs.
     latest = _status_still_reserved(
         config,
         task_id=task_id,
@@ -917,7 +941,7 @@ def _revalidate_reserved_admission(
             root=root,
         )
     )
-    return status, task, request, ref_sha, errors
+    return status, task, request, ref_sha, errors, registry, manifest
 
 
 def _record_blocked(
@@ -1504,7 +1528,6 @@ def process_release_lease_issuance(
             ) or changed
             continue
 
-        registry, manifest, final_input_errors = _read_release_inputs(root, str(request.get("candidate_sha") or ""))
         admission = _revalidate_reserved_admission(
             config,
             task_id=task_id,
@@ -1512,9 +1535,6 @@ def process_release_lease_issuance(
             settings=settings,
             root=root,
             archive_dir=archive_dir,
-            registry=registry,
-            manifest=manifest,
-            input_errors=final_input_errors,
             ref_resolver=ref_resolver,
             current_time=current_time,
         )
@@ -1525,7 +1545,7 @@ def process_release_lease_issuance(
                 except Exception:
                     pass
             continue
-        status, task, request, final_ref_sha, final_errors = admission
+        status, task, request, final_ref_sha, final_errors, registry, manifest = admission
         if final_errors:
             if _has_exact_lease_ownership(lease, task_id, request):
                 try:
@@ -1601,9 +1621,6 @@ def process_release_lease_issuance(
                 settings=settings,
                 root=root,
                 archive_dir=archive_dir,
-                registry=registry,
-                manifest=manifest,
-                input_errors=final_input_errors,
                 ref_resolver=ref_resolver,
                 current_time=current_time,
             )
@@ -1614,7 +1631,7 @@ def process_release_lease_issuance(
                     except Exception:
                         pass
                 continue
-            status, task, request, retry_ref_sha, retry_errors = retry_admission
+            status, task, request, retry_ref_sha, retry_errors, registry, manifest = retry_admission
             retry_lease_exp = parse_iso_timestamp(lease.get("expires_at") or "")
             retry_req_exp = parse_iso_timestamp(request.get("expires_at") or "")
             retry_now = current_time()
@@ -1682,9 +1699,6 @@ def process_release_lease_issuance(
             settings=settings,
             root=root,
             archive_dir=archive_dir,
-            registry=registry,
-            manifest=manifest,
-            input_errors=final_input_errors,
             ref_resolver=ref_resolver,
             current_time=current_time,
             expected_state="issued",
@@ -1698,7 +1712,7 @@ def process_release_lease_issuance(
                 except Exception:
                     pass
             continue
-        status, task, request, post_ref_sha, post_errors = post_admission
+        status, task, request, post_ref_sha, post_errors, registry, manifest = post_admission
         post_commit_lease_exp = parse_iso_timestamp(lease.get("expires_at") or "")
         post_commit_req_exp = parse_iso_timestamp(request.get("expires_at") or "")
         post_commit_now = current_time()

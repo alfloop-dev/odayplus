@@ -1581,73 +1581,47 @@ def test_issuing_recovery_with_ttl_delay_blocks_and_does_not_dispatch(harness: d
     assert harness["store"].get(lease["lease_id"])["state"] == "revoked"
 
 
-def test_canonical_writer_race_preserves_newer_status_revision(harness: dict) -> None:
-    """When a concurrent canonical writer advances status revision, newer task/request data is preserved.
-
-    Uses a revision-checking writer double that:
-    1. Maintains a _status_write_revision field.
-    2. Simulates a concurrent writer advancing the revision during the first
-       'issued' commit attempt (CAS rejection).
-    3. On the retry, accepts the commit and preserves concurrent changes.
-    """
-    revision = {"current": uuid.uuid4().hex}
-    concurrent_writer_ran = False
-
-    # Seed initial status with revision
+def test_revision_checking_writer_preserves_newer_status_on_bounded_retry(harness: dict) -> None:
+    """A genuine revision CAS reload preserves a concurrent update on retry."""
     initial_status = _read_status(harness)
-    initial_status["_status_write_revision"] = revision["current"]
+    initial_status["_status_write_revision"] = "revision-before-race"
     harness["status_path"].write_text(json.dumps(initial_status), encoding="utf-8")
-
-    issued_attempt = 0
+    issued_attempts = 0
+    concurrent_writer_ran = False
+    dispatches: list[dict] = []
 
     def revision_checking_commit(config, candidate):
-        nonlocal concurrent_writer_ran, issued_attempt
-        # Read current disk revision
-        disk = json.loads(harness["status_path"].read_text(encoding="utf-8"))
-
-        task_issuance = None
-        for t in candidate.get("tasks", []):
-            if t.get("id") == TASK_ID:
-                task_issuance = t.get(bridge.ISSUANCE_FIELD)
-                break
-
-        # On first 'issued' commit: simulate concurrent writer advancing revision
-        if task_issuance and task_issuance.get("state") == "issued" and issued_attempt == 0:
-            issued_attempt += 1
-            # Concurrent writer updates disk with new revision and task data
-            disk["_status_write_revision"] = uuid.uuid4().hex
+        nonlocal issued_attempts, concurrent_writer_ran
+        disk = _read_status(harness)
+        # A real CAS writer never repairs or merges a stale candidate.
+        if candidate.get("_status_write_revision") != disk.get("_status_write_revision"):
+            return False
+        candidate_task = next(task for task in candidate["tasks"] if task["id"] == TASK_ID)
+        issuance = candidate_task.get(bridge.ISSUANCE_FIELD, {})
+        if issuance.get("state") == "issued" and issued_attempts == 0:
+            issued_attempts += 1
+            disk["_status_write_revision"] = "revision-after-concurrent-update"
             disk["tasks"][0]["notes"] = ["concurrent writer updated dependency"]
             disk["updated_at"] = "2026-09-28T04:00:00Z"
             harness["status_path"].write_text(json.dumps(disk), encoding="utf-8")
             concurrent_writer_ran = True
-            # Candidate's revision is now stale — CAS rejection
+            # The candidate revision is now stale; reject it without repair.
             return False
-
-        # Normal commit: write candidate with new revision
-        candidate["_status_write_revision"] = uuid.uuid4().hex
-        # Merge concurrent writer's changes into candidate
-        disk = json.loads(harness["status_path"].read_text(encoding="utf-8"))
-        for i, t in enumerate(disk.get("tasks", [])):
-            if t.get("id") != TASK_ID:
-                candidate["tasks"][i] = t
-        if "updated_at" in disk:
-            candidate["updated_at"] = disk["updated_at"]
+        next_revision = f"revision-{uuid.uuid4().hex}"
+        candidate["_status_write_revision"] = next_revision
         harness["status_path"].write_text(json.dumps(candidate), encoding="utf-8")
-        revision["current"] = candidate["_status_write_revision"]
         return True
 
     harness["commit"] = revision_checking_commit
-    dispatches: list[dict] = []
     assert _run(harness, lambda **kwargs: dispatches.append(kwargs))
     assert len(dispatches) == 1
+    assert issued_attempts == 1
     assert concurrent_writer_ran
 
     status_final = _read_status(harness)
-    # Verify concurrent writer's change was preserved after revision advance
     assert status_final["tasks"][0]["notes"] == ["concurrent writer updated dependency"]
     assert status_final["tasks"][1][bridge.ISSUANCE_FIELD]["state"] == "dispatched"
-    # Verify revision was advanced (not the initial)
-    assert status_final.get("_status_write_revision") == revision["current"]
+    assert status_final["_status_write_revision"].startswith("revision-")
 
 
 def test_second_cas_rejection_during_recovery_does_not_dispatch(harness: dict) -> None:
@@ -1963,62 +1937,38 @@ def test_no_secret_or_bearer_material_in_logs_or_status(harness: dict) -> None:
 
 
 
-def test_full_revision_advancing_lifecycle_with_recovery_and_second_rejection(
+def test_revision_checking_writer_recovers_after_two_issued_cas_rejections(
     harness: dict,
 ) -> None:
-    """Full multi-cycle lifecycle: reserved → durable lease → rejected issued receipt → bounded retry rejection → recovery dispatch.
-
-    Uses a real revision-checking writer double that:
-    1. Maintains _status_write_revision across all commits.
-    2. Rejects the first two 'issued' commits (CAS stale revision), including
-       the bounded retry within the same cycle.
-    3. During each rejection, a concurrent writer advances the revision and
-       updates the dependency task's notes, preserving newer data.
-    4. Second cycle (recovery): reconciles the durable GCS lease without
-       re-signing, and dispatches exactly once.
-    Asserts no duplicate signing, no duplicate dispatch, no secret leakage.
-    """
-    revision = {"current": uuid.uuid4().hex}
+    """Two true CAS rejections preserve newer data; recovery never re-signs."""
     key_loader_calls: list[str] = []
     dispatches: list[dict] = []
-    commit_attempts = {"issuing": 0, "issued": 0, "dispatched": 0, "total": 0}
+    issued_attempts = 0
 
-    # Seed initial status with revision
     initial_status = _read_status(harness)
-    initial_status["_status_write_revision"] = revision["current"]
+    initial_status["_status_write_revision"] = "revision-initial"
     harness["status_path"].write_text(json.dumps(initial_status), encoding="utf-8")
 
     def revision_checking_commit(config, candidate):
-        commit_attempts["total"] += 1
-        task_issuance = None
-        for t in candidate.get("tasks", []):
-            if t.get("id") == TASK_ID:
-                task_issuance = t.get(bridge.ISSUANCE_FIELD)
-                break
-        state = task_issuance.get("state") if task_issuance else None
-        if state:
-            commit_attempts[state] = commit_attempts.get(state, 0) + 1
-
-        disk = json.loads(harness["status_path"].read_text(encoding="utf-8"))
-
-        # Reject the first two 'issued' commit attempts
-        if state == "issued" and commit_attempts.get("issued", 0) <= 2:
-            # Concurrent writer advances revision and updates other task
-            disk["_status_write_revision"] = uuid.uuid4().hex
-            disk["tasks"][0]["notes"] = [f"concurrent update {commit_attempts['issued']}"]
-            harness["status_path"].write_text(json.dumps(disk), encoding="utf-8")
-            revision["current"] = disk["_status_write_revision"]
+        nonlocal issued_attempts
+        disk = _read_status(harness)
+        # The writer accepts only the exact revision read by the caller and
+        # never repairs or merges a stale candidate snapshot.
+        if candidate.get("_status_write_revision") != disk.get("_status_write_revision"):
             return False
-
-        # Normal commit: merge concurrent data and advance revision
-        new_rev = uuid.uuid4().hex
-        candidate["_status_write_revision"] = new_rev
-        # Preserve concurrent writer's changes on other tasks
-        for i, t in enumerate(disk.get("tasks", [])):
-            if t.get("id") != TASK_ID:
-                candidate["tasks"][i] = t
+        candidate_task = next(task for task in candidate["tasks"] if task["id"] == TASK_ID)
+        issuance = candidate_task.get(bridge.ISSUANCE_FIELD, {})
+        if issuance.get("state") == "issued" and issued_attempts < 2:
+            issued_attempts += 1
+            disk["_status_write_revision"] = f"revision-concurrent-{issued_attempts}"
+            disk["tasks"][0]["notes"] = [f"concurrent update {issued_attempts}"]
+            disk["updated_at"] = f"2026-09-28T04:00:0{issued_attempts}Z"
+            harness["status_path"].write_text(json.dumps(disk), encoding="utf-8")
+            # This is the concurrent writer's commit. The candidate passed
+            # the earlier compare but is now stale, so reject it.
+            return False
+        candidate["_status_write_revision"] = f"revision-accepted-{uuid.uuid4().hex}"
         harness["status_path"].write_text(json.dumps(candidate), encoding="utf-8")
-        revision["current"] = new_rev
         return True
 
     harness["commit"] = revision_checking_commit
@@ -2027,48 +1977,113 @@ def test_full_revision_advancing_lifecycle_with_recovery_and_second_rejection(
         key_loader_calls.append(ref)
         return harness["private_key"]
 
-    # Cycle 1: signs key once, writes GCS, fails 'issued' CAS commit,
-    # bounded retry also fails (2 issued attempts total)
+    # Cycle 1: one signature is durable, while both receipt CAS attempts lose
+    # to newer canonical revisions.
     assert _run(harness, lambda **kwargs: dispatches.append(kwargs), loader=tracking_loader)
     assert len(key_loader_calls) == 1
-    assert len(dispatches) == 0
-    assert commit_attempts["issued"] == 2  # original + bounded retry
+    assert dispatches == []
+    assert issued_attempts == 2
 
-    # Confirm GCS state store has exactly one unconsumed issued lease
     leases = harness["store"].find_leases_for_task(TASK_ID)
     assert len(leases) == 1
     assert leases[0]["state"] == "issued"
     lease_id = leases[0]["lease_id"]
 
-    # Cycle 2: recovery reconciles GCS lease, 3rd issued commit succeeds, dispatches
+    # Cycle 2 proves exact-lease recovery without loading the signing key again.
     assert _run(
         harness,
         lambda **kwargs: dispatches.append(kwargs),
-        loader=lambda _: pytest.fail("recovery must not reload private key on cycle 2"),
+        loader=lambda _: pytest.fail("recovery must not reload the signing key"),
     )
     assert len(dispatches) == 1
-    assert len(key_loader_calls) == 1  # No additional key loads
+    assert len(key_loader_calls) == 1
     assert dispatches[0]["lease"]["lease_id"] == lease_id
 
-    # Verify final status
     status_final = _read_status(harness)
     record = status_final["tasks"][1][bridge.ISSUANCE_FIELD]
     assert record["state"] == "dispatched"
     assert record["dispatch"] == "accepted"
-    # Concurrent writer's changes preserved
-    assert "concurrent update" in str(status_final["tasks"][0].get("notes", []))
-    # Revision was advanced
-    assert status_final.get("_status_write_revision") == revision["current"]
+    assert status_final["tasks"][0]["notes"] == ["concurrent update 2"]
+    assert status_final["_status_write_revision"].startswith("revision-accepted-")
 
-    # No secret leakage in issuance record or activity log
     serialized_record = json.dumps(record)
     activity_text = harness["activity_path"].read_text(encoding="utf-8")
+    status_text = harness["status_path"].read_text(encoding="utf-8")
     assert harness["request"]["nonce"] not in serialized_record
     assert harness["request"]["nonce"] not in activity_text
-    status_text = harness["status_path"].read_text(encoding="utf-8")
     assert "BEGIN PRIVATE KEY" not in status_text
     assert "BEGIN PRIVATE KEY" not in activity_text
 
+
+@pytest.mark.parametrize("phase", ["cas", "post_sync"])
+@pytest.mark.parametrize("input_change", ["no_go", "manifest", "build_binding"])
+def test_release_inputs_are_reloaded_after_cas_and_sync_callbacks(
+    harness: dict, phase: str, input_change: str
+) -> None:
+    """Fresh gate, manifest and build inputs revoke stale retry/dispatch admission."""
+    initial_status = _read_status(harness)
+    initial_status["_status_write_revision"] = "revision-before-input-change"
+    harness["status_path"].write_text(json.dumps(initial_status), encoding="utf-8")
+    issued_attempts = 0
+    dispatches: list[dict] = []
+    key_loader_calls: list[str] = []
+
+    def mutate_release_inputs() -> None:
+        registry_path = harness["root"] / "docs/evidence/gates/RELEASE_GATE_REGISTRY.json"
+        manifest_path = harness["root"] / "docs/evidence/gates/RELEASE_MANIFEST.json"
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if input_change == "no_go":
+            registry["release"]["decision"] = "no-go"
+        elif input_change == "manifest":
+            manifest["components"]["api"]["image"] = "ghcr.io/example/api@sha256:" + "f" * 64
+            manifest["manifest_digest"] = compute_manifest_digest(manifest)
+        else:
+            registry["candidate_rebind"]["build_run"]["run_id"] = int(RUN_ID) + 1
+        registry_path.write_text(json.dumps(registry), encoding="utf-8")
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    def revision_checking_commit(config, candidate):
+        nonlocal issued_attempts
+        disk = _read_status(harness)
+        if candidate.get("_status_write_revision") != disk.get("_status_write_revision"):
+            return False
+        candidate_task = next(task for task in candidate["tasks"] if task["id"] == TASK_ID)
+        issuance = candidate_task.get(bridge.ISSUANCE_FIELD, {})
+        if issuance.get("state") == "issued":
+            issued_attempts += 1
+            if phase == "cas" and issued_attempts == 1:
+                disk["_status_write_revision"] = "revision-after-issued-cas-race"
+                disk["tasks"][0]["notes"] = ["preserve concurrent writer"]
+                harness["status_path"].write_text(json.dumps(disk), encoding="utf-8")
+                mutate_release_inputs()
+                return False
+        candidate["_status_write_revision"] = f"revision-accepted-{uuid.uuid4().hex}"
+        harness["status_path"].write_text(json.dumps(candidate), encoding="utf-8")
+        if phase == "post_sync" and issuance.get("state") == "issued" and issued_attempts == 1:
+            mutate_release_inputs()
+        return True
+
+    harness["commit"] = revision_checking_commit
+
+    def tracking_loader(ref):
+        key_loader_calls.append(ref)
+        return harness["private_key"]
+
+    assert _run(harness, lambda **kwargs: dispatches.append(kwargs), loader=tracking_loader)
+    assert dispatches == []
+    assert len(key_loader_calls) == 1
+    assert issued_attempts == 1
+
+    final_status = _read_status(harness)
+    record = final_status["tasks"][1][bridge.ISSUANCE_FIELD]
+    assert record["state"] == "blocked"
+    assert harness["store"].find_leases_for_task(TASK_ID)[0]["state"] == "revoked"
+    if phase == "cas":
+        assert final_status["tasks"][0]["notes"] == ["preserve concurrent writer"]
+        assert final_status["_status_write_revision"].startswith("revision-accepted-")
+    else:
+        assert "_status_write_revision" in final_status
 
 
 def test_request_expiry_during_final_ref_validation_blocks_without_dispatch(

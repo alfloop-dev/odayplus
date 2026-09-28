@@ -55,7 +55,8 @@ To eliminate control plane stalls while strictly preventing unauthorized dispatc
   - Build run successful `workflow_dispatch` verification.
   - Remote dispatch ref ancestry (`check_dispatch_ref_errors`).
   - Request and lease expiry timestamps.
-- If any precondition fails post-storage, the lease is revoked (if owned), and the task transitions to `blocked` without committing an `issued` receipt or dispatching.
+- Each final admission refresh re-reads the registry and manifest after ref-resolution callbacks, then reloads canonical status after those file reads. CAS retry and post-sync checks use the refreshed inputs, and dispatch receives the exact manifest that passed the final check.
+- If a precondition fails before receipt commit, the exact owned lease is revoked and the task blocks without an `issued` receipt. If it fails after the receipt commit but before dispatch, the record transitions to a non-dispatchable `blocked` or `expired_before_dispatch` state and dispatch is prevented.
 
 ### D. Dual-Point Expiry Recheck (P1 Fix)
 - **Pre-receipt-commit recheck**: After slow validation and ref lookup (which may take seconds), both `lease.expires_at` and `request.expires_at` are rechecked against the current time before committing the issued receipt. If either has elapsed, the lease is revoked and a terminal `blocked` outcome is committed.
@@ -80,7 +81,7 @@ To eliminate control plane stalls while strictly preventing unauthorized dispatc
 
 ### G. Two-Phase Dispatch Guarantee
 - **Mandatory Sequence**: The secret-free `issued_record` receipt must successfully commit to `ai-status.json` *before* attempting `dispatch_runtime_release`.
-- If the CAS commit fails, is rejected, or is unconfirmed, dispatch is strictly prevented, allowing the subsequent Supervisor cycle to safely reconcile the unexpired GCS lease.
+- A first issued-receipt CAS rejection may receive one bounded retry only after full status, registry, manifest, build, ref, and expiry revalidation. A second rejection or unconfirmed commit prevents dispatch; no dispatch occurs until an issued receipt successfully commits.
 
 ### H. Bounded Safe Error Codes & Bearer Protection
 - Private key material is parsed strictly in memory and zeroed immediately after use.
@@ -91,7 +92,7 @@ To eliminate control plane stalls while strictly preventing unauthorized dispatc
   - Schema version mismatch → `"lease schema_version does not match expected version"` (raw value not interpolated)
   - State store read errors → `"durable lease state lookup failed"` (raw exceptions not forwarded)
   - State value interpolation → bounded to known states (`issued`, `consumed`, `revoked`, `expired`, `unknown`); unknown values mapped to `"invalid"`
-  - Long hex sequences (>32 chars, potential signatures) → `[REDACTED]`
+  - Unmatched diagnostic text → fixed `"lease validation failed"`; arbitrary exception text and bearer values are never forwarded
 - Only cryptographic digests (`approval_nonce_digest`, `nonce_digest`, `signature_digest`, `signature_key_id`) are published in receipts and activity logs.
 
 ---
@@ -121,8 +122,8 @@ The test suite in `.orchestrator/test_release_lease_integration.py` provides com
    - Request parameter change after reservation prevents dispatch of mismatched prior lease.
 10. `test_issuing_recovery_with_ttl_delay_blocks_and_does_not_dispatch`:
     - Recovery runs after lease TTL has elapsed; pre-receipt-commit expiry recheck catches the expired lease and transitions to `blocked`.
-11. `test_canonical_writer_race_preserves_newer_status_revision`:
-    - Uses a revision-checking writer double that maintains `_status_write_revision`, simulates a concurrent writer advancing the revision during the first `issued` commit (CAS rejection), and verifies that concurrent data is preserved after recovery and the revision is advanced.
+11. `test_revision_checking_writer_preserves_newer_status_on_bounded_retry`:
+    - Rejects stale candidates by exact `_status_write_revision` comparison, then verifies the retry reloads and preserves concurrent data without repairing or merging a stale snapshot.
 12. `test_second_cas_rejection_during_recovery_does_not_dispatch`:
     - Recovery encounters CAS rejection on status commit; dispatch is prevented and durable lease stays `issued` for future retry.
 13. `test_eligibility_revoked_during_storage_revokes_lease_and_blocks`:
@@ -131,22 +132,22 @@ The test suite in `.orchestrator/test_release_lease_integration.py` provides com
     - Confirms that recovery cycle makes exactly 0 signing key calls and dispatches exactly once.
 15. `test_no_secret_or_bearer_material_in_logs_or_status`:
     - Validates absence of private key material, raw signature values, and raw nonces in receipts and logs.
-16. `test_exact_approval_id_and_nonce_digest_mismatch_on_same_deployment_leaves_lease_unrevoked`:
-    - Verifies that mismatched approval identity on identical deployment params leaves the durable lease unrevoked in GCS.
+16. `test_cas_retry_revalidates_revoked_approval_and_preserves_newer_state`:
+    - A canonical revision race that revokes request approval blocks retry, preserves the newer status, and revokes only the exact matching lease.
 17. `test_state_store_list_or_read_failure_records_blocked_without_crashing_or_signing`:
     - Verifies that GCS `LeaseStateError` during storage lookup transitions the task to blocked with a sanitized receipt error.
 18. `test_malformed_verifier_errors_with_bearer_sentinels_never_leak_secrets`:
     - Verifies that raw sentinels and verifier diagnostic fragments are never leaked into receipts or activity logs.
-19. `test_full_revision_advancing_lifecycle_with_recovery_and_second_rejection`:
-    - Full multi-cycle lifecycle test with a revision-checking writer double: reserved → durable lease → rejected issued receipt (CAS stale) → recovery → second rejection → eventual dispatch. Verifies no duplicate signing (1 key load total), no duplicate dispatch (1 dispatch total), concurrent writer data preserved, and no secret leakage.
-20. `test_request_expiry_during_fresh_issuance_validation_blocks_without_dispatch`:
-    - Verifies that when request expires during fresh issuance validation, the pre-commit recheck catches it and blocks without dispatch.
+19. `test_revision_checking_writer_recovers_after_two_issued_cas_rejections` and `test_release_inputs_are_reloaded_after_cas_and_sync_callbacks`:
+    - An exact-revision writer rejects two issued-receipt CAS attempts, then proves one-lease recovery dispatch without re-signing while preserving newer task data. Six callback cases change registry decision, manifest, or build binding during CAS rejection and post-sync; each must block dispatch and revoke only the exact owned lease.
+20. `test_request_expiry_during_final_ref_validation_blocks_without_dispatch` and `test_request_expiry_during_commit_sync_blocks_dispatch`:
+    - Callback-driven clock advancement proves expiry during final ref resolution and commit synchronization blocks before dispatch.
 21. `test_schema_version_bearing_signature_value_is_sanitized`:
     - A stored lease with `schema_version` set to a 128-char hex signature value has its error sanitized; the raw hex value never appears in status or activity logs.
 22. `test_durable_state_lookup_error_uses_safe_sentinel_not_raw_exception`:
     - `LeaseStateError` with infrastructure details (bucket paths, IAM errors) uses safe sentinel in receipt errors; raw exception text never appears in status or activity.
-23. `test_sanitize_errors_redacts_long_hex_sequences`:
-    - `_sanitize_errors` redacts hex sequences >32 chars that could be signature or key material.
+23. `test_sanitize_errors_unknown_text_maps_to_fixed_message`:
+    - Unknown verifier/storage text maps to a fixed safe message; arbitrary text is never truncated and forwarded.
 24. `test_sanitize_errors_state_store_sentinel_mapping`:
     - `_sanitize_errors` maps known diagnostic categories to bounded safe sentinel codes.
 
@@ -156,10 +157,18 @@ The test suite in `.orchestrator/test_release_lease_integration.py` provides com
 
 | Acceptance Criterion | Implementation / Evidence | Status |
 |---|---|---|
-| Use fake storage and canonical writer doubles to reproduce the reserved-state then stale status write race without touching live GCP | `test_stale_cas_issuing_recovery_reconciles_gcs_lease_and_dispatches`, `test_canonical_writer_race_preserves_newer_status_revision` (revision-checking writer double), `test_full_revision_advancing_lifecycle_with_recovery_and_second_rejection` (multi-cycle revision-advancing double) | **PASSED** |
-| Use the existing verifier and exact request fingerprint to prove a lease payload matches the current approval without exposing bearer data | `verify_lease`, `_has_exact_lease_ownership`, `_exact_binding_errors`, `_sanitize_errors` (sentinel mapping + hex redaction) | **PASSED** |
-| Revalidate current status candidate manifest target action approval and request before persisting issued receipt; dispatch only after that receipt commits | `_status_still_reserved`, post-storage precondition rechecks, P1 dual-point expiry recheck (pre-commit + pre-dispatch), and `_commit_result` ordering before `dispatch()` | **PASSED** |
-| If exact lease binding cannot be proven or TTL has elapsed record a terminal non-dispatchable outcome and require a fresh Human/Ops request without reusing a nonce | `test_issuing_without_gcs_lease_terminates_blocked_without_loading_key`, `test_issuing_with_consumed_or_revoked_gcs_lease_terminates_blocked_without_loading_key`, `test_issuing_recovery_with_ttl_delay_blocks_and_does_not_dispatch`, `test_request_expiry_during_fresh_issuance_validation_blocks_without_dispatch` | **PASSED** |
-| Do not attribute a stale status event with no task_id to this issuance; require task-linked evidence for root-cause claims | Section 1 of this document; explicit epistemic boundaries and caveat declarations | **PASSED** |
-| Regression tests prove stale CAS does not cause duplicate signing dispatch or overwrite newer status and logs contain no secret material | `test_no_duplicate_sign_or_dispatch_on_recovery`, `test_canonical_writer_race_preserves_newer_status_revision` (revision-checking double), `test_full_revision_advancing_lifecycle_with_recovery_and_second_rejection` (multi-cycle), `test_no_secret_or_bearer_material_in_logs_or_status`, `test_schema_version_bearing_signature_value_is_sanitized`, `test_durable_state_lookup_error_uses_safe_sentinel_not_raw_exception` | **PASSED** |
-| Only Supervisor signs or dispatches; submit a separate reviewed PR | In-memory signing key lifetime, single supervisor bridge entrypoint, separate per-task PR workflow | **PASSED** |
+| Use fake storage and canonical writer doubles to reproduce the reserved-state then stale status write race without touching live GCP | `test_stale_cas_issuing_recovery_reconciles_gcs_lease_and_dispatches`, `test_revision_checking_writer_preserves_newer_status_on_bounded_retry`, and `test_revision_checking_writer_recovers_after_two_issued_cas_rejections` (exact-revision CAS doubles) | **LOCAL PASS; exact-head CI pending** |
+| Use the existing verifier and exact request fingerprint to prove a lease payload matches the current approval without exposing bearer data | `verify_lease`, `_has_exact_lease_ownership`, `_exact_binding_errors`, `_sanitize_errors` (fixed known sentinels and fixed message for unmatched diagnostics) | **LOCAL PASS; exact-head CI pending** |
+| Revalidate current status candidate manifest target action approval and request before persisting issued receipt; dispatch only after that receipt commits | `_status_still_reserved`, refreshed registry/manifest reads at each admission check, P1 dual-point expiry recheck, and `_commit_result` ordering before `dispatch()` | **LOCAL PASS; exact-head CI pending** |
+| If exact lease binding cannot be proven or TTL has elapsed record a terminal non-dispatchable outcome and require a fresh Human/Ops request without reusing a nonce | `test_issuing_without_gcs_lease_terminates_blocked_without_loading_key`, `test_issuing_with_consumed_or_revoked_gcs_lease_terminates_blocked_without_loading_key`, `test_issuing_recovery_with_ttl_delay_blocks_and_does_not_dispatch`, `test_request_expiry_during_final_ref_validation_blocks_without_dispatch` and `test_request_expiry_during_commit_sync_blocks_dispatch` | **LOCAL PASS; exact-head CI pending** |
+| Do not attribute a stale status event with no task_id to this issuance; require task-linked evidence for root-cause claims | Section 1 of this document; explicit epistemic boundaries and caveat declarations | **CAVEAT RETAINED** |
+| Regression tests prove stale CAS does not cause duplicate signing dispatch or overwrite newer status and logs contain no secret material | `test_no_duplicate_sign_or_dispatch_on_recovery`, both exact-revision writer tests, `test_release_inputs_are_reloaded_after_cas_and_sync_callbacks`, `test_no_secret_or_bearer_material_in_logs_or_status`, `test_schema_version_bearing_signature_value_is_sanitized`, `test_durable_state_lookup_error_uses_safe_sentinel_not_raw_exception` | **LOCAL PASS; exact-head CI pending** |
+| Only Supervisor signs or dispatches; submit a separate reviewed PR | In-memory signing key lifetime, single supervisor bridge entrypoint; PR #1377 | **REVIEW AND MERGE PENDING** |
+
+
+## 5. Current Patch Verification
+
+- `uv run pytest -q --tb=no .orchestrator/test_release_lease_integration.py` — exit 0.
+- `uv run ruff check .orchestrator/release_lease_integration.py .orchestrator/test_release_lease_integration.py` — exit 0.
+- `python3 -m py_compile .orchestrator/release_lease_integration.py .orchestrator/test_release_lease_integration.py` — exit 0.
+- The current patch is local on the task branch; exact-head GitHub CI, owner finalization, and reviewer approval are pending. No live GCP mutation, lease signing, or Runtime Release dispatch occurred.
