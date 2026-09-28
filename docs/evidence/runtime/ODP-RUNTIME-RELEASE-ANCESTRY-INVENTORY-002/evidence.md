@@ -61,7 +61,7 @@ file.
 
 ## Focused Verification
 
-- **Tested HEAD**: will be bound to commit SHA after anchor commit
+- **Tested HEAD**: `3cc85636670e2d514f49c9d2975890d3442c4185`
 - **Command**:
   ```
   uv run pytest tests/e2e/test_release_gate_registry.py -x -v --tb=short \
