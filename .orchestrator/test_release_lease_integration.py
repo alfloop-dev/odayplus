@@ -2304,3 +2304,383 @@ def test_sanitize_errors_state_store_sentinel_mapping() -> None:
         result = bridge._sanitize_errors([raw])
         assert len(result) == 1, f"Expected 1 result for {raw!r}, got {result}"
         assert result[0] == expected_sentinel, f"For {raw!r}: expected {expected_sentinel!r}, got {result[0]!r}"
+
+
+def test_fresh_issuance_succeeds_when_historical_prior_approval_lease_is_expired(harness: dict) -> None:
+    """Historical expired prior-approval lease in state=issued does not block a fresh valid Human/Ops approval.
+
+    The expired historical lease remains unmodified in durable state store; exactly one newly
+    bound lease is issued and dispatched after its canonical receipt commits.
+    """
+    prior_request = copy.deepcopy(harness["request"])
+    prior_request["approval_id"] = "approval-prior-20260904-000"
+    prior_request["nonce"] = "prior-one-time-nonce-000"
+    prior_fp = bridge.request_fingerprint(TASK_ID, prior_request)
+
+    expired_time = NOW - timedelta(hours=2)
+    prior_lease = build_lease(
+        task_id=TASK_ID,
+        release_id=str(harness["manifest"]["release_id"]),
+        candidate_sha=CANDIDATE_SHA,
+        manifest_digest=harness["manifest"]["manifest_digest"],
+        target_environment="dev",
+        allowed_action="deploy",
+        private_key=harness["private_key"],
+        ttl_seconds=300,
+        issued_at=expired_time,
+        request_fingerprint=prior_fp,
+        approval_id="approval-prior-20260904-000",
+        approval_nonce_digest=bridge._safe_digest("prior-one-time-nonce-000"),
+    )
+    harness["store"].record_issued(prior_lease)
+
+    # Install fresh valid Human/Ops request for the same task with a new nonce and approval ID
+    fresh_request = copy.deepcopy(harness["request"])
+    fresh_request["approval_id"] = "approval-fresh-20260904-002"
+    fresh_request["nonce"] = "fresh-one-time-nonce-002"
+    current_status = _read_status(harness)
+    current_status["tasks"][1][bridge.REQUEST_FIELD] = fresh_request
+    current_status["tasks"][1].pop(bridge.ISSUANCE_FIELD, None)
+    harness["status_path"].write_text(json.dumps(current_status), encoding="utf-8")
+
+    dispatches: list[dict] = []
+    assert _run(harness, lambda **kwargs: dispatches.append(kwargs))
+    assert len(dispatches) == 1
+    new_lease = dispatches[0]["lease"]
+    assert new_lease["lease_id"] != prior_lease["lease_id"]
+    assert new_lease["approval_id"] == "approval-fresh-20260904-002"
+    assert dispatches[0]["request"]["nonce"] == "fresh-one-time-nonce-002"
+
+    # Prove historical lease remains completely unmodified in durable store (state=issued)
+    prior_record = harness["store"].get(prior_lease["lease_id"])
+    assert prior_record is not None
+    assert prior_record["state"] == "issued"
+    assert prior_record["lease"]["lease_id"] == prior_lease["lease_id"]
+
+    # Prove newly bound lease is persisted as issued
+    new_record = harness["store"].get(new_lease["lease_id"])
+    assert new_record is not None
+    assert new_record["state"] == "issued"
+    assert new_record["approval_id"] == "approval-fresh-20260904-002"
+
+    # Prove canonical receipt committed before dispatch
+    task_after = _read_status(harness)["tasks"][1]
+    assert task_after[bridge.ISSUANCE_FIELD]["state"] == "dispatched"
+    assert task_after[bridge.ISSUANCE_FIELD]["receipt"]["lease_id"] == new_lease["lease_id"]
+    assert task_after[bridge.ISSUANCE_FIELD]["approval_id"] == "approval-fresh-20260904-002"
+
+
+def test_fresh_issuance_succeeds_when_historical_legacy_lease_lacking_binding_metadata_is_expired(
+    harness: dict,
+) -> None:
+    """Historical signed legacy lease lacking new binding metadata does not block a fresh valid Human/Ops approval.
+
+    The legacy lease (which has valid signature over legacy fields but no request_fingerprint,
+    approval_id, or approval_nonce_digest) is demonstrably expired and remains unmodified in
+    durable store.
+    """
+    expired_time = NOW - timedelta(hours=3)
+    legacy_lease = build_lease(
+        task_id=TASK_ID,
+        release_id=str(harness["manifest"]["release_id"]),
+        candidate_sha=CANDIDATE_SHA,
+        manifest_digest=harness["manifest"]["manifest_digest"],
+        target_environment="dev",
+        allowed_action="deploy",
+        private_key=harness["private_key"],
+        ttl_seconds=300,
+        issued_at=expired_time,
+    )
+    assert "request_fingerprint" not in legacy_lease
+    assert "approval_id" not in legacy_lease
+    assert "approval_nonce_digest" not in legacy_lease
+    harness["store"].record_issued(legacy_lease)
+
+    # Fresh valid Human/Ops request
+    fresh_request = copy.deepcopy(harness["request"])
+    fresh_request["approval_id"] = "approval-fresh-legacy-test-001"
+    fresh_request["nonce"] = "fresh-legacy-test-nonce-001"
+    current_status = _read_status(harness)
+    current_status["tasks"][1][bridge.REQUEST_FIELD] = fresh_request
+    current_status["tasks"][1].pop(bridge.ISSUANCE_FIELD, None)
+    harness["status_path"].write_text(json.dumps(current_status), encoding="utf-8")
+
+    dispatches: list[dict] = []
+    assert _run(harness, lambda **kwargs: dispatches.append(kwargs))
+    assert len(dispatches) == 1
+    new_lease = dispatches[0]["lease"]
+    assert new_lease["lease_id"] != legacy_lease["lease_id"]
+    assert new_lease["approval_id"] == "approval-fresh-legacy-test-001"
+
+    # Legacy lease remains unmodified in durable state
+    legacy_record = harness["store"].get(legacy_lease["lease_id"])
+    assert legacy_record is not None
+    assert legacy_record["state"] == "issued"
+    assert "request_fingerprint" not in legacy_record["lease"]
+
+    # Canonical status records the newly bound lease
+    task_after = _read_status(harness)["tasks"][1]
+    assert task_after[bridge.ISSUANCE_FIELD]["state"] == "dispatched"
+    assert task_after[bridge.ISSUANCE_FIELD]["receipt"]["lease_id"] == new_lease["lease_id"]
+
+
+def test_issuing_recovery_succeeds_with_expired_historical_record_alongside_current_recoverable_lease(
+    harness: dict,
+) -> None:
+    """An expired historical lease in durable store does not prevent recovery of the exact current recoverable lease.
+
+    The historical record is left unmodified; the exact current lease is recovered and dispatched
+    without re-signing.
+    """
+    # Expired historical lease
+    prior_lease = build_lease(
+        task_id=TASK_ID,
+        release_id=str(harness["manifest"]["release_id"]),
+        candidate_sha=CANDIDATE_SHA,
+        manifest_digest=harness["manifest"]["manifest_digest"],
+        target_environment="dev",
+        allowed_action="deploy",
+        private_key=harness["private_key"],
+        ttl_seconds=300,
+        issued_at=NOW - timedelta(hours=2),
+        request_fingerprint="sha256:" + "a" * 64,
+        approval_id="approval-prior-hist-001",
+        approval_nonce_digest="sha256:" + "b" * 64,
+    )
+    harness["store"].record_issued(prior_lease)
+
+    # Current exact recoverable lease
+    fp = bridge.request_fingerprint(TASK_ID, harness["request"])
+    current_lease = build_lease(
+        task_id=TASK_ID,
+        release_id=str(harness["manifest"]["release_id"]),
+        candidate_sha=CANDIDATE_SHA,
+        manifest_digest=harness["manifest"]["manifest_digest"],
+        target_environment="dev",
+        allowed_action="deploy",
+        private_key=harness["private_key"],
+        ttl_seconds=300,
+        issued_at=NOW,
+        request_fingerprint=fp,
+        approval_id=str(harness["request"].get("approval_id") or ""),
+        approval_nonce_digest=bridge._safe_digest(harness["request"].get("nonce")),
+    )
+    harness["store"].record_issued(current_lease)
+
+    # Set task to issuing reservation matching current request
+    current_status = _read_status(harness)
+    task = current_status["tasks"][1]
+    task[bridge.ISSUANCE_FIELD] = bridge._issuance_record(
+        state="issuing",
+        task_id=TASK_ID,
+        request=harness["request"],
+        fingerprint=fp,
+        settings=harness["config"]["release_lease_issuer"],
+        receipt=bridge._receipt(None, errors=[], issued_at=NOW),
+        updated_at=NOW,
+    )
+    harness["status_path"].write_text(json.dumps(current_status), encoding="utf-8")
+
+    dispatches: list[dict] = []
+    assert _run(
+        harness,
+        lambda **kwargs: dispatches.append(kwargs),
+        loader=lambda _: pytest.fail("recovery must not reload signing key"),
+    )
+    assert len(dispatches) == 1
+    assert dispatches[0]["lease"]["lease_id"] == current_lease["lease_id"]
+
+    # Historical lease is untouched
+    prior_record = harness["store"].get(prior_lease["lease_id"])
+    assert prior_record is not None
+    assert prior_record["state"] == "issued"
+
+    # Current lease is still issued and status updated
+    current_record = harness["store"].get(current_lease["lease_id"])
+    assert current_record is not None
+    assert current_record["state"] == "issued"
+
+    task_after = _read_status(harness)["tasks"][1]
+    assert task_after[bridge.ISSUANCE_FIELD]["state"] == "dispatched"
+    assert task_after[bridge.ISSUANCE_FIELD]["receipt"]["lease_id"] == current_lease["lease_id"]
+
+
+def test_fresh_issuance_blocks_when_unrelated_lease_is_genuinely_active(harness: dict) -> None:
+    """A genuinely active unexpired lease for a different approval blocks fresh issuance fail-closed without revoking."""
+    active_unrelated = build_lease(
+        task_id=TASK_ID,
+        release_id=str(harness["manifest"]["release_id"]),
+        candidate_sha=CANDIDATE_SHA,
+        manifest_digest=harness["manifest"]["manifest_digest"],
+        target_environment="dev",
+        allowed_action="deploy",
+        private_key=harness["private_key"],
+        ttl_seconds=300,
+        issued_at=NOW,
+        request_fingerprint="sha256:" + "d" * 64,
+        approval_id="other-active-approval",
+        approval_nonce_digest="sha256:" + "e" * 64,
+    )
+    harness["store"].record_issued(active_unrelated)
+
+    dispatches: list[dict] = []
+    assert _run(
+        harness,
+        lambda **kwargs: dispatches.append(kwargs),
+        loader=lambda _: pytest.fail("active conflict must not load signing key"),
+    )
+    assert dispatches == []
+
+    # Unrelated active lease must NOT be revoked
+    unrelated_record = harness["store"].get(active_unrelated["lease_id"])
+    assert unrelated_record is not None
+    assert unrelated_record["state"] == "issued"
+
+    task_after = _read_status(harness)["tasks"][1]
+    assert task_after[bridge.ISSUANCE_FIELD]["state"] == "blocked"
+    assert any("reconciled" in err for err in task_after[bridge.ISSUANCE_FIELD]["receipt"]["errors"])
+
+
+def test_fresh_issuance_blocks_when_historical_lease_has_unprovable_expiry_due_to_invalid_signature(
+    harness: dict,
+) -> None:
+    """A historical lease whose signature does not verify cannot prove expiry and blocks fail-closed."""
+    tampered_lease = build_lease(
+        task_id=TASK_ID,
+        release_id=str(harness["manifest"]["release_id"]),
+        candidate_sha=CANDIDATE_SHA,
+        manifest_digest=harness["manifest"]["manifest_digest"],
+        target_environment="dev",
+        allowed_action="deploy",
+        private_key=harness["private_key"],
+        ttl_seconds=300,
+        issued_at=NOW - timedelta(hours=2),
+    )
+    tampered_lease["signature"]["value"] = "f" * 128  # corrupt signature
+    harness["store"].record_issued(tampered_lease)
+
+    dispatches: list[dict] = []
+    assert _run(
+        harness,
+        lambda **kwargs: dispatches.append(kwargs),
+        loader=lambda _: pytest.fail("unprovable expiry must not load signing key"),
+    )
+    assert dispatches == []
+
+    # Tampered lease is not revoked (exact ownership not proven)
+    tampered_record = harness["store"].get(tampered_lease["lease_id"])
+    assert tampered_record is not None
+    assert tampered_record["state"] == "issued"
+
+    task_after = _read_status(harness)["tasks"][1]
+    assert task_after[bridge.ISSUANCE_FIELD]["state"] == "blocked"
+
+
+def test_fresh_issuance_blocks_when_historical_lease_has_malformed_expiry_timestamp(
+    harness: dict,
+) -> None:
+    """A lease with malformed/unparseable expiry timestamp cannot prove expiry and blocks fail-closed."""
+    malformed_lease = build_lease(
+        task_id=TASK_ID,
+        release_id=str(harness["manifest"]["release_id"]),
+        candidate_sha=CANDIDATE_SHA,
+        manifest_digest=harness["manifest"]["manifest_digest"],
+        target_environment="dev",
+        allowed_action="deploy",
+        private_key=harness["private_key"],
+        ttl_seconds=300,
+        issued_at=NOW - timedelta(hours=2),
+    )
+    malformed_lease["expires_at"] = "invalid-iso-date"
+    # Note: re-recording directly in store
+    path = harness["store"]._path(malformed_lease["lease_id"])
+    record = {
+        "lease_id": malformed_lease["lease_id"],
+        "state": "issued",
+        "issued_at": malformed_lease["issued_at"],
+        "issued_by": "supervisor",
+        "expires_at": "invalid-iso-date",
+        "lease": malformed_lease,
+    }
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+    dispatches: list[dict] = []
+    assert _run(
+        harness,
+        lambda **kwargs: dispatches.append(kwargs),
+        loader=lambda _: pytest.fail("malformed expiry must not load signing key"),
+    )
+    assert dispatches == []
+
+    task_after = _read_status(harness)["tasks"][1]
+    assert task_after[bridge.ISSUANCE_FIELD]["state"] == "blocked"
+
+
+def test_issuing_recovery_blocks_when_unrelated_active_lease_exists_alongside_current_recoverable_lease(
+    harness: dict,
+) -> None:
+    """An unrelated genuinely active lease alongside a recoverable current lease blocks recovery as a conflict."""
+    # Unrelated active lease
+    active_unrelated = build_lease(
+        task_id=TASK_ID,
+        release_id=str(harness["manifest"]["release_id"]),
+        candidate_sha=CANDIDATE_SHA,
+        manifest_digest=harness["manifest"]["manifest_digest"],
+        target_environment="dev",
+        allowed_action="deploy",
+        private_key=harness["private_key"],
+        ttl_seconds=300,
+        issued_at=NOW,
+        request_fingerprint="sha256:" + "d" * 64,
+        approval_id="other-active-approval",
+        approval_nonce_digest="sha256:" + "e" * 64,
+    )
+    harness["store"].record_issued(active_unrelated)
+
+    # Current recoverable lease
+    fp = bridge.request_fingerprint(TASK_ID, harness["request"])
+    current_lease = build_lease(
+        task_id=TASK_ID,
+        release_id=str(harness["manifest"]["release_id"]),
+        candidate_sha=CANDIDATE_SHA,
+        manifest_digest=harness["manifest"]["manifest_digest"],
+        target_environment="dev",
+        allowed_action="deploy",
+        private_key=harness["private_key"],
+        ttl_seconds=300,
+        issued_at=NOW,
+        request_fingerprint=fp,
+        approval_id=str(harness["request"].get("approval_id") or ""),
+        approval_nonce_digest=bridge._safe_digest(harness["request"].get("nonce")),
+    )
+    harness["store"].record_issued(current_lease)
+
+    current_status = _read_status(harness)
+    task = current_status["tasks"][1]
+    task[bridge.ISSUANCE_FIELD] = bridge._issuance_record(
+        state="issuing",
+        task_id=TASK_ID,
+        request=harness["request"],
+        fingerprint=fp,
+        settings=harness["config"]["release_lease_issuer"],
+        receipt=bridge._receipt(None, errors=[], issued_at=NOW),
+        updated_at=NOW,
+    )
+    harness["status_path"].write_text(json.dumps(current_status), encoding="utf-8")
+
+    dispatches: list[dict] = []
+    assert _run(
+        harness,
+        lambda **kwargs: dispatches.append(kwargs),
+        loader=lambda _: pytest.fail("conflicting recovery must not load signing key"),
+    )
+    assert dispatches == []
+
+    # Current owned lease was revoked due to conflict; unrelated active lease was not revoked
+    assert harness["store"].get(current_lease["lease_id"])["state"] == "revoked"
+    assert harness["store"].get(active_unrelated["lease_id"])["state"] == "issued"
+
+    task_after = _read_status(harness)["tasks"][1]
+    assert task_after[bridge.ISSUANCE_FIELD]["state"] == "blocked"
+    assert any("multiple conflicting" in err for err in task_after[bridge.ISSUANCE_FIELD]["receipt"]["errors"])
+

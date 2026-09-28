@@ -95,6 +95,13 @@ To eliminate control plane stalls while strictly preventing unauthorized dispatc
   - Unmatched diagnostic text → fixed `"lease validation failed"`; arbitrary exception text and bearer values are never forwarded
 - Only cryptographic digests (`approval_nonce_digest`, `nonce_digest`, `signature_digest`, `signature_key_id`) are published in receipts and activity logs.
 
+### I. Authenticated Expiry & Historical Orphan Reconciliation (P2 Fix)
+- **Safe Historical Reconciliation**: Demonstrably expired historical leases (including signed legacy leases lacking the new binding metadata) in durable store with `state=issued` are safely distinguished from active conflicts using authenticated Ed25519 signature and validity window verification (`_is_demonstrably_expired`).
+- **Unmodified Historical Records**: Historical records are left completely unmodified in durable store; they are never revoked, adopted, replayed, or re-signed under fresh requests.
+- **Unblocked Fresh Human/Ops Requests**: A fresh valid Human/Ops approval request with a new nonce for the same task mints, persists, commits, and dispatches exactly one newly bound lease without permanent task-level stalls or manual GCS mutation.
+- **Issuing Recovery Alongside Historical Records**: An interrupted reservation in `state="issuing"` cleanly recovers its exact current recoverable lease even when an expired historical record exists in storage.
+- **Fail-Closed Active / Unprovable Leases**: Genuinely active unrelated leases (`expires_at > now`) and leases with unprovable expiry (invalid signature, corrupted payload, malformed timestamps, or unavailable public key) fail closed and block fresh issuance or recovery without modifying durable state.
+
 ---
 
 ## 3. Verification & Regression Coverage
@@ -150,6 +157,20 @@ The test suite in `.orchestrator/test_release_lease_integration.py` provides com
     - Unknown verifier/storage text maps to a fixed safe message; arbitrary text is never truncated and forwarded.
 24. `test_sanitize_errors_state_store_sentinel_mapping`:
     - `_sanitize_errors` maps known diagnostic categories to bounded safe sentinel codes.
+25. `test_fresh_issuance_succeeds_when_historical_prior_approval_lease_is_expired`:
+    - Persists an expired prior-approval lease in durable store with `state=issued`. Proves that a fresh valid Human/Ops request with a new nonce succeeds, mints exactly one new lease, commits the issued receipt, and dispatches while the historical lease remains unmodified in durable state.
+26. `test_fresh_issuance_succeeds_when_historical_legacy_lease_lacking_binding_metadata_is_expired`:
+    - Persists an expired signed legacy lease lacking new binding metadata in durable store. Proves that a fresh Human/Ops request succeeds cleanly while the legacy lease remains unmodified.
+27. `test_issuing_recovery_succeeds_with_expired_historical_record_alongside_current_recoverable_lease`:
+    - Proves that issuing recovery cleanly recovers and dispatches the exact current lease without re-signing, even when an expired historical record exists in storage.
+28. `test_fresh_issuance_blocks_when_unrelated_lease_is_genuinely_active`:
+    - Proves that a genuinely active unexpired lease for a different approval blocks fresh issuance fail-closed without mutating or revoking durable state.
+29. `test_fresh_issuance_blocks_when_historical_lease_has_unprovable_expiry_due_to_invalid_signature`:
+    - Proves that a historical lease whose signature does not verify cannot prove expiry and blocks fresh issuance fail-closed without revoking.
+30. `test_fresh_issuance_blocks_when_historical_lease_has_malformed_expiry_timestamp`:
+    - Proves that a lease with malformed/unparseable expiry timestamp cannot prove expiry and blocks fail-closed.
+31. `test_issuing_recovery_blocks_when_unrelated_active_lease_exists_alongside_current_recoverable_lease`:
+    - Proves that an unrelated genuinely active lease alongside a recoverable current lease blocks recovery as a conflicting unconsumed lease.
 
 ---
 
@@ -160,7 +181,7 @@ The test suite in `.orchestrator/test_release_lease_integration.py` provides com
 | Use fake storage and canonical writer doubles to reproduce the reserved-state then stale status write race without touching live GCP | `test_stale_cas_issuing_recovery_reconciles_gcs_lease_and_dispatches`, `test_revision_checking_writer_preserves_newer_status_on_bounded_retry`, and `test_revision_checking_writer_recovers_after_two_issued_cas_rejections` (exact-revision CAS doubles) | **LOCAL PASS; exact-head CI pending** |
 | Use the existing verifier and exact request fingerprint to prove a lease payload matches the current approval without exposing bearer data | `verify_lease`, `_has_exact_lease_ownership`, `_exact_binding_errors`, `_sanitize_errors` (fixed known sentinels and fixed message for unmatched diagnostics) | **LOCAL PASS; exact-head CI pending** |
 | Revalidate current status candidate manifest target action approval and request before persisting issued receipt; dispatch only after that receipt commits | `_status_still_reserved`, refreshed registry/manifest reads at each admission check, P1 dual-point expiry recheck, and `_commit_result` ordering before `dispatch()` | **LOCAL PASS; exact-head CI pending** |
-| If exact lease binding cannot be proven or TTL has elapsed record a terminal non-dispatchable outcome and require a fresh Human/Ops request without reusing a nonce | `test_issuing_without_gcs_lease_terminates_blocked_without_loading_key`, `test_issuing_with_consumed_or_revoked_gcs_lease_terminates_blocked_without_loading_key`, `test_issuing_recovery_with_ttl_delay_blocks_and_does_not_dispatch`, `test_request_expiry_during_final_ref_validation_blocks_without_dispatch` and `test_request_expiry_during_commit_sync_blocks_dispatch` | **LOCAL PASS; exact-head CI pending** |
+| If exact lease binding cannot be proven or TTL has elapsed record a terminal non-dispatchable outcome and require a fresh Human/Ops request without reusing a nonce | `test_issuing_without_gcs_lease_terminates_blocked_without_loading_key`, `test_issuing_with_consumed_or_revoked_gcs_lease_terminates_blocked_without_loading_key`, `test_issuing_recovery_with_ttl_delay_blocks_and_does_not_dispatch`, `test_request_expiry_during_final_ref_validation_blocks_without_dispatch`, `test_request_expiry_during_commit_sync_blocks_dispatch`, `test_fresh_issuance_succeeds_when_historical_prior_approval_lease_is_expired`, and `test_fresh_issuance_succeeds_when_historical_legacy_lease_lacking_binding_metadata_is_expired` | **LOCAL PASS; exact-head CI pending** |
 | Do not attribute a stale status event with no task_id to this issuance; require task-linked evidence for root-cause claims | Section 1 of this document; explicit epistemic boundaries and caveat declarations | **CAVEAT RETAINED** |
 | Regression tests prove stale CAS does not cause duplicate signing dispatch or overwrite newer status and logs contain no secret material | `test_no_duplicate_sign_or_dispatch_on_recovery`, both exact-revision writer tests, `test_release_inputs_are_reloaded_after_cas_and_sync_callbacks`, `test_no_secret_or_bearer_material_in_logs_or_status`, `test_schema_version_bearing_signature_value_is_sanitized`, `test_durable_state_lookup_error_uses_safe_sentinel_not_raw_exception` | **LOCAL PASS; exact-head CI pending** |
 | Only Supervisor signs or dispatches; submit a separate reviewed PR | In-memory signing key lifetime, single supervisor bridge entrypoint; PR #1377 | **REVIEW AND MERGE PENDING** |
@@ -168,7 +189,8 @@ The test suite in `.orchestrator/test_release_lease_integration.py` provides com
 
 ## 5. Current Patch Verification
 
-- `uv run pytest -q --tb=no .orchestrator/test_release_lease_integration.py` — exit 0.
-- `uv run ruff check .orchestrator/release_lease_integration.py .orchestrator/test_release_lease_integration.py` — exit 0.
-- `python3 -m py_compile .orchestrator/release_lease_integration.py .orchestrator/test_release_lease_integration.py` — exit 0.
+- `uv run pytest -q --tb=no .orchestrator/test_release_lease_integration.py` — 95 passed in ~6s (exit 0).
+- `uv run ruff check .orchestrator/release_lease_integration.py .orchestrator/test_release_lease_integration.py delivery_toolchain/release/release_lease.py` — exit 0.
+- `python3 -m py_compile .orchestrator/release_lease_integration.py .orchestrator/test_release_lease_integration.py delivery_toolchain/release/release_lease.py` — exit 0.
 - The current patch is local on the task branch; exact-head GitHub CI, owner finalization, and reviewer approval are pending. No live GCP mutation, lease signing, or Runtime Release dispatch occurred.
+

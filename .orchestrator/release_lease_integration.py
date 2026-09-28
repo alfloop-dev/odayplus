@@ -45,6 +45,7 @@ from delivery_toolchain.release.release_lease import (
     load_private_key_material,
     load_public_key,
     load_public_key_material,
+    signature_errors,
     verify_lease,
 )
 from delivery_toolchain.release.release_manifest import load_manifest
@@ -405,6 +406,8 @@ def _sanitize_errors(errors: list[str]) -> list[str]:
          "durable lease does not match current request"),
         (lambda t: "multiple conflicting" in t.lower(),
          "multiple conflicting durable leases were found"),
+        (lambda t: "reconciled" in t.lower() or "unconsumed lease" in t.lower(),
+         "existing unconsumed lease in state store could not be reconciled"),
         (lambda t: "expected 'done'" in t.lower() or "dependency" in t.lower(),
          "required dependency expected 'done'"),
         (lambda t: "no durable lease record" in t.lower(),
@@ -1039,6 +1042,40 @@ def _has_exact_lease_ownership(
     return True
 
 
+def _is_demonstrably_expired(
+    record: dict[str, Any],
+    public_key: Any | None,
+    now: datetime,
+) -> bool:
+    """Return True only if the record contains an authentic signed lease whose expiry has passed.
+
+    Fail closed: if the lease signature cannot be verified (e.g. missing or invalid
+    public key, corrupted signature, tampered payload), or timestamps are malformed,
+    or the expiry timestamp has not elapsed, return False so the record is treated as
+    an active conflict rather than silently ignored.
+    """
+    if not isinstance(record, dict):
+        return False
+    if record.get("state") != "issued":
+        return False
+    stored_lease = record.get("lease")
+    if not isinstance(stored_lease, dict):
+        return False
+    if public_key is None:
+        return False
+    if signature_errors(stored_lease, public_key=public_key):
+        return False
+    issued_at = parse_iso_timestamp(stored_lease.get("issued_at") or "")
+    expires_at = parse_iso_timestamp(stored_lease.get("expires_at") or "")
+    if issued_at is None or expires_at is None:
+        return False
+    if expires_at <= issued_at:
+        return False
+    if expires_at > now:
+        return False
+    return True
+
+
 def process_release_lease_issuance(
     config: dict[str, Any],
     *,
@@ -1196,7 +1233,20 @@ def process_release_lease_issuance(
             ) or changed
             continue
 
+        public_key = _resolve_public_key(public_key_loader, settings)
         issued_records = [r for r in existing_records if r.get("state") == "issued"]
+        owned_issued_records = [
+            r for r in issued_records
+            if _has_exact_lease_ownership(r.get("lease"), task_id, request)
+        ]
+        unowned_issued_records = [
+            r for r in issued_records
+            if not _has_exact_lease_ownership(r.get("lease"), task_id, request)
+        ]
+        active_unowned_records = [
+            r for r in unowned_issued_records
+            if not _is_demonstrably_expired(r, public_key, current_time())
+        ]
 
         lease = None
         if is_issuing_recovery:
@@ -1217,7 +1267,34 @@ def process_release_lease_issuance(
                 ) or changed
                 continue
 
-            if len(issued_records) == 0:
+            if len(owned_issued_records) == 0:
+                if len(active_unowned_records) == 1:
+                    changed = _record_blocked(
+                        config,
+                        status,
+                        task,
+                        request,
+                        fingerprint,
+                        settings,
+                        ["durable lease payload does not match current request parameters or exact approval identity"],
+                        commit_status=commit_status,
+                        dispatch_ref_sha=ref_sha,
+                    ) or changed
+                    continue
+                if len(active_unowned_records) > 1:
+                    changed = _record_blocked(
+                        config,
+                        status,
+                        task,
+                        request,
+                        fingerprint,
+                        settings,
+                        ["multiple conflicting unconsumed leases in durable state"],
+                        commit_status=commit_status,
+                        dispatch_ref_sha=ref_sha,
+                    ) or changed
+                    continue
+
                 _KNOWN_STATES = {"issued", "consumed", "revoked", "expired", "unknown"}
                 found_states = ", ".join(sorted(
                     s if s in _KNOWN_STATES else "invalid"
@@ -1236,8 +1313,8 @@ def process_release_lease_issuance(
                 ) or changed
                 continue
 
-            if len(issued_records) > 1:
-                for r in issued_records:
+            if len(owned_issued_records) > 1 or len(active_unowned_records) >= 1:
+                for r in owned_issued_records:
                     stored_lease = r.get("lease")
                     if _has_exact_lease_ownership(stored_lease, task_id, request):
                         try:
@@ -1257,7 +1334,7 @@ def process_release_lease_issuance(
                 ) or changed
                 continue
 
-            rec = issued_records[0]
+            rec = owned_issued_records[0]
             stored_lease = rec.get("lease")
             if not isinstance(stored_lease, dict):
                 changed = _record_blocked(
@@ -1288,7 +1365,6 @@ def process_release_lease_issuance(
                 ) or changed
                 continue
 
-            public_key = _resolve_public_key(public_key_loader, settings)
             if public_key is None:
                 changed = _record_blocked(
                     config,
@@ -1359,10 +1435,23 @@ def process_release_lease_issuance(
                 ) or changed
                 continue
 
-            if issued_records:
-                if len(issued_records) == 1 and _has_exact_lease_ownership(issued_records[0].get("lease"), task_id, request):
-                    stored_lease = issued_records[0].get("lease")
-                    public_key = _resolve_public_key(public_key_loader, settings)
+            if active_unowned_records:
+                changed = _record_blocked(
+                    config,
+                    status,
+                    task,
+                    request,
+                    fingerprint,
+                    settings,
+                    ["existing unconsumed lease in state store could not be reconciled"],
+                    commit_status=commit_status,
+                    dispatch_ref_sha=ref_sha,
+                ) or changed
+                continue
+
+            if owned_issued_records:
+                if len(owned_issued_records) == 1:
+                    stored_lease = owned_issued_records[0].get("lease")
                     if public_key is not None:
                         verify_errs = verify_lease(
                             stored_lease,
@@ -1381,7 +1470,7 @@ def process_release_lease_issuance(
                         if not verify_errs:
                             lease = stored_lease
                 if lease is None:
-                    for r in issued_records:
+                    for r in owned_issued_records:
                         stored_lease = r.get("lease")
                         if _has_exact_lease_ownership(stored_lease, task_id, request):
                             try:
