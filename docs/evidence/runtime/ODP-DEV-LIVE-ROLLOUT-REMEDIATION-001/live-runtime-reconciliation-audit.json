@@ -6,7 +6,7 @@
   "blocking_layer": "supervisor_release_lease_issuer_blocked",
   "deployment_success_claimed": false,
   "historical_receipts_modified": false,
-  "generated_at": "2026-09-28T02:15:00Z",
+  "generated_at": "2026-09-28T02:53:11Z",
   "generated_by": "Antigravity3",
   "collection_baseline": {
     "note": "Round 6 (a31 candidate evidence correction and lease blocker routing): all 16 dependencies done. Origin/dev head bb15fe9f includes merged ODP-DEV-MIGRATION-ADMISSION-001 (PR #1375). Task branch is task/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001.",
@@ -190,9 +190,10 @@
     "candidate_must_rebuild": false,
     "old_artifacts_reused": false,
     "repository_manifest": {
-      "raw_sha256": "487184ed9332431a9ae8abac550fdee4ea3bd99431e21481c0a3244fa285210c",
-      "hosted_manifest_artifact_id": 10840909143,
-      "byte_identical_to_hosted_artifact": true
+      "raw_sha256": "d4591109492cc153c35938067c1b62972b53bf9a8dd62ee180dbe51f90b21fb1",
+      "hosted_manifest_artifact_id": 10936456723,
+      "byte_identical_to_hosted_artifact": true,
+      "logical_manifest_digest": "sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2"
     },
     "component_images": {
       "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:fee344d4b2e80a2e81306fa73d283a09777a2bf83f49fd5591d5b9d61c6984ab",
@@ -274,45 +275,63 @@
     "uploaded_artifacts": [
       {
         "name": "initial-release-absence-readback-a31e02ae391811a4c323ec4d834b70e200953366",
-        "id": null,
-        "sha256": "43ca9e289bf53b92f99d7a22bbab0430a9eef1e6878e3eb39dc7d194c77c9ff7",
-        "bytes": 1226,
-        "created_at": "2026-09-27T16:36:28Z"
+        "id": 10936157298,
+        "created_at": "2026-09-27T16:36:29Z",
+        "raw_sha256": "77070ae8a1056ca1ef94a85411012e96caab2401fcf1e2b38abca8c32135debf",
+        "raw_bytes": 1226,
+        "hash_scope": "expanded artifact JSON file bytes",
+        "archive_size_in_bytes": 507,
+        "evidence_file": "hosted-artifacts/initial-release-absence-readback-a31e02ae391811a4c323ec4d834b70e200953366/initial-release-absence-readback.json"
       },
       {
         "name": "release-environment-receipt-dev-build",
-        "id": null,
-        "sha256": "6d9a2ba1883be777a0ba1a7e2fe7553c528f413a299d2843efc2912440339243",
-        "bytes": 1111,
-        "created_at": "2026-09-27T16:29:21Z"
+        "id": 10935973744,
+        "created_at": "2026-09-27T16:29:22Z",
+        "raw_sha256": "c4a3f24e8e7a565d351fa35b8fc0e37eedf65a898cf8440530e107cca932687e",
+        "raw_bytes": 1111,
+        "hash_scope": "expanded artifact JSON file bytes",
+        "archive_size_in_bytes": 797,
+        "evidence_file": "hosted-artifacts/release-environment-receipt-dev-build/release-environment-receipt.json"
       },
       {
         "name": "release-npm-audit-receipt-dev",
-        "id": null,
-        "sha256": "9b3b85d341b52a1efc82bbd5138cefd442468e4c7ba94a5585f67df56c3679f2",
-        "bytes": 605,
-        "created_at": "2026-09-27T16:29:49Z"
+        "id": 10936796645,
+        "created_at": "2026-09-27T16:29:50Z",
+        "raw_sha256": "5acee3d1d018742cd5e0db833ad4db09a840883497b2cd926b17f1bb526928c3",
+        "raw_bytes": 605,
+        "hash_scope": "expanded artifact JSON file bytes",
+        "archive_size_in_bytes": 508,
+        "evidence_file": "hosted-artifacts/release-npm-audit-receipt-dev/npm-audit-receipt.json"
       },
       {
         "name": "release-phase-receipt-dev-build",
-        "id": null,
-        "sha256": "63f136b6f79989b52a5c40ee536dc4c8ae6e5e8e50b10be1332a685714faecaa",
-        "bytes": 767,
-        "created_at": "2026-09-27T16:29:07Z"
+        "id": 10936187998,
+        "created_at": "2026-09-27T16:29:08Z",
+        "raw_sha256": "703961a036a926f7afc78d6ebac2d539e719c89c26af74e3fb1275b44a809cb7",
+        "raw_bytes": 767,
+        "hash_scope": "expanded artifact JSON file bytes",
+        "archive_size_in_bytes": 631,
+        "evidence_file": "hosted-artifacts/release-phase-receipt-dev-build/release-phase-receipt.json"
       },
       {
         "name": "runtime-release-images-a31e02ae391811a4c323ec4d834b70e200953366",
-        "id": null,
-        "sha256": "3cb15cf013ef17f4b8893d5f57a3e3ca097ec1ddbe7b415a7862d5bc94593457",
-        "bytes": 657,
-        "created_at": "2026-09-27T16:36:26Z"
+        "id": 10936167349,
+        "created_at": "2026-09-27T16:36:27Z",
+        "raw_sha256": "5a70c507c7dcf6a967efa4742c606fecee571e63ba805129cc7fdc1bb2ae8a2b",
+        "raw_bytes": 657,
+        "hash_scope": "expanded artifact JSON file bytes",
+        "archive_size_in_bytes": 454,
+        "evidence_file": "hosted-artifacts/runtime-release-images-a31e02ae391811a4c323ec4d834b70e200953366/runtime-release-images.json"
       },
       {
         "name": "runtime-release-manifest-a31e02ae391811a4c323ec4d834b70e200953366",
-        "id": null,
-        "sha256": "487184ed9332431a9ae8abac550fdee4ea3bd99431e21481c0a3244fa285210c",
-        "bytes": 9481,
-        "created_at": "2026-09-27T16:36:27Z"
+        "id": 10936456723,
+        "created_at": "2026-09-27T16:36:28Z",
+        "raw_sha256": "d4591109492cc153c35938067c1b62972b53bf9a8dd62ee180dbe51f90b21fb1",
+        "raw_bytes": 9481,
+        "hash_scope": "expanded artifact JSON file bytes",
+        "archive_size_in_bytes": 2502,
+        "evidence_file": "hosted-artifacts/runtime-release-manifest-a31e02ae391811a4c323ec4d834b70e200953366/RELEASE_MANIFEST.json"
       }
     ],
     "build_job_log_readback": {
@@ -760,7 +779,59 @@
     "cloud_run_generated_urls": [],
     "cloud_run_revisions": [],
     "job_executions": [],
-    "scheduler_triggers": []
+    "scheduler_triggers": [],
+    "lease_issuance_diagnostic": {
+      "observed_at_utc": "2026-09-28T02:44:32Z",
+      "target_environment": "dev",
+      "candidate_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
+      "manifest_digest": "sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2",
+      "operator_gcp_project": "odayplus-runtime-20260825",
+      "operator_authentication": "active user credentials; metadata reads succeeded",
+      "lease_bucket_metadata_readable": true,
+      "lease_bucket_object_count": 8,
+      "latest_object_metadata_updated_at_utc": "2026-09-28T00:47:38Z",
+      "lease_object_payload_read": false,
+      "secret_version_metadata": {
+        "version": "1",
+        "state": "enabled"
+      },
+      "secret_payload_read": false,
+      "secret_metadata_proves_supervisor_runtime_access": false,
+      "configured_lease_ttl_seconds": 600,
+      "latest_object_metadata_older_than_configured_ttl": true,
+      "canonical_issuance": {
+        "state": "issuing",
+        "updated_at_utc": "2026-09-28T00:47:26Z",
+        "receipt_event": "lease_issue_blocked",
+        "receipt_admitted": false,
+        "lease_id_present": false,
+        "dispatch_ref_sha_present": false
+      },
+      "activity_sequence": [
+        {
+          "at_utc": "2026-09-28T00:47:34Z",
+          "event": "release_lease_issuance_reserved",
+          "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001"
+        },
+        {
+          "at_utc": "2026-09-28T00:47:42Z",
+          "event": "stale_status_write_rejected",
+          "task_id_in_event": false,
+          "relation_to_this_issuance": "temporally adjacent; event does not identify a task, so causality is unconfirmed"
+        }
+      ],
+      "conclusion": "No admitted canonical lease receipt or accepted Runtime Release dispatch is recorded. Metadata visibility does not prove a valid lease, signing identity access, or the Supervisor root cause. Do not reuse the object or one-shot approval request. Dedicated remediation task ODP-SUPERVISOR-LEASE-ISSUANCE-RECOVERY-001 is in_progress; the parent rollout remains blocked until recovery and separately valid release authorization.",
+      "new_release_request_created": false,
+      "remediation_task": {
+        "task_id": "ODP-SUPERVISOR-LEASE-ISSUANCE-RECOVERY-001",
+        "title": "修復 Supervisor lease issuance 的 stale-CAS 安全恢復路徑",
+        "status": "in_progress",
+        "owner": "Antigravity4",
+        "reviewer": "Codex2",
+        "scope": "Supervisor code and regression tests only; no live GCP mutation, release request, lease signing, or dispatch",
+        "causal_correction_recorded": true
+      }
+    }
   },
   "reconciliation_findings": [
     {
@@ -774,7 +845,7 @@
       "id": "FINDING-002",
       "severity": "P0",
       "topic": "hosted_artifacts_independently_reverified",
-      "finding": "All hosted run-36333397898 receipts and artifacts were verified; the manifest is byte-identical to the repository manifest, the image handoff matches manifest components (API fee344d4, Web 3f9afa01, Worker fcaf3ba3, Scheduler 03ef45f9), signature and SBOM refs are present, and the build job 108659578847 succeeded while deploy jobs 108660864789, 108660864915, 108660865313 were skipped awaiting Supervisor lease.",
+      "finding": "All six hosted artifacts from run 36333397898 were downloaded by immutable GitHub artifact ID and their expanded JSON files are preserved and SHA-256 checked by the verifier. The hosted manifest raw-file SHA-256 is d4591109492cc153c35938067c1b62972b53bf9a8dd62ee180dbe51f90b21fb1; it is byte-identical to the repository manifest. The embedded logical manifest_digest remains sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2 and is independently computed from canonical manifest JSON with manifest_digest removed. Build job 108659578847 succeeded while lease/deploy/watch jobs 108660864789, 108660864915, 108660865313 were skipped; this is build provenance, not deployment evidence.",
       "status": "verified"
     },
     {
@@ -832,6 +903,13 @@
       "topic": "open_blocker_routed_to_supervisor",
       "finding": "Task ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 records an open blocker for the unresolved lease issuer and routes resolution to the Supervisor/remediation lane, preserving fail-closed posture until a signed lease and deploy receipts are produced.",
       "status": "blocked"
+    },
+    {
+      "id": "FINDING-011",
+      "severity": "P1",
+      "topic": "supervisor_lease_issuance_recovery_routed",
+      "finding": "Dedicated control-plane remediation ODP-SUPERVISOR-LEASE-ISSUANCE-RECOVERY-001 is assigned to Antigravity4 and independently reviewed by Codex2. It is code/tests only; it cannot create a release request, sign a lease, or dispatch. The dev rollout remains blocked.",
+      "status": "in_progress"
     }
   ],
   "historical_receipts_sha256": {
@@ -1164,6 +1242,14 @@
       "build_run_id": 36080312679,
       "migration_failure_run_id": 36278150009,
       "reason": "Candidate 419 failed migration in deploy run 36278150009 due to Dagster revision 29b539ebc72a collision. Superseded by a31 candidate with isolated migration version table."
+    },
+    "round_2026_09_28_review_9_artifact_and_lease_diagnostic": {
+      "at_utc": "2026-09-28T02:53:11Z",
+      "reviewed_head": "7043ff66a73f13eb6b53fa9165abebf541058175",
+      "artifact_provenance": "Re-downloaded all six run-36333397898 artifacts by ID, corrected raw hashes and IDs, preserved the expanded JSON files, and added verifier checks. Raw manifest file SHA-256 is distinct from its logical manifest_digest.",
+      "lease_diagnostic": "Confirmed active user auth and read-only GCS/Secret Manager metadata access; found the exact issuance remains ambiguous and no accepted dispatch exists. The stale-write event is generic without task_id; no root cause is claimed.",
+      "deployment_status": "No a31 deploy, migration, smoke, or post-deploy probes have run. The task stays blocked until Supervisor issuance recovery and valid Human/Ops authorization are in place.",
+      "lease_remediation_task": "ODP-SUPERVISOR-LEASE-ISSUANCE-RECOVERY-001 (Antigravity4 / Codex2, in_progress; no deploy scope)"
     }
   },
   "revision": {

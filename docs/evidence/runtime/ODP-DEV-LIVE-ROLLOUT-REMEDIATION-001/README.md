@@ -8807,8 +8807,7 @@ Release lease issuance remains **blocked** (state `issuing`, event `lease_issue_
 since 2026-09-28T00:47:26Z. No signed lease, no `lease_id`, no `dispatch_ref_sha`,
 no new Runtime Release deploy run dispatched.
 
-Root cause is Supervisor-side: GCS lease state store unavailable or Secret Manager access issue.
-Worker cannot sign or dispatch outside Supervisor (per acceptance criterion 2).
+Root cause is unconfirmed. Later read-only checks found operator GCP authentication, lease-bucket metadata listing, and Secret Manager version metadata available; these checks do not prove Supervisor runtime identity access or identify the cause. Worker cannot sign or dispatch outside Supervisor (per acceptance criterion 2).
 
 No deployment, migration, traffic switch, or smoke test has been executed for the a31 candidate.
 `deployment_success_claimed` remains `false`.
@@ -8821,5 +8820,12 @@ No deployment, migration, traffic switch, or smoke test has been executed for th
 2. **驗證腳本強化**：
    - `verify_dev_live_rollout_remediation.py` 新增 component images、signature refs、sbom refs、job execution 狀態及 initial recovery binding 之跨欄位比對，確保 audit JSON 與 repository manifest / gate registry 嚴格一致。
 3. **Fail-Closed 阻塞與路由**：
-   - 任務維持 fail-closed `in_progress`，並已記錄 open blocker 路由至 Supervisor 修復 Lease issuer 授權與環境。
+   - 這段記錄已由 2026-09-28 review reopen #9 更正：task 現為 `blocked` / `waiting_for: Human/Ops`；先前 issuer blocker 被 scheduler reassignment 標為 resolved，但沒有 lease-issued 或 dispatch receipt，不能算解決。
 
+## Round 7 correction: hosted artifact provenance and lease status (2026-09-28)
+
+Codex2 review #9 found the a31 hosted artifact IDs and raw-file SHA-256 values were not verified. All six artifacts from Runtime Release run `36333397898` have now been downloaded by their immutable GitHub artifact IDs and preserved under `hosted-artifacts/`. The audit records each ID, expanded-file byte count and SHA-256; the verifier recomputes those values from the preserved files. The manifest artifact ID is `10936456723`; its raw file SHA-256 is `d4591109492cc153c35938067c1b62972b53bf9a8dd62ee180dbe51f90b21fb1`, byte-identical to the repository file. Its logical manifest digest remains `sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2`; the verifier recomputes this canonical digest separately from the raw file hash.
+
+Read-only GCP diagnostics at `2026-09-28T02:44:32Z` confirmed operator metadata access to project `odayplus-runtime-20260825`, eight lease-bucket object metadata entries (newest update `2026-09-28T00:47:38Z`), and Secret Manager version 1 metadata as `enabled`. No lease or secret payload was read. The configured lease TTL is 600 seconds, so the newest object metadata is too old to authorize a dispatch. Metadata access under operator credentials does not prove Supervisor identity permissions or establish a root cause.
+
+The canonical task still records `state=issuing`, `lease_issue_blocked`, `admitted=false`, no canonical lease ID and no dispatch reference SHA. Activity shows reservation at `00:47:34Z`, then a generic stale status write rejection at `00:47:42Z` without a task ID; the sequence is a diagnostic lead, not proven causality. No a31 deployment or post-deploy checks occurred. The one-shot release request is already associated with this ambiguous transaction and must not be replayed. Dedicated task `ODP-SUPERVISOR-LEASE-ISSUANCE-RECOVERY-001` is now `in_progress` (owner Antigravity4, reviewer Codex2) for Supervisor code and regression tests only. The task records that object existence and the generic stale-write event do not prove causality. The parent rollout remains blocked; no new request, lease signing, or dispatch is authorized by this remediation task.

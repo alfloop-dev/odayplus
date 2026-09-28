@@ -5,7 +5,8 @@ Validates the fail-closed evidence produced against the current base:
 1. Evidence files exist and the audit JSON carries the required structure.
 2. The audit binds the same candidate SHA, manifest digest, component images and
    registry decision (go) as the canonical repository manifest and gate registry.
-3. The hosted build run and artifact digests are syntactically immutable and cross-bound.
+3. The six immutable hosted artifact IDs and preserved raw files match the audit hashes and sizes.
+   The raw manifest-file hash is checked separately from its canonical logical manifest digest.
 4. Authorization and gate clearance state are verified against the repository.
 5. No deployment success is claimed anywhere.
 6. The seven historical ODP-DEV-ROLLOUT-001 receipts recompute to the hashes the
@@ -38,6 +39,14 @@ EXPECTED_RELEASE_ID = "odp-a31e02ae3918"
 EXPECTED_MANIFEST_DIGEST = "sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2"
 EXPECTED_AUTHORIZATION_ID = "HUMANOPS-DEV-MIGRATION-20260927T225545Z"
 EXPECTED_CI_RUN_ID = 36329922612
+EXPECTED_HOSTED_ARTIFACT_IDS = {
+    "initial-release-absence-readback-a31e02ae391811a4c323ec4d834b70e200953366": 10936157298,
+    "release-environment-receipt-dev-build": 10935973744,
+    "release-npm-audit-receipt-dev": 10936796645,
+    "release-phase-receipt-dev-build": 10936187998,
+    "runtime-release-images-a31e02ae391811a4c323ec4d834b70e200953366": 10936167349,
+    "runtime-release-manifest-a31e02ae391811a4c323ec4d834b70e200953366": 10936456723,
+}
 COMPONENTS = ("api", "web", "worker", "scheduler")
 DEV_GATES = ("gate-0", "gate-1", "gate-4")
 CLEARED_STATUSES = {"passed", "passed-with-deviation"}
@@ -216,6 +225,72 @@ def _check_build(audit: dict, manifest: dict, errors: list[str]) -> None:
         errors.append("Deploy job must exist and be 'skipped' for build-only phase")
 
 
+def _check_hosted_artifacts(audit: dict, manifest: dict, errors: list[str]) -> None:
+    build_exec = audit.get("hosted_build_execution", {})
+    records = build_exec.get("uploaded_artifacts", [])
+    by_name = {record.get("name"): record for record in records if isinstance(record, dict)}
+    if len(records) != len(EXPECTED_HOSTED_ARTIFACT_IDS) or set(by_name) != set(EXPECTED_HOSTED_ARTIFACT_IDS):
+        errors.append("hosted artifact inventory names do not match the six immutable run artifacts")
+
+    raw_manifest_bytes = RELEASE_MANIFEST.read_bytes()
+    repository_manifest = audit.get("candidate_reconciliation", {}).get("repository_manifest", {})
+    actual_manifest_sha = hashlib.sha256(raw_manifest_bytes).hexdigest()
+    if repository_manifest.get("raw_sha256") != actual_manifest_sha:
+        errors.append("repository_manifest.raw_sha256 does not match the raw RELEASE_MANIFEST.json bytes")
+
+    for name, expected_id in EXPECTED_HOSTED_ARTIFACT_IDS.items():
+        record = by_name.get(name)
+        if record is None:
+            errors.append(f"hosted artifact record missing: {name}")
+            continue
+        if type(record.get("id")) is not int or record.get("id") != expected_id:
+            errors.append(f"hosted artifact {name} has the wrong immutable artifact ID")
+        if record.get("hash_scope") != "expanded artifact JSON file bytes":
+            errors.append(f"hosted artifact {name} does not identify its raw hash scope")
+        relative = Path(str(record.get("evidence_file") or ""))
+        if relative.is_absolute() or ".." in relative.parts:
+            errors.append(f"hosted artifact {name} has an unsafe evidence_file path")
+            continue
+        artifact_path = EVIDENCE_DIR / relative
+        if not artifact_path.is_file():
+            errors.append(f"hosted artifact raw file is missing: {name}")
+            continue
+        content = artifact_path.read_bytes()
+        raw_sha = hashlib.sha256(content).hexdigest()
+        if record.get("raw_sha256") != raw_sha:
+            errors.append(f"hosted artifact {name} raw_sha256 does not match its preserved file")
+        if record.get("raw_bytes") != len(content):
+            errors.append(f"hosted artifact {name} raw_bytes does not match its preserved file")
+        if not isinstance(record.get("archive_size_in_bytes"), int) or record["archive_size_in_bytes"] <= 0:
+            errors.append(f"hosted artifact {name} has no valid GitHub archive size")
+
+        if name.startswith("runtime-release-manifest-"):
+            try:
+                hosted_manifest = json.loads(content.decode("utf-8"))
+            except Exception as exc:  # noqa: BLE001 - malformed artifact is evidence failure
+                errors.append(f"hosted manifest artifact is not valid JSON: {exc}")
+                continue
+            if content != raw_manifest_bytes:
+                errors.append("hosted manifest artifact is not byte-identical to repository RELEASE_MANIFEST.json")
+            if repository_manifest.get("hosted_manifest_artifact_id") != expected_id:
+                errors.append("repository_manifest hosted artifact ID does not match the hosted artifact record")
+            if repository_manifest.get("byte_identical_to_hosted_artifact") is not True:
+                errors.append("repository_manifest must assert verified byte identity with the hosted artifact")
+            if hosted_manifest.get("manifest_digest") != EXPECTED_MANIFEST_DIGEST:
+                errors.append("hosted manifest logical manifest_digest does not match the authorized release")
+            if hosted_manifest.get("manifest_digest") != manifest.get("manifest_digest"):
+                errors.append("hosted manifest logical digest differs from the repository manifest field")
+            if repository_manifest.get("logical_manifest_digest") != hosted_manifest.get("manifest_digest"):
+                errors.append("repository_manifest logical digest differs from the hosted manifest field")
+            payload = dict(hosted_manifest)
+            payload.pop("manifest_digest", None)
+            canonical_payload = json.dumps(
+                payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+            computed_logical_digest = "sha256:" + hashlib.sha256(canonical_payload).hexdigest()
+            if computed_logical_digest != hosted_manifest.get("manifest_digest"):
+                errors.append("hosted manifest logical digest does not recompute from canonical JSON")
+
 def _check_sources(audit: dict, manifest: dict, errors: list[str]) -> None:
     source_posture = audit.get("source_posture", {})
     attestation = manifest.get("sources_off_attestation", {})
@@ -362,6 +437,7 @@ def verify_evidence_bundle() -> list[str]:
     _check_header(audit, errors)
     _check_candidate(audit, manifest, registry, errors)
     _check_build(audit, manifest, errors)
+    _check_hosted_artifacts(audit, manifest, errors)
     _check_sources(audit, manifest, errors)
     _check_authorization(audit, registry, errors)
     _check_live_state(audit, errors)
