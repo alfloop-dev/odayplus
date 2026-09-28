@@ -819,6 +819,92 @@ def test_cli_expected_sha_ancestry_stale_second_parent_evidence_merge_passes(
     assert errors == []
 
 
+def test_is_evidence_path_accepts_generated_boundary_inventory() -> None:
+    """Regression: docs/audits/code-boundary-inventory.csv is evidence-only."""
+    module = load_checker_module()
+    assert module.is_evidence_path("docs/audits/code-boundary-inventory.csv")
+    assert module.is_evidence_path("docs/audits/some-other-audit.json")
+    # Product paths must still be rejected
+    assert not module.is_evidence_path("apps/api/server.py")
+    assert not module.is_evidence_path("src/feature.py")
+
+
+def test_cli_expected_sha_ancestry_inventory_only_descendant_passes(
+    tmp_path: Path,
+) -> None:
+    """Regression ODP-RUNTIME-RELEASE-ANCESTRY-INVENTORY-002: a rollout PR whose
+    only intervening changes are to docs/audits/ (generated boundary inventory)
+    must pass the candidate-to-merge ancestry check."""
+    module = load_checker_module()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def run_git(*args: str) -> str:
+        res = subprocess.run(
+            ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        )
+        return res.stdout.strip()
+
+    run_git("init")
+    run_git("config", "user.email", "test@example.com")
+    run_git("config", "user.name", "Test")
+
+    (repo / "app.py").write_text("print('v1')\n", encoding="utf-8")
+    run_git("add", ".")
+    run_git("commit", "-m", "candidate")
+    candidate_sha = run_git("rev-parse", "HEAD")
+
+    # Intervening commit touches only docs/audits/ — generated inventory
+    (repo / "docs" / "audits").mkdir(parents=True)
+    (repo / "docs" / "audits" / "code-boundary-inventory.csv").write_text(
+        "path,boundary\napp.py,product\n", encoding="utf-8"
+    )
+    run_git("add", ".")
+    run_git("commit", "-m", "regenerate boundary inventory")
+    head_sha = run_git("rev-parse", "HEAD")
+
+    errors = module.check_candidate_ancestry(candidate_sha, head_sha, repo)
+    assert errors == []
+
+
+def test_cli_expected_sha_ancestry_inventory_plus_product_change_fails_closed(
+    tmp_path: Path,
+) -> None:
+    """Inventory changes alone pass, but inventory + product changes still fail closed."""
+    module = load_checker_module()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def run_git(*args: str) -> str:
+        res = subprocess.run(
+            ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        )
+        return res.stdout.strip()
+
+    run_git("init")
+    run_git("config", "user.email", "test@example.com")
+    run_git("config", "user.name", "Test")
+
+    (repo / "app.py").write_text("print('v1')\n", encoding="utf-8")
+    run_git("add", ".")
+    run_git("commit", "-m", "candidate")
+    candidate_sha = run_git("rev-parse", "HEAD")
+
+    # Both inventory and product change — must fail closed
+    (repo / "docs" / "audits").mkdir(parents=True)
+    (repo / "docs" / "audits" / "code-boundary-inventory.csv").write_text(
+        "path,boundary\napp.py,product\n", encoding="utf-8"
+    )
+    (repo / "app.py").write_text("print('v2')\n", encoding="utf-8")
+    run_git("add", ".")
+    run_git("commit", "-m", "inventory + product change")
+    head_sha = run_git("rev-parse", "HEAD")
+
+    errors = module.check_candidate_ancestry(candidate_sha, head_sha, repo)
+    assert any("intervening commits touch non-evidence paths" in err for err in errors)
+    assert any("app.py" in err for err in errors)
+
+
 def test_cli_expected_sha_match_passes() -> None:
     result = run_checker("--expected-sha", CANDIDATE_SHA)
 
