@@ -699,6 +699,7 @@ def is_evidence_path(path: str) -> bool:
         or normalized.startswith("docs/runbooks/")
         or normalized.startswith("docs/testing/")
         or normalized.startswith("docs/uat/")
+        or normalized == "docs/audits/code-boundary-inventory.csv"
         or normalized.startswith(".orchestrator/task-briefs/")
         or normalized
         in {
