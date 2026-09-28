@@ -178,7 +178,6 @@ def _check_sources(audit: dict, manifest: dict, errors: list[str]) -> None:
 
 def _check_authorization(audit: dict, registry: dict, errors: list[str]) -> None:
     authorization = audit.get("authorization_state", {})
-    release = registry.get("release", {})
     if authorization.get("supervisor_lease_issued") is not False:
         errors.append("authorization_state.supervisor_lease_issued must be false")
     if authorization.get("canonical_registry_decision") != "go":
