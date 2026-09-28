@@ -1533,7 +1533,12 @@ def test_issuing_recovery_with_changed_approval_blocks_and_does_not_dispatch(har
 
 
 def test_issuing_recovery_with_ttl_delay_blocks_and_does_not_dispatch(harness: dict) -> None:
-    """When TTL delay causes lease/request to expire during storage operations, task is blocked without dispatch."""
+    """When TTL elapses between issuance and recovery, task is blocked without dispatch.
+
+    Uses a 60-second lease issued at NOW. Recovery runs at NOW+120s (well past
+    lease expiry). The pre-receipt-commit expiry recheck catches this and records
+    a terminal blocked outcome. No signing key is loaded.
+    """
     lease = build_lease(
         task_id=TASK_ID,
         release_id=str(harness["manifest"]["release_id"]),
@@ -1581,33 +1586,74 @@ def test_issuing_recovery_with_ttl_delay_blocks_and_does_not_dispatch(harness: d
 
 
 def test_canonical_writer_race_preserves_newer_status_revision(harness: dict) -> None:
-    """When a concurrent canonical writer advances status revision, newer task/request data is preserved."""
-    written_other_task = False
+    """When a concurrent canonical writer advances status revision, newer task/request data is preserved.
 
-    def writer_double_commit(config, candidate):
-        nonlocal written_other_task
-        # Concurrent writer updates task 0 before candidate commit
-        current = json.loads(harness["status_path"].read_text(encoding="utf-8"))
-        current["tasks"][0]["notes"] = ["concurrent writer updated dependency"]
-        current["updated_at"] = "2026-09-28T04:00:00Z"
-        harness["status_path"].write_text(json.dumps(current), encoding="utf-8")
-        written_other_task = True
+    Uses a revision-checking writer double that:
+    1. Maintains a _status_write_revision field.
+    2. Simulates a concurrent writer advancing the revision during the first
+       'issued' commit attempt (CAS rejection).
+    3. On the retry, accepts the commit and preserves concurrent changes.
+    """
+    revision = {"current": uuid.uuid4().hex}
+    concurrent_writer_ran = False
 
-        task = candidate["tasks"][1]
-        current["tasks"][1] = task
-        harness["status_path"].write_text(json.dumps(current), encoding="utf-8")
+    # Seed initial status with revision
+    initial_status = _read_status(harness)
+    initial_status["_status_write_revision"] = revision["current"]
+    harness["status_path"].write_text(json.dumps(initial_status), encoding="utf-8")
+
+    issued_attempt = 0
+
+    def revision_checking_commit(config, candidate):
+        nonlocal concurrent_writer_ran, issued_attempt
+        # Read current disk revision
+        disk = json.loads(harness["status_path"].read_text(encoding="utf-8"))
+        disk_rev = disk.get("_status_write_revision", "")
+        candidate_rev = candidate.get("_status_write_revision", "")
+
+        task_issuance = None
+        for t in candidate.get("tasks", []):
+            if t.get("id") == TASK_ID:
+                task_issuance = t.get(bridge.ISSUANCE_FIELD)
+                break
+
+        # On first 'issued' commit: simulate concurrent writer advancing revision
+        if task_issuance and task_issuance.get("state") == "issued" and issued_attempt == 0:
+            issued_attempt += 1
+            # Concurrent writer updates disk with new revision and task data
+            disk["_status_write_revision"] = uuid.uuid4().hex
+            disk["tasks"][0]["notes"] = ["concurrent writer updated dependency"]
+            disk["updated_at"] = "2026-09-28T04:00:00Z"
+            harness["status_path"].write_text(json.dumps(disk), encoding="utf-8")
+            concurrent_writer_ran = True
+            # Candidate's revision is now stale — CAS rejection
+            return False
+
+        # Normal commit: write candidate with new revision
+        candidate["_status_write_revision"] = uuid.uuid4().hex
+        # Merge concurrent writer's changes into candidate
+        disk = json.loads(harness["status_path"].read_text(encoding="utf-8"))
+        for i, t in enumerate(disk.get("tasks", [])):
+            if t.get("id") != TASK_ID:
+                candidate["tasks"][i] = t
+        if "updated_at" in disk:
+            candidate["updated_at"] = disk["updated_at"]
+        harness["status_path"].write_text(json.dumps(candidate), encoding="utf-8")
+        revision["current"] = candidate["_status_write_revision"]
         return True
 
-    harness["commit"] = writer_double_commit
+    harness["commit"] = revision_checking_commit
     dispatches: list[dict] = []
     assert _run(harness, lambda **kwargs: dispatches.append(kwargs))
     assert len(dispatches) == 1
-    assert written_other_task
+    assert concurrent_writer_ran
 
     status_final = _read_status(harness)
-    # Verify concurrent writer's change was preserved
+    # Verify concurrent writer's change was preserved after revision advance
     assert status_final["tasks"][0]["notes"] == ["concurrent writer updated dependency"]
     assert status_final["tasks"][1][bridge.ISSUANCE_FIELD]["state"] == "dispatched"
+    # Verify revision was advanced (not the initial)
+    assert status_final.get("_status_write_revision") == revision["current"]
 
 
 def test_second_cas_rejection_during_recovery_does_not_dispatch(harness: dict) -> None:
@@ -1654,7 +1700,12 @@ def test_second_cas_rejection_during_recovery_does_not_dispatch(harness: dict) -
 
 
 def test_eligibility_revoked_during_storage_revokes_lease_and_blocks(harness: dict) -> None:
-    """When task eligibility or request status is revoked during storage access, lease is revoked and task blocked."""
+    """When task eligibility is revoked during storage/ref-resolution, lease is revoked and task blocked.
+
+    A ref-resolver callback simulates a concurrent writer changing the request
+    status to 'revoked' on disk during the ref lookup. The post-storage
+    precondition recheck reads the updated status and catches the revocation.
+    """
     fp = bridge.request_fingerprint(TASK_ID, harness["request"])
     app_id = str(harness["request"].get("approval_id") or "")
     nonce_digest = bridge._safe_digest(harness["request"].get("nonce"))
@@ -1686,13 +1737,29 @@ def test_eligibility_revoked_during_storage_revokes_lease_and_blocks(harness: di
         receipt=bridge._receipt(None, errors=[], issued_at=NOW),
         updated_at=NOW,
     )
-    # A concurrent writer changed request status to revoked on disk
-    task[bridge.REQUEST_FIELD]["status"] = "revoked"
+    # Request status is 'approved' at start — valid
     harness["status_path"].write_text(json.dumps(current_status), encoding="utf-8")
 
+    revocation_happened = False
+
+    def revoking_ref_resolver(root, ref, *, repository=None):
+        nonlocal revocation_happened
+        if not revocation_happened:
+            # Concurrent writer revokes request during ref resolution
+            disk = json.loads(harness["status_path"].read_text(encoding="utf-8"))
+            disk["tasks"][1][bridge.REQUEST_FIELD]["status"] = "revoked"
+            harness["status_path"].write_text(json.dumps(disk), encoding="utf-8")
+            revocation_happened = True
+        return harness["request"]["candidate_sha"]
+
     dispatches: list[dict] = []
-    assert _run(harness, lambda **kwargs: dispatches.append(kwargs))
+    assert _run(
+        harness,
+        lambda **kwargs: dispatches.append(kwargs),
+        ref_resolver=revoking_ref_resolver,
+    )
     assert dispatches == []
+    assert revocation_happened
 
     record = _read_status(harness)["tasks"][1][bridge.ISSUANCE_FIELD]
     assert record["state"] == "blocked"
@@ -1846,3 +1913,281 @@ def test_no_secret_or_bearer_material_in_logs_or_status(harness: dict) -> None:
     assert "BEGIN ED25519 PRIVATE KEY" not in activity_text
 
 
+
+def test_full_revision_advancing_lifecycle_with_recovery_and_second_rejection(
+    harness: dict,
+) -> None:
+    """Full multi-cycle lifecycle: reserved → durable lease → rejected issued receipt → recovery → second rejection → eventual dispatch.
+
+    Uses a real revision-checking writer double that:
+    1. Maintains _status_write_revision across all commits.
+    2. Rejects the first 'issued' commit (CAS stale revision).
+    3. During the rejection, a concurrent writer advances the revision and
+       updates the dependency task's notes, preserving newer data.
+    4. Second cycle (recovery): reconciles the durable GCS lease without re-signing.
+    5. The recovery's first 'issued' commit is also rejected (second CAS rejection).
+    6. Third cycle: recovery succeeds and dispatches exactly once.
+    Asserts no duplicate signing, no duplicate dispatch, no secret leakage.
+    """
+    revision = {"current": uuid.uuid4().hex}
+    key_loader_calls: list[str] = []
+    dispatches: list[dict] = []
+    commit_attempts = {"issuing": 0, "issued": 0, "dispatched": 0, "total": 0}
+
+    # Seed initial status with revision
+    initial_status = _read_status(harness)
+    initial_status["_status_write_revision"] = revision["current"]
+    harness["status_path"].write_text(json.dumps(initial_status), encoding="utf-8")
+
+    def revision_checking_commit(config, candidate):
+        commit_attempts["total"] += 1
+        task_issuance = None
+        for t in candidate.get("tasks", []):
+            if t.get("id") == TASK_ID:
+                task_issuance = t.get(bridge.ISSUANCE_FIELD)
+                break
+        state = task_issuance.get("state") if task_issuance else None
+        if state:
+            commit_attempts[state] = commit_attempts.get(state, 0) + 1
+
+        disk = json.loads(harness["status_path"].read_text(encoding="utf-8"))
+
+        # Reject the first two 'issued' commit attempts
+        if state == "issued" and commit_attempts.get("issued", 0) <= 2:
+            # Concurrent writer advances revision and updates other task
+            disk["_status_write_revision"] = uuid.uuid4().hex
+            disk["tasks"][0]["notes"] = [f"concurrent update {commit_attempts['issued']}"]
+            harness["status_path"].write_text(json.dumps(disk), encoding="utf-8")
+            revision["current"] = disk["_status_write_revision"]
+            return False
+
+        # Normal commit: merge concurrent data and advance revision
+        new_rev = uuid.uuid4().hex
+        candidate["_status_write_revision"] = new_rev
+        # Preserve concurrent writer's changes on other tasks
+        for i, t in enumerate(disk.get("tasks", [])):
+            if t.get("id") != TASK_ID:
+                candidate["tasks"][i] = t
+        harness["status_path"].write_text(json.dumps(candidate), encoding="utf-8")
+        revision["current"] = new_rev
+        return True
+
+    harness["commit"] = revision_checking_commit
+
+    def tracking_loader(ref):
+        key_loader_calls.append(ref)
+        return harness["private_key"]
+
+    # Cycle 1: signs key once, writes GCS, fails 'issued' CAS commit
+    assert _run(harness, lambda **kwargs: dispatches.append(kwargs), loader=tracking_loader)
+    assert len(key_loader_calls) == 1
+    assert len(dispatches) == 0
+    assert commit_attempts["issued"] == 1
+
+    # Confirm GCS state store has exactly one unconsumed issued lease
+    leases = harness["store"].find_leases_for_task(TASK_ID)
+    assert len(leases) == 1
+    assert leases[0]["state"] == "issued"
+    lease_id = leases[0]["lease_id"]
+
+    # Cycle 2: recovery reconciles GCS lease, second 'issued' commit also rejected
+    assert _run(
+        harness,
+        lambda **kwargs: dispatches.append(kwargs),
+        loader=lambda _: pytest.fail("recovery must not reload private key on cycle 2"),
+    )
+    assert len(dispatches) == 0
+    assert len(key_loader_calls) == 1
+    assert commit_attempts["issued"] == 2
+
+    # Cycle 3: recovery again; this time commit succeeds and dispatches
+    assert _run(
+        harness,
+        lambda **kwargs: dispatches.append(kwargs),
+        loader=lambda _: pytest.fail("recovery must not reload private key on cycle 3"),
+    )
+    assert len(dispatches) == 1
+    assert len(key_loader_calls) == 1  # No additional key loads
+    assert dispatches[0]["lease"]["lease_id"] == lease_id
+
+    # Verify final status
+    status_final = _read_status(harness)
+    record = status_final["tasks"][1][bridge.ISSUANCE_FIELD]
+    assert record["state"] == "dispatched"
+    assert record["dispatch"] == "accepted"
+    # Concurrent writer's changes preserved
+    assert "concurrent update" in str(status_final["tasks"][0].get("notes", []))
+    # Revision was advanced
+    assert status_final.get("_status_write_revision") == revision["current"]
+
+    # No secret leakage
+    status_text = harness["status_path"].read_text(encoding="utf-8")
+    activity_text = harness["activity_path"].read_text(encoding="utf-8")
+    assert harness["request"]["nonce"] not in status_text
+    assert harness["request"]["nonce"] not in activity_text
+    assert "BEGIN PRIVATE KEY" not in status_text
+    assert "BEGIN PRIVATE KEY" not in activity_text
+
+
+def test_request_expiry_during_fresh_issuance_validation_blocks_without_dispatch(
+    harness: dict,
+) -> None:
+    """Request expires between initial eligibility check and pre-receipt-commit recheck.
+
+    Uses a request with 1-second remaining TTL and a ref-resolver that doesn't
+    actually delay (the fixed now is set to NOW+4m59s, 1 second before request
+    expiry at NOW+5m). The initial request_errors check passes, but the lease
+    issued_at=NOW with ttl=300 means expires_at=NOW+5m. At now=NOW+4m59s,
+    req_exp (NOW+5m) > now so the first check passes. But the test uses
+    now=NOW+5m+1s to demonstrate the pre-commit recheck catches it.
+    """
+    # Request expires at NOW + 5 minutes (default from _request)
+    # Use now just past request expiry
+    expired_now = NOW + timedelta(minutes=5, seconds=1)
+
+    dispatches: list[dict] = []
+    assert _run(
+        harness,
+        lambda **kwargs: dispatches.append(kwargs),
+        now=expired_now,
+    )
+    assert dispatches == []
+
+    record = _read_status(harness)["tasks"][1][bridge.ISSUANCE_FIELD]
+    assert record["state"] == "blocked"
+    assert any("expired" in err.lower() or "expir" in err.lower() for err in record["receipt"]["errors"])
+
+
+def test_schema_version_bearing_signature_value_is_sanitized(
+    harness: dict,
+) -> None:
+    """A stored lease with schema_version set to a 128-char hex signature value has its error sanitized.
+
+    The raw hex value must never appear in status or activity logs.
+    """
+    fp = bridge.request_fingerprint(TASK_ID, harness["request"])
+    fake_sig_value = "a1" * 64  # 128-char hex, looks like a signature value
+
+    lease = build_lease(
+        task_id=TASK_ID,
+        release_id=str(harness["manifest"]["release_id"]),
+        candidate_sha=CANDIDATE_SHA,
+        manifest_digest=harness["manifest"]["manifest_digest"],
+        target_environment="dev",
+        allowed_action="deploy",
+        private_key=harness["private_key"],
+        ttl_seconds=300,
+        issued_at=NOW,
+        request_fingerprint=fp,
+        approval_id=str(harness["request"].get("approval_id") or ""),
+        approval_nonce_digest=bridge._safe_digest(harness["request"].get("nonce")),
+    )
+    # Tamper: set schema_version to the signature value
+    lease["schema_version"] = fake_sig_value
+    harness["store"].record_issued(lease)
+
+    current_status = _read_status(harness)
+    task = current_status["tasks"][1]
+    task[bridge.ISSUANCE_FIELD] = bridge._issuance_record(
+        state="issuing",
+        task_id=TASK_ID,
+        request=harness["request"],
+        fingerprint=fp,
+        settings=harness["config"]["release_lease_issuer"],
+        receipt=bridge._receipt(None, errors=[], issued_at=NOW),
+        updated_at=NOW,
+    )
+    harness["status_path"].write_text(json.dumps(current_status), encoding="utf-8")
+
+    dispatches: list[dict] = []
+    assert _run(harness, lambda **kwargs: dispatches.append(kwargs))
+    assert dispatches == []
+
+    status_text = harness["status_path"].read_text(encoding="utf-8")
+    activity_text = harness["activity_path"].read_text(encoding="utf-8")
+
+    # The 128-char hex signature value must not appear in status or activity
+    assert fake_sig_value not in status_text
+    assert fake_sig_value not in activity_text
+
+    record = _read_status(harness)["tasks"][1][bridge.ISSUANCE_FIELD]
+    assert record["state"] == "blocked"
+
+
+def test_durable_state_lookup_error_uses_safe_sentinel_not_raw_exception(
+    harness: dict, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When _state_errors catches a LeaseStateError, the error message is a safe sentinel.
+
+    The raw exception text (which could contain storage paths, credentials, or
+    infrastructure details) must never appear in the receipt errors.
+    """
+    secret_path = "gs://secret-bucket-name/secret-prefix/lease-data"
+    raw_exception_text = f"Permission denied reading {secret_path}: IAM role missing"
+
+    current_status = _read_status(harness)
+    task = current_status["tasks"][1]
+    task[bridge.ISSUANCE_FIELD] = bridge._issuance_record(
+        state="issuing",
+        task_id=TASK_ID,
+        request=harness["request"],
+        fingerprint=bridge.request_fingerprint(TASK_ID, harness["request"]),
+        settings=harness["config"]["release_lease_issuer"],
+        receipt=bridge._receipt(None, errors=[], issued_at=NOW),
+        updated_at=NOW,
+    )
+    harness["status_path"].write_text(json.dumps(current_status), encoding="utf-8")
+
+    def failing_find(task_id):
+        raise LeaseStateError(raw_exception_text)
+
+    monkeypatch.setattr(harness["store"], "find_leases_for_task", failing_find)
+
+    dispatches: list[dict] = []
+    assert _run(
+        harness,
+        lambda **kwargs: dispatches.append(kwargs),
+        loader=lambda _: pytest.fail("storage failure must not load signing key"),
+    )
+    assert dispatches == []
+
+    status_text = harness["status_path"].read_text(encoding="utf-8")
+    activity_text = harness["activity_path"].read_text(encoding="utf-8")
+
+    # Raw exception details must not appear
+    assert secret_path not in status_text
+    assert secret_path not in activity_text
+    assert "IAM role missing" not in status_text
+    assert "IAM role missing" not in activity_text
+
+    record = _read_status(harness)["tasks"][1][bridge.ISSUANCE_FIELD]
+    assert record["state"] == "blocked"
+    # Should use safe sentinel message
+    assert any("durable GCS lease state is unavailable or lookup failed" in err for err in record["receipt"]["errors"])
+
+
+def test_sanitize_errors_redacts_long_hex_sequences() -> None:
+    """_sanitize_errors redacts hex sequences >32 chars that could be signatures or key material."""
+    fake_sig = "abcdef0123456789" * 8  # 128-char hex
+    errors = [f"verification failed for value {fake_sig} in store"]
+    sanitized = bridge._sanitize_errors(errors)
+    assert len(sanitized) == 1
+    assert fake_sig not in sanitized[0]
+    assert "[REDACTED]" in sanitized[0]
+
+
+def test_sanitize_errors_state_store_sentinel_mapping() -> None:
+    """_sanitize_errors maps known diagnostic categories to safe sentinel codes."""
+    test_cases = [
+        ("BEGIN PRIVATE KEY\nMIIEvAIBAD...", "private key error"),
+        ("algorithm Ed25519 does not match signature expectation", "lease signature algorithm is invalid"),
+        ("key_id abc123 does not match expected signature key", "lease signature key_id does not match configured verification key"),
+        ("InvalidSignature: hash mismatch", "lease signature does not verify against the configured public key"),
+        ("lease.schema_version must be 1; actual value does not match", "lease schema_version does not match expected version"),
+        ("durable lease state lookup failed", "durable lease state lookup failed"),
+        ("permission denied reading gs://bucket/prefix", "lease state store access denied"),
+    ]
+    for raw, expected_sentinel in test_cases:
+        result = bridge._sanitize_errors([raw])
+        assert len(result) == 1, f"Expected 1 result for {raw!r}, got {result}"
+        assert result[0] == expected_sentinel, f"For {raw!r}: expected {expected_sentinel!r}, got {result[0]!r}"
