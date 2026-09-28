@@ -1489,9 +1489,36 @@ def process_release_lease_issuance(
         expected_issuance = deepcopy(issued_record)
         expected_request = deepcopy(request)
         if not _commit_result(config, status, task, issued_record, commit_status=commit_status):
-            # GCS has a credential but task CAS is uncertain. Do not dispatch.
-            # The next supervisor cycle will safely reconcile the unexpired GCS lease.
-            continue
+            # CAS rejected: a concurrent canonical writer advanced the status
+            # revision. Re-read the live snapshot; if the issuing reservation is
+            # still intact and the request has not changed, retry the issued
+            # commit exactly once against the refreshed snapshot. A second
+            # failure falls through to the next supervisor cycle.
+            retry_reserved = _status_still_reserved(config, task_id=task_id, fingerprint=fingerprint)
+            if retry_reserved is None:
+                continue
+            status, task, request = retry_reserved
+            issued_record = _issuance_record(
+                state="issued",
+                task_id=task_id,
+                request=request,
+                fingerprint=fingerprint,
+                settings=settings,
+                receipt=_receipt(
+                    lease,
+                    errors=[],
+                    issued_at=parse_iso_timestamp(lease.get("issued_at") or "") or _utc(now),
+                    dispatch_ref=settings.get("dispatch_ref", DEFAULT_DISPATCH_REF),
+                    dispatch_ref_sha=ref_sha,
+                ),
+                updated_at=_utc(now),
+            )
+            expected_issuance = deepcopy(issued_record)
+            expected_request = deepcopy(request)
+            if not _commit_result(config, status, task, issued_record, commit_status=commit_status):
+                # Second CAS rejection: do not dispatch. The unexpired GCS lease
+                # will be reconciled by the next supervisor cycle.
+                continue
         changed = True
         _write_activity(config, "release_lease_issued", task_id=task_id, record=issued_record)
 

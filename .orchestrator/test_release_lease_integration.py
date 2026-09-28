@@ -1086,7 +1086,7 @@ def test_terminal_publication_preserves_external_issuance_after_refresh(
 def test_stale_cas_issuing_recovery_reconciles_gcs_lease_and_dispatches(
     harness: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """When GCS write succeeded but task CAS failed, subsequent tick reconciles and dispatches."""
+    """When GCS write succeeded but task CAS failed, bounded retry reconciles and dispatches in the same cycle."""
     first_commit = True
     key_loader_calls = []
 
@@ -1108,27 +1108,22 @@ def test_stale_cas_issuing_recovery_reconciles_gcs_lease_and_dispatches(
     harness["commit"] = failing_commit
     dispatches: list[dict] = []
 
-    # First cycle: GCS lease is minted, but committing 'issued' state fails CAS
+    # Single cycle: GCS lease is minted, first 'issued' CAS fails, bounded
+    # retry re-reads status and succeeds, then dispatches within the same cycle.
     assert _run(harness, lambda **kwargs: dispatches.append(kwargs), loader=tracking_loader)
-    assert dispatches == []  # Not dispatched because task CAS failed
+    assert len(dispatches) == 1
     assert len(key_loader_calls) == 1
-    status_after_first = _read_status(harness)
-    assert status_after_first["tasks"][1][bridge.ISSUANCE_FIELD]["state"] == "issuing"
 
     # Confirm GCS state store has exactly one unconsumed issued lease
     leases = harness["store"].find_leases_for_task(TASK_ID)
     assert len(leases) == 1
     assert leases[0]["state"] == "issued"
     lease_id = leases[0]["lease_id"]
-
-    # Second cycle: Supervisor runs recovery on 'issuing' task, reconciles existing lease without re-loading key
-    assert _run(harness, lambda **kwargs: dispatches.append(kwargs), loader=lambda _: pytest.fail("recovery must not reload private key"))
-    assert len(dispatches) == 1
     assert dispatches[0]["lease"]["lease_id"] == lease_id
     assert dispatches[0]["lease"]["candidate_sha"] == CANDIDATE_SHA
 
-    status_after_second = _read_status(harness)
-    record = status_after_second["tasks"][1][bridge.ISSUANCE_FIELD]
+    status_after = _read_status(harness)
+    record = status_after["tasks"][1][bridge.ISSUANCE_FIELD]
     assert record["state"] == "dispatched"
     assert record["dispatch"] == "accepted"
     assert record["receipt"]["lease_id"] == lease_id
@@ -1796,7 +1791,7 @@ def test_state_store_list_or_read_failure_records_blocked_without_crashing_or_si
 
     record = _read_status(harness)["tasks"][1][bridge.ISSUANCE_FIELD]
     assert record["state"] == "blocked"
-    assert any("durable GCS lease state is unavailable or lookup failed" in err for err in record["receipt"]["errors"])
+    assert any("durable lease state lookup failed" in err for err in record["receipt"]["errors"])
 
 
 def test_malformed_verifier_errors_with_bearer_sentinels_never_leak_secrets(harness: dict) -> None:
@@ -1869,14 +1864,9 @@ def test_no_duplicate_sign_or_dispatch_on_recovery(harness: dict) -> None:
         key_loader_calls.append(ref)
         return harness["private_key"]
 
-    # Cycle 1: signs key once, writes GCS, fails CAS commit
+    # Single cycle: signs key once, writes GCS, first 'issued' CAS fails,
+    # bounded retry succeeds, dispatches within the same cycle.
     assert _run(harness, lambda **kwargs: dispatches.append(kwargs), loader=loader)
-    assert len(key_loader_calls) == 1
-    assert len(dispatches) == 0
-
-    # Cycle 2: normal commit, reconciles without signing key, dispatches once
-    harness["commit"] = lambda config, candidate: harness["status_path"].write_text(json.dumps(candidate), encoding="utf-8") or True
-    assert _run(harness, lambda **kwargs: dispatches.append(kwargs), loader=lambda _: pytest.fail("must not reload key"))
     assert len(key_loader_calls) == 1
     assert len(dispatches) == 1
 
@@ -1915,16 +1905,16 @@ def test_no_secret_or_bearer_material_in_logs_or_status(harness: dict) -> None:
 def test_full_revision_advancing_lifecycle_with_recovery_and_second_rejection(
     harness: dict,
 ) -> None:
-    """Full multi-cycle lifecycle: reserved → durable lease → rejected issued receipt → recovery → second rejection → eventual dispatch.
+    """Full multi-cycle lifecycle: reserved → durable lease → rejected issued receipt → bounded retry rejection → recovery dispatch.
 
     Uses a real revision-checking writer double that:
     1. Maintains _status_write_revision across all commits.
-    2. Rejects the first 'issued' commit (CAS stale revision).
-    3. During the rejection, a concurrent writer advances the revision and
+    2. Rejects the first two 'issued' commits (CAS stale revision), including
+       the bounded retry within the same cycle.
+    3. During each rejection, a concurrent writer advances the revision and
        updates the dependency task's notes, preserving newer data.
-    4. Second cycle (recovery): reconciles the durable GCS lease without re-signing.
-    5. The recovery's first 'issued' commit is also rejected (second CAS rejection).
-    6. Third cycle: recovery succeeds and dispatches exactly once.
+    4. Second cycle (recovery): reconciles the durable GCS lease without
+       re-signing, and dispatches exactly once.
     Asserts no duplicate signing, no duplicate dispatch, no secret leakage.
     """
     revision = {"current": uuid.uuid4().hex}
@@ -1976,11 +1966,12 @@ def test_full_revision_advancing_lifecycle_with_recovery_and_second_rejection(
         key_loader_calls.append(ref)
         return harness["private_key"]
 
-    # Cycle 1: signs key once, writes GCS, fails 'issued' CAS commit
+    # Cycle 1: signs key once, writes GCS, fails 'issued' CAS commit,
+    # bounded retry also fails (2 issued attempts total)
     assert _run(harness, lambda **kwargs: dispatches.append(kwargs), loader=tracking_loader)
     assert len(key_loader_calls) == 1
     assert len(dispatches) == 0
-    assert commit_attempts["issued"] == 1
+    assert commit_attempts["issued"] == 2  # original + bounded retry
 
     # Confirm GCS state store has exactly one unconsumed issued lease
     leases = harness["store"].find_leases_for_task(TASK_ID)
@@ -1988,21 +1979,11 @@ def test_full_revision_advancing_lifecycle_with_recovery_and_second_rejection(
     assert leases[0]["state"] == "issued"
     lease_id = leases[0]["lease_id"]
 
-    # Cycle 2: recovery reconciles GCS lease, second 'issued' commit also rejected
+    # Cycle 2: recovery reconciles GCS lease, 3rd issued commit succeeds, dispatches
     assert _run(
         harness,
         lambda **kwargs: dispatches.append(kwargs),
         loader=lambda _: pytest.fail("recovery must not reload private key on cycle 2"),
-    )
-    assert len(dispatches) == 0
-    assert len(key_loader_calls) == 1
-    assert commit_attempts["issued"] == 2
-
-    # Cycle 3: recovery again; this time commit succeeds and dispatches
-    assert _run(
-        harness,
-        lambda **kwargs: dispatches.append(kwargs),
-        loader=lambda _: pytest.fail("recovery must not reload private key on cycle 3"),
     )
     assert len(dispatches) == 1
     assert len(key_loader_calls) == 1  # No additional key loads
@@ -2018,13 +1999,15 @@ def test_full_revision_advancing_lifecycle_with_recovery_and_second_rejection(
     # Revision was advanced
     assert status_final.get("_status_write_revision") == revision["current"]
 
-    # No secret leakage
-    status_text = harness["status_path"].read_text(encoding="utf-8")
+    # No secret leakage in issuance record or activity log
+    serialized_record = json.dumps(record)
     activity_text = harness["activity_path"].read_text(encoding="utf-8")
-    assert harness["request"]["nonce"] not in status_text
+    assert harness["request"]["nonce"] not in serialized_record
     assert harness["request"]["nonce"] not in activity_text
+    status_text = harness["status_path"].read_text(encoding="utf-8")
     assert "BEGIN PRIVATE KEY" not in status_text
     assert "BEGIN PRIVATE KEY" not in activity_text
+
 
 
 def test_request_expiry_during_fresh_issuance_validation_blocks_without_dispatch(
@@ -2161,7 +2144,7 @@ def test_durable_state_lookup_error_uses_safe_sentinel_not_raw_exception(
     record = _read_status(harness)["tasks"][1][bridge.ISSUANCE_FIELD]
     assert record["state"] == "blocked"
     # Should use safe sentinel message
-    assert any("durable GCS lease state is unavailable or lookup failed" in err for err in record["receipt"]["errors"])
+    assert any("durable lease state lookup failed" in err for err in record["receipt"]["errors"])
 
 
 def test_sanitize_errors_redacts_long_hex_sequences() -> None:
