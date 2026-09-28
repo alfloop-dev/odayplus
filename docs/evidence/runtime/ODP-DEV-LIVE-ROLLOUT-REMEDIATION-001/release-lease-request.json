@@ -1,0 +1,21 @@
+{
+  "kind": "runtime_release_deploy",
+  "status": "approved",
+  "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+  "approved_by": "Human/Ops",
+  "approval_id": "HUMANOPS-DEV-MIGRATION-20260927T225545Z",
+  "nonce": "972f7d6b40664f1d8f06c4ff5f074275",
+  "candidate_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
+  "manifest_digest": "sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2",
+  "manifest_run_id": "36333397898",
+  "target_environment": "dev",
+  "action": "deploy",
+  "approved_at": "2026-09-27T22:55:45Z",
+  "expires_at": "2026-09-28T04:55:45Z",
+  "transcribed_by": {
+    "written_by": "Antigravity3",
+    "basis": "Explicit current interactive user confirmation HUMANOPS-DEV-MIGRATION-20260927T225545Z for exact candidate a31e02ae / manifest sha256:499110d0 / build 36333397898",
+    "authorization_artifact": "docs/evidence/runtime/ODP-DEV-MIGRATION-ADMISSION-001/a31-user-authorization.json",
+    "note": "approved_by is the protocol role, not the author; no external identity signature claimed. This request replaces the expired 355a94b5 request."
+  }
+}
