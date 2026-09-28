@@ -1608,8 +1608,6 @@ def test_canonical_writer_race_preserves_newer_status_revision(harness: dict) ->
         nonlocal concurrent_writer_ran, issued_attempt
         # Read current disk revision
         disk = json.loads(harness["status_path"].read_text(encoding="utf-8"))
-        disk_rev = disk.get("_status_write_revision", "")
-        candidate_rev = candidate.get("_status_write_revision", "")
 
         task_issuance = None
         for t in candidate.get("tasks", []):
