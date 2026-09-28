@@ -72,7 +72,7 @@ _SECRET_REFERENCE = re.compile(
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _MANIFEST_RUN_ID = re.compile(r"^[1-9][0-9]{0,18}$")
 _REF_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$")
-_FINAL_NO_RETRY_STATES = {"issued", "dispatched", "dispatch_unknown"}
+_FINAL_NO_RETRY_STATES = {"issued", "dispatched", "dispatch_unknown", "expired_before_dispatch"}
 
 
 class SecretManagerAccessError(RuntimeError):
@@ -367,7 +367,39 @@ def _archive_current_issuance(task: dict[str, Any]) -> None:
 
 
 def _sanitize_errors(errors: list[str]) -> list[str]:
-    """Sanitize error messages to prevent secret, bearer, or malformed string leakage."""
+    """Sanitize error messages to bounded safe error codes.
+
+    Uses positive-match sentinel mapping rather than blacklist/truncation.
+    Every error that matches a known diagnostic category is replaced with
+    a fixed safe code; unrecognised errors are truncated to a safe length
+    with all hex sequences >32 chars redacted to prevent signature leakage.
+    """
+    _SENTINEL_MAP: list[tuple[Callable[[str], bool], str]] = [
+        # Bearer / key material sentinels
+        (lambda t: "BEGIN PRIVATE KEY" in t or "BEGIN ED25519 PRIVATE KEY" in t,
+         "private key error"),
+        # Signature verification sentinels
+        (lambda t: "algorithm" in t.lower() and "signature" in t.lower(),
+         "lease signature algorithm is invalid"),
+        (lambda t: "key_id" in t.lower() and "signature" in t.lower(),
+         "lease signature key_id does not match configured verification key"),
+        (lambda t: "signature does not verify" in t.lower() or "invalidsignature" in t.lower(),
+         "lease signature does not verify against the configured public key"),
+        # Schema version sentinel
+        (lambda t: "schema_version" in t.lower() and ("must be" in t.lower() or "does not match" in t.lower()),
+         "lease schema_version does not match expected version"),
+        # State store / read-error sentinels
+        (lambda t: "durable" in t.lower() and ("lookup failed" in t.lower() or "unavailable" in t.lower()),
+         "durable lease state lookup failed"),
+        (lambda t: "permission denied" in t.lower() or "access denied" in t.lower(),
+         "lease state store access denied"),
+        (lambda t: "state store" in t.lower() and ("error" in t.lower() or "exception" in t.lower()),
+         "lease state store error"),
+    ]
+
+    # Redact long hex sequences that could be signatures or key material
+    _HEX_REDACT = re.compile(r'[0-9a-fA-F]{33,}')
+
     sanitized: list[str] = []
     for err in errors:
         if not isinstance(err, str):
@@ -375,21 +407,25 @@ def _sanitize_errors(errors: list[str]) -> list[str]:
         text = err.strip()
         if not text:
             continue
-        if "BEGIN PRIVATE KEY" in text or "BEGIN ED25519 PRIVATE KEY" in text:
-            sanitized.append("private key error")
-            continue
-        if "algorithm" in text.lower() and "signature" in text.lower():
-            sanitized.append("lease signature algorithm is invalid")
-            continue
-        if "key_id" in text.lower() and "signature" in text.lower():
-            sanitized.append("lease signature key_id does not match configured verification key")
-            continue
-        if "signature does not verify" in text.lower() or "invalidsignature" in text.lower():
-            sanitized.append("lease signature does not verify against the configured public key")
-            continue
-        if len(text) > 256:
-            text = text[:253] + "..."
-        sanitized.append(text)
+
+        matched = False
+        for predicate, sentinel in _SENTINEL_MAP:
+            try:
+                if predicate(text):
+                    sanitized.append(sentinel)
+                    matched = True
+                    break
+            except Exception:
+                sanitized.append("error diagnostic unavailable")
+                matched = True
+                break
+
+        if not matched:
+            # Redact long hex sequences and truncate
+            safe = _HEX_REDACT.sub("[REDACTED]", text)
+            if len(safe) > 256:
+                safe = safe[:253] + "..."
+            sanitized.append(safe)
     return sanitized
 
 
@@ -1049,7 +1085,11 @@ def process_release_lease_issuance(
                 continue
 
             if len(issued_records) == 0:
-                found_states = ", ".join(sorted(set(str(r.get("state", "unknown")) for r in existing_records)))
+                _KNOWN_STATES = {"issued", "consumed", "revoked", "expired", "unknown"}
+                found_states = ", ".join(sorted(
+                    s if s in _KNOWN_STATES else "invalid"
+                    for s in set(str(r.get("state", "unknown")) for r in existing_records)
+                ))
                 changed = _record_blocked(
                     config,
                     status,
@@ -1402,6 +1442,35 @@ def process_release_lease_issuance(
             continue
         ref_sha = final_ref_sha
 
+        # P1: Recheck both deadlines after slow validation before receipt commit.
+        # The ref lookup, input reads, and admission checks above may have taken
+        # seconds; if either deadline has elapsed the receipt must not commit.
+        pre_commit_lease_exp = parse_iso_timestamp(lease.get("expires_at") or "")
+        pre_commit_req_exp = parse_iso_timestamp(request.get("expires_at") or "")
+        if (
+            pre_commit_lease_exp is None
+            or pre_commit_req_exp is None
+            or pre_commit_lease_exp <= _utc(now)
+            or pre_commit_req_exp <= _utc(now)
+        ):
+            if _has_exact_lease_ownership(lease, task_id, request):
+                try:
+                    state_store.revoke(lease, reason="lease or request expired after slow validation before receipt commit")
+                except Exception:
+                    pass
+            changed = _record_blocked(
+                config,
+                status,
+                task,
+                request,
+                fingerprint,
+                settings,
+                ["lease or request expired after validation before receipt commit; re-signing prohibited without new approval"],
+                commit_status=commit_status,
+                dispatch_ref_sha=ref_sha,
+            ) or changed
+            continue
+
         issued_record = _issuance_record(
             state="issued",
             task_id=task_id,
@@ -1425,6 +1494,36 @@ def process_release_lease_issuance(
             continue
         changed = True
         _write_activity(config, "release_lease_issued", task_id=task_id, record=issued_record)
+
+        # P1: Recheck both deadlines immediately before dispatch after callback
+        # synchronization. _commit_result runs sync_status_pipeline (which may
+        # take additional time); if deadlines have elapsed, commit a terminal
+        # non-dispatchable outcome rather than dispatching after expiry.
+        post_commit_lease_exp = parse_iso_timestamp(lease.get("expires_at") or "")
+        post_commit_req_exp = parse_iso_timestamp(request.get("expires_at") or "")
+        if (
+            post_commit_lease_exp is None
+            or post_commit_req_exp is None
+            or post_commit_lease_exp <= _utc(now)
+            or post_commit_req_exp <= _utc(now)
+        ):
+            expired_record = dict(issued_record)
+            expired_record["state"] = "expired_before_dispatch"
+            expired_record["updated_at"] = _utc(now).replace(microsecond=0).isoformat()
+            expired_record["dispatch"] = "expired"
+            if _commit_result(
+                config, status, task, expired_record, commit_status=commit_status,
+                expected_issuance=expected_issuance, expected_request=expected_request,
+            ):
+                _write_activity(
+                    config, "release_lease_expired_before_dispatch", task_id=task_id, record=expired_record
+                )
+            if _has_exact_lease_ownership(lease, task_id, request):
+                try:
+                    state_store.revoke(lease, reason="lease or request expired after receipt commit before dispatch")
+                except Exception:
+                    pass
+            continue
 
         try:
             if not isinstance(manifest, dict):

@@ -850,8 +850,8 @@ def verify_lease(
 
     if lease.get("schema_version") != LEASE_SCHEMA_VERSION:
         errors.append(
-            f"lease.schema_version must be {LEASE_SCHEMA_VERSION}, "
-            f"got: {lease.get('schema_version')!r}"
+            f"lease.schema_version must be {LEASE_SCHEMA_VERSION}; "
+            "actual value does not match"
         )
 
     missing = [field for field in (*LEASE_REQUIRED_FIELDS, "signature") if field not in lease]
@@ -981,8 +981,8 @@ def _state_errors(lease: dict[str, Any], state_store: LeaseStateStore) -> list[s
     lease_id = str(lease.get("lease_id"))
     try:
         record = state_store.get(lease_id)
-    except LeaseStateError as exc:
-        return [str(exc)]
+    except LeaseStateError:
+        return ["durable lease state lookup failed"]
 
     if record is None:
         return [
@@ -991,8 +991,9 @@ def _state_errors(lease: dict[str, Any], state_store: LeaseStateStore) -> list[s
         ]
     state = record.get("state")
     if state != STATE_ISSUED:
+        safe_state = state if isinstance(state, str) and len(state) <= 32 and state.isalnum() else "invalid"
         return [
-            f"lease {lease_id} is {state!r} in durable state, expected {STATE_ISSUED!r} "
+            f"lease {lease_id} is {safe_state!r} in durable state, expected {STATE_ISSUED!r} "
             "(already used, or revoked)"
         ]
     stored = record.get("lease")
