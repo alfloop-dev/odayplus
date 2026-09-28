@@ -7,7 +7,7 @@ import copy
 import json
 import subprocess
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -17,6 +17,7 @@ from common import validate_config
 
 from delivery_toolchain.release.release_lease import (
     LeaseStateStore,
+    build_lease,
     generate_keypair,
     load_private_key,
 )
@@ -1141,7 +1142,6 @@ def test_stale_cas_issuing_recovery_reconciles_gcs_lease_and_dispatches(
 def test_stale_cas_issuing_recovery_with_expired_lease_revokes_and_blocks(harness: dict) -> None:
     """When an orphan lease in GCS has expired, recovery revokes it and marks task blocked."""
     # Pre-populate an issued lease in state store with expired timestamp
-    from delivery_toolchain.release.release_lease import build_lease
     expired_time = datetime(2026, 9, 4, 11, 0, 0, tzinfo=UTC)
     expired_lease = build_lease(
         task_id=TASK_ID,
@@ -1191,7 +1191,6 @@ def test_stale_cas_issuing_recovery_with_expired_lease_revokes_and_blocks(harnes
 
 def test_stale_cas_issuing_recovery_with_mismatched_payload_leaves_unrelated_lease_and_blocks(harness: dict) -> None:
     """When an orphan lease in GCS has mismatched candidate_sha, recovery does not revoke unrelated lease and blocks."""
-    from delivery_toolchain.release.release_lease import build_lease
     mismatched_lease = build_lease(
         task_id=TASK_ID,
         release_id=str(harness["manifest"]["release_id"]),
@@ -1238,7 +1237,6 @@ def test_stale_cas_issuing_recovery_with_mismatched_payload_leaves_unrelated_lea
 
 def test_stale_cas_issuing_recovery_with_multiple_issued_leases_revokes_matching_and_blocks(harness: dict) -> None:
     """When multiple issued leases exist in GCS for a task, recovery revokes matching leases and blocks."""
-    from delivery_toolchain.release.release_lease import build_lease
     lease1 = build_lease(
         task_id=TASK_ID,
         release_id=str(harness["manifest"]["release_id"]),
@@ -1294,7 +1292,6 @@ def test_stale_cas_issuing_recovery_with_multiple_issued_leases_revokes_matching
 
 def test_stale_cas_issuing_recovery_with_failed_preconditions_revokes_and_blocks(harness: dict) -> None:
     """When an issuing task's dependencies become incomplete, recovery revokes GCS lease and blocks."""
-    from delivery_toolchain.release.release_lease import build_lease
     lease = build_lease(
         task_id=TASK_ID,
         release_id=str(harness["manifest"]["release_id"]),
@@ -1367,7 +1364,6 @@ def test_issuing_without_gcs_lease_terminates_blocked_without_loading_key(harnes
 
 def test_issuing_with_consumed_or_revoked_gcs_lease_terminates_blocked_without_loading_key(harness: dict) -> None:
     """When a task is in issuing state but the durable lease is consumed or revoked, recovery blocks without re-signing."""
-    from delivery_toolchain.release.release_lease import build_lease
     lease = build_lease(
         task_id=TASK_ID,
         release_id=str(harness["manifest"]["release_id"]),
@@ -1410,7 +1406,6 @@ def test_issuing_with_consumed_or_revoked_gcs_lease_terminates_blocked_without_l
 
 def test_issuing_recovery_with_invalid_signature_blocks_and_does_not_dispatch(harness: dict) -> None:
     """When durable lease in GCS has an invalid signature, verify_lease catches it, revokes lease, and blocks."""
-    from delivery_toolchain.release.release_lease import build_lease
     lease = build_lease(
         task_id=TASK_ID,
         release_id=str(harness["manifest"]["release_id"]),
@@ -1454,7 +1449,6 @@ def test_issuing_recovery_with_invalid_signature_blocks_and_does_not_dispatch(ha
 
 def test_issuing_recovery_with_changed_approval_blocks_and_does_not_dispatch(harness: dict) -> None:
     """When approval request parameters change after reservation, recovery detects mismatch and does not dispatch old lease."""
-    from delivery_toolchain.release.release_lease import build_lease
     old_lease = build_lease(
         task_id=TASK_ID,
         release_id=str(harness["manifest"]["release_id"]),
@@ -1500,8 +1494,6 @@ def test_issuing_recovery_with_changed_approval_blocks_and_does_not_dispatch(har
 
 def test_issuing_recovery_with_ttl_delay_blocks_and_does_not_dispatch(harness: dict) -> None:
     """When TTL delay causes lease/request to expire before recovery completes, task is blocked without dispatch."""
-    from datetime import timedelta
-    from delivery_toolchain.release.release_lease import build_lease
     lease = build_lease(
         task_id=TASK_ID,
         release_id=str(harness["manifest"]["release_id"]),
@@ -1545,7 +1537,6 @@ def test_issuing_recovery_with_ttl_delay_blocks_and_does_not_dispatch(harness: d
 
 def test_canonical_writer_race_preserves_newer_status_revision(harness: dict) -> None:
     """When a concurrent canonical writer advances status revision, stale status snapshot is discarded."""
-    from delivery_toolchain.release.release_lease import build_lease
     lease = build_lease(
         task_id=TASK_ID,
         release_id=str(harness["manifest"]["release_id"]),
