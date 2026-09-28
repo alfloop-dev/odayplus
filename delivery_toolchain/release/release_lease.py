@@ -253,12 +253,8 @@ def load_private_key_material(material: bytes) -> Ed25519PrivateKey:
     return key
 
 
-def load_public_key(
-    *, key_path: Path | None = None, env_var: str = PUBLIC_KEY_ENV
-) -> Ed25519PublicKey:
-    """Load the verification key from a PEM file, PEM env var, or raw hex."""
-
-    material = _read_key_material(key_path=key_path, env_var=env_var, kind="public")
+def load_public_key_material(material: bytes) -> Ed25519PublicKey:
+    """Parse public-key bytes in-memory without requiring a file path."""
     text = material.decode("utf-8", "ignore").strip()
     if HEX_KEY_PATTERN.fullmatch(text):
         return Ed25519PublicKey.from_public_bytes(bytes.fromhex(text))
@@ -269,6 +265,15 @@ def load_public_key(
     if not isinstance(key, Ed25519PublicKey):
         raise LeaseKeyError("release lease public key must be an Ed25519 key")
     return key
+
+
+def load_public_key(
+    *, key_path: Path | None = None, env_var: str = PUBLIC_KEY_ENV
+) -> Ed25519PublicKey:
+    """Load the verification key from a PEM file, PEM env var, or raw hex."""
+
+    material = _read_key_material(key_path=key_path, env_var=env_var, kind="public")
+    return load_public_key_material(material)
 
 
 def _read_key_material(*, key_path: Path | None, env_var: str, kind: str) -> bytes:
@@ -1138,6 +1143,7 @@ __all__ = [
     "load_private_key",
     "load_private_key_material",
     "load_public_key",
+    "load_public_key_material",
     "public_key_id",
     "sign_lease",
     "signature_errors",

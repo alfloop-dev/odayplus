@@ -210,15 +210,16 @@ def _set_task_status(harness: dict, task_id: str, status: str) -> None:
     raise AssertionError(f"missing task {task_id}")
 
 
-def _run(harness: dict, dispatch, *, loader=None, ref_resolver=None) -> bool:
+def _run(harness: dict, dispatch, *, loader=None, public_loader=None, ref_resolver=None, now=NOW) -> bool:
     return bridge.process_release_lease_issuance(
         harness["config"],
         commit_status=harness["commit"],
         private_key_loader=loader or (lambda _: harness["private_key"]),
+        public_key_loader=public_loader or (lambda *_: harness["private_key"].public_key()),
         dispatch=dispatch,
         ref_resolver=ref_resolver
         or (lambda root, ref, *, repository=None: harness["request"]["candidate_sha"]),
-        now=NOW,
+        now=now,
     )
 
 
@@ -1188,8 +1189,8 @@ def test_stale_cas_issuing_recovery_with_expired_lease_revokes_and_blocks(harnes
     assert any("expired" in err for err in task_after[bridge.ISSUANCE_FIELD]["receipt"]["errors"])
 
 
-def test_stale_cas_issuing_recovery_with_mismatched_payload_revokes_and_blocks(harness: dict) -> None:
-    """When an orphan lease in GCS has mismatched candidate_sha, recovery revokes and blocks."""
+def test_stale_cas_issuing_recovery_with_mismatched_payload_leaves_unrelated_lease_and_blocks(harness: dict) -> None:
+    """When an orphan lease in GCS has mismatched candidate_sha, recovery does not revoke unrelated lease and blocks."""
     from delivery_toolchain.release.release_lease import build_lease
     mismatched_lease = build_lease(
         task_id=TASK_ID,
@@ -1225,18 +1226,18 @@ def test_stale_cas_issuing_recovery_with_mismatched_payload_revokes_and_blocks(h
     )
     assert dispatches == []
 
-    # Verify lease was revoked in GCS
+    # Verify unrelated lease was NOT revoked in GCS (exact ownership rule)
     record = harness["store"].get(mismatched_lease["lease_id"])
-    assert record["state"] == "revoked"
+    assert record["state"] == "issued"
 
     # Verify task board state is blocked
     task_after = _read_status(harness)["tasks"][1]
     assert task_after[bridge.ISSUANCE_FIELD]["state"] == "blocked"
-    assert any("candidate_sha" in err for err in task_after[bridge.ISSUANCE_FIELD]["receipt"]["errors"])
+    assert any("does not match current request" in err for err in task_after[bridge.ISSUANCE_FIELD]["receipt"]["errors"])
 
 
-def test_stale_cas_issuing_recovery_with_multiple_issued_leases_revokes_all_and_blocks(harness: dict) -> None:
-    """When multiple issued leases exist in GCS for a task, recovery revokes all and blocks."""
+def test_stale_cas_issuing_recovery_with_multiple_issued_leases_revokes_matching_and_blocks(harness: dict) -> None:
+    """When multiple issued leases exist in GCS for a task, recovery revokes matching leases and blocks."""
     from delivery_toolchain.release.release_lease import build_lease
     lease1 = build_lease(
         task_id=TASK_ID,
@@ -1277,7 +1278,11 @@ def test_stale_cas_issuing_recovery_with_multiple_issued_leases_revokes_all_and_
     harness["status_path"].write_text(json.dumps(current_status), encoding="utf-8")
 
     dispatches: list[dict] = []
-    assert _run(harness, lambda **kwargs: dispatches.append(kwargs))
+    assert _run(
+        harness,
+        lambda **kwargs: dispatches.append(kwargs),
+        loader=lambda _: pytest.fail("multiple lease recovery must not load signing key"),
+    )
     assert dispatches == []
 
     assert harness["store"].get(lease1["lease_id"])["state"] == "revoked"
@@ -1319,7 +1324,11 @@ def test_stale_cas_issuing_recovery_with_failed_preconditions_revokes_and_blocks
     harness["status_path"].write_text(json.dumps(current_status), encoding="utf-8")
 
     dispatches: list[dict] = []
-    assert _run(harness, lambda **kwargs: dispatches.append(kwargs))
+    assert _run(
+        harness,
+        lambda **kwargs: dispatches.append(kwargs),
+        loader=lambda _: pytest.fail("failed precondition recovery must not load signing key"),
+    )
     assert dispatches == []
 
     assert harness["store"].get(lease["lease_id"])["state"] == "revoked"
@@ -1328,8 +1337,8 @@ def test_stale_cas_issuing_recovery_with_failed_preconditions_revokes_and_blocks
     assert any("expected 'done'" in err for err in task_after[bridge.ISSUANCE_FIELD]["receipt"]["errors"])
 
 
-def test_issuing_without_gcs_lease_proceeds_with_fresh_issuance(harness: dict) -> None:
-    """When a task is in issuing state but no GCS lease exists, fresh issuance proceeds."""
+def test_issuing_without_gcs_lease_terminates_blocked_without_loading_key(harness: dict) -> None:
+    """When a task is in issuing state but no GCS lease exists, recovery terminates blocked without re-signing."""
     current_status = _read_status(harness)
     task = current_status["tasks"][1]
     task[bridge.ISSUANCE_FIELD] = bridge._issuance_record(
@@ -1344,18 +1353,289 @@ def test_issuing_without_gcs_lease_proceeds_with_fresh_issuance(harness: dict) -
     harness["status_path"].write_text(json.dumps(current_status), encoding="utf-8")
 
     dispatches: list[dict] = []
-    key_loader_calls = []
+    assert _run(
+        harness,
+        lambda **kwargs: dispatches.append(kwargs),
+        loader=lambda _: pytest.fail("absent GCS lease recovery must NOT load signing key"),
+    )
+    assert dispatches == []
+
+    record = _read_status(harness)["tasks"][1][bridge.ISSUANCE_FIELD]
+    assert record["state"] == "blocked"
+    assert any("no durable lease record" in err for err in record["receipt"]["errors"])
+
+
+def test_issuing_with_consumed_or_revoked_gcs_lease_terminates_blocked_without_loading_key(harness: dict) -> None:
+    """When a task is in issuing state but the durable lease is consumed or revoked, recovery blocks without re-signing."""
+    from delivery_toolchain.release.release_lease import build_lease
+    lease = build_lease(
+        task_id=TASK_ID,
+        release_id=str(harness["manifest"]["release_id"]),
+        candidate_sha=CANDIDATE_SHA,
+        manifest_digest=harness["manifest"]["manifest_digest"],
+        target_environment="dev",
+        allowed_action="deploy",
+        private_key=harness["private_key"],
+        ttl_seconds=300,
+        issued_at=NOW,
+    )
+    harness["store"].record_issued(lease)
+    harness["store"].consume(lease, consumed_by="previous_runner")
+
+    current_status = _read_status(harness)
+    task = current_status["tasks"][1]
+    task[bridge.ISSUANCE_FIELD] = bridge._issuance_record(
+        state="issuing",
+        task_id=TASK_ID,
+        request=harness["request"],
+        fingerprint=bridge.request_fingerprint(TASK_ID, harness["request"]),
+        settings=harness["config"]["release_lease_issuer"],
+        receipt=bridge._receipt(None, errors=[], issued_at=NOW),
+        updated_at=NOW,
+    )
+    harness["status_path"].write_text(json.dumps(current_status), encoding="utf-8")
+
+    dispatches: list[dict] = []
+    assert _run(
+        harness,
+        lambda **kwargs: dispatches.append(kwargs),
+        loader=lambda _: pytest.fail("consumed GCS lease recovery must NOT load signing key"),
+    )
+    assert dispatches == []
+
+    record = _read_status(harness)["tasks"][1][bridge.ISSUANCE_FIELD]
+    assert record["state"] == "blocked"
+    assert any("no active issued lease" in err for err in record["receipt"]["errors"])
+
+
+def test_issuing_recovery_with_invalid_signature_blocks_and_does_not_dispatch(harness: dict) -> None:
+    """When durable lease in GCS has an invalid signature, verify_lease catches it, revokes lease, and blocks."""
+    from delivery_toolchain.release.release_lease import build_lease
+    lease = build_lease(
+        task_id=TASK_ID,
+        release_id=str(harness["manifest"]["release_id"]),
+        candidate_sha=CANDIDATE_SHA,
+        manifest_digest=harness["manifest"]["manifest_digest"],
+        target_environment="dev",
+        allowed_action="deploy",
+        private_key=harness["private_key"],
+        ttl_seconds=300,
+        issued_at=NOW,
+    )
+    # Corrupt signature value
+    lease["signature"]["value"] = "0" * 128
+    harness["store"].record_issued(lease)
+
+    current_status = _read_status(harness)
+    task = current_status["tasks"][1]
+    task[bridge.ISSUANCE_FIELD] = bridge._issuance_record(
+        state="issuing",
+        task_id=TASK_ID,
+        request=harness["request"],
+        fingerprint=bridge.request_fingerprint(TASK_ID, harness["request"]),
+        settings=harness["config"]["release_lease_issuer"],
+        receipt=bridge._receipt(None, errors=[], issued_at=NOW),
+        updated_at=NOW,
+    )
+    harness["status_path"].write_text(json.dumps(current_status), encoding="utf-8")
+
+    dispatches: list[dict] = []
+    assert _run(
+        harness,
+        lambda **kwargs: dispatches.append(kwargs),
+        loader=lambda _: pytest.fail("invalid signature recovery must NOT load signing key"),
+    )
+    assert dispatches == []
+
+    record = _read_status(harness)["tasks"][1][bridge.ISSUANCE_FIELD]
+    assert record["state"] == "blocked"
+    assert any("signature" in err for err in record["receipt"]["errors"])
+
+
+def test_issuing_recovery_with_changed_approval_blocks_and_does_not_dispatch(harness: dict) -> None:
+    """When approval request parameters change after reservation, recovery detects mismatch and does not dispatch old lease."""
+    from delivery_toolchain.release.release_lease import build_lease
+    old_lease = build_lease(
+        task_id=TASK_ID,
+        release_id=str(harness["manifest"]["release_id"]),
+        candidate_sha=CANDIDATE_SHA,
+        manifest_digest=harness["manifest"]["manifest_digest"],
+        target_environment="dev",
+        allowed_action="deploy",
+        private_key=harness["private_key"],
+        ttl_seconds=300,
+        issued_at=NOW,
+    )
+    harness["store"].record_issued(old_lease)
+
+    old_request = copy.deepcopy(harness["request"])
+    old_request["nonce"] = "old-nonce"
+    old_fp = bridge.request_fingerprint(TASK_ID, old_request)
+
+    changed_request = copy.deepcopy(harness["request"])
+    changed_request["candidate_sha"] = "a" * 40
+
+    current_status = _read_status(harness)
+    task = current_status["tasks"][1]
+    task[bridge.REQUEST_FIELD] = changed_request
+    task[bridge.ISSUANCE_FIELD] = bridge._issuance_record(
+        state="issuing",
+        task_id=TASK_ID,
+        request=old_request,
+        fingerprint=old_fp,
+        settings=harness["config"]["release_lease_issuer"],
+        receipt=bridge._receipt(None, errors=[], issued_at=NOW),
+        updated_at=NOW,
+    )
+    harness["status_path"].write_text(json.dumps(current_status), encoding="utf-8")
+
+    dispatches: list[dict] = []
+    assert _run(
+        harness,
+        lambda **kwargs: dispatches.append(kwargs),
+        loader=lambda _: pytest.fail("changed approval must not load key for old lease"),
+    )
+    assert dispatches == []
+
+
+def test_issuing_recovery_with_ttl_delay_blocks_and_does_not_dispatch(harness: dict) -> None:
+    """When TTL delay causes lease/request to expire before recovery completes, task is blocked without dispatch."""
+    from datetime import timedelta
+    from delivery_toolchain.release.release_lease import build_lease
+    lease = build_lease(
+        task_id=TASK_ID,
+        release_id=str(harness["manifest"]["release_id"]),
+        candidate_sha=CANDIDATE_SHA,
+        manifest_digest=harness["manifest"]["manifest_digest"],
+        target_environment="dev",
+        allowed_action="deploy",
+        private_key=harness["private_key"],
+        ttl_seconds=60,
+        issued_at=NOW,
+    )
+    harness["store"].record_issued(lease)
+
+    current_status = _read_status(harness)
+    task = current_status["tasks"][1]
+    task[bridge.ISSUANCE_FIELD] = bridge._issuance_record(
+        state="issuing",
+        task_id=TASK_ID,
+        request=harness["request"],
+        fingerprint=bridge.request_fingerprint(TASK_ID, harness["request"]),
+        settings=harness["config"]["release_lease_issuer"],
+        receipt=bridge._receipt(None, errors=[], issued_at=NOW),
+        updated_at=NOW,
+    )
+    harness["status_path"].write_text(json.dumps(current_status), encoding="utf-8")
+
+    later_now = NOW + timedelta(seconds=120)
+    dispatches: list[dict] = []
+    assert _run(
+        harness,
+        lambda **kwargs: dispatches.append(kwargs),
+        loader=lambda _: pytest.fail("delayed TTL recovery must not load signing key"),
+        now=later_now,
+    )
+    assert dispatches == []
+
+    record = _read_status(harness)["tasks"][1][bridge.ISSUANCE_FIELD]
+    assert record["state"] == "blocked"
+    assert any("expired" in err for err in record["receipt"]["errors"])
+
+
+def test_canonical_writer_race_preserves_newer_status_revision(harness: dict) -> None:
+    """When a concurrent canonical writer advances status revision, stale status snapshot is discarded."""
+    from delivery_toolchain.release.release_lease import build_lease
+    lease = build_lease(
+        task_id=TASK_ID,
+        release_id=str(harness["manifest"]["release_id"]),
+        candidate_sha=CANDIDATE_SHA,
+        manifest_digest=harness["manifest"]["manifest_digest"],
+        target_environment="dev",
+        allowed_action="deploy",
+        private_key=harness["private_key"],
+        ttl_seconds=300,
+        issued_at=NOW,
+    )
+    harness["store"].record_issued(lease)
+
+    # Newer writer advances task state to 'done' concurrently
+    current_status = _read_status(harness)
+    task = current_status["tasks"][1]
+    task["status"] = "done"
+    harness["status_path"].write_text(json.dumps(current_status), encoding="utf-8")
+
+    def rejecting_commit(config, candidate):
+        return False
+
+    harness["commit"] = rejecting_commit
+    dispatches: list[dict] = []
+    assert not _run(harness, lambda **kwargs: dispatches.append(kwargs))
+    assert dispatches == []
+
+    # Verify newer status state was preserved
+    status_final = _read_status(harness)
+    assert status_final["tasks"][1]["status"] == "done"
+
+
+def test_no_duplicate_sign_or_dispatch_on_recovery(harness: dict) -> None:
+    """Reconciliation after a stale CAS never duplicates private key signing or dispatches twice."""
+    key_loader_calls: list[str] = []
+    dispatches: list[dict] = []
+    attempt = 0
+
+    def flaky_commit(config, candidate):
+        nonlocal attempt
+        attempt += 1
+        if attempt == 2:  # attempt 1 is 'issuing' reservation, attempt 2 is 'issued'
+            return False
+        harness["status_path"].write_text(json.dumps(candidate), encoding="utf-8")
+        return True
+
+    harness["commit"] = flaky_commit
 
     def loader(ref):
         key_loader_calls.append(ref)
         return harness["private_key"]
 
+    # Cycle 1: signs key once, writes GCS, fails CAS commit
     assert _run(harness, lambda **kwargs: dispatches.append(kwargs), loader=loader)
-    assert len(dispatches) == 1
     assert len(key_loader_calls) == 1
-    assert dispatches[0]["lease"]["candidate_sha"] == CANDIDATE_SHA
+    assert len(dispatches) == 0
 
-    record = _read_status(harness)["tasks"][1][bridge.ISSUANCE_FIELD]
-    assert record["state"] == "dispatched"
-    assert record["dispatch"] == "accepted"
+    # Cycle 2: normal commit, reconciles without signing key, dispatches once
+    harness["commit"] = lambda config, candidate: harness["status_path"].write_text(json.dumps(candidate), encoding="utf-8") or True
+    assert _run(harness, lambda **kwargs: dispatches.append(kwargs), loader=lambda _: pytest.fail("must not reload key"))
+    assert len(key_loader_calls) == 1
+    assert len(dispatches) == 1
+
+
+def test_no_secret_or_bearer_material_in_logs_or_status(harness: dict) -> None:
+    """Neither private key material nor raw bearer tokens/signatures appear in issuance receipts or logs."""
+    dispatches: list[dict] = []
+    assert _run(harness, lambda **kwargs: dispatches.append(kwargs))
+    assert len(dispatches) == 1
+
+    lease = dispatches[0]["lease"]
+    sig_value = lease["signature"]["value"]
+    raw_nonce = harness["request"]["nonce"]
+
+    issuance_record = _read_status(harness)["tasks"][1][bridge.ISSUANCE_FIELD]
+    serialized_issuance = json.dumps(issuance_record, sort_keys=True)
+    activity_text = harness["activity_path"].read_text(encoding="utf-8")
+
+    # Raw signature value must never appear in issuance record or activity log
+    assert sig_value not in serialized_issuance
+    assert sig_value not in activity_text
+
+    # Raw human nonce must not appear in issuance record or activity log (only digest)
+    assert raw_nonce not in serialized_issuance
+    assert raw_nonce not in activity_text
+
+    # Private key markers must never appear in status or activity log
+    status_text = harness["status_path"].read_text(encoding="utf-8")
+    assert "BEGIN PRIVATE KEY" not in status_text
+    assert "BEGIN PRIVATE KEY" not in activity_text
+    assert "BEGIN ED25519 PRIVATE KEY" not in status_text
+    assert "BEGIN ED25519 PRIVATE KEY" not in activity_text
 

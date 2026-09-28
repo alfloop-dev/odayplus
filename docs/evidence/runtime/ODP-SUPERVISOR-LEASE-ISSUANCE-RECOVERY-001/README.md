@@ -9,87 +9,102 @@
 
 ---
 
-## 1. Executive Summary & Incident Analysis (a31 Transaction)
+## 1. Incident Context & Epistemic Boundaries (a31 Transaction)
 
-During the `a31` candidate admission and deployment sequence (`candidate_sha`: `a31e02ae391811a4c323ec4d834b70e200953366`, `manifest_run_id`: `36333397898`, `approval_id`: `HUMANOPS-DEV-MIGRATION-20260927T225545Z`), the Supervisor release lease bridge encountered an execution edge case:
+During the investigation of the 2026-09-28 `a31` release candidate admission and deployment sequence (`candidate_sha`: `a31e02ae391811a4c323ec4d834b70e200953366`, `manifest_run_id`: `36333397898`, `approval_id`: `HUMANOPS-DEV-MIGRATION-20260927T225545Z`):
 
-1. The Supervisor successfully validated all gate and dependency preconditions.
-2. The Supervisor retrieved the private Ed25519 signing key in-memory from Secret Manager.
-3. The Supervisor successfully minted the signed release lease and persisted it into the GCS durable compare-and-set store (`state_store.record_issued(lease)`).
-4. When the Supervisor attempted to commit the transition from `state="issuing"` to `state="issued"` on `ai-status.json` (`_commit_result`), the commit failed because a concurrent task/status writer advanced `_status_write_revision` during the external network calls.
-5. The original bridge implementation did not reconcile in-flight `state="issuing"` reservations and skipped them unconditionally on subsequent cycles (`if previous.get("state") == "issuing": continue`), abandoning the validly minted GCS lease and stalling automated dispatch.
+### Available Evidence & Explicit Caveats
+- **Observed Artifacts**:
+  1. GCS object metadata indicating an object existed in the durable state bucket prefix.
+  2. A generic activity log entry `stale_status_write_rejected` recorded during the cycle.
+- **Epistemic Discipline & Unproven Assumptions**:
+  - The generic `stale_status_write_rejected` event carries **no `task_id`**. Without task-linked evidence, causality between that generic stale-write event and the `a31` issuance transaction cannot be asserted as proven fact.
+  - The exact plaintext and signature contents of any historical GCS object were not verified in live telemetry.
+  - Specific IAM, provider network, or environment root causes are neither asserted nor ruled out without direct evidence.
+  - No live GCP infrastructure was accessed, no live private keys were loaded, and no live deployment dispatches were executed during this investigation.
 
-### Root Cause Disposition
-
-- **Root Cause**: A stale Compare-And-Set (CAS) write conflict on `ai-status.json` occurring after GCS lease persistence, combined with the lack of an automated safe reconciliation and orphan-lease handling handler for tasks in `state="issuing"`.
-- **Non-Causes (Definitively Ruled Out)**:
-  - **GCP IAM**: Service account permissions and Workload Identity Federation performed normally.
-  - **GCS CAS State Store**: GCS object creation (`if_generation_match=0`) succeeded without error.
-  - **Google Secret Manager**: Secret version access and private key parsing succeeded in memory without error.
+### Control Plane Recovery Objective
+Rather than relying on unverified assumptions about past events, the control plane architecture must guarantee safe, fail-closed reconciliation under any possible combination of concurrent status writes, interrupted transactions, or delayed storage operations.
 
 ---
 
-## 2. Safe Recovery Architecture & Implementation
+## 2. Safe Recovery Architecture & Protocol
 
-To prevent control plane stall while strictly preventing lease replay or unauthorized dispatch, the following mechanisms were implemented:
+To eliminate control plane stalls while strictly preventing unauthorized dispatch, lease replay, or duplicate signing, the following mechanisms are implemented:
 
-### A. Durable State Store Query & Reconciliation (`LeaseStateStore`)
+### A. Durable State Store Query (`LeaseStateStore`)
 - Added `list_records()` and `find_leases_for_task(task_id)` to both `_GCSLeaseStateStore` and local `LeaseStateStore`.
-- When Supervisor evaluates a task in `state="issuing"` (or during issuance), it queries `state_store` for any existing unconsumed (`state="issued"`) leases for that exact `task_id`.
+- When the Supervisor encounters a task in `state="issuing"` (or evaluates fresh issuance), it queries durable state for existing leases for that `task_id`.
 
-### B. Exact Request Fingerprint & Precondition Binding
-- When an unconsumed lease is found in durable state:
-  1. The bridge verifies that the lease matches the exact current approval and request payload:
+### B. Formal Lease Verification & Exact Ownership Binding
+- Any durable lease found in storage must satisfy formal cryptographic and policy verification:
+  1. **`verify_lease` Execution**: Validates schema version, required fields, cryptographic Ed25519 signature against the authorized verification public key, and validity window (`issued_at` to `expires_at` vs current time).
+  2. **Exact Request Fingerprint & Precondition Binding**: Validates exact equality for:
      - `task_id` == `request.task_id`
      - `candidate_sha` == `request.candidate_sha` == `manifest.candidate_sha` == `registry.release.candidate_sha`
      - `manifest_digest` == `request.manifest_digest` == `manifest.manifest_digest`
      - `target_environment` == `request.target_environment`
      - `allowed_action` == `request.action` ("deploy")
      - `release_id` == `manifest.release_id`
-  2. The bridge verifies that neither the lease nor the human approval request has expired (`expires_at > now`).
-  3. The bridge re-checks all gate, dependency, dispatch reference, and ancestry preconditions (`request_errors`, `_exact_binding_errors`, `_build_run_binding_errors`, `check_dispatch_ref_errors`, `issuance_errors`).
-  4. If all validations succeed, the bridge reconciles the existing GCS lease without re-requesting the signing key from Secret Manager.
+  3. **Signed Nonce & Request Validity**: Validates that neither the lease nor the human approval request has expired.
+  4. **Post-Storage Recheck**: Gate registry, dependency completions, dispatch reference ancestry, and expiry are re-verified after storage reads and before any status commit.
 
-### C. Two-Phase Dispatch Guarantee
-- **Mandatory Order**: The bridge persists the secret-free `issued_record` receipt to `ai-status.json` *before* attempting `dispatch_runtime_release`.
-- If the task CAS commit fails or cannot be confirmed, dispatch is strictly prevented.
+### C. Fail-Closed Terminal Resolution for Unproven Issuing Reservations
+- If a task is already in `state="issuing"`, it represents a prior attempt that was interrupted.
+- If storage contains:
+  - **Zero records** (absent lease),
+  - **Non-`issued` records** (`consumed` or `revoked`),
+  - **Invalid signatures or tampered documents**,
+  - **Mismatched request parameters or expired TTLs**,
+  the task terminates non-dispatchably into `state="blocked"`.
+- **Strict No Re-Sign Rule**: Under no circumstances does an interrupted `issuing` task re-acquire the Secret Manager signing key or mint a new lease under the same approval request. A fresh Human/Ops approval request with a new nonce is required.
 
-### D. Orphan & Expired Lease Revocation
-- If an unconsumed lease in `state_store` is found to be expired, mismatched in payload, or fails any gate precondition:
-  1. The bridge transitions the lease in `state_store` to `state="revoked"` with an audit reason (`orphan lease expired or unbound from current request`).
-  2. The task board transitions to `state="blocked"` with detailed receipt error reporting.
-  3. The approval nonce digest remains recorded in the issuance record and task history, preventing nonce reuse.
+### D. Exact Ownership Revocation Rule
+- To prevent accidental invalidation of unrelated operations, the bridge **never revokes task-wide or mismatched leases**.
+- Only leases that provably match the exact `task_id`, `candidate_sha`, `manifest_digest`, `target_environment`, and `action` of the active request are revoked when precondition or verification failures occur.
 
-### E. Multiple Conflicting Leases Fail-Closed
-- If more than one unconsumed `issued` lease is found in `state_store` for a task, the bridge revokes all conflicting leases and transitions the task to `blocked`.
+### E. Two-Phase Dispatch Guarantee
+- **Mandatory Sequence**: The secret-free `issued_record` receipt must successfully commit to `ai-status.json` *before* attempting `dispatch_runtime_release`.
+- If the CAS commit fails or is unconfirmed, dispatch is strictly prevented, allowing the subsequent Supervisor cycle to safely reconcile the unexpired GCS lease.
 
 ### F. Secrecy & Bearer Protection
-- Private key material is never persisted, logged, or exported.
-- Lease bearer payloads (base64 documents) and signatures are never logged or stored in receipts/status. Only cryptographic digests (`nonce_digest`, `signature_digest`, `signature_key_id`) are published.
+- Private key material is parsed strictly in memory and zeroed immediately after use.
+- Bearer lease payloads (base64 JSON) and raw signature hex values are never logged or stored in `ai-status.json`.
+- Only cryptographic digests (`approval_nonce_digest`, `nonce_digest`, `signature_digest`, `signature_key_id`) are published in receipts and activity logs.
 
 ---
 
 ## 3. Verification & Regression Coverage
 
-The regression suite in `.orchestrator/test_release_lease_integration.py` was expanded with reproducible, GCP-mocked tests:
+The test suite in `.orchestrator/test_release_lease_integration.py` provides comprehensive, reproducible verification using local state doubles without touching live GCP:
 
 1. `test_stale_cas_issuing_recovery_reconciles_gcs_lease_and_dispatches`:
-   - Simulates GCS write success followed by a stale CAS status write rejection.
-   - Verifies that subsequent Supervisor cycle safely reconciles the unexpired GCS lease without re-loading Secret Manager private key, commits `issued` receipt to status, and dispatches.
+   - Simulates GCS lease persistence followed by a stale CAS status write conflict.
+   - Subsequent cycle safely reconciles the unexpired GCS lease via `verify_lease` without re-loading Secret Manager private key, commits `issued` receipt to status, and dispatches.
 2. `test_stale_cas_issuing_recovery_with_expired_lease_revokes_and_blocks`:
-   - Verifies that an expired orphan lease in GCS is revoked and marks the task `blocked`.
-3. `test_stale_cas_issuing_recovery_with_mismatched_payload_revokes_and_blocks`:
-   - Verifies that a mismatched orphan lease is revoked and marks the task `blocked`.
-4. `test_stale_cas_issuing_recovery_with_multiple_issued_leases_revokes_all_and_blocks`:
-   - Verifies that multiple unconsumed leases in GCS are revoked and marked `blocked`.
+   - Expired orphan lease in GCS is revoked and marks the task `blocked` without dispatch.
+3. `test_stale_cas_issuing_recovery_with_mismatched_payload_leaves_unrelated_lease_and_blocks`:
+   - Mismatched orphan lease is preserved (not revoked) and marks the current task `blocked`.
+4. `test_stale_cas_issuing_recovery_with_multiple_issued_leases_revokes_matching_and_blocks`:
+   - Multiple conflicting unconsumed leases in GCS are revoked and marked `blocked`.
 5. `test_stale_cas_issuing_recovery_with_failed_preconditions_revokes_and_blocks`:
-   - Verifies that precondition failure (e.g. dependency regression) revokes existing GCS lease and blocks.
-6. `test_issuing_without_gcs_lease_proceeds_with_fresh_issuance`:
-   - Verifies that an `issuing` reservation without a GCS lease proceeds with fresh key acquisition and minting.
-
-### Test Execution Results
-- `uv run --python 3.12 pytest .orchestrator/test_release_lease_integration.py`: **62 passed in 2.89s**.
-- `uv run --python 3.12 pytest tests/release/ .orchestrator/test_release_lease_integration.py .orchestrator/test_release_lease_issuer.py`: **504 passed in 279.09s**.
+   - Precondition regression (e.g. dependency reverted to `in_progress`) revokes matching lease and blocks.
+6. `test_issuing_without_gcs_lease_terminates_blocked_without_loading_key`:
+   - `issuing` reservation with 0 GCS records terminates `blocked` without loading key or re-signing.
+7. `test_issuing_with_consumed_or_revoked_gcs_lease_terminates_blocked_without_loading_key`:
+   - `issuing` reservation with consumed/revoked lease terminates `blocked` without loading key.
+8. `test_issuing_recovery_with_invalid_signature_blocks_and_does_not_dispatch`:
+   - Durable lease with corrupt signature fails `verify_lease` and transitions task to `blocked`.
+9. `test_issuing_recovery_with_changed_approval_blocks_and_does_not_dispatch`:
+   - Request parameter change after reservation prevents dispatch of mismatched prior lease.
+10. `test_issuing_recovery_with_ttl_delay_blocks_and_does_not_dispatch`:
+    - Rechecking expiry after delay catches expired lease/request and transitions to `blocked`.
+11. `test_canonical_writer_race_preserves_newer_status_revision`:
+    - Confirms stale status snapshot does not overwrite newer writer revisions.
+12. `test_no_duplicate_sign_or_dispatch_on_recovery`:
+    - Confirms that recovery cycle makes exactly 0 signing key calls and dispatches exactly once.
+13. `test_no_secret_or_bearer_material_in_logs_or_status`:
+    - Validates absence of private key material, raw signature values, and raw nonces in receipts and logs.
 
 ---
 
@@ -97,9 +112,10 @@ The regression suite in `.orchestrator/test_release_lease_integration.py` was ex
 
 | Acceptance Criterion | Implementation / Evidence | Status |
 |---|---|---|
-| 用可重現測試涵蓋 GCS durable write 後 canonical task CAS stale 的競態且測試不觸碰 live GCP | `.orchestrator/test_release_lease_integration.py::test_stale_cas_issuing_recovery_reconciles_gcs_lease_and_dispatches` | **PASSED** |
-| 以 exact request fingerprint 與目前 canonical approval 安全 reconciliation 未過期 lease 並先持久化 issued receipt 才允許 Supervisor dispatch | `.orchestrator/release_lease_integration.py` lines 940–1160; exact fingerprint and payload checks, `_commit_result` before `dispatch` | **PASSED** |
-| 逾期或無法證明 payload 與 request 完全綁定的 orphan lease 進入明確 no-dispatch terminal state 且不能重用 nonce | `release_lease_integration.py` orphan checks + `state_store.revoke()` + `_record_blocked()` + nonces preserved in history | **PASSED** |
-| stale status snapshot 不覆蓋較新 task 狀態並在任何安全前置條件失敗時維持 blocked | `_status_still_reserved` + `_commit_result(..., expected_issuance=...)` + CAS verification in `write_status_snapshot_if_current` | **PASSED** |
-| 日誌與活動記錄不輸出私鑰或 lease bearer payload且只有 Supervisor 簽署與 dispatch | In-memory key zeroing, `build_receipt` digests only, stdin-based `gh api` dispatch | **PASSED** |
-| 新增 regression tests並提交獨立審查 PR | 6 dedicated regression tests added to `.orchestrator/test_release_lease_integration.py`; full suite passing | **PASSED** |
+| Use fake storage and canonical writer doubles to reproduce the reserved-state then stale status write race without touching live GCP | `.orchestrator/test_release_lease_integration.py::test_stale_cas_issuing_recovery_reconciles_gcs_lease_and_dispatches` | **PASSED** |
+| Use the existing verifier and exact request fingerprint to prove a lease payload matches the current approval without exposing bearer data | `.orchestrator/release_lease_integration.py` (`verify_lease`, `_has_exact_lease_ownership`, `_exact_binding_errors`) | **PASSED** |
+| Revalidate current status candidate manifest target action approval and request before persisting issued receipt; dispatch only after that receipt commits | `_status_still_reserved`, post-read expiry rechecks, and `_commit_result` ordering before `dispatch()` | **PASSED** |
+| If exact lease binding cannot be proven or TTL has elapsed record a terminal non-dispatchable outcome and require a fresh Human/Ops request without reusing a nonce | `test_issuing_without_gcs_lease_terminates_blocked_without_loading_key`, `test_issuing_with_consumed_or_revoked_gcs_lease_terminates_blocked_without_loading_key`, `test_issuing_recovery_with_ttl_delay_blocks_and_does_not_dispatch` | **PASSED** |
+| Do not attribute a stale status event with no task_id to this issuance; require task-linked evidence for root-cause claims | Section 1 of this document; explicit epistemic boundaries and caveat declarations | **PASSED** |
+| Regression tests prove stale CAS does not cause duplicate signing dispatch or overwrite newer status and logs contain no secret material | `test_no_duplicate_sign_or_dispatch_on_recovery`, `test_canonical_writer_race_preserves_newer_status_revision`, `test_no_secret_or_bearer_material_in_logs_or_status` | **PASSED** |
+| Only Supervisor signs or dispatches; submit a separate reviewed PR | In-memory signing key lifetime, single supervisor bridge entrypoint, separate per-task PR workflow | **PASSED** |
