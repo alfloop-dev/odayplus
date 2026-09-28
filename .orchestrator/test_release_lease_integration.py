@@ -1153,6 +1153,9 @@ def test_stale_cas_issuing_recovery_with_expired_lease_revokes_and_blocks(harnes
         private_key=harness["private_key"],
         ttl_seconds=60,
         issued_at=expired_time,
+        request_fingerprint=bridge.request_fingerprint(TASK_ID, harness["request"]),
+        approval_id=str(harness["request"].get("approval_id") or ""),
+        approval_nonce_digest=bridge._safe_digest(harness["request"].get("nonce")),
     )
     harness["store"].record_issued(expired_lease)
 
@@ -1201,6 +1204,9 @@ def test_stale_cas_issuing_recovery_with_mismatched_payload_leaves_unrelated_lea
         private_key=harness["private_key"],
         ttl_seconds=300,
         issued_at=NOW,
+        request_fingerprint="sha256:" + "f" * 64,
+        approval_id="other-approval",
+        approval_nonce_digest="sha256:" + "0" * 64,
     )
     harness["store"].record_issued(mismatched_lease)
 
@@ -1237,6 +1243,9 @@ def test_stale_cas_issuing_recovery_with_mismatched_payload_leaves_unrelated_lea
 
 def test_stale_cas_issuing_recovery_with_multiple_issued_leases_revokes_matching_and_blocks(harness: dict) -> None:
     """When multiple issued leases exist in GCS for a task, recovery revokes matching leases and blocks."""
+    fp = bridge.request_fingerprint(TASK_ID, harness["request"])
+    app_id = str(harness["request"].get("approval_id") or "")
+    nonce_digest = bridge._safe_digest(harness["request"].get("nonce"))
     lease1 = build_lease(
         task_id=TASK_ID,
         release_id=str(harness["manifest"]["release_id"]),
@@ -1247,6 +1256,9 @@ def test_stale_cas_issuing_recovery_with_multiple_issued_leases_revokes_matching
         private_key=harness["private_key"],
         ttl_seconds=300,
         issued_at=NOW,
+        request_fingerprint=fp,
+        approval_id=app_id,
+        approval_nonce_digest=nonce_digest,
     )
     lease2 = build_lease(
         task_id=TASK_ID,
@@ -1258,6 +1270,9 @@ def test_stale_cas_issuing_recovery_with_multiple_issued_leases_revokes_matching
         private_key=harness["private_key"],
         ttl_seconds=300,
         issued_at=NOW,
+        request_fingerprint=fp,
+        approval_id=app_id,
+        approval_nonce_digest=nonce_digest,
     )
     harness["store"].record_issued(lease1)
     harness["store"].record_issued(lease2)
@@ -1302,6 +1317,9 @@ def test_stale_cas_issuing_recovery_with_failed_preconditions_revokes_and_blocks
         private_key=harness["private_key"],
         ttl_seconds=300,
         issued_at=NOW,
+        request_fingerprint=bridge.request_fingerprint(TASK_ID, harness["request"]),
+        approval_id=str(harness["request"].get("approval_id") or ""),
+        approval_nonce_digest=bridge._safe_digest(harness["request"].get("nonce")),
     )
     harness["store"].record_issued(lease)
 
@@ -1374,6 +1392,9 @@ def test_issuing_with_consumed_or_revoked_gcs_lease_terminates_blocked_without_l
         private_key=harness["private_key"],
         ttl_seconds=300,
         issued_at=NOW,
+        request_fingerprint=bridge.request_fingerprint(TASK_ID, harness["request"]),
+        approval_id=str(harness["request"].get("approval_id") or ""),
+        approval_nonce_digest=bridge._safe_digest(harness["request"].get("nonce")),
     )
     harness["store"].record_issued(lease)
     harness["store"].consume(lease, consumed_by="previous_runner")
@@ -1416,6 +1437,9 @@ def test_issuing_recovery_with_invalid_signature_blocks_and_does_not_dispatch(ha
         private_key=harness["private_key"],
         ttl_seconds=300,
         issued_at=NOW,
+        request_fingerprint=bridge.request_fingerprint(TASK_ID, harness["request"]),
+        approval_id=str(harness["request"].get("approval_id") or ""),
+        approval_nonce_digest=bridge._safe_digest(harness["request"].get("nonce")),
     )
     # Corrupt signature value
     lease["signature"]["value"] = "0" * 128
@@ -1448,7 +1472,12 @@ def test_issuing_recovery_with_invalid_signature_blocks_and_does_not_dispatch(ha
 
 
 def test_issuing_recovery_with_changed_approval_blocks_and_does_not_dispatch(harness: dict) -> None:
-    """When approval request parameters change after reservation, recovery detects mismatch and does not dispatch old lease."""
+    """When a new approval ID/nonce is issued for the same deploy, recovery does not adopt or revoke the old lease."""
+    old_request = copy.deepcopy(harness["request"])
+    old_request["approval_id"] = "approval-old-001"
+    old_request["nonce"] = "old-human-nonce-001"
+    old_fp = bridge.request_fingerprint(TASK_ID, old_request)
+
     old_lease = build_lease(
         task_id=TASK_ID,
         release_id=str(harness["manifest"]["release_id"]),
@@ -1459,24 +1488,26 @@ def test_issuing_recovery_with_changed_approval_blocks_and_does_not_dispatch(har
         private_key=harness["private_key"],
         ttl_seconds=300,
         issued_at=NOW,
+        request_fingerprint=old_fp,
+        approval_id="approval-old-001",
+        approval_nonce_digest=bridge._safe_digest("old-human-nonce-001"),
     )
     harness["store"].record_issued(old_lease)
 
-    old_request = copy.deepcopy(harness["request"])
-    old_request["nonce"] = "old-nonce"
-    old_fp = bridge.request_fingerprint(TASK_ID, old_request)
-
-    changed_request = copy.deepcopy(harness["request"])
-    changed_request["candidate_sha"] = "a" * 40
+    # New approval request on identical deployment fields (same candidate_sha, manifest, env, action)
+    new_request = copy.deepcopy(harness["request"])
+    new_request["approval_id"] = "approval-new-002"
+    new_request["nonce"] = "new-human-nonce-002"
+    new_fp = bridge.request_fingerprint(TASK_ID, new_request)
 
     current_status = _read_status(harness)
     task = current_status["tasks"][1]
-    task[bridge.REQUEST_FIELD] = changed_request
+    task[bridge.REQUEST_FIELD] = new_request
     task[bridge.ISSUANCE_FIELD] = bridge._issuance_record(
         state="issuing",
         task_id=TASK_ID,
-        request=old_request,
-        fingerprint=old_fp,
+        request=new_request,
+        fingerprint=new_fp,
         settings=harness["config"]["release_lease_issuer"],
         receipt=bridge._receipt(None, errors=[], issued_at=NOW),
         updated_at=NOW,
@@ -1491,9 +1522,17 @@ def test_issuing_recovery_with_changed_approval_blocks_and_does_not_dispatch(har
     )
     assert dispatches == []
 
+    # Old lease must remain unmodified in store (not adopted, not revoked)
+    stored_rec = harness["store"].get(old_lease["lease_id"])
+    assert stored_rec["state"] == "issued"
+
+    record = _read_status(harness)["tasks"][1][bridge.ISSUANCE_FIELD]
+    assert record["state"] == "blocked"
+    assert any("does not match current request" in err for err in record["receipt"]["errors"])
+
 
 def test_issuing_recovery_with_ttl_delay_blocks_and_does_not_dispatch(harness: dict) -> None:
-    """When TTL delay causes lease/request to expire before recovery completes, task is blocked without dispatch."""
+    """When TTL delay causes lease/request to expire during storage operations, task is blocked without dispatch."""
     lease = build_lease(
         task_id=TASK_ID,
         release_id=str(harness["manifest"]["release_id"]),
@@ -1504,6 +1543,9 @@ def test_issuing_recovery_with_ttl_delay_blocks_and_does_not_dispatch(harness: d
         private_key=harness["private_key"],
         ttl_seconds=60,
         issued_at=NOW,
+        request_fingerprint=bridge.request_fingerprint(TASK_ID, harness["request"]),
+        approval_id=str(harness["request"].get("approval_id") or ""),
+        approval_nonce_digest=bridge._safe_digest(harness["request"].get("nonce")),
     )
     harness["store"].record_issued(lease)
 
@@ -1533,10 +1575,42 @@ def test_issuing_recovery_with_ttl_delay_blocks_and_does_not_dispatch(harness: d
     record = _read_status(harness)["tasks"][1][bridge.ISSUANCE_FIELD]
     assert record["state"] == "blocked"
     assert any("expired" in err for err in record["receipt"]["errors"])
+    # Matching lease was revoked
+    assert harness["store"].get(lease["lease_id"])["state"] == "revoked"
 
 
 def test_canonical_writer_race_preserves_newer_status_revision(harness: dict) -> None:
-    """When a concurrent canonical writer advances status revision, stale status snapshot is discarded."""
+    """When a concurrent canonical writer advances status revision, newer task/request data is preserved."""
+    written_other_task = False
+
+    def writer_double_commit(config, candidate):
+        nonlocal written_other_task
+        # Concurrent writer updates task 0 before candidate commit
+        current = json.loads(harness["status_path"].read_text(encoding="utf-8"))
+        current["tasks"][0]["notes"] = ["concurrent writer updated dependency"]
+        current["updated_at"] = "2026-09-28T04:00:00Z"
+        harness["status_path"].write_text(json.dumps(current), encoding="utf-8")
+        written_other_task = True
+
+        task = candidate["tasks"][1]
+        current["tasks"][1] = task
+        harness["status_path"].write_text(json.dumps(current), encoding="utf-8")
+        return True
+
+    harness["commit"] = writer_double_commit
+    dispatches: list[dict] = []
+    assert _run(harness, lambda **kwargs: dispatches.append(kwargs))
+    assert len(dispatches) == 1
+    assert written_other_task
+
+    status_final = _read_status(harness)
+    # Verify concurrent writer's change was preserved
+    assert status_final["tasks"][0]["notes"] == ["concurrent writer updated dependency"]
+    assert status_final["tasks"][1][bridge.ISSUANCE_FIELD]["state"] == "dispatched"
+
+
+def test_second_cas_rejection_during_recovery_does_not_dispatch(harness: dict) -> None:
+    """When recovery encounters a second CAS rejection on status commit, dispatch is prevented."""
     lease = build_lease(
         task_id=TASK_ID,
         release_id=str(harness["manifest"]["release_id"]),
@@ -1547,13 +1621,23 @@ def test_canonical_writer_race_preserves_newer_status_revision(harness: dict) ->
         private_key=harness["private_key"],
         ttl_seconds=300,
         issued_at=NOW,
+        request_fingerprint=bridge.request_fingerprint(TASK_ID, harness["request"]),
+        approval_id=str(harness["request"].get("approval_id") or ""),
+        approval_nonce_digest=bridge._safe_digest(harness["request"].get("nonce")),
     )
     harness["store"].record_issued(lease)
 
-    # Newer writer advances task state to 'done' concurrently
     current_status = _read_status(harness)
     task = current_status["tasks"][1]
-    task["status"] = "done"
+    task[bridge.ISSUANCE_FIELD] = bridge._issuance_record(
+        state="issuing",
+        task_id=TASK_ID,
+        request=harness["request"],
+        fingerprint=bridge.request_fingerprint(TASK_ID, harness["request"]),
+        settings=harness["config"]["release_lease_issuer"],
+        receipt=bridge._receipt(None, errors=[], issued_at=NOW),
+        updated_at=NOW,
+    )
     harness["status_path"].write_text(json.dumps(current_status), encoding="utf-8")
 
     def rejecting_commit(config, candidate):
@@ -1564,9 +1648,139 @@ def test_canonical_writer_race_preserves_newer_status_revision(harness: dict) ->
     assert not _run(harness, lambda **kwargs: dispatches.append(kwargs))
     assert dispatches == []
 
-    # Verify newer status state was preserved
-    status_final = _read_status(harness)
-    assert status_final["tasks"][1]["status"] == "done"
+    # Durable lease in store must stay issued for future cycle retry
+    assert harness["store"].get(lease["lease_id"])["state"] == "issued"
+
+
+def test_eligibility_revoked_during_storage_revokes_lease_and_blocks(harness: dict) -> None:
+    """When task eligibility or request status is revoked during storage access, lease is revoked and task blocked."""
+    fp = bridge.request_fingerprint(TASK_ID, harness["request"])
+    app_id = str(harness["request"].get("approval_id") or "")
+    nonce_digest = bridge._safe_digest(harness["request"].get("nonce"))
+
+    lease = build_lease(
+        task_id=TASK_ID,
+        release_id=str(harness["manifest"]["release_id"]),
+        candidate_sha=CANDIDATE_SHA,
+        manifest_digest=harness["manifest"]["manifest_digest"],
+        target_environment="dev",
+        allowed_action="deploy",
+        private_key=harness["private_key"],
+        ttl_seconds=300,
+        issued_at=NOW,
+        request_fingerprint=fp,
+        approval_id=app_id,
+        approval_nonce_digest=nonce_digest,
+    )
+    harness["store"].record_issued(lease)
+
+    current_status = _read_status(harness)
+    task = current_status["tasks"][1]
+    task[bridge.ISSUANCE_FIELD] = bridge._issuance_record(
+        state="issuing",
+        task_id=TASK_ID,
+        request=harness["request"],
+        fingerprint=fp,
+        settings=harness["config"]["release_lease_issuer"],
+        receipt=bridge._receipt(None, errors=[], issued_at=NOW),
+        updated_at=NOW,
+    )
+    # A concurrent writer changed request status to revoked on disk
+    task[bridge.REQUEST_FIELD]["status"] = "revoked"
+    harness["status_path"].write_text(json.dumps(current_status), encoding="utf-8")
+
+    dispatches: list[dict] = []
+    assert _run(harness, lambda **kwargs: dispatches.append(kwargs))
+    assert dispatches == []
+
+    record = _read_status(harness)["tasks"][1][bridge.ISSUANCE_FIELD]
+    assert record["state"] == "blocked"
+    assert harness["store"].get(lease["lease_id"])["state"] == "revoked"
+
+
+def test_state_store_list_or_read_failure_records_blocked_without_crashing_or_signing(
+    harness: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When state store list/read raises LeaseStateError, process catches it and marks task blocked."""
+    current_status = _read_status(harness)
+    task = current_status["tasks"][1]
+    task[bridge.ISSUANCE_FIELD] = bridge._issuance_record(
+        state="issuing",
+        task_id=TASK_ID,
+        request=harness["request"],
+        fingerprint=bridge.request_fingerprint(TASK_ID, harness["request"]),
+        settings=harness["config"]["release_lease_issuer"],
+        receipt=bridge._receipt(None, errors=[], issued_at=NOW),
+        updated_at=NOW,
+    )
+    harness["status_path"].write_text(json.dumps(current_status), encoding="utf-8")
+
+    def failing_find(task_id):
+        raise LeaseStateError("GCS list_blobs permission denied")
+
+    monkeypatch.setattr(harness["store"], "find_leases_for_task", failing_find)
+
+    dispatches: list[dict] = []
+    assert _run(
+        harness,
+        lambda **kwargs: dispatches.append(kwargs),
+        loader=lambda _: pytest.fail("storage lookup failure must not load signing key"),
+    )
+    assert dispatches == []
+
+    record = _read_status(harness)["tasks"][1][bridge.ISSUANCE_FIELD]
+    assert record["state"] == "blocked"
+    assert any("durable GCS lease state is unavailable or lookup failed" in err for err in record["receipt"]["errors"])
+
+
+def test_malformed_verifier_errors_with_bearer_sentinels_never_leak_secrets(harness: dict) -> None:
+    """Malformed verifier errors containing bearer sentinels are sanitized and never leak into status or activity log."""
+    sentinel_algo = "BEARER_ALGO_TOKEN_SECRET_12345"
+    sentinel_key = "BEARER_KEY_ID_SECRET_67890"
+
+    lease = build_lease(
+        task_id=TASK_ID,
+        release_id=str(harness["manifest"]["release_id"]),
+        candidate_sha=CANDIDATE_SHA,
+        manifest_digest=harness["manifest"]["manifest_digest"],
+        target_environment="dev",
+        allowed_action="deploy",
+        private_key=harness["private_key"],
+        ttl_seconds=300,
+        issued_at=NOW,
+        request_fingerprint=bridge.request_fingerprint(TASK_ID, harness["request"]),
+        approval_id=str(harness["request"].get("approval_id") or ""),
+        approval_nonce_digest=bridge._safe_digest(harness["request"].get("nonce")),
+    )
+    # Inject bearer sentinels into signature block
+    lease["signature"]["algorithm"] = sentinel_algo
+    lease["signature"]["key_id"] = sentinel_key
+    harness["store"].record_issued(lease)
+
+    current_status = _read_status(harness)
+    task = current_status["tasks"][1]
+    task[bridge.ISSUANCE_FIELD] = bridge._issuance_record(
+        state="issuing",
+        task_id=TASK_ID,
+        request=harness["request"],
+        fingerprint=bridge.request_fingerprint(TASK_ID, harness["request"]),
+        settings=harness["config"]["release_lease_issuer"],
+        receipt=bridge._receipt(None, errors=[], issued_at=NOW),
+        updated_at=NOW,
+    )
+    harness["status_path"].write_text(json.dumps(current_status), encoding="utf-8")
+
+    dispatches: list[dict] = []
+    assert _run(harness, lambda **kwargs: dispatches.append(kwargs))
+    assert dispatches == []
+
+    status_text = harness["status_path"].read_text(encoding="utf-8")
+    activity_text = harness["activity_path"].read_text(encoding="utf-8")
+
+    assert sentinel_algo not in status_text
+    assert sentinel_algo not in activity_text
+    assert sentinel_key not in status_text
+    assert sentinel_key not in activity_text
 
 
 def test_no_duplicate_sign_or_dispatch_on_recovery(harness: dict) -> None:
@@ -1629,4 +1843,5 @@ def test_no_secret_or_bearer_material_in_logs_or_status(harness: dict) -> None:
     assert "BEGIN PRIVATE KEY" not in activity_text
     assert "BEGIN ED25519 PRIVATE KEY" not in status_text
     assert "BEGIN ED25519 PRIVATE KEY" not in activity_text
+
 

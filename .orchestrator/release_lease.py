@@ -220,6 +220,9 @@ def issue_release_lease(
     archive_dir: Path | None = None,
     issued_at: datetime | None = None,
     root: Path = ROOT,
+    request_fingerprint: str | None = None,
+    approval_id: str | None = None,
+    approval_nonce_digest: str | None = None,
 ) -> dict[str, Any]:
     """Mint and durably record one lease, or raise `LeaseIssuanceError`.
 
@@ -257,6 +260,9 @@ def issue_release_lease(
         private_key=private_key,
         ttl_seconds=ttl_seconds,
         issued_at=issued_at,
+        request_fingerprint=request_fingerprint,
+        approval_id=approval_id,
+        approval_nonce_digest=approval_nonce_digest,
     )
     state_store.record_issued(lease, issued_by=ISSUER_NAME)
     return lease
