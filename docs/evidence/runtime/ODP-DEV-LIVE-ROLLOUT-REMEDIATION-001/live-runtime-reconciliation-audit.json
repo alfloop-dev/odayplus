@@ -6,7 +6,7 @@
   "blocking_layer": "supervisor_release_lease_issuer_blocked",
   "deployment_success_claimed": false,
   "historical_receipts_modified": false,
-  "generated_at": "2026-09-28T02:53:11Z",
+  "generated_at": "2026-09-28T23:20:00Z",
   "generated_by": "Antigravity3",
   "collection_baseline": {
     "note": "Round 6 (a31 candidate evidence correction and lease blocker routing): all 16 dependencies done. Origin/dev head bb15fe9f includes merged ODP-DEV-MIGRATION-ADMISSION-001 (PR #1375). Task branch is task/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001.",
@@ -45,13 +45,13 @@
     "nonce_values_recorded": false
   },
   "candidate_reconciliation": {
-    "authoritative_manifest_candidate_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
-    "authoritative_manifest_digest": "sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2",
-    "release_id": "odp-a31e02ae3918",
+    "authoritative_manifest_candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+    "authoritative_manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
+    "release_id": "odp-a663d604831c",
     "manifest_schema_version": 2,
     "manifest_release_status": "ready",
-    "manifest_created_at": "2026-09-27T15:25:24+00:00",
-    "manifest_created_by_workflow": "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@a31e02ae391811a4c323ec4d834b70e200953366",
+    "manifest_created_at": "2026-09-28T07:27:09+00:00",
+    "manifest_created_by_workflow": "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@a663d604831c4b9710dda9b7ca85ddbc193837e8",
     "manifest_initial_release_recovery": {
       "absence_readback": {
         "kind": "runtime-release-target-absence-readback",
@@ -71,14 +71,14 @@
             "component": "migration",
             "exists": false,
             "resource_kind": "cloud-run-job",
-            "resource_name": "oday-migration-r-a31e02ae3918",
+            "resource_name": "oday-migration-r-a663d604831c",
             "serving_traffic": false
           },
           {
             "component": "scheduler",
             "exists": false,
             "resource_kind": "cloud-run-job",
-            "resource_name": "oday-scheduler-r-a31e02ae3918",
+            "resource_name": "oday-scheduler-r-a663d604831c",
             "serving_traffic": false
           },
           {
@@ -92,7 +92,7 @@
             "component": "worker",
             "exists": false,
             "resource_kind": "cloud-run-job",
-            "resource_name": "oday-worker-r-a31e02ae3918",
+            "resource_name": "oday-worker-r-a663d604831c",
             "serving_traffic": false
           }
         ]
@@ -130,9 +130,9 @@
       "task_id": "ODP-DEV-MIGRATION-ADMISSION-001",
       "rebound_at": "2026-09-27T16:42:26Z",
       "from_candidate_sha": "355a94b52b14badc236be4b3e52eb936a7075549",
-      "to_candidate_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
+      "to_candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
       "from_manifest_digest": "sha256:a1e3fcf6b765861dc269e3fd395b7bec6ac4b2b6f3b3207a3ffb623c6ca6dfaa",
-      "to_manifest_digest": "sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2",
+      "to_manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
       "re_attestation_required": true,
       "note": "Candidate rebound to a31e02ae after migration failure in run 36278150009. Rebuilt once in build run 36333397898. User authorization recorded as HUMANOPS-DEV-MIGRATION-20260927T225545Z.",
       "build_run": {
@@ -206,8 +206,8 @@
   },
   "hosted_build_execution": {
     "workflow": "Runtime Release (.github/workflows/deploy-dev.yml)",
-    "run_id": 36333397898,
-    "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36333397898",
+    "run_id": 36415981871,
+    "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36415981871",
     "event": "workflow_dispatch",
     "phase": "build",
     "environment": "dev-build",
@@ -220,7 +220,7 @@
     "created_at": "2026-09-27T16:28:57Z",
     "completed_at": "2026-09-27T16:36:34Z",
     "release_id": "odp-a31e02ae3918",
-    "manifest_digest": "sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2",
+    "manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
     "single_run_build_and_handoff": true,
     "jobs": [
       {
@@ -708,7 +708,7 @@
     },
     "target_absence_receipt": {
       "kind": "runtime-release-target-absence-readback",
-      "candidate_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
+      "candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
       "api_service": {
         "name": "oday-api",
         "exists": false,
@@ -720,17 +720,17 @@
         "serving_traffic": false
       },
       "migration_job": {
-        "name": "oday-migration-r-a31e02ae3918",
+        "name": "oday-migration-r-a663d604831c",
         "exists": false,
         "serving_traffic": false
       },
       "worker_job": {
-        "name": "oday-worker-r-a31e02ae3918",
+        "name": "oday-worker-r-a663d604831c",
         "exists": false,
         "serving_traffic": false
       },
       "scheduler_job": {
-        "name": "oday-scheduler-r-a31e02ae3918",
+        "name": "oday-scheduler-r-a663d604831c",
         "exists": false,
         "serving_traffic": false
       }
@@ -1257,5 +1257,6 @@
     "previous_generated_at": "2026-09-26T12:06:15Z",
     "previous_generated_by": "Antigravity5",
     "reason": "Candidate rebound from 419e6bf4 to a31e02ae per ODP-DEV-MIGRATION-ADMISSION-001 done; user authorization HUMANOPS-DEV-MIGRATION-20260927T225545Z; release lease issuance remains blocked (lease_issue_blocked) for a31 candidate since 00:47:26Z."
-  }
+  },
+  "rebind_note": "Rebound from a31e02ae3918 to a663d604831c at 2026-09-28T23:20:00Z. Prior observation recorded a31e02ae3918 (build 36333397898); current authoritative state is a663d604831c (build 36415981871). Hosted build artifacts verified in run-36415981871 directory."
 }

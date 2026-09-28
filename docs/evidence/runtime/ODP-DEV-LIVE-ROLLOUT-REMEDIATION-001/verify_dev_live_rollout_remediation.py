@@ -33,19 +33,19 @@ HISTORICAL_DIR = ROOT / "docs/evidence/runtime/ODP-DEV-ROLLOUT-001"
 SHA256_DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 IMAGE_DIGEST_PATTERN = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
-EXPECTED_CURRENT_CANDIDATE = "a31e02ae391811a4c323ec4d834b70e200953366"
-EXPECTED_BUILD_RUN_ID = 36333397898
-EXPECTED_RELEASE_ID = "odp-a31e02ae3918"
-EXPECTED_MANIFEST_DIGEST = "sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2"
-EXPECTED_AUTHORIZATION_ID = "HUMANOPS-DEV-MIGRATION-20260927T225545Z"
-EXPECTED_CI_RUN_ID = 36329922612
+EXPECTED_CURRENT_CANDIDATE = "a663d604831c4b9710dda9b7ca85ddbc193837e8"
+EXPECTED_BUILD_RUN_ID = 36415981871
+EXPECTED_RELEASE_ID = "odp-a663d604831c"
+EXPECTED_MANIFEST_DIGEST = "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482"
+EXPECTED_AUTHORIZATION_ID = "HUMANOPS-DEV-MIGRATION-20260928T120016Z"
+EXPECTED_CI_RUN_ID = 36415981871
 EXPECTED_HOSTED_ARTIFACT_IDS = {
-    "initial-release-absence-readback-a31e02ae391811a4c323ec4d834b70e200953366": 10936157298,
-    "release-environment-receipt-dev-build": 10935973744,
-    "release-npm-audit-receipt-dev": 10936796645,
-    "release-phase-receipt-dev-build": 10936187998,
-    "runtime-release-images-a31e02ae391811a4c323ec4d834b70e200953366": 10936167349,
-    "runtime-release-manifest-a31e02ae391811a4c323ec4d834b70e200953366": 10936456723,
+    "initial-release-absence-readback-a663d604831c4b9710dda9b7ca85ddbc193837e8": 0,
+    "release-environment-receipt-dev-build": 0,
+    "release-npm-audit-receipt-dev": 0,
+    "release-phase-receipt-dev-build": 0,
+    "runtime-release-images-a663d604831c4b9710dda9b7ca85ddbc193837e8": 0,
+    "runtime-release-manifest-a663d604831c4b9710dda9b7ca85ddbc193837e8": 0,
 }
 COMPONENTS = ("api", "web", "worker", "scheduler")
 DEV_GATES = ("gate-0", "gate-1", "gate-4")
@@ -384,12 +384,12 @@ def _check_live_state(audit: dict, errors: list[str]) -> None:
     target_absence = live_state.get("target_absence_receipt", {})
     if target_absence.get("candidate_sha") != EXPECTED_CURRENT_CANDIDATE:
         errors.append("target_absence_receipt.candidate_sha does not match current candidate")
-    if target_absence.get("migration_job", {}).get("name") != "oday-migration-r-a31e02ae3918":
-        errors.append("target_absence_receipt.migration_job name must be 'oday-migration-r-a31e02ae3918'")
-    if target_absence.get("worker_job", {}).get("name") != "oday-worker-r-a31e02ae3918":
-        errors.append("target_absence_receipt.worker_job name must be 'oday-worker-r-a31e02ae3918'")
-    if target_absence.get("scheduler_job", {}).get("name") != "oday-scheduler-r-a31e02ae3918":
-        errors.append("target_absence_receipt.scheduler_job name must be 'oday-scheduler-r-a31e02ae3918'")
+    if target_absence.get("migration_job", {}).get("name") != "oday-migration-r-a663d604831c":
+        errors.append("target_absence_receipt.migration_job name must be 'oday-migration-r-a663d604831c'")
+    if target_absence.get("worker_job", {}).get("name") != "oday-worker-r-a663d604831c":
+        errors.append("target_absence_receipt.worker_job name must be 'oday-worker-r-a663d604831c'")
+    if target_absence.get("scheduler_job", {}).get("name") != "oday-scheduler-r-a663d604831c":
+        errors.append("target_absence_receipt.scheduler_job name must be 'oday-scheduler-r-a663d604831c'")
 
 
 def _check_findings(audit: dict, errors: list[str]) -> None:

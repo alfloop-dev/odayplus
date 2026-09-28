@@ -8850,3 +8850,43 @@ The machine-readable receipt is build-reconciliation-36415981871.json; the appro
 Merge-group CI run [36391745153](https://github.com/alfloop-dev/odayplus/actions/runs/36391745153) succeeded with `head_sha` exactly `a663d604831c4b9710dda9b7ca85ddbc193837e8`. The orchestrator and infrastructure job ran the repository pytest command and reported 3,207 passed, 6 skipped, 10 deselected, 3 warnings, and 726 subtests passed in 300.71 seconds.
 
 This is exact-candidate evidence for the lease-issuance recovery code. Change-scope skipped the product child jobs; the aggregate product wrapper succeeded but does not turn those skipped jobs into product test passes. This receipt alone does not clear gate 0 or gate 1, and it is not release admission or deployment evidence. The full machine-readable run reconciliation is `exact-candidate-ci-36391745153.json`.
+
+## Round 10 — canonical rebind to a663d604 (2026-09-28)
+
+### Base advance
+
+Task branch `task/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` merged `origin/dev` (ee06d1d82944)
+to include:
+- ODP-SUPERVISOR-LEASE-ISSUANCE-RECOVERY-001 (PR #1377)
+- ODP-RUNTIME-RELEASE-ANCESTRY-INVENTORY-002 (PR #1379)
+
+Merge was clean (no conflicts). Merge-base is now `ee06d1d82944`.
+
+### Canonical file rebind
+
+| 項目 | 前值 | 新值 |
+|---|---|---|
+| Candidate SHA | `a31e02ae391811a4c323ec4d834b70e200953366` | `a663d604831c4b9710dda9b7ca85ddbc193837e8` |
+| Manifest digest | `sha256:499110d0…` | `sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482` |
+| Build run | 36333397898 | [36415981871](https://github.com/alfloop-dev/odayplus/actions/runs/36415981871) |
+| Release ID | `odp-a31e02ae3918` | `odp-a663d604831c` |
+| User approval | `HUMANOPS-DEV-MIGRATION-20260927T225545Z` (expired) | `HUMANOPS-DEV-MIGRATION-20260928T120016Z` (expired at 18:00:16Z) |
+
+Files updated:
+- `docs/evidence/gates/RELEASE_MANIFEST.json` — copied from hosted artifact run-36415981871
+- `docs/evidence/gates/RELEASE_GATE_REGISTRY.json` — rebind candidate, manifest, approval, and gate receipts
+- `live-runtime-reconciliation-audit.json` — authoritative candidate/manifest/build/absence targets
+- `release-lease-request.json` — updated to new candidate, marked as expired
+- `verify_dev_live_rollout_remediation.py` — constants, artifact names, job names
+
+### Approval status
+
+User approval `HUMANOPS-DEV-MIGRATION-20260928T120016Z` expired at 2026-09-28T18:00:16Z.
+A fresh candidate-specific user approval is required before any new lease request can be
+registered. Gate 4 `passed-with-deviation` discloses this; the missing H01 receipt is not
+relabeled as passed.
+
+### No deployment claimed
+
+No lease has been issued, no deployment has been dispatched, and no deployment has occurred
+for candidate `a663d604`. `deployment_success_claimed` remains `false`.
