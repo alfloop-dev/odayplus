@@ -16,6 +16,7 @@ import supervisor
 from common import validate_config
 
 from delivery_toolchain.release.release_lease import (
+    LeaseStateError,
     LeaseStateStore,
     build_lease,
     generate_keypair,
