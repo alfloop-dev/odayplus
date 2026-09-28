@@ -8844,3 +8844,9 @@ This section adds the post-merge lease-fix build readback. Earlier candidate evi
 - The user granted conditional approval HUMANOPS-DEV-MIGRATION-20260928T120016Z for a663d604831c4b9710dda9b7ca85ddbc193837e8 / sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482 / build 36415981871 / dev/deploy, expiring 2026-09-28T18:00:16Z. It is usable only after the owner updates the canonical manifest, registry, and task evidence on PR #1107; the reviewer approves the exact submitted head; and the PR is merged. The old approval/request/nonce must not be replayed. No database reset, Alembic stamp, database deletion, or rewrite of foreign Dagster history is authorized.
 
 The machine-readable receipt is build-reconciliation-36415981871.json; the approval transcription is user-deploy-authorization-HUMANOPS-DEV-MIGRATION-20260928T120016Z.json. The six hosted artifacts are preserved under hosted-artifacts/run-36415981871/ and include their artifact IDs and file hashes in the reconciliation receipt.
+
+## Round 9 — exact-candidate CI receipt for a663d604831c4b9710dda9b7ca85ddbc193837e8
+
+Merge-group CI run [36391745153](https://github.com/alfloop-dev/odayplus/actions/runs/36391745153) succeeded with `head_sha` exactly `a663d604831c4b9710dda9b7ca85ddbc193837e8`. The orchestrator and infrastructure job ran the repository pytest command and reported 3,207 passed, 6 skipped, 10 deselected, 3 warnings, and 726 subtests passed in 300.71 seconds.
+
+This is exact-candidate evidence for the lease-issuance recovery code. Change-scope skipped the product child jobs; the aggregate product wrapper succeeded but does not turn those skipped jobs into product test passes. This receipt alone does not clear gate 0 or gate 1, and it is not release admission or deployment evidence. The full machine-readable run reconciliation is `exact-candidate-ci-36391745153.json`.
