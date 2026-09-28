@@ -291,6 +291,21 @@ def _check_hosted_artifacts(audit: dict, manifest: dict, errors: list[str]) -> N
             if computed_logical_digest != hosted_manifest.get("manifest_digest"):
                 errors.append("hosted manifest logical digest does not recompute from canonical JSON")
 
+    readback_source = audit.get("live_gcp_runtime_state", {}).get("readback_source", {})
+    if readback_source.get("run_id") == build_exec.get("run_id"):
+        absence_records = [
+            record
+            for record in records
+            if str(record.get("name") or "").startswith("initial-release-absence-readback-")
+        ]
+        if len(absence_records) != 1:
+            errors.append("the build run must contain exactly one initial-release absence artifact")
+        elif readback_source.get("sha256") != absence_records[0].get("raw_sha256"):
+            errors.append(
+                "live_gcp_runtime_state.readback_source.sha256 does not match the raw "
+                "initial-release absence artifact for the same build run"
+            )
+
 def _check_sources(audit: dict, manifest: dict, errors: list[str]) -> None:
     source_posture = audit.get("source_posture", {})
     attestation = manifest.get("sources_off_attestation", {})

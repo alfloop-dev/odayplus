@@ -703,7 +703,7 @@
       "run_id": 36333397898,
       "probe_step_started_at": "2026-09-27T16:32:21Z",
       "artifact_created_at": "2026-09-27T16:36:28Z",
-      "sha256": "43ca9e289bf53b92f99d7a22bbab0430a9eef1e6878e3eb39dc7d194c77c9ff7",
+      "sha256": "77070ae8a1056ca1ef94a85411012e96caab2401fcf1e2b38abca8c32135debf",
       "probe_command": "gcloud run services list --format=value(metadata.name); gcloud run jobs list --format=value(metadata.name)"
     },
     "target_absence_receipt": {
