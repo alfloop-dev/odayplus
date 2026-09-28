@@ -464,6 +464,33 @@ class _GCSLeaseStateStore:
             ) from exc
         return record
 
+    def list_records(self) -> list[dict[str, Any]]:
+        prefix = f"{self._prefix}/" if self._prefix else ""
+        try:
+            blobs = self._client.list_blobs(self._bucket, prefix=prefix)
+            records: list[dict[str, Any]] = []
+            for blob in blobs:
+                name = blob.name[len(prefix):] if prefix and blob.name.startswith(prefix) else blob.name
+                if "/" in name or not name.endswith(".json"):
+                    continue
+                lease_id = name[:-5]
+                if not LEASE_ID_PATTERN.fullmatch(lease_id):
+                    continue
+                record = self.get(lease_id)
+                if record is not None:
+                    records.append(record)
+            return records
+        except Exception as exc:
+            raise LeaseStateError(f"cannot list lease records in {self._uri}: {exc}") from exc
+
+    def find_leases_for_task(self, task_id: str) -> list[dict[str, Any]]:
+        matching: list[dict[str, Any]] = []
+        for record in self.list_records():
+            stored_lease = record.get("lease")
+            if isinstance(stored_lease, dict) and str(stored_lease.get("task_id") or "").strip() == task_id:
+                matching.append(record)
+        return matching
+
 
 class LeaseStateStore:
     """Durable Supervisor-owned CAS store for lease lifecycle state.
@@ -510,6 +537,34 @@ class LeaseStateStore:
         if not LEASE_ID_PATTERN.fullmatch(lease_id):
             raise LeaseStateError(f"lease_id {lease_id!r} is not a valid lease identifier")
         return self._dir / f"{lease_id}.json"
+
+    def list_records(self) -> list[dict[str, Any]]:
+        if self._remote is not None:
+            return self._remote.list_records()
+        records: list[dict[str, Any]] = []
+        try:
+            for path in sorted(self._dir.glob("*.json")):
+                if not path.is_file():
+                    continue
+                lease_id = path.stem
+                if not LEASE_ID_PATTERN.fullmatch(lease_id):
+                    continue
+                record = self.get(lease_id)
+                if record is not None:
+                    records.append(record)
+            return records
+        except OSError as exc:
+            raise LeaseStateError(f"cannot list lease records in {self._dir}: {exc}") from exc
+
+    def find_leases_for_task(self, task_id: str) -> list[dict[str, Any]]:
+        if self._remote is not None:
+            return self._remote.find_leases_for_task(task_id)
+        matching: list[dict[str, Any]] = []
+        for record in self.list_records():
+            stored_lease = record.get("lease")
+            if isinstance(stored_lease, dict) and str(stored_lease.get("task_id") or "").strip() == task_id:
+                matching.append(record)
+        return matching
 
     def get(self, lease_id: str) -> dict[str, Any] | None:
         if self._remote is not None:

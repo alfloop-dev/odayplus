@@ -844,12 +844,13 @@ def process_release_lease_issuance(
             continue
         fingerprint = request_fingerprint(task_id, request)
         previous = task.get(ISSUANCE_FIELD)
+        is_issuing_recovery = (
+            isinstance(previous, dict)
+            and previous.get("request_fingerprint") == fingerprint
+            and previous.get("state") == "issuing"
+        )
         if isinstance(previous, dict) and previous.get("request_fingerprint") == fingerprint:
             if previous.get("state") in _FINAL_NO_RETRY_STATES | {"blocked"}:
-                continue
-            if previous.get("state") == "issuing":
-                # A prior process could be between GCS CAS and task CAS. That
-                # ambiguity is never retried automatically.
                 continue
 
         errors = request_errors(status, task, request, now=timestamp)
@@ -864,22 +865,25 @@ def process_release_lease_issuance(
             ) or changed
             continue
 
-        # Reserve the exact approval before any secret or GCS access. A later
-        # CAS conflict means the request may have changed, so it cannot issue.
-        _archive_current_issuance(task)
-        reservation = _issuance_record(
-            state="issuing",
-            task_id=task_id,
-            request=request,
-            fingerprint=fingerprint,
-            settings=settings,
-            receipt=_receipt(None, errors=[], issued_at=timestamp),
-            updated_at=timestamp,
-        )
-        if not _commit_result(config, status, task, reservation, commit_status=commit_status):
-            continue
-        changed = True
-        _write_activity(config, "release_lease_issuance_reserved", task_id=task_id, record=reservation)
+        if not is_issuing_recovery:
+            # Reserve the exact approval before any secret or GCS access. A later
+            # CAS conflict means the request may have changed, so it cannot issue.
+            _archive_current_issuance(task)
+            reservation = _issuance_record(
+                state="issuing",
+                task_id=task_id,
+                request=request,
+                fingerprint=fingerprint,
+                settings=settings,
+                receipt=_receipt(None, errors=[], issued_at=timestamp),
+                updated_at=timestamp,
+            )
+            if not _commit_result(config, status, task, reservation, commit_status=commit_status):
+                continue
+            changed = True
+            _write_activity(config, "release_lease_issuance_reserved", task_id=task_id, record=reservation)
+        else:
+            reservation = previous
 
         reserved = _status_still_reserved(config, task_id=task_id, fingerprint=fingerprint)
         if reserved is None:
@@ -912,19 +916,6 @@ def process_release_lease_issuance(
                 root=root,
             )
         )
-        if errors:
-            changed = _record_blocked(
-                config,
-                status,
-                task,
-                request,
-                fingerprint,
-                settings,
-                errors,
-                commit_status=commit_status,
-                dispatch_ref_sha=ref_sha,
-            ) or changed
-            continue
 
         try:
             state_store = LeaseStateStore(settings["state_uri"], require_existing=True)
@@ -942,58 +933,17 @@ def process_release_lease_issuance(
             ) or changed
             continue
 
-        try:
-            private_key = private_key_loader(settings["secret_reference"])
-        except Exception:
-            changed = _record_blocked(
-                config,
-                status,
-                task,
-                request,
-                fingerprint,
-                settings,
-                ["Secret Manager signing key is unavailable"],
-                commit_status=commit_status,
-                dispatch_ref_sha=ref_sha,
-            ) or changed
-            continue
+        existing_records = state_store.find_leases_for_task(task_id)
+        issued_records = [r for r in existing_records if r.get("state") == "issued"]
 
-        # Re-read every mutable authority after key acquisition. Gate, task,
-        # manifest or SHA drift turns into a failure before any lease exists.
-        reserved = _status_still_reserved(config, task_id=task_id, fingerprint=fingerprint)
-        if reserved is None:
-            del private_key
-            continue
-        status, task, request = reserved
-        registry, manifest, input_errors = _read_release_inputs(root, str(request.get("candidate_sha") or ""))
-        errors = request_errors(status, task, request, now=_utc(now))
-        errors.extend(input_errors)
-        errors.extend(_exact_binding_errors(request, registry, manifest))
-        errors.extend(_build_run_binding_errors(request, registry))
-        ref_sha, post_ref_errors = check_dispatch_ref_errors(
-            settings, str(request.get("candidate_sha") or ""), root, ref_resolver=ref_resolver
-        )
-        errors.extend(post_ref_errors)
-        errors.extend(
-            _nonce_reuse_errors(
-                status, task_id, fingerprint, _safe_digest(request.get("nonce")), archive_dir=archive_dir, config=config
-            )
-        )
-        errors.extend(
-            issuance_errors(
-                status=status,
-                registry=registry,
-                manifest=manifest,
-                manifest_errors=input_errors,
-                task_id=task_id,
-                target_environment=str(request.get("target_environment") or ""),
-                release_sha=str(request.get("candidate_sha") or ""),
-                archive_dir=archive_dir,
-                root=root,
-            )
-        )
         if errors:
-            del private_key
+            for r in issued_records:
+                stored_lease = r.get("lease")
+                if isinstance(stored_lease, dict):
+                    try:
+                        state_store.revoke(stored_lease, reason="preconditions failed during issuance reconciliation")
+                    except Exception:
+                        pass
             changed = _record_blocked(
                 config,
                 status,
@@ -1007,25 +957,14 @@ def process_release_lease_issuance(
             ) or changed
             continue
 
-        try:
-            lease = issue_release_lease(
-                task_id=task_id,
-                target_environment=str(request["target_environment"]),
-                status=status,
-                registry=registry,
-                manifest=manifest,
-                manifest_errors=input_errors,
-                private_key=private_key,
-                state_store=state_store,
-                allowed_action=DEFAULT_ACTION,
-                ttl_seconds=settings["ttl_seconds"],
-                release_sha=str(request["candidate_sha"]),
-                archive_dir=archive_dir,
-                issued_at=_utc(now),
-                root=root,
-            )
-        except (LeaseError, ValueError):
-            del private_key
+        if len(issued_records) > 1:
+            for r in issued_records:
+                stored_lease = r.get("lease")
+                if isinstance(stored_lease, dict):
+                    try:
+                        state_store.revoke(stored_lease, reason="multiple conflicting unconsumed leases in durable state")
+                    except Exception:
+                        pass
             changed = _record_blocked(
                 config,
                 status,
@@ -1033,12 +972,156 @@ def process_release_lease_issuance(
                 request,
                 fingerprint,
                 settings,
-                ["lease issuance or durable GCS CAS failed"],
+                ["multiple conflicting unconsumed leases in durable state"],
                 commit_status=commit_status,
                 dispatch_ref_sha=ref_sha,
             ) or changed
             continue
-        del private_key
+
+        lease = None
+        if len(issued_records) == 1:
+            rec = issued_records[0]
+            stored_lease = rec.get("lease")
+            lease_binding_errors: list[str] = []
+            if not isinstance(stored_lease, dict):
+                lease_binding_errors.append("durable lease record has no lease payload")
+            else:
+                exp_time = parse_iso_timestamp(stored_lease.get("expires_at") or "")
+                if exp_time is None or exp_time <= timestamp:
+                    lease_binding_errors.append(f"durable lease {stored_lease.get('lease_id')} has expired")
+                req_exp_time = parse_iso_timestamp(request.get("expires_at") or "")
+                if req_exp_time is None or req_exp_time <= timestamp:
+                    lease_binding_errors.append("release_lease_request has expired")
+                if stored_lease.get("candidate_sha") != request.get("candidate_sha"):
+                    lease_binding_errors.append("durable lease candidate_sha does not match request")
+                if stored_lease.get("manifest_digest") != request.get("manifest_digest"):
+                    lease_binding_errors.append("durable lease manifest_digest does not match request")
+                if stored_lease.get("target_environment") != request.get("target_environment"):
+                    lease_binding_errors.append("durable lease target_environment does not match request")
+                if stored_lease.get("allowed_action") != request.get("action", DEFAULT_ACTION):
+                    lease_binding_errors.append("durable lease allowed_action does not match request")
+                if isinstance(manifest, dict) and stored_lease.get("release_id") != manifest.get("release_id"):
+                    lease_binding_errors.append("durable lease release_id does not match manifest")
+
+            if lease_binding_errors:
+                if isinstance(stored_lease, dict):
+                    try:
+                        state_store.revoke(stored_lease, reason="orphan lease expired or unbound from current request")
+                    except Exception:
+                        pass
+                changed = _record_blocked(
+                    config,
+                    status,
+                    task,
+                    request,
+                    fingerprint,
+                    settings,
+                    lease_binding_errors,
+                    commit_status=commit_status,
+                    dispatch_ref_sha=ref_sha,
+                ) or changed
+                continue
+
+            lease = stored_lease
+
+        if lease is None:
+            try:
+                private_key = private_key_loader(settings["secret_reference"])
+            except Exception:
+                changed = _record_blocked(
+                    config,
+                    status,
+                    task,
+                    request,
+                    fingerprint,
+                    settings,
+                    ["Secret Manager signing key is unavailable"],
+                    commit_status=commit_status,
+                    dispatch_ref_sha=ref_sha,
+                ) or changed
+                continue
+
+            # Re-read every mutable authority after key acquisition. Gate, task,
+            # manifest or SHA drift turns into a failure before any lease exists.
+            reserved = _status_still_reserved(config, task_id=task_id, fingerprint=fingerprint)
+            if reserved is None:
+                del private_key
+                continue
+            status, task, request = reserved
+            registry, manifest, input_errors = _read_release_inputs(root, str(request.get("candidate_sha") or ""))
+            errors = request_errors(status, task, request, now=_utc(now))
+            errors.extend(input_errors)
+            errors.extend(_exact_binding_errors(request, registry, manifest))
+            errors.extend(_build_run_binding_errors(request, registry))
+            ref_sha, post_ref_errors = check_dispatch_ref_errors(
+                settings, str(request.get("candidate_sha") or ""), root, ref_resolver=ref_resolver
+            )
+            errors.extend(post_ref_errors)
+            errors.extend(
+                _nonce_reuse_errors(
+                    status, task_id, fingerprint, _safe_digest(request.get("nonce")), archive_dir=archive_dir, config=config
+                )
+            )
+            errors.extend(
+                issuance_errors(
+                    status=status,
+                    registry=registry,
+                    manifest=manifest,
+                    manifest_errors=input_errors,
+                    task_id=task_id,
+                    target_environment=str(request.get("target_environment") or ""),
+                    release_sha=str(request.get("candidate_sha") or ""),
+                    archive_dir=archive_dir,
+                    root=root,
+                )
+            )
+            if errors:
+                del private_key
+                changed = _record_blocked(
+                    config,
+                    status,
+                    task,
+                    request,
+                    fingerprint,
+                    settings,
+                    errors,
+                    commit_status=commit_status,
+                    dispatch_ref_sha=ref_sha,
+                ) or changed
+                continue
+
+            try:
+                lease = issue_release_lease(
+                    task_id=task_id,
+                    target_environment=str(request["target_environment"]),
+                    status=status,
+                    registry=registry,
+                    manifest=manifest,
+                    manifest_errors=input_errors,
+                    private_key=private_key,
+                    state_store=state_store,
+                    allowed_action=DEFAULT_ACTION,
+                    ttl_seconds=settings["ttl_seconds"],
+                    release_sha=str(request["candidate_sha"]),
+                    archive_dir=archive_dir,
+                    issued_at=_utc(now),
+                    root=root,
+                )
+            except (LeaseError, ValueError):
+                del private_key
+                changed = _record_blocked(
+                    config,
+                    status,
+                    task,
+                    request,
+                    fingerprint,
+                    settings,
+                    ["lease issuance or durable GCS CAS failed"],
+                    commit_status=commit_status,
+                    dispatch_ref_sha=ref_sha,
+                ) or changed
+                continue
+            del private_key
 
         issued_record = _issuance_record(
             state="issued",
@@ -1049,7 +1132,7 @@ def process_release_lease_issuance(
             receipt=_receipt(
                 lease,
                 errors=[],
-                issued_at=_utc(now),
+                issued_at=parse_iso_timestamp(lease.get("issued_at") or "") or _utc(now),
                 dispatch_ref=settings.get("dispatch_ref", DEFAULT_DISPATCH_REF),
                 dispatch_ref_sha=ref_sha,
             ),
@@ -1058,9 +1141,10 @@ def process_release_lease_issuance(
         expected_issuance = deepcopy(issued_record)
         expected_request = deepcopy(request)
         if not _commit_result(config, status, task, issued_record, commit_status=commit_status):
-            # GCS has a credential but task CAS is uncertain. Do not dispatch or
-            # reissue it: an operator must create a fresh approval after audit.
+            # GCS has a credential but task CAS is uncertain. Do not dispatch.
+            # The next supervisor cycle will safely reconcile the unexpired GCS lease.
             continue
+        changed = True
         _write_activity(config, "release_lease_issued", task_id=task_id, record=issued_record)
 
         try:
@@ -1076,6 +1160,7 @@ def process_release_lease_issuance(
                 config, status, task, dispatch_record, commit_status=commit_status,
                 expected_issuance=expected_issuance, expected_request=expected_request,
             ):
+                changed = True
                 _write_activity(
                     config, "release_lease_dispatch_unknown", task_id=task_id, record=dispatch_record
                 )
@@ -1089,6 +1174,7 @@ def process_release_lease_issuance(
             config, status, task, dispatched_record, commit_status=commit_status,
             expected_issuance=expected_issuance, expected_request=expected_request,
         ):
+            changed = True
             _write_activity(
                 config, "release_lease_runtime_release_dispatched", task_id=task_id, record=dispatched_record
             )
