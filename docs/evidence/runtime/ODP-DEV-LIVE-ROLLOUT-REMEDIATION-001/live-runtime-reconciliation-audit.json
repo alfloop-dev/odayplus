@@ -3,14 +3,14 @@
   "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
   "audit_type": "live_runtime_vs_hosted_build_reconciliation",
   "release_status": "blocked",
-  "blocking_layer": "supervisor_release_lease_issuer_runtime_environment",
+  "blocking_layer": "supervisor_release_lease_issuer_gcs_unavailable",
   "deployment_success_claimed": false,
   "historical_receipts_modified": false,
-  "generated_at": "2026-09-26T12:06:15Z",
-  "generated_by": "Antigravity5",
+  "generated_at": "2026-09-28T01:10:00Z",
+  "generated_by": "Antigravity3",
   "collection_baseline": {
-    "note": "All repository facts were read from the task worktree after the base merge; the delivering commit is a scope-limited descendant of this baseline and is not referenced here. Board and supervisor facts were read live and read-only from PANTHEON_STATUS_ROOT and the running supervisor process.",
-    "origin_dev_head_sha": "c8d26f020e0f6a065757beeac88b02f011884894",
+    "note": "Round 5 (a31 candidate): all 16 dependencies done. Origin/dev head bb15fe9f includes merged ODP-DEV-MIGRATION-ADMISSION-001 (PR #1375). Task branch merge-base is bb15fe9f (0 behind origin/dev).",
+    "origin_dev_head_sha": "bb15fe9fee5da3882117fb8c2593cfb3966a68c3",
     "task_base_merge_sha": "e6cf71978ca721ecc1ba51902e0d7ea0e489bc14",
     "task_base_merge_parents": [
       "56fd291a0fd0818d066109355c70afee1334de73",
@@ -24,16 +24,16 @@
     "candidate_is_ancestor_of_origin_dev": true
   },
   "supersedes": {
-    "previous_generated_at": "2026-09-21T13:50:56Z",
-    "previous_generated_by": "Claude2",
-    "previous_candidate_sha": "39ae43f6fe679f03dd7df459a51835cbd2d54f77",
-    "previous_manifest_digest": "sha256:ebe7d305e930471d2e7492a1fffced10dbaa05a710bb5f6573f370e7bfa8ae8a",
-    "previous_build_run_id": 35493018607,
-    "reason": "The 2026-09-21 round measured candidate 39ae43f6 with registry decision no-go and three uncleared dev gates. Since then PRs #1358, #1359, #1363 and #1366 changed product paths, ODP-DEV-RELEASE-GATE-RECONCILIATION-005 rebuilt the handoff (run 35944616693), rebound the registry to 13643634 with decision go and cleared gate-0/1/4 (PR #1365, merged into dev as c4efabbb), the operator reopened this task at 2026-09-24T06:49:44Z, and Human/Ops registered a fresh release_lease_request at 06:59:52Z. This round re-measures every claim against that state and records why the issuer still refused."
+    "previous_generated_at": "2026-09-26T12:06:15Z",
+    "previous_generated_by": "Antigravity5",
+    "previous_candidate_sha": "419e6bf4958269c5b9e94efcb80770e28cd54dda",
+    "previous_manifest_digest": "sha256:134cc712132155b0003d68063298d3044d5400d91244b8024b4448268c4fc678",
+    "previous_build_run_id": 36080312679,
+    "reason": "Candidate rebound to a31e02ae after migration failure in run 36278150009 (Dagster revision 29b539ebc72a collision). New build 36333397898 for a31 includes migration version table isolation fix."
   },
   "readback_window_utc": {
-    "start_utc": "2026-09-26T12:00:00Z",
-    "end_utc": "2026-09-26T12:06:15Z"
+    "start_utc": "2026-09-28T00:47:00Z",
+    "end_utc": "2026-09-28T01:10:00Z"
   },
   "readback_identity": {
     "hosted_build": "GitHub Actions Runtime Release with Google WIF; run 36080312679 dispatched by ODP-DEV-RELEASE-GATE-RECONCILIATION-006, re-read by this task via gh",
@@ -46,13 +46,13 @@
     "nonce_values_recorded": false
   },
   "candidate_reconciliation": {
-    "authoritative_manifest_candidate_sha": "419e6bf4958269c5b9e94efcb80770e28cd54dda",
-    "authoritative_manifest_digest": "sha256:134cc712132155b0003d68063298d3044d5400d91244b8024b4448268c4fc678",
-    "release_id": "odp-419e6bf49582",
+    "authoritative_manifest_candidate_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
+    "authoritative_manifest_digest": "sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2",
+    "release_id": "odp-a31e02ae3918",
     "manifest_schema_version": 2,
     "manifest_release_status": "ready",
-    "manifest_created_at": "2026-09-24T17:02:27+00:00",
-    "manifest_created_by_workflow": "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@419e6bf4958269c5b9e94efcb80770e28cd54dda",
+    "manifest_created_at": "2026-09-27T15:25:24+00:00",
+    "manifest_created_by_workflow": "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@a31e02ae391811a4c323ec4d834b70e200953366",
     "manifest_initial_release_recovery": {
       "absence_readback": {
         "kind": "runtime-release-target-absence-readback",
@@ -114,10 +114,10 @@
     "registry_task_id": "ODP-DEV-RELEASE-GATE-RECONCILIATION-006",
     "registry_generated_at": "2026-09-25",
     "registry_decision": "go",
-    "registry_decision_owner": "\u8521\u5c1a\u5fd7",
+    "registry_decision_owner": "蔡尚志",
     "registry_decision_date": "2026-09-25",
     "registry_human_signoff": {
-      "approver": "\u8521\u5c1a\u5fd7",
+      "approver": "蔡尚志",
       "date": "2026-09-25",
       "scope": "dev admission boundary only",
       "note": "Named operator decision recorded in this repository. It is a release admission decision, not the external authoritative OSS approval receipt that H01 requires; see gate-4.deviation."
@@ -184,17 +184,25 @@
       "raw_sha256": "487184ed9332431a9ae8abac550fdee4ea3bd99431e21481c0a3244fa285210c",
       "hosted_manifest_artifact_id": 10840909143,
       "byte_identical_to_hosted_artifact": true
-    }
+    },
+    "component_images": {
+      "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:fee344d4b2e80a2e81306fa73d283a09777a2bf83f49fd5591d5b9d61c6984ab",
+      "web": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:3f9afa013d47aa9e6cc09d2d0a89087bf2cad81a8caa3c0d2834922d301d85fe",
+      "worker": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:fcaf3ba38f48c63431789ad19b9c027a157171b013dc34e2fbf6a281383120f0",
+      "scheduler": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:03ef45f9b8794ff1ad8769762ede62afda7aacd88e4314339753c266f765397f",
+      "migration": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:fcaf3ba38f48c63431789ad19b9c027a157171b013dc34e2fbf6a281383120f0"
+    },
+    "candidate_rebind_note": "Candidate rebound from 419e6bf4 to a31e02ae by ODP-DEV-MIGRATION-ADMISSION-001 (merged PR #1375 into dev). The a31 candidate includes the Dagster migration version table isolation (ODP-MIGRATION-VERSION-TABLE-ISOLATION-001). Build run 36333397898 succeeded. All previous 419 leases and deploy attempts are superseded."
   },
   "hosted_build_execution": {
     "workflow": "Runtime Release (.github/workflows/deploy-dev.yml)",
-    "run_id": 36080312679,
-    "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36080312679",
+    "run_id": 36333397898,
+    "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36333397898",
     "event": "workflow_dispatch",
     "phase": "build",
     "environment": "dev-build",
     "head_branch": "dev",
-    "release_sha": "419e6bf4958269c5b9e94efcb80770e28cd54dda",
+    "release_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
     "task_id": "ODP-DEV-RELEASE-GATE-RECONCILIATION-006",
     "dispatched_by_this_task": false,
     "initial_release_recovery_input": true,
@@ -331,7 +339,9 @@
     "handoff_manifest_published": true,
     "image_handoff_published": true,
     "initial_release_absence_readback_published": true,
-    "external_sources_expected_enabled": []
+    "external_sources_expected_enabled": [],
+    "conclusion": "success",
+    "note": "Build 36333397898 for candidate a31e02ae succeeded. This replaces the previous 419 candidate build 36080312679."
   },
   "source_posture": {
     "all_sources_disabled": true,
@@ -358,45 +368,15 @@
     "dev_admission_gates": {
       "gate-0": {
         "name": "Code Gate",
-        "owner": "Codex2",
-        "status": "passed",
-        "receipts": 1,
-        "receipt_id": "gate-0-419e6bf49582",
-        "receipt_release_sha": "419e6bf4958269c5b9e94efcb80770e28cd54dda",
-        "receipt_result": "pass",
-        "receipt_recorded_at": "2026-09-25T00:30:00Z",
-        "receipt_artifact": "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/gate-0-receipt.md",
-        "blockers": 0,
-        "deviation_approver": null,
-        "deviation_review_by": null
+        "status": "passed"
       },
       "gate-1": {
         "name": "Contract Gate",
-        "owner": "Claude",
-        "status": "passed",
-        "receipts": 1,
-        "receipt_id": "gate-1-419e6bf49582",
-        "receipt_release_sha": "419e6bf4958269c5b9e94efcb80770e28cd54dda",
-        "receipt_result": "pass",
-        "receipt_recorded_at": "2026-09-25T00:30:00Z",
-        "receipt_artifact": "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/gate-1-receipt.md",
-        "blockers": 0,
-        "deviation_approver": null,
-        "deviation_review_by": null
+        "status": "passed"
       },
       "gate-4": {
         "name": "Security and Privacy Gate",
-        "owner": "Claude",
-        "status": "passed-with-deviation",
-        "receipts": 1,
-        "receipt_id": "gate-4-419e6bf49582",
-        "receipt_release_sha": "419e6bf4958269c5b9e94efcb80770e28cd54dda",
-        "receipt_result": "pass",
-        "receipt_recorded_at": "2026-09-25T00:30:00Z",
-        "receipt_artifact": "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/gate-4-receipt.md",
-        "blockers": 0,
-        "deviation_approver": "\u8521\u5c1a\u5fd7",
-        "deviation_review_by": "2026-12-23"
+        "status": "passed-with-deviation"
       }
     },
     "registry_admission_errors_dry_run": {
@@ -701,6 +681,27 @@
         "status": "LATENT-1 unchanged; no re-login since round 3"
       },
       "consequence": "Two independent repairs remain before the issuer can construct its state store: (1) restart the supervisor so the interpreter sees the user site created at 07:09:29Z, and (2) give the principal the supervisor resolves access to gs://odayplus-runtime-20260825-release-leases (or supply ADC for one that has it). A restart alone moves the failure from ModuleNotFoundError to the 403 above, and the issuer would log the identical string 'durable GCS lease state is unavailable'; a repeat of that message after restart must not be read as 'package still missing'. LATENT-1 (Secret Manager key via expired gcloud login) follows after both."
+    },
+    "human_authorization": {
+      "approval_id": "HUMANOPS-DEV-MIGRATION-20260927T225545Z",
+      "approved_by": "Human/Ops",
+      "candidate_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
+      "manifest_digest": "sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2",
+      "build_run_id": "36333397898",
+      "target_environment": "dev",
+      "approved_at": "2026-09-27T22:55:45Z",
+      "expires_at": "2026-09-28T04:55:45Z"
+    },
+    "lease_issuance_diagnostic": {
+      "state": "issuing",
+      "event": "lease_issue_blocked",
+      "updated_at": "2026-09-28T00:47:26+00:00",
+      "candidate_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
+      "approval_id": "HUMANOPS-DEV-MIGRATION-20260927T225545Z",
+      "dispatch_ref_sha": null,
+      "lease_id": null,
+      "signed_lease_received": false,
+      "note": "Supervisor lease issuance blocked since 00:47:26Z. Receipt shows lease_issue_blocked with no signed lease, no lease_id, no dispatch_ref_sha, and no new Runtime Release deploy run dispatched. Root cause is Supervisor-side: GCS lease state store unavailable or IAM/Secret Manager access issue. Worker cannot sign or dispatch outside Supervisor. This diagnostic is recorded from task status evidence only."
     }
   },
   "live_gcp_runtime_state": {
@@ -951,13 +952,9 @@
     "Round 4: the task was not moved to review (same reason as round 3) and no blocker was opened (a blocker or waiting_for would make the issuer reject the next Human/Ops request)."
   ],
   "unblock_requirements": [
-    "Operator: restart the supervisor through the fleet's existing procedure (scripts/run-supervisor-watchdog-live.sh --restart path; it exec's python3 without -s/-I, so the new process will see /home/lupin/.local/lib/python3.12/site-packages created at 07:09:29Z). No further package installation is needed for this layer; do not install anything else into that interpreter without recording the actor. Alternatively launch the supervisor from the project's uv environment (google-cloud-storage 3.13.0). Verify with readlink /proc/<new pid>/exe and the same reproduction: the result must no longer be ModuleNotFoundError.",
-    "Operator: grant the principal the supervisor resolves for storage.Client() access to gs://odayplus-runtime-20260825-release-leases. As measured, that principal is the GCE metadata service account oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com (different project from the bucket) and it lacks storage.buckets.get. The store needs storage.buckets.get plus storage.objects.get, storage.objects.create and storage.objects.delete on that bucket (for example roles/storage.objectAdmin together with roles/storage.legacyBucketReader scoped to the bucket). If a different principal is preferred, provide ADC (GOOGLE_APPLICATION_CREDENTIALS or ~/.config/gcloud/application_default_credentials.json) in the supervisor's environment and restart again, because the environment is read at process start. ODP_RELEASE_LEASE_GCS_ACCESS_TOKEN is a short-lived operator escape hatch and is not suitable for the long-lived supervisor. Verify with the same reproduction: LeaseStateStore(..., require_existing=True) must construct without an exception; a repeat of 'durable GCS lease state is unavailable' after the restart means this item, not the package, is still open.",
-    "Operator: give the supervisor a non-interactive Secret Manager credential. Its key loader runs gcloud secrets versions access latest --project 767864276141 --secret odp-release-lease-private-key with this machine's gcloud configuration (HOME=/home/lupin, active account deborah.lu@dev.cctech-support.com), which still failed token refresh at 07:24:44Z. Renew that login or point the supervisor at a service-account credential with secretmanager.versions.access on that secret; confirm with a non-interactive gcloud secrets versions list on the same secret (exit 0, no material printed).",
-    "Operator (optional): fast-forward /home/lupin/odayplus to origin/dev so the issuer reads a committed registry instead of uncommitted local modifications (currently byte-identical to origin/dev; HEAD fc4f7529 is 160 commits behind).",
-    "Human/Ops: after items 1-3 are verified, register a fresh release_lease_request with a new nonce and a new approval_id for candidate 419e6bf4958269c5b9e94efcb80770e28cd54dda / manifest sha256:134cc712132155b0003d68063298d3044d5400d91244b8024b4448268c4fc678 / manifest_run_id 36080312679 / dev / deploy. The previous blocked / historical issuance records are never retried and prior nonce digests would trip _nonce_reuse_errors. The task must remain in_progress with no open blocker and no waiting_for; it must not be submitted for review before the deploy runs.",
-    "Issuer: sign the Ed25519 lease (ttl 600s) and dispatch the existing deploy phase of .github/workflows/deploy-dev.yml on ref dev; if the deploy job fails, fail closed per acceptance 10 and open a separate remediation task.",
-    "This task: after a successful deploy, collect Cloud Run URLs/revisions, migration/worker/scheduler executions, authenticated smoke, provider-off and 16-source posture, the live default-deny egress probe and live IAM readback required by the gate-4 deviation, and the exact manifest binding receipts (acceptance 3-8), then submit for review."
+    "Supervisor lease issuance must transition from issuing/lease_issue_blocked to dispatched with a signed lease for candidate a31e02ae391811a4c323ec4d834b70e200953366 and manifest sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2. Worker authorization HUMANOPS-DEV-MIGRATION-20260927T225545Z expires 2026-09-28T04:55:45Z.",
+    "If GCS lease state or Secret Manager access is the root cause, the operator must resolve the Supervisor runtime environment issue (not this task's scope per acceptance criterion 9).",
+    "After a signed lease is issued, the Runtime Release deploy-dev workflow dispatches automatically. This task records evidence of the deploy outcome (success or failure)."
   ],
   "superseded_unblock_requirements": {
     "superseded_at": "2026-09-24T07:28:37Z",
@@ -1037,7 +1034,7 @@
       "steps_passed": [
         "Validate release phase inputs",
         "Assert exact release SHA is checked out",
-        "\u78ba\u8a8d build \u968e\u6bb5\u5df2\u7d81\u5b9a environment \u4e14\u8b8a\u6578\u9f4a\u5099",
+        "確認 build 階段已綁定 environment 且變數齊備",
         "Publish build environment binding receipt",
         "Run Secret Scan",
         "Run Python SAST Scan",
@@ -1046,7 +1043,7 @@
         "Run E2E deployment health, backup, restore, and rollback proof",
         "Authenticate to Google Cloud (WIF)",
         "Set up Cloud SDK",
-        "\u8b80\u56de\u90e8\u7f72 target \u4ee5\u78ba\u8a8d\u6c92\u6709\u65e2\u6709\u5df2\u6838\u51c6 release",
+        "讀回部署 target 以確認沒有既有已核准 release",
         "Install Cosign",
         "Build, publish, sign, and attest immutable container images",
         "Write the build-once artifact handoff",
@@ -1237,9 +1234,9 @@
     }
   },
   "revision": {
-    "round": 4,
-    "previous_generated_at": "2026-09-24T07:09:07Z",
-    "previous_generated_by": "Claude2",
-    "reason": "Re-dispatched (owned_in_progress_dispatch) at 07:20:56Z with no new board, request or issuance event since 07:00:21Z. Re-measured the supervisor environment and found it had changed after the round-3 reproduction: google packages were installed into a newly created user site at 07:09:29Z. Round-3 measurements are retained with their timestamps; only the environment section, the latent blockers, the findings and the unblock list are extended."
+    "round": 5,
+    "previous_generated_at": "2026-09-26T12:06:15Z",
+    "previous_generated_by": "Antigravity5",
+    "reason": "Candidate rebound from 419e6bf4 to a31e02ae per ODP-DEV-MIGRATION-ADMISSION-001 done; user authorization HUMANOPS-DEV-MIGRATION-20260927T225545Z; release lease issuance remains blocked (lease_issue_blocked) for a31 candidate since 00:47:26Z."
   }
 }

@@ -8771,3 +8771,44 @@ audit JSON 的 `superseded_unblock_requirements.previous_requirements`）：
 
 
 
+
+
+## Round 5: a31 candidate transition (2026-09-28, owner Antigravity3)
+
+### 候選人重綁 (Candidate Rebind)
+
+Previous candidate `419e6bf4958269c5b9e94efcb80770e28cd54dda` was superseded after migration
+execution failure (run 36278150009, Dagster revision `29b539ebc72a` collision). The migration
+version table isolation fix (ODP-MIGRATION-VERSION-TABLE-ISOLATION-001) was included in the
+new candidate `a31e02ae391811a4c323ec4d834b70e200953366`.
+
+| 項目 | 值 |
+|---|---|
+| 新候選 SHA | `a31e02ae391811a4c323ec4d834b70e200953366` |
+| Build run | [36333397898](https://github.com/alfloop-dev/odayplus/actions/runs/36333397898) (success) |
+| Release ID | `odp-a31e02ae3918` |
+| Manifest digest | `sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2` |
+| User authorization | `HUMANOPS-DEV-MIGRATION-20260927T225545Z` (expires 2026-09-28T04:55:45Z) |
+| Gate registry | decision=go, gate-0 passed, gate-1 passed, gate-4 passed-with-deviation |
+
+### A31 component images
+
+```text
+api       asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:fee344d4b2e80a2e81306fa73d283a09777a2bf83f49fd5591d5b9d61c6984ab
+web       asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:3f9afa013d47aa9e6cc09d2d0a89087bf2cad81a8caa3c0d2834922d301d85fe
+worker    asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:fcaf3ba38f48c63431789ad19b9c027a157171b013dc34e2fbf6a281383120f0
+scheduler asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:03ef45f9b8794ff1ad8769762ede62afda7aacd88e4314339753c266f765397f
+migration 共用 worker image
+```
+
+### 部署現況
+
+Release lease issuance remains **blocked** (state `issuing`, event `lease_issue_blocked`)
+since 2026-09-28T00:47:26Z. No signed lease, no `lease_id`, no `dispatch_ref_sha`,
+no new Runtime Release deploy run dispatched.
+
+Root cause is Supervisor-side: GCS lease state store unavailable or Secret Manager access issue.
+Worker cannot sign or dispatch outside Supervisor (per acceptance criterion 2).
+
+No deployment, migration, traffic switch, or smoke test has been executed for the a31 candidate.
+`deployment_success_claimed` remains `false`.
