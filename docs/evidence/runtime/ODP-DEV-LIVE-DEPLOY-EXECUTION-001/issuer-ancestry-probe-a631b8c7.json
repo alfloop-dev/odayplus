@@ -1,0 +1,26 @@
+{
+  "probed_at": "2026-09-29T15:24:10Z",
+  "note": "read-only in-process call of check_candidate_ancestry (the function the issuer's check_dispatch_ref_errors uses) from two code versions; no request, nonce, GCS or secret access",
+  "candidate_sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
+  "dispatch_ref": "dev",
+  "dispatch_ref_sha": "a631b8c793b27842f28f54f663a33b4af49ee824",
+  "git_root": "/tmp/pantheon-worker-worktrees/pantheon/odp-dev-live-deploy-execution-001",
+  "issuer_runtime": {
+    "module": "/home/lupin/oday-plus-supervisor-runtime-af923aa58d33/delivery_toolchain/e2e/check_release_gate_registry.py",
+    "runtime_commit": "af923aa58d33da4971e09f6e87ea2d1a026f6580",
+    "contains_3cc85636": false,
+    "errors": [
+      "release.candidate_sha 'ee06d1d8294464f1eb7231f2b06505348a61cba2' is an ancestor of expected SHA 'a631b8c793b27842f28f54f663a33b4af49ee824', but intervening commits touch non-evidence paths: docs/audits/code-boundary-inventory.csv"
+    ]
+  },
+  "origin_dev_code": {
+    "module": "delivery_toolchain/e2e/check_release_gate_registry.py @ a631b8c793b27842f28f54f663a33b4af49ee824",
+    "errors": []
+  },
+  "csv_touching_commits_candidate_to_ref": [
+    "00b8a049fc8d32d0cc3a5b332360c5e5c6409530 ODP-NFR-RUNTIME-EVIDENCE-001: keep five NFR items blocked by evidence",
+    "276b093816ed46d49b393656b483784979097c04 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001: update boundary inventory",
+    "bd65dccc9ee028725361037acc6f721f0011776b ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001: anchor restore boundary inventory",
+    "c04ce8084d36817b7e08a16f7f52e8bdec3cda45 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001: update boundary inventory"
+  ]
+}
