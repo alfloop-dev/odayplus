@@ -1,0 +1,6 @@
+{
+  "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:07b3c1f3ceb9a2bec728fa656e84b74cdb245a7fb77c6ca9c69e4bc74827e7f1",
+  "scheduler": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:bd4efa0d799261261c53773c994568f40bff08621bf039becce7835f9e5db66d",
+  "web": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:9939e4d0bc83fc8bcaf81d4b9d2ed0d1fc338605ab32c4524414f2ab5dc1ddd6",
+  "worker": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:9aeb6784439dfac4c69675b6426cc1003968faa35ceb18928fed5825f7d61dd4"
+}

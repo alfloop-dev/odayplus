@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "record_kind": "exact-candidate-ci-and-product-inheritance",
+  "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+  "candidate_sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
+  "observed_at": "2026-09-29T05:37:00Z",
+  "exact_candidate_ci": [
+    {
+      "workflow": "CI",
+      "run_id": 36435578948,
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/36435578948",
+      "event": "merge_group",
+      "head_sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
+      "conclusion": "success",
+      "created_at": "2026-09-28T14:23:16Z",
+      "updated_at": "2026-09-28T14:29:54Z",
+      "orchestrator_job": {
+        "id": 108972518361,
+        "conclusion": "success",
+        "started_at": "2026-09-28T14:23:19Z",
+        "completed_at": "2026-09-28T14:29:53Z",
+        "test_command": "uv run pytest -m \"not requires_live_env\" .orchestrator delivery_toolchain scripts tests/tooling infra",
+        "summary": "3207 passed, 6 skipped, 10 deselected, 3 warnings, 726 subtests passed in 345.78s (0:05:45)"
+      },
+      "change_scope_job": {
+        "id": 108972518879,
+        "conclusion": "success"
+      },
+      "product_child_jobs": "all seven skipped by change-scope (development_tooling)"
+    },
+    {
+      "workflow": "CI",
+      "run_id": 36436491098,
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/36436491098",
+      "event": "push",
+      "head_sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
+      "conclusion": "success",
+      "created_at": "2026-09-28T14:30:28Z",
+      "updated_at": "2026-09-28T14:36:36Z",
+      "orchestrator_job": {
+        "id": 108975649897,
+        "conclusion": "success"
+      },
+      "product_child_jobs": "all seven skipped by change-scope"
+    }
+  ],
+  "product_ci_inheritance": {
+    "source_commit": "bb15fe9fee5da3882117fb8c2593cfb3966a68c3",
+    "source_ci_run_id": 36361727942,
+    "source_ci_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36361727942",
+    "source_ci_event": "push",
+    "source_ci_created_at": "2026-09-28T00:18:17Z",
+    "source_ci_conclusion": "success",
+    "source_product_jobs": {
+      "product-db": [
+        108740115077,
+        "success"
+      ],
+      "product-lint-unit": [
+        108740115117,
+        "success"
+      ],
+      "performance-gate": [
+        108740115121,
+        "success"
+      ],
+      "product-security": [
+        108740115144,
+        "success"
+      ],
+      "product-e2e-gate": [
+        108740115154,
+        "success"
+      ],
+      "product-node": [
+        108740115160,
+        "success"
+      ],
+      "product-api-contract": [
+        108740115525,
+        "success"
+      ]
+    },
+    "selection_rule": "newest commit on dev first-parent history from the candidate whose push/merge_group CI run executed all seven product child jobs with conclusion success",
+    "source_is_first_parent_ancestor_of_candidate": true,
+    "delta_paths": [
+      ".orchestrator/release_lease.py",
+      ".orchestrator/release_lease_integration.py",
+      ".orchestrator/test_release_lease_integration.py",
+      "delivery_toolchain/e2e/check_release_gate_registry.py",
+      "delivery_toolchain/release/release_lease.py",
+      "docs/evidence/runtime/ODP-RUNTIME-RELEASE-ANCESTRY-INVENTORY-002/evidence.md",
+      "docs/evidence/runtime/ODP-SUPERVISOR-LEASE-ISSUANCE-RECOVERY-001/README.md",
+      "tests/e2e/test_release_gate_registry.py"
+    ],
+    "delta_classification": {
+      "classifier": "delivery_toolchain/governance/classify_change_review_scope.py at the candidate commit (the same classifier CI change-scope runs)",
+      "command": "git diff --name-only bb15fe9fee5da3882117fb8c2593cfb3966a68c3 ee06d1d8294464f1eb7231f2b06505348a61cba2 > paths.txt; python3 delivery_toolchain/governance/classify_change_review_scope.py --paths-file paths.txt",
+      "exit_code": 0,
+      "scope": "development_tooling",
+      "non_tooling_paths": []
+    },
+    "conclusion": "No product path differs between the inherited full-product CI commit and the candidate, by the CI's own classifier; product child-job results are inherited, not re-run. The eight differing tooling/evidence paths are covered by the exact-candidate orchestrator job above, except tests/e2e/test_release_gate_registry.py, which is outside that job's paths and is covered by the supplementary receipt below."
+  },
+  "supplementary_local_receipts": [
+    {
+      "purpose": "tests/e2e/test_release_gate_registry.py changed after the inherited product CI and is not in the orchestrator job paths; run it against the exact candidate tree",
+      "checkout": "git clone --shared of the local repository, detached at ee06d1d8294464f1eb7231f2b06505348a61cba2 (HEAD verified), followed by npm ci",
+      "command": "UV_PYTHON=3.12 uv run --frozen pytest tests/e2e/test_release_gate_registry.py",
+      "exit_code": 0,
+      "summary": "61 passed in 16.56s",
+      "ran_by": "Claude (interactive session, on explicit user instruction)",
+      "earlier_attempts_disclosed": [
+        "git archive extraction (no .git): 10 failed / 51 passed, 'not a git repository'",
+        "git checkout without node_modules: 2 failed / 59 passed, \"Cannot find module '@playwright/test'\""
+      ],
+      "completed_at": "2026-09-29T05:34:25Z",
+      "completed_at_source": "mtime of the pytest output log, written when the run finished"
+    }
+  ],
+  "does_not_attest": [
+    "release admission, lease issuance, deploy, or live runtime acceptance",
+    "external H01 legal approval"
+  ]
+}

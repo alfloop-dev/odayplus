@@ -1,0 +1,33 @@
+{
+  "approval_id": "HUMANOPS-DEV-MIGRATION-20260928T120016Z",
+  "approved_by": "Human/Ops (user response transcribed by interactive Codex; not an external identity-system signature)",
+  "user_reply": "同意",
+  "recorded_at": "2026-09-28T12:00:16Z",
+  "expires_at": "2026-09-28T18:00:16Z",
+  "candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+  "manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
+  "manifest_run_id": 36415981871,
+  "target_environment": "dev",
+  "action": "deploy",
+  "dispatch_preconditions": [
+    "Owner updates canonical RELEASE_MANIFEST.json, RELEASE_GATE_REGISTRY.json, and task evidence on PR #1107 for this exact candidate.",
+    "Reviewer accepts the exact submitted head through the canonical task flow.",
+    "PR #1107 is merged before the fresh lease request is registered."
+  ],
+  "authorized_scope": [
+    "one fresh release request",
+    "one standard short-lived Supervisor lease",
+    "existing Runtime Release deploy phase only"
+  ],
+  "scope_limits": [
+    "no database reset",
+    "no Alembic stamp",
+    "no database deletion",
+    "no rewriting foreign Dagster migration history",
+    "no reuse of expired approval/request/nonce",
+    "all 16 external sources remain disabled",
+    "provider credentials absent",
+    "egress default-deny",
+    "staging and production unchanged"
+  ]
+}
