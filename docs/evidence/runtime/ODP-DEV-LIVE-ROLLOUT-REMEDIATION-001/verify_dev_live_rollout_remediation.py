@@ -38,14 +38,14 @@ EXPECTED_BUILD_RUN_ID = 36415981871
 EXPECTED_RELEASE_ID = "odp-a663d604831c"
 EXPECTED_MANIFEST_DIGEST = "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482"
 EXPECTED_AUTHORIZATION_ID = "HUMANOPS-DEV-MIGRATION-20260928T120016Z"
-EXPECTED_CI_RUN_ID = 36415981871
+EXPECTED_CI_RUN_ID = 36391745153
 EXPECTED_HOSTED_ARTIFACT_IDS = {
-    "initial-release-absence-readback-a663d604831c4b9710dda9b7ca85ddbc193837e8": 0,
-    "release-environment-receipt-dev-build": 0,
-    "release-npm-audit-receipt-dev": 0,
-    "release-phase-receipt-dev-build": 0,
-    "runtime-release-images-a663d604831c4b9710dda9b7ca85ddbc193837e8": 0,
-    "runtime-release-manifest-a663d604831c4b9710dda9b7ca85ddbc193837e8": 0,
+    "initial-release-absence-readback-a663d604831c4b9710dda9b7ca85ddbc193837e8": 10967906043,
+    "release-environment-receipt-dev-build": 10968030024,
+    "release-npm-audit-receipt-dev": 10967620580,
+    "release-phase-receipt-dev-build": 10967535042,
+    "runtime-release-images-a663d604831c4b9710dda9b7ca85ddbc193837e8": 10967216335,
+    "runtime-release-manifest-a663d604831c4b9710dda9b7ca85ddbc193837e8": 10967281361,
 }
 COMPONENTS = ("api", "web", "worker", "scheduler")
 DEV_GATES = ("gate-0", "gate-1", "gate-4")

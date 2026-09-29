@@ -75,11 +75,27 @@
           "receipt_id": "gate-0-a663d604831c",
           "release_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
           "result": "pass",
-          "recorded_at": "2026-09-27T16:42:26Z",
-          "recorded_by": "Codex",
-          "artifact": "docs/evidence/runtime/ODP-DEV-MIGRATION-ADMISSION-001/a31-gate-0-receipt.md",
+          "recorded_at": "2026-09-28T23:20:00Z",
+          "recorded_by": "Antigravity3",
+          "artifact": "docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/exact-candidate-ci-36391745153.json",
           "gate_name": "Code Gate",
-          "summary": "Exact candidate docs-scope CI succeeded with product jobs skipped; identical11 product/build objects bind prior355 full CI results; fresh exact a663 Runtime Release build 36415981871 succeeded. See explicit provenance in receipt.",
+          "summary": "Exact a663 CI run 36391745153 (merge_group, success) proves orchestrator/infra tests (3207 passed). Product child jobs skipped by change-scope (docs-only delta a31→a663). Product build objects identical to prior 355a94b5 full CI (inherited via ODP-DEV-MIGRATION-ADMISSION-001/a31-candidate-comparison.json). Fresh a663 Runtime Release build 36415981871 succeeded (build-only, deploy/lease skipped).",
+          "provenance": {
+            "exact_ci_run_id": 36391745153,
+            "exact_ci_event": "merge_group",
+            "exact_ci_conclusion": "success",
+            "exact_ci_product_jobs": "skipped by change-scope",
+            "product_ci_inheritance": {
+              "source_candidate": "355a94b52b14badc236be4b3e52eb936a7075549",
+              "source_ci_run_id": 36311413006,
+              "basis": "docs/evidence/runtime/ODP-DEV-MIGRATION-ADMISSION-001/a31-candidate-comparison.json",
+              "identical_product_build_objects": 11
+            },
+            "build_run_id": 36415981871,
+            "build_run_workflow": "Runtime Release",
+            "build_run_conclusion": "success",
+            "build_run_deploy_phase": "skipped"
+          },
           "recorded_under_task": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001"
         }
       ],
@@ -127,11 +143,27 @@
           "receipt_id": "gate-1-a663d604831c",
           "release_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
           "result": "pass",
-          "recorded_at": "2026-09-27T16:42:26Z",
-          "recorded_by": "Codex",
-          "artifact": "docs/evidence/runtime/ODP-DEV-MIGRATION-ADMISSION-001/a31-gate-1-receipt.md",
+          "recorded_at": "2026-09-28T23:20:00Z",
+          "recorded_by": "Antigravity3",
+          "artifact": "docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/exact-candidate-ci-36391745153.json",
           "gate_name": "Contract Gate",
-          "summary": "Exact candidate docs-scope CI succeeded with product jobs skipped; identical11 product/build objects bind prior355 full CI results; fresh exact a663 Runtime Release build 36415981871 succeeded. See explicit provenance in receipt.",
+          "summary": "Exact a663 CI run 36391745153 (merge_group, success) proves orchestrator/infra tests including contract tests (3207 passed). Product child jobs skipped by change-scope (docs-only delta a31→a663). Product/contract build objects identical to prior 355a94b5 full CI (inherited via ODP-DEV-MIGRATION-ADMISSION-001/a31-candidate-comparison.json). Fresh a663 Runtime Release build 36415981871 succeeded (build-only, deploy/lease skipped).",
+          "provenance": {
+            "exact_ci_run_id": 36391745153,
+            "exact_ci_event": "merge_group",
+            "exact_ci_conclusion": "success",
+            "exact_ci_product_jobs": "skipped by change-scope",
+            "product_ci_inheritance": {
+              "source_candidate": "355a94b52b14badc236be4b3e52eb936a7075549",
+              "source_ci_run_id": 36311413006,
+              "basis": "docs/evidence/runtime/ODP-DEV-MIGRATION-ADMISSION-001/a31-candidate-comparison.json",
+              "identical_product_build_objects": 11
+            },
+            "build_run_id": 36415981871,
+            "build_run_workflow": "Runtime Release",
+            "build_run_conclusion": "success",
+            "build_run_deploy_phase": "skipped"
+          },
           "recorded_under_task": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001"
         }
       ],
@@ -411,10 +443,13 @@
     },
     "candidate_ci_run": {
       "workflow": "CI",
-      "run_id": 36415981871,
-      "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36415981871",
+      "run_id": 36391745153,
+      "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36391745153",
+      "event": "merge_group",
       "head_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
-      "product_jobs": "full CI on merge commit"
+      "conclusion": "success",
+      "product_jobs": "skipped by change-scope; product build objects identical to prior 355a94b5 full CI",
+      "evidence": "docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/exact-candidate-ci-36391745153.json"
     },
     "approval_id": "HUMANOPS-DEV-MIGRATION-20260928T120016Z",
     "approval_status": "expired",

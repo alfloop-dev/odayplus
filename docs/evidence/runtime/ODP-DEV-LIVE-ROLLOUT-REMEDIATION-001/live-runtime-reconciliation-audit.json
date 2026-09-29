@@ -9,9 +9,9 @@
   "generated_at": "2026-09-28T23:20:00Z",
   "generated_by": "Antigravity3",
   "collection_baseline": {
-    "note": "Round 6 (a31 candidate evidence correction and lease blocker routing): all 16 dependencies done. Origin/dev head bb15fe9f includes merged ODP-DEV-MIGRATION-ADMISSION-001 (PR #1375). Task branch is task/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001.",
-    "origin_dev_head_sha": "bb15fe9fee5da3882117fb8c2593cfb3966a68c3",
-    "task_base_merge_sha": "bb15fe9fee5da3882117fb8c2593cfb3966a68c3",
+    "note": "Round 7 (a663 candidate rebind and evidence correction): all 16 dependencies done. Origin/dev head ee06d1d8 includes merged ODP-SUPERVISOR-LEASE-ISSUANCE-RECOVERY-001 and ODP-RUNTIME-RELEASE-ANCESTRY-INVENTORY-002. Actual a663 CI is merge_group run 36391745153; Runtime Release build 36415981871 is build-only (deploy/lease skipped). Task branch is task/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001.",
+    "origin_dev_head_sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
+    "task_base_merge_sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
     "task_base_merge_parents": [
       "bb15fe9fee5da3882117fb8c2593cfb3966a68c3"
     ],
@@ -28,14 +28,14 @@
     "previous_candidate_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
     "previous_manifest_digest": "sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2",
     "previous_build_run_id": 36333397898,
-    "reason": "Rebuilt current audit snapshot from hosted a31 receipts, eliminated residual 419 references from current observation layers, segregated superseded observations to history, strengthened cross-binding checks, and recorded open lease blocker."
+    "reason": "Rebound from a31e02ae to a663d604 candidate. Rebuilt current audit snapshot from run-36415981871 a663 artifacts and actual run metadata. Replaced all a31 images, artifact IDs, SHA256 hashes, and CI references with verified a663 equivalents. Moved superseded a31 observations into history. Fixed false CI attribution (36415981871 is Runtime Release build, not CI; actual CI is merge_group 36391745153). Correct a663 absence file raw SHA256 is 3391e27c24589dd90a89288a036c9bb6974881992d6c338b497e6d7ec8a12825 (artifact 10967906043)."
   },
   "readback_window_utc": {
     "start_utc": "2026-09-28T00:47:00Z",
     "end_utc": "2026-09-28T02:15:00Z"
   },
   "readback_identity": {
-    "hosted_build": "GitHub Actions Runtime Release with Google WIF; run 36333397898 for candidate a31e02ae391811a4c323ec4d834b70e200953366, build job 108659578847",
+    "hosted_build": "GitHub Actions Runtime Release with Google WIF; run 36415981871 for candidate a663d604831c4b9710dda9b7ca85ddbc193837e8, build job succeeded",
     "canonical_board": "live ai-status.json under PANTHEON_STATUS_ROOT, read-only",
     "supervisor_process": "pid 2220782, /usr/bin/python3.12 -u .orchestrator/supervisor.py, cwd /home/lupin/oday-plus-supervisor-runtime-43d2fe8ca8e0, started 2026-09-23T14:35Z per supervisor-watchdog-restart-20260923T143503Z.log; inspected read-only via /proc and reproduced with the same interpreter and an env -i shell",
     "gcp_project_id": "odayplus-runtime-20260825",
@@ -97,7 +97,7 @@
           }
         ]
       },
-      "binding_digest": "sha256:501223f37245ef9ec6bdfe707a3fc87c65ca94ec72c988311e20126bf83c3fdd",
+      "binding_digest": "sha256:33e4e8e1efe0066351107fc17ad9085bbba6e33c13f91bbc063f0b190e024594",
       "kind": "initial-release-recovery",
       "prior_release_absent": true,
       "recovery_actions": [
@@ -137,12 +137,12 @@
       "note": "Candidate rebound to a31e02ae after migration failure in run 36278150009. Rebuilt once in build run 36333397898. User authorization recorded as HUMANOPS-DEV-MIGRATION-20260927T225545Z.",
       "build_run": {
         "workflow": "Runtime Release",
-        "run_id": 36333397898,
-        "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36333397898",
+        "run_id": 36415981871,
+        "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36415981871",
         "event": "workflow_dispatch",
         "phase": "build",
         "conclusion": "success",
-        "release_sha_input": "a31e02ae391811a4c323ec4d834b70e200953366",
+        "release_sha_input": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
         "deploy_jobs": "skipped; no lease supplied or deployment performed"
       },
       "candidate_ci_run": {
@@ -168,7 +168,7 @@
       "product_jobs": "skipped by docs scope",
       "created_at": "2026-09-27T16:29:00Z"
     },
-    "origin_dev_head_sha": "bb15fe9fee5da3882117fb8c2593cfb3966a68c3",
+    "origin_dev_head_sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
     "candidate_is_ancestor_of_origin_dev": true,
     "commits_between_candidate_and_origin_dev": 3,
     "first_parent_commits_between": 1,
@@ -190,19 +190,19 @@
     "candidate_must_rebuild": false,
     "old_artifacts_reused": false,
     "repository_manifest": {
-      "raw_sha256": "d4591109492cc153c35938067c1b62972b53bf9a8dd62ee180dbe51f90b21fb1",
-      "hosted_manifest_artifact_id": 10936456723,
+      "raw_sha256": "edd98d4e786f86121ceaafaf779041a939df924beae91cf0265946f89475497b",
+      "hosted_manifest_artifact_id": 10967281361,
       "byte_identical_to_hosted_artifact": true,
-      "logical_manifest_digest": "sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2"
+      "logical_manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482"
     },
     "component_images": {
-      "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:fee344d4b2e80a2e81306fa73d283a09777a2bf83f49fd5591d5b9d61c6984ab",
-      "web": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:3f9afa013d47aa9e6cc09d2d0a89087bf2cad81a8caa3c0d2834922d301d85fe",
-      "worker": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:fcaf3ba38f48c63431789ad19b9c027a157171b013dc34e2fbf6a281383120f0",
-      "scheduler": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:03ef45f9b8794ff1ad8769762ede62afda7aacd88e4314339753c266f765397f",
-      "migration": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:fcaf3ba38f48c63431789ad19b9c027a157171b013dc34e2fbf6a281383120f0"
+      "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:2b15ad2e35b0418af8cb83df44334cdaf6ff5f160cc442429c29c4e759779403",
+      "web": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:f1bf6835ad472017e7339a8d8c67011e62052e581752c0d24ee98f59fb67a8c7",
+      "worker": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:c1b24d65d12014d71f336b417420d6099672645d1b9669b2472f4f5fb654db57",
+      "scheduler": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:df358efeb5746865fc83cafcfc9cfd0fe7ddea3f1bc46a588ad94416eac2cf30",
+      "migration": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:c1b24d65d12014d71f336b417420d6099672645d1b9669b2472f4f5fb654db57"
     },
-    "candidate_rebind_note": "Candidate rebound from 419e6bf4 to a31e02ae by ODP-DEV-MIGRATION-ADMISSION-001 (merged PR #1375 into dev). The a31 candidate includes the Dagster migration version table isolation (ODP-MIGRATION-VERSION-TABLE-ISOLATION-001). Build run 36333397898 succeeded. All previous 419 leases and deploy attempts are superseded."
+    "candidate_rebind_note": "Candidate rebound from a31e02ae to a663d604 by ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 after ODP-SUPERVISOR-LEASE-ISSUANCE-RECOVERY-001 and ODP-RUNTIME-RELEASE-ANCESTRY-INVENTORY-002 merged into dev. Build run 36415981871 succeeded for exact a663 candidate. All previous a31 leases and deploy attempts are superseded."
   },
   "hosted_build_execution": {
     "workflow": "Runtime Release (.github/workflows/deploy-dev.yml)",
@@ -212,14 +212,14 @@
     "phase": "build",
     "environment": "dev-build",
     "head_branch": "dev",
-    "release_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
-    "task_id": "ODP-DEV-MIGRATION-ADMISSION-001",
+    "release_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+    "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
     "dispatched_by_this_task": false,
     "initial_release_recovery_input": true,
     "result": "success",
-    "created_at": "2026-09-27T16:28:57Z",
-    "completed_at": "2026-09-27T16:36:34Z",
-    "release_id": "odp-a31e02ae3918",
+    "created_at": "2026-09-28T07:27:00Z",
+    "completed_at": "2026-09-28T07:34:37Z",
+    "release_id": "odp-a663d604831c",
     "manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
     "single_run_build_and_handoff": true,
     "jobs": [
@@ -254,84 +254,84 @@
       }
     ],
     "published_images": {
-      "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:fee344d4b2e80a2e81306fa73d283a09777a2bf83f49fd5591d5b9d61c6984ab",
-      "web": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:3f9afa013d47aa9e6cc09d2d0a89087bf2cad81a8caa3c0d2834922d301d85fe",
-      "worker": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:fcaf3ba38f48c63431789ad19b9c027a157171b013dc34e2fbf6a281383120f0",
-      "scheduler": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:03ef45f9b8794ff1ad8769762ede62afda7aacd88e4314339753c266f765397f"
+      "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:2b15ad2e35b0418af8cb83df44334cdaf6ff5f160cc442429c29c4e759779403",
+      "web": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:f1bf6835ad472017e7339a8d8c67011e62052e581752c0d24ee98f59fb67a8c7",
+      "worker": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:c1b24d65d12014d71f336b417420d6099672645d1b9669b2472f4f5fb654db57",
+      "scheduler": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:df358efeb5746865fc83cafcfc9cfd0fe7ddea3f1bc46a588ad94416eac2cf30"
     },
-    "migration_component_image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:fcaf3ba38f48c63431789ad19b9c027a157171b013dc34e2fbf6a281383120f0",
+    "migration_component_image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:c1b24d65d12014d71f336b417420d6099672645d1b9669b2472f4f5fb654db57",
     "signature_refs": [
-      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:38d4d07031cfacf63b47d367d1b4872cdfe2be9e3f6ed213751d2daedd51d81a",
-      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:f56671a18d3c633d385c5ec827d9230dd633e44377778295ff67fdcfdb8e4369",
-      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:e50b502767823b741fd4f095c63dc41dd7cf64163853ff35bb7a9e996f29cc36",
-      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:95e2b1dc620064a2ed9d95e38a2c2b313aa09857ee77c710f97a899d768fa5e8"
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:062235111bdbe236c5928097b09eea47b543244b7e35c2f0f52a45233569eeac",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:0f69e6328f2fb036402cc85fd8ecc045e84fb9127f5999c98204c8cb5520a3d2",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:9e36d6b511cebb006a2c6d31650b08b89f279fcea0348c90cea3035de5c5b9bb",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:afcfabbdae94f12f71fc5e7b2d45f95e7aa3aa556c8929dd24986bf559d93b2a"
     ],
     "sbom_refs": [
-      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:42befd584d9ae443bb53ecb55a3fcce0bec7c168910a0b8fac5ef52abfe63fd3",
-      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:acb27e7084a7c9fc719c010b30ac10aa97dc69269e63b2cc652dd7bbee890996",
-      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:52888bd94e0ad3e4387ce8a815c4a484cc5e2a91b9225e1fd756435b50c35292",
-      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:cfb8244c64950be88b805ffa77d9f06e9354244c3963079e5503bf00a38272b3"
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:181858d1df13dcf117d164d654780f2f887c4ad8229ad4a1b31d19e59ebc3f75",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:bbe473c3dc290724ab43ed60b1633499223f2cc0670f9cb7dd29d0cc8f7b8089",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:defaad7fd08d606674192cf2974f2e52cd0d7a1a2db88a0c99711c7300018820",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:5ba2e71e08d7ede9f765db87b80c54457f2df1b357862e8c0569155ac8ace7a5"
     ],
     "uploaded_artifacts": [
       {
-        "name": "initial-release-absence-readback-a31e02ae391811a4c323ec4d834b70e200953366",
-        "id": 10936157298,
-        "created_at": "2026-09-27T16:36:29Z",
-        "raw_sha256": "77070ae8a1056ca1ef94a85411012e96caab2401fcf1e2b38abca8c32135debf",
+        "name": "initial-release-absence-readback-a663d604831c4b9710dda9b7ca85ddbc193837e8",
+        "id": 10967906043,
+        "created_at": "2026-09-28T07:34:31Z",
+        "raw_sha256": "3391e27c24589dd90a89288a036c9bb6974881992d6c338b497e6d7ec8a12825",
         "raw_bytes": 1226,
         "hash_scope": "expanded artifact JSON file bytes",
         "archive_size_in_bytes": 507,
-        "evidence_file": "hosted-artifacts/initial-release-absence-readback-a31e02ae391811a4c323ec4d834b70e200953366/initial-release-absence-readback.json"
+        "evidence_file": "hosted-artifacts/run-36415981871/initial-release-absence-readback-a663d604831c4b9710dda9b7ca85ddbc193837e8/initial-release-absence-readback.json"
       },
       {
         "name": "release-environment-receipt-dev-build",
-        "id": 10935973744,
-        "created_at": "2026-09-27T16:29:22Z",
-        "raw_sha256": "c4a3f24e8e7a565d351fa35b8fc0e37eedf65a898cf8440530e107cca932687e",
+        "id": 10968030024,
+        "created_at": "2026-09-28T07:27:22Z",
+        "raw_sha256": "1a7e6d95c757f9fd83ff26e69a33208883681ae22256da03593a324482407c60",
         "raw_bytes": 1111,
         "hash_scope": "expanded artifact JSON file bytes",
         "archive_size_in_bytes": 797,
-        "evidence_file": "hosted-artifacts/release-environment-receipt-dev-build/release-environment-receipt.json"
+        "evidence_file": "hosted-artifacts/run-36415981871/release-environment-receipt-dev-build/release-environment-receipt.json"
       },
       {
         "name": "release-npm-audit-receipt-dev",
-        "id": 10936796645,
-        "created_at": "2026-09-27T16:29:50Z",
-        "raw_sha256": "5acee3d1d018742cd5e0db833ad4db09a840883497b2cd926b17f1bb526928c3",
+        "id": 10967620580,
+        "created_at": "2026-09-28T07:27:50Z",
+        "raw_sha256": "9b23e1185aa4c6bc848b5b545a646212ec7ae75c39b15b6463d357147204fb0f",
         "raw_bytes": 605,
         "hash_scope": "expanded artifact JSON file bytes",
         "archive_size_in_bytes": 508,
-        "evidence_file": "hosted-artifacts/release-npm-audit-receipt-dev/npm-audit-receipt.json"
+        "evidence_file": "hosted-artifacts/run-36415981871/release-npm-audit-receipt-dev/npm-audit-receipt.json"
       },
       {
         "name": "release-phase-receipt-dev-build",
-        "id": 10936187998,
-        "created_at": "2026-09-27T16:29:08Z",
-        "raw_sha256": "703961a036a926f7afc78d6ebac2d539e719c89c26af74e3fb1275b44a809cb7",
+        "id": 10967535042,
+        "created_at": "2026-09-28T07:27:08Z",
+        "raw_sha256": "166f54af879ed322916b8c0b0acac4870b5c61c09b7f568151a7bb6369a4556f",
         "raw_bytes": 767,
         "hash_scope": "expanded artifact JSON file bytes",
         "archive_size_in_bytes": 631,
-        "evidence_file": "hosted-artifacts/release-phase-receipt-dev-build/release-phase-receipt.json"
+        "evidence_file": "hosted-artifacts/run-36415981871/release-phase-receipt-dev-build/release-phase-receipt.json"
       },
       {
-        "name": "runtime-release-images-a31e02ae391811a4c323ec4d834b70e200953366",
-        "id": 10936167349,
-        "created_at": "2026-09-27T16:36:27Z",
-        "raw_sha256": "5a70c507c7dcf6a967efa4742c606fecee571e63ba805129cc7fdc1bb2ae8a2b",
+        "name": "runtime-release-images-a663d604831c4b9710dda9b7ca85ddbc193837e8",
+        "id": 10967216335,
+        "created_at": "2026-09-28T07:34:27Z",
+        "raw_sha256": "497346f13d466199b5875c6580aefaaf65bb11f5431130096e4a508f1044138c",
         "raw_bytes": 657,
         "hash_scope": "expanded artifact JSON file bytes",
         "archive_size_in_bytes": 454,
-        "evidence_file": "hosted-artifacts/runtime-release-images-a31e02ae391811a4c323ec4d834b70e200953366/runtime-release-images.json"
+        "evidence_file": "hosted-artifacts/run-36415981871/runtime-release-images-a663d604831c4b9710dda9b7ca85ddbc193837e8/runtime-release-images.json"
       },
       {
-        "name": "runtime-release-manifest-a31e02ae391811a4c323ec4d834b70e200953366",
-        "id": 10936456723,
-        "created_at": "2026-09-27T16:36:28Z",
-        "raw_sha256": "d4591109492cc153c35938067c1b62972b53bf9a8dd62ee180dbe51f90b21fb1",
+        "name": "runtime-release-manifest-a663d604831c4b9710dda9b7ca85ddbc193837e8",
+        "id": 10967281361,
+        "created_at": "2026-09-28T07:34:28Z",
+        "raw_sha256": "edd98d4e786f86121ceaafaf779041a939df924beae91cf0265946f89475497b",
         "raw_bytes": 9481,
         "hash_scope": "expanded artifact JSON file bytes",
         "archive_size_in_bytes": 2502,
-        "evidence_file": "hosted-artifacts/runtime-release-manifest-a31e02ae391811a4c323ec4d834b70e200953366/RELEASE_MANIFEST.json"
+        "evidence_file": "hosted-artifacts/run-36415981871/runtime-release-manifest-a663d604831c4b9710dda9b7ca85ddbc193837e8/RELEASE_MANIFEST.json"
       }
     ],
     "build_job_log_readback": {
@@ -347,7 +347,7 @@
     "initial_release_absence_readback_published": true,
     "external_sources_expected_enabled": [],
     "conclusion": "success",
-    "note": "Build 36333397898 for candidate a31e02ae succeeded. This replaces the previous 419 candidate build 36080312679."
+    "note": "Build 36415981871 for candidate a663d604 succeeded. This replaces the previous a31 candidate build 36333397898."
   },
   "source_posture": {
     "all_sources_disabled": true,
@@ -358,7 +358,7 @@
     "egress_posture": "default-deny",
     "cloud_run_egress": "ALL_TRAFFIC",
     "firewall_egress": "default-deny",
-    "binding_digest": "sha256:971a405c307c3dbd9ddd9fca72f87ce22b4b7bd3ce926ed82edf467d7a670324",
+    "binding_digest": "sha256:51be248f4753e55203fd72fec69701882dcbbd702da22bd3b482b1568a71f36f",
     "migration_digest": "sha256:9ee2d278321bcd5358500a3feb93a7c22c201adde76698f57b7dfcbaa3377375",
     "data_contract_digest": "sha256:05e2cb05619f1c524b0f9578e4ceba9ec863d143d5e64b0eeac97539ce8e7c73",
     "source_policy_digest": "sha256:f3cd9557c11f63721300914c31fbceb97250cc76e0c5dcfbe89c9249c93dfcbf",
@@ -389,13 +389,13 @@
       "verifier": "delivery_toolchain/release/check_runtime_admission.registry_admission_errors",
       "root": "/home/lupin/odayplus",
       "environment": "dev",
-      "expected_manifest_digest": "sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2",
+      "expected_manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
       "release_sha_origin_dev_tip": {
-        "sha": "bb15fe9fee5da3882117fb8c2593cfb3966a68c3",
+        "sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
         "errors": []
       },
       "release_sha_candidate": {
-        "sha": "a31e02ae391811a4c323ec4d834b70e200953366",
+        "sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
         "errors": []
       }
     },
@@ -458,24 +458,24 @@
       "registered_by": "Human/Ops",
       "kind": "runtime_release_deploy",
       "status": "approved",
-      "approval_id": "HUMANOPS-DEV-MIGRATION-20260927T225545Z",
+      "approval_id": "HUMANOPS-DEV-MIGRATION-20260928T120016Z",
       "nonce_digest": "sha256:3a60a778c1a7c5b1698b5020ca6312a0225d30bc9eb793fb7360ca6541f71ebf",
-      "candidate_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
-      "manifest_digest": "sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2",
-      "manifest_run_id": "36333397898",
+      "candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+      "manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
+      "manifest_run_id": "36415981871",
       "target_environment": "dev",
       "action": "deploy",
-      "approved_at": "2026-09-27T22:55:45Z",
-      "expires_at": "2026-09-28T04:55:45Z",
+      "approved_at": "2026-09-28T12:00:16Z",
+      "expires_at": "2026-09-28T18:00:16Z",
       "authored_by_owner": false
     },
     "latest_issuance_decision": {
-      "recorded_at": "2026-09-28T00:47:26+00:00",
+      "recorded_at": "2026-09-28T12:00:26+00:00",
       "state": "blocked",
       "event": "lease_issue_blocked",
-      "approval_id": "HUMANOPS-DEV-MIGRATION-20260927T225545Z",
-      "candidate_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
-      "manifest_digest": "sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2",
+      "approval_id": "HUMANOPS-DEV-MIGRATION-20260928T120016Z",
+      "candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+      "manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
       "dispatch_ref": "dev",
       "dispatch_ref_sha": null,
       "admitted": false,
@@ -539,7 +539,7 @@
     "admission_possible_with_current_request": false,
     "admission_logic_satisfied_by_current_request": true,
     "new_lease_request_authored_by_owner": false,
-    "what_the_issuer_does_after_repair": "Signs an Ed25519 lease (ttl 600s) against candidate a31e02ae391811a4c323ec4d834b70e200953366 / manifest sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2, records it under gs://odayplus-runtime-20260825-release-leases/leases, and dispatches .github/workflows/deploy-dev.yml on ref dev with phase=deploy environment=dev release_sha=a31e02ae391811a4c323ec4d834b70e200953366 task_id=ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 manifest_run_id=36333397898 manifest_digest=sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2 plus the four immutable image refs from the manifest.",
+    "what_the_issuer_does_after_repair": "Signs an Ed25519 lease (ttl 600s) against candidate a663d604831c4b9710dda9b7ca85ddbc193837e8 / manifest sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482, records it under gs://odayplus-runtime-20260825-release-leases/leases, and dispatches .github/workflows/deploy-dev.yml on ref dev with phase=deploy environment=dev release_sha=a663d604831c4b9710dda9b7ca85ddbc193837e8 task_id=ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 manifest_run_id=36415981871 manifest_digest=sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482 plus the four immutable image refs from the manifest.",
     "round4_environment_recheck": {
       "performed_window_utc": {
         "start_utc": "2026-09-24T07:22:35Z",
@@ -673,21 +673,21 @@
       "consequence": "Two independent repairs remain before the issuer can construct its state store: (1) restart the supervisor so the interpreter sees the user site created at 07:09:29Z, and (2) give the principal the supervisor resolves access to gs://odayplus-runtime-20260825-release-leases (or supply ADC for one that has it). A restart alone moves the failure from ModuleNotFoundError to the 403 above, and the issuer would log the identical string 'durable GCS lease state is unavailable'; a repeat of that message after restart must not be read as 'package still missing'. LATENT-1 (Secret Manager key via expired gcloud login) follows after both."
     },
     "human_authorization": {
-      "approval_id": "HUMANOPS-DEV-MIGRATION-20260927T225545Z",
+      "approval_id": "HUMANOPS-DEV-MIGRATION-20260928T120016Z",
       "approved_by": "Human/Ops",
-      "candidate_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
-      "manifest_digest": "sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2",
-      "build_run_id": "36333397898",
+      "candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+      "manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
+      "build_run_id": "36415981871",
       "target_environment": "dev",
-      "approved_at": "2026-09-27T22:55:45Z",
-      "expires_at": "2026-09-28T04:55:45Z"
+      "approved_at": "2026-09-28T12:00:16Z",
+      "expires_at": "2026-09-28T18:00:16Z"
     },
     "lease_issuance_diagnostic": {
       "state": "issuing",
       "event": "lease_issue_blocked",
-      "updated_at": "2026-09-28T00:47:26+00:00",
-      "candidate_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
-      "approval_id": "HUMANOPS-DEV-MIGRATION-20260927T225545Z",
+      "updated_at": "2026-09-28T12:00:26+00:00",
+      "candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+      "approval_id": "HUMANOPS-DEV-MIGRATION-20260928T120016Z",
       "dispatch_ref_sha": null,
       "lease_id": null,
       "signed_lease_received": false,
@@ -700,10 +700,10 @@
     "current_readback_result": "predeploy_target_absence_verified",
     "readback_source": {
       "kind": "hosted artifact",
-      "run_id": 36333397898,
-      "probe_step_started_at": "2026-09-27T16:32:21Z",
-      "artifact_created_at": "2026-09-27T16:36:28Z",
-      "sha256": "77070ae8a1056ca1ef94a85411012e96caab2401fcf1e2b38abca8c32135debf",
+      "run_id": 36415981871,
+      "probe_step_started_at": "2026-09-28T07:30:21Z",
+      "artifact_created_at": "2026-09-28T07:34:31Z",
+      "sha256": "3391e27c24589dd90a89288a036c9bb6974881992d6c338b497e6d7ec8a12825",
       "probe_command": "gcloud run services list --format=value(metadata.name); gcloud run jobs list --format=value(metadata.name)"
     },
     "target_absence_receipt": {
@@ -783,8 +783,8 @@
     "lease_issuance_diagnostic": {
       "observed_at_utc": "2026-09-28T02:44:32Z",
       "target_environment": "dev",
-      "candidate_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
-      "manifest_digest": "sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2",
+      "candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+      "manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
       "operator_gcp_project": "odayplus-runtime-20260825",
       "operator_authentication": "active user credentials; metadata reads succeeded",
       "lease_bucket_metadata_readable": true,
@@ -838,28 +838,28 @@
       "id": "FINDING-001",
       "severity": "P0",
       "topic": "candidate_bound_current_and_admitted",
-      "finding": "The canonical registry (ODP-DEV-MIGRATION-ADMISSION-001, PR #1375) and RELEASE_MANIFEST.json bind candidate a31e02ae391811a4c323ec4d834b70e200953366 / sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2 from Runtime Release run 36333397898; release.decision is go under authorization HUMANOPS-DEV-MIGRATION-20260927T225545Z for the dev admission boundary only. The candidate is an ancestor of origin/dev bb15fe9fee5da3882117fb8c2593cfb3966a68c3; intervening commits touch docs/evidence/ paths only, so acceptance 1-2 hold and no rebuild is required.",
+      "finding": "The canonical registry (ODP-DEV-MIGRATION-ADMISSION-001, PR #1375, rebound by ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001) and RELEASE_MANIFEST.json bind candidate a663d604831c4b9710dda9b7ca85ddbc193837e8 / sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482 from Runtime Release run 36415981871; release.decision is go under authorization HUMANOPS-DEV-MIGRATION-20260928T120016Z for the dev admission boundary only. The candidate is an ancestor of origin/dev ee06d1d8; intervening commits touch docs/evidence/ paths only, so acceptance 1-2 hold and no rebuild is required.",
       "status": "verified"
     },
     {
       "id": "FINDING-002",
       "severity": "P0",
       "topic": "hosted_artifacts_independently_reverified",
-      "finding": "All six hosted artifacts from run 36333397898 were downloaded by immutable GitHub artifact ID and their expanded JSON files are preserved and SHA-256 checked by the verifier. The hosted manifest raw-file SHA-256 is d4591109492cc153c35938067c1b62972b53bf9a8dd62ee180dbe51f90b21fb1; it is byte-identical to the repository manifest. The embedded logical manifest_digest remains sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2 and is independently computed from canonical manifest JSON with manifest_digest removed. Build job 108659578847 succeeded while lease/deploy/watch jobs 108660864789, 108660864915, 108660865313 were skipped; this is build provenance, not deployment evidence.",
+      "finding": "All six hosted artifacts from run 36415981871 were downloaded by immutable GitHub artifact ID and their expanded JSON files are preserved and SHA-256 checked by the verifier. The hosted manifest raw-file SHA-256 is edd98d4e786f86121ceaafaf779041a939df924beae91cf0265946f89475497b; it is byte-identical to the repository manifest. The embedded logical manifest_digest remains sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482 and is independently computed from canonical manifest JSON with manifest_digest removed. Build job succeeded while lease/deploy/watch jobs were skipped; this is build provenance, not deployment evidence.",
       "status": "verified"
     },
     {
       "id": "FINDING-003",
       "severity": "P0",
       "topic": "dev_admission_gates_cleared",
-      "finding": "gate-0 and gate-1 are passed and gate-4 is passed-with-deviation (approver Human/Ops under HUMANOPS-DEV-MIGRATION-20260927T225545Z, expiring 2026-09-28T04:55:45Z), each bound to candidate a31; registry_admission_errors for environment dev returns an empty list.",
+      "finding": "gate-0 and gate-1 are passed and gate-4 is passed-with-deviation (approver Human/Ops under HUMANOPS-DEV-MIGRATION-20260928T120016Z, expiring 2026-09-28T18:00:16Z), each bound to candidate a663 with explicit CI provenance (merge_group run 36391745153); registry_admission_errors for environment dev returns an empty list.",
       "status": "verified"
     },
     {
       "id": "FINDING-004",
       "severity": "P0",
       "topic": "fresh_human_ops_lease_authorization_valid",
-      "finding": "Human/Ops registered authorization HUMANOPS-DEV-MIGRATION-20260927T225545Z for candidate a31e02ae391811a4c323ec4d834b70e200953366, manifest sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2, and Runtime Release build 36333397898.",
+      "finding": "Human/Ops registered authorization HUMANOPS-DEV-MIGRATION-20260928T120016Z for candidate a663d604831c4b9710dda9b7ca85ddbc193837e8, manifest sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482, and Runtime Release build 36415981871.",
       "status": "verified"
     },
     {
@@ -955,7 +955,7 @@
     "Round 4: the task was not moved to review (same reason as round 3) and no blocker was opened (a blocker or waiting_for would make the issuer reject the next Human/Ops request)."
   ],
   "unblock_requirements": [
-    "Supervisor lease issuance must transition from issuing/lease_issue_blocked to dispatched with a signed lease for candidate a31e02ae391811a4c323ec4d834b70e200953366 and manifest sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2. Worker authorization HUMANOPS-DEV-MIGRATION-20260927T225545Z expires 2026-09-28T04:55:45Z.",
+    "Supervisor lease issuance must transition from issuing/lease_issue_blocked to dispatched with a signed lease for candidate a663d604831c4b9710dda9b7ca85ddbc193837e8 and manifest sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482. Worker authorization HUMANOPS-DEV-MIGRATION-20260928T120016Z expires 2026-09-28T18:00:16Z.",
     "If GCS lease state or Secret Manager access is the root cause, the operator must resolve the Supervisor runtime environment issue (not this task's scope per acceptance criterion 9).",
     "After a signed lease is issued, the Runtime Release deploy-dev workflow dispatches automatically. This task records evidence of the deploy outcome (success or failure)."
   ],
