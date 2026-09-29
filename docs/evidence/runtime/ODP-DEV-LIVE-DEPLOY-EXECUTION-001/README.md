@@ -1,6 +1,20 @@
 # ODP-DEV-LIVE-DEPLOY-EXECUTION-001 — evidence
 
-Status: **blocked at lease issuance. Nothing has been deployed.** Round 2 (2026-09-29T15:19Z) used the one fresh release request that Human/Ops registered under `HUMANOPS-DEV-MIGRATION-20260929T053234Z`. The live Supervisor issuer rejected it before any lease existed: no GCS lease, no Secret Manager read, and no Runtime Release run. The newest `deploy-dev.yml` run is still the build run `36509055237` (2026-09-29T01:41:03Z). Round 3 (15:33Z) found that the runtime roll-forward is staged but not running, and that no new request is on the board.
+Status: **blocked on Human/Ops (round 4, 15:44Z): Supervisor still on af923aa5. Nothing has been deployed.** Round 2 (2026-09-29T15:19Z) used the one fresh release request that Human/Ops registered under `HUMANOPS-DEV-MIGRATION-20260929T053234Z`. The live Supervisor issuer rejected it before any lease existed: no GCS lease, no Secret Manager read, and no Runtime Release run. The newest `deploy-dev.yml` run is still the build run `36509055237` (2026-09-29T01:41:03Z). Round 3 (15:33Z) found that the runtime roll-forward is staged but not running, and that no new request is on the board.
+
+## Round 4 (2026-09-29T15:44Z) — task parked as blocked on Human/Ops
+
+Re-measured at 15:44:12Z. Nothing has changed since round 3: pid `630708` is still running with `/proc/630708/cwd` = `oday-plus-supervisor-runtime-af923aa58d33`, `oday-plus-supervisor-runtime-current` still points to `af923aa58d33`, `task.release_lease_request` is `null`, and `task.release_lease_issuance.state` is still the round-2 `blocked` record.
+
+The 15:39Z round left only a note, and the orchestrator recorded it as `worker_failed` (no progress). While the Supervisor runs `af923aa5`, every `owned_in_progress_dispatch` round can only re-measure. For that reason this round moves the task to `blocked` with `waiting_for=Human/Ops`. A Human/Ops blocker is never auto-recovered (`blocked_task_auto_recovery_eligible`), so the re-dispatch loop stops until an operator acts.
+
+Operator order, deadline 2026-09-30T05:32:34Z:
+
+1. Point `oday-plus-supervisor-runtime-current` at `oday-plus-supervisor-runtime-a631b8c793b2`, restart the Supervisor, and confirm with `readlink /proc/<new pid>/cwd`.
+2. Return the task to `in_progress` and resolve the open blocker. `request_errors` rejects a blocked task or a task with an open blocker.
+3. Register one fresh `release_lease_request` under `HUMANOPS-DEV-MIGRATION-20260929T053234Z`. Use the round-2 binding, a new nonce, and `expires_at` ≤ 2026-09-30T05:32:34Z.
+
+If the deadline passes first, the authorization cannot be reused, and this task stays blocked until a new authorization exists.
 
 ## Round 3 (2026-09-29T15:33Z – 15:36Z) — precheck only, no request registered
 
