@@ -1,0 +1,666 @@
+{
+  "repo": "alfloop-dev/odayplus",
+  "captured_from": "2026-09-29T07:02:50Z",
+  "calls": {
+    "runtime_release_runs": {
+      "argv": [
+        "gh",
+        "run",
+        "list",
+        "-R",
+        "alfloop-dev/odayplus",
+        "--workflow",
+        "deploy-dev.yml",
+        "-L",
+        "20",
+        "--json",
+        "databaseId,event,status,conclusion,createdAt,headSha"
+      ],
+      "started_at": "2026-09-29T07:02:50Z",
+      "finished_at": "2026-09-29T07:02:51Z",
+      "exit_code": 0,
+      "stdout": "[{\"conclusion\":\"success\",\"createdAt\":\"2026-09-29T01:41:03Z\",\"databaseId\":36509055237,\"event\":\"workflow_dispatch\",\"headSha\":\"ee06d1d8294464f1eb7231f2b06505348a61cba2\",\"status\":\"completed\"},{\"conclusion\":\"success\",\"createdAt\":\"2026-09-28T11:29:45Z\",\"databaseId\":36415981871,\"event\":\"workflow_dispatch\",\"headSha\":\"a663d604831c4b9710dda9b7ca85ddbc193837e8\",\"status\":\"completed\"},{\"conclusion\":\"success\",\"createdAt\":\"2026-09-27T16:28:57Z\",\"databaseId\":36333397898,\"event\":\"workflow_dispatch\",\"headSha\":\"a31e02ae391811a4c323ec4d834b70e200953366\",\"status\":\"completed\"},{\"conclusion\":\"success\",\"createdAt\":\"2026-09-27T10:37:48Z\",\"databaseId\":36313147910,\"event\":\"workflow_dispatch\",\"headSha\":\"355a94b52b14badc236be4b3e52eb936a7075549\",\"status\":\"completed\"},{\"conclusion\":\"failure\",\"createdAt\":\"2026-09-26T23:01:48Z\",\"databaseId\":36278150009,\"event\":\"workflow_dispatch\",\"headSha\":\"c8d26f020e0f6a065757beeac88b02f011884894\",\"status\":\"completed\"},{\"conclusion\":\"failure\",\"createdAt\":\"2026-09-26T15:27:57Z\",\"databaseId\":36252025603,\"event\":\"workflow_dispatch\",\"headSha\":\"c8d26f020e0f6a065757beeac88b02f011884894\",\"status\":\"completed\"},{\"conclusion\":\"failure\",\"createdAt\":\"2026-09-26T15:27:51Z\",\"databaseId\":36252020646,\"event\":\"workflow_dispatch\",\"headSha\":\"c8d26f020e0f6a065757beeac88b02f011884894\",\"status\":\"completed\"},{\"conclusion\":\"failure\",\"createdAt\":\"2026-09-26T14:53:01Z\",\"databaseId\":36250018645,\"event\":\"workflow_dispatch\",\"headSha\":\"c8d26f020e0f6a065757beeac88b02f011884894\",\"status\":\"completed\"},{\"conclusion\":\"failure\",\"createdAt\":\"2026-09-26T14:45:05Z\",\"databaseId\":36249563324,\"event\":\"workflow_dispatch\",\"headSha\":\"c8d26f020e0f6a065757beeac88b02f011884894\",\"status\":\"completed\"},{\"conclusion\":\"success\",\"createdAt\":\"2026-09-25T01:03:15Z\",\"databaseId\":36080312679,\"event\":\"workflow_dispatch\",\"headSha\":\"419e6bf4958269c5b9e94efcb80770e28cd54dda\",\"status\":\"completed\"},{\"conclusion\":\"failure\",\"createdAt\":\"2026-09-24T16:29:34Z\",\"databaseId\":36027737089,\"event\":\"workflow_dispatch\",\"headSha\":\"c4efabbbeba9e743fab8ee52125932137852c703\",\"status\":\"completed\"},{\"conclusion\":\"success\",\"createdAt\":\"2026-09-24T01:49:46Z\",\"databaseId\":35944616693,\"event\":\"workflow_dispatch\",\"headSha\":\"1364363402900c800ec3ed033d38fd1d757c1f10\",\"status\":\"completed\"},{\"conclusion\":\"success\",\"createdAt\":\"2026-09-23T16:12:20Z\",\"databaseId\":35887115502,\"event\":\"workflow_dispatch\",\"headSha\":\"9694320fc8a9922cbfed9b63e647508db32ef26c\",\"status\":\"completed\"},{\"conclusion\":\"success\",\"createdAt\":\"2026-09-20T05:58:41Z\",\"databaseId\":35493018607,\"event\":\"workflow_dispatch\",\"headSha\":\"39ae43f6fe679f03dd7df459a51835cbd2d54f77\",\"status\":\"completed\"},{\"conclusion\":\"failure\",\"createdAt\":\"2026-09-20T05:48:40Z\",\"databaseId\":35492613570,\"event\":\"workflow_dispatch\",\"headSha\":\"39ae43f6fe679f03dd7df459a51835cbd2d54f77\",\"status\":\"completed\"},{\"conclusion\":\"success\",\"createdAt\":\"2026-09-17T14:07:18Z\",\"databaseId\":35231472494,\"event\":\"workflow_dispatch\",\"headSha\":\"307e6e7286c5ca89e72572e4462eb45a57e8888d\",\"status\":\"completed\"},{\"conclusion\":\"failure\",\"createdAt\":\"2026-09-17T13:54:09Z\",\"databaseId\":35230043435,\"event\":\"workflow_dispatch\",\"headSha\":\"307e6e7286c5ca89e72572e4462eb45a57e8888d\",\"status\":\"completed\"},{\"conclusion\":\"success\",\"createdAt\":\"2026-09-12T23:45:50Z\",\"databaseId\":34726258529,\"event\":\"workflow_dispatch\",\"headSha\":\"36a102b7b39d1fe2e58939ee6e454e20c6d72dbd\",\"status\":\"completed\"},{\"conclusion\":\"failure\",\"createdAt\":\"2026-09-12T14:48:32Z\",\"databaseId\":34700361988,\"event\":\"workflow_dispatch\",\"headSha\":\"a04010cde22a0337fdda05a6fa5146f70cc699f4\",\"status\":\"completed\"},{\"conclusion\":\"success\",\"createdAt\":\"2026-09-08T02:21:49Z\",\"databaseId\":34179791241,\"event\":\"workflow_dispatch\",\"headSha\":\"8c570a56353abdcc8ba70fe0a3fdd9b963902391\",\"status\":\"completed\"}]\n",
+      "stderr": ""
+    },
+    "latest_run_jobs": {
+      "argv": [
+        "gh",
+        "run",
+        "view",
+        "36509055237",
+        "-R",
+        "alfloop-dev/odayplus",
+        "--json",
+        "databaseId,headSha,jobs",
+        "--jq",
+        "{databaseId,headSha,jobs:[.jobs[]|{databaseId,name,conclusion}]}"
+      ],
+      "started_at": "2026-09-29T07:02:51Z",
+      "finished_at": "2026-09-29T07:02:52Z",
+      "exit_code": 0,
+      "stdout": "{\"databaseId\":36509055237,\"headSha\":\"ee06d1d8294464f1eb7231f2b06505348a61cba2\",\"jobs\":[{\"conclusion\":\"success\",\"databaseId\":109216932607,\"name\":\"Validate release phase inputs\"},{\"conclusion\":\"success\",\"databaseId\":109216985371,\"name\":\"Build once and publish the immutable artifact handoff\"},{\"conclusion\":\"skipped\",\"databaseId\":109218916726,\"name\":\"Verify the Supervisor lease authorises this deploy\"},{\"conclusion\":\"skipped\",\"databaseId\":109218916838,\"name\":\"Deploy the admitted artifact by immutable digest\"},{\"conclusion\":\"skipped\",\"databaseId\":109218917433,\"name\":\"Verify production watch and clean up ephemeral staging\"}]}\n",
+      "stderr": ""
+    },
+    "deployments_dev": {
+      "argv": [
+        "gh",
+        "api",
+        "repos/alfloop-dev/odayplus/deployments?environment=dev&per_page=100",
+        "--jq",
+        "[.[]|{id,sha,ref,created_at}]"
+      ],
+      "started_at": "2026-09-29T07:02:52Z",
+      "finished_at": "2026-09-29T07:02:53Z",
+      "exit_code": 0,
+      "stdout": "[{\"created_at\":\"2026-09-26T23:03:05Z\",\"id\":6685363483,\"ref\":\"dev\",\"sha\":\"c8d26f020e0f6a065757beeac88b02f011884894\"},{\"created_at\":\"2026-09-26T23:02:00Z\",\"id\":6685353926,\"ref\":\"dev\",\"sha\":\"c8d26f020e0f6a065757beeac88b02f011884894\"},{\"created_at\":\"2026-09-26T15:31:20Z\",\"id\":6680701369,\"ref\":\"dev\",\"sha\":\"c8d26f020e0f6a065757beeac88b02f011884894\"},{\"created_at\":\"2026-09-26T15:28:57Z\",\"id\":6680674880,\"ref\":\"dev\",\"sha\":\"c8d26f020e0f6a065757beeac88b02f011884894\"},{\"created_at\":\"2026-09-26T15:28:04Z\",\"id\":6680665691,\"ref\":\"dev\",\"sha\":\"c8d26f020e0f6a065757beeac88b02f011884894\"},{\"created_at\":\"2026-09-26T14:54:26Z\",\"id\":6680303974,\"ref\":\"dev\",\"sha\":\"c8d26f020e0f6a065757beeac88b02f011884894\"},{\"created_at\":\"2026-09-26T14:53:17Z\",\"id\":6680292410,\"ref\":\"dev\",\"sha\":\"c8d26f020e0f6a065757beeac88b02f011884894\"},{\"created_at\":\"2026-09-26T14:45:17Z\",\"id\":6680207955,\"ref\":\"dev\",\"sha\":\"c8d26f020e0f6a065757beeac88b02f011884894\"},{\"created_at\":\"2026-09-24T16:29:53Z\",\"id\":6642839738,\"ref\":\"dev\",\"sha\":\"c4efabbbeba9e743fab8ee52125932137852c703\"},{\"created_at\":\"2026-08-20T10:36:30Z\",\"id\":6000516853,\"ref\":\"dev\",\"sha\":\"208262cf372af0527d2a27adca8e1810f9bf7ccb\"},{\"created_at\":\"2026-08-20T10:34:23Z\",\"id\":6000487569,\"ref\":\"dev\",\"sha\":\"55fe2275be9442ada3bfe1012c74efca1b8b038d\"},{\"created_at\":\"2026-08-20T06:59:28Z\",\"id\":5997435357,\"ref\":\"dev\",\"sha\":\"56a2b4a55504c1690ff5f99fdb0a8af2d1e186c2\"},{\"created_at\":\"2026-08-20T03:06:16Z\",\"id\":5994989216,\"ref\":\"dev\",\"sha\":\"7cc1c3c6b8492d059719a7f8211727c26341661f\"},{\"created_at\":\"2026-08-20T02:11:01Z\",\"id\":5994448605,\"ref\":\"dev\",\"sha\":\"115e0d924e0ee85a86efa62b4d968e98433c0d27\"},{\"created_at\":\"2026-08-20T01:49:33Z\",\"id\":5994243838,\"ref\":\"dev\",\"sha\":\"1be4064287400d21431b2083d64f36792e3d2c22\"},{\"created_at\":\"2026-08-19T14:45:57Z\",\"id\":5984830789,\"ref\":\"dev\",\"sha\":\"559e389e6de802d062898d5adec7991f9f49387c\"},{\"created_at\":\"2026-08-19T13:50:10Z\",\"id\":5983803776,\"ref\":\"dev\",\"sha\":\"f5e9aa230f795c060fac0552c87dcdf513df2572\"},{\"created_at\":\"2026-08-19T13:45:46Z\",\"id\":5983723180,\"ref\":\"dev\",\"sha\":\"175e9975866cdd5f26c36ad9cea611141ba3147f\"},{\"created_at\":\"2026-08-19T13:31:21Z\",\"id\":5983467161,\"ref\":\"dev\",\"sha\":\"fce74e548306a4183b1a170a85ddc60de41726d4\"},{\"created_at\":\"2026-08-19T12:35:28Z\",\"id\":5982515380,\"ref\":\"dev\",\"sha\":\"7ca0005c361e02c264623aa28e98aad9514a9522\"},{\"created_at\":\"2026-08-19T12:33:27Z\",\"id\":5982483025,\"ref\":\"dev\",\"sha\":\"9918bda29a36702b4371a1ca23dbe39eceab9d63\"},{\"created_at\":\"2026-08-19T12:31:32Z\",\"id\":5982452735,\"ref\":\"dev\",\"sha\":\"2810473d2e6918bf98ec824ac13648d939f8d2c4\"},{\"created_at\":\"2026-08-19T12:30:21Z\",\"id\":5982433031,\"ref\":\"dev\",\"sha\":\"f88d2f610564789c7976480391beb4b4a23591c4\"},{\"created_at\":\"2026-08-19T12:03:29Z\",\"id\":5981982348,\"ref\":\"dev\",\"sha\":\"5ec08ec1acd05c8fde76ac1f7d9409928bb02440\"},{\"created_at\":\"2026-08-19T11:33:06Z\",\"id\":5981527553,\"ref\":\"dev\",\"sha\":\"27206610180dc276a36de131ca6474a9d880cbf6\"},{\"created_at\":\"2026-08-19T06:16:21Z\",\"id\":5977151217,\"ref\":\"dev\",\"sha\":\"46d70ac7a48088e429f0c161dd9697f00d98211a\"},{\"created_at\":\"2026-08-19T02:56:05Z\",\"id\":5975135389,\"ref\":\"dev\",\"sha\":\"cfd38e30c0266994be8789110c29fb4af17ad769\"},{\"created_at\":\"2026-08-19T02:48:38Z\",\"id\":5975067163,\"ref\":\"dev\",\"sha\":\"aa612a49fc52529d304dc7e05732bca4fb2e79b0\"},{\"created_at\":\"2026-08-19T01:02:33Z\",\"id\":5974019003,\"ref\":\"dev\",\"sha\":\"90b69085d55628a0a223ae0556e298ab9c6a7c63\"},{\"created_at\":\"2026-08-18T14:55:16Z\",\"id\":5965339185,\"ref\":\"dev\",\"sha\":\"ee0454e3fb6e97ea4d5ce8e029a7ff60a66536ea\"},{\"created_at\":\"2026-08-18T06:41:57Z\",\"id\":5957564042,\"ref\":\"dev\",\"sha\":\"b7aeb702ede62fb5906944157a262fa9b7a18dff\"},{\"created_at\":\"2026-08-18T06:23:41Z\",\"id\":5957346886,\"ref\":\"dev\",\"sha\":\"44034706f099213199d024f35275876bb975efad\"},{\"created_at\":\"2026-08-18T06:03:45Z\",\"id\":5957109026,\"ref\":\"dev\",\"sha\":\"f56f35d14843151bc336c10ef195b405cc363c78\"},{\"created_at\":\"2026-08-18T05:39:23Z\",\"id\":5956850621,\"ref\":\"dev\",\"sha\":\"cd4128271770525bfe07f4459bf48b93bb3d440d\"},{\"created_at\":\"2026-08-17T23:42:09Z\",\"id\":5953328238,\"ref\":\"dev\",\"sha\":\"04fe521d2c7adb52eff42f8ebeded58e013468e6\"},{\"created_at\":\"2026-08-17T21:47:42Z\",\"id\":5951946317,\"ref\":\"dev\",\"sha\":\"c819465b74d74d5d06cd385a24f3de10007ea147\"},{\"created_at\":\"2026-08-17T19:31:14Z\",\"id\":5949907995,\"ref\":\"dev\",\"sha\":\"fc98a645de6d4fad9c553b7f01850c177ee4b5e1\"},{\"created_at\":\"2026-08-17T19:22:38Z\",\"id\":5949775392,\"ref\":\"dev\",\"sha\":\"382b06ce3446583bc9dceb53791fa76b2b4704c7\"},{\"created_at\":\"2026-08-17T16:54:03Z\",\"id\":5947627357,\"ref\":\"dev\",\"sha\":\"078ed1563736fe36a43c7df8dec98dbd615d5d36\"},{\"created_at\":\"2026-08-17T16:20:31Z\",\"id\":5947065054,\"ref\":\"dev\",\"sha\":\"be3cf03b03a51983a61be800e888eb1c5743921c\"},{\"created_at\":\"2026-08-16T16:03:20Z\",\"id\":5932785595,\"ref\":\"dev\",\"sha\":\"3ad0b50333e324caf9c8f7ca1b9c0b7f442618b9\"},{\"created_at\":\"2026-08-16T14:31:19Z\",\"id\":5931980422,\"ref\":\"dev\",\"sha\":\"6f9609ff7ef382af9c0b69f8fe011443552230ef\"},{\"created_at\":\"2026-08-16T13:43:03Z\",\"id\":5931559937,\"ref\":\"dev\",\"sha\":\"9e82b47883541579ad3e995e86f13ccbb6589ec3\"},{\"created_at\":\"2026-08-16T13:10:27Z\",\"id\":5931289234,\"ref\":\"dev\",\"sha\":\"a4e2dee7c43c0ccc8da274842c789914ae1825c6\"},{\"created_at\":\"2026-08-16T12:50:00Z\",\"id\":5931130751,\"ref\":\"dev\",\"sha\":\"2a469a07e916c030c63de971b3c40911fa940b5f\"},{\"created_at\":\"2026-08-16T12:24:59Z\",\"id\":5930935713,\"ref\":\"dev\",\"sha\":\"27f35c635cf1c8e32c5083ca76315e3d635b96ed\"},{\"created_at\":\"2026-08-16T10:54:41Z\",\"id\":5930210777,\"ref\":\"dev\",\"sha\":\"ae7d6cdb2d52759b8608b4c51ec9a08691de8610\"},{\"created_at\":\"2026-08-16T10:29:53Z\",\"id\":5930033536,\"ref\":\"dev\",\"sha\":\"e10b50022a42be175398b2d4e5c5a982efc32120\"},{\"created_at\":\"2026-08-16T05:36:48Z\",\"id\":5928010929,\"ref\":\"dev\",\"sha\":\"0766fbb7b4d4c40fff087aefd079777a20d3ef14\"},{\"created_at\":\"2026-08-15T15:30:17Z\",\"id\":5921889358,\"ref\":\"dev\",\"sha\":\"c5778df31df41da27b912c0c9824c41db680fc2d\"},{\"created_at\":\"2026-08-15T14:51:20Z\",\"id\":5921553330,\"ref\":\"dev\",\"sha\":\"ac2cb30b3789924b74d42106c19d1f8ee9534775\"},{\"created_at\":\"2026-08-15T12:09:03Z\",\"id\":5920271503,\"ref\":\"dev\",\"sha\":\"cffb67296aea3ae4bdacc87ff71bcf0f9ad19747\"},{\"created_at\":\"2026-08-14T16:32:59Z\",\"id\":5909768366,\"ref\":\"dev\",\"sha\":\"d7db93fa75a568cf7a3315b60e141715000eaea0\"},{\"created_at\":\"2026-08-14T16:21:11Z\",\"id\":5909602712,\"ref\":\"dev\",\"sha\":\"f493deb91309604d95040a7fbf49904e0d3f6c0d\"},{\"created_at\":\"2026-08-14T16:13:08Z\",\"id\":5909481989,\"ref\":\"dev\",\"sha\":\"127e53d4fac9a6d34b8cfaba42c2430ef6948786\"},{\"created_at\":\"2026-08-14T15:53:26Z\",\"id\":5909196722,\"ref\":\"dev\",\"sha\":\"1dab9123b4272b0a2b22dbdf13d12a5cd5ebf564\"},{\"created_at\":\"2026-08-14T15:41:56Z\",\"id\":5909026685,\"ref\":\"dev\",\"sha\":\"8ec5e4e41070ac8d88bd59e035e686953894993a\"},{\"created_at\":\"2026-08-14T14:38:15Z\",\"id\":5908048550,\"ref\":\"dev\",\"sha\":\"12ee7e11ff55648062e322fa83a2c3f9226d962c\"},{\"created_at\":\"2026-08-14T14:23:24Z\",\"id\":5907813800,\"ref\":\"dev\",\"sha\":\"2ee4f60605e7e74521ab39115fceece825faca09\"},{\"created_at\":\"2026-08-14T13:49:17Z\",\"id\":5907291042,\"ref\":\"dev\",\"sha\":\"b2e5bccd53bc76ce9e638012949409802f8ed84f\"},{\"created_at\":\"2026-08-14T13:20:18Z\",\"id\":5906851286,\"ref\":\"dev\",\"sha\":\"c93478925d66ca3d336b0d5c86b0333f31516290\"},{\"created_at\":\"2026-08-14T12:55:36Z\",\"id\":5906499185,\"ref\":\"dev\",\"sha\":\"4240c1ad40ef0429bbc7043830501ca1ae925979\"},{\"created_at\":\"2026-08-14T12:09:34Z\",\"id\":5905845011,\"ref\":\"dev\",\"sha\":\"04c3352630ea03a27d16c1bd43ef65e18e11f219\"},{\"created_at\":\"2026-08-13T14:25:18Z\",\"id\":5889895736,\"ref\":\"dev\",\"sha\":\"46f274e4ae3c4aaf18823c556edd05692b875dac\"},{\"created_at\":\"2026-08-12T12:49:16Z\",\"id\":5869530149,\"ref\":\"dev\",\"sha\":\"0d1603cf347e30c9cf2f25f0eecc10673ac55015\"},{\"created_at\":\"2026-08-12T11:18:33Z\",\"id\":5868173454,\"ref\":\"dev\",\"sha\":\"7c5fe86789600b50ae84ee21e7f3f41d0326abb0\"},{\"created_at\":\"2026-08-12T05:17:24Z\",\"id\":5863612864,\"ref\":\"dev\",\"sha\":\"5c90218b72c535bf88df7234d91da2dbea673f00\"},{\"created_at\":\"2026-08-12T03:41:16Z\",\"id\":5862726102,\"ref\":\"dev\",\"sha\":\"5e2adf7d8df1423dd5b27fa82485a1a81f4017f5\"},{\"created_at\":\"2026-08-12T02:06:59Z\",\"id\":5861886128,\"ref\":\"dev\",\"sha\":\"ec589b4c8c92d0c72514fe9db4cf5a3a7a46f08a\"},{\"created_at\":\"2026-08-12T00:30:48Z\",\"id\":5860979528,\"ref\":\"dev\",\"sha\":\"5cdbe23e2c1a6598e465335292d6eac9434ddcc4\"},{\"created_at\":\"2026-08-11T12:50:51Z\",\"id\":5850769873,\"ref\":\"dev\",\"sha\":\"b4ed57afa8495f83beca02ddc31b98c0bfc8f76a\"},{\"created_at\":\"2026-08-11T12:45:36Z\",\"id\":5850684938,\"ref\":\"dev\",\"sha\":\"29d383ad4141826878c0fe6fd7bf09de7c4b78b4\"},{\"created_at\":\"2026-08-11T12:41:41Z\",\"id\":5850625343,\"ref\":\"dev\",\"sha\":\"c754771a548941cedd224c537ef1efedf9f2d808\"},{\"created_at\":\"2026-08-11T12:12:04Z\",\"id\":5850148372,\"ref\":\"dev\",\"sha\":\"7db61abe1dd6d09ea1aba5b8572f38f62be178cd\"},{\"created_at\":\"2026-08-11T12:07:05Z\",\"id\":5850077198,\"ref\":\"dev\",\"sha\":\"2163c1d1623aaa65ccfa17c0924093458eb71e8b\"},{\"created_at\":\"2026-08-11T11:49:37Z\",\"id\":5849824569,\"ref\":\"dev\",\"sha\":\"e16dfde4e13263210b80c1ccf1533e0efc73282b\"},{\"created_at\":\"2026-08-11T08:30:02Z\",\"id\":5847014511,\"ref\":\"dev\",\"sha\":\"dc8fdb9b6d19d4d36091af6aabe713e1677eda54\"},{\"created_at\":\"2026-08-11T08:09:50Z\",\"id\":5846740526,\"ref\":\"dev\",\"sha\":\"77c2a5bdd19bbd67b3de3fc16909dc231b032deb\"},{\"created_at\":\"2026-08-11T08:05:31Z\",\"id\":5846686677,\"ref\":\"dev\",\"sha\":\"2bf3b9ff307b3f54f913dc52d84d08bfcb67cdca\"},{\"created_at\":\"2026-08-11T07:25:11Z\",\"id\":5846169464,\"ref\":\"dev\",\"sha\":\"b3981961f0a5df3ccd4fe575fe7a63d535889ef8\"},{\"created_at\":\"2026-08-11T06:42:25Z\",\"id\":5845678534,\"ref\":\"dev\",\"sha\":\"494bc7e74cd6fb74a54044f29d14b8a9523f595a\"},{\"created_at\":\"2026-08-11T06:29:36Z\",\"id\":5845533865,\"ref\":\"dev\",\"sha\":\"88269ee3317276eca39e4da622785367eb07acb2\"},{\"created_at\":\"2026-08-11T06:25:37Z\",\"id\":5845487034,\"ref\":\"dev\",\"sha\":\"1b431dd4a0e2a69b2fe0db0af4cdbf5b7082d68f\"},{\"created_at\":\"2026-08-11T05:45:46Z\",\"id\":5845084117,\"ref\":\"dev\",\"sha\":\"529f0a2c8a722bb27430fb0d614229ef1ea6c127\"},{\"created_at\":\"2026-08-11T02:05:00Z\",\"id\":5843110789,\"ref\":\"dev\",\"sha\":\"ca41da7a64d6526726178578d0f6043a4f9ed727\"},{\"created_at\":\"2026-08-11T01:41:21Z\",\"id\":5842909256,\"ref\":\"dev\",\"sha\":\"4b981f7cea1a0d79df18af8561f90875887fe9a4\"},{\"created_at\":\"2026-08-11T01:03:42Z\",\"id\":5842576504,\"ref\":\"dev\",\"sha\":\"87ccf72f563ee78c5322e26d98ea0f2566a20490\"},{\"created_at\":\"2026-08-11T00:37:02Z\",\"id\":5842341529,\"ref\":\"dev\",\"sha\":\"b785d28112f22cf56388e5c2fe2a0afefa9919ed\"},{\"created_at\":\"2026-08-10T17:43:33Z\",\"id\":5836976439,\"ref\":\"dev\",\"sha\":\"e46729ca20734e798a523785555a4e7a271e0471\"},{\"created_at\":\"2026-08-10T16:35:49Z\",\"id\":5835971033,\"ref\":\"dev\",\"sha\":\"077b1c339f26eef5d09db37804c3bd002194c74f\"},{\"created_at\":\"2026-08-10T16:24:46Z\",\"id\":5835800331,\"ref\":\"dev\",\"sha\":\"d7db01ab0e2a65b13d3a5de6739d74bd7007f28c\"},{\"created_at\":\"2026-08-10T15:40:34Z\",\"id\":5835094755,\"ref\":\"dev\",\"sha\":\"78f340fabdccfb6a1a20b2c390a87de1f6507b65\"},{\"created_at\":\"2026-08-10T15:20:03Z\",\"id\":5834748940,\"ref\":\"dev\",\"sha\":\"db32d08feee2ccead51fbf2a835f2ee7e6257385\"},{\"created_at\":\"2026-08-10T15:10:46Z\",\"id\":5834596185,\"ref\":\"dev\",\"sha\":\"0f64537413e65955fa261f21fb31017dc80dcb72\"},{\"created_at\":\"2026-08-10T15:00:17Z\",\"id\":5834420075,\"ref\":\"dev\",\"sha\":\"100c92d8fc5eacf37a7b1facddcee5839bdf7c03\"},{\"created_at\":\"2026-08-10T14:49:14Z\",\"id\":5834234248,\"ref\":\"dev\",\"sha\":\"72cad51bd3b0e87b500ba8626bf29a946d7ca6e9\"},{\"created_at\":\"2026-08-10T14:33:53Z\",\"id\":5833973861,\"ref\":\"dev\",\"sha\":\"3c46b55fc0af8ee856218444ce9f979b3a58391a\"},{\"created_at\":\"2026-08-10T14:07:12Z\",\"id\":5833519630,\"ref\":\"dev\",\"sha\":\"a5f24d59180ed8d9b2767fe81faacc58fbd9f42f\"},{\"created_at\":\"2026-08-10T13:58:36Z\",\"id\":5833375907,\"ref\":\"dev\",\"sha\":\"6d334754a7fc9934f1034609543553529c03f178\"},{\"created_at\":\"2026-08-10T13:36:55Z\",\"id\":5833021830,\"ref\":\"dev\",\"sha\":\"438c8df4a3b0bf16c1c23dc4c1944ae76f52efbc\"}]\n",
+      "stderr": ""
+    },
+    "deployments_staging": {
+      "argv": [
+        "gh",
+        "api",
+        "repos/alfloop-dev/odayplus/deployments?environment=staging&per_page=100",
+        "--jq",
+        "[.[]|{id,sha,ref,created_at}]"
+      ],
+      "started_at": "2026-09-29T07:02:53Z",
+      "finished_at": "2026-09-29T07:02:54Z",
+      "exit_code": 0,
+      "stdout": "[{\"created_at\":\"2026-08-30T15:51:44Z\",\"id\":6168420745,\"ref\":\"task/ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001\",\"sha\":\"3e2c4c094eccdf533f5dca5fa4064b9226792498\"},{\"created_at\":\"2026-08-30T15:45:29Z\",\"id\":6168364410,\"ref\":\"task/ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001\",\"sha\":\"25909fde1aee41c9ad31bf9c755274e6d80e3f3d\"},{\"created_at\":\"2026-08-07T12:25:20Z\",\"id\":5794448512,\"ref\":\"main\",\"sha\":\"574dde52b56992b5088aedc74332e2e90fb40b44\"},{\"created_at\":\"2026-08-04T00:39:52Z\",\"id\":5735945825,\"ref\":\"main\",\"sha\":\"84029065b42aac28c93aba47d0157e006852a265\"},{\"created_at\":\"2026-08-03T01:20:37Z\",\"id\":5719488718,\"ref\":\"main\",\"sha\":\"7cacf023c44f74627695e3884dae3d711665cf01\"},{\"created_at\":\"2026-08-02T16:11:50Z\",\"id\":5715411410,\"ref\":\"main\",\"sha\":\"88e489778363d88083207c4a49778a5a2a78e351\"},{\"created_at\":\"2026-08-02T15:46:05Z\",\"id\":5715217040,\"ref\":\"main\",\"sha\":\"90bfcf6ac0dd9aa7b53beee2b7955938d7b1ad63\"},{\"created_at\":\"2026-08-02T15:10:28Z\",\"id\":5714940468,\"ref\":\"main\",\"sha\":\"3499239370028ccb7604b8a29fc1b1582680f1a3\"},{\"created_at\":\"2026-08-02T13:05:32Z\",\"id\":5714006362,\"ref\":\"main\",\"sha\":\"edc749a448ddaf65384ebabd8181fcb0b7ddebd6\"},{\"created_at\":\"2026-08-02T11:55:21Z\",\"id\":5713486766,\"ref\":\"main\",\"sha\":\"e2047379965e28d7e2d840261ff0c5b07fd51892\"},{\"created_at\":\"2026-08-02T10:41:04Z\",\"id\":5713000632,\"ref\":\"main\",\"sha\":\"be76416387fdca5d1ae64cd4fb2d0ec3b7972a6e\"},{\"created_at\":\"2026-08-02T04:17:07Z\",\"id\":5710776752,\"ref\":\"main\",\"sha\":\"4718767842cac69d45b492966fb0278f7ffb5a29\"},{\"created_at\":\"2026-08-01T08:18:47Z\",\"id\":5702949252,\"ref\":\"main\",\"sha\":\"63abcb32f2164493f1ebecc251dceb172877726e\"},{\"created_at\":\"2026-08-01T07:05:02Z\",\"id\":5702498720,\"ref\":\"main\",\"sha\":\"43d344e6540b54a706ecbf1b87c9e6e8a6845904\"},{\"created_at\":\"2026-08-01T03:37:22Z\",\"id\":5701306801,\"ref\":\"main\",\"sha\":\"477e9e136204d0818a47915462cfd5da60caec7f\"},{\"created_at\":\"2026-07-31T20:48:00Z\",\"id\":5697989045,\"ref\":\"main\",\"sha\":\"e121d66b270534ffd2a3cc3e8691f6bc4a5791de\"},{\"created_at\":\"2026-07-31T19:08:17Z\",\"id\":5696808634,\"ref\":\"main\",\"sha\":\"36aeb59fed4393c41f40afba472606ca7bda6cee\"},{\"created_at\":\"2026-07-31T14:51:53Z\",\"id\":5693460047,\"ref\":\"main\",\"sha\":\"e5faa785eaab5c0b4f4afd28d50b5f51c559f417\"},{\"created_at\":\"2026-07-30T20:23:53Z\",\"id\":5681745530,\"ref\":\"main\",\"sha\":\"9a4cc407df77081d173823c66f34d3e7bd4d9608\"},{\"created_at\":\"2026-07-30T18:21:28Z\",\"id\":5680081120,\"ref\":\"main\",\"sha\":\"d9101ae9fadc499fd8b30e6c4d818aa273a08a88\"},{\"created_at\":\"2026-07-30T17:33:16Z\",\"id\":5679406951,\"ref\":\"main\",\"sha\":\"b6845a39f899c9ef3fbe312c33ddba2e9de71051\"},{\"created_at\":\"2026-07-29T15:21:03Z\",\"id\":5660119563,\"ref\":\"main\",\"sha\":\"e6e12324617d91b4965defaed125ba755dd36932\"},{\"created_at\":\"2026-07-29T13:36:17Z\",\"id\":5658405289,\"ref\":\"main\",\"sha\":\"f0780e06e8d5cf4402ae4bf6e84d302a8399e5aa\"},{\"created_at\":\"2026-07-29T12:33:42Z\",\"id\":5657407679,\"ref\":\"main\",\"sha\":\"55979426ada0a9b982723a8185cb739d6714290b\"},{\"created_at\":\"2026-07-29T10:50:56Z\",\"id\":5656020936,\"ref\":\"main\",\"sha\":\"32707947042eac187099db50a460a0d3559da237\"},{\"created_at\":\"2026-07-29T08:54:12Z\",\"id\":5654501737,\"ref\":\"main\",\"sha\":\"7afeaaeae676692196736e8242bab0911d499835\"},{\"created_at\":\"2026-07-29T07:29:09Z\",\"id\":5653459120,\"ref\":\"main\",\"sha\":\"e9612db2124bb6c4cc1278eb97f56271b3d88fc7\"},{\"created_at\":\"2026-07-29T03:29:35Z\",\"id\":5651237827,\"ref\":\"main\",\"sha\":\"23da3b065bfc1dd08dc07f8ed61543b22fe3af15\"},{\"created_at\":\"2026-07-29T01:30:57Z\",\"id\":5650248207,\"ref\":\"main\",\"sha\":\"b00b6522481fc7d77ef156f7f1a3b95c31ab6ff2\"},{\"created_at\":\"2026-07-28T22:33:04Z\",\"id\":5648610967,\"ref\":\"main\",\"sha\":\"bee24dded813ddc1d934c47f3ad4e70056d13e05\"},{\"created_at\":\"2026-07-28T19:09:54Z\",\"id\":5645920604,\"ref\":\"main\",\"sha\":\"b5dfd69f3d634e7c5507303d945baefbd5202763\"},{\"created_at\":\"2026-07-28T16:46:42Z\",\"id\":5643867393,\"ref\":\"main\",\"sha\":\"861d8849480d3d72ae37b47f333b7d1fa93aa9cd\"},{\"created_at\":\"2026-07-28T14:37:43Z\",\"id\":5641812276,\"ref\":\"main\",\"sha\":\"37584b8789b6ba2bacadc94c61d7e4eb7693de7b\"},{\"created_at\":\"2026-07-28T13:39:26Z\",\"id\":5640855380,\"ref\":\"main\",\"sha\":\"276d67163d972594d7f35cb7fb619f693302d303\"},{\"created_at\":\"2026-07-28T13:10:47Z\",\"id\":5640402579,\"ref\":\"main\",\"sha\":\"795b16ea07c6290a47f9f77285626926171badc5\"},{\"created_at\":\"2026-07-28T11:50:45Z\",\"id\":5639208194,\"ref\":\"main\",\"sha\":\"913a803ede88d7316b71b45dae47a929f94f263f\"},{\"created_at\":\"2026-07-28T04:48:25Z\",\"id\":5634256609,\"ref\":\"main\",\"sha\":\"e4ee1d9de2f84bef37eb9cc1247d2b1a110fbeaf\"},{\"created_at\":\"2026-07-28T03:14:18Z\",\"id\":5633484970,\"ref\":\"main\",\"sha\":\"900c12c4cc33f80536de7bd9e408bf1e0729cda3\"},{\"created_at\":\"2026-07-28T00:44:15Z\",\"id\":5632217091,\"ref\":\"main\",\"sha\":\"7303e44ae603abbe8b42a224eb0b50d9970cd444\"},{\"created_at\":\"2026-07-27T23:48:36Z\",\"id\":5631721325,\"ref\":\"main\",\"sha\":\"e5605833fbe0b1b96f89cf4f2616f53402070b79\"},{\"created_at\":\"2026-07-27T21:56:21Z\",\"id\":5630575774,\"ref\":\"main\",\"sha\":\"dd3d74235f3647ea5b12328e6c02592fdb66d184\"},{\"created_at\":\"2026-07-27T21:15:44Z\",\"id\":5630077115,\"ref\":\"main\",\"sha\":\"19a7d6000a95fafa2c8057f2834d37f76c3cd818\"},{\"created_at\":\"2026-07-27T20:33:15Z\",\"id\":5629486111,\"ref\":\"main\",\"sha\":\"514f9e9bdc7fc71fff1b0814471009be52585fa9\"},{\"created_at\":\"2026-07-27T19:02:42Z\",\"id\":5628264982,\"ref\":\"main\",\"sha\":\"edbb17ec035125b6b9cd869be11d7d0e91239694\"},{\"created_at\":\"2026-07-27T18:19:30Z\",\"id\":5627648578,\"ref\":\"main\",\"sha\":\"a34b12ff1b0ce93d2ab0a4b0417a0ae9fd87d623\"},{\"created_at\":\"2026-07-27T17:16:27Z\",\"id\":5626786670,\"ref\":\"main\",\"sha\":\"3b093a11eefc94a1f8ec009a0fc73b53d5a62358\"},{\"created_at\":\"2026-07-27T16:07:03Z\",\"id\":5625784294,\"ref\":\"main\",\"sha\":\"b25ee5624e5a58e498f85a137afd23efa8fd6be9\"},{\"created_at\":\"2026-07-27T14:56:43Z\",\"id\":5624664233,\"ref\":\"main\",\"sha\":\"1fa5082d68c4197123d6b769de0690c0709f676d\"},{\"created_at\":\"2026-07-27T13:58:35Z\",\"id\":5623739408,\"ref\":\"main\",\"sha\":\"8c516e8efee50ac62271043001faa29b5b0d4a1f\"},{\"created_at\":\"2026-07-27T12:51:50Z\",\"id\":5622709760,\"ref\":\"main\",\"sha\":\"5ba9573f3344b7b57e2ed3e198f2d08623a4e89d\"},{\"created_at\":\"2026-07-26T16:02:52Z\",\"id\":5611778152,\"ref\":\"main\",\"sha\":\"4ec0fadc60717d6935ab8153b93b8c50dfd3bc18\"},{\"created_at\":\"2026-07-26T12:22:54Z\",\"id\":5610110313,\"ref\":\"main\",\"sha\":\"915f0ebc72401b04cce054c69853ac763be1b8f1\"},{\"created_at\":\"2026-07-26T00:44:17Z\",\"id\":5606130533,\"ref\":\"main\",\"sha\":\"bcf9c0edb6a9addfa7d2c44615081189d5ee243a\"},{\"created_at\":\"2026-07-25T11:52:18Z\",\"id\":5601009381,\"ref\":\"main\",\"sha\":\"63bf5821075a238db1d447a5d9588754af040511\"},{\"created_at\":\"2026-07-25T03:49:24Z\",\"id\":5598250129,\"ref\":\"main\",\"sha\":\"8654736ce30dda2253adab038123d2d8879481c8\"},{\"created_at\":\"2026-06-28T14:15:46Z\",\"id\":5229058416,\"ref\":\"main\",\"sha\":\"f4545810c9aa5b7908ef6d2674c27235980e0a00\"},{\"created_at\":\"2026-06-28T07:35:38Z\",\"id\":5226866411,\"ref\":\"main\",\"sha\":\"0d586739c5bba9914b086a653895249852b06cb1\"},{\"created_at\":\"2026-06-28T04:42:27Z\",\"id\":5226081296,\"ref\":\"main\",\"sha\":\"f1f4da7fc10a3e2e7ccbdf768b23a89e2ee25c50\"},{\"created_at\":\"2026-06-28T04:28:06Z\",\"id\":5226016361,\"ref\":\"main\",\"sha\":\"86d03fa3964a364167201ae7e905451f7cbed7e6\"},{\"created_at\":\"2026-06-28T04:17:25Z\",\"id\":5225973174,\"ref\":\"main\",\"sha\":\"3dd4b01dfc7457b0a87c530747f3b5026e8d6002\"},{\"created_at\":\"2026-06-28T04:14:05Z\",\"id\":5225959285,\"ref\":\"main\",\"sha\":\"d63759bb7db174606d5ddb3dd156348d29fe4b6a\"},{\"created_at\":\"2026-06-28T03:55:11Z\",\"id\":5225881580,\"ref\":\"main\",\"sha\":\"7d20416846d855b322d3ba8ff6d55f719b259ca8\"},{\"created_at\":\"2026-06-28T03:45:22Z\",\"id\":5225838622,\"ref\":\"main\",\"sha\":\"c87dd403a1635255c3e3a1550d699d87b1e907d1\"},{\"created_at\":\"2026-06-28T03:36:12Z\",\"id\":5225800479,\"ref\":\"main\",\"sha\":\"790634c32b45a2abf74bb6ae92e6acbe8554ba2e\"},{\"created_at\":\"2026-06-28T03:29:59Z\",\"id\":5225774056,\"ref\":\"main\",\"sha\":\"f05f0a49698e7ac6c9e36c05121a5ce056f2bfc3\"},{\"created_at\":\"2026-06-28T03:22:04Z\",\"id\":5225740045,\"ref\":\"main\",\"sha\":\"97bf95f34e93635513a5e4b2a7adfba163596d18\"},{\"created_at\":\"2026-06-28T03:09:13Z\",\"id\":5225675577,\"ref\":\"main\",\"sha\":\"39aeef58ff3703d584653e9c7b1b5809a15645cb\"},{\"created_at\":\"2026-06-28T03:06:20Z\",\"id\":5225662879,\"ref\":\"main\",\"sha\":\"787bc9e658a98d00462cfd5ce790a9ff5e86c016\"},{\"created_at\":\"2026-06-28T02:58:21Z\",\"id\":5225626467,\"ref\":\"main\",\"sha\":\"b3992806208d7889998bf28d0e6a4d212419d54d\"},{\"created_at\":\"2026-06-28T02:20:28Z\",\"id\":5225473703,\"ref\":\"main\",\"sha\":\"ee2e245c381721c30b646855f42699c8b9d8b935\"},{\"created_at\":\"2026-06-28T01:46:50Z\",\"id\":5225334829,\"ref\":\"main\",\"sha\":\"1e5fe773117ab9805dd151483de9fde9b99b0c32\"},{\"created_at\":\"2026-06-28T01:27:48Z\",\"id\":5225252516,\"ref\":\"main\",\"sha\":\"e64813e4527cb6eee2d70b83bdfc22e8e3353b20\"},{\"created_at\":\"2026-06-28T01:13:31Z\",\"id\":5225188482,\"ref\":\"main\",\"sha\":\"552c43c9922e905458b0248107eed159c8a2ca2f\"},{\"created_at\":\"2026-06-28T00:25:55Z\",\"id\":5224977712,\"ref\":\"main\",\"sha\":\"8b32707532bca7c43854563b697cb4746a78dd84\"},{\"created_at\":\"2026-06-28T00:06:56Z\",\"id\":5224894314,\"ref\":\"main\",\"sha\":\"05e0e36c059d56f754678879429f8095b1a7d6e6\"},{\"created_at\":\"2026-06-27T23:43:05Z\",\"id\":5224785249,\"ref\":\"main\",\"sha\":\"c65f89bd9d657f02814f752052f113f6c00d8be2\"},{\"created_at\":\"2026-06-27T23:38:21Z\",\"id\":5224764227,\"ref\":\"main\",\"sha\":\"da8a8c4894094578b1330cb3cda4504800e84d82\"},{\"created_at\":\"2026-06-27T23:24:38Z\",\"id\":5224696302,\"ref\":\"main\",\"sha\":\"fc4e37d2f260d78dcb38f7abb493964463a3243d\"},{\"created_at\":\"2026-06-27T22:25:07Z\",\"id\":5224400104,\"ref\":\"main\",\"sha\":\"87c35dee5f33993f0314385b94fb3796d6c208ed\"},{\"created_at\":\"2026-06-27T05:49:57Z\",\"id\":5218824758,\"ref\":\"main\",\"sha\":\"64d13a8b81a7187547fd35e854bd27b6d0c6cc8f\"},{\"created_at\":\"2026-06-27T05:34:37Z\",\"id\":5218753025,\"ref\":\"main\",\"sha\":\"95cb5ff8bebe15c811563fc59af217e841a1795c\"},{\"created_at\":\"2026-06-26T22:58:23Z\",\"id\":5216717755,\"ref\":\"main\",\"sha\":\"c7449f0aa728aeed49f6e985b37576e03a60261a\"}]\n",
+      "stderr": ""
+    },
+    "deployments_production": {
+      "argv": [
+        "gh",
+        "api",
+        "repos/alfloop-dev/odayplus/deployments?environment=production&per_page=100",
+        "--jq",
+        "[.[]|{id,sha,ref,created_at}]"
+      ],
+      "started_at": "2026-09-29T07:02:54Z",
+      "finished_at": "2026-09-29T07:02:54Z",
+      "exit_code": 0,
+      "stdout": "[]\n",
+      "stderr": ""
+    },
+    "deployments_dev-build": {
+      "argv": [
+        "gh",
+        "api",
+        "repos/alfloop-dev/odayplus/deployments?environment=dev-build&per_page=100",
+        "--jq",
+        "[.[]|{id,sha,ref,created_at}]"
+      ],
+      "started_at": "2026-09-29T07:02:54Z",
+      "finished_at": "2026-09-29T07:02:55Z",
+      "exit_code": 0,
+      "stdout": "[{\"created_at\":\"2026-09-29T01:41:18Z\",\"id\":6724604398,\"ref\":\"dev\",\"sha\":\"ee06d1d8294464f1eb7231f2b06505348a61cba2\"},{\"created_at\":\"2026-09-28T11:30:01Z\",\"id\":6708779276,\"ref\":\"dev\",\"sha\":\"a663d604831c4b9710dda9b7ca85ddbc193837e8\"},{\"created_at\":\"2026-09-27T16:29:11Z\",\"id\":6694780344,\"ref\":\"dev\",\"sha\":\"a31e02ae391811a4c323ec4d834b70e200953366\"},{\"created_at\":\"2026-09-27T10:38:02Z\",\"id\":6691133979,\"ref\":\"dev\",\"sha\":\"355a94b52b14badc236be4b3e52eb936a7075549\"},{\"created_at\":\"2026-09-25T01:03:29Z\",\"id\":6651454929,\"ref\":\"dev\",\"sha\":\"419e6bf4958269c5b9e94efcb80770e28cd54dda\"},{\"created_at\":\"2026-09-24T01:50:02Z\",\"id\":6628381353,\"ref\":\"dev\",\"sha\":\"1364363402900c800ec3ed033d38fd1d757c1f10\"},{\"created_at\":\"2026-09-23T16:12:35Z\",\"id\":6618731191,\"ref\":\"dev\",\"sha\":\"9694320fc8a9922cbfed9b63e647508db32ef26c\"},{\"created_at\":\"2026-09-20T05:58:52Z\",\"id\":6549637942,\"ref\":\"dev\",\"sha\":\"39ae43f6fe679f03dd7df459a51835cbd2d54f77\"},{\"created_at\":\"2026-09-20T05:48:54Z\",\"id\":6549572925,\"ref\":\"dev\",\"sha\":\"39ae43f6fe679f03dd7df459a51835cbd2d54f77\"},{\"created_at\":\"2026-09-17T14:07:32Z\",\"id\":6504565681,\"ref\":\"dev\",\"sha\":\"307e6e7286c5ca89e72572e4462eb45a57e8888d\"},{\"created_at\":\"2026-09-17T13:54:23Z\",\"id\":6504296384,\"ref\":\"dev\",\"sha\":\"307e6e7286c5ca89e72572e4462eb45a57e8888d\"},{\"created_at\":\"2026-09-12T23:46:04Z\",\"id\":6415679548,\"ref\":\"dev\",\"sha\":\"36a102b7b39d1fe2e58939ee6e454e20c6d72dbd\"},{\"created_at\":\"2026-09-12T14:48:43Z\",\"id\":6410882190,\"ref\":\"dev\",\"sha\":\"a04010cde22a0337fdda05a6fa5146f70cc699f4\"},{\"created_at\":\"2026-09-08T02:22:01Z\",\"id\":6319391622,\"ref\":\"dev\",\"sha\":\"8c570a56353abdcc8ba70fe0a3fdd9b963902391\"},{\"created_at\":\"2026-09-08T02:11:56Z\",\"id\":6319291161,\"ref\":\"dev\",\"sha\":\"8c570a56353abdcc8ba70fe0a3fdd9b963902391\"},{\"created_at\":\"2026-09-07T15:49:06Z\",\"id\":6312068275,\"ref\":\"dev\",\"sha\":\"596b9c9a1788d952811a2bf8d4bba8a4e4d76b12\"},{\"created_at\":\"2026-09-05T03:31:50Z\",\"id\":6276668722,\"ref\":\"dev\",\"sha\":\"04e1572f802a54c2646ba678fe2975226dfbd7c4\"},{\"created_at\":\"2026-09-04T06:26:04Z\",\"id\":6259114765,\"ref\":\"dev\",\"sha\":\"1edb2f834cbf38ccd489cd999802098076e891b7\"},{\"created_at\":\"2026-09-02T14:34:30Z\",\"id\":6224759609,\"ref\":\"dev\",\"sha\":\"d858e1c3a75489b5ecae5f67920fb314289a93d9\"},{\"created_at\":\"2026-09-02T14:23:16Z\",\"id\":6224527838,\"ref\":\"dev\",\"sha\":\"c8f151afc44e2d71d1ffdb07d8fbf5dc237e5411\"},{\"created_at\":\"2026-09-02T11:57:19Z\",\"id\":6221791988,\"ref\":\"dev\",\"sha\":\"38de35a7bac2d6c6f6d8d079ffaf16abf6163c29\"},{\"created_at\":\"2026-09-02T11:55:25Z\",\"id\":6221761107,\"ref\":\"dev\",\"sha\":\"38de35a7bac2d6c6f6d8d079ffaf16abf6163c29\"},{\"created_at\":\"2026-09-01T12:45:42Z\",\"id\":6201474707,\"ref\":\"dev\",\"sha\":\"ae03490480e5a1313d3fdb992172c9b5793053e2\"},{\"created_at\":\"2026-08-26T19:11:01Z\",\"id\":6110184523,\"ref\":\"dev\",\"sha\":\"ebc4fca5c2dd5871275aee39a18406dd67464f04\"}]\n",
+      "stderr": ""
+    },
+    "deployments_staging-build": {
+      "argv": [
+        "gh",
+        "api",
+        "repos/alfloop-dev/odayplus/deployments?environment=staging-build&per_page=100",
+        "--jq",
+        "[.[]|{id,sha,ref,created_at}]"
+      ],
+      "started_at": "2026-09-29T07:02:55Z",
+      "finished_at": "2026-09-29T07:02:55Z",
+      "exit_code": 0,
+      "stdout": "[]\n",
+      "stderr": ""
+    },
+    "deployments_production-build": {
+      "argv": [
+        "gh",
+        "api",
+        "repos/alfloop-dev/odayplus/deployments?environment=production-build&per_page=100",
+        "--jq",
+        "[.[]|{id,sha,ref,created_at}]"
+      ],
+      "started_at": "2026-09-29T07:02:55Z",
+      "finished_at": "2026-09-29T07:02:56Z",
+      "exit_code": 0,
+      "stdout": "[]\n",
+      "stderr": ""
+    },
+    "deployment_statuses_dev": {
+      "6685363483": {
+        "argv": [
+          "gh",
+          "api",
+          "repos/alfloop-dev/odayplus/deployments/6685363483/statuses",
+          "--jq",
+          "[.[]|{state,created_at,log_url}]"
+        ],
+        "started_at": "2026-09-29T07:02:56Z",
+        "finished_at": "2026-09-29T07:02:56Z",
+        "exit_code": 0,
+        "stdout": "[{\"created_at\":\"2026-09-26T23:05:55Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/36278150009/job/108504945939\",\"state\":\"failure\"},{\"created_at\":\"2026-09-26T23:03:08Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/36278150009/job/108504945939\",\"state\":\"in_progress\"}]\n",
+        "stderr": ""
+      },
+      "6685353926": {
+        "argv": [
+          "gh",
+          "api",
+          "repos/alfloop-dev/odayplus/deployments/6685353926/statuses",
+          "--jq",
+          "[.[]|{state,created_at,log_url}]"
+        ],
+        "started_at": "2026-09-29T07:02:56Z",
+        "finished_at": "2026-09-29T07:02:57Z",
+        "exit_code": 0,
+        "stdout": "[{\"created_at\":\"2026-09-26T23:03:05Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/36278150009/job/108504787820\",\"state\":\"success\"},{\"created_at\":\"2026-09-26T23:02:03Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/36278150009/job/108504787820\",\"state\":\"in_progress\"}]\n",
+        "stderr": ""
+      },
+      "6680701369": {
+        "argv": [
+          "gh",
+          "api",
+          "repos/alfloop-dev/odayplus/deployments/6680701369/statuses",
+          "--jq",
+          "[.[]|{state,created_at,log_url}]"
+        ],
+        "started_at": "2026-09-29T07:02:57Z",
+        "finished_at": "2026-09-29T07:02:57Z",
+        "exit_code": 0,
+        "stdout": "[{\"created_at\":\"2026-09-26T15:32:28Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/36252025603/job/108432267471\",\"state\":\"failure\"},{\"created_at\":\"2026-09-26T15:31:23Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/36252025603/job/108432267471\",\"state\":\"in_progress\"},{\"created_at\":\"2026-09-26T15:31:21Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/36252025603/job/108432267471\",\"state\":\"queued\"}]\n",
+        "stderr": ""
+      },
+      "6680674880": {
+        "argv": [
+          "gh",
+          "api",
+          "repos/alfloop-dev/odayplus/deployments/6680674880/statuses",
+          "--jq",
+          "[.[]|{state,created_at,log_url}]"
+        ],
+        "started_at": "2026-09-29T07:02:57Z",
+        "finished_at": "2026-09-29T07:02:57Z",
+        "exit_code": 0,
+        "stdout": "[{\"created_at\":\"2026-09-26T15:30:32Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/36252020646/job/108431873671\",\"state\":\"failure\"},{\"created_at\":\"2026-09-26T15:29:00Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/36252020646/job/108431873671\",\"state\":\"in_progress\"}]\n",
+        "stderr": ""
+      },
+      "6680665691": {
+        "argv": [
+          "gh",
+          "api",
+          "repos/alfloop-dev/odayplus/deployments/6680665691/statuses",
+          "--jq",
+          "[.[]|{state,created_at,log_url}]"
+        ],
+        "started_at": "2026-09-29T07:02:57Z",
+        "finished_at": "2026-09-29T07:02:58Z",
+        "exit_code": 0,
+        "stdout": "[{\"created_at\":\"2026-09-26T15:28:57Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/36252020646/job/108431731546\",\"state\":\"success\"},{\"created_at\":\"2026-09-26T15:28:07Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/36252020646/job/108431731546\",\"state\":\"in_progress\"}]\n",
+        "stderr": ""
+      },
+      "6680303974": {
+        "argv": [
+          "gh",
+          "api",
+          "repos/alfloop-dev/odayplus/deployments/6680303974/statuses",
+          "--jq",
+          "[.[]|{state,created_at,log_url}]"
+        ],
+        "started_at": "2026-09-29T07:02:58Z",
+        "finished_at": "2026-09-29T07:02:58Z",
+        "exit_code": 0,
+        "stdout": "[{\"created_at\":\"2026-09-26T14:55:06Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/36250018645/job/108426383644\",\"state\":\"failure\"},{\"created_at\":\"2026-09-26T14:54:30Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/36250018645/job/108426383644\",\"state\":\"in_progress\"}]\n",
+        "stderr": ""
+      },
+      "6680292410": {
+        "argv": [
+          "gh",
+          "api",
+          "repos/alfloop-dev/odayplus/deployments/6680292410/statuses",
+          "--jq",
+          "[.[]|{state,created_at,log_url}]"
+        ],
+        "started_at": "2026-09-29T07:02:58Z",
+        "finished_at": "2026-09-29T07:02:59Z",
+        "exit_code": 0,
+        "stdout": "[{\"created_at\":\"2026-09-26T14:54:26Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/36250018645/job/108426209292\",\"state\":\"success\"},{\"created_at\":\"2026-09-26T14:53:20Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/36250018645/job/108426209292\",\"state\":\"in_progress\"}]\n",
+        "stderr": ""
+      },
+      "6680207955": {
+        "argv": [
+          "gh",
+          "api",
+          "repos/alfloop-dev/odayplus/deployments/6680207955/statuses",
+          "--jq",
+          "[.[]|{state,created_at,log_url}]"
+        ],
+        "started_at": "2026-09-29T07:02:59Z",
+        "finished_at": "2026-09-29T07:02:59Z",
+        "exit_code": 0,
+        "stdout": "[{\"created_at\":\"2026-09-26T14:46:18Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/36249563324/job/108424963470\",\"state\":\"failure\"},{\"created_at\":\"2026-09-26T14:45:20Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/36249563324/job/108424963470\",\"state\":\"in_progress\"}]\n",
+        "stderr": ""
+      },
+      "6642839738": {
+        "argv": [
+          "gh",
+          "api",
+          "repos/alfloop-dev/odayplus/deployments/6642839738/statuses",
+          "--jq",
+          "[.[]|{state,created_at,log_url}]"
+        ],
+        "started_at": "2026-09-29T07:02:59Z",
+        "finished_at": "2026-09-29T07:03:00Z",
+        "exit_code": 0,
+        "stdout": "[{\"created_at\":\"2026-09-24T16:31:01Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/36027737089/job/107728563586\",\"state\":\"failure\"},{\"created_at\":\"2026-09-24T16:29:58Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/36027737089/job/107728563586\",\"state\":\"in_progress\"}]\n",
+        "stderr": ""
+      },
+      "6000516853": {
+        "argv": [
+          "gh",
+          "api",
+          "repos/alfloop-dev/odayplus/deployments/6000516853/statuses",
+          "--jq",
+          "[.[]|{state,created_at,log_url}]"
+        ],
+        "started_at": "2026-09-29T07:03:00Z",
+        "finished_at": "2026-09-29T07:03:00Z",
+        "exit_code": 0,
+        "stdout": "[{\"created_at\":\"2026-08-20T10:36:37Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/32359736962/job/96396624584\",\"state\":\"failure\"},{\"created_at\":\"2026-08-20T10:36:33Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/32359736962/job/96396624584\",\"state\":\"in_progress\"},{\"created_at\":\"2026-08-20T10:36:31Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/32359736962/job/96396624584\",\"state\":\"queued\"}]\n",
+        "stderr": ""
+      }
+    },
+    "success_deployment_runs_dev": {
+      "36278150009": {
+        "argv": [
+          "gh",
+          "run",
+          "view",
+          "36278150009",
+          "-R",
+          "alfloop-dev/odayplus",
+          "--json",
+          "databaseId,headSha,conclusion,jobs",
+          "--jq",
+          "{databaseId,headSha,conclusion,jobs:[.jobs[]|{name,conclusion}]}"
+        ],
+        "started_at": "2026-09-29T07:03:00Z",
+        "finished_at": "2026-09-29T07:03:02Z",
+        "exit_code": 0,
+        "stdout": "{\"conclusion\":\"failure\",\"databaseId\":36278150009,\"headSha\":\"c8d26f020e0f6a065757beeac88b02f011884894\",\"jobs\":[{\"conclusion\":\"success\",\"name\":\"Validate release phase inputs\"},{\"conclusion\":\"success\",\"name\":\"Verify the Supervisor lease authorises this deploy\"},{\"conclusion\":\"skipped\",\"name\":\"Build once and publish the immutable artifact handoff\"},{\"conclusion\":\"failure\",\"name\":\"Deploy the admitted artifact by immutable digest\"},{\"conclusion\":\"skipped\",\"name\":\"Verify production watch and clean up ephemeral staging\"}]}\n",
+        "stderr": ""
+      },
+      "36252020646": {
+        "argv": [
+          "gh",
+          "run",
+          "view",
+          "36252020646",
+          "-R",
+          "alfloop-dev/odayplus",
+          "--json",
+          "databaseId,headSha,conclusion,jobs",
+          "--jq",
+          "{databaseId,headSha,conclusion,jobs:[.jobs[]|{name,conclusion}]}"
+        ],
+        "started_at": "2026-09-29T07:03:02Z",
+        "finished_at": "2026-09-29T07:03:03Z",
+        "exit_code": 0,
+        "stdout": "{\"conclusion\":\"failure\",\"databaseId\":36252020646,\"headSha\":\"c8d26f020e0f6a065757beeac88b02f011884894\",\"jobs\":[{\"conclusion\":\"success\",\"name\":\"Validate release phase inputs\"},{\"conclusion\":\"success\",\"name\":\"Verify the Supervisor lease authorises this deploy\"},{\"conclusion\":\"skipped\",\"name\":\"Build once and publish the immutable artifact handoff\"},{\"conclusion\":\"failure\",\"name\":\"Deploy the admitted artifact by immutable digest\"},{\"conclusion\":\"skipped\",\"name\":\"Verify production watch and clean up ephemeral staging\"}]}\n",
+        "stderr": ""
+      },
+      "36250018645": {
+        "argv": [
+          "gh",
+          "run",
+          "view",
+          "36250018645",
+          "-R",
+          "alfloop-dev/odayplus",
+          "--json",
+          "databaseId,headSha,conclusion,jobs",
+          "--jq",
+          "{databaseId,headSha,conclusion,jobs:[.jobs[]|{name,conclusion}]}"
+        ],
+        "started_at": "2026-09-29T07:03:03Z",
+        "finished_at": "2026-09-29T07:03:05Z",
+        "exit_code": 0,
+        "stdout": "{\"conclusion\":\"failure\",\"databaseId\":36250018645,\"headSha\":\"c8d26f020e0f6a065757beeac88b02f011884894\",\"jobs\":[{\"conclusion\":\"success\",\"name\":\"Validate release phase inputs\"},{\"conclusion\":\"success\",\"name\":\"Verify the Supervisor lease authorises this deploy\"},{\"conclusion\":\"skipped\",\"name\":\"Build once and publish the immutable artifact handoff\"},{\"conclusion\":\"failure\",\"name\":\"Deploy the admitted artifact by immutable digest\"},{\"conclusion\":\"skipped\",\"name\":\"Verify production watch and clean up ephemeral staging\"}]}\n",
+        "stderr": ""
+      }
+    },
+    "deployment_statuses_staging": {
+      "6168420745": {
+        "argv": [
+          "gh",
+          "api",
+          "repos/alfloop-dev/odayplus/deployments/6168420745/statuses",
+          "--jq",
+          "[.[]|{state,created_at,log_url}]"
+        ],
+        "started_at": "2026-09-29T07:03:05Z",
+        "finished_at": "2026-09-29T07:03:05Z",
+        "exit_code": 0,
+        "stdout": "[{\"created_at\":\"2026-08-30T15:52:33Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/33320822376/job/99282369480\",\"state\":\"success\"},{\"created_at\":\"2026-08-30T15:52:03Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/33320822376/job/99282369480\",\"state\":\"in_progress\"},{\"created_at\":\"2026-08-30T15:51:59Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/33320822376/job/99282369480\",\"state\":\"queued\"},{\"created_at\":\"2026-08-30T15:51:45Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/33320822376/job/99282369480\",\"state\":\"waiting\"}]\n",
+        "stderr": ""
+      },
+      "6168364410": {
+        "argv": [
+          "gh",
+          "api",
+          "repos/alfloop-dev/odayplus/deployments/6168364410/statuses",
+          "--jq",
+          "[.[]|{state,created_at,log_url}]"
+        ],
+        "started_at": "2026-09-29T07:03:05Z",
+        "finished_at": "2026-09-29T07:03:05Z",
+        "exit_code": 0,
+        "stdout": "[{\"created_at\":\"2026-08-30T15:47:28Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/33320534334/job/99281597674\",\"state\":\"failure\"},{\"created_at\":\"2026-08-30T15:46:59Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/33320534334/job/99281597674\",\"state\":\"in_progress\"},{\"created_at\":\"2026-08-30T15:46:57Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/33320534334/job/99281597674\",\"state\":\"queued\"},{\"created_at\":\"2026-08-30T15:45:31Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/33320534334/job/99281597674\",\"state\":\"waiting\"}]\n",
+        "stderr": ""
+      },
+      "5794448512": {
+        "argv": [
+          "gh",
+          "api",
+          "repos/alfloop-dev/odayplus/deployments/5794448512/statuses",
+          "--jq",
+          "[.[]|{state,created_at,log_url}]"
+        ],
+        "started_at": "2026-09-29T07:03:05Z",
+        "finished_at": "2026-09-29T07:03:06Z",
+        "exit_code": 0,
+        "stdout": "[{\"created_at\":\"2026-08-07T12:25:51Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/31178110763/job/92864659705\",\"state\":\"failure\"},{\"created_at\":\"2026-08-07T12:25:23Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/31178110763/job/92864659705\",\"state\":\"in_progress\"}]\n",
+        "stderr": ""
+      },
+      "5735945825": {
+        "argv": [
+          "gh",
+          "api",
+          "repos/alfloop-dev/odayplus/deployments/5735945825/statuses",
+          "--jq",
+          "[.[]|{state,created_at,log_url}]"
+        ],
+        "started_at": "2026-09-29T07:03:06Z",
+        "finished_at": "2026-09-29T07:03:06Z",
+        "exit_code": 0,
+        "stdout": "[{\"created_at\":\"2026-08-04T00:40:32Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/30866281526/job/91858745827\",\"state\":\"failure\"},{\"created_at\":\"2026-08-04T00:40:01Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/30866281526/job/91858745827\",\"state\":\"in_progress\"}]\n",
+        "stderr": ""
+      },
+      "5719488718": {
+        "argv": [
+          "gh",
+          "api",
+          "repos/alfloop-dev/odayplus/deployments/5719488718/statuses",
+          "--jq",
+          "[.[]|{state,created_at,log_url}]"
+        ],
+        "started_at": "2026-09-29T07:03:06Z",
+        "finished_at": "2026-09-29T07:03:07Z",
+        "exit_code": 0,
+        "stdout": "[{\"created_at\":\"2026-08-03T01:21:15Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/30776645866/job/91573285365\",\"state\":\"failure\"},{\"created_at\":\"2026-08-03T01:20:45Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/30776645866/job/91573285365\",\"state\":\"in_progress\"}]\n",
+        "stderr": ""
+      },
+      "5715411410": {
+        "argv": [
+          "gh",
+          "api",
+          "repos/alfloop-dev/odayplus/deployments/5715411410/statuses",
+          "--jq",
+          "[.[]|{state,created_at,log_url}]"
+        ],
+        "started_at": "2026-09-29T07:03:07Z",
+        "finished_at": "2026-09-29T07:03:07Z",
+        "exit_code": 0,
+        "stdout": "[{\"created_at\":\"2026-08-02T16:12:31Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/30756079565/job/91518353125\",\"state\":\"failure\"},{\"created_at\":\"2026-08-02T16:11:58Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/30756079565/job/91518353125\",\"state\":\"in_progress\"}]\n",
+        "stderr": ""
+      },
+      "5715217040": {
+        "argv": [
+          "gh",
+          "api",
+          "repos/alfloop-dev/odayplus/deployments/5715217040/statuses",
+          "--jq",
+          "[.[]|{state,created_at,log_url}]"
+        ],
+        "started_at": "2026-09-29T07:03:07Z",
+        "finished_at": "2026-09-29T07:03:08Z",
+        "exit_code": 0,
+        "stdout": "[{\"created_at\":\"2026-08-02T15:46:42Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/30755092200/job/91515776000\",\"state\":\"failure\"},{\"created_at\":\"2026-08-02T15:46:15Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/30755092200/job/91515776000\",\"state\":\"in_progress\"}]\n",
+        "stderr": ""
+      },
+      "5714940468": {
+        "argv": [
+          "gh",
+          "api",
+          "repos/alfloop-dev/odayplus/deployments/5714940468/statuses",
+          "--jq",
+          "[.[]|{state,created_at,log_url}]"
+        ],
+        "started_at": "2026-09-29T07:03:08Z",
+        "finished_at": "2026-09-29T07:03:08Z",
+        "exit_code": 0,
+        "stdout": "[{\"created_at\":\"2026-08-02T15:11:04Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/30753747153/job/91512237486\",\"state\":\"failure\"},{\"created_at\":\"2026-08-02T15:10:31Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/30753747153/job/91512237486\",\"state\":\"in_progress\"}]\n",
+        "stderr": ""
+      },
+      "5714006362": {
+        "argv": [
+          "gh",
+          "api",
+          "repos/alfloop-dev/odayplus/deployments/5714006362/statuses",
+          "--jq",
+          "[.[]|{state,created_at,log_url}]"
+        ],
+        "started_at": "2026-09-29T07:03:08Z",
+        "finished_at": "2026-09-29T07:03:09Z",
+        "exit_code": 0,
+        "stdout": "[{\"created_at\":\"2026-08-02T13:06:07Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/30749194359/job/91500059754\",\"state\":\"failure\"},{\"created_at\":\"2026-08-02T13:05:34Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/30749194359/job/91500059754\",\"state\":\"in_progress\"}]\n",
+        "stderr": ""
+      },
+      "5713486766": {
+        "argv": [
+          "gh",
+          "api",
+          "repos/alfloop-dev/odayplus/deployments/5713486766/statuses",
+          "--jq",
+          "[.[]|{state,created_at,log_url}]"
+        ],
+        "started_at": "2026-09-29T07:03:09Z",
+        "finished_at": "2026-09-29T07:03:09Z",
+        "exit_code": 0,
+        "stdout": "[{\"created_at\":\"2026-08-02T11:55:50Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/30746732274/job/91493488037\",\"state\":\"failure\"},{\"created_at\":\"2026-08-02T11:55:24Z\",\"log_url\":\"https://github.com/alfloop-dev/odayplus/actions/runs/30746732274/job/91493488037\",\"state\":\"in_progress\"}]\n",
+        "stderr": ""
+      }
+    },
+    "success_deployment_runs_staging": {
+      "33320822376": {
+        "argv": [
+          "gh",
+          "run",
+          "view",
+          "33320822376",
+          "-R",
+          "alfloop-dev/odayplus",
+          "--json",
+          "databaseId,headSha,conclusion,jobs",
+          "--jq",
+          "{databaseId,headSha,conclusion,jobs:[.jobs[]|{name,conclusion}]}"
+        ],
+        "started_at": "2026-09-29T07:03:09Z",
+        "finished_at": "2026-09-29T07:03:10Z",
+        "exit_code": 0,
+        "stdout": "{\"conclusion\":\"success\",\"databaseId\":33320822376,\"headSha\":\"3e2c4c094eccdf533f5dca5fa4064b9226792498\",\"jobs\":[{\"conclusion\":\"success\",\"name\":\"Verify staging deployer state backend access\"},{\"conclusion\":\"skipped\",\"name\":\"Validate release phase inputs\"},{\"conclusion\":\"skipped\",\"name\":\"Build once and publish the immutable artifact handoff\"},{\"conclusion\":\"skipped\",\"name\":\"Verify the Supervisor lease authorises this deploy\"},{\"conclusion\":\"skipped\",\"name\":\"Deploy the admitted artifact by immutable digest\"}]}\n",
+        "stderr": ""
+      }
+    },
+    "deployment_statuses_production": {},
+    "success_deployment_runs_production": {},
+    "variables_dev": [
+      {
+        "argv": [
+          "gh",
+          "api",
+          "repos/alfloop-dev/odayplus/environments/dev/variables?per_page=30&page=1"
+        ],
+        "started_at": "2026-09-29T07:03:10Z",
+        "finished_at": "2026-09-29T07:03:11Z",
+        "exit_code": 0,
+        "stdout": "{\"total_count\": 43, \"names\": [\"GCP_AR_REPO\", \"GCP_CLOUD_SQL_INSTANCE\", \"GCP_PROJECT_ID\", \"GCP_REGION\", \"GCP_SERVICE_ACCOUNT\", \"GCP_WORKLOAD_IDENTITY_PROVIDER\", \"MLFLOW_TRACKING_URI\", \"ODAY_DATABASE_URL_SECRET\", \"ODP_AUTH_AUDIENCES\", \"ODP_AUTH_ISSUER\", \"ODP_AUTH_JWKS_URI\", \"ODP_AUTH_MODE\", \"ODP_AUTH_PRINCIPAL_MAP_SECRET\", \"ODP_CLOUD_RUN_API_SERVICE\", \"ODP_CLOUD_RUN_MIGRATION_JOB\", \"ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT\", \"ODP_CLOUD_RUN_SCHEDULER_JOB\", \"ODP_CLOUD_RUN_VPC_CONNECTOR\", \"ODP_CLOUD_RUN_VPC_EGRESS\", \"ODP_CLOUD_RUN_WEB_SERVICE\", \"ODP_CLOUD_RUN_WORKER_JOB\", \"ODP_CLOUD_SCHEDULER_SCHEDULER_TRIGGER\", \"ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT\", \"ODP_CLOUD_SCHEDULER_WORKER_TRIGGER\", \"ODP_DEV_DEPLOY_URL\", \"ODP_FORECAST_ENGINE\", \"ODP_FORECAST_MODEL\", \"ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET\", \"ODP_MLFLOW_CLOUD_RUN_AUDIENCE\", \"ODP_OPERATOR_SMOKE_ROLE\"]}",
+        "stderr": ""
+      },
+      {
+        "argv": [
+          "gh",
+          "api",
+          "repos/alfloop-dev/odayplus/environments/dev/variables?per_page=30&page=2"
+        ],
+        "started_at": "2026-09-29T07:03:11Z",
+        "finished_at": "2026-09-29T07:03:11Z",
+        "exit_code": 0,
+        "stdout": "{\"total_count\": 43, \"names\": [\"ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT\", \"ODP_RELEASE_LEASE_PUBLIC_KEY\", \"ODP_RELEASE_LEASE_STATE_URI\", \"ODP_SCHEDULED_INGESTION_TENANT_ID\", \"ODP_SCHEDULER_CRON\", \"ODP_SCHEDULER_TIME_ZONE\", \"ODP_SNAPSHOT_BUCKET\", \"ODP_TENANT_ID\", \"ODP_WEB_BASE_URL\", \"ODP_WEB_OIDC_CLIENT_SECRET_SECRET\", \"ODP_WEB_OIDC_ISSUER\", \"ODP_WEB_SESSION_SECRET_SECRET\", \"ODP_WORKER_CRON\"]}",
+        "stderr": ""
+      }
+    ],
+    "variables_staging": [
+      {
+        "argv": [
+          "gh",
+          "api",
+          "repos/alfloop-dev/odayplus/environments/staging/variables?per_page=30&page=1"
+        ],
+        "started_at": "2026-09-29T07:03:11Z",
+        "finished_at": "2026-09-29T07:03:12Z",
+        "exit_code": 0,
+        "stdout": "{\"total_count\": 50, \"names\": [\"GCP_AR_REPO\", \"GCP_CLOUD_SQL_INSTANCE\", \"GCP_PROJECT_ID\", \"GCP_REGION\", \"GCP_SERVICE_ACCOUNT\", \"GCP_WORKLOAD_IDENTITY_PROVIDER\", \"MLFLOW_TRACKING_URI\", \"ODAY_DATABASE_URL_SECRET\", \"ODP_AUTH_AUDIENCES\", \"ODP_AUTH_ISSUER\", \"ODP_AUTH_JWKS_URI\", \"ODP_AUTH_MODE\", \"ODP_AUTH_PRINCIPAL_MAP_SECRET\", \"ODP_CLOUD_RUN_API_SERVICE\", \"ODP_CLOUD_RUN_MIGRATION_JOB\", \"ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT\", \"ODP_CLOUD_RUN_SCHEDULER_JOB\", \"ODP_CLOUD_RUN_VPC_CONNECTOR\", \"ODP_CLOUD_RUN_VPC_EGRESS\", \"ODP_CLOUD_RUN_WEB_SERVICE\", \"ODP_CLOUD_RUN_WORKER_JOB\", \"ODP_CLOUD_SCHEDULER_SCHEDULER_TRIGGER\", \"ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT\", \"ODP_CLOUD_SCHEDULER_WORKER_TRIGGER\", \"ODP_FORECAST_ENGINE\", \"ODP_FORECAST_MODEL\", \"ODP_LIVE_E2E_DEPLOYMENT_MODE\", \"ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS\", \"ODP_MLFLOW_CLOUD_RUN_AUDIENCE\", \"ODP_OPERATOR_SMOKE_ROLE\"]}",
+        "stderr": ""
+      },
+      {
+        "argv": [
+          "gh",
+          "api",
+          "repos/alfloop-dev/odayplus/environments/staging/variables?per_page=30&page=2"
+        ],
+        "started_at": "2026-09-29T07:03:12Z",
+        "finished_at": "2026-09-29T07:03:13Z",
+        "exit_code": 0,
+        "stdout": "{\"total_count\": 50, \"names\": [\"ODP_RELEASE_LEASE_PUBLIC_KEY\", \"ODP_RELEASE_LEASE_STATE_URI\", \"ODP_SCHEDULED_INGESTION_TENANT_ID\", \"ODP_SCHEDULER_CRON\", \"ODP_SCHEDULER_TIME_ZONE\", \"ODP_SNAPSHOT_BUCKET\", \"ODP_STAGING_API_URL\", \"ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT\", \"ODP_STAGING_DEPLOY_URL\", \"ODP_STAGING_KMS_KEY_ID\", \"ODP_STAGING_RECOVERY_BUNDLE_BUCKET\", \"ODP_STAGING_SECRET_OWNER\", \"ODP_STAGING_TERRAFORM_STATE_BUCKET\", \"ODP_STAGING_VPC_NETWORK\", \"ODP_STAGING_VPC_SUBNETWORK\", \"ODP_TENANT_ID\", \"ODP_WEB_OIDC_CLIENT_SECRET_SECRET\", \"ODP_WEB_OIDC_ISSUER\", \"ODP_WEB_SESSION_SECRET_SECRET\", \"ODP_WORKER_CRON\"]}",
+        "stderr": ""
+      }
+    ],
+    "variables_production": [
+      {
+        "argv": [
+          "gh",
+          "api",
+          "repos/alfloop-dev/odayplus/environments/production/variables?per_page=30&page=1"
+        ],
+        "started_at": "2026-09-29T07:03:13Z",
+        "finished_at": "2026-09-29T07:03:13Z",
+        "exit_code": 0,
+        "stdout": "{\"total_count\": 48, \"names\": [\"GCP_AR_REPO\", \"GCP_CLOUD_SQL_INSTANCE\", \"GCP_PROJECT_ID\", \"GCP_REGION\", \"GCP_SERVICE_ACCOUNT\", \"GCP_WORKLOAD_IDENTITY_PROVIDER\", \"MLFLOW_TRACKING_URI\", \"ODAY_DATABASE_URL_SECRET\", \"ODP_AUTH_AUDIENCES\", \"ODP_AUTH_ISSUER\", \"ODP_AUTH_JWKS_URI\", \"ODP_AUTH_MODE\", \"ODP_AUTH_PRINCIPAL_MAP_SECRET\", \"ODP_CLOUD_RUN_API_SERVICE\", \"ODP_CLOUD_RUN_MIGRATION_JOB\", \"ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT\", \"ODP_CLOUD_RUN_SCHEDULER_JOB\", \"ODP_CLOUD_RUN_VPC_EGRESS\", \"ODP_CLOUD_RUN_WEB_SERVICE\", \"ODP_CLOUD_RUN_WORKER_JOB\", \"ODP_CLOUD_SCHEDULER_SCHEDULER_TRIGGER\", \"ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT\", \"ODP_CLOUD_SCHEDULER_WORKER_TRIGGER\", \"ODP_FORECAST_ENGINE\", \"ODP_FORECAST_MODEL\", \"ODP_LIVE_E2E_DEPLOYMENT_MODE\", \"ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS\", \"ODP_MLFLOW_CLOUD_RUN_AUDIENCE\", \"ODP_OPERATOR_SMOKE_ROLE\", \"ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT\"]}",
+        "stderr": ""
+      },
+      {
+        "argv": [
+          "gh",
+          "api",
+          "repos/alfloop-dev/odayplus/environments/production/variables?per_page=30&page=2"
+        ],
+        "started_at": "2026-09-29T07:03:13Z",
+        "finished_at": "2026-09-29T07:03:14Z",
+        "exit_code": 0,
+        "stdout": "{\"total_count\": 48, \"names\": [\"ODP_PROD_API_URL\", \"ODP_PROD_DEPLOYER_SERVICE_ACCOUNT\", \"ODP_PROD_DEPLOY_URL\", \"ODP_PROD_KMS_KEY_ID\", \"ODP_PROD_SECRET_OWNER\", \"ODP_PROD_VPC_NETWORK\", \"ODP_PROD_VPC_SUBNETWORK\", \"ODP_RELEASE_LEASE_PUBLIC_KEY\", \"ODP_RELEASE_LEASE_STATE_URI\", \"ODP_SCHEDULED_INGESTION_TENANT_ID\", \"ODP_SCHEDULER_CRON\", \"ODP_SCHEDULER_TIME_ZONE\", \"ODP_SNAPSHOT_BUCKET\", \"ODP_TENANT_ID\", \"ODP_WEB_OIDC_CLIENT_SECRET_SECRET\", \"ODP_WEB_OIDC_ISSUER\", \"ODP_WEB_SESSION_SECRET_SECRET\", \"ODP_WORKER_CRON\"]}",
+        "stderr": ""
+      }
+    ]
+  },
+  "identity_reference_comparison": {
+    "GCP_PROJECT_ID": {
+      "fingerprints": {
+        "dev": "sha256:ffd423cf0af4a8512fd7b0058445bdf8f303e516aea4b72a95266e5d7d5263d9",
+        "staging": "sha256:ffd423cf0af4a8512fd7b0058445bdf8f303e516aea4b72a95266e5d7d5263d9",
+        "production": "sha256:e13975e7ae9210fdb0f16f29862dd920e77aafb9a2d7ede6b3fd55f667c86b23"
+      },
+      "distinct_across_present_envs": false,
+      "shared_with_production": []
+    },
+    "GCP_SERVICE_ACCOUNT": {
+      "fingerprints": {
+        "dev": "sha256:cf0921eb1fb5c454a01a7407529a878a63be13d3992f44299534903979e4c4d9",
+        "staging": "sha256:cf0921eb1fb5c454a01a7407529a878a63be13d3992f44299534903979e4c4d9",
+        "production": "sha256:bc5a3ff312124200b101a07bf39e3b9c9a948238485719a0b10ed8f9dc092b9a"
+      },
+      "distinct_across_present_envs": false,
+      "shared_with_production": []
+    },
+    "GCP_WORKLOAD_IDENTITY_PROVIDER": {
+      "fingerprints": {
+        "dev": "sha256:48669f3cb8ed7f9db57e34ca38e3b38fd8283daa7e1a11eb26a31d81457f2666",
+        "staging": "sha256:48669f3cb8ed7f9db57e34ca38e3b38fd8283daa7e1a11eb26a31d81457f2666",
+        "production": "sha256:750ad700f674bc88d33a57a99df0fa9db7e70533efac2c032ac6945213018250"
+      },
+      "distinct_across_present_envs": false,
+      "shared_with_production": []
+    },
+    "ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT": {
+      "fingerprints": {
+        "dev": "sha256:b01027fe3380792d9df235941c3c408b9196a15e089a1e7d3efc346509734e05",
+        "staging": "sha256:9caa83347c76abea353cf7118a2fd4d778752efa64f30c79e5c5099146defee1",
+        "production": "sha256:9c61dfd3fc4a7073f6972c4c0c164326f9261a86cd8612f80cbfd2ee0510d459"
+      },
+      "distinct_across_present_envs": true,
+      "shared_with_production": []
+    },
+    "ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT": {
+      "fingerprints": {
+        "dev": "sha256:a7069dee3386cefeeeacef640af68a391cc2c9a39f4f1287f40a8920c8d9ceb4",
+        "staging": "sha256:cb2da38879649d7354cff14f531e942cdb236160bff315ec96b96713da1cd509",
+        "production": "sha256:a15291115d21bc77de17e309235fe88ab79bef80033d93b4e2e782e9a4deb759"
+      },
+      "distinct_across_present_envs": true,
+      "shared_with_production": []
+    },
+    "ODAY_DATABASE_URL_SECRET": {
+      "fingerprints": {
+        "dev": "sha256:3fa652a145dc3f42943000ce9c973343d6c33d8bf8c1dc51a0b96c3fd499e86c",
+        "staging": "sha256:3f7ad2ab5457a9b8329c401c64502aa519d0d821e0cd8dd4c5d997bb93d1abd6",
+        "production": "sha256:515107b1ea461b77bbd6efdd6783fd2b04d4c78866badc0b7a5ed3720b90c0d7"
+      },
+      "distinct_across_present_envs": true,
+      "shared_with_production": []
+    },
+    "ODP_AUTH_PRINCIPAL_MAP_SECRET": {
+      "fingerprints": {
+        "dev": "sha256:1081e2f85726f63677682bee5bacd172e1150e2f8c506ea7df6803696f9fe8b7",
+        "staging": "sha256:ef3b7979bf5279bb022f570c82e759e25313f9a47b63b88ad08cd592e85cf621",
+        "production": "sha256:19c7298730105ef3ab5f4764717cc83d6576737f232b06b00096dc74012f07d0"
+      },
+      "distinct_across_present_envs": true,
+      "shared_with_production": []
+    },
+    "ODP_WEB_OIDC_CLIENT_SECRET_SECRET": {
+      "fingerprints": {
+        "dev": "sha256:879128f4bd5264a8b233ac30b8dcfc489a7d1a52f140f4bff580cdda5605a537",
+        "staging": "sha256:962b1700a14fe1c420f316fa97c679bbe118b4ea76c9e31b6705e6cc06277cae",
+        "production": "sha256:26fffb96c94b075dff0a3d7d40fefda15130b0a3377b9c64eb464b2980766222"
+      },
+      "distinct_across_present_envs": true,
+      "shared_with_production": []
+    },
+    "ODP_WEB_SESSION_SECRET_SECRET": {
+      "fingerprints": {
+        "dev": "sha256:9b8fb3da9abcb1cb1f40c4367c53d85142928e887729ec8dff628a10def38610",
+        "staging": "sha256:cdf32c196d0d59d8916677f6b9ecfd8746cf7b84bcafff42644f725976efc782",
+        "production": "sha256:bbb7ee0e8c92eca61c63c44ba908b437b00630efa8e90327e7340324e8aff8ba"
+      },
+      "distinct_across_present_envs": true,
+      "shared_with_production": []
+    },
+    "ODP_SNAPSHOT_BUCKET": {
+      "fingerprints": {
+        "dev": "sha256:21ce7c2a9b97bdcf2704af72f63d6b71ce2b38c776aa2051fba30f368c2075f5",
+        "staging": "sha256:2abc9567b6e1d4da2831f0cad20d7746aeb7445aaeee518081491c12c3be2b97",
+        "production": "sha256:4fcb9c4a2e45833d857796a131c8ddf76cabf3f7895d5803379a6f847451db25"
+      },
+      "distinct_across_present_envs": true,
+      "shared_with_production": []
+    }
+  },
+  "captured_until": "2026-09-29T07:03:14Z"
+}
