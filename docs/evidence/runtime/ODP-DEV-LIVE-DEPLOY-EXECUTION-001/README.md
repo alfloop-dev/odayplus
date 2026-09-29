@@ -1,6 +1,43 @@
 # ODP-DEV-LIVE-DEPLOY-EXECUTION-001 — evidence
 
-Status: **blocked at lease issuance. Nothing has been deployed.** Round 2 (2026-09-29T15:19Z) used the one fresh release request that Human/Ops registered under `HUMANOPS-DEV-MIGRATION-20260929T053234Z`. The live Supervisor issuer rejected it before any lease existed: no GCS lease, no Secret Manager read, and no Runtime Release run. The newest `deploy-dev.yml` run is still the build run `36509055237` (2026-09-29T01:41:03Z).
+Status: **blocked at lease issuance. Nothing has been deployed.** Round 2 (2026-09-29T15:19Z) used the one fresh release request that Human/Ops registered under `HUMANOPS-DEV-MIGRATION-20260929T053234Z`. The live Supervisor issuer rejected it before any lease existed: no GCS lease, no Secret Manager read, and no Runtime Release run. The newest `deploy-dev.yml` run is still the build run `36509055237` (2026-09-29T01:41:03Z). Round 3 (15:33Z) found that the runtime roll-forward is staged but not running, and that no new request is on the board.
+
+## Round 3 (2026-09-29T15:33Z – 15:36Z) — precheck only, no request registered
+
+The 15:33:00Z reopen said: "Supervisor runtime rolled to current dev … Second release_lease_request with a fresh nonce registered". Both claims were measured against the live host and the live board.
+
+### Live state
+
+| Check | Measured | Source |
+|---|---|---|
+| Running Supervisor | pid `630708`, started 2026-09-27T08:15:36Z, `/proc/630708/cwd` = `/home/lupin/oday-plus-supervisor-runtime-af923aa58d33` | `ps -eo pid,lstart,args`, `readlink /proc/630708/cwd` |
+| `oday-plus-supervisor-runtime-current` | → `oday-plus-supervisor-runtime-af923aa58d33` | `readlink` |
+| New runtime dir | `oday-plus-supervisor-runtime-a631b8c793b2` exists, HEAD `a631b8c7`, created 15:32:51Z, **not running** | `ls --time-style=full-iso`, `git rev-parse HEAD` |
+| Worker launch path for this round | `/home/lupin/oday-plus-supervisor-runtime-af923aa58d33/.orchestrator/bin/claude` | `worker_started` event at 15:33:11Z |
+| `task.release_lease_request` | `null` | `$PANTHEON_STATUS_ROOT/ai-status.json` at 15:34:01Z and 15:35:08Z |
+| `task.release_lease_issuance.state` | still the round-2 `blocked` record (fingerprint `sha256:6b5c80ed…`) | same |
+
+The runtime directory was created, but the running Supervisor is still on `af923aa5`. The "second request" is not on the board. A Human/Ops `assign` at 15:33:50Z came after the reopen and may have cleared the field. Whatever the cause, the issuer has no request to process, and nothing will be issued until one is registered.
+
+### Full pre-GCS issuer check, both runtimes
+
+For this round the probe covers every check that `process_release_lease_issuance` runs before `LeaseStateStore`: `request_errors`, `_read_release_inputs`, `_exact_binding_errors`, `_build_run_binding_errors`, `check_dispatch_ref_errors` (real `resolve_ref_sha` against the remote `dev`), `_nonce_reuse_errors` and `issuance_errors`. It uses the live config and live status root `/home/lupin/odayplus`. The request is hypothetical (`approval_id=HYPOTHETICAL-PROBE-NOT-REGISTERED`, throwaway nonce, `expires_at` = the authorization deadline) and was never written to the board. No GCS, Secret Manager or dispatch call was made.
+
+| Runtime code | Every check except dispatch ref | `check_dispatch_ref_errors` (dev = `a631b8c7`) |
+|---|---|---|
+| `a631b8c793b2` (staged, not running) | `[]` | `[]` |
+| `af923aa58d33` (running) | `[]` | `…intervening commits touch non-evidence paths: docs/audits/code-boundary-inventory.csv` |
+
+Receipts: `issuer-full-precheck-runtime-a631b8c7.json`, `issuer-full-precheck-runtime-af923aa5.json`. The script is under Reproduce → Round 3 full issuer precheck.
+
+### Consequence
+
+If a request is registered while pid `630708` is still running, it gets blocked on the same ancestry error as round 2, and that request is used up. If the Supervisor is running `a631b8c7`, every check before GCS passes. After that, only the GCS lease store, the Secret Manager key and the deploy itself remain, and none of them can be dry-run.
+
+### Required Human/Ops actions, in this order
+
+1. Point `oday-plus-supervisor-runtime-current` at `oday-plus-supervisor-runtime-a631b8c793b2` and restart the Supervisor. Confirm with `readlink /proc/<new pid>/cwd`.
+2. Only then register one fresh `release_lease_request`. Use the same binding as the round-2 request, a new nonce, and `expires_at` ≤ 2026-09-30T05:32:34Z. The task must stay `in_progress` with no open blocker, because `request_errors` rejects any other state.
 
 ## Round 2 (2026-09-29T15:19Z – 15:24Z)
 
@@ -209,5 +246,52 @@ out = {
 tmp = root / "delivery_toolchain/e2e/check_release_gate_registry.py"
 assert subprocess.run(["git","diff","--quiet",ref,"--",str(tmp)],cwd=root).returncode == 0
 out["origin_dev_code"]["errors"] = load(str(tmp)).check_candidate_ancestry(cand, ref, root)
+print(json.dumps(out, indent=2, ensure_ascii=False))
+```
+
+Round 3 full issuer precheck (`python3 <script> <runtime dir>`, read-only; run once per runtime):
+
+```python
+import json, sys, hashlib, datetime, subprocess
+from pathlib import Path
+from datetime import UTC
+RT_ROOT = Path(sys.argv[1])
+RT = RT_ROOT / ".orchestrator"
+sys.path.insert(0, str(RT_ROOT)); sys.path.insert(0, str(RT))
+import common, release_lease_integration as rli
+from release_lease import issuance_errors
+STATUS_ROOT = Path("/home/lupin/odayplus")
+config = common.load_config_for_status_root(STATUS_ROOT)
+settings, serr = rli.issuer_settings(config)
+status = common.load_status(config)
+task = rli._task_index(status, "ODP-DEV-LIVE-DEPLOY-EXECUTION-001", config=config)
+now = datetime.datetime.now(UTC)
+req = {"kind": rli.REQUEST_KIND, "status": "approved", "task_id": "ODP-DEV-LIVE-DEPLOY-EXECUTION-001",
+       "approved_by": "Human/Ops", "approval_id": "HYPOTHETICAL-PROBE-NOT-REGISTERED",
+       "nonce": "probe-" + hashlib.sha256(now.isoformat().encode()).hexdigest()[:16],
+       "candidate_sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
+       "manifest_digest": "sha256:8ee919d67fc89768c7ae8912ecfce706dc1b2a0fbb2e3da1a14b5e87c1fae80e",
+       "manifest_run_id": "36509055237", "target_environment": "dev", "action": "deploy",
+       "approved_at": now.isoformat(), "expires_at": "2026-09-30T05:32:34+00:00"}
+root = common.config_path(config, "status_file").parent
+archive_dir = root / "ai-task-archive/tasks"
+fp = rli.request_fingerprint(task["id"], req)
+out = {"probed_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+       "code_runtime": str(RT_ROOT),
+       "code_runtime_head": subprocess.check_output(["git","-C",str(RT_ROOT),"rev-parse","HEAD"],text=True).strip() if (RT_ROOT/".git").exists() else None,
+       "issuer_input_root": str(root), "settings_errors": serr,
+       "dispatch_ref": settings and settings.get("dispatch_ref"),
+       "hypothetical_request": {k: v for k, v in req.items() if k != "nonce"},
+       "live_task_status": task.get("status"), "live_task_has_request": task.get(rli.REQUEST_FIELD) is not None}
+out["request_errors"] = rli.request_errors(status, task, req, now=now)
+registry, manifest, input_errors = rli._read_release_inputs(root, req["candidate_sha"])
+out["read_release_inputs_errors"] = input_errors
+out["exact_binding_errors"] = rli._exact_binding_errors(req, registry, manifest)
+out["build_run_binding_errors"] = rli._build_run_binding_errors(req, registry)
+ref_sha, ref_errors = rli.check_dispatch_ref_errors(settings, req["candidate_sha"], root)
+out["dispatch_ref_sha"] = ref_sha; out["dispatch_ref_errors"] = ref_errors
+out["nonce_reuse_errors"] = rli._nonce_reuse_errors(status, task["id"], fp, rli._safe_digest(req["nonce"]), archive_dir=archive_dir, config=config)
+out["issuance_errors"] = issuance_errors(status=status, registry=registry, manifest=manifest, manifest_errors=input_errors,
+    task_id=task["id"], target_environment="dev", release_sha=req["candidate_sha"], archive_dir=archive_dir, root=root)
 print(json.dumps(out, indent=2, ensure_ascii=False))
 ```
