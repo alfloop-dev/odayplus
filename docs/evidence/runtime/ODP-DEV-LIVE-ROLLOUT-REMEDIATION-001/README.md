@@ -1,3 +1,50 @@
+# ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 — evidence
+
+## Current candidate (2026-09-29): ee06d1d8294464f1eb7231f2b06505348a61cba2
+
+Status: **blocked, not deployed.** No lease request is registered and nothing has been deployed. Everything below this section is history from earlier rounds and is not current evidence.
+
+### Why the candidate changed
+
+Candidate `a663d604831c` cannot pass `check_candidate_ancestry` against current dev. Between `a663d604831c` and dev head `ee06d1d82944`, PR #1379 changed `delivery_toolchain/e2e/check_release_gate_registry.py` and `tests/e2e/test_release_gate_registry.py`. The ancestry checker rejects both because they are not evidence paths. A fresh candidate was built from dev head `ee06d1d82944` instead of widening the allowlist.
+
+### Current facts and where each comes from
+
+| Fact | Value | Source receipt |
+|---|---|---|
+| Build | Runtime Release run `36509055237`: build job `109216985371` succeeded 01:41:20–01:49:32Z; lease, deploy and watch jobs were skipped | `build-reconciliation-36509055237.json` |
+| Manifest | logical `sha256:8ee919d67fc89768c7ae8912ecfce706dc1b2a0fbb2e3da1a14b5e87c1fae80e`, raw file sha256 `1d34ada707d40bbb25f8053955e9736b30cc16f229563a7ec594e3598a209ec0`, byte-identical to `docs/evidence/gates/RELEASE_MANIFEST.json` | `hosted-artifacts/run-36509055237/` |
+| Images | all four built fresh in this run; each signature and attestation has its own Rekor tlog entry | `build-reconciliation-36509055237.json#image_signing` |
+| Target absence | all five dev targets absent, probed 01:44:46–01:44:56Z | `hosted-artifacts/run-36509055237/initial-release-absence-readback-*` |
+| Exact-candidate CI | `36435578948` (merge_group) and `36436491098` (push), both success; orchestrator job 3207 passed; product jobs skipped by change-scope | `candidate-ci-and-product-inheritance-ee06d1d8.json` |
+| Product CI inheritance | full-product CI `36361727942` on `bb15fe9fee5d` (all seven product jobs succeeded). The CI's own classifier rates the delta to the candidate `development_tooling`, with zero non-tooling paths | same file, `product_ci_inheritance` |
+| Gap closed locally | `tests/e2e/test_release_gate_registry.py` is outside the orchestrator job paths. It was run on the exact candidate checkout: 61 passed, exit 0 | same file, `supplementary_local_receipts` |
+| Human approval | `HUMANOPS-DEV-MIGRATION-20260929T053234Z`, dev only, expires 2026-09-30T05:32:34Z. It accepts the missing H01 receipt and the dev-tool npm findings as dev-only deviations | `user-deploy-authorization-HUMANOPS-DEV-MIGRATION-20260929T053234Z.json` |
+
+### What is not claimed
+
+- No deployment, lease, or live runtime acceptance.
+- No external H01 legal approval. The missing receipt is a disclosed deviation, not a pass.
+- No re-run of product tests. Product results are inherited, only on the classifier evidence above.
+
+### Verification
+
+```
+python3 docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/verify_dev_live_rollout_remediation.py
+```
+
+The verifier checks:
+- every hosted artifact hash;
+- the manifest logical digest, recomputed;
+- that the build, CI, and signoff fields match their source receipts;
+- that no superseded a31/a663 value appears in current fields.
+
+The rejected a663 round is preserved verbatim under `history.round_2026_09_28_a663_rebind_rejected_reviews_11_12` in `live-runtime-reconciliation-audit.json`.
+
+---
+
+# History (superseded rounds)
+
 # ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001
 
 ## 結論（2026-09-24 round 4，owner Claude2；round 3 的量測保留，round 4 的增量標示為「07:20Z 後」）

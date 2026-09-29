@@ -1,353 +1,310 @@
 {
-  "schema_version": 2,
+  "schema_version": 1,
   "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
   "audit_type": "live_runtime_vs_hosted_build_reconciliation",
   "release_status": "blocked",
-  "blocking_layer": "supervisor_release_lease_issuer_blocked",
+  "blocking_layer": "exact-head review and merge of PR #1107, then lease registration",
   "deployment_success_claimed": false,
   "historical_receipts_modified": false,
-  "generated_at": "2026-09-28T23:20:00Z",
-  "generated_by": "Antigravity3",
+  "generated_at": "2026-09-29T06:00:00Z",
+  "generated_by": "Claude (interactive session, on explicit user instruction)",
   "collection_baseline": {
-    "note": "Round 7 (a663 candidate rebind and evidence correction): all 16 dependencies done. Origin/dev head ee06d1d8 includes merged ODP-SUPERVISOR-LEASE-ISSUANCE-RECOVERY-001 and ODP-RUNTIME-RELEASE-ANCESTRY-INVENTORY-002. Actual a663 CI is merge_group run 36391745153; Runtime Release build 36415981871 is build-only (deploy/lease skipped). Task branch is task/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001.",
+    "note": "Worktree base equals origin/dev; the candidate is origin/dev head itself.",
     "origin_dev_head_sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
-    "task_base_merge_sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
-    "task_base_merge_parents": [
-      "bb15fe9fee5da3882117fb8c2593cfb3966a68c3"
-    ],
-    "task_base_merge_tree": "2a60552e6c680ce9489480b9ccc1cbabe711970d",
-    "merge_tree_precheck_equal": true,
-    "merge_conflicts": 0,
-    "files_taken_from_dev": 11,
-    "forbidden_path_diff_vs_origin_dev_empty": true,
-    "candidate_is_ancestor_of_origin_dev": true
+    "candidate_is_ancestor_of_origin_dev": true,
+    "commits_between_candidate_and_origin_dev": 0
   },
   "supersedes": {
-    "previous_generated_at": "2026-09-28T01:10:00Z",
-    "previous_generated_by": "Antigravity3",
-    "previous_candidate_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
-    "previous_manifest_digest": "sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2",
-    "previous_build_run_id": 36333397898,
-    "reason": "Rebound from a31e02ae to a663d604 candidate. Rebuilt current audit snapshot from run-36415981871 a663 artifacts and actual run metadata. Replaced all a31 images, artifact IDs, SHA256 hashes, and CI references with verified a663 equivalents. Moved superseded a31 observations into history. Fixed false CI attribution (36415981871 is Runtime Release build, not CI; actual CI is merge_group 36391745153). Correct a663 absence file raw SHA256 is 3391e27c24589dd90a89288a036c9bb6974881992d6c338b497e6d7ec8a12825 (artifact 10967906043)."
+    "previous_candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+    "previous_manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
+    "previous_build_run_id": 36415981871,
+    "reason": "a663 undispatchable against current dev (ancestry); rebuilt from dev head. Prior round preserved under history."
   },
   "readback_window_utc": {
-    "start_utc": "2026-09-28T00:47:00Z",
-    "end_utc": "2026-09-28T02:15:00Z"
+    "start_utc": "2026-09-29T01:41:03Z",
+    "end_utc": "2026-09-29T06:00:00Z"
   },
   "readback_identity": {
-    "hosted_build": "GitHub Actions Runtime Release with Google WIF; run 36415981871 for candidate a663d604831c4b9710dda9b7ca85ddbc193837e8, build job succeeded",
-    "canonical_board": "live ai-status.json under PANTHEON_STATUS_ROOT, read-only",
-    "supervisor_process": "pid 2220782, /usr/bin/python3.12 -u .orchestrator/supervisor.py, cwd /home/lupin/oday-plus-supervisor-runtime-43d2fe8ca8e0, started 2026-09-23T14:35Z per supervisor-watchdog-restart-20260923T143503Z.log; inspected read-only via /proc and reproduced with the same interpreter and an env -i shell",
+    "hosted_build": "GitHub Actions run 36509055237 via gh api / gh run download",
     "gcp_project_id": "odayplus-runtime-20260825",
     "gcp_region": "asia-east1",
-    "direct_gcloud_readback_this_round": "attempted; credential refresh failed non-interactively",
+    "direct_gcloud_readback_this_round": "none; build-time absence probe only",
     "secret_values_redacted": true,
     "nonce_values_recorded": false
   },
   "candidate_reconciliation": {
-    "authoritative_manifest_candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
-    "authoritative_manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
-    "release_id": "odp-a663d604831c",
+    "authoritative_manifest_candidate_sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
+    "authoritative_manifest_digest": "sha256:8ee919d67fc89768c7ae8912ecfce706dc1b2a0fbb2e3da1a14b5e87c1fae80e",
+    "release_id": "odp-ee06d1d82944",
     "manifest_schema_version": 2,
     "manifest_release_status": "ready",
-    "manifest_created_at": "2026-09-28T07:27:09+00:00",
-    "manifest_created_by_workflow": "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@a663d604831c4b9710dda9b7ca85ddbc193837e8",
+    "manifest_created_at": "2026-09-28T14:22:56+00:00",
+    "manifest_created_by_workflow": "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@ee06d1d8294464f1eb7231f2b06505348a61cba2",
     "manifest_initial_release_recovery": {
-      "absence_readback": {
-        "kind": "runtime-release-target-absence-readback",
-        "probe_command": "gcloud run services list --format=value(metadata.name); gcloud run jobs list --format=value(metadata.name)",
-        "project": "odayplus-runtime-20260825",
-        "region": "asia-east1",
-        "target_environment": "dev",
-        "targets": [
-          {
-            "component": "api",
-            "exists": false,
-            "resource_kind": "cloud-run-service",
-            "resource_name": "oday-api",
-            "serving_traffic": false
-          },
-          {
-            "component": "migration",
-            "exists": false,
-            "resource_kind": "cloud-run-job",
-            "resource_name": "oday-migration-r-a663d604831c",
-            "serving_traffic": false
-          },
-          {
-            "component": "scheduler",
-            "exists": false,
-            "resource_kind": "cloud-run-job",
-            "resource_name": "oday-scheduler-r-a663d604831c",
-            "serving_traffic": false
-          },
-          {
-            "component": "web",
-            "exists": false,
-            "resource_kind": "cloud-run-service",
-            "resource_name": "oday-web",
-            "serving_traffic": false
-          },
-          {
-            "component": "worker",
-            "exists": false,
-            "resource_kind": "cloud-run-job",
-            "resource_name": "oday-worker-r-a663d604831c",
-            "serving_traffic": false
-          }
-        ]
-      },
-      "binding_digest": "sha256:33e4e8e1efe0066351107fc17ad9085bbba6e33c13f91bbc063f0b190e024594",
-      "kind": "initial-release-recovery",
-      "prior_release_absent": true,
-      "recovery_actions": [
-        "delete-candidate-cloud-run-services",
-        "delete-candidate-cloud-run-jobs",
-        "delete-candidate-scheduler-triggers",
-        "hold-zero-traffic"
-      ],
+      "binding_digest": "sha256:0e8443cd128ece86b9e8fa135bd7848c874358ff913e5fbbe7e2a3b46d330616",
       "recovery_method": "delete-candidate-zero-traffic",
-      "rollback_target_available": false,
-      "target_environment": "dev"
+      "prior_release_absent": true
     },
-    "registry_task_id": "ODP-DEV-MIGRATION-ADMISSION-001",
-    "registry_generated_at": "2026-09-27",
+    "registry_task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+    "registry_generated_at": "2026-09-29",
     "registry_decision": "go",
     "registry_decision_owner": "Human/Ops",
-    "registry_decision_date": "2026-09-27",
+    "registry_decision_date": "2026-09-29",
     "registry_human_signoff": {
       "approver": "Human/Ops",
-      "date": "2026-09-27",
-      "scope": "dev only; exact candidate a31e02ae391811a4c323ec4d834b70e200953366, manifest sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2, build 36333397898; expires 2026-09-28T04:55:45Z",
-      "approval_id": "HUMANOPS-DEV-MIGRATION-20260927T225545Z",
-      "artifact": "docs/evidence/runtime/ODP-DEV-MIGRATION-ADMISSION-001/a31-user-authorization.json",
-      "note": "The current user explicitly replied \"更新至新候選\" to the exact scoped request; transcribed by interactive Codex, not an external identity signature."
+      "date": "2026-09-29",
+      "scope": "dev only; exact candidate ee06d1d8294464f1eb7231f2b06505348a61cba2, manifest sha256:8ee919d67fc89768c7ae8912ecfce706dc1b2a0fbb2e3da1a14b5e87c1fae80e, build 36509055237; expires 2026-09-30T05:32:34Z",
+      "approval_id": "HUMANOPS-DEV-MIGRATION-20260929T053234Z",
+      "artifact": "docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/user-deploy-authorization-HUMANOPS-DEV-MIGRATION-20260929T053234Z.json",
+      "note": "The user replied \"授權\" to the exact scoped question recorded in the artifact; transcribed by interactive Claude, not an external identity signature."
     },
     "registry_stage": "candidate-built",
     "registry_admission_target": "dev",
     "candidate_ref": "refs/heads/dev",
     "candidate_rebind": {
-      "task_id": "ODP-DEV-MIGRATION-ADMISSION-001",
-      "rebound_at": "2026-09-27T16:42:26Z",
-      "from_candidate_sha": "355a94b52b14badc236be4b3e52eb936a7075549",
-      "to_candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
-      "from_manifest_digest": "sha256:a1e3fcf6b765861dc269e3fd395b7bec6ac4b2b6f3b3207a3ffb623c6ca6dfaa",
-      "to_manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
+      "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+      "rebound_at": "2026-09-29T06:00:00Z",
+      "from_candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+      "to_candidate_sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
+      "from_manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
+      "to_manifest_digest": "sha256:8ee919d67fc89768c7ae8912ecfce706dc1b2a0fbb2e3da1a14b5e87c1fae80e",
       "re_attestation_required": true,
-      "note": "Candidate rebound to a31e02ae after migration failure in run 36278150009. Rebuilt once in build run 36333397898. User authorization recorded as HUMANOPS-DEV-MIGRATION-20260927T225545Z.",
+      "reason": "a663d604831c cannot pass check_candidate_ancestry against current dev: a663d604831c..ee06d1d82944 changes delivery_toolchain/e2e/check_release_gate_registry.py and tests/e2e/test_release_gate_registry.py (PR #1379), which are not evidence paths. A fresh candidate was built from dev head ee06d1d82944 instead of widening the allowlist.",
       "build_run": {
         "workflow": "Runtime Release",
-        "run_id": 36415981871,
-        "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36415981871",
+        "run_id": 36509055237,
+        "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36509055237",
         "event": "workflow_dispatch",
         "phase": "build",
         "conclusion": "success",
-        "release_sha_input": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
-        "deploy_jobs": "skipped; no lease supplied or deployment performed"
+        "release_sha_input": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
+        "deploy_jobs": "skipped; no lease supplied, nothing deployed",
+        "evidence": "docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/build-reconciliation-36509055237.json"
       },
-      "candidate_ci_run": {
-        "workflow": "CI",
-        "run_id": 36329922612,
-        "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36329922612",
-        "head_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
-        "product_jobs": "skipped by docs scope"
-      },
-      "inherited_product_ci_run": {
-        "run_id": 36311413006,
-        "head_sha": "355a94b52b14badc236be4b3e52eb936a7075549",
-        "basis": "docs/evidence/runtime/ODP-DEV-MIGRATION-ADMISSION-001/a31-candidate-comparison.json"
-      },
-      "approval_id": "HUMANOPS-DEV-MIGRATION-20260927T225545Z"
+      "candidate_ci_runs": [
+        36435578948,
+        36436491098
+      ],
+      "candidate_ci_evidence": "docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/candidate-ci-and-product-inheritance-ee06d1d8.json",
+      "approval_id": "HUMANOPS-DEV-MIGRATION-20260929T053234Z",
+      "approval_status": "issued",
+      "approval_expires_at": "2026-09-30T05:32:34Z",
+      "superseded_approvals": [
+        "HUMANOPS-DEV-MIGRATION-20260928T120016Z (a663, expired)",
+        "HUMANOPS-DEV-MIGRATION-20260929T001600Z (a663, note only, unusable)"
+      ]
     },
-    "candidate_ci_run_readback": {
-      "run_id": 36329922612,
-      "workflow": "CI",
-      "event": "push",
-      "head_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
-      "conclusion": "success",
-      "product_jobs": "skipped by docs scope",
-      "created_at": "2026-09-27T16:29:00Z"
+    "candidate_ci_readback": {
+      "evidence": "docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/candidate-ci-and-product-inheritance-ee06d1d8.json",
+      "runs": [
+        36435578948,
+        36436491098
+      ],
+      "orchestrator_job_ids": [
+        108972518361,
+        108975649897
+      ]
     },
     "origin_dev_head_sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
     "candidate_is_ancestor_of_origin_dev": true,
-    "commits_between_candidate_and_origin_dev": 3,
-    "first_parent_commits_between": 1,
-    "paths_changed_between": [
-      "docs/evidence/gates/RELEASE_GATE_REGISTRY.json",
-      "docs/evidence/gates/RELEASE_MANIFEST.json",
-      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/README.md",
-      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/gate-0-receipt.md",
-      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/gate-1-receipt.md",
-      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/gate-4-receipt.md",
-      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/initial-release-absence-readback.json",
-      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/npm-audit-receipt.json",
-      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/release-environment-receipt.json",
-      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/release-phase-receipt.json",
-      "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/runtime-release-images.json"
-    ],
+    "commits_between_candidate_and_origin_dev": 0,
+    "paths_changed_between": [],
     "non_evidence_paths_changed": [],
-    "drift_status": "evidence_only_descendant",
+    "drift_status": "none (candidate == origin/dev head at collection)",
     "candidate_must_rebuild": false,
     "old_artifacts_reused": false,
     "repository_manifest": {
-      "raw_sha256": "edd98d4e786f86121ceaafaf779041a939df924beae91cf0265946f89475497b",
-      "hosted_manifest_artifact_id": 10967281361,
-      "byte_identical_to_hosted_artifact": true,
-      "logical_manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482"
+      "path": "docs/evidence/gates/RELEASE_MANIFEST.json",
+      "raw_sha256": "1d34ada707d40bbb25f8053955e9736b30cc16f229563a7ec594e3598a209ec0",
+      "logical_manifest_digest": "sha256:8ee919d67fc89768c7ae8912ecfce706dc1b2a0fbb2e3da1a14b5e87c1fae80e",
+      "hosted_manifest_artifact_id": 11008107910,
+      "byte_identical_to_hosted_artifact": true
     },
     "component_images": {
-      "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:2b15ad2e35b0418af8cb83df44334cdaf6ff5f160cc442429c29c4e759779403",
-      "web": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:f1bf6835ad472017e7339a8d8c67011e62052e581752c0d24ee98f59fb67a8c7",
-      "worker": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:c1b24d65d12014d71f336b417420d6099672645d1b9669b2472f4f5fb654db57",
-      "scheduler": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:df358efeb5746865fc83cafcfc9cfd0fe7ddea3f1bc46a588ad94416eac2cf30",
-      "migration": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:c1b24d65d12014d71f336b417420d6099672645d1b9669b2472f4f5fb654db57"
-    },
-    "candidate_rebind_note": "Candidate rebound from a31e02ae to a663d604 by ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 after ODP-SUPERVISOR-LEASE-ISSUANCE-RECOVERY-001 and ODP-RUNTIME-RELEASE-ANCESTRY-INVENTORY-002 merged into dev. Build run 36415981871 succeeded for exact a663 candidate. All previous a31 leases and deploy attempts are superseded."
+      "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:07b3c1f3ceb9a2bec728fa656e84b74cdb245a7fb77c6ca9c69e4bc74827e7f1",
+      "web": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:9939e4d0bc83fc8bcaf81d4b9d2ed0d1fc338605ab32c4524414f2ab5dc1ddd6",
+      "worker": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:9aeb6784439dfac4c69675b6426cc1003968faa35ceb18928fed5825f7d61dd4",
+      "scheduler": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:bd4efa0d799261261c53773c994568f40bff08621bf039becce7835f9e5db66d"
+    }
   },
   "hosted_build_execution": {
     "workflow": "Runtime Release (.github/workflows/deploy-dev.yml)",
-    "run_id": 36415981871,
-    "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36415981871",
+    "run_id": 36509055237,
+    "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36509055237",
     "event": "workflow_dispatch",
     "phase": "build",
-    "environment": "dev-build",
+    "environment": "dev",
     "head_branch": "dev",
-    "release_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+    "release_sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
     "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
-    "dispatched_by_this_task": false,
+    "dispatched_by": "user (ajoe734) at Claude's request, with explicit user approval",
     "initial_release_recovery_input": true,
-    "result": "success",
-    "created_at": "2026-09-28T07:27:00Z",
-    "completed_at": "2026-09-28T07:34:37Z",
-    "release_id": "odp-a663d604831c",
-    "manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
-    "single_run_build_and_handoff": true,
+    "created_at": "2026-09-29T01:41:03Z",
+    "completed_at": "2026-09-29T01:49:33Z",
+    "release_id": "odp-ee06d1d82944",
+    "manifest_digest": "sha256:8ee919d67fc89768c7ae8912ecfce706dc1b2a0fbb2e3da1a14b5e87c1fae80e",
     "jobs": [
       {
         "name": "Validate release phase inputs",
-        "id": 108659545600,
+        "id": 109216932607,
         "conclusion": "success",
-        "started_at": "2026-09-27T16:29:00Z",
-        "completed_at": "2026-09-27T16:29:10Z"
+        "started_at": "2026-09-29T01:41:08Z",
+        "completed_at": "2026-09-29T01:41:18Z"
       },
       {
         "name": "Build once and publish the immutable artifact handoff",
-        "id": 108659578847,
+        "id": 109216985371,
         "conclusion": "success",
-        "started_at": "2026-09-27T16:29:13Z",
-        "completed_at": "2026-09-27T16:36:33Z"
+        "started_at": "2026-09-29T01:41:20Z",
+        "completed_at": "2026-09-29T01:49:32Z"
       },
       {
         "name": "Verify the Supervisor lease authorises this deploy",
-        "id": 108660864789,
-        "conclusion": "skipped"
+        "id": 109218916726,
+        "conclusion": "skipped",
+        "started_at": "2026-09-29T01:49:33Z",
+        "completed_at": "2026-09-29T01:49:32Z"
       },
       {
         "name": "Deploy the admitted artifact by immutable digest",
-        "id": 108660864915,
-        "conclusion": "skipped"
+        "id": 109218916838,
+        "conclusion": "skipped",
+        "started_at": "2026-09-29T01:49:33Z",
+        "completed_at": "2026-09-29T01:49:33Z"
       },
       {
         "name": "Verify production watch and clean up ephemeral staging",
-        "id": 108660865313,
-        "conclusion": "skipped"
+        "id": 109218917433,
+        "conclusion": "skipped",
+        "started_at": "2026-09-29T01:49:33Z",
+        "completed_at": "2026-09-29T01:49:33Z"
       }
     ],
     "published_images": {
-      "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:2b15ad2e35b0418af8cb83df44334cdaf6ff5f160cc442429c29c4e759779403",
-      "web": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:f1bf6835ad472017e7339a8d8c67011e62052e581752c0d24ee98f59fb67a8c7",
-      "worker": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:c1b24d65d12014d71f336b417420d6099672645d1b9669b2472f4f5fb654db57",
-      "scheduler": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:df358efeb5746865fc83cafcfc9cfd0fe7ddea3f1bc46a588ad94416eac2cf30"
+      "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:07b3c1f3ceb9a2bec728fa656e84b74cdb245a7fb77c6ca9c69e4bc74827e7f1",
+      "web": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:9939e4d0bc83fc8bcaf81d4b9d2ed0d1fc338605ab32c4524414f2ab5dc1ddd6",
+      "worker": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:9aeb6784439dfac4c69675b6426cc1003968faa35ceb18928fed5825f7d61dd4",
+      "scheduler": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:bd4efa0d799261261c53773c994568f40bff08621bf039becce7835f9e5db66d"
     },
-    "migration_component_image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:c1b24d65d12014d71f336b417420d6099672645d1b9669b2472f4f5fb654db57",
+    "migration_component_image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:9aeb6784439dfac4c69675b6426cc1003968faa35ceb18928fed5825f7d61dd4",
     "signature_refs": [
-      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:062235111bdbe236c5928097b09eea47b543244b7e35c2f0f52a45233569eeac",
-      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:0f69e6328f2fb036402cc85fd8ecc045e84fb9127f5999c98204c8cb5520a3d2",
-      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:9e36d6b511cebb006a2c6d31650b08b89f279fcea0348c90cea3035de5c5b9bb",
-      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:afcfabbdae94f12f71fc5e7b2d45f95e7aa3aa556c8929dd24986bf559d93b2a"
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:9db512d1d207bb0c6f82ef0f64654214155a6bd10526bc6516866efd31ddc7a3",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:6cb38887b8b809d0e613a77c0f81ceff2e04b9ed396c9039a156511d8ce7c24a",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:f3e887f707e4811c92e8771fd9a208255904fe90fde570ddea82b6a5e274ebf0",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:9a38280ce3eb15f55dd3d5c9ed79193ffa98094ce0517e521bdbcb8226a0aba2"
     ],
     "sbom_refs": [
-      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:181858d1df13dcf117d164d654780f2f887c4ad8229ad4a1b31d19e59ebc3f75",
-      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:bbe473c3dc290724ab43ed60b1633499223f2cc0670f9cb7dd29d0cc8f7b8089",
-      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:defaad7fd08d606674192cf2974f2e52cd0d7a1a2db88a0c99711c7300018820",
-      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:5ba2e71e08d7ede9f765db87b80c54457f2df1b357862e8c0569155ac8ace7a5"
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:e7685989fb759c1afe67293e846e1e37175cc1f716c95a518a27e052090767cd",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:db6c0be105db86fde1c7e036465026c6c82b4aaf3e46db373d5fd47833882e1f",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:731ceead80d8d81fab50c722ca7ac9a927b3e422ead5361bafeb607628fd6ce1",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:cf36a5734d35650f8b26da76b7a09b63870d999a8d6eed6d95823734a71463b6"
     ],
+    "image_signing": {
+      "api": {
+        "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:07b3c1f3ceb9a2bec728fa656e84b74cdb245a7fb77c6ca9c69e4bc74827e7f1",
+        "pushed_at": "2026-09-29T01:46:16Z",
+        "rekor_tlog_indexes": [
+          2991682672,
+          2991685616
+        ]
+      },
+      "worker": {
+        "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:9aeb6784439dfac4c69675b6426cc1003968faa35ceb18928fed5825f7d61dd4",
+        "pushed_at": "2026-09-29T01:46:47Z",
+        "rekor_tlog_indexes": [
+          2991689623,
+          2991691826
+        ]
+      },
+      "scheduler": {
+        "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:bd4efa0d799261261c53773c994568f40bff08621bf039becce7835f9e5db66d",
+        "pushed_at": "2026-09-29T01:47:14Z",
+        "rekor_tlog_indexes": [
+          2991695811,
+          2991698010
+        ]
+      },
+      "web": {
+        "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:9939e4d0bc83fc8bcaf81d4b9d2ed0d1fc338605ab32c4524414f2ab5dc1ddd6",
+        "pushed_at": "2026-09-29T01:48:46Z",
+        "rekor_tlog_indexes": [
+          2991720395,
+          2991722767
+        ]
+      }
+    },
     "uploaded_artifacts": [
       {
-        "name": "initial-release-absence-readback-a663d604831c4b9710dda9b7ca85ddbc193837e8",
-        "id": 10967906043,
-        "created_at": "2026-09-28T07:34:31Z",
-        "raw_sha256": "3391e27c24589dd90a89288a036c9bb6974881992d6c338b497e6d7ec8a12825",
+        "name": "initial-release-absence-readback-ee06d1d8294464f1eb7231f2b06505348a61cba2",
+        "id": 11008427645,
+        "created_at": "2026-09-29T01:49:29Z",
+        "github_archive_digest": "sha256:5604a9fc1b60625086f92391d5f976cb3a4f21e8cda9a7b13a3c0f4ebacdeec8",
+        "raw_sha256": "b93a18f5a97ba61518f4fc4c5f75122b2a3595cd38d797daa44fe3f9d2023b63",
         "raw_bytes": 1226,
         "hash_scope": "expanded artifact JSON file bytes",
         "archive_size_in_bytes": 507,
-        "evidence_file": "hosted-artifacts/run-36415981871/initial-release-absence-readback-a663d604831c4b9710dda9b7ca85ddbc193837e8/initial-release-absence-readback.json"
+        "evidence_file": "hosted-artifacts/run-36509055237/initial-release-absence-readback-ee06d1d8294464f1eb7231f2b06505348a61cba2/initial-release-absence-readback.json"
       },
       {
         "name": "release-environment-receipt-dev-build",
-        "id": 10968030024,
-        "created_at": "2026-09-28T07:27:22Z",
-        "raw_sha256": "1a7e6d95c757f9fd83ff26e69a33208883681ae22256da03593a324482407c60",
+        "id": 11008311973,
+        "created_at": "2026-09-29T01:41:27Z",
+        "github_archive_digest": "sha256:fb213371093fa974906b7cd04b30256e212e78b0c564706bee1fb66e8c47a2cb",
+        "raw_sha256": "8d28c1fed9af51427991d5f661c01e2f1ad8791bc014053f573902b0d38f5811",
         "raw_bytes": 1111,
         "hash_scope": "expanded artifact JSON file bytes",
         "archive_size_in_bytes": 797,
-        "evidence_file": "hosted-artifacts/run-36415981871/release-environment-receipt-dev-build/release-environment-receipt.json"
+        "evidence_file": "hosted-artifacts/run-36509055237/release-environment-receipt-dev-build/release-environment-receipt.json"
       },
       {
         "name": "release-npm-audit-receipt-dev",
-        "id": 10967620580,
-        "created_at": "2026-09-28T07:27:50Z",
-        "raw_sha256": "9b23e1185aa4c6bc848b5b545a646212ec7ae75c39b15b6463d357147204fb0f",
+        "id": 11008491705,
+        "created_at": "2026-09-29T01:41:50Z",
+        "github_archive_digest": "sha256:c3a85456ba5d753668b118db0b7891e89ebf9b2d544765f91c88e185da6eceaf",
+        "raw_sha256": "1a5112ff68763687ae2f7f5e165538f88738cf17148fb6ab7f5370a69e06ac0e",
         "raw_bytes": 605,
         "hash_scope": "expanded artifact JSON file bytes",
-        "archive_size_in_bytes": 508,
-        "evidence_file": "hosted-artifacts/run-36415981871/release-npm-audit-receipt-dev/npm-audit-receipt.json"
+        "archive_size_in_bytes": 509,
+        "evidence_file": "hosted-artifacts/run-36509055237/release-npm-audit-receipt-dev/npm-audit-receipt.json"
       },
       {
         "name": "release-phase-receipt-dev-build",
-        "id": 10967535042,
-        "created_at": "2026-09-28T07:27:08Z",
-        "raw_sha256": "166f54af879ed322916b8c0b0acac4870b5c61c09b7f568151a7bb6369a4556f",
+        "id": 11008606106,
+        "created_at": "2026-09-29T01:41:15Z",
+        "github_archive_digest": "sha256:0b2eae05c5c08ba0281d5017221fa418207d3fb02e9433177e950fbe163914ae",
+        "raw_sha256": "de8e6c6e32eb42e01d7a69493f694387b1168522ccb22878f11f3d0433aa3f00",
         "raw_bytes": 767,
         "hash_scope": "expanded artifact JSON file bytes",
         "archive_size_in_bytes": 631,
-        "evidence_file": "hosted-artifacts/run-36415981871/release-phase-receipt-dev-build/release-phase-receipt.json"
+        "evidence_file": "hosted-artifacts/run-36509055237/release-phase-receipt-dev-build/release-phase-receipt.json"
       },
       {
-        "name": "runtime-release-images-a663d604831c4b9710dda9b7ca85ddbc193837e8",
-        "id": 10967216335,
-        "created_at": "2026-09-28T07:34:27Z",
-        "raw_sha256": "497346f13d466199b5875c6580aefaaf65bb11f5431130096e4a508f1044138c",
+        "name": "runtime-release-images-ee06d1d8294464f1eb7231f2b06505348a61cba2",
+        "id": 11008477524,
+        "created_at": "2026-09-29T01:49:27Z",
+        "github_archive_digest": "sha256:a8ba17231d9781f3f7b7271f09ae5ad974cd6b928ae365af65703a190bfe8827",
+        "raw_sha256": "6c0b91423361a4463aaf5e95ed364f79d7af83fde839a3f5ef204f464c9585b7",
         "raw_bytes": 657,
         "hash_scope": "expanded artifact JSON file bytes",
-        "archive_size_in_bytes": 454,
-        "evidence_file": "hosted-artifacts/run-36415981871/runtime-release-images-a663d604831c4b9710dda9b7ca85ddbc193837e8/runtime-release-images.json"
+        "archive_size_in_bytes": 455,
+        "evidence_file": "hosted-artifacts/run-36509055237/runtime-release-images-ee06d1d8294464f1eb7231f2b06505348a61cba2/runtime-release-images.json"
       },
       {
-        "name": "runtime-release-manifest-a663d604831c4b9710dda9b7ca85ddbc193837e8",
-        "id": 10967281361,
-        "created_at": "2026-09-28T07:34:28Z",
-        "raw_sha256": "edd98d4e786f86121ceaafaf779041a939df924beae91cf0265946f89475497b",
+        "name": "runtime-release-manifest-ee06d1d8294464f1eb7231f2b06505348a61cba2",
+        "id": 11008107910,
+        "created_at": "2026-09-29T01:49:28Z",
+        "github_archive_digest": "sha256:585e6c666ced91eb10536490ab53e76bac8df60ff3b92618df2993b5a87bf71e",
+        "raw_sha256": "1d34ada707d40bbb25f8053955e9736b30cc16f229563a7ec594e3598a209ec0",
         "raw_bytes": 9481,
         "hash_scope": "expanded artifact JSON file bytes",
-        "archive_size_in_bytes": 2502,
-        "evidence_file": "hosted-artifacts/run-36415981871/runtime-release-manifest-a663d604831c4b9710dda9b7ca85ddbc193837e8/RELEASE_MANIFEST.json"
+        "archive_size_in_bytes": 2499,
+        "evidence_file": "hosted-artifacts/run-36509055237/runtime-release-manifest-ee06d1d8294464f1eb7231f2b06505348a61cba2/RELEASE_MANIFEST.json"
       }
     ],
-    "build_job_log_readback": {
-      "job_id": 108659578847,
-      "fetched_window_utc": {
-        "start_utc": "2026-09-27T16:29:13Z",
-        "end_utc": "2026-09-27T16:36:33Z"
-      },
-      "conclusion": "success"
-    },
-    "handoff_manifest_published": true,
-    "image_handoff_published": true,
-    "initial_release_absence_readback_published": true,
+    "evidence": "docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/build-reconciliation-36509055237.json",
     "external_sources_expected_enabled": [],
     "conclusion": "success",
-    "note": "Build 36415981871 for candidate a663d604 succeeded. This replaces the previous a31 candidate build 36333397898."
+    "note": "Build provenance only; lease/deploy/watch jobs skipped."
   },
   "source_posture": {
     "all_sources_disabled": true,
@@ -358,558 +315,201 @@
     "egress_posture": "default-deny",
     "cloud_run_egress": "ALL_TRAFFIC",
     "firewall_egress": "default-deny",
-    "binding_digest": "sha256:51be248f4753e55203fd72fec69701882dcbbd702da22bd3b482b1568a71f36f",
+    "binding_digest": "sha256:263098317429d98310afc633ebe5639835db70360d3693e1ead0770779acb9db",
     "migration_digest": "sha256:9ee2d278321bcd5358500a3feb93a7c22c201adde76698f57b7dfcbaa3377375",
     "data_contract_digest": "sha256:05e2cb05619f1c524b0f9578e4ceba9ec863d143d5e64b0eeac97539ce8e7c73",
     "source_policy_digest": "sha256:f3cd9557c11f63721300914c31fbceb97250cc76e0c5dcfbe89c9249c93dfcbf",
-    "post_deploy_runtime_probe": "not_available_before_deployment"
+    "post_deploy_runtime_probe": "not run (nothing deployed)"
   },
   "authorization_state": {
     "supervisor_lease_issued": false,
-    "leases_ever_issued_fleet_wide": 1,
-    "historical_lease_dispatched_at": "2026-09-24T16:29:34Z",
-    "historical_lease_id": "lease-8930f965fa0f05a9059bc94a6716f3d1",
-    "private_signing_key_available_to_worker": false,
     "canonical_registry_decision": "go",
     "dev_admission_gates": {
       "gate-0": {
-        "name": "Code Gate",
-        "status": "passed"
+        "status": "passed",
+        "receipt_id": "gate-0-ee06d1d82944",
+        "artifact": "docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/candidate-ci-and-product-inheritance-ee06d1d8.json"
       },
       "gate-1": {
-        "name": "Contract Gate",
-        "status": "passed"
+        "status": "passed",
+        "receipt_id": "gate-1-ee06d1d82944",
+        "artifact": "docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/candidate-ci-and-product-inheritance-ee06d1d8.json"
       },
       "gate-4": {
-        "name": "Security and Privacy Gate",
-        "status": "passed-with-deviation"
+        "status": "passed-with-deviation",
+        "receipt_id": "gate-4-ee06d1d82944-user-approved-HUMANOPS-DEV-MIGRATION-20260929T053234Z",
+        "artifact": "docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/user-deploy-authorization-HUMANOPS-DEV-MIGRATION-20260929T053234Z.json"
       }
     },
     "registry_admission_errors_dry_run": {
-      "verifier": "delivery_toolchain/release/check_runtime_admission.registry_admission_errors",
-      "root": "/home/lupin/odayplus",
+      "status": "admitted",
+      "errors": [],
       "environment": "dev",
-      "expected_manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
-      "release_sha_origin_dev_tip": {
-        "sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
-        "errors": []
+      "simulated_release_sha": "6ca4223ead7444b487b6de6fcf692e9699b35bb3",
+      "simulated_merge": {
+        "first_parent": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
+        "second_parent": "7be83b1baf8fb968b3886892ab201f95d716c943",
+        "tree": "d470dcb82ef52f65c9f209e09fb4a052a1a03f74",
+        "tree_source": "this PR's working tree immediately before this dry-run field was written"
       },
-      "release_sha_candidate": {
-        "sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
-        "errors": []
-      }
-    },
-    "release_lease_issuer_config": {
-      "enabled": true,
-      "workflow": ".github/workflows/deploy-dev.yml",
-      "dispatch_ref": "dev",
-      "ttl_seconds": 600,
-      "secret_reference": "projects/767864276141/secrets/odp-release-lease-private-key",
-      "state_uri": "gs://odayplus-runtime-20260825-release-leases/leases",
-      "github_repository": "alfloop-dev/odayplus"
-    },
-    "issuer_root_checkout": {
-      "path": "/home/lupin/odayplus",
-      "head_sha": "fc4f7529ff840d21035db08e47ffad91028cc151",
-      "head_committed_registry_candidate": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
-      "head_committed_registry_decision": "no-go",
-      "commits_behind_origin_dev": 160,
-      "registry_and_manifest_are_uncommitted_local_modifications": true,
-      "registry_and_manifest_on_disk_identical_to_origin_dev": true
-    },
-    "board_task_state_at_window": {
-      "status": "in_progress",
-      "waiting_for": null,
-      "open_blockers": 0,
-      "last_reopened_at": "2026-09-24T06:49:44Z",
-      "last_reopened_by": "Claude2",
-      "last_reopened_reason": "owner_resume"
-    },
-    "owner_preflight_before_human_registration": {
-      "performed_window_utc": {
-        "start_utc": "2026-09-24T06:56:55Z",
-        "end_utc": "2026-09-24T06:56:57Z"
-      },
-      "method": "Dry run of the live issuer's own validators (request_errors, _read_release_inputs, _exact_binding_errors, _build_run_binding_errors, check_dispatch_ref_errors, _nonce_reuse_errors) imported from /home/lupin/oday-plus-supervisor-runtime-current/.orchestrator/release_lease_integration.py against the live board and root /home/lupin/odayplus; nothing was written.",
-      "expired_2026_09_17_request_errors": [
-        "release_lease_request has expired"
+      "non_evidence_paths_in_merge_vs_candidate": [
+        "docs/audits/code-boundary-inventory.csv"
       ],
-      "hypothetical_request_literal_values": {
-        "nonce": "PREFLIGHT-NOT-A-REAL-NONCE",
-        "approval_id": "PREFLIGHT-NOT-A-REAL-APPROVAL",
-        "candidate_sha": "1364363402900c800ec3ed033d38fd1d757c1f10",
-        "manifest_digest": "sha256:6fb8f9e2e6af8dcef9cbe2fd76f2c3d319d95a40fe64c77e3ffdb435f3dc246d",
-        "manifest_run_id": "35944616693"
-      },
-      "hypothetical_request_written_to_board": false,
-      "results": {
-        "request_errors": [],
-        "read_release_inputs": [],
-        "exact_binding_errors": [],
-        "build_run_binding_errors": [],
-        "dispatch_ref": {
-          "resolved_sha": "c4efabbbeba9e743fab8ee52125932137852c703",
-          "errors": []
-        },
-        "nonce_reuse_errors": []
-      }
-    },
-    "current_release_lease_request": {
-      "registered_by": "Human/Ops",
-      "kind": "runtime_release_deploy",
-      "status": "approved",
-      "approval_id": "HUMANOPS-DEV-MIGRATION-20260928T120016Z",
-      "nonce_digest": "sha256:3a60a778c1a7c5b1698b5020ca6312a0225d30bc9eb793fb7360ca6541f71ebf",
-      "candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
-      "manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
-      "manifest_run_id": "36415981871",
-      "target_environment": "dev",
-      "action": "deploy",
-      "approved_at": "2026-09-28T12:00:16Z",
-      "expires_at": "2026-09-28T18:00:16Z",
-      "authored_by_owner": false
-    },
-    "latest_issuance_decision": {
-      "recorded_at": "2026-09-28T12:00:26+00:00",
-      "state": "blocked",
-      "event": "lease_issue_blocked",
-      "approval_id": "HUMANOPS-DEV-MIGRATION-20260928T120016Z",
-      "candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
-      "manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
-      "dispatch_ref": "dev",
-      "dispatch_ref_sha": null,
-      "admitted": false,
-      "lease_id": null,
-      "error_count": 1,
-      "errors": [
-        "lease issuer blocked: durable GCS lease state is unavailable or Secret Manager credential unrefreshed"
-      ]
-    },
-    "root_cause_reproduction": {
-      "performed_at": "2026-09-24T07:02:49Z",
-      "interpreter": "/usr/bin/python3.12",
-      "interpreter_source": "readlink /proc/2220782/exe",
-      "environment": "env -i HOME=/home/lupin USER=lupin PATH=/home/lupin/.local/bin:/usr/local/bin:/usr/bin:/bin PYTHONPATH=/home/lupin/oday-plus-supervisor-runtime-current",
-      "call": "delivery_toolchain.release.release_lease.LeaseStateStore('gs://odayplus-runtime-20260825-release-leases/leases', require_existing=True)",
-      "exception_type": "LeaseStateError",
-      "exception_message": "google-cloud-storage is required for gs:// lease state",
-      "cause_type": "ModuleNotFoundError",
-      "cause_message": "No module named 'google'",
-      "integration_layer_message": "durable GCS lease state is unavailable",
-      "supervisor_python_has_pip": false,
-      "user_site_packages": "/home/lupin/.local/lib/python3.12/site-packages",
-      "user_site_has_google_packages": false,
-      "project_uv_venv_has": {
-        "google-cloud-storage": "3.13.0",
-        "google-auth": "2.56.2",
-        "cryptography": "50.0.1",
-        "google-cloud-secretmanager": "absent (not required; key access shells out to gcloud)"
-      },
-      "pyproject_pins": [
-        "google-cloud-storage>=2.19,<4",
-        "google-auth>=2.40,<3"
+      "checker": "delivery_toolchain/release/check_runtime_admission.py::registry_admission_errors at the candidate commit (includes check_candidate_ancestry)",
+      "expected_manifest_digest": "sha256:8ee919d67fc89768c7ae8912ecfce706dc1b2a0fbb2e3da1a14b5e87c1fae80e",
+      "reproduce": [
+        "GIT_INDEX_FILE=tmp git read-tree HEAD && GIT_INDEX_FILE=tmp git add -A && TREE=$(GIT_INDEX_FILE=tmp git write-tree)",
+        "MERGE=$(git commit-tree $TREE -p ee06d1d8294464f1eb7231f2b06505348a61cba2 -p HEAD -m dry-run)",
+        "in a checkout of the candidate: uv run --frozen python -c 'registry_admission_errors(registry, release_sha=MERGE, environment=\"dev\", expected_manifest_digest=<manifest digest>, root=.)'"
       ],
-      "credential_path_not_reached": true,
-      "user_site_has_google_packages_as_of": "2026-09-24T07:02:49Z",
-      "superseded_by": "authorization_state.round4_environment_recheck.user_site_change (user site created 2026-09-24T07:09:29Z)"
-    },
-    "latent_blockers_after_dependency_repair": [
-      {
-        "id": "LATENT-1",
-        "step": "private_key_loader = load_private_key_from_secret_reference",
-        "mechanism": "subprocess gcloud secrets versions access latest --project 767864276141 --secret odp-release-lease-private-key, stderr discarded",
-        "observed": "The supervisor process has HOME=/home/lupin and no CLOUDSDK_CONFIG, so it shares this machine's gcloud configuration (active account deborah.lu@dev.cctech-support.com). At 2026-09-24T06:56:12Z-06:56:18Z read-only gcloud calls from that configuration failed with 'Reauthentication failed. cannot prompt during non-interactive execution' (exit 1).",
-        "expected_issuer_error_if_unrepaired": "Secret Manager signing key is unavailable",
-        "status": "confirmed_for_this_gcloud_configuration",
-        "rechecked_at": "2026-09-24T07:24:44Z",
-        "recheck_result": "still failing: gcloud secrets versions list exit 1, 'Reauthentication failed. cannot prompt during non-interactive execution'; credentials.db unchanged since 2026-09-17T02:16:03Z"
-      },
-      {
-        "id": "LATENT-2",
-        "step": "storage.Client() credentials inside _GCSLeaseStateStore",
-        "mechanism": "google.auth.default(): no GOOGLE_APPLICATION_CREDENTIALS in the supervisor environment and no ~/.config/gcloud/application_default_credentials.json; the fallback is the GCE metadata service account oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com, which belongs to a different project than the bucket.",
-        "observed": "Measured at 07:25:13Z and 07:28:36Z with the supervisor's interpreter once google-cloud-storage 3.14.1 was importable: storage.Client() resolved oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com via the GCE metadata server and Bucket.exists() returned HTTP 403 (Permission 'storage.buckets.get' denied). See round4_environment_recheck.reproduction_after_package_availability.",
-        "expected_issuer_error_if_unrepaired": "durable GCS lease state is unavailable (cannot access durable lease state bucket odayplus-runtime-20260825-release-leases: 403 ... storage.buckets.get denied)",
-        "status": "confirmed_403_at_2026-09-24T07:25:13Z",
-        "observed_round3": "Bucket access from that identity was not verified: the harness denied the owner's metadata-token probe.",
-        "denied_permission": "storage.buckets.get",
-        "resolved_principal": "oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com"
-      }
-    ],
-    "admission_possible_with_current_request": false,
-    "admission_logic_satisfied_by_current_request": true,
-    "new_lease_request_authored_by_owner": false,
-    "what_the_issuer_does_after_repair": "Signs an Ed25519 lease (ttl 600s) against candidate a663d604831c4b9710dda9b7ca85ddbc193837e8 / manifest sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482, records it under gs://odayplus-runtime-20260825-release-leases/leases, and dispatches .github/workflows/deploy-dev.yml on ref dev with phase=deploy environment=dev release_sha=a663d604831c4b9710dda9b7ca85ddbc193837e8 task_id=ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 manifest_run_id=36415981871 manifest_digest=sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482 plus the four immutable image refs from the manifest.",
-    "round4_environment_recheck": {
-      "performed_window_utc": {
-        "start_utc": "2026-09-24T07:22:35Z",
-        "end_utc": "2026-09-24T07:28:37Z"
-      },
-      "trigger": "owned_in_progress_dispatch at 2026-09-24T07:20:56Z; activity log shows no release_lease_* event and no board write to this task's release_lease_request or release_lease_issuance after 07:00:21Z",
-      "board_delta_since_round3": {
-        "task_status": "in_progress",
-        "waiting_for": null,
-        "open_blockers": 0,
-        "release_lease_request_unchanged": true,
-        "release_lease_issuance_unchanged": true,
-        "issuance_state": "blocked",
-        "new_issuer_events_since_07_00_21Z": 0,
-        "origin_dev_head_sha": "c4efabbbeba9e743fab8ee52125932137852c703",
-        "task_branch_head_sha": "9afaf1e978ec65a64d6c2da52d72ad7bc30767d3",
-        "pr": {
-          "number": 1107,
-          "state": "OPEN",
-          "head_ref_oid": "9afaf1e978ec65a64d6c2da52d72ad7bc30767d3"
-        }
-      },
-      "supervisor_process": {
-        "pid": 2220782,
-        "exe": "/usr/bin/python3.12",
-        "cmdline": "python3 -u .orchestrator/supervisor.py --verbose",
-        "cwd": "/home/lupin/oday-plus-supervisor-runtime-43d2fe8ca8e0",
-        "started_utc": "2026-09-23T14:35:03Z",
-        "started_source": "ps -o lstart (host TZ=UTC) and /proc/2220782",
-        "restarted_since_round3": false,
-        "environ_has_google_application_credentials": false,
-        "environ_has_odp_release_lease_gcs_access_token": false,
-        "environ_has_cloudsdk_config": false,
-        "environ_has_pythonpath_or_pythonnousersite": false,
-        "issuer_runs_in_process": true,
-        "issuer_call_site": ".orchestrator/supervisor.py:5535 -> release_lease_integration.process_release_lease_issuance (same interpreter, no subprocess for LeaseStateStore)"
-      },
-      "user_site_change": {
-        "path": "/home/lupin/.local/lib/python3.12/site-packages",
-        "parent_directory_birth_utc": "2026-09-24T07:09:29Z",
-        "directory_birth_utc": "2026-09-24T07:09:29Z",
-        "last_write_utc": "2026-09-24T07:09:39Z",
-        "birth_source": "stat --format=%w (ext4 crtime) on /home/lupin/.local/lib/python3.12, its site-packages and site-packages/.lock",
-        "installer_recorded_in_dist_info": "uv",
-        "uv_binary": "/home/lupin/.local/bin/uv 0.12.5",
-        "distributions_installed": [
-          "certifi-2026.7.22",
-          "cffi-2.1.1",
-          "charset_normalizer-3.5.1",
-          "cryptography-50.0.1",
-          "google_api_core-2.38.0",
-          "google_auth-2.58.0",
-          "google_cloud_core-2.7.0",
-          "google_cloud_storage-3.14.1",
-          "google_crc32c-1.8.0",
-          "google_resumable_media-2.10.2",
-          "googleapis_common_protos-1.75.3",
-          "idna-3.20",
-          "opentelemetry_api-1.44.0",
-          "proto_plus-1.28.4",
-          "protobuf-7.36.2",
-          "pyasn1-0.6.4",
-          "pyasn1_modules-0.4.2",
-          "pycparser-3.0",
-          "requests-2.34.2",
-          "typing_extensions-4.16.0",
-          "urllib3-2.8.0"
-        ],
-        "versions_differ_from_project_uv_env": {
-          "google-cloud-storage": "3.14.1 (user site) vs 3.13.0 (uv env)",
-          "google-auth": "2.58.0 (user site) vs 2.56.2 (uv env)"
-        },
-        "actor": "not recorded: no ai-activity-log event, no task note, and not this worker (round 3 installed nothing; its reproduction at 07:02:49Z predates the directory's birth)",
-        "relation_to_round3_evidence": "The round-3 statement 'user site has no google packages' was true at 07:02:49Z and false from 07:09:29Z; the round-3 README (written 07:12Z) and audit (07:09:07Z) did not observe the change.",
-        "existed_when_supervisor_started": false,
-        "fresh_interpreter_imports_google": true,
-        "running_supervisor_can_import_google": false,
-        "reason": "CPython adds the user site to sys.path only when os.path.isdir(user_site) is true at interpreter start (/usr/lib/python3.12/site.py line 358, addusersitepackages). The directory was born 16h34m after pid 2220782 started; /proc/2220782/maps references nothing under /home/lupin/.local/lib.",
-        "emulation_of_running_process": "/usr/bin/python3.12 -s -c 'import google.cloud.storage' -> ModuleNotFoundError: No module named 'google' (-s disables the user site, matching a process whose user site did not exist at start)",
-        "restart_path_would_pick_it_up": true,
-        "restart_path_evidence": "scripts/run-supervisor-watchdog-live.sh -> scripts/run-supervisor-watchdog.sh -> exec python3 .orchestrator/supervisor_watchdog.py (no -s/-I, PYTHONNOUSERSITE unset); python3 on the supervisor's PATH resolves to /usr/bin/python3 (3.12), identical in /home/lupin/odayplus fc4f7529, runtime-current 43d2fe8c and origin/dev."
-      },
-      "reproduction_after_package_availability": {
-        "performed_at": [
-          "2026-09-24T07:25:13Z",
-          "2026-09-24T07:28:36Z"
-        ],
-        "interpreter": "/usr/bin/python3.12",
-        "environment": "env -i HOME=/home/lupin USER=lupin PATH=/home/lupin/.local/bin:/usr/local/bin:/usr/bin:/bin PYTHONPATH=/home/lupin/oday-plus-supervisor-runtime-current (identical to the round-3 reproduction)",
-        "user_site_in_sys_path": true,
-        "google_cloud_storage_version": "3.14.1",
-        "google_auth_version": "2.58.0",
-        "call": "delivery_toolchain.release.release_lease.LeaseStateStore('gs://odayplus-runtime-20260825-release-leases/leases', require_existing=True)",
-        "exception_type": "LeaseStateError",
-        "exception_message": "cannot access durable lease state bucket odayplus-runtime-20260825-release-leases: 403 GET https://storage.googleapis.com/storage/v1/b/odayplus-runtime-20260825-release-leases?fields=name&prettyPrint=false: oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com does not have storage.buckets.get access to the Google Cloud Storage bucket. Permission 'storage.buckets.get' denied on resource '//storage.googleapis.com/projects/_/buckets/odayplus-runtime-20260825-release-leases' (or it may not exist).",
-        "cause_type": "Forbidden",
-        "http_status": 403,
-        "http_method_and_url": "GET https://storage.googleapis.com/storage/v1/b/odayplus-runtime-20260825-release-leases?fields=name&prettyPrint=false",
-        "resolved_principal": "oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com",
-        "principal_source": "google.auth.default() fallback to the GCE metadata service account (no ADC file, no GOOGLE_APPLICATION_CREDENTIALS, no ODP_RELEASE_LEASE_GCS_ACCESS_TOKEN)",
-        "denied_permission": "storage.buckets.get",
-        "failing_store_step": "Bucket.exists() under require_existing=True (release_lease.py line 347)",
-        "integration_layer_message": "durable GCS lease state is unavailable",
-        "integration_layer_mapping": "release_lease_integration.py lines 929-940 map every LeaseError from LeaseStateStore(...) to the same string, so after a restart the issuer would record an identical refusal for this reason",
-        "credential_path_reached": true,
-        "bucket_existence": "not determinable from this response: GCS returns 403 for both a denied bucket and a nonexistent one when the caller lacks list permission",
-        "mutation_performed": false,
-        "process_exit_code": 0
-      },
-      "gcs_operations_required_by_store": [
-        "storage.buckets.get (Bucket.exists during construction with require_existing=True)",
-        "storage.objects.get (Blob.reload and download_as_text with if_generation_match)",
-        "storage.objects.create with if_generation_match=0 (lease issuance record)",
-        "storage.objects.create and storage.objects.delete (overwrite on state transition with if_generation_match=<observed generation>)"
-      ],
-      "secret_manager_recheck": {
-        "performed_at": "2026-09-24T07:24:44Z",
-        "command": "gcloud secrets versions list odp-release-lease-private-key --project 767864276141 --format='value(name,state)'",
-        "exit_code": 1,
-        "stderr_first_line": "ERROR: (gcloud.secrets.versions.list) There was a problem refreshing your current auth tokens: Reauthentication failed. cannot prompt during non-interactive execution.",
-        "secret_material_printed": false,
-        "gcloud_config_last_modified_utc": {
-          "access_tokens.db": "2026-09-21T13:34:42Z",
-          "credentials.db": "2026-09-17T02:16:03Z",
-          "active_config": "2026-08-17T13:10:50Z"
-        },
-        "active_account": "deborah.lu@dev.cctech-support.com",
-        "adc_file_present": false,
-        "status": "LATENT-1 unchanged; no re-login since round 3"
-      },
-      "consequence": "Two independent repairs remain before the issuer can construct its state store: (1) restart the supervisor so the interpreter sees the user site created at 07:09:29Z, and (2) give the principal the supervisor resolves access to gs://odayplus-runtime-20260825-release-leases (or supply ADC for one that has it). A restart alone moves the failure from ModuleNotFoundError to the 403 above, and the issuer would log the identical string 'durable GCS lease state is unavailable'; a repeat of that message after restart must not be read as 'package still missing'. LATENT-1 (Secret Manager key via expired gcloud login) follows after both."
+      "caveat": "Writing this field changes the audit file (a docs/evidence path), so the merge tree of the submitted head differs from the dry-run tree only by this field. It is not a lease check: no lease exists and none was requested."
     },
     "human_authorization": {
-      "approval_id": "HUMANOPS-DEV-MIGRATION-20260928T120016Z",
-      "approved_by": "Human/Ops",
-      "candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
-      "manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
-      "build_run_id": "36415981871",
-      "target_environment": "dev",
-      "approved_at": "2026-09-28T12:00:16Z",
-      "expires_at": "2026-09-28T18:00:16Z"
+      "approval_id": "HUMANOPS-DEV-MIGRATION-20260929T053234Z",
+      "candidate_sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
+      "manifest_digest": "sha256:8ee919d67fc89768c7ae8912ecfce706dc1b2a0fbb2e3da1a14b5e87c1fae80e",
+      "manifest_run_id": 36509055237,
+      "recorded_at": "2026-09-29T05:32:34Z",
+      "expires_at": "2026-09-30T05:32:34Z",
+      "artifact": "docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/user-deploy-authorization-HUMANOPS-DEV-MIGRATION-20260929T053234Z.json"
     },
-    "lease_issuance_diagnostic": {
-      "state": "issuing",
+    "current_release_lease_request": {
+      "status": "not_registered",
+      "approval_id": "HUMANOPS-DEV-MIGRATION-20260929T053234Z",
+      "candidate_sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
+      "manifest_digest": "sha256:8ee919d67fc89768c7ae8912ecfce706dc1b2a0fbb2e3da1a14b5e87c1fae80e",
+      "artifact": "docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/release-lease-request.json"
+    },
+    "latest_issuance_decision": {
+      "state": "blocked",
       "event": "lease_issue_blocked",
-      "updated_at": "2026-09-28T12:00:26+00:00",
-      "candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
-      "approval_id": "HUMANOPS-DEV-MIGRATION-20260928T120016Z",
-      "dispatch_ref_sha": null,
-      "lease_id": null,
-      "signed_lease_received": false,
-      "note": "Supervisor lease issuance blocked since 00:47:26Z. Receipt shows lease_issue_blocked with no signed lease, no lease_id, no dispatch_ref_sha, and no new Runtime Release deploy run dispatched. Root cause is Supervisor-side: GCS lease state store unavailable or IAM/Secret Manager access issue. Worker cannot sign or dispatch outside Supervisor. This diagnostic is recorded from task status evidence only."
+      "reason": "no lease request registered for this candidate; registration waits for PR #1107 review and merge"
     }
   },
   "live_gcp_runtime_state": {
     "project_id": "odayplus-runtime-20260825",
     "region": "asia-east1",
-    "current_readback_result": "predeploy_target_absence_verified",
+    "current_readback_result": "all five dev targets absent",
     "readback_source": {
       "kind": "hosted artifact",
-      "run_id": 36415981871,
-      "probe_step_started_at": "2026-09-28T07:30:21Z",
-      "artifact_created_at": "2026-09-28T07:34:31Z",
-      "sha256": "3391e27c24589dd90a89288a036c9bb6974881992d6c338b497e6d7ec8a12825",
+      "run_id": 36509055237,
+      "probe_step_started_at": "2026-09-29T01:44:46Z",
+      "probe_step_completed_at": "2026-09-29T01:44:56Z",
+      "artifact_created_at": "2026-09-29T01:49:29Z",
+      "sha256": "b93a18f5a97ba61518f4fc4c5f75122b2a3595cd38d797daa44fe3f9d2023b63",
       "probe_command": "gcloud run services list --format=value(metadata.name); gcloud run jobs list --format=value(metadata.name)"
     },
     "target_absence_receipt": {
       "kind": "runtime-release-target-absence-readback",
-      "candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+      "candidate_sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
       "api_service": {
-        "name": "oday-api",
+        "resource_name": "oday-api",
         "exists": false,
         "serving_traffic": false
       },
       "web_service": {
-        "name": "oday-web",
+        "resource_name": "oday-web",
         "exists": false,
         "serving_traffic": false
       },
       "migration_job": {
-        "name": "oday-migration-r-a663d604831c",
-        "exists": false,
-        "serving_traffic": false
+        "name": "oday-migration-r-ee06d1d82944",
+        "exists": false
       },
       "worker_job": {
-        "name": "oday-worker-r-a663d604831c",
-        "exists": false,
-        "serving_traffic": false
+        "name": "oday-worker-r-ee06d1d82944",
+        "exists": false
       },
       "scheduler_job": {
-        "name": "oday-scheduler-r-a663d604831c",
-        "exists": false,
-        "serving_traffic": false
+        "name": "oday-scheduler-r-ee06d1d82944",
+        "exists": false
       }
-    },
-    "operator_readback_2026_09_17": {
-      "recorded_in": "canonical board blocker created 2026-09-17T06:05:38Z by Antigravity2",
-      "cloud_run_services_present": [
-        "oday-mlflow",
-        "oday-staging-mlflow"
-      ],
-      "oday_api_present": false,
-      "oday_web_present": false,
-      "cloud_run_jobs_present": [],
-      "lease_state_bucket_objects": 0
-    },
-    "direct_gcloud_readback_this_round": {
-      "attempted": true,
-      "succeeded": false,
-      "window_utc": {
-        "start_utc": "2026-09-26T12:00:00Z",
-        "end_utc": "2026-09-26T12:06:15Z"
-      },
-      "gcloud_config_account": "deborah.lu@dev.cctech-support.com",
-      "gcloud_config_project": "odayplus-runtime-20260825",
-      "commands": [
-        {
-          "command": "gcloud run services list --project odayplus-runtime-20260825 --region asia-east1",
-          "exit_code": 1,
-          "error": "Reauthentication failed. cannot prompt during non-interactive execution"
-        },
-        {
-          "command": "gcloud run jobs list --project odayplus-runtime-20260825 --region asia-east1",
-          "exit_code": 1,
-          "error": "Reauthentication failed. cannot prompt during non-interactive execution"
-        },
-        {
-          "command": "gcloud storage ls gs://odayplus-runtime-20260825-release-leases/leases/",
-          "exit_code": 1,
-          "error": "Reauthentication failed. cannot prompt during non-interactive execution"
-        }
-      ]
     },
     "deployment_commands_run": false,
     "traffic_switch_run": false,
-    "post_deploy_readback": "not_applicable_without_signed_supervisor_lease",
+    "post_deploy_readback": "not applicable; nothing deployed",
     "cloud_run_generated_urls": [],
     "cloud_run_revisions": [],
     "job_executions": [],
-    "scheduler_triggers": [],
-    "lease_issuance_diagnostic": {
-      "observed_at_utc": "2026-09-28T02:44:32Z",
-      "target_environment": "dev",
-      "candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
-      "manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
-      "operator_gcp_project": "odayplus-runtime-20260825",
-      "operator_authentication": "active user credentials; metadata reads succeeded",
-      "lease_bucket_metadata_readable": true,
-      "lease_bucket_object_count": 8,
-      "latest_object_metadata_updated_at_utc": "2026-09-28T00:47:38Z",
-      "lease_object_payload_read": false,
-      "secret_version_metadata": {
-        "version": "1",
-        "state": "enabled"
-      },
-      "secret_payload_read": false,
-      "secret_metadata_proves_supervisor_runtime_access": false,
-      "configured_lease_ttl_seconds": 600,
-      "latest_object_metadata_older_than_configured_ttl": true,
-      "canonical_issuance": {
-        "state": "issuing",
-        "updated_at_utc": "2026-09-28T00:47:26Z",
-        "receipt_event": "lease_issue_blocked",
-        "receipt_admitted": false,
-        "lease_id_present": false,
-        "dispatch_ref_sha_present": false
-      },
-      "activity_sequence": [
-        {
-          "at_utc": "2026-09-28T00:47:34Z",
-          "event": "release_lease_issuance_reserved",
-          "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001"
-        },
-        {
-          "at_utc": "2026-09-28T00:47:42Z",
-          "event": "stale_status_write_rejected",
-          "task_id_in_event": false,
-          "relation_to_this_issuance": "temporally adjacent; event does not identify a task, so causality is unconfirmed"
-        }
-      ],
-      "conclusion": "No admitted canonical lease receipt or accepted Runtime Release dispatch is recorded. Metadata visibility does not prove a valid lease, signing identity access, or the Supervisor root cause. Do not reuse the object or one-shot approval request. Dedicated remediation task ODP-SUPERVISOR-LEASE-ISSUANCE-RECOVERY-001 is in_progress; the parent rollout remains blocked until recovery and separately valid release authorization.",
-      "new_release_request_created": false,
-      "remediation_task": {
-        "task_id": "ODP-SUPERVISOR-LEASE-ISSUANCE-RECOVERY-001",
-        "title": "修復 Supervisor lease issuance 的 stale-CAS 安全恢復路徑",
-        "status": "in_progress",
-        "owner": "Antigravity4",
-        "reviewer": "Codex2",
-        "scope": "Supervisor code and regression tests only; no live GCP mutation, release request, lease signing, or dispatch",
-        "causal_correction_recorded": true
-      }
-    }
+    "scheduler_triggers": []
   },
   "reconciliation_findings": [
     {
       "id": "FINDING-001",
       "severity": "P0",
-      "topic": "candidate_bound_current_and_admitted",
-      "finding": "The canonical registry (ODP-DEV-MIGRATION-ADMISSION-001, PR #1375, rebound by ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001) and RELEASE_MANIFEST.json bind candidate a663d604831c4b9710dda9b7ca85ddbc193837e8 / sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482 from Runtime Release run 36415981871; release.decision is go under authorization HUMANOPS-DEV-MIGRATION-20260928T120016Z for the dev admission boundary only. The candidate is an ancestor of origin/dev ee06d1d8; intervening commits touch docs/evidence/ paths only, so acceptance 1-2 hold and no rebuild is required.",
+      "topic": "candidate_rebuilt_from_current_dev",
+      "finding": "The a663 candidate could not pass ancestry admission against dev ee06d1d8 (PR #1379 changed a checker and its test, both non-evidence paths). A fresh candidate ee06d1d8294464f1eb7231f2b06505348a61cba2 was built by Runtime Release run 36509055237; manifest sha256:8ee919d67fc89768c7ae8912ecfce706dc1b2a0fbb2e3da1a14b5e87c1fae80e.",
       "status": "verified"
     },
     {
       "id": "FINDING-002",
       "severity": "P0",
-      "topic": "hosted_artifacts_independently_reverified",
-      "finding": "All six hosted artifacts from run 36415981871 were downloaded by immutable GitHub artifact ID and their expanded JSON files are preserved and SHA-256 checked by the verifier. The hosted manifest raw-file SHA-256 is edd98d4e786f86121ceaafaf779041a939df924beae91cf0265946f89475497b; it is byte-identical to the repository manifest. The embedded logical manifest_digest remains sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482 and is independently computed from canonical manifest JSON with manifest_digest removed. Build job succeeded while lease/deploy/watch jobs were skipped; this is build provenance, not deployment evidence.",
+      "topic": "hosted_artifacts_preserved",
+      "finding": "All six artifacts of run 36509055237 were downloaded and preserved byte-for-byte; the verifier recomputes each raw SHA-256 and the manifest logical digest.",
       "status": "verified"
     },
     {
       "id": "FINDING-003",
       "severity": "P0",
-      "topic": "dev_admission_gates_cleared",
-      "finding": "gate-0 and gate-1 are passed and gate-4 is passed-with-deviation (approver Human/Ops under HUMANOPS-DEV-MIGRATION-20260928T120016Z, expiring 2026-09-28T18:00:16Z), each bound to candidate a663 with explicit CI provenance (merge_group run 36391745153); registry_admission_errors for environment dev returns an empty list.",
+      "topic": "canonical_manifest_byte_identical",
+      "finding": "docs/evidence/gates/RELEASE_MANIFEST.json is byte-identical to the hosted manifest artifact (raw sha256 1d34ada707d40bbb25f8053955e9736b30cc16f229563a7ec594e3598a209ec0).",
       "status": "verified"
     },
     {
       "id": "FINDING-004",
       "severity": "P0",
-      "topic": "fresh_human_ops_lease_authorization_valid",
-      "finding": "Human/Ops registered authorization HUMANOPS-DEV-MIGRATION-20260928T120016Z for candidate a663d604831c4b9710dda9b7ca85ddbc193837e8, manifest sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482, and Runtime Release build 36415981871.",
+      "topic": "images_fresh_and_signed",
+      "finding": "All four component images were built and pushed in this run and each signature/attestation created a fresh Rekor tlog entry; no digest reuse.",
       "status": "verified"
     },
     {
       "id": "FINDING-005",
-      "severity": "P0",
-      "topic": "supervisor_lease_issuer_blocked",
-      "finding": "Supervisor lease issuance records issuing / lease_issue_blocked at 2026-09-28T00:47:26Z with admitted=false, lease_id=null. The lease issuer is blocked from generating a signed lease. An open blocker is recorded on the task and routed to Supervisor/remediation task to resolve.",
-      "status": "blocked"
+      "severity": "P1",
+      "topic": "gate_0_1_provenance",
+      "finding": "Gate 0/1 receipts cite exact-candidate tooling CI (36435578948, 36436491098) and inherit product results from full-product CI 36361727942 on bb15fe9fee5d only because the CI classifier rates the delta development_tooling with zero non-tooling paths.",
+      "status": "verified"
     },
     {
       "id": "FINDING-006",
-      "severity": "P0",
-      "topic": "supervisor_gcloud_credential_expired_blocks_signing_key",
-      "finding": "After the dependency is repaired the next issuer step shells out to gcloud secrets versions access using this machine's gcloud configuration (active account deborah.lu@dev.cctech-support.com). That configuration failed non-interactive token refresh, so the issuer records Secret Manager signing key unavailable until the credential is renewed or replaced with a non-interactive one.",
-      "status": "blocked"
+      "severity": "P1",
+      "topic": "e2e_registry_test_gap_closed_locally",
+      "finding": "tests/e2e/test_release_gate_registry.py is outside the orchestrator job paths; it was run on the exact candidate checkout: 61 passed, exit 0.",
+      "status": "verified"
     },
     {
       "id": "FINDING-007",
       "severity": "P1",
-      "topic": "supervisor_gcs_credential_path_unverified",
-      "finding": "storage.Client() in the supervisor resolves credentials via google.auth.default(); no ADC file or GOOGLE_APPLICATION_CREDENTIALS exists, so the fallback is the GCE metadata service account oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com, which belongs to a different project than the lease bucket.",
-      "status": "blocked"
+      "topic": "gate_4_deviation_rebound",
+      "finding": "Gate 4 cites the new candidate-specific approval HUMANOPS-DEV-MIGRATION-20260929T053234Z; the H01 receipt is still missing and is disclosed as a dev-only deviation, not a pass.",
+      "status": "verified"
     },
     {
       "id": "FINDING-008",
       "severity": "P0",
-      "topic": "deployment_not_attempted",
-      "finding": "No lease exists, so no Cloud Run deployment, job execution, authenticated smoke, post-deploy provider-off probe, or egress probe was run; rollout acceptance 3-8 remain incomplete pending signed Supervisor lease and deploy execution.",
-      "status": "fail_closed"
+      "topic": "ancestry_admission_dry_run",
+      "finding": "See authorization_state.registry_admission_errors_dry_run for the check run against a simulated candidate-first-parent merge of this PR head.",
+      "status": "verified"
     },
     {
       "id": "FINDING-009",
       "severity": "P0",
-      "topic": "historical_false_receipts_immutable",
-      "finding": "The seven docs/evidence/runtime/ODP-DEV-ROLLOUT-001 receipts recompute to their recorded hashes; they remain unmodified and explicitly superseded.",
-      "status": "verified_without_mutation"
+      "topic": "no_lease_no_deploy",
+      "finding": "No lease request is registered and none may be until PR #1107 is reviewed and merged; nothing was deployed.",
+      "status": "fail_closed"
     },
     {
       "id": "FINDING-010",
       "severity": "P1",
-      "topic": "open_blocker_routed_to_supervisor",
-      "finding": "Task ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 records an open blocker for the unresolved lease issuer and routes resolution to the Supervisor/remediation lane, preserving fail-closed posture until a signed lease and deploy receipts are produced.",
-      "status": "blocked"
+      "topic": "live_runtime_unverified",
+      "finding": "No live runtime readback beyond the build-time target absence probe (01:44:46-01:44:56Z) exists; runtime egress, IAM and data-plane acceptance remain post-deploy work.",
+      "status": "fail_closed"
     },
     {
       "id": "FINDING-011",
-      "severity": "P1",
-      "topic": "supervisor_lease_issuance_recovery_routed",
-      "finding": "Dedicated control-plane remediation ODP-SUPERVISOR-LEASE-ISSUANCE-RECOVERY-001 is assigned to Antigravity4 and independently reviewed by Codex2. It is code/tests only; it cannot create a release request, sign a lease, or dispatch. The dev rollout remains blocked.",
-      "status": "in_progress"
+      "severity": "P2",
+      "topic": "a663_history_preserved",
+      "finding": "The rejected a663 round is preserved verbatim under history; its values do not appear in current sections (verifier-enforced).",
+      "status": "verified"
     }
   ],
   "historical_receipts_sha256": {
@@ -922,87 +522,36 @@
     "release-receipts-index.json": "5b1e41015c9291e2fe6dda26de681f456a90672a325aa7e9ce868e9e96e09449"
   },
   "actions_taken": [
-    "Confirmed the expected task branch and merged origin/dev c4efabbbeba9e743fab8ee52125932137852c703 as cecb7a0124b2b67d37b62c8b7cd92995bcf376f9 (parents 46f380764f1152949816545bf55f95b35f14d0dc, c4efabbbeba9e743fab8ee52125932137852c703); the merge tree equals git merge-tree --write-tree output (41af6431cfd883e37484b520c3b08d942134d19a), no conflicts, origin/dev is an ancestor of HEAD, and the forbidden-path diff is empty.",
-    "Re-read the canonical registry, manifest and gate states from the merged tree (identical to origin/dev).",
-    "Re-downloaded the six run-36080312679 artifacts, hashed them, and compared the manifest with the repository copy and the five others with their ODP-DEV-RELEASE-GATE-RECONCILIATION-006 copies.",
-    "Read the build job log for job 107900654118 and counted digest, cosign verify, push and tlog occurrences.",
-    "Ran registry_admission_errors for environment dev against the candidate and the origin/dev tip (both empty).",
-    "Ran a read-only dry run of the live issuer's validators against the board before the human registration; nothing was written.",
-    "Attempted direct gcloud and imagetools readback; recorded the non-interactive credential failure verbatim.",
-    "After Human/Ops registered the fresh request and the issuer refused it, read the issuance record and activity log, inspected the supervisor process (/proc, read-only) and reproduced the failing LeaseStateStore call under the supervisor's interpreter and a clean environment.",
-    "Recomputed the seven historical receipt hashes after base composition.",
-    "Rewrote this evidence bundle and its verifier against the current base and state.",
-    "Round 4 (07:22:35Z-07:28:37Z): re-read the live board (request, issuance record, status, blockers, waiting_for), PR #1107 and origin/dev; no change since round 3.",
-    "Round 4: inspected pid 2220782 read-only via /proc (exe, cwd, environ, maps, start time) and confirmed it has not restarted since 2026-09-23T14:35:03Z.",
-    "Round 4: measured the birth and modification times of /home/lupin/.local/lib/python3.12 and its site-packages, the dist-info INSTALLER files and the 21 distributions present; confirmed a fresh /usr/bin/python3.12 imports google.cloud.storage 3.14.1 and that python3.12 -s (no user site) still raises ModuleNotFoundError.",
-    "Round 4: re-ran the round-3 reproduction unchanged (same interpreter, same env -i shell) twice; recorded the resulting HTTP 403 verbatim, the resolved principal and the denied permission. The call is read-only (Bucket.exists); nothing was created or modified in GCS.",
-    "Round 4: re-ran a non-interactive gcloud secrets versions list (names only) and recorded the credential-refresh failure verbatim.",
-    "Round 4: re-read the watchdog launch path in /home/lupin/odayplus, runtime-current and origin/dev to determine whether a restart would pick up the user site."
+    "Built candidate ee06d1d8294464f1eb7231f2b06505348a61cba2 with Runtime Release run 36509055237 (build phase only)",
+    "Preserved six hosted artifacts byte-for-byte",
+    "Replaced canonical manifest with the hosted manifest",
+    "Rebound registry gates 0/1/4 with candidate-bound receipts",
+    "Recorded user approval HUMANOPS-DEV-MIGRATION-20260929T053234Z",
+    "Ran tests/e2e/test_release_gate_registry.py on the exact candidate (61 passed)",
+    "Moved the rejected a663 round verbatim into history",
+    "Extended the verifier with source-receipt cross-checks"
   ],
   "actions_not_taken": [
-    "No Runtime Release build or deploy phase was dispatched; the canonical candidate is current and admitted.",
-    "No release_lease_request was authored, edited or re-registered by the owner; the fresh request was written by Human/Ops and its nonce value is not recorded here.",
-    "No Supervisor lease was fabricated, signed, consumed or replayed; no lease has ever been issued fleet-wide.",
-    "No package was installed into the supervisor interpreter, no supervisor restart, config edit or credential renewal was performed, and no file under .orchestrator/ was changed (forbidden path; acceptance 10).",
-    "No gcloud mutation, Cloud Run change, traffic switch, DNS, custom-domain or certificate change was performed.",
-    "No provider credential payload was read and no third-party source was enabled.",
-    "No historical receipt under docs/evidence/runtime/ODP-DEV-ROLLOUT-001/ was edited, moved or deleted.",
-    "No deployment-success receipt was written.",
-    "The task was not moved to review: submit_review sets status=review and the issuer requires in_progress, so a review submission now would re-block the very request the operator's 06:49:44Z reopen enabled.",
-    "Round 4: no supervisor restart, no IAM or bucket policy change, no ADC or credential file created, no gcloud login, no environment variable set for the supervisor, and no file under .orchestrator/ touched.",
-    "Round 4: no package was installed or removed by this worker; the 07:09:29Z user-site installation was performed by an unrecorded actor before this round started and is reported here as an observed environment change, not as a worker action.",
-    "Round 4: no release_lease_request was written, edited or re-registered; the 07:00:12Z blocked issuance record was not touched.",
-    "Round 4: the task was not moved to review (same reason as round 3) and no blocker was opened (a blocker or waiting_for would make the issuer reject the next Human/Ops request)."
+    "No lease request registered",
+    "No release dispatch or deploy",
+    "No database reset/stamp/deletion",
+    "No allowlist widening in the ancestry checker",
+    "No external source enabled"
   ],
   "unblock_requirements": [
-    "Supervisor lease issuance must transition from issuing/lease_issue_blocked to dispatched with a signed lease for candidate a663d604831c4b9710dda9b7ca85ddbc193837e8 and manifest sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482. Worker authorization HUMANOPS-DEV-MIGRATION-20260928T120016Z expires 2026-09-28T18:00:16Z.",
-    "If GCS lease state or Secret Manager access is the root cause, the operator must resolve the Supervisor runtime environment issue (not this task's scope per acceptance criterion 9).",
-    "After a signed lease is issued, the Runtime Release deploy-dev workflow dispatches automatically. This task records evidence of the deploy outcome (success or failure)."
+    "Codex2 exact-head review of PR #1107 accepts this head",
+    "PR #1107 merged into dev",
+    "Fresh lease request registered under HUMANOPS-DEV-MIGRATION-20260929T053234Z before 2026-09-30T05:32:34Z",
+    "Deploy phase run with that lease and live readbacks captured"
   ],
   "superseded_unblock_requirements": {
-    "superseded_at": "2026-09-24T07:28:37Z",
-    "reason": "Round-3 items 1-2 assumed the package was absent everywhere; it was installed into a user site at 07:09:29Z by an unrecorded actor while round 3 was writing its evidence. The running supervisor still cannot import it, so the restart half of item 1 remains. Round-3 item 4 (verify the GCS principal) was measured in round 4 and is a confirmed 403, so it is now a required IAM/ADC repair rather than a check. Items 3, 5, 6, 7 and 8 are unchanged.",
+    "superseded_at": "2026-09-29T06:00:00Z",
+    "reason": "a663 round superseded; see history",
     "previous_requirements": [
-      "Operator: make google-cloud-storage (and google-auth) importable by the interpreter that runs .orchestrator/supervisor.py. Either launch the supervisor from the project's uv environment, which already carries google-cloud-storage 3.13.0, or install the pinned packages into an interpreter the supervisor uses (the system /usr/bin/python3.12 has no pip). Restart the supervisor afterwards using the fleet's restart procedure; the user-site path is only added at interpreter start.",
-      "Operator: verify the repair with the same reproduction: from /home/lupin/oday-plus-supervisor-runtime-current, with the supervisor's interpreter, construct LeaseStateStore('gs://odayplus-runtime-20260825-release-leases/leases', require_existing=True). The outcome must no longer be ModuleNotFoundError; a credential error at this point means LATENT-2 is real.",
-      "Operator: give the supervisor a non-interactive Secret Manager credential. Its key loader runs gcloud secrets versions access latest --project 767864276141 --secret odp-release-lease-private-key with this machine's gcloud configuration (HOME=/home/lupin, active account deborah.lu@dev.cctech-support.com), which currently fails token refresh. Renew that login or point the supervisor at a service-account credential with secretmanager.versions.access on that secret; confirm with a non-interactive gcloud secrets versions list on the same secret (exit 0, no material printed).",
-      "Operator: confirm the credential storage.Client() resolves in the supervisor (ADC or the GCE metadata account oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com) can read and create objects under gs://odayplus-runtime-20260825-release-leases/leases; otherwise provide ADC for a principal that can.",
-      "Optional: fast-forward /home/lupin/odayplus to origin/dev so the registry and manifest the issuer reads are committed rather than uncommitted local edits (HEAD is fc4f7529, 160 commits behind).",
-      "Human/Ops: after the repairs, register a new release_lease_request on this task with a new nonce and a new approval_id (kind runtime_release_deploy, status approved, approved_by Human/Ops, candidate_sha 1364363402900c800ec3ed033d38fd1d757c1f10, manifest_digest sha256:6fb8f9e2e6af8dcef9cbe2fd76f2c3d319d95a40fe64c77e3ffdb435f3dc246d, manifest_run_id 35944616693, target_environment dev, action deploy, approved_at at issue time, expires_at later). The request blocked under fingerprint sha256:7436c060... will not be retried. Keep the task in_progress with no blocker or waiting_for; do not submit it for review before the deploy has run.",
-      "The issuer then signs the lease and dispatches the existing deploy phase; if the deploy job fails, fail closed and mint a separate remediation task (acceptance 10).",
-      "This task then captures the authorized post-deploy Cloud Run URLs/revisions, migration/worker/scheduler executions, authenticated smoke, provider-off/16-source, live default-deny egress probe and live IAM readback (gate-4 deviation conditions), and exact manifest-binding receipts (acceptance 3-8)."
-    ],
-    "earlier_superseded": {
-      "superseded_at": "2026-09-24T07:09:07Z",
-      "reason": "Items 1-4 of the 2026-09-21 list (gate-0 C1 repair, gate-1 event-schema repair, gate-4 sign-off or deviation, registry decision go) were completed by PRs #1358, #1359, #1363, #1365 and the ODP-DEV-RELEASE-GATE-RECONCILIATION-005 rebind; item 5 (freshness re-check) is measured in this round; item 6 (fresh Human/Ops request) was performed at 2026-09-24T06:59:52Z. The gap moved to the supervisor's runtime environment.",
-      "previous_requirements": [
-        "gate-0 (owner Codex2): repair criterion C1 zero build warnings for candidate 39ae43f6 (apps/web Edge Runtime import of pg-connection-string / pg-pool), which is a product path outside this task; the coordinator must mint an owning task, after which the gate owner records a receipt and moves gate-0 to passed.",
-        "gate-1 (owner Claude): reconcile the event schema compatibility policy with the 16 payload schemas (additionalProperties: false) and shared/domain/events.py validation; also a product path requiring a coordinator-minted task, then a gate-1 receipt.",
-        "gate-4 (owner Claude): HUMAN-OSS-LEGAL-APPROVAL-001 named sign-off on docs/security/license_policy.json and license_exemptions.json, plus the H02 dev-tool CVE risk acceptance; this requires Human/Ops to cut the XR-EXT-OSS-FINAL-AUDIT-001 <-> dev-rollout cycle (either the audit stops requiring live measurements from an environment that does not exist yet, or gate-4 for admission_target=dev stops requiring production-level legal sign-off).",
-        "Human/Ops flips registry.release.decision to go for 39ae43f6 with the three receipts bound, via a reviewed PR (the registry has no writer tool).",
-        "Immediately before issuance, confirm 39ae43f6..origin/dev still touches docs/evidence/ only; if a product or build-input commit has landed, run the single Runtime Release build phase once against the new tip and rebind the registry through a reconciliation task before continuing.",
-        "Human/Ops records a fresh release_lease_request on this task (kind runtime_release_deploy, approved_by Human/Ops, new approval_id and nonce, candidate_sha 39ae43f6fe679f03dd7df459a51835cbd2d54f77, manifest_digest sha256:ebe7d305e930471d2e7492a1fffced10dbaa05a710bb5f6573f370e7bfa8ae8a, manifest_run_id 35493018607, target_environment dev, action deploy) while the task is in_progress with no open blocker; the enabled issuer then signs the Ed25519 lease and dispatches the existing deploy phase itself.",
-        "This task then captures the authorized post-deploy Cloud Run URLs/revisions, migration/worker/scheduler executions, authenticated smoke, provider-off/16-source, default-deny egress, and exact manifest-binding receipts (acceptance 3-8)."
-      ],
-      "earlier_superseded": {
-        "superseded_at": "2026-09-21T13:50:56Z",
-        "reason": "The 2026-09-04 list assumed the registry would be reconciled by ODP-DEV-STAGED-GATE-RECONCILIATION-001 and that lease issuance had no owner. PR #1183 merged 2026-09-04T12:18:30Z, ODP-DEV-STAGED-GATE-RECONCILIATION-001 and ODP-DEV-RELEASE-GATE-RECONCILIATION-004 are done, and the issuer is enabled; the remaining gap moved to dev gate clearance and the Human/Ops lease request.",
-        "previous_requirements": [
-          "Merge PR #1183 (ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001), which releases the HARD HOLD on ODP-DEV-STAGED-GATE-RECONCILIATION-001 and fixes the candidate selection point.",
-          "Select the then-latest origin/dev head as the deploy candidate. Do NOT reconcile the registry to 1edb2f834cbf38ccd489cd999802098076e891b7: ODP-DEV-STAGED-GATE-RECONCILIATION-001 is explicitly forbidden to bind that SHA, so the build artifacts of run 33844319992 are superseded in advance and must not be reused.",
-          "Re-run the single existing Runtime Release build phase once against that new exact SHA to produce a fresh build-once manifest and four immutable image digests.",
-          "Reconcile the canonical release gate registry from candidate ebc4fca5c2dd5871275aee39a18406dd67464f04 / decision no-go to the new candidate SHA and its manifest digest, via ODP-DEV-STAGED-GATE-RECONCILIATION-001 and its staged dev-admission rules.",
-          "Have the Supervisor issuer create and durably record an Ed25519-signed lease for target dev, action deploy, and that new exact manifest digest. No worker holds the private signing key, and ODP-DEV-STAGED-GATE-RECONCILIATION-001 acceptance forbids it from signing a lease or dispatching a deploy, so this step currently has no owner on the board and is carried by this task's open blocker.",
-          "Dispatch the existing Runtime Release deploy phase with the new exact image refs and the signed lease.",
-          "Capture authorized post-deploy Cloud Run URLs/revisions, migration/worker/scheduler executions, authenticated smoke, provider-off/16-source, default-deny egress, and exact manifest-binding receipts."
-        ],
-        "earlier_superseded": {
-          "superseded_at": "2026-09-04T07:20:00Z",
-          "reason": "The earlier plan named 1edb2f83 as the registry reconciliation target before the HARD HOLD on ODP-DEV-STAGED-GATE-RECONCILIATION-001 was known. Recorded here so the correction is auditable rather than silent.",
-          "previous_first_requirement": "Reconcile the canonical release gate registry to candidate 1edb2f834cbf38ccd489cd999802098076e891b7 and manifest digest sha256:c9ff71c7557c4009487cf6e093280f47369db2fdd49a17ac8b9e1aa472e8c2c7."
-        }
-      }
-    }
+      "Supervisor lease issuance must transition from issuing/lease_issue_blocked to dispatched with a signed lease for candidate a663d604831c4b9710dda9b7ca85ddbc193837e8 and manifest sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482. Worker authorization HUMANOPS-DEV-MIGRATION-20260928T120016Z expires 2026-09-28T18:00:16Z.",
+      "If GCS lease state or Secret Manager access is the root cause, the operator must resolve the Supervisor runtime environment issue (not this task's scope per acceptance criterion 9).",
+      "After a signed lease is issued, the Runtime Release deploy-dev workflow dispatches automatically. This task records evidence of the deploy outcome (success or failure)."
+    ]
   },
   "history": {
     "candidate_finality_2026_09_04": {
@@ -1250,13 +799,1014 @@
       "lease_diagnostic": "Confirmed active user auth and read-only GCS/Secret Manager metadata access; found the exact issuance remains ambiguous and no accepted dispatch exists. The stale-write event is generic without task_id; no root cause is claimed.",
       "deployment_status": "No a31 deploy, migration, smoke, or post-deploy probes have run. The task stays blocked until Supervisor issuance recovery and valid Human/Ops authorization are in place.",
       "lease_remediation_task": "ODP-SUPERVISOR-LEASE-ISSUANCE-RECOVERY-001 (Antigravity4 / Codex2, in_progress; no deploy scope)"
+    },
+    "round_2026_09_28_a663_rebind_rejected_reviews_11_12": {
+      "note": "Verbatim current sections of the a663 rebind round (heads ee771b69 / 7be83b1b), rejected by Codex2 at 2026-09-28T23:56:51Z and 2026-09-29T01:00:30Z for mixing a31/a663 provenance and for a663 being undispatchable against current dev. Preserved unedited as history; not current evidence.",
+      "sections": {
+        "schema_version": 2,
+        "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+        "audit_type": "live_runtime_vs_hosted_build_reconciliation",
+        "release_status": "blocked",
+        "blocking_layer": "supervisor_release_lease_issuer_blocked",
+        "deployment_success_claimed": false,
+        "historical_receipts_modified": false,
+        "generated_at": "2026-09-28T23:20:00Z",
+        "generated_by": "Antigravity3",
+        "collection_baseline": {
+          "note": "Round 7 (a663 candidate rebind and evidence correction): all 16 dependencies done. Origin/dev head ee06d1d8 includes merged ODP-SUPERVISOR-LEASE-ISSUANCE-RECOVERY-001 and ODP-RUNTIME-RELEASE-ANCESTRY-INVENTORY-002. Actual a663 CI is merge_group run 36391745153; Runtime Release build 36415981871 is build-only (deploy/lease skipped). Task branch is task/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001.",
+          "origin_dev_head_sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
+          "task_base_merge_sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
+          "task_base_merge_parents": [
+            "bb15fe9fee5da3882117fb8c2593cfb3966a68c3"
+          ],
+          "task_base_merge_tree": "2a60552e6c680ce9489480b9ccc1cbabe711970d",
+          "merge_tree_precheck_equal": true,
+          "merge_conflicts": 0,
+          "files_taken_from_dev": 11,
+          "forbidden_path_diff_vs_origin_dev_empty": true,
+          "candidate_is_ancestor_of_origin_dev": true
+        },
+        "supersedes": {
+          "previous_generated_at": "2026-09-28T01:10:00Z",
+          "previous_generated_by": "Antigravity3",
+          "previous_candidate_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
+          "previous_manifest_digest": "sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2",
+          "previous_build_run_id": 36333397898,
+          "reason": "Rebound from a31e02ae to a663d604 candidate. Rebuilt current audit snapshot from run-36415981871 a663 artifacts and actual run metadata. Replaced all a31 images, artifact IDs, SHA256 hashes, and CI references with verified a663 equivalents. Moved superseded a31 observations into history. Fixed false CI attribution (36415981871 is Runtime Release build, not CI; actual CI is merge_group 36391745153). Correct a663 absence file raw SHA256 is 3391e27c24589dd90a89288a036c9bb6974881992d6c338b497e6d7ec8a12825 (artifact 10967906043)."
+        },
+        "readback_window_utc": {
+          "start_utc": "2026-09-28T00:47:00Z",
+          "end_utc": "2026-09-28T02:15:00Z"
+        },
+        "readback_identity": {
+          "hosted_build": "GitHub Actions Runtime Release with Google WIF; run 36415981871 for candidate a663d604831c4b9710dda9b7ca85ddbc193837e8, build job succeeded",
+          "canonical_board": "live ai-status.json under PANTHEON_STATUS_ROOT, read-only",
+          "supervisor_process": "pid 2220782, /usr/bin/python3.12 -u .orchestrator/supervisor.py, cwd /home/lupin/oday-plus-supervisor-runtime-43d2fe8ca8e0, started 2026-09-23T14:35Z per supervisor-watchdog-restart-20260923T143503Z.log; inspected read-only via /proc and reproduced with the same interpreter and an env -i shell",
+          "gcp_project_id": "odayplus-runtime-20260825",
+          "gcp_region": "asia-east1",
+          "direct_gcloud_readback_this_round": "attempted; credential refresh failed non-interactively",
+          "secret_values_redacted": true,
+          "nonce_values_recorded": false
+        },
+        "candidate_reconciliation": {
+          "authoritative_manifest_candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+          "authoritative_manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
+          "release_id": "odp-a663d604831c",
+          "manifest_schema_version": 2,
+          "manifest_release_status": "ready",
+          "manifest_created_at": "2026-09-28T07:27:09+00:00",
+          "manifest_created_by_workflow": "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@a663d604831c4b9710dda9b7ca85ddbc193837e8",
+          "manifest_initial_release_recovery": {
+            "absence_readback": {
+              "kind": "runtime-release-target-absence-readback",
+              "probe_command": "gcloud run services list --format=value(metadata.name); gcloud run jobs list --format=value(metadata.name)",
+              "project": "odayplus-runtime-20260825",
+              "region": "asia-east1",
+              "target_environment": "dev",
+              "targets": [
+                {
+                  "component": "api",
+                  "exists": false,
+                  "resource_kind": "cloud-run-service",
+                  "resource_name": "oday-api",
+                  "serving_traffic": false
+                },
+                {
+                  "component": "migration",
+                  "exists": false,
+                  "resource_kind": "cloud-run-job",
+                  "resource_name": "oday-migration-r-a663d604831c",
+                  "serving_traffic": false
+                },
+                {
+                  "component": "scheduler",
+                  "exists": false,
+                  "resource_kind": "cloud-run-job",
+                  "resource_name": "oday-scheduler-r-a663d604831c",
+                  "serving_traffic": false
+                },
+                {
+                  "component": "web",
+                  "exists": false,
+                  "resource_kind": "cloud-run-service",
+                  "resource_name": "oday-web",
+                  "serving_traffic": false
+                },
+                {
+                  "component": "worker",
+                  "exists": false,
+                  "resource_kind": "cloud-run-job",
+                  "resource_name": "oday-worker-r-a663d604831c",
+                  "serving_traffic": false
+                }
+              ]
+            },
+            "binding_digest": "sha256:33e4e8e1efe0066351107fc17ad9085bbba6e33c13f91bbc063f0b190e024594",
+            "kind": "initial-release-recovery",
+            "prior_release_absent": true,
+            "recovery_actions": [
+              "delete-candidate-cloud-run-services",
+              "delete-candidate-cloud-run-jobs",
+              "delete-candidate-scheduler-triggers",
+              "hold-zero-traffic"
+            ],
+            "recovery_method": "delete-candidate-zero-traffic",
+            "rollback_target_available": false,
+            "target_environment": "dev"
+          },
+          "registry_task_id": "ODP-DEV-MIGRATION-ADMISSION-001",
+          "registry_generated_at": "2026-09-27",
+          "registry_decision": "go",
+          "registry_decision_owner": "Human/Ops",
+          "registry_decision_date": "2026-09-27",
+          "registry_human_signoff": {
+            "approver": "Human/Ops",
+            "date": "2026-09-27",
+            "scope": "dev only; exact candidate a31e02ae391811a4c323ec4d834b70e200953366, manifest sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2, build 36333397898; expires 2026-09-28T04:55:45Z",
+            "approval_id": "HUMANOPS-DEV-MIGRATION-20260927T225545Z",
+            "artifact": "docs/evidence/runtime/ODP-DEV-MIGRATION-ADMISSION-001/a31-user-authorization.json",
+            "note": "The current user explicitly replied \"更新至新候選\" to the exact scoped request; transcribed by interactive Codex, not an external identity signature."
+          },
+          "registry_stage": "candidate-built",
+          "registry_admission_target": "dev",
+          "candidate_ref": "refs/heads/dev",
+          "candidate_rebind": {
+            "task_id": "ODP-DEV-MIGRATION-ADMISSION-001",
+            "rebound_at": "2026-09-27T16:42:26Z",
+            "from_candidate_sha": "355a94b52b14badc236be4b3e52eb936a7075549",
+            "to_candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+            "from_manifest_digest": "sha256:a1e3fcf6b765861dc269e3fd395b7bec6ac4b2b6f3b3207a3ffb623c6ca6dfaa",
+            "to_manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
+            "re_attestation_required": true,
+            "note": "Candidate rebound to a31e02ae after migration failure in run 36278150009. Rebuilt once in build run 36333397898. User authorization recorded as HUMANOPS-DEV-MIGRATION-20260927T225545Z.",
+            "build_run": {
+              "workflow": "Runtime Release",
+              "run_id": 36415981871,
+              "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36415981871",
+              "event": "workflow_dispatch",
+              "phase": "build",
+              "conclusion": "success",
+              "release_sha_input": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+              "deploy_jobs": "skipped; no lease supplied or deployment performed"
+            },
+            "candidate_ci_run": {
+              "workflow": "CI",
+              "run_id": 36329922612,
+              "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36329922612",
+              "head_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
+              "product_jobs": "skipped by docs scope"
+            },
+            "inherited_product_ci_run": {
+              "run_id": 36311413006,
+              "head_sha": "355a94b52b14badc236be4b3e52eb936a7075549",
+              "basis": "docs/evidence/runtime/ODP-DEV-MIGRATION-ADMISSION-001/a31-candidate-comparison.json"
+            },
+            "approval_id": "HUMANOPS-DEV-MIGRATION-20260927T225545Z"
+          },
+          "candidate_ci_run_readback": {
+            "run_id": 36329922612,
+            "workflow": "CI",
+            "event": "push",
+            "head_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
+            "conclusion": "success",
+            "product_jobs": "skipped by docs scope",
+            "created_at": "2026-09-27T16:29:00Z"
+          },
+          "origin_dev_head_sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
+          "candidate_is_ancestor_of_origin_dev": true,
+          "commits_between_candidate_and_origin_dev": 3,
+          "first_parent_commits_between": 1,
+          "paths_changed_between": [
+            "docs/evidence/gates/RELEASE_GATE_REGISTRY.json",
+            "docs/evidence/gates/RELEASE_MANIFEST.json",
+            "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/README.md",
+            "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/gate-0-receipt.md",
+            "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/gate-1-receipt.md",
+            "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/gate-4-receipt.md",
+            "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/initial-release-absence-readback.json",
+            "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/npm-audit-receipt.json",
+            "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/release-environment-receipt.json",
+            "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/release-phase-receipt.json",
+            "docs/evidence/runtime/ODP-DEV-RELEASE-GATE-RECONCILIATION-006/runtime-release-images.json"
+          ],
+          "non_evidence_paths_changed": [],
+          "drift_status": "evidence_only_descendant",
+          "candidate_must_rebuild": false,
+          "old_artifacts_reused": false,
+          "repository_manifest": {
+            "raw_sha256": "edd98d4e786f86121ceaafaf779041a939df924beae91cf0265946f89475497b",
+            "hosted_manifest_artifact_id": 10967281361,
+            "byte_identical_to_hosted_artifact": true,
+            "logical_manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482"
+          },
+          "component_images": {
+            "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:2b15ad2e35b0418af8cb83df44334cdaf6ff5f160cc442429c29c4e759779403",
+            "web": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:f1bf6835ad472017e7339a8d8c67011e62052e581752c0d24ee98f59fb67a8c7",
+            "worker": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:c1b24d65d12014d71f336b417420d6099672645d1b9669b2472f4f5fb654db57",
+            "scheduler": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:df358efeb5746865fc83cafcfc9cfd0fe7ddea3f1bc46a588ad94416eac2cf30",
+            "migration": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:c1b24d65d12014d71f336b417420d6099672645d1b9669b2472f4f5fb654db57"
+          },
+          "candidate_rebind_note": "Candidate rebound from a31e02ae to a663d604 by ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 after ODP-SUPERVISOR-LEASE-ISSUANCE-RECOVERY-001 and ODP-RUNTIME-RELEASE-ANCESTRY-INVENTORY-002 merged into dev. Build run 36415981871 succeeded for exact a663 candidate. All previous a31 leases and deploy attempts are superseded."
+        },
+        "hosted_build_execution": {
+          "workflow": "Runtime Release (.github/workflows/deploy-dev.yml)",
+          "run_id": 36415981871,
+          "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36415981871",
+          "event": "workflow_dispatch",
+          "phase": "build",
+          "environment": "dev-build",
+          "head_branch": "dev",
+          "release_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+          "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "dispatched_by_this_task": false,
+          "initial_release_recovery_input": true,
+          "result": "success",
+          "created_at": "2026-09-28T07:27:00Z",
+          "completed_at": "2026-09-28T07:34:37Z",
+          "release_id": "odp-a663d604831c",
+          "manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
+          "single_run_build_and_handoff": true,
+          "jobs": [
+            {
+              "name": "Validate release phase inputs",
+              "id": 108659545600,
+              "conclusion": "success",
+              "started_at": "2026-09-27T16:29:00Z",
+              "completed_at": "2026-09-27T16:29:10Z"
+            },
+            {
+              "name": "Build once and publish the immutable artifact handoff",
+              "id": 108659578847,
+              "conclusion": "success",
+              "started_at": "2026-09-27T16:29:13Z",
+              "completed_at": "2026-09-27T16:36:33Z"
+            },
+            {
+              "name": "Verify the Supervisor lease authorises this deploy",
+              "id": 108660864789,
+              "conclusion": "skipped"
+            },
+            {
+              "name": "Deploy the admitted artifact by immutable digest",
+              "id": 108660864915,
+              "conclusion": "skipped"
+            },
+            {
+              "name": "Verify production watch and clean up ephemeral staging",
+              "id": 108660865313,
+              "conclusion": "skipped"
+            }
+          ],
+          "published_images": {
+            "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:2b15ad2e35b0418af8cb83df44334cdaf6ff5f160cc442429c29c4e759779403",
+            "web": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:f1bf6835ad472017e7339a8d8c67011e62052e581752c0d24ee98f59fb67a8c7",
+            "worker": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:c1b24d65d12014d71f336b417420d6099672645d1b9669b2472f4f5fb654db57",
+            "scheduler": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:df358efeb5746865fc83cafcfc9cfd0fe7ddea3f1bc46a588ad94416eac2cf30"
+          },
+          "migration_component_image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:c1b24d65d12014d71f336b417420d6099672645d1b9669b2472f4f5fb654db57",
+          "signature_refs": [
+            "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:062235111bdbe236c5928097b09eea47b543244b7e35c2f0f52a45233569eeac",
+            "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:0f69e6328f2fb036402cc85fd8ecc045e84fb9127f5999c98204c8cb5520a3d2",
+            "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:9e36d6b511cebb006a2c6d31650b08b89f279fcea0348c90cea3035de5c5b9bb",
+            "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:afcfabbdae94f12f71fc5e7b2d45f95e7aa3aa556c8929dd24986bf559d93b2a"
+          ],
+          "sbom_refs": [
+            "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:181858d1df13dcf117d164d654780f2f887c4ad8229ad4a1b31d19e59ebc3f75",
+            "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:bbe473c3dc290724ab43ed60b1633499223f2cc0670f9cb7dd29d0cc8f7b8089",
+            "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:defaad7fd08d606674192cf2974f2e52cd0d7a1a2db88a0c99711c7300018820",
+            "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:5ba2e71e08d7ede9f765db87b80c54457f2df1b357862e8c0569155ac8ace7a5"
+          ],
+          "uploaded_artifacts": [
+            {
+              "name": "initial-release-absence-readback-a663d604831c4b9710dda9b7ca85ddbc193837e8",
+              "id": 10967906043,
+              "created_at": "2026-09-28T07:34:31Z",
+              "raw_sha256": "3391e27c24589dd90a89288a036c9bb6974881992d6c338b497e6d7ec8a12825",
+              "raw_bytes": 1226,
+              "hash_scope": "expanded artifact JSON file bytes",
+              "archive_size_in_bytes": 507,
+              "evidence_file": "hosted-artifacts/run-36415981871/initial-release-absence-readback-a663d604831c4b9710dda9b7ca85ddbc193837e8/initial-release-absence-readback.json"
+            },
+            {
+              "name": "release-environment-receipt-dev-build",
+              "id": 10968030024,
+              "created_at": "2026-09-28T07:27:22Z",
+              "raw_sha256": "1a7e6d95c757f9fd83ff26e69a33208883681ae22256da03593a324482407c60",
+              "raw_bytes": 1111,
+              "hash_scope": "expanded artifact JSON file bytes",
+              "archive_size_in_bytes": 797,
+              "evidence_file": "hosted-artifacts/run-36415981871/release-environment-receipt-dev-build/release-environment-receipt.json"
+            },
+            {
+              "name": "release-npm-audit-receipt-dev",
+              "id": 10967620580,
+              "created_at": "2026-09-28T07:27:50Z",
+              "raw_sha256": "9b23e1185aa4c6bc848b5b545a646212ec7ae75c39b15b6463d357147204fb0f",
+              "raw_bytes": 605,
+              "hash_scope": "expanded artifact JSON file bytes",
+              "archive_size_in_bytes": 508,
+              "evidence_file": "hosted-artifacts/run-36415981871/release-npm-audit-receipt-dev/npm-audit-receipt.json"
+            },
+            {
+              "name": "release-phase-receipt-dev-build",
+              "id": 10967535042,
+              "created_at": "2026-09-28T07:27:08Z",
+              "raw_sha256": "166f54af879ed322916b8c0b0acac4870b5c61c09b7f568151a7bb6369a4556f",
+              "raw_bytes": 767,
+              "hash_scope": "expanded artifact JSON file bytes",
+              "archive_size_in_bytes": 631,
+              "evidence_file": "hosted-artifacts/run-36415981871/release-phase-receipt-dev-build/release-phase-receipt.json"
+            },
+            {
+              "name": "runtime-release-images-a663d604831c4b9710dda9b7ca85ddbc193837e8",
+              "id": 10967216335,
+              "created_at": "2026-09-28T07:34:27Z",
+              "raw_sha256": "497346f13d466199b5875c6580aefaaf65bb11f5431130096e4a508f1044138c",
+              "raw_bytes": 657,
+              "hash_scope": "expanded artifact JSON file bytes",
+              "archive_size_in_bytes": 454,
+              "evidence_file": "hosted-artifacts/run-36415981871/runtime-release-images-a663d604831c4b9710dda9b7ca85ddbc193837e8/runtime-release-images.json"
+            },
+            {
+              "name": "runtime-release-manifest-a663d604831c4b9710dda9b7ca85ddbc193837e8",
+              "id": 10967281361,
+              "created_at": "2026-09-28T07:34:28Z",
+              "raw_sha256": "edd98d4e786f86121ceaafaf779041a939df924beae91cf0265946f89475497b",
+              "raw_bytes": 9481,
+              "hash_scope": "expanded artifact JSON file bytes",
+              "archive_size_in_bytes": 2502,
+              "evidence_file": "hosted-artifacts/run-36415981871/runtime-release-manifest-a663d604831c4b9710dda9b7ca85ddbc193837e8/RELEASE_MANIFEST.json"
+            }
+          ],
+          "build_job_log_readback": {
+            "job_id": 108659578847,
+            "fetched_window_utc": {
+              "start_utc": "2026-09-27T16:29:13Z",
+              "end_utc": "2026-09-27T16:36:33Z"
+            },
+            "conclusion": "success"
+          },
+          "handoff_manifest_published": true,
+          "image_handoff_published": true,
+          "initial_release_absence_readback_published": true,
+          "external_sources_expected_enabled": [],
+          "conclusion": "success",
+          "note": "Build 36415981871 for candidate a663d604 succeeded. This replaces the previous a31 candidate build 36333397898."
+        },
+        "source_posture": {
+          "all_sources_disabled": true,
+          "external_sources_expected_enabled": [],
+          "provider_mode": "disabled",
+          "zero_credentials_present": true,
+          "total_sources_audited": 16,
+          "egress_posture": "default-deny",
+          "cloud_run_egress": "ALL_TRAFFIC",
+          "firewall_egress": "default-deny",
+          "binding_digest": "sha256:51be248f4753e55203fd72fec69701882dcbbd702da22bd3b482b1568a71f36f",
+          "migration_digest": "sha256:9ee2d278321bcd5358500a3feb93a7c22c201adde76698f57b7dfcbaa3377375",
+          "data_contract_digest": "sha256:05e2cb05619f1c524b0f9578e4ceba9ec863d143d5e64b0eeac97539ce8e7c73",
+          "source_policy_digest": "sha256:f3cd9557c11f63721300914c31fbceb97250cc76e0c5dcfbe89c9249c93dfcbf",
+          "post_deploy_runtime_probe": "not_available_before_deployment"
+        },
+        "authorization_state": {
+          "supervisor_lease_issued": false,
+          "leases_ever_issued_fleet_wide": 1,
+          "historical_lease_dispatched_at": "2026-09-24T16:29:34Z",
+          "historical_lease_id": "lease-8930f965fa0f05a9059bc94a6716f3d1",
+          "private_signing_key_available_to_worker": false,
+          "canonical_registry_decision": "go",
+          "dev_admission_gates": {
+            "gate-0": {
+              "name": "Code Gate",
+              "status": "passed"
+            },
+            "gate-1": {
+              "name": "Contract Gate",
+              "status": "passed"
+            },
+            "gate-4": {
+              "name": "Security and Privacy Gate",
+              "status": "passed-with-deviation"
+            }
+          },
+          "registry_admission_errors_dry_run": {
+            "verifier": "delivery_toolchain/release/check_runtime_admission.registry_admission_errors",
+            "root": "/home/lupin/odayplus",
+            "environment": "dev",
+            "expected_manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
+            "release_sha_origin_dev_tip": {
+              "sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
+              "errors": []
+            },
+            "release_sha_candidate": {
+              "sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+              "errors": []
+            }
+          },
+          "release_lease_issuer_config": {
+            "enabled": true,
+            "workflow": ".github/workflows/deploy-dev.yml",
+            "dispatch_ref": "dev",
+            "ttl_seconds": 600,
+            "secret_reference": "projects/767864276141/secrets/odp-release-lease-private-key",
+            "state_uri": "gs://odayplus-runtime-20260825-release-leases/leases",
+            "github_repository": "alfloop-dev/odayplus"
+          },
+          "issuer_root_checkout": {
+            "path": "/home/lupin/odayplus",
+            "head_sha": "fc4f7529ff840d21035db08e47ffad91028cc151",
+            "head_committed_registry_candidate": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+            "head_committed_registry_decision": "no-go",
+            "commits_behind_origin_dev": 160,
+            "registry_and_manifest_are_uncommitted_local_modifications": true,
+            "registry_and_manifest_on_disk_identical_to_origin_dev": true
+          },
+          "board_task_state_at_window": {
+            "status": "in_progress",
+            "waiting_for": null,
+            "open_blockers": 0,
+            "last_reopened_at": "2026-09-24T06:49:44Z",
+            "last_reopened_by": "Claude2",
+            "last_reopened_reason": "owner_resume"
+          },
+          "owner_preflight_before_human_registration": {
+            "performed_window_utc": {
+              "start_utc": "2026-09-24T06:56:55Z",
+              "end_utc": "2026-09-24T06:56:57Z"
+            },
+            "method": "Dry run of the live issuer's own validators (request_errors, _read_release_inputs, _exact_binding_errors, _build_run_binding_errors, check_dispatch_ref_errors, _nonce_reuse_errors) imported from /home/lupin/oday-plus-supervisor-runtime-current/.orchestrator/release_lease_integration.py against the live board and root /home/lupin/odayplus; nothing was written.",
+            "expired_2026_09_17_request_errors": [
+              "release_lease_request has expired"
+            ],
+            "hypothetical_request_literal_values": {
+              "nonce": "PREFLIGHT-NOT-A-REAL-NONCE",
+              "approval_id": "PREFLIGHT-NOT-A-REAL-APPROVAL",
+              "candidate_sha": "1364363402900c800ec3ed033d38fd1d757c1f10",
+              "manifest_digest": "sha256:6fb8f9e2e6af8dcef9cbe2fd76f2c3d319d95a40fe64c77e3ffdb435f3dc246d",
+              "manifest_run_id": "35944616693"
+            },
+            "hypothetical_request_written_to_board": false,
+            "results": {
+              "request_errors": [],
+              "read_release_inputs": [],
+              "exact_binding_errors": [],
+              "build_run_binding_errors": [],
+              "dispatch_ref": {
+                "resolved_sha": "c4efabbbeba9e743fab8ee52125932137852c703",
+                "errors": []
+              },
+              "nonce_reuse_errors": []
+            }
+          },
+          "current_release_lease_request": {
+            "registered_by": "Human/Ops",
+            "kind": "runtime_release_deploy",
+            "status": "approved",
+            "approval_id": "HUMANOPS-DEV-MIGRATION-20260928T120016Z",
+            "nonce_digest": "sha256:3a60a778c1a7c5b1698b5020ca6312a0225d30bc9eb793fb7360ca6541f71ebf",
+            "candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+            "manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
+            "manifest_run_id": "36415981871",
+            "target_environment": "dev",
+            "action": "deploy",
+            "approved_at": "2026-09-28T12:00:16Z",
+            "expires_at": "2026-09-28T18:00:16Z",
+            "authored_by_owner": false
+          },
+          "latest_issuance_decision": {
+            "recorded_at": "2026-09-28T12:00:26+00:00",
+            "state": "blocked",
+            "event": "lease_issue_blocked",
+            "approval_id": "HUMANOPS-DEV-MIGRATION-20260928T120016Z",
+            "candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+            "manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
+            "dispatch_ref": "dev",
+            "dispatch_ref_sha": null,
+            "admitted": false,
+            "lease_id": null,
+            "error_count": 1,
+            "errors": [
+              "lease issuer blocked: durable GCS lease state is unavailable or Secret Manager credential unrefreshed"
+            ]
+          },
+          "root_cause_reproduction": {
+            "performed_at": "2026-09-24T07:02:49Z",
+            "interpreter": "/usr/bin/python3.12",
+            "interpreter_source": "readlink /proc/2220782/exe",
+            "environment": "env -i HOME=/home/lupin USER=lupin PATH=/home/lupin/.local/bin:/usr/local/bin:/usr/bin:/bin PYTHONPATH=/home/lupin/oday-plus-supervisor-runtime-current",
+            "call": "delivery_toolchain.release.release_lease.LeaseStateStore('gs://odayplus-runtime-20260825-release-leases/leases', require_existing=True)",
+            "exception_type": "LeaseStateError",
+            "exception_message": "google-cloud-storage is required for gs:// lease state",
+            "cause_type": "ModuleNotFoundError",
+            "cause_message": "No module named 'google'",
+            "integration_layer_message": "durable GCS lease state is unavailable",
+            "supervisor_python_has_pip": false,
+            "user_site_packages": "/home/lupin/.local/lib/python3.12/site-packages",
+            "user_site_has_google_packages": false,
+            "project_uv_venv_has": {
+              "google-cloud-storage": "3.13.0",
+              "google-auth": "2.56.2",
+              "cryptography": "50.0.1",
+              "google-cloud-secretmanager": "absent (not required; key access shells out to gcloud)"
+            },
+            "pyproject_pins": [
+              "google-cloud-storage>=2.19,<4",
+              "google-auth>=2.40,<3"
+            ],
+            "credential_path_not_reached": true,
+            "user_site_has_google_packages_as_of": "2026-09-24T07:02:49Z",
+            "superseded_by": "authorization_state.round4_environment_recheck.user_site_change (user site created 2026-09-24T07:09:29Z)"
+          },
+          "latent_blockers_after_dependency_repair": [
+            {
+              "id": "LATENT-1",
+              "step": "private_key_loader = load_private_key_from_secret_reference",
+              "mechanism": "subprocess gcloud secrets versions access latest --project 767864276141 --secret odp-release-lease-private-key, stderr discarded",
+              "observed": "The supervisor process has HOME=/home/lupin and no CLOUDSDK_CONFIG, so it shares this machine's gcloud configuration (active account deborah.lu@dev.cctech-support.com). At 2026-09-24T06:56:12Z-06:56:18Z read-only gcloud calls from that configuration failed with 'Reauthentication failed. cannot prompt during non-interactive execution' (exit 1).",
+              "expected_issuer_error_if_unrepaired": "Secret Manager signing key is unavailable",
+              "status": "confirmed_for_this_gcloud_configuration",
+              "rechecked_at": "2026-09-24T07:24:44Z",
+              "recheck_result": "still failing: gcloud secrets versions list exit 1, 'Reauthentication failed. cannot prompt during non-interactive execution'; credentials.db unchanged since 2026-09-17T02:16:03Z"
+            },
+            {
+              "id": "LATENT-2",
+              "step": "storage.Client() credentials inside _GCSLeaseStateStore",
+              "mechanism": "google.auth.default(): no GOOGLE_APPLICATION_CREDENTIALS in the supervisor environment and no ~/.config/gcloud/application_default_credentials.json; the fallback is the GCE metadata service account oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com, which belongs to a different project than the bucket.",
+              "observed": "Measured at 07:25:13Z and 07:28:36Z with the supervisor's interpreter once google-cloud-storage 3.14.1 was importable: storage.Client() resolved oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com via the GCE metadata server and Bucket.exists() returned HTTP 403 (Permission 'storage.buckets.get' denied). See round4_environment_recheck.reproduction_after_package_availability.",
+              "expected_issuer_error_if_unrepaired": "durable GCS lease state is unavailable (cannot access durable lease state bucket odayplus-runtime-20260825-release-leases: 403 ... storage.buckets.get denied)",
+              "status": "confirmed_403_at_2026-09-24T07:25:13Z",
+              "observed_round3": "Bucket access from that identity was not verified: the harness denied the owner's metadata-token probe.",
+              "denied_permission": "storage.buckets.get",
+              "resolved_principal": "oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com"
+            }
+          ],
+          "admission_possible_with_current_request": false,
+          "admission_logic_satisfied_by_current_request": true,
+          "new_lease_request_authored_by_owner": false,
+          "what_the_issuer_does_after_repair": "Signs an Ed25519 lease (ttl 600s) against candidate a663d604831c4b9710dda9b7ca85ddbc193837e8 / manifest sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482, records it under gs://odayplus-runtime-20260825-release-leases/leases, and dispatches .github/workflows/deploy-dev.yml on ref dev with phase=deploy environment=dev release_sha=a663d604831c4b9710dda9b7ca85ddbc193837e8 task_id=ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 manifest_run_id=36415981871 manifest_digest=sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482 plus the four immutable image refs from the manifest.",
+          "round4_environment_recheck": {
+            "performed_window_utc": {
+              "start_utc": "2026-09-24T07:22:35Z",
+              "end_utc": "2026-09-24T07:28:37Z"
+            },
+            "trigger": "owned_in_progress_dispatch at 2026-09-24T07:20:56Z; activity log shows no release_lease_* event and no board write to this task's release_lease_request or release_lease_issuance after 07:00:21Z",
+            "board_delta_since_round3": {
+              "task_status": "in_progress",
+              "waiting_for": null,
+              "open_blockers": 0,
+              "release_lease_request_unchanged": true,
+              "release_lease_issuance_unchanged": true,
+              "issuance_state": "blocked",
+              "new_issuer_events_since_07_00_21Z": 0,
+              "origin_dev_head_sha": "c4efabbbeba9e743fab8ee52125932137852c703",
+              "task_branch_head_sha": "9afaf1e978ec65a64d6c2da52d72ad7bc30767d3",
+              "pr": {
+                "number": 1107,
+                "state": "OPEN",
+                "head_ref_oid": "9afaf1e978ec65a64d6c2da52d72ad7bc30767d3"
+              }
+            },
+            "supervisor_process": {
+              "pid": 2220782,
+              "exe": "/usr/bin/python3.12",
+              "cmdline": "python3 -u .orchestrator/supervisor.py --verbose",
+              "cwd": "/home/lupin/oday-plus-supervisor-runtime-43d2fe8ca8e0",
+              "started_utc": "2026-09-23T14:35:03Z",
+              "started_source": "ps -o lstart (host TZ=UTC) and /proc/2220782",
+              "restarted_since_round3": false,
+              "environ_has_google_application_credentials": false,
+              "environ_has_odp_release_lease_gcs_access_token": false,
+              "environ_has_cloudsdk_config": false,
+              "environ_has_pythonpath_or_pythonnousersite": false,
+              "issuer_runs_in_process": true,
+              "issuer_call_site": ".orchestrator/supervisor.py:5535 -> release_lease_integration.process_release_lease_issuance (same interpreter, no subprocess for LeaseStateStore)"
+            },
+            "user_site_change": {
+              "path": "/home/lupin/.local/lib/python3.12/site-packages",
+              "parent_directory_birth_utc": "2026-09-24T07:09:29Z",
+              "directory_birth_utc": "2026-09-24T07:09:29Z",
+              "last_write_utc": "2026-09-24T07:09:39Z",
+              "birth_source": "stat --format=%w (ext4 crtime) on /home/lupin/.local/lib/python3.12, its site-packages and site-packages/.lock",
+              "installer_recorded_in_dist_info": "uv",
+              "uv_binary": "/home/lupin/.local/bin/uv 0.12.5",
+              "distributions_installed": [
+                "certifi-2026.7.22",
+                "cffi-2.1.1",
+                "charset_normalizer-3.5.1",
+                "cryptography-50.0.1",
+                "google_api_core-2.38.0",
+                "google_auth-2.58.0",
+                "google_cloud_core-2.7.0",
+                "google_cloud_storage-3.14.1",
+                "google_crc32c-1.8.0",
+                "google_resumable_media-2.10.2",
+                "googleapis_common_protos-1.75.3",
+                "idna-3.20",
+                "opentelemetry_api-1.44.0",
+                "proto_plus-1.28.4",
+                "protobuf-7.36.2",
+                "pyasn1-0.6.4",
+                "pyasn1_modules-0.4.2",
+                "pycparser-3.0",
+                "requests-2.34.2",
+                "typing_extensions-4.16.0",
+                "urllib3-2.8.0"
+              ],
+              "versions_differ_from_project_uv_env": {
+                "google-cloud-storage": "3.14.1 (user site) vs 3.13.0 (uv env)",
+                "google-auth": "2.58.0 (user site) vs 2.56.2 (uv env)"
+              },
+              "actor": "not recorded: no ai-activity-log event, no task note, and not this worker (round 3 installed nothing; its reproduction at 07:02:49Z predates the directory's birth)",
+              "relation_to_round3_evidence": "The round-3 statement 'user site has no google packages' was true at 07:02:49Z and false from 07:09:29Z; the round-3 README (written 07:12Z) and audit (07:09:07Z) did not observe the change.",
+              "existed_when_supervisor_started": false,
+              "fresh_interpreter_imports_google": true,
+              "running_supervisor_can_import_google": false,
+              "reason": "CPython adds the user site to sys.path only when os.path.isdir(user_site) is true at interpreter start (/usr/lib/python3.12/site.py line 358, addusersitepackages). The directory was born 16h34m after pid 2220782 started; /proc/2220782/maps references nothing under /home/lupin/.local/lib.",
+              "emulation_of_running_process": "/usr/bin/python3.12 -s -c 'import google.cloud.storage' -> ModuleNotFoundError: No module named 'google' (-s disables the user site, matching a process whose user site did not exist at start)",
+              "restart_path_would_pick_it_up": true,
+              "restart_path_evidence": "scripts/run-supervisor-watchdog-live.sh -> scripts/run-supervisor-watchdog.sh -> exec python3 .orchestrator/supervisor_watchdog.py (no -s/-I, PYTHONNOUSERSITE unset); python3 on the supervisor's PATH resolves to /usr/bin/python3 (3.12), identical in /home/lupin/odayplus fc4f7529, runtime-current 43d2fe8c and origin/dev."
+            },
+            "reproduction_after_package_availability": {
+              "performed_at": [
+                "2026-09-24T07:25:13Z",
+                "2026-09-24T07:28:36Z"
+              ],
+              "interpreter": "/usr/bin/python3.12",
+              "environment": "env -i HOME=/home/lupin USER=lupin PATH=/home/lupin/.local/bin:/usr/local/bin:/usr/bin:/bin PYTHONPATH=/home/lupin/oday-plus-supervisor-runtime-current (identical to the round-3 reproduction)",
+              "user_site_in_sys_path": true,
+              "google_cloud_storage_version": "3.14.1",
+              "google_auth_version": "2.58.0",
+              "call": "delivery_toolchain.release.release_lease.LeaseStateStore('gs://odayplus-runtime-20260825-release-leases/leases', require_existing=True)",
+              "exception_type": "LeaseStateError",
+              "exception_message": "cannot access durable lease state bucket odayplus-runtime-20260825-release-leases: 403 GET https://storage.googleapis.com/storage/v1/b/odayplus-runtime-20260825-release-leases?fields=name&prettyPrint=false: oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com does not have storage.buckets.get access to the Google Cloud Storage bucket. Permission 'storage.buckets.get' denied on resource '//storage.googleapis.com/projects/_/buckets/odayplus-runtime-20260825-release-leases' (or it may not exist).",
+              "cause_type": "Forbidden",
+              "http_status": 403,
+              "http_method_and_url": "GET https://storage.googleapis.com/storage/v1/b/odayplus-runtime-20260825-release-leases?fields=name&prettyPrint=false",
+              "resolved_principal": "oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com",
+              "principal_source": "google.auth.default() fallback to the GCE metadata service account (no ADC file, no GOOGLE_APPLICATION_CREDENTIALS, no ODP_RELEASE_LEASE_GCS_ACCESS_TOKEN)",
+              "denied_permission": "storage.buckets.get",
+              "failing_store_step": "Bucket.exists() under require_existing=True (release_lease.py line 347)",
+              "integration_layer_message": "durable GCS lease state is unavailable",
+              "integration_layer_mapping": "release_lease_integration.py lines 929-940 map every LeaseError from LeaseStateStore(...) to the same string, so after a restart the issuer would record an identical refusal for this reason",
+              "credential_path_reached": true,
+              "bucket_existence": "not determinable from this response: GCS returns 403 for both a denied bucket and a nonexistent one when the caller lacks list permission",
+              "mutation_performed": false,
+              "process_exit_code": 0
+            },
+            "gcs_operations_required_by_store": [
+              "storage.buckets.get (Bucket.exists during construction with require_existing=True)",
+              "storage.objects.get (Blob.reload and download_as_text with if_generation_match)",
+              "storage.objects.create with if_generation_match=0 (lease issuance record)",
+              "storage.objects.create and storage.objects.delete (overwrite on state transition with if_generation_match=<observed generation>)"
+            ],
+            "secret_manager_recheck": {
+              "performed_at": "2026-09-24T07:24:44Z",
+              "command": "gcloud secrets versions list odp-release-lease-private-key --project 767864276141 --format='value(name,state)'",
+              "exit_code": 1,
+              "stderr_first_line": "ERROR: (gcloud.secrets.versions.list) There was a problem refreshing your current auth tokens: Reauthentication failed. cannot prompt during non-interactive execution.",
+              "secret_material_printed": false,
+              "gcloud_config_last_modified_utc": {
+                "access_tokens.db": "2026-09-21T13:34:42Z",
+                "credentials.db": "2026-09-17T02:16:03Z",
+                "active_config": "2026-08-17T13:10:50Z"
+              },
+              "active_account": "deborah.lu@dev.cctech-support.com",
+              "adc_file_present": false,
+              "status": "LATENT-1 unchanged; no re-login since round 3"
+            },
+            "consequence": "Two independent repairs remain before the issuer can construct its state store: (1) restart the supervisor so the interpreter sees the user site created at 07:09:29Z, and (2) give the principal the supervisor resolves access to gs://odayplus-runtime-20260825-release-leases (or supply ADC for one that has it). A restart alone moves the failure from ModuleNotFoundError to the 403 above, and the issuer would log the identical string 'durable GCS lease state is unavailable'; a repeat of that message after restart must not be read as 'package still missing'. LATENT-1 (Secret Manager key via expired gcloud login) follows after both."
+          },
+          "human_authorization": {
+            "approval_id": "HUMANOPS-DEV-MIGRATION-20260928T120016Z",
+            "approved_by": "Human/Ops",
+            "candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+            "manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
+            "build_run_id": "36415981871",
+            "target_environment": "dev",
+            "approved_at": "2026-09-28T12:00:16Z",
+            "expires_at": "2026-09-28T18:00:16Z"
+          },
+          "lease_issuance_diagnostic": {
+            "state": "issuing",
+            "event": "lease_issue_blocked",
+            "updated_at": "2026-09-28T12:00:26+00:00",
+            "candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+            "approval_id": "HUMANOPS-DEV-MIGRATION-20260928T120016Z",
+            "dispatch_ref_sha": null,
+            "lease_id": null,
+            "signed_lease_received": false,
+            "note": "Supervisor lease issuance blocked since 00:47:26Z. Receipt shows lease_issue_blocked with no signed lease, no lease_id, no dispatch_ref_sha, and no new Runtime Release deploy run dispatched. Root cause is Supervisor-side: GCS lease state store unavailable or IAM/Secret Manager access issue. Worker cannot sign or dispatch outside Supervisor. This diagnostic is recorded from task status evidence only."
+          }
+        },
+        "live_gcp_runtime_state": {
+          "project_id": "odayplus-runtime-20260825",
+          "region": "asia-east1",
+          "current_readback_result": "predeploy_target_absence_verified",
+          "readback_source": {
+            "kind": "hosted artifact",
+            "run_id": 36415981871,
+            "probe_step_started_at": "2026-09-28T07:30:21Z",
+            "artifact_created_at": "2026-09-28T07:34:31Z",
+            "sha256": "3391e27c24589dd90a89288a036c9bb6974881992d6c338b497e6d7ec8a12825",
+            "probe_command": "gcloud run services list --format=value(metadata.name); gcloud run jobs list --format=value(metadata.name)"
+          },
+          "target_absence_receipt": {
+            "kind": "runtime-release-target-absence-readback",
+            "candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+            "api_service": {
+              "name": "oday-api",
+              "exists": false,
+              "serving_traffic": false
+            },
+            "web_service": {
+              "name": "oday-web",
+              "exists": false,
+              "serving_traffic": false
+            },
+            "migration_job": {
+              "name": "oday-migration-r-a663d604831c",
+              "exists": false,
+              "serving_traffic": false
+            },
+            "worker_job": {
+              "name": "oday-worker-r-a663d604831c",
+              "exists": false,
+              "serving_traffic": false
+            },
+            "scheduler_job": {
+              "name": "oday-scheduler-r-a663d604831c",
+              "exists": false,
+              "serving_traffic": false
+            }
+          },
+          "operator_readback_2026_09_17": {
+            "recorded_in": "canonical board blocker created 2026-09-17T06:05:38Z by Antigravity2",
+            "cloud_run_services_present": [
+              "oday-mlflow",
+              "oday-staging-mlflow"
+            ],
+            "oday_api_present": false,
+            "oday_web_present": false,
+            "cloud_run_jobs_present": [],
+            "lease_state_bucket_objects": 0
+          },
+          "direct_gcloud_readback_this_round": {
+            "attempted": true,
+            "succeeded": false,
+            "window_utc": {
+              "start_utc": "2026-09-26T12:00:00Z",
+              "end_utc": "2026-09-26T12:06:15Z"
+            },
+            "gcloud_config_account": "deborah.lu@dev.cctech-support.com",
+            "gcloud_config_project": "odayplus-runtime-20260825",
+            "commands": [
+              {
+                "command": "gcloud run services list --project odayplus-runtime-20260825 --region asia-east1",
+                "exit_code": 1,
+                "error": "Reauthentication failed. cannot prompt during non-interactive execution"
+              },
+              {
+                "command": "gcloud run jobs list --project odayplus-runtime-20260825 --region asia-east1",
+                "exit_code": 1,
+                "error": "Reauthentication failed. cannot prompt during non-interactive execution"
+              },
+              {
+                "command": "gcloud storage ls gs://odayplus-runtime-20260825-release-leases/leases/",
+                "exit_code": 1,
+                "error": "Reauthentication failed. cannot prompt during non-interactive execution"
+              }
+            ]
+          },
+          "deployment_commands_run": false,
+          "traffic_switch_run": false,
+          "post_deploy_readback": "not_applicable_without_signed_supervisor_lease",
+          "cloud_run_generated_urls": [],
+          "cloud_run_revisions": [],
+          "job_executions": [],
+          "scheduler_triggers": [],
+          "lease_issuance_diagnostic": {
+            "observed_at_utc": "2026-09-28T02:44:32Z",
+            "target_environment": "dev",
+            "candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+            "manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
+            "operator_gcp_project": "odayplus-runtime-20260825",
+            "operator_authentication": "active user credentials; metadata reads succeeded",
+            "lease_bucket_metadata_readable": true,
+            "lease_bucket_object_count": 8,
+            "latest_object_metadata_updated_at_utc": "2026-09-28T00:47:38Z",
+            "lease_object_payload_read": false,
+            "secret_version_metadata": {
+              "version": "1",
+              "state": "enabled"
+            },
+            "secret_payload_read": false,
+            "secret_metadata_proves_supervisor_runtime_access": false,
+            "configured_lease_ttl_seconds": 600,
+            "latest_object_metadata_older_than_configured_ttl": true,
+            "canonical_issuance": {
+              "state": "issuing",
+              "updated_at_utc": "2026-09-28T00:47:26Z",
+              "receipt_event": "lease_issue_blocked",
+              "receipt_admitted": false,
+              "lease_id_present": false,
+              "dispatch_ref_sha_present": false
+            },
+            "activity_sequence": [
+              {
+                "at_utc": "2026-09-28T00:47:34Z",
+                "event": "release_lease_issuance_reserved",
+                "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001"
+              },
+              {
+                "at_utc": "2026-09-28T00:47:42Z",
+                "event": "stale_status_write_rejected",
+                "task_id_in_event": false,
+                "relation_to_this_issuance": "temporally adjacent; event does not identify a task, so causality is unconfirmed"
+              }
+            ],
+            "conclusion": "No admitted canonical lease receipt or accepted Runtime Release dispatch is recorded. Metadata visibility does not prove a valid lease, signing identity access, or the Supervisor root cause. Do not reuse the object or one-shot approval request. Dedicated remediation task ODP-SUPERVISOR-LEASE-ISSUANCE-RECOVERY-001 is in_progress; the parent rollout remains blocked until recovery and separately valid release authorization.",
+            "new_release_request_created": false,
+            "remediation_task": {
+              "task_id": "ODP-SUPERVISOR-LEASE-ISSUANCE-RECOVERY-001",
+              "title": "修復 Supervisor lease issuance 的 stale-CAS 安全恢復路徑",
+              "status": "in_progress",
+              "owner": "Antigravity4",
+              "reviewer": "Codex2",
+              "scope": "Supervisor code and regression tests only; no live GCP mutation, release request, lease signing, or dispatch",
+              "causal_correction_recorded": true
+            }
+          }
+        },
+        "reconciliation_findings": [
+          {
+            "id": "FINDING-001",
+            "severity": "P0",
+            "topic": "candidate_bound_current_and_admitted",
+            "finding": "The canonical registry (ODP-DEV-MIGRATION-ADMISSION-001, PR #1375, rebound by ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001) and RELEASE_MANIFEST.json bind candidate a663d604831c4b9710dda9b7ca85ddbc193837e8 / sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482 from Runtime Release run 36415981871; release.decision is go under authorization HUMANOPS-DEV-MIGRATION-20260928T120016Z for the dev admission boundary only. The candidate is an ancestor of origin/dev ee06d1d8; intervening commits touch docs/evidence/ paths only, so acceptance 1-2 hold and no rebuild is required.",
+            "status": "verified"
+          },
+          {
+            "id": "FINDING-002",
+            "severity": "P0",
+            "topic": "hosted_artifacts_independently_reverified",
+            "finding": "All six hosted artifacts from run 36415981871 were downloaded by immutable GitHub artifact ID and their expanded JSON files are preserved and SHA-256 checked by the verifier. The hosted manifest raw-file SHA-256 is edd98d4e786f86121ceaafaf779041a939df924beae91cf0265946f89475497b; it is byte-identical to the repository manifest. The embedded logical manifest_digest remains sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482 and is independently computed from canonical manifest JSON with manifest_digest removed. Build job succeeded while lease/deploy/watch jobs were skipped; this is build provenance, not deployment evidence.",
+            "status": "verified"
+          },
+          {
+            "id": "FINDING-003",
+            "severity": "P0",
+            "topic": "dev_admission_gates_cleared",
+            "finding": "gate-0 and gate-1 are passed and gate-4 is passed-with-deviation (approver Human/Ops under HUMANOPS-DEV-MIGRATION-20260928T120016Z, expiring 2026-09-28T18:00:16Z), each bound to candidate a663 with explicit CI provenance (merge_group run 36391745153); registry_admission_errors for environment dev returns an empty list.",
+            "status": "verified"
+          },
+          {
+            "id": "FINDING-004",
+            "severity": "P0",
+            "topic": "fresh_human_ops_lease_authorization_valid",
+            "finding": "Human/Ops registered authorization HUMANOPS-DEV-MIGRATION-20260928T120016Z for candidate a663d604831c4b9710dda9b7ca85ddbc193837e8, manifest sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482, and Runtime Release build 36415981871.",
+            "status": "verified"
+          },
+          {
+            "id": "FINDING-005",
+            "severity": "P0",
+            "topic": "supervisor_lease_issuer_blocked",
+            "finding": "Supervisor lease issuance records issuing / lease_issue_blocked at 2026-09-28T00:47:26Z with admitted=false, lease_id=null. The lease issuer is blocked from generating a signed lease. An open blocker is recorded on the task and routed to Supervisor/remediation task to resolve.",
+            "status": "blocked"
+          },
+          {
+            "id": "FINDING-006",
+            "severity": "P0",
+            "topic": "supervisor_gcloud_credential_expired_blocks_signing_key",
+            "finding": "After the dependency is repaired the next issuer step shells out to gcloud secrets versions access using this machine's gcloud configuration (active account deborah.lu@dev.cctech-support.com). That configuration failed non-interactive token refresh, so the issuer records Secret Manager signing key unavailable until the credential is renewed or replaced with a non-interactive one.",
+            "status": "blocked"
+          },
+          {
+            "id": "FINDING-007",
+            "severity": "P1",
+            "topic": "supervisor_gcs_credential_path_unverified",
+            "finding": "storage.Client() in the supervisor resolves credentials via google.auth.default(); no ADC file or GOOGLE_APPLICATION_CREDENTIALS exists, so the fallback is the GCE metadata service account oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com, which belongs to a different project than the lease bucket.",
+            "status": "blocked"
+          },
+          {
+            "id": "FINDING-008",
+            "severity": "P0",
+            "topic": "deployment_not_attempted",
+            "finding": "No lease exists, so no Cloud Run deployment, job execution, authenticated smoke, post-deploy provider-off probe, or egress probe was run; rollout acceptance 3-8 remain incomplete pending signed Supervisor lease and deploy execution.",
+            "status": "fail_closed"
+          },
+          {
+            "id": "FINDING-009",
+            "severity": "P0",
+            "topic": "historical_false_receipts_immutable",
+            "finding": "The seven docs/evidence/runtime/ODP-DEV-ROLLOUT-001 receipts recompute to their recorded hashes; they remain unmodified and explicitly superseded.",
+            "status": "verified_without_mutation"
+          },
+          {
+            "id": "FINDING-010",
+            "severity": "P1",
+            "topic": "open_blocker_routed_to_supervisor",
+            "finding": "Task ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 records an open blocker for the unresolved lease issuer and routes resolution to the Supervisor/remediation lane, preserving fail-closed posture until a signed lease and deploy receipts are produced.",
+            "status": "blocked"
+          },
+          {
+            "id": "FINDING-011",
+            "severity": "P1",
+            "topic": "supervisor_lease_issuance_recovery_routed",
+            "finding": "Dedicated control-plane remediation ODP-SUPERVISOR-LEASE-ISSUANCE-RECOVERY-001 is assigned to Antigravity4 and independently reviewed by Codex2. It is code/tests only; it cannot create a release request, sign a lease, or dispatch. The dev rollout remains blocked.",
+            "status": "in_progress"
+          }
+        ],
+        "actions_taken": [
+          "Confirmed the expected task branch and merged origin/dev c4efabbbeba9e743fab8ee52125932137852c703 as cecb7a0124b2b67d37b62c8b7cd92995bcf376f9 (parents 46f380764f1152949816545bf55f95b35f14d0dc, c4efabbbeba9e743fab8ee52125932137852c703); the merge tree equals git merge-tree --write-tree output (41af6431cfd883e37484b520c3b08d942134d19a), no conflicts, origin/dev is an ancestor of HEAD, and the forbidden-path diff is empty.",
+          "Re-read the canonical registry, manifest and gate states from the merged tree (identical to origin/dev).",
+          "Re-downloaded the six run-36080312679 artifacts, hashed them, and compared the manifest with the repository copy and the five others with their ODP-DEV-RELEASE-GATE-RECONCILIATION-006 copies.",
+          "Read the build job log for job 107900654118 and counted digest, cosign verify, push and tlog occurrences.",
+          "Ran registry_admission_errors for environment dev against the candidate and the origin/dev tip (both empty).",
+          "Ran a read-only dry run of the live issuer's validators against the board before the human registration; nothing was written.",
+          "Attempted direct gcloud and imagetools readback; recorded the non-interactive credential failure verbatim.",
+          "After Human/Ops registered the fresh request and the issuer refused it, read the issuance record and activity log, inspected the supervisor process (/proc, read-only) and reproduced the failing LeaseStateStore call under the supervisor's interpreter and a clean environment.",
+          "Recomputed the seven historical receipt hashes after base composition.",
+          "Rewrote this evidence bundle and its verifier against the current base and state.",
+          "Round 4 (07:22:35Z-07:28:37Z): re-read the live board (request, issuance record, status, blockers, waiting_for), PR #1107 and origin/dev; no change since round 3.",
+          "Round 4: inspected pid 2220782 read-only via /proc (exe, cwd, environ, maps, start time) and confirmed it has not restarted since 2026-09-23T14:35:03Z.",
+          "Round 4: measured the birth and modification times of /home/lupin/.local/lib/python3.12 and its site-packages, the dist-info INSTALLER files and the 21 distributions present; confirmed a fresh /usr/bin/python3.12 imports google.cloud.storage 3.14.1 and that python3.12 -s (no user site) still raises ModuleNotFoundError.",
+          "Round 4: re-ran the round-3 reproduction unchanged (same interpreter, same env -i shell) twice; recorded the resulting HTTP 403 verbatim, the resolved principal and the denied permission. The call is read-only (Bucket.exists); nothing was created or modified in GCS.",
+          "Round 4: re-ran a non-interactive gcloud secrets versions list (names only) and recorded the credential-refresh failure verbatim.",
+          "Round 4: re-read the watchdog launch path in /home/lupin/odayplus, runtime-current and origin/dev to determine whether a restart would pick up the user site."
+        ],
+        "actions_not_taken": [
+          "No Runtime Release build or deploy phase was dispatched; the canonical candidate is current and admitted.",
+          "No release_lease_request was authored, edited or re-registered by the owner; the fresh request was written by Human/Ops and its nonce value is not recorded here.",
+          "No Supervisor lease was fabricated, signed, consumed or replayed; no lease has ever been issued fleet-wide.",
+          "No package was installed into the supervisor interpreter, no supervisor restart, config edit or credential renewal was performed, and no file under .orchestrator/ was changed (forbidden path; acceptance 10).",
+          "No gcloud mutation, Cloud Run change, traffic switch, DNS, custom-domain or certificate change was performed.",
+          "No provider credential payload was read and no third-party source was enabled.",
+          "No historical receipt under docs/evidence/runtime/ODP-DEV-ROLLOUT-001/ was edited, moved or deleted.",
+          "No deployment-success receipt was written.",
+          "The task was not moved to review: submit_review sets status=review and the issuer requires in_progress, so a review submission now would re-block the very request the operator's 06:49:44Z reopen enabled.",
+          "Round 4: no supervisor restart, no IAM or bucket policy change, no ADC or credential file created, no gcloud login, no environment variable set for the supervisor, and no file under .orchestrator/ touched.",
+          "Round 4: no package was installed or removed by this worker; the 07:09:29Z user-site installation was performed by an unrecorded actor before this round started and is reported here as an observed environment change, not as a worker action.",
+          "Round 4: no release_lease_request was written, edited or re-registered; the 07:00:12Z blocked issuance record was not touched.",
+          "Round 4: the task was not moved to review (same reason as round 3) and no blocker was opened (a blocker or waiting_for would make the issuer reject the next Human/Ops request)."
+        ],
+        "unblock_requirements": [
+          "Supervisor lease issuance must transition from issuing/lease_issue_blocked to dispatched with a signed lease for candidate a663d604831c4b9710dda9b7ca85ddbc193837e8 and manifest sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482. Worker authorization HUMANOPS-DEV-MIGRATION-20260928T120016Z expires 2026-09-28T18:00:16Z.",
+          "If GCS lease state or Secret Manager access is the root cause, the operator must resolve the Supervisor runtime environment issue (not this task's scope per acceptance criterion 9).",
+          "After a signed lease is issued, the Runtime Release deploy-dev workflow dispatches automatically. This task records evidence of the deploy outcome (success or failure)."
+        ],
+        "superseded_unblock_requirements": {
+          "superseded_at": "2026-09-24T07:28:37Z",
+          "reason": "Round-3 items 1-2 assumed the package was absent everywhere; it was installed into a user site at 07:09:29Z by an unrecorded actor while round 3 was writing its evidence. The running supervisor still cannot import it, so the restart half of item 1 remains. Round-3 item 4 (verify the GCS principal) was measured in round 4 and is a confirmed 403, so it is now a required IAM/ADC repair rather than a check. Items 3, 5, 6, 7 and 8 are unchanged.",
+          "previous_requirements": [
+            "Operator: make google-cloud-storage (and google-auth) importable by the interpreter that runs .orchestrator/supervisor.py. Either launch the supervisor from the project's uv environment, which already carries google-cloud-storage 3.13.0, or install the pinned packages into an interpreter the supervisor uses (the system /usr/bin/python3.12 has no pip). Restart the supervisor afterwards using the fleet's restart procedure; the user-site path is only added at interpreter start.",
+            "Operator: verify the repair with the same reproduction: from /home/lupin/oday-plus-supervisor-runtime-current, with the supervisor's interpreter, construct LeaseStateStore('gs://odayplus-runtime-20260825-release-leases/leases', require_existing=True). The outcome must no longer be ModuleNotFoundError; a credential error at this point means LATENT-2 is real.",
+            "Operator: give the supervisor a non-interactive Secret Manager credential. Its key loader runs gcloud secrets versions access latest --project 767864276141 --secret odp-release-lease-private-key with this machine's gcloud configuration (HOME=/home/lupin, active account deborah.lu@dev.cctech-support.com), which currently fails token refresh. Renew that login or point the supervisor at a service-account credential with secretmanager.versions.access on that secret; confirm with a non-interactive gcloud secrets versions list on the same secret (exit 0, no material printed).",
+            "Operator: confirm the credential storage.Client() resolves in the supervisor (ADC or the GCE metadata account oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com) can read and create objects under gs://odayplus-runtime-20260825-release-leases/leases; otherwise provide ADC for a principal that can.",
+            "Optional: fast-forward /home/lupin/odayplus to origin/dev so the registry and manifest the issuer reads are committed rather than uncommitted local edits (HEAD is fc4f7529, 160 commits behind).",
+            "Human/Ops: after the repairs, register a new release_lease_request on this task with a new nonce and a new approval_id (kind runtime_release_deploy, status approved, approved_by Human/Ops, candidate_sha 1364363402900c800ec3ed033d38fd1d757c1f10, manifest_digest sha256:6fb8f9e2e6af8dcef9cbe2fd76f2c3d319d95a40fe64c77e3ffdb435f3dc246d, manifest_run_id 35944616693, target_environment dev, action deploy, approved_at at issue time, expires_at later). The request blocked under fingerprint sha256:7436c060... will not be retried. Keep the task in_progress with no blocker or waiting_for; do not submit it for review before the deploy has run.",
+            "The issuer then signs the lease and dispatches the existing deploy phase; if the deploy job fails, fail closed and mint a separate remediation task (acceptance 10).",
+            "This task then captures the authorized post-deploy Cloud Run URLs/revisions, migration/worker/scheduler executions, authenticated smoke, provider-off/16-source, live default-deny egress probe and live IAM readback (gate-4 deviation conditions), and exact manifest-binding receipts (acceptance 3-8)."
+          ],
+          "earlier_superseded": {
+            "superseded_at": "2026-09-24T07:09:07Z",
+            "reason": "Items 1-4 of the 2026-09-21 list (gate-0 C1 repair, gate-1 event-schema repair, gate-4 sign-off or deviation, registry decision go) were completed by PRs #1358, #1359, #1363, #1365 and the ODP-DEV-RELEASE-GATE-RECONCILIATION-005 rebind; item 5 (freshness re-check) is measured in this round; item 6 (fresh Human/Ops request) was performed at 2026-09-24T06:59:52Z. The gap moved to the supervisor's runtime environment.",
+            "previous_requirements": [
+              "gate-0 (owner Codex2): repair criterion C1 zero build warnings for candidate 39ae43f6 (apps/web Edge Runtime import of pg-connection-string / pg-pool), which is a product path outside this task; the coordinator must mint an owning task, after which the gate owner records a receipt and moves gate-0 to passed.",
+              "gate-1 (owner Claude): reconcile the event schema compatibility policy with the 16 payload schemas (additionalProperties: false) and shared/domain/events.py validation; also a product path requiring a coordinator-minted task, then a gate-1 receipt.",
+              "gate-4 (owner Claude): HUMAN-OSS-LEGAL-APPROVAL-001 named sign-off on docs/security/license_policy.json and license_exemptions.json, plus the H02 dev-tool CVE risk acceptance; this requires Human/Ops to cut the XR-EXT-OSS-FINAL-AUDIT-001 <-> dev-rollout cycle (either the audit stops requiring live measurements from an environment that does not exist yet, or gate-4 for admission_target=dev stops requiring production-level legal sign-off).",
+              "Human/Ops flips registry.release.decision to go for 39ae43f6 with the three receipts bound, via a reviewed PR (the registry has no writer tool).",
+              "Immediately before issuance, confirm 39ae43f6..origin/dev still touches docs/evidence/ only; if a product or build-input commit has landed, run the single Runtime Release build phase once against the new tip and rebind the registry through a reconciliation task before continuing.",
+              "Human/Ops records a fresh release_lease_request on this task (kind runtime_release_deploy, approved_by Human/Ops, new approval_id and nonce, candidate_sha 39ae43f6fe679f03dd7df459a51835cbd2d54f77, manifest_digest sha256:ebe7d305e930471d2e7492a1fffced10dbaa05a710bb5f6573f370e7bfa8ae8a, manifest_run_id 35493018607, target_environment dev, action deploy) while the task is in_progress with no open blocker; the enabled issuer then signs the Ed25519 lease and dispatches the existing deploy phase itself.",
+              "This task then captures the authorized post-deploy Cloud Run URLs/revisions, migration/worker/scheduler executions, authenticated smoke, provider-off/16-source, default-deny egress, and exact manifest-binding receipts (acceptance 3-8)."
+            ],
+            "earlier_superseded": {
+              "superseded_at": "2026-09-21T13:50:56Z",
+              "reason": "The 2026-09-04 list assumed the registry would be reconciled by ODP-DEV-STAGED-GATE-RECONCILIATION-001 and that lease issuance had no owner. PR #1183 merged 2026-09-04T12:18:30Z, ODP-DEV-STAGED-GATE-RECONCILIATION-001 and ODP-DEV-RELEASE-GATE-RECONCILIATION-004 are done, and the issuer is enabled; the remaining gap moved to dev gate clearance and the Human/Ops lease request.",
+              "previous_requirements": [
+                "Merge PR #1183 (ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001), which releases the HARD HOLD on ODP-DEV-STAGED-GATE-RECONCILIATION-001 and fixes the candidate selection point.",
+                "Select the then-latest origin/dev head as the deploy candidate. Do NOT reconcile the registry to 1edb2f834cbf38ccd489cd999802098076e891b7: ODP-DEV-STAGED-GATE-RECONCILIATION-001 is explicitly forbidden to bind that SHA, so the build artifacts of run 33844319992 are superseded in advance and must not be reused.",
+                "Re-run the single existing Runtime Release build phase once against that new exact SHA to produce a fresh build-once manifest and four immutable image digests.",
+                "Reconcile the canonical release gate registry from candidate ebc4fca5c2dd5871275aee39a18406dd67464f04 / decision no-go to the new candidate SHA and its manifest digest, via ODP-DEV-STAGED-GATE-RECONCILIATION-001 and its staged dev-admission rules.",
+                "Have the Supervisor issuer create and durably record an Ed25519-signed lease for target dev, action deploy, and that new exact manifest digest. No worker holds the private signing key, and ODP-DEV-STAGED-GATE-RECONCILIATION-001 acceptance forbids it from signing a lease or dispatching a deploy, so this step currently has no owner on the board and is carried by this task's open blocker.",
+                "Dispatch the existing Runtime Release deploy phase with the new exact image refs and the signed lease.",
+                "Capture authorized post-deploy Cloud Run URLs/revisions, migration/worker/scheduler executions, authenticated smoke, provider-off/16-source, default-deny egress, and exact manifest-binding receipts."
+              ],
+              "earlier_superseded": {
+                "superseded_at": "2026-09-04T07:20:00Z",
+                "reason": "The earlier plan named 1edb2f83 as the registry reconciliation target before the HARD HOLD on ODP-DEV-STAGED-GATE-RECONCILIATION-001 was known. Recorded here so the correction is auditable rather than silent.",
+                "previous_first_requirement": "Reconcile the canonical release gate registry to candidate 1edb2f834cbf38ccd489cd999802098076e891b7 and manifest digest sha256:c9ff71c7557c4009487cf6e093280f47369db2fdd49a17ac8b9e1aa472e8c2c7."
+              }
+            }
+          }
+        },
+        "revision": {
+          "round": 5,
+          "previous_generated_at": "2026-09-26T12:06:15Z",
+          "previous_generated_by": "Antigravity5",
+          "reason": "Candidate rebound from 419e6bf4 to a31e02ae per ODP-DEV-MIGRATION-ADMISSION-001 done; user authorization HUMANOPS-DEV-MIGRATION-20260927T225545Z; release lease issuance remains blocked (lease_issue_blocked) for a31 candidate since 00:47:26Z."
+        },
+        "rebind_note": "Rebound from a31e02ae3918 to a663d604831c at 2026-09-28T23:20:00Z. Prior observation recorded a31e02ae3918 (build 36333397898); current authoritative state is a663d604831c (build 36415981871). Hosted build artifacts verified in run-36415981871 directory."
+      }
     }
-  },
-  "revision": {
-    "round": 5,
-    "previous_generated_at": "2026-09-26T12:06:15Z",
-    "previous_generated_by": "Antigravity5",
-    "reason": "Candidate rebound from 419e6bf4 to a31e02ae per ODP-DEV-MIGRATION-ADMISSION-001 done; user authorization HUMANOPS-DEV-MIGRATION-20260927T225545Z; release lease issuance remains blocked (lease_issue_blocked) for a31 candidate since 00:47:26Z."
-  },
-  "rebind_note": "Rebound from a31e02ae3918 to a663d604831c at 2026-09-28T23:20:00Z. Prior observation recorded a31e02ae3918 (build 36333397898); current authoritative state is a663d604831c (build 36415981871). Hosted build artifacts verified in run-36415981871 directory."
+  }
 }

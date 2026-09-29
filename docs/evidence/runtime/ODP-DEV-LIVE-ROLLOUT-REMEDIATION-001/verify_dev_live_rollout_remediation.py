@@ -11,6 +11,10 @@ Validates the fail-closed evidence produced against the current base:
 5. No deployment success is claimed anywhere.
 6. The seven historical ODP-DEV-ROLLOUT-001 receipts recompute to the hashes the
    audit records (immutability is measured, not asserted).
+7. Current CI, signoff and run/job metadata agree with their preserved source
+   receipts (build reconciliation, candidate CI, user authorization), and no
+   superseded candidate, manifest, run or approval value appears in current
+   sections outside explicitly scoped supersede/rebind fields.
 """
 
 from __future__ import annotations
@@ -33,19 +37,47 @@ HISTORICAL_DIR = ROOT / "docs/evidence/runtime/ODP-DEV-ROLLOUT-001"
 SHA256_DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 IMAGE_DIGEST_PATTERN = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
-EXPECTED_CURRENT_CANDIDATE = "a663d604831c4b9710dda9b7ca85ddbc193837e8"
-EXPECTED_BUILD_RUN_ID = 36415981871
-EXPECTED_RELEASE_ID = "odp-a663d604831c"
-EXPECTED_MANIFEST_DIGEST = "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482"
-EXPECTED_AUTHORIZATION_ID = "HUMANOPS-DEV-MIGRATION-20260928T120016Z"
-EXPECTED_CI_RUN_ID = 36391745153
+EXPECTED_CURRENT_CANDIDATE = "ee06d1d8294464f1eb7231f2b06505348a61cba2"
+EXPECTED_BUILD_RUN_ID = 36509055237
+EXPECTED_RELEASE_ID = "odp-ee06d1d82944"
+EXPECTED_MANIFEST_DIGEST = "sha256:8ee919d67fc89768c7ae8912ecfce706dc1b2a0fbb2e3da1a14b5e87c1fae80e"
+EXPECTED_AUTHORIZATION_ID = "HUMANOPS-DEV-MIGRATION-20260929T053234Z"
+EXPECTED_CI_RUN_IDS = (36435578948, 36436491098)
+EXPECTED_INHERITED_CI_RUN_ID = 36361727942
 EXPECTED_HOSTED_ARTIFACT_IDS = {
-    "initial-release-absence-readback-a663d604831c4b9710dda9b7ca85ddbc193837e8": 10967906043,
-    "release-environment-receipt-dev-build": 10968030024,
-    "release-npm-audit-receipt-dev": 10967620580,
-    "release-phase-receipt-dev-build": 10967535042,
-    "runtime-release-images-a663d604831c4b9710dda9b7ca85ddbc193837e8": 10967216335,
-    "runtime-release-manifest-a663d604831c4b9710dda9b7ca85ddbc193837e8": 10967281361,
+    "initial-release-absence-readback-ee06d1d8294464f1eb7231f2b06505348a61cba2": 11008427645,
+    "release-environment-receipt-dev-build": 11008311973,
+    "release-npm-audit-receipt-dev": 11008491705,
+    "release-phase-receipt-dev-build": 11008606106,
+    "runtime-release-images-ee06d1d8294464f1eb7231f2b06505348a61cba2": 11008477524,
+    "runtime-release-manifest-ee06d1d8294464f1eb7231f2b06505348a61cba2": 11008107910,
+}
+BUILD_RECONCILIATION = EVIDENCE_DIR / f"build-reconciliation-{EXPECTED_BUILD_RUN_ID}.json"
+CANDIDATE_CI = EVIDENCE_DIR / "candidate-ci-and-product-inheritance-ee06d1d8.json"
+AUTHORIZATION = EVIDENCE_DIR / f"user-deploy-authorization-{EXPECTED_AUTHORIZATION_ID}.json"
+# Values of the superseded a31/a663 rounds. They may appear only under history
+# and in fields whose name scopes them as superseded or as the rebind origin.
+STALE_TOKENS = (
+    "a31e02ae391811a4c323ec4d834b70e200953366",
+    "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+    "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
+    "sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2",
+    "36415981871",
+    "36333397898",
+    "36391745153",
+    "108659578847",
+    "HUMANOPS-DEV-MIGRATION-20260928T120016Z",
+    "HUMANOPS-DEV-MIGRATION-20260927T225545Z",
+)
+STALE_ALLOWED_KEYS = {
+    "history",
+    "supersedes",
+    "superseded_unblock_requirements",
+    "from_candidate_sha",
+    "from_manifest_digest",
+    "superseded_approvals",
+    "reason",
+    "previous_request",
 }
 COMPONENTS = ("api", "web", "worker", "scheduler")
 DEV_GATES = ("gate-0", "gate-1", "gate-4")
@@ -127,7 +159,10 @@ def _check_candidate(audit: dict, manifest: dict, registry: dict, errors: list[s
         errors.append("authoritative_manifest_candidate_sha does not match the canonical candidate")
     if cand.get("authoritative_manifest_digest") != EXPECTED_MANIFEST_DIGEST:
         errors.append("authoritative_manifest_digest does not match the canonical manifest digest")
-    if cand.get("release_id") != EXPECTED_RELEASE_ID or manifest.get("release_id") != EXPECTED_RELEASE_ID:
+    if (
+        cand.get("release_id") != EXPECTED_RELEASE_ID
+        or manifest.get("release_id") != EXPECTED_RELEASE_ID
+    ):
         errors.append("release_id differs between audit, manifest and expectation")
     if manifest.get("candidate_sha") != cand.get("authoritative_manifest_candidate_sha"):
         errors.append("repository RELEASE_MANIFEST.json candidate_sha differs from the audit")
@@ -135,9 +170,13 @@ def _check_candidate(audit: dict, manifest: dict, registry: dict, errors: list[s
         errors.append("repository RELEASE_MANIFEST.json manifest_digest differs from the audit")
 
     registry_manifest_digest = release.get("manifest_digest", "")
-    if registry_manifest_digest and registry_manifest_digest != cand.get("authoritative_manifest_digest"):
+    if registry_manifest_digest and registry_manifest_digest != cand.get(
+        "authoritative_manifest_digest"
+    ):
         errors.append("repository registry release.manifest_digest differs from the audit")
-    if release.get("candidate_sha") and release.get("candidate_sha") != cand.get("authoritative_manifest_candidate_sha"):
+    if release.get("candidate_sha") and release.get("candidate_sha") != cand.get(
+        "authoritative_manifest_candidate_sha"
+    ):
         errors.append("repository registry release.candidate_sha differs from the audit")
     if release.get("decision") != "go":
         errors.append("registry decision must be go")
@@ -151,13 +190,17 @@ def _check_candidate(audit: dict, manifest: dict, registry: dict, errors: list[s
         expected_img = manifest_components.get(comp, {}).get("image")
         actual_img = cand_images.get(comp)
         if actual_img != expected_img:
-            errors.append(f"candidate_reconciliation component_images[{comp}] ({actual_img}) != manifest component image ({expected_img})")
+            errors.append(
+                f"candidate_reconciliation component_images[{comp}] ({actual_img}) != manifest component image ({expected_img})"
+            )
 
     # Initial release recovery bindings
     cand_recovery = cand.get("manifest_initial_release_recovery", {})
     manifest_recovery = manifest.get("initial_release_recovery", {})
     if cand_recovery.get("binding_digest") != manifest_recovery.get("binding_digest"):
-        errors.append("candidate_reconciliation manifest_initial_release_recovery.binding_digest != manifest binding_digest")
+        errors.append(
+            "candidate_reconciliation manifest_initial_release_recovery.binding_digest != manifest binding_digest"
+        )
 
     # Candidate rebind
     cand_rebind = cand.get("candidate_rebind", {})
@@ -176,9 +219,13 @@ def _check_build(audit: dict, manifest: dict, errors: list[str]) -> None:
     if build_exec.get("release_sha") != EXPECTED_CURRENT_CANDIDATE:
         errors.append("hosted build release_sha does not match current candidate")
     if build_exec.get("release_id") != EXPECTED_RELEASE_ID:
-        errors.append(f"hosted build release_id must be {EXPECTED_RELEASE_ID}, got {build_exec.get('release_id')}")
+        errors.append(
+            f"hosted build release_id must be {EXPECTED_RELEASE_ID}, got {build_exec.get('release_id')}"
+        )
     if build_exec.get("manifest_digest") != EXPECTED_MANIFEST_DIGEST:
-        errors.append(f"hosted build manifest_digest must be {EXPECTED_MANIFEST_DIGEST}, got {build_exec.get('manifest_digest')}")
+        errors.append(
+            f"hosted build manifest_digest must be {EXPECTED_MANIFEST_DIGEST}, got {build_exec.get('manifest_digest')}"
+        )
     conclusion = build_exec.get("conclusion") or build_exec.get("result")
     if conclusion != "success":
         errors.append("hosted build conclusion must be success")
@@ -195,7 +242,9 @@ def _check_build(audit: dict, manifest: dict, errors: list[str]) -> None:
         expected_img = manifest_components.get(comp, {}).get("image")
         actual_img = pub_images.get(comp)
         if actual_img != expected_img:
-            errors.append(f"hosted_build_execution published_images[{comp}] ({actual_img}) != manifest component image ({expected_img})")
+            errors.append(
+                f"hosted_build_execution published_images[{comp}] ({actual_img}) != manifest component image ({expected_img})"
+            )
 
     # Cross-binding: signature refs
     pub_sigs = sorted(build_exec.get("signature_refs", []))
@@ -229,14 +278,20 @@ def _check_hosted_artifacts(audit: dict, manifest: dict, errors: list[str]) -> N
     build_exec = audit.get("hosted_build_execution", {})
     records = build_exec.get("uploaded_artifacts", [])
     by_name = {record.get("name"): record for record in records if isinstance(record, dict)}
-    if len(records) != len(EXPECTED_HOSTED_ARTIFACT_IDS) or set(by_name) != set(EXPECTED_HOSTED_ARTIFACT_IDS):
-        errors.append("hosted artifact inventory names do not match the six immutable run artifacts")
+    if len(records) != len(EXPECTED_HOSTED_ARTIFACT_IDS) or set(by_name) != set(
+        EXPECTED_HOSTED_ARTIFACT_IDS
+    ):
+        errors.append(
+            "hosted artifact inventory names do not match the six immutable run artifacts"
+        )
 
     raw_manifest_bytes = RELEASE_MANIFEST.read_bytes()
     repository_manifest = audit.get("candidate_reconciliation", {}).get("repository_manifest", {})
     actual_manifest_sha = hashlib.sha256(raw_manifest_bytes).hexdigest()
     if repository_manifest.get("raw_sha256") != actual_manifest_sha:
-        errors.append("repository_manifest.raw_sha256 does not match the raw RELEASE_MANIFEST.json bytes")
+        errors.append(
+            "repository_manifest.raw_sha256 does not match the raw RELEASE_MANIFEST.json bytes"
+        )
 
     for name, expected_id in EXPECTED_HOSTED_ARTIFACT_IDS.items():
         record = by_name.get(name)
@@ -261,7 +316,10 @@ def _check_hosted_artifacts(audit: dict, manifest: dict, errors: list[str]) -> N
             errors.append(f"hosted artifact {name} raw_sha256 does not match its preserved file")
         if record.get("raw_bytes") != len(content):
             errors.append(f"hosted artifact {name} raw_bytes does not match its preserved file")
-        if not isinstance(record.get("archive_size_in_bytes"), int) or record["archive_size_in_bytes"] <= 0:
+        if (
+            not isinstance(record.get("archive_size_in_bytes"), int)
+            or record["archive_size_in_bytes"] <= 0
+        ):
             errors.append(f"hosted artifact {name} has no valid GitHub archive size")
 
         if name.startswith("runtime-release-manifest-"):
@@ -271,17 +329,31 @@ def _check_hosted_artifacts(audit: dict, manifest: dict, errors: list[str]) -> N
                 errors.append(f"hosted manifest artifact is not valid JSON: {exc}")
                 continue
             if content != raw_manifest_bytes:
-                errors.append("hosted manifest artifact is not byte-identical to repository RELEASE_MANIFEST.json")
+                errors.append(
+                    "hosted manifest artifact is not byte-identical to repository RELEASE_MANIFEST.json"
+                )
             if repository_manifest.get("hosted_manifest_artifact_id") != expected_id:
-                errors.append("repository_manifest hosted artifact ID does not match the hosted artifact record")
+                errors.append(
+                    "repository_manifest hosted artifact ID does not match the hosted artifact record"
+                )
             if repository_manifest.get("byte_identical_to_hosted_artifact") is not True:
-                errors.append("repository_manifest must assert verified byte identity with the hosted artifact")
+                errors.append(
+                    "repository_manifest must assert verified byte identity with the hosted artifact"
+                )
             if hosted_manifest.get("manifest_digest") != EXPECTED_MANIFEST_DIGEST:
-                errors.append("hosted manifest logical manifest_digest does not match the authorized release")
+                errors.append(
+                    "hosted manifest logical manifest_digest does not match the authorized release"
+                )
             if hosted_manifest.get("manifest_digest") != manifest.get("manifest_digest"):
-                errors.append("hosted manifest logical digest differs from the repository manifest field")
-            if repository_manifest.get("logical_manifest_digest") != hosted_manifest.get("manifest_digest"):
-                errors.append("repository_manifest logical digest differs from the hosted manifest field")
+                errors.append(
+                    "hosted manifest logical digest differs from the repository manifest field"
+                )
+            if repository_manifest.get("logical_manifest_digest") != hosted_manifest.get(
+                "manifest_digest"
+            ):
+                errors.append(
+                    "repository_manifest logical digest differs from the hosted manifest field"
+                )
             payload = dict(hosted_manifest)
             payload.pop("manifest_digest", None)
             canonical_payload = json.dumps(
@@ -289,7 +361,9 @@ def _check_hosted_artifacts(audit: dict, manifest: dict, errors: list[str]) -> N
             ).encode("utf-8")
             computed_logical_digest = "sha256:" + hashlib.sha256(canonical_payload).hexdigest()
             if computed_logical_digest != hosted_manifest.get("manifest_digest"):
-                errors.append("hosted manifest logical digest does not recompute from canonical JSON")
+                errors.append(
+                    "hosted manifest logical digest does not recompute from canonical JSON"
+                )
 
     readback_source = audit.get("live_gcp_runtime_state", {}).get("readback_source", {})
     if readback_source.get("run_id") == build_exec.get("run_id"):
@@ -305,6 +379,7 @@ def _check_hosted_artifacts(audit: dict, manifest: dict, errors: list[str]) -> N
                 "live_gcp_runtime_state.readback_source.sha256 does not match the raw "
                 "initial-release absence artifact for the same build run"
             )
+
 
 def _check_sources(audit: dict, manifest: dict, errors: list[str]) -> None:
     source_posture = audit.get("source_posture", {})
@@ -326,7 +401,9 @@ def _check_sources(audit: dict, manifest: dict, errors: list[str]) -> None:
     ):
         errors.append("source posture must record default-deny egress")
     if source_posture.get("binding_digest") != attestation.get("binding_digest"):
-        errors.append("source posture binding_digest does not match manifest sources_off_attestation.binding_digest")
+        errors.append(
+            "source posture binding_digest does not match manifest sources_off_attestation.binding_digest"
+        )
 
 
 def _check_authorization(audit: dict, registry: dict, errors: list[str]) -> None:
@@ -359,11 +436,17 @@ def _check_authorization(audit: dict, registry: dict, errors: list[str]) -> None
     # Verify current release lease request
     req = authorization.get("current_release_lease_request", {})
     if req.get("approval_id") != EXPECTED_AUTHORIZATION_ID:
-        errors.append(f"current_release_lease_request.approval_id must be {EXPECTED_AUTHORIZATION_ID}")
+        errors.append(
+            f"current_release_lease_request.approval_id must be {EXPECTED_AUTHORIZATION_ID}"
+        )
     if req.get("candidate_sha") != EXPECTED_CURRENT_CANDIDATE:
-        errors.append("current_release_lease_request.candidate_sha does not match current candidate")
+        errors.append(
+            "current_release_lease_request.candidate_sha does not match current candidate"
+        )
     if req.get("manifest_digest") != EXPECTED_MANIFEST_DIGEST:
-        errors.append("current_release_lease_request.manifest_digest does not match current manifest digest")
+        errors.append(
+            "current_release_lease_request.manifest_digest does not match current manifest digest"
+        )
 
     # Verify latest issuance decision
     issuance = authorization.get("latest_issuance_decision", {})
@@ -384,12 +467,16 @@ def _check_live_state(audit: dict, errors: list[str]) -> None:
     target_absence = live_state.get("target_absence_receipt", {})
     if target_absence.get("candidate_sha") != EXPECTED_CURRENT_CANDIDATE:
         errors.append("target_absence_receipt.candidate_sha does not match current candidate")
-    if target_absence.get("migration_job", {}).get("name") != "oday-migration-r-a663d604831c":
-        errors.append("target_absence_receipt.migration_job name must be 'oday-migration-r-a663d604831c'")
-    if target_absence.get("worker_job", {}).get("name") != "oday-worker-r-a663d604831c":
+    if target_absence.get("migration_job", {}).get("name") != "oday-migration-r-ee06d1d82944":
+        errors.append(
+            "target_absence_receipt.migration_job name must be 'oday-migration-r-a663d604831c'"
+        )
+    if target_absence.get("worker_job", {}).get("name") != "oday-worker-r-ee06d1d82944":
         errors.append("target_absence_receipt.worker_job name must be 'oday-worker-r-a663d604831c'")
-    if target_absence.get("scheduler_job", {}).get("name") != "oday-scheduler-r-a663d604831c":
-        errors.append("target_absence_receipt.scheduler_job name must be 'oday-scheduler-r-a663d604831c'")
+    if target_absence.get("scheduler_job", {}).get("name") != "oday-scheduler-r-ee06d1d82944":
+        errors.append(
+            "target_absence_receipt.scheduler_job name must be 'oday-scheduler-r-a663d604831c'"
+        )
 
 
 def _check_findings(audit: dict, errors: list[str]) -> None:
@@ -413,7 +500,11 @@ def _check_history(audit: dict, errors: list[str]) -> None:
         if recorded.get(name) != _sha256(path):
             errors.append(f"historical receipt {name} no longer matches the recorded sha256")
     history = audit.get("history", {})
-    for key in ("round_2026_09_21", "hosted_build_execution_2026_09_04"):
+    for key in (
+        "round_2026_09_21",
+        "hosted_build_execution_2026_09_04",
+        "round_2026_09_28_a663_rebind_rejected_reviews_11_12",
+    ):
         if key not in history:
             errors.append(f"history must retain {key}")
 
@@ -425,6 +516,175 @@ def _check_readme(errors: list[str]) -> None:
     transcript = TRANSCRIPT_TXT.read_text(encoding="utf-8")
     if not transcript:
         errors.append("transcript text is empty")
+
+
+def _stale_hits(value: object, path: str, hits: list[str]) -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in STALE_ALLOWED_KEYS:
+                continue
+            _stale_hits(item, f"{path}.{key}", hits)
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            _stale_hits(item, f"{path}[{index}]", hits)
+    elif isinstance(value, (str, int)) and not isinstance(value, bool):
+        text = str(value)
+        if any(token in text for token in STALE_TOKENS):
+            hits.append(path)
+
+
+def _check_no_stale_current(audit: dict, registry: dict, manifest: dict, errors: list[str]) -> None:
+    for label, document in (("audit", audit), ("registry", registry), ("manifest", manifest)):
+        hits: list[str] = []
+        _stale_hits(document, label, hits)
+        for hit in hits:
+            errors.append(f"superseded candidate/run/approval value appears in current field {hit}")
+    lease_request = _load_json(EVIDENCE_DIR / "release-lease-request.json", errors) or {}
+    hits = []
+    _stale_hits(lease_request, "release-lease-request", hits)
+    for hit in hits:
+        errors.append(f"superseded value appears in current lease request field {hit}")
+
+
+def _check_source_receipts(audit: dict, registry: dict, errors: list[str]) -> None:
+    """Current metadata must equal the preserved first-hand receipts it came from."""
+    build = _load_json(BUILD_RECONCILIATION, errors) or {}
+    ci = _load_json(CANDIDATE_CI, errors) or {}
+    auth = _load_json(AUTHORIZATION, errors) or {}
+    build_exec = audit.get("hosted_build_execution", {})
+    build_run = build.get("build_run", {})
+
+    if (
+        build_run.get("run_id") != EXPECTED_BUILD_RUN_ID
+        or build_run.get("head_sha") != EXPECTED_CURRENT_CANDIDATE
+    ):
+        errors.append("build reconciliation does not bind the expected run and candidate")
+    for field in ("created_at",):
+        if build_exec.get(field) != build_run.get(field):
+            errors.append(
+                f"hosted_build_execution.{field} differs from the build reconciliation receipt"
+            )
+    if build_exec.get("completed_at") != build_run.get("updated_at"):
+        errors.append("hosted_build_execution.completed_at differs from the build run updated_at")
+    if build_exec.get("jobs") != build_run.get("jobs"):
+        errors.append(
+            "hosted_build_execution.jobs (IDs/times/conclusions) differ from the build reconciliation receipt"
+        )
+    if build_exec.get("uploaded_artifacts") != build.get("uploaded_artifacts"):
+        errors.append(
+            "hosted_build_execution.uploaded_artifacts differ from the build reconciliation receipt"
+        )
+    if build_exec.get("image_signing") != build.get("image_signing"):
+        errors.append(
+            "hosted_build_execution.image_signing differs from the build reconciliation receipt"
+        )
+    if build.get("manifest", {}).get("logical_digest") != EXPECTED_MANIFEST_DIGEST:
+        errors.append(
+            "build reconciliation manifest digest differs from the expected manifest digest"
+        )
+    for job in build_run.get("jobs", []):
+        if not isinstance(job.get("id"), int):
+            errors.append(f"build job {job.get('name')} has no numeric job ID")
+        elif job.get("started_at", "") < build_run.get("created_at", "") or job.get(
+            "completed_at", ""
+        ) > build_run.get("updated_at", "~"):
+            errors.append(f"build job {job.get('name')} falls outside its run's time window")
+
+    if ci.get("candidate_sha") != EXPECTED_CURRENT_CANDIDATE:
+        errors.append("candidate CI receipt does not bind the current candidate")
+    exact = {run.get("run_id"): run for run in ci.get("exact_candidate_ci", [])}
+    if set(exact) != set(EXPECTED_CI_RUN_IDS):
+        errors.append("candidate CI receipt does not record the expected exact-candidate CI runs")
+    for run in exact.values():
+        if run.get("head_sha") != EXPECTED_CURRENT_CANDIDATE or run.get("conclusion") != "success":
+            errors.append(
+                f"exact CI run {run.get('run_id')} is not a successful run of the candidate"
+            )
+    inheritance = ci.get("product_ci_inheritance", {})
+    classification = inheritance.get("delta_classification", {})
+    if inheritance.get("source_ci_run_id") != EXPECTED_INHERITED_CI_RUN_ID:
+        errors.append("product CI inheritance does not cite the expected full-product run")
+    if (
+        classification.get("scope") != "development_tooling"
+        or classification.get("non_tooling_paths") != []
+    ):
+        errors.append(
+            "product CI inheritance is not backed by a development_tooling classification"
+        )
+    if (
+        any(
+            result != "success" for _, result in inheritance.get("source_product_jobs", {}).values()
+        )
+        or len(inheritance.get("source_product_jobs", {})) != 7
+    ):
+        errors.append("inherited full-product run must record all seven product jobs as success")
+    for receipt in ci.get("supplementary_local_receipts", []):
+        if receipt.get("exit_code") != 0:
+            errors.append("a supplementary local receipt did not exit 0")
+
+    gates = {gate.get("id"): gate for gate in registry.get("gates", [])}
+    for gate_id in ("gate-0", "gate-1"):
+        receipt = (gates.get(gate_id, {}).get("receipts") or [{}])[0]
+        provenance = receipt.get("provenance", {})
+        cited = {
+            run.get("run_id"): run.get("orchestrator_job_id")
+            for run in provenance.get("exact_ci_runs", [])
+        }
+        recorded = {
+            run_id: run.get("orchestrator_job", {}).get("id") for run_id, run in exact.items()
+        }
+        if cited != recorded:
+            errors.append(f"{gate_id} receipt CI run/job IDs differ from the candidate CI receipt")
+        if provenance.get("product_ci_inheritance", {}).get("source_ci_run_id") != inheritance.get(
+            "source_ci_run_id"
+        ):
+            errors.append(
+                f"{gate_id} receipt inheritance run differs from the candidate CI receipt"
+            )
+        if provenance.get("build_run_id") != EXPECTED_BUILD_RUN_ID:
+            errors.append(f"{gate_id} receipt cites the wrong build run")
+        if receipt.get("artifact") != str(CANDIDATE_CI.relative_to(ROOT)):
+            errors.append(f"{gate_id} receipt does not cite the candidate CI receipt")
+
+    signoff = registry.get("release", {}).get("human_signoff", {})
+    human = audit.get("authorization_state", {}).get("human_authorization", {})
+    for label, record in (
+        ("registry human_signoff", signoff),
+        ("audit human_authorization", human),
+    ):
+        if record.get("approval_id") != auth.get("approval_id"):
+            errors.append(f"{label}.approval_id differs from the authorization receipt")
+        if record.get("artifact") != str(AUTHORIZATION.relative_to(ROOT)):
+            errors.append(f"{label}.artifact does not cite the authorization receipt")
+    for field in (
+        "candidate_sha",
+        "manifest_digest",
+        "manifest_run_id",
+        "recorded_at",
+        "expires_at",
+    ):
+        if human.get(field) != auth.get(field):
+            errors.append(
+                f"audit human_authorization.{field} differs from the authorization receipt"
+            )
+    if (
+        auth.get("candidate_sha") != EXPECTED_CURRENT_CANDIDATE
+        or auth.get("manifest_digest") != EXPECTED_MANIFEST_DIGEST
+    ):
+        errors.append("authorization receipt is not bound to the current candidate and manifest")
+    gate4 = (gates.get("gate-4", {}).get("receipts") or [{}])[0]
+    if gate4.get("artifact") != str(
+        AUTHORIZATION.relative_to(ROOT)
+    ) or EXPECTED_AUTHORIZATION_ID not in gate4.get("receipt_id", ""):
+        errors.append("gate-4 receipt does not cite the current authorization receipt")
+
+    dry_run = audit.get("authorization_state", {}).get("registry_admission_errors_dry_run", {})
+    if dry_run.get("errors") != [] or not SHA_PATTERN.fullmatch(
+        str(dry_run.get("simulated_release_sha", ""))
+    ):
+        errors.append(
+            "registry admission dry run must record an empty error list against a simulated merge SHA"
+        )
 
 
 def verify_evidence_bundle() -> list[str]:
@@ -458,6 +718,8 @@ def verify_evidence_bundle() -> list[str]:
     _check_live_state(audit, errors)
     _check_findings(audit, errors)
     _check_history(audit, errors)
+    _check_source_receipts(audit, registry, errors)
+    _check_no_stale_current(audit, registry, manifest, errors)
     _check_readme(errors)
     return errors
 

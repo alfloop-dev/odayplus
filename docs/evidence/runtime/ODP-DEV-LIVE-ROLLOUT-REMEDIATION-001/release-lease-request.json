@@ -1,22 +1,37 @@
 {
   "kind": "runtime_release_deploy",
-  "status": "expired",
+  "status": "not_registered",
   "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
-  "approved_by": "Human/Ops",
-  "approval_id": "HUMANOPS-DEV-MIGRATION-20260928T120016Z",
-  "nonce": "972f7d6b40664f1d8f06c4ff5f074275",
-  "candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
-  "manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
-  "manifest_run_id": "36415981871",
+  "approval_id": "HUMANOPS-DEV-MIGRATION-20260929T053234Z",
+  "candidate_sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
+  "manifest_digest": "sha256:8ee919d67fc89768c7ae8912ecfce706dc1b2a0fbb2e3da1a14b5e87c1fae80e",
+  "manifest_run_id": "36509055237",
   "target_environment": "dev",
   "action": "deploy",
-  "approved_at": "2026-09-28T12:00:16Z",
-  "expires_at": "2026-09-28T18:00:16Z",
-  "transcribed_by": {
-    "written_by": "Antigravity3",
-    "basis": "Explicit current interactive user confirmation HUMANOPS-DEV-MIGRATION-20260928T120016Z for exact candidate a663d604 / manifest sha256:6ed4f3a4 / build 36415981871",
-    "authorization_artifact": "docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/user-deploy-authorization-HUMANOPS-DEV-MIGRATION-20260928T120016Z.json",
-    "note": "approved_by is the protocol role, not the author; no external identity signature claimed. Approval expired; a fresh approval is required."
-  },
-  "expired_note": "User approval HUMANOPS-DEV-MIGRATION-20260928T120016Z expired at 18:00:16Z. A fresh candidate-specific user approval is required before a new lease request can be registered."
+  "approval_recorded_at": "2026-09-29T05:32:34Z",
+  "approval_expires_at": "2026-09-30T05:32:34Z",
+  "authorization_artifact": "docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/user-deploy-authorization-HUMANOPS-DEV-MIGRATION-20260929T053234Z.json",
+  "registration_precondition": "PR #1107 exact-head review accepted and PR merged; a fresh nonce is minted at registration, none exists yet.",
+  "previous_request": {
+    "kind": "runtime_release_deploy",
+    "status": "expired",
+    "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+    "approved_by": "Human/Ops",
+    "approval_id": "HUMANOPS-DEV-MIGRATION-20260928T120016Z",
+    "nonce": "972f7d6b40664f1d8f06c4ff5f074275",
+    "candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
+    "manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
+    "manifest_run_id": "36415981871",
+    "target_environment": "dev",
+    "action": "deploy",
+    "approved_at": "2026-09-28T12:00:16Z",
+    "expires_at": "2026-09-28T18:00:16Z",
+    "transcribed_by": {
+      "written_by": "Antigravity3",
+      "basis": "Explicit current interactive user confirmation HUMANOPS-DEV-MIGRATION-20260928T120016Z for exact candidate a663d604 / manifest sha256:6ed4f3a4 / build 36415981871",
+      "authorization_artifact": "docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/user-deploy-authorization-HUMANOPS-DEV-MIGRATION-20260928T120016Z.json",
+      "note": "approved_by is the protocol role, not the author; no external identity signature claimed. Approval expired; a fresh approval is required."
+    },
+    "expired_note": "User approval HUMANOPS-DEV-MIGRATION-20260928T120016Z expired at 18:00:16Z. A fresh candidate-specific user approval is required before a new lease request can be registered."
+  }
 }
