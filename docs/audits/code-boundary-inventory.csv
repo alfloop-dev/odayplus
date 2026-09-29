@@ -306,6 +306,8 @@ docs/evidence/runtime/ODP-DEPLOY-STAGING-JOB-RECEIPT-UPLOAD-001/simulate_staging
 docs/evidence/runtime/ODP-DEPLOY-WEB-PROTECTED-REDIRECT-001/mutation_harness.py,evidence_artifact,evidence_only,false,,,conditional,The evidence retention period and audit obligations have ended.
 docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/verify_dev_live_rollout_remediation.py,evidence_artifact,evidence_only,false,,,conditional,The evidence retention period and audit obligations have ended.
 docs/evidence/runtime/ODP-DEV-MIGRATION-LIVE-PREFLIGHT-001/readback.py,evidence_artifact,evidence_only,false,,,conditional,The evidence retention period and audit obligations have ended.
+docs/evidence/runtime/ODP-NFR-RUNTIME-EVIDENCE-001/capture_rollout_readback.py,evidence_artifact,evidence_only,false,,,conditional,The evidence retention period and audit obligations have ended.
+docs/evidence/runtime/ODP-NFR-RUNTIME-EVIDENCE-001/verify_nfr_runtime_disposition.py,evidence_artifact,evidence_only,false,,,conditional,The evidence retention period and audit obligations have ended.
 docs/evidence/runtime/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001/deploy.py,evidence_artifact,evidence_only,false,,,conditional,The evidence retention period and audit obligations have ended.
 docs/evidence/runtime/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001/live_authority_probe.py,evidence_artifact,evidence_only,false,,,conditional,The evidence retention period and audit obligations have ended.
 docs/evidence/runtime/ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001/sandbox_cli_matrix.py,evidence_artifact,evidence_only,false,,,conditional,The evidence retention period and audit obligations have ended.
