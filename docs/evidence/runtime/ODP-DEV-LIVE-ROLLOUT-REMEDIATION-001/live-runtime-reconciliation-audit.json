@@ -345,12 +345,12 @@
       "status": "admitted",
       "errors": [],
       "environment": "dev",
-      "simulated_release_sha": "6ca4223ead7444b487b6de6fcf692e9699b35bb3",
+      "simulated_release_sha": "6a1675ce3b4e067f129ee6a36e96b4676e351d53",
       "simulated_merge": {
         "first_parent": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
-        "second_parent": "7be83b1baf8fb968b3886892ab201f95d716c943",
-        "tree": "d470dcb82ef52f65c9f209e09fb4a052a1a03f74",
-        "tree_source": "this PR's working tree immediately before this dry-run field was written"
+        "second_parent": "2bac71c68657deeac11bf0ee3e83eb1a018674ae",
+        "tree": "6a391174f50dbd8f2160727c089fbafb252912f5",
+        "tree_source": "exact committed tree of 2bac71c6 (worktree clean at dry-run time)"
       },
       "non_evidence_paths_in_merge_vs_candidate": [
         "docs/audits/code-boundary-inventory.csv"
@@ -362,7 +362,7 @@
         "MERGE=$(git commit-tree $TREE -p ee06d1d8294464f1eb7231f2b06505348a61cba2 -p HEAD -m dry-run)",
         "in a checkout of the candidate: uv run --frozen python -c 'registry_admission_errors(registry, release_sha=MERGE, environment=\"dev\", expected_manifest_digest=<manifest digest>, root=.)'"
       ],
-      "caveat": "Writing this field changes the audit file (a docs/evidence path), so the merge tree of the submitted head differs from the dry-run tree only by this field. It is not a lease check: no lease exists and none was requested."
+      "caveat": "The dry run binds commit 2bac71c6. The only later change is the commit that records this field (this audit file, a docs/evidence path). It is not a lease check: no lease exists and none was requested."
     },
     "human_authorization": {
       "approval_id": "HUMANOPS-DEV-MIGRATION-20260929T053234Z",
