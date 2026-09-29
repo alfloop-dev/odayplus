@@ -6,7 +6,8 @@
   "blocking_layer": "exact-head review and merge of PR #1107, then lease registration",
   "deployment_success_claimed": false,
   "historical_receipts_modified": false,
-  "generated_at": "2026-09-29T06:00:00Z",
+  "generated_at": "2026-09-29T05:37:00Z",
+  "generated_at_source": "mtime of build-reconciliation-36509055237.json as first written by the rebuild script; all 05:37:00Z stamps in this round share this measured value and precede commit 2bac71c6 (05:44:58Z)",
   "generated_by": "Claude (interactive session, on explicit user instruction)",
   "collection_baseline": {
     "note": "Worktree base equals origin/dev; the candidate is origin/dev head itself.",
@@ -22,7 +23,7 @@
   },
   "readback_window_utc": {
     "start_utc": "2026-09-29T01:41:03Z",
-    "end_utc": "2026-09-29T06:00:00Z"
+    "end_utc": "2026-09-29T05:37:00Z"
   },
   "readback_identity": {
     "hosted_build": "GitHub Actions run 36509055237 via gh api / gh run download",
@@ -63,7 +64,7 @@
     "candidate_ref": "refs/heads/dev",
     "candidate_rebind": {
       "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
-      "rebound_at": "2026-09-29T06:00:00Z",
+      "rebound_at": "2026-09-29T05:37:00Z",
       "from_candidate_sha": "a663d604831c4b9710dda9b7ca85ddbc193837e8",
       "to_candidate_sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
       "from_manifest_digest": "sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482",
@@ -545,7 +546,7 @@
     "Deploy phase run with that lease and live readbacks captured"
   ],
   "superseded_unblock_requirements": {
-    "superseded_at": "2026-09-29T06:00:00Z",
+    "superseded_at": "2026-09-29T05:37:00Z",
     "reason": "a663 round superseded; see history",
     "previous_requirements": [
       "Supervisor lease issuance must transition from issuing/lease_issue_blocked to dispatched with a signed lease for candidate a663d604831c4b9710dda9b7ca85ddbc193837e8 and manifest sha256:6ed4f3a4c1506b5a99ac80d9e1e4eda544f90975f9553b6ef77581a3f21c5482. Worker authorization HUMANOPS-DEV-MIGRATION-20260928T120016Z expires 2026-09-28T18:00:16Z.",
