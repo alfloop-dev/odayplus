@@ -19,6 +19,16 @@
 
 截至 2026-08-26 01:18:58Z 的 task-scoped 唯讀重查確認上述 blocker 沒有漂移：`origin/dev` 仍為 `8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3`；Actions 仍只有 `Deploy Dev` / `Deploy/Verify Staging`；staging environment 仍沒有 15 個 Runtime Release variables、lease authority 或 environment secrets；Artifact Registry 仍只有 `oday-data-platform` / `oday-mlflow`，Cloud Run 仍只有 `oday-mlflow`；snapshot bucket object listing、Scheduler jobs 與 staging namespace workloads 仍為空。這次重查仍未執行 apply、deploy 或 rehearsal。
 
+## 2026-09-29 重新判定：阻塞點移到 staging Data Gate
+
+這次只讀 `origin/dev`（`0d569940`）與看板，沒有呼叫 GCP，也沒有執行 build、deploy 或 rehearsal。
+
+- 上游 dev rollout 已完成：`ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 已 done（PR #1107，merge `0d569940`）。`docs/evidence/gates/RELEASE_GATE_REGISTRY.json` 的 `release.decision=go`、candidate `ee06d1d8294464f1eb7231f2b06505348a61cba2`、manifest `sha256:8ee919d67fc89768c7ae8912ecfce706dc1b2a0fbb2e3da1a14b5e87c1fae80e`，但 `admission_target=dev`。所以上方 B1/B3/B6（placeholder digest、stale candidate、沒有 image handoff）在 dev 這一層已經被真實 build 取代。這不代表 staging 已獲准。
+- staging 准入要看 `gate-2`（Data Gate，`admission_target=staging`）。目前它是 `blocked`、`receipts=[]`。它的 blocker 要求對 live 部署跑 `check_live_production_data.py`，並指出 masked snapshot 由 `DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001` 產生。
+- rollout plan 第 88 行與第 233 行都要求 staging 從核准的 masked snapshot 還原。`DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001` 目前仍是 `todo`，它依賴的 `DPF-EMGI-LIVE-ROLLOUT-001`、`ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001`、`DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001` 也還沒完成。
+- 處置：已把 `DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001` 加進本 task 的 `depends_on`，用來停止空轉重派。等它 done、`gate-2` 有綁定 candidate 的 receipt，再由 Human/Ops 以 staging 為目標登記 lease request，才能開始 rehearsal。
+- 在那之前，本目錄仍然沒有 `staging-verified` 收據。
+
 ## Blockers 與解除條件
 
 | Blocker | 解除條件 |
