@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "record_kind": "exact-candidate-ci",
+  "task_id": "ODP-DEV-CANDIDATE-REBIND-B175-001",
+  "candidate_sha": "b175b231cea7e063286670405650ae987230d7d7",
+  "readback_method": "gh api repos/alfloop-dev/odayplus/actions/runs?head_sha=b175b231cea7e063286670405650ae987230d7d7; gh api .../runs/<id>/jobs",
+  "exact_candidate_ci": [
+    {
+      "workflow": "CI",
+      "run_id": 36681540726,
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/36681540726",
+      "event": "merge_group",
+      "head_sha": "b175b231cea7e063286670405650ae987230d7d7",
+      "conclusion": "success",
+      "created_at": "2026-09-30T07:03:21Z",
+      "updated_at": "2026-09-30T07:24:51Z",
+      "jobs": {
+        "orchestrator": [
+          109777851334,
+          "success"
+        ],
+        "change-scope": [
+          109777851593,
+          "success"
+        ],
+        "product-node": [
+          109777917174,
+          "success"
+        ],
+        "product-lint-unit": [
+          109777917189,
+          "success"
+        ],
+        "product-security": [
+          109777917266,
+          "success"
+        ],
+        "performance-gate": [
+          109777917276,
+          "success"
+        ],
+        "product-db": [
+          109777917286,
+          "success"
+        ],
+        "product-api-contract": [
+          109777917291,
+          "success"
+        ],
+        "product-e2e-gate": [
+          109777917319,
+          "success"
+        ],
+        "product": [
+          109784076109,
+          "success"
+        ]
+      }
+    },
+    {
+      "workflow": "CI",
+      "run_id": 36683617429,
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/36683617429",
+      "event": "push",
+      "head_sha": "b175b231cea7e063286670405650ae987230d7d7",
+      "conclusion": "success",
+      "created_at": "2026-09-30T07:25:38Z",
+      "updated_at": "2026-09-30T07:47:10Z",
+      "jobs": {
+        "change-scope": [
+          109784362454,
+          "success"
+        ],
+        "orchestrator": [
+          109784362765,
+          "success"
+        ],
+        "performance-gate": [
+          109784430324,
+          "success"
+        ],
+        "product-security": [
+          109784430355,
+          "success"
+        ],
+        "product-api-contract": [
+          109784430362,
+          "success"
+        ],
+        "product-node": [
+          109784430403,
+          "success"
+        ],
+        "product-db": [
+          109784430472,
+          "success"
+        ],
+        "product-lint-unit": [
+          109784430476,
+          "success"
+        ],
+        "product-e2e-gate": [
+          109784430518,
+          "success"
+        ],
+        "product": [
+          109790931931,
+          "success"
+        ]
+      }
+    }
+  ],
+  "product_child_jobs": "all seven executed and succeeded on the exact candidate in both runs; no inheritance is claimed",
+  "does_not_attest": [
+    "release admission, lease issuance, deploy, or live runtime acceptance",
+    "external H01 legal approval"
+  ]
+}
