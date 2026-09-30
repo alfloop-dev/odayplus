@@ -1,6 +1,52 @@
 # ODP-DEV-LIVE-DEPLOY-EXECUTION-001 — evidence
 
-Status: **blocked on Human/Ops (round 4, 15:44Z): Supervisor still on af923aa5. Nothing has been deployed.** Round 2 (2026-09-29T15:19Z) used the one fresh release request that Human/Ops registered under `HUMANOPS-DEV-MIGRATION-20260929T053234Z`. The live Supervisor issuer rejected it before any lease existed: no GCS lease, no Secret Manager read, and no Runtime Release run. The newest `deploy-dev.yml` run is still the build run `36509055237` (2026-09-29T01:41:03Z). Round 3 (15:33Z) found that the runtime roll-forward is staged but not running, and that no new request is on the board.
+Status: **blocked on Human/Ops (round 5, 2026-09-30T00:35Z): the issuer cannot read the signing key because the host's gcloud login has expired. Nothing has been deployed.** The second fresh request under `HUMANOPS-DEV-MIGRATION-20260929T053234Z` passed every check up to and including the GCS lease store on Supervisor `a631b8c7`, then failed at the Secret Manager key load. No lease exists and no Runtime Release run was started. Earlier rounds are kept below as recorded.
+
+## Round 5 (2026-09-30T00:32Z – 00:36Z) — issuer blocked at the signing key
+
+### Preconditions, measured before the issuer ran
+
+| Check | Measured | Source |
+|---|---|---|
+| Running Supervisor | pid `2780187`, started 2026-09-30T00:12:41Z, `/proc/2780187/cwd` = `oday-plus-supervisor-runtime-a631b8c793b2`, exe `/usr/bin/python3.12` | `ps`, `readlink` |
+| `oday-plus-supervisor-runtime-current` | → `a631b8c793b2` | `readlink -f` |
+| `origin/dev` | `a631b8c793b27842f28f54f663a33b4af49ee824`, unchanged since round 2, so `admission-origin-dev-a631b8c7.json` (`errors: []`) still applies | `git fetch origin dev; git rev-parse origin/dev` |
+| Task | `in_progress`, no blocker, `release_lease_request` present: approval `HUMANOPS-DEV-MIGRATION-20260929T053234Z`, round-2 binding, `expires_at` 2026-09-30T05:32:34Z, nonce digest `sha256:a7065d07…` (round 2 was `sha256:4caac1a3…`) | live `ai-status.json` |
+| Full pre-GCS issuer check on the **registered** request, a631 code | every list `[]`, `dispatch_ref_sha` = `a631b8c7` | `issuer-precheck-registered-request-round5.json` (the round-3 script with the live request instead of a hypothetical one; read-only) |
+
+### What the issuer did
+
+| Time (UTC) | Event |
+|---|---|
+| 00:35:21 | `release_lease_issuance_reserved`, fingerprint `sha256:ebac97f0…`, state `issuing` |
+| 00:35:34 | `release_lease_issue_blocked`, `lease_id=null`, error `Secret Manager signing key is unavailable`, `dispatch_ref_sha` = `a631b8c7` |
+
+Receipt: `issuance-blocked-receipt-round5.json` (verbatim request with the nonce replaced by its sha256, the issuance record and both events).
+
+In `process_release_lease_issuance` this error is recorded only in the `private_key_loader(...)` branch, which runs after the ancestry, nonce, admission and GCS lease-store steps. The ancestry block from round 2 is fixed, and the GCS lease store is reachable. The only remaining failure is the key load.
+
+### Root cause: the host gcloud login needs re-authentication
+
+`load_private_key_from_secret_reference` runs `gcloud secrets versions access latest --project 767864276141 --secret odp-release-lease-private-key` as a subprocess and discards stderr. The Supervisor has `HOME=/home/lupin` and no `CLOUDSDK_CONFIG` or `GOOGLE_APPLICATION_CREDENTIALS`, so it uses the host gcloud config (active account `deborah.lu@dev.cctech-support.com`). A metadata-only call from the same HOME on the same secret, which reads no key material, fails like this:
+
+```
+ERROR: (gcloud.secrets.versions.describe) There was a problem refreshing your current auth tokens: Reauthentication failed. cannot prompt during non-interactive execution.
+EXIT=1
+```
+
+Transcript: `secret-access-probe-round5.txt`. `gh run list --workflow deploy-dev.yml` still shows `36509055237` (build, 2026-09-29T01:41:03Z) as the newest run, so nothing was dispatched.
+
+### Why I stopped
+
+The issuer does not retry a blocked fingerprint. The request's nonce is now recorded in issuance history, and `_nonce_reuse_errors` rejects it if it is registered again. Acceptance requires stopping on failure. Getting a working login needs an interactive `gcloud auth login`, which a background worker cannot do.
+
+### Required Human/Ops actions, deadline 2026-09-30T05:32:34Z
+
+1. On the Supervisor host, as `lupin`, restore a non-interactive gcloud login for an account that has `secretmanager.versions.access` on `projects/767864276141/secrets/odp-release-lease-private-key`, for example `gcloud auth login deborah.lu@dev.cctech-support.com`. Check that `gcloud secrets versions describe latest --secret odp-release-lease-private-key --project 767864276141 </dev/null` exits 0. The key loader runs gcloud per call, so no Supervisor restart is needed for this.
+2. Return the task to `in_progress` and resolve the round-5 blocker.
+3. With the user's consent (this would be the third request under this approval id), register one fresh `release_lease_request` with a new nonce, the same binding, and `expires_at` ≤ 2026-09-30T05:32:34Z.
+
+After the deadline this authorization cannot be reused, and a new one is needed.
 
 ## Round 4 (2026-09-29T15:44Z) — task parked as blocked on Human/Ops
 
