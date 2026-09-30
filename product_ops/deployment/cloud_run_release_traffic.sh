@@ -33,6 +33,120 @@ capture_service_traffic() {
   python3 "${ODP_TRAFFIC_HELPER}" service-url --description="${output}" >/dev/null
 }
 
+# ODP-DEPLOY-FIRST-RELEASE-NO-TRAFFIC-FIX-001: `gcloud run deploy --no-traffic`
+# is rejected when it would create the service, so the candidate deploy has to
+# know whether the service exists right now. That is read from `gcloud run
+# services describe` at deploy time -- not from the pre-release snapshot or the
+# recovery mode an operator expected. Prints `present` or `absent`; only the
+# explicit not-found answer means absent. Any other describe failure
+# (permission, API, network) returns non-zero so the release fails closed
+# rather than creating a service over one it could not read.
+cloud_run_service_presence() {
+  local service="$1"
+  local stderr_file name
+  stderr_file="$(mktemp)"
+  if name="$(gcloud run services describe "${service}" \
+    --region="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" \
+    --format='value(metadata.name)' 2>"${stderr_file}")"; then
+    rm -f "${stderr_file}"
+    if [ "${name}" != "${service}" ]; then
+      echo "Error: Cloud Run describe for '${service}' returned '${name}'; presence is unknown." >&2
+      return 1
+    fi
+    printf 'present'
+    return 0
+  fi
+  if grep -qF "Cannot find service [${service}]" "${stderr_file}"; then
+    rm -f "${stderr_file}"
+    printf 'absent'
+    return 0
+  fi
+  cat "${stderr_file}" >&2
+  rm -f "${stderr_file}"
+  echo "Error: cannot determine whether Cloud Run service '${service}' exists; refusing to deploy." >&2
+  return 1
+}
+
+# A first release cannot hide its Web candidate behind --no-traffic: the first
+# revision of a new service takes 100% of it. So a new Web service is created
+# without public invocation, the smoke reaches it through Cloud Run IAM with a
+# short-lived identity token sent as X-Serverless-Authorization (the
+# application still sees an anonymous browser request), and allUsers is only
+# granted at promotion. A failed verification deletes the service before that.
+grant_service_invoker() {
+  local service="$1"
+  local member="$2"
+  gcloud run services add-iam-policy-binding "${service}" \
+    --region="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" \
+    --member="${member}" \
+    --role="roles/run.invoker" \
+    --quiet >/dev/null
+}
+
+# Proves the candidate refuses anonymous callers, then waits (bounded) for the
+# fresh invoker binding to admit the smoke identity. IAM bindings propagate
+# asynchronously, so without this the smoke can fail on a 403 that is only
+# propagation lag.
+wait_for_private_candidate_invoker() {
+  local url="$1"
+  local token="$2"
+  local attempts="${ODP_CANDIDATE_INVOKER_WAIT_ATTEMPTS:-24}"
+  local delay="${ODP_CANDIDATE_INVOKER_WAIT_SECONDS:-5}"
+  local header_file status attempt
+  status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "${url}/operator" || true)"
+  if [ "${status}" != "401" ] && [ "${status}" != "403" ]; then
+    echo "Error: first-release Web candidate answered an anonymous request with HTTP ${status}; it must be private until promotion." >&2
+    return 1
+  fi
+  header_file="$(mktemp)"
+  chmod 600 "${header_file}"
+  printf 'X-Serverless-Authorization: Bearer %s\n' "${token}" >"${header_file}"
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 \
+      -H "@${header_file}" "${url}/operator" || true)"
+    case "${status}" in
+      000 | 401 | 403) ;;
+      *)
+        rm -f "${header_file}"
+        return 0
+        ;;
+    esac
+    if [ "${attempt}" -lt "${attempts}" ]; then
+      sleep "${delay}"
+    fi
+  done
+  rm -f "${header_file}"
+  echo "Error: smoke identity was not admitted to the private Web candidate (last HTTP ${status})." >&2
+  return 1
+}
+
+# Waits (bounded) for the fresh allUsers invoker binding on a first-release Web
+# service to propagate to anonymous callers before live E2E runs. IAM bindings
+# propagate asynchronously, so without this the anonymous /operator check in
+# check_live_e2e_gate can fail on a 403.
+wait_for_public_service_invoker() {
+  local url="$1"
+  local attempts="${ODP_PUBLIC_INVOKER_WAIT_ATTEMPTS:-${ODP_CANDIDATE_INVOKER_WAIT_ATTEMPTS:-24}}"
+  local delay="${ODP_PUBLIC_INVOKER_WAIT_SECONDS:-${ODP_CANDIDATE_INVOKER_WAIT_SECONDS:-5}}"
+  local status attempt
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "${url}/operator" || true)"
+    case "${status}" in
+      000 | 401 | 403) ;;
+      *)
+        return 0
+        ;;
+    esac
+    if [ "${attempt}" -lt "${attempts}" ]; then
+      sleep "${delay}"
+    fi
+  done
+  echo "Error: public invocation was not admitted on the promoted Web service (last HTTP ${status})." >&2
+  return 1
+}
+
 service_snapshot_url() {
   local snapshot="$1"
   if [ "$(python3 "${ODP_TRAFFIC_HELPER}" exists --description="${snapshot}")" != "true" ]; then

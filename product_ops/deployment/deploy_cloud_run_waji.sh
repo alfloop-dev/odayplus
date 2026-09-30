@@ -766,6 +766,16 @@ run_migration_compatibility_gate() {
 run_migration_compatibility_gate
 
 echo "Deploying immutable API candidate without production traffic..."
+# A first release creates the service, and Cloud Run rejects the no-traffic flag
+# on create: the first revision always takes 100% of a new service. Existing
+# services keep the no-traffic blue/green path unchanged.
+if ! API_SERVICE_PRESENCE="$(cloud_run_service_presence "${API_SERVICE}")"; then
+  exit 1
+fi
+API_TRAFFIC_ARGS=()
+if [ "${API_SERVICE_PRESENCE}" = "present" ]; then
+  API_TRAFFIC_ARGS=(--no-traffic)
+fi
 gcloud run deploy "${API_SERVICE}" \
   --image="${API_IMAGE}" \
   --region="${GCP_REGION}" \
@@ -780,7 +790,7 @@ gcloud run deploy "${API_SERVICE}" \
   --revision-suffix="${REVISION_SUFFIX}" \
   "${CLOUD_RUN_NETWORK_ARGS[@]}" \
   --tag="${API_REVISION_TAG}" \
-  --no-traffic \
+  "${API_TRAFFIC_ARGS[@]}" \
   --no-allow-unauthenticated \
   --quiet
 
@@ -947,6 +957,20 @@ else
 fi
 
 echo "Deploying immutable Web candidate without production traffic..."
+# A first release creates the service, and Cloud Run rejects the no-traffic flag
+# on create: the first revision always takes 100% of a new service. Existing
+# services keep the no-traffic blue/green path unchanged.
+if ! WEB_SERVICE_PRESENCE="$(cloud_run_service_presence "${WEB_SERVICE}")"; then
+  exit 1
+fi
+# Because a new Web service serves its first revision at once, it is created
+# private and only opened to allUsers at promotion (see grant_service_invoker).
+WEB_TRAFFIC_ARGS=()
+WEB_ACCESS_ARGS=(--no-allow-unauthenticated)
+if [ "${WEB_SERVICE_PRESENCE}" = "present" ]; then
+  WEB_TRAFFIC_ARGS=(--no-traffic)
+  WEB_ACCESS_ARGS=(--allow-unauthenticated)
+fi
 gcloud run deploy "${WEB_SERVICE}" \
   --image="${WEB_IMAGE}" \
   --region="${GCP_REGION}" \
@@ -961,8 +985,8 @@ gcloud run deploy "${WEB_SERVICE}" \
   --revision-suffix="${REVISION_SUFFIX}" \
   "${CLOUD_RUN_NETWORK_ARGS[@]}" \
   --tag="${WEB_REVISION_TAG}" \
-  --no-traffic \
-  --allow-unauthenticated \
+  "${WEB_TRAFFIC_ARGS[@]}" \
+  "${WEB_ACCESS_ARGS[@]}" \
   --quiet
 
 gcloud run services describe "${WEB_SERVICE}" \
@@ -971,6 +995,28 @@ gcloud run services describe "${WEB_SERVICE}" \
   --format=json >"${WEB_CANDIDATE_DESCRIPTION}"
 WEB_REVISION="$(tagged_revision "${WEB_CANDIDATE_DESCRIPTION}" "${WEB_REVISION_TAG}")"
 WEB_URL="$(tagged_revision_url "${WEB_CANDIDATE_DESCRIPTION}" "${WEB_REVISION_TAG}")"
+
+if [ "${WEB_SERVICE_PRESENCE}" = "absent" ]; then
+  echo "First-release Web candidate is private; granting the smoke identity invoker access..."
+  WEB_CANDIDATE_AUDIENCE="$(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")"
+  if [[ -z "${WEB_CANDIDATE_AUDIENCE}" ]]; then
+    echo "Error: first-release Web candidate has no service URL to use as token audience." >&2
+    exit 1
+  fi
+  grant_service_invoker "${WEB_SERVICE}" "serviceAccount:${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT}"
+  ODP_WEB_CANDIDATE_INVOKER_TOKEN="$(gcloud auth print-identity-token \
+    --impersonate-service-account="${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT}" \
+    --audiences="${WEB_CANDIDATE_AUDIENCE}")"
+  if [[ -z "${ODP_WEB_CANDIDATE_INVOKER_TOKEN}" ]]; then
+    echo "Error: failed to mint the first-release Web candidate invoker token." >&2
+    exit 1
+  fi
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    echo "::add-mask::${ODP_WEB_CANDIDATE_INVOKER_TOKEN}"
+  fi
+  export ODP_WEB_CANDIDATE_INVOKER_TOKEN
+  wait_for_private_candidate_invoker "${WEB_URL}" "${ODP_WEB_CANDIDATE_INVOKER_TOKEN}"
+fi
 
 if [[ -z "${ODP_OPERATOR_SMOKE_BEARER_TOKEN:-}" ]]; then
   smoke_audience="${ODP_AUTH_AUDIENCES%%,*}"
@@ -1010,6 +1056,10 @@ upsert_scheduler_trigger \
   "${WORKER_CANDIDATE_JOB}" \
   "${ODP_WORKER_CRON}"
 promote_service_traffic "${API_SERVICE}" "${API_REVISION}"
+if [ "${WEB_SERVICE_PRESENCE}" = "absent" ]; then
+  echo "Promotion: opening the first-release Web service to public invocation..."
+  grant_service_invoker "${WEB_SERVICE}" "allUsers"
+fi
 promote_service_traffic "${WEB_SERVICE}" "${WEB_REVISION}"
 
 # ODP-LIVE-E2E-001: the release is serving but is not committed yet. The live
@@ -1036,6 +1086,10 @@ if [[ -z "${LIVE_E2E_API_URL}" || -z "${LIVE_E2E_WEB_URL}" ]]; then
   echo "Live E2E gate cannot run: served origin lookup returned empty" \
     "(api='${LIVE_E2E_API_URL}' web='${LIVE_E2E_WEB_URL}')." >&2
   exit 1
+fi
+if [ "${WEB_SERVICE_PRESENCE}" = "absent" ]; then
+  echo "Waiting for public invocation to become effective on ${LIVE_E2E_WEB_URL}..."
+  wait_for_public_service_invoker "${LIVE_E2E_WEB_URL}"
 fi
 # `deploymentMode` is what the *runtime* reports back from
 # `apps/api/oday_api/runtime_mode.deployment_mode()`, which reads the
