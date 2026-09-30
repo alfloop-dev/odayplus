@@ -68,6 +68,60 @@ cloud_run_service_presence() {
   return 1
 }
 
+# A first release cannot hide its Web candidate behind --no-traffic: the first
+# revision of a new service takes 100% of it. So a new Web service is created
+# without public invocation, the smoke reaches it through Cloud Run IAM with a
+# short-lived identity token sent as X-Serverless-Authorization (the
+# application still sees an anonymous browser request), and allUsers is only
+# granted at promotion. A failed verification deletes the service before that.
+grant_service_invoker() {
+  local service="$1"
+  local member="$2"
+  gcloud run services add-iam-policy-binding "${service}" \
+    --region="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" \
+    --member="${member}" \
+    --role="roles/run.invoker" \
+    --quiet >/dev/null
+}
+
+# Proves the candidate refuses anonymous callers, then waits (bounded) for the
+# fresh invoker binding to admit the smoke identity. IAM bindings propagate
+# asynchronously, so without this the smoke can fail on a 403 that is only
+# propagation lag.
+wait_for_private_candidate_invoker() {
+  local url="$1"
+  local token="$2"
+  local attempts="${ODP_CANDIDATE_INVOKER_WAIT_ATTEMPTS:-24}"
+  local delay="${ODP_CANDIDATE_INVOKER_WAIT_SECONDS:-5}"
+  local header_file status attempt
+  status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "${url}/operator" || true)"
+  if [ "${status}" != "401" ] && [ "${status}" != "403" ]; then
+    echo "Error: first-release Web candidate answered an anonymous request with HTTP ${status}; it must be private until promotion." >&2
+    return 1
+  fi
+  header_file="$(mktemp)"
+  chmod 600 "${header_file}"
+  printf 'X-Serverless-Authorization: Bearer %s\n' "${token}" >"${header_file}"
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 \
+      -H "@${header_file}" "${url}/operator" || true)"
+    case "${status}" in
+      000 | 401 | 403) ;;
+      *)
+        rm -f "${header_file}"
+        return 0
+        ;;
+    esac
+    if [ "${attempt}" -lt "${attempts}" ]; then
+      sleep "${delay}"
+    fi
+  done
+  rm -f "${header_file}"
+  echo "Error: smoke identity was not admitted to the private Web candidate (last HTTP ${status})." >&2
+  return 1
+}
+
 service_snapshot_url() {
   local snapshot="$1"
   if [ "$(python3 "${ODP_TRAFFIC_HELPER}" exists --description="${snapshot}")" != "true" ]; then

@@ -2185,6 +2185,7 @@ def smoke_checks(
     operator_tenant: str,
     correlation_id: str,
     timeout: float,
+    web_invoker_token: str = "",
 ) -> tuple[list[CheckResult], dict[str, Any]]:
     checks: list[CheckResult] = []
     report: dict[str, Any] = {
@@ -2192,9 +2193,16 @@ def smoke_checks(
         "web_url": web_url.rstrip("/"),
         "expected_sha": expected_sha,
         "correlation_id": correlation_id,
+        "web_invoker_authenticated": bool(web_invoker_token.strip()),
         "secret_values_redacted": True,
     }
     base_headers = {"x-correlation-id": correlation_id}
+    # A first-release Web candidate is private until promotion. Cloud Run checks
+    # X-Serverless-Authorization for IAM, so the application still sees the
+    # anonymous request whose protected redirect this probe asserts.
+    web_headers = dict(base_headers)
+    if web_invoker_token.strip():
+        web_headers["x-serverless-authorization"] = f"Bearer {web_invoker_token.strip()}"
 
     probes = (
         ("version", "/platform/version"),
@@ -2352,7 +2360,7 @@ def smoke_checks(
     try:
         web_status, location = _request_without_redirect(
             f"{web_url.rstrip('/')}/operator",
-            headers=base_headers,
+            headers=web_headers,
             timeout=timeout,
         )
         auth_redirect = _is_safe_protected_redirect(web_url, web_status, location)
@@ -4194,6 +4202,7 @@ def main() -> int:
                 operator_tenant=os.environ.get("ODP_OPERATOR_SMOKE_TENANT", ""),
                 correlation_id=args.correlation_id,
                 timeout=args.timeout,
+                web_invoker_token=os.environ.get("ODP_WEB_CANDIDATE_INVOKER_TOKEN", ""),
             )
     return _finalize(
         checks=checks,

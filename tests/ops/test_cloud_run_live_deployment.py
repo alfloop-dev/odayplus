@@ -6046,11 +6046,41 @@ def _extract_cloud_run_service_deploy_block(script_text: str, service_var: str) 
     return "\n".join(block_lines)
 
 
+def _web_access_contract_ok(text: str) -> bool:
+    """Web is public only on an existing service; a first release is created private."""
+    web_block = _extract_cloud_run_service_deploy_block(text, "WEB_SERVICE")
+    default_private = "WEB_ACCESS_ARGS=(--no-allow-unauthenticated)\n"
+    existing_public = (
+        'if [ "${WEB_SERVICE_PRESENCE}" = "present" ]; then\n'
+        "  WEB_TRAFFIC_ARGS=(--no-traffic)\n"
+        "  WEB_ACCESS_ARGS=(--allow-unauthenticated)\n"
+        "fi\n"
+    )
+    return (
+        '"${WEB_ACCESS_ARGS[@]}"' in web_block
+        and "allow-unauthenticated" not in web_block
+        and default_private in text
+        and existing_public in text
+        and text.index(default_private) < text.index(existing_public)
+    )
+
+
+def _api_access_contract_ok(text: str) -> bool:
+    api_block = _extract_cloud_run_service_deploy_block(text, "API_SERVICE")
+    return (
+        "--no-allow-unauthenticated" in api_block
+        and "--allow-unauthenticated" not in api_block.replace("--no-allow-unauthenticated", "")
+    )
+
+
 def test_deploy_script_api_and_web_authentication_boundary_contract() -> None:
     """ODP-RUNTIME-RELEASE-API-INVOCATION-BOUNDARY-001:
 
     - API deployment must explicitly use --no-allow-unauthenticated and must not use --allow-unauthenticated.
-    - Web deployment must use --allow-unauthenticated (as public entrypoint for OIDC login) and must not use --no-allow-unauthenticated.
+    - Web deployment of an existing service uses --allow-unauthenticated (public
+      entrypoint for OIDC login). A first-release Web service is created with
+      --no-allow-unauthenticated and only opened to allUsers at promotion
+      (ODP-DEPLOY-FIRST-RELEASE-NO-TRAFFIC-FIX-001).
     - Both services deploy with explicit revision tags; existing services get
       --no-traffic through the presence-derived traffic args (first release
       cannot, see ODP-DEPLOY-FIRST-RELEASE-NO-TRAFFIC-FIX-001).
@@ -6058,40 +6088,56 @@ def test_deploy_script_api_and_web_authentication_boundary_contract() -> None:
     text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
 
     api_block = _extract_cloud_run_service_deploy_block(text, "API_SERVICE")
-    assert "--no-allow-unauthenticated" in api_block
-    assert "--allow-unauthenticated" not in api_block.replace("--no-allow-unauthenticated", "")
+    assert _api_access_contract_ok(text)
     assert '"${API_TRAFFIC_ARGS[@]}"' in api_block
     assert "--no-traffic" not in api_block
     assert "API_TRAFFIC_ARGS=(--no-traffic)" in text
     assert '--tag="${API_REVISION_TAG}"' in api_block
 
     web_block = _extract_cloud_run_service_deploy_block(text, "WEB_SERVICE")
-    assert "--allow-unauthenticated" in web_block
-    assert "--no-allow-unauthenticated" not in web_block
+    assert _web_access_contract_ok(text)
     assert '"${WEB_TRAFFIC_ARGS[@]}"' in web_block
     assert "--no-traffic" not in web_block
     assert "WEB_TRAFFIC_ARGS=(--no-traffic)" in text
     assert '--tag="${WEB_REVISION_TAG}"' in web_block
 
-    # Across the entire script, exactly one service uses --no-allow-unauthenticated (API)
-    # and exactly one service uses --allow-unauthenticated (Web).
-    assert text.count("--no-allow-unauthenticated") == 1
-    assert text.count("--allow-unauthenticated") == 1
+    # The API deploy and the first-release Web default are the only private
+    # flags; the existing-service Web branch is the only public one.
+    assert text.count("--no-allow-unauthenticated") == 2
+    assert text.replace("--no-allow-unauthenticated", "").count("--allow-unauthenticated") == 1
+    # allUsers is granted in exactly one place: the first-release promotion.
+    assert text.count('grant_service_invoker "${WEB_SERVICE}" "allUsers"') == 1
+    assert text.index('grant_service_invoker "${WEB_SERVICE}" "allUsers"') > text.index(
+        "validate_cloud_run_live_deployment.py smoke"
+    )
 
 
 @pytest.mark.parametrize(
-    "mutated_api_flag,mutated_web_flag,should_pass",
+    "old,new,should_pass",
     [
-        ("--no-allow-unauthenticated", "--allow-unauthenticated", True),
-        ("--allow-unauthenticated", "--allow-unauthenticated", False),
-        ("--no-allow-unauthenticated", "--no-allow-unauthenticated", False),
-        ("", "--allow-unauthenticated", False),
-        ("--no-allow-unauthenticated", "", False),
+        ("", "", True),
+        (
+            "  --no-allow-unauthenticated \\\n  --quiet",
+            "  --allow-unauthenticated \\\n  --quiet",
+            False,
+        ),
+        ("  --no-allow-unauthenticated \\\n", "", False),
+        (
+            "WEB_ACCESS_ARGS=(--no-allow-unauthenticated)",
+            "WEB_ACCESS_ARGS=(--allow-unauthenticated)",
+            False,
+        ),
+        (
+            "  WEB_ACCESS_ARGS=(--allow-unauthenticated)",
+            "  WEB_ACCESS_ARGS=(--no-allow-unauthenticated)",
+            False,
+        ),
+        ('  "${WEB_ACCESS_ARGS[@]}" \\\n', "  --allow-unauthenticated \\\n", False),
     ],
 )
 def test_deploy_script_invoker_boundary_fails_closed_when_flags_tampered(
-    mutated_api_flag: str,
-    mutated_web_flag: str,
+    old: str,
+    new: str,
     should_pass: bool,
 ) -> None:
     """ODP-RUNTIME-RELEASE-API-INVOCATION-BOUNDARY-001:
@@ -6099,27 +6145,11 @@ def test_deploy_script_invoker_boundary_fails_closed_when_flags_tampered(
     Contract validation fails closed if either API or Web authentication flag is tampered with.
     """
     text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    mutated_text = text.replace(
-        "  --no-allow-unauthenticated \\\n",
-        f"  {mutated_api_flag} \\\n" if mutated_api_flag else "",
-        1,
-    ).replace(
-        "  --allow-unauthenticated \\\n",
-        f"  {mutated_web_flag} \\\n" if mutated_web_flag else "",
-        1,
-    )
+    if old:
+        assert old in text
+    mutated_text = text.replace(old, new, 1) if old else text
 
-    api_block = _extract_cloud_run_service_deploy_block(mutated_text, "API_SERVICE")
-    web_block = _extract_cloud_run_service_deploy_block(mutated_text, "WEB_SERVICE")
-
-    api_ok = (
-        "--no-allow-unauthenticated" in api_block
-        and "--allow-unauthenticated" not in api_block.replace("--no-allow-unauthenticated", "")
-    )
-    web_ok = (
-        "--allow-unauthenticated" in web_block and "--no-allow-unauthenticated" not in web_block
-    )
-    is_valid = api_ok and web_ok
+    is_valid = _api_access_contract_ok(mutated_text) and _web_access_contract_ok(mutated_text)
     assert is_valid is should_pass
 
 
