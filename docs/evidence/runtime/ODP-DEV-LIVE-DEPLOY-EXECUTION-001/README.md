@@ -1,6 +1,57 @@
 # ODP-DEV-LIVE-DEPLOY-EXECUTION-001 — evidence
 
-Status: **blocked on Human/Ops (round 5, 2026-09-30T00:35Z): the issuer cannot read the signing key because the host's gcloud login has expired. Nothing has been deployed.** The second fresh request under `HUMANOPS-DEV-MIGRATION-20260929T053234Z` passed every check up to and including the GCS lease store on Supervisor `a631b8c7`, then failed at the Secret Manager key load. No lease exists and no Runtime Release run was started. Earlier rounds are kept below as recorded.
+Status: **blocked on Human/Ops (round 6, 2026-09-30T02:06Z): the lease was issued and consumed, the migration ran and succeeded on dev, then `gcloud run deploy` refused to create the new `oday-api` service because the deploy script passes `--no-traffic`, which Cloud Run does not accept on service creation. No API, web, worker or scheduler workload exists on dev.** This is a code defect in `product_ops/deployment/deploy_cloud_run_waji.sh`, present in the candidate `ee06d1d8` and still present on `origin/dev`. Earlier rounds are kept below as recorded.
+
+## Round 6 (2026-09-30T01:58Z – 02:10Z) — lease issued, deploy failed at API service creation
+
+### Preconditions, measured before the issuer ran
+
+| Check | Measured |
+|---|---|
+| Task | `in_progress`, no blocker; `release_lease_request` approval `HUMANOPS-DEV-MIGRATION-20260929T053234Z`, new nonce digest `sha256:e9d9dbde…` (round 5 was `sha256:a7065d07…`), `expires_at` 2026-09-30T05:32:34Z |
+| Signing key, metadata only | `gcloud secrets versions describe latest --secret=odp-release-lease-private-key --project=767864276141 </dev/null` → `versions/1 ENABLED`, exit 0, account `deborah.lu@dev.cctech-support.com` |
+| Supervisor | pid `2780187` (runtime `a631b8c7`, as in round 5) |
+
+### What happened
+
+| Time (UTC) | Event |
+|---|---|
+| 02:01:22 | `release_lease_issuance_reserved`, fingerprint `sha256:5e915602…` |
+| 02:01:35 | `release_lease_issued`, `lease_id=lease-410e6cf6a181ebb31e8b91fb14177bed`, key `ed25519:f2b35469…`, `dispatch_ref_sha=a631b8c7` |
+| 02:01:38 | Deploy Dev run [36657889962](https://github.com/alfloop-dev/odayplus/actions/runs/36657889962) dispatched on `dev` @ `a631b8c7` (`release_lease_runtime_release_dispatched`) |
+| 02:01–02:06 | Jobs: validate inputs ✅, lease verification ✅, build skipped (deploy phase), **deploy ❌**, watch skipped |
+| 02:03:55 | Live deployment preflight passed |
+| 02:04:12 | Migration job `oday-migration-r-ee06d1d82944` created with the manifest images (`oday-api@sha256:07b3c1f3…`, `oday-worker@sha256:9aeb6784…`, `oday-scheduler@sha256:bd4efa0d…`, `oday-web@sha256:9939e4d0…`) |
+| 02:05:34 | Migration execution `oday-migration-r-ee06d1d82944-76fh9` exit 0; receipt `status=succeeded`, `target_revision=head`, `runtime_schema_verified=true`, assisted-intake steps 001–004 `verified` |
+| 02:05:46 | Migration job smoke and bootstrap compatibility passed |
+| 02:05:49 | `ERROR: (gcloud.run.deploy) --no-traffic not supported when creating a new service.` on `oday-api` |
+| 02:05:49 | Script: `previous-release state could not be determined; no recovery mode is claimed` → first-release recovery deletes the candidate job and holds zero traffic |
+| 02:05:56 | Migration candidate job deleted |
+
+Raw step log: `deploy-run-36657889962-failed-step.log`. Live readback (services, jobs, migration Cloud Logging entries, run job conclusions): `live-readback-run-36657889962.json`.
+
+The migration failure from the previous rollout (`Can't locate revision identified by '29b539ebc72a'`) did not recur: this execution upgraded to `head` and verified the schema.
+
+### Live state after the run (read-only readback)
+
+- Cloud Run services in `odayplus-runtime-20260825` / `asia-east1`: `oday-mlflow`, `oday-staging-mlflow` only. No `oday-api`, no `oday-web`.
+- Cloud Run jobs: none. The migration candidate job was deleted by the script's first-release recovery.
+- The dev database schema **was** changed: the migration ran to `head`. Nothing was reset, stamped or deleted.
+- Egress and IAM on the API and web services cannot be read back because the services were never created. The 16 external sources stay off (`ODP_EXTERNAL_PROVIDER_MODE: disabled` in the step environment).
+- The lease is consumed. The approval expires at 05:32:34Z today, and this request cannot be retried.
+
+### Root cause: the deploy script cannot create a service
+
+`product_ops/deployment/deploy_cloud_run_waji.sh` deploys the API (line 783) and the web service (line 964) with `--tag=… --no-traffic`. Cloud Run accepts `--no-traffic` only when the service already exists. This is the first release into this target, so the first `gcloud run deploy` always fails. `tests/ops/test_cloud_run_live_deployment.py` asserts that both blocks contain `--no-traffic` (lines 2281 and 6061/6067), so the contract tests require the defect. The same lines are on `origin/dev`. No open task or PR changes them.
+
+The deploy job checks out the candidate SHA (`Assert exact release SHA is checked out`). So the fix cannot reach this candidate. The fix has to land on `dev` first, followed by a new build, a new registry binding and a new approval.
+
+### Required Human/Ops actions (human gate)
+
+1. Open a product task to fix the first-release path in `deploy_cloud_run_waji.sh`. Probe the service with `gcloud run services describe`. If it is absent, create it without `--no-traffic`: either `--no-traffic` omitted with ingress kept private and no public invoker, or a creation step that puts zero traffic on a placeholder. Update the two contract tests to match.
+2. After that fix merges, rebuild the candidate and rebind the registry. The fix is outside `docs/evidence/`, so `ee06d1d8` cannot be reused.
+3. Issue a new deploy authorization for the new candidate. `HUMANOPS-DEV-MIGRATION-20260929T053234Z` expires at 05:32:34Z today.
+4. Account for the dev schema: it is already at the `ee06d1d8` head. The next candidate's migration will start from that state.
 
 ## Round 5 (2026-09-30T00:32Z – 00:36Z) — issuer blocked at the signing key
 
