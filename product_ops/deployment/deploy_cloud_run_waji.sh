@@ -1087,6 +1087,10 @@ if [[ -z "${LIVE_E2E_API_URL}" || -z "${LIVE_E2E_WEB_URL}" ]]; then
     "(api='${LIVE_E2E_API_URL}' web='${LIVE_E2E_WEB_URL}')." >&2
   exit 1
 fi
+if [ "${WEB_SERVICE_PRESENCE}" = "absent" ]; then
+  echo "Waiting for public invocation to become effective on ${LIVE_E2E_WEB_URL}..."
+  wait_for_public_service_invoker "${LIVE_E2E_WEB_URL}"
+fi
 # `deploymentMode` is what the *runtime* reports back from
 # `apps/api/oday_api/runtime_mode.deployment_mode()`, which reads the
 # ODP_DEPLOY_ENV/ODAY_ENV/ODP_ENV triple this script writes into the API env

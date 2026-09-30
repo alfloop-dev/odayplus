@@ -147,18 +147,44 @@ for index, argument in enumerate(args):
 with Path(os.environ["FAKE_LOG"]).open("a", encoding="utf-8") as handle:
     handle.write(json.dumps(["curl", url, headers]) + "\n")
 state = json.loads(Path(os.environ["FAKE_STATE"]).read_text(encoding="utf-8"))
-service = url.split("---", 1)[1].split("-abc.a.run.app", 1)[0]
+if "---" in url:
+    service = url.split("---", 1)[1].split("-abc.a.run.app", 1)[0]
+else:
+    service = url.split("://", 1)[1].split("-abc.a.run.app", 1)[0]
 iam = state[service].get("iam", [])
 token = next(
     (h.split("Bearer ", 1)[1] for h in headers if h.startswith("X-Serverless-Authorization:")),
     "",
 )
-admitted = "allUsers" in iam or (
+
+admitted = False
+if "allUsers" in iam:
+    if os.environ.get("FAKE_PUBLIC_IAM_LAGS_FOREVER") == "1":
+        admitted = False
+    elif os.environ.get("FAKE_PUBLIC_IAM_LAGS_UNTIL_ATTEMPT"):
+        threshold = int(os.environ["FAKE_PUBLIC_IAM_LAGS_UNTIL_ATTEMPT"])
+        log_lines = [
+            json.loads(line)
+            for line in Path(os.environ["FAKE_LOG"]).read_text(encoding="utf-8").splitlines()
+        ]
+        anon_count = sum(
+            1
+            for entry in log_lines
+            if entry[0] == "curl"
+            and entry[1] == url
+            and not any(h.startswith("X-Serverless-Authorization:") for h in entry[2])
+        )
+        admitted = anon_count >= threshold
+    else:
+        admitted = True
+elif (
     os.environ.get("FAKE_IAM_LAGS_FOREVER") != "1"
     and token.startswith("idtoken:")
     and "serviceAccount:" + token.split(":")[1] in iam
     and token.split(":", 2)[2] == state[service]["status"]["url"]
-)
+):
+    admitted = True
+
 sys.stdout.write("307" if admitted else "403")
 """
 
@@ -177,11 +203,10 @@ API_SEGMENT_MARKERS = (
     'echo "Deploying immutable API candidate',
     'API_SERVICE_AUDIENCE="$(service_snapshot_url',
 )
-# Web candidate deploy -> smoke -> promotion, including the first-release
-# invoker grants on both sides of the smoke.
+# Web candidate deploy -> smoke -> promotion -> public invoker wait -> live E2E gate.
 WEB_SEGMENT_MARKERS = (
     'echo "Deploying immutable Web candidate',
-    'promote_service_traffic "${WEB_SERVICE}" "${WEB_REVISION}"',
+    '--output "${LIVE_E2E_REPORT}"',
 )
 
 HARNESS = r"""
@@ -190,24 +215,29 @@ source "$1"
 CLOUD_RUN_NETWORK_ARGS=(--vpc-egress=all-traffic)
 API_CANDIDATE_DESCRIPTION="$(mktemp)"
 WEB_CANDIDATE_DESCRIPTION="$(mktemp)"
-# The smoke is stubbed: it records what the Web service's invoker policy was
-# and which candidate invoker token it was handed at verification time.
+# The smoke and live E2E gate are stubbed: they record what the Web service's
+# invoker policy was and what arguments were passed.
 run_locked_python() {
   python3 -c '
 import json, os, sys
 state = json.load(open(os.environ["FAKE_STATE"]))
 web = state.get(os.environ["WEB_SERVICE"], {})
+target = "smoke" if any("smoke" in arg for arg in sys.argv[1:]) else "live_e2e"
 with open(os.environ["FAKE_LOG"], "a") as handle:
-    handle.write(json.dumps(["smoke", sys.argv[1:], web.get("iam", []),
+    handle.write(json.dumps([target, sys.argv[1:], web.get("iam", []),
         os.environ.get("ODP_WEB_CANDIDATE_INVOKER_TOKEN", "")]) + "\n")
 ' "$@"
-  return "${FAKE_SMOKE_EXIT:-0}"
+  if [[ "$*" == *"smoke"* ]]; then
+    return "${FAKE_SMOKE_EXIT:-0}"
+  fi
+  return "${FAKE_LIVE_E2E_EXIT:-0}"
 }
 upsert_scheduler_trigger() { :; }
 eval "$2"
 eval "$3"
-printf 'API_REVISION=%s\nAPI_URL=%s\nAPI_SERVICE_AUDIENCE=%s\nWEB_REVISION=%s\nWEB_URL=%s\n' \
-  "${API_REVISION}" "${API_URL}" "${API_SERVICE_AUDIENCE}" "${WEB_REVISION}" "${WEB_URL}"
+printf 'API_REVISION=%s\nAPI_URL=%s\nAPI_SERVICE_AUDIENCE=%s\nWEB_REVISION=%s\nWEB_URL=%s\nLIVE_E2E_API_URL=%s\nLIVE_E2E_WEB_URL=%s\n' \
+  "${API_REVISION}" "${API_URL}" "${API_SERVICE_AUDIENCE}" "${WEB_REVISION}" "${WEB_URL}" \
+  "${LIVE_E2E_API_URL:-}" "${LIVE_E2E_WEB_URL:-}"
 """
 
 SMOKE_SA = "smoke@odayplus-dev.iam.gserviceaccount.com"
@@ -283,6 +313,7 @@ def _run(
             "ODP_OPERATOR_SMOKE_BEARER_TOKEN": "operator-app-token",
             "ODP_DEPLOY_ENV": "dev",
             "SMOKE_REPORT": str(tmp_path / "smoke.json"),
+            "LIVE_E2E_REPORT": str(tmp_path / "live_e2e.json"),
             "SCHEDULER_SCHEDULE_NAME": "oday-scheduler",
             "SCHEDULER_CANDIDATE_JOB": "oday-scheduler-candidate",
             "ODP_SCHEDULER_CRON": "* * * * *",
@@ -290,6 +321,7 @@ def _run(
             "WORKER_CANDIDATE_JOB": "oday-worker-candidate",
             "ODP_WORKER_CRON": "* * * * *",
             "ODP_CANDIDATE_INVOKER_WAIT_SECONDS": "0",
+            "ODP_PUBLIC_INVOKER_WAIT_SECONDS": "0",
             **env,
         }
     )
@@ -327,6 +359,10 @@ def _index(calls: list[list[object]], predicate) -> int:
 
 def _is_smoke(call: list[object]) -> bool:
     return call[0] == "smoke"
+
+
+def _is_live_e2e(call: list[object]) -> bool:
+    return call[0] == "live_e2e"
 
 
 def _is_public_grant(call: list[object]) -> bool:
@@ -393,6 +429,8 @@ def test_first_release_creates_both_services_without_no_traffic(tmp_path: Path) 
         "API_SERVICE_AUDIENCE": f"https://{API_SERVICE}-abc.a.run.app",
         "WEB_REVISION": f"{WEB_SERVICE}-{SUFFIX}",
         "WEB_URL": f"https://{TAG}---{WEB_SERVICE}-abc.a.run.app",
+        "LIVE_E2E_API_URL": f"https://{API_SERVICE}-abc.a.run.app",
+        "LIVE_E2E_WEB_URL": f"https://{WEB_SERVICE}-abc.a.run.app",
     }
 
 
@@ -413,21 +451,64 @@ def test_first_release_web_is_private_through_verification_and_public_at_promoti
     assert result.returncode == 0, result.stderr
     smoke = calls[_index(calls, _is_smoke)]
     web_url = f"https://{TAG}---{WEB_SERVICE}-abc.a.run.app"
+    live_web_url = f"https://{WEB_SERVICE}-abc.a.run.app"
     assert ["--web-url", web_url] == smoke[1][smoke[1].index("--web-url") :][:2]
     # At verification time only the smoke identity may invoke the Web service,
     # and the smoke carries an invoker token scoped to that service's URL.
     assert smoke[2] == [f"serviceAccount:{SMOKE_SA}"]
     assert smoke[3] == f"idtoken:{SMOKE_SA}:https://{WEB_SERVICE}-abc.a.run.app"
-    # The anonymous probe was refused and the authenticated one admitted.
+    # The candidate anonymous probe was refused and the authenticated one admitted.
     probes = [call for call in calls if call[0] == "curl"]
     assert probes[0] == ["curl", f"{web_url}/operator", []]
-    assert probes[-1][2] == [f"X-Serverless-Authorization: Bearer {smoke[3]}"]
+    assert probes[1] == [
+        "curl",
+        f"{web_url}/operator",
+        [f"X-Serverless-Authorization: Bearer {smoke[3]}"],
+    ]
+    # The public wait probed the promoted service anonymously after allUsers was granted.
+    assert probes[2] == ["curl", f"{live_web_url}/operator", []]
     # Public invocation is granted once, after the smoke and before Web promotion.
     public_grant = _index(calls, _is_public_grant)
     assert calls[public_grant][3] == WEB_SERVICE
     assert _index(calls, _is_smoke) < public_grant < _index(calls, _is_web_promotion)
+    assert _index(calls, _is_web_promotion) < _index(calls, _is_live_e2e)
     assert "allUsers" in state[WEB_SERVICE]["iam"]
     assert "allUsers" not in state[API_SERVICE]["iam"]
+    live_e2e = calls[_index(calls, _is_live_e2e)]
+    assert ["--web-url", live_web_url] == live_e2e[1][live_e2e[1].index("--web-url") :][:2]
+
+
+def test_first_release_waits_for_public_iam_propagation_before_live_e2e(tmp_path: Path) -> None:
+    result, calls, state = _run(
+        tmp_path, {}, FAKE_PUBLIC_IAM_LAGS_UNTIL_ATTEMPT="3", ODP_PUBLIC_INVOKER_WAIT_ATTEMPTS="5"
+    )
+
+    assert result.returncode == 0, result.stderr
+    live_web_url = f"https://{WEB_SERVICE}-abc.a.run.app"
+    public_probes = [
+        call for call in calls if call[0] == "curl" and call[1] == f"{live_web_url}/operator"
+    ]
+    assert len(public_probes) == 3
+    assert any(_is_live_e2e(call) for call in calls)
+    assert "allUsers" in state[WEB_SERVICE]["iam"]
+
+
+def test_first_release_fails_when_public_iam_never_converges(tmp_path: Path) -> None:
+    result, calls, state = _run(
+        tmp_path, {}, FAKE_PUBLIC_IAM_LAGS_FOREVER="1", ODP_PUBLIC_INVOKER_WAIT_ATTEMPTS="3"
+    )
+
+    assert result.returncode != 0
+    assert (
+        "public invocation was not admitted on the promoted Web service (last HTTP 403)"
+        in result.stderr
+    )
+    live_web_url = f"https://{WEB_SERVICE}-abc.a.run.app"
+    public_probes = [
+        call for call in calls if call[0] == "curl" and call[1] == f"{live_web_url}/operator"
+    ]
+    assert len(public_probes) == 3
+    assert not any(_is_live_e2e(call) for call in calls)
 
 
 def test_first_release_web_is_never_public_when_verification_fails(tmp_path: Path) -> None:
@@ -437,6 +518,7 @@ def test_first_release_web_is_never_public_when_verification_fails(tmp_path: Pat
     assert any(_is_smoke(call) for call in calls)
     assert not any(_is_public_grant(call) for call in calls)
     assert not any(_is_web_promotion(call) for call in calls)
+    assert not any(_is_live_e2e(call) for call in calls)
     assert "allUsers" not in state[WEB_SERVICE]["iam"]
 
 
@@ -456,6 +538,7 @@ def test_first_release_refuses_to_verify_a_web_candidate_that_answers_anonymousl
     assert "must be private until promotion" in result.stderr
     assert not any(_is_smoke(call) for call in calls)
     assert not any(_is_web_promotion(call) for call in calls)
+    assert not any(_is_live_e2e(call) for call in calls)
 
 
 def test_first_release_fails_when_the_smoke_identity_is_never_admitted(tmp_path: Path) -> None:
@@ -468,6 +551,7 @@ def test_first_release_fails_when_the_smoke_identity_is_never_admitted(tmp_path:
     # One anonymous probe plus the bounded authenticated attempts.
     assert len([call for call in calls if call[0] == "curl"]) == 4
     assert not any(_is_smoke(call) for call in calls)
+    assert not any(_is_live_e2e(call) for call in calls)
     assert "allUsers" not in state[WEB_SERVICE]["iam"]
 
 
@@ -489,11 +573,13 @@ def test_existing_services_keep_the_exact_no_traffic_blue_green_argv(tmp_path: P
     outputs = _outputs(result.stdout)
     assert outputs["API_REVISION"] == f"{API_SERVICE}-{SUFFIX}"
     assert outputs["WEB_URL"] == f"https://{TAG}---{WEB_SERVICE}-abc.a.run.app"
+    assert outputs["LIVE_E2E_WEB_URL"] == f"https://{WEB_SERVICE}-abc.a.run.app"
     # No first-release access steps on the blue/green path.
     assert not any(call[:3] == ["run", "services", "add-iam-policy-binding"] for call in calls)
     assert not any(call[:2] == ["auth", "print-identity-token"] for call in calls)
     assert not any(call[0] == "curl" for call in calls)
     assert calls[_index(calls, _is_smoke)][3] == ""
+    assert any(_is_live_e2e(call) for call in calls)
 
 
 def test_describe_failure_other_than_not_found_fails_closed_before_deploy(

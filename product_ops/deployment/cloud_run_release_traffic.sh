@@ -122,6 +122,31 @@ wait_for_private_candidate_invoker() {
   return 1
 }
 
+# Waits (bounded) for the fresh allUsers invoker binding on a first-release Web
+# service to propagate to anonymous callers before live E2E runs. IAM bindings
+# propagate asynchronously, so without this the anonymous /operator check in
+# check_live_e2e_gate can fail on a 403.
+wait_for_public_service_invoker() {
+  local url="$1"
+  local attempts="${ODP_PUBLIC_INVOKER_WAIT_ATTEMPTS:-${ODP_CANDIDATE_INVOKER_WAIT_ATTEMPTS:-24}}"
+  local delay="${ODP_PUBLIC_INVOKER_WAIT_SECONDS:-${ODP_CANDIDATE_INVOKER_WAIT_SECONDS:-5}}"
+  local status attempt
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "${url}/operator" || true)"
+    case "${status}" in
+      000 | 401 | 403) ;;
+      *)
+        return 0
+        ;;
+    esac
+    if [ "${attempt}" -lt "${attempts}" ]; then
+      sleep "${delay}"
+    fi
+  done
+  echo "Error: public invocation was not admitted on the promoted Web service (last HTTP ${status})." >&2
+  return 1
+}
+
 service_snapshot_url() {
   local snapshot="$1"
   if [ "$(python3 "${ODP_TRAFFIC_HELPER}" exists --description="${snapshot}")" != "true" ]; then
