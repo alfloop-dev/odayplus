@@ -766,6 +766,16 @@ run_migration_compatibility_gate() {
 run_migration_compatibility_gate
 
 echo "Deploying immutable API candidate without production traffic..."
+# A first release creates the service, and Cloud Run rejects the no-traffic flag
+# on create: the first revision always takes 100% of a new service. Existing
+# services keep the no-traffic blue/green path unchanged.
+if ! API_SERVICE_PRESENCE="$(cloud_run_service_presence "${API_SERVICE}")"; then
+  exit 1
+fi
+API_TRAFFIC_ARGS=()
+if [ "${API_SERVICE_PRESENCE}" = "present" ]; then
+  API_TRAFFIC_ARGS=(--no-traffic)
+fi
 gcloud run deploy "${API_SERVICE}" \
   --image="${API_IMAGE}" \
   --region="${GCP_REGION}" \
@@ -780,7 +790,7 @@ gcloud run deploy "${API_SERVICE}" \
   --revision-suffix="${REVISION_SUFFIX}" \
   "${CLOUD_RUN_NETWORK_ARGS[@]}" \
   --tag="${API_REVISION_TAG}" \
-  --no-traffic \
+  "${API_TRAFFIC_ARGS[@]}" \
   --no-allow-unauthenticated \
   --quiet
 
@@ -947,6 +957,16 @@ else
 fi
 
 echo "Deploying immutable Web candidate without production traffic..."
+# A first release creates the service, and Cloud Run rejects the no-traffic flag
+# on create: the first revision always takes 100% of a new service. Existing
+# services keep the no-traffic blue/green path unchanged.
+if ! WEB_SERVICE_PRESENCE="$(cloud_run_service_presence "${WEB_SERVICE}")"; then
+  exit 1
+fi
+WEB_TRAFFIC_ARGS=()
+if [ "${WEB_SERVICE_PRESENCE}" = "present" ]; then
+  WEB_TRAFFIC_ARGS=(--no-traffic)
+fi
 gcloud run deploy "${WEB_SERVICE}" \
   --image="${WEB_IMAGE}" \
   --region="${GCP_REGION}" \
@@ -961,7 +981,7 @@ gcloud run deploy "${WEB_SERVICE}" \
   --revision-suffix="${REVISION_SUFFIX}" \
   "${CLOUD_RUN_NETWORK_ARGS[@]}" \
   --tag="${WEB_REVISION_TAG}" \
-  --no-traffic \
+  "${WEB_TRAFFIC_ARGS[@]}" \
   --allow-unauthenticated \
   --quiet
 

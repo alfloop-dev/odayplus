@@ -33,6 +33,41 @@ capture_service_traffic() {
   python3 "${ODP_TRAFFIC_HELPER}" service-url --description="${output}" >/dev/null
 }
 
+# ODP-DEPLOY-FIRST-RELEASE-NO-TRAFFIC-FIX-001: `gcloud run deploy --no-traffic`
+# is rejected when it would create the service, so the candidate deploy has to
+# know whether the service exists right now. That is read from `gcloud run
+# services describe` at deploy time -- not from the pre-release snapshot or the
+# recovery mode an operator expected. Prints `present` or `absent`; only the
+# explicit not-found answer means absent. Any other describe failure
+# (permission, API, network) returns non-zero so the release fails closed
+# rather than creating a service over one it could not read.
+cloud_run_service_presence() {
+  local service="$1"
+  local stderr_file name
+  stderr_file="$(mktemp)"
+  if name="$(gcloud run services describe "${service}" \
+    --region="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" \
+    --format='value(metadata.name)' 2>"${stderr_file}")"; then
+    rm -f "${stderr_file}"
+    if [ "${name}" != "${service}" ]; then
+      echo "Error: Cloud Run describe for '${service}' returned '${name}'; presence is unknown." >&2
+      return 1
+    fi
+    printf 'present'
+    return 0
+  fi
+  if grep -qF "Cannot find service [${service}]" "${stderr_file}"; then
+    rm -f "${stderr_file}"
+    printf 'absent'
+    return 0
+  fi
+  cat "${stderr_file}" >&2
+  rm -f "${stderr_file}"
+  echo "Error: cannot determine whether Cloud Run service '${service}' exists; refusing to deploy." >&2
+  return 1
+}
+
 service_snapshot_url() {
   local snapshot="$1"
   if [ "$(python3 "${ODP_TRAFFIC_HELPER}" exists --description="${snapshot}")" != "true" ]; then

@@ -6051,20 +6051,26 @@ def test_deploy_script_api_and_web_authentication_boundary_contract() -> None:
 
     - API deployment must explicitly use --no-allow-unauthenticated and must not use --allow-unauthenticated.
     - Web deployment must use --allow-unauthenticated (as public entrypoint for OIDC login) and must not use --no-allow-unauthenticated.
-    - Both services deploy with --no-traffic and explicit revision tags.
+    - Both services deploy with explicit revision tags; existing services get
+      --no-traffic through the presence-derived traffic args (first release
+      cannot, see ODP-DEPLOY-FIRST-RELEASE-NO-TRAFFIC-FIX-001).
     """
     text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
 
     api_block = _extract_cloud_run_service_deploy_block(text, "API_SERVICE")
     assert "--no-allow-unauthenticated" in api_block
     assert "--allow-unauthenticated" not in api_block.replace("--no-allow-unauthenticated", "")
-    assert "--no-traffic" in api_block
+    assert '"${API_TRAFFIC_ARGS[@]}"' in api_block
+    assert "--no-traffic" not in api_block
+    assert "API_TRAFFIC_ARGS=(--no-traffic)" in text
     assert '--tag="${API_REVISION_TAG}"' in api_block
 
     web_block = _extract_cloud_run_service_deploy_block(text, "WEB_SERVICE")
     assert "--allow-unauthenticated" in web_block
     assert "--no-allow-unauthenticated" not in web_block
-    assert "--no-traffic" in web_block
+    assert '"${WEB_TRAFFIC_ARGS[@]}"' in web_block
+    assert "--no-traffic" not in web_block
+    assert "WEB_TRAFFIC_ARGS=(--no-traffic)" in text
     assert '--tag="${WEB_REVISION_TAG}"' in web_block
 
     # Across the entire script, exactly one service uses --no-allow-unauthenticated (API)
