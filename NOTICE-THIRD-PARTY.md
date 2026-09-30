@@ -863,7 +863,7 @@ File-level copyleft: source of any modified MPL file must be offered.
 - `typing-inspection` 0.4.2 (pypi)
 - `tzlocal` 5.4.4 (pypi)
 - `universal_pathlib` 0.3.10 (pypi)
-- `urllib3` 2.7.0 (pypi)
+- `urllib3` 2.8.0 (pypi)
 - `uvloop` 0.22.1 (pypi)
 - `watchfiles` 1.2.0 (pypi)
 - `wcwidth` 0.8.2 (pypi)
