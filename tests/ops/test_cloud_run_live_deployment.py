@@ -1947,6 +1947,11 @@ def test_compatibility_database_verdict_is_not_a_substring_match() -> None:
     )
 
 
+def _api_invoker_env() -> dict[str, str]:
+    """The deploy always exports a transport token for the private API."""
+    return {**os.environ, "ODP_API_INVOKER_TOKEN": "api-transport-token-value"}
+
+
 def test_compatibility_smoke_cli_records_the_bounded_retry_contract(tmp_path: Path) -> None:
     DeterministicRuntimeHandler.release_sha = "b" * 40
     server, url = start_server()
@@ -1977,6 +1982,7 @@ def test_compatibility_smoke_cli_records_the_bounded_retry_contract(tmp_path: Pa
                 str(report_path),
             ],
             cwd=ROOT,
+            env=_api_invoker_env(),
             check=False,
             capture_output=True,
             text=True,
@@ -2099,6 +2105,7 @@ def test_compatibility_smoke_cli_fails_closed_on_an_unrequestable_url(
             str(report_path),
         ],
         cwd=ROOT,
+        env=_api_invoker_env(),
         check=False,
         capture_output=True,
         text=True,
@@ -6180,3 +6187,273 @@ def test_no_duplicate_or_additional_deployment_entrypoints() -> None:
     assert len(workflows) == 1
     assert workflows[0].name == "deploy-dev.yml"
 
+
+
+# ---------------------------------------------------------------------------
+# ODP-DEV-PRIVATE-API-TRANSPORT-AUTH-001: private API transport identity
+# ---------------------------------------------------------------------------
+
+API_TRANSPORT_TOKEN = "api-transport-token-value"
+WEB_TRANSPORT_TOKEN = "web-transport-token-value"
+
+
+def test_smoke_sends_the_api_transport_token_to_every_api_request_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api_requests: list[tuple[str, dict[str, str]]] = []
+    web_requests: list[dict[str, str]] = []
+
+    def fake_json_request(url, *, headers, timeout):
+        api_requests.append((url, dict(headers)))
+        raise OSError("network disabled in this test")
+
+    def fake_request_without_redirect(url, *, headers, timeout):
+        web_requests.append(dict(headers))
+        return 307, "https://web.example/login?returnTo=%2Foperator"
+
+    monkeypatch.setattr(validator, "_json_request", fake_json_request)
+    monkeypatch.setattr(validator, "_request_without_redirect", fake_request_without_redirect)
+
+    _checks, report = validator.smoke_checks(
+        api_url="https://candidate-x---oday-api-abc.a.run.app",
+        web_url="https://web.example",
+        expected_sha=None,
+        bearer_token="operator-app-token",
+        operator_role="operator",
+        operator_subject="subject",
+        operator_tenant="tenant",
+        correlation_id="corr-1",
+        timeout=0.01,
+        web_invoker_token=WEB_TRANSPORT_TOKEN,
+        api_invoker_token=API_TRANSPORT_TOKEN,
+    )
+
+    paths = [url.split(".a.run.app", 1)[1] for url, _ in api_requests]
+    assert paths == [
+        "/platform/version",
+        "/platform/health",
+        "/readiness",
+        "/api/v1/operator/bootstrap",
+    ]
+    for url, headers in api_requests:
+        assert headers["x-serverless-authorization"] == f"Bearer {API_TRANSPORT_TOKEN}"
+        if url.endswith("/api/v1/operator/bootstrap"):
+            # The application bearer stays a separate credential.
+            assert headers["authorization"] == "Bearer operator-app-token"
+        else:
+            assert "authorization" not in headers
+    # The Web request never carries the API audience token.
+    (web_headers,) = web_requests
+    assert web_headers["x-serverless-authorization"] == f"Bearer {WEB_TRANSPORT_TOKEN}"
+    assert report["api_invoker_authenticated"] is True
+    serialized = json.dumps(report)
+    assert API_TRANSPORT_TOKEN not in serialized
+    assert WEB_TRANSPORT_TOKEN not in serialized
+
+
+def test_compatibility_probes_carry_the_api_transport_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[tuple[str, dict[str, str]]] = []
+
+    def fake_request(url, *, headers, timeout):
+        seen.append((url, dict(headers)))
+        if url.endswith("/platform/version"):
+            return 200, "application/json", json.dumps({"release_sha": "a" * 40})
+        return 200, "application/json", json.dumps(
+            {"status": "ok", "dependencies": {"database": "healthy"}}
+        )
+
+    monkeypatch.setattr(validator, "_request", fake_request)
+
+    checks, report = validator.compatibility_smoke_checks(
+        api_url="https://oday-api-abc.a.run.app",
+        web_url="https://oday-web-abc.a.run.app",
+        correlation_id="corr-compat",
+        timeout=1.0,
+        sleep=lambda _seconds: None,
+        api_invoker_token=API_TRANSPORT_TOKEN,
+    )
+
+    assert all(check.ok for check in checks), checks
+    assert [url.rsplit(".a.run.app", 1)[1] for url, _ in seen] == [
+        "/platform/version",
+        "/platform/health",
+    ]
+    for _url, headers in seen:
+        assert headers["x-serverless-authorization"] == f"Bearer {API_TRANSPORT_TOKEN}"
+        assert "authorization" not in headers
+    assert report["api_invoker_authenticated"] is True
+    assert API_TRANSPORT_TOKEN not in json.dumps(report)
+
+
+@pytest.mark.parametrize("command", ["smoke", "compatibility-smoke"])
+def test_cli_fails_closed_without_the_api_transport_token(
+    tmp_path: Path, command: str
+) -> None:
+    report_path = tmp_path / f"{command}.json"
+    argv = [
+        sys.executable,
+        str(VALIDATOR_PATH),
+        command,
+        "--api-url",
+        "http://127.0.0.1:1",
+        "--web-url",
+        "http://127.0.0.1:1",
+        "--output",
+        str(report_path),
+    ]
+    if command == "smoke":
+        argv.extend(["--expected-sha", EXPECTED_SHA])
+    environment = {**os.environ, "ODP_OPERATOR_SMOKE_BEARER_TOKEN": "operator-app-token"}
+    environment.pop("ODP_API_INVOKER_TOKEN", None)
+
+    result = subprocess.run(
+        argv, cwd=ROOT, env=environment, check=False, capture_output=True, text=True
+    )
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["ok"] is False
+    failed = [check["name"] for check in report["checks"] if not check["ok"]]
+    assert failed == ["secret:ODP_API_INVOKER_TOKEN"]
+    assert "operator-app-token" not in report_path.read_text(encoding="utf-8")
+
+
+def test_deploy_script_keeps_api_invokers_service_scoped_and_audience_stable() -> None:
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    helper = (ROOT / "product_ops/deployment/cloud_run_release_traffic.sh").read_text(
+        encoding="utf-8"
+    )
+
+    # Bindings are on the API service itself, for the two existing identities.
+    assert (
+        'grant_service_invoker "${service}" '
+        '"serviceAccount:${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT}"' in helper
+    )
+    assert (
+        'grant_service_invoker "${service}" '
+        '"serviceAccount:${ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT}"' in helper
+    )
+    for combined in (text, helper):
+        assert "allAuthenticatedUsers" not in combined
+        assert "projects add-iam-policy-binding" not in combined
+    assert text.count('grant_service_invoker "${API_SERVICE}"') == 0
+    assert text.count('prepare_private_api_transport "${API_SERVICE}"') == 2
+
+    # The compatibility gate prepares the old API's transport before probing it.
+    compat_prepare = text.index('prepare_private_api_transport "${API_SERVICE}" "${OLD_API_URL}"')
+    assert compat_prepare < text.index("validate_cloud_run_live_deployment.py compatibility-smoke")
+    # The candidate's audience is the stable service URL, not the tag URL.
+    audience = text.index('API_SERVICE_AUDIENCE="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"')
+    candidate_prepare = text.index(
+        'prepare_private_api_transport "${API_SERVICE}" "${API_SERVICE_AUDIENCE}"'
+    )
+    assert audience < candidate_prepare < text.index('gcloud run deploy "${WEB_SERVICE}"')
+    assert "API_URL" not in text[candidate_prepare : text.index("\n", candidate_prepare)]
+    # Fresh tokens right before the smoke and the live E2E gate, same audience.
+    refresh = 'mint_api_invoker_token "${API_SERVICE_AUDIENCE}"'
+    assert text.count(refresh) == 2
+    first_refresh = text.index(refresh)
+    second_refresh = text.index(refresh, first_refresh + 1)
+    assert first_refresh < text.index("validate_cloud_run_live_deployment.py smoke")
+    assert text.index("validate_cloud_run_live_deployment.py smoke") < second_refresh
+    assert second_refresh < text.index("delivery_toolchain/e2e/check_live_e2e_gate.py")
+    # The token is masked and only ever written to a 0600 header file.
+    assert "::add-mask::${ODP_API_INVOKER_TOKEN}" in helper
+    assert 'chmod 600 "${header_file}"' in helper
+    assert "echo \"${ODP_API_INVOKER_TOKEN}" not in helper
+
+
+def _redirect_to_second_origin() -> tuple[list[ThreadingHTTPServer], str, list[dict[str, str]]]:
+    """Serve a private-API stand-in whose every GET redirects to another origin."""
+
+    collected: list[dict[str, str]] = []
+
+    class Collector(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            collected.append({key.lower(): value for key, value in self.headers.items()})
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"release_sha": EXPECTED_SHA}).encode("utf-8"))
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    collector = ThreadingHTTPServer(("127.0.0.1", 0), Collector)
+    Thread(target=collector.serve_forever, daemon=True).start()
+    collector_host, collector_port = collector.server_address
+    collector_url = f"http://{collector_host}:{collector_port}"
+
+    class Api(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            self.send_response(302)
+            self.send_header("location", f"{collector_url}/collect")
+            self.send_header("content-length", "0")
+            self.end_headers()
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    api = ThreadingHTTPServer(("127.0.0.1", 0), Api)
+    Thread(target=api.serve_forever, daemon=True).start()
+    api_host, api_port = api.server_address
+    return [api, collector], f"http://{api_host}:{api_port}", collected
+
+
+def test_smoke_never_follows_an_api_redirect_to_another_origin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        validator,
+        "_request_without_redirect",
+        lambda url, **_: (307, "https://web.example/login?returnTo=%2Foperator"),
+    )
+    servers, api_url, collected = _redirect_to_second_origin()
+    try:
+        checks, report = validator.smoke_checks(
+            api_url=api_url,
+            web_url="https://web.example",
+            expected_sha=EXPECTED_SHA,
+            bearer_token="operator-app-token",
+            operator_role="operator",
+            operator_subject="subject",
+            operator_tenant="tenant",
+            correlation_id="corr-redirect",
+            timeout=5.0,
+            api_invoker_token=API_TRANSPORT_TOKEN,
+        )
+    finally:
+        for server in servers:
+            server.shutdown()
+
+    # Neither the anonymous probes nor the authenticated bootstrap reached the
+    # second origin, so neither credential left the API origin.
+    assert collected == []
+    failed = {check.name for check in checks if not check.ok}
+    for path in ("/platform/version", "/platform/health", "/readiness", "/api/v1/operator/bootstrap"):
+        assert any(name.startswith(f"smoke:{path}") for name in failed), (path, failed)
+    serialized = json.dumps(report) + json.dumps([check.detail for check in checks])
+    assert API_TRANSPORT_TOKEN not in serialized
+    assert "operator-app-token" not in serialized
+
+
+def test_compatibility_never_follows_an_api_redirect_to_another_origin() -> None:
+    servers, api_url, collected = _redirect_to_second_origin()
+    try:
+        checks, report = validator.compatibility_smoke_checks(
+            api_url=api_url,
+            web_url="https://web.example",
+            correlation_id="corr-compat-redirect",
+            timeout=5.0,
+            sleep=lambda _seconds: None,
+            api_invoker_token=API_TRANSPORT_TOKEN,
+        )
+    finally:
+        for server in servers:
+            server.shutdown()
+
+    assert collected == []
+    assert not all(check.ok for check in checks)
+    assert API_TRANSPORT_TOKEN not in json.dumps(report)

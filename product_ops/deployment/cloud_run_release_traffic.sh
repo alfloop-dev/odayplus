@@ -122,6 +122,90 @@ wait_for_private_candidate_invoker() {
   return 1
 }
 
+# ODP-DEV-PRIVATE-API-TRANSPORT-AUTH-001: the API service is never public.
+# Every caller reaches it through Cloud Run IAM: the Web BFF as the runtime
+# identity, and the release's own probes (migration compatibility, candidate
+# smoke, live E2E) as the smoke identity. Both get a run.invoker binding scoped
+# to this one service -- never a public principal or a project-level role.
+# The probes carry a short-lived ID token in X-Serverless-Authorization, which
+# Cloud Run checks and strips, so Authorization stays free for the
+# application's own bearer token and an anonymous app request stays anonymous.
+# The audience is always the API's stable service URL: Cloud Run accepts that
+# audience on revision tag URLs too, and it is never the Web service's URL.
+grant_api_service_invokers() {
+  local service="$1"
+  grant_service_invoker "${service}" "serviceAccount:${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT}" \
+    || return 1
+  grant_service_invoker "${service}" "serviceAccount:${ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT}"
+}
+
+# Mints (or refreshes) ODP_API_INVOKER_TOKEN for the API's stable service URL
+# and exports it to the probes. The value is masked in GitHub Actions and is
+# never printed or written to a report.
+mint_api_invoker_token() {
+  local audience="$1"
+  if [[ -z "${audience}" ]]; then
+    echo "Error: the API service has no stable URL to use as the transport token audience." >&2
+    return 1
+  fi
+  ODP_API_INVOKER_TOKEN="$(gcloud auth print-identity-token \
+    --impersonate-service-account="${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT}" \
+    --audiences="${audience}" \
+    --include-email)" || return 1
+  if [[ -z "${ODP_API_INVOKER_TOKEN}" ]]; then
+    echo "Error: failed to mint the private API transport identity token." >&2
+    return 1
+  fi
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    echo "::add-mask::${ODP_API_INVOKER_TOKEN}"
+  fi
+  export ODP_API_INVOKER_TOKEN
+}
+
+# Proves the API refuses anonymous callers at the Cloud Run front end, then
+# waits (bounded) for the service-scoped invoker binding to admit the smoke
+# identity, so a probe never fails on a 403 that is only IAM propagation lag.
+wait_for_private_api_invoker() {
+  local url="$1"
+  local token="$2"
+  local attempts="${ODP_API_INVOKER_WAIT_ATTEMPTS:-${ODP_CANDIDATE_INVOKER_WAIT_ATTEMPTS:-24}}"
+  local delay="${ODP_API_INVOKER_WAIT_SECONDS:-${ODP_CANDIDATE_INVOKER_WAIT_SECONDS:-5}}"
+  local header_file status attempt
+  status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "${url}/platform/version" || true)"
+  if [ "${status}" != "401" ] && [ "${status}" != "403" ]; then
+    echo "Error: the API service answered an anonymous request with HTTP ${status}; it must stay private." >&2
+    return 1
+  fi
+  header_file="$(mktemp)"
+  chmod 600 "${header_file}"
+  printf 'X-Serverless-Authorization: Bearer %s\n' "${token}" >"${header_file}"
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 \
+      -H "@${header_file}" "${url}/platform/version" || true)"
+    case "${status}" in
+      000 | 401 | 403) ;;
+      *)
+        rm -f "${header_file}"
+        return 0
+        ;;
+    esac
+    if [ "${attempt}" -lt "${attempts}" ]; then
+      sleep "${delay}"
+    fi
+  done
+  rm -f "${header_file}"
+  echo "Error: smoke identity was not admitted to the private API service (last HTTP ${status})." >&2
+  return 1
+}
+
+prepare_private_api_transport() {
+  local service="$1"
+  local audience="$2"
+  grant_api_service_invokers "${service}" || return 1
+  mint_api_invoker_token "${audience}" || return 1
+  wait_for_private_api_invoker "${audience}" "${ODP_API_INVOKER_TOKEN}"
+}
+
 # Waits (bounded) for the fresh allUsers invoker binding on a first-release Web
 # service to propagate to anonymous callers before live E2E runs. IAM bindings
 # propagate asynchronously, so without this the anonymous /operator check in
