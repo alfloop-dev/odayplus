@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "record_kind": "exact-candidate-ci",
+  "task_id": "ODP-DEV-CANDIDATE-REBIND-B175-001",
+  "candidate_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
+  "candidate_is_merged_dev": {
+    "origin_dev_readback": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
+    "equal": true,
+    "merged_pr": 1388,
+    "read_at": "2026-10-01T03:36:15Z"
+  },
+  "readback_method": "gh api repos/alfloop-dev/odayplus/actions/runs?head_sha=48611d264e9e10b5c74b8ac1cb972bc92e5ef817; gh api .../runs/<id>/jobs",
+  "read_at": "2026-10-01T03:36:15Z",
+  "exact_candidate_ci": [
+    {
+      "workflow": "CI",
+      "run_id": 36808278515,
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/36808278515",
+      "event": "merge_group",
+      "head_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
+      "conclusion": "success",
+      "created_at": "2026-10-01T02:57:45Z",
+      "updated_at": "2026-10-01T03:30:35Z",
+      "jobs": {
+        "orchestrator": [
+          110197408194,
+          "success"
+        ],
+        "change-scope": [
+          110197408271,
+          "success"
+        ],
+        "product-lint-unit": [
+          110197448343,
+          "success"
+        ],
+        "performance-gate": [
+          110197448357,
+          "success"
+        ],
+        "product-node": [
+          110197448381,
+          "success"
+        ],
+        "product-api-contract": [
+          110197448383,
+          "success"
+        ],
+        "product-security": [
+          110197448397,
+          "success"
+        ],
+        "product-e2e-gate": [
+          110197448429,
+          "success"
+        ],
+        "product-db": [
+          110197448432,
+          "success"
+        ],
+        "product": [
+          110205250993,
+          "success"
+        ]
+      }
+    }
+  ],
+  "other_runs_at_read_time": [
+    {
+      "workflow": "CI",
+      "run_id": 36810867790,
+      "event": "push",
+      "status": "in_progress",
+      "conclusion": null
+    },
+    {
+      "workflow": "Merge queue review gate",
+      "run_id": 36808278462,
+      "event": "merge_group",
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ],
+  "product_child_jobs": "all seven product child jobs executed and succeeded on the exact candidate in the merge_group run; no inheritance is claimed",
+  "does_not_attest": [
+    "a Runtime Release build for this candidate (none exists at read time; see README)",
+    "release admission, lease issuance, deploy, or live runtime acceptance",
+    "external H01 legal approval"
+  ]
+}

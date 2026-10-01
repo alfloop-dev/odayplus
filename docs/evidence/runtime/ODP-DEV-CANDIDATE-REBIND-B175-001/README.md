@@ -2,6 +2,24 @@
 
 Status: evidence only. This task does not request a lease and does not deploy. The dev rollout is `ODP-DEV-LIVE-DEPLOY-EXECUTION-001`, which may register a lease request only after this PR merges and an approval for the current candidate exists.
 
+## Next candidate: 48611d26 (no build yet; gates still bound to f5496614, no-go)
+
+`ODP-DEV-PRIVATE-API-TRANSPORT-AUTH-001` (PR #1388) changed `product_ops/deployment/` and `delivery_toolchain/e2e/`. Those are non-evidence paths, so f5496614 can no longer pass ancestry admission. The next candidate is merged dev head `48611d264e9e10b5c74b8ac1cb972bc92e5ef817`. This branch merged it in as a base advance; the merge tree equals `git merge-tree` of both parents.
+
+| Fact | Value | Source |
+|---|---|---|
+| Exact-candidate CI | `36808278515` (merge_group), success; all ten jobs including the seven product jobs ran on the exact candidate. The push run `36810867790` was still running at read time and is not cited | `candidate-ci-48611d26.json` |
+| npm audit inputs | all ten tracked npm inputs are byte-identical to f5496614 and match the original input proof. The 01:13:32Z dev-inclusive audit snapshot is reused by equivalence. This is not a fresh scan | `npm-audit-input-equivalence-48611d26.json` |
+| Runtime Release build | none. Deploy Dev has no run for this SHA (latest is `36799446467` on f5496614) | readback of workflow `302984644` runs |
+
+What has not been done, and why:
+
+- No build was dispatched. A build needs an explicit operator permission for this exact SHA. Earlier auto-review refusals (Production Deploy dispatch, Security Weaken gate flip) are not retried and are not routed around with a different tool or actor.
+- `RELEASE_MANIFEST.json` and `RELEASE_GATE_REGISTRY.json` are unchanged. They still describe f5496614, and decision stays no-go. They change only after a real build exists for 48611d26.
+- The f5496614 approval (`HUMANOPS-DEV-MIGRATION-20261001T012941Z`) is bound to that tuple and does not carry over.
+
+Build parameters for the operator (same shape as run `36799446467`): `gh workflow run deploy-dev.yml --ref dev -f phase=build -f environment=dev -f release_sha=48611d264e9e10b5c74b8ac1cb972bc92e5ef817 -f task_id=ODP-DEV-LIVE-DEPLOY-EXECUTION-001`, with `release_lease` left empty.
+
 ## Current candidate: f5496614 (decision: no-go, awaiting user approval)
 
 ### Why the candidate changed again
