@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "status": "admitted",
+  "errors": [],
+  "environment": "dev",
+  "checker": "delivery_toolchain/release/check_runtime_admission.py::registry_admission_errors at candidate b175b231 (includes check_candidate_ancestry)",
+  "bound_commit": "8ed4c41d067ee2b0a632598e6fa704a43049b687",
+  "bound_tree": "e204339a2c6d72b439493e73bb00a929d3faf010",
+  "simulated_release_sha": "f885443abc88b1b14d034e89558c2e2641063e95",
+  "simulated_merge": {
+    "first_parent": "b175b231cea7e063286670405650ae987230d7d7",
+    "second_parent": "8ed4c41d067ee2b0a632598e6fa704a43049b687"
+  },
+  "non_evidence_paths_in_merge_vs_candidate": [],
+  "expected_manifest_digest": "sha256:b26b71357b0107a17f115b07f6ff1f71551314197ae3f4f8c4de590d9447924d",
+  "caveat": "Bound to commit 8ed4c41d; the only later change is the commit adding this file (a docs/evidence path). Recheck admission against the actual merged dev SHA before any lease request; never use the simulated SHA."
+}

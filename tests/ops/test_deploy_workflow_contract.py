@@ -2109,3 +2109,19 @@ def test_admission_runs_the_check_inside_the_locked_environment() -> None:
     run = step["run"]
     assert "uv run python delivery_toolchain/release/check_runtime_admission.py" in run
     assert "\n          python3 delivery_toolchain/release/check_runtime_admission.py" not in run
+
+
+def test_deploy_job_already_binds_the_private_api_transport_identities() -> None:
+    """ODP-DEV-PRIVATE-API-TRANSPORT-AUTH-001: the API invoker bindings and the
+    transport token reuse identities the deploy job already receives. The token
+    itself is minted at deploy time and is never a stored workflow credential."""
+
+    parsed = yaml.safe_load(RELEASE_WORKFLOW.read_text(encoding="utf-8"))
+    env = parsed["jobs"]["deploy"]["env"]
+    assert env["ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT"] == (
+        "${{ vars.ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT }}"
+    )
+    assert env["ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT"] == (
+        "${{ vars.ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT }}"
+    )
+    assert "ODP_API_INVOKER_TOKEN" not in RELEASE_WORKFLOW.read_text(encoding="utf-8")

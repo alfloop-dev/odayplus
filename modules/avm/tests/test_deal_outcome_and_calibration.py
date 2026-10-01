@@ -627,17 +627,19 @@ class TestAVMServiceIntegration:
 
     def test_depreciation_version_pin_and_rollback_receipt(self) -> None:
         """Finding F6: Rollback pin and R-3 receipt attached in execution metadata."""
-        from datetime import UTC, datetime
+        from datetime import UTC, datetime, timedelta
 
         from modules.avm.application.valuation import DepreciationRollbackReceipt
         from modules.avm.domain.valuation import AVM_DEPRECIATION_LEGACY_VERSION
 
+        # Relative to now: the receipt is rejected once target_expiry passes.
+        now = datetime.now(UTC)
         repo = InMemoryAVMRepository()
         receipt = DepreciationRollbackReceipt(
             decider="finance_lead",
-            decision_time=datetime(2026, 9, 10, 12, 0, tzinfo=UTC),
+            decision_time=now - timedelta(days=1),
             reason="Market dislocation observed during canary rollout",
-            target_expiry="2026-09-30",
+            target_expiry=(now + timedelta(days=30)).date().isoformat(),
             depreciation_version_pin=AVM_DEPRECIATION_LEGACY_VERSION,
         )
         service = AVMService(

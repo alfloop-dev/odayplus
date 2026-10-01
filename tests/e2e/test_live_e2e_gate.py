@@ -12,7 +12,9 @@ import json
 import subprocess
 import sys
 from copy import deepcopy
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
 from typing import Any
 
 import pytest
@@ -29,6 +31,7 @@ NOW = "2026-07-26T15:00:00Z"
 # ODP_DEPLOY_ENV=dev. It is the deploy env, not the product mode -- a dev deploy
 # is a production-*mode* runtime (ODP_PRODUCT_MODE) that reports `dev` here.
 DEPLOYMENT_MODE = "dev"
+TRANSPORT_TOKEN = "cloud-run-transport-token-value"
 
 
 def load_checker() -> Any:
@@ -568,6 +571,9 @@ def config(**overrides: Any) -> Any:
         "expected_sha": EXPECTED_SHA,
         "bearer_token": "operator-token-value",
         "operator_role": "ops_admin",
+        # Cloud Run transport identity for the private API service; a separate
+        # credential from the application bearer token above.
+        "api_transport_token": TRANSPORT_TOKEN,
         # The web origin is part of the release contract: the gate now blocks
         # rather than silently skipping the protected-route assertion.
         "web_url": WEB_URL,
@@ -794,6 +800,179 @@ def test_report_never_contains_the_bearer_token() -> None:
     serialized = json.dumps(report)
     assert "operator-token-value" not in serialized
     assert "<redacted>" in serialized
+
+
+# ---------------------------------------------------------------------------
+# Private API transport identity (ODP-DEV-PRIVATE-API-TRANSPORT-AUTH-001)
+# ---------------------------------------------------------------------------
+
+
+def test_missing_api_transport_credential_blocks_before_any_request() -> None:
+    http = FakeHttp(live_routes())
+    clock = FakeClock()
+    _, report = gate.evaluate_gate(
+        config(api_transport_token=""),
+        http=http,
+        worker_driver=FakeWorkerDriver(),
+        correlation_id=CORRELATION_ID,
+        now=NOW,
+        web_http=passing_web_http(),
+        monotonic=clock.monotonic,
+        sleep=clock.sleep,
+    )
+
+    assert report["ok"] is False
+    blocker = next(
+        b for b in report["blockers"] if b["check"] == "config:api_transport_credential"
+    )
+    assert blocker["dependency"] == "config"
+    assert gate.API_TRANSPORT_TOKEN_ENV in blocker["detail"]
+    assert report["inputs"]["api_transport_credential_configured"] is False
+    # A Cloud Run 403 must never stand in for the app's anonymous denial, so
+    # nothing is sent without the transport identity.
+    assert http.calls == []
+
+
+def test_report_never_contains_the_transport_token() -> None:
+    routes = live_routes()
+    routes["GET /api/v1/operator/bootstrap"] = response(
+        500, {"detail": f"transport {TRANSPORT_TOKEN} rejected"}
+    )
+    _, report = run_gate(routes)
+
+    serialized = json.dumps(report)
+    assert TRANSPORT_TOKEN not in serialized
+    assert report["inputs"]["api_transport_credential_configured"] is True
+
+
+class _CapturingOpener:
+    def __init__(self, sink: list[Any]) -> None:
+        self.sink = sink
+
+    def open(self, request: Any, timeout: float) -> Any:
+        self.sink.append(request)
+
+        class _Response:
+            status = 200
+            headers: dict[str, str] = {}
+
+            def read(self) -> bytes:
+                return b"{}"
+
+            def __enter__(self) -> Any:
+                return self
+
+            def __exit__(self, *exc: Any) -> None:
+                return None
+
+        return _Response()
+
+
+def _capture_requests(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    sink: list[Any] = []
+    monkeypatch.setattr(
+        gate.urllib.request, "build_opener", lambda *handlers: _CapturingOpener(sink)
+    )
+    return sink
+
+
+def _api_client(transport_token: str = TRANSPORT_TOKEN) -> Any:
+    return gate.UrllibHttpClient(
+        API_URL,
+        timeout=1.0,
+        bearer_token="operator-token-value",
+        operator_role="ops_admin",
+        operator_subject="live-e2e-gate",
+        operator_tenant="",
+        correlation_id=CORRELATION_ID,
+        transport_token=transport_token,
+    )
+
+
+def test_anonymous_api_request_keeps_transport_identity_without_app_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent = _capture_requests(monkeypatch)
+
+    _api_client().request("GET", "/api/v1/operator/bootstrap", authenticated=False)
+
+    (request,) = sent
+    headers = {key.lower(): value for key, value in request.header_items()}
+    assert headers["x-serverless-authorization"] == f"Bearer {TRANSPORT_TOKEN}"
+    # authenticated=False means "no application bearer", not "no Cloud Run
+    # identity": the application, not Cloud Run IAM, decides the denial.
+    assert "authorization" not in headers
+    assert "x-operator-role" not in headers
+
+
+def test_authenticated_api_request_separates_app_and_transport_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent = _capture_requests(monkeypatch)
+
+    _api_client().request(
+        "POST",
+        "/api/v1/jobs",
+        body={"job_type": "external-fetch"},
+        headers={"X-Serverless-Authorization": "Bearer caller-override"},
+    )
+
+    (request,) = sent
+    headers = {key.lower(): value for key, value in request.header_items()}
+    assert headers["authorization"] == "Bearer operator-token-value"
+    assert headers["x-serverless-authorization"] == f"Bearer {TRANSPORT_TOKEN}"
+
+
+def test_web_client_never_receives_the_api_transport_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sent = _capture_requests(monkeypatch)
+    web = gate._web_client(config(), CORRELATION_ID)
+    assert web is not None
+
+    web.request("GET", "/operator", authenticated=False, follow_redirects=False)
+
+    (request,) = sent
+    headers = {key.lower(): value for key, value in request.header_items()}
+    assert "x-serverless-authorization" not in headers
+    assert "authorization" not in headers
+
+
+def test_main_wires_the_transport_token_to_the_api_client_only(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_evaluate_gate(config_value: Any, **kwargs: Any) -> Any:
+        captured["config"] = config_value
+        captured.update(kwargs)
+        return [], {"ok": True, "blockers": [], "blocking_dependencies": []}
+
+    monkeypatch.setattr(gate, "evaluate_gate", fake_evaluate_gate)
+    monkeypatch.setenv("ODP_OPERATOR_SMOKE_BEARER_TOKEN", "operator-token-value")
+    monkeypatch.setenv(gate.API_TRANSPORT_TOKEN_ENV, TRANSPORT_TOKEN)
+
+    exit_code = gate.main(
+        [
+            "--api-url",
+            API_URL,
+            "--web-url",
+            WEB_URL,
+            "--expected-sha",
+            EXPECTED_SHA,
+            "--expected-deployment",
+            DEPLOYMENT_MODE,
+            "--output",
+            str(tmp_path / "report.json"),
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["config"].api_transport_token == TRANSPORT_TOKEN
+    assert captured["config"].bearer_token == "operator-token-value"
+    assert captured["http"]._transport_token == TRANSPORT_TOKEN
+    assert captured["web_http"]._transport_token == ""
+    assert TRANSPORT_TOKEN not in (tmp_path / "report.json").read_text(encoding="utf-8")
 
 
 def test_every_check_declares_a_known_runtime_dependency() -> None:
@@ -2215,3 +2394,104 @@ def test_web_login_redirect_contract_matches_the_deployed_middleware() -> None:
 
     assert 'new URL("/login", request.url)' in middleware
     assert '"returnTo",' in middleware
+
+
+# ---------------------------------------------------------------------------
+# A redirect must never carry the API credentials to another origin
+# ---------------------------------------------------------------------------
+
+
+def _serve(handler: type[BaseHTTPRequestHandler]) -> tuple[ThreadingHTTPServer, str]:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    Thread(target=server.serve_forever, daemon=True).start()
+    host, port = server.server_address
+    return server, f"http://{host}:{port}"
+
+
+@pytest.fixture
+def redirecting_api() -> Any:
+    """A local API origin that redirects to a second, recording origin."""
+
+    collected: list[dict[str, str]] = []
+
+    class Collector(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            collected.append({key.lower(): value for key, value in self.headers.items()})
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    collector, collector_url = _serve(Collector)
+
+    class Api(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            if self.path == "/landing":
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"landed": true}')
+                return
+            self.send_response(302)
+            target = "/landing" if self.path == "/same-origin" else f"{collector_url}/collect"
+            self.send_header("location", target)
+            self.send_header("content-length", "0")
+            self.end_headers()
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    api, api_url = _serve(Api)
+    try:
+        yield api_url, collected
+    finally:
+        api.shutdown()
+        collector.shutdown()
+
+
+@pytest.mark.parametrize("authenticated", [True, False])
+def test_api_client_refuses_a_cross_origin_redirect(
+    redirecting_api: Any, authenticated: bool
+) -> None:
+    api_url, collected = redirecting_api
+    client = gate.UrllibHttpClient(
+        api_url,
+        timeout=5.0,
+        bearer_token="operator-token-value",
+        operator_role="ops_admin",
+        operator_subject="live-e2e-gate",
+        operator_tenant="",
+        correlation_id=CORRELATION_ID,
+        transport_token=TRANSPORT_TOKEN,
+    )
+
+    result = client.request("GET", "/api/v1/operator/bootstrap", authenticated=authenticated)
+
+    # Fail closed, and the second origin is never contacted with either credential.
+    assert result.status == 0
+    assert result.error == "refused cross-origin redirect for /api/v1/operator/bootstrap"
+    assert TRANSPORT_TOKEN not in result.error
+    assert collected == []
+
+
+def test_api_client_still_follows_a_same_origin_redirect(redirecting_api: Any) -> None:
+    api_url, collected = redirecting_api
+    client = gate.UrllibHttpClient(
+        api_url,
+        timeout=5.0,
+        bearer_token="operator-token-value",
+        operator_role="ops_admin",
+        operator_subject="live-e2e-gate",
+        operator_tenant="",
+        correlation_id=CORRELATION_ID,
+        transport_token=TRANSPORT_TOKEN,
+    )
+
+    result = client.request("GET", "/same-origin")
+
+    assert result.status == 200
+    assert result.payload == {"landed": True}
+    assert collected == []

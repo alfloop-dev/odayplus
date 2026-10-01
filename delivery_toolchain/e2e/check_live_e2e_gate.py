@@ -56,6 +56,11 @@ API_URL_ENV = "ODP_LIVE_E2E_API_URL"
 WEB_URL_ENV = "ODP_LIVE_E2E_WEB_URL"
 EXPECTED_SHA_ENV = "ODAY_RELEASE_SHA"
 BEARER_TOKEN_ENV = "ODP_OPERATOR_SMOKE_BEARER_TOKEN"
+# ODP-DEV-PRIVATE-API-TRANSPORT-AUTH-001: the API Cloud Run service is private.
+# The deploy mints this Cloud Run transport ID token for the API's stable
+# service URL; it rides in X-Serverless-Authorization on every API request,
+# anonymous ones included, and never reaches the Web origin.
+API_TRANSPORT_TOKEN_ENV = "ODP_API_INVOKER_TOKEN"
 OPERATOR_ROLE_ENV = "ODP_OPERATOR_SMOKE_ROLE"
 PRODUCTION_PROVIDER_IDS_ENV = "ODP_PRODUCTION_PROVIDER_IDS"
 
@@ -174,8 +179,8 @@ PROVIDER_MODE_DISABLED_REASON_CODE = "provider_mode_disabled"
 DEPENDENCY_ACTIONS: Mapping[str, str] = {
     "config": (
         "Set the gate inputs (API URL, web URL, release SHA, operator bearer "
-        "token, role, ODP_PRODUCTION_PROVIDER_IDS) in the deploy workflow "
-        "environment."
+        "token, API transport token, role, ODP_PRODUCTION_PROVIDER_IDS) in the "
+        "deploy workflow environment."
     ),
     "release": (
         "Re-run the deployment so the serving revision carries the expected "
@@ -273,6 +278,10 @@ class GateConfig:
     poll_interval_seconds: float = 10.0
     timeout: float = 20.0
     allow_http: bool = False
+    # Cloud Run transport identity for the private API service. It is a
+    # different credential from ``bearer_token`` (the application token) and is
+    # never used to decide whether a request is application-authenticated.
+    api_transport_token: str = ""
 
     @property
     def unknown_provider_ids(self) -> tuple[str, ...]:
@@ -398,6 +407,7 @@ class UrllibHttpClient:
         operator_subject: str,
         operator_tenant: str,
         correlation_id: str,
+        transport_token: str = "",
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
@@ -406,6 +416,7 @@ class UrllibHttpClient:
         self._operator_subject = operator_subject
         self._operator_tenant = operator_tenant
         self._correlation_id = correlation_id
+        self._transport_token = transport_token
 
     def _auth_headers(self) -> dict[str, str]:
         headers = {
@@ -437,10 +448,15 @@ class UrllibHttpClient:
             "accept": "application/json",
             "x-correlation-id": self._correlation_id,
         }
+        # ``authenticated`` is about the application only: the Cloud Run
+        # transport identity is sent either way, so an anonymous request is
+        # denied (or not) by the application rather than by Cloud Run IAM.
         if authenticated:
             request_headers.update(self._auth_headers())
         if headers:
             request_headers.update({key.lower(): value for key, value in headers.items()})
+        if self._transport_token:
+            request_headers["x-serverless-authorization"] = f"Bearer {self._transport_token}"
 
         data: bytes | None = None
         if body is not None:
@@ -453,14 +469,21 @@ class UrllibHttpClient:
             headers=request_headers,
             method=method.upper(),
         )
+        # urllib copies every header except the body ones onto a redirect
+        # target, so following one off this origin would hand the transport
+        # token (and the application bearer) to another host.
         opener = (
-            urllib.request.build_opener()
+            urllib.request.build_opener(_SameOriginRedirect(self._base_url))
             if follow_redirects
             else urllib.request.build_opener(_NoRedirect)
         )
         try:
             with opener.open(request, timeout=self._timeout) as response:
                 return _to_response(response.status, response.headers, response.read())
+        except _CrossOriginRedirectRefused:
+            return HttpResponse(
+                status=0, error=f"refused cross-origin redirect for {safe_path}"
+            )
         except urllib.error.HTTPError as exc:
             return _to_response(exc.code, exc.headers, exc.read())
         except (OSError, urllib.error.URLError, TimeoutError) as exc:
@@ -470,6 +493,34 @@ class UrllibHttpClient:
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args: Any, **kwargs: Any) -> None:  # noqa: D102
         return None
+
+
+class _CrossOriginRedirectRefused(urllib.error.URLError):
+    """A redirect left the client's origin; the target is deliberately not kept."""
+
+
+def _origin(url: str) -> tuple[str, str, int | None]:
+    parsed = urllib.parse.urlsplit(url)
+    scheme = parsed.scheme.lower()
+    try:
+        port = parsed.port
+    except ValueError:
+        return scheme, "", None
+    if port is None:
+        port = {"http": 80, "https": 443}.get(scheme)
+    return scheme, (parsed.hostname or "").lower(), port
+
+
+class _SameOriginRedirect(urllib.request.HTTPRedirectHandler):
+    def __init__(self, base_url: str) -> None:
+        self._origin = _origin(base_url)
+
+    def redirect_request(  # noqa: D102
+        self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str
+    ) -> Any:
+        if _origin(newurl) != self._origin:
+            raise _CrossOriginRedirectRefused("cross-origin redirect refused")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def _to_response(status: int, headers: Any, raw: bytes) -> HttpResponse:
@@ -676,6 +727,15 @@ def validate_config(config: GateConfig) -> list[CheckResult]:
         bool(config.bearer_token),
         "config:operator_credential",
         "configured" if config.bearer_token else f"missing {BEARER_TOKEN_ENV}",
+        "config",
+    )
+    # Without it every API request is refused by Cloud Run IAM, and that 403
+    # must never stand in for the application's own anonymous denial.
+    _check(
+        checks,
+        bool(config.api_transport_token),
+        "config:api_transport_credential",
+        "configured" if config.api_transport_token else f"missing {API_TRANSPORT_TOKEN_ENV}",
         "config",
     )
     _check(
@@ -1766,7 +1826,7 @@ def evaluate_gate(
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> tuple[list[CheckResult], dict[str, Any]]:
-    redact = _redactor(config.bearer_token)
+    redact = _redactor(config.bearer_token, config.api_transport_token)
     checks = validate_config(config)
     report: dict[str, Any] = {
         "schema_version": 1,
@@ -1778,6 +1838,7 @@ def evaluate_gate(
             "api_url_configured": bool(config.api_url),
             "web_url_configured": bool(config.web_url),
             "operator_credential_configured": bool(config.bearer_token),
+            "api_transport_credential_configured": bool(config.api_transport_token),
             "required_provider_ids": list(config.required_provider_ids),
             "snapshot_provider_ids": list(config.snapshot_provider_ids),
             "enrichment_provider_ids": list(config.enrichment_provider_ids),
@@ -1946,6 +2007,7 @@ def main(argv: list[str] | None = None) -> int:
         api_url=args.api_url.strip(),
         expected_sha=args.expected_sha.strip().lower(),
         bearer_token=os.environ.get(args.bearer_token_env, "").strip(),
+        api_transport_token=os.environ.get(API_TRANSPORT_TOKEN_ENV, "").strip(),
         operator_role=args.operator_role.strip(),
         web_url=args.web_url.strip(),
         expected_deployment=args.expected_deployment.strip().lower(),
@@ -1974,6 +2036,7 @@ def main(argv: list[str] | None = None) -> int:
         operator_subject=config.operator_subject,
         operator_tenant=config.operator_tenant,
         correlation_id=correlation_id,
+        transport_token=config.api_transport_token,
     )
     if args.worker_job and args.gcp_region and args.gcp_project:
         worker_driver: WorkerDriver = CloudRunWorkerDriver(

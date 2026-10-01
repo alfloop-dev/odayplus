@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "record_kind": "npm-audit-input-equivalence",
+  "task_id": "ODP-DEV-CANDIDATE-REBIND-B175-001",
+  "new_candidate_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
+  "original_audit_candidate_sha": "f5496614c01b815d5c78d5ee1a2fd7445932e739",
+  "compared_at": "2026-10-01T03:36:15Z",
+  "method": "git show <sha>:<path> byte comparison; input set = tracked package.json/package-lock.json/npm-shrinkwrap.json at each sha",
+  "input_set_identical": true,
+  "input_count": 10,
+  "inputs": [
+    {
+      "path": "apps/web/package.json",
+      "sha256_old": "13c15697aabb50463307ecbfed3cc74bf5890fade4dfca0191287a3da0ac4336",
+      "sha256_new": "13c15697aabb50463307ecbfed3cc74bf5890fade4dfca0191287a3da0ac4336",
+      "identical": true,
+      "matches_original_input_proof": true
+    },
+    {
+      "path": "package-lock.json",
+      "sha256_old": "380154ad533798958de7d38511b10092926ca1ed69de2951c39b0a5f87b0fc26",
+      "sha256_new": "380154ad533798958de7d38511b10092926ca1ed69de2951c39b0a5f87b0fc26",
+      "identical": true,
+      "matches_original_input_proof": true
+    },
+    {
+      "path": "package.json",
+      "sha256_old": "14be4a59ebd1b3b873482a17cab83c138dae3ce8ffa50f51b28e3446e0ad9946",
+      "sha256_new": "14be4a59ebd1b3b873482a17cab83c138dae3ce8ffa50f51b28e3446e0ad9946",
+      "identical": true,
+      "matches_original_input_proof": true
+    },
+    {
+      "path": "packages/design-tokens/package.json",
+      "sha256_old": "6fb04e3fe953244030f02f8ae816fbc5549f60029206627aae29bac27cc6ba78",
+      "sha256_new": "6fb04e3fe953244030f02f8ae816fbc5549f60029206627aae29bac27cc6ba78",
+      "identical": true,
+      "matches_original_input_proof": true
+    },
+    {
+      "path": "packages/domain-types/package.json",
+      "sha256_old": "06530acce418c78b601c64a7318554b6062e220aeb9944a57ba42b7ec617570a",
+      "sha256_new": "06530acce418c78b601c64a7318554b6062e220aeb9944a57ba42b7ec617570a",
+      "identical": true,
+      "matches_original_input_proof": true
+    },
+    {
+      "path": "packages/openapi-client/package.json",
+      "sha256_old": "c3a17a2dbaaa96f870e010d65b4bac74b43dfcc79a88128024bc8ea10b0645da",
+      "sha256_new": "c3a17a2dbaaa96f870e010d65b4bac74b43dfcc79a88128024bc8ea10b0645da",
+      "identical": true,
+      "matches_original_input_proof": true
+    },
+    {
+      "path": "packages/schemas/package.json",
+      "sha256_old": "69f421161d76a3762e3a74a9c71a494dade26aac02b9869c1d3ed877addac4e1",
+      "sha256_new": "69f421161d76a3762e3a74a9c71a494dade26aac02b9869c1d3ed877addac4e1",
+      "identical": true,
+      "matches_original_input_proof": true
+    },
+    {
+      "path": "packages/testkit/package.json",
+      "sha256_old": "c603501c435c60e9671a8b26dbb72b59e52bdb9ea4a47e83c22b2e675399dbce",
+      "sha256_new": "c603501c435c60e9671a8b26dbb72b59e52bdb9ea4a47e83c22b2e675399dbce",
+      "identical": true,
+      "matches_original_input_proof": true
+    },
+    {
+      "path": "packages/ui-domain/package.json",
+      "sha256_old": "4281e48586c3904ee188c351a3b954a1a1e56c6b05f4bc59a3daf78903d9176a",
+      "sha256_new": "4281e48586c3904ee188c351a3b954a1a1e56c6b05f4bc59a3daf78903d9176a",
+      "identical": true,
+      "matches_original_input_proof": true
+    },
+    {
+      "path": "packages/ui/package.json",
+      "sha256_old": "c22cade27141bb67252f3a88e08dee68e297ea661c1bb84db678b474e1321992",
+      "sha256_new": "c22cade27141bb67252f3a88e08dee68e297ea661c1bb84db678b474e1321992",
+      "identical": true,
+      "matches_original_input_proof": true
+    }
+  ],
+  "reused_audit_snapshot": {
+    "npm_audit_json": "/tmp/oday-npm-audit-f5496614-20261001T011332Z/npm-audit.json",
+    "npm_audit_json_sha256": "a983d2336a9f1be254607c73936566a4f3b668080b2ef571965fa7079c79efdb",
+    "input_proof": "/tmp/oday-npm-audit-f5496614-20261001T011332Z/audit-command-input-proof.json",
+    "input_proof_sha256": "6c82b58e2a6f39b0e9e24c60d68440e1b93a99de0891ead6837e7e356db9f280",
+    "original_run_at": "2026-10-01T01:13:32.335913+00:00",
+    "original_candidate": "f5496614c01b815d5c78d5ee1a2fd7445932e739"
+  },
+  "interpretation": "Not a fresh scan. The dev-inclusive npm audit result recorded in dev-npm-audit-f5496614.json applies to the new candidate only because all npm inputs are byte-identical. Advisory data is as of the original run time. The build production audit receipt for the new candidate must come from its own Runtime Release build."
+}

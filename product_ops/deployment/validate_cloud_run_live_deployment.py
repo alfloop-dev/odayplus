@@ -1696,15 +1696,25 @@ def preflight_checks(
     return checks
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        return None
+
+
 def _request(
     url: str,
     *,
     headers: Mapping[str, str],
     timeout: float,
 ) -> tuple[int, str, str]:
+    # Every caller probes the private API with its Cloud Run transport token
+    # (and, for the operator bootstrap, the application bearer). urllib copies
+    # those headers onto any redirect target, so a redirect is never followed:
+    # the 3xx is returned as the probe's own non-200 verdict instead.
     request = urllib.request.Request(url, headers=dict(headers))
+    opener = urllib.request.build_opener(_NoRedirect)
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+        with opener.open(request, timeout=timeout) as response:  # noqa: S310
             return (
                 response.status,
                 response.headers.get("content-type", ""),
@@ -1716,11 +1726,6 @@ def _request(
             exc.headers.get("content-type", ""),
             exc.read().decode("utf-8", errors="replace"),
         )
-
-
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
-        return None
 
 
 def _request_without_redirect(
@@ -2174,6 +2179,28 @@ def _operator_source(payload: Mapping[str, Any]) -> str:
     return ""
 
 
+# ODP-DEV-PRIVATE-API-TRANSPORT-AUTH-001: the API service is private
+# (--no-allow-unauthenticated), so every probe reaches it through Cloud Run IAM
+# with a short-lived ID token minted for the API's stable service URL. Cloud
+# Run checks and strips X-Serverless-Authorization, which leaves Authorization
+# to the application: an anonymous probe stays anonymous to the API, and an
+# authenticated one still carries only the operator's application token there.
+API_INVOKER_TOKEN_ENV = "ODP_API_INVOKER_TOKEN"
+
+
+def _api_transport_headers(api_invoker_token: str) -> dict[str, str]:
+    token = api_invoker_token.strip()
+    return {"x-serverless-authorization": f"Bearer {token}"} if token else {}
+
+
+def _missing_api_invoker_check(prefix: str) -> CheckResult:
+    return CheckResult(
+        False,
+        f"secret:{API_INVOKER_TOKEN_ENV}",
+        f"missing; the private API cannot be reached for {prefix} probes",
+    )
+
+
 def smoke_checks(
     *,
     api_url: str,
@@ -2185,6 +2212,8 @@ def smoke_checks(
     operator_tenant: str,
     correlation_id: str,
     timeout: float,
+    web_invoker_token: str = "",
+    api_invoker_token: str = "",
 ) -> tuple[list[CheckResult], dict[str, Any]]:
     checks: list[CheckResult] = []
     report: dict[str, Any] = {
@@ -2192,9 +2221,19 @@ def smoke_checks(
         "web_url": web_url.rstrip("/"),
         "expected_sha": expected_sha,
         "correlation_id": correlation_id,
+        "web_invoker_authenticated": bool(web_invoker_token.strip()),
+        "api_invoker_authenticated": bool(api_invoker_token.strip()),
         "secret_values_redacted": True,
     }
     base_headers = {"x-correlation-id": correlation_id}
+    # Each service gets only the transport token minted for its own audience.
+    api_headers = {**base_headers, **_api_transport_headers(api_invoker_token)}
+    # A first-release Web candidate is private until promotion. Cloud Run checks
+    # X-Serverless-Authorization for IAM, so the application still sees the
+    # anonymous request whose protected redirect this probe asserts.
+    web_headers = dict(base_headers)
+    if web_invoker_token.strip():
+        web_headers["x-serverless-authorization"] = f"Bearer {web_invoker_token.strip()}"
 
     probes = (
         ("version", "/platform/version"),
@@ -2206,7 +2245,7 @@ def smoke_checks(
         try:
             status, payload = _json_request(
                 f"{api_url.rstrip('/')}{path}",
-                headers=base_headers,
+                headers=api_headers,
                 timeout=timeout,
             )
             payloads[name] = payload
@@ -2276,7 +2315,7 @@ def smoke_checks(
     )
 
     operator_headers = {
-        **base_headers,
+        **api_headers,
         "authorization": f"Bearer {bearer_token}",
         "x-operator-role": operator_role,
     }
@@ -2352,7 +2391,7 @@ def smoke_checks(
     try:
         web_status, location = _request_without_redirect(
             f"{web_url.rstrip('/')}/operator",
-            headers=base_headers,
+            headers=web_headers,
             timeout=timeout,
         )
         auth_redirect = _is_safe_protected_redirect(web_url, web_status, location)
@@ -2741,6 +2780,7 @@ def compatibility_smoke_checks(
     timeout: float,
     retry_policy: ProbeRetryPolicy | None = None,
     sleep: Any = time.sleep,
+    api_invoker_token: str = "",
 ) -> tuple[list[CheckResult], dict[str, Any]]:
     """Verify that the old API can still read the migrated production database."""
 
@@ -2750,10 +2790,11 @@ def compatibility_smoke_checks(
         "api_url": api_url.rstrip("/"),
         "web_url": web_url.rstrip("/"),
         "correlation_id": correlation_id,
+        "api_invoker_authenticated": bool(api_invoker_token.strip()),
         "secret_values_redacted": True,
         "probe_retry_policy": policy.as_report(),
     }
-    headers = {"x-correlation-id": correlation_id}
+    headers = {"x-correlation-id": correlation_id, **_api_transport_headers(api_invoker_token)}
 
     version_result = probe_with_bounded_retry(
         f"{api_url.rstrip('/')}/platform/version",
@@ -4164,15 +4205,22 @@ def main() -> int:
                 output=args.output,
                 label="Cloud Run migration compatibility smoke",
             )
-        checks, report = compatibility_smoke_checks(
-            api_url=args.api_url,
-            web_url=args.web_url,
-            correlation_id=args.correlation_id,
-            timeout=args.timeout,
-            retry_policy=policy,
-        )
+        api_invoker_token = os.environ.get(API_INVOKER_TOKEN_ENV, "")
+        if not api_invoker_token.strip():
+            checks = [_missing_api_invoker_check("compatibility")]
+            report = {"api_invoker_authenticated": False, "secret_values_redacted": True}
+        else:
+            checks, report = compatibility_smoke_checks(
+                api_url=args.api_url,
+                web_url=args.web_url,
+                correlation_id=args.correlation_id,
+                timeout=args.timeout,
+                retry_policy=policy,
+                api_invoker_token=api_invoker_token,
+            )
     else:
         token = os.environ.get("ODP_OPERATOR_SMOKE_BEARER_TOKEN", "")
+        api_invoker_token = os.environ.get(API_INVOKER_TOKEN_ENV, "")
         checks = []
         if not token.strip():
             checks.append(
@@ -4182,6 +4230,9 @@ def main() -> int:
                     "missing; authenticated operator bootstrap cannot be verified",
                 )
             )
+        if not api_invoker_token.strip():
+            checks.append(_missing_api_invoker_check("smoke"))
+        if checks:
             report = {"secret_values_redacted": True}
         else:
             checks, report = smoke_checks(
@@ -4194,6 +4245,8 @@ def main() -> int:
                 operator_tenant=os.environ.get("ODP_OPERATOR_SMOKE_TENANT", ""),
                 correlation_id=args.correlation_id,
                 timeout=args.timeout,
+                web_invoker_token=os.environ.get("ODP_WEB_CANDIDATE_INVOKER_TOKEN", ""),
+                api_invoker_token=api_invoker_token,
             )
     return _finalize(
         checks=checks,
