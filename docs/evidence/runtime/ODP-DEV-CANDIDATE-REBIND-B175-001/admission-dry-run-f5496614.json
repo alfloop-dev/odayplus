@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "status": "refused-as-expected",
+  "environment": "dev",
+  "checker": "delivery_toolchain/release/check_runtime_admission.py::registry_admission_errors at candidate f5496614 (byte-identical to the candidate version; includes check_candidate_ancestry)",
+  "script": "merge-tree --write-tree C H; commit-tree -p C -p H; clone --shared and detach at the simulated SHA; call registry_admission_errors(root=.)",
+  "bound_commit": "e7201c934976fa1d3c7372659ebf4a9242aa4b89",
+  "bound_tree": "6fa84ba3f0da80714de447178230850c0ac07464",
+  "simulated_release_sha": "da46056ce492ae63c23e825b9f422f547e599d88",
+  "simulated_merge": {
+    "first_parent": "f5496614c01b815d5c78d5ee1a2fd7445932e739",
+    "second_parent": "e7201c934976fa1d3c7372659ebf4a9242aa4b89",
+    "tree_equals_bound_tree": true
+  },
+  "non_evidence_paths_in_merge_vs_candidate": [],
+  "expected_manifest_digest": "sha256:a0fc3aa9647834528a44ac19d1ea9429c4933071248424bfa386591452322e9c",
+  "errors": [
+    "registry decision is 'no-go', expected 'go'",
+    "gate-4 status is 'blocked', which does not clear the gate",
+    "gate-4 has no release receipt"
+  ],
+  "interpretation": "No ancestry or manifest-binding error. The three refusals are the missing user approval for this candidate, recorded on purpose; this is not a GO.",
+  "caveat": "Bound to commit e7201c93; the only later change is the commit adding this file (a docs/evidence path). After an approval is recorded, rerun admission; before any lease request, check the actual merged dev SHA, never the simulated one."
+}

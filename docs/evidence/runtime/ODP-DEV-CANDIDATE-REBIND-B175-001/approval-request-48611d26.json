@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "record_kind": "pending-user-approval-request",
+  "status": "awaiting-user-decision",
+  "is_approval": false,
+  "task_id": "ODP-DEV-CANDIDATE-REBIND-B175-001",
+  "target_environment": "dev",
+  "action": "deploy",
+  "candidate_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
+  "manifest_digest": "sha256:eb97c149496cfda57fc353e121be0a01a1c75282c9e23a9f32052913745a99c7",
+  "manifest_raw_sha256": "sha256:1075e139de973fe55e9d8c74b93cf2c920168803eace03ab4d067119637f0b0c",
+  "manifest_run_id": 36823039168,
+  "prepared_at": "2026-10-01T08:30:25Z",
+  "question_for_user_zh_tw": "是否授權只在 dev 部署這個精確候選？candidate 48611d264e9e10b5c74b8ac1cb972bc92e5ef817、manifest sha256:eb97c149496cfda57fc353e121be0a01a1c75282c9e23a9f32052913745a99c7、Runtime Release build 36823039168。此授權只涵蓋此候選的一次新 release request、一次短期 Supervisor lease 與既有 Runtime Release deploy phase；必須先等 PR #1384 的精確 head 通過審查並合併。部署偏差需明確接受：外部權威 H01 LGPL 法務/安全收據仍缺（四項條件式案例，不視為已通過）；全量 npm audit 有 4 個 dev-only findings（2 high、2 moderate：js-yaml GHSA-2883-xcg3-v3hh、vitest/@vitest/mocker GHSA-82fw-gwwq-j7x9、brace-expansion GHSA-qhr7-859c-m2p7、GHSA-6j4f-fj2g-mc7p、GHSA-q2hr-2g5m-vwhr），而本次 build 的 production npm audit 為 0 findings。若授權，只限 dev；不做資料庫 reset/stamp/delete，不啟用外部資料來源，不變更 staging/production。先前 b175/f549 的授權不延用。",
+  "proposed_deviations": [
+    "Missing external authoritative H01 Legal/Security receipt for four conditionally-used LGPL cases; this remains missing and is not relabeled as passed.",
+    "Four dev-only npm audit finding records (2 high, 2 moderate); exact advisories: GHSA-2883-xcg3-v3hh, GHSA-82fw-gwwq-j7x9, GHSA-qhr7-859c-m2p7, GHSA-6j4f-fj2g-mc7p, GHSA-q2hr-2g5m-vwhr. The production audit in build 36823039168 is zero findings."
+  ],
+  "proposed_scope_limits": "one fresh release request; one short-lived Supervisor lease; existing Runtime Release deploy phase only; dev only; no DB reset/stamp/delete; no rewriting foreign Dagster migration history; no reuse of old approval/nonce; 16 external sources remain disabled; provider credentials absent; egress default-deny; staging and production unchanged.",
+  "dispatch_preconditions": [
+    "PR #1384 exact submitted head is reviewed and merged.",
+    "Canonical manifest and gate registry files are synced from the merged PR.",
+    "Actual merged-dev registry admission passes for this candidate and exact manifest digest."
+  ],
+  "does_not_carry_over": "Prior dev authorizations tied to b175b231 or f5496614 and their manifests/build runs are not extended to this candidate.",
+  "how_recorded": "Only the user can approve. After an explicit reply, the assigned interactive owner must record a new exact-tuple authorization receipt; this pending request is not an approval."
+}
