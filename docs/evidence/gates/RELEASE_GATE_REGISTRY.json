@@ -3,7 +3,7 @@
   "registry_id": "ODP-RELEASE-GATE-REGISTRY",
   "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
   "generated_at": "2026-10-01",
-  "description": "Candidate 48611d264e9e10b5c74b8ac1cb972bc92e5ef817 (Runtime Release build 36823039168) is rebound for dev after PR #1388. Gates 0/1 pass on exact-candidate merge_group CI 36808278515; gate 4 and release decision remain no-go pending exact candidate approval and preserve the missing H01 receipt plus dev-only npm findings. Staging/production gates remain blocked.",
+  "description": "Candidate 48611d264e9e10b5c74b8ac1cb972bc92e5ef817 (Runtime Release build 36823039168) is rebound for dev after PR #1388. Gates 0/1 pass on exact-candidate merge_group CI 36808278515. Gate 4 is passed-with-deviation and release decision is GO for dev only under exact-candidate authorization HUMANOPS-DEV-MIGRATION-20261001T141113Z, which expires 2026-10-02T14:11:13Z. The external H01 receipt remains missing and the four dev-only npm findings remain disclosed. No lease or deployment is authorized until this registry is merged and actual origin/dev registry and Runtime Release admission both return zero errors; staging and production remain blocked.",
   "migration": {
     "from_schema_version": "1.0.0",
     "source_registry_id": "ODP-RELEASE-GATE-REGISTRY",
@@ -19,10 +19,15 @@
     "stage": "candidate-built",
     "environment": "dev",
     "admission_target": "dev",
-    "decision": "no-go",
+    "decision": "go",
     "decision_owner": "Human/Ops",
     "decision_date": "2026-10-01",
-    "decision_note": "No-go until the user explicitly approves dev-only admission/deploy for exact candidate 48611d264e9e10b5c74b8ac1cb972bc92e5ef817, manifest sha256:eb97c149496cfda57fc353e121be0a01a1c75282c9e23a9f32052913745a99c7, Runtime Release build 36823039168. Prior approvals HUMANOPS-DEV-MIGRATION-20260930T145659Z (b175) and HUMANOPS-DEV-MIGRATION-20261001T012941Z (f549) are not extended. The pending exact-tuple question is recorded in docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/approval-request-48611d26.json. No lease request until approval exists, PR #1384 is reviewed and merged, and actual merged-dev admission passes."
+    "decision_note": "GO for dev admission only under exact user authorization HUMANOPS-DEV-MIGRATION-20261001T141113Z: candidate 48611d264e9e10b5c74b8ac1cb972bc92e5ef817, manifest sha256:eb97c149496cfda57fc353e121be0a01a1c75282c9e23a9f32052913745a99c7, build 36823039168. H01 remains missing (not passed) and the four dev-only npm findings remain disclosed under a dev-only deviation. This does not authorize a lease or deployment until the updated registry is merged and actual origin/dev registry plus Runtime Release admission have zero errors; staging and production remain outside this approval.",
+    "human_signoff": {
+      "approver": "Human/Ops (explicit user reply transcribed by interactive Codex; not an external identity-system signature)",
+      "date": "2026-10-01",
+      "approval_id": "HUMANOPS-DEV-MIGRATION-20261001T141113Z"
+    }
   },
   "gates": [
     {
@@ -304,7 +309,7 @@
       "scope": "All production or sensitive releases: secret scanning, dependency and SAST findings, RBAC/ABAC enforcement, sensitive export and audit controls, IAM/infrastructure review, and OSS licence compliance.",
       "owner": "Claude",
       "reviewer": "Antigravity2",
-      "status": "blocked",
+      "status": "passed-with-deviation",
       "status_date": "2026-10-01",
       "release_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
       "stage": "candidate-built",
@@ -328,14 +333,34 @@
           "kind": "command",
           "ref": "make security",
           "description": "Dependency and static security scan target invoked by make ci."
+        },
+        {
+          "kind": "doc",
+          "ref": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/user-deploy-authorization-HUMANOPS-DEV-MIGRATION-20261001T141113Z.json",
+          "description": "Exact-C user authorization; H01 and dev-only npm findings are accepted only as disclosed dev-only deviations."
+        },
+        {
+          "kind": "doc",
+          "ref": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/build-reconciliation-36823039168.json",
+          "description": "Exact candidate build, production npm audit, security scans, hosted artifacts, and skipped lease/deploy phases."
         }
       ],
-      "receipts": [],
-      "blockers": [
-        "No user approval exists for exact candidate 48611d264e9e10b5c74b8ac1cb972bc92e5ef817, manifest sha256:eb97c149496cfda57fc353e121be0a01a1c75282c9e23a9f32052913745a99c7, build 36823039168. Prior approval HUMANOPS-DEV-MIGRATION-20260930T145659Z is bound only to b175b231; HUMANOPS-DEV-MIGRATION-20261001T012941Z is bound only to f5496614. Neither is extended. Pending question: docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/approval-request-48611d26.json.",
-        "Full npm audit evidence is reused only through exact byte-equivalence of all 10 tracked npm inputs (see npm-audit-input-equivalence-48611d26.json), not claimed as a fresh scan. It reports 4 dev-only finding records (2 high, 2 moderate): js-yaml GHSA-2883-xcg3-v3hh, vitest/@vitest/mocker GHSA-82fw-gwwq-j7x9, and brace-expansion GHSA-qhr7-859c-m2p7, GHSA-6j4f-fj2g-mc7p, GHSA-q2hr-2g5m-vwhr (docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/dev-npm-audit-f5496614.json). This build production npm audit is 0 findings.",
-        "External authoritative H01 receipt for four conditionally-used LGPL cases is still missing; it can only be accepted as a dev-only deviation by the user, not relabeled as passed."
-      ]
+      "receipts": [
+        {
+          "receipt_id": "gate-4-48611d264e9e-20261001T141113Z",
+          "release_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
+          "result": "pass",
+          "recorded_at": "2026-10-01T14:11:13Z",
+          "recorded_by": "Codex (interactive transcription of the explicit user authorization)",
+          "artifact": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/user-deploy-authorization-HUMANOPS-DEV-MIGRATION-20261001T141113Z.json"
+        }
+      ],
+      "blockers": [],
+      "deviation": {
+        "description": "For this exact dev candidate only, the user accepts the missing external authoritative H01 LGPL receipt for four conditionally-used cases and the four disclosed dev-only npm finding records (2 high, 2 moderate). H01 is not claimed as passed; build 36823039168 reported zero production npm findings. Staging and production require the authoritative H01 receipt, resolution or explicit fresh disposition of dependency findings, and new approval.",
+        "approver": "Human/Ops (explicit user reply transcribed by interactive Codex; not an external identity-system signature)",
+        "review_by": "2026-10-02"
+      }
     },
     {
       "id": "gate-5",
@@ -467,8 +492,9 @@
       36808278515
     ],
     "candidate_ci_evidence": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/candidate-ci-48611d26.json",
-    "approval_id": null,
-    "approval_status": "awaiting-user-decision",
+    "approval_id": "HUMANOPS-DEV-MIGRATION-20261001T141113Z",
+    "approval_status": "approved",
+    "approval_expires_at": "2026-10-02T14:11:13Z",
     "approval_request": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/approval-request-48611d26.json",
     "superseded_approvals": [
       "HUMANOPS-DEV-MIGRATION-20260929T053234Z (ee06d1d8; expired and consumed by failed run 36657889962)",
