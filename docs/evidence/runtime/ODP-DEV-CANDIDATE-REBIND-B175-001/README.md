@@ -18,7 +18,7 @@ What has not been done, and why:
 - `RELEASE_MANIFEST.json` and `RELEASE_GATE_REGISTRY.json` are unchanged. They still describe f5496614, and decision stays no-go. They change only after a real build exists for 48611d26.
 - The f5496614 approval (`HUMANOPS-DEV-MIGRATION-20261001T012941Z`) is bound to that tuple and does not carry over.
 
-Build parameters for the operator (same shape as run `36799446467`): `gh workflow run deploy-dev.yml --ref dev -f phase=build -f environment=dev -f release_sha=48611d264e9e10b5c74b8ac1cb972bc92e5ef817 -f task_id=ODP-DEV-LIVE-DEPLOY-EXECUTION-001`, with `release_lease` left empty.
+Build parameters for the operator (same shape as run `36799446467`): `gh workflow run deploy-dev.yml --repo alfloop-dev/odayplus --ref dev -f phase=build -f environment=dev -f release_sha=48611d264e9e10b5c74b8ac1cb972bc92e5ef817 -f task_id=ODP-DEV-LIVE-DEPLOY-EXECUTION-001 -f initial_release_recovery=true`, with `release_lease` and the remaining optional inputs left empty. The recovery flag records fresh target-absence evidence for the first release; this command remains a proposal until explicit permission is granted.
 
 ## Current candidate: f5496614 (decision: no-go, awaiting user approval)
 
