@@ -1,0 +1,221 @@
+{
+  "schema_version": 1,
+  "record_kind": "runtime-release-build-only-reconciliation",
+  "task_id": "ODP-DEV-CANDIDATE-REBIND-B175-001",
+  "readback_method": "gh api repos/alfloop-dev/odayplus/actions/runs/36799446467{,/jobs,/artifacts}, gh api .../actions/jobs/110170336414 (steps), gh run view --log --job 110170336414, gh api .../actions/artifacts/<id>/zip (each archive sha256 compared with the GitHub artifact digest)",
+  "readback_at": "2026-10-01",
+  "read_back_by": "Claude2 (auto worker); independently repeats the root readback at /tmp/oday-dev-build-36799446467-root-readback/ and matches it byte-for-byte",
+  "candidate": {
+    "sha": "f5496614c01b815d5c78d5ee1a2fd7445932e739",
+    "environment": "dev",
+    "phase": "build",
+    "release_id": "odp-f5496614c01b"
+  },
+  "manifest": {
+    "artifact": "runtime-release-manifest-f5496614c01b815d5c78d5ee1a2fd7445932e739",
+    "logical_digest": "sha256:a0fc3aa9647834528a44ac19d1ea9429c4933071248424bfa386591452322e9c",
+    "logical_digest_recomputed_with": "delivery_toolchain/release/release_manifest.py::compute_manifest_digest",
+    "raw_file_sha256": "sha256:c79c5283048a497bd0cc33268e5046905b84c35c6be88f497ceac8ea98e3b07f",
+    "release_status": "ready",
+    "schema_version": 2,
+    "canonical_copy": "docs/evidence/gates/RELEASE_MANIFEST.json (byte-identical)"
+  },
+  "build_run": {
+    "workflow": "Runtime Release",
+    "workflow_file": ".github/workflows/deploy-dev.yml",
+    "run_id": 36799446467,
+    "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36799446467",
+    "event": "workflow_dispatch",
+    "head_branch": "dev",
+    "head_sha": "f5496614c01b815d5c78d5ee1a2fd7445932e739",
+    "triggering_actor": "ajoe734",
+    "created_at": "2026-10-01T01:06:00Z",
+    "updated_at": "2026-10-01T01:14:29Z",
+    "conclusion": "success",
+    "release_phase_receipt": {
+      "phase": "build",
+      "environment": "dev",
+      "release_sha": "f5496614c01b815d5c78d5ee1a2fd7445932e739",
+      "task_id": "ODP-DEV-LIVE-DEPLOY-EXECUTION-001",
+      "lease_supplied": false
+    },
+    "jobs": [
+      {
+        "name": "Validate release phase inputs",
+        "id": 110170285069,
+        "conclusion": "success",
+        "started_at": "2026-10-01T01:06:08Z",
+        "completed_at": "2026-10-01T01:06:17Z"
+      },
+      {
+        "name": "Build once and publish the immutable artifact handoff",
+        "id": 110170336414,
+        "conclusion": "success",
+        "started_at": "2026-10-01T01:06:20Z",
+        "completed_at": "2026-10-01T01:14:28Z"
+      },
+      {
+        "name": "Verify the Supervisor lease authorises this deploy",
+        "id": 110172400605,
+        "conclusion": "skipped"
+      },
+      {
+        "name": "Verify production watch and clean up ephemeral staging",
+        "id": 110172401796,
+        "conclusion": "skipped"
+      },
+      {
+        "name": "Deploy the admitted artifact by immutable digest",
+        "id": 110172402017,
+        "conclusion": "skipped"
+      }
+    ],
+    "lease_issued": false,
+    "deployment_performed": false
+  },
+  "build_job_steps": {
+    "secret_scan": {
+      "step": 8,
+      "conclusion": "success"
+    },
+    "python_sast": {
+      "step": 9,
+      "conclusion": "success"
+    },
+    "production_npm_audit": {
+      "step": 10,
+      "started_at": "2026-10-01T01:06:50Z",
+      "completed_at": "2026-10-01T01:06:51Z",
+      "conclusion": "success"
+    },
+    "e2e_health_backup_restore_rollback_proof": {
+      "step": 14,
+      "started_at": "2026-10-01T01:06:53Z",
+      "completed_at": "2026-10-01T01:09:27Z",
+      "conclusion": "success"
+    },
+    "initial_release_target_absence_readback": {
+      "step": 17,
+      "started_at": "2026-10-01T01:09:43Z",
+      "completed_at": "2026-10-01T01:09:53Z",
+      "conclusion": "success"
+    },
+    "build_publish_sign_attest": {
+      "step": 19,
+      "started_at": "2026-10-01T01:09:54Z",
+      "completed_at": "2026-10-01T01:14:20Z",
+      "conclusion": "success"
+    }
+  },
+  "images_built_fresh": true,
+  "images_built_fresh_basis": "Build job log shows each image pushed with a 'digest: sha256:...' line followed by a fresh 'tlog entry created' for its signature and its attestation; the reuse message 'Immutable images already exist ... reusing their digests.' appears only in the echoed script source, never as output.",
+  "image_signing": {
+    "api": {
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:80213b088d1b6c81d9a1edbf96cf3107800e48109f77eef48f7b032c6f19c8ae",
+      "pushed_at": "2026-10-01T01:11:13Z",
+      "rekor_tlog_indexes": [
+        3028485915,
+        3028488428
+      ]
+    },
+    "worker": {
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:29c840af7806f767e19ef9688a1e5f021baf218cf81819fc626eb99ea374aeec",
+      "pushed_at": "2026-10-01T01:11:42Z",
+      "rekor_tlog_indexes": [
+        3028493240,
+        3028495506
+      ]
+    },
+    "scheduler": {
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:607c94630b2f90e389bc9a4918d78cbd89572114059fae9086ae23242e80491b",
+      "pushed_at": "2026-10-01T01:12:07Z",
+      "rekor_tlog_indexes": [
+        3028498260,
+        3028500322
+      ]
+    },
+    "web": {
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:1517cb9c07783f9ba0e1bfaca2f00e310c9a7f58b240f7a2f70693df74d9a1af",
+      "pushed_at": "2026-10-01T01:13:37Z",
+      "rekor_tlog_indexes": [
+        3028510170,
+        3028511549
+      ]
+    }
+  },
+  "uploaded_artifacts": [
+    {
+      "name": "release-phase-receipt-dev-build",
+      "id": 11134838701,
+      "created_at": "2026-10-01T01:06:15Z",
+      "github_archive_digest": "sha256:1680d12911a60b9032c4bc148611e7e35c8641e2417756b154e3e420da8940fd",
+      "downloaded_archive_sha256": "sha256:1680d12911a60b9032c4bc148611e7e35c8641e2417756b154e3e420da8940fd",
+      "raw_sha256": "af8ed66cdf5af6038bfe86de3667dea9c90eebb03842cdae66b8ea9f391378ca",
+      "raw_bytes": 764,
+      "hash_scope": "expanded artifact JSON file bytes",
+      "archive_size_in_bytes": 629,
+      "evidence_file": "hosted-artifacts/run-36799446467/release-phase-receipt-dev-build/release-phase-receipt.json"
+    },
+    {
+      "name": "release-environment-receipt-dev-build",
+      "id": 11134838737,
+      "created_at": "2026-10-01T01:06:28Z",
+      "github_archive_digest": "sha256:34644df6f712e6f887195c0aa76e49e0af4ff1994526f17a448db86c6e94643b",
+      "downloaded_archive_sha256": "sha256:34644df6f712e6f887195c0aa76e49e0af4ff1994526f17a448db86c6e94643b",
+      "raw_sha256": "9fdb8b84cfebb8fc19db4f5d416dbe60fb5fcf72da1305a8cad93338182a5a95",
+      "raw_bytes": 1108,
+      "hash_scope": "expanded artifact JSON file bytes",
+      "archive_size_in_bytes": 795,
+      "evidence_file": "hosted-artifacts/run-36799446467/release-environment-receipt-dev-build/release-environment-receipt.json"
+    },
+    {
+      "name": "release-npm-audit-receipt-dev",
+      "id": 11135331976,
+      "created_at": "2026-10-01T01:06:52Z",
+      "github_archive_digest": "sha256:eef17ee4f4cf76fbf79751ca27365c0a7974a7bc95b997856441f5ef735b9ef1",
+      "downloaded_archive_sha256": "sha256:eef17ee4f4cf76fbf79751ca27365c0a7974a7bc95b997856441f5ef735b9ef1",
+      "raw_sha256": "ab2c9ff9ca4d7f0de7d9132ae8ad1dedd080ca3b6f55481b4745fb2cd0cd31f6",
+      "raw_bytes": 605,
+      "hash_scope": "expanded artifact JSON file bytes",
+      "archive_size_in_bytes": 509,
+      "evidence_file": "hosted-artifacts/run-36799446467/release-npm-audit-receipt-dev/npm-audit-receipt.json"
+    },
+    {
+      "name": "runtime-release-images-f5496614c01b815d5c78d5ee1a2fd7445932e739",
+      "id": 11135515283,
+      "created_at": "2026-10-01T01:14:21Z",
+      "github_archive_digest": "sha256:c0cf1a60435a3d80593138a3af05d7a91d7d184113c7d2c290e79edf4bd50231",
+      "downloaded_archive_sha256": "sha256:c0cf1a60435a3d80593138a3af05d7a91d7d184113c7d2c290e79edf4bd50231",
+      "raw_sha256": "29b0eaf0d883b3586be278d48be853500808c79d72bc6cdfb856fc8e788f6473",
+      "raw_bytes": 657,
+      "hash_scope": "expanded artifact JSON file bytes",
+      "archive_size_in_bytes": 454,
+      "evidence_file": "hosted-artifacts/run-36799446467/runtime-release-images-f5496614c01b815d5c78d5ee1a2fd7445932e739/runtime-release-images.json"
+    },
+    {
+      "name": "runtime-release-manifest-f5496614c01b815d5c78d5ee1a2fd7445932e739",
+      "id": 11134994383,
+      "created_at": "2026-10-01T01:14:22Z",
+      "github_archive_digest": "sha256:d0c4cf55e965f7114f33fe3aed9708c33be7ccbfaf7365c5648a9526721d9e8d",
+      "downloaded_archive_sha256": "sha256:d0c4cf55e965f7114f33fe3aed9708c33be7ccbfaf7365c5648a9526721d9e8d",
+      "raw_sha256": "c79c5283048a497bd0cc33268e5046905b84c35c6be88f497ceac8ea98e3b07f",
+      "raw_bytes": 9481,
+      "hash_scope": "expanded artifact JSON file bytes",
+      "archive_size_in_bytes": 2506,
+      "evidence_file": "hosted-artifacts/run-36799446467/runtime-release-manifest-f5496614c01b815d5c78d5ee1a2fd7445932e739/RELEASE_MANIFEST.json"
+    },
+    {
+      "name": "initial-release-absence-readback-f5496614c01b815d5c78d5ee1a2fd7445932e739",
+      "id": 11134944466,
+      "created_at": "2026-10-01T01:14:23Z",
+      "github_archive_digest": "sha256:a17c43c5141d46dbdff2914315579d00c2d482a91c85ab7bd353484abdd84e5a",
+      "downloaded_archive_sha256": "sha256:a17c43c5141d46dbdff2914315579d00c2d482a91c85ab7bd353484abdd84e5a",
+      "raw_sha256": "c088453c8494c060c37d9272da67cd41ae4000136b6be74c6a66fec246827ad3",
+      "raw_bytes": 1226,
+      "hash_scope": "expanded artifact JSON file bytes",
+      "archive_size_in_bytes": 508,
+      "evidence_file": "hosted-artifacts/run-36799446467/initial-release-absence-readback-f5496614c01b815d5c78d5ee1a2fd7445932e739/initial-release-absence-readback.json"
+    }
+  ],
+  "interpretation": "Build provenance only. Lease, deploy and watch jobs were skipped; nothing was deployed and no lease was issued. Not an approval."
+}
