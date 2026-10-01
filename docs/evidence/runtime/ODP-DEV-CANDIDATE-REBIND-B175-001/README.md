@@ -1,59 +1,39 @@
 # ODP-DEV-CANDIDATE-REBIND-B175-001 — dev candidate evidence
 
-Status: evidence only. This task does not request a lease and does not deploy. The dev rollout is `ODP-DEV-LIVE-DEPLOY-EXECUTION-001`, which may register a lease request only after this PR merges and an approval for the current candidate exists.
+Status: evidence only. This task does not request a lease and does not deploy. The dev rollout is `ODP-DEV-LIVE-DEPLOY-EXECUTION-001`; it may register a lease request only after the candidate PR is reviewed and merged, an exact-tuple user authorization exists, and actual merged-dev admission passes.
 
-## Next candidate: 48611d26 (no build yet; gates still bound to f5496614, no-go)
+## Current candidate: 48611d26 (build succeeded; release remains NO-GO)
 
-`ODP-DEV-PRIVATE-API-TRANSPORT-AUTH-001` (PR #1388) changed `product_ops/deployment/` and `delivery_toolchain/e2e/`. Those are non-evidence paths, so f5496614 can no longer pass ancestry admission. The next candidate is merged dev head `48611d264e9e10b5c74b8ac1cb972bc92e5ef817`. This branch merged it in as a base advance; the merge tree equals `git merge-tree` of both parents.
-
-| Fact | Value | Source |
-|---|---|---|
-| Exact-candidate CI | `36808278515` (merge_group), success; all ten jobs including the seven product jobs ran on the exact candidate. The push run `36810867790` was still running at read time and is not cited | `candidate-ci-48611d26.json` |
-| npm audit inputs | all ten tracked npm inputs are byte-identical to f5496614 and match the original input proof. The 01:13:32Z dev-inclusive audit snapshot is reused by equivalence. This is not a fresh scan | `npm-audit-input-equivalence-48611d26.json` |
-| Runtime Release build | none. Deploy Dev has no run for this SHA (latest is `36799446467` on f5496614) | readback of workflow `302984644` runs |
-
-What has not been done, and why:
-
-- No build was dispatched. A build needs an explicit operator permission for this exact SHA. Earlier auto-review refusals (Production Deploy dispatch, Security Weaken gate flip) are not retried and are not routed around with a different tool or actor.
-- `RELEASE_MANIFEST.json` and `RELEASE_GATE_REGISTRY.json` are unchanged. They still describe f5496614, and decision stays no-go. They change only after a real build exists for 48611d26.
-- The f5496614 approval (`HUMANOPS-DEV-MIGRATION-20261001T012941Z`) is bound to that tuple and does not carry over.
-
-Build parameters for the operator (same shape as run `36799446467`): `gh workflow run deploy-dev.yml --repo alfloop-dev/odayplus --ref dev -f phase=build -f environment=dev -f release_sha=48611d264e9e10b5c74b8ac1cb972bc92e5ef817 -f task_id=ODP-DEV-LIVE-DEPLOY-EXECUTION-001 -f initial_release_recovery=true`, with `release_lease` and the remaining optional inputs left empty. The recovery flag records fresh target-absence evidence for the first release; this command remains a proposal until explicit permission is granted.
-
-## Current candidate: f5496614 (decision: no-go, awaiting user approval)
-
-### Why the candidate changed again
-
-Exact-candidate CI on b175b231 later found a urllib3 vulnerability and a SiteScore receipt test that depended on the wall clock. `ODP-SEC-URLLIB3-20260930-001` (PR #1385) fixed both by changing `uv.lock` and `tests/models/`. Those are non-evidence paths, so b175b231 can no longer pass ancestry admission. The user dispatched one fresh build from dev head `f5496614c01b`.
-
-### Facts and source receipts
+Candidate `48611d264e9e10b5c74b8ac1cb972bc92e5ef817` is the actual merged dev head after PR #1388 (`ODP-DEV-PRIVATE-API-TRANSPORT-AUTH-001`). The candidate is built once under the user-authorized Runtime Release build phase. This evidence continues the original PR #1384; it does not change product code or workflow files.
 
 | Fact | Value | Source |
 |---|---|---|
-| Build | Runtime Release run `36799446467`, dispatched by `ajoe734`, build job `110170336414`, 01:06:20–01:14:28Z on 2026-10-01; lease, deploy and watch jobs skipped | `build-reconciliation-36799446467.json` |
-| Manifest | logical `sha256:a0fc3aa9647834528a44ac19d1ea9429c4933071248424bfa386591452322e9c` (recomputed with `compute_manifest_digest`), raw sha256 `c79c5283048a497bd0cc33268e5046905b84c35c6be88f497ceac8ea98e3b07f`, byte-identical to `docs/evidence/gates/RELEASE_MANIFEST.json` | `hosted-artifacts/run-36799446467/` |
-| Artifacts | all six archives downloaded again; each sha256 equals the GitHub artifact digest, and the expanded files equal the root readback in `/tmp/oday-dev-build-36799446467-root-readback/` | `build-reconciliation-36799446467.json#uploaded_artifacts` |
-| Images | four images built fresh; each signature and attestation has its own Rekor tlog entry | `build-reconciliation-36799446467.json#image_signing` |
-| Target absence | five dev targets absent, probed 01:09:43–01:09:53Z | hosted `initial-release-absence-readback-*` |
-| Exact-candidate CI | `36795834052` (merge_group) and `36797803528` (push), both success; all seven product jobs executed and passed on the exact candidate; no inheritance claimed | `candidate-ci-f5496614.json` |
-| Production npm audit | 0 findings (`--omit=dev`) | hosted `release-npm-audit-receipt-dev` |
-| Full npm audit | 2 high, 2 moderate, all in dev dependencies. js-yaml and vitest/mocker were disclosed before; brace-expansion GHSA-qhr7-859c-m2p7, GHSA-6j4f-fj2g-mc7p (high) and GHSA-q2hr-2g5m-vwhr (moderate) are new | `dev-npm-audit-f5496614.json` |
-| Approval | none. `HUMANOPS-DEV-MIGRATION-20260930T145659Z` covers only b175b231 and is not extended. The exact question for the user is recorded, unanswered | `approval-request-f5496614.json` |
+| Exact-candidate CI | `36808278515` (`merge_group`), success; all ten jobs including all seven product child jobs ran on exact C | `candidate-ci-48611d26.json` |
+| Build | Runtime Release run `36823039168`, exact head C, completed successfully; build job `110242751752` succeeded | `build-reconciliation-36823039168.json` |
+| Manifest | logical digest `sha256:eb97c149496cfda57fc353e121be0a01a1c75282c9e23a9f32052913745a99c7`; raw SHA-256 `1075e139de973fe55e9d8c74b93cf2c920168803eace03ab4d067119637f0b0c`; canonical copy is byte-identical | `build-reconciliation-36823039168.json` |
+| Hosted artifacts | all six ZIPs were downloaded from GitHub; each downloaded archive SHA-256 matches its GitHub `artifact.digest`; expanded files are stored under `hosted-artifacts/run-36823039168/` | `build-reconciliation-36823039168.json` |
+| Build checks | secret scan, Python SAST, production npm audit (0 findings), E2E health/backup/restore/rollback proof, GCP WIF, and four cosign signature verifications passed | `build-reconciliation-36823039168.json` |
+| First-release target readback | five dev Cloud Run targets were absent; this is recorded in the hosted absence-readback artifact | `hosted-artifacts/run-36823039168/initial-release-absence-readback-48611d264e9e10b5c74b8ac1cb972bc92e5ef817/initial-release-absence-readback.json` |
+| Lease / deployment | no lease was supplied; lease, deploy, and watch jobs were skipped; nothing was deployed | `build-reconciliation-36823039168.json` |
+| Full npm audit | reused only because all ten tracked npm inputs are byte-identical to the earlier snapshot; it has four dev-only finding records (2 high, 2 moderate), and is not described as a fresh scan | `npm-audit-input-equivalence-48611d26.json`, `dev-npm-audit-f5496614.json` |
+| Exact dev authorization | none yet for this candidate/build. The pending request names this exact C / manifest / build and its H01/npm deviations | `approval-request-48611d26.json` |
 
-### Registry state
+The earlier authorized dispatch `36813751985` did not produce a usable build artifact. The corrected, separately authorized run `36823039168` is the successful build recorded here.
 
-- gate-0 and gate-1: passed on exact-candidate CI.
-- gate-4: blocked until the user answers the recorded question. It cannot be passed-with-deviation without that answer.
-- `release.decision`: `no-go`. `check_release_gate_registry.py` exits 0 and prints `RELEASE STATE: NO-GO`.
+## Registry and admission
 
-### Admission
+- Gate 0 and gate 1 pass on exact-C CI `36808278515`; historical receipts for prior candidates remain recorded as history.
+- Gate 4 remains blocked. The four conditionally-used LGPL cases still lack an external authoritative H01 legal/security receipt; user acceptance would be a dev-only deviation, not a legal pass. The full npm audit findings are disclosed in the exact-tuple request.
+- Data, model/solver, production E2E/UAT, and operations gates remain blocked for their existing reasons.
+- `release.decision` remains `no-go`. The registry check and real dev admission dry-run are recorded in `admission-dry-run-48611d26.json`; neither claims GO.
+- Previous approvals for b175b231 and f5496614 do not carry over.
 
-`admission-dry-run-f5496614.json` records the real `registry_admission_errors` output on a simulated merge of this PR head onto f5496614. It lists the expected refusals (decision is no-go, gate-4 not cleared) and nothing else. The PR head itself includes a base-advance merge of dev, so `check_candidate_ancestry` against the PR head is not meaningful; the final check must run against the actual merged dev SHA, whose first parent is the candidate.
+## Remaining steps
 
-### Next steps (not done by this task)
-
-1. The user answers the question in `approval-request-f5496614.json`. An interactive session transcribes the answer into `user-deploy-authorization-<approval_id>.json`, sets gate-4 and `release.decision`, and reruns admission.
-2. After that commit is reviewed and merged, sync the two gate files into the canonical checkout `/home/lupin/odayplus` before any lease request (the lease issuer reads the working tree there).
+1. Run the normal exact-head review and merge PR #1384. Its owner/reviewer must use their assigned identities; this task does not forge a review.
+2. After merge, read the actual dev SHA and validate candidate ancestry through evidence-only changes.
+3. Ask the user for the exact approval recorded in `approval-request-48611d26.json`; only after approval is recorded may the authorized owner update gate 4 and the release decision, sync the canonical gate files, and prove actual merged-dev admission.
+4. Reopen and hand off to the existing dev deployment task only after all of those checks pass. No lease or deploy is requested by this evidence task.
 
 ## History: candidate b175b231 (superseded, not deployed)
 

@@ -3,7 +3,7 @@
   "registry_id": "ODP-RELEASE-GATE-REGISTRY",
   "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
   "generated_at": "2026-10-01",
-  "description": "Candidate f5496614c01b815d5c78d5ee1a2fd7445932e739 (Runtime Release build 36799446467) is rebound for dev; gates 0/1 pass on exact-candidate full CI. Decision is no-go: gate 4 is blocked until the user explicitly approves this exact candidate (request recorded in docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/approval-request-f5496614.json). Staging/production gates remain blocked.",
+  "description": "Candidate 48611d264e9e10b5c74b8ac1cb972bc92e5ef817 (Runtime Release build 36823039168) is rebound for dev after PR #1388. Gates 0/1 pass on exact-candidate merge_group CI 36808278515; gate 4 and release decision remain no-go pending exact candidate approval and preserve the missing H01 receipt plus dev-only npm findings. Staging/production gates remain blocked.",
   "migration": {
     "from_schema_version": "1.0.0",
     "source_registry_id": "ODP-RELEASE-GATE-REGISTRY",
@@ -12,17 +12,17 @@
     "re_attestation_required": true
   },
   "release": {
-    "candidate_sha": "f5496614c01b815d5c78d5ee1a2fd7445932e739",
+    "candidate_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
     "candidate_ref": "refs/heads/dev",
     "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json",
-    "manifest_digest": "sha256:a0fc3aa9647834528a44ac19d1ea9429c4933071248424bfa386591452322e9c",
+    "manifest_digest": "sha256:eb97c149496cfda57fc353e121be0a01a1c75282c9e23a9f32052913745a99c7",
     "stage": "candidate-built",
     "environment": "dev",
     "admission_target": "dev",
     "decision": "no-go",
     "decision_owner": "Human/Ops",
     "decision_date": "2026-10-01",
-    "decision_note": "No-go until the user explicitly approves dev-only admission/deploy for exact candidate f5496614c01b815d5c78d5ee1a2fd7445932e739, manifest sha256:a0fc3aa9647834528a44ac19d1ea9429c4933071248424bfa386591452322e9c, Runtime Release build 36799446467. Approval HUMANOPS-DEV-MIGRATION-20260930T145659Z is bound to b175b231cea7e063286670405650ae987230d7d7 and is not extended. The pending question is recorded in approval-request-f5496614.json; no lease request until an approval exists and the ODP-DEV-CANDIDATE-REBIND-B175-001 PR is reviewed and merged."
+    "decision_note": "No-go until the user explicitly approves dev-only admission/deploy for exact candidate 48611d264e9e10b5c74b8ac1cb972bc92e5ef817, manifest sha256:eb97c149496cfda57fc353e121be0a01a1c75282c9e23a9f32052913745a99c7, Runtime Release build 36823039168. Prior approvals HUMANOPS-DEV-MIGRATION-20260930T145659Z (b175) and HUMANOPS-DEV-MIGRATION-20261001T012941Z (f549) are not extended. The pending exact-tuple question is recorded in docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/approval-request-48611d26.json. No lease request until approval exists, PR #1384 is reviewed and merged, and actual merged-dev admission passes."
   },
   "gates": [
     {
@@ -34,7 +34,7 @@
       "reviewer": "Claude",
       "status": "passed",
       "status_date": "2026-10-01",
-      "release_sha": "f5496614c01b815d5c78d5ee1a2fd7445932e739",
+      "release_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
       "stage": "candidate-built",
       "environment": "dev",
       "admission_target": "dev",
@@ -64,6 +64,32 @@
       ],
       "receipts": [
         {
+          "receipt_id": "gate-0-48611d264e9e",
+          "release_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
+          "result": "pass",
+          "recorded_at": "2026-10-01T08:30:25Z",
+          "recorded_by": "Codex (exact-candidate evidence reconciliation)",
+          "artifact": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/candidate-ci-48611d26.json",
+          "gate_name": "Code Gate",
+          "summary": "Exact candidate merge_group CI 36808278515 passed all ten jobs (including all seven product child jobs) on 48611d264e9e10b5c74b8ac1cb972bc92e5ef817. Build run 36823039168 also passed and is recorded separately; lease/deploy/watch were skipped. No inherited CI or deployment is claimed.",
+          "provenance": {
+            "exact_ci_runs": [
+              {
+                "run_id": 36808278515,
+                "event": "merge_group",
+                "product_jobs": "7/7 success; 10/10 total jobs success"
+              }
+            ],
+            "build_run_id": 36823039168,
+            "build_run_conclusion": "success",
+            "build_run_deploy_phase": "skipped"
+          },
+          "recorded_under_task": "ODP-DEV-CANDIDATE-REBIND-B175-001"
+        }
+      ],
+      "blockers": [],
+      "historical_receipts": [
+        {
           "receipt_id": "gate-0-f5496614c01b",
           "release_sha": "f5496614c01b815d5c78d5ee1a2fd7445932e739",
           "result": "pass",
@@ -91,8 +117,7 @@
           },
           "recorded_under_task": "ODP-DEV-CANDIDATE-REBIND-B175-001"
         }
-      ],
-      "blockers": []
+      ]
     },
     {
       "id": "gate-1",
@@ -103,7 +128,7 @@
       "reviewer": "Codex2",
       "status": "passed",
       "status_date": "2026-10-01",
-      "release_sha": "f5496614c01b815d5c78d5ee1a2fd7445932e739",
+      "release_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
       "stage": "candidate-built",
       "environment": "dev",
       "admission_target": "dev",
@@ -133,6 +158,32 @@
       ],
       "receipts": [
         {
+          "receipt_id": "gate-1-48611d264e9e",
+          "release_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
+          "result": "pass",
+          "recorded_at": "2026-10-01T08:30:25Z",
+          "recorded_by": "Codex (exact-candidate evidence reconciliation)",
+          "artifact": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/candidate-ci-48611d26.json",
+          "gate_name": "Contract Gate",
+          "summary": "Exact candidate merge_group CI 36808278515 passed all ten jobs (including all seven product child jobs) on 48611d264e9e10b5c74b8ac1cb972bc92e5ef817. Build run 36823039168 also passed and is recorded separately; lease/deploy/watch were skipped. No inherited CI or deployment is claimed.",
+          "provenance": {
+            "exact_ci_runs": [
+              {
+                "run_id": 36808278515,
+                "event": "merge_group",
+                "product_jobs": "7/7 success; 10/10 total jobs success"
+              }
+            ],
+            "build_run_id": 36823039168,
+            "build_run_conclusion": "success",
+            "build_run_deploy_phase": "skipped"
+          },
+          "recorded_under_task": "ODP-DEV-CANDIDATE-REBIND-B175-001"
+        }
+      ],
+      "blockers": [],
+      "historical_receipts": [
+        {
           "receipt_id": "gate-1-f5496614c01b",
           "release_sha": "f5496614c01b815d5c78d5ee1a2fd7445932e739",
           "result": "pass",
@@ -160,8 +211,7 @@
           },
           "recorded_under_task": "ODP-DEV-CANDIDATE-REBIND-B175-001"
         }
-      ],
-      "blockers": []
+      ]
     },
     {
       "id": "gate-2",
@@ -172,7 +222,7 @@
       "reviewer": "Claude",
       "status": "blocked",
       "status_date": "2026-10-01",
-      "release_sha": "f5496614c01b815d5c78d5ee1a2fd7445932e739",
+      "release_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
       "stage": "dev-verified",
       "environment": "dev",
       "admission_target": "staging",
@@ -203,7 +253,7 @@
       ],
       "receipts": [],
       "blockers": [
-        "No Data Gate receipt is bound to release candidate f5496614c01b815d5c78d5ee1a2fd7445932e739 in this registry.",
+        "No Data Gate receipt is bound to release candidate 48611d264e9e10b5c74b8ac1cb972bc92e5ef817 in this registry.",
         "check_live_production_data.py has not been run against a live deployment of this candidate; deterministic fixtures and source stubs do not satisfy the Data Gate. Live dev data-plane verification is assigned to active task ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 (owner Antigravity2) and masked snapshot artifact generation is assigned to active task DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001 (owner Antigravity); gate ownership by Codex2 (reviewer Claude)."
       ]
     },
@@ -216,7 +266,7 @@
       "reviewer": "Antigravity2",
       "status": "blocked",
       "status_date": "2026-10-01",
-      "release_sha": "f5496614c01b815d5c78d5ee1a2fd7445932e739",
+      "release_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
       "stage": "staging-verified",
       "environment": "staging",
       "admission_target": "production",
@@ -242,7 +292,7 @@
       ],
       "receipts": [],
       "blockers": [
-        "No Model and Solver Gate receipt is bound to release candidate f5496614c01b815d5c78d5ee1a2fd7445932e739 in this registry.",
+        "No Model and Solver Gate receipt is bound to release candidate 48611d264e9e10b5c74b8ac1cb972bc92e5ef817 in this registry.",
         "Reconciled from legacy references: canonical task HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001 (owner Human/Ops) covers specific BRAND_TRANSFER/FORMAT_CONVERSION/LEASE/PARTIAL/CDC/merge-queue dispositions, but does not own formal ForecastOps model release/history/production alias or general model-risk approval. Formal model release/history/production alias and general model-risk acceptance require unassigned proposal to coordinator (Authority: Product Owner + ML Risk Owner; Required Input: ForecastOps model card, SiteScore/AVM validation, production alias binding; Acceptance: named human signoff receipt). Staging model and solver execution rehearsal is exercised under active task ODP-EPHEMERAL-STAGING-ROLLOUT-001 (owner Antigravity5).",
         "Solver domain tasks (ODP-BRAND-TRANSFER-IMPLEMENTATION-001, ODP-FORMAT-CONVERSION-IMPLEMENTATION-001, ODP-NET002-LEASE-IMPLEMENTATION-001) remain blocked on upstream dependencies; gate ownership by Codex2 (reviewer Antigravity2)."
       ]
@@ -256,7 +306,7 @@
       "reviewer": "Antigravity2",
       "status": "blocked",
       "status_date": "2026-10-01",
-      "release_sha": "f5496614c01b815d5c78d5ee1a2fd7445932e739",
+      "release_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
       "stage": "candidate-built",
       "environment": "dev",
       "admission_target": "dev",
@@ -282,8 +332,8 @@
       ],
       "receipts": [],
       "blockers": [
-        "No user approval exists for exact candidate f5496614c01b815d5c78d5ee1a2fd7445932e739, manifest sha256:a0fc3aa9647834528a44ac19d1ea9429c4933071248424bfa386591452322e9c, build 36799446467. HUMANOPS-DEV-MIGRATION-20260930T145659Z covers only b175b231cea7e063286670405650ae987230d7d7 and is not extended. Pending question: docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/approval-request-f5496614.json.",
-        "Full npm audit on this candidate reports four dev-only findings, including new brace-expansion advisories GHSA-qhr7-859c-m2p7, GHSA-6j4f-fj2g-mc7p and GHSA-q2hr-2g5m-vwhr not covered by any prior deviation (docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/dev-npm-audit-f5496614.json). Build production npm audit: 0 findings.",
+        "No user approval exists for exact candidate 48611d264e9e10b5c74b8ac1cb972bc92e5ef817, manifest sha256:eb97c149496cfda57fc353e121be0a01a1c75282c9e23a9f32052913745a99c7, build 36823039168. Prior approval HUMANOPS-DEV-MIGRATION-20260930T145659Z is bound only to b175b231; HUMANOPS-DEV-MIGRATION-20261001T012941Z is bound only to f5496614. Neither is extended. Pending question: docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/approval-request-48611d26.json.",
+        "Full npm audit evidence is reused only through exact byte-equivalence of all 10 tracked npm inputs (see npm-audit-input-equivalence-48611d26.json), not claimed as a fresh scan. It reports 4 dev-only finding records (2 high, 2 moderate): js-yaml GHSA-2883-xcg3-v3hh, vitest/@vitest/mocker GHSA-82fw-gwwq-j7x9, and brace-expansion GHSA-qhr7-859c-m2p7, GHSA-6j4f-fj2g-mc7p, GHSA-q2hr-2g5m-vwhr (docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/dev-npm-audit-f5496614.json). This build production npm audit is 0 findings.",
         "External authoritative H01 receipt for four conditionally-used LGPL cases is still missing; it can only be accepted as a dev-only deviation by the user, not relabeled as passed."
       ]
     },
@@ -296,7 +346,7 @@
       "reviewer": "Human/Ops",
       "status": "blocked",
       "status_date": "2026-10-01",
-      "release_sha": "f5496614c01b815d5c78d5ee1a2fd7445932e739",
+      "release_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
       "stage": "staging-verified",
       "environment": "staging",
       "admission_target": "production",
@@ -331,7 +381,7 @@
       ],
       "receipts": [],
       "blockers": [
-        "No E2E, Performance and UAT Gate receipt is bound to release candidate f5496614c01b815d5c78d5ee1a2fd7445932e739 in this registry.",
+        "No E2E, Performance and UAT Gate receipt is bound to release candidate 48611d264e9e10b5c74b8ac1cb972bc92e5ef817 in this registry.",
         "Reconciled from legacy references: exact-SHA live ephemeral staging end-to-end rehearsal, backup/restore drill, and rollback rehearsal are assigned to active task ODP-EPHEMERAL-STAGING-ROLLOUT-001 (owner Antigravity5).",
         "Runtime NFR measurement (SHARED-008, PERF/BATCH/AVAIL/RPO) is assigned to active task ODP-NFR-RUNTIME-EVIDENCE-001 (owner Antigravity3); cross-role UAT defect closeout and formal sign-off require human/ops decision when staging is live (proposal submitted to coordinator); gate ownership by Codex2 (reviewer Human/Ops)."
       ]
@@ -345,7 +395,7 @@
       "reviewer": "Human/Ops",
       "status": "blocked",
       "status_date": "2026-10-01",
-      "release_sha": "f5496614c01b815d5c78d5ee1a2fd7445932e739",
+      "release_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
       "stage": "staging-verified",
       "environment": "staging",
       "admission_target": "production",
@@ -387,7 +437,7 @@
       ],
       "receipts": [],
       "blockers": [
-        "No Ops, Release and Audit Gate receipt is bound to release candidate f5496614c01b815d5c78d5ee1a2fd7445932e739 in this registry.",
+        "No Ops, Release and Audit Gate receipt is bound to release candidate 48611d264e9e10b5c74b8ac1cb972bc92e5ef817 in this registry.",
         "Pre-production admission readiness (required prior to production admission): runbook review, deployment and rollback plan review, backup/DR review, decision-log retention proof (docs/evidence/AUDIT_EVIDENCE_RETENTION_PROOF.md), subsidy audit matrix (docs/evidence/SUBSIDY_EVIDENCE_MATRIX.md), on-call route assignment, and Stage 0-7 / Gate 0-6 final gate audit readiness require coordinator disposition / Human/Ops final go/no-go signoff in docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md (every Human/Ops row remains pending-human; gate ownership by Claude, reviewer Human/Ops).",
         "Post-production closeout (downstream of production rollout): post-deploy production watch window, staging cleanup, and final release archive are assigned to active task ODP-POSTDEPLOY-WATCH-CLOSEOUT-001 (owner Antigravity5, canonical depends_on ODP-PROD-BLUEGREEN-ROLLOUT-001). Structural remediation ledger closeout is assigned to active task ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001 (owner Antigravity5). Post-deploy activities do not block pre-production admission, resolving circular production-order dependency."
       ]
@@ -395,35 +445,35 @@
   ],
   "candidate_rebind": {
     "task_id": "ODP-DEV-CANDIDATE-REBIND-B175-001",
-    "from_candidate_sha": "b175b231cea7e063286670405650ae987230d7d7",
-    "to_candidate_sha": "f5496614c01b815d5c78d5ee1a2fd7445932e739",
-    "from_manifest_digest": "sha256:b26b71357b0107a17f115b07f6ff1f71551314197ae3f4f8c4de590d9447924d",
-    "to_manifest_digest": "sha256:a0fc3aa9647834528a44ac19d1ea9429c4933071248424bfa386591452322e9c",
+    "from_candidate_sha": "f5496614c01b815d5c78d5ee1a2fd7445932e739",
+    "to_candidate_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
+    "from_manifest_digest": "sha256:a0fc3aa9647834528a44ac19d1ea9429c4933071248424bfa386591452322e9c",
+    "to_manifest_digest": "sha256:eb97c149496cfda57fc353e121be0a01a1c75282c9e23a9f32052913745a99c7",
     "re_attestation_required": true,
-    "reason": "PR #1385 (ODP-SEC-URLLIB3-20260930-001) changed uv.lock and tests/models, non-evidence paths, so b175b231 can no longer pass ancestry admission. A fresh candidate was built from dev head f5496614c01b.",
+    "reason": "PR #1388 (ODP-DEV-PRIVATE-API-TRANSPORT-AUTH-001) changed product_ops/deployment and delivery_toolchain/e2e code after f5496614. Because non-evidence paths changed, the earlier candidate cannot be reused; this fresh candidate has exact-C CI and a separate successful build.",
     "build_run": {
       "workflow": "Runtime Release",
-      "run_id": 36799446467,
-      "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36799446467",
+      "run_id": 36823039168,
+      "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36823039168",
       "event": "workflow_dispatch",
       "triggering_actor": "ajoe734",
       "phase": "build",
       "conclusion": "success",
-      "release_sha_input": "f5496614c01b815d5c78d5ee1a2fd7445932e739",
+      "release_sha_input": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
       "deploy_jobs": "skipped; no lease supplied, nothing deployed",
-      "evidence": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/build-reconciliation-36799446467.json"
+      "evidence": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/build-reconciliation-36823039168.json"
     },
     "candidate_ci_runs": [
-      36795834052,
-      36797803528
+      36808278515
     ],
-    "candidate_ci_evidence": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/candidate-ci-f5496614.json",
+    "candidate_ci_evidence": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/candidate-ci-48611d26.json",
     "approval_id": null,
     "approval_status": "awaiting-user-decision",
-    "approval_request": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/approval-request-f5496614.json",
+    "approval_request": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/approval-request-48611d26.json",
     "superseded_approvals": [
-      "HUMANOPS-DEV-MIGRATION-20260929T053234Z (ee06d1d8, expired; its lease was consumed by failed run 36657889962)",
-      "HUMANOPS-DEV-MIGRATION-20260930T145659Z (b175b231 only; candidate superseded before any lease request)"
+      "HUMANOPS-DEV-MIGRATION-20260929T053234Z (ee06d1d8; expired and consumed by failed run 36657889962)",
+      "HUMANOPS-DEV-MIGRATION-20260930T145659Z (b175b231 only; not extended)",
+      "HUMANOPS-DEV-MIGRATION-20261001T012941Z (f5496614 only; not extended)"
     ],
     "history": [
       {
@@ -452,6 +502,37 @@
         "approval_expires_at": "2026-10-01T14:56:59Z",
         "approval_status": "issued for b175b231 only; not extended to f5496614",
         "superseded_because": "Exact-candidate CI on b175b231 later found the urllib3 vulnerability and a SiteScore receipt test clock failure; fixed by ODP-SEC-URLLIB3-20260930-001 (PR #1385), producing dev head f5496614."
+      },
+      {
+        "from_candidate_sha": "f5496614c01b815d5c78d5ee1a2fd7445932e739",
+        "to_candidate_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
+        "from_manifest_digest": "sha256:a0fc3aa9647834528a44ac19d1ea9429c4933071248424bfa386591452322e9c",
+        "to_manifest_digest": "sha256:eb97c149496cfda57fc353e121be0a01a1c75282c9e23a9f32052913745a99c7",
+        "reason": "PR #1388 (ODP-DEV-PRIVATE-API-TRANSPORT-AUTH-001) changed private API transport/auth implementation and related release verification paths after f5496614; this non-evidence change required a new candidate and fresh build.",
+        "prior_build_run": {
+          "workflow": "Runtime Release",
+          "run_id": 36799446467,
+          "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36799446467",
+          "event": "workflow_dispatch",
+          "triggering_actor": "ajoe734",
+          "phase": "build",
+          "conclusion": "success",
+          "release_sha_input": "f5496614c01b815d5c78d5ee1a2fd7445932e739",
+          "deploy_jobs": "skipped; no lease supplied, nothing deployed",
+          "evidence": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/build-reconciliation-36799446467.json"
+        },
+        "prior_candidate_ci_runs": [
+          36795834052,
+          36797803528
+        ],
+        "prior_candidate_ci_evidence": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/candidate-ci-f5496614.json",
+        "prior_approval_request": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/approval-request-f5496614.json",
+        "prior_approval_status": "not extended to the new candidate",
+        "new_build_run_id": 36823039168,
+        "new_candidate_ci_run_ids": [
+          36808278515
+        ],
+        "new_build_evidence": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/build-reconciliation-36823039168.json"
       }
     ]
   }

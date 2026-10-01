@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "record_kind": "release-registry-and-runtime-admission-dry-run",
+  "task_id": "ODP-DEV-CANDIDATE-REBIND-B175-001",
+  "recorded_at": "2026-10-01T08:30:25Z",
+  "candidate_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
+  "manifest_digest": "sha256:eb97c149496cfda57fc353e121be0a01a1c75282c9e23a9f32052913745a99c7",
+  "build_run_id": 36823039168,
+  "candidate_context": "Exact candidate C is the remote dev HEAD; PR #1384 evidence update is not yet merged.",
+  "registry_check": {
+    "command": "python3 delivery_toolchain/e2e/check_release_gate_registry.py --registry docs/evidence/gates/RELEASE_GATE_REGISTRY.json --root . --expected-sha 48611d264e9e10b5c74b8ac1cb972bc92e5ef817 --json",
+    "exit_code": 0,
+    "report": {
+      "registry_id": "ODP-RELEASE-GATE-REGISTRY",
+      "candidate_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
+      "manifest_digest": "sha256:eb97c149496cfda57fc353e121be0a01a1c75282c9e23a9f32052913745a99c7",
+      "stage": "candidate-built",
+      "environment": "dev",
+      "admission_target": "dev",
+      "decision": "no-go",
+      "gate_count": 7,
+      "cleared_gates": [
+        "gate-0",
+        "gate-1"
+      ],
+      "blocking_gates": [
+        "gate-4"
+      ],
+      "integrity_errors": [],
+      "release_state": "NO-GO"
+    }
+  },
+  "runtime_admission": {
+    "function": "delivery_toolchain.release.check_runtime_admission.registry_admission_errors",
+    "environment": "dev",
+    "release_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
+    "expected_manifest_digest": "sha256:eb97c149496cfda57fc353e121be0a01a1c75282c9e23a9f32052913745a99c7",
+    "admitted": false,
+    "errors": [
+      "registry decision is 'no-go', expected 'go'",
+      "gate-4 status is 'blocked', which does not clear the gate",
+      "gate-4 has no release receipt"
+    ]
+  },
+  "interpretation": "Registry integrity passes with no integrity errors. Gates 0 and 1 are cleared. Deployment admission correctly remains blocked because release.decision is no-go and gate-4 has no exact-candidate user approval. No lease or deployment was attempted."
+}
