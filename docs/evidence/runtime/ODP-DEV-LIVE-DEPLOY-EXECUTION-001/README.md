@@ -1,6 +1,45 @@
 # ODP-DEV-LIVE-DEPLOY-EXECUTION-001 — evidence
 
-Status: **blocked on Human/Ops (round 6, 2026-09-30T02:06Z): the lease was issued and consumed, the migration ran and succeeded on dev, then `gcloud run deploy` refused to create the new `oday-api` service because the deploy script passes `--no-traffic`, which Cloud Run does not accept on service creation. No API, web, worker or scheduler workload exists on dev.** This is a code defect in `product_ops/deployment/deploy_cloud_run_waji.sh`, present in the candidate `ee06d1d8` and still present on `origin/dev`. Earlier rounds are kept below as recorded.
+Status: **blocked on Human/Ops (round 7, 2026-10-01T23:21Z): the issuer rejected the fresh request for candidate `48611d26` with `Secret Manager signing key is unavailable`, the same failure as round 5. No lease was issued and no Deploy Dev run was dispatched.** Rounds 1–6 are kept below as recorded; the round-6 status (deploy-script `--no-traffic` defect) was fixed by PR #1383 and superseded by the `48611d26` candidate.
+
+## Round 7 (2026-10-01T23:21Z) — issuer blocked at the signing key, candidate 48611d26
+
+### Inputs
+
+| Item | Value |
+|---|---|
+| Candidate | `48611d264e9e10b5c74b8ac1cb972bc92e5ef817`, manifest `sha256:eb97c149…`, build run [36823039168](https://github.com/alfloop-dev/odayplus/actions/runs/36823039168) (`workflow_dispatch`, success) |
+| Authorization | `HUMANOPS-DEV-MIGRATION-20261001T141113Z` (PR #1389), approved 2026-10-01T14:11:13Z, `expires_at` 2026-10-02T14:11:13Z |
+| Request nonce digest | `sha256:d1239175…` (new; not in issuance history before this round) |
+| `origin/dev` | `32330be95f1440e8fbd2388b1dd4cba12841aed2` (= issuer `dispatch_ref_sha`) |
+| Task branch | base advanced to `origin/dev` `32330be9` by a normal merge (tree equals `git merge-tree --write-tree`) |
+
+### What the issuer did
+
+| Time (UTC) | Event |
+|---|---|
+| 23:21:07 | `release_lease_issuance_reserved`, fingerprint `sha256:7b009b13…`, state `issuing` |
+| 23:21:18 | `release_lease_issue_blocked`, `lease_id=null`, error `Secret Manager signing key is unavailable`, `dispatch_ref_sha=32330be9` |
+
+Receipt: `issuance-blocked-receipt-round7.json` (request with the nonce replaced by its sha256, the issuance record and both events, copied read-only from the live board). `gh run list --workflow deploy-dev.yml` still shows `36823039168` (the build) as the newest run, so nothing was dispatched.
+
+`dispatch_ref_sha` is set, so the request, binding, build-run, ancestry, nonce and GCS lease-store checks passed (same code path as round 5). The only failing step is `private_key_loader(...)`, which runs `gcloud secrets versions access` with the host login and discards stderr.
+
+### Not re-measured this round
+
+The round-5 metadata-only probe (`gcloud secrets versions describe latest … </dev/null`) was refused by the background worker's permission layer this time, so I have no first-hand reading of the host gcloud login. The round-5 root cause (`Reauthentication failed. cannot prompt during non-interactive execution`) is the most likely cause but is not re-confirmed.
+
+### Why I stopped
+
+The issuer does not retry a blocked fingerprint, and this nonce is now in issuance history, so the request cannot be reused. Acceptance requires stopping on failure. Restoring the login needs an interactive `gcloud auth login`, which a background worker cannot do.
+
+### Required Human/Ops actions, deadline 2026-10-02T14:11:13Z
+
+1. On the Supervisor host, as `lupin`, restore a non-interactive gcloud login with `secretmanager.versions.access` on `projects/767864276141/secrets/odp-release-lease-private-key`. Check that `gcloud secrets versions describe latest --secret odp-release-lease-private-key --project 767864276141 </dev/null` exits 0. No Supervisor restart is needed; the loader runs gcloud per call.
+2. Return the task to `in_progress` and resolve the round-7 blocker.
+3. Register one fresh `release_lease_request` under `HUMANOPS-DEV-MIGRATION-20261001T141113Z` with the same binding, a **new nonce**, and `expires_at` ≤ 2026-10-02T14:11:13Z.
+
+After the deadline this authorization cannot be reused, and a new one is needed.
 
 ## Round 6 (2026-09-30T01:58Z – 02:10Z) — lease issued, deploy failed at API service creation
 
