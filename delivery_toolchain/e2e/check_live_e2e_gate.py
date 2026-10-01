@@ -469,14 +469,21 @@ class UrllibHttpClient:
             headers=request_headers,
             method=method.upper(),
         )
+        # urllib copies every header except the body ones onto a redirect
+        # target, so following one off this origin would hand the transport
+        # token (and the application bearer) to another host.
         opener = (
-            urllib.request.build_opener()
+            urllib.request.build_opener(_SameOriginRedirect(self._base_url))
             if follow_redirects
             else urllib.request.build_opener(_NoRedirect)
         )
         try:
             with opener.open(request, timeout=self._timeout) as response:
                 return _to_response(response.status, response.headers, response.read())
+        except _CrossOriginRedirectRefused:
+            return HttpResponse(
+                status=0, error=f"refused cross-origin redirect for {safe_path}"
+            )
         except urllib.error.HTTPError as exc:
             return _to_response(exc.code, exc.headers, exc.read())
         except (OSError, urllib.error.URLError, TimeoutError) as exc:
@@ -486,6 +493,34 @@ class UrllibHttpClient:
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args: Any, **kwargs: Any) -> None:  # noqa: D102
         return None
+
+
+class _CrossOriginRedirectRefused(urllib.error.URLError):
+    """A redirect left the client's origin; the target is deliberately not kept."""
+
+
+def _origin(url: str) -> tuple[str, str, int | None]:
+    parsed = urllib.parse.urlsplit(url)
+    scheme = parsed.scheme.lower()
+    try:
+        port = parsed.port
+    except ValueError:
+        return scheme, "", None
+    if port is None:
+        port = {"http": 80, "https": 443}.get(scheme)
+    return scheme, (parsed.hostname or "").lower(), port
+
+
+class _SameOriginRedirect(urllib.request.HTTPRedirectHandler):
+    def __init__(self, base_url: str) -> None:
+        self._origin = _origin(base_url)
+
+    def redirect_request(  # noqa: D102
+        self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str
+    ) -> Any:
+        if _origin(newurl) != self._origin:
+            raise _CrossOriginRedirectRefused("cross-origin redirect refused")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def _to_response(status: int, headers: Any, raw: bytes) -> HttpResponse:

@@ -1696,15 +1696,25 @@ def preflight_checks(
     return checks
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        return None
+
+
 def _request(
     url: str,
     *,
     headers: Mapping[str, str],
     timeout: float,
 ) -> tuple[int, str, str]:
+    # Every caller probes the private API with its Cloud Run transport token
+    # (and, for the operator bootstrap, the application bearer). urllib copies
+    # those headers onto any redirect target, so a redirect is never followed:
+    # the 3xx is returned as the probe's own non-200 verdict instead.
     request = urllib.request.Request(url, headers=dict(headers))
+    opener = urllib.request.build_opener(_NoRedirect)
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+        with opener.open(request, timeout=timeout) as response:  # noqa: S310
             return (
                 response.status,
                 response.headers.get("content-type", ""),
@@ -1716,11 +1726,6 @@ def _request(
             exc.headers.get("content-type", ""),
             exc.read().decode("utf-8", errors="replace"),
         )
-
-
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
-        return None
 
 
 def _request_without_redirect(

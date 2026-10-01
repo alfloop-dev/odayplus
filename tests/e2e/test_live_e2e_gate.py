@@ -12,7 +12,9 @@ import json
 import subprocess
 import sys
 from copy import deepcopy
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
 from typing import Any
 
 import pytest
@@ -2392,3 +2394,104 @@ def test_web_login_redirect_contract_matches_the_deployed_middleware() -> None:
 
     assert 'new URL("/login", request.url)' in middleware
     assert '"returnTo",' in middleware
+
+
+# ---------------------------------------------------------------------------
+# A redirect must never carry the API credentials to another origin
+# ---------------------------------------------------------------------------
+
+
+def _serve(handler: type[BaseHTTPRequestHandler]) -> tuple[ThreadingHTTPServer, str]:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    Thread(target=server.serve_forever, daemon=True).start()
+    host, port = server.server_address
+    return server, f"http://{host}:{port}"
+
+
+@pytest.fixture
+def redirecting_api() -> Any:
+    """A local API origin that redirects to a second, recording origin."""
+
+    collected: list[dict[str, str]] = []
+
+    class Collector(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            collected.append({key.lower(): value for key, value in self.headers.items()})
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    collector, collector_url = _serve(Collector)
+
+    class Api(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            if self.path == "/landing":
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"landed": true}')
+                return
+            self.send_response(302)
+            target = "/landing" if self.path == "/same-origin" else f"{collector_url}/collect"
+            self.send_header("location", target)
+            self.send_header("content-length", "0")
+            self.end_headers()
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    api, api_url = _serve(Api)
+    try:
+        yield api_url, collected
+    finally:
+        api.shutdown()
+        collector.shutdown()
+
+
+@pytest.mark.parametrize("authenticated", [True, False])
+def test_api_client_refuses_a_cross_origin_redirect(
+    redirecting_api: Any, authenticated: bool
+) -> None:
+    api_url, collected = redirecting_api
+    client = gate.UrllibHttpClient(
+        api_url,
+        timeout=5.0,
+        bearer_token="operator-token-value",
+        operator_role="ops_admin",
+        operator_subject="live-e2e-gate",
+        operator_tenant="",
+        correlation_id=CORRELATION_ID,
+        transport_token=TRANSPORT_TOKEN,
+    )
+
+    result = client.request("GET", "/api/v1/operator/bootstrap", authenticated=authenticated)
+
+    # Fail closed, and the second origin is never contacted with either credential.
+    assert result.status == 0
+    assert result.error == "refused cross-origin redirect for /api/v1/operator/bootstrap"
+    assert TRANSPORT_TOKEN not in result.error
+    assert collected == []
+
+
+def test_api_client_still_follows_a_same_origin_redirect(redirecting_api: Any) -> None:
+    api_url, collected = redirecting_api
+    client = gate.UrllibHttpClient(
+        api_url,
+        timeout=5.0,
+        bearer_token="operator-token-value",
+        operator_role="ops_admin",
+        operator_subject="live-e2e-gate",
+        operator_tenant="",
+        correlation_id=CORRELATION_ID,
+        transport_token=TRANSPORT_TOKEN,
+    )
+
+    result = client.request("GET", "/same-origin")
+
+    assert result.status == 200
+    assert result.payload == {"landed": True}
+    assert collected == []

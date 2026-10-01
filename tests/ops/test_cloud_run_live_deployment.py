@@ -6363,3 +6363,97 @@ def test_deploy_script_keeps_api_invokers_service_scoped_and_audience_stable() -
     assert "::add-mask::${ODP_API_INVOKER_TOKEN}" in helper
     assert 'chmod 600 "${header_file}"' in helper
     assert "echo \"${ODP_API_INVOKER_TOKEN}" not in helper
+
+
+def _redirect_to_second_origin() -> tuple[list[ThreadingHTTPServer], str, list[dict[str, str]]]:
+    """Serve a private-API stand-in whose every GET redirects to another origin."""
+
+    collected: list[dict[str, str]] = []
+
+    class Collector(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            collected.append({key.lower(): value for key, value in self.headers.items()})
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"release_sha": EXPECTED_SHA}).encode("utf-8"))
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    collector = ThreadingHTTPServer(("127.0.0.1", 0), Collector)
+    Thread(target=collector.serve_forever, daemon=True).start()
+    collector_host, collector_port = collector.server_address
+    collector_url = f"http://{collector_host}:{collector_port}"
+
+    class Api(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            self.send_response(302)
+            self.send_header("location", f"{collector_url}/collect")
+            self.send_header("content-length", "0")
+            self.end_headers()
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    api = ThreadingHTTPServer(("127.0.0.1", 0), Api)
+    Thread(target=api.serve_forever, daemon=True).start()
+    api_host, api_port = api.server_address
+    return [api, collector], f"http://{api_host}:{api_port}", collected
+
+
+def test_smoke_never_follows_an_api_redirect_to_another_origin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        validator,
+        "_request_without_redirect",
+        lambda url, **_: (307, "https://web.example/login?returnTo=%2Foperator"),
+    )
+    servers, api_url, collected = _redirect_to_second_origin()
+    try:
+        checks, report = validator.smoke_checks(
+            api_url=api_url,
+            web_url="https://web.example",
+            expected_sha=EXPECTED_SHA,
+            bearer_token="operator-app-token",
+            operator_role="operator",
+            operator_subject="subject",
+            operator_tenant="tenant",
+            correlation_id="corr-redirect",
+            timeout=5.0,
+            api_invoker_token=API_TRANSPORT_TOKEN,
+        )
+    finally:
+        for server in servers:
+            server.shutdown()
+
+    # Neither the anonymous probes nor the authenticated bootstrap reached the
+    # second origin, so neither credential left the API origin.
+    assert collected == []
+    failed = {check.name for check in checks if not check.ok}
+    for path in ("/platform/version", "/platform/health", "/readiness", "/api/v1/operator/bootstrap"):
+        assert any(name.startswith(f"smoke:{path}") for name in failed), (path, failed)
+    serialized = json.dumps(report) + json.dumps([check.detail for check in checks])
+    assert API_TRANSPORT_TOKEN not in serialized
+    assert "operator-app-token" not in serialized
+
+
+def test_compatibility_never_follows_an_api_redirect_to_another_origin() -> None:
+    servers, api_url, collected = _redirect_to_second_origin()
+    try:
+        checks, report = validator.compatibility_smoke_checks(
+            api_url=api_url,
+            web_url="https://web.example",
+            correlation_id="corr-compat-redirect",
+            timeout=5.0,
+            sleep=lambda _seconds: None,
+            api_invoker_token=API_TRANSPORT_TOKEN,
+        )
+    finally:
+        for server in servers:
+            server.shutdown()
+
+    assert collected == []
+    assert not all(check.ok for check in checks)
+    assert API_TRANSPORT_TOKEN not in json.dumps(report)
