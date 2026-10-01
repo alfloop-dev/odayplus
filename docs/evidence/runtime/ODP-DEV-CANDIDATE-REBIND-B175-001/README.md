@@ -2,7 +2,7 @@
 
 Status: evidence only. This task does not request a lease and does not deploy. The dev rollout is `ODP-DEV-LIVE-DEPLOY-EXECUTION-001`; it may register a lease request only after the candidate PR is reviewed and merged, an exact-tuple user authorization exists, and actual merged-dev admission passes.
 
-## Current candidate: 48611d26 (build succeeded; release remains NO-GO)
+## Current candidate: 48611d26 (build succeeded; GO for dev only, post-merge admission pending)
 
 Candidate `48611d264e9e10b5c74b8ac1cb972bc92e5ef817` is the actual merged dev head after PR #1388 (`ODP-DEV-PRIVATE-API-TRANSPORT-AUTH-001`). The candidate is built once under the user-authorized Runtime Release build phase. This evidence continues the original PR #1384; it does not change product code or workflow files.
 
@@ -16,24 +16,24 @@ Candidate `48611d264e9e10b5c74b8ac1cb972bc92e5ef817` is the actual merged dev he
 | First-release target readback | five dev Cloud Run targets were absent; this is recorded in the hosted absence-readback artifact | `hosted-artifacts/run-36823039168/initial-release-absence-readback-48611d264e9e10b5c74b8ac1cb972bc92e5ef817/initial-release-absence-readback.json` |
 | Lease / deployment | no lease was supplied; lease, deploy, and watch jobs were skipped; nothing was deployed | `build-reconciliation-36823039168.json` |
 | Full npm audit | reused only because all ten tracked npm inputs are byte-identical to the earlier snapshot; it has four dev-only finding records (2 high, 2 moderate), and is not described as a fresh scan | `npm-audit-input-equivalence-48611d26.json`, `dev-npm-audit-f5496614.json` |
-| Exact dev authorization | none yet for this candidate/build. The pending request names this exact C / manifest / build and its H01/npm deviations | `approval-request-48611d26.json` |
+| Exact dev authorization | `HUMANOPS-DEV-MIGRATION-20261001T141113Z`; exact C / manifest / build; H01 and npm findings remain disclosed dev-only deviations; 24-hour expiry | `user-deploy-authorization-HUMANOPS-DEV-MIGRATION-20261001T141113Z.json` |
 
 The earlier authorized dispatch `36813751985` did not produce a usable build artifact. The corrected, separately authorized run `36823039168` is the successful build recorded here.
 
 ## Registry and admission
 
 - Gate 0 and gate 1 pass on exact-C CI `36808278515`; historical receipts for prior candidates remain recorded as history.
-- Gate 4 remains blocked. The four conditionally-used LGPL cases still lack an external authoritative H01 legal/security receipt; user acceptance would be a dev-only deviation, not a legal pass. The full npm audit findings are disclosed in the exact-tuple request.
-- Data, model/solver, production E2E/UAT, and operations gates remain blocked for their existing reasons.
-- `release.decision` remains `no-go`. The registry check and real dev admission dry-run are recorded in `admission-dry-run-48611d26.json`; neither claims GO.
+- In this PR branch, Gate 4 records `passed-with-deviation` for dev only under `HUMANOPS-DEV-MIGRATION-20261001T141113Z`. The external H01 receipt remains missing and is not claimed as passed; the four dev-only npm findings remain disclosed.
+- Data, model/solver, production E2E/UAT, and operations gates remain blocked for their staging/production boundaries.
+- In this PR branch, `release.decision` is `go` for dev only. This is not yet actual merged-dev admission: rerun registry and Runtime Release admission after merge, against the then-current `origin/dev`, before requesting a lease.
 - Previous approvals for b175b231 and f5496614 do not carry over.
 
 ## Remaining steps
 
-1. Run the normal exact-head review and merge PR #1384. Its owner/reviewer must use their assigned identities; this task does not forge a review.
-2. After merge, read the actual dev SHA and validate candidate ancestry through evidence-only changes.
-3. Ask the user for the exact approval recorded in `approval-request-48611d26.json`; only after approval is recorded may the authorized owner update gate 4 and the release decision, sync the canonical gate files, and prove actual merged-dev admission.
-4. Reopen and hand off to the existing dev deployment task only after all of those checks pass. No lease or deploy is requested by this evidence task.
+1. PR #1384 already merged at `405fc892151860c19cf261c520792ea25baba5a7`; candidate ancestry is evidence-only.
+2. The exact user authorization is recorded in `user-deploy-authorization-HUMANOPS-DEV-MIGRATION-20261001T141113Z.json`. This follow-up branch updates gate 4 and the dev-only release decision; submit it for review and merge.
+3. The branch-local registry and runtime admission projection against current `origin/dev` is recorded in `admission-projection-48611d26.json`. It passes but is explicitly not post-merge proof.
+4. After this branch merges, rerun registry and Runtime Release admission against the actual current `origin/dev` SHA. Only if both return zero errors may the existing deployment task register one fresh release request and let Supervisor issue one short-lived lease. This task itself does not request a lease or deploy.
 
 ## History: candidate b175b231 (superseded, not deployed)
 
