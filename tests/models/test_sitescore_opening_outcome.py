@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+from datetime import datetime, timedelta
 from typing import Any
 
 from models.shared_ml.model_card import ModelCard
@@ -1133,28 +1134,59 @@ def test_sitescore_verifier_rejects_artifact_hashes_drift_and_model_card_mismatc
     assert any("Model card artifact hash mismatch" in e for e in res2.errors)
 
 
-def test_sitescore_committed_evidence_files_round_trip_verification_b2():
-    # B2 Re-review test: Committed evidence files in docs/evidence/models/ are consistent and verify clean
+def _load_committed_sitescore_evidence() -> tuple[dict[str, Any], dict[str, Any]]:
     from pathlib import Path
 
+    evidence_dir = Path(__file__).resolve().parents[2] / "docs" / "evidence" / "models"
+    with (evidence_dir / "sitescore_gate2_receipt.json").open(encoding="utf-8") as f:
+        receipt = json.load(f)
+    with (evidence_dir / "sitescore_model_card.json").open(encoding="utf-8") as f:
+        model_card = json.load(f)
+    return receipt, model_card
+
+
+def _freeze_verifier_clock(monkeypatch, frozen_now: datetime) -> None:
+    # Pin datetime.now() inside the verifier module only; the 30-day policy itself is untouched.
+    import models.sitescore.opening_outcome as opening_outcome
+
+    class _FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return frozen_now if tz is None else frozen_now.astimezone(tz)
+
+    monkeypatch.setattr(opening_outcome, "datetime", _FrozenDatetime)
+
+
+def _committed_receipt_observed_at(receipt: dict[str, Any]) -> datetime:
+    return datetime.fromisoformat(receipt["observed_at"].replace("Z", "+00:00"))
+
+
+def test_sitescore_committed_evidence_files_round_trip_verification_b2(monkeypatch):
+    # B2 Re-review test: Committed evidence files in docs/evidence/models/ are consistent and verify clean.
+    # The receipt is historical, so verify it as of one day after its own observed_at rather than wall-clock now.
     from models.sitescore.opening_outcome import compute_model_card_sha256
 
-    evidence_dir = Path(__file__).resolve().parents[2] / "docs" / "evidence" / "models"
-    receipt_path = evidence_dir / "sitescore_gate2_receipt.json"
-    card_path = evidence_dir / "sitescore_model_card.json"
-
-    with receipt_path.open(encoding="utf-8") as f:
-        receipt = json.load(f)
-    with card_path.open(encoding="utf-8") as f:
-        model_card = json.load(f)
+    receipt, model_card = _load_committed_sitescore_evidence()
 
     mc_hash = compute_model_card_sha256(model_card)
     assert receipt["artifact_hashes"]["model_card_hash"] == mc_hash
     assert receipt["integrity"]["model_card_hash"] == mc_hash
 
+    _freeze_verifier_clock(monkeypatch, _committed_receipt_observed_at(receipt) + timedelta(days=1))
     verif = verify_sitescore_gate2_receipt(receipt, model_card_artifact=model_card)
+    assert list(verif.errors) == []
     assert verif.is_valid is True
     assert verif.reason_code == "RECEIPT_VALIDATED"
+
+
+def test_sitescore_committed_evidence_rejected_once_older_than_max_age(monkeypatch):
+    # The pinned clock must not mask the 30-day freshness policy: the same committed receipt fails past it.
+    receipt, model_card = _load_committed_sitescore_evidence()
+
+    _freeze_verifier_clock(monkeypatch, _committed_receipt_observed_at(receipt) + timedelta(days=31))
+    verif = verify_sitescore_gate2_receipt(receipt, model_card_artifact=model_card)
+    assert verif.is_valid is False
+    assert any("older than maximum evidence age (30 days)" in e for e in verif.errors)
 
 
 def test_sitescore_verifier_mandates_model_card_and_rejects_forged_governed_disabled_semantics_b1():
