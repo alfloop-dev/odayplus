@@ -12,6 +12,12 @@ candidate is created without public invocation, the smoke reaches it through
 Cloud Run IAM, and allUsers is granted only at promotion. The Web segment here
 runs from the candidate deploy through the Web promotion with the smoke stubbed,
 so the tests can see what was public at verification time and on failure.
+
+ODP-DEV-PRIVATE-API-TRANSPORT-AUTH-001: the API service is private on every
+release. Its smoke and runtime identities get a run.invoker binding scoped to
+the API service, and the probes carry a transport token minted for the API's
+stable URL. The fake curl only admits a token whose audience is the stable URL
+of the service it is calling.
 """
 
 from __future__ import annotations
@@ -178,7 +184,8 @@ if "allUsers" in iam:
     else:
         admitted = True
 elif (
-    os.environ.get("FAKE_IAM_LAGS_FOREVER") != "1"
+    # FAKE_IAM_LAGS_FOREVER names the service whose invoker binding never converges.
+    os.environ.get("FAKE_IAM_LAGS_FOREVER") != service
     and token.startswith("idtoken:")
     and "serviceAccount:" + token.split(":")[1] in iam
     and token.split(":", 2)[2] == state[service]["status"]["url"]
@@ -201,7 +208,7 @@ def _segment(start_marker: str, end_marker: str, text: str | None = None) -> str
 
 API_SEGMENT_MARKERS = (
     'echo "Deploying immutable API candidate',
-    'API_SERVICE_AUDIENCE="$(service_snapshot_url',
+    'prepare_private_api_transport "${API_SERVICE}" "${API_SERVICE_AUDIENCE}"',
 )
 # Web candidate deploy -> smoke -> promotion -> public invoker wait -> live E2E gate.
 WEB_SEGMENT_MARKERS = (
@@ -225,7 +232,8 @@ web = state.get(os.environ["WEB_SERVICE"], {})
 target = "smoke" if any("smoke" in arg for arg in sys.argv[1:]) else "live_e2e"
 with open(os.environ["FAKE_LOG"], "a") as handle:
     handle.write(json.dumps([target, sys.argv[1:], web.get("iam", []),
-        os.environ.get("ODP_WEB_CANDIDATE_INVOKER_TOKEN", "")]) + "\n")
+        os.environ.get("ODP_WEB_CANDIDATE_INVOKER_TOKEN", ""),
+        os.environ.get("ODP_API_INVOKER_TOKEN", "")]) + "\n")
 ' "$@"
   if [[ "$*" == *"smoke"* ]]; then
     return "${FAKE_SMOKE_EXIT:-0}"
@@ -241,6 +249,10 @@ printf 'API_REVISION=%s\nAPI_URL=%s\nAPI_SERVICE_AUDIENCE=%s\nWEB_REVISION=%s\nW
 """
 
 SMOKE_SA = "smoke@odayplus-dev.iam.gserviceaccount.com"
+RUNTIME_SA = "runtime@odayplus-dev.iam.gserviceaccount.com"
+API_STABLE_URL = f"https://{API_SERVICE}-abc.a.run.app"
+API_TRANSPORT_TOKEN = f"idtoken:{SMOKE_SA}:{API_STABLE_URL}"
+API_INVOKERS = [f"serviceAccount:{SMOKE_SA}", f"serviceAccount:{RUNTIME_SA}"]
 
 
 def _existing_service(service: str) -> dict[str, object]:
@@ -288,6 +300,7 @@ def _run(
     environment = dict(os.environ)
     environment.pop("GITHUB_ACTIONS", None)
     environment.pop("ODP_WEB_CANDIDATE_INVOKER_TOKEN", None)
+    environment.pop("ODP_API_INVOKER_TOKEN", None)
     environment.update(
         {
             "PATH": f"{bin_dir}:{environment.get('PATH', '')}",
@@ -299,7 +312,7 @@ def _run(
             "WEB_SERVICE": WEB_SERVICE,
             "API_IMAGE": "registry/api@sha256:" + "a" * 64,
             "WEB_IMAGE": "registry/web@sha256:" + "b" * 64,
-            "ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT": "runtime@odayplus-dev.iam.gserviceaccount.com",
+            "ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT": RUNTIME_SA,
             "GCP_CLOUD_SQL_INSTANCE": "odayplus-dev:asia-east1:oday",
             "API_ENV_FILE": "/dev/null",
             "WEB_ENV_FILE": "/dev/null",
@@ -322,6 +335,7 @@ def _run(
             "ODP_WORKER_CRON": "* * * * *",
             "ODP_CANDIDATE_INVOKER_WAIT_SECONDS": "0",
             "ODP_PUBLIC_INVOKER_WAIT_SECONDS": "0",
+            "ODP_API_INVOKER_WAIT_SECONDS": "0",
             **env,
         }
     )
@@ -373,6 +387,12 @@ def _is_public_grant(call: list[object]) -> bool:
 
 def _is_web_promotion(call: list[object]) -> bool:
     return call[:4] == ["run", "services", "update-traffic", WEB_SERVICE]
+
+
+def _flag(call: list[object], name: str) -> str:
+    return next(
+        (str(arg).split("=", 1)[1] for arg in call if str(arg).startswith(name + "=")), ""
+    )
 
 
 def _outputs(stdout: str) -> dict[str, str]:
@@ -458,7 +478,7 @@ def test_first_release_web_is_private_through_verification_and_public_at_promoti
     assert smoke[2] == [f"serviceAccount:{SMOKE_SA}"]
     assert smoke[3] == f"idtoken:{SMOKE_SA}:https://{WEB_SERVICE}-abc.a.run.app"
     # The candidate anonymous probe was refused and the authenticated one admitted.
-    probes = [call for call in calls if call[0] == "curl"]
+    probes = [call for call in calls if call[0] == "curl" and WEB_SERVICE in call[1]]
     assert probes[0] == ["curl", f"{web_url}/operator", []]
     assert probes[1] == [
         "curl",
@@ -543,13 +563,13 @@ def test_first_release_refuses_to_verify_a_web_candidate_that_answers_anonymousl
 
 def test_first_release_fails_when_the_smoke_identity_is_never_admitted(tmp_path: Path) -> None:
     result, calls, state = _run(
-        tmp_path, {}, FAKE_IAM_LAGS_FOREVER="1", ODP_CANDIDATE_INVOKER_WAIT_ATTEMPTS="3"
+        tmp_path, {}, FAKE_IAM_LAGS_FOREVER=WEB_SERVICE, ODP_CANDIDATE_INVOKER_WAIT_ATTEMPTS="3"
     )
 
     assert result.returncode != 0
     assert "was not admitted to the private Web candidate (last HTTP 403)" in result.stderr
     # One anonymous probe plus the bounded authenticated attempts.
-    assert len([call for call in calls if call[0] == "curl"]) == 4
+    assert len([call for call in calls if call[0] == "curl" and WEB_SERVICE in call[1]]) == 4
     assert not any(_is_smoke(call) for call in calls)
     assert not any(_is_live_e2e(call) for call in calls)
     assert "allUsers" not in state[WEB_SERVICE]["iam"]
@@ -574,12 +594,223 @@ def test_existing_services_keep_the_exact_no_traffic_blue_green_argv(tmp_path: P
     assert outputs["API_REVISION"] == f"{API_SERVICE}-{SUFFIX}"
     assert outputs["WEB_URL"] == f"https://{TAG}---{WEB_SERVICE}-abc.a.run.app"
     assert outputs["LIVE_E2E_WEB_URL"] == f"https://{WEB_SERVICE}-abc.a.run.app"
-    # No first-release access steps on the blue/green path.
-    assert not any(call[:3] == ["run", "services", "add-iam-policy-binding"] for call in calls)
-    assert not any(call[:2] == ["auth", "print-identity-token"] for call in calls)
-    assert not any(call[0] == "curl" for call in calls)
-    assert calls[_index(calls, _is_smoke)][3] == ""
-    assert any(_is_live_e2e(call) for call in calls)
+    # No first-release Web access steps on the blue/green path: the only
+    # bindings are the API's service-scoped invokers, and the only token
+    # audience is the API's stable URL.
+    grants = [call for call in calls if call[:3] == ["run", "services", "add-iam-policy-binding"]]
+    assert {call[3] for call in grants} == {API_SERVICE}
+    assert after[API_SERVICE]["iam"] == API_INVOKERS
+    assert after[WEB_SERVICE]["iam"] == ["allUsers"]
+    audiences = {
+        _flag(call, "--audiences")
+        for call in calls
+        if call[:2] == ["auth", "print-identity-token"]
+    }
+    assert audiences == {API_STABLE_URL}
+    assert not any(call[0] == "curl" and WEB_SERVICE in call[1] for call in calls)
+    smoke = calls[_index(calls, _is_smoke)]
+    assert smoke[3] == ""
+    assert smoke[4] == API_TRANSPORT_TOKEN
+    assert calls[_index(calls, _is_live_e2e)][4] == API_TRANSPORT_TOKEN
+
+
+def _is_api_grant(call: list[object]) -> bool:
+    return call[:4] == ["run", "services", "add-iam-policy-binding", API_SERVICE]
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_private_api_gets_service_scoped_invokers_and_a_stable_audience_token(
+    tmp_path: Path, existing: bool
+) -> None:
+    state = (
+        {API_SERVICE: _existing_service(API_SERVICE), WEB_SERVICE: _existing_service(WEB_SERVICE)}
+        if existing
+        else {}
+    )
+
+    result, calls, after = _run(tmp_path, state)
+
+    assert result.returncode == 0, result.stderr
+    # The API stays private: only the smoke and runtime identities, bound on
+    # the API service itself, never a public or project-wide principal.
+    assert after[API_SERVICE]["iam"] == API_INVOKERS
+    api_grants = [call for call in calls if _is_api_grant(call)]
+    assert [_flag(call, "--member") for call in api_grants] == [
+        f"serviceAccount:{SMOKE_SA}",
+        f"serviceAccount:{RUNTIME_SA}",
+    ]
+    assert all(_flag(call, "--role") == "roles/run.invoker" for call in api_grants)
+    members = [_flag(call, "--member") for call in calls if "add-iam-policy-binding" in call]
+    assert "allAuthenticatedUsers" not in members
+    assert not any(
+        member == "allUsers" and call[3] == API_SERVICE
+        for call in calls
+        if "add-iam-policy-binding" in call
+        for member in [_flag(call, "--member")]
+    )
+    # The Web BFF runtime identity can invoke the API before the Web serves.
+    web_deploy = _index(calls, lambda call: call[:3] == ["run", "deploy", WEB_SERVICE])
+    assert max(calls.index(call) for call in api_grants) < web_deploy
+    # Smoke goes to the revision tag URL, yet the transport audience is the
+    # stable service URL, and it is never the Web token.
+    smoke = calls[_index(calls, _is_smoke)]
+    tagged_api = f"https://{TAG}---{API_SERVICE}-abc.a.run.app"
+    assert ["--api-url", tagged_api] == smoke[1][smoke[1].index("--api-url") :][:2]
+    assert smoke[4] == API_TRANSPORT_TOKEN
+    assert smoke[3] != smoke[4]
+    live_e2e = calls[_index(calls, _is_live_e2e)]
+    assert live_e2e[4] == API_TRANSPORT_TOKEN
+    # The API refused an anonymous caller before the token was admitted.
+    api_probes = [call for call in calls if call[0] == "curl" and API_SERVICE in call[1]]
+    assert api_probes[0] == ["curl", f"{API_STABLE_URL}/platform/version", []]
+    assert api_probes[1] == [
+        "curl",
+        f"{API_STABLE_URL}/platform/version",
+        [f"X-Serverless-Authorization: Bearer {API_TRANSPORT_TOKEN}"],
+    ]
+    # Every API token is minted for the stable API URL from the smoke identity.
+    for call in calls:
+        if call[:2] == ["auth", "print-identity-token"] and API_SERVICE in str(call):
+            assert _flag(call, "--audiences") == API_STABLE_URL
+            assert _flag(call, "--impersonate-service-account") == SMOKE_SA
+            assert "--include-email" in call
+    assert API_TRANSPORT_TOKEN not in result.stdout + result.stderr
+
+
+def test_api_that_answers_anonymously_stops_the_release_before_web(tmp_path: Path) -> None:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    api_block_flag = '  "${API_TRAFFIC_ARGS[@]}" \\\n  --no-allow-unauthenticated \\\n'
+    assert script.count(api_block_flag) == 1
+    script = script.replace(
+        api_block_flag, '  "${API_TRAFFIC_ARGS[@]}" \\\n  --allow-unauthenticated \\\n'
+    )
+
+    result, calls, _state = _run(tmp_path, {}, script_text=script)
+
+    assert result.returncode != 0
+    assert "API service answered an anonymous request with HTTP 307" in result.stderr
+    assert WEB_SERVICE not in _deploys(calls)
+    assert not any(_is_smoke(call) for call in calls)
+
+
+def test_api_invoker_that_never_converges_stops_the_release_before_web(tmp_path: Path) -> None:
+    result, calls, _state = _run(
+        tmp_path, {}, FAKE_IAM_LAGS_FOREVER=API_SERVICE, ODP_API_INVOKER_WAIT_ATTEMPTS="3"
+    )
+
+    assert result.returncode != 0
+    assert "was not admitted to the private API service (last HTTP 403)" in result.stderr
+    api_probes = [call for call in calls if call[0] == "curl" and API_SERVICE in call[1]]
+    assert len(api_probes) == 4
+    assert WEB_SERVICE not in _deploys(calls)
+    assert not any(_is_smoke(call) for call in calls)
+
+
+COMPAT_HARNESS = r"""
+set -euo pipefail
+source "$1"
+execute_job() { :; }
+run_locked_python() {
+  python3 -c '
+import json, os, sys
+with open(os.environ["FAKE_LOG"], "a") as handle:
+    handle.write(json.dumps(["compat", sys.argv[1:], "",
+        os.environ.get("ODP_API_INVOKER_TOKEN", "")]) + "\n")
+' "$@"
+}
+eval "$2"
+OLD_API_URL="${FAKE_OLD_API_URL}"
+OLD_WEB_URL="${FAKE_OLD_WEB_URL}"
+run_migration_compatibility_gate
+"""
+
+
+def _run_compat(tmp_path: Path, state: dict[str, object], **env: str):
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    start = text.index("run_migration_compatibility_gate() {")
+    end = text.index("\n}\n", start) + 3
+    segment = text[start:end]
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name, body in (("gcloud", FAKE_GCLOUD), ("curl", FAKE_CURL)):
+        tool = bin_dir / name
+        tool.write_text(body, encoding="utf-8")
+        tool.chmod(0o755)
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    log_path = tmp_path / "gcloud.log"
+    environment = dict(os.environ)
+    environment.pop("GITHUB_ACTIONS", None)
+    environment.pop("ODP_API_INVOKER_TOKEN", None)
+    environment.update(
+        {
+            "PATH": f"{bin_dir}:{environment.get('PATH', '')}",
+            "FAKE_STATE": str(state_path),
+            "FAKE_LOG": str(log_path),
+            "GCP_PROJECT": "odayplus-dev",
+            "GCP_REGION": "asia-east1",
+            "API_SERVICE": API_SERVICE,
+            "ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT": RUNTIME_SA,
+            "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT": SMOKE_SA,
+            "ODP_DEPLOY_ENV": "dev",
+            "ODAY_RELEASE_SHA": "ee06d1d8" + "a" * 32,
+            "MIGRATION_CANDIDATE_JOB": "oday-migrate-candidate",
+            "MIGRATION_COMPAT_REPORT": str(tmp_path / "compat.json"),
+            "MIGRATION_COMPAT_TIMEOUT": "15",
+            "MIGRATION_COMPAT_RETRY_ATTEMPTS": "4",
+            "MIGRATION_COMPAT_RETRY_BACKOFF": "2",
+            "MIGRATION_COMPAT_RETRY_MAX_BACKOFF": "8",
+            "MIGRATION_COMPAT_RETRY_DEADLINE": "120",
+            "ODP_API_INVOKER_WAIT_SECONDS": "0",
+            **env,
+        }
+    )
+    result = subprocess.run(
+        ["bash", "-c", COMPAT_HARNESS, "bash", str(TRAFFIC_HELPER), segment],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    calls = []
+    if log_path.exists():
+        calls = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+    return result, calls, json.loads(state_path.read_text(encoding="utf-8"))
+
+
+def test_compatibility_gate_reaches_the_old_private_api_with_a_transport_token(
+    tmp_path: Path,
+) -> None:
+    state = {API_SERVICE: _existing_service(API_SERVICE), WEB_SERVICE: _existing_service(WEB_SERVICE)}
+
+    result, calls, after = _run_compat(
+        tmp_path,
+        state,
+        FAKE_OLD_API_URL=API_STABLE_URL,
+        FAKE_OLD_WEB_URL=f"https://{WEB_SERVICE}-abc.a.run.app",
+    )
+
+    assert result.returncode == 0, result.stderr
+    compat = calls[_index(calls, lambda call: call[0] == "compat")]
+    assert "compatibility-smoke" in compat[1]
+    assert compat[3] == API_TRANSPORT_TOKEN
+    assert after[API_SERVICE]["iam"] == API_INVOKERS
+    assert after[WEB_SERVICE]["iam"] == ["allUsers"]
+    grant_positions = [position for position, call in enumerate(calls) if _is_api_grant(call)]
+    assert len(grant_positions) == 2
+    assert max(grant_positions) < calls.index(compat)
+
+
+def test_bootstrap_compatibility_needs_no_api_transport(tmp_path: Path) -> None:
+    result, calls, after = _run_compat(tmp_path, {}, FAKE_OLD_API_URL="", FAKE_OLD_WEB_URL="")
+
+    assert result.returncode == 0, result.stderr
+    compat = calls[_index(calls, lambda call: call[0] == "compat")]
+    assert "bootstrap-compatibility" in compat[1]
+    assert compat[3] == ""
+    assert after == {}
+    assert not any(call[0] in {"run", "auth", "curl"} for call in calls)
 
 
 def test_describe_failure_other_than_not_found_fails_closed_before_deploy(

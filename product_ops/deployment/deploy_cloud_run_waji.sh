@@ -752,6 +752,8 @@ run_migration_compatibility_gate() {
     echo "Error: bootstrap state is inconsistent; API and Web must both exist or both be absent." >&2
     return 1
   fi
+  # The old API is private too; its stable URL is the transport token audience.
+  prepare_private_api_transport "${API_SERVICE}" "${OLD_API_URL}" || return 1
   run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py compatibility-smoke \
     --api-url "${OLD_API_URL}" \
     --web-url "${OLD_WEB_URL}" \
@@ -801,6 +803,11 @@ gcloud run services describe "${API_SERVICE}" \
 API_REVISION="$(tagged_revision "${API_CANDIDATE_DESCRIPTION}" "${API_REVISION_TAG}")"
 API_URL="$(tagged_revision_url "${API_CANDIDATE_DESCRIPTION}" "${API_REVISION_TAG}")"
 API_SERVICE_AUDIENCE="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"
+# A first release has just created the API service, so this is the first point
+# its service-scoped invokers can be bound; on an existing service the bindings
+# are already present and the grant is a no-op. The Web BFF runtime identity
+# needs it before the Web candidate serves.
+prepare_private_api_transport "${API_SERVICE}" "${API_SERVICE_AUDIENCE}"
 
 echo "Deploying immutable scheduler candidate Cloud Run Job..."
 gcloud run jobs deploy "${SCHEDULER_CANDIDATE_JOB}" \
@@ -1038,6 +1045,9 @@ if [[ -z "${ODP_OPERATOR_SMOKE_BEARER_TOKEN:-}" ]]; then
   fi
 fi
 
+# ID tokens are short-lived and the jobs and Web build above can take a while,
+# so the transport token is refreshed right before each probe stage.
+mint_api_invoker_token "${API_SERVICE_AUDIENCE}"
 echo "Running release-aware smoke checks against tagged candidate revisions..."
 run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py smoke \
   --api-url "${API_URL}" \
@@ -1107,6 +1117,9 @@ if [[ -z "${LIVE_E2E_DEPLOYMENT_MODE}" ]]; then
     "ODP_DEPLOY_ENV is set, so the expected deploymentMode is unknown." >&2
   exit 1
 fi
+# Production reaches the API through its custom domain, but the transport
+# audience stays the API's stable Cloud Run service URL.
+mint_api_invoker_token "${API_SERVICE_AUDIENCE}"
 run_locked_python delivery_toolchain/e2e/check_live_e2e_gate.py \
   --api-url "${LIVE_E2E_API_URL}" \
   --web-url "${LIVE_E2E_WEB_URL}" \
