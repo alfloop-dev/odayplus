@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -39,14 +40,14 @@ PR970_DISPOSITION_PATH = (
 @pytest.fixture(scope="module")
 def obligation_matrix() -> dict:
     assert OBLIGATION_MATRIX_PATH.is_file(), f"Missing {OBLIGATION_MATRIX_PATH}"
-    with open(OBLIGATION_MATRIX_PATH, "r", encoding="utf-8") as f:
+    with open(OBLIGATION_MATRIX_PATH, encoding="utf-8") as f:
         return json.load(f)
 
 
 @pytest.fixture(scope="module")
 def pr_matrix() -> dict:
     assert PR_DISPOSITION_MATRIX_PATH.is_file(), f"Missing {PR_DISPOSITION_MATRIX_PATH}"
-    with open(PR_DISPOSITION_MATRIX_PATH, "r", encoding="utf-8") as f:
+    with open(PR_DISPOSITION_MATRIX_PATH, encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -249,5 +250,5 @@ def test_old_pr_disposition_matrix(pr_matrix: dict) -> None:
     # Verify active in-flight PRs are protected
     active_prs = {item["pr_number"]: item for item in pr_matrix["active_in_flight_prs"]}
     assert set(active_prs.keys()) == {1381, 1312, 1014, 77, 63}
-    for pr_num, item in active_prs.items():
+    for item in active_prs.values():
         assert "active_delivery" in item["status"]
