@@ -603,6 +603,9 @@ WORKER_FAILURE_PATTERNS = (
     re.compile(r"^Failed to authenticate\b", re.IGNORECASE),
     re.compile(r"\bnot authenticated\b", re.IGNORECASE),
     re.compile(r"invalid authentication credentials", re.IGNORECASE),
+    # pi's not-logged-in exits; anchored so quoted or grepped copies don't match.
+    re.compile(r"^No models available\.\s+Use /login\b", re.IGNORECASE),
+    re.compile(r"^No API key found for [A-Za-z0-9_.-]+\.?$", re.IGNORECASE),
     re.compile(
         r"^reason:\s*.*\b("
         r"terminalquotaerror|retryablequotaerror|quota_exhausted|resource_exhausted|"

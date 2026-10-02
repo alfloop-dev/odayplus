@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "record_kind": "issuer-build-binding-preflight",
+  "task_id": "ODP-DEV-ISSUER-BUILD-BINDING-6140D0EF-001",
+  "parent_task_id": "ODP-DEV-LIVE-DEPLOY-EXECUTION-001",
+  "base_dev_sha": "fdf0fb9fde1dfd8e5de7636bbc3b0f8ee16a4e63",
+  "recorded_at": "2026-10-02T17:47:11Z",
+  "recorded_by": "Claude2",
+  "candidate_sha": "6140d0ef633cbf94522c171d9927103ab200257f",
+  "manifest_digest": "sha256:d286dd009978a5b9aaa9ee9fc01d1c1be1d8b846855539be63b18504ad368108",
+  "manifest_run_id": "37006345960",
+  "target_environment": "dev",
+  "defect": "PR #1392 rebound release, manifest and gates to 6140d0ef, but candidate_rebind still bound 48611d264e9e10b5c74b8ac1cb972bc92e5ef817 / build 36823039168.",
+  "change": "candidate_rebind now binds 6140d0ef / manifest d286dd00 / Runtime Release build 37006345960; the previous 48611d26 record is preserved unchanged in candidate_rebind.history with superseded_because.",
+  "evidence_reused": {
+    "build_reconciliation": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-6140D0EF-001/build-reconciliation-37006345960.json",
+    "exact_candidate_ci": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-6140D0EF-001/candidate-ci-6140d0ef.json",
+    "user_authorization": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-6140D0EF-001/user-deploy-authorization-HUMANOPS-DEV-MIGRATION-20261002T130206Z.json"
+  },
+  "approval": {
+    "approval_id": "HUMANOPS-DEV-MIGRATION-20261002T130206Z",
+    "expires_at": "2026-10-02T19:02:06Z",
+    "new_approval": false,
+    "expiry_extended": false
+  },
+  "preserved": [
+    "H01 external LGPL receipt still missing; not claimed passed",
+    "dev-only npm findings remain disclosed",
+    "authorized scope unchanged: 1 release request, 1 short-lived lease, 1 deploy phase, dev only"
+  ],
+  "not_done": [
+    "no rebuild",
+    "no lease issued",
+    "no release request registered",
+    "no deploy",
+    "no migration",
+    "no image change"
+  ],
+  "preflight": {
+    "probed_at": "2026-10-02T17:47:11Z",
+    "probe_mode": "read-only import from the deployed Supervisor runtime; request fields candidate_sha/manifest_digest/manifest_run_id/target_environment=dev",
+    "runtime_module": "/home/lupin/oday-plus-supervisor-runtime-6140d0ef633c/.orchestrator/release_lease_integration.py",
+    "runtime_module_sha256": "5131b1dda03c59f65528c11bcddfe437ce09976a70edd074209b51d9a0673464",
+    "admission_module": "/home/lupin/oday-plus-supervisor-runtime-6140d0ef633c/delivery_toolchain/release/check_runtime_admission.py",
+    "admission_module_sha256": "167ffab429e48ab7746615e71c72c272275fcc3a17d46cec5609ea0cdc480364",
+    "before_fix_on_origin_dev_fdf0fb9f": {
+      "registry_sha256": "8c5f2a2d114d7bbc0536367632fc13326748109958ca0b95f6cc5ab1f5f547a7",
+      "read_release_inputs_errors": [],
+      "exact_binding_errors": [],
+      "build_run_binding_errors": [
+        "candidate_rebind does not bind the requested candidate_sha"
+      ],
+      "registry_admission_errors": []
+    },
+    "after_fix_on_task_branch": {
+      "registry_sha256": "ada33872aac543982a828ec0f021fa235df7894a126a1676685cddddd5b36b0b",
+      "read_release_inputs_errors": [],
+      "exact_binding_errors": [],
+      "build_run_binding_errors": [],
+      "registry_admission_errors": []
+    },
+    "provenance_correction": "Supersedes the earlier preflight which recorded status-root module hash 75fb4bd2630e29fdf9a52dca2f8498ad44f6f51d2da8cfcd2a58788f59a3840c and a hardcoded recorded_at 2026-10-02T17:45:00Z; probes re-run against the module the Supervisor actually executes."
+  },
+  "post_merge_required": "Re-run registry_admission_errors, _exact_binding_errors and _build_run_binding_errors against actual origin/dev after merge before any separate lease request.",
+  "local_verification": {
+    "check_release_gate_registry": "uv run --frozen --python 3.12 python delivery_toolchain/e2e/check_release_gate_registry.py -> exit 0 (RELEASE STATE: GO)",
+    "focused_pytest": "tests/e2e/test_release_gate_registry.py tests/release/test_runtime_admission.py tests/release/test_release_manifest.py tests/ops/test_deploy_workflow_contract.py -> exit 1; only failures test_product_gate_accepts_expected_sha and test_dev_merge_gate_accepts_valid_registry_and_require_go_checks_packet, which fail identically with the unchanged origin/dev registry (local Playwright: Cannot find module '@playwright/test'; no node_modules in worktree)."
+  }
+}

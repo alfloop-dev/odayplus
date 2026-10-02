@@ -676,6 +676,42 @@
             },
             "additionalProperties": false
           },
+          "pi": {
+            "description": "pi coding agent (`pi -p`) delivery settings for providers with delivery_mode=pi.",
+            "type": "object",
+            "properties": {
+              "cli": {
+                "type": "string"
+              },
+              "llm_provider": {
+                "description": "pi `--provider` id. Defaults to openai-codex (ChatGPT Plus/Pro OAuth). Must have a credential in <agent_dir>/auth.json.",
+                "type": "string"
+              },
+              "model": {
+                "description": "pi `--model` id. Empty uses the adapter's mirror of pi's per-provider default (openai-codex: gpt-6.1-sol).",
+                "type": "string"
+              },
+              "thinking": {
+                "description": "pi `--thinking` level. Omit to send nothing and leave pi on its own default.",
+                "type": "string",
+                "enum": [
+                  "off",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ]
+              },
+              "agent_dir": {
+                "description": "Exported as PI_CODING_AGENT_DIR so each account pool can carry its own auth.json. Defaults to ~/.pi/agent. Must be absolute or ~-relative: the auth check runs in the supervisor cwd but pi runs in the task worktree.",
+                "type": "string",
+                "pattern": "^(?:/|~)"
+              }
+            },
+            "additionalProperties": false
+          },
           "quota_group": {
             "type": "string"
           },
