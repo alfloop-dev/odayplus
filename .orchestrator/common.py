@@ -784,7 +784,7 @@ def claude_auth_ready(binary: str | None, *, env: dict[str, str] | None = None, 
 # binary not found") and which would pause a healthy lane for 900s. Requiring a
 # known CLI name *and* the literal "CLI" keeps it to the wrappers' own wording,
 # mirroring how AGY_QUOTA_SIGNATURE_PATTERN insists on agy's full signature.
-PROVIDER_CLI_NAMES = ("codex", "claude", "antigravity", "copilot", "github", "gemini")
+PROVIDER_CLI_NAMES = ("codex", "claude", "antigravity", "copilot", "github", "gemini", "pi")
 PROVIDER_LAUNCHER_MISSING_PATTERN = re.compile(
     r"^(?P<cli>" + "|".join(PROVIDER_CLI_NAMES) + r")\s+CLI\s*(?:\([^)]*\)\s*)?binary not found\b",
     re.IGNORECASE,
@@ -799,6 +799,7 @@ PROVIDER_CLI_FAMILY = {
     "gemini": "antigravity",
     "copilot": "copilot",
     "github": "copilot",
+    "pi": "pi",
 }
 
 
