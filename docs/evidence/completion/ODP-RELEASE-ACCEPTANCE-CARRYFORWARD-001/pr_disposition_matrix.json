@@ -1,0 +1,144 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at": "2026-10-03T00:00:00Z",
+  "task_id": "ODP-RELEASE-ACCEPTANCE-CARRYFORWARD-001",
+  "owner": "Antigravity3",
+  "reviewer": "Codex2",
+  "audited_prs": [
+    {
+      "repository": "alfloop-dev/odayplus",
+      "pr_number": 1243,
+      "branch": "task/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002-CLEAN",
+      "title": "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002: clean evidence from C",
+      "author": "Claude",
+      "created_at": "2026-09-08T06:07:18Z",
+      "state": "OPEN",
+      "exact_diff_summary": "Rebuilt evidence tree to bind candidate C (596b9c9a) and Runtime Release run 33942097235 into RELEASE_GATE_REGISTRY.json.",
+      "superseded_by": "PR #1387 / PR #1390 (ODP-DEV-CANDIDATE-REBIND-B175-001) and PR #1392 (ODP-DEV-CANDIDATE-REBIND-6140D0EF-001) merged into origin/dev.",
+      "unlanded_code_remaining": false,
+      "recommendation": "close_as_superseded",
+      "rationale": "The candidate SHA 596b9c9a was superseded by subsequent candidate builds (b175b231, f5496614, 48611d26, 6140d0ef). The canonical registry is now bound to candidate 6140d0ef in origin/dev. PR #1243 has no un-landed code and should be closed as superseded."
+    },
+    {
+      "repository": "alfloop-dev/odayplus",
+      "pr_number": 1205,
+      "branch": "task/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+      "title": "[ReviewBus] ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002 以最新 build receipt 重整 dev candidate gate",
+      "author": "Antigravity3",
+      "created_at": "2026-09-05T03:55:59Z",
+      "state": "OPEN",
+      "exact_diff_summary": "Earlier iteration of candidate rebind for run 33942097235 on candidate 3b5de7e7.",
+      "superseded_by": "PR #1243 and subsequently merged candidate rebind PRs #1387, #1390, #1392.",
+      "unlanded_code_remaining": false,
+      "recommendation": "close_as_superseded",
+      "rationale": "Historical ancestry attempt superseded by later rebind tasks. No unique code remaining."
+    },
+    {
+      "repository": "alfloop-dev/odayplus",
+      "pr_number": 1052,
+      "branch": "task/ORCH-PROVIDER-QUOTA-SIGNAL-AUTHORITY-001-SIDECAR-BLOCKED-TASK-DIAGNOSTICS",
+      "title": "ORCH-PROVIDER-QUOTA-SIGNAL-AUTHORITY-001-SIDECAR-BLOCKED-TASK-DIAGNOSTICS: 建立阻塞診斷交接包",
+      "author": "Claude",
+      "created_at": "2026-08-27T09:11:37Z",
+      "state": "OPEN",
+      "exact_diff_summary": "Adds docs/evidence/execution-control/ORCH-PROVIDER-QUOTA-SIGNAL-AUTHORITY-001/SIDECAR_BLOCKED_TASK_DIAGNOSTICS.md diagnosing worker_lifecycle.py is_success short-circuit.",
+      "superseded_by": "PR #1045 and mainline supervisor failure policy updates in origin/dev.",
+      "unlanded_code_remaining": false,
+      "recommendation": "close_as_historical_diagnostic",
+      "rationale": "Informational sidecar diagnostic packet created during review churn. Mainline dev already resolved primary failure classification issues. Can be closed or retained as historical reference."
+    },
+    {
+      "repository": "alfloop-dev/odayplus",
+      "pr_number": 986,
+      "branch": "fix/quarantine-clean-is-not-unreadable",
+      "title": "orchestrator: a clean worktree is not an unreadable one",
+      "author": "Claude",
+      "created_at": "2026-08-23T09:09:06Z",
+      "state": "OPEN",
+      "exact_diff_summary": "Modified .orchestrator/worker_workspace.py and test_supervisor.py to distinguish clean worktree from unreadable git status.",
+      "superseded_by": "Mainline worker_workspace.py refactoring in origin/dev (worktree_clean / nothing_to_preserve handlers).",
+      "unlanded_code_remaining": false,
+      "recommendation": "close_as_superseded_by_mainline",
+      "rationale": "The core bug (quarantine treating clean worktree as error) was independently resolved in origin/dev via worktree_clean / nothing_to_preserve branches in _quarantine_and_preserve_dirty_worktree. The PR branch is non-standard fix/* and is superseded by current supervisor code."
+    },
+    {
+      "repository": "alfloop-dev/odayplus",
+      "pr_number": 970,
+      "branch": "task/XR-CUTOVER-001",
+      "title": "[ReviewBus] XR-CUTOVER-001 Execute dual-run, reconciliation, cutover and rollback of legacy odayplus external ingestion",
+      "author": "Claude2",
+      "created_at": "2026-08-22T14:30:10Z",
+      "state": "OPEN",
+      "exact_diff_summary": "65 files changed (1,511 additions, 10,027 deletions) attempting whole-module deletion of legacy external ingestion.",
+      "superseded_by": "PR #991 (ODP-XR-CUTOVER-ACTIVATE-002, commit b32fd65f) merged into origin/dev.",
+      "unlanded_code_remaining": false,
+      "recommendation": "close_as_superseded",
+      "rationale": "PR #970 cannot be closed merely because it lacked a board card; it was fully audited in docs/evidence/completion/ODP-XR-CUTOVER-ACTIVATE-002/pr-970-disposition.md across all 65 files. The destructive deletions and renamings were rejected because they broke rollback capabilities and deleted required regression tests. Instead, PR #991 implemented the canonical ODAY_MARKET_DATA_FACADE_MODE=PLATFORM_PRIMARY switch with default-deny on all external sources. All valid objectives of PR #970 landed cleanly via PR #991 without orphaned code."
+    },
+    {
+      "repository": "alfloop-dev/odayplus",
+      "pr_number": 607,
+      "branch": "agent/dev-progress-spec-gap-audit-20260803",
+      "title": "docs: audit latest dev progress against specification",
+      "author": "Claude",
+      "created_at": "2026-08-03T14:39:06Z",
+      "state": "OPEN",
+      "exact_diff_summary": "Added docs/audits/DEV_PROGRESS_SPEC_GAP_AUDIT_20260803.md (early August 2026 gap audit).",
+      "superseded_by": "September 2026 remediation architecture: ODP_REMEDIATION_PLAN_2026-09-03.md, ODP_OPEN_DECISIONS_2026-09-03.md, EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md, and EXECUTION.md.",
+      "unlanded_code_remaining": false,
+      "recommendation": "close_as_historical_snapshot",
+      "rationale": "Early exploratory audit written before the comprehensive September 2026 remediation plan was formulated. All gaps identified in PR #607 have been formally structured into active canonical tasks and closed/in-progress work packages."
+    },
+    {
+      "repository": "alfloop-dev/oday-data-platform",
+      "pr_number": 1,
+      "branch": "feat/transaction-automation",
+      "title": "[Feat] add transactions daily lookback automation",
+      "author": "Alien-alfaloop",
+      "created_at": "2026-07-06T05:44:56Z",
+      "state": "OPEN",
+      "exact_diff_summary": "Adds transaction daily lookback automation and partition schedules in early oday_data_platform defs.",
+      "superseded_by": "Modern Dagster pipeline architecture governed by DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001 (PR #77) and DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001 (PR #63).",
+      "unlanded_code_remaining": false,
+      "recommendation": "close_as_superseded_by_dagster_pipeline",
+      "rationale": "Orphan pull request from July 2026 before data platform foundation refactoring. Partitioning, validation, and snapshotting are now fully handled in the current Dagster and data-platform services."
+    }
+  ],
+  "active_in_flight_prs": [
+    {
+      "repository": "alfloop-dev/odayplus",
+      "pr_number": 1381,
+      "branch": "task/ODP-DEV-LIVE-DEPLOYMENT-REPAIR-001",
+      "title": "[ReviewBus] ODP-DEV-LIVE-DEPLOYMENT-REPAIR-001",
+      "status": "active_delivery_do_not_duplicate_or_close"
+    },
+    {
+      "repository": "alfloop-dev/odayplus",
+      "pr_number": 1312,
+      "branch": "task/XR-EXT-OSS-FINAL-AUDIT-001",
+      "title": "[ReviewBus] XR-EXT-OSS-FINAL-AUDIT-001",
+      "status": "active_delivery_do_not_duplicate_or_close"
+    },
+    {
+      "repository": "alfloop-dev/odayplus",
+      "pr_number": 1014,
+      "branch": "task/ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+      "title": "[ReviewBus] ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+      "status": "active_delivery_do_not_duplicate_or_close"
+    },
+    {
+      "repository": "alfloop-dev/oday-data-platform",
+      "pr_number": 77,
+      "branch": "task/DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001",
+      "title": "DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001",
+      "status": "active_delivery_do_not_duplicate_or_close"
+    },
+    {
+      "repository": "alfloop-dev/oday-data-platform",
+      "pr_number": 63,
+      "branch": "task/DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+      "title": "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+      "status": "active_delivery_do_not_duplicate_or_close"
+    }
+  ]
+}
