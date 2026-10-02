@@ -1,0 +1,43 @@
+{
+  "_links": {
+    "html": {
+      "href": "https://github.com/alfloop-dev/odayplus/rules/20508144"
+    },
+    "self": {
+      "href": "https://api.github.com/repos/alfloop-dev/odayplus/rulesets/20508144"
+    }
+  },
+  "bypass_actors": [],
+  "conditions": {
+    "ref_name": {
+      "exclude": [],
+      "include": [
+        "refs/heads/dev"
+      ]
+    }
+  },
+  "created_at": "2026-08-06T12:22:17.310Z",
+  "current_user_can_bypass": "never",
+  "enforcement": "active",
+  "id": 20508144,
+  "name": "dev-merge-queue",
+  "node_id": "RRS_lACqUmVwb3NpdG9yec5MWoLizgE47fA",
+  "rules": [
+    {
+      "parameters": {
+        "check_response_timeout_minutes": 60,
+        "grouping_strategy": "ALLGREEN",
+        "max_entries_to_build": 5,
+        "max_entries_to_merge": 5,
+        "merge_method": "MERGE",
+        "min_entries_to_merge": 1,
+        "min_entries_to_merge_wait_minutes": 5
+      },
+      "type": "merge_queue"
+    }
+  ],
+  "source": "alfloop-dev/odayplus",
+  "source_type": "Repository",
+  "target": "branch",
+  "updated_at": "2026-08-06T12:23:23.907Z"
+}

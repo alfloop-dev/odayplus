@@ -116,7 +116,7 @@
 | 16 | `INTV-006` Adjust | 先問實務：現在要調整的介入人是怎麼做的 |
 | 17 | `LH-003` Backtest 當發布閘 | 低。Shadow／Canary／Rollback／Champion-Challenger 已覆蓋大部分 |
 | 18 | `OPS-002` 留言 | 純缺功能。價值在把討論與決策綁在一起，不在提供溝通管道 |
-| 19 | merge queue 批次 | **OPEN（2026-09-08 決策 D21 轉為正式實作需求）：** 使用者選定選項 B（保留為正式實作需求，不裁決不做、不建立 Waiver）；A 階段只讀量測與配置方案已由 `ODP-MERGE-QUEUE-BATCH-DESIGN-001` (PR #1250) 交付；B 階段工程任務 `ODP-MERGE-QUEUE-BATCH-IMPLEMENTATION-001` 待 H08 參數確認後入場。見 [`docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/README.md`](../evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/README.md) |
+| 19 | merge queue 批次 | **OPEN（2026-09-08 決策 D21 轉為正式實作需求）：** 使用者選定選項 B（保留為正式實作需求，不裁決不做、不建立 Waiver）；A 階段只讀量測與配置方案已由 `ODP-MERGE-QUEUE-BATCH-DESIGN-001` (PR #1250) 交付；B 階段工程任務 `ODP-MERGE-QUEUE-BATCH-IMPLEMENTATION-001` 待 H08 參數確認後入場。見 [`docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/README.md`](../evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/README.md)<br><br>**更新（2026-10-02 H08）：** 負責人蔡尚志簽核 Option B（`min_entries_to_merge = 2`、wait 10 分鐘），並授權套用；已寫入 GitHub `dev-merge-queue` ruleset 並讀回（套用前 live 仍是 1／5 分鐘）。實際批次形成與 solo PR 等待時間仍待 WP-35C 觀測，未標 VERIFIED。見 [`docs/evidence/human-decisions/ODP-MERGE-QUEUE-H08-ACTIVATION-001/README.md`](../evidence/human-decisions/ODP-MERGE-QUEUE-H08-ACTIVATION-001/README.md) |
 
 ---
 
