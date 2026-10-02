@@ -631,8 +631,12 @@ errors = validate_sources_off_probe_receipt(
     receipt,
     expected_candidate_sha=sys.argv[3],
     expected_manifest_digest=sys.argv[4],
-    expected_egress=sys.argv[5],
+    expected_egress=sys.argv[6],
 )
+if receipt.get("job") != sys.argv[5]:
+    errors.append(
+        f"sources-off egress probe receipt.job must be {sys.argv[5]!r}; got {receipt.get('job')!r}"
+    )
 if errors:
     raise SystemExit("invalid public egress probe receipt: " + "; ".join(errors))
 Path(sys.argv[2]).write_text(
@@ -657,28 +661,7 @@ run_public_egress_probe() {
     write_public_egress_probe_receipt "failed" "job_readback_failed" "" "not_run"
     return 1
   fi
-  if ! actual_egress="$(printf '%s' "${description}" | run_locked_python -c '
-import json
-import sys
-
-payload = json.load(sys.stdin)
-paths = (
-    ("template", "template", "vpcAccess", "egress"),
-    ("template", "vpcAccess", "egress"),
-    ("spec", "template", "spec", "template", "spec", "vpcAccess", "egress"),
-    ("vpcAccess", "egress"),
-)
-for path in paths:
-    value = payload
-    try:
-        for key in path:
-            value = value[key]
-    except (KeyError, IndexError, TypeError):
-        continue
-    if isinstance(value, str):
-        print(value)
-        break
-')"; then
+  if ! actual_egress="$(printf '%s' "${description}" | cloud_run_job_vpc_egress)"; then
     write_public_egress_probe_receipt "failed" "job_readback_invalid" "" "not_run"
     return 1
   fi
