@@ -360,3 +360,10 @@ A1–A3 尚缺真 snapshot/query、歷史七軸比對與 live runtime/flow-log �
 - 原驗收：2 met、3 partially_met，`can_closeout_as_done=false`，不送 approval/done。
 - 送審後，owner 以 `AI_NAME=Claude` 經 live canonical `blocker` 重新登記具名 blocker，waiting_for `Claude2`（兩個上游承接 task 的 owner）。
 - 上游交付真實 raw／masked snapshot 與 live 讀回後，本 task 才對它們執行等價比對並重新送審；否則依 acceptance 第 1 條由 Human/Ops 裁決以 blocked 收尾。
+
+### 13.6 `--check` 重新捕捉（capture 後補記，值取自 `verification-20261003/receipt.json`）
+- 原因：`acceptance-reconciliation.json` 是 `--check` 的輸入，本輪在 `fcaf6d42` 新增了 `dependency_reconciliation_20261003`；因此在該 commit 的乾淨工作樹（`worktree_status_at_capture=[]`）上跑一次，retry reason 記於收據。沒有重跑任何歷史套件。
+- command-1 `git diff --check 3828c5ad -- <evidence>`：2026-10-02T23:58:55Z，exit 0，0.016s，stdout 0 bytes。
+- command-2 `/usr/bin/python3 <abs>/capture_verification.py --check`：2026-10-02T23:58:55Z，exit 0，0.07s，stdout 12241 bytes／SHA256 `6f8a8d7a09709b3f1afad7360bc3527d4f81fd4e109ae7ce12d533ae76ebc706`，stderr 0 bytes。stdout 與 §12.1 相同，因為 `--check` 只輸出 DAG 拓撲結果，不讀新增的區塊。
+- 41 個輸入全部 `committed_at_head=true`；`inputs_unchanged_after_execution=true`。§12.1 第 5 點所說「四個 `--check` 輸入與送審 head byte 級一致」只適用於 `053ad713`；從 `fcaf6d42` 起 `acceptance-reconciliation.json` 以本收據為準。
+- README 與本收據目錄是在 capture 之後才 commit，它們不是 `--check` 輸入。
