@@ -715,6 +715,56 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
         )
     )
 
+    # No implicit "pi" entry: unlike codex, pi only exists once a provider is
+    # configured with delivery_mode=pi, so the report gains nothing otherwise.
+    pi_provider_ids = [
+        provider_id
+        for provider_id, settings in (config.get("providers", {}) or {}).items()
+        if (settings or {}).get("delivery_mode") == "pi"
+    ]
+
+    def pi_provider_report(provider_id: str) -> dict[str, Any]:
+        provider_settings = provider_config(config, provider_id, default="pi")
+        profile = provider_section(config, provider_id=provider_id, section="pi", default="pi")
+        provider_binary = command_exists(profile.get("cli") or "pi")
+        probe = cli_probe(provider_binary)
+        cli_usable = bool(provider_binary) and not cli_is_dead(probe)
+        capability = build_adapter("pi", config=config, provider_capabilities={}).capability(provider_id)
+        ready = cli_usable and capability.supported
+        return {
+            "installed": cli_usable,
+            "cli_probe": probe,
+            "host_layer": "CLI",
+            "delivery_mode": "pi",
+            "quota_group": provider_settings.get("quota_group"),
+            "approval_mode": "none",
+            "persistent_allow_supported": False,
+            "default_auto_approve_supported": ready,
+            "full_access_supported": ready,
+            "per_tool_allow_supported": False,
+            "local_cli_worker_supported": ready,
+            "vscode_link_supported": False,
+            "cloud_agent_supported": False,
+            "supports_auto_approve": ready,
+            "supports_defer_resume": False,
+            "auth_ready": capability.supported,
+            "supported_models": [],
+            "selected_model": profile.get("model") or None,
+            "applied": True,
+            "verified": "partial" if ready else "unavailable",
+            "version": None,
+            "paths": {
+                "binary": provider_binary,
+                "agent_dir": profile.get("agent_dir"),
+            },
+            "settings": {
+                "pi.llm_provider": profile.get("llm_provider"),
+                "pi.model": profile.get("model"),
+                "pi.thinking": profile.get("thinking"),
+            },
+            "notes": [capability.notes],
+        }
+
     def codex_provider_report(provider_id: str) -> dict[str, Any]:
         provider_settings = provider_config(config, provider_id, default="codex")
         profile = provider_section(config, provider_id=provider_id, section="codex", default="codex") or codex_profile
@@ -843,6 +893,7 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
                 for provider_id in gemini_provider_ids
             },
             **{provider_id: codex_provider_report(provider_id) for provider_id in codex_provider_ids},
+            **{provider_id: pi_provider_report(provider_id) for provider_id in pi_provider_ids},
             "copilot": {
                 "installed": copilot_installed,
                 "host_layer": "CLI + VS Code extension + GitHub CLI"
