@@ -748,10 +748,9 @@ def matching_receipts(
     """Receipts measured against this head and selection, oldest first.
 
     ``command`` narrows the match to receipts for that exact command. Rerun
-    control leaves it unset on purpose -- two commands that select the same
-    tests are the same measurement for dedupe purposes -- while the finalize
-    gate always sets it, because there a receipt only proves the command it
-    actually ran.
+    control uses it for non-runner commands, but leaves it unset for test
+    selections so formatting flags cannot authorize another measurement.
+    The finalize gate always sets it: a receipt only proves what actually ran.
     """
     sha = str(head_sha or "").strip().lower()
     wanted_command = command_key(command) if command is not None else None
@@ -779,6 +778,7 @@ def evaluate_baseline_request(
     head_sha: str,
     selection_id: str,
     task_id: str | None = None,
+    command: str | None = None,
     retry_reason: str | None = None,
 ) -> BaselineDecision:
     """Refuse a second baseline for a SHA that already has a settled result.
@@ -786,8 +786,20 @@ def evaluate_baseline_request(
     A prior run that was interrupted never produced a baseline, so repeating
     it is a resume and needs no retry reason. A prior run that passed or
     failed did produce one, so repeating it needs an explicit reason.
+    When a command is supplied, non-runner commands match their identity;
+    runner commands still match selections, excluding non-runner receipts.
+    Omitting the command preserves the legacy selection-only lookup.
     """
-    prior = matching_receipts(receipts, head_sha=head_sha, selection_id=selection_id, task_id=task_id)
+    runner = detect_runner(command) if command is not None else None
+    prior = matching_receipts(
+        receipts,
+        head_sha=head_sha,
+        selection_id=selection_id,
+        task_id=task_id,
+        command=command if runner is None else None,
+    )
+    if runner is not None:
+        prior = [item for item in prior if detect_runner(str(item.get("command") or "")) is not None]
     if not prior:
         return BaselineDecision(allowed=True, kind=KIND_BASELINE, reason="no prior receipt for this head SHA and selection")
 
@@ -1269,6 +1281,7 @@ def verify_and_build_receipt(
         head_sha=head_sha,
         selection_id=str(selection.get("fingerprint") or ""),
         task_id=task_id,
+        command=command,
         retry_reason=retry_reason,
     )
     if not decision.allowed:
