@@ -4,7 +4,7 @@
   "task_id": "ODP-DEV-ISSUER-BUILD-BINDING-6140D0EF-001",
   "parent_task_id": "ODP-DEV-LIVE-DEPLOY-EXECUTION-001",
   "base_dev_sha": "fdf0fb9fde1dfd8e5de7636bbc3b0f8ee16a4e63",
-  "recorded_at": "2026-10-02T17:45:00Z",
+  "recorded_at": "2026-10-02T17:47:11Z",
   "recorded_by": "Claude2",
   "candidate_sha": "6140d0ef633cbf94522c171d9927103ab200257f",
   "manifest_digest": "sha256:d286dd009978a5b9aaa9ee9fc01d1c1be1d8b846855539be63b18504ad368108",
@@ -37,20 +37,29 @@
     "no image change"
   ],
   "preflight": {
-    "runtime_module": "$PANTHEON_STATUS_ROOT/.orchestrator/release_lease_integration.py (read-only import)",
-    "runtime_module_sha256": "75fb4bd2630e29fdf9a52dca2f8498ad44f6f51d2da8cfcd2a58788f59a3840c",
-    "registry_sha256": "ada33872aac543982a828ec0f021fa235df7894a126a1676685cddddd5b36b0b",
+    "probed_at": "2026-10-02T17:47:11Z",
+    "probe_mode": "read-only import from the deployed Supervisor runtime; request fields candidate_sha/manifest_digest/manifest_run_id/target_environment=dev",
+    "runtime_module": "/home/lupin/oday-plus-supervisor-runtime-6140d0ef633c/.orchestrator/release_lease_integration.py",
+    "runtime_module_sha256": "5131b1dda03c59f65528c11bcddfe437ce09976a70edd074209b51d9a0673464",
+    "admission_module": "/home/lupin/oday-plus-supervisor-runtime-6140d0ef633c/delivery_toolchain/release/check_runtime_admission.py",
+    "admission_module_sha256": "167ffab429e48ab7746615e71c72c272275fcc3a17d46cec5609ea0cdc480364",
     "before_fix_on_origin_dev_fdf0fb9f": {
+      "registry_sha256": "8c5f2a2d114d7bbc0536367632fc13326748109958ca0b95f6cc5ab1f5f547a7",
+      "read_release_inputs_errors": [],
+      "exact_binding_errors": [],
       "build_run_binding_errors": [
         "candidate_rebind does not bind the requested candidate_sha"
-      ]
+      ],
+      "registry_admission_errors": []
     },
     "after_fix_on_task_branch": {
+      "registry_sha256": "ada33872aac543982a828ec0f021fa235df7894a126a1676685cddddd5b36b0b",
       "read_release_inputs_errors": [],
       "exact_binding_errors": [],
       "build_run_binding_errors": [],
       "registry_admission_errors": []
-    }
+    },
+    "provenance_correction": "Supersedes the earlier preflight which recorded status-root module hash 75fb4bd2630e29fdf9a52dca2f8498ad44f6f51d2da8cfcd2a58788f59a3840c and a hardcoded recorded_at 2026-10-02T17:45:00Z; probes re-run against the module the Supervisor actually executes."
   },
   "post_merge_required": "Re-run registry_admission_errors, _exact_binding_errors and _build_run_binding_errors against actual origin/dev after merge before any separate lease request.",
   "local_verification": {
