@@ -497,37 +497,39 @@
     }
   ],
   "candidate_rebind": {
-    "task_id": "ODP-DEV-CANDIDATE-REBIND-B175-001",
-    "from_candidate_sha": "f5496614c01b815d5c78d5ee1a2fd7445932e739",
-    "to_candidate_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
-    "from_manifest_digest": "sha256:a0fc3aa9647834528a44ac19d1ea9429c4933071248424bfa386591452322e9c",
-    "to_manifest_digest": "sha256:eb97c149496cfda57fc353e121be0a01a1c75282c9e23a9f32052913745a99c7",
+    "task_id": "ODP-DEV-CANDIDATE-REBIND-6140D0EF-001",
+    "binding_repair_task_id": "ODP-DEV-ISSUER-BUILD-BINDING-6140D0EF-001",
+    "from_candidate_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
+    "to_candidate_sha": "6140d0ef633cbf94522c171d9927103ab200257f",
+    "from_manifest_digest": "sha256:eb97c149496cfda57fc353e121be0a01a1c75282c9e23a9f32052913745a99c7",
+    "to_manifest_digest": "sha256:d286dd009978a5b9aaa9ee9fc01d1c1be1d8b846855539be63b18504ad368108",
     "re_attestation_required": true,
-    "reason": "PR #1388 (ODP-DEV-PRIVATE-API-TRANSPORT-AUTH-001) changed product_ops/deployment and delivery_toolchain/e2e code after f5496614. Because non-evidence paths changed, the earlier candidate cannot be reused; this fresh candidate has exact-C CI and a separate successful build.",
+    "reason": "Candidate 6140d0ef633cbf94522c171d9927103ab200257f was rebound by PR #1392 with exact-SHA CI and a separate successful Runtime Release build. This block only corrects the canonical build binding that PR #1392 left on 48611d26; no rebuild, new approval, or expiry extension.",
     "build_run": {
       "workflow": "Runtime Release",
-      "run_id": 36823039168,
-      "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36823039168",
+      "run_id": 37006345960,
+      "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/37006345960",
       "event": "workflow_dispatch",
-      "triggering_actor": "ajoe734",
       "phase": "build",
       "conclusion": "success",
-      "release_sha_input": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
+      "release_sha_input": "6140d0ef633cbf94522c171d9927103ab200257f",
       "deploy_jobs": "skipped; no lease supplied, nothing deployed",
-      "evidence": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/build-reconciliation-36823039168.json"
+      "evidence": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-6140D0EF-001/build-reconciliation-37006345960.json"
     },
     "candidate_ci_runs": [
-      36808278515
+      36953491190,
+      36954325829
     ],
-    "candidate_ci_evidence": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/candidate-ci-48611d26.json",
-    "approval_id": "HUMANOPS-DEV-MIGRATION-20261001T141113Z",
+    "candidate_ci_evidence": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-6140D0EF-001/candidate-ci-6140d0ef.json",
+    "approval_id": "HUMANOPS-DEV-MIGRATION-20261002T130206Z",
     "approval_status": "approved",
-    "approval_expires_at": "2026-10-02T14:11:13Z",
-    "approval_request": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/approval-request-48611d26.json",
+    "approval_expires_at": "2026-10-02T19:02:06Z",
+    "approval_request": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-6140D0EF-001/user-deploy-authorization-HUMANOPS-DEV-MIGRATION-20261002T130206Z.json",
     "superseded_approvals": [
       "HUMANOPS-DEV-MIGRATION-20260929T053234Z (ee06d1d8; expired and consumed by failed run 36657889962)",
       "HUMANOPS-DEV-MIGRATION-20260930T145659Z (b175b231 only; not extended)",
-      "HUMANOPS-DEV-MIGRATION-20261001T012941Z (f5496614 only; not extended)"
+      "HUMANOPS-DEV-MIGRATION-20261001T012941Z (f5496614 only; not extended)",
+      "HUMANOPS-DEV-MIGRATION-20261001T141113Z (48611d26 only; expired 2026-10-02T14:11:13Z; not extended)"
     ],
     "history": [
       {
@@ -587,6 +589,41 @@
           36808278515
         ],
         "new_build_evidence": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/build-reconciliation-36823039168.json"
+      },
+      {
+        "task_id": "ODP-DEV-CANDIDATE-REBIND-B175-001",
+        "from_candidate_sha": "f5496614c01b815d5c78d5ee1a2fd7445932e739",
+        "to_candidate_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
+        "from_manifest_digest": "sha256:a0fc3aa9647834528a44ac19d1ea9429c4933071248424bfa386591452322e9c",
+        "to_manifest_digest": "sha256:eb97c149496cfda57fc353e121be0a01a1c75282c9e23a9f32052913745a99c7",
+        "re_attestation_required": true,
+        "reason": "PR #1388 (ODP-DEV-PRIVATE-API-TRANSPORT-AUTH-001) changed product_ops/deployment and delivery_toolchain/e2e code after f5496614. Because non-evidence paths changed, the earlier candidate cannot be reused; this fresh candidate has exact-C CI and a separate successful build.",
+        "build_run": {
+          "workflow": "Runtime Release",
+          "run_id": 36823039168,
+          "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36823039168",
+          "event": "workflow_dispatch",
+          "triggering_actor": "ajoe734",
+          "phase": "build",
+          "conclusion": "success",
+          "release_sha_input": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
+          "deploy_jobs": "skipped; no lease supplied, nothing deployed",
+          "evidence": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/build-reconciliation-36823039168.json"
+        },
+        "candidate_ci_runs": [
+          36808278515
+        ],
+        "candidate_ci_evidence": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/candidate-ci-48611d26.json",
+        "approval_id": "HUMANOPS-DEV-MIGRATION-20261001T141113Z",
+        "approval_status": "approved",
+        "approval_expires_at": "2026-10-02T14:11:13Z",
+        "approval_request": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-B175-001/approval-request-48611d26.json",
+        "superseded_approvals": [
+          "HUMANOPS-DEV-MIGRATION-20260929T053234Z (ee06d1d8; expired and consumed by failed run 36657889962)",
+          "HUMANOPS-DEV-MIGRATION-20260930T145659Z (b175b231 only; not extended)",
+          "HUMANOPS-DEV-MIGRATION-20261001T012941Z (f5496614 only; not extended)"
+        ],
+        "superseded_because": "Superseded by candidate 6140d0ef633cbf94522c171d9927103ab200257f (PR #1392, ODP-DEV-CANDIDATE-REBIND-6140D0EF-001). PR #1392 rebound release, manifest and gates but left this candidate_rebind block on 48611d26/build 36823039168; ODP-DEV-ISSUER-BUILD-BINDING-6140D0EF-001 moved it to history unchanged."
       }
     ]
   }
