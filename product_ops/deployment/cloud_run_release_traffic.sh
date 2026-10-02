@@ -288,8 +288,8 @@ restore_service_traffic() {
     gcloud run services delete "${service}" \
       --region="${GCP_REGION}" \
       --project="${GCP_PROJECT}" \
-      --quiet
-    return
+      --quiet || return 1
+    return 0
   fi
   local traffic
   traffic="$(python3 "${ODP_TRAFFIC_HELPER}" restore-arg --description="${snapshot}")"
@@ -310,6 +310,12 @@ restore_service_traffic() {
 # deletes the bootstrap candidate -- but the failure path announced a traffic
 # restore either way, which is the one moment an operator reads the log to learn
 # whether the old version is back.
+#
+# ODP-DEV-EGRESS-READBACK-RECOVERY-001: this helper and restore_service_traffic
+# run inside the deploy script's EXIT trap. There a bare `return` reports the
+# status of the last command before the trap -- the failed deployment step --
+# not the helper's own outcome, so a completed recovery read back as failed.
+# Every success path in trap-reachable helpers returns 0 explicitly.
 release_recovery_mode() {
   local api_snapshot="$1"
   local web_snapshot="$2"
@@ -321,11 +327,11 @@ release_recovery_mode() {
   fi
   if [ "${api_exists}" = "true" ] || [ "${web_exists}" = "true" ]; then
     printf 'rollback'
-    return
+    return 0
   fi
   if [ "${api_exists}" = "false" ] && [ "${web_exists}" = "false" ]; then
     printf 'initial-release-cleanup'
-    return
+    return 0
   fi
   echo "Error: API/Web pre-deploy snapshot has an invalid existence value; recovery mode is unknown." >&2
   return 1
@@ -489,4 +495,67 @@ restore_scheduler_trigger() {
 
   echo "Cloud Scheduler trigger '${trigger}' successfully restored." >&2
   return 0
+}
+
+# ODP-DEV-EGRESS-READBACK-RECOVERY-001: read the VPC egress setting back from a
+# `gcloud run jobs describe --format=json` payload on stdin and print it in its
+# canonical v2 form. gcloud returns the v1 Job shape, where the setting lives in
+# the execution-template annotation `run.googleapis.com/vpc-access-egress`
+# (`all-traffic`); the v2 Admin API shape carries `vpcAccess.egress`
+# (`ALL_TRAFFIC`). Every known location is read, and the readback fails closed
+# when no location carries a value, when a value is not a recognised egress
+# setting, or when two locations disagree. A recognised `private-ranges-only`
+# readback is printed as PRIVATE_RANGES_ONLY so the caller can refuse it with
+# the observed value on record.
+cloud_run_job_vpc_egress() {
+  python3 -c '
+import json
+import sys
+
+ANNOTATION = "run.googleapis.com/vpc-access-egress"
+CANONICAL = {
+    "all": "ALL_TRAFFIC",
+    "all-traffic": "ALL_TRAFFIC",
+    "ALL_TRAFFIC": "ALL_TRAFFIC",
+    "private-ranges-only": "PRIVATE_RANGES_ONLY",
+    "PRIVATE_RANGES_ONLY": "PRIVATE_RANGES_ONLY",
+}
+PATHS = (
+    ("spec", "template", "metadata", "annotations", ANNOTATION),
+    ("metadata", "annotations", ANNOTATION),
+    ("template", "template", "vpcAccess", "egress"),
+    ("template", "vpcAccess", "egress"),
+    ("spec", "template", "spec", "template", "spec", "vpcAccess", "egress"),
+    ("vpcAccess", "egress"),
+)
+
+try:
+    payload = json.load(sys.stdin)
+except ValueError as error:
+    raise SystemExit(f"Error: Cloud Run Job readback is not JSON: {error}")
+if not isinstance(payload, dict):
+    raise SystemExit("Error: Cloud Run Job readback is not a JSON object.")
+
+observed = {}
+for path in PATHS:
+    value = payload
+    for key in path:
+        if not isinstance(value, dict) or key not in value:
+            break
+        value = value[key]
+    else:
+        location = ".".join(path)
+        if not isinstance(value, str) or value not in CANONICAL:
+            raise SystemExit(
+                f"Error: Cloud Run Job VPC egress at {location} is not a recognised "
+                f"setting: {value!r}"
+            )
+        observed[location] = CANONICAL[value]
+
+if not observed:
+    raise SystemExit("Error: Cloud Run Job readback carries no VPC egress setting.")
+if len(set(observed.values())) != 1:
+    raise SystemExit(f"Error: Cloud Run Job VPC egress readback is contradictory: {observed}")
+print(next(iter(observed.values())))
+'
 }
