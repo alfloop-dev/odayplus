@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "record_kind": "runtime-release-registry-admission-dry-run",
+  "candidate_sha": "6140d0ef633cbf94522c171d9927103ab200257f",
+  "manifest_digest": "sha256:d286dd009978a5b9aaa9ee9fc01d1c1be1d8b846855539be63b18504ad368108",
+  "target_environment": "dev",
+  "registry_candidate_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
+  "registry_manifest_digest": "sha256:eb97c149496cfda57fc353e121be0a01a1c75282c9e23a9f32052913745a99c7",
+  "result": "no-go",
+  "errors": [
+    "registry release.manifest_digest does not match the manifest committed at the release SHA; the registry and the artifact identity disagree",
+    "release.candidate_sha '48611d264e9e10b5c74b8ac1cb972bc92e5ef817' is an ancestor of expected SHA '6140d0ef633cbf94522c171d9927103ab200257f', but intervening commits touch non-evidence paths: .orchestrator/adapters/__init__.py, .orchestrator/adapters/pi.py, .orchestrator/bin/pi, .orchestrator/common.py, .orchestrator/config.schema.json, .orchestrator/provider_permissions.py, .orchestrator/supervisor.py, .orchestrator/test_pi_adapter.py, .orchestrator/worker_failure_policy.py, docs/plans/ODP_OPEN_DECISIONS_2026-09-03.md"
+  ],
+  "checked_at": "2026-10-02T13:02:06Z",
+  "checker": "delivery_toolchain/release/check_runtime_admission.py::registry_admission_errors",
+  "note": "Read-only validation of the merged origin/dev tree. No lease state was read or consumed."
+}
