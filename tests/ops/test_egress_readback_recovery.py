@@ -16,9 +16,14 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+
+from delivery_toolchain.release.release_manifest import (
+    compute_sources_off_probe_receipt_content_digest,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 TRAFFIC_HELPER = ROOT / "product_ops/deployment/cloud_run_release_traffic.sh"
@@ -274,3 +279,144 @@ def test_genuinely_failed_cleanup_in_exit_trap_is_still_reported(
     assert "DELETE_FAILED" in result.stderr
     # A failed delete does not stop the remaining candidates from being cleaned.
     assert len(read_log(tmp_path)) == 4
+
+
+CANDIDATE_SHA = "6140d0ef633cbf94522c171d9927103ab200257f"
+MANIFEST_DIGEST = "sha256:" + "d2" * 32
+CANDIDATE_JOB = "oday-worker-r-6140d0ef633c"
+
+
+def capture_validator() -> str:
+    """The inline receipt validator of capture_public_egress_probe_receipt."""
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    capture = script[script.index("capture_public_egress_probe_receipt() {") :]
+    capture = capture[: capture.index("\n}\n")]
+    call = capture.index('run_locked_python - "${logs_file}" "${PUBLIC_EGRESS_PROBE_REPORT}"')
+    body = capture[call:]
+    body = body[body.index("<<'PY'\n") + len("<<'PY'\n") :]
+    return body[: body.index("\nPY\n")]
+
+
+def runtime_receipt(**overrides: object) -> dict[str, object]:
+    receipt: dict[str, object] = {
+        "schema_version": 1,
+        "receipt_kind": "public_egress_probe",
+        "secret_values_redacted": True,
+        "candidate_sha": CANDIDATE_SHA,
+        "manifest_digest": MANIFEST_DIGEST,
+        "job": CANDIDATE_JOB,
+        "probe_url": "https://example.com/",
+        "expected": "denied",
+        "vpc_egress": "ALL_TRAFFIC",
+        "result": "passed",
+        "reason": "public_canary_denied",
+        "execution": "succeeded",
+        "recorded_at": "2026-10-02T19:07:55.041371+00:00",
+    }
+    receipt.update(overrides)
+    receipt["receipt_content_digest"] = compute_sources_off_probe_receipt_content_digest(
+        resolved_cloud_run_egress=receipt["vpc_egress"],
+        result=receipt["result"],
+        reason=receipt["reason"],
+    )
+    return receipt
+
+
+def run_capture_validator(
+    tmp_path: Path,
+    receipt: dict[str, object],
+    *,
+    job: str = CANDIDATE_JOB,
+    egress: str = "ALL_TRAFFIC",
+) -> tuple[subprocess.CompletedProcess[str], Path]:
+    logs = tmp_path / "logs.json"
+    logs.write_text(json.dumps([{"jsonPayload": receipt}]), encoding="utf-8")
+    report = tmp_path / "report.json"
+    # Same positional arguments, in the same order, as the deploy script passes.
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-",
+            str(logs),
+            str(report),
+            CANDIDATE_SHA,
+            MANIFEST_DIGEST,
+            job,
+            egress,
+        ],
+        cwd=ROOT,
+        env={**os.environ, "PYTHONPATH": str(ROOT)},
+        input=capture_validator(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result, report
+
+
+def test_capture_validator_receives_job_then_expected_egress() -> None:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    capture = script[script.index("capture_public_egress_probe_receipt() {") :]
+    assert (
+        '"${ODAY_RELEASE_SHA}" "${MANIFEST_DIGEST}" "${WORKER_CANDIDATE_JOB}" \\\n'
+        "    \"${expected_egress}\" <<'PY'"
+    ) in capture
+
+
+def test_capture_validator_accepts_valid_all_traffic_runtime_receipt(tmp_path: Path) -> None:
+    receipt = runtime_receipt()
+
+    result, report = run_capture_validator(tmp_path, receipt)
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(report.read_text(encoding="utf-8")) == receipt
+
+
+@pytest.mark.parametrize(
+    ("receipt_overrides", "arguments", "message"),
+    [
+        pytest.param(
+            {"job": "oday-worker-r-000000000000"}, {}, "receipt.job must be", id="wrong-job"
+        ),
+        pytest.param({"job": ""}, {}, "receipt.job must be", id="empty-job"),
+        pytest.param(
+            {"vpc_egress": "PRIVATE_RANGES_ONLY"}, {}, "vpc_egress must be", id="wrong-egress"
+        ),
+        pytest.param(
+            {}, {"egress": "PRIVATE_RANGES_ONLY"}, "vpc_egress must be", id="expected-egress"
+        ),
+        pytest.param(
+            {"candidate_sha": "0" * 40}, {}, "candidate_sha does not match", id="wrong-candidate"
+        ),
+        pytest.param(
+            {"manifest_digest": "sha256:" + "0" * 64},
+            {},
+            "manifest_digest does not match",
+            id="wrong-manifest-digest",
+        ),
+    ],
+)
+def test_capture_validator_rejects_mismatched_runtime_receipt(
+    tmp_path: Path,
+    receipt_overrides: dict[str, object],
+    arguments: dict[str, str],
+    message: str,
+) -> None:
+    result, report = run_capture_validator(
+        tmp_path, runtime_receipt(**receipt_overrides), **arguments
+    )
+
+    assert result.returncode != 0
+    assert message in result.stderr
+    assert not report.exists()
+
+
+def test_capture_validator_rejects_tampered_receipt_digest(tmp_path: Path) -> None:
+    receipt = runtime_receipt()
+    receipt["reason"] = "public_canary_reachable"
+
+    result, report = run_capture_validator(tmp_path, receipt)
+
+    assert result.returncode != 0
+    assert "receipt_content_digest does not match" in result.stderr
+    assert not report.exists()

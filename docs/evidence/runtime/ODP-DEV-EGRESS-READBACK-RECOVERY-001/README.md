@@ -56,6 +56,28 @@
 - Genuinely failed cleanup (service or job delete failing) still yields a
   non-zero recovery status, and remaining candidates are still deleted.
 
+## Review reopen 1 (Codex, 2026-10-02T19:08:41Z): receipt argument binding
+
+- Finding, reproduced offline on head d19b7aa3: `capture_public_egress_probe_receipt`
+  passes `argv[5]=${WORKER_CANDIDATE_JOB}` and `argv[6]=${expected_egress}`,
+  but its inline validator used `expected_egress=sys.argv[5]`, so a fully
+  valid `ALL_TRAFFIC` runtime receipt failed with
+  `vpc_egress must be 'oday-worker-r-6140d0ef633c'; got 'ALL_TRAFFIC'`, and
+  the job argument was never checked.
+- Repair: the validator uses `sys.argv[6]` as the expected egress and requires
+  `receipt.job == sys.argv[5]` (the candidate worker job). Candidate SHA,
+  manifest digest and receipt content digest checks are unchanged.
+- Tests (`tests/ops/test_egress_readback_recovery.py`) extract and execute the
+  real inline capture validator with the deploy script's argument order: a
+  valid receipt is accepted and copied to the report; wrong/empty job, wrong
+  receipt egress, non-ALL_TRAFFIC expected egress, wrong candidate SHA, wrong
+  manifest digest and a tampered content digest are rejected without writing
+  the report.
+- `uv run --frozen --python 3.12 pytest -q` on the same four test files →
+  exit 0, 143 passed (134 prior + 9 new). A/B against the d19b7aa3 script:
+  the valid-receipt and wrong-job cases fail (exit 1), as in the reviewer's
+  repro. No cloud action was taken.
+
 ## Follow-up (coordinator)
 
 This source change needs a fresh exact candidate/build and a new exact-tuple
