@@ -48,7 +48,7 @@ class PiAdapterTests(unittest.TestCase):
             },
         }
 
-    def deliver(self, config: dict, *, cli: str | None = "/usr/bin/pi"):
+    def deliver(self, config: dict, *, cli: str | None = "/usr/bin/pi", metadata: dict | None = None):
         request = DeliveryRequest(
             agent_id="pi1",
             provider="pi1",
@@ -56,6 +56,7 @@ class PiAdapterTests(unittest.TestCase):
             message="wake",
             task_id="T-PI",
             reason="owned_ready_dispatch",
+            metadata=metadata or {},
         )
         fake_process = mock.Mock(pid=4321)
         with (
@@ -166,6 +167,30 @@ class PiAdapterTests(unittest.TestCase):
         self.assertFalse(capability.supported)
         self.assertIn("has no openai-codex credential", capability.notes)
 
+    def test_relative_agent_dir_is_rejected_even_when_supervisor_cwd_has_auth(self) -> None:
+        # Supervisor cwd holds accounts/pi1/auth.json; the task worktree pi runs
+        # in does not, so the relative dir must not pass the check here.
+        supervisor_cwd = self.root / "supervisor"
+        (supervisor_cwd / "accounts" / "pi1").mkdir(parents=True)
+        (supervisor_cwd / "accounts" / "pi1" / "auth.json").write_text(
+            json.dumps({"openai-codex": {"type": "oauth"}}), encoding="utf-8"
+        )
+        worktree = self.root / "worktree"
+        worktree.mkdir()
+        config = self.config(agent_dir="accounts/pi1")
+        cwd = os.getcwd()
+        os.chdir(supervisor_cwd)
+        self.addCleanup(os.chdir, cwd)
+
+        with mock.patch("adapters.pi.command_exists", return_value="/usr/bin/pi"):
+            capability = build_adapter("pi", config=config).capability("pi1")
+        self.assertFalse(capability.supported)
+        self.assertIn("must be an absolute or ~-relative path", capability.notes)
+
+        result, spawn = self.deliver(config, metadata={"workspace_path": str(worktree)})
+        self.assertFalse(result.ok)
+        spawn.assert_not_called()
+
     def test_ready_capability_states_the_missing_sandbox(self) -> None:
         with mock.patch("adapters.pi.command_exists", return_value="/usr/bin/pi"):
             capability = build_adapter("pi", config=self.config()).capability("pi1")
@@ -197,6 +222,10 @@ class PiConfigSchemaTests(unittest.TestCase):
         with self.assertRaises(ConfigError):
             self.validate({"thinking": "maximum"})
 
+    def test_relative_agent_dir_is_rejected(self) -> None:
+        with self.assertRaises(ConfigError):
+            self.validate({"agent_dir": "accounts/pi1"})
+
 
 class PiFailureClassificationTests(unittest.TestCase):
     CONFIG = {"providers": {"pi1": {"delivery_mode": "pi"}}}
@@ -214,6 +243,44 @@ class PiFailureClassificationTests(unittest.TestCase):
     def test_no_api_key_found_is_auth(self) -> None:
         reason = "No API key found for openai-codex.\n\nUse /login to log into a provider via OAuth or API key."
         self.assertEqual(self.classify(reason)["kind"], "auth")
+
+    def detect(self, text: str) -> str | None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "worker.log"
+            log_path.write_text(text, encoding="utf-8")
+            worker = {
+                "run_id": "run-pi",
+                "task_id": "T-PI",
+                "provider": "pi1",
+                "agent_id": "pi1",
+                "status": "running",
+                "runner_status": "failed",
+                "exit_code": 1,
+                "log_path": str(log_path),
+                "pid": 999999,
+            }
+            return worker_failure_policy.detect_worker_failure(worker)
+
+    def test_not_logged_in_stderr_is_detected_then_classified_as_auth(self) -> None:
+        for text in (
+            "No models available. Use /login to log into a provider via OAuth or API key. See:\n"
+            "  /home/u/.local/lib/node_modules/@earendil-works/pi-coding-agent/docs/providers.md\n",
+            "No API key found for openai-codex.\n\nUse /login to log into a provider via OAuth or API key.\n",
+        ):
+            with self.subTest(text=text.splitlines()[0]):
+                reason = self.detect(text)
+                self.assertIsNotNone(reason)
+                self.assertEqual(self.classify(reason)["kind"], "auth")
+
+    def test_quoted_not_logged_in_text_is_not_detected(self) -> None:
+        for text in (
+            'reason = "No API key found for openai-codex."\n',
+            "adapters/pi.py:12: No models available. Use /login to log into a provider\n",
+            "> No API key found for openai-codex.\n",
+            "No API key found for openai-codex is the pi message we classify as auth.\n",
+        ):
+            with self.subTest(text=text):
+                self.assertIsNone(self.detect(text))
 
     def test_pi_wrapper_missing_binary_is_provider_unavailable(self) -> None:
         reason = "pi CLI binary not found at /home/u/.local/bin/pi or on PATH."

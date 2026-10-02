@@ -59,6 +59,10 @@ def _auth_problem(agent_dir: Path, llm_provider: str) -> str | None:
     pi writes `{}` to auth.json before anyone logs in, so the file existing is not
     enough: the provider id has to be a key in it.
     """
+    if not agent_dir.is_absolute():
+        # This check runs in the supervisor cwd while pi runs in the task
+        # worktree, so a relative dir would pass here and miss there.
+        return f"pi agent_dir {str(agent_dir)!r} must be an absolute or ~-relative path."
     auth_path = agent_dir / "auth.json"
     login_hint = f"run `PI_CODING_AGENT_DIR={agent_dir} pi` and /login to {llm_provider} first."
     if not auth_path.is_file():

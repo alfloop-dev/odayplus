@@ -705,8 +705,9 @@
                 ]
               },
               "agent_dir": {
-                "description": "Exported as PI_CODING_AGENT_DIR so each account pool can carry its own auth.json. Defaults to ~/.pi/agent.",
-                "type": "string"
+                "description": "Exported as PI_CODING_AGENT_DIR so each account pool can carry its own auth.json. Defaults to ~/.pi/agent. Must be absolute or ~-relative: the auth check runs in the supervisor cwd but pi runs in the task worktree.",
+                "type": "string",
+                "pattern": "^(?:/|~)"
               }
             },
             "additionalProperties": false
