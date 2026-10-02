@@ -7,11 +7,87 @@ owner: Codex2
 reviewer: Antigravity5
 repository: alfloop-dev/odayplus
 observed_ref: 75d25f653aa12c21a3f9627f29af2ed4def73153
+updated_at: 2026-10-03
+updated_ref: 1b14b276447a7778f1dad1045ced1a5bd6abe01e
+updated_by_task: ODP-REMEDIATION-TRUTH-RECONCILIATION-001
 ---
 
 # ODP-SA-06 與 ODP-FR-AVM-001 canonical source provenance
 
+## 2026-10-03 更正：原始 bytes 已找到，剩下的缺口只有 authority 批准
+
+本節由 `ODP-REMEDIATION-TRUTH-RECONCILIATION-001` 於 2026-10-03、在
+`1b14b276447a7778f1dad1045ced1a5bd6abe01e` 上加入。下方「結論」以後各節是
+2026-09-03 的原始紀錄，原文保留不改；其中「原始 artifact 未找到」「版本／
+位置／hash 不可確認」的結論**已被本節更正**。兩筆 record 的狀態仍是
+`BLOCKED_BY_EVIDENCE`，但阻塞原因從「找不到 bytes」改為「bytes 未經 authority
+批准」。
+
+### 找到的原始 bytes
+
+| 欄位 | 值 |
+|---|---|
+| Container | repo 根目錄 `oday_plus_batch_02_sa_documents.zip`（git blob `362fbf7aeaf7ce6aba786ea89a1a0378340edb60`，檔案 sha256 `63a10ee035be3e47d541f92558998bbb0eb88d03595409f3bb15d5ac53455fe0`） |
+| 首次進 repo | initial commit `297a76189c7a21354ae9e09bcbd43453e6bb22b3`（2026-06-26），之後未再變更 |
+| ZIP member | `ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md`，20223 bytes |
+| Member content SHA-256 | `43dad7bf171a5e80511a01fd289bf2132c060e08c27799dcd8f91f86fb2073ec` |
+| 精確位置 | `github://alfloop-dev/odayplus@1b14b276447a7778f1dad1045ced1a5bd6abe01e/oday_plus_batch_02_sa_documents.zip!ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md` |
+| Front matter | `doc_id: ODP-SA-06`、`version: 0.1.0`、`status: draft-for-review`、`updated_at: 2026-06-26`、`owner: "Product Lead"`、`approvers: "Domain Business Owners / Architecture Owner / QA Lead"` |
+
+2026-09-03 的查證只檢查兩個散檔 path 與 `git rev-list --objects` 的物件名稱，
+沒有打開 ZIP。該 ZIP 在 `75d25f653aa12c21a3f9627f29af2ed4def73153` 時就已存在，
+所以當時的「未找到」是查找遺漏，不是來源不存在。
+
+### `ODP-FR-AVM-001` 原文對照
+
+原始 row 位於上述 member 第 104 行（該行 bytes 的 SHA-256：
+`0a516d3b167aea0cd4858250b5b3630651597de2ad72d22ba11957f6faabcc3a`）：
+
+```text
+| `ODP-FR-AVM-001` | 系統必須整合 GM_TTM、GM_FWD、折舊、資產、租約與正常化調整。 | DealRoomAVM | 依模組流程或資料更新觸發 | 可由 API／UI／Job／報表或 Audit 驗證 | MUST | `ODP-HLR-AVM-*` |
+```
+
+| 項目 | 原始 row | Manifest 轉錄（`set_valued_requirements.json`） |
+|---|---|---|
+| 敘述 | 系統必須整合 GM_TTM、GM_FWD、折舊、資產、租約與正常化調整。 | 估值必須組合 GM_TTM、GM_FWD、折舊、資產、租約與正常化。 |
+| 成員 | GM_TTM、GM_FWD、折舊、資產、租約、正常化（調整） | `GM_TTM`、`GM_FWD`、`DEPRECIATION`、`ASSET`、`LEASE`、`NORMALIZATION` |
+| 模組／優先級 | DealRoomAVM／MUST | — |
+| 驗收欄 | 「可由 API／UI／Job／報表或 Audit 驗證」（全文共用樣板） | — |
+
+差異只在措辭（「系統必須整合」vs「估值必須組合」、「正常化調整」vs「正常化」），
+六個成員同集合、同順序。原始 row 沒有成員級驗收標準，這點與 manifest
+`_comment` 的既有判斷一致。
+
+### 仍然存在的缺口：authority 批准
+
+找到 bytes 只證明 bytes 的出處，不等於規格已被批准為 canonical。這份 member
+的 front matter 寫的是 `status: draft-for-review`，列了 approvers，但 repo 內沒有
+任何批准紀錄，也沒有 Product Lead／source custodian 確認「`0.1.0` 這份就是
+ratified canonical `ODP-SA-06`」。因此：
+
+- 兩筆 record 維持 `BLOCKED_BY_EVIDENCE`，`blocked_on: authority_ratification`；
+  `canonical_source.ratified` 記為 `false`，`ratification_evidence` 為 `null`。
+- 找到的 bytes 記在 `source_artifact`，不是填進 `canonical_source` 冒充批准。
+- **Evidence owner**：`Product Lead`。**Next check date**：`2026-10-17`。
+- **Recheck**：Product Lead 或 source custodian 以可追溯紀錄確認 ZIP member
+  `0.1.0`（sha256 `43dad7bf…73ec`）是否為 ratified canonical `ODP-SA-06`，或提供
+  已批准的後續版本及其位置與 SHA-256。
+
+### 重現指令
+
+```bash
+git cat-file -e 297a76189c7a21354ae9e09bcbd43453e6bb22b3:oday_plus_batch_02_sa_documents.zip
+git rev-parse 1b14b276447a7778f1dad1045ced1a5bd6abe01e:oday_plus_batch_02_sa_documents.zip
+unzip -p oday_plus_batch_02_sa_documents.zip ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md | sha256sum
+unzip -p oday_plus_batch_02_sa_documents.zip ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md | sed -n 104p
+```
+
+上述檢查也由 `tests/governance/test_remediation_truth_reconciliation.py` 直接讀
+ZIP bytes 執行，並證明 hash 被竄改或 record 改回「未找到」時測試會失敗。
+
 ## 結論
+
+（2026-09-03 原始紀錄；「未找到原檔」部分已被上方 2026-10-03 更正取代。）
 
 截至 2026-09-03，`ODP-SA-06` 與 `ODP-FR-AVM-001` 都是
 `BLOCKED_BY_EVIDENCE`。本 repo 有查證報告與修正案的轉錄／衍生內容，

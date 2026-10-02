@@ -253,10 +253,15 @@ stateDiagram-v2
 ### 4.6 `ODP-FR-LH-005`：模型漂移監控
 
 #### 成員：`PREDICTION_DRIFT`（預測分布漂移）
-- **處置狀態**：`IMPLEMENTATION_READY`
-- **負責人 (Assigned To)**: `ML Monitoring Lead`
-- **目標交付批次 (Target Phase)**: `Batch 4a (ODP Remediation Plan)`
-- **理由 (Rationale)**: Evidently 預測分布漂移監控已完成技術規格設計，排入 Batch 4a 實作。
+- **處置狀態**：`BLOCKED_BY_EVIDENCE`（`status: satisfied`；程式已交付，缺 production 實測收據）
+- **實作證據 (Evidence)**: `modules/learninghub/application/release.py::LearningHubService.monitor_prediction_drift`
+  （PR #1154，merge `0cbc5330f6a076344d2dff32370dedae5b82da4a`，`ODP-LH-PREDICTION-DRIFT-001`）；由
+  `modules/learninghub/workers/release_worker.py` 呼叫，執行 `EvidentlyDriftMonitor.run_prediction`。
+- **證據負責人 (Evidence Owner)**: `ML Monitoring Lead`
+- **下次檢視日期 (Next Review Date)**: `2026-10-17`
+- **欠缺證據 (Evidence Needed)**: 對實際 PRODUCTION alias 模型版本、真實 reference／current 預測 snapshot、受治理 DecisionPolicy 執行 `monitor_prediction_drift` 的 production 收據，並自 production repository 讀回 `MonitoringEvaluation`。
+- **理由 (Rationale)**: 程式、worker 接線與離線測試已存在，故成員以程式而言 `satisfied`；但從未對真實 production 模型執行（真實 Forecast 模型／歷史交接本身仍缺，見 `ODP-MODEL-ARTIFACT-HISTORY-RECOVERY-001`），因此運行驗收不得升為 `VERIFIED`。
+- **歷史 (History)**: 2026-09-03 登錄為 `absent`／`IMPLEMENTATION_READY`（`ML Monitoring Lead`，`Batch 4a (ODP Remediation Plan)`：「Evidently 預測分布漂移監控已完成技術規格設計，排入 Batch 4a 實作」）。2026-10-03 由 `ODP-REMEDIATION-TRUTH-RECONCILIATION-001` 依已合併實作更正，證據見 [`docs/evidence/completion/ODP-REMEDIATION-TRUTH-RECONCILIATION-001/README.md`](../evidence/completion/ODP-REMEDIATION-TRUTH-RECONCILIATION-001/README.md)。
 
 ---
 
@@ -278,29 +283,35 @@ stateDiagram-v2
 - **理由 (Rationale)**: 具備治理化 XLSX 試算表解析、預覽驗證與冪等提交，另支援 feed 與 public_dataset。
 
 #### 成員：`EVENT`（事件串流）
-- **處置狀態**：`OPEN`
+- **處置狀態**：`BLOCKED_BY_EVIDENCE`（`status: satisfied`；scoped 程式已交付，缺 lifecycle 欄位與 live 實測）
+- **實作證據 (Evidence)**: `apps/data_platform/definitions.py::scoped_cdc_device_log_sensor`（PR #1340，merge `dc0eb370b29e50f2fc916e008bdab3d08e0a3ddc`，`ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001`）。依 H07 第 5 項，`device_log` change stream（`core.machine_status_events` 的來源，即宣告 `integration_mode: event_stream` 的 `machine_status_event` 契約）由 Dagster 常駐 sensor 經 `ScopedCdcAdapter` 消費，依裁決不引入 Broker。
 - **負責人 (Assigned To)**: `Platform Infrastructure Lead`
-- **下次檢視日期 (Next Review Date)**: `2026-10-01`
-- **理由 (Rationale)**:
-  `machine_status_event` 契約宣告了 `integration_mode: event_stream` 與 `envelope: event`，但在生產環境中 `core.machine_status_events` 係透過 `SourceKind.DEVICE_LOG` 走批次水位線落地。目前全樹無事件 Broker / Stream Consumer 生產者。待架構與平台團隊評估補建生產者或修訂契約 taxonomy。
+- **證據負責人 (Evidence Owner)**: `Platform Infrastructure Lead / Data Platform Lead`
+- **下次檢視日期 (Next Review Date)**: `2026-10-17`
+- **仍屬剩餘範圍 (Remaining Scope)**:
+  1. sensor 預設 `STOPPED`，從未對 `fongniao_prod` 啟動；
+  2. `core.machine_status_events` 沒有記錄生命週期欄位，`device_log` 退場只留稽核墓碑而保留原列——由 `ODP-CDC-MACHINE-EVENT-LIFECYCLE-001` 負責；
+  3. 批次水位線路徑仍是 fallback；replica set、oplog 窗與 sub-10s 延遲未實測。
+- **理由 (Rationale)**: 「全樹無 Stream Consumer」對程式已不成立，故以程式而言 `satisfied`；但未曾 live 執行且機台事件生命週期仍缺，不得升為 `VERIFIED`。H07 已定案，不再要求重答。
+- **歷史 (History)**: 2026-09-03 登錄為 `absent`／`OPEN`（「`machine_status_event` 契約宣告 event_stream，但生產以 `SourceKind.DEVICE_LOG` 批次水位線落地；全樹無事件 Broker／Stream Consumer」）。2026-10-03 更正。
 
 #### 成員：`CDC`（異動資料擷取）
-- **處置狀態**：`OPEN`（已確認實作方向 D20；A 階段工程準備已交付；跟進任務派發中；Stage 34B 等待 H07 串流來源確認）
+- **處置狀態**：`BLOCKED_BY_EVIDENCE`（`status: satisfied`；scoped adapter 已交付，缺 live 實測）
+- **實作證據 (Evidence)**: `apps/data_platform/cdc.py::ScopedCdcAdapter`（PR #1340，merge `dc0eb370b29e50f2fc916e008bdab3d08e0a3ddc`）：僅 `orders` 與 `device_log` 啟用 change stream（`SCOPED_CDC_POLICIES`，其餘 13 集合維持批次）、resume token checkpoint 與 snapshot recovery、adapter 內遮罩、軟刪除與稽核墓碑、GDPR 清除、`cdc_staging_events`／`cdc_checkpoints` 控制表，以 `STOPPED` sensor 接線。
 - **負責人 (Assigned To)**: `Data Platform Lead`
-- **下次檢視日期 (Next Review Date)**: `2026-10-01`
+- **證據負責人 (Evidence Owner)**: `Data Platform Lead`
+- **下次檢視日期 (Next Review Date)**: `2026-10-17`
+- **欠缺證據 (Evidence Needed)**: 上游 replica set／oplog 窗讀回（`rs.status()` 或 `db.getReplicationInfo()`）、`odp_cdc_reader` 角色讀回、控制表 DDL 經 install 路徑於真實 PostgreSQL 執行、啟動 scoped sensor 後 `orders`／`device_log` 端到端延遲對 sub-10s 目標之實測。
 - **正式移交文件 (Formal Handback Ref)**: `docs/evidence/ODP_INT001_CDC_DISPOSITION_2026-09-03.md`
-- **2026-09-08 人工決策更新 (Decision D20)**:
-  使用者確認選擇「選項 A：實作／補齊 CDC 適用性與契約」，不刪除需求、不建立 Waiver。
-- **A 階段交付成果 (Stage 34A)**:
-  `ODP-CDC-SOURCE-CONTRACT-PREP-001` (PR [#1258](https://github.com/alfloop-dev/odayplus/pull/1258)，Approved HEAD `ec3a218805ff1ccbd176262c3c76d70a62034eac`，已合併入 `dev`)，交付目錄：[`docs/evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/`](../evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/)。
-  包含 `source-applicability-matrix.json`、`event-contract-draft.json`、`human-input-request-H07.md` 與 `implementation-handoff.md`。
-- **獨立跟進任務 (Follow-up Tasks)**:
-  - `ODP-DATA-PLANE-DELETE-PROPAGATION-001`: 資料落地層刪除與墓碑傳播引擎 (`todo`)。
-  - `ODP-SCHEMA-STORE-OPENING-AUTHORITY-001`: 補齊 `store_opening_authority_snapshot` 來源契約 (`todo`)。
-  - `ODP-DATA-CATALOG-METADATA-ALIGNMENT-001`: 來源契約表達 Data Owner 與延遲 SLA (`todo`)。
-- **B 階段接續實作任務 (Stage 34B)**: `ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001`（目前處於 `blocked`，待收到 H07 確認候選來源如 orders/device_log 後入場）。
-- **處置依據與查證結論**:
-  依 `docs/evidence/ODP_INT001_CDC_SOURCE_EVIDENCE_2026-09-03.md` 與 `docs/evidence/ODP_INT001_CDC_DISPOSITION_2026-09-03.md` 之查證，全樹 15 個內部集合中僅 `orders` 與 `device_log` 具近即時 CDC 串流價值，外部來源均為快照。依 D20 完成 A 階段契約與 21 個來源適用性評估，建立資料落地層刪除修補任務，並於 H07 請求中向架構與業務方確認目標來源與 SLA。
+- **理由 (Rationale)**: scoped adapter 不等於全面 CDC live 驗證；模組本身聲明不證明任何 live 叢集事實。H07（2026-09-13）已定案，不再要求重答。
+- **歷史 (History，保留)**:
+  - 2026-09-08 人工決策 D20：使用者確認選擇「選項 A：實作／補齊 CDC 適用性與契約」，不刪除需求、不建立 Waiver。
+  - A 階段交付成果 (Stage 34A)：`ODP-CDC-SOURCE-CONTRACT-PREP-001` (PR [#1258](https://github.com/alfloop-dev/odayplus/pull/1258)，Approved HEAD `ec3a218805ff1ccbd176262c3c76d70a62034eac`，已合併入 `dev`)，交付目錄：[`docs/evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/`](../evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/)，包含 `source-applicability-matrix.json`、`event-contract-draft.json`、`human-input-request-H07.md` 與 `implementation-handoff.md`。
+  - 獨立跟進任務：`ODP-DATA-PLANE-DELETE-PROPAGATION-001`、`ODP-SCHEMA-STORE-OPENING-AUTHORITY-001`、`ODP-DATA-CATALOG-METADATA-ALIGNMENT-001`。
+  - 2026-09-03 查證結論：依 `docs/evidence/ODP_INT001_CDC_SOURCE_EVIDENCE_2026-09-03.md` 與 `docs/evidence/ODP_INT001_CDC_DISPOSITION_2026-09-03.md`，全樹 15 個內部集合中僅 `orders` 與 `device_log` 具近即時 CDC 串流價值，外部來源均為快照。
+  - 2026-09-13 H07 裁決；Stage 34B `ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001` 於 PR #1340 合併（先前本節記載其為 `blocked` 待 H07，已過時）。
+  - 2026-10-03 由 `ODP-REMEDIATION-TRUTH-RECONCILIATION-001` 自 `absent`／`OPEN` 更正。
+
 ### 4.8 `ODP-FR-FCT-004`：ForecastOps 預測特徵與根因契約
 
 #### 成員：`ROOT_CAUSE_CANDIDATE`（根因候選）
@@ -318,23 +329,22 @@ stateDiagram-v2
 ### 4.9 `ODP-FR-AVM-001`：AVM 估值組成
 
 #### 成員：`DEPRECIATION`（資產折舊）
-- **處置狀態**：`IMPLEMENTATION_READY`
-- **負責人 (Assigned To)**: `AVM Domain Lead / Finance Analytics Lead`
-- **目標交付批次 (Target Phase)**: `Batch 1 (ODP Remediation Plan) — AVM 估值`
+- **處置狀態**：`BLOCKED_BY_EVIDENCE`（`status: satisfied`；程式已交付，缺 Finance activation 證據）
+- **實作證據 (Evidence)**: `modules/avm/domain/valuation.py::calculate_depreciation`，於 `modules/avm/application/production.py::AVMProductionExecutor` 套用（PR #1295，merge `898c192d59b0e39d51844b8596d952104771b6d8`，`ODP-AVM-DEPRECIATION-INTEGRATION-001`）。`modules/avm/tests/test_avm_depreciation_contract.py` 的八條 `xfail(strict=True)` 標記已因實作通過而移除。
 - **契約文件 (Contract Ref)**: [`docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md`](../design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md)
-- **處置證據 (Evidence Ref)**: [`docs/evidence/ODP_AVM001_DEPRECIATION_DISPOSITION_2026-09-04.md`](../evidence/ODP_AVM001_DEPRECIATION_DISPOSITION_2026-09-04.md)
-- **驗收標準 (Acceptance Criteria)**: `modules/avm/tests/test_avm_depreciation_contract.py` 的八條 `xfail(strict=True)` 契約規格（C-1 基數判別、C-2 輸入欄位、C-3 直線折舊計算、C-4 evidence 與版本欄位、C-5 缺席 fail-closed、L-1／L-2 舊估值卡、L-4 校準分版本、R-1 逐位元回滾）。`strict=True` 使實作落地後這些規格會以 XPASS 判紅，強迫實作者回來移除標記——本狀態因此帶有機械式到期機制。
-- **工程處置 (Engineering Disposition)**:
-  修復計畫第 1 批要求先回答「AVM 資產折舊與 `site_economics` 門市現金流折舊是否同一概念」。判定為**不是**，四項證據：被量測的對象不同（format catalog 的全新機型組合 vs. 已使用 N 個月的特定門市設備）、輸出去向不同（稅盾，從未調低任何資產帳面價值 vs. 直接進 asset lens）、時鐘原點相反（開店月往後 vs. 投入使用日往回）、殘值語意不同（期末退場現金流入 vs. 折舊下限）。因此採 **AVM-specific model**，且**連直線折舊純函式都不抽出共用**——為三行算式建立 `modules/avm` → `modules/site_economics` 依賴，換到的是「兩邊折舊政策一致」的假象。要對齊的是參數（`useful_life_months` 與 `residual_value_ratio` 的 catalog 假設），不是程式碼。
+- **處置證據 (Evidence Ref)**: [`docs/evidence/ODP_AVM001_DEPRECIATION_DISPOSITION_2026-09-04.md`](../evidence/ODP_AVM001_DEPRECIATION_DISPOSITION_2026-09-04.md)（2026-09-04 契約處置，歷史）；2026-10-03 更正見 [`docs/evidence/completion/ODP-REMEDIATION-TRUTH-RECONCILIATION-001/README.md`](../evidence/completion/ODP-REMEDIATION-TRUTH-RECONCILIATION-001/README.md)。
+- **證據負責人 (Evidence Owner)**: `Finance Analytics Lead / AVM Domain Lead`
+- **下次檢視日期 (Next Review Date)**: `2026-10-17`
+- **欠缺證據 (Evidence Needed)**: Finance 擁有的 `DepreciationCutoverEvidence`（具名核准人與時間、`thresholds_reference`、R-4 三個回滾門檻），以及 production AVM 以 `depreciation_applied=true` 執行後的讀回。
 - **為何不是其他狀態**:
-  - 不是 `VERIFIED`：`modules/avm` 內沒有任何折舊計算，且依 §3.1 `absent` 不得冒充 `VERIFIED`。
-  - 不是 `DECIDED`：沒有任何人類裁決「不納入折舊」。要通過 `DECIDED` 閘就必須編造 `decider`，正是 §3.2 禁止的 AI 自簽豁免。本處置不攜帶任何法定裁決欄位。
-  - 不是 `BLOCKED_BY_EVIDENCE`：判定已做出、驗收標準已可執行，實作現在就能開始。欠的是工，不是證據——把它記成阻塞會讓一份寫完的契約看起來像在等別人。
+  - 不是 `VERIFIED`：production v1 啟用路徑在缺 Finance cutover 證據時拒絕執行；門檻無人簽署前，v1 折舊在 production 不生效。
+  - 不是 `absent`／`IMPLEMENTATION_READY`：實作已合併，契約規格已通過，欠的不再是工。
+  - 不是 `DECIDED`：沒有任何人類裁決；本處置不攜帶任何法定裁決欄位。
 - **仍屬人類治理、本次不代簽**:
   1. 契約 R-4 的三個回滾門檻（數值／結構／校準）由財務 owner 填入，**門檻未填不得 cutover**；
-  2. `ODP-FR-AVM-001` 的 canonical 需求 bytes 依 [`ODP_SPEC_SOURCE_PROVENANCE_2026-09-03.md`](../evidence/ODP_SPEC_SOURCE_PROVENANCE_2026-09-03.md) 仍為 `BLOCKED_BY_EVIDENCE`，manifest `_source_provenance` 已記錄。本處置只宣稱「依目前轉錄內容」成立。
-- **轉為 `VERIFIED` 的條件**: 八條 xfail 標記被實作而非改寫地移除且全數通過、`status` 轉為 `satisfied` 且 `evidence` 指向可解析符號、R-4 門檻已填。
-- **回歸測試**: `tests/governance/test_avm001_disposition.py`（含三條負向測試：冒充 `VERIFIED`、AI 簽署的 `DECIDED`、移除 `disposition` 區塊，checker 均須拒絕）。
+  2. `ODP-FR-AVM-001` 的來源 bytes 已定位於 `oday_plus_batch_02_sa_documents.zip` 內 `ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md` 第 104 行（version `0.1.0`，sha256 `43dad7bf171a5e80511a01fd289bf2132c060e08c27799dcd8f91f86fb2073ec`），但該文件為 `draft-for-review`，authority 批准仍為 `BLOCKED_BY_EVIDENCE`，見 [`ODP_SPEC_SOURCE_PROVENANCE_2026-09-03.md`](../evidence/ODP_SPEC_SOURCE_PROVENANCE_2026-09-03.md)。
+- **歷史 (History)**: 2026-09-04 登錄為 `absent`／`IMPLEMENTATION_READY`（`AVM Domain Lead / Finance Analytics Lead`，`Batch 1 (ODP Remediation Plan) — AVM 估值`；驗收標準為上述八條 strict xfail 規格）。當時判定 AVM 折舊與 `site_economics` 稅盾折舊不是同一概念，採 AVM-specific model，此判定不變。
+- **回歸測試**: `tests/governance/test_avm001_disposition.py`、`tests/governance/test_remediation_truth_reconciliation.py`（含負向測試：改回 `absent`、冒充 `VERIFIED`、AI 簽署的 `DECIDED`、移除 `disposition` 區塊均須被拒絕）。
 
 ---
 

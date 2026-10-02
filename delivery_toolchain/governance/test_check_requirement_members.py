@@ -1831,8 +1831,10 @@ class TestTheCheckedInManifestHolds:
         assert member_map["BATCH"]["status"] == "satisfied"
         assert member_map["API"]["status"] == "satisfied"
         assert member_map["FILE"]["status"] == "satisfied"
-        assert member_map["EVENT"]["status"] == "absent"
-        assert member_map["EVENT"]["disposition"]["state"] == "OPEN"
-        assert member_map["CDC"]["status"] == "absent"
-        assert member_map["CDC"]["disposition"]["state"] == "OPEN"
+        # The scoped adapter (PR #1340) delivered both in code; neither has a
+        # live receipt, so neither may be VERIFIED.
+        assert member_map["EVENT"]["status"] == "satisfied"
+        assert member_map["EVENT"]["disposition"]["state"] == "BLOCKED_BY_EVIDENCE"
+        assert member_map["CDC"]["status"] == "satisfied"
+        assert member_map["CDC"]["disposition"]["state"] == "BLOCKED_BY_EVIDENCE"
 
