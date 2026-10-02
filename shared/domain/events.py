@@ -68,6 +68,18 @@ def deep_merge(dict1: dict[str, Any], dict2: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+#: Validation stance for event publishers: the payload schemas are closed
+#: (``additionalProperties: false``) so unknown fields are a producer defect.
+PRODUCER_MODE = "producer"
+
+#: Validation stance for event consumers. The ``backward_compatible``
+#: compatibility policy in
+#: docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml requires that
+#: "consumers must ignore unknown optional fields", so a consumer running an
+#: older minor version keeps processing events from a newer producer.
+CONSUMER_MODE = "consumer"
+
+
 class EventContractValidator:
     def __init__(self) -> None:
         self.catalog: dict[str, dict[str, Any]] = {}
@@ -137,7 +149,24 @@ class EventContractValidator:
             return val.startswith("http://") or val.startswith("https://") or val.startswith("gs://") or val.startswith("odp-artifact://")
         return True
 
-    def validate_schema(self, data: Any, schema: dict[str, Any]) -> list[str]:
+    def validate_schema(
+        self,
+        data: Any,
+        schema: dict[str, Any],
+        *,
+        allow_unknown: bool = False,
+    ) -> list[str]:
+        """Validate ``data`` against ``schema``.
+
+        ``allow_unknown`` relaxes ``additionalProperties: false`` so that unknown
+        fields are ignored instead of rejected. It exists to implement the
+        ``consumers must ignore unknown optional fields`` rule of the
+        ``backward_compatible`` compatibility policy declared in
+        docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENTS_V1.yaml. Producers
+        keep the closed-schema check (the default) so typos are caught at publish
+        time; consumers read with it enabled so a producer that adds an optional
+        field in a minor version does not push every event to the DLQ.
+        """
         errors = []
 
         if "$ref" in schema:
@@ -145,7 +174,9 @@ class EventContractValidator:
             if ref_path.startswith("#/definitions/"):
                 def_name = ref_path.split("/")[-1]
                 if def_name in self.definitions:
-                    return self.validate_schema(data, self.definitions[def_name])
+                    return self.validate_schema(
+                        data, self.definitions[def_name], allow_unknown=allow_unknown
+                    )
                 else:
                     errors.append(f"Definition '{def_name}' not found")
                     return errors
@@ -168,17 +199,21 @@ class EventContractValidator:
             properties = schema.get("properties", {})
             for k, v in data.items():
                 if k in properties:
-                    sub_errors = self.validate_schema(v, properties[k])
+                    sub_errors = self.validate_schema(
+                        v, properties[k], allow_unknown=allow_unknown
+                    )
                     for err in sub_errors:
                         errors.append(f"Field '{k}': {err}")
-                elif schema.get("additionalProperties") is False:
+                elif schema.get("additionalProperties") is False and not allow_unknown:
                     errors.append(f"Additional property not allowed: {k}")
 
         elif isinstance(data, list):
             items_schema = schema.get("items")
             if items_schema:
                 for idx, item in enumerate(data):
-                    sub_errors = self.validate_schema(item, items_schema)
+                    sub_errors = self.validate_schema(
+                        item, items_schema, allow_unknown=allow_unknown
+                    )
                     for err in sub_errors:
                         errors.append(f"Index {idx}: {err}")
 
@@ -241,7 +276,17 @@ class EventContractValidator:
 
         return errors
 
-    def validate(self, event: DomainEvent | dict[str, Any]) -> list[str]:
+    def validate(
+        self,
+        event: DomainEvent | dict[str, Any],
+        *,
+        mode: str = PRODUCER_MODE,
+    ) -> list[str]:
+        if mode not in (PRODUCER_MODE, CONSUMER_MODE):
+            raise ValueError(
+                f"Unknown validation mode {mode!r}; "
+                f"expected {PRODUCER_MODE!r} or {CONSUMER_MODE!r}"
+            )
         event_dict = event.to_dict() if isinstance(event, DomainEvent) else event
         errors = self.validate_envelope(event_dict)
         if errors:
@@ -261,7 +306,11 @@ class EventContractValidator:
             return errors
 
         payload_schema = self.payloads[schema_name]
-        payload_errors = self.validate_schema(event_dict["payload"], payload_schema)
+        payload_errors = self.validate_schema(
+            event_dict["payload"],
+            payload_schema,
+            allow_unknown=(mode == CONSUMER_MODE),
+        )
         for err in payload_errors:
             errors.append(f"Payload: {err}")
 
@@ -278,5 +327,16 @@ class EventContractValidator:
 # Global instance for validation
 _validator = EventContractValidator()
 
-def validate_event(event: DomainEvent | dict[str, Any]) -> list[str]:
-    return _validator.validate(event)
+def validate_event(
+    event: DomainEvent | dict[str, Any],
+    *,
+    mode: str = PRODUCER_MODE,
+) -> list[str]:
+    """Validate an event against the committed contract.
+
+    ``mode`` selects the compatibility stance. ``"producer"`` (the default) keeps
+    the closed-schema check declared by the payload schemas. ``"consumer"``
+    ignores unknown payload fields, as required by the ``backward_compatible``
+    compatibility policy.
+    """
+    return _validator.validate(event, mode=mode)

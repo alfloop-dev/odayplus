@@ -1,0 +1,41 @@
+{
+  "approval_id": "HUMANOPS-DEV-MIGRATION-20260929T053234Z",
+  "approved_by": "Human/Ops (user reply transcribed by interactive Claude; not an external identity-system signature)",
+  "user_reply": "授權",
+  "question_answered": "是否授權新 candidate 的 dev 部署？條件與你上一份授權完全相同，只是改綁新 candidate。candidate ee06d1d8294464f1eb7231f2b06505348a61cba2、manifest sha256:8ee919d67fc89768c7ae8912ecfce706dc1b2a0fbb2e3da1a14b5e87c1fae80e、build run 36509055237；接受缺 H01 收據與 npm 開發工具漏洞作為 dev-only deviation；PR #1107 必須先通過 exact-head review 並合併，才能申請 lease；到期時間 24 小時。",
+  "recorded_at": "2026-09-29T05:32:34Z",
+  "expires_at": "2026-09-30T05:32:34Z",
+  "supersedes": [
+    "HUMANOPS-DEV-MIGRATION-20260928T120016Z (a663; expired 2026-09-28T18:00:16Z)",
+    "HUMANOPS-DEV-MIGRATION-20260929T001600Z (a663; recorded as a task note only, never usable: a663 cannot pass ancestry admission against current dev)"
+  ],
+  "candidate_sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
+  "manifest_digest": "sha256:8ee919d67fc89768c7ae8912ecfce706dc1b2a0fbb2e3da1a14b5e87c1fae80e",
+  "manifest_run_id": 36509055237,
+  "target_environment": "dev",
+  "action": "deploy",
+  "accepted_deviations": [
+    "Missing external authoritative H01 Legal/Security receipt for the four conditionally-used LGPL cases, accepted as a dev-only deviation. H01 is not relabeled as passed; staging and production still require the real H01 receipt.",
+    "Disclosed dev-tool npm findings (js-yaml GHSA-2883-xcg3-v3hh, vitest/mocker GHSA-82fw-gwwq-j7x9: 1 high, 2 moderate), accepted as a dev-only deviation. Build production npm audit for this candidate is 0 findings; the automated full audit is not relabeled as passing."
+  ],
+  "dispatch_preconditions": [
+    "Reviewer accepts the exact submitted head of PR #1107 through the canonical task flow.",
+    "PR #1107 is merged before the fresh lease request is registered."
+  ],
+  "authorized_scope": [
+    "one fresh release request",
+    "one standard short-lived Supervisor lease",
+    "existing Runtime Release deploy phase only"
+  ],
+  "scope_limits": [
+    "no database reset",
+    "no Alembic stamp",
+    "no database deletion",
+    "no rewriting foreign Dagster migration history",
+    "no reuse of expired approval/request/nonce",
+    "all 16 external sources remain disabled",
+    "provider credentials absent",
+    "egress default-deny",
+    "staging and production unchanged"
+  ]
+}

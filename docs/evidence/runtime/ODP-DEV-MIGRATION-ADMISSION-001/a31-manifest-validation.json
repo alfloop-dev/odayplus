@@ -1,0 +1,13 @@
+{
+  "recorded_at": "2026-09-27T16:39:35.039726+00:00",
+  "candidate_sha": "a31e02ae391811a4c323ec4d834b70e200953366",
+  "manifest_digest": "sha256:499110d08fc91eef448ba9e3697005b0978669946ca0065e065cb18871ca83b2",
+  "build_run_id": "36333397898",
+  "validation_checkout": "/tmp/odp-dev-migration-live-preflight-20260927",
+  "clean_tracked_checkout_verified": true,
+  "manifest_schema_and_canonical_digest": "passed",
+  "image_handoff_bindings": "passed",
+  "deployment_authorized": false,
+  "deployment_performed": false,
+  "user_approval_required_for_changed_candidate": true
+}

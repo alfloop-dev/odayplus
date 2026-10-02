@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "record_kind": "user-authorized-dev-release-deviation",
+  "status": "approved",
+  "is_approval": true,
+  "approval_id": "HUMANOPS-DEV-MIGRATION-20261001T141113Z",
+  "approved_by": "Human/Ops (explicit user reply transcribed by interactive Codex; not an external identity-system signature)",
+  "user_reply": "授權",
+  "question_answered": "是否授權只在 dev 部署這個精確候選？candidate 48611d264e9e10b5c74b8ac1cb972bc92e5ef817、manifest sha256:eb97c149496cfda57fc353e121be0a01a1c75282c9e23a9f32052913745a99c7、Runtime Release build 36823039168。此授權只涵蓋此候選的一次新 release request、一次短期 Supervisor lease 與既有 Runtime Release deploy phase；必須先等 PR #1384 的精確 head 通過審查並合併。部署偏差需明確接受：外部權威 H01 LGPL 法務/安全收據仍缺（四項條件式案例，不視為已通過）；全量 npm audit 有 4 個 dev-only findings（2 high、2 moderate：js-yaml GHSA-2883-xcg3-v3hh、vitest/@vitest/mocker GHSA-82fw-gwwq-j7x9、brace-expansion GHSA-qhr7-859c-m2p7、GHSA-6j4f-fj2g-mc7p、GHSA-q2hr-2g5m-vwhr），而本次 build 的 production npm audit 為 0 findings。若授權，只限 dev；不做資料庫 reset/stamp/delete，不啟用外部資料來源，不變更 staging/production。先前 b175/f549 的授權不延用。",
+  "recorded_at": "2026-10-01T14:11:13Z",
+  "expires_at": "2026-10-02T14:11:13Z",
+  "candidate_sha": "48611d264e9e10b5c74b8ac1cb972bc92e5ef817",
+  "manifest_digest": "sha256:eb97c149496cfda57fc353e121be0a01a1c75282c9e23a9f32052913745a99c7",
+  "manifest_raw_sha256": "sha256:1075e139de973fe55e9d8c74b93cf2c920168803eace03ab4d067119637f0b0c",
+  "manifest_run_id": 36823039168,
+  "target_environment": "dev",
+  "action": "deploy",
+  "accepted_deviations": [
+    "External authoritative H01 LGPL Legal/Security receipt for four conditionally-used cases remains missing and is not passed; accepted only as a dev-only deviation for this exact candidate.",
+    "Four dev-only npm audit finding records (2 high, 2 moderate) remain disclosed and are not relabeled as passing; the production npm audit in build 36823039168 reported zero findings."
+  ],
+  "authorized_scope": [
+    "one fresh release request after all stated preconditions pass",
+    "one standard short-lived Supervisor lease",
+    "existing Runtime Release deploy phase only",
+    "dev environment only"
+  ],
+  "scope_limits": [
+    "no database reset, Alembic stamp, deletion, or rewriting foreign Dagster migration history",
+    "all 16 external sources remain disabled; no external source activation",
+    "provider credentials absent and egress default-deny",
+    "staging and production remain unchanged",
+    "no old approval, request, nonce, or lease may be reused"
+  ],
+  "dispatch_preconditions": [
+    "PR #1384 was reviewed and merged; the actual dev head is 405fc892151860c19cf261c520792ea25baba5a7.",
+    "The exact candidate build and hosted artifacts are verified in build run 36823039168.",
+    "Before registering a release request or issuing a lease, rerun registry and Runtime Release admission against the actual current origin/dev SHA and require zero errors."
+  ],
+  "does_not_carry_over": [
+    "HUMANOPS-DEV-MIGRATION-20260930T145659Z (candidate b175b231)",
+    "HUMANOPS-DEV-MIGRATION-20261001T012941Z (candidate f5496614)"
+  ],
+  "external_identity_signature": false,
+  "lease_or_nonce_issued": false,
+  "consumed_at": null
+}

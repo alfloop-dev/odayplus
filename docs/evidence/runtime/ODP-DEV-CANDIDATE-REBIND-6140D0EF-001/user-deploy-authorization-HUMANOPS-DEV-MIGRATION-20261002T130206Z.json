@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "record_kind": "humanops-runtime-release-deploy-authorization",
+  "status": "approved",
+  "is_approval": true,
+  "task_id": "ODP-DEV-LIVE-DEPLOY-EXECUTION-001",
+  "approved_by": "Human/Ops",
+  "approval_id": "HUMANOPS-DEV-MIGRATION-20261002T130206Z",
+  "candidate_sha": "6140d0ef633cbf94522c171d9927103ab200257f",
+  "manifest_digest": "sha256:d286dd009978a5b9aaa9ee9fc01d1c1be1d8b846855539be63b18504ad368108",
+  "manifest_run_id": "37006345960",
+  "target_environment": "dev",
+  "action": "deploy",
+  "approved_at": "2026-10-02T13:02:06Z",
+  "expires_at": "2026-10-02T19:02:06Z",
+  "authorization_basis": {
+    "user_reply": "\u8655\u7406\u5b8c\u6210",
+    "context": "Reply followed an exact-tuple authorization request naming this candidate SHA, manifest digest, build run, dev DB migration, first-release Cloud Run creation, open H01 and dev-only npm findings, and the scope limits below.",
+    "interpretation": "User instructed completion; interpreted as approval of only the exact tuple and scope stated in that request. Not an external identity-system signature."
+  },
+  "authorized_scope": {
+    "max_release_requests": 1,
+    "max_short_lived_supervisor_leases": 1,
+    "runtime_release_deploy_phases": 1,
+    "allowed_environment": "dev",
+    "may_run_dev_database_migrations": true,
+    "first_release_target_readback_required_at_dispatch": true,
+    "database_reset_stamp_delete": false,
+    "external_sources_enabled": false,
+    "staging_or_production_changes": false
+  },
+  "accepted_deviations": [
+    "External authoritative H01 LGPL receipt for four conditionally used cases remains missing and is not claimed as passed.",
+    "Previously disclosed dev-only npm findings remain unresolved/not reclassified; this exact build production npm audit reports zero findings."
+  ],
+  "recorded_by": "Codex (interactive user-response transcription; no external identity signature claimed)",
+  "evidence": {
+    "build_reconciliation": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-6140D0EF-001/build-reconciliation-37006345960.json",
+    "build_workflow_url": "https://github.com/alfloop-dev/odayplus/actions/runs/37006345960",
+    "exact_ci": "docs/evidence/runtime/ODP-DEV-CANDIDATE-REBIND-6140D0EF-001/candidate-ci-6140d0ef.json"
+  }
+}

@@ -33,6 +33,204 @@ capture_service_traffic() {
   python3 "${ODP_TRAFFIC_HELPER}" service-url --description="${output}" >/dev/null
 }
 
+# ODP-DEPLOY-FIRST-RELEASE-NO-TRAFFIC-FIX-001: `gcloud run deploy --no-traffic`
+# is rejected when it would create the service, so the candidate deploy has to
+# know whether the service exists right now. That is read from `gcloud run
+# services describe` at deploy time -- not from the pre-release snapshot or the
+# recovery mode an operator expected. Prints `present` or `absent`; only the
+# explicit not-found answer means absent. Any other describe failure
+# (permission, API, network) returns non-zero so the release fails closed
+# rather than creating a service over one it could not read.
+cloud_run_service_presence() {
+  local service="$1"
+  local stderr_file name
+  stderr_file="$(mktemp)"
+  if name="$(gcloud run services describe "${service}" \
+    --region="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" \
+    --format='value(metadata.name)' 2>"${stderr_file}")"; then
+    rm -f "${stderr_file}"
+    if [ "${name}" != "${service}" ]; then
+      echo "Error: Cloud Run describe for '${service}' returned '${name}'; presence is unknown." >&2
+      return 1
+    fi
+    printf 'present'
+    return 0
+  fi
+  if grep -qF "Cannot find service [${service}]" "${stderr_file}"; then
+    rm -f "${stderr_file}"
+    printf 'absent'
+    return 0
+  fi
+  cat "${stderr_file}" >&2
+  rm -f "${stderr_file}"
+  echo "Error: cannot determine whether Cloud Run service '${service}' exists; refusing to deploy." >&2
+  return 1
+}
+
+# A first release cannot hide its Web candidate behind --no-traffic: the first
+# revision of a new service takes 100% of it. So a new Web service is created
+# without public invocation, the smoke reaches it through Cloud Run IAM with a
+# short-lived identity token sent as X-Serverless-Authorization (the
+# application still sees an anonymous browser request), and allUsers is only
+# granted at promotion. A failed verification deletes the service before that.
+grant_service_invoker() {
+  local service="$1"
+  local member="$2"
+  gcloud run services add-iam-policy-binding "${service}" \
+    --region="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" \
+    --member="${member}" \
+    --role="roles/run.invoker" \
+    --quiet >/dev/null
+}
+
+# Proves the candidate refuses anonymous callers, then waits (bounded) for the
+# fresh invoker binding to admit the smoke identity. IAM bindings propagate
+# asynchronously, so without this the smoke can fail on a 403 that is only
+# propagation lag.
+wait_for_private_candidate_invoker() {
+  local url="$1"
+  local token="$2"
+  local attempts="${ODP_CANDIDATE_INVOKER_WAIT_ATTEMPTS:-24}"
+  local delay="${ODP_CANDIDATE_INVOKER_WAIT_SECONDS:-5}"
+  local header_file status attempt
+  status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "${url}/operator" || true)"
+  if [ "${status}" != "401" ] && [ "${status}" != "403" ]; then
+    echo "Error: first-release Web candidate answered an anonymous request with HTTP ${status}; it must be private until promotion." >&2
+    return 1
+  fi
+  header_file="$(mktemp)"
+  chmod 600 "${header_file}"
+  printf 'X-Serverless-Authorization: Bearer %s\n' "${token}" >"${header_file}"
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 \
+      -H "@${header_file}" "${url}/operator" || true)"
+    case "${status}" in
+      000 | 401 | 403) ;;
+      *)
+        rm -f "${header_file}"
+        return 0
+        ;;
+    esac
+    if [ "${attempt}" -lt "${attempts}" ]; then
+      sleep "${delay}"
+    fi
+  done
+  rm -f "${header_file}"
+  echo "Error: smoke identity was not admitted to the private Web candidate (last HTTP ${status})." >&2
+  return 1
+}
+
+# ODP-DEV-PRIVATE-API-TRANSPORT-AUTH-001: the API service is never public.
+# Every caller reaches it through Cloud Run IAM: the Web BFF as the runtime
+# identity, and the release's own probes (migration compatibility, candidate
+# smoke, live E2E) as the smoke identity. Both get a run.invoker binding scoped
+# to this one service -- never a public principal or a project-level role.
+# The probes carry a short-lived ID token in X-Serverless-Authorization, which
+# Cloud Run checks and strips, so Authorization stays free for the
+# application's own bearer token and an anonymous app request stays anonymous.
+# The audience is always the API's stable service URL: Cloud Run accepts that
+# audience on revision tag URLs too, and it is never the Web service's URL.
+grant_api_service_invokers() {
+  local service="$1"
+  grant_service_invoker "${service}" "serviceAccount:${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT}" \
+    || return 1
+  grant_service_invoker "${service}" "serviceAccount:${ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT}"
+}
+
+# Mints (or refreshes) ODP_API_INVOKER_TOKEN for the API's stable service URL
+# and exports it to the probes. The value is masked in GitHub Actions and is
+# never printed or written to a report.
+mint_api_invoker_token() {
+  local audience="$1"
+  if [[ -z "${audience}" ]]; then
+    echo "Error: the API service has no stable URL to use as the transport token audience." >&2
+    return 1
+  fi
+  ODP_API_INVOKER_TOKEN="$(gcloud auth print-identity-token \
+    --impersonate-service-account="${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT}" \
+    --audiences="${audience}" \
+    --include-email)" || return 1
+  if [[ -z "${ODP_API_INVOKER_TOKEN}" ]]; then
+    echo "Error: failed to mint the private API transport identity token." >&2
+    return 1
+  fi
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    echo "::add-mask::${ODP_API_INVOKER_TOKEN}"
+  fi
+  export ODP_API_INVOKER_TOKEN
+}
+
+# Proves the API refuses anonymous callers at the Cloud Run front end, then
+# waits (bounded) for the service-scoped invoker binding to admit the smoke
+# identity, so a probe never fails on a 403 that is only IAM propagation lag.
+wait_for_private_api_invoker() {
+  local url="$1"
+  local token="$2"
+  local attempts="${ODP_API_INVOKER_WAIT_ATTEMPTS:-${ODP_CANDIDATE_INVOKER_WAIT_ATTEMPTS:-24}}"
+  local delay="${ODP_API_INVOKER_WAIT_SECONDS:-${ODP_CANDIDATE_INVOKER_WAIT_SECONDS:-5}}"
+  local header_file status attempt
+  status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "${url}/platform/version" || true)"
+  if [ "${status}" != "401" ] && [ "${status}" != "403" ]; then
+    echo "Error: the API service answered an anonymous request with HTTP ${status}; it must stay private." >&2
+    return 1
+  fi
+  header_file="$(mktemp)"
+  chmod 600 "${header_file}"
+  printf 'X-Serverless-Authorization: Bearer %s\n' "${token}" >"${header_file}"
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 \
+      -H "@${header_file}" "${url}/platform/version" || true)"
+    case "${status}" in
+      000 | 401 | 403) ;;
+      *)
+        rm -f "${header_file}"
+        return 0
+        ;;
+    esac
+    if [ "${attempt}" -lt "${attempts}" ]; then
+      sleep "${delay}"
+    fi
+  done
+  rm -f "${header_file}"
+  echo "Error: smoke identity was not admitted to the private API service (last HTTP ${status})." >&2
+  return 1
+}
+
+prepare_private_api_transport() {
+  local service="$1"
+  local audience="$2"
+  grant_api_service_invokers "${service}" || return 1
+  mint_api_invoker_token "${audience}" || return 1
+  wait_for_private_api_invoker "${audience}" "${ODP_API_INVOKER_TOKEN}"
+}
+
+# Waits (bounded) for the fresh allUsers invoker binding on a first-release Web
+# service to propagate to anonymous callers before live E2E runs. IAM bindings
+# propagate asynchronously, so without this the anonymous /operator check in
+# check_live_e2e_gate can fail on a 403.
+wait_for_public_service_invoker() {
+  local url="$1"
+  local attempts="${ODP_PUBLIC_INVOKER_WAIT_ATTEMPTS:-${ODP_CANDIDATE_INVOKER_WAIT_ATTEMPTS:-24}}"
+  local delay="${ODP_PUBLIC_INVOKER_WAIT_SECONDS:-${ODP_CANDIDATE_INVOKER_WAIT_SECONDS:-5}}"
+  local status attempt
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "${url}/operator" || true)"
+    case "${status}" in
+      000 | 401 | 403) ;;
+      *)
+        return 0
+        ;;
+    esac
+    if [ "${attempt}" -lt "${attempts}" ]; then
+      sleep "${delay}"
+    fi
+  done
+  echo "Error: public invocation was not admitted on the promoted Web service (last HTTP ${status})." >&2
+  return 1
+}
+
 service_snapshot_url() {
   local snapshot="$1"
   if [ "$(python3 "${ODP_TRAFFIC_HELPER}" exists --description="${snapshot}")" != "true" ]; then
@@ -90,8 +288,8 @@ restore_service_traffic() {
     gcloud run services delete "${service}" \
       --region="${GCP_REGION}" \
       --project="${GCP_PROJECT}" \
-      --quiet
-    return
+      --quiet || return 1
+    return 0
   fi
   local traffic
   traffic="$(python3 "${ODP_TRAFFIC_HELPER}" restore-arg --description="${snapshot}")"
@@ -112,6 +310,12 @@ restore_service_traffic() {
 # deletes the bootstrap candidate -- but the failure path announced a traffic
 # restore either way, which is the one moment an operator reads the log to learn
 # whether the old version is back.
+#
+# ODP-DEV-EGRESS-READBACK-RECOVERY-001: this helper and restore_service_traffic
+# run inside the deploy script's EXIT trap. There a bare `return` reports the
+# status of the last command before the trap -- the failed deployment step --
+# not the helper's own outcome, so a completed recovery read back as failed.
+# Every success path in trap-reachable helpers returns 0 explicitly.
 release_recovery_mode() {
   local api_snapshot="$1"
   local web_snapshot="$2"
@@ -123,11 +327,11 @@ release_recovery_mode() {
   fi
   if [ "${api_exists}" = "true" ] || [ "${web_exists}" = "true" ]; then
     printf 'rollback'
-    return
+    return 0
   fi
   if [ "${api_exists}" = "false" ] && [ "${web_exists}" = "false" ]; then
     printf 'initial-release-cleanup'
-    return
+    return 0
   fi
   echo "Error: API/Web pre-deploy snapshot has an invalid existence value; recovery mode is unknown." >&2
   return 1
@@ -291,4 +495,67 @@ restore_scheduler_trigger() {
 
   echo "Cloud Scheduler trigger '${trigger}' successfully restored." >&2
   return 0
+}
+
+# ODP-DEV-EGRESS-READBACK-RECOVERY-001: read the VPC egress setting back from a
+# `gcloud run jobs describe --format=json` payload on stdin and print it in its
+# canonical v2 form. gcloud returns the v1 Job shape, where the setting lives in
+# the execution-template annotation `run.googleapis.com/vpc-access-egress`
+# (`all-traffic`); the v2 Admin API shape carries `vpcAccess.egress`
+# (`ALL_TRAFFIC`). Every known location is read, and the readback fails closed
+# when no location carries a value, when a value is not a recognised egress
+# setting, or when two locations disagree. A recognised `private-ranges-only`
+# readback is printed as PRIVATE_RANGES_ONLY so the caller can refuse it with
+# the observed value on record.
+cloud_run_job_vpc_egress() {
+  python3 -c '
+import json
+import sys
+
+ANNOTATION = "run.googleapis.com/vpc-access-egress"
+CANONICAL = {
+    "all": "ALL_TRAFFIC",
+    "all-traffic": "ALL_TRAFFIC",
+    "ALL_TRAFFIC": "ALL_TRAFFIC",
+    "private-ranges-only": "PRIVATE_RANGES_ONLY",
+    "PRIVATE_RANGES_ONLY": "PRIVATE_RANGES_ONLY",
+}
+PATHS = (
+    ("spec", "template", "metadata", "annotations", ANNOTATION),
+    ("metadata", "annotations", ANNOTATION),
+    ("template", "template", "vpcAccess", "egress"),
+    ("template", "vpcAccess", "egress"),
+    ("spec", "template", "spec", "template", "spec", "vpcAccess", "egress"),
+    ("vpcAccess", "egress"),
+)
+
+try:
+    payload = json.load(sys.stdin)
+except ValueError as error:
+    raise SystemExit(f"Error: Cloud Run Job readback is not JSON: {error}")
+if not isinstance(payload, dict):
+    raise SystemExit("Error: Cloud Run Job readback is not a JSON object.")
+
+observed = {}
+for path in PATHS:
+    value = payload
+    for key in path:
+        if not isinstance(value, dict) or key not in value:
+            break
+        value = value[key]
+    else:
+        location = ".".join(path)
+        if not isinstance(value, str) or value not in CANONICAL:
+            raise SystemExit(
+                f"Error: Cloud Run Job VPC egress at {location} is not a recognised "
+                f"setting: {value!r}"
+            )
+        observed[location] = CANONICAL[value]
+
+if not observed:
+    raise SystemExit("Error: Cloud Run Job readback carries no VPC egress setting.")
+if len(set(observed.values())) != 1:
+    raise SystemExit(f"Error: Cloud Run Job VPC egress readback is contradictory: {observed}")
+print(next(iter(observed.values())))
+'
 }

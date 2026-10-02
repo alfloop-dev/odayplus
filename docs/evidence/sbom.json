@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-672b62432cfc0a1b4004986a8f0341d3",
+  "serialNumber": "urn:uuid:sha256-4c2b3996bc592265964862bfbef08922",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-09-19T16:54:44.154787+00:00",
+    "timestamp": "2026-09-30T23:42:11.535819+00:00",
     "tools": [
       {
         "vendor": "ODay Plus",
@@ -16,21 +16,21 @@
       "name": "oday-plus",
       "version": "0.1.0",
       "type": "application",
-      "purl": "pkg:generic/alfloop-dev/odayplus@069b07e180cbf8d840567493245cff25a0d26479",
-      "bom-ref": "pkg:generic/alfloop-dev/odayplus@069b07e180cbf8d840567493245cff25a0d26479"
+      "purl": "pkg:generic/alfloop-dev/odayplus@b175b231cea7e063286670405650ae987230d7d7",
+      "bom-ref": "pkg:generic/alfloop-dev/odayplus@b175b231cea7e063286670405650ae987230d7d7"
     },
     "properties": [
       {
         "name": "git-sha",
-        "value": "069b07e180cbf8d840567493245cff25a0d26479"
+        "value": "b175b231cea7e063286670405650ae987230d7d7"
       },
       {
         "name": "sbom-hash",
-        "value": "672b62432cfc0a1b4004986a8f0341d3fc796fb6e845ab606b8dbfef6bee35d2"
+        "value": "4c2b3996bc592265964862bfbef089226561157f564d1c0f411a47913dc31cee"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:f42d5fa1ba75510c545775a7ab0c4e8fe824e831b95aa5647cec73708edfb278"
+        "value": "sha256:d301876b7cee768aee5b5e7a7ee3a18f96c411a1f2aa1cfffa19065e9ed7f91c"
       },
       {
         "name": "container-base-images",
@@ -17836,10 +17836,10 @@
     },
     {
       "name": "urllib3",
-      "version": "2.7.0",
+      "version": "2.8.0",
       "type": "library",
-      "purl": "pkg:pypi/urllib3@2.7.0",
-      "bom-ref": "pkg:pypi/urllib3@2.7.0",
+      "purl": "pkg:pypi/urllib3@2.8.0",
+      "bom-ref": "pkg:pypi/urllib3@2.8.0",
       "scope": "required",
       "licenses": [
         {
@@ -17851,11 +17851,11 @@
       "hashes": [
         {
           "alg": "SHA256",
-          "content": "231e0ec3b63ceb14667c67be60f2f2c40a518cb38b03af60abc813da26505f4c"
+          "content": "63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63"
         },
         {
           "alg": "SHA256",
-          "content": "9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
+          "content": "0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3"
         }
       ],
       "supplier": {
@@ -18556,7 +18556,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/alfloop-dev/odayplus@069b07e180cbf8d840567493245cff25a0d26479",
+      "ref": "pkg:generic/alfloop-dev/odayplus@b175b231cea7e063286670405650ae987230d7d7",
       "dependsOn": [
         "pkg:npm/@deck.gl/core@9.3.7",
         "pkg:npm/@deck.gl/layers@9.3.7",
@@ -21081,7 +21081,7 @@
         "pkg:pypi/google-auth@2.56.2",
         "pkg:pypi/protobuf@6.33.6",
         "pkg:pypi/requests@2.34.2",
-        "pkg:pypi/urllib3@2.7.0"
+        "pkg:pypi/urllib3@2.8.0"
       ]
     },
     {
@@ -21126,7 +21126,7 @@
       "dependsOn": [
         "pkg:pypi/pywin32@312",
         "pkg:pypi/requests@2.34.2",
-        "pkg:pypi/urllib3@2.7.0"
+        "pkg:pypi/urllib3@2.8.0"
       ]
     },
     {
@@ -21761,7 +21761,7 @@
         "pkg:pypi/certifi@2026.6.17",
         "pkg:pypi/charset-normalizer@3.4.9",
         "pkg:pypi/idna@3.18",
-        "pkg:pypi/urllib3@2.7.0"
+        "pkg:pypi/urllib3@2.8.0"
       ]
     },
     {

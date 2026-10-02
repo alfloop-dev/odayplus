@@ -1,0 +1,186 @@
+{
+  "task_id": "ODP-NFR-RUNTIME-EVIDENCE-001",
+  "base_commit": "0d5699401d3c70d2a55f23c12e9e2ee19668a77a",
+  "assessed_at": "2026-09-29T07:40:55Z",
+  "readback_receipt": {
+    "path": "docs/evidence/runtime/ODP-NFR-RUNTIME-EVIDENCE-001/rollout-readback.json",
+    "sha256": "9e13d07c9224544a790fe6d5495f36e8e301b1b92e11b1b6295abf6cbe61f760",
+    "producer": "docs/evidence/runtime/ODP-NFR-RUNTIME-EVIDENCE-001/capture_rollout_readback.py",
+    "window": [
+      "2026-09-29T07:39:56Z",
+      "2026-09-29T07:40:55Z"
+    ]
+  },
+  "prior_receipts": [
+    {
+      "path": "docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/hosted-artifacts/run-36509055237/initial-release-absence-readback-ee06d1d8294464f1eb7231f2b06505348a61cba2/initial-release-absence-readback.json",
+      "sha256": "b93a18f5a97ba61518f4fc4c5f75122b2a3595cd38d797daa44fe3f9d2023b63",
+      "fact": "hosted WIF probe in run 36509055237 found all five dev targets (oday-api, oday-web, migration/worker/scheduler jobs) absent in odayplus-runtime-20260825/asia-east1"
+    }
+  ],
+  "rollout_precondition": {
+    "required": "an immutable rollout receipt: a Runtime Release run whose 'Deploy the admitted artifact by immutable digest' job concluded success for the environment",
+    "coverage": "complete GitHub deployment history of dev, staging and production at capture time: every deployment (row count cross-checked against the GraphQL totalCount), every status of each deployment, and the full job list (all attempts) of every workflow run that put a deployment into success or inactive. Not covered: a deploy performed outside GitHub Actions (e.g. manual gcloud) leaves no GitHub deployment record and is invisible here; the hosted absence probe in prior_receipts is the only runtime-side check.",
+    "observed": {
+      "dev": {
+        "deployments_total": 982,
+        "deployments_reached_success": 639,
+        "runs_resolved": 246,
+        "runtime_release_runs": [
+          "36250018645",
+          "36252020646",
+          "36278150009"
+        ],
+        "admitted_deploy_success_runs": [],
+        "legacy_workflow_runs": {
+          "Deploy Dev": 243
+        },
+        "legacy_deployment_window": [
+          "2026-06-26T22:58:40Z",
+          "2026-07-27T14:55:42Z"
+        ],
+        "summary": "no admitted deploy job has succeeded in the complete history. The three Runtime Release runs that put a dev deployment into success (36250018645, 36252020646, 36278150009, all c8d26f02) have the deploy job concluded failure; the latest run 36509055237 skipped lease/deploy/watch. The other 243 runs are the pre-remediation 'Deploy Dev' workflow (2026-06-26..2026-07-27), which did not deploy an admitted immutable-digest artifact; the hosted probe in run 36509055237 (started 2026-09-29T01:41:03Z) found all five dev targets absent"
+      },
+      "staging": {
+        "deployments_total": 82,
+        "deployments_reached_success": 28,
+        "runs_resolved": 28,
+        "runtime_release_runs": [
+          "33320822376"
+        ],
+        "admitted_deploy_success_runs": [],
+        "legacy_workflow_runs": {
+          "Deploy Staging": 27
+        },
+        "legacy_deployment_window": [
+          "2026-06-26T22:58:23Z",
+          "2026-06-28T14:15:46Z"
+        ],
+        "summary": "no admitted deploy job has succeeded in the complete history. The one Runtime Release run with a success deployment (33320822376, 2026-08-30) ran only 'Verify staging deployer state backend access'; the other 27 runs are the pre-remediation 'Deploy Staging' workflow (2026-06-26..2026-06-28), not an admitted artifact"
+      },
+      "production": {
+        "deployments_total": 0,
+        "deployments_reached_success": 0,
+        "runs_resolved": 0,
+        "runtime_release_runs": [],
+        "admitted_deploy_success_runs": [],
+        "legacy_workflow_runs": {},
+        "legacy_deployment_window": null,
+        "summary": "zero GitHub deployments recorded for production"
+      }
+    },
+    "met": false
+  },
+  "items": [
+    {
+      "requirement_id": "ODP-FR-SHARED-008",
+      "requirement": "Dev/Staging/Production must not share the Production Secret; env vars, secrets, database, bucket and model alias separable",
+      "source": "oday_plus_batch_02_sa_documents.zip:ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md#L140",
+      "state": "BLOCKED_BY_EVIDENCE",
+      "environments": [
+        "dev",
+        "staging",
+        "production"
+      ],
+      "threshold": "for every secret-bearing binding: no dev or staging Secret Manager secret version has the same value digest as any production secret version, and no dev/staging Cloud Run service or job runs as a production service account; zero secret values in any receipt",
+      "command_or_query": [
+        "per environment, inside a WIF-authenticated job: gcloud secrets versions access latest --secret=<ref> | sha256sum  (only the digest leaves the job)",
+        "gcloud run services describe oday-api|oday-web --format='value(spec.template.spec.serviceAccountName, spec.template.spec.containers[].env[].valueFrom.secretKeyRef)'",
+        "gcloud run jobs describe oday-{migration,worker,scheduler}-r-<release> --format=<same fields>"
+      ],
+      "time_window": "single readback per environment taken after that environment's admitted deploy job succeeded, repeated at every release",
+      "observed_partial": {
+        "plane": "GitHub environment variables (deployment configuration, not runtime)",
+        "receipt_key": "identity_reference_comparison",
+        "shared_with_production": "none of the 10 compared keys (project, deployer SA, WIF provider, runtime SA, scheduler SA, four secret refs, snapshot bucket); all 10 keys are set in all three environments, and equality is derived from the per-environment fingerprints",
+        "disclosed": "dev and staging share GCP_PROJECT_ID, GCP_SERVICE_ACCOUNT and GCP_WORKLOAD_IDENTITY_PROVIDER; SHARED-008 as written concerns only the Production Secret, so this is disclosed rather than counted as a violation"
+      },
+      "evidence_needed": "secret value digests per environment and the service account plus secret refs bound on the deployed Cloud Run resources; references in GitHub variables cannot prove two secrets hold different values",
+      "evidence_owner": "Human/Ops (GCP Secret Manager and Cloud Run read access in the production project; the auto worker's gcloud cannot reauthenticate non-interactively)",
+      "next_review_date": "2026-10-06",
+      "reopen_trigger": "the first Runtime Release run for any environment whose deploy job concludes success",
+      "runtime_receipts": []
+    },
+    {
+      "requirement_id": "ODP-NFR-PERF-001",
+      "requirement": "completed-result query API P95 <= 3 s; long tasks return job_id",
+      "source": "oday_plus_batch_02_sa_documents.zip:ODP-SA-08_NON_FUNCTIONAL_REQUIREMENTS.md#L44",
+      "state": "BLOCKED_BY_EVIDENCE",
+      "environments": [
+        "staging",
+        "production"
+      ],
+      "threshold": "p95 <= 3.0 s and 0 failures at 10/20/50 concurrency with 150 requests per run (ratified in docs/design/ODP-PGAP-RELIABILITY-001_SLO_AND_DR_TARGETS_RATIFICATION.md section 2); plus p95 <= 3.0 s on real traffic",
+      "command_or_query": [
+        "load run against the deployed oday-api URL at 10, 20 and 50 concurrency, 150 requests each, raw per-request latencies kept",
+        "Cloud Monitoring: run.googleapis.com/request_latencies, service_name=oday-api, ALIGN_PERCENTILE_95 over the window"
+      ],
+      "time_window": "load runs on one deployed release; monitoring window >= 24 h after that release receives traffic",
+      "evidence_needed": "a deployed oday-api revision identified by image digest, and latency samples taken from it",
+      "evidence_owner": "Human/Ops (Cloud Monitoring read access); load run may be executed by the task owner once a deployed URL and an authenticated smoke identity exist",
+      "next_review_date": "2026-10-06",
+      "reopen_trigger": "Runtime Release deploy job success for staging or production",
+      "runtime_receipts": []
+    },
+    {
+      "requirement_id": "ODP-NFR-BATCH-002",
+      "requirement": "daily ForecastOps, data quality and required ops batches finish before the operating day starts",
+      "source": "oday_plus_batch_02_sa_documents.zip:ODP-SA-08_NON_FUNCTIONAL_REQUIREMENTS.md#L45",
+      "state": "BLOCKED_BY_EVIDENCE",
+      "environments": [
+        "production"
+      ],
+      "threshold": "every daily batch execution completes successfully before the operating-day start; the cut-off time is not defined in any repo document and must be supplied by Human/Ops before the check can pass",
+      "command_or_query": [
+        "gcloud run jobs executions list --job=oday-worker-r-<release> --format='value(name,status.completionTime,status.succeededCount,status.failedCount)'",
+        "same for oday-scheduler-r-<release>; compare completionTime against the cut-off in Asia/Taipei"
+      ],
+      "time_window": "7 consecutive operating days on one release",
+      "evidence_needed": "scheduled worker/scheduler job executions in the target environment, and a stated operating-day cut-off",
+      "evidence_owner": "Human/Ops (cut-off definition and Cloud Run job execution read access)",
+      "next_review_date": "2026-10-06",
+      "reopen_trigger": "production deploy job success and a cut-off time recorded by Human/Ops",
+      "runtime_receipts": []
+    },
+    {
+      "requirement_id": "ODP-NFR-AVAIL-003",
+      "requirement": "OpsBoard monthly availability >= 99.5%",
+      "source": "oday_plus_batch_02_sa_documents.zip:ODP-SA-08_NON_FUNCTIONAL_REQUIREMENTS.md#L46",
+      "state": "BLOCKED_BY_EVIDENCE",
+      "environments": [
+        "production"
+      ],
+      "threshold": ">= 99.5% successful checks over a calendar month",
+      "command_or_query": [
+        "Cloud Monitoring uptime check on the production oday-web OpsBoard route; monitoring.googleapis.com/uptime_check/check_passed fraction over the month"
+      ],
+      "time_window": "one full calendar month on production",
+      "evidence_needed": "a production deployment and an uptime check configured against it; dev or staging uptime does not satisfy this item",
+      "evidence_owner": "Human/Ops (production monitoring)",
+      "next_review_date": "2026-10-06",
+      "reopen_trigger": "production deploy job success; the item can first be measured one calendar month later",
+      "runtime_receipts": []
+    },
+    {
+      "requirement_id": "ODP-NFR-RPO-004",
+      "requirement": "important data has defined RPO/RTO approved by SA/OPS documents",
+      "source": "oday_plus_batch_02_sa_documents.zip:ODP-SA-08_NON_FUNCTIONAL_REQUIREMENTS.md#L47",
+      "state": "BLOCKED_BY_EVIDENCE",
+      "environments": [
+        "staging",
+        "production"
+      ],
+      "threshold": "RPO <= 60 min and RTO <= 240 min (ratified in docs/design/ODP-PGAP-RELIABILITY-001_SLO_AND_DR_TARGETS_RATIFICATION.md section 3); backup restores in staging and core queries verify (ODP-AC-NFR-007)",
+      "command_or_query": [
+        "gcloud sql instances describe <instance> --format='value(settings.backupConfiguration)' (point-in-time recovery enabled, log retention)",
+        "restore drill: clone to a timestamp into staging, run core queries, record data-loss window and wall-clock recovery time"
+      ],
+      "time_window": "one timed restore drill on the deployed database; backup configuration read at the same time",
+      "evidence_needed": "the deployed database instance and a restore drill against it; the existing dr_drill_records.json is a local shutil.copy drill and the ratification document states it does not demonstrate the targets",
+      "evidence_owner": "Human/Ops (Cloud SQL admin access for the drill)",
+      "next_review_date": "2026-10-06",
+      "reopen_trigger": "staging deploy job success with its database provisioned",
+      "runtime_receipts": []
+    }
+  ]
+}

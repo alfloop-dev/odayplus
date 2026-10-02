@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from delivery_toolchain.e2e.check_release_gate_registry import validate_registry
+from delivery_toolchain.e2e.check_release_gate_registry import blocking_gates, validate_registry
 from delivery_toolchain.release.migrate_gate_registry import (
     RegistryMigrationError,
     migrate_registry,
@@ -330,7 +330,17 @@ def test_staging_admission_is_dev_verified_not_staging_verified() -> None:
     assert validate_registry(registry, ROOT) == []
 
 
-def test_legacy_migration_adds_identity_and_requires_re_attestation() -> None:
+def legacy_registry() -> dict:
+    """Project the live v2 registry back onto the v1 shape that migration consumes.
+
+    v1 had no admission boundary, so ``decision: go`` there meant every gate was
+    cleared. The live v2 registry may be ``go`` for one admission target while gates
+    bound to later targets stay blocked; v1 cannot express that. Migration rebinds
+    every gate to the ``dev`` boundary, so carrying a scoped ``go`` through would
+    produce a registry that claims GO with open gates, which the validator correctly
+    refuses. The projected legacy decision is therefore ``no-go`` whenever any gate
+    is still open, exactly as a real v1 registry in that state would have been.
+    """
     legacy = copy.deepcopy(load_registry())
     legacy["schema_version"] = "1.0.0"
     legacy.pop("migration")
@@ -339,6 +349,13 @@ def test_legacy_migration_adds_identity_and_requires_re_attestation() -> None:
     for gate in legacy["gates"]:
         for key in ("stage", "environment", "admission_target"):
             gate.pop(key, None)
+    if blocking_gates(legacy):
+        legacy["release"]["decision"] = "no-go"
+    return legacy
+
+
+def test_legacy_migration_adds_identity_and_requires_re_attestation() -> None:
+    legacy = legacy_registry()
 
     migrated = migrate_registry(
         legacy,
@@ -352,14 +369,7 @@ def test_legacy_migration_adds_identity_and_requires_re_attestation() -> None:
 
 
 def test_legacy_migration_rejects_manifest_for_another_candidate() -> None:
-    legacy = copy.deepcopy(load_registry())
-    legacy["schema_version"] = "1.0.0"
-    legacy.pop("migration")
-    for key in ("manifest_ref", "manifest_digest", "stage", "environment", "admission_target"):
-        legacy["release"].pop(key, None)
-    for gate in legacy["gates"]:
-        for key in ("stage", "environment", "admission_target"):
-            gate.pop(key, None)
+    legacy = legacy_registry()
     manifest = load_manifest()
     manifest["candidate_sha"] = "0" * 40
     manifest["manifest_digest"] = compute_manifest_digest(manifest)

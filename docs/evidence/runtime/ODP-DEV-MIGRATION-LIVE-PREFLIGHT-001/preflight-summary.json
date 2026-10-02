@@ -1,0 +1,24 @@
+{
+  "recorded_at": "2026-09-27T14:12:10.730530+00:00",
+  "candidate_sha": "355a94b52b14badc236be4b3e52eb936a7075549",
+  "manifest_digest": "sha256:a1e3fcf6b765861dc269e3fd395b7bec6ac4b2b6f3b3207a3ffb623c6ca6dfaa",
+  "build_run_id": 36313147910,
+  "migration_fix_pr": 1372,
+  "rebuild_pr": 1373,
+  "live_diagnosis": "confirmed shared Dagster version history; app schema absent",
+  "gcp_user": "deborah.lu@dev.cctech-support.com",
+  "gcp_project": "odayplus-runtime-20260825",
+  "unchanged_dependency_inputs_since_prior_acceptance": [],
+  "live_migration_executed": false,
+  "dev_deployment_complete": false,
+  "approval_status": "pending; no new Human/Ops approval recorded",
+  "full_migration_replay": {
+    "passed": true,
+    "runs": 2,
+    "runtime_schema_verified": true,
+    "app_revision": "0020",
+    "dagster_revision_preserved": true,
+    "scope": "disposable local PostgreSQL 16/PostGIS 3.5; Cloud SQL uses PostGIS 3.6"
+  },
+  "executed_readback_script_sha256": "171116487c9715881ee6cd6cfbe7f943341d526650e2d9f43f7ddc27dffd2231"
+}

@@ -446,6 +446,10 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         "invalid api key",
         "forbidden",
         "permission denied",
+        # pi's not-logged-in guidance ("No models available. Use /login to log
+        # into a provider ...", "No API key found for openai-codex.").
+        "use /login to log into a provider",
+        "no api key found for",
     }
     terminal_quota_markers = {
         "status: 402",

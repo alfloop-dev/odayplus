@@ -2078,3 +2078,50 @@ def test_a_failed_first_deploy_does_not_claim_a_rollback_it_cannot_do() -> None:
     # The pre-existing honest branch stays: an absent snapshot deletes the
     # bootstrap candidate rather than restoring traffic that was never there.
     assert "Deleting bootstrap candidate service" in traffic_helpers
+
+
+# ODP-RELEASE-ADMISSION-JOB-DEPS-001: the admission job used to call the runner's
+# bare `python3`, which carries no project dependencies. `check_runtime_admission`
+# reads the durable lease state through google-cloud-storage whenever the state
+# URI is a gs:// bucket, so every hosted admission failed with
+# "google-cloud-storage is required for gs:// lease state" before it could verify
+# a signature. Run 36027737089 (2026-09-24) is the first dispatch that reached
+# this step and therefore the first to show it. The build and deploy jobs already
+# provision the locked environment; admission has to do the same.
+
+
+def test_admission_provisions_the_locked_environment_before_admitting() -> None:
+    job = _release_jobs()["admission"]
+    names = [step.get("name") for step in _job_steps(job)]
+    admit = names.index("Validate supervisor release admission")
+
+    for required in ("Install uv", "Set up Python", "Install locked project dependencies"):
+        assert required in names, f"admission job is missing the {required!r} step"
+        assert names.index(required) < admit, (
+            f"{required!r} must run before the admission check that needs it"
+        )
+
+
+def test_admission_runs_the_check_inside_the_locked_environment() -> None:
+    """`uv sync` is pointless if the check then runs outside the venv it created."""
+
+    step = _named_step(_release_jobs()["admission"], "Validate supervisor release admission")
+    run = step["run"]
+    assert "uv run python delivery_toolchain/release/check_runtime_admission.py" in run
+    assert "\n          python3 delivery_toolchain/release/check_runtime_admission.py" not in run
+
+
+def test_deploy_job_already_binds_the_private_api_transport_identities() -> None:
+    """ODP-DEV-PRIVATE-API-TRANSPORT-AUTH-001: the API invoker bindings and the
+    transport token reuse identities the deploy job already receives. The token
+    itself is minted at deploy time and is never a stored workflow credential."""
+
+    parsed = yaml.safe_load(RELEASE_WORKFLOW.read_text(encoding="utf-8"))
+    env = parsed["jobs"]["deploy"]["env"]
+    assert env["ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT"] == (
+        "${{ vars.ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT }}"
+    )
+    assert env["ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT"] == (
+        "${{ vars.ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT }}"
+    )
+    assert "ODP_API_INVOKER_TOKEN" not in RELEASE_WORKFLOW.read_text(encoding="utf-8")

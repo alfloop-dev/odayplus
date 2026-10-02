@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { middleware } from "../../../middleware";
+import { middleware, runtime } from "../../../middleware";
 import {
   sealWebSessionReference,
   webSessionCookieName,
@@ -70,5 +70,16 @@ describe("production protected-route middleware", () => {
     const response = await middleware(request);
     expect(response.status).toBe(200);
     expect(response.headers.get("x-middleware-next")).toBe("1");
+  });
+});
+
+describe("middleware runtime pin", () => {
+  // The session lookup goes through PostgresSessionStore, which dynamically
+  // imports `pg`. `pg` cannot load in the Edge Runtime, so an Edge middleware
+  // would reject every readWebSession call, swallow the error, and redirect
+  // every authenticated request to /login. It is also the source of the 28
+  // "Edge Runtime" build warnings that Gate 0 C1 (zero build warnings) tracks.
+  it("runs on the Node.js runtime so the durable session lookup can load pg", () => {
+    expect(runtime).toBe("nodejs");
   });
 });
