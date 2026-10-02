@@ -897,7 +897,8 @@
     "fresh_dag_snapshot_sha256": "8704cda2b476d9dc9b9ffee735f5947e75b5647ab03268e1ea426942e75130af",
     "fresh_dag_capture_ref": "requery-20260920/fresh-canonical-dag-20260921.stdout.json",
     "fresh_dag_captured_at": "2026-09-21T10:26:17.000000Z",
-    "dag_snapshot_historical_sha256": "592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390"
+    "dag_snapshot_historical_sha256": "592b8e0f8285d6879790c2047805be54347069022fdea24b2fa9f0b6c9147390",
+    "current_dependency_reconciliation_ref": "dependency_reconciliation_20261003"
   },
   "canonical_task_dag_snapshot": {
     "source": "/home/lupin/odayplus/ai-status.json",
@@ -1452,5 +1453,203 @@
       "dependency-input-snapshot.json",
       "requery-20260920/fresh-canonical-dag-20260921.stdout.json"
     ]
+  },
+  "dependency_reconciliation_20261003": {
+    "recorded_by": "Claude",
+    "trigger": "2026-10-02T23:53:06Z scheduler reopen of the stale blocked task; prior named blocker (created 2026-09-21T13:16:53Z) auto-resolved with resolution_ref=scheduler_reassignment:XR-EXT-OSS-FINAL-AUDIT-001. Original acceptance unchanged.",
+    "base_advance": {
+      "merge_commit": "8bcb87388b662924716149f26fc56d1efb709208",
+      "parents": [
+        "053ad71375516bc25df51803ef41c19f16e0a00b",
+        "1b14b276447a7778f1dad1045ced1a5bd6abe01e"
+      ],
+      "tree": "6a2f411e599e6e0f790881cc2c4215ef8a9b47d5",
+      "tree_equals_premerge_merge_tree_write_tree": true,
+      "conflicts": 0
+    },
+    "observation": {
+      "receipt": "requery-20261003/receipt.json",
+      "stdout_ref": "requery-20261003/readback.stdout.json",
+      "stdout_sha256": "dac8126eaab556174f0760b1c6645afea4070bda899c5917e4e2e3e5e453aaa9",
+      "stdout_bytes": 6785,
+      "exit_code": 0,
+      "started_at": "2026-10-02T23:56:37.163614+00:00",
+      "finished_at": "2026-10-02T23:56:37.276072+00:00",
+      "argv": [
+        "/usr/bin/python3",
+        "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/capture_dependency_readback.py",
+        "--readback",
+        "/home/lupin/odayplus"
+      ],
+      "script": "capture_dependency_readback.py",
+      "script_sha256": "268b471786cf2febeb82a739644264b5f94b2f742cb24a435115e0a4ef9d75aa",
+      "script_tracked_at_capture_head": false,
+      "capture_head": "8bcb87388b662924716149f26fc56d1efb709208",
+      "canonical_ai_status_sha256": "46ebc848f736d56fca72479a03b91b34c7354b741af6ff0bc588eb321d8ea979",
+      "scope": "Read-only. Live canonical status root ai-status.json plus ai-task-archive task files for archived tasks, and the origin/dev blob of the ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 README. No network, cloud, or canonical writes."
+    },
+    "observed_tasks": {
+      "DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001": {
+        "status": "blocked",
+        "owner": "Claude2",
+        "depends_on": [
+          "DPF-CAPTURE-RETENTION-RUNNER-001",
+          "DPF-RAW-RETENTION-RUNTIME-HANDOFF-001"
+        ],
+        "pr_url": "https://github.com/alfloop-dev/oday-data-platform/pull/77",
+        "source": "ai-status.json"
+      },
+      "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001": {
+        "status": "todo",
+        "owner": "Antigravity4",
+        "depends_on": [
+          "DPF-EMGI-LIVE-ROLLOUT-001",
+          "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
+          "DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001"
+        ],
+        "pr_url": "https://github.com/alfloop-dev/oday-data-platform/pull/63",
+        "source": "ai-status.json"
+      },
+      "HUMAN-OSS-LEGAL-APPROVAL-001": {
+        "status": "todo",
+        "owner": "Human/Ops",
+        "depends_on": [
+          "XR-EXT-OSS-FINAL-AUDIT-001"
+        ],
+        "pr_url": null,
+        "source": "ai-status.json"
+      },
+      "ODP-DEV-LIVE-DEPLOY-EXECUTION-001": {
+        "status": "blocked",
+        "owner": "Claude2",
+        "depends_on": [
+          "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "ODP-DEPLOY-FIRST-RELEASE-NO-TRAFFIC-FIX-001",
+          "ODP-DEV-CANDIDATE-REBIND-B175-001",
+          "ODP-DEV-CANDIDATE-REBIND-6140D0EF-001",
+          "ODP-DEV-ISSUER-BUILD-BINDING-6140D0EF-001",
+          "ODP-DEV-EGRESS-READBACK-RECOVERY-001",
+          "ODP-DEV-CANDIDATE-REBIND-EGRESS-001"
+        ],
+        "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1381",
+        "source": "ai-status.json"
+      },
+      "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001": {
+        "status": "done",
+        "owner": "Claude2",
+        "depends_on": [
+          "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+          "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+          "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+          "DPF-EMGI-LIVE-ROLLOUT-001",
+          "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+          "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+          "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+          "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+          "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+          "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+          "ODP-DEV-RELEASE-GATE-RECONCILIATION-004",
+          "ODP-DEV-RELEASE-GATE-RECONCILIATION-006",
+          "ODP-MIGRATION-VERSION-TABLE-ISOLATION-001",
+          "ODP-DEV-MIGRATION-RELEASE-REBUILD-001",
+          "ODP-DEV-MIGRATION-LIVE-PREFLIGHT-001",
+          "ODP-DEV-MIGRATION-ADMISSION-001"
+        ],
+        "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1107",
+        "source": "ai-task-archive/tasks/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001.json"
+      },
+      "XR-EXT-OSS-FINAL-AUDIT-001": {
+        "status": "in_progress",
+        "owner": "Claude",
+        "depends_on": [],
+        "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1312",
+        "source": "ai-status.json"
+      }
+    },
+    "findings": [
+      {
+        "id": "F1",
+        "subject": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 closed done without delivering the A2/A3 inputs",
+        "facts": [
+          "Archived status done, owner Claude2, PR #1107 merged into dev 2026-09-29T06:55:20Z as 0d5699401d3c70d2a55f23c12e9e2ee19668a77a (merged head e0bb78985f869e652b7d212af892ebaec4f5615f; gh pr view 1107 read-only).",
+          "Its own evidence on origin/dev@1b14b276 (docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/README.md, sha256 ed7e0d4afca3d75a6465d0783c9edb6ec06e75433d30b17de6ed81f177f35b63) states: Status: **blocked, not deployed.** No lease request is registered and nothing has been deployed. Everything below this section is history from earlier rounds and is not current evidence. / - No deployment, lease, or live runtime acceptance."
+        ],
+        "effect_on_original_acceptance": "A2 live pod/container image digest and secret-projection readback, and A3 live default-deny egress and credential non-projection readback, remain unproven. The done status of the handover task is not evidence for A2/A3; A2 and A3 stay partially_met.",
+        "successor": {
+          "task_id": "ODP-DEV-LIVE-DEPLOY-EXECUTION-001",
+          "title": "完成更新候選的 dev 實際部署與 live 讀回",
+          "status": "blocked",
+          "owner": "Claude2",
+          "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1381",
+          "depends_on": [
+            "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+            "ODP-DEPLOY-FIRST-RELEASE-NO-TRAFFIC-FIX-001",
+            "ODP-DEV-CANDIDATE-REBIND-B175-001",
+            "ODP-DEV-CANDIDATE-REBIND-6140D0EF-001",
+            "ODP-DEV-ISSUER-BUILD-BINDING-6140D0EF-001",
+            "ODP-DEV-EGRESS-READBACK-RECOVERY-001",
+            "ODP-DEV-CANDIDATE-REBIND-EGRESS-001"
+          ]
+        }
+      },
+      {
+        "id": "F2",
+        "subject": "A1 raw capture still not delivered",
+        "facts": [
+          "DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001 is blocked, owner Claude2 (previously recorded here as Antigravity6), PR oday-data-platform#77; its canonical next field reports 2 local / 0 retained captures and waits for per-source acquisition authority, raw-field classification and named credentials/pinned inputs."
+        ],
+        "effect_on_original_acceptance": "A1 real raw dataset input still absent; A1 stays partially_met."
+      },
+      {
+        "id": "F3",
+        "subject": "Masked snapshot still not started",
+        "facts": [
+          "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001 is todo, owner Antigravity4 (previously recorded here as Antigravity), PR oday-data-platform#63, depends_on includes DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001."
+        ],
+        "effect_on_original_acceptance": "A1 generation/hash/classification/masking/readback still absent."
+      },
+      {
+        "id": "F4",
+        "subject": "Dependency graph reachable from the named tasks",
+        "facts": [
+          "16 nodes visited over active depends_on edges (archived tasks treated as leaves), 0 cycles. HUMAN-OSS-LEGAL-APPROVAL-001 still todo with depends_on [XR-EXT-OSS-FINAL-AUDIT-001]."
+        ],
+        "effect_on_original_acceptance": "Criterion 5 unchanged (met): the legal dependency is still held by this task."
+      }
+    ],
+    "current_handover_mapping": [
+      {
+        "clause": "A1 real raw bounded capture",
+        "task_id": "DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001",
+        "owner": "Claude2",
+        "status": "blocked"
+      },
+      {
+        "clause": "A1 masked snapshot generation, hash, classification, masking and readback",
+        "task_id": "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+        "owner": "Antigravity4",
+        "status": "todo"
+      },
+      {
+        "clause": "A2/A3 live image digest, secret and credential non-projection, default-deny egress and consumer readback",
+        "task_id": "ODP-DEV-LIVE-DEPLOY-EXECUTION-001",
+        "owner": "Claude2",
+        "status": "blocked",
+        "replaces": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 (done without live deployment)"
+      },
+      {
+        "clause": "independent quality / historical comparison (equivalent items 4-7, not formally adopted)",
+        "task_id": "XR-EXT-OSS-FINAL-AUDIT-001",
+        "owner": "Claude",
+        "status": "in_progress"
+      }
+    ],
+    "superseded_mapping_note": "Earlier sections (review-12 to review-17) name Antigravity6, Antigravity, Antigravity2 and ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 as owners/handover targets. They are kept as historical records; this block is the current mapping. The equivalent-verification proposal (legitimate_equivalent_verification_proposal) is still PROPOSAL_PENDING_FORMAL_GOVERNANCE_ADOPTION; item 3 should be read against the successor task.",
+    "dependency_proposal_update": "If governance formally adopts the handover, HUMAN-OSS-LEGAL-APPROVAL-001 would depend on DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001 and ODP-DEV-LIVE-DEPLOY-EXECUTION-001 (not the done ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001). Not applied; no depends_on edited by this task.",
+    "acceptance_status_after": {
+      "criteria_met": 2,
+      "criteria_partially_met": 3,
+      "can_closeout_as_done": false
+    }
   }
 }

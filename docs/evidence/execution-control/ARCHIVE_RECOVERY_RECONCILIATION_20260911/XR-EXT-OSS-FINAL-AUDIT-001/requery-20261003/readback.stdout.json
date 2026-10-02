@@ -1,0 +1,126 @@
+{
+  "ai_status_sha256": "46ebc848f736d56fca72479a03b91b34c7354b741af6ff0bc588eb321d8ea979",
+  "dependency_cycle_check": {
+    "cycles": [],
+    "nodes_visited": 16,
+    "scope": "depends_on edges of active ai-status.json tasks reachable from the named tasks; archived tasks are leaves"
+  },
+  "observed_at": "2026-10-02T23:56:37.226908+00:00",
+  "rollout_remediation_evidence": {
+    "blob_sha": "3270e016be38ce37610b5aeaa9c0a4edcedbca02",
+    "ref": "origin/dev@1b14b276447a7778f1dad1045ced1a5bd6abe01e:docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/README.md",
+    "sha256": "ed7e0d4afca3d75a6465d0783c9edb6ec06e75433d30b17de6ed81f177f35b63",
+    "status_lines": [
+      "Status: **blocked, not deployed.** No lease request is registered and nothing has been deployed. Everything below this section is history from earlier rounds and is not current evidence.",
+      "- No deployment, lease, or live runtime acceptance."
+    ]
+  },
+  "status_root": "/home/lupin/odayplus",
+  "task_id": "XR-EXT-OSS-FINAL-AUDIT-001",
+  "tasks": {
+    "DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001": {
+      "depends_on": [
+        "DPF-CAPTURE-RETENTION-RUNNER-001",
+        "DPF-RAW-RETENTION-RUNTIME-HANDOFF-001"
+      ],
+      "last_update": "2026-10-02T23:49:49Z",
+      "next": "2026-10-03舊blocker補正：TRTC provenance與既有GKE raw-retention執行交接已由data-platform #80/24c40ae交付；原PR77已合base，不重做runner，不再把已修程式缺口或舊VM ADC錯誤列為未解工程。最新有效成果仍2 local/0 retained；保留原MOF/RIS bytes，等待各source真實acquisition authority/raw-field classification與具名credentials/pinned inputs。工程擷取許可和production activation分開，權威輸入到位前不capture/retain/enable，不以此note製造批准。",
+      "owner": "Claude2",
+      "pr_url": "https://github.com/alfloop-dev/oday-data-platform/pull/77",
+      "reviewer": "Codex2",
+      "source": "ai-status.json",
+      "status": "blocked"
+    },
+    "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001": {
+      "depends_on": [
+        "DPF-EMGI-LIVE-ROLLOUT-001",
+        "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
+        "DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001"
+      ],
+      "last_update": "2026-09-30T23:36:24Z",
+      "next": "Auto-reconciled task assignment integrity: reviewer Codex -> Codex2.",
+      "owner": "Antigravity4",
+      "pr_url": "https://github.com/alfloop-dev/oday-data-platform/pull/63",
+      "reviewer": "Codex2",
+      "source": "ai-status.json",
+      "status": "todo"
+    },
+    "HUMAN-OSS-LEGAL-APPROVAL-001": {
+      "depends_on": [
+        "XR-EXT-OSS-FINAL-AUDIT-001"
+      ],
+      "last_update": "2026-10-02T23:49:52Z",
+      "next": "2026-10-03需要分階段處理：最終production逐來源許可仍沿本task及原technical-audit依賴；但受控工程擷取/retention所需的精確acquisition permission與raw-field-classification authority可先由具名權責人提供，供PR77產生technical audit輸入。不得把technical audit尚缺資料當作禁止先確認這些輸入，亦不得把工程輸入當production activation核准。來源分類/保存許可/發布masking為三個不同依據。本輪僅澄清等待循環，沒有ALLOW、credentials、classification背書或blanket waiver。",
+      "owner": "Human/Ops",
+      "pr_url": null,
+      "reviewer": "Codex",
+      "source": "ai-status.json",
+      "status": "todo"
+    },
+    "ODP-DEV-LIVE-DEPLOY-EXECUTION-001": {
+      "depends_on": [
+        "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+        "ODP-DEPLOY-FIRST-RELEASE-NO-TRAFFIC-FIX-001",
+        "ODP-DEV-CANDIDATE-REBIND-B175-001",
+        "ODP-DEV-CANDIDATE-REBIND-6140D0EF-001",
+        "ODP-DEV-ISSUER-BUILD-BINDING-6140D0EF-001",
+        "ODP-DEV-EGRESS-READBACK-RECOVERY-001",
+        "ODP-DEV-CANDIDATE-REBIND-EGRESS-001"
+      ],
+      "last_update": "2026-10-02T23:50:11Z",
+      "next": "2026-10-03總修正續辦：egress/cleanup #1395已merged，舊failed run37049356942和6140授權/lease仍spent。模型/歷史缺口已有具名ODP-MODEL-ARTIFACT-HISTORY-RECOVERY-001承接唯讀找回；不可把其調查完成當model ready。先讓本輪source修正合批、唯一fresh candidate/build/digest完成，再新精確授權與lease，沿PR1381取真live證據。這次使用者「把這些修正完成」不記成精確tuple部署批准。",
+      "owner": "Claude2",
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1381",
+      "reviewer": "Codex",
+      "source": "ai-status.json",
+      "status": "blocked"
+    },
+    "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001": {
+      "depends_on": [
+        "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+        "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+        "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+        "DPF-EMGI-LIVE-ROLLOUT-001",
+        "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+        "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+        "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+        "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+        "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+        "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+        "ODP-DEV-RELEASE-GATE-RECONCILIATION-004",
+        "ODP-DEV-RELEASE-GATE-RECONCILIATION-006",
+        "ODP-MIGRATION-VERSION-TABLE-ISOLATION-001",
+        "ODP-DEV-MIGRATION-RELEASE-REBUILD-001",
+        "ODP-DEV-MIGRATION-LIVE-PREFLIGHT-001",
+        "ODP-DEV-MIGRATION-ADMISSION-001"
+      ],
+      "last_update": "2026-09-29T06:58:15Z",
+      "next": "PR #1107 merged into dev at 2026-09-29T06:55:20Z (merge 0d569940); merged head e0bb7898 equals reviewer-approved head; worktree clean; immutable finalize, no tests rerun.",
+      "owner": "Claude2",
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1107",
+      "review_submission": {
+        "base_branch": "dev",
+        "branch": "task/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+        "pr_number": 1107,
+        "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1107",
+        "remote_sha": "e0bb78985f869e652b7d212af892ebaec4f5615f",
+        "submitted_by": "Claude2",
+        "verified_at": "2026-09-29T06:09:48Z"
+      },
+      "reviewer": "Codex2",
+      "source": "ai-task-archive/tasks/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001.json",
+      "source_sha256": "8389653f160b5dc34d836d5eb663b617c961b0e381bfa705df82569c6f34f544",
+      "status": "done"
+    },
+    "XR-EXT-OSS-FINAL-AUDIT-001": {
+      "depends_on": [],
+      "last_update": "2026-10-02T23:53:40Z",
+      "next": "Supervisor auto-started XR-EXT-OSS-FINAL-AUDIT-001 after successful dispatch.",
+      "owner": "Claude",
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1312",
+      "reviewer": "Codex2",
+      "source": "ai-status.json",
+      "status": "in_progress"
+    }
+  }
+}

@@ -319,3 +319,44 @@ A1–A3 尚缺真 snapshot/query、歷史七軸比對與 live runtime/flow-log �
 - 前輪 owner 於 2026-09-21T10:51:29Z 登記之具名 blocker（waiting_for `Antigravity6`）於 10:53:37Z 被 `resolution_ref=scheduler_reassignment` 自動 resolved。經唯讀核對 live orchestrator 判定式：`blocked_task_auto_recovery_eligible` 在 `depends_on` 為空時改以 prose 關鍵字判定，該 blocker 訊息含「credentials absent」命中可自動恢復之 `credential` 標記，因而被視為過期路由狀態而非真實依賴閘。此為 control-plane 判定問題，非 owner 漏登。
 - 本輪處置：送審記錄（PR #1312 exact head）原子更新後，owner 以真實 `AI_NAME=Claude` 經 live canonical `blocker` 重新登記具名 blocker，waiting_for 維持 `Antigravity6`（`DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001` 受控真實 raw 擷取，為 A1 外部資料集之上游）；訊息逐條列 A1–A3 剩餘條款、精確所需輸入、責任 task/owner（`DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001`／`Antigravity`、`ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001`／`Antigravity2`、未正式承接之獨立品質/歷史比對留本 ID）與下一步，並以英文明示其為 external-data／dataset／human acceptance ruling 閘，避免再被誤判為可自動恢復之路由狀態。不手改 `depends_on`、不自簽人類決策、等價方案維持 `PROPOSAL_PENDING_FORMAL_GOVERNANCE_ADOPTION`。
 - 註：`submit_review` 會將同 task 既有 open blocker 標為 resolved（live `ai_status.py` `mark_blockers_resolved`），故登記順序必須在送審之後；此順序已記錄於本節供 Supervisor 核對。
+
+---
+
+## 13. 2026-10-03 依賴現況重核（scheduler reopen 後）
+
+本輪由 owner Claude 執行。觸發：2026-10-02T23:53:06Z scheduler 以「stale blocked」重開本 task，並把 2026-09-21T13:16:53Z 登記的具名 blocker 標為 `resolution_ref=scheduler_reassignment`。原驗收沒有變；本節只記錄依賴現況，不改寫 §1–§12 的歷史紀錄。
+
+### 13.1 Base advance
+- 以 merge 併入 `origin/dev` `1b14b276`：merge commit `8bcb8738`，parents `053ad713`／`1b14b276`，tree `6a2f411e`，與 merge 前 `git merge-tree --write-tree` 結果相同，無衝突。
+- 對 `origin/dev` 的 diff 只剩本 evidence 目錄與 `docs/audits/code-boundary-inventory.csv`；兩個 delivery_toolchain shell 檔維持零 diff。
+
+### 13.2 唯讀讀回收據
+- 指令：`/usr/bin/python3 capture_dependency_readback.py --readback /home/lupin/odayplus`（由 `capture_dependency_readback.py <status_root> requery-20261003` 包一層，完整 argv 見收據）。
+- 2026-10-02T23:56:37Z 執行，exit 0；stdout 6785 bytes、SHA256 `dac8126eaab556174f0760b1c6645afea4070bda899c5917e4e2e3e5e453aaa9`，完整保存於 `requery-20261003/readback.stdout.json`；stderr 0 bytes。收據 `requery-20261003/receipt.json`。
+- 讀取當下 canonical `ai-status.json` SHA256 `46ebc848f736d56fca72479a03b91b34c7354b741af6ff0bc588eb321d8ea979`。
+- 腳本執行時尚未 commit（`script_tracked_at_head=false`，執行時 HEAD `8bcb8738`）；腳本內容以收據內 `script_blob_sha256` `268b4717…` 綁定，與本次提交的檔案 byte 相同。
+- 範圍：只讀 live canonical status root 的 `ai-status.json`、已封存 task 的 `ai-task-archive/tasks/<id>.json`，以及 `origin/dev` 上 ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 的 README blob。沒有網路、雲端或 canonical 寫入。
+
+### 13.3 發現
+| # | 事實 | 對原驗收的影響 |
+|---|---|---|
+| F1 | `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 已 `done`（owner Claude2；PR #1107 於 2026-09-29T06:55:20Z merge 為 `0d569940`）。但該 task 在 `origin/dev` 上自己的 evidence 寫明：`Status: **blocked, not deployed.**`、`No deployment, lease, or live runtime acceptance.` | 它沒有交付 A2/A3 需要的 live 輸入。這個 `done` 不能當 A2/A3 的證據，A2、A3 仍是 `partially_met`。實際部署與 live 讀回已移到 `ODP-DEV-LIVE-DEPLOY-EXECUTION-001`（owner Claude2，`blocked`，PR #1381）。 |
+| F2 | `DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001` 仍 `blocked`，owner 已改為 Claude2（先前記為 Antigravity6）；canonical next 寫明 2 local／0 retained，還在等各來源的 acquisition authority、raw-field classification 與具名 credentials／pinned inputs | A1 的真實 raw 資料集仍不存在，A1 仍是 `partially_met`。 |
+| F3 | `DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001` 仍 `todo`，owner 已改為 Antigravity4（先前記為 Antigravity），並依賴 F2 | A1 的 generation／hash／classification／masking／readback 仍不存在。 |
+| F4 | 從上述 task 出發、沿 active `depends_on` 走訪 16 個節點，0 cycles（已封存 task 視為葉節點）。`HUMAN-OSS-LEGAL-APPROVAL-001` 仍 `todo`，`depends_on=[XR-EXT-OSS-FINAL-AUDIT-001]` | 條款 5 不變：法務依賴仍由本 task 持有。 |
+
+### 13.4 目前的承接對應（取代 §10.3、§11.3、§12.3 的 owner／task 名稱）
+| 剩餘條款 | 承接 task | owner | 狀態 |
+|---|---|---|---|
+| A1 受控真實 raw 擷取 | `DPF-BOUNDED-CAPTURE-RETENTION-EXECUTION-001` | Claude2 | blocked |
+| A1 masked snapshot 產生、hash、分類、去敏與 readback | `DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001` | Antigravity4 | todo |
+| A2/A3 live image digest、secret／credential 未投影、default-deny egress、consumer readback | `ODP-DEV-LIVE-DEPLOY-EXECUTION-001`（取代已 done 但未部署的 `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001`） | Claude2 | blocked |
+| 獨立品質／歷史比對（等價項 4–7，尚未正式採納） | `XR-EXT-OSS-FINAL-AUDIT-001` | Claude | in_progress |
+
+- 等價驗證方案仍是 `PROPOSAL_PENDING_FORMAL_GOVERNANCE_ADOPTION`；第 3 項的責任 task 應改讀為 `ODP-DEV-LIVE-DEPLOY-EXECUTION-001`。
+- 依賴提案同步更新：若治理正式採納，`HUMAN-OSS-LEGAL-APPROVAL-001` 應依賴 `DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001` 與 `ODP-DEV-LIVE-DEPLOY-EXECUTION-001`，而不是已 done 的 `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001`。本 task 沒有修改任何 `depends_on`。
+
+### 13.5 結論與下一步
+- 原驗收：2 met、3 partially_met，`can_closeout_as_done=false`，不送 approval/done。
+- 送審後，owner 以 `AI_NAME=Claude` 經 live canonical `blocker` 重新登記具名 blocker，waiting_for `Claude2`（兩個上游承接 task 的 owner）。
+- 上游交付真實 raw／masked snapshot 與 live 讀回後，本 task 才對它們執行等價比對並重新送審；否則依 acceptance 第 1 條由 Human/Ops 裁決以 blocked 收尾。
