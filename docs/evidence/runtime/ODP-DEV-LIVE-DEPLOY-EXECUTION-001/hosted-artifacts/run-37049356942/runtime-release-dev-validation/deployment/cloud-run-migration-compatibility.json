@@ -1,0 +1,20 @@
+{
+  "bootstrap": true,
+  "checks": [
+    {
+      "detail": "not applicable: no previous API/Web services exist",
+      "name": "compatibility:bootstrap",
+      "ok": true
+    }
+  ],
+  "environment": "dev",
+  "generated_at": "2026-10-02T18:47:41Z",
+  "ok": true,
+  "previous_services": {
+    "api": "absent",
+    "web": "absent"
+  },
+  "release_sha": "6140d0ef633cbf94522c171d9927103ab200257f",
+  "schema_version": 1,
+  "secret_values_redacted": true
+}

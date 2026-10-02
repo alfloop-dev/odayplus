@@ -1,6 +1,82 @@
 # ODP-DEV-LIVE-DEPLOY-EXECUTION-001 — evidence
 
-Status: **blocked on Human/Ops (round 7, 2026-10-01T23:21Z): the issuer rejected the fresh request for candidate `48611d26` with `Secret Manager signing key is unavailable`, the same failure as round 5. No lease was issued and no Deploy Dev run was dispatched.** Rounds 1–6 are kept below as recorded; the round-6 status (deploy-script `--no-traffic` defect) was fixed by PR #1383 and superseded by the `48611d26` candidate.
+Status: **blocked (round 8, 2026-10-02T18:50Z): the lease was issued and the Deploy Dev run started, but the deploy step failed at the sources-off egress proof. The egress readback in `deploy_cloud_run_waji.sh` returned an empty value for the worker job, so the script refused to run the probe and first-release recovery deleted every candidate resource.** Nothing is serving. The approval and lease are spent. Rounds 1–7 are kept below as recorded.
+
+## Round 8 (2026-10-02T18:43Z – 18:50Z) — lease issued, deploy failed at the egress proof, candidate 6140d0ef
+
+### Inputs
+
+| Item | Value |
+|---|---|
+| Candidate | `6140d0ef633cbf94522c171d9927103ab200257f`, manifest `sha256:d286dd00…`, build run [37006345960](https://github.com/alfloop-dev/odayplus/actions/runs/37006345960) |
+| Authorization | `HUMANOPS-DEV-MIGRATION-20261002T130206Z`, request registered by the coordinator at 18:39:28Z, `expires_at` 2026-10-02T19:02:06Z, nonce digest `sha256:419fb1a5…` |
+| `origin/dev` | `96a2a05a486c4a832a3cc94f4f6028dcb20a777e` (= issuer `dispatch_ref_sha`) |
+| Task branch | base advanced to `origin/dev` `96a2a05a` by a normal merge (tree `9f56926a` equals `git merge-tree --write-tree HEAD origin/dev`) |
+
+I did not register a request, mint a lease or dispatch a workflow. The coordinator registered the request; the Supervisor issued the lease and dispatched the run.
+
+### What happened
+
+| Time (UTC) | Event |
+|---|---|
+| 18:43:10 | `release_lease_issuance_reserved`, fingerprint `sha256:0840ab9c…` |
+| 18:43:14 | lease `lease-f108a8641cfd49f699922638a366f0d4` issued, key `ed25519:f2b35469…`, expires 18:53:14Z |
+| 18:43:25 | Deploy Dev run [37049356942](https://github.com/alfloop-dev/odayplus/actions/runs/37049356942) dispatched on `dev` @ `96a2a05a` |
+| 18:43–18:44 | Jobs: validate inputs ✅, lease verification ✅ (admission receipt `admitted=true`, same lease id), build skipped (deploy phase) |
+| 18:45:50 | Live deployment preflight passed. VPC binding mode `connector` (`oday-staging-vpc`), `ODP_CLOUD_RUN_VPC_EGRESS=all-traffic`, `ODP_EXTERNAL_PROVIDER_MODE=disabled` |
+| 18:46:05 | Migration job `oday-migration-r-6140d0ef633c` created |
+| 18:47:35 | Migration execution `oday-migration-r-6140d0ef633c-kwd8j` completed; migration smoke passed, including `succeededCount>=1 and failedCount=0`. Bootstrap compatibility passed (no previous API/Web) |
+| 18:48:27 | `oday-api` created as revision `oday-api-release-6140d0ef633c`. The PR #1383 first-release fix worked: the new service was created without `--no-traffic`. IAM policy updated twice |
+| 18:50:11–18:50:22 | Scheduler and worker candidate jobs created; `roles/run.invoker` granted only to `oday-dev-scheduler@…` on each |
+| 18:50:22 | `Proving sources-off public egress is denied from the candidate worker job...` |
+| 18:50:24 | Probe receipt: `result=failed`, `reason=vpc_egress_not_all_traffic`, `vpc_egress=""`, `execution=not_run` |
+| 18:50:24 | `Error: previous-release state could not be determined; no recovery mode is claimed.` then `Deployment failed on the first release into this target.` |
+| 18:50:28–18:50:39 | Recovery deleted service `oday-api` and jobs `oday-migration-r-…`, `oday-worker-r-…`, `oday-scheduler-r-…` |
+| 18:50:39 | `Error: one or more Cloud Run recovery actions failed.`, exit 1 |
+
+`oday-web` was never deployed; the script fails before it reaches the web service.
+
+Every image the run deployed equals the manifest `components` digest (api `67bbd263…`, worker/migration `9eaa9ea6…`, scheduler `2d83f4d6…`; web `7b5911dc…` was handed off but not deployed). See `release-phase-receipt.json` `image_handoff` and `RELEASE_MANIFEST.json` from build run 37006345960.
+
+Files:
+
+- `issuance-receipt-round8.json`: the request with the nonce replaced by its sha256, the issuance record and the three issuance events, copied read-only from the live board.
+- `deploy-run-37049356942-failed-step.log`: the raw failed-step log. It contains Secret Manager reference names, not secret values.
+- `hosted-artifacts/run-37049356942/`: every artifact the run uploaded (admission, environment and phase receipts, preflight, migration validation, migration compatibility, egress probe, initial-release recovery receipt).
+
+### Root cause: the egress readback reads a field that `gcloud run jobs describe` does not return
+
+`run_public_egress_probe` in `product_ops/deployment/deploy_cloud_run_waji.sh` (lines 649–690 at `6140d0ef`; same on `origin/dev` `96a2a05a`) reads the worker job with `gcloud run jobs describe --format=json`. It then looks for a string at four paths, all ending in `vpcAccess.egress` (the Cloud Run Admin API v2 shape), and requires the value `ALL_TRAFFIC` (the v2 enum).
+
+The job was created with `--vpc-connector=… --vpc-egress=all-traffic` (connector mode). None of the four paths matched, so the parser printed nothing and the script recorded `vpc_egress=""`. My reading (inferred, not confirmed against a live describe) is that `gcloud run jobs describe` returns the v1 (Knative) resource. In that resource, egress is the annotation `run.googleapis.com/vpc-access-egress: all-traffic` on the execution template metadata, not a `vpcAccess` object. If so, the check can never pass for a connector-mode job in this target, whatever the real egress setting is.
+
+`product_ops/deployment/staging_lifecycle.py` (lines 2724–2826 on `origin/dev`) uses the same set of `vpcAccess.egress` paths. No test in `tests/` feeds the readback a v1-shaped describe.
+
+The failure is fail-closed: the probe did not run, nothing serves traffic, and no egress claim is made.
+
+### Secondary finding: recovery reports `could not be determined` and a recovery failure on a clean recovery
+
+`release_recovery_mode` returned non-zero but the mode still came out as `initial-release-cleanup`, and the script ended with `one or more Cloud Run recovery actions failed` although every delete printed `done`. The hosted `initial-release-recovery-receipt.json` records `verified_absent=true` for all five targets (`gcloud run services list` / `gcloud run jobs list`) and `rollback_target_available=false`. The recovery did its job; the two error lines are misleading. I did not trace which `rollback_status` producer returned non-zero.
+
+### Live state after the run
+
+- **Services and jobs:** from the hosted `initial-release-recovery-receipt.json` absence readback, taken by the run after recovery: `oday-api`, `oday-web` and the three `*-r-6140d0ef633c` jobs are absent (`exists=false`, `serving_traffic=false`). I tried my own read-only `gcloud run services list` / `gcloud run jobs list` from this worker at about 18:55Z, and the worker permission layer refused it. So I have no first-hand readback this round.
+- **Migration:** the dev schema was upgraded by execution `oday-migration-r-6140d0ef633c-kwd8j` (succeeded). It started from the `ee06d1d8` head left by round 6. Nothing was reset, stamped or deleted.
+- **Egress default-deny:** not proven. The probe did not run (`execution=not_run`). 16 external sources stay off (`ODP_EXTERNAL_PROVIDER_MODE: disabled`; migration smoke `no external providers selected`).
+- **IAM:** the only bindings the log shows are `roles/run.invoker` for `oday-dev-scheduler@…` on the two deleted jobs, plus two unprinted IAM updates on the deleted `oday-api`. Nothing remains to read back.
+- **Lease and approval:** lease `lease-f108a864…` is consumed by the run. `HUMANOPS-DEV-MIGRATION-20261002T130206Z` expires 19:02:06Z and cannot be reused.
+- Staging and production were not touched.
+
+### Why I stopped
+
+Acceptance requires a `blocked` close on any failure. The fix is in the deploy script, which the deploy job checks out at the candidate SHA. So, as in round 6, the fix has to reach `dev` before a new candidate is built.
+
+### Required Human/Ops actions (human gate)
+
+1. Open a product task to fix the egress readback in `run_public_egress_probe` (and the matching readers in `staging_lifecycle.py`). Before changing it, capture one real `gcloud run jobs describe --format=json` of a connector-mode job in this target to confirm the shape. The readback must accept the v1 annotation `run.googleapis.com/vpc-access-egress` = `all-traffic` (and the v2 `ALL_TRAFFIC`). Add a contract test with that real shape. It must keep rejecting `private-ranges-only` and missing values.
+2. Optionally, make `handle_deployment_exit` report recovery failure only when a recovery action actually fails.
+3. After the fix merges: rebuild the candidate, rebind the registry, issue a fresh Human/Ops authorization for the new candidate, then register one fresh request.
+4. Account for the dev schema: it is now at the `6140d0ef` head.
 
 ## Round 7 (2026-10-01T23:21Z) — issuer blocked at the signing key, candidate 48611d26
 

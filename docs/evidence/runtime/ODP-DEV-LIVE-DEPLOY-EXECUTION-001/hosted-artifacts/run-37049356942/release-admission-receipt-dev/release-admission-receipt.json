@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "verifier": "delivery_toolchain/release/check_runtime_admission.py",
+  "verified_at": "2026-10-02T18:44:36+00:00",
+  "admitted": true,
+  "lease_id": "lease-f108a8641cfd49f699922638a366f0d4",
+  "task_id": "ODP-DEV-LIVE-DEPLOY-EXECUTION-001",
+  "release_id": "odp-6140d0ef633c",
+  "candidate_sha": "6140d0ef633cbf94522c171d9927103ab200257f",
+  "manifest_digest": "sha256:d286dd009978a5b9aaa9ee9fc01d1c1be1d8b846855539be63b18504ad368108",
+  "target_environment": "dev",
+  "allowed_action": "deploy",
+  "issued_at": "2026-10-02T18:43:14+00:00",
+  "expires_at": "2026-10-02T18:53:14+00:00",
+  "request_fingerprint": "sha256:0840ab9c7d24a403e1b819de13983b607c72c3419a2c75d6fd384eedf3d58764",
+  "approval_id": "HUMANOPS-DEV-MIGRATION-20261002T130206Z",
+  "approval_nonce_digest": "sha256:419fb1a597d1817eef4b395cfb3ba76415540984d5f82e737100b6f64ff3a478",
+  "signature_key_id": "ed25519:f2b354695a03fa8e6f509270b082de63",
+  "nonce_digest": "sha256:26401c53e6e41b77c15f89af81576d4fb46aaea4b2070c77667dd0a0e275881e",
+  "signature_digest": "sha256:84c61a3c0f49abc204414b282e4940a28d26fc2a33ca8f5df89d7d7198fc9b37",
+  "consumed_at": "2026-10-02T18:44:40.599345+00:00",
+  "errors": [],
+  "component_images": {
+    "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:67bbd2639c901a9faa0dc3a751f865ebcac5da1d008c97e3a13561ed14df6f70",
+    "scheduler": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:2d83f4d65424912a6974907dd882fc7636388d988098394c9384dc545d3634cc",
+    "web": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:7b5911dc5da91e0b36ea1b11625023886f7f8f635cf146c2959edce1a8a6a99a",
+    "worker": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:9eaa9ea6aa9f48da4a57e0c92bff57b621101aa86c4f7444d4b4c296974880a0"
+  },
+  "manifest_transport": {
+    "manifest_path": ".odp_data/release/admitted-manifest/RELEASE_MANIFEST.json",
+    "expected_manifest_digest": "sha256:d286dd009978a5b9aaa9ee9fc01d1c1be1d8b846855539be63b18504ad368108",
+    "digest_binding_required": true
+  }
+}
