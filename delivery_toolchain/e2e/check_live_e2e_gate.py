@@ -1644,10 +1644,11 @@ def _check_dev_admin_session(
     5. GET /api/v1/operator/users is served from the identity schema, lists the
        account itself with exactly platform_admin, active;
     6. the user audit trail carries the identity.account.bootstrap event;
-    7. the business operator shell is refused (platform_admin holds no business read);
-    8. an Operator Console role outside grants is refused (wrong-role probe);
-    9. GET /operator?view=admin is served as an authenticated Web page;
-    10. sign-out succeeds and the revoked cookie is refused by Web and API.
+    7. foreign-tenant scope update on existing account is refused and readback verifies scope unmodified;
+    8. the business operator shell is refused (platform_admin holds no business read);
+    9. an Operator Console role outside grants is refused (wrong-role probe);
+    10. GET /operator?view=admin is served as an authenticated Web page;
+    11. sign-out succeeds and the revoked cookie is refused by Web and API.
     """
 
     operations: list[str] = []
@@ -1751,53 +1752,12 @@ def _check_dev_admin_session(
         if not users_probe.failed and users_probe.status == 403 and _payload_mentions(users_probe, "PASSWORD_CHANGE_REQUIRED"):
             _check(
                 checks,
-                True,
+                False,
                 "session:must_change_enforced",
-                "status=403 PASSWORD_CHANGE_REQUIRED (first-login rotation required)",
+                "status=403 PASSWORD_CHANGE_REQUIRED: first-login rotation requires distinct initial secret and operational password; equal-input pseudo-rotation refused",
                 "auth",
             )
-            rotate_resp = web.request(
-                "POST",
-                "/auth/password",
-                authenticated=False,
-                body={
-                    "currentPassword": password,
-                    "newPassword": password,
-                    "confirmPassword": password,
-                },
-                headers=session_headers(cookies, origin=origin),
-                follow_redirects=False,
-            )
-            rotated = (not rotate_resp.failed) and rotate_resp.status == 200 and rotate_resp.payload.get("ok") is True
-            _check(
-                checks,
-                rotated,
-                "session:first_login_password_rotated",
-                _failure_detail(rotate_resp, expected="200 ok (password rotated)"),
-                "auth",
-            )
-            if not rotated:
-                return
-            login = web.request(
-                "POST",
-                "/login",
-                authenticated=False,
-                body={
-                    "username": username,
-                    "password": password,
-                    "returnTo": "/operator?view=admin",
-                },
-                headers=with_origin,
-                follow_redirects=False,
-            )
-            cookies = {name: value for name, value in login.cookies.items() if value}
-            signed_in = (
-                (not login.failed)
-                and login.status == 200
-                and login.payload.get("ok") is True
-                and login.payload.get("subject") == username
-                and bool(cookies)
-            )
+            return
         _check(
             checks,
             signed_in,
@@ -1809,6 +1769,15 @@ def _check_dev_admin_session(
             return
         operations.append("password_login")
     elif (not login.failed) and login.status == 401 and initial_password:
+        if initial_password == password:
+            _check(
+                checks,
+                False,
+                "session:password_login",
+                "initial bootstrap secret equals operational password; distinct credentials required for first-login rotation",
+                "session",
+            )
+            return
         init_login = web.request(
             "POST",
             "/login",
@@ -1849,6 +1818,8 @@ def _check_dev_admin_session(
             _failure_detail(users_probe, expected="403 PASSWORD_CHANGE_REQUIRED"),
             "auth",
         )
+        if not must_change_refused:
+            return
         rotate_resp = web.request(
             "POST",
             "/auth/password",
@@ -2002,7 +1973,76 @@ def _check_dev_admin_session(
     )
     operations.append("bootstrap_audit_readback")
 
-    # 7. Business shell is denied (pure platform_admin has no business read).
+    # 7. Tenant isolation: saving a foreign tenant scope on existing account is refused.
+    foreign_probe = web.request(
+        "POST",
+        "/api/v1/operator/users",
+        authenticated=False,
+        body={
+            "subjectId": own_record.get("subject_id") or username,
+            "roles": ["platform_admin"],
+            "scope": {
+                "tenant_id": FOREIGN_TENANT_PROBE_ID,
+                "clearance": "CONFIDENTIAL",
+            },
+            "status": "active",
+            "reason": "foreign tenant scope boundary probe",
+        },
+        headers=session_headers(cookies, origin=origin),
+        follow_redirects=False,
+    )
+    foreign_refused = (
+        (not foreign_probe.failed)
+        and foreign_probe.status in {400, 403, 422}
+        and not _payload_mentions(foreign_probe, "ok")
+    )
+    _check(
+        checks,
+        foreign_refused,
+        "session:cross_tenant_denied",
+        _failure_detail(foreign_probe, expected="403/422 for foreign tenant scope"),
+        "tenant-isolation",
+    )
+    if not foreign_refused:
+        return
+
+    readback = web.request(
+        "GET", "/api/v1/operator/users", authenticated=False, headers=session_headers(cookies)
+    )
+    readback_list = readback.payload.get("users") if not readback.failed else None
+    readback_list = [u for u in readback_list if isinstance(u, dict)] if isinstance(readback_list, list) else []
+    readback_own = [
+        u
+        for u in readback_list
+        if u.get("username") == username
+        or _as_dict(u.get("attributes")).get("username") == username
+    ]
+    readback_rec = readback_own[0] if readback_own else {}
+    readback_tenant = _as_dict(readback_rec.get("scope")).get("tenant_id")
+    tenant_unmodified = (
+        (not readback.failed)
+        and readback.status == 200
+        and bool(readback_own)
+        and readback_tenant != FOREIGN_TENANT_PROBE_ID
+        and sorted(str(r) for r in readback_rec.get("roles") or []) == ["platform_admin"]
+    )
+    _check(
+        checks,
+        tenant_unmodified,
+        "admin:foreign_tenant_unmodified_readback",
+        (
+            f"status={readback.status} tenant={readback_tenant} "
+            f"roles={readback_rec.get('roles')}"
+            if not readback.failed
+            else readback.error
+        ),
+        "tenant-isolation",
+    )
+    if not tenant_unmodified:
+        return
+    operations.append("cross_tenant_denied")
+
+    # 8. Business shell is denied (pure platform_admin has no business read).
     business = web.request(
         "GET", "/api/v1/operator/bootstrap", authenticated=False, headers=session_headers(cookies)
     )
@@ -2015,7 +2055,7 @@ def _check_dev_admin_session(
     )
     operations.append("business_shell_denied")
 
-    # 8. RBAC wrong-role probe:
+    # 9. RBAC wrong-role probe:
     denied_role = config.dev_admin_denied_role or "cs-lead"
     wrong_role = web.request(
         "GET",
@@ -2032,7 +2072,7 @@ def _check_dev_admin_session(
     )
     operations.append("wrong_role_denied")
 
-    # 9. Admin view served to the session.
+    # 10. Admin view served to the session.
     page = web.request(
         "GET",
         "/operator?view=admin",
@@ -2049,7 +2089,7 @@ def _check_dev_admin_session(
     )
     operations.append("admin_page")
 
-    # 10. Logout and revocation.
+    # 11. Logout and revocation.
     logout = web.request(
         "POST",
         "/auth/logout",

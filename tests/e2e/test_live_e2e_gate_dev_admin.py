@@ -142,6 +142,19 @@ def web_routes(**overrides: Any) -> dict[str, Any]:
         "anon GET /api/v1/operator/bootstrap": denied,
         "GET /auth/session [session]": base.response(200, {"subject": USERNAME, "expiresAt": 1}),
         "GET /api/v1/operator/users [session]": base.response(200, admin_users()),
+        "POST /api/v1/operator/users [session]": lambda body, headers: (
+            base.response(
+                422,
+                {
+                    "detail": (
+                        f"Cannot save user scope for tenant '{body.get('scope', {}).get('tenant_id')}'; "
+                        "caller is restricted to its own tenant."
+                    )
+                },
+            )
+            if (body or {}).get("scope", {}).get("tenant_id") == gate.FOREIGN_TENANT_PROBE_ID
+            else base.response(200, {"ok": True, "message": "User saved."})
+        ),
         "GET /api/v1/operator/users/audit-trail [session]": base.response(200, admin_audit_trail()),
         "GET /api/v1/operator/bootstrap [session]": base.response(
             403, {"detail": "role does not permit view on operator_console"}
@@ -247,25 +260,57 @@ class AdminWeb(base.FakeHttp):
         if method == "GET" and path == "/auth/session":
             if has_session:
                 if "GET /auth/session [session]" in self.routes:
-                    return deepcopy(self.routes["GET /auth/session [session]"])
+                    route = self.routes["GET /auth/session [session]"]
+                    if callable(route):
+                        return route(kwargs.get("body"), headers)
+                    return deepcopy(route)
                 return base.response(200, {"subject": USERNAME, "expiresAt": 1})
             if has_fresh_session:
                 return base.response(200, {"subject": USERNAME, "expiresAt": 1})
             if "anon GET /auth/session" in self.routes:
-                return deepcopy(self.routes["anon GET /auth/session"])
+                route = self.routes["anon GET /auth/session"]
+                if callable(route):
+                    return route(kwargs.get("body"), headers)
+                return deepcopy(route)
             return base.response(401, {"error": {"code": "WEB_SESSION_REQUIRED"}})
 
         # GET /api/v1/operator/users
         if method == "GET" and path == "/api/v1/operator/users":
             if has_fresh_session and not self.password_rotated:
                 if "must-change-override" in self.routes:
-                    return deepcopy(self.routes["must-change-override"])
+                    route = self.routes["must-change-override"]
+                    if callable(route):
+                        return route(kwargs.get("body"), headers)
+                    return deepcopy(route)
                 return base.response(403, {"detail": "PASSWORD_CHANGE_REQUIRED"})
             if has_session or (has_fresh_session and self.password_rotated):
                 if "GET /api/v1/operator/users [session]" in self.routes:
-                    return deepcopy(self.routes["GET /api/v1/operator/users [session]"])
+                    route = self.routes["GET /api/v1/operator/users [session]"]
+                    if callable(route):
+                        return route(kwargs.get("body"), headers)
+                    return deepcopy(route)
                 return base.response(200, admin_users())
             return base.response(401, {"error": {"code": "WEB_SESSION_REQUIRED"}})
+
+        # POST /api/v1/operator/users
+        if method == "POST" and path == "/api/v1/operator/users":
+            if "POST /api/v1/operator/users [session]" in self.routes:
+                route = self.routes["POST /api/v1/operator/users [session]"]
+                if callable(route):
+                    return route(kwargs.get("body"), headers)
+                return deepcopy(route)
+            body = kwargs.get("body") or {}
+            if body.get("scope", {}).get("tenant_id") == gate.FOREIGN_TENANT_PROBE_ID:
+                return base.response(
+                    422,
+                    {
+                        "detail": (
+                            f"Cannot save user scope for tenant '{gate.FOREIGN_TENANT_PROBE_ID}'; "
+                            "caller is restricted to its own tenant."
+                        )
+                    },
+                )
+            return base.response(200, {"ok": True, "message": "User saved."})
 
         # RBAC wrong-role check on /api/v1/operator/bootstrap
         if (
@@ -351,6 +396,8 @@ def test_dev_admin_passes_with_missing_models_and_already_rotated_session() -> N
         "session:session_resolves_account",
         "admin:identity_user_list",
         "admin:bootstrap_audited",
+        "session:cross_tenant_denied",
+        "admin:foreign_tenant_unmodified_readback",
         "admin:business_shell_denied",
         "session:wrong_role_denied",
         "admin:admin_page_served",
@@ -368,6 +415,7 @@ def test_dev_admin_passes_with_missing_models_and_already_rotated_session() -> N
         "session_read",
         "identity_user_list",
         "bootstrap_audit_readback",
+        "cross_tenant_denied",
         "business_shell_denied",
         "wrong_role_denied",
         "admin_page",
@@ -403,6 +451,7 @@ def test_dev_admin_passes_fresh_bootstrap_account_with_controlled_rotation() -> 
         "session_read",
         "identity_user_list",
         "bootstrap_audit_readback",
+        "cross_tenant_denied",
         "business_shell_denied",
         "wrong_role_denied",
         "admin_page",
@@ -754,6 +803,101 @@ def test_fresh_admin_fails_if_must_change_not_enforced() -> None:
 
     assert report["ok"] is False
     assert "session:must_change_enforced" in blockers(report)
+    # Critical: no password mutation must occur when must_change is not enforced
+    assert web.password_rotated is False
+    assert not any(call == "POST /auth/password" for call, _ in web.headers_seen)
+
+
+def test_first_login_fails_without_rotation_if_initial_and_final_passwords_are_equal() -> None:
+    web = AdminWeb(web_routes(), is_fresh=True)
+    cfg = dev_admin_config(
+        dev_admin_password=INITIAL_PASSWORD,
+        dev_admin_initial_password=INITIAL_PASSWORD,
+    )
+    _, report, _ = run_dev_admin(web=web, cfg=cfg)
+
+    assert report["ok"] is False
+    assert "session:must_change_enforced" in blockers(report)
+    assert web.password_rotated is False
+    assert not any(call == "POST /auth/password" for call, _ in web.headers_seen)
+
+
+def test_direct_login_with_pending_must_change_refuses_equal_input_rotation() -> None:
+    # Direct login with PASSWORD succeeds, but user probe returns PASSWORD_CHANGE_REQUIRED
+    web = AdminWeb(
+        web_routes(
+            **{
+                "GET /api/v1/operator/users [session]": base.response(
+                    403, {"detail": "PASSWORD_CHANGE_REQUIRED"}
+                )
+            }
+        ),
+        is_fresh=False,
+    )
+    # No distinct initial password configured; direct login uses PASSWORD
+    cfg = dev_admin_config(dev_admin_initial_password="")
+    _, report, _ = run_dev_admin(web=web, cfg=cfg)
+
+    assert report["ok"] is False
+    assert "session:must_change_enforced" in blockers(report)
+    assert not any(call == "POST /auth/password" for call, _ in web.headers_seen)
+
+
+def test_foreign_tenant_scope_allowed_blocks_dev_admin() -> None:
+    # Foreign tenant probe returns 200 instead of 403/422
+    web = AdminWeb(
+        web_routes(
+            **{
+                "POST /api/v1/operator/users [session]": base.response(
+                    200, {"ok": True, "message": "foreign tenant accepted"}
+                )
+            }
+        )
+    )
+    _, report, _ = run_dev_admin(web=web)
+
+    assert report["ok"] is False
+    assert blockers(report)["session:cross_tenant_denied"] == "tenant-isolation"
+
+
+def test_foreign_tenant_scope_mutated_in_readback_blocks_dev_admin() -> None:
+    call_count = 0
+
+    def users_dispatch(body: Any, headers: dict) -> Any:
+        nonlocal call_count
+        call_count += 1
+        if call_count > 1:
+            # Second call is the readback after foreign-tenant save
+            return base.response(
+                200,
+                {
+                    "users": [
+                        {
+                            "subject_id": ADMIN_ACCOUNT_ID,
+                            "username": USERNAME,
+                            "roles": ["platform_admin"],
+                            "status": "active",
+                            "scope": {"tenant_id": gate.FOREIGN_TENANT_PROBE_ID},
+                            "attributes": {"identity_source": "identity.accounts", "username": USERNAME},
+                        }
+                    ],
+                    "count": 1,
+                },
+            )
+        return base.response(200, admin_users())
+
+    web = AdminWeb(
+        web_routes(
+            **{
+                "GET /api/v1/operator/users [session]": users_dispatch,
+                "POST /api/v1/operator/users [session]": base.response(422, {"detail": "rejected"}),
+            }
+        )
+    )
+    _, report, _ = run_dev_admin(web=web)
+
+    assert report["ok"] is False
+    assert blockers(report)["admin:foreign_tenant_unmodified_readback"] == "tenant-isolation"
 
 
 def test_failed_postgresql_blocks_dev_admin_like_full() -> None:

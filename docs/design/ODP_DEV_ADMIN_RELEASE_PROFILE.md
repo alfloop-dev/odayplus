@@ -122,10 +122,11 @@ The supported operations exercised, in order:
 | 4 | `GET /auth/session` with the cookie | `session:session_resolves_account` | subject is not the signed-in account |
 | 5 | `GET /api/v1/operator/users` (`user:view`) | `admin:identity_user_list` | not 200; or the account is not listed from `identity.accounts` with exactly `platform_admin`, `active` |
 | 6 | `GET /api/v1/operator/users/audit-trail` | `admin:bootstrap_audited` | no `identity.account.bootstrap` event for that account |
-| 7 | `GET /api/v1/operator/bootstrap` | `admin:business_shell_denied` | not 403 (a pure admin must not get business reads) |
-| 8 | the same read with `x-operator-role` set to a role the account does not hold | `session:wrong_role_denied` | not 403 |
-| 9 | `GET /operator?view=admin` (Web) | `admin:admin_page_served` | not 200 (for example a `/login` redirect) |
-| 10 | `POST /auth/logout`, then replay the old cookie on `/auth/session` and `/api/v1/operator/users` | `session:logout`, `session:revoked_session_refused`, `admin:logout_revokes_admin_api` | logout not durable (503) or cookie not cleared; revoked cookie still served |
+| 7 | `POST /api/v1/operator/users` with foreign tenant scope, then readback | `session:cross_tenant_denied`, `admin:foreign_tenant_unmodified_readback` | foreign tenant scope accepted or account scope mutated |
+| 8 | `GET /api/v1/operator/bootstrap` | `admin:business_shell_denied` | not 403 (a pure admin must not get business reads) |
+| 9 | the same read with `x-operator-role` set to a role the account does not hold | `session:wrong_role_denied` | not 403 |
+| 10 | `GET /operator?view=admin` (Web) | `admin:admin_page_served` | not 200 (for example a `/login` redirect) |
+| 11 | `POST /auth/logout`, then replay the old cookie on `/auth/session` and `/api/v1/operator/users` | `session:logout`, `session:revoked_session_refused`, `admin:logout_revokes_admin_api` | logout not durable (503) or cookie not cleared; revoked cookie still served |
 
 These are the supported human administration operations the live verifier
 exercises with the single pure administrator. The machine service-identity checks
