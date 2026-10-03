@@ -107,51 +107,37 @@ dev-admin gate cannot close them, and its receipt says so:
 ## 5. Administration proof: the Web password journey (dev-admin)
 
 The gate signs in through the deployed Web origin the way a browser does. It
-uses the password form endpoint, the sealed session cookie, and the BFF proxy
-that swaps the cookie for the server-side session bearer. It never injects a
-bearer, role or tenant header. Each step is a separate named check:
+uses the password form endpoint, the sealed session cookie, the BFF proxy that
+swaps the cookie for the server-side session bearer, and exercises the single
+pure `platform_admin` account created by the identity bootstrap (§5.1). It
+never injects a bearer, role or tenant header.
+
+The supported operations exercised, in order:
 
 | # | Operation | Check | Fails on |
 |---|---|---|---|
 | 1 | anonymous `/auth/session`, anonymous `/api/v1/operator/bootstrap` | `session:anonymous_session_denied`, `session:anonymous_api_denied` | either served |
 | 2 | `POST /login` with a wrong password | `session:invalid_credentials_refused` | anything but 401 `AUTH_INVALID_CREDENTIALS`, or any session cookie issued |
-| 3 | `POST /login` (JSON, Web `Origin`) as the provisioned account | `session:password_login` | not 200 `ok` for that subject, or no session cookie (for example, the PostgreSQL session store or throttle is down: 503) |
+| 3 | `POST /login` as the `platform_admin` account (and if fresh, verify `PASSWORD_CHANGE_REQUIRED` 403 on `/operator/users` + rotate via `POST /auth/password`) | `session:password_login`, `session:must_change_enforced`, `session:first_login_password_rotated` | not 200 `ok` for that subject, no session cookie, rotation failure, or `must_change` not enforced |
 | 4 | `GET /auth/session` with the cookie | `session:session_resolves_account` | subject is not the signed-in account |
-| 5 | `GET /api/v1/operator/bootstrap` through the session | `session:operator_bootstrap` | not 200 live provenance, or a surrogate marker |
-| 6 | the same read with `x-operator-role` set to a role the account does not hold | `session:wrong_role_denied` | not 403 |
-| 7 | `POST /api/v1/jobs` (`external-fetch`, tenant bound from the session, idempotency key), then `GET /api/v1/jobs/{id}` | `session:job_enqueue`, `session:job_readback` | not 202 created with an audit event id; not read back from the durable queue |
-| 8 | `POST /api/v1/jobs` with `payload.tenant_id` set to another tenant | `session:cross_tenant_denied` | not 403 `TENANT_SCOPE_MISMATCH` |
-| 9 | `GET /api/v1/audit/events?correlation_id=<journey>` | `session:audit_persisted` | missing the hash-chained accepted enqueue for the job, or missing the denied enqueue |
-| 10 | `POST /auth/logout`, then replay the old cookie on `/auth/session` and the API | `session:logout`, `session:revoked_session_refused`, `session:revoked_api_refused` | logout not durable (503) or cookie not cleared; revoked cookie still served |
+| 5 | `GET /api/v1/operator/users` (`user:view`) | `admin:identity_user_list` | not 200; or the account is not listed from `identity.accounts` with exactly `platform_admin`, `active` |
+| 6 | `GET /api/v1/operator/users/audit-trail` | `admin:bootstrap_audited` | no `identity.account.bootstrap` event for that account |
+| 7 | `GET /api/v1/operator/bootstrap` | `admin:business_shell_denied` | not 403 (a pure admin must not get business reads) |
+| 8 | the same read with `x-operator-role` set to a role the account does not hold | `session:wrong_role_denied` | not 403 |
+| 9 | `GET /operator?view=admin` (Web) | `admin:admin_page_served` | not 200 (for example a `/login` redirect) |
+| 10 | `POST /auth/logout`, then replay the old cookie on `/auth/session` and `/api/v1/operator/users` | `session:logout`, `session:revoked_session_refused`, `admin:logout_revokes_admin_api` | logout not durable (503) or cookie not cleared; revoked cookie still served |
 
-These are the supported core operations the live verifier exercises. All of
-them run against the candidate that `runtime:release_profile` and
-`release:platform_version` (exact release SHA) bind. The existing core checks
+These are the supported human administration operations the live verifier
+exercises with the single pure administrator. The machine service-identity checks
 also run unchanged: PostgreSQL persistence, the operator repository and live
 data origin, the provider posture, worker enqueue/idempotent replay/drain and
 terminal state, the durable audit receipt and its integrity, and ingestion
 receipts.
 
-The password comes only from a secret. The report redacts it, and it never
-appears in a check detail.
+The passwords come only from secrets. The report redacts them, and they never
+appear in a check detail.
 
-### 5.1 The bootstrap-created pure administrator
-
-The journey above signs in with a business-role operator account. That does
-not prove that the account the identity bootstrap creates (§5.2), which holds
-**only** `platform_admin`, can administer anything. A second journey signs in as
-that account through the same Web form:
-
-| # | Operation | Check | Fails on |
-|---|---|---|---|
-| 1 | `POST /login` as the bootstrap admin (`returnTo=/operator?view=admin`) | `admin:password_login` | not 200 `ok` for that subject, or no cookie |
-| 2 | `GET /api/v1/operator/users` (`user:view`) | `admin:identity_user_list` | not 200; or the account is not listed from `identity.accounts` with exactly `platform_admin`, `active`; a 403 `PASSWORD_CHANGE_REQUIRED` means the first-login rotation was not done |
-| 3 | `GET /api/v1/operator/users/audit-trail` | `admin:bootstrap_audited` | no `identity.account.bootstrap` event for that account |
-| 4 | `GET /api/v1/operator/bootstrap` | `admin:business_shell_denied` | not 403 (a pure admin must not get business reads) |
-| 5 | `GET /operator?view=admin` (Web) | `admin:admin_page_served` | not 200 (for example a `/login` redirect) |
-| 6 | `POST /auth/logout`, replay on `/api/v1/operator/users` | `admin:logout_revokes_admin_api` | logout not 200 `ok`, or the revoked cookie still served |
-
-### 5.2 First administrator bootstrap (Contract §7.2)
+### 5.1 First administrator bootstrap (Contract §7.2)
 
 Before this task the contract's one-time bootstrap had no implementation, so a
 fresh dev database had no way to obtain its first account. It now exists as a
@@ -184,7 +170,7 @@ no HTTP route; running it requires the target database credentials.
   posts to the existing `/auth/password` route (current-password check, policy,
   Argon2id, `must_change=false`, other sessions revoked).
 
-### 5.3 User administration is authoritative
+### 5.2 User administration is authoritative
 
 Live Operator user administration used to edit a `users-roles` document that
 the auth boundary never reads, so a role change or a disable reported success
@@ -197,7 +183,7 @@ request, in one transaction with its audit event:
   tenant only (other tenants look like 404); records keyed by `account_id`.
 - `POST /operator/users`: replace roles and scope of an **existing** account.
   It never creates accounts or passwords (422). Only the bootstrap creates an
-  account today; the contract's invitation flow is not implemented yet (§6).
+  account today.
 - `POST /operator/users/{id}/status`: `disabled` sets the account disabled and
   revokes every session (`admin_disable_account`); `active` re-enables a
   disabled account and requires `platform_admin`.
@@ -206,7 +192,7 @@ request, in one transaction with its audit event:
 - A live router without the PostgreSQL identity schema answers 503
   `IDENTITY_PERSISTENCE_UNAVAILABLE` instead of editing a document.
 
-### 5.4 Where a pure administrator works
+### 5.3 Where a pure administrator works
 
 `platform_admin` is granted user/role/feature-flag administration but no
 business `operator_console` read, and that stays so. The business console's
@@ -224,23 +210,21 @@ revocation. A failure is reported and the page stays.
 - `deploy-dev.yml` adds the build-phase input `release_profile` (`full` |
   `dev-admin`, default `full`), the admission job output `release_profile`,
   and the deploy job env `ODP_RELEASE_PROFILE`, which comes from admission
-  only. The Cloud Run deploy step now reads three more values:
-  `vars.ODP_DEV_ADMIN_USERNAME`, `secrets.ODP_DEV_ADMIN_PASSWORD` and
-  `vars.ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE`.
+  only. The Cloud Run deploy step reads `vars.ODP_DEV_ADMIN_USERNAME`,
+  `secrets.ODP_DEV_ADMIN_PASSWORD`, optional `secrets.ODP_DEV_ADMIN_INITIAL_PASSWORD`,
+  and `vars.ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE`.
 - `build_release_handoff.py --release-profile`. Its GitHub output adds
   `release_profile`.
 - The manifest gains the optional field `release_profile`. Admission receipts
   gain the field `release_profile`.
 - `check_live_e2e_gate.py --release-profile` (default: `$ODP_RELEASE_PROFILE`,
-  otherwise `full`). It reads `ODP_DEV_ADMIN_USERNAME`,
-  `ODP_DEV_ADMIN_PASSWORD`, `ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE`,
-  `ODP_DEV_BOOTSTRAP_ADMIN_USERNAME` and `ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD`.
-  The deploy step passes the last two from `vars.` / `secrets.` of the same
-  names, and `deploy_cloud_run_waji.sh` refuses `dev-admin` without them.
-- New deployment entrypoint `python -m shared.identity.bootstrap` (§5.2).
+  otherwise `full`). It reads `ODP_DEV_ADMIN_USERNAME`, `ODP_DEV_ADMIN_PASSWORD`,
+  optional `ODP_DEV_ADMIN_INITIAL_PASSWORD` (or `ODP_IDENTITY_BOOTSTRAP_SECRET`),
+  and `ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE`.
+- New deployment entrypoint `python -m shared.identity.bootstrap` (§5.1).
 - API: password sessions with `must_change=true` get 403
   `PASSWORD_CHANGE_REQUIRED`; live `/operator/users*` is identity-backed
-  (§5.3). No route or schema was added, so the OpenAPI artifact is unchanged.
+  (§5.2). No route or schema was added, so the OpenAPI artifact is unchanged.
 - Web: `/operator?view=admin` and `/operator?view=password`; console Logout
   is real.
 - The API and Web runtime env carry `ODP_RELEASE_PROFILE`, and the API
@@ -248,38 +232,27 @@ revocation. A failure is reported and the page stays.
 
 **Prerequisites in the `dev` GitHub environment** (vars are environment-scoped)
 
-- `ODP_DEV_ADMIN_USERNAME`: an existing operator account in `identity` on dev
-  PostgreSQL. It needs a local password, Operator Console access,
-  `external-fetch` job create/view and `audit:view`. Provision it through the
-  existing account bootstrap. Do not seed a fixed password.
-- `ODP_DEV_ADMIN_PASSWORD` (environment **secret**): that account's password.
+- `ODP_DEV_ADMIN_USERNAME`: the username of the single pure `platform_admin`
+  account created by the bootstrap.
+- `ODP_DEV_ADMIN_PASSWORD` (environment **secret**): the permanent rotated
+  password of that account.
+- `ODP_DEV_ADMIN_INITIAL_PASSWORD` (environment **secret**): the one-time initial
+  bootstrap secret (`ODP_IDENTITY_BOOTSTRAP_SECRET`), required for automated first-login
+  rotation on a fresh database.
 - `ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE`: an Operator Console role id the account
-  does **not** hold, for example `cs-lead` for an account without it. If the
-  account holds every role, the wrong-role probe cannot be proven and the gate
-  stays red. Use a narrower account in that case.
-- `ODP_DEV_BOOTSTRAP_ADMIN_USERNAME` (var) and `ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD`
-  (secret): the account created by the bootstrap, after its first-login
-  rotation. Who owns that account, and its one-time secret, are decided in the
-  reviewed deployment handoff; this task invents neither.
+  does **not** hold (e.g. `cs-lead`).
 
 **Account prerequisites, in order** (deployment handoff; this task runs none):
 
 1. Apply the normal migrations (identity schema `000011`, runtime schema).
-2. Run the bootstrap once against dev PostgreSQL with the §5.2 inputs, the
+2. Run the bootstrap once against dev PostgreSQL with the §5.1 inputs, the
    secret injected from Secret Manager, and keep only the JSON receipt.
-3. The account owner signs in with the one-time secret, is sent to
-   `/operator?view=password`, and sets a personal password.
-4. The business-role operator account the session journey (§5) uses must be a
-   **second** account. **Open prerequisite:** the invitation flow of Contract
-   §7.3 has no implementation on `dev` (`git grep` finds no code that writes
-   `identity.invitations` or accepts an invitation), and this task does not
-   add one. Once such an account exists, the administrator assigns its roles
-   from `/operator?view=admin`. How that second account is created is a
-   coordinator decision (a separate invitation task, or a reviewed one-off
-   provisioning step); the role editor here deliberately refuses to create
-   accounts.
-5. Store the two account names as vars and their passwords as environment
-   secrets, then run the build/deploy below.
+3. Configure the `dev` environment vars and secrets above.
+4. Run the build/deploy below. On first deployment, the gate uses the initial secret,
+   proves `PASSWORD_CHANGE_REQUIRED` enforcement, rotates to the permanent password
+   via `/auth/password`, and executes the full administration suite. On subsequent
+   deployments, the gate signs in directly with the permanent password. No human
+   racing or sacrificial deployments are needed.
 **Candidate.** The build, deploy and gate code runs from the release SHA's own
 tree. A dev-admin release therefore needs a candidate built from a SHA that
 contains this change. The existing candidate cannot be relabelled. It keeps

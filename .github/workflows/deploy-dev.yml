@@ -1251,13 +1251,13 @@ jobs:
         if: ${{ inputs.environment != 'staging' }}
         env:
           # Only the dev-admin profile reads these: the live gate signs in
-          # through the Web password form as this provisioned operator account
-          # and signs out again. Scoped to this step, never printed.
+          # through the Web password form as the single pure platform_admin
+          # account, verifies must_change enforcement, first-login rotation
+          # if fresh, authoritative user admin, and signs out again.
           ODP_DEV_ADMIN_USERNAME: ${{ vars.ODP_DEV_ADMIN_USERNAME }}
           ODP_DEV_ADMIN_PASSWORD: ${{ secrets.ODP_DEV_ADMIN_PASSWORD }}
+          ODP_DEV_ADMIN_INITIAL_PASSWORD: ${{ secrets.ODP_DEV_ADMIN_INITIAL_PASSWORD }}
           ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE: ${{ vars.ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE }}
-          # The bootstrap-created pure platform_admin (password already rotated
-          # on first login); the gate proves it can administer users alone.
           ODP_DEV_BOOTSTRAP_ADMIN_USERNAME: ${{ vars.ODP_DEV_BOOTSTRAP_ADMIN_USERNAME }}
           ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD }}
         run: ./product_ops/deployment/deploy_cloud_run_waji.sh

@@ -2,10 +2,10 @@
 
 Starts from the fully passing deployment of ``test_live_e2e_gate`` and changes
 exactly what the dev-admin scope is about: production models are absent (and
-must stay truthfully refused), and administration is proven by a real Web
-password sign-in journey. Every negative breaks one fact and asserts the gate
-names it. The full profile is re-run against the same missing-model runtime to
-prove it still refuses.
+must stay truthfully refused), and administration is proven by the single pure
+platform_admin Web password sign-in and first-password rotation journey.
+Every negative breaks one fact and asserts the gate names it. The full profile
+is re-run against the same missing-model runtime to prove it still refuses.
 """
 
 from __future__ import annotations
@@ -29,17 +29,15 @@ sys.modules[_spec.name] = base
 _spec.loader.exec_module(base)
 gate = base.gate
 
-USERNAME = "dev-ops-admin"
-PASSWORD = "operator-chosen-passphrase-value"
+USERNAME = "first.admin"
+PASSWORD = "rotated-first-admin-passphrase"
+INITIAL_PASSWORD = "initial-bootstrap-secret-passphrase"
 DENIED_ROLE = "cs-lead"
 SESSION_COOKIE = "__Host-oday_web_session"
-SESSION_VALUE = "sealed-session-reference"
-ADMIN_USERNAME = "first.admin"
-ADMIN_PASSWORD = "rotated-first-admin-passphrase"
-ADMIN_SESSION_VALUE = "sealed-admin-session-reference"
+SESSION_VALUE = "sealed-admin-session-reference"
+FRESH_SESSION_VALUE = "sealed-fresh-admin-session-reference"
 ADMIN_ACCOUNT_ID = "5f0c1a2b-3c4d-4e5f-8a9b-0c1d2e3f4a5b"
 SESSION_CORRELATION_ID = f"{base.CORRELATION_ID}-session"
-SESSION_JOB_ID = "job-session-0001"
 MODEL_ERROR = (
     "forecastops: MLFLOW_TRACKING_URI_REQUIRED: production model runtime is not configured"
 )
@@ -106,110 +104,15 @@ def api_routes(**overrides: Any) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-class SessionWeb(base.FakeHttp):
-    """FakeHttp that also dispatches on whether the session cookie was sent.
-
-    A route key gains a `` [session]`` suffix when the request carries the
-    signed-in cookie, so the fixture can model the server deciding on the
-    cookie it was actually given rather than on call order.
-    """
-
-    def __init__(self, routes: dict[str, Any]) -> None:
-        super().__init__(routes)
-        self.headers_seen: list[tuple[str, dict[str, str]]] = []
-
-    def request(self, method: str, path: str, **kwargs: Any) -> Any:
-        headers = {k.lower(): v for k, v in (kwargs.get("headers") or {}).items()}
-        self.headers_seen.append((f"{method} {path}", headers))
-        assert kwargs.get("authenticated") is False, "web requests never inject app identity"
-        assert "authorization" not in headers and "x-tenant-id" not in headers
-        cookie = headers.get("cookie", "")
-        marker = (
-            "session"
-            if f"{SESSION_COOKIE}={SESSION_VALUE}" in cookie
-            else "admin"
-            if f"{SESSION_COOKIE}={ADMIN_SESSION_VALUE}" in cookie
-            else None
-        )
-        if marker is not None:
-            key = f"{method.upper()} {path} [{marker}]"
-            if key in self.routes:
-                self.calls.append(key)
-                route = self.routes[key]
-                if callable(route):
-                    route = route(kwargs.get("body"), headers)
-                return deepcopy(route)
-        return super().request(method, path, **kwargs)
-
-
-def login_route(body: Any, headers: Any) -> Any:
-    assert headers.get("origin") == base.WEB_URL, "login must carry the Web origin (CSRF)"
-    if body == {"username": USERNAME, "password": PASSWORD, "returnTo": "/operator"}:
-        return base.response(
-            200,
-            {"ok": True, "subject": USERNAME, "returnTo": "/operator"},
-            cookies={SESSION_COOKIE: SESSION_VALUE},
-        )
-    if body == {"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD, "returnTo": "/operator?view=admin"}:
-        return base.response(
-            200,
-            {"ok": True, "subject": ADMIN_USERNAME, "returnTo": "/operator?view=admin"},
-            cookies={SESSION_COOKIE: ADMIN_SESSION_VALUE},
-        )
-    return base.response(
-        401,
-        {"error": {"code": "AUTH_INVALID_CREDENTIALS", "summary": "Invalid username or password."}},
-    )
-
-
-def session_jobs_route(body: Any, headers: Any) -> Any:
-    payload = body.get("payload") or {}
-    if payload.get("tenant_id"):
-        return base.response(
-            403,
-            {"error": {"code": "TENANT_SCOPE_MISMATCH", "message": "tenant mismatch"}},
-        )
-    return base.response(
-        202,
-        {
-            "job_id": SESSION_JOB_ID,
-            "status": "queued",
-            "created": True,
-            "audit_event_id": "evt-session-1",
-            "job": {"job_id": SESSION_JOB_ID, "status": "queued"},
-        },
-    )
-
-
-def session_audit() -> dict[str, Any]:
-    return {
-        "events": [
-            {
-                "event_type": "job.enqueue",
-                "outcome": "accepted",
-                "job_id": SESSION_JOB_ID,
-                "correlation_id": SESSION_CORRELATION_ID,
-                "integrity": {"sequence": 41, "event_hash": "a" * 64},
-            },
-            {
-                "event_type": "job.enqueue",
-                "outcome": "denied",
-                "correlation_id": SESSION_CORRELATION_ID,
-                "metadata": {"status_code": 403},
-            },
-        ]
-    }
-
-
 def admin_users(roles: list[str] | None = None) -> dict[str, Any]:
     return {
         "users": [
             {
                 "subject_id": ADMIN_ACCOUNT_ID,
-                "username": ADMIN_USERNAME,
+                "username": USERNAME,
                 "roles": roles if roles is not None else ["platform_admin"],
                 "status": "active",
-                "attributes": {"identity_source": "identity.accounts", "username": ADMIN_USERNAME},
+                "attributes": {"identity_source": "identity.accounts", "username": USERNAME},
             }
         ],
         "count": 1,
@@ -229,79 +132,170 @@ def admin_audit_trail() -> dict[str, Any]:
     }
 
 
-def operator_bootstrap() -> Any:
-    return base.live_routes()["GET /api/v1/operator/bootstrap"]
-
-
 def web_routes(**overrides: Any) -> dict[str, Any]:
     denied = base.response(401, {"error": {"code": "WEB_SESSION_REQUIRED"}})
     routes: dict[str, Any] = {
         "anon GET /operator": base.response(
             302, location=f"{base.WEB_URL}/login?returnTo=%2Foperator"
         ),
-        # Without (or with a revoked) session cookie.
         "anon GET /auth/session": denied,
         "anon GET /api/v1/operator/bootstrap": denied,
-        "anon POST /login": login_route,
-        # With the signed-in session cookie.
         "GET /auth/session [session]": base.response(200, {"subject": USERNAME, "expiresAt": 1}),
-        "GET /api/v1/operator/bootstrap [session]": operator_bootstrap(),
-        "POST /api/v1/jobs [session]": session_jobs_route,
-        f"GET /api/v1/jobs/{SESSION_JOB_ID} [session]": base.response(
-            200, {"job_id": SESSION_JOB_ID, "job_type": "external-fetch", "status": "queued"}
+        "GET /api/v1/operator/users [session]": base.response(200, admin_users()),
+        "GET /api/v1/operator/users/audit-trail [session]": base.response(200, admin_audit_trail()),
+        "GET /api/v1/operator/bootstrap [session]": base.response(
+            403, {"detail": "role does not permit view on operator_console"}
         ),
-        f"GET /api/v1/audit/events?correlation_id={SESSION_CORRELATION_ID} [session]": (
-            base.response(200, session_audit())
-        ),
+        "GET /operator?view=admin [session]": base.response(200, {}),
         "POST /auth/logout [session]": base.response(
             200, {"ok": True}, cookies={SESSION_COOKIE: ""}
         ),
-        # The bootstrap-created pure platform_admin.
-        "GET /api/v1/operator/users [admin]": base.response(200, admin_users()),
-        "GET /api/v1/operator/users/audit-trail [admin]": base.response(200, admin_audit_trail()),
-        "GET /api/v1/operator/bootstrap [admin]": base.response(
-            403, {"detail": "role does not permit view on operator_console"}
-        ),
-        "GET /operator?view=admin [admin]": base.response(200, {}),
-        "POST /auth/logout [admin]": base.response(200, {"ok": True}, cookies={SESSION_COOKIE: ""}),
     }
     routes.update(overrides)
     return routes
 
 
-class RoleAwareWeb(SessionWeb):
-    """Refuse the session's bootstrap when a role outside its grants is asked for,
-    and refuse every session read once it has been signed out."""
+class AdminWeb(base.FakeHttp):
+    """Fake Web client that models the pure platform_admin journey:
+    supports fresh accounts (first password rotation needed) and already-rotated accounts.
+    """
 
-    def __init__(self, routes: dict[str, Any], *, revoke_on_logout: bool = True) -> None:
+    def __init__(
+        self,
+        routes: dict[str, Any],
+        *,
+        is_fresh: bool = False,
+        revoke_on_logout: bool = True,
+    ) -> None:
         super().__init__(routes)
-        self.logged_out = False
-        self.admin_logged_out = False
+        self.is_fresh = is_fresh
         self.revoke_on_logout = revoke_on_logout
+        self.logged_out = False
+        self.password_rotated = not is_fresh
+        self.headers_seen: list[tuple[str, dict[str, str]]] = []
 
     def request(self, method: str, path: str, **kwargs: Any) -> Any:
         headers = {k.lower(): v for k, v in (kwargs.get("headers") or {}).items()}
-        has_session = f"{SESSION_COOKIE}={SESSION_VALUE}" in headers.get("cookie", "")
-        has_admin = f"{SESSION_COOKIE}={ADMIN_SESSION_VALUE}" in headers.get("cookie", "")
-        if self.revoke_on_logout and (
-            (has_session and self.logged_out) or (has_admin and self.admin_logged_out)
-        ):
-            self.headers_seen.append((f"{method} {path}", headers))
+        self.headers_seen.append((f"{method} {path}", headers))
+        assert kwargs.get("authenticated") is False, "web requests never inject app identity"
+        assert "authorization" not in headers and "x-tenant-id" not in headers
+        cookie = headers.get("cookie", "")
+        has_session = f"{SESSION_COOKIE}={SESSION_VALUE}" in cookie
+        has_fresh_session = f"{SESSION_COOKIE}={FRESH_SESSION_VALUE}" in cookie
+
+        if self.revoke_on_logout and (has_session or has_fresh_session) and self.logged_out:
             return base.response(401, {"error": {"code": "WEB_SESSION_REQUIRED"}})
+
+        # POST /login
+        if method == "POST" and path == "/login":
+            assert headers.get("origin") == base.WEB_URL, "login must carry Web origin (CSRF)"
+            if "anon POST /login" in self.routes:
+                route = self.routes["anon POST /login"]
+                if callable(route):
+                    return route(kwargs.get("body"), headers)
+                return deepcopy(route)
+            body = kwargs.get("body") or {}
+            u = body.get("username")
+            p = body.get("password")
+            if u == USERNAME and p == PASSWORD and self.password_rotated:
+                self.logged_out = False
+                return base.response(
+                    200,
+                    {"ok": True, "subject": USERNAME, "returnTo": "/operator?view=admin"},
+                    cookies={SESSION_COOKIE: SESSION_VALUE},
+                )
+            if u == USERNAME and p == INITIAL_PASSWORD and not self.password_rotated:
+                self.logged_out = False
+                return base.response(
+                    200,
+                    {"ok": True, "subject": USERNAME, "returnTo": "/operator?view=admin"},
+                    cookies={SESSION_COOKIE: FRESH_SESSION_VALUE},
+                )
+            return base.response(
+                401,
+                {"error": {"code": "AUTH_INVALID_CREDENTIALS", "summary": "Invalid username or password."}},
+            )
+
+        # POST /auth/password
+        if method == "POST" and path == "/auth/password":
+            assert headers.get("origin") == base.WEB_URL, "password change must carry Web origin"
+            if "POST /auth/password [session]" in self.routes:
+                route = self.routes["POST /auth/password [session]"]
+                if callable(route):
+                    return route(kwargs.get("body"), headers)
+                return deepcopy(route)
+            body = kwargs.get("body") or {}
+            curr = body.get("currentPassword")
+            new_p = body.get("newPassword")
+            if (curr == INITIAL_PASSWORD or (curr == PASSWORD and not self.password_rotated)) and new_p == PASSWORD:
+                self.password_rotated = True
+                return base.response(200, {"ok": True})
+            return base.response(400, {"error": {"code": "INVALID_PASSWORD"}})
+
+        # POST /auth/logout
+        if method == "POST" and path == "/auth/logout":
+            assert headers.get("origin") == base.WEB_URL, "logout must carry Web origin"
+            self.logged_out = True
+            if "POST /auth/logout [session]" in self.routes:
+                route = self.routes["POST /auth/logout [session]"]
+                if callable(route):
+                    return route(kwargs.get("body"), headers)
+                return deepcopy(route)
+            return base.response(200, {"ok": True}, cookies={SESSION_COOKIE: ""})
+
+        # GET /auth/session
+        if method == "GET" and path == "/auth/session":
+            if has_session:
+                if "GET /auth/session [session]" in self.routes:
+                    return deepcopy(self.routes["GET /auth/session [session]"])
+                return base.response(200, {"subject": USERNAME, "expiresAt": 1})
+            if has_fresh_session:
+                return base.response(200, {"subject": USERNAME, "expiresAt": 1})
+            if "anon GET /auth/session" in self.routes:
+                return deepcopy(self.routes["anon GET /auth/session"])
+            return base.response(401, {"error": {"code": "WEB_SESSION_REQUIRED"}})
+
+        # GET /api/v1/operator/users
+        if method == "GET" and path == "/api/v1/operator/users":
+            if has_fresh_session and not self.password_rotated:
+                if "must-change-override" in self.routes:
+                    return deepcopy(self.routes["must-change-override"])
+                return base.response(403, {"detail": "PASSWORD_CHANGE_REQUIRED"})
+            if has_session or (has_fresh_session and self.password_rotated):
+                if "GET /api/v1/operator/users [session]" in self.routes:
+                    return deepcopy(self.routes["GET /api/v1/operator/users [session]"])
+                return base.response(200, admin_users())
+            return base.response(401, {"error": {"code": "WEB_SESSION_REQUIRED"}})
+
+        # RBAC wrong-role check on /api/v1/operator/bootstrap
         if (
-            has_session
+            (has_session or has_fresh_session)
             and path == "/api/v1/operator/bootstrap"
             and headers.get("x-operator-role") == DENIED_ROLE
-            and "role-check" not in self.routes
         ):
-            self.headers_seen.append((f"{method} {path}", headers))
+            if "role-check" in self.routes and self.routes["role-check"] == "disabled":
+                return base.response(200, {"status": "ok"})
             return base.response(403, {"error": {"code": "forbidden"}})
-        result = super().request(method, path, **kwargs)
-        if has_session and method == "POST" and path == "/auth/logout":
-            self.logged_out = True
-        if has_admin and method == "POST" and path == "/auth/logout":
-            self.admin_logged_out = True
-        return result
+
+        # Dispatch other configured routes
+        marker = "session" if (has_session or has_fresh_session) else "anon"
+        key = f"{method.upper()} {path} [{marker}]"
+        if key in self.routes:
+            self.calls.append(key)
+            route = self.routes[key]
+            if callable(route):
+                route = route(kwargs.get("body"), headers)
+            return deepcopy(route)
+
+        anon_key = f"anon {method.upper()} {path}"
+        if anon_key in self.routes:
+            self.calls.append(anon_key)
+            route = self.routes[anon_key]
+            if callable(route):
+                route = route(kwargs.get("body"), headers)
+            return deepcopy(route)
+
+        return super().request(method, path, **kwargs)
 
 
 def dev_admin_config(**overrides: Any) -> Any:
@@ -309,9 +303,8 @@ def dev_admin_config(**overrides: Any) -> Any:
         "release_profile": "dev-admin",
         "dev_admin_username": USERNAME,
         "dev_admin_password": PASSWORD,
+        "dev_admin_initial_password": "",
         "dev_admin_denied_role": DENIED_ROLE,
-        "bootstrap_admin_username": ADMIN_USERNAME,
-        "bootstrap_admin_password": ADMIN_PASSWORD,
     }
     values.update(overrides)
     return base.disabled_config(**values)
@@ -323,7 +316,7 @@ def run_dev_admin(
     web: Any = None,
     cfg: Any = None,
 ) -> tuple[list[Any], dict[str, Any], Any]:
-    web_http = web if web is not None else RoleAwareWeb(web_routes())
+    web_http = web if web is not None else AdminWeb(web_routes())
     checks, report = base.run_gate(
         api if api is not None else api_routes(),
         cfg=cfg or dev_admin_config(),
@@ -341,7 +334,7 @@ def blockers(report: dict[str, Any]) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def test_dev_admin_passes_with_missing_models_and_a_real_session_journey() -> None:
+def test_dev_admin_passes_with_missing_models_and_already_rotated_session() -> None:
     checks, report, web = run_dev_admin()
 
     assert report["ok"] is True, report["blockers"]
@@ -356,20 +349,13 @@ def test_dev_admin_passes_with_missing_models_and_a_real_session_journey() -> No
         "session:invalid_credentials_refused",
         "session:password_login",
         "session:session_resolves_account",
-        "session:operator_bootstrap",
-        "session:wrong_role_denied",
-        "session:job_enqueue",
-        "session:job_readback",
-        "session:cross_tenant_denied",
-        "session:audit_persisted",
-        "session:logout",
-        "session:revoked_session_refused",
-        "session:revoked_api_refused",
-        "admin:password_login",
         "admin:identity_user_list",
         "admin:bootstrap_audited",
         "admin:business_shell_denied",
+        "session:wrong_role_denied",
         "admin:admin_page_served",
+        "session:logout",
+        "session:revoked_session_refused",
         "admin:logout_revokes_admin_api",
     } <= names
     # The full-profile model assertions are replaced, not silently passed.
@@ -380,18 +366,10 @@ def test_dev_admin_passes_with_missing_models_and_a_real_session_journey() -> No
         "invalid_password_refused",
         "password_login",
         "session_read",
-        "operator_bootstrap",
-        "wrong_role_denied",
-        "job_enqueue_and_readback",
-        "cross_tenant_denied",
-        "audit_readback",
-        "logout_and_revocation",
-    ]
-    assert report["bootstrap_admin"]["operations"] == [
-        "password_login",
         "identity_user_list",
         "bootstrap_audit_readback",
         "business_shell_denied",
+        "wrong_role_denied",
         "admin_page",
         "logout_and_revocation",
     ]
@@ -400,8 +378,6 @@ def test_dev_admin_passes_with_missing_models_and_a_real_session_journey() -> No
         "model_readiness_claimed": False,
         "full_product_acceptance_claimed": False,
     }
-    # Every write and the logout carried the Web origin (CSRF), and the
-    # wrong-role probe really asked for the denied role.
     sent = dict(web.headers_seen)
     assert sent["POST /auth/logout"]["origin"] == base.WEB_URL
     assert any(
@@ -410,13 +386,37 @@ def test_dev_admin_passes_with_missing_models_and_a_real_session_journey() -> No
     )
 
 
+def test_dev_admin_passes_fresh_bootstrap_account_with_controlled_rotation() -> None:
+    web = AdminWeb(web_routes(), is_fresh=True)
+    cfg = dev_admin_config(dev_admin_initial_password=INITIAL_PASSWORD)
+    checks, report, _ = run_dev_admin(web=web, cfg=cfg)
+
+    assert report["ok"] is True, report["blockers"]
+    names = {check.name for check in checks}
+    assert "session:must_change_enforced" in names
+    assert "session:first_login_password_rotated" in names
+    assert "session:password_login" in names
+    assert report["dev_admin"]["operations"] == [
+        "anonymous_denied",
+        "invalid_password_refused",
+        "password_rotated_and_logged_in",
+        "session_read",
+        "identity_user_list",
+        "bootstrap_audit_readback",
+        "business_shell_denied",
+        "wrong_role_denied",
+        "admin_page",
+        "logout_and_revocation",
+    ]
+
+
 def test_the_report_never_contains_the_admin_password() -> None:
     _, report, _ = run_dev_admin(
-        web=RoleAwareWeb(web_routes(**{"anon POST /login": base.response(503, {"echo": PASSWORD})}))
+        web=AdminWeb(web_routes(**{"anon POST /login": base.response(503, {"echo": PASSWORD})}))
     )
 
     assert PASSWORD not in json.dumps(report)
-    assert ADMIN_PASSWORD not in json.dumps(report)
+    assert INITIAL_PASSWORD not in json.dumps(report)
 
 
 # ---------------------------------------------------------------------------
@@ -432,7 +432,7 @@ def test_full_profile_still_rejects_a_runtime_without_production_models() -> Non
     assert found["runtime:model_bindings"] == "mlflow"
     assert found["runtime:model_capability:forecastops"] == "mlflow"
     assert found["models:registry"] == "mlflow"
-    assert "session:password_login" not in found  # no session journey in full scope
+    assert "session:password_login" not in found
 
 
 def test_dev_admin_with_verified_models_is_held_to_the_full_model_assertions() -> None:
@@ -502,8 +502,6 @@ def test_an_unknown_profile_is_refused_before_any_request(profile: str) -> None:
         ({"dev_admin_password": ""}, "config:dev_admin_account"),
         ({"dev_admin_username": ""}, "config:dev_admin_account"),
         ({"dev_admin_denied_role": ""}, "config:dev_admin_denied_role"),
-        ({"bootstrap_admin_username": ""}, "config:bootstrap_admin_account"),
-        ({"bootstrap_admin_password": ""}, "config:bootstrap_admin_account"),
     ],
 )
 def test_dev_admin_without_its_sign_in_inputs_is_refused(overrides: dict, check: str) -> None:
@@ -615,15 +613,17 @@ DB_DOWN = base.response(
             id="anonymous-session-served",
         ),
         pytest.param(
-            {"anon GET /api/v1/operator/bootstrap": operator_bootstrap()},
+            {"anon GET /api/v1/operator/bootstrap": base.response(200, {})},
             "session:anonymous_api_denied",
             "auth",
             id="anonymous-api-served",
         ),
         pytest.param(
             {
-                "anon POST /login": lambda body, headers: base.response(
-                    200, {"ok": True, "subject": USERNAME}, cookies={SESSION_COOKIE: SESSION_VALUE}
+                "anon POST /login": lambda body, headers: (
+                    base.response(200, {"ok": True, "subject": USERNAME}, cookies={SESSION_COOKIE: SESSION_VALUE})
+                    if "-live-gate-invalid" in str((body or {}).get("password"))
+                    else base.response(200, {"ok": True, "subject": USERNAME}, cookies={SESSION_COOKIE: SESSION_VALUE})
                 )
             },
             "session:invalid_credentials_refused",
@@ -659,84 +659,34 @@ DB_DOWN = base.response(
             id="session-for-another-account",
         ),
         pytest.param(
-            {"GET /api/v1/operator/bootstrap [session]": DB_DOWN},
-            "session:operator_bootstrap",
-            "data-binding",
-            id="bootstrap-db-down",
+            {"GET /api/v1/operator/users [session]": base.response(200, admin_users(["growth_lead"]))},
+            "admin:identity_user_list",
+            "auth",
+            id="user-has-wrong-roles",
         ),
         pytest.param(
-            {
-                "POST /api/v1/jobs [session]": lambda body, headers: base.response(
-                    202,
-                    {
-                        "job_id": SESSION_JOB_ID,
-                        "created": True,
-                        "audit_event_id": "evt",
-                        "job": {"job_id": SESSION_JOB_ID},
-                    },
-                )
-            },
-            "session:cross_tenant_denied",
-            "tenant-isolation",
-            id="foreign-tenant-write-accepted",
+            {"GET /api/v1/operator/users [session]": base.response(200, {"users": [], "count": 0})},
+            "admin:identity_user_list",
+            "auth",
+            id="user-not-listed",
         ),
         pytest.param(
-            {
-                "POST /api/v1/jobs [session]": lambda body, headers: base.response(
-                    503, {"error": {"code": "DURABLE_JOB_QUEUE_UNAVAILABLE"}}
-                )
-            },
-            "session:job_enqueue",
-            "worker",
-            id="job-persistence-failed",
-        ),
-        pytest.param(
-            {
-                f"GET /api/v1/jobs/{SESSION_JOB_ID} [session]": base.response(
-                    404, {"detail": "job not found"}
-                )
-            },
-            "session:job_readback",
-            "postgresql",
-            id="job-not-durable",
-        ),
-        pytest.param(
-            {
-                f"GET /api/v1/audit/events?correlation_id={SESSION_CORRELATION_ID} [session]": (
-                    base.response(200, {"events": session_audit()["events"][:1]})
-                )
-            },
-            "session:audit_persisted",
+            {"GET /api/v1/operator/users/audit-trail [session]": base.response(200, {"events": []})},
+            "admin:bootstrap_audited",
             "audit",
-            id="denial-not-audited",
+            id="bootstrap-event-missing",
         ),
         pytest.param(
-            {
-                f"GET /api/v1/audit/events?correlation_id={SESSION_CORRELATION_ID} [session]": (
-                    base.response(
-                        200,
-                        {
-                            "events": [
-                                {**session_audit()["events"][0], "integrity": {}},
-                                session_audit()["events"][1],
-                            ]
-                        },
-                    )
-                )
-            },
-            "session:audit_persisted",
-            "audit",
-            id="audit-not-hash-chained",
+            {"GET /api/v1/operator/bootstrap [session]": base.response(200, {})},
+            "admin:business_shell_denied",
+            "auth",
+            id="business-shell-allowed-to-pure-admin",
         ),
         pytest.param(
-            {
-                f"GET /api/v1/audit/events?correlation_id={SESSION_CORRELATION_ID} [session]": (
-                    DB_DOWN
-                )
-            },
-            "session:audit_persisted",
-            "audit",
-            id="audit-store-down",
+            {"GET /operator?view=admin [session]": base.response(302, location=f"{base.WEB_URL}/login")},
+            "admin:admin_page_served",
+            "session",
+            id="admin-page-redirects-to-login",
         ),
         pytest.param(
             {"POST /auth/logout [session]": DB_DOWN},
@@ -749,7 +699,7 @@ DB_DOWN = base.response(
 def test_a_broken_administration_fact_blocks_dev_admin(
     overrides: dict, check: str, dependency: str
 ) -> None:
-    _, report, _ = run_dev_admin(web=RoleAwareWeb(web_routes(**overrides)))
+    _, report, _ = run_dev_admin(web=AdminWeb(web_routes(**overrides)))
 
     assert report["ok"] is False
     assert blockers(report).get(check) == dependency, report["blockers"]
@@ -757,7 +707,7 @@ def test_a_broken_administration_fact_blocks_dev_admin(
 
 def test_a_role_outside_the_account_grants_that_is_served_blocks() -> None:
     routes = web_routes(**{"role-check": "disabled"})
-    _, report, _ = run_dev_admin(web=RoleAwareWeb(routes))
+    _, report, _ = run_dev_admin(web=AdminWeb(routes))
 
     assert blockers(report)["session:wrong_role_denied"] == "auth"
 
@@ -766,11 +716,44 @@ def test_a_session_that_survives_logout_blocks() -> None:
     routes = web_routes(
         **{"GET /auth/session [session]": base.response(200, {"subject": USERNAME, "expiresAt": 1})}
     )
-    _, report, _ = run_dev_admin(web=RoleAwareWeb(routes, revoke_on_logout=False))
+    _, report, _ = run_dev_admin(web=AdminWeb(routes, revoke_on_logout=False))
 
     found = blockers(report)
     assert found["session:revoked_session_refused"] == "session"
-    assert found["session:revoked_api_refused"] == "session"
+    assert found["admin:logout_revokes_admin_api"] == "session"
+
+
+def test_fresh_admin_fails_if_initial_password_missing() -> None:
+    web = AdminWeb(web_routes(), is_fresh=True)
+    cfg = dev_admin_config(dev_admin_initial_password="")
+    _, report, _ = run_dev_admin(web=web, cfg=cfg)
+
+    assert report["ok"] is False
+    assert "session:password_login" in blockers(report)
+
+
+def test_fresh_admin_fails_if_rotation_fails() -> None:
+    web = AdminWeb(
+        web_routes(**{"POST /auth/password [session]": base.response(500, {"error": "failed"})}),
+        is_fresh=True,
+    )
+    cfg = dev_admin_config(dev_admin_initial_password=INITIAL_PASSWORD)
+    _, report, _ = run_dev_admin(web=web, cfg=cfg)
+
+    assert report["ok"] is False
+    assert "session:first_login_password_rotated" in blockers(report)
+
+
+def test_fresh_admin_fails_if_must_change_not_enforced() -> None:
+    web = AdminWeb(
+        web_routes(**{"must-change-override": base.response(200, admin_users())}),
+        is_fresh=True,
+    )
+    cfg = dev_admin_config(dev_admin_initial_password=INITIAL_PASSWORD)
+    _, report, _ = run_dev_admin(web=web, cfg=cfg)
+
+    assert report["ok"] is False
+    assert "session:must_change_enforced" in blockers(report)
 
 
 def test_failed_postgresql_blocks_dev_admin_like_full() -> None:
@@ -900,53 +883,8 @@ def test_cli_reads_the_profile_and_account_from_the_environment(
     assert gate.parse_args([]).release_profile == "full"
 
 
-# ---------------------------------------------------------------------------
-# The bootstrap-created pure administrator
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("override", "check"),
-    [
-        (
-            {"GET /api/v1/operator/users [admin]": base.response(403, {"detail": "PASSWORD_CHANGE_REQUIRED"})},
-            "admin:identity_user_list",
-        ),
-        (
-            {"GET /api/v1/operator/users [admin]": base.response(200, admin_users(["platform_admin", "operations_manager"]))},
-            "admin:identity_user_list",
-        ),
-        (
-            {"GET /api/v1/operator/users [admin]": base.response(200, {"users": [], "count": 0})},
-            "admin:identity_user_list",
-        ),
-        (
-            {"GET /api/v1/operator/users/audit-trail [admin]": base.response(200, {"events": []})},
-            "admin:bootstrap_audited",
-        ),
-        ({"GET /api/v1/operator/bootstrap [admin]": operator_bootstrap()}, "admin:business_shell_denied"),
-        (
-            {"GET /operator?view=admin [admin]": base.response(302, location=f"{base.WEB_URL}/login")},
-            "admin:admin_page_served",
-        ),
-        ({"POST /auth/logout [admin]": base.response(503, {"error": {"code": "WEB_AUTH_UNAVAILABLE"}})}, "admin:logout_revokes_admin_api"),
-    ],
-)
-def test_a_broken_bootstrap_admin_fact_blocks_dev_admin(override: dict[str, Any], check: str) -> None:
-    _, report, _ = run_dev_admin(web=RoleAwareWeb(web_routes(**override)))
-
-    assert check in blockers(report)
-    assert ADMIN_PASSWORD not in json.dumps(report)
-
-
-def test_a_wrong_bootstrap_admin_password_stops_the_admin_journey() -> None:
-    _, report, _ = run_dev_admin(cfg=dev_admin_config(bootstrap_admin_password="not-the-password"))
-
-    found = blockers(report)
-    assert found["admin:password_login"] == "session"
-    assert "admin:identity_user_list" not in found  # stopped, not guessed
-
-
 def test_bootstrap_admin_inputs_use_the_documented_environment_names() -> None:
     assert gate.BOOTSTRAP_ADMIN_USERNAME_ENV == "ODP_DEV_BOOTSTRAP_ADMIN_USERNAME"
     assert gate.BOOTSTRAP_ADMIN_PASSWORD_ENV == "ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD"
+    assert gate.DEV_ADMIN_INITIAL_PASSWORD_ENV == "ODP_DEV_ADMIN_INITIAL_PASSWORD"
+    assert gate.BOOTSTRAP_SECRET_ENV == "ODP_IDENTITY_BOOTSTRAP_SECRET"

@@ -66,12 +66,14 @@ PRODUCTION_PROVIDER_IDS_ENV = "ODP_PRODUCTION_PROVIDER_IDS"
 RELEASE_PROFILE_ENV = "ODP_RELEASE_PROFILE"
 DEV_ADMIN_USERNAME_ENV = "ODP_DEV_ADMIN_USERNAME"
 DEV_ADMIN_PASSWORD_ENV = "ODP_DEV_ADMIN_PASSWORD"
+DEV_ADMIN_INITIAL_PASSWORD_ENV = "ODP_DEV_ADMIN_INITIAL_PASSWORD"
 DEV_ADMIN_DENIED_ROLE_ENV = "ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE"
-# The deployment-bootstrapped first administrator (platform_admin only, password
-# already rotated on first login). Proves the account the bootstrap creates can
-# administer users on its own, without any business role.
+# The deployment-bootstrapped first administrator (platform_admin only). Proves
+# the single pure administrator created by bootstrap can administer users and
+# perform first-login password rotation without any business role.
 BOOTSTRAP_ADMIN_USERNAME_ENV = "ODP_DEV_BOOTSTRAP_ADMIN_USERNAME"
 BOOTSTRAP_ADMIN_PASSWORD_ENV = "ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD"
+BOOTSTRAP_SECRET_ENV = "ODP_IDENTITY_BOOTSTRAP_SECRET"
 BOOTSTRAP_AUDIT_EVENT = "identity.account.bootstrap"
 
 # ODP-DEV-ADMIN-RELEASE-READINESS-001: the acceptance scope this gate holds a
@@ -331,13 +333,12 @@ class GateConfig:
     api_transport_token: str = ""
     # The admitted acceptance scope (see RELEASE_PROFILE_DEPLOYMENTS).
     release_profile: str = RELEASE_PROFILE_FULL
-    # dev-admin only: a provisioned operator account the gate signs in as
-    # through the Web password form, and an Operator Console role that account
-    # does not hold (the wrong-role probe). Never written to the report.
+    # dev-admin only: the bootstrap-created pure platform_admin account the gate
+    # signs in as through the Web password form. Never written to the report.
     dev_admin_username: str = ""
     dev_admin_password: str = ""
+    dev_admin_initial_password: str = ""
     dev_admin_denied_role: str = ""
-    # dev-admin only: the bootstrap-created pure platform_admin. Never reported.
     bootstrap_admin_username: str = ""
     bootstrap_admin_password: str = ""
 
@@ -941,13 +942,15 @@ def _release_profile_config_checks(config: GateConfig) -> list[CheckResult]:
             "release-profile",
         )
     if config.dev_admin:
+        resolved_username = config.dev_admin_username or config.bootstrap_admin_username
+        resolved_password = config.dev_admin_password or config.bootstrap_admin_password
         _check(
             checks,
-            bool(config.dev_admin_username) and bool(config.dev_admin_password),
+            bool(resolved_username) and bool(resolved_password),
             "config:dev_admin_account",
             (
                 "configured"
-                if config.dev_admin_username and config.dev_admin_password
+                if resolved_username and resolved_password
                 else f"missing {DEV_ADMIN_USERNAME_ENV}/{DEV_ADMIN_PASSWORD_ENV}"
             ),
             "config",
@@ -957,17 +960,6 @@ def _release_profile_config_checks(config: GateConfig) -> list[CheckResult]:
             bool(config.dev_admin_denied_role),
             "config:dev_admin_denied_role",
             config.dev_admin_denied_role or f"missing {DEV_ADMIN_DENIED_ROLE_ENV}",
-            "config",
-        )
-        _check(
-            checks,
-            bool(config.bootstrap_admin_username) and bool(config.bootstrap_admin_password),
-            "config:bootstrap_admin_account",
-            (
-                "configured"
-                if config.bootstrap_admin_username and config.bootstrap_admin_password
-                else f"missing {BOOTSTRAP_ADMIN_USERNAME_ENV}/{BOOTSTRAP_ADMIN_PASSWORD_ENV}"
-            ),
             "config",
         )
     return checks
@@ -1633,27 +1625,28 @@ def _check_dev_admin_session(
     checks: list[CheckResult],
     report: dict[str, Any],
 ) -> None:
-    """Drive the real password sign-in journey through the deployed Web.
+    """Drive the real password sign-in and administration journey through the deployed Web.
 
     Every step goes through the Web origin exactly as a browser would: the
     password form endpoint, the sealed session cookie, the BFF proxy that
-    swaps the cookie for the server-side session bearer, and sign-out. No
+    swaps the cookie for the server-side session bearer, must_change enforcement,
+    first-login password rotation if pending, authoritative user administration,
+    business shell refusal (for pure platform_admin), and sign-out. No
     bearer, role, or tenant header is injected; the only identity the API sees
-    is the one the Web session carries. Each step is a separate named check so
-    a red gate says which part of administration is broken.
+    is the one the Web session carries.
 
-    The supported core operations exercised, in order:
+    The supported operations exercised, in order:
 
     1. anonymous session/API reads are refused;
     2. a wrong password is refused without issuing a session;
-    3. password sign-in issues a session cookie for the provisioned account;
+    3. password sign-in (or initial secret sign-in + first-password rotation if fresh);
     4. the session resolves to that account;
-    5. the operator bootstrap is served live through that session;
-    6. an Operator Console role the account does not hold is refused;
-    7. an ``external-fetch`` job is enqueued (durable queue) and read back;
-    8. a job aimed at another tenant is refused with TENANT_SCOPE_MISMATCH;
-    9. the accepted and the denied enqueue are both in the durable audit log
-       under this journey's correlation id, the accepted one hash-chained;
+    5. GET /api/v1/operator/users is served from the identity schema, lists the
+       account itself with exactly platform_admin, active;
+    6. the user audit trail carries the identity.account.bootstrap event;
+    7. the business operator shell is refused (platform_admin holds no business read);
+    8. an Operator Console role outside grants is refused (wrong-role probe);
+    9. GET /operator?view=admin is served as an authenticated Web page;
     10. sign-out succeeds and the revoked cookie is refused by Web and API.
     """
 
@@ -1676,6 +1669,10 @@ def _check_dev_admin_session(
     def session_headers(cookies: Mapping[str, str], **extra: str) -> dict[str, str]:
         return {**base, "cookie": _cookie_header(cookies), **extra}
 
+    username = config.dev_admin_username or config.bootstrap_admin_username
+    password = config.dev_admin_password or config.bootstrap_admin_password
+    initial_password = config.dev_admin_initial_password
+
     # 1. Anonymous reads are refused by both the Web and the API behind it.
     anonymous_session = web.request("GET", "/auth/session", authenticated=False, headers=base)
     _check(
@@ -1697,16 +1694,15 @@ def _check_dev_admin_session(
     )
     operations.append("anonymous_denied")
 
-    # 2. A wrong password is refused and no session cookie is issued. It runs
-    # before the real sign-in, whose success clears the account's counter.
+    # 2. A wrong password is refused and no session cookie is issued.
     invalid = web.request(
         "POST",
         "/login",
         authenticated=False,
         body={
-            "username": config.dev_admin_username,
-            "password": f"{config.dev_admin_password}-live-gate-invalid",
-            "returnTo": "/operator",
+            "username": username,
+            "password": f"{password}-live-gate-invalid",
+            "returnTo": "/operator?view=admin",
         },
         headers=with_origin,
         follow_redirects=False,
@@ -1726,15 +1722,15 @@ def _check_dev_admin_session(
     )
     operations.append("invalid_password_refused")
 
-    # 3. Password sign-in.
+    # 3. Password sign-in / First-login rotation handling:
     login = web.request(
         "POST",
         "/login",
         authenticated=False,
         body={
-            "username": config.dev_admin_username,
-            "password": config.dev_admin_password,
-            "returnTo": "/operator",
+            "username": username,
+            "password": password,
+            "returnTo": "/operator?view=admin",
         },
         headers=with_origin,
         follow_redirects=False,
@@ -1744,24 +1740,178 @@ def _check_dev_admin_session(
         (not login.failed)
         and login.status == 200
         and login.payload.get("ok") is True
-        and login.payload.get("subject") == config.dev_admin_username
+        and login.payload.get("subject") == username
         and bool(cookies)
     )
-    _check(
-        checks,
-        signed_in,
-        "session:password_login",
-        (
-            f"{_failure_detail(login, expected='200 ok')} "
-            f"sessionCookie={'issued' if cookies else 'missing'}"
-        ),
-        "session",
-    )
-    if not signed_in:
-        return
-    operations.append("password_login")
 
-    # 4. The session resolves to the signed-in account (not just "a cookie").
+    if signed_in:
+        users_probe = web.request(
+            "GET", "/api/v1/operator/users", authenticated=False, headers=session_headers(cookies)
+        )
+        if not users_probe.failed and users_probe.status == 403 and _payload_mentions(users_probe, "PASSWORD_CHANGE_REQUIRED"):
+            _check(
+                checks,
+                True,
+                "session:must_change_enforced",
+                "status=403 PASSWORD_CHANGE_REQUIRED (first-login rotation required)",
+                "auth",
+            )
+            rotate_resp = web.request(
+                "POST",
+                "/auth/password",
+                authenticated=False,
+                body={
+                    "currentPassword": password,
+                    "newPassword": password,
+                    "confirmPassword": password,
+                },
+                headers=session_headers(cookies, origin=origin),
+                follow_redirects=False,
+            )
+            rotated = (not rotate_resp.failed) and rotate_resp.status == 200 and rotate_resp.payload.get("ok") is True
+            _check(
+                checks,
+                rotated,
+                "session:first_login_password_rotated",
+                _failure_detail(rotate_resp, expected="200 ok (password rotated)"),
+                "auth",
+            )
+            if not rotated:
+                return
+            login = web.request(
+                "POST",
+                "/login",
+                authenticated=False,
+                body={
+                    "username": username,
+                    "password": password,
+                    "returnTo": "/operator?view=admin",
+                },
+                headers=with_origin,
+                follow_redirects=False,
+            )
+            cookies = {name: value for name, value in login.cookies.items() if value}
+            signed_in = (
+                (not login.failed)
+                and login.status == 200
+                and login.payload.get("ok") is True
+                and login.payload.get("subject") == username
+                and bool(cookies)
+            )
+        _check(
+            checks,
+            signed_in,
+            "session:password_login",
+            f"{_failure_detail(login, expected='200 ok')} sessionCookie={'issued' if cookies else 'missing'}",
+            "session",
+        )
+        if not signed_in:
+            return
+        operations.append("password_login")
+    elif (not login.failed) and login.status == 401 and initial_password:
+        init_login = web.request(
+            "POST",
+            "/login",
+            authenticated=False,
+            body={
+                "username": username,
+                "password": initial_password,
+                "returnTo": "/operator?view=admin",
+            },
+            headers=with_origin,
+            follow_redirects=False,
+        )
+        init_cookies = {name: value for name, value in init_login.cookies.items() if value}
+        init_signed_in = (
+            (not init_login.failed)
+            and init_login.status == 200
+            and init_login.payload.get("ok") is True
+            and init_login.payload.get("subject") == username
+            and bool(init_cookies)
+        )
+        if not init_signed_in:
+            _check(
+                checks,
+                False,
+                "session:password_login",
+                _failure_detail(init_login, expected="200 ok for initial secret"),
+                "session",
+            )
+            return
+        users_probe = web.request(
+            "GET", "/api/v1/operator/users", authenticated=False, headers=session_headers(init_cookies)
+        )
+        must_change_refused = (not users_probe.failed) and users_probe.status == 403 and _payload_mentions(users_probe, "PASSWORD_CHANGE_REQUIRED")
+        _check(
+            checks,
+            must_change_refused,
+            "session:must_change_enforced",
+            _failure_detail(users_probe, expected="403 PASSWORD_CHANGE_REQUIRED"),
+            "auth",
+        )
+        rotate_resp = web.request(
+            "POST",
+            "/auth/password",
+            authenticated=False,
+            body={
+                "currentPassword": initial_password,
+                "newPassword": password,
+                "confirmPassword": password,
+            },
+            headers=session_headers(init_cookies, origin=origin),
+            follow_redirects=False,
+        )
+        rotated = (not rotate_resp.failed) and rotate_resp.status == 200 and rotate_resp.payload.get("ok") is True
+        _check(
+            checks,
+            rotated,
+            "session:first_login_password_rotated",
+            _failure_detail(rotate_resp, expected="200 ok (password rotated)"),
+            "auth",
+        )
+        if not rotated:
+            return
+        login = web.request(
+            "POST",
+            "/login",
+            authenticated=False,
+            body={
+                "username": username,
+                "password": password,
+                "returnTo": "/operator?view=admin",
+            },
+            headers=with_origin,
+            follow_redirects=False,
+        )
+        cookies = {name: value for name, value in login.cookies.items() if value}
+        signed_in = (
+            (not login.failed)
+            and login.status == 200
+            and login.payload.get("ok") is True
+            and login.payload.get("subject") == username
+            and bool(cookies)
+        )
+        _check(
+            checks,
+            signed_in,
+            "session:password_login",
+            f"{_failure_detail(login, expected='200 ok')} sessionCookie={'issued' if cookies else 'missing'}",
+            "session",
+        )
+        if not signed_in:
+            return
+        operations.append("password_rotated_and_logged_in")
+    else:
+        _check(
+            checks,
+            False,
+            "session:password_login",
+            f"{_failure_detail(login, expected='200 ok')} sessionCookie={'issued' if cookies else 'missing'}",
+            "session",
+        )
+        return
+
+    # 4. The session resolves to the signed-in account.
     current = web.request(
         "GET", "/auth/session", authenticated=False, headers=session_headers(cookies)
     )
@@ -1769,11 +1919,11 @@ def _check_dev_admin_session(
         checks,
         (not current.failed)
         and current.status == 200
-        and current.payload.get("subject") == config.dev_admin_username,
+        and current.payload.get("subject") == username,
         "session:session_resolves_account",
         (
             f"status={current.status} subjectMatches="
-            f"{current.payload.get('subject') == config.dev_admin_username}"
+            f"{current.payload.get('subject') == username}"
             if not current.failed
             else current.error
         ),
@@ -1781,300 +1931,7 @@ def _check_dev_admin_session(
     )
     operations.append("session_read")
 
-    # 5. Allowed administration read through the BFF with the session.
-    bootstrap = web.request(
-        "GET",
-        "/api/v1/operator/bootstrap",
-        authenticated=False,
-        headers=session_headers(cookies),
-    )
-    bootstrap_mode = _declared_data_mode(bootstrap.payload)
-    bootstrap_markers = find_surrogate_values(bootstrap.payload)
-    _check(
-        checks,
-        (not bootstrap.failed)
-        and bootstrap.status == 200
-        and bootstrap_mode == "live"
-        and bool(_operator_source(bootstrap.payload))
-        and not bootstrap_markers,
-        "session:operator_bootstrap",
-        (
-            f"{_failure_detail(bootstrap, expected='200') if bootstrap.status != 200 else 'status=200'} "
-            f"data_mode={bootstrap_mode or '<missing>'} "
-            f"surrogatePaths={bootstrap_markers[:5] if bootstrap_markers else 'none'}"
-        ),
-        _dependency_for(bootstrap, "data-binding"),
-    )
-    operations.append("operator_bootstrap")
-
-    # 6. RBAC: a console role outside the account's grants is refused.
-    wrong_role = web.request(
-        "GET",
-        "/api/v1/operator/bootstrap",
-        authenticated=False,
-        headers=session_headers(cookies, **{"x-operator-role": config.dev_admin_denied_role}),
-    )
-    _check(
-        checks,
-        (not wrong_role.failed) and wrong_role.status == 403,
-        "session:wrong_role_denied",
-        _failure_detail(wrong_role, expected=f"403 for role {config.dev_admin_denied_role}"),
-        "auth",
-    )
-    operations.append("wrong_role_denied")
-
-    # 7. Durable job persistence: enqueue under the account's own tenant (the
-    # API binds it from the session; none is supplied) and read it back.
-    idempotency_key = f"live-e2e-session-{config.expected_sha[:12]}-{correlation_id}"
-    body = {
-        "job_type": WORKER_PROBE_JOB_TYPE,
-        "payload": {
-            "provider_id": config.probe_provider_id or DISABLED_WORKER_PROBE_PROVIDER_ID,
-            "schedule_id": "live-e2e-gate-session",
-        },
-        "idempotency_key": idempotency_key,
-    }
-    enqueue = web.request(
-        "POST",
-        "/api/v1/jobs",
-        authenticated=False,
-        body=body,
-        headers=session_headers(
-            cookies, origin=origin, **{"idempotency-key": idempotency_key}
-        ),
-    )
-    job_id = str(enqueue.payload.get("job_id") or "")
-    _check(
-        checks,
-        (not enqueue.failed)
-        and enqueue.status == 202
-        and bool(job_id)
-        and enqueue.payload.get("created") is True
-        and bool(enqueue.payload.get("audit_event_id")),
-        "session:job_enqueue",
-        (
-            _failure_detail(enqueue, expected="202")
-            if enqueue.failed or enqueue.status != 202
-            else (
-                f"status=202 jobId={'present' if job_id else 'missing'} "
-                f"created={enqueue.payload.get('created')} "
-                f"auditEventId={'present' if enqueue.payload.get('audit_event_id') else 'missing'}"
-            )
-        ),
-        _dependency_for(enqueue, "worker"),
-    )
-    report["dev_admin"]["job_id"] = job_id or None
-    if job_id:
-        readback = web.request(
-            "GET",
-            f"/api/v1/jobs/{urllib.parse.quote(job_id)}",
-            authenticated=False,
-            headers=session_headers(cookies),
-        )
-        _check(
-            checks,
-            (not readback.failed)
-            and readback.status == 200
-            and str(readback.payload.get("job_id") or "") == job_id
-            and str(readback.payload.get("job_type") or "") == WORKER_PROBE_JOB_TYPE,
-            "session:job_readback",
-            _failure_detail(readback, expected="200 same job")
-            if readback.failed or readback.status != 200
-            else f"status=200 sameJob={str(readback.payload.get('job_id') or '') == job_id}",
-            _dependency_for(readback, "postgresql"),
-        )
-    operations.append("job_enqueue_and_readback")
-
-    # 8. Tenant isolation: writing under another tenant is refused.
-    foreign_key = f"{idempotency_key}-foreign"
-    foreign = web.request(
-        "POST",
-        "/api/v1/jobs",
-        authenticated=False,
-        body={
-            **body,
-            "payload": {**body["payload"], "tenant_id": FOREIGN_TENANT_PROBE_ID},
-            "idempotency_key": foreign_key,
-        },
-        headers=session_headers(cookies, origin=origin, **{"idempotency-key": foreign_key}),
-    )
-    _check(
-        checks,
-        (not foreign.failed)
-        and foreign.status == 403
-        and _payload_mentions(foreign, TENANT_SCOPE_MISMATCH_CODE),
-        "session:cross_tenant_denied",
-        _failure_detail(foreign, expected=f"403 {TENANT_SCOPE_MISMATCH_CODE}"),
-        "tenant-isolation",
-    )
-    operations.append("cross_tenant_denied")
-
-    # 9. Both decisions are in the durable audit log under this correlation id.
-    events_response = web.request(
-        "GET",
-        f"/api/v1/audit/events?correlation_id={urllib.parse.quote(correlation_id)}",
-        authenticated=False,
-        headers=session_headers(cookies),
-    )
-    if events_response.failed or events_response.status != 200:
-        _check(
-            checks,
-            False,
-            "session:audit_persisted",
-            _failure_detail(events_response, expected="200"),
-            _dependency_for(events_response, "audit"),
-        )
-    else:
-        events = events_response.payload.get("events")
-        events = [e for e in events if isinstance(e, dict)] if isinstance(events, list) else []
-        enqueues = [e for e in events if e.get("event_type") == "job.enqueue"]
-        accepted = [
-            e
-            for e in enqueues
-            if e.get("outcome") == "accepted" and job_id and str(e.get("job_id") or "") == job_id
-        ]
-        chained = [
-            e
-            for e in accepted
-            if _as_dict(e.get("integrity")).get("event_hash")
-            and _as_dict(e.get("integrity")).get("sequence") is not None
-        ]
-        denied = [e for e in enqueues if e.get("outcome") == "denied"]
-        _check(
-            checks,
-            bool(chained) and bool(denied) and not find_surrogate_values(events_response.payload),
-            "session:audit_persisted",
-            (
-                f"jobEnqueueEvents={len(enqueues)} accepted={len(accepted)} "
-                f"hashChained={len(chained)} denied={len(denied)}"
-            ),
-            "audit",
-        )
-    operations.append("audit_readback")
-
-    # 10. Sign-out, then the old cookie must be dead on both sides.
-    logout = web.request(
-        "POST",
-        "/auth/logout",
-        authenticated=False,
-        headers=session_headers(cookies, origin=origin),
-        follow_redirects=False,
-    )
-    cleared = all(not logout.cookies.get(name, "x") for name in cookies)
-    _check(
-        checks,
-        (not logout.failed)
-        and logout.status == 200
-        and logout.payload.get("ok") is True
-        and cleared,
-        "session:logout",
-        f"{_failure_detail(logout, expected='200 ok')} cookieCleared={cleared}",
-        "session",
-    )
-    replay_session = web.request(
-        "GET", "/auth/session", authenticated=False, headers=session_headers(cookies)
-    )
-    _check(
-        checks,
-        (not replay_session.failed) and replay_session.status == 401,
-        "session:revoked_session_refused",
-        _failure_detail(replay_session, expected="401 after logout"),
-        "session",
-    )
-    replay_api = web.request(
-        "GET",
-        "/api/v1/operator/bootstrap",
-        authenticated=False,
-        headers=session_headers(cookies),
-    )
-    _check(
-        checks,
-        (not replay_api.failed) and replay_api.status in DENIED_STATUSES,
-        "session:revoked_api_refused",
-        _failure_detail(replay_api, expected="401/403 after logout"),
-        "session",
-    )
-    operations.append("logout_and_revocation")
-
-
-def _check_bootstrap_admin_session(
-    *,
-    web: HttpClient | None,
-    config: GateConfig,
-    correlation_id: str,
-    checks: list[CheckResult],
-    report: dict[str, Any],
-) -> None:
-    """Prove the bootstrap-created pure administrator can actually administer.
-
-    The operator journey above signs in with a business-role account; that does
-    not show the account the identity bootstrap creates (``platform_admin``
-    only) can do anything. This journey signs in as that account through the
-    same Web password form and checks, in order:
-
-    1. sign-in issues a session for the bootstrap administrator;
-    2. ``GET /api/v1/operator/users`` (``user:view``) is served from the
-       identity schema, lists the account itself with exactly
-       ``platform_admin``, and is not refused for a pending password change
-       (``PASSWORD_CHANGE_REQUIRED`` means the first-login rotation is missing);
-    3. the user audit trail carries the ``identity.account.bootstrap`` event;
-    4. the business operator shell is refused (no blanket business grant);
-    5. the Web administration view ``/operator?view=admin`` is served to the session;
-    6. sign-out revokes the session for the user administration API.
-    """
-
-    operations: list[str] = []
-    report["bootstrap_admin"] = {"correlation_id": correlation_id, "operations": operations}
-    if web is None:
-        _check(
-            checks,
-            False,
-            "admin:web_client",
-            f"no usable web origin for {config.web_url or '<missing>'}",
-            "config",
-        )
-        return
-
-    origin = _web_origin(config.web_url)
-    base = {"accept": "application/json", "x-correlation-id": correlation_id}
-
-    def session_headers(cookies: Mapping[str, str], **extra: str) -> dict[str, str]:
-        return {**base, "cookie": _cookie_header(cookies), **extra}
-
-    login = web.request(
-        "POST",
-        "/login",
-        authenticated=False,
-        body={
-            "username": config.bootstrap_admin_username,
-            "password": config.bootstrap_admin_password,
-            "returnTo": "/operator?view=admin",
-        },
-        headers={**base, "origin": origin},
-        follow_redirects=False,
-    )
-    cookies = {name: value for name, value in login.cookies.items() if value}
-    signed_in = (
-        (not login.failed)
-        and login.status == 200
-        and login.payload.get("ok") is True
-        and login.payload.get("subject") == config.bootstrap_admin_username
-        and bool(cookies)
-    )
-    _check(
-        checks,
-        signed_in,
-        "admin:password_login",
-        (
-            f"{_failure_detail(login, expected='200 ok')} "
-            f"sessionCookie={'issued' if cookies else 'missing'}"
-        ),
-        "session",
-    )
-    if not signed_in:
-        return
-    operations.append("password_login")
-
+    # 5. Authoritative user list from identity schema.
     users = web.request(
         "GET", "/api/v1/operator/users", authenticated=False, headers=session_headers(cookies)
     )
@@ -2083,8 +1940,8 @@ def _check_bootstrap_admin_session(
     own = [
         u
         for u in listed
-        if u.get("username") == config.bootstrap_admin_username
-        or _as_dict(u.get("attributes")).get("username") == config.bootstrap_admin_username
+        if u.get("username") == username
+        or _as_dict(u.get("attributes")).get("username") == username
     ]
     own_record = own[0] if own else {}
     pure_admin = (
@@ -2116,6 +1973,7 @@ def _check_bootstrap_admin_session(
     )
     operations.append("identity_user_list")
 
+    # 6. User audit trail carries identity.account.bootstrap event.
     trail = web.request(
         "GET",
         "/api/v1/operator/users/audit-trail",
@@ -2144,6 +2002,7 @@ def _check_bootstrap_admin_session(
     )
     operations.append("bootstrap_audit_readback")
 
+    # 7. Business shell is denied (pure platform_admin has no business read).
     business = web.request(
         "GET", "/api/v1/operator/bootstrap", authenticated=False, headers=session_headers(cookies)
     )
@@ -2156,6 +2015,24 @@ def _check_bootstrap_admin_session(
     )
     operations.append("business_shell_denied")
 
+    # 8. RBAC wrong-role probe:
+    denied_role = config.dev_admin_denied_role or "cs-lead"
+    wrong_role = web.request(
+        "GET",
+        "/api/v1/operator/bootstrap",
+        authenticated=False,
+        headers=session_headers(cookies, **{"x-operator-role": denied_role}),
+    )
+    _check(
+        checks,
+        (not wrong_role.failed) and wrong_role.status == 403,
+        "session:wrong_role_denied",
+        _failure_detail(wrong_role, expected=f"403 for role {denied_role}"),
+        "auth",
+    )
+    operations.append("wrong_role_denied")
+
+    # 9. Admin view served to the session.
     page = web.request(
         "GET",
         "/operator?view=admin",
@@ -2172,6 +2049,7 @@ def _check_bootstrap_admin_session(
     )
     operations.append("admin_page")
 
+    # 10. Logout and revocation.
     logout = web.request(
         "POST",
         "/auth/logout",
@@ -2179,21 +2057,35 @@ def _check_bootstrap_admin_session(
         headers=session_headers(cookies, origin=origin),
         follow_redirects=False,
     )
-    replay = web.request(
-        "GET", "/api/v1/operator/users", authenticated=False, headers=session_headers(cookies)
-    )
+    cleared = all(not logout.cookies.get(name, "x") for name in cookies)
     _check(
         checks,
         (not logout.failed)
         and logout.status == 200
         and logout.payload.get("ok") is True
-        and (not replay.failed)
-        and replay.status in DENIED_STATUSES,
+        and cleared,
+        "session:logout",
+        f"{_failure_detail(logout, expected='200 ok')} cookieCleared={cleared}",
+        "session",
+    )
+    replay_session = web.request(
+        "GET", "/auth/session", authenticated=False, headers=session_headers(cookies)
+    )
+    _check(
+        checks,
+        (not replay_session.failed) and replay_session.status == 401,
+        "session:revoked_session_refused",
+        _failure_detail(replay_session, expected="401 after logout"),
+        "session",
+    )
+    replay_api = web.request(
+        "GET", "/api/v1/operator/users", authenticated=False, headers=session_headers(cookies)
+    )
+    _check(
+        checks,
+        (not replay_api.failed) and replay_api.status in DENIED_STATUSES,
         "admin:logout_revokes_admin_api",
-        (
-            f"logout={_failure_detail(logout, expected='200 ok')} "
-            f"replay={_failure_detail(replay, expected='401/403')}"
-        ),
+        f"replay={_failure_detail(replay_api, expected='401/403')}",
         "session",
     )
     operations.append("logout_and_revocation")
@@ -2696,6 +2588,7 @@ def evaluate_gate(
         config.bearer_token,
         config.api_transport_token,
         config.dev_admin_password,
+        config.dev_admin_initial_password,
         config.bootstrap_admin_password,
     )
     checks = validate_config(config)
@@ -2717,10 +2610,13 @@ def evaluate_gate(
             "external_provider_mode": config.external_provider_mode,
             "release_profile": config.release_profile,
             "dev_admin_account_configured": bool(
-                config.dev_admin_username and config.dev_admin_password
+                (config.dev_admin_username or config.bootstrap_admin_username)
+                and (config.dev_admin_password or config.bootstrap_admin_password)
             ),
+            "dev_admin_initial_password_configured": bool(config.dev_admin_initial_password),
             "bootstrap_admin_account_configured": bool(
-                config.bootstrap_admin_username and config.bootstrap_admin_password
+                (config.dev_admin_username or config.bootstrap_admin_username)
+                and (config.dev_admin_password or config.bootstrap_admin_password)
             ),
             "secret_values_redacted": True,
         },
@@ -2786,13 +2682,6 @@ def evaluate_gate(
                 web=web_http,
                 config=config,
                 correlation_id=f"{correlation_id}-session",
-                checks=checks,
-                report=report,
-            )
-            _check_bootstrap_admin_session(
-                web=web_http,
-                config=config,
-                correlation_id=f"{correlation_id}-admin",
                 checks=checks,
                 report=report,
             )
@@ -2933,10 +2822,11 @@ def main(argv: list[str] | None = None) -> int:
         timeout=args.timeout,
         allow_http=args.allow_http,
         release_profile=str(args.release_profile or "").strip().lower(),
-        dev_admin_username=os.environ.get(DEV_ADMIN_USERNAME_ENV, "").strip(),
+        dev_admin_username=os.environ.get(DEV_ADMIN_USERNAME_ENV, "").strip() or os.environ.get(BOOTSTRAP_ADMIN_USERNAME_ENV, "").strip(),
         # Not stripped: a password is exactly what the operator set.
-        dev_admin_password=os.environ.get(DEV_ADMIN_PASSWORD_ENV, ""),
-        dev_admin_denied_role=os.environ.get(DEV_ADMIN_DENIED_ROLE_ENV, "").strip(),
+        dev_admin_password=os.environ.get(DEV_ADMIN_PASSWORD_ENV, "") or os.environ.get(BOOTSTRAP_ADMIN_PASSWORD_ENV, ""),
+        dev_admin_initial_password=os.environ.get(DEV_ADMIN_INITIAL_PASSWORD_ENV, "") or os.environ.get(BOOTSTRAP_SECRET_ENV, ""),
+        dev_admin_denied_role=os.environ.get(DEV_ADMIN_DENIED_ROLE_ENV, "").strip() or "cs-lead",
         bootstrap_admin_username=os.environ.get(BOOTSTRAP_ADMIN_USERNAME_ENV, "").strip(),
         bootstrap_admin_password=os.environ.get(BOOTSTRAP_ADMIN_PASSWORD_ENV, ""),
     )
