@@ -4298,35 +4298,38 @@ def normalized_business_priority(value: Any, default: str = "P2") -> str:
     return status_transition.normalized_business_priority(value, default=default)
 
 
-_CODE_REFERENCE_FILE_EXTENSION_RE = re.compile(
-    r"\.(?:py|sh|tf|yml|yaml|json|toml|md|csv|txt|log|lock|ini|cfg)$",
-    re.IGNORECASE,
+# Canonical blocker prose (casefolded). A path or filename may name the
+# required deliverable itself (`waiting for dataset.csv`), so path syntax is
+# never release authority. Only two bounded reference grammars prove a path is
+# an incidental code pointer: a whole `refs=`/`ref:`/`see` clause, and the
+# location of a failure (`provider failure in scripts/deployment.py`), each
+# ending at a clause boundary.
+_CODE_REFERENCE_PATH = (
+    r"`?(?:(?:~|\.{1,2})?/[a-z0-9_.\-/]*[a-z0-9_\-]"
+    r"|[a-z0-9_.\-]+/[a-z0-9_.\-/]*[a-z0-9_\-]"
+    r"|[a-z0-9_.\-/]*[a-z0-9_\-]\.[a-z0-9]{1,8})`?"
 )
+_CODE_REFERENCE_CLAUSE_END = r"\s*(?=[;；\n]|$)"
+_CODE_REFERENCE_LABEL_CLAUSE_RE = re.compile(
+    r"(?:^|(?<=[;；\n]))\s*(?:refs?|see)\s*[:=]?\s*"
+    + _CODE_REFERENCE_PATH
+    + r"(?:\s*,\s*" + _CODE_REFERENCE_PATH + r")*"
+    + _CODE_REFERENCE_CLAUSE_END
+)
+_CODE_REFERENCE_FAILURE_LOCATION_RE = re.compile(
+    r"\b(failure|failures|failed|error|errors|crash|crashed|exception|traceback|timeout)"
+    r"\s+(?:in|at)\s+" + _CODE_REFERENCE_PATH + _CODE_REFERENCE_CLAUSE_END
+)
+# Any path/filename syntax left after reference clauses were removed is an
+# unproven artifact condition: absolute/relative/home paths (including an
+# extensionless `/provider/worktree` whose slash-split parts look like routing
+# words) and dotted names such as `payload.csv` or `“manifest.json”`.
+_CANONICAL_ARTIFACT_RE = re.compile(r"(?:^|[^\w.\-/])(?:~|\.{1,2})?/|\w\.\w")
 
-# Top-level roots of this repository and absolute/relative path prefixes. A
-# quoted slash compound is a path reference only when it is anchored here;
-# `Human/Ops` or `External-data/dataset` stay gate evidence.
-_CODE_REFERENCE_PATH_ROOTS = frozenset({
-    ".github", ".githooks", ".orchestrator", "apps", "archive", "config",
-    "delivery_toolchain", "docs", "docs-site", "docs_archive", "infra",
-    "models", "modules", "packages", "pipelines", "product_ops", "scripts",
-    "services", "shared", "solver", "support", "tests",
-})
 
-
-def _is_explicit_code_path_reference(span: str) -> bool:
-    """Whether a quoted Markdown span is a proven path, not gate prose."""
-    text = span.strip()
-    if not text or any(char.isspace() for char in text):
-        return False
-    if not re.fullmatch(r"[A-Za-z0-9_.\-/]+", text):
-        return False
-    if text.startswith(("/", "./", "../")):
-        return True
-    if _CODE_REFERENCE_FILE_EXTENSION_RE.search(text):
-        return True
-    root, separator, rest = text.partition("/")
-    return bool(separator and rest) and root.casefold() in _CODE_REFERENCE_PATH_ROOTS
+def _strip_explicit_code_reference_clauses(context: str) -> str:
+    context = _CODE_REFERENCE_LABEL_CLAUSE_RE.sub(" ", context)
+    return _CODE_REFERENCE_FAILURE_LOCATION_RE.sub(lambda match: f"{match.group(1)} ", context)
 
 
 def blocked_task_prose_context(
@@ -4374,17 +4377,14 @@ def blocked_task_prose_context(
 
     # 1. Strip code blocks and inline backticks. In canonical blocker prose,
     # Markdown quoting is not proof of code: `human approval`, `pending_human`
-    # or a quoted gate field name may be the gate itself. Drop only spans that
-    # are an explicit repository/filesystem path; unwrap every other span so
-    # hard/unknown classification still sees its content.
+    # or `docs/approval.json` may be the gate itself. Remove only the bounded
+    # explicit reference clauses, then unwrap every remaining span so
+    # hard/unknown/artifact classification still sees its content.
     if canonical_gate_prose:
+        context = _strip_explicit_code_reference_clauses(context)
         context = re.sub(
             r"```([\s\S]*?)```|`([^`]*)`",
-            lambda match: (
-                " "
-                if _is_explicit_code_path_reference(match.group(1) if match.group(1) is not None else match.group(2))
-                else f" {match.group(1) if match.group(1) is not None else match.group(2)} "
-            ),
+            lambda match: f" {match.group(1) if match.group(1) is not None else match.group(2)} ",
             context,
         )
     else:
@@ -4393,27 +4393,24 @@ def blocked_task_prose_context(
 
     # 2. Strip <key>=<value> pairs. Canonical blocker prose keeps both sides
     # as words: `approval=pending` is gate evidence, not a code reference.
-    # An explicit path value is still removed by step 3 below.
     if canonical_gate_prose:
         context = re.sub(r"\s*=\s*", " ", context)
     else:
         context = re.sub(r"[A-Za-z0-9_.\-/]+\s*=\s*[A-Za-z0-9_.\-/]+", " ", context)
 
-    # 3. Strip unambiguous filesystem paths and file references.
-    # Absolute paths (/...), relative dot paths (./... or ../...), and
-    # explicit file extensions (.py, .json, etc.) are unambiguous code.
-    # Bare slash compounds (e.g. 'External-data/dataset', 'Human/Ops',
-    # 'provider/worktree', 'raw/masked') are preserved in canonical gate
-    # prose without losing gate labels or sentence punctuation.
-    context = re.sub(r"(?<!\S)/(?:[A-Za-z0-9_.\-]+/)*[A-Za-z0-9_.\-]*[A-Za-z0-9_\-]+", " ", context)
-    context = re.sub(r"(?:\./|\.\./)[A-Za-z0-9_.\-/]*[A-Za-z0-9_\-]+", " ", context)
-    context = re.sub(
-        r"\b[A-Za-z0-9_.\-/]*[A-Za-z0-9_\-]+\.(?:py|sh|tf|yml|yaml|json|toml|md|csv|txt|log|lock|ini|cfg)\b",
-        " ",
-        context,
-        flags=re.IGNORECASE,
-    )
+    # 3. Strip filesystem paths and file references from ordinary notes only.
+    # In canonical blocker prose a path or filename may be the missing
+    # deliverable; it survives and fails closed unless step 1 proved it an
+    # explicit reference clause.
     if not canonical_gate_prose:
+        context = re.sub(r"(?<!\S)/(?:[A-Za-z0-9_.\-]+/)*[A-Za-z0-9_.\-]*[A-Za-z0-9_\-]+", " ", context)
+        context = re.sub(r"(?:\./|\.\./)[A-Za-z0-9_.\-/]*[A-Za-z0-9_\-]+", " ", context)
+        context = re.sub(
+            r"\b[A-Za-z0-9_.\-/]*[A-Za-z0-9_\-]+\.(?:py|sh|tf|yml|yaml|json|toml|md|csv|txt|log|lock|ini|cfg)\b",
+            " ",
+            context,
+            flags=re.IGNORECASE,
+        )
         context = re.sub(r"\b[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-/]*[A-Za-z0-9_\-]+\b", " ", context)
 
     # 4. Strip snake_case identifiers containing underscore. In canonical
@@ -4761,6 +4758,8 @@ def _token_is_allowed(part: str) -> bool:
 def _prose_tokens_all_allowed(text: str) -> bool:
     if not text or not text.strip():
         return True
+    if _CANONICAL_ARTIFACT_RE.search(text):
+        return False
     chunks = re.split(
         r"[ ,;.:\-_\/&|+*~^@#$%=\(\)\[\]{}<>\"\'\`!?\s；，。：（）【】！？、—·“”‘’→]+",
         text.casefold(),
@@ -4895,6 +4894,8 @@ def blocked_task_auto_recovery_eligible(
                 blocker_context,
                 flags=re.IGNORECASE,
             )
+            if _CANONICAL_ARTIFACT_RE.search(remaining_dep_prose):
+                return False
             residual = re.sub(r"[ ,;.:\-_/&|]+", " ", remaining_dep_prose).strip()
             if residual:
                 if not _is_recoverable_routing_prose(residual):
@@ -4909,6 +4910,8 @@ def blocked_task_auto_recovery_eligible(
             context,
             flags=re.IGNORECASE,
         )
+        if _CANONICAL_ARTIFACT_RE.search(context_after_dep):
+            return False
         residual_context = re.sub(r"[ ,;.:\-_/&|]+", " ", context_after_dep).strip()
         if residual_context and not _prose_tokens_all_allowed(residual_context):
             return False

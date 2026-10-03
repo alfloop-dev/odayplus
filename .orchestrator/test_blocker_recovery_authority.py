@@ -137,6 +137,30 @@ def test_note_cannot_release_canonical_external_blocker(board, message):
     "waiting for deploy job; provider handoff pending",
     "production 相關 job pending; provider handoff pending",
     "waiting for dependencies: UPSTREAM-DATASET-001; deployment job pending; provider handoff pending",
+    # A path or filename can name the missing deliverable; path syntax alone
+    # is not a code reference. Only an explicit refs=/see clause or a failure
+    # location proves that.
+    "waiting for dataset.csv; provider handoff pending",
+    "waiting for docs/approval.json; provider handoff pending",
+    "waiting for attestation.json; provider handoff pending",
+    "waiting for payload.csv; provider handoff pending",
+    "required manifest.json; provider handoff pending",
+    "waiting for `payload.csv`; provider handoff pending",
+    "waiting for “manifest.json”; provider handoff pending",
+    "等待「payload.csv」；provider handoff pending",
+    "waiting for /srv/inbox/payload; provider handoff pending",
+    "waiting for ./out/payload; provider handoff pending",
+    "waiting for ../handoff/payload; provider handoff pending",
+    "waiting for ~/provider/handoff; provider handoff pending",
+    "waiting for /provider/worktree; provider handoff pending",
+    "`/provider/worktree`; provider handoff pending",
+    "/provider/worktree",
+    "`docs/dataset`; provider handoff pending",
+    "/tmp/dataset; provider handoff pending",
+    "see payload.csv when provider handoff pending",
+    "provider failure in payload.csv still pending approval",
+    "waiting for dependencies: UPSTREAM-DATASET-001; waiting for payload.csv; provider handoff pending",
+    "waiting for dependencies: UPSTREAM-DATASET-001; /provider/worktree",
 ])
 def test_mixed_gate_prose_is_not_erased_as_a_path(board, completed_dependency, blocker_message):
     config, status, path = board
@@ -220,7 +244,7 @@ def test_released_scheduler_owned_gate_still_recovers_and_enqueues(board, scenar
     elif scenario == "references":
         task.update(depends_on=["UPSTREAM-DATASET-001"], next="stale provider failure in scripts/deployment.py; retry dispatch")
         status["tasks"].append({"id": "UPSTREAM-DATASET-001", "status": "done", "depends_on": []})
-        status["blockers"] = [hard_blocker(message="provider failure in scripts/deployment.py; refs=docs/dataset.json; `docs/dataset`; /tmp/dataset; ./docs/dataset; `scripts/ai_status.py`; `/tmp/dataset`; `.orchestrator/supervisor.py`; UPSTREAM-DATASET-001")]
+        status["blockers"] = [hard_blocker(message="provider failure in scripts/deployment.py; refs=docs/dataset.json; see `docs/dataset`; ref: /tmp/dataset; refs ./docs/dataset, `scripts/ai_status.py`; see `/tmp/dataset`; ref=`.orchestrator/supervisor.py`; provider crash at `../dataset/approval.json`; UPSTREAM-DATASET-001")]
     elif scenario == "dependency":
         task.update(depends_on=["UPSTREAM-DATASET-001"], next="waiting for dependencies: UPSTREAM-DATASET-001")
         status["tasks"].append({"id": "UPSTREAM-DATASET-001", "status": "done", "depends_on": []})
