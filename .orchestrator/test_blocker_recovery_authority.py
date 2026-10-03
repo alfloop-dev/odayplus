@@ -112,6 +112,7 @@ def test_note_cannot_release_canonical_external_blocker(board, message):
     {"external_data_gate": True}, {"human_gate": {"status": "pending"}},
     {"gate_status": "pending_human_signoff"}, {"waiting_for": "Human/Ops"},
     {"non_dispatchable": True}, {"task_class": "human_gate"},
+    {"blocked_reason": "dataset still missing"},
 ])
 def test_structured_gate_survives_note(board, gate):
     config, status, path = board
@@ -130,6 +131,10 @@ def test_structured_gate_survives_note(board, gate):
     hard_blocker(message="unrecorded business input still missing"),
     hard_blocker(message="provider error", waiting_for="Human/Ops"),
     hard_blocker(message="provider error", external_data_gate=True),
+    hard_blocker(message="provider handoff notification", kind="external_data"),
+    hard_blocker(message="stale worktree notification", kind="human_gate"),
+    hard_blocker(message="provider notification", kind="cross_repo_delivery"),
+    hard_blocker(message="stale provider", status="unknown"),
 ])
 def test_completed_dependency_cannot_release_an_independent_blocker(board, blocker):
     config, status, path = board
@@ -190,6 +195,13 @@ def test_task_only_map_is_not_authority_even_without_dependencies(board):
     task["next"] = "stale provider handoff"
     assert not supervisor.blocked_task_auto_recovery_eligible(config, task, {task["id"]: task})
     assert not supervisor.normalize_mainline_task_assignment(config, task, {task["id"]: task})
+
+
+def test_task_must_match_the_authorizing_snapshot(board):
+    config, status, path = board
+    task = deepcopy(status["tasks"][0])
+    task["next"] = "stale provider failure"
+    assert not supervisor.blocked_task_auto_recovery_eligible(config, task, status_snapshot=status)
 
 
 def test_snapshot_dependency_truth_overrides_optimistic_task_map(board):

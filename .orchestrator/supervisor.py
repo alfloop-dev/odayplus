@@ -4637,21 +4637,24 @@ def blocked_task_auto_recovery_eligible(
         return False
     declared_dependencies = [str(dep).strip() for dep in (task.get("depends_on") or []) if str(dep).strip()]
     dependency_gate_released = False
-    if task_map is not None:
-        done_statuses = {
-            str(value).lower()
-            for value in ready_dispatch_settings(config).get("dependency_done_statuses", ["done"])
-        }
-        if not dependencies_satisfied(task, task_map, done_statuses):
-            return False
-        dependency_gate_released = bool(declared_dependencies)
-    context = blocked_task_prose_context(task)
+    done_statuses = {
+        str(value).lower()
+        for value in ready_dispatch_settings(config).get("dependency_done_statuses", ["done"])
+    }
+    if not dependencies_satisfied(task, task_map, done_statuses):
+        return False
+    dependency_gate_released = bool(declared_dependencies)
+    context = blocked_task_prose_context({
+        **task,
+        "next": f"{task.get('next') or ''} {task.get('blocked_reason') or ''}",
+    })
     hard_gate_markers = (
         "human/ops", "human gate", "pending_human", "authoritative", "dataset", "attestation",
         "external-data", "mlflow", "deploy dev", "live-e2e", "production alias", "merge queue",
         "operator intervention", "manual approval", "requires operator",
         "external data", "deployment", "production", "sign-off", "signoff",
-        "approval required", "approval gate",
+        "approval required", "approval gate", "credentials gate", "credential gate",
+        "pending human", "cross repo delivery",
     )
     routing_markers = (
         "auto-reassigned", "sidecar-only", "quota", "auth", "credential", "worktree",
@@ -4679,7 +4682,12 @@ def blocked_task_auto_recovery_eligible(
             "depends_on": declared_dependencies,
             "next": " ".join(str(blocker.get(key) or "") for key in ("kind", "message", "reason")),
         })
-        if any(marker in blocker_context for marker in hard_gate_markers):
+        # `kind` is structured classification, not a code identifier. Do not
+        # strip e.g. external_data / human_gate as snake_case prose noise.
+        blocker_kind = str(blocker.get("kind") or "").strip().casefold().replace("_", " ")
+        if blocker_kind == "human" or any(
+            marker in f"{blocker_kind} {blocker_context}" for marker in hard_gate_markers
+        ):
             return False
         dependency_blocker = dependency_gate_released and (
             blocker.get("kind") == "dependency"
