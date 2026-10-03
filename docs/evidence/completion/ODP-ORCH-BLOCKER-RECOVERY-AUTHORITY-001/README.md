@@ -2,6 +2,10 @@
 
 Task: ODP-ORCH-BLOCKER-RECOVERY-AUTHORITY-001 · Owner Pi · Reviewer Codex2
 
+Review-round sections below record historical implementations, not cumulative
+sanitization permissions. The latest reopen-8 section describes current slash
+handling; finalization receipts must still bind the exact submitted head.
+
 ## Reproduction and authority
 
 The isolated production dispatcher reproduces the reported failure without
@@ -212,6 +216,55 @@ the explicit reference grammars and still recovers with a completed
 dependency, alongside routing/dependency/resolved positives, missing
 snapshot, CAS and `AutomaticRecoveryTests`. Exact-head receipts come from the
 declared verification gate at submission.
+
+## Reopen 8: extensionless relative artifacts (Pi)
+
+Codex2 rejected `c6943d253de9`: relative `auth/credentials`,
+`runtime/credentials` and `provider/worktree` lacked both a leading path marker
+and a file extension. The classifier split them into allowlisted routing words,
+releasing required artifacts despite an ordinary note carrying no release
+authority.
+
+Regression anchor `87f6bcf08a96` first adds the exact production-entry messages
+(with and without done dependencies), bare/quoted routing-named paths,
+demanded paths followed by `failure`, dependency residuals and retained task
+`blocked_reason`. The real note/load/recovery/persist/CAS harness reproduces
+incorrect transitions; the declared two-file selection exits 1 (5.571s), receipt
+`712e5e23c3f4c55c`, copied here as `relative-path-red.json`. It is not a
+collection failure. The existing AutomaticRecoveryTests selection stays green.
+
+Fix anchor `72cffd788d8c` treats **every remaining slash as an atomic ambiguous
+artifact condition**, before either ordinary routing tokenization or completed
+dependency residual cleanup. This covers all relative/absolute extensionless
+forms without a filename/root allowlist. The only slash-compound exception is
+an entire, boundary-anchored provider/quota/worktree failure clause, e.g.
+`provider quota/worktree failure` or `stale provider/worktree failure`.
+`waiting for provider/worktree`, `required provider quota/worktree failure`
+and bare quoted paths do not match this grammar. No allowed-token list was
+expanded, and no assertion was removed.
+
+Explicit bounded `refs=`/`ref:`/`see` and failure-location clauses remain
+incidental source references, now positively tested with extensionless
+`auth/credentials`, `runtime/credentials` and `provider/worktree` references.
+Pure routing still resolves/enqueues; dependency-only recovery, resolved
+history, Chinese unknown prose, missing snapshots and parallel human-blocker
+CAS protection remain covered. No cross-file snapshot scans or persistence
+changes were introduced by this correction.
+
+Fix-anchor receipts copied here:
+
+- `relative-path-green.json`: declared two-file selection, exit 0, 4.574s,
+  receipt `71433ea90bba1a2e`.
+- `relative-path-routing-green.json`: declared AutomaticRecoveryTests,
+  exit 0, 1.846s, receipt `03ef5618cc579bcd`.
+- `git diff --check`: exit 0, 0.016s, receipt `e9db5831d03d47bd` in the
+  existing receipt store.
+
+The existing generator recalculates the boundary inventory. Publication runs
+all three declarations on the final head after this evidence commit; anchor
+receipts are not substitutes for exact-head proof. No wider supervisor suite
+was run. Base `origin/dev` `e126cba49b93` was verified as an ancestor of the
+task head; no merge or history rewrite was necessary this dispatch.
 
 ## Runtime rollout and merge follow-up
 
