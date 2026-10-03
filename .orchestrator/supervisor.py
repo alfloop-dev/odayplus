@@ -4298,6 +4298,37 @@ def normalized_business_priority(value: Any, default: str = "P2") -> str:
     return status_transition.normalized_business_priority(value, default=default)
 
 
+_CODE_REFERENCE_FILE_EXTENSION_RE = re.compile(
+    r"\.(?:py|sh|tf|yml|yaml|json|toml|md|csv|txt|log|lock|ini|cfg)$",
+    re.IGNORECASE,
+)
+
+# Top-level roots of this repository and absolute/relative path prefixes. A
+# quoted slash compound is a path reference only when it is anchored here;
+# `Human/Ops` or `External-data/dataset` stay gate evidence.
+_CODE_REFERENCE_PATH_ROOTS = frozenset({
+    ".github", ".githooks", ".orchestrator", "apps", "archive", "config",
+    "delivery_toolchain", "docs", "docs-site", "docs_archive", "infra",
+    "models", "modules", "packages", "pipelines", "product_ops", "scripts",
+    "services", "shared", "solver", "support", "tests",
+})
+
+
+def _is_explicit_code_path_reference(span: str) -> bool:
+    """Whether a quoted Markdown span is a proven path, not gate prose."""
+    text = span.strip()
+    if not text or any(char.isspace() for char in text):
+        return False
+    if not re.fullmatch(r"[A-Za-z0-9_.\-/]+", text):
+        return False
+    if text.startswith(("/", "./", "../")):
+        return True
+    if _CODE_REFERENCE_FILE_EXTENSION_RE.search(text):
+        return True
+    root, separator, rest = text.partition("/")
+    return bool(separator and rest) and root.casefold() in _CODE_REFERENCE_PATH_ROOTS
+
+
 def blocked_task_prose_context(
     task: dict[str, Any], *, canonical_gate_prose: bool = False,
 ) -> str:
@@ -4341,9 +4372,24 @@ def blocked_task_prose_context(
         if token:
             context = context.replace(token, " ")
 
-    # 1. Strip code blocks and inline backticks
-    context = re.sub(r"```[\s\S]*?```", " ", context)
-    context = re.sub(r"`[^`]*`", " ", context)
+    # 1. Strip code blocks and inline backticks. In canonical blocker prose,
+    # Markdown quoting is not proof of code: `human approval`, `pending_human`
+    # or a quoted gate field name may be the gate itself. Drop only spans that
+    # are an explicit repository/filesystem path; unwrap every other span so
+    # hard/unknown classification still sees its content.
+    if canonical_gate_prose:
+        context = re.sub(
+            r"```([\s\S]*?)```|`([^`]*)`",
+            lambda match: (
+                " "
+                if _is_explicit_code_path_reference(match.group(1) if match.group(1) is not None else match.group(2))
+                else f" {match.group(1) if match.group(1) is not None else match.group(2)} "
+            ),
+            context,
+        )
+    else:
+        context = re.sub(r"```[\s\S]*?```", " ", context)
+        context = re.sub(r"`[^`]*`", " ", context)
 
     # 2. Strip <key>=<value> pairs. Canonical blocker prose keeps both sides
     # as words: `approval=pending` is gate evidence, not a code reference.

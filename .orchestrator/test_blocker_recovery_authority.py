@@ -124,6 +124,15 @@ def test_note_cannot_release_canonical_external_blocker(board, message):
     "gate_status=pending_human_signoff; provider handoff pending",
     "waiting for dependencies: UPSTREAM-DATASET-001; pending_human; provider handoff pending",
     "waiting for dependencies: UPSTREAM-DATASET-001; approval=pending; provider handoff pending",
+    "waiting for `human approval`; provider handoff pending",
+    "`仍欠業主准許`；provider handoff pending",
+    "`pending_human`; provider handoff pending",
+    "`approval=pending`; provider handoff pending",
+    "`external_data_gate`; provider handoff pending",
+    "`Human/Ops`; provider handoff pending",
+    "`External-data/dataset`; provider handoff pending",
+    "```\nawaiting client consent\n```; provider handoff pending",
+    "waiting for dependencies: UPSTREAM-DATASET-001; `pending_human`; provider handoff pending",
 ])
 def test_mixed_gate_prose_is_not_erased_as_a_path(board, completed_dependency, blocker_message):
     config, status, path = board
@@ -205,7 +214,7 @@ def test_released_scheduler_owned_gate_still_recovers_and_enqueues(board, scenar
     elif scenario == "references":
         task.update(depends_on=["UPSTREAM-DATASET-001"], next="stale provider failure in scripts/deployment.py; retry dispatch")
         status["tasks"].append({"id": "UPSTREAM-DATASET-001", "status": "done", "depends_on": []})
-        status["blockers"] = [hard_blocker(message="provider failure in scripts/deployment.py; refs=docs/dataset.json; `docs/dataset`; /tmp/dataset; ./docs/dataset; `external_data_gate`; UPSTREAM-DATASET-001")]
+        status["blockers"] = [hard_blocker(message="provider failure in scripts/deployment.py; refs=docs/dataset.json; `docs/dataset`; /tmp/dataset; ./docs/dataset; `scripts/ai_status.py`; `/tmp/dataset`; `.orchestrator/supervisor.py`; UPSTREAM-DATASET-001")]
     elif scenario == "dependency":
         task.update(depends_on=["UPSTREAM-DATASET-001"], next="waiting for dependencies: UPSTREAM-DATASET-001")
         status["tasks"].append({"id": "UPSTREAM-DATASET-001", "status": "done", "depends_on": []})

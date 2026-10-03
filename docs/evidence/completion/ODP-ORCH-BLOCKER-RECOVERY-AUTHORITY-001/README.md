@@ -125,6 +125,43 @@ on the fix all pass, along with the existing references/routing/dependency
 positives, resolved-history, missing-snapshot and CAS cases. Exact-head
 receipts come from the declared verification gate at submission.
 
+## Review round 5: Markdown spans are not gate-release authority
+
+Codex2 rejected head `32894673805c` because canonical blocker sanitization
+still deleted every backtick span before hard/unknown classification. Open
+blockers ``waiting for `human approval`; provider handoff pending``,
+``` `仍欠業主准許`；provider handoff pending ``` and
+``` `pending_human`; provider handoff pending ``` lost their gate evidence and
+the remaining routing words authorized recovery (with and without a completed
+dependency).
+
+Fix (`blocked_task_prose_context`, canonical mode only): a quoted span (inline
+or fenced) is removed only when `_is_explicit_code_path_reference` proves it is
+a path: whitespace-free and either absolute/dot-relative, ending in a known
+file extension, or anchored at a top-level root of this repository
+(`docs/…`, `scripts/…`, `.orchestrator/…`). Every other span is unwrapped and
+classified as prose, so quoted human conditions, Chinese requirements,
+`pending_human`, `approval=pending`, `Human/Ops` and `External-data/dataset`
+remain hard/unknown evidence. Ordinary-note (non-canonical) mode is unchanged.
+
+Deliberate tightening: a quoted structured-gate field name such as
+`` `external_data_gate` `` is a canonical gate label in the same sense as
+`pending_human` (both are `ai_status` gate schema values), and shape alone
+cannot tell them apart, so it now fails closed. The explicit code/path
+positive keeps `scripts/deployment.py`, `refs=docs/dataset.json`,
+`` `docs/dataset` ``, `/tmp/dataset`, `./docs/dataset` and adds quoted
+`` `scripts/ai_status.py` ``, `` `/tmp/dataset` `` and
+`` `.orchestrator/supervisor.py` ``; it still recovers and enqueues.
+
+Added production-entry negatives (each with and without completed dependency):
+the three reviewer messages, `` `approval=pending` ``, `` `external_data_gate` ``,
+`` `Human/Ops` ``, `` `External-data/dataset` ``, a fenced `awaiting client
+consent` block, and `` `pending_human` `` inside a dependency blocker. Against
+head `32894673805c`, 17 of these fail (blocked → todo); on the fix all pass,
+together with the existing routing/dependency/references positives,
+resolved-history, missing-snapshot, Chinese failclosed and CAS cases.
+Exact-head receipts come from the declared verification gate at submission.
+
 ## Runtime rollout and merge follow-up
 
 **Source-only correction: no supervisor restart, runtime switch, XR/gate/IAM or
