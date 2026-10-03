@@ -60,6 +60,17 @@ PRINCIPAL_MAP = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _isolate_bound_persistence():
+    # create_app binds a persistence bundle / audit log into module globals that
+    # outlive the app; a test elsewhere that closes its engine without unbinding
+    # leaves principal_from_headers auditing into a closed SQLite database.
+    # reset_default_boundary() only clears the cached boundary, so unbind here.
+    deps.reset_bound_persistence()
+    yield
+    deps.reset_bound_persistence()
+
+
 def _config(**overrides) -> AuthBoundaryConfig:
     base = {
         "issuer": ISSUER,

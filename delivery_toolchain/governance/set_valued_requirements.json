@@ -9,16 +9,32 @@
     "records": {
       "ODP-SA-06": {
         "status": "BLOCKED_BY_EVIDENCE",
+        "blocked_on": "authority_ratification",
+        "source_artifact": {
+          "container_path": "oday_plus_batch_02_sa_documents.zip",
+          "container_git_blob": "362fbf7aeaf7ce6aba786ea89a1a0378340edb60",
+          "container_sha256": "63a10ee035be3e47d541f92558998bbb0eb88d03595409f3bb15d5ac53455fe0",
+          "container_first_commit": "297a76189c7a21354ae9e09bcbd43453e6bb22b3",
+          "member_path": "ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md",
+          "member_size_bytes": 20223,
+          "content_sha256": "43dad7bf171a5e80511a01fd289bf2132c060e08c27799dcd8f91f86fb2073ec",
+          "location": "github://alfloop-dev/odayplus@1b14b276447a7778f1dad1045ced1a5bd6abe01e/oday_plus_batch_02_sa_documents.zip!ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md",
+          "front_matter": {
+            "doc_id": "ODP-SA-06",
+            "version": "0.1.0",
+            "status": "draft-for-review",
+            "updated_at": "2026-06-26",
+            "owner": "Product Lead",
+            "approvers": "Domain Business Owners / Architecture Owner / QA Lead"
+          },
+          "located_at": "2026-10-03",
+          "located_ref": "1b14b276447a7778f1dad1045ced1a5bd6abe01e"
+        },
         "canonical_source": {
           "document_id": "ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md",
-          "version": null,
-          "location": null,
-          "content_sha256": null,
-          "lookup": [
-            "github://alfloop-dev/odayplus@75d25f653aa12c21a3f9627f29af2ed4def73153/ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md",
-            "github://alfloop-dev/odayplus@75d25f653aa12c21a3f9627f29af2ed4def73153/docs/design/ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md"
-          ],
-          "blocked_reason": "Neither expected path exists at the pinned ref; the repository amendment only declares amends and does not contain the original artifact."
+          "ratified": false,
+          "ratification_evidence": null,
+          "blocked_reason": "The bytes are located and hashed, but their front matter says status: draft-for-review and names approvers without any approval record. No Product Lead or source-custodian confirmation that version 0.1.0 of this ZIP member is the ratified canonical ODP-SA-06 exists in the repo. Finding the bytes is provenance of the bytes, not ratification of the specification."
         },
         "repo_transcription": {
           "path": "docs/evidence/ODP_FR_VERIFICATION_112_AND_ROOT_CAUSES_2026-09-01.md",
@@ -27,22 +43,62 @@
           "scope": "Cause 02 and Appendix A summarize ODP-SA-06 but are repo evidence, not the canonical specification."
         },
         "evidence_owner": "Product Lead",
-        "next_check_date": "2026-09-10",
-        "recheck": "Obtain the original artifact or immutable source ref from Product/source custodian, then record version, exact location, and SHA-256."
+        "next_check_date": "2026-10-17",
+        "recheck": "Product Lead or the source custodian confirms in a traceable record whether oday_plus_batch_02_sa_documents.zip!ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md version 0.1.0 (sha256 43dad7bf...73ec) is the ratified canonical ODP-SA-06, or supplies the ratified later version with its own location and SHA-256.",
+        "history": [
+          {
+            "observed_at": "2026-09-03",
+            "observed_ref": "75d25f653aa12c21a3f9627f29af2ed4def73153",
+            "status": "BLOCKED_BY_EVIDENCE",
+            "canonical_source": {
+              "document_id": "ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md",
+              "version": null,
+              "location": null,
+              "content_sha256": null,
+              "lookup": [
+                "github://alfloop-dev/odayplus@75d25f653aa12c21a3f9627f29af2ed4def73153/ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md",
+                "github://alfloop-dev/odayplus@75d25f653aa12c21a3f9627f29af2ed4def73153/docs/design/ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md"
+              ],
+              "blocked_reason": "Neither expected path exists at the pinned ref; the repository amendment only declares amends and does not contain the original artifact."
+            },
+            "evidence_owner": "Product Lead",
+            "next_check_date": "2026-09-10",
+            "recheck": "Obtain the original artifact or immutable source ref from Product/source custodian, then record version, exact location, and SHA-256."
+          },
+          {
+            "observed_at": "2026-10-03",
+            "observed_ref": "1b14b276447a7778f1dad1045ced1a5bd6abe01e",
+            "status": "BLOCKED_BY_EVIDENCE",
+            "note": "Correction: the 2026-09-03 lookup checked two loose-file paths and object names only. The original bytes were tracked inside oday_plus_batch_02_sa_documents.zip at the repository root since the initial commit 297a7618 (2026-06-26), so they were already present at 75d25f65. 'Not found' was a lookup miss, not an absence. Version, exact location and SHA-256 are now recorded; the remaining gap is authority ratification only."
+          }
+        ]
       },
       "ODP-FR-AVM-001": {
         "status": "BLOCKED_BY_EVIDENCE",
+        "blocked_on": "authority_ratification",
+        "source_artifact": {
+          "parent_record": "ODP-SA-06",
+          "location": "github://alfloop-dev/odayplus@1b14b276447a7778f1dad1045ced1a5bd6abe01e/oday_plus_batch_02_sa_documents.zip!ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md#L104",
+          "line": 104,
+          "row_text": "| `ODP-FR-AVM-001` | 系統必須整合 GM_TTM、GM_FWD、折舊、資產、租約與正常化調整。 | DealRoomAVM | 依模組流程或資料更新觸發 | 可由 API／UI／Job／報表或 Audit 驗證 | MUST | `ODP-HLR-AVM-*` |",
+          "row_sha256": "0a516d3b167aea0cd4858250b5b3630651597de2ad72d22ba11957f6faabcc3a",
+          "document_content_sha256": "43dad7bf171a5e80511a01fd289bf2132c060e08c27799dcd8f91f86fb2073ec",
+          "document_version": "0.1.0",
+          "located_at": "2026-10-03",
+          "located_ref": "1b14b276447a7778f1dad1045ced1a5bd6abe01e"
+        },
+        "transcription_comparison": {
+          "source_statement": "系統必須整合 GM_TTM、GM_FWD、折舊、資產、租約與正常化調整。",
+          "manifest_statement": "估值必須組合 GM_TTM、GM_FWD、折舊、資產、租約與正常化。",
+          "members_match": true,
+          "differences": "Wording only: the source says 系統必須整合 (system must integrate) and 正常化調整 (normalization adjustment); the manifest transcription says 估值必須組合 and 正常化. The six members GM_TTM, GM_FWD, 折舊, 資產, 租約, 正常化 are the same set in the same order.",
+          "acceptance_column": "可由 API／UI／Job／報表或 Audit 驗證 -- the shared boilerplate; the row carries no member-level acceptance criteria."
+        },
         "canonical_source": {
           "document_id": "ODP-FR-AVM-001",
-          "version": null,
-          "location": null,
-          "content_sha256": null,
-          "expected_location": "ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md AVM-001 row (inferred, not verified)",
-          "lookup": [
-            "github://alfloop-dev/odayplus@75d25f653aa12c21a3f9627f29af2ed4def73153/ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md",
-            "github://alfloop-dev/odayplus@75d25f653aa12c21a3f9627f29af2ed4def73153/docs/evidence/ODP-FR-AVM-001.md"
-          ],
-          "blocked_reason": "No standalone requirement artifact or source row with verifiable version, location, and bytes was found; the repo contains only an AVM-001 summary in the verification report."
+          "ratified": false,
+          "ratification_evidence": null,
+          "blocked_reason": "The AVM-001 row is located at a pinned line of the hashed ODP-SA-06 bytes, which inherit that document's unratified draft-for-review status. See ODP-SA-06 ratification gap."
         },
         "repo_transcription": {
           "path": "docs/evidence/ODP_FR_VERIFICATION_112_AND_ROOT_CAUSES_2026-09-01.md",
@@ -51,10 +107,41 @@
           "scope": "Appendix A AVM-001 row summarizes GM_TTM, GM_FWD, depreciation, asset, lease, and normalization; it is not the full FR text."
         },
         "evidence_owner": "Product Lead",
-        "next_check_date": "2026-09-10",
-        "recheck": "Confirm whether AVM-001 belongs to the original ODP-SA-06 artifact or a separate canonical AVM document, then hash the retrieved source bytes."
+        "next_check_date": "2026-10-17",
+        "recheck": "Resolved together with ODP-SA-06 ratification; no separate AVM document is needed unless Product names one.",
+        "history": [
+          {
+            "observed_at": "2026-09-03",
+            "observed_ref": "75d25f653aa12c21a3f9627f29af2ed4def73153",
+            "status": "BLOCKED_BY_EVIDENCE",
+            "canonical_source": {
+              "document_id": "ODP-FR-AVM-001",
+              "version": null,
+              "location": null,
+              "content_sha256": null,
+              "expected_location": "ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md AVM-001 row (inferred, not verified)",
+              "lookup": [
+                "github://alfloop-dev/odayplus@75d25f653aa12c21a3f9627f29af2ed4def73153/ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md",
+                "github://alfloop-dev/odayplus@75d25f653aa12c21a3f9627f29af2ed4def73153/docs/evidence/ODP-FR-AVM-001.md"
+              ],
+              "blocked_reason": "No standalone requirement artifact or source row with verifiable version, location, and bytes was found; the repo contains only an AVM-001 summary in the verification report."
+            },
+            "evidence_owner": "Product Lead",
+            "next_check_date": "2026-09-10",
+            "recheck": "Confirm whether AVM-001 belongs to the original ODP-SA-06 artifact or a separate canonical AVM document, then hash the retrieved source bytes."
+          },
+          {
+            "observed_at": "2026-10-03",
+            "observed_ref": "1b14b276447a7778f1dad1045ced1a5bd6abe01e",
+            "status": "BLOCKED_BY_EVIDENCE",
+            "note": "Correction: AVM-001 is line 104 of ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md inside oday_plus_batch_02_sa_documents.zip; the expected location inferred on 2026-09-03 is now verified against bytes. Remaining gap is authority ratification only."
+          }
+        ]
       }
-    }
+    },
+    "updated_at": "2026-10-03",
+    "updated_ref": "1b14b276447a7778f1dad1045ced1a5bd6abe01e",
+    "update_evidence": "docs/evidence/completion/ODP-REMEDIATION-TRUTH-RECONCILIATION-001/README.md"
   },
   "requirements": [
     {
@@ -456,14 +543,34 @@
         },
         {
           "name": "PREDICTION_DRIFT",
-          "status": "absent",
-          "note": "Nothing monitors the distribution of model outputs. DataDriftPreset is the only preset used anywhere in the tree.",
+          "status": "satisfied",
+          "note": "Program delivered: PR #1154 (merge 0cbc5330f6a076344d2dff32370dedae5b82da4a, ODP-LH-PREDICTION-DRIFT-001) wired LearningHubService.monitor_prediction_drift, which requires a resolved DecisionPolicy, the current production model version, declared prediction output types and both snapshot ids, then runs modules/learninghub/infrastructure/evidently_monitor.py::EvidentlyDriftMonitor.run_prediction and records a PREDICTION_DRIFT MonitoringEvaluation; modules/learninghub/workers/release_worker.py calls it. ODP-DRIFT-DEP-REMOVE-002 later replaced the Evidently package with the native engine, so the old note ('DataDriftPreset is the only preset') no longer describes the tree. Offline tests (modules/learninghub/tests/test_prediction_drift.py) are not a production run: no receipt exists of this monitor evaluating a real production model, and the real Forecast model/history handoff is itself still missing (ODP-MODEL-ARTIFACT-HISTORY-RECOVERY-001).",
           "disposition": {
-            "state": "IMPLEMENTATION_READY",
-            "assigned_to": "ML Monitoring Lead",
-            "target_phase": "Batch 4a (ODP Remediation Plan)",
-            "rationale": "Evidently prediction distribution drift monitor scheduled for implementation in Batch 4a."
-          }
+            "state": "BLOCKED_BY_EVIDENCE",
+            "previous_state": "IMPLEMENTATION_READY",
+            "history": [
+              {
+                "state": "IMPLEMENTATION_READY",
+                "date": "2026-09-03",
+                "note": "Registered absent; Evidently prediction distribution drift monitor scheduled for implementation in Batch 4a.",
+                "assigned_to": "ML Monitoring Lead",
+                "target_phase": "Batch 4a (ODP Remediation Plan)"
+              },
+              {
+                "state": "BLOCKED_BY_EVIDENCE",
+                "date": "2026-10-03",
+                "observed_ref": "1b14b276447a7778f1dad1045ced1a5bd6abe01e",
+                "source_sha": "0cbc5330f6a076344d2dff32370dedae5b82da4a",
+                "note": "Implementation merged in PR #1154; reclassified satisfied in code, blocked on a live production receipt."
+              }
+            ],
+            "evidence_needed": "A production receipt of LearningHubService.monitor_prediction_drift evaluating the actual PRODUCTION-alias model version against real reference/current prediction snapshots under a governed DecisionPolicy, with the MonitoringEvaluation and any retraining request read back from the production repository.",
+            "evidence_owner": "ML Monitoring Lead",
+            "next_review_date": "2026-10-17",
+            "evidence_ref": "docs/evidence/completion/ODP-REMEDIATION-TRUTH-RECONCILIATION-001/README.md",
+            "rationale": "The monitor exists, is wired into the release worker and is covered by offline tests, so the member is satisfied as code. It has never run against a real production model, so the run-time acceptance stays blocked rather than VERIFIED."
+          },
+          "evidence": "modules/learninghub/application/release.py::LearningHubService.monitor_prediction_drift"
         },
         {
           "name": "PERFORMANCE_DRIFT",
@@ -507,23 +614,42 @@
         },
         {
           "name": "EVENT",
-          "status": "absent",
-          "note": "The machine_status_event schema contract declares integration_mode=event_stream and envelope=event, but in production core.machine_status_events is populated via batch watermark reads of device_log (store.py:394-401). No event broker/stream consumer currently exists in production.",
+          "status": "satisfied",
+          "note": "Program delivered, scoped: PR #1340 (merge dc0eb370b29e50f2fc916e008bdab3d08e0a3ddc, ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001) implemented H07 decision 5 -- the device_log change stream that feeds core.machine_status_events (the machine_status_event contract declaring integration_mode=event_stream) is consumed by the Dagster-resident scoped_cdc_device_log_sensor through apps/data_platform/cdc.py::ScopedCdcAdapter, with no message broker by ruling. So 'no stream consumer exists' is no longer true of the code. Remaining scope: the sensor ships DefaultSensorStatus.STOPPED and has never been started against fongniao_prod; core.machine_status_events still has no record-lifecycle column, so a device_log retirement keeps the row and records only a tombstone (ODP-CDC-MACHINE-EVENT-LIFECYCLE-001 owns that); the batch watermark path remains the fallback; replica-set, oplog window and sub-10s latency are unmeasured.",
           "disposition": {
-            "state": "OPEN",
+            "state": "BLOCKED_BY_EVIDENCE",
+            "previous_state": "OPEN",
+            "history": [
+              {
+                "state": "OPEN",
+                "date": "2026-09-03",
+                "note": "The machine_status_event schema contract declares integration_mode=event_stream and envelope=event, but in production core.machine_status_events is populated via batch watermark reads of device_log (store.py:394-401). No event broker/stream consumer currently exists in production."
+              },
+              {
+                "state": "BLOCKED_BY_EVIDENCE",
+                "date": "2026-10-03",
+                "observed_ref": "1b14b276447a7778f1dad1045ced1a5bd6abe01e",
+                "source_sha": "dc0eb370b29e50f2fc916e008bdab3d08e0a3ddc",
+                "note": "Scoped device_log stream consumer merged in PR #1340; reclassified satisfied in code, blocked on lifecycle column and live evidence."
+              }
+            ],
             "assigned_to": "Platform Infrastructure Lead",
-            "next_review_date": "2026-10-01",
-            "rationale": "Schema contract declares event_stream mode but production ingestion path executes via device_log batch ingestion; reconcile contract or implement event consumer."
-          }
+            "evidence_needed": "(1) The core.machine_status_events record-lifecycle column with tenant/version-guarded soft retirement, merged with a forward migration (ODP-CDC-MACHINE-EVENT-LIFECYCLE-001); (2) a live run of scoped_cdc_device_log_sensor against fongniao_prod under the odp_cdc_reader role, with rs.status()/getReplicationInfo() readback and measured end-to-end latency against the sub-10s target.",
+            "evidence_owner": "Platform Infrastructure Lead / Data Platform Lead",
+            "next_review_date": "2026-10-17",
+            "evidence_ref": "docs/evidence/human-decisions/ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001/README.md",
+            "rationale": "The ruled event path exists in code and is tested offline, so the member is satisfied as code. It has not run live and the machine-event lifecycle is still missing, so it is not VERIFIED. H07 is already decided and is not asked again."
+          },
+          "evidence": "apps/data_platform/definitions.py::scoped_cdc_device_log_sensor"
         },
         {
           "name": "CDC",
-          "status": "absent",
-          "note": "Audited in ODP_INT001_CDC_SOURCE_EVIDENCE_2026-09-03.md and ODP_INT001_CDC_DISPOSITION_2026-09-03.md. User confirmed decision D20 on 2026-09-08 (Option A: implement CDC applicability matrix and contracts). Stage 34A delivered in ODP-CDC-SOURCE-CONTRACT-PREP-001 (PR #1258). Follow-up data-plane delete propagation and schema tasks created; Stage 34B assigned to ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001 pending H07.",
+          "status": "satisfied",
+          "note": "Program delivered, scoped: H07 was ruled on 2026-09-13 and PR #1340 (merge dc0eb370b29e50f2fc916e008bdab3d08e0a3ddc, ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001) implemented it in apps/data_platform/cdc.py: change streams for orders and device_log only (SCOPED_CDC_POLICIES; thirteen collections stay batch-only), resume-token checkpoints with snapshot recovery, in-adapter redaction, soft delete plus audit tombstone, GDPR erasure, and the data_plane.cdc_staging_events / cdc_checkpoints control tables, wired as STOPPED Dagster sensors. Earlier audit trail: ODP_INT001_CDC_SOURCE_EVIDENCE_2026-09-03.md, ODP_INT001_CDC_DISPOSITION_2026-09-03.md, D20 (2026-09-08), Stage 34A PR #1258. A scoped adapter is not a live CDC verification: no stream has been opened against the real cluster, the control-table DDL has not run on the real PostgreSQL, and latency is unmeasured.",
           "disposition": {
-            "state": "OPEN",
+            "state": "BLOCKED_BY_EVIDENCE",
+            "previous_state": "OPEN",
             "assigned_to": "Data Platform Lead",
-            "next_review_date": "2026-10-01",
             "history": [
               {
                 "state": "OPEN",
@@ -534,12 +660,23 @@
                 "state": "OPEN",
                 "date": "2026-09-08",
                 "note": "User confirmed decision D20 (implement CDC applicability and contract); Stage 34A delivered in ODP-CDC-SOURCE-CONTRACT-PREP-001 (PR #1258); Stage 34B assigned to ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001 pending H07."
+              },
+              {
+                "state": "BLOCKED_BY_EVIDENCE",
+                "date": "2026-10-03",
+                "observed_ref": "1b14b276447a7778f1dad1045ced1a5bd6abe01e",
+                "source_sha": "dc0eb370b29e50f2fc916e008bdab3d08e0a3ddc",
+                "note": "H07 ruled 2026-09-13; Stage 34B scoped adapter merged in PR #1340. Reclassified satisfied in code, blocked on live evidence."
               }
             ],
-            "rationale": "User confirmed D20 implementation direction; Stage 34A source applicability matrix and event contract draft delivered. Data plane delete propagation and schema follow-up tasks registered; Stage 34B awaiting H07 human decision on candidate streams and SLA.",
-            "evidence_ref": "docs/evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/README.md",
+            "evidence_needed": "Live evidence the ruled scope runs: upstream replica-set and oplog-window readback (rs.status() or db.getReplicationInfo()), the odp_cdc_reader role readback, cdc_checkpoints/cdc_staging_events DDL applied on the real PostgreSQL through the install path, and measured orders/device_log end-to-end latency against the sub-10s target from a started scoped CDC sensor.",
+            "evidence_owner": "Data Platform Lead",
+            "next_review_date": "2026-10-17",
+            "rationale": "The adapter implements every H07 decision in code with offline tests, so the member is satisfied as code. The module itself states it proves nothing about the live cluster, so the member stays blocked on live evidence and is not VERIFIED. H07 is already decided and is not asked again.",
+            "evidence_ref": "docs/evidence/human-decisions/ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001/README.md",
             "formal_handback_ref": "docs/evidence/ODP_INT001_CDC_DISPOSITION_2026-09-03.md"
-          }
+          },
+          "evidence": "apps/data_platform/cdc.py::ScopedCdcAdapter"
         }
       ]
     },
@@ -591,7 +728,7 @@
     {
       "id": "ODP-FR-AVM-001",
       "statement": "估值必須組合 GM_TTM、GM_FWD、折舊、資產、租約與正常化。",
-      "statement_provenance": "_source_provenance.records['ODP-FR-AVM-001'] -- BLOCKED_BY_EVIDENCE. This statement is a repo transcription of the AVM-001 row in docs/evidence/ODP_FR_VERIFICATION_112_AND_ROOT_CAUSES_2026-09-01.md, not canonical bytes. The member list below is therefore asserted 'as transcribed', and no disposition here claims canonical traceability.",
+      "statement_provenance": "_source_provenance.records['ODP-FR-AVM-001'] -- BLOCKED_BY_EVIDENCE on authority ratification only. The statement below is the repo transcription; the source row is line 104 of oday_plus_batch_02_sa_documents.zip!ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md (version 0.1.0, sha256 43dad7bf171a5e80511a01fd289bf2132c060e08c27799dcd8f91f86fb2073ec, row sha256 0a516d3b167aea0cd4858250b5b3630651597de2ad72d22ba11957f6faabcc3a) and lists the same six members. Those bytes are a draft-for-review document, so no disposition here claims ratified canonical traceability.",
       "member_count": 6,
       "members": [
         {
@@ -614,15 +751,34 @@
         },
         {
           "name": "DEPRECIATION",
-          "status": "absent",
-          "note": "No depreciation reaches the valuation path. The only depreciation in the tree is modules/site_economics/domain/simulator.py:325-357, where it is a tax shield on a greenfield store's projected cash flow -- a different quantity, on a different clock, for a different consumer -- and modules/avm does not import it. The verdict is AVM-specific and its four pieces of evidence, the input fields, the version fields, the legacy-card rules and the rollback guarantee are in docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md; the disposition is registered at docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md section 4.9 and evidenced at docs/evidence/ODP_AVM001_DEPRECIATION_DISPOSITION_2026-09-04.md. This member stays absent until an implementation lands: the contract is written, the gap is not closed.",
+          "status": "satisfied",
+          "note": "Program delivered: PR #1295 (merge 898c192d59b0e39d51844b8596d952104771b6d8, ODP-AVM-DEPRECIATION-INTEGRATION-001) added modules/avm/domain/valuation.py::calculate_depreciation and applies it in modules/avm/application/production.py::AVMProductionExecutor; the eight xfail(strict=True) contract specs in modules/avm/tests/test_avm_depreciation_contract.py were removed because they pass. The contract stays docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md, the earlier disposition evidence stays docs/evidence/ODP_AVM001_DEPRECIATION_DISPOSITION_2026-09-04.md, and the registry entry is docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md section 4.9. Production v1 activation refuses to run without DepreciationCutoverEvidence (Finance approved_by/approved_at, thresholds_reference and the three R-4 thresholds); no such Finance evidence exists, so the v1 depreciation path is not active in production.",
           "disposition": {
-            "state": "IMPLEMENTATION_READY",
-            "assigned_to": "AVM Domain Lead / Finance Analytics Lead",
-            "target_phase": "Batch 1 (ODP Remediation Plan) -- AVM valuation",
-            "acceptance_criteria": "modules/avm/tests/test_avm_depreciation_contract.py -- eight xfail(strict=True) specs covering C-1 basis discrimination, C-2 input fields, C-3 straight-line calculation, C-4 evidence and version fields, C-5 fail-closed on missing inputs, L-1/L-2 legacy card handling, L-4 calibration version split, and R-1 bit-exact v0 rollback. strict=True means the specs turn red by XPASS the moment an implementation satisfies them, so the contract cannot be met without removing the markers deliberately.",
-            "rationale": "The remediation plan asked first whether AVM asset depreciation and the site_economics store cash-flow depreciation are the same concept. They are not: different measured object (a greenfield format's brand-new machine mix versus a specific store's N-month-old equipment), different destination (a tax shield that never lowers a carrying value versus a direct reduction of the asset lens), opposite clock origins, and a residual that is an exit cash inflow on one side and a carrying-value floor on the other. So the model is AVM-specific, and even the three-line straight-line formula is not extracted into a shared function, because the shared dependency would advertise a policy alignment that does not exist. What is missing is the implementation, not the specification: C-1..C-5, L-1..L-4 and R-1..R-4 are written and executable, an owner and a delivery batch are named. Two preconditions are recorded in the contract and belong to humans, not to this registration: the finance owner must fill in the three R-4 rollback thresholds before cutover, and the canonical requirement bytes remain BLOCKED_BY_EVIDENCE under _source_provenance."
-          }
+            "state": "BLOCKED_BY_EVIDENCE",
+            "previous_state": "IMPLEMENTATION_READY",
+            "history": [
+              {
+                "state": "IMPLEMENTATION_READY",
+                "date": "2026-09-04",
+                "note": "Contract written, implementation scheduled. Batch 1 (ODP Remediation Plan) -- AVM valuation",
+                "assigned_to": "AVM Domain Lead / Finance Analytics Lead",
+                "acceptance_criteria": "modules/avm/tests/test_avm_depreciation_contract.py -- eight xfail(strict=True) specs covering C-1 basis discrimination, C-2 input fields, C-3 straight-line calculation, C-4 evidence and version fields, C-5 fail-closed on missing inputs, L-1/L-2 legacy card handling, L-4 calibration version split, and R-1 bit-exact v0 rollback. strict=True means the specs turn red by XPASS the moment an implementation satisfies them, so the contract cannot be met without removing the markers deliberately."
+              },
+              {
+                "state": "BLOCKED_BY_EVIDENCE",
+                "date": "2026-10-03",
+                "observed_ref": "1b14b276447a7778f1dad1045ced1a5bd6abe01e",
+                "source_sha": "898c192d59b0e39d51844b8596d952104771b6d8",
+                "note": "Implementation merged in PR #1295; reclassified satisfied in code, blocked on Finance activation evidence."
+              }
+            ],
+            "evidence_needed": "Finance-owned DepreciationCutoverEvidence for the active depreciation policy: named approver and approval time, thresholds_reference, and the three R-4 rollback thresholds (asset delta ratio, unexplained cohort ratio, calibration coverage degradation), followed by a production AVM run read back with depreciation_applied=true.",
+            "evidence_owner": "Finance Analytics Lead / AVM Domain Lead",
+            "next_review_date": "2026-10-17",
+            "evidence_ref": "docs/evidence/completion/ODP-REMEDIATION-TRUTH-RECONCILIATION-001/README.md",
+            "rationale": "calculate_depreciation and the production cutover gate are merged and tested offline, so the member is satisfied as code. The gate exists precisely because activation needs Finance thresholds nobody has signed; until they exist the v1 path is refused at run time, and the member cannot be VERIFIED."
+          },
+          "evidence": "modules/avm/domain/valuation.py::calculate_depreciation"
         },
         {
           "name": "ASSET",
