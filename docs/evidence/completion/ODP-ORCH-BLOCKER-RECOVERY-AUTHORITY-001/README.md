@@ -182,6 +182,37 @@ snapshot, quoted/snake/kv/Chinese failclosed and CAS cases, and
 `AutomaticRecoveryTests`. Exact-head receipts come from the declared
 verification gate at submission.
 
+## Reopen 7: path/filename conditions (review of `c8fc0c0ed881`)
+
+Codex2 showed that canonical blocker prose still erased filenames and paths
+before hard/unknown classification, so `waiting for dataset.csv`, `waiting
+for docs/approval.json` or `waiting for attestation.json` left only
+allowlisted waiting/provider/handoff words and released the blocker. A path
+can name the missing deliverable itself; path syntax is not release
+authority.
+
+Canonical blocker and task gate prose now keep every path and filename by
+default. Only two bounded reference grammars remove one, each ending at a
+clause boundary: a whole `refs=`/`ref:`/`see` clause (`refs=docs/dataset.json`,
+``see `scripts/ai_status.py` ``) and a failure location (`provider failure in
+scripts/deployment.py`). Any remaining absolute, relative or home path —
+including an extensionless `/provider/worktree` whose slash-split parts are
+all allowlisted — or dotted filename fails closed, also in the
+completed-dependency residual checks. Ordinary-note sanitization is unchanged.
+
+Added production-entry negatives (with and without completed dependency): the
+three reviewer messages, `waiting for payload.csv`, `required manifest.json`,
+backtick, curly-quote and `「」` quoted filenames, `/srv/inbox/payload`,
+`./out/payload`, `../handoff/payload`, `~/provider/handoff`,
+`/provider/worktree` (bare, quoted and alone), standalone `` `docs/dataset` ``
+and `/tmp/dataset` clauses, and dependency blockers carrying a filename or
+extensionless absolute path. On the pre-fix supervisor 32 of these fail
+(blocked → todo); on the fix all pass. The references positive now uses only
+the explicit reference grammars and still recovers with a completed
+dependency, alongside routing/dependency/resolved positives, missing
+snapshot, CAS and `AutomaticRecoveryTests`. Exact-head receipts come from the
+declared verification gate at submission.
+
 ## Runtime rollout and merge follow-up
 
 **Source-only correction: no supervisor restart, runtime switch, XR/gate/IAM or
