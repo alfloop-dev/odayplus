@@ -1,47 +1,53 @@
 {
-  "schema_version": "1.0.0",
-  "generated_at": "2026-10-03T00:30:00Z",
+  "schema_version": "2.0.0",
+  "generated_at": "2026-10-03T02:00:00Z",
   "task_id": "ODP-RELEASE-ACCEPTANCE-CARRYFORWARD-001",
-  "owner": "Antigravity3",
-  "reviewer": "Codex2",
+  "owner": "Claude",
+  "reviewer": "Codex",
   "audited_prs": [
     {
       "repository": "alfloop-dev/odayplus",
       "pr_number": 1243,
       "head_sha": "3a9fb628d83bb0ff39e36ef652d3e4164922e992",
-      "comparison_base": "origin/dev (9a5ef53de695)",
+      "comparison_base": "origin/dev (734dcb652edf)",
       "branch": "task/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002-CLEAN",
       "title": "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002: clean evidence from C",
       "author": "Claude",
       "created_at": "2026-09-08T06:07:18Z",
       "state": "OPEN",
-      "exact_diff_summary": "Rebuilt evidence tree to bind candidate C (596b9c9a) and Runtime Release run 33942097235 into RELEASE_GATE_REGISTRY.json and documentation.",
-      "superseded_by": "PR #1387 / PR #1390 candidate rebind sequence and PR #1392 (ODP-DEV-CANDIDATE-REBIND-6140D0EF-001) merged into origin/dev.",
+      "exact_diff_summary": "22 files: modifies docs/evidence/gates/README.md, RELEASE_GATE_REGISTRY.json and RELEASE_MANIFEST.json to bind candidate 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12 with artifact-handoff Runtime Release run 34179791241 (images built by producer run 34179207603), and adds 19 evidence files under docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/ (including the historical-run-33942097235/ archive).",
+      "superseded_by": "Evidence directory docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/ landed through PR #1246 (ODP-DEV-CANDIDATE-GATE-RECONCILIATION-003 root clean commit, merge 00c0347383806e8aa6679ed78215b4ac31b1da57) and PR #1292 (merge 3613faff582bd1c5a2c9b2ae5b5cd390d8be381f); RELEASE_GATE_REGISTRY/RELEASE_MANIFEST are now bound to candidate 6140d0ef633cbf94522c171d9927103ab200257f by PR #1392 (ODP-DEV-CANDIDATE-REBIND-6140D0EF-001, merge fdf0fb9fde1dfd8e5de7636bbc3b0f8ee16a4e63).",
       "unlanded_code_remaining": false,
       "recommendation": "close_as_superseded",
-      "rationale": "The candidate SHA 596b9c9a was superseded by subsequent candidate builds (b175b231, f5496614, 48611d26, 6140d0ef). The canonical registry is now bound to candidate 6140d0ef in origin/dev. PR #1243 has no un-landed code and should be closed as superseded."
+      "rationale": "All 19 evidence paths already exist on origin/dev; the remaining diff in that directory is 3 files (README.md, verification-transcript.txt, and root-clean-ancestry-receipt.json which dev has and the PR lacks), where dev carries the later reviewed versions. Merging the gate files would rebind the canonical registry/manifest from 6140d0ef back to the stale 596b9c9a candidate. No code, only superseded evidence.",
+      "changed_files": 22,
+      "additions": 2429,
+      "deletions": 99
     },
     {
       "repository": "alfloop-dev/odayplus",
       "pr_number": 1205,
       "head_sha": "eaa7f8c51b81718a3582ce047fd86867c6db9eda",
-      "comparison_base": "origin/dev (9a5ef53de695)",
+      "comparison_base": "origin/dev (734dcb652edf)",
       "branch": "task/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
       "title": "[ReviewBus] ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002 以最新 build receipt 重整 dev candidate gate",
       "author": "Antigravity3",
       "created_at": "2026-09-05T03:55:59Z",
       "state": "OPEN",
-      "exact_diff_summary": "Earlier iteration of candidate rebind for run 33942097235 on candidate 3b5de7e7 with 8 evidence/doc files.",
-      "superseded_by": "PR #1243 and subsequently merged candidate rebind PRs.",
+      "exact_diff_summary": "Same 22 paths as #1243, also binding candidate 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12 / run 34179791241 (producer run 34179207603). Against #1243 head the evidence differs only in wording of docs/evidence/gates/README.md, RELEASE_GATE_REGISTRY.json description, the evidence README.md and verification-transcript.txt; it is the earlier iteration on the non-CLEAN branch of the same task.",
+      "superseded_by": "Evidence directory docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/ landed through PR #1246 (ODP-DEV-CANDIDATE-GATE-RECONCILIATION-003 root clean commit, merge 00c0347383806e8aa6679ed78215b4ac31b1da57) and PR #1292 (merge 3613faff582bd1c5a2c9b2ae5b5cd390d8be381f); RELEASE_GATE_REGISTRY/RELEASE_MANIFEST are now bound to candidate 6140d0ef633cbf94522c171d9927103ab200257f by PR #1392 (ODP-DEV-CANDIDATE-REBIND-6140D0EF-001, merge fdf0fb9fde1dfd8e5de7636bbc3b0f8ee16a4e63).",
       "unlanded_code_remaining": false,
       "recommendation": "close_as_superseded",
-      "rationale": "Historical ancestry attempt superseded by later rebind tasks. No unique code remaining."
+      "rationale": "Same supersession as #1243: evidence already on dev in later reviewed form (remaining diff: README.md and the missing root-clean-ancestry-receipt.json); gate files would regress the 6140d0ef binding. No unique code.",
+      "changed_files": 22,
+      "additions": 2450,
+      "deletions": 109
     },
     {
       "repository": "alfloop-dev/odayplus",
       "pr_number": 1052,
       "head_sha": "73a9ee4676b8ebd9526b9d2768cb8c88aa8cacbd",
-      "comparison_base": "origin/dev (9a5ef53de695)",
+      "comparison_base": "origin/dev (734dcb652edf)",
       "branch": "task/ORCH-PROVIDER-QUOTA-SIGNAL-AUTHORITY-001-SIDECAR-BLOCKED-TASK-DIAGNOSTICS",
       "title": "ORCH-PROVIDER-QUOTA-SIGNAL-AUTHORITY-001-SIDECAR-BLOCKED-TASK-DIAGNOSTICS: 建立阻塞診斷交接包",
       "author": "Claude",
@@ -51,45 +57,54 @@
       "superseded_by": "PR #1045 and mainline supervisor failure policy in origin/dev, but trailer logic differences and sidecar doc are unmerged.",
       "unlanded_code_remaining": true,
       "recommendation": "needs_comparison",
-      "rationale": "PR #1052 includes check_commit_trailers.py task-ID-dependent subject length logic across 2 files (including support/sidecars document), not 5 diagnostic-only files. Must be preserved and marked needs_comparison until trailer validation differences are explicitly evaluated."
+      "rationale": "PR #1052 includes check_commit_trailers.py task-ID-dependent subject length logic across 2 files (+8/-3 in check_commit_trailers.py: subject limit becomes max(72, len(task_id)+40); +248 sidecar doc), not 5 diagnostic-only files; re-verified against 734dcb652edf. Must be preserved and marked needs_comparison until trailer validation differences are explicitly evaluated.",
+      "changed_files": 2,
+      "additions": 253,
+      "deletions": 3
     },
     {
       "repository": "alfloop-dev/odayplus",
       "pr_number": 986,
       "head_sha": "173f51c649ec52cf5073b306fddb38abb6fd2e31",
-      "comparison_base": "origin/dev (9a5ef53de695)",
+      "comparison_base": "origin/dev (734dcb652edf)",
       "branch": "fix/quarantine-clean-is-not-unreadable",
       "title": "orchestrator: a clean worktree is not an unreadable one",
       "author": "Claude",
       "created_at": "2026-08-23T09:09:06Z",
       "state": "OPEN",
       "exact_diff_summary": "Modifies worker_workspace.py and test_supervisor.py to carry git stderr into status_unreadable.detail and adds 43 lines of supervisor test coverage.",
-      "superseded_by": "Partial: origin/dev independently added worktree_clean/nothing_to_preserve handlers but worker_workspace.py:3624-3625 still drops git stderr.",
+      "superseded_by": "Partial: origin/dev independently added worktree_clean/nothing_to_preserve handlers but worker_workspace.py:3625 still drops git stderr.",
       "unlanded_code_remaining": true,
       "recommendation": "needs_comparison",
-      "rationale": "Head commit 173f51c6 still adds git stderr to status_unreadable.detail and test_supervisor.py regression coverage, which origin/dev worker_workspace.py:3624-3625 currently drops. Must be preserved and marked needs_comparison until stderr propagation is explicitly dispositioned."
+      "rationale": "Head commit 173f51c6 still adds git stderr to status_unreadable.detail and test_supervisor.py regression coverage, which origin/dev worker_workspace.py:3625 (re-verified at 734dcb652edf) currently drops. Must be preserved and marked needs_comparison until stderr propagation is explicitly dispositioned.",
+      "changed_files": 2,
+      "additions": 50,
+      "deletions": 1
     },
     {
       "repository": "alfloop-dev/odayplus",
       "pr_number": 970,
-      "head_sha": "4c813d1c496155694c96570c061aa0ce92634e5a",
-      "comparison_base": "origin/dev (9a5ef53de695)",
+      "head_sha": "e102821ccd5aa89e95b04d957e3b2fd863a8c083",
+      "comparison_base": "origin/dev (734dcb652edf)",
       "branch": "task/XR-CUTOVER-001",
       "title": "[ReviewBus] XR-CUTOVER-001 Execute dual-run, reconciliation, cutover and rollback of legacy odayplus external ingestion",
       "author": "Claude2",
       "created_at": "2026-08-22T14:30:10Z",
       "state": "OPEN",
-      "exact_diff_summary": "65 files changed (1,511 additions, 10,027 deletions) attempting whole-module deletion and renaming of legacy external ingestion.",
-      "superseded_by": "PR #991 (ODP-XR-CUTOVER-ACTIVATE-002, commit b32fd65f) merged into origin/dev.",
+      "exact_diff_summary": "65 files changed (1,511 additions, 10,027 deletions) at head e102821c, as enumerated by `git diff --name-status -M c045f5f9...e102821c` in pr-970-disposition.md.",
+      "superseded_by": "PR #991 (ODP-XR-CUTOVER-ACTIVATE-002, merge b32fd65f4e60e4814b6b96bf074c5dc34dec12d4) merged into origin/dev.",
       "unlanded_code_remaining": false,
       "recommendation": "close_as_superseded",
-      "rationale": "PR #970 cannot be closed merely because it lacked a board card; it was fully audited in docs/evidence/completion/ODP-XR-CUTOVER-ACTIVATE-002/pr-970-disposition.md across all 65 files. The destructive deletions and renamings were rejected because they broke rollback capabilities and deleted required regression tests. Instead, PR #991 implemented the canonical ODAY_MARKET_DATA_FACADE_MODE=PLATFORM_PRIMARY switch with default-deny on all external sources. All valid objectives of PR #970 landed cleanly via PR #991 without orphaned code."
+      "rationale": "PR #970 cannot be closed merely because it lacked a board card; it was fully audited in docs/evidence/completion/ODP-XR-CUTOVER-ACTIVATE-002/pr-970-disposition.md across all 65 files. The destructive deletions and renamings were rejected because they broke rollback capabilities and deleted required regression tests. Instead, PR #991 implemented the canonical ODAY_MARKET_DATA_FACADE_MODE=PLATFORM_PRIMARY switch with default-deny on all external sources. All valid objectives of PR #970 landed cleanly via PR #991 without orphaned code.",
+      "changed_files": 65,
+      "additions": 1511,
+      "deletions": 10027
     },
     {
       "repository": "alfloop-dev/odayplus",
       "pr_number": 607,
       "head_sha": "a70b62ca13168927c1500c3e24a8603885681331",
-      "comparison_base": "origin/dev (9a5ef53de695)",
+      "comparison_base": "origin/dev (734dcb652edf)",
       "branch": "agent/dev-progress-spec-gap-audit-20260803",
       "title": "docs: audit latest dev progress against specification",
       "author": "Claude",
@@ -99,23 +114,29 @@
       "superseded_by": "September 2026 remediation architecture: ODP_REMEDIATION_PLAN_2026-09-03.md, ODP_OPEN_DECISIONS_2026-09-03.md, EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md, and EXECUTION.md.",
       "unlanded_code_remaining": false,
       "recommendation": "close_as_historical_snapshot",
-      "rationale": "Early exploratory audit written before the comprehensive September 2026 remediation plan was formulated. All gaps identified in PR #607 have been formally structured into active canonical tasks and closed/in-progress work packages."
+      "rationale": "Early exploratory audit written before the comprehensive September 2026 remediation plan was formulated. All gaps identified in PR #607 have been formally structured into active canonical tasks and closed/in-progress work packages.",
+      "changed_files": 1,
+      "additions": 329,
+      "deletions": 0
     },
     {
       "repository": "alfloop-dev/oday-data-platform",
       "pr_number": 1,
       "head_sha": "0577773d0457d7b51e93d2e1913f70002227fdb4",
-      "comparison_base": "alfloop-dev/oday-data-platform origin/dev (24c40ae75e5759a47a21566f4dccfa15d5d38386)",
+      "comparison_base": "PR base branch main (e079199ba00368581be9e628fd8791b97fbefe4f); feature presence compared against data-platform dev 24c40ae75e5759a47a21566f4dccfa15d5d38386",
       "branch": "feat/transaction-automation",
       "title": "[Feat] add transactions daily lookback automation",
       "author": "Alien-alfaloop",
       "created_at": "2026-07-06T05:44:56Z",
       "state": "OPEN",
-      "exact_diff_summary": "Modifies assets.py, schedules.py, test_assets.py adding transaction daily-lookback scheduling, configurable partition start, count-mismatch failure and automation metadata.",
-      "superseded_by": "Unmerged: DPF #63 and #77 are open/unmerged masked-snapshot and bounded-capture work, not functional replacements. Features remain absent from DPF dev 24c40ae75e5759a47a21566f4dccfa15d5d38386.",
+      "exact_diff_summary": "6 files: deploy/k8s/dev/configmap.yaml (+2), src/oday_data_platform/defs/assets.py (+10/-2), src/oday_data_platform/defs/raw_transactions.py (+57/-25), src/oday_data_platform/defs/schedules.py (added, +94), tests/test_assets.py (+73/-8), tests/test_schedules.py (added, +69): transaction daily-lookback job/schedule, env-configurable partition start (ODAY_TRANSACTIONS_AUTOMATION_LOOKBACK_DAYS), count-mismatch failure and automation run metadata.",
+      "superseded_by": "Unmerged: DPF #63 and #77 are open masked-snapshot and bounded-capture work, not functional replacements. On dev 24c40ae7 schedules.py does not exist and raw_transactions.py keeps a fixed TRANSACTIONS_PARTITION_LOOKBACK_DAYS = 365 partition start.",
       "unlanded_code_remaining": true,
       "recommendation": "needs_comparison",
-      "rationale": "Head 0577773d adds transaction daily-lookback scheduling, configurable partition start, count-mismatch failure and automation metadata absent from DPF dev 24c40ae75e5759a47a21566f4dccfa15d5d38386. DPF #63 and #77 do not supersede this functional logic. Must be preserved and marked needs_comparison until explicitly dispositioned or ported."
+      "rationale": "Head 0577773d adds transaction daily-lookback scheduling, configurable partition start, count-mismatch failure and automation metadata absent from DPF dev 24c40ae75e5759a47a21566f4dccfa15d5d38386. DPF #63 and #77 do not supersede this functional logic. Must be preserved and marked needs_comparison until explicitly dispositioned or ported.",
+      "changed_files": 6,
+      "additions": 305,
+      "deletions": 35
     }
   ],
   "active_in_flight_prs": [
@@ -154,5 +175,11 @@
       "title": "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
       "status": "active_delivery_do_not_duplicate_or_close"
     }
-  ]
+  ],
+  "comparison_readback": {
+    "odayplus_origin_dev": "734dcb652edf28b92cdc0bf5fd1e7b983ed46837",
+    "data_platform_dev": "24c40ae75e5759a47a21566f4dccfa15d5d38386",
+    "data_platform_main": "e079199ba00368581be9e628fd8791b97fbefe4f",
+    "method": "gh api repos/<repo>/pulls/<n> and /pulls/<n>/files readback plus git diff origin/dev...<head>; no PR was closed, merged or edited."
+  }
 }

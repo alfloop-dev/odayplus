@@ -1,12 +1,13 @@
 # ODP-RELEASE-ACCEPTANCE-CARRYFORWARD-001: 未完成 Live 驗收承接與舊 PR 處置對照報告
 
 - **Task ID**: `ODP-RELEASE-ACCEPTANCE-CARRYFORWARD-001`
-- **負責人 (Owner)**: `Antigravity3`
-- **評審人 (Reviewer)**: `Codex2`
-- **參照基礎**: `origin/dev` @ `9a5ef53de6955aef2b2c772b8e5f83c78222c675`
+- **負責人 (Owner)**: `Claude`（2026-10-03 由 Antigravity3 改派）
+- **評審人 (Reviewer)**: `Codex`
+- **參照基礎**: `origin/dev` @ `734dcb652edf28b92cdc0bf5fd1e7b983ed46837`
 - **執行依據**: `support/handoffs/remaining-work-corrections-20261003/EXECUTION.md`
 - **機讀承接矩陣**: [`obligation_matrix.json`](obligation_matrix.json)
 - **舊 PR 處置矩陣**: [`pr_disposition_matrix.json`](pr_disposition_matrix.json)
+- **Owner inventory**: [`owner_inventory.json`](owner_inventory.json)（canonical `ai-status.json` 與 archive 唯讀讀回，含 sha256 provenance）
 
 ---
 
@@ -18,62 +19,73 @@
    - 程式碼已合併或離線測試綠燈（`is_engineering_done = True`），**不等於** live 運行環境驗收完成（`is_live_done = False`）。
    - 任何涉及 live 運行環境的 NFR 觀測窗、CDC 實體叢集驗證、Merge Queue 真實流量觀測，均維持 `BLOCKED_BY_EVIDENCE` 直至真實部署與收據產生。
 2. **歷史已完成工程 (Historical Source Task) 與當前作用中執行通道 (Active Canonical Lane) 嚴格分離**：
-   - 原已 archived done 的工程任務（如 `ODP-NFR-RUNTIME-EVIDENCE-001`、`ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001`、`ODP-MERGE-QUEUE-H08-ACTIVATION-001`、`ODP-DURABLE-PARTIAL-IMPL-001`）僅作為歷史來源依據，不得重開已完成工程，亦不得作為 active live execution lane。
-   - 所有待驗收項目均明確綁定至當前作用中之 canonical owner task（如 Staging 部署由 `ODP-EPHEMERAL-STAGING-ROLLOUT-001` 承接、Prod 上線後觀測由 `ODP-POSTDEPLOY-WATCH-CLOSEOUT-001` 承接、結構性整改收尾由 `ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001` 承接）。
-3. **拒絕循環依賴 (Anti-Circularity)**：
-   - 預發布 / 准入階段（Pre-production Admission）不得循環依賴上線後的長期觀測窗（如 NFR 7 營運日、1 個月可用率）。
-   - 部署前必需項（如 Staging 壓測、WIF 配置隔離、Staging 還原演練、UAT/ModelRisk 簽核）與部署後觀測項（Prod 24h 流量監控、7 日批次、月可用率）明確劃分，禁止同一項目同時宣告 pre_prod_blocking 與 post_prod_observation。
+   - 已 archived done 的任務（`owner_inventory.json` 的 `archived_tasks`，含 `ODP-MODEL-ARTIFACT-HISTORY-RECOVERY-001` 這類有界調查）只能當 `historical_source_task`。
+   - `canonical_owner_task` 與 `prerequisite_tasks` 必須出現在 inventory 的 `active_tasks`（狀態 todo/in_progress/review/blocked），且該 lane 的 `lane_roles` 要涵蓋該項 stage；其他任意 ID 一律拒絕。
+   - 找不到既有 lane 的項目（ADJUST、AVM Finance）記為 `OWNER_RECONCILIATION_REQUIRED`，列出提議 lane、需由誰做什麼與缺少的權責，不宣稱已承接。Wave 5+ 是 backlog 參照（`deferred_backlog_ref`），不偽裝成 task。
+3. **階段固定、拒絕循環依賴 (Anti-Circularity)**：
+   - 每項只屬一個 stage：`pre_production_admission`、`code_remediation`、`production_cutover`、`post_deploy_observation`、`dev_runtime_observation`、`deferred`；stage 決定 `pre_prod_blocking`／`post_prod_observation`／`requires_production_deployment` 三旗標，不一致即拒絕。
+   - 准入項不得需要 production 部署；production 上的 24h／多日／整月窗只能是 `post_deploy_observation`。
+   - 原 SHARED-008 拆為 staging 准入讀回與 production 0%-green cutover 讀回；RPO-004、CDC DDL 同理；PARTIAL 拆為業務範圍裁定、staging intake 演練、production 驗收三段，保留原 live 義務。
 4. **單一發布閘門真相 (Single Canonical Gate Truth)**：
    - 本任務產出承接矩陣與處置對照，**不重寫、不取代** `docs/evidence/gates/RELEASE_GATE_REGISTRY.json` 與 `RELEASE_MANIFEST.json`。
    - `PRODUCT_RELEASE_GO_NO_GO.md` 中的 2026-06-29 PR #82 歷史評估已被明確標記為歷史脈絡，當前發布狀態回歸唯一 Canonical Gate。
 5. **不擅自簽署人類權限**：
    - 缺真實資料或批准時，絕不用假數據（synthetic fixture）或假簽名冒充 Human/Ops。
-   - `HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001` 僅涵蓋六項業務處置（H01-H06），不擴張為通用 UAT/ModelRisk/Ops 授權。
+   - `HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001` 的驗收只涵蓋 BRAND_TRANSFER／FORMAT_CONVERSION／LEASE／PARTIAL／CDC／merge queue 六項，不擴張為 ADJUST、Finance 或通用 UAT/ModelRisk/Ops 授權。
 
 ---
 
 ## 2. 跨領域未完成驗收承接 (Obligation Carryforward)
 
-| 領域 | 項目 / 需求 ID | 目標環境 | 歷史來源依據 | 當前作用中承接任務 | 所需真實收據 | 觸發條件 | 當前真實狀態 |
-|---|---|---|---|---|---|---|---|
-| **NFR** | `ODP-FR-SHARED-008` (金鑰與身份隔離) | dev / staging / prod | `ODP-NFR-RUNTIME-EVIDENCE-001` | `ODP-EPHEMERAL-STAGING-ROLLOUT-001` (Human/Ops) | WIF 內 Secret Version SHA-256 Digest 比對 (零明文洩漏)；Cloud Run SA 讀回 | 各環境 Runtime Release 部署成功 | `BLOCKED_BY_EVIDENCE` (配置指紋已隔離，待 live 讀回) |
-| **NFR** | `ODP-NFR-PERF-001-STAGING` (Staging API 延遲 P95 <= 3s) | staging | `ODP-NFR-RUNTIME-EVIDENCE-001` | `ODP-EPHEMERAL-STAGING-ROLLOUT-001` | 已部署 staging `oday-api` 壓測報告 (併發 10/20/50 零失敗) | Staging 部署並注入流量 | `BLOCKED_BY_EVIDENCE` (離線測試不代表 runtime 證據) |
-| **NFR** | `ODP-NFR-PERF-001-PROD` (Prod 24h 流量延遲 P95 <= 3s) | prod | `ODP-NFR-RUNTIME-EVIDENCE-001` | `ODP-POSTDEPLOY-WATCH-CLOSEOUT-001` (Human/Ops) | Cloud Monitoring >= 24h Prod 流量 P95 遙測 | Prod 運行滿 24 小時 | `BLOCKED_BY_EVIDENCE` (上線後觀測項) |
-| **NFR** | `ODP-NFR-BATCH-002` (每日批次截止) | prod | `ODP-NFR-RUNTIME-EVIDENCE-001` | `ODP-POSTDEPLOY-WATCH-CLOSEOUT-001` (Human/Ops) | 7 個連續營運日 Job 執行成功紀錄；**Human/Ops 書面定義營運日截止時刻** | Prod 運行 7 個營運日 | `BLOCKED_BY_EVIDENCE` (repo 內無截止時刻，需 Human 提供) |
-| **NFR** | `ODP-NFR-AVAIL-003` (月可用率 >= 99.5%) | prod | `ODP-NFR-RUNTIME-EVIDENCE-001` | `ODP-POSTDEPLOY-WATCH-CLOSEOUT-001` (Human/Ops) | Cloud Monitoring OpsBoard 路由 Uptime Check 一個完整日曆月比例 >= 99.5% | Prod 部署後滿 1 個日曆月 | `BLOCKED_BY_EVIDENCE` (上線後觀測項) |
-| **NFR** | `ODP-NFR-RPO-004` (RPO <= 60m, RTO <= 240m) | staging / prod | `ODP-NFR-RUNTIME-EVIDENCE-001` | `ODP-EPHEMERAL-STAGING-ROLLOUT-001` (Human/Ops) | Cloud SQL PITR 設定讀回；Staging 資料庫計時還原演練日誌 (ODP-AC-NFR-007) | Staging 資料庫實體建立 | `BLOCKED_BY_EVIDENCE` (本機 copy 演練非 live 證據) |
-| **CDC Live** | `ODP-CDC-LIVE-REPLICA-SET` (ReplicaSet/oplog 24-48h) | prod | `ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001` | `ODP-EPHEMERAL-STAGING-ROLLOUT-001` (DBA) | DBA 執行 `rs.status()` / `db.getReplicationInfo()` 書面讀回 | 生產 MongoDB 連線驗證 | `BLOCKED_BY_EVIDENCE` (口頭確認待轉書面 DBA 收據) |
-| **CDC Live** | `ODP-CDC-LIVE-LATENCY-STAGING` (Staging 延遲驗證 < 10s, P95 < 5s) | staging | `ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001` | `ODP-EPHEMERAL-STAGING-ROLLOUT-001` | Staging Scoped CDC 實體串流真實時鐘量測 `latency_seconds` 與 `sla_breaches()` 遙測日誌 | Staging CDC 啟用 | `BLOCKED_BY_EVIDENCE` (測試時鐘非生產延遲) |
-| **CDC Live** | `ODP-CDC-LIVE-LATENCY-PROD` (Prod 持續遙測觀測) | prod | `ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001` | `ODP-POSTDEPLOY-WATCH-CLOSEOUT-001` | 生產環境 >= 24h ChangeStream 遙測驗證持續 P95 < 5s 且無 SLA breach | Prod CDC 運行 | `BLOCKED_BY_EVIDENCE` (上線後觀測項) |
-| **CDC Live** | `ODP-CDC-LIVE-IAM-CREDENTIALS` (帳號與權限) | staging / prod | `ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001` | `ODP-EPHEMERAL-STAGING-ROLLOUT-001` (Human/Ops) | IAM 與 DB 角色讀回：`odp_cdc_reader` 具備 `changeStream` 權限 | Ops / DBA 配置授權 | `BLOCKED_BY_EVIDENCE` (非互動 Worker 無權改 IAM) |
-| **CDC Live** | `ODP-CDC-LIVE-PG-DDL-MIGRATION` (PostgreSQL 表結構) | dev / staging / prod | `ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001` | `ODP-EPHEMERAL-STAGING-ROLLOUT-001` | 真實 PG 執行 `control_schema.sql` (checkpoints/staging_events) 驗證 | 部署執行 Migration | `BLOCKED_BY_EVIDENCE` (離線 SQL 待部署至實體叢集) |
-| **CDC Live** | `ODP-CDC-LIVE-OPLOG-FAIL-CLOSED` (過期 Token 拒絕) | staging | `ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001` | `ODP-EPHEMERAL-STAGING-ROLLOUT-001` | Staging 注入過期 token 觸發 fail-closed 並自動排入批次回復日誌 | Staging 故障注入演練 | `BLOCKED_BY_EVIDENCE` |
-| **CDC Live** | `ODP-CDC-MACHINE-EVENT-LIFECYCLE` (生命週期欄位) | codebase / dev | `ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001` | `ODP-CDC-MACHINE-EVENT-LIFECYCLE-001` | `core.machine_status_events` 欄位 migration 與 soft-retirement 程式/測試 | 執行本輪修正任務 | `IN_PROGRESS` |
-| **業務營運** | `ODP-PARTIAL-LIVE-H06` (H06 業務範圍與 Live 佇列) | prod | `ODP-DURABLE-PARTIAL-IMPL-001` | `HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001` | 具名業務負責人核准之 Partial 功能營運範圍裁定；真實來源資料匯入、live 佇列政策套用與 production 驗收收據 (ODP-DURABLE-PARTIAL-IMPL-001 §5) | 業務負責人簽核 & Staging 取證 | `PENDING_HUMAN_AUTHORITY` |
-| **業務營運** | `ODP-ADJUST-OPERATIONAL-CONFIRMATION` (調整確認) | prod | `ODP_REQUIREMENT_DISPOSITIONS.md` | `HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001` | 營運主管確認門市實務（就地調整 vs 停舊開新）之正式書面決策（含具名決策人、日期、門市範圍與可追溯來源證據，ODP_REQUIREMENT_DISPOSITIONS.md:211-225） | 營運主管簽核 | `PENDING_HUMAN_AUTHORITY` |
-| **業務營運** | `ODP-AVM-FINANCE-CUTOVER` (AVM 財務切換) | prod | `ODP-AVM-DEPRECIATION-INTEGRATION-001` | `HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001` | 財務主管簽署 Contract R-4 三項回滾門檻（數值／結構／校準門檻，ODP_AVM001_DEPRECIATION_DISPOSITION_2026-09-04.md §4-5）及生產切換核准 | 財務主管簽核 | `PENDING_HUMAN_AUTHORITY` |
-| **Merge Queue** | `ODP-MERGE-QUEUE-BATCH-FORMATION` (多 PR 批次) | dev | `ODP-MERGE-QUEUE-H08-ACTIVATION-001` | `ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001` | GitHub Actions / Merge Queue 審計日誌證明 >= 2 PR 同時排隊時形成批次 | 自然 PR 排隊流量 | `BLOCKED_BY_EVIDENCE` (Option B 已寫入，待流量觀測) |
-| **Merge Queue** | `ODP-MERGE-QUEUE-HOLD-TIMEOUT` (單 PR 等待 <= 10m) | dev | `ODP-MERGE-QUEUE-H08-ACTIVATION-001` | `ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001` | Merge Queue 延遲紀錄證明單 PR hold 不超過 10 分鐘 | 單 PR 排隊情境 | `BLOCKED_BY_EVIDENCE` |
-| **Merge Queue** | `ODP-MERGE-QUEUE-ALLGREEN-REBUILD` (失敗剔除重建) | dev | `ODP-MERGE-QUEUE-H08-ACTIVATION-001` | `ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001` | 審計日誌證明批次內失敗 PR 被剔除且其餘 PR 重建合併 | 批次測試失敗情境 | `BLOCKED_BY_EVIDENCE` |
-| **人工簽核** | `ODP-SIGN-OFF-UAT` (跨角色 UAT 簽核) | staging / prod | `RELEASE_GATE_REGISTRY.json §gate-5` | `ODP-EPHEMERAL-STAGING-ROLLOUT-001` (QA/Product) | 全角色 (Operator, Manager, Franchisee) 零 P0/P1 缺陷簽署件 | Staging UAT 完成 | `PENDING_HUMAN_AUTHORITY` |
-| **人工簽核** | `ODP-SIGN-OFF-MODEL-RISK` (模型風險簽核) | staging / prod | `RELEASE_GATE_REGISTRY.json §gate-3` | `ODP-MODEL-ARTIFACT-HISTORY-RECOVERY-001` (ML Risk) | ML Risk Owner 簽署之 ForecastOps 模型版本保管、SiteScore/AVM 驗證基準與 production alias 綁定件 | 模型主管審查 | `PENDING_HUMAN_AUTHORITY` |
-| **人工簽核** | `ODP-SIGN-OFF-OPS-GO-NO-GO` (最終 Go/No-Go) | prod | `RELEASE_GATE_REGISTRY.json §gate-6` | `ODP-PROD-BLUEGREEN-ROLLOUT-001` (Human/Ops) | `PRODUCT_RELEASE_GO_NO_GO.md` 與 `RELEASE_GATE_REGISTRY.json` 具名簽署（綁定 exact release SHA） | Gate 0-6 滿足 | `PENDING_HUMAN_AUTHORITY` |
-| **延後項** | `ODP-DEFERRED-ROOT-CAUSE-WAVE-5` (Wave 5+ 根因) | codebase | `EXECUTION.md` | `DEFERRED-BACKLOG-WAVE5` | 納入上線後維護週期 Backlog 排程追蹤 | 上線後排程 | `DEFERRED_NON_BLOCKING` |
-| **延後項** | `ODP-DEFERRED-GOOGLE-OAUTH` (Google OAuth) | codebase | `Decision D15` | `HUMAN-GCP-WEB-OAUTH-CLIENTS-001` | D15 決策合規 (維持帳密登入，OAuth 保持停用) | 未來需求評估 | `DEFERRED_NON_BLOCKING` |
+| 領域 | 項目 ID | Stage | 目標環境 | 承接 task（或缺口） | 前置 task | 權責 | 觸發條件 | 真實狀態 |
+|---|---|---|---|---|---|---|---|---|
+| NFR | `ODP-FR-SHARED-008-STAGING` | `pre_production_admission` | dev / staging | `ODP-EPHEMERAL-STAGING-ROLLOUT-001` | — | Human/Ops | Runtime Release deploy job conclusion 'success' on the staging environment for the exact candidate | `BLOCKED_BY_EVIDENCE` |
+| NFR | `ODP-FR-SHARED-008-PROD-READBACK` | `production_cutover` | production | `ODP-PROD-BLUEGREEN-ROLLOUT-001` | — | Human/Ops | Human GO and valid Supervisor lease exist; production green deployed at 0% traffic with the same digests | `BLOCKED_BY_EVIDENCE` |
+| NFR | `ODP-NFR-PERF-001-STAGING` | `pre_production_admission` | staging | `ODP-EPHEMERAL-STAGING-ROLLOUT-001` | — | Release / QA Lead | Ephemeral staging rollout completion with staging traffic injection | `BLOCKED_BY_EVIDENCE` |
+| NFR | `ODP-NFR-PERF-001-PROD` | `post_deploy_observation` | production | `ODP-POSTDEPLOY-WATCH-CLOSEOUT-001` | — | Human/Ops | Production deployment running active traffic for at least 24 hours | `BLOCKED_BY_EVIDENCE` |
+| NFR | `ODP-NFR-BATCH-002` | `post_deploy_observation` | production | `ODP-POSTDEPLOY-WATCH-CLOSEOUT-001` | — | Human/Ops | Live production deployment running scheduled daily batch jobs over 7 operating days | `BLOCKED_BY_EVIDENCE` |
+| NFR | `ODP-NFR-AVAIL-003` | `post_deploy_observation` | production | `ODP-POSTDEPLOY-WATCH-CLOSEOUT-001` | — | Human/Ops | 1 full calendar month elapsed following live production deployment | `BLOCKED_BY_EVIDENCE` |
+| NFR | `ODP-NFR-RPO-004-STAGING-DRILL` | `pre_production_admission` | staging | `ODP-EPHEMERAL-STAGING-ROLLOUT-001` | — | Human/Ops | Deployed staging database instance available for timed restoration drill | `BLOCKED_BY_EVIDENCE` |
+| NFR | `ODP-NFR-RPO-004-PROD-BACKUP-READBACK` | `production_cutover` | production | `ODP-PROD-BLUEGREEN-ROLLOUT-001` | — | Human/Ops | Production green deployed at 0% traffic after Human GO | `BLOCKED_BY_EVIDENCE` |
+| CDC Live | `ODP-CDC-LIVE-REPLICA-SET` | `pre_production_admission` | production | `ODP-EPHEMERAL-STAGING-ROLLOUT-001` | — | Human/DBA | Production MongoDB infrastructure inspection | `BLOCKED_BY_EVIDENCE` |
+| CDC Live | `ODP-CDC-LIVE-LATENCY-STAGING` | `pre_production_admission` | staging | `ODP-EPHEMERAL-STAGING-ROLLOUT-001` | — | Data Platform Owner | Staging Scoped CDC ChangeStream sensor running against active database | `BLOCKED_BY_EVIDENCE` |
+| CDC Live | `ODP-CDC-LIVE-LATENCY-PROD` | `post_deploy_observation` | production | `ODP-POSTDEPLOY-WATCH-CLOSEOUT-001` | — | Data Platform Owner | Production Scoped CDC ChangeStream running live stream | `BLOCKED_BY_EVIDENCE` |
+| CDC Live | `ODP-CDC-LIVE-IAM-CREDENTIALS` | `pre_production_admission` | staging / production | `ODP-EPHEMERAL-STAGING-ROLLOUT-001` | — | Human/Ops | IAM / MongoDB role assignment | `BLOCKED_BY_EVIDENCE` |
+| CDC Live | `ODP-CDC-LIVE-PG-DDL-STAGING` | `pre_production_admission` | dev / staging | `ODP-EPHEMERAL-STAGING-ROLLOUT-001` | — | Platform / Release Engineering | Staging rollout migration step for the exact candidate | `BLOCKED_BY_EVIDENCE` |
+| CDC Live | `ODP-CDC-LIVE-PG-DDL-PROD-READBACK` | `production_cutover` | production | `ODP-PROD-BLUEGREEN-ROLLOUT-001` | — | Platform / Release Engineering | Production migration step of the blue-green rollout after Human GO | `BLOCKED_BY_EVIDENCE` |
+| CDC Live | `ODP-CDC-LIVE-OPLOG-FAIL-CLOSED` | `pre_production_admission` | staging | `ODP-EPHEMERAL-STAGING-ROLLOUT-001` | — | Data Platform Owner | Staging fault injection with expired resume token | `BLOCKED_BY_EVIDENCE` |
+| CDC Live | `ODP-CDC-MACHINE-EVENT-LIFECYCLE` | `code_remediation` | codebase / dev / staging / production | `ODP-CDC-MACHINE-EVENT-LIFECYCLE-001` | — | ODP-CDC-MACHINE-EVENT-LIFECYCLE-001 Owner | Execution of task ODP-CDC-MACHINE-EVENT-LIFECYCLE-001 | `IN_PROGRESS` |
+| 業務營運 | `ODP-PARTIAL-H06-SCOPE-RATIFICATION` | `pre_production_admission` | production | `HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001` | — | Human/Business Owner | Business stakeholder ratification under HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001 (SHARED-001 PARTIAL item) | `PENDING_HUMAN_AUTHORITY` |
+| 業務營運 | `ODP-PARTIAL-H06-STAGING-INTAKE` | `pre_production_admission` | staging | `ODP-EPHEMERAL-STAGING-ROLLOUT-001` | `HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001` | Release / QA Lead | ODP-PARTIAL-H06-SCOPE-RATIFICATION recorded and staging deployed with the exact candidate | `BLOCKED_BY_EVIDENCE` |
+| 業務營運 | `ODP-PARTIAL-H06-PROD-ACCEPTANCE` | `post_deploy_observation` | production | `ODP-POSTDEPLOY-WATCH-CLOSEOUT-001` | — | Human/Business Owner | Production cutover complete and live partial intake jobs executed in the watch window | `BLOCKED_BY_EVIDENCE` |
+| 業務營運 | `ODP-ADJUST-OPERATIONAL-CONFIRMATION` | `pre_production_admission` | production | **缺 owner**：提議 `HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001`，待其 owner/reviewer 明確接受 | — | Operations Lead / Product Lead | Operations leadership review of intervention adjustment workflow | `OWNER_RECONCILIATION_REQUIRED` |
+| 業務營運 | `ODP-AVM-FINANCE-CUTOVER` | `pre_production_admission` | production | **缺 owner**：提議 `ODP-PRODUCTION-MODEL-REGISTRY-001`、`HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001`，待其 owner/reviewer 明確接受 | — | Finance Owner (R-4 thresholds); Product Owner + ML Risk Owner (AVM promotion) | Finance owner review of depreciation contract and valuation benchmarks | `OWNER_RECONCILIATION_REQUIRED` |
+| Merge Queue | `ODP-MERGE-QUEUE-BATCH-FORMATION` | `dev_runtime_observation` | dev | `ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001` | — | Platform Ops / Supervisor | 2+ eligible PRs queued concurrently under active dev development | `BLOCKED_BY_EVIDENCE` |
+| Merge Queue | `ODP-MERGE-QUEUE-HOLD-TIMEOUT` | `dev_runtime_observation` | dev | `ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001` | — | Platform Ops / Supervisor | Single PR queued in dev merge queue | `BLOCKED_BY_EVIDENCE` |
+| Merge Queue | `ODP-MERGE-QUEUE-ALLGREEN-REBUILD` | `dev_runtime_observation` | dev | `ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001` | — | Platform Ops / Supervisor | Test failure occurrence inside an active merge batch | `BLOCKED_BY_EVIDENCE` |
+| 人工簽核 | `ODP-SIGN-OFF-UAT` | `pre_production_admission` | staging | `ODP-EPHEMERAL-STAGING-ROLLOUT-001` | — | Human/QA & Product Owner | Live staging environment availability with UAT test data | `PENDING_HUMAN_AUTHORITY` |
+| 人工簽核 | `ODP-SIGN-OFF-MODEL-RISK` | `pre_production_admission` | dev / staging | `ODP-PRODUCTION-MODEL-REGISTRY-001` | `ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001` | Product Owner + ML Risk Owner | Approved real history/model inputs and operational admission arrive for ODP-PRODUCTION-MODEL-REGISTRY-001 | `BLOCKED_BY_EVIDENCE` |
+| 人工簽核 | `ODP-SIGN-OFF-OPS-GO-NO-GO` | `pre_production_admission` | production | `ODP-PROD-BLUEGREEN-ROLLOUT-001` | — | Human/Ops | All pre-production gates (Gates 0-6) satisfied on exact release candidate SHA | `PENDING_HUMAN_AUTHORITY` |
+| 延後項 | `ODP-DEFERRED-ROOT-CAUSE-WAVE-5` | `deferred` | codebase | backlog 參照 `DEFERRED-BACKLOG-WAVE5`（非 task） | — | Platform / Quality Lead | Post-launch maintenance cycle prioritization | `DEFERRED_NON_BLOCKING` |
+| 延後項 | `ODP-DEFERRED-GOOGLE-OAUTH` | `deferred` | codebase / dev / staging / production | `HUMAN-GCP-WEB-OAUTH-CLIENTS-001` | — | Product / Security Lead | Future optional feature prioritization | `DEFERRED_NON_BLOCKING` |
+
+各項的原驗收出處、所需收據與觀測窗見 `obligation_matrix.json`。
 
 ---
 
 ## 3. 舊 Open PR 逐一對照與處置建議
 
-| 儲存庫 | PR 編號 | Head SHA | 比較基準 (Base) | 分支名稱 | 標題 | 狀態 | 差異內容與未合併程式碼現況 | 處置建議 |
-|---|---|---|---|---|---|---|---|---|
-| `odayplus` | **#1243** | `3a9fb628...` | `origin/dev` | `task/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002-CLEAN` | ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002: clean evidence from C | OPEN | 重建 evidence 樹嘗試綁定 candidate C (596b9c9a) 與 build run 33942097235。已被後續候選重綁 sequence (PR #1387, #1390, #1392) 取代，當前 dev 已綁定至 6140d0ef。無遺留代碼。 | **建議關閉 (Superseded)** |
-| `odayplus` | **#1205** | `eaa7f8c5...` | `origin/dev` | `task/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002` | [ReviewBus] ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002 以最新 build receipt 重整 dev candidate gate | OPEN | 舊版 candidate 3b5de7e7 綁定嘗試（8 檔文件/證據）。已被 PR #1243 及後續 PR 取代。無遺留代碼。 | **建議關閉 (Superseded)** |
-| `odayplus` | **#1052** | `73a9ee46...` | `origin/dev` | `task/ORCH-PROVIDER-QUOTA-SIGNAL-AUTHORITY-001-SIDECAR-BLOCKED-TASK-DIAGNOSTICS` | ORCH-PROVIDER-QUOTA-SIGNAL-AUTHORITY-001-SIDECAR-BLOCKED-TASK-DIAGNOSTICS: 建立阻塞診斷交接包 | OPEN | 修改 2 檔：`check_commit_trailers.py`（task-ID 相關之主旨長度判斷邏輯）與新增診斷文件 `support/sidecars/...-DIAGNOSTICS.md`。主線 dev 雖已修復 failure policy，但 trailer 邏輯差異未合併。 | **需進一步比對/保留 (Needs Comparison)** |
-| `odayplus` | **#986** | `173f51c6...` | `origin/dev` | `fix/quarantine-clean-is-not-unreadable` | orchestrator: a clean worktree is not an unreadable one | OPEN | 修改 `worker_workspace.py` 與 `test_supervisor.py`（+43 行測試），將 git 的 stderr 傳入 `status_unreadable.detail`。主線 `origin/dev` 雖已具備 clean worktree 判定，但 `worker_workspace.py:3624-3625` 仍丟棄 git stderr。有未合併有效改動。 | **需進一步比對/保留 (Needs Comparison)** |
-| `odayplus` | **#970** | `4c813d1c...` | `origin/dev` | `task/XR-CUTOVER-001` | [ReviewBus] XR-CUTOVER-001 Execute dual-run, reconciliation, cutover and rollback of legacy odayplus external ingestion | OPEN | **已完成 65 檔完整稽核**：`docs/evidence/completion/ODP-XR-CUTOVER-ACTIVATE-002/pr-970-disposition.md` 逐檔對照，拒絕毀滅性刪除以保有緊急回滾能力；改由 PR #991 (`ODP-XR-CUTOVER-ACTIVATE-002`，commit `b32fd65f`) 實作單一控制面 `PLATFORM_PRIMARY` + 預設阻斷。所有有效功能均已在 dev 落地，無遺留未合併代碼。 | **建議關閉 (Superseded with 65-file audit)** |
-| `odayplus` | **#607** | `a70b62ca...` | `origin/dev` | `agent/dev-progress-spec-gap-audit-20260803` | docs: audit latest dev progress against specification | OPEN | 新增 8 月 3 日早期盤點文件 `docs/evidence/DEV_PROGRESS_SPEC_GAP_AUDIT_2026-08-03.md`。已被 9 月整改計畫 (`ODP_REMEDIATION_PLAN_2026-09-03.md`)、待決策事項及 `EXECUTION.md` 完整取代。 | **建議結案/歷史存檔 (Historical Snapshot)** |
-| `oday-data-platform` | **#1** | `0577773d...` | `origin/dev (24c40ae7)` | `feat/transaction-automation` | [Feat] add transactions daily lookback automation | OPEN | 修改 `assets.py`, `schedules.py`, `test_assets.py`，新增 transaction daily-lookback scheduling、可配置 partition start、count-mismatch failure 與 automation metadata。這些功能在 DPF dev 中仍不存在，且未被 unmerged 的 PR #63/#77 取代。有未合併功能代碼。 | **需進一步比對/保留 (Needs Comparison)** |
+| 儲存庫 | PR | Exact head | 規模 | 差異內容 | 已合併替代／現況 | 未落地程式 | 建議 |
+|---|---|---|---|---|---|---|---|
+| `odayplus` | **#1243** | `3a9fb628d83bb0ff39e36ef652d3e4164922e992` | 22 檔 +2429/-99 | 22 files: modifies docs/evidence/gates/README.md, RELEASE_GATE_REGISTRY.json and RELEASE_MANIFEST.json to bind candidate 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12 with artifact-handoff Runtime Release run 34179791241 (images built by producer run 34179207603), and adds 19 evidence files under docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/ (including the historical-run-33942097235/ archive). | Evidence directory docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/ landed through PR #1246 (ODP-DEV-CANDIDATE-GATE-RECONCILIATION-003 root clean commit, merge 00c0347383806e8aa6679ed78215b4ac31b1da57) and PR #1292 (merge 3613faff582bd1c5a2c9b2ae5b5cd390d8be381f); RELEASE_GATE_REGISTRY/RELEASE_MANIFEST are now bound to candidate 6140d0ef633cbf94522c171d9927103ab200257f by PR #1392 (ODP-DEV-CANDIDATE-REBIND-6140D0EF-001, merge fdf0fb9fde1dfd8e5de7636bbc3b0f8ee16a4e63). | 無 | **可關閉 (Superseded)** |
+| `odayplus` | **#1205** | `eaa7f8c51b81718a3582ce047fd86867c6db9eda` | 22 檔 +2450/-109 | Same 22 paths as #1243, also binding candidate 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12 / run 34179791241 (producer run 34179207603). Against #1243 head the evidence differs only in wording of docs/evidence/gates/README.md, RELEASE_GATE_REGISTRY.json description, the evidence README.md and verification-transcript.txt; it is the earlier iteration on the non-CLEAN branch of the same task. | Evidence directory docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/ landed through PR #1246 (ODP-DEV-CANDIDATE-GATE-RECONCILIATION-003 root clean commit, merge 00c0347383806e8aa6679ed78215b4ac31b1da57) and PR #1292 (merge 3613faff582bd1c5a2c9b2ae5b5cd390d8be381f); RELEASE_GATE_REGISTRY/RELEASE_MANIFEST are now bound to candidate 6140d0ef633cbf94522c171d9927103ab200257f by PR #1392 (ODP-DEV-CANDIDATE-REBIND-6140D0EF-001, merge fdf0fb9fde1dfd8e5de7636bbc3b0f8ee16a4e63). | 無 | **可關閉 (Superseded)** |
+| `odayplus` | **#1052** | `73a9ee4676b8ebd9526b9d2768cb8c88aa8cacbd` | 2 檔 +253/-3 | Modifies 2 files: delivery_toolchain/git/check_commit_trailers.py (adjusts task-ID-dependent subject length checks) and adds support/sidecars/ORCH-PROVIDER-QUOTA-SIGNAL-AUTHORITY-001-SIDECAR-BLOCKED-TASK-DIAGNOSTICS.md diagnosing worker_lifecycle failure policy. | PR #1045 and mainline supervisor failure policy in origin/dev, but trailer logic differences and sidecar doc are unmerged. | 有 | **保留／需比對 (Needs Comparison)** |
+| `odayplus` | **#986** | `173f51c649ec52cf5073b306fddb38abb6fd2e31` | 2 檔 +50/-1 | Modifies worker_workspace.py and test_supervisor.py to carry git stderr into status_unreadable.detail and adds 43 lines of supervisor test coverage. | Partial: origin/dev independently added worktree_clean/nothing_to_preserve handlers but worker_workspace.py:3625 still drops git stderr. | 有 | **保留／需比對 (Needs Comparison)** |
+| `odayplus` | **#970** | `e102821ccd5aa89e95b04d957e3b2fd863a8c083` | 65 檔 +1511/-10027 | 65 files changed (1,511 additions, 10,027 deletions) at head e102821c, as enumerated by `git diff --name-status -M c045f5f9...e102821c` in pr-970-disposition.md. | PR #991 (ODP-XR-CUTOVER-ACTIVATE-002, merge b32fd65f4e60e4814b6b96bf074c5dc34dec12d4) merged into origin/dev. | 無 | **可關閉 (Superseded)** |
+| `odayplus` | **#607** | `a70b62ca13168927c1500c3e24a8603885681331` | 1 檔 +329/-0 | Added docs/evidence/DEV_PROGRESS_SPEC_GAP_AUDIT_2026-08-03.md (early August 2026 gap audit). | September 2026 remediation architecture: ODP_REMEDIATION_PLAN_2026-09-03.md, ODP_OPEN_DECISIONS_2026-09-03.md, EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md, and EXECUTION.md. | 無 | **可結案 (Historical Snapshot)** |
+| `oday-data-platform` | **#1** | `0577773d0457d7b51e93d2e1913f70002227fdb4` | 6 檔 +305/-35 | 6 files: deploy/k8s/dev/configmap.yaml (+2), src/oday_data_platform/defs/assets.py (+10/-2), src/oday_data_platform/defs/raw_transactions.py (+57/-25), src/oday_data_platform/defs/schedules.py (added, +94), tests/test_assets.py (+73/-8), tests/test_schedules.py (added, +69): transaction daily-lookback job/schedule, env-configurable partition start (ODAY_TRANSACTIONS_AUTOMATION_LOOKBACK_DAYS), count-mismatch failure and automation run metadata. | Unmerged: DPF #63 and #77 are open masked-snapshot and bounded-capture work, not functional replacements. On dev 24c40ae7 schedules.py does not exist and raw_transactions.py keeps a fixed TRANSACTIONS_PARTITION_LOOKBACK_DAYS = 365 partition start. | 有 | **保留／需比對 (Needs Comparison)** |
+
+比對基準：odayplus `origin/dev` `734dcb652edf`；data-platform dev `24c40ae7`（DPF#1 的 PR base 是 `main` `e079199b`）。本任務未關閉、合併或編輯任何 PR；建議僅供 PR 作者／owner 決定。
 
 ### 作用中正式交付 PR (Active In-flight PRs — 嚴禁重複開立或誤關閉)
 - `alfloop-dev/odayplus` **#1381** (`task/ODP-DEV-LIVE-DEPLOY-EXECUTION-001`)
@@ -94,14 +106,15 @@ uv run --frozen --python 3.12 pytest -q docs/evidence/completion/ODP-RELEASE-ACC
 1. **結構綱要與欄位完整性驗證**：嚴格驗證所有 obligation 的 `obligation_id`、`title`、`category`、`stage`、`phase`、`canonical_owner_task`、`historical_source_task`、`owner_or_authority`、`original_acceptance_ref`、`trigger_condition`、`target_environments`、`observation_window`、`observation_window_type`、`required_receipts`、`real_status`、`is_engineering_done`、`is_live_done`、`pre_prod_blocking`、`post_prod_observation`。
 2. **防偽與負向測試 (Negative Test Cases)**：
    - 拒絕缺失或空白的 `canonical_owner_task`、`stage`、`phase`、`trigger_condition`、`original_acceptance_ref`。
-   - 拒絕將已 archived 的任務（如 `ODP-NFR-RUNTIME-EVIDENCE-001`）作為 `canonical_owner_task`。
+   - 對 inventory 內每個 archived task、任意未知 ID、backlog 參照、錯 lane owner 與非 active 狀態一律拒絕。
+   - 拒絕無 `ownership_gap` 的缺 owner 項、提議 lane 不存在或缺 required_action 的缺口。
    - 拒絕空列表或包含空白字串 `[""]` 的 `required_receipts`。
    - 拒絕將尚未具備 live 證據的項目虛構標記為 `is_live_done = True`。
-   - 拒絕循環依賴：禁止同一項目同時具備 `pre_prod_blocking = True` 與 `post_prod_observation = True`。
-3. **NFR 與 CDC 階層區分**：PERF 與 CDC latency 分別拆分為 Staging 部署前驗證（pre-prod blocking）與 Production 上線後觀測（post-prod observation）。
+   - 拒絕循環依賴：stage 與三旗標不一致即拒絕；例如把 `ODP-CDC-LIVE-LATENCY-PROD` 改成 pre_prod_blocking=true/post=false（保留 post-deploy stage、owner 與 production 24h 窗）、改 stage、再改 owner 三種變形都會被擋；拆分前的 SHARED-008 形狀（准入卻需 production 部署）亦被擋。
+3. **階段區分**：SHARED-008／RPO-004／CDC DDL 拆成 staging 准入與 production cutover；PERF、CDC latency、PARTIAL 的 production 部分屬 post-deploy；ModelRisk 綁 `ODP-PRODUCTION-MODEL-REGISTRY-001`（前置 `ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001`），權責 Product Owner + ML Risk Owner（gate-3）。
 4. **具體原驗收標準**：
-   - PARTIAL 包含真實來源資料匯入、live 佇列政策套用與 production 驗收（ODP-DURABLE-PARTIAL-IMPL-001 §5）。
+   - PARTIAL 包含真實來源資料匯入、live 佇列政策套用與 production 驗收（ODP-DURABLE-PARTIAL-IMPL-001 README §5.3）。
    - ADJUST 包含門市營運實務（就地調整 vs 停舊開新）具名決策人、日期、範圍與來源依據（ODP_REQUIREMENT_DISPOSITIONS.md:211-225）。
    - AVM 包含 Contract R-4 數值／結構／校準三項回滾門檻（ODP_AVM001_DEPRECIATION_DISPOSITION_2026-09-04.md §4-5）。
 5. **PRODUCT_RELEASE_GO_NO_GO 歷史脈絡與唯一發布閘門連結驗證**。
-6. **舊 PR 處置對照**：精確記錄 exact PR head、comparison base、diff 及未合併代碼現況，保護作用中交付。
+6. **舊 PR 處置對照**：精確記錄 exact PR head、檔數／行數、comparison base、diff 及未合併代碼現況，保護作用中交付。

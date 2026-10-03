@@ -1,9 +1,9 @@
 {
-  "schema_version": "1.0.0",
-  "generated_at": "2026-10-03T00:30:00Z",
+  "schema_version": "2.0.0",
+  "generated_at": "2026-10-03T02:00:00Z",
   "task_id": "ODP-RELEASE-ACCEPTANCE-CARRYFORWARD-001",
-  "owner": "Antigravity3",
-  "reviewer": "Codex2",
+  "owner": "Claude",
+  "reviewer": "Codex",
   "canonical_reference": "support/handoffs/remaining-work-corrections-20261003/EXECUTION.md",
   "summary": "Machine-readable carryforward obligation matrix reconciling incomplete live acceptance, post-deploy observation windows, human authorities, active execution lanes, and orphan PR dispositions.",
   "principles": [
@@ -11,44 +11,84 @@
     "Pre-production gates must not circularly depend on post-production observation windows.",
     "NFR observation windows (24h, 7 business days, 1 full calendar month) must be bound to their respective post-deployment stages without fake numbers.",
     "Historical completed tasks (source evidence) must be cleanly separated from active canonical execution lanes.",
-    "Release gate registry and manifest remain the sole canonical release truth."
+    "Release gate registry and manifest remain the sole canonical release truth.",
+    "Every obligation sits in exactly one stage: pre_production_admission, production_cutover, post_deploy_observation, dev_runtime_observation, code_remediation or deferred; admission never needs a production deployment.",
+    "A missing owner is recorded as OWNER_RECONCILIATION_REQUIRED with the proposed lane and the action its owner/reviewer must take, never as a settled binding."
   ],
   "obligations": [
     {
-      "obligation_id": "ODP-FR-SHARED-008",
-      "title": "Secret and Identity Isolation Across Environments (dev, staging, prod)",
+      "obligation_id": "ODP-FR-SHARED-008-STAGING",
+      "title": "Secret and Identity Isolation: dev/staging runtime readback before production admission",
       "category": "nfr",
-      "stage": "staging_and_prod_deployment_verification",
-      "target_environments": ["dev", "staging", "production"],
+      "stage": "pre_production_admission",
+      "target_environments": [
+        "dev",
+        "staging"
+      ],
       "historical_source_task": "ODP-NFR-RUNTIME-EVIDENCE-001",
       "canonical_owner_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+      "prerequisite_tasks": [],
       "owner_or_authority": "Human/Ops",
-      "phase": "Staging & Production runtime release verification",
+      "phase": "Staging runtime release verification",
       "original_acceptance_ref": "docs/evidence/ODP_NFR_RUNTIME_DISPOSITION_2026-09-03.md §2",
-      "observation_window": "Per-deployment verification",
+      "observation_window": "Per-deployment readback on the staging (and dev) release",
       "observation_window_type": "instant_readback",
       "required_receipts": [
-        "In-WIF job SHA256 digest of secret versions (gcloud secrets versions access ... | sha256sum) with zero secret values exported",
-        "gcloud run services/jobs describe output proving dev/staging resources do not execute under production Service Account",
-        "Verification that dev and staging secret digests do not match production secret digests"
+        "In-WIF job SHA256 digest of dev/staging secret versions with zero secret values exported",
+        "gcloud run services/jobs describe output proving dev/staging resources do not execute under the production service account",
+        "Comparison of dev/staging secret digests and service-account identities against the production configuration references (not live production values)"
       ],
-      "trigger_condition": "Runtime Release deploy job conclusion 'success' in staging and production environments",
+      "trigger_condition": "Runtime Release deploy job conclusion 'success' on the staging environment for the exact candidate",
       "real_status": "BLOCKED_BY_EVIDENCE",
       "is_engineering_done": true,
       "is_live_done": false,
       "pre_prod_blocking": true,
       "post_prod_observation": false,
+      "requires_production_deployment": false,
       "human_input_required": true,
-      "disposition_notes": "Static configuration identity reference fingerprints verified distinct in rollout-readback.json; runtime secret value digests require live deployed environments."
+      "disposition_notes": "Split from the former combined staging+production item: admission needs only staging/dev readback against production configuration references, so it no longer waits on its own production deployment."
+    },
+    {
+      "obligation_id": "ODP-FR-SHARED-008-PROD-READBACK",
+      "title": "Secret and Identity Isolation: production readback at 0%-green cutover",
+      "category": "nfr",
+      "stage": "production_cutover",
+      "target_environments": [
+        "production"
+      ],
+      "historical_source_task": "ODP-NFR-RUNTIME-EVIDENCE-001",
+      "canonical_owner_task": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+      "prerequisite_tasks": [],
+      "owner_or_authority": "Human/Ops",
+      "phase": "Production 0%-green IAM/secret smoke",
+      "original_acceptance_ref": "docs/evidence/ODP_NFR_RUNTIME_DISPOSITION_2026-09-03.md §2",
+      "observation_window": "Single readback on the 0%-traffic green revision",
+      "observation_window_type": "instant_readback",
+      "required_receipts": [
+        "In-WIF job SHA256 digest of production secret versions with zero secret values exported, compared against the staging digests recorded by ODP-FR-SHARED-008-STAGING",
+        "gcloud run services/jobs describe output proving the production green revision runs under the production service account only"
+      ],
+      "trigger_condition": "Human GO and valid Supervisor lease exist; production green deployed at 0% traffic with the same digests",
+      "real_status": "BLOCKED_BY_EVIDENCE",
+      "is_engineering_done": true,
+      "is_live_done": false,
+      "pre_prod_blocking": false,
+      "post_prod_observation": false,
+      "requires_production_deployment": true,
+      "human_input_required": true,
+      "disposition_notes": "Production-side half of SHARED-008. Bound to the blue-green rollout acceptance 'prod green以同一digests在0%完成IAM/secret/startup/job smoke'; executed after GO, not a precondition of GO."
     },
     {
       "obligation_id": "ODP-NFR-PERF-001-STAGING",
       "title": "API Latency & Concurrency Performance SLA on Staging (P95 <= 3.0s, 0 errors)",
       "category": "nfr",
-      "stage": "staging_performance_verification",
-      "target_environments": ["staging"],
+      "stage": "pre_production_admission",
+      "target_environments": [
+        "staging"
+      ],
       "historical_source_task": "ODP-NFR-RUNTIME-EVIDENCE-001",
       "canonical_owner_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+      "prerequisite_tasks": [],
       "owner_or_authority": "Release / QA Lead",
       "phase": "Staging load test verification",
       "original_acceptance_ref": "docs/evidence/ODP_NFR_RUNTIME_DISPOSITION_2026-09-03.md §2",
@@ -63,6 +103,7 @@
       "is_live_done": false,
       "pre_prod_blocking": true,
       "post_prod_observation": false,
+      "requires_production_deployment": false,
       "human_input_required": false,
       "disposition_notes": "Deterministic load_soak_performance_report.json is an offline test, not runtime proof. Staging load pass gates production admission."
     },
@@ -71,9 +112,12 @@
       "title": "API Latency Live Production Traffic Monitoring (P95 <= 3.0s over >= 24h)",
       "category": "nfr",
       "stage": "post_deploy_observation",
-      "target_environments": ["production"],
+      "target_environments": [
+        "production"
+      ],
       "historical_source_task": "ODP-NFR-RUNTIME-EVIDENCE-001",
       "canonical_owner_task": "ODP-POSTDEPLOY-WATCH-CLOSEOUT-001",
+      "prerequisite_tasks": [],
       "owner_or_authority": "Human/Ops",
       "phase": "Post-production 24h traffic telemetry watch",
       "original_acceptance_ref": "docs/evidence/ODP_NFR_RUNTIME_DISPOSITION_2026-09-03.md §2",
@@ -88,6 +132,7 @@
       "is_live_done": false,
       "pre_prod_blocking": false,
       "post_prod_observation": true,
+      "requires_production_deployment": true,
       "human_input_required": true,
       "disposition_notes": "Post-production observation window. Observed following live rollout; non-blocking for pre-production admission."
     },
@@ -96,9 +141,12 @@
       "title": "Daily Batch Completion SLA Before Operating Day",
       "category": "nfr",
       "stage": "post_deploy_observation",
-      "target_environments": ["production"],
+      "target_environments": [
+        "production"
+      ],
       "historical_source_task": "ODP-NFR-RUNTIME-EVIDENCE-001",
       "canonical_owner_task": "ODP-POSTDEPLOY-WATCH-CLOSEOUT-001",
+      "prerequisite_tasks": [],
       "owner_or_authority": "Human/Ops",
       "phase": "Post-production batch execution observation",
       "original_acceptance_ref": "docs/evidence/ODP_NFR_RUNTIME_DISPOSITION_2026-09-03.md §2",
@@ -114,6 +162,7 @@
       "is_live_done": false,
       "pre_prod_blocking": false,
       "post_prod_observation": true,
+      "requires_production_deployment": true,
       "human_input_required": true,
       "disposition_notes": "Operating day cutoff deadline is NOT defined in repo and requires Human/Ops input. 7-day observation is post-production and does not block pre-production admission."
     },
@@ -122,9 +171,12 @@
       "title": "OpsBoard Monthly Availability SLA >= 99.5%",
       "category": "nfr",
       "stage": "post_deploy_observation",
-      "target_environments": ["production"],
+      "target_environments": [
+        "production"
+      ],
       "historical_source_task": "ODP-NFR-RUNTIME-EVIDENCE-001",
       "canonical_owner_task": "ODP-POSTDEPLOY-WATCH-CLOSEOUT-001",
+      "prerequisite_tasks": [],
       "owner_or_authority": "Human/Ops",
       "phase": "Post-production availability observation",
       "original_acceptance_ref": "docs/evidence/ODP_NFR_RUNTIME_DISPOSITION_2026-09-03.md §2",
@@ -139,24 +191,28 @@
       "is_live_done": false,
       "pre_prod_blocking": false,
       "post_prod_observation": true,
+      "requires_production_deployment": true,
       "human_input_required": true,
       "disposition_notes": "Post-production availability monitoring window. Cannot be measured prior to production launch; non-circular."
     },
     {
-      "obligation_id": "ODP-NFR-RPO-004",
-      "title": "RPO <= 60 min, RTO <= 240 min & Staging Restoration Drill",
+      "obligation_id": "ODP-NFR-RPO-004-STAGING-DRILL",
+      "title": "RPO <= 60 min, RTO <= 240 min: staging timed restore drill",
       "category": "nfr",
-      "stage": "staging_dr_verification",
-      "target_environments": ["staging", "production"],
+      "stage": "pre_production_admission",
+      "target_environments": [
+        "staging"
+      ],
       "historical_source_task": "ODP-NFR-RUNTIME-EVIDENCE-001",
       "canonical_owner_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+      "prerequisite_tasks": [],
       "owner_or_authority": "Human/Ops",
       "phase": "Staging DR rehearsal and Cloud SQL verification",
       "original_acceptance_ref": "docs/evidence/ODP_NFR_RUNTIME_DISPOSITION_2026-09-03.md §2",
       "observation_window": "1 timed recovery drill",
       "observation_window_type": "drill_event",
       "required_receipts": [
-        "gcloud sql instances describe readback verifying backupConfiguration and PITR enabled",
+        "gcloud sql instances describe readback on the staging instance verifying backupConfiguration and PITR enabled",
         "Timed database restore drill execution log on staging verifying RTO <= 240 min and core query validation (ODP-AC-NFR-007)"
       ],
       "trigger_condition": "Deployed staging database instance available for timed restoration drill",
@@ -165,17 +221,50 @@
       "is_live_done": false,
       "pre_prod_blocking": true,
       "post_prod_observation": false,
+      "requires_production_deployment": false,
       "human_input_required": true,
       "disposition_notes": "Local shutil.copy drill in dr_drill_records.json is an offline test; runtime Cloud SQL restore drill on staging required."
+    },
+    {
+      "obligation_id": "ODP-NFR-RPO-004-PROD-BACKUP-READBACK",
+      "title": "RPO <= 60 min: production Cloud SQL backup/PITR configuration readback",
+      "category": "nfr",
+      "stage": "production_cutover",
+      "target_environments": [
+        "production"
+      ],
+      "historical_source_task": "ODP-NFR-RUNTIME-EVIDENCE-001",
+      "canonical_owner_task": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+      "prerequisite_tasks": [],
+      "owner_or_authority": "Human/Ops",
+      "phase": "Production cutover readback",
+      "original_acceptance_ref": "docs/evidence/ODP_NFR_RUNTIME_DISPOSITION_2026-09-03.md §2",
+      "observation_window": "Single configuration readback at cutover",
+      "observation_window_type": "instant_readback",
+      "required_receipts": [
+        "gcloud sql instances describe readback on the production instance verifying backupConfiguration and PITR enabled"
+      ],
+      "trigger_condition": "Production green deployed at 0% traffic after Human GO",
+      "real_status": "BLOCKED_BY_EVIDENCE",
+      "is_engineering_done": true,
+      "is_live_done": false,
+      "pre_prod_blocking": false,
+      "post_prod_observation": false,
+      "requires_production_deployment": true,
+      "human_input_required": true,
+      "disposition_notes": "Production configuration half of RPO-004; the restore drill itself stays on staging and gates admission."
     },
     {
       "obligation_id": "ODP-CDC-LIVE-REPLICA-SET",
       "title": "MongoDB Upstream Replica Set & Oplog Retention Floor Confirmation",
       "category": "cdc_live",
-      "stage": "pre_live_configuration",
-      "target_environments": ["production"],
+      "stage": "pre_production_admission",
+      "target_environments": [
+        "production"
+      ],
       "historical_source_task": "ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001",
       "canonical_owner_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+      "prerequisite_tasks": [],
       "owner_or_authority": "Human/DBA",
       "phase": "Upstream infrastructure verification",
       "original_acceptance_ref": "docs/evidence/human-decisions/ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001/README.md §0",
@@ -190,6 +279,7 @@
       "is_live_done": false,
       "pre_prod_blocking": true,
       "post_prod_observation": false,
+      "requires_production_deployment": false,
       "human_input_required": true,
       "disposition_notes": "Oral operator statement transcribed in H07; requires formal written DBA verification receipt."
     },
@@ -197,10 +287,13 @@
       "obligation_id": "ODP-CDC-LIVE-LATENCY-STAGING",
       "title": "Scoped CDC End-to-End Latency Verification on Staging (< 10s SLA, P95 < 5s)",
       "category": "cdc_live",
-      "stage": "staging_stream_verification",
-      "target_environments": ["staging"],
+      "stage": "pre_production_admission",
+      "target_environments": [
+        "staging"
+      ],
       "historical_source_task": "ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001",
       "canonical_owner_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+      "prerequisite_tasks": [],
       "owner_or_authority": "Data Platform Owner",
       "phase": "Staging ChangeStream telemetry verification",
       "original_acceptance_ref": "docs/evidence/human-decisions/ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001/README.md §0",
@@ -215,6 +308,7 @@
       "is_live_done": false,
       "pre_prod_blocking": true,
       "post_prod_observation": false,
+      "requires_production_deployment": false,
       "human_input_required": false,
       "disposition_notes": "Measurement code merged in apps/data_platform/cdc.py; offline test clocks do not constitute live latency evidence. Verified in staging stream before prod admission."
     },
@@ -223,9 +317,12 @@
       "title": "Scoped CDC Continuous Production Telemetry Observation",
       "category": "cdc_live",
       "stage": "post_deploy_observation",
-      "target_environments": ["production"],
+      "target_environments": [
+        "production"
+      ],
       "historical_source_task": "ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001",
       "canonical_owner_task": "ODP-POSTDEPLOY-WATCH-CLOSEOUT-001",
+      "prerequisite_tasks": [],
       "owner_or_authority": "Data Platform Owner",
       "phase": "Post-production ChangeStream telemetry watch",
       "original_acceptance_ref": "docs/evidence/human-decisions/ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001/README.md §0",
@@ -240,6 +337,7 @@
       "is_live_done": false,
       "pre_prod_blocking": false,
       "post_prod_observation": true,
+      "requires_production_deployment": true,
       "human_input_required": false,
       "disposition_notes": "Post-production continuous stream observation. Does not circularly block pre-production admission."
     },
@@ -247,10 +345,14 @@
       "obligation_id": "ODP-CDC-LIVE-IAM-CREDENTIALS",
       "title": "odp_cdc_reader Service Account & changeStream Role Grant",
       "category": "cdc_live",
-      "stage": "pre_live_configuration",
-      "target_environments": ["staging", "production"],
+      "stage": "pre_production_admission",
+      "target_environments": [
+        "staging",
+        "production"
+      ],
       "historical_source_task": "ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001",
       "canonical_owner_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+      "prerequisite_tasks": [],
       "owner_or_authority": "Human/Ops",
       "phase": "IAM / database access provisioning",
       "original_acceptance_ref": "docs/evidence/human-decisions/ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001/README.md §0",
@@ -265,42 +367,80 @@
       "is_live_done": false,
       "pre_prod_blocking": true,
       "post_prod_observation": false,
+      "requires_production_deployment": false,
       "human_input_required": true,
       "disposition_notes": "Automated workers do not modify IAM or apply credentials; must be provisioned and read back by authorized Ops."
     },
     {
-      "obligation_id": "ODP-CDC-LIVE-PG-DDL-MIGRATION",
+      "obligation_id": "ODP-CDC-LIVE-PG-DDL-STAGING",
       "title": "PostgreSQL cdc_checkpoints & cdc_staging_events Schema Execution",
       "category": "cdc_live",
-      "stage": "staging_and_prod_deployment_verification",
-      "target_environments": ["dev", "staging", "production"],
+      "stage": "pre_production_admission",
+      "target_environments": [
+        "dev",
+        "staging"
+      ],
       "historical_source_task": "ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001",
       "canonical_owner_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+      "prerequisite_tasks": [],
       "owner_or_authority": "Platform / Release Engineering",
       "phase": "Database schema migration execution",
       "original_acceptance_ref": "docs/evidence/human-decisions/ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001/README.md §0",
       "observation_window": "Migration execution receipt",
       "observation_window_type": "instant_readback",
       "required_receipts": [
-        "information_schema.tables and check constraint verification on real PostgreSQL instance for cdc_checkpoints and cdc_staging_events"
+        "information_schema.tables and check constraint verification on the deployed dev/staging PostgreSQL instance for cdc_checkpoints and cdc_staging_events"
       ],
-      "trigger_condition": "Deployment execution of apps/data_platform/sql/control_schema.sql on cluster",
+      "trigger_condition": "Staging rollout migration step for the exact candidate",
       "real_status": "BLOCKED_BY_EVIDENCE",
       "is_engineering_done": true,
       "is_live_done": false,
       "pre_prod_blocking": true,
       "post_prod_observation": false,
+      "requires_production_deployment": false,
       "human_input_required": false,
       "disposition_notes": "DDL defined and tested offline; execution on live PostgreSQL cluster required during deployment."
+    },
+    {
+      "obligation_id": "ODP-CDC-LIVE-PG-DDL-PROD-READBACK",
+      "title": "PostgreSQL cdc_checkpoints & cdc_staging_events Schema Execution",
+      "category": "cdc_live",
+      "stage": "production_cutover",
+      "target_environments": [
+        "production"
+      ],
+      "historical_source_task": "ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001",
+      "canonical_owner_task": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+      "prerequisite_tasks": [],
+      "owner_or_authority": "Platform / Release Engineering",
+      "phase": "Production cutover schema readback",
+      "original_acceptance_ref": "docs/evidence/human-decisions/ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001/README.md §0",
+      "observation_window": "Migration execution receipt",
+      "observation_window_type": "instant_readback",
+      "required_receipts": [
+        "information_schema.tables and check constraint readback on the production PostgreSQL instance for cdc_checkpoints and cdc_staging_events"
+      ],
+      "trigger_condition": "Production migration step of the blue-green rollout after Human GO",
+      "real_status": "BLOCKED_BY_EVIDENCE",
+      "is_engineering_done": true,
+      "is_live_done": false,
+      "pre_prod_blocking": false,
+      "post_prod_observation": false,
+      "requires_production_deployment": true,
+      "human_input_required": false,
+      "disposition_notes": "Production half of the CDC DDL obligation; this task does not run any migration."
     },
     {
       "obligation_id": "ODP-CDC-LIVE-OPLOG-FAIL-CLOSED",
       "title": "Expired Resume Token Fail-Closed Rejection & Snapshot Recovery Re-Read",
       "category": "cdc_live",
-      "stage": "staging_resilience_verification",
-      "target_environments": ["staging"],
+      "stage": "pre_production_admission",
+      "target_environments": [
+        "staging"
+      ],
       "historical_source_task": "ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001",
       "canonical_owner_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+      "prerequisite_tasks": [],
       "owner_or_authority": "Data Platform Owner",
       "phase": "Staging resilience verification",
       "original_acceptance_ref": "docs/evidence/human-decisions/ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001/README.md §0",
@@ -315,6 +455,7 @@
       "is_live_done": false,
       "pre_prod_blocking": true,
       "post_prod_observation": false,
+      "requires_production_deployment": false,
       "human_input_required": false,
       "disposition_notes": "Offline integration test passed with mock throw; live cluster oplog rejection verification required in staging."
     },
@@ -322,10 +463,16 @@
       "obligation_id": "ODP-CDC-MACHINE-EVENT-LIFECYCLE",
       "title": "core.machine_status_events Record Lifecycle Field Migration & Soft Retirement Guard",
       "category": "cdc_live",
-      "stage": "code_remediation_and_migration",
-      "target_environments": ["codebase", "dev", "staging", "production"],
+      "stage": "code_remediation",
+      "target_environments": [
+        "codebase",
+        "dev",
+        "staging",
+        "production"
+      ],
       "historical_source_task": "ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001",
       "canonical_owner_task": "ODP-CDC-MACHINE-EVENT-LIFECYCLE-001",
+      "prerequisite_tasks": [],
       "owner_or_authority": "ODP-CDC-MACHINE-EVENT-LIFECYCLE-001 Owner",
       "phase": "Remaining work correction",
       "original_acceptance_ref": "docs/evidence/human-decisions/ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001/README.md §4",
@@ -341,43 +488,118 @@
       "is_live_done": false,
       "pre_prod_blocking": true,
       "post_prod_observation": false,
+      "requires_production_deployment": false,
       "human_input_required": false,
       "disposition_notes": "Identified gap in WP-34B; assigned to dedicated task ODP-CDC-MACHINE-EVENT-LIFECYCLE-001 in current batch."
     },
     {
-      "obligation_id": "ODP-PARTIAL-LIVE-H06",
-      "title": "H06 Partial Business Scope, Real-Source Ingestion & Live Queue Policy Acceptance",
+      "obligation_id": "ODP-PARTIAL-H06-SCOPE-RATIFICATION",
+      "title": "H06 / SHARED-001 PARTIAL: named business-owner scope ratification",
       "category": "business_operational",
-      "stage": "pre_release_readiness",
-      "target_environments": ["production"],
+      "stage": "pre_production_admission",
+      "target_environments": [
+        "production"
+      ],
       "historical_source_task": "ODP-DURABLE-PARTIAL-IMPL-001",
       "canonical_owner_task": "HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001",
+      "prerequisite_tasks": [],
       "owner_or_authority": "Human/Business Owner",
-      "phase": "Business governance ratification & live intake acceptance",
+      "phase": "Business governance ratification",
       "original_acceptance_ref": "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-IMPL-001/README.md §5",
-      "observation_window": "Formal signoff memo & live ingestion receipt",
+      "observation_window": "Formal signoff memo",
       "observation_window_type": "instant_readback",
       "required_receipts": [
-        "Named business owner sign-off defining approved operational scope for partial features (replacing engineering default batch-listing-intake)",
-        "Verification of real-source ingestion, live queue policy enforcement, and production acceptance per ODP-DURABLE-PARTIAL-IMPL-001 §5"
+        "Named business owner decision on which durable multi-item jobs need partial success and their per-item receipt/retry semantics (or a formal revision/waiver with decider, date, scope, risk owner, expiry and reopen trigger), replacing the engineering default batch-listing-intake"
       ],
-      "trigger_condition": "Business stakeholder ratification and live staging ingestion validation",
+      "trigger_condition": "Business stakeholder ratification under HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001 (SHARED-001 PARTIAL item)",
       "real_status": "PENDING_HUMAN_AUTHORITY",
       "is_engineering_done": true,
       "is_live_done": false,
       "pre_prod_blocking": true,
       "post_prod_observation": false,
+      "requires_production_deployment": false,
       "human_input_required": true,
-      "disposition_notes": "Durable partial batch code delivered in PR #1285; awaiting named business owner scope ratification and subsequent live ingestion/queue acceptance."
+      "disposition_notes": "Covered by the SHARED-001 PARTIAL line of HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001 acceptance. Durable partial batch code delivered in PR #1285; batch-listing-intake remains an engineering default, not a Human signature."
+    },
+    {
+      "obligation_id": "ODP-PARTIAL-H06-STAGING-INTAKE",
+      "title": "H06 PARTIAL: real-source ingestion and live queue policy on staging",
+      "category": "business_operational",
+      "stage": "pre_production_admission",
+      "target_environments": [
+        "staging"
+      ],
+      "historical_source_task": "ODP-DURABLE-PARTIAL-IMPL-001",
+      "canonical_owner_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+      "prerequisite_tasks": [
+        "HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001"
+      ],
+      "owner_or_authority": "Release / QA Lead",
+      "phase": "Staging business-path rehearsal",
+      "original_acceptance_ref": "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-IMPL-001/README.md §5",
+      "observation_window": "Staging intake run under the ratified scope",
+      "observation_window_type": "drill_event",
+      "required_receipts": [
+        "Staging run log of real-source batch intake under the ratified scope showing per-item receipts, retry semantics and live queue policy enforcement (ODP-DURABLE-PARTIAL-IMPL-001 README §5.3)"
+      ],
+      "trigger_condition": "ODP-PARTIAL-H06-SCOPE-RATIFICATION recorded and staging deployed with the exact candidate",
+      "real_status": "BLOCKED_BY_EVIDENCE",
+      "is_engineering_done": true,
+      "is_live_done": false,
+      "pre_prod_blocking": true,
+      "post_prod_observation": false,
+      "requires_production_deployment": false,
+      "human_input_required": false,
+      "disposition_notes": "Staging readiness half of PARTIAL. No synthetic fixture substitutes for the real-source run."
+    },
+    {
+      "obligation_id": "ODP-PARTIAL-H06-PROD-ACCEPTANCE",
+      "title": "H06 PARTIAL: production acceptance of live intake",
+      "category": "business_operational",
+      "stage": "post_deploy_observation",
+      "target_environments": [
+        "production"
+      ],
+      "historical_source_task": "ODP-DURABLE-PARTIAL-IMPL-001",
+      "canonical_owner_task": "ODP-POSTDEPLOY-WATCH-CLOSEOUT-001",
+      "prerequisite_tasks": [],
+      "owner_or_authority": "Human/Business Owner",
+      "phase": "Post-production business acceptance",
+      "original_acceptance_ref": "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-IMPL-001/README.md §5",
+      "observation_window": "Production watch window job/audit evidence",
+      "observation_window_type": "event_stream",
+      "required_receipts": [
+        "Production job/audit readback of partial-success batch intake within the watch window, accepted by the named business owner (ODP-DURABLE-PARTIAL-IMPL-001 README §5.3 production acceptance)"
+      ],
+      "trigger_condition": "Production cutover complete and live partial intake jobs executed in the watch window",
+      "real_status": "BLOCKED_BY_EVIDENCE",
+      "is_engineering_done": true,
+      "is_live_done": false,
+      "pre_prod_blocking": false,
+      "post_prod_observation": true,
+      "requires_production_deployment": true,
+      "human_input_required": true,
+      "disposition_notes": "Original live obligation preserved; it cannot gate production admission because it needs production."
     },
     {
       "obligation_id": "ODP-ADJUST-OPERATIONAL-CONFIRMATION",
       "title": "Adjustment In-Place vs Stop-Plus-Recreate Operational Confirmation",
       "category": "business_operational",
-      "stage": "pre_release_readiness",
-      "target_environments": ["production"],
+      "stage": "pre_production_admission",
+      "target_environments": [
+        "production"
+      ],
       "historical_source_task": "ODP-REMEDIATION-PLAN-2026-09-03",
-      "canonical_owner_task": "HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001",
+      "canonical_owner_task": null,
+      "prerequisite_tasks": [],
+      "ownership_gap": {
+        "finding": "No canonical task owns ADJUST: HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001 acceptance covers BRAND_TRANSFER/FORMAT_CONVERSION/LEASE/PARTIAL/CDC/merge queue only. The 2026-10-03T00:36:29Z AI note on that task is a proposed handoff, not scope acceptance.",
+        "proposed_owner_tasks": [
+          "HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001"
+        ],
+        "required_action": "That task's owner (Human/Ops) and reviewer (Codex) explicitly accept or reject ADJUST into scope through the canonical writer, or Human/Ops names another lane. Operations/Product authority is not self-signed here.",
+        "missing_authority": "Operations Lead / Product Lead"
+      },
       "owner_or_authority": "Operations Lead / Product Lead",
       "phase": "Operational practice ratification",
       "original_acceptance_ref": "docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md §4.4",
@@ -387,23 +609,36 @@
         "Formal written confirmation of store operational practice (in-place adjustment vs stop-plus-recreate) with named decision owner, decision date, applicable store scope, and traceable source evidence per ODP_REQUIREMENT_DISPOSITIONS.md:211-225"
       ],
       "trigger_condition": "Operations leadership review of intervention adjustment workflow",
-      "real_status": "PENDING_HUMAN_AUTHORITY",
+      "real_status": "OWNER_RECONCILIATION_REQUIRED",
       "is_engineering_done": true,
       "is_live_done": false,
       "pre_prod_blocking": true,
       "post_prod_observation": false,
+      "requires_production_deployment": false,
       "human_input_required": true,
-      "disposition_notes": "Technical stop-plus-recreate mechanism delivered in PR #1285/000025 migration; awaiting formal confirmation of store operational practice from named Operations/Product lead."
+      "disposition_notes": "Technical stop-plus-recreate mechanism delivered in PR #1285/000025 migration. Ownership is an open gap, not settled."
     },
     {
       "obligation_id": "ODP-AVM-FINANCE-CUTOVER",
       "title": "AVM Valuation & Depreciation R-4 Rollback Thresholds Finance Sign-off",
       "category": "business_operational",
-      "stage": "pre_release_readiness",
-      "target_environments": ["production"],
+      "stage": "pre_production_admission",
+      "target_environments": [
+        "production"
+      ],
       "historical_source_task": "ODP-AVM-DEPRECIATION-INTEGRATION-001",
-      "canonical_owner_task": "HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001",
-      "owner_or_authority": "Finance Owner / ML Risk Owner",
+      "canonical_owner_task": null,
+      "prerequisite_tasks": [],
+      "ownership_gap": {
+        "finding": "No canonical task owns the Finance R-4 rollback thresholds or the AVM valuation cutover approval: HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001 does not cover Finance, and ODP-PRODUCTION-MODEL-REGISTRY-001 owns AVM model readiness/promotion but not Finance authority.",
+        "proposed_owner_tasks": [
+          "ODP-PRODUCTION-MODEL-REGISTRY-001",
+          "HUMAN-ODP-OPEN-REQUIREMENT-DISPOSITIONS-001"
+        ],
+        "required_action": "ODP-PRODUCTION-MODEL-REGISTRY-001 owner/reviewer confirm whether AVM promotion consumes the R-4 thresholds as its rollback target; Human/Ops names the Finance decision lane. Neither is assumed here.",
+        "missing_authority": "Finance Owner"
+      },
+      "owner_or_authority": "Finance Owner (R-4 thresholds); Product Owner + ML Risk Owner (AVM promotion)",
       "phase": "Finance R-4 thresholds & cutover sign-off",
       "original_acceptance_ref": "docs/evidence/ODP_AVM001_DEPRECIATION_DISPOSITION_2026-09-04.md §4-5",
       "observation_window": "Finance signoff receipt",
@@ -413,22 +648,26 @@
         "Finance leadership formal approval for production valuation cutover"
       ],
       "trigger_condition": "Finance owner review of depreciation contract and valuation benchmarks",
-      "real_status": "PENDING_HUMAN_AUTHORITY",
+      "real_status": "OWNER_RECONCILIATION_REQUIRED",
       "is_engineering_done": true,
       "is_live_done": false,
       "pre_prod_blocking": true,
       "post_prod_observation": false,
+      "requires_production_deployment": false,
       "human_input_required": true,
-      "disposition_notes": "Depreciation integration code delivered; Contract R-4 rollback thresholds (numerical/structural/calibration) must be filled by Finance owner before production cutover."
+      "disposition_notes": "Depreciation integration code delivered; R-4 thresholds must be filled by the Finance owner before cutover (ODP_AVM001_DEPRECIATION_DISPOSITION_2026-09-04.md §4-5). Ownership is an open gap, not settled."
     },
     {
       "obligation_id": "ODP-MERGE-QUEUE-BATCH-FORMATION",
       "title": "Live Merge Queue Batch Formation for 2+ Concurrently Queued PRs",
       "category": "merge_queue",
-      "stage": "dev_merge_queue_observation",
-      "target_environments": ["dev"],
+      "stage": "dev_runtime_observation",
+      "target_environments": [
+        "dev"
+      ],
       "historical_source_task": "ODP-MERGE-QUEUE-H08-ACTIVATION-001",
       "canonical_owner_task": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+      "prerequisite_tasks": [],
       "owner_or_authority": "Platform Ops / Supervisor",
       "phase": "Live merge queue behavior verification",
       "original_acceptance_ref": "docs/evidence/human-decisions/ODP-MERGE-QUEUE-H08-ACTIVATION-001/README.md §4",
@@ -443,6 +682,7 @@
       "is_live_done": false,
       "pre_prod_blocking": false,
       "post_prod_observation": false,
+      "requires_production_deployment": false,
       "human_input_required": false,
       "disposition_notes": "H08 Option B ruleset applied to GitHub (ruleset 20508144); real multi-PR queue formation awaiting natural traffic."
     },
@@ -450,10 +690,13 @@
       "obligation_id": "ODP-MERGE-QUEUE-HOLD-TIMEOUT",
       "title": "Single PR Accumulation Hold Duration <= 10 Minutes",
       "category": "merge_queue",
-      "stage": "dev_merge_queue_observation",
-      "target_environments": ["dev"],
+      "stage": "dev_runtime_observation",
+      "target_environments": [
+        "dev"
+      ],
       "historical_source_task": "ODP-MERGE-QUEUE-H08-ACTIVATION-001",
       "canonical_owner_task": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+      "prerequisite_tasks": [],
       "owner_or_authority": "Platform Ops / Supervisor",
       "phase": "Live merge queue behavior verification",
       "original_acceptance_ref": "docs/evidence/human-decisions/ODP-MERGE-QUEUE-H08-ACTIVATION-001/README.md §4",
@@ -468,6 +711,7 @@
       "is_live_done": false,
       "pre_prod_blocking": false,
       "post_prod_observation": false,
+      "requires_production_deployment": false,
       "human_input_required": false,
       "disposition_notes": "Rule configured; real accumulation timer hold duration observation pending."
     },
@@ -475,10 +719,13 @@
       "obligation_id": "ODP-MERGE-QUEUE-ALLGREEN-REBUILD",
       "title": "ALLGREEN Strategy Failed PR Eviction & Clean Batch Rebuild",
       "category": "merge_queue",
-      "stage": "dev_merge_queue_observation",
-      "target_environments": ["dev"],
+      "stage": "dev_runtime_observation",
+      "target_environments": [
+        "dev"
+      ],
       "historical_source_task": "ODP-MERGE-QUEUE-H08-ACTIVATION-001",
       "canonical_owner_task": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+      "prerequisite_tasks": [],
       "owner_or_authority": "Platform Ops / Supervisor",
       "phase": "Live merge queue behavior verification",
       "original_acceptance_ref": "docs/evidence/human-decisions/ODP-MERGE-QUEUE-H08-ACTIVATION-001/README.md §4",
@@ -493,6 +740,7 @@
       "is_live_done": false,
       "pre_prod_blocking": false,
       "post_prod_observation": false,
+      "requires_production_deployment": false,
       "human_input_required": false,
       "disposition_notes": "Configured in dev-merge-queue ruleset; runtime observation open."
     },
@@ -500,10 +748,13 @@
       "obligation_id": "ODP-SIGN-OFF-UAT",
       "title": "Cross-Role User Acceptance Testing (UAT) Sign-off (Zero P0/P1 Defects)",
       "category": "human_signoff",
-      "stage": "staging_uat_readiness",
-      "target_environments": ["staging", "production"],
+      "stage": "pre_production_admission",
+      "target_environments": [
+        "staging"
+      ],
       "historical_source_task": "RELEASE_GATE_REGISTRY.json §gate-5",
       "canonical_owner_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+      "prerequisite_tasks": [],
       "owner_or_authority": "Human/QA & Product Owner",
       "phase": "Pre-production admission readiness",
       "original_acceptance_ref": "docs/evidence/gates/RELEASE_GATE_REGISTRY.json §gate-5",
@@ -518,6 +769,7 @@
       "is_live_done": false,
       "pre_prod_blocking": true,
       "post_prod_observation": false,
+      "requires_production_deployment": false,
       "human_input_required": true,
       "disposition_notes": "Deterministic test coverage complete; live staging UAT execution and sign-off pending live staging deployment."
     },
@@ -525,35 +777,47 @@
       "obligation_id": "ODP-SIGN-OFF-MODEL-RISK",
       "title": "Model Risk & ML Governance Formal Sign-off",
       "category": "human_signoff",
-      "stage": "model_risk_governance_readiness",
-      "target_environments": ["staging", "production"],
-      "historical_source_task": "RELEASE_GATE_REGISTRY.json §gate-3",
-      "canonical_owner_task": "ODP-MODEL-ARTIFACT-HISTORY-RECOVERY-001",
-      "owner_or_authority": "ML Risk Owner",
-      "phase": "Pre-production admission readiness",
+      "stage": "pre_production_admission",
+      "target_environments": [
+        "dev",
+        "staging"
+      ],
+      "historical_source_task": "ODP-MODEL-ARTIFACT-HISTORY-RECOVERY-001",
+      "canonical_owner_task": "ODP-PRODUCTION-MODEL-REGISTRY-001",
+      "prerequisite_tasks": [
+        "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001"
+      ],
+      "owner_or_authority": "Product Owner + ML Risk Owner",
+      "phase": "Model execution and governance evidence before admission",
       "original_acceptance_ref": "docs/evidence/gates/RELEASE_GATE_REGISTRY.json §gate-3",
       "observation_window": "Model governance review",
       "observation_window_type": "instant_readback",
       "required_receipts": [
-        "Formal ML Risk Owner approval receipt covering ForecastOps model version custody, SiteScore/AVM validation benchmarks, and production alias binding"
+        "Real DEV candidate training record per model: dataset hash/version, metrics, model card, MLflow model version and artifact digest (ODP-PRODUCTION-MODEL-REGISTRY-001)",
+        "Authoritative Forecast history backfill before/after count/window/hash receipts satisfying the training contract (ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001)",
+        "Named Product Owner + ML Risk Owner approval with rollback target for any DEV->SHADOW->production promotion, bound to RELEASE_GATE_REGISTRY gate-3 for the exact candidate"
       ],
-      "trigger_condition": "Model validation review against approved historical dataset and candidate artifacts",
-      "real_status": "PENDING_HUMAN_AUTHORITY",
+      "trigger_condition": "Approved real history/model inputs and operational admission arrive for ODP-PRODUCTION-MODEL-REGISTRY-001",
+      "real_status": "BLOCKED_BY_EVIDENCE",
       "is_engineering_done": true,
       "is_live_done": false,
       "pre_prod_blocking": true,
       "post_prod_observation": false,
+      "requires_production_deployment": false,
       "human_input_required": true,
-      "disposition_notes": "ML code and Gate 1 benchmark receipts delivered; formal model-risk custody and production alias binding pending."
+      "disposition_notes": "ODP-MODEL-ARTIFACT-HISTORY-RECOVERY-001 was a bounded investigation that may finish without a ready model; it is a historical source only. Continuing execution/governance is ODP-PRODUCTION-MODEL-REGISTRY-001 (non_dispatchable until real inputs) with history prerequisite ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001. Authority per gate-3: Product Owner + ML Risk Owner."
     },
     {
       "obligation_id": "ODP-SIGN-OFF-OPS-GO-NO-GO",
       "title": "Production Release Final Go/No-Go Decision",
       "category": "human_signoff",
-      "stage": "production_release_admission",
-      "target_environments": ["production"],
+      "stage": "pre_production_admission",
+      "target_environments": [
+        "production"
+      ],
       "historical_source_task": "RELEASE_GATE_REGISTRY.json §gate-6",
       "canonical_owner_task": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+      "prerequisite_tasks": [],
       "owner_or_authority": "Human/Ops",
       "phase": "Production release gate admission",
       "original_acceptance_ref": "docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md / docs/evidence/gates/RELEASE_GATE_REGISTRY.json §gate-6",
@@ -568,6 +832,7 @@
       "is_live_done": false,
       "pre_prod_blocking": true,
       "post_prod_observation": false,
+      "requires_production_deployment": false,
       "human_input_required": true,
       "disposition_notes": "All Human/Ops checklist rows remain pending-human; cannot fabricate GO decision without real authority."
     },
@@ -575,10 +840,14 @@
       "obligation_id": "ODP-DEFERRED-ROOT-CAUSE-WAVE-5",
       "title": "Wave 5+ Root Cause Preventive Remediation Actions",
       "category": "deferred",
-      "stage": "post_release_maintenance",
-      "target_environments": ["codebase"],
+      "stage": "deferred",
+      "target_environments": [
+        "codebase"
+      ],
       "historical_source_task": "EXECUTION.md §Existing lanes remain the owners",
-      "canonical_owner_task": "DEFERRED-BACKLOG-WAVE5",
+      "canonical_owner_task": null,
+      "prerequisite_tasks": [],
+      "deferred_backlog_ref": "DEFERRED-BACKLOG-WAVE5",
       "owner_or_authority": "Platform / Quality Lead",
       "phase": "Future maintenance iteration",
       "original_acceptance_ref": "support/handoffs/remaining-work-corrections-20261003/EXECUTION.md §Existing lanes remain the owners",
@@ -593,17 +862,24 @@
       "is_live_done": false,
       "pre_prod_blocking": false,
       "post_prod_observation": false,
+      "requires_production_deployment": false,
       "human_input_required": false,
-      "disposition_notes": "Explicitly deferred to Wave 5+ post-launch; not a production release blocker."
+      "disposition_notes": "Explicitly deferred to Wave 5+ post-launch; tracked as a backlog reference, not a canonical task. Not a production release blocker."
     },
     {
       "obligation_id": "ODP-DEFERRED-GOOGLE-OAUTH",
       "title": "Optional Google OAuth 2.0 Integration (Disabled under Decision D15)",
       "category": "deferred",
-      "stage": "post_release_maintenance",
-      "target_environments": ["codebase", "dev", "staging", "production"],
+      "stage": "deferred",
+      "target_environments": [
+        "codebase",
+        "dev",
+        "staging",
+        "production"
+      ],
       "historical_source_task": "EXECUTION.md §Existing lanes remain the owners / Decision D15",
       "canonical_owner_task": "HUMAN-GCP-WEB-OAUTH-CLIENTS-001",
+      "prerequisite_tasks": [],
       "owner_or_authority": "Product / Security Lead",
       "phase": "Future optional enhancement",
       "original_acceptance_ref": "support/handoffs/remaining-work-corrections-20261003/EXECUTION.md §Existing lanes remain the owners",
@@ -618,8 +894,10 @@
       "is_live_done": false,
       "pre_prod_blocking": false,
       "post_prod_observation": false,
+      "requires_production_deployment": false,
       "human_input_required": false,
       "disposition_notes": "Decision D15 keeps Google OAuth disabled; password authentication is canonical. Assigned to HUMAN-GCP-WEB-OAUTH-CLIENTS-001 as optional non-blocking feature."
     }
-  ]
+  ],
+  "owner_inventory": "owner_inventory.json"
 }
