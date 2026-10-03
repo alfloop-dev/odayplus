@@ -222,15 +222,8 @@ SCOPED_CDC_POLICIES: dict[SourceKind, ScopedCdcPolicy] = {
         canonical_table="core.machine_status_events",
         canonical_id_column="status_event_id",
         redaction_profile="device_log_minimized_v1",
-        lifecycle_column=None,
-        lifecycle_gap=(
-            "core.machine_status_events has no approved record-lifecycle column: "
-            "status_type carries the device's state (online/offline/error/...), not "
-            "the row's. Adding one is a canonical migration under infra/db/migrations/, "
-            "outside this task's owned paths, so a device_log retirement records the "
-            "audit tombstone and retains the row instead of claiming a soft delete "
-            "that no column can express."
-        ),
+        lifecycle_column="record_status",
+        lifecycle_gap=None,
     ),
 }
 
@@ -597,9 +590,7 @@ def change_envelope(
         redaction=redaction,
         updated_fields=updated_fields,
         removed_fields=removed_fields,
-        content_sha256=hashlib.sha256(
-            canonical_json(after_payload).encode("utf-8")
-        ).hexdigest(),
+        content_sha256=hashlib.sha256(canonical_json(after_payload).encode("utf-8")).hexdigest(),
     )
 
 
@@ -701,10 +692,7 @@ def check_tenant_binding(
         return None
     return ChangeDecision(
         ChangeDisposition.SUPERSEDED,
-        (
-            f"tenant {envelope.tenant_id} is not authorised for partition "
-            f"{envelope.partition_key}"
-        ),
+        (f"tenant {envelope.tenant_id} is not authorised for partition {envelope.partition_key}"),
         CdcRejectReason.TENANT_BOUNDARY_VIOLATION,
     )
 
@@ -799,9 +787,7 @@ def advance_checkpoint(
         checkpoint,
         resume_token=envelope.resume_token if moves_forward else checkpoint.resume_token,
         last_sequence_no=max(envelope.sequence_number, checkpoint.last_sequence_no),
-        last_server_timestamp=max(
-            envelope.server_timestamp, checkpoint.last_server_timestamp
-        ),
+        last_server_timestamp=max(envelope.server_timestamp, checkpoint.last_server_timestamp),
         processed_count=checkpoint.processed_count + max(processed_delta, 0),
         status=CheckpointStatus.ACTIVE,
         updated_at=envelope.ingested_at,
@@ -956,6 +942,13 @@ class SoftDeleteDirective:
             f"AND scope.tenant_id = %s "
             f"AND (%s::bigint IS NULL OR lineage.source_version IS NULL "
             f"OR lineage.source_version <= %s::bigint) "
+            f"AND NOT EXISTS ("
+            f"SELECT 1 FROM {control_schema}.canonical_lineage AS newer_lineage "
+            f"WHERE newer_lineage.canonical_table = lineage.canonical_table "
+            f"AND newer_lineage.canonical_id = lineage.canonical_id "
+            f"AND newer_lineage.tenant_id = lineage.tenant_id "
+            f"AND %s::bigint IS NOT NULL "
+            f"AND newer_lineage.source_version > %s::bigint) "
             f"AND target.{self.status_column} IS DISTINCT FROM %s"
         )
         params = (
@@ -966,6 +959,8 @@ class SoftDeleteDirective:
             self.source_id,
             self.tenant_id,
             self.tenant_id,
+            self.source_version,
+            self.source_version,
             self.source_version,
             self.source_version,
             self.status_value,
@@ -1112,8 +1107,14 @@ def plan_change_application(
             tombstone=None,
         )
     status = RETIREMENT_STATUS[envelope.operation]
+    # The retirement status is a property of the operation, not of whether the
+    # packet happened to carry its tenant: a delete without a full document
+    # still resolves its owner from lineage inside the tombstone transaction,
+    # and must then mark the row with the contracted status (``refunded`` for
+    # a refund), not a default.
+    soft_retires = policy.lifecycle_column is not None
     soft_delete: SoftDeleteDirective | None = None
-    if policy.lifecycle_column is not None and envelope.tenant_id is not None:
+    if soft_retires and envelope.tenant_id is not None:
         soft_delete = SoftDeleteDirective(
             canonical_table=policy.canonical_table,
             canonical_id_column=policy.canonical_id_column,
@@ -1150,7 +1151,8 @@ def plan_change_application(
             "cdc_operation": envelope.operation.value,
             "cdc_change_id": envelope.change_id,
             "cdc_resume_token": envelope.resume_token,
-            "soft_delete_status": status if soft_delete is not None else None,
+            "soft_delete_table": policy.canonical_table if soft_retires else None,
+            "soft_delete_status": status if soft_retires else None,
             "contract_version": envelope.contract_version,
         },
     )
@@ -1159,7 +1161,7 @@ def plan_change_application(
         source_envelope=None,
         soft_delete=soft_delete,
         tombstone=tombstone,
-        lifecycle_gap="" if soft_delete is not None else (policy.lifecycle_gap or ""),
+        lifecycle_gap="" if soft_retires else (policy.lifecycle_gap or ""),
     )
 
 
@@ -1429,9 +1431,7 @@ class CdcDrainResult:
             "checkpoint_status": (
                 None if self.checkpoint is None else self.checkpoint.status.value
             ),
-            "recovery_plan": (
-                None if self.recovery_plan is None else self.recovery_plan.as_dict()
-            ),
+            "recovery_plan": (None if self.recovery_plan is None else self.recovery_plan.as_dict()),
         }
 
 
@@ -1491,9 +1491,7 @@ class ScopedCdcAdapter:
         policy = cdc_policy(source_kind)
         if limit <= 0:
             raise ValueError("drain limit must be positive")
-        result = CdcDrainResult(
-            source_kind=source_kind, partition_id=partition_id, run_id=run_id
-        )
+        result = CdcDrainResult(source_kind=source_kind, partition_id=partition_id, run_id=run_id)
         checkpoint = self._store.load_checkpoint(source_kind, partition_id)
         try:
             resume_after = resume_token_for(checkpoint)
@@ -1533,9 +1531,7 @@ class ScopedCdcAdapter:
                     )
                     continue
                 result.latencies.append(envelope.latency_seconds)
-                boundary = check_tenant_binding(
-                    envelope, authorized_tenants=authorized_tenants
-                )
+                boundary = check_tenant_binding(envelope, authorized_tenants=authorized_tenants)
                 if boundary is not None:
                     self._reject(result, quarantines, envelope, boundary, run_id)
                     continue
@@ -1572,9 +1568,7 @@ class ScopedCdcAdapter:
                 )
                 result.applied += 1
                 result.plans.append(
-                    plan_change_application(
-                        envelope, run_id=run_id, now=self._clock()
-                    )
+                    plan_change_application(envelope, run_id=run_id, now=self._clock())
                 )
                 checkpoint = advance_checkpoint(
                     checkpoint,
@@ -1637,9 +1631,7 @@ class ScopedCdcAdapter:
             result.superseded += 1
         else:
             result.quarantined += 1
-        result.quarantine_reasons[reason.value] = (
-            result.quarantine_reasons.get(reason.value, 0) + 1
-        )
+        result.quarantine_reasons[reason.value] = result.quarantine_reasons.get(reason.value, 0) + 1
         quarantines.append(
             quarantine_statement(
                 envelope,
@@ -1668,9 +1660,7 @@ class ScopedCdcAdapter:
     ) -> None:
         """Isolate a poison packet without stopping the stream."""
         result.quarantined += 1
-        result.quarantine_reasons[reason.value] = (
-            result.quarantine_reasons.get(reason.value, 0) + 1
-        )
+        result.quarantine_reasons[reason.value] = result.quarantine_reasons.get(reason.value, 0) + 1
         digest = hashlib.sha256(canonical_json(raw).encode("utf-8")).hexdigest()
         quarantines.append(
             quarantine_statement(
@@ -1730,9 +1720,7 @@ class PsycopgCdcStore:
     def control_schema(self) -> str:
         return self._config.control_schema
 
-    def load_checkpoint(
-        self, source_kind: SourceKind, partition_id: str
-    ) -> CdcCheckpoint | None:
+    def load_checkpoint(self, source_kind: SourceKind, partition_id: str) -> CdcCheckpoint | None:
         statement, params = checkpoint_select_statement(
             source_kind, partition_id, control_schema=self.control_schema
         )
@@ -1770,9 +1758,7 @@ class PsycopgCdcStore:
         staged = 0
         with self._connect() as connection:
             for envelope in envelopes:
-                statement, params = stage_statement(
-                    envelope, control_schema=self.control_schema
-                )
+                statement, params = stage_statement(envelope, control_schema=self.control_schema)
                 connection.execute(statement, params)
                 staged += 1
             for statement, params in quarantines:
@@ -1938,11 +1924,10 @@ class ScopedCdcProjector:
         for plan in plans:
             if plan.tombstone is None:
                 continue
-            if plan.soft_delete is not None:
-                result.soft_deleted += self._mark(plan.soft_delete)
-            elif plan.lifecycle_gap:
+            if plan.lifecycle_gap:
                 result.lifecycle_gaps.append(plan.lifecycle_gap)
             outcome = self._canonical.tombstone_record(plan.tombstone)
+            result.soft_deleted += getattr(outcome, "soft_deleted_count", 0)
             result.tombstoned += 1
             key = outcome.outcome.value
             result.delete_outcomes[key] = result.delete_outcomes.get(key, 0) + 1

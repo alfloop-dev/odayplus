@@ -240,6 +240,14 @@ class _PostgresLookup(MappingLookup):
 #: churn of owners cannot spin here, and the last read still decides.
 _DELETE_SCOPE_LOCK_ATTEMPTS = 3
 
+#: Canonical tables a scoped CDC retirement may soft-retire, mapped to their
+#: primary key and approved record-lifecycle column. Anything else keeps the
+#: row and records only the tombstone.
+_SOFT_RETIREMENT_COLUMNS: dict[str, tuple[str, str]] = {
+    "core.transactions": ("transaction_id", "transaction_status"),
+    "core.machine_status_events": ("status_event_id", "record_status"),
+}
+
 
 class PsycopgCanonicalStore:
     """Transactional canonical writer and lineage/checkpoint authority."""
@@ -565,9 +573,7 @@ class PsycopgCanonicalStore:
                 tenant_id = resolution.tenant_id
                 assert tenant_id is not None  # nosec B101 -- narrowed by resolved
                 targets = tuple(
-                    (str(row[1]), row[2])
-                    for row in lineage
-                    if UUID(str(row[0])) == tenant_id
+                    (str(row[1]), row[2]) for row in lineage if UUID(str(row[0])) == tenant_id
                 )
                 applied_versions = [
                     int(row[3])
@@ -575,15 +581,19 @@ class PsycopgCanonicalStore:
                     if UUID(str(row[0])) == tenant_id and len(row) > 3 and row[3] is not None
                 ]
                 latest_applied_version = max(applied_versions) if applied_versions else None
-                recorded = self._read_tombstone(
-                    connection, tenant_id, scope, for_update=True
-                )
+                recorded = self._read_tombstone(connection, tenant_id, scope, for_update=True)
                 recorded_version = None if recorded is None else recorded.source_version
 
                 effective_recorded_version = recorded_version
                 if latest_applied_version is not None:
-                    if effective_recorded_version is None or latest_applied_version > effective_recorded_version:
-                        if event.source_version is not None and event.source_version < latest_applied_version:
+                    if (
+                        effective_recorded_version is None
+                        or latest_applied_version > effective_recorded_version
+                    ):
+                        if (
+                            event.source_version is not None
+                            and event.source_version < latest_applied_version
+                        ):
                             effective_recorded_version = latest_applied_version
 
                 decision = decide_delete(
@@ -693,13 +703,17 @@ class PsycopgCanonicalStore:
                             ),
                         )
                 else:
+                    soft_deleted = 0
+                    if mode is DeletePropagationMode.TOMBSTONE_PURGE and decision.purges_rows:
+                        soft_deleted = self._soft_retire_targets(
+                            connection, event, scope, tenant_id, targets
+                        )
+
                     retained = tuple(sorted({table for table, _ in targets}))
                     if not retained and recorded is not None and recorded.retained_targets:
                         retained = recorded.retained_targets
 
-                row = self._upsert_tombstone(
-                    connection, event, tenant_id, mode, purged, retained
-                )
+                row = self._upsert_tombstone(connection, event, tenant_id, mode, purged, retained)
                 if row is None:
                     # The database-level version guard refused the write, which
                     # only happens when a concurrent writer recorded a newer
@@ -722,7 +736,101 @@ class PsycopgCanonicalStore:
                     purged_row_count=int(row[2]),
                     retained_targets=tuple(row[3] or ()) if len(row) > 3 else retained,
                     replay_count=int(row[1]),
+                    soft_deleted_count=soft_deleted if mode is DeletePropagationMode.TOMBSTONE_PURGE else 0,
                 )
+
+    def _soft_retire_targets(
+        self,
+        connection: Any,
+        event: DeleteEvent,
+        scope: DeleteScope,
+        tenant_id: UUID,
+        targets: Sequence[tuple[str, Any]],
+    ) -> int:
+        """Mark the scoped CDC lifecycle column inside the tombstone transaction.
+
+        Only an event that explicitly carries a soft-retirement request (the
+        scoped CDC planner sets ``soft_delete_table`` / ``soft_delete_status``)
+        touches a business row; every other tombstone caller keeps the
+        record-and-retain behaviour it always had.
+
+        Each update re-checks, under the scope and canonical-target locks the
+        caller already holds, that this source still owns the target: its own
+        lineage must bind the row at or below the delete version, no lineage
+        from any source may carry a newer version for that row, and for
+        ``core.transactions`` the current ``transaction_authority`` snapshot
+        must be one of this source's own landed snapshots. A row another source
+        now owns is therefore retained, never voided on its behalf.
+        """
+        context = event.context or {}
+        table = context.get("soft_delete_table")
+        status = context.get("soft_delete_status")
+        spec = _SOFT_RETIREMENT_COLUMNS.get(str(table)) if table else None
+        if spec is None or not status:
+            return 0
+        id_column, status_column = spec
+        if not any(canonical_table == table for canonical_table, _ in targets):
+            return 0
+        authority_guard = ""
+        if table == "core.transactions":
+            authority_guard = (
+                f"AND EXISTS ("  # nosec B608 -- DataPlaneConfig validates the schema identifier.
+                f"SELECT 1 FROM {self._schema}.transaction_authority AS auth "
+                f"WHERE auth.transaction_id = target.transaction_id "
+                f"AND auth.source_snapshot_id IN ("
+                f"SELECT owned.source_snapshot_id "
+                f"FROM {self._schema}.canonical_lineage AS owned "
+                f"WHERE owned.canonical_table = %(table)s "
+                f"AND owned.canonical_id = target.transaction_id "
+                f"AND owned.tenant_id = %(tenant_id)s "
+                f"AND owned.source_kind = %(source_kind)s "
+                f"AND owned.source_id = %(source_id)s)) "
+            )
+        statement = (
+            f"UPDATE {table} AS target "  # nosec B608 -- table/columns come from a fixed allowlist.
+            f"SET {status_column} = %(status)s, updated_at = %(purged_at)s "
+            f"FROM core.stores AS scope "
+            f"WHERE target.store_id = scope.store_id "
+            f"AND scope.tenant_id = %(tenant_id)s "
+            f"AND target.{status_column} IS DISTINCT FROM %(status)s "
+            f"AND EXISTS ("
+            f"SELECT 1 FROM {self._schema}.canonical_lineage AS lineage "
+            f"WHERE lineage.canonical_table = %(table)s "
+            f"AND lineage.canonical_id = target.{id_column} "
+            f"AND lineage.tenant_id = %(tenant_id)s "
+            f"AND lineage.source_kind = %(source_kind)s "
+            f"AND lineage.source_id = %(source_id)s "
+            f"AND (%(version)s::bigint IS NULL OR lineage.source_version IS NULL "
+            f"OR lineage.source_version <= %(version)s::bigint)) "
+            f"AND NOT EXISTS ("
+            f"SELECT 1 FROM {self._schema}.canonical_lineage AS newer "
+            f"WHERE newer.canonical_table = %(table)s "
+            f"AND newer.canonical_id = target.{id_column} "
+            f"AND newer.tenant_id = %(tenant_id)s "
+            f"AND %(version)s::bigint IS NOT NULL "
+            f"AND newer.source_version > %(version)s::bigint) "
+            f"{authority_guard}"
+            f"AND target.{id_column} = %(canonical_id)s"
+        )
+        retired = 0
+        for canonical_table, canonical_id in targets:
+            if canonical_table != table:
+                continue
+            cursor = connection.execute(
+                statement,
+                {
+                    "status": status,
+                    "purged_at": event.purged_at,
+                    "tenant_id": tenant_id,
+                    "table": table,
+                    "source_kind": scope.source_kind.value,
+                    "source_id": scope.source_id,
+                    "version": event.source_version,
+                    "canonical_id": canonical_id,
+                },
+            )
+            retired += max(int(getattr(cursor, "rowcount", 0) or 0), 0)
+        return retired
 
     @staticmethod
     def _unchanged_result(
@@ -769,7 +877,7 @@ class PsycopgCanonicalStore:
                    replay_count
             FROM {self._schema}.tombstones
             WHERE tenant_id = %s AND entity_type = %s AND entity_id = %s
-            {'FOR UPDATE' if for_update else ''}
+            {"FOR UPDATE" if for_update else ""}
             """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
             (tenant_id, scope.source_kind.value, scope.source_id),
         ).fetchone()
@@ -1542,15 +1650,18 @@ class PsycopgCanonicalStore:
             """
             INSERT INTO core.machine_status_events (
                 status_event_id, store_id, machine_id, event_time,
-                status_type, severity, error_code, resolved_time
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, NULL)
+                status_type, severity, error_code, resolved_time,
+                record_status, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, NULL, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ON CONFLICT (status_event_id) DO UPDATE SET
                 store_id = EXCLUDED.store_id,
                 machine_id = EXCLUDED.machine_id,
                 event_time = EXCLUDED.event_time,
                 status_type = EXCLUDED.status_type,
                 severity = EXCLUDED.severity,
-                error_code = EXCLUDED.error_code
+                error_code = EXCLUDED.error_code,
+                record_status = 'active',
+                updated_at = CURRENT_TIMESTAMP
             """,
             (
                 projection.status_event_id,
@@ -1569,7 +1680,12 @@ class PsycopgCanonicalStore:
                 machine_id, status_event_id, content_sha256,
                 observation_time, source_freshness_at, run_id
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (source_snapshot_id) DO UPDATE SET
+            ON CONFLICT (status_event_id) DO UPDATE SET
+                source_snapshot_id = EXCLUDED.source_snapshot_id,
+                source_id = EXCLUDED.source_id,
+                tenant_id = EXCLUDED.tenant_id,
+                store_id = EXCLUDED.store_id,
+                machine_id = EXCLUDED.machine_id,
                 content_sha256 = EXCLUDED.content_sha256,
                 observation_time = EXCLUDED.observation_time,
                 source_freshness_at = EXCLUDED.source_freshness_at,

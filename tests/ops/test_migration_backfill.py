@@ -43,6 +43,7 @@ def test_migration_plan_indexes_revision_hashes_and_rollback() -> None:
         "0018",
         "0019",
         "0020",
+        "0021",
     ]
     assert len(plan.manifest_sha256) == 64
     assert all(len(step.sha256) == 64 for step in plan.steps)
@@ -246,6 +247,19 @@ def test_canonical_measurement_nullable_migration_is_reachable_from_alembic_head
         for asset in measurement_step.assets
         if asset.role == "sql"
     } == {"infra/db/migrations/000026_canonical_measurement_nullable.sql"}
+
+
+def test_machine_status_events_record_lifecycle_migration_is_reachable_from_alembic_head() -> None:
+    """ODP-CDC-MACHINE-EVENT-LIFECYCLE-001: 0021 record lifecycle migration reachability."""
+    plan = build_migration_plan(environment="dev")
+    lifecycle_step = next(step for step in plan.steps if step.revision == "0021")
+
+    assert lifecycle_step.path.endswith("0021_machine_status_events_record_lifecycle.py")
+    assert {
+        asset.path
+        for asset in lifecycle_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000027_machine_status_events_record_lifecycle.sql"}
 
 
 def test_migration_plan_uses_explicit_alembic_sql_references() -> None:
