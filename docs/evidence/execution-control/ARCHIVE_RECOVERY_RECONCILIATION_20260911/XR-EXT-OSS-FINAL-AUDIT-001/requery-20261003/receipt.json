@@ -1,0 +1,27 @@
+{
+  "task_id": "XR-EXT-OSS-FINAL-AUDIT-001",
+  "purpose": "Read-only re-observation of handover dependency state after reopen; no prior receipt covers 2026-10-03 state.",
+  "head_sha": "8bcb87388b662924716149f26fc56d1efb709208",
+  "script_blob_sha256": "268b471786cf2febeb82a739644264b5f94b2f742cb24a435115e0a4ef9d75aa",
+  "script_tracked_at_head": false,
+  "argv": [
+    "/usr/bin/python3",
+    "docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/XR-EXT-OSS-FINAL-AUDIT-001/capture_dependency_readback.py",
+    "--readback",
+    "/home/lupin/odayplus"
+  ],
+  "cwd": "/tmp/pantheon-worker-worktrees/pantheon/xr-ext-oss-final-audit-001",
+  "started_at": "2026-10-02T23:56:37.163614+00:00",
+  "finished_at": "2026-10-02T23:56:37.276072+00:00",
+  "exit_code": 0,
+  "stdout": {
+    "path": "readback.stdout.json",
+    "bytes": 6785,
+    "sha256": "dac8126eaab556174f0760b1c6645afea4070bda899c5917e4e2e3e5e453aaa9"
+  },
+  "stderr": {
+    "path": "readback.stderr.txt",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}
