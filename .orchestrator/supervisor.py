@@ -4317,6 +4317,10 @@ def blocked_task_prose_context(
     """
     identifiers = [str(task.get("id") or "")]
     identifiers.extend(str(dep) for dep in (task.get("depends_on") or []))
+    for agent_key in ("owner", "reviewer", "waiting_for"):
+        agent_val = str(task.get(agent_key) or "").strip()
+        if agent_val and agent_val.casefold() not in {"human", "human/ops", "ops"}:
+            identifiers.append(agent_val)
     raw_context = " ".join(
         str(task.get(key) or "")
         for key in (
@@ -4344,26 +4348,22 @@ def blocked_task_prose_context(
     # 2. Strip <key>=<value> pairs
     context = re.sub(r"[A-Za-z0-9_.\-/]+\s*=\s*[A-Za-z0-9_.\-/]+", " ", context)
 
-    # 3. Task notes may contain arbitrary path noise. Durable blockers need
-    # lossless treatment of slash-labelled gates BEFORE broad path stripping.
-    # Absolute/dot-prefixed paths, file extensions, backticks and key=value
-    # references are unambiguous code; bare extensionless slash compounds
-    # are not. Callers must quote extensionless filesystem references.
-    path_pattern = r"[A-Za-z0-9_.\-]*/[A-Za-z0-9_.\-/]+"
-    if canonical_gate_prose:
-        context = re.sub(
-            path_pattern,
-            lambda match: " " if match[0].startswith(("/", ".")) or "." in match[0] else match[0],
-            context,
-        )
-    else:
-        context = re.sub(path_pattern, " ", context)
+    # 3. Strip unambiguous filesystem paths and file references.
+    # Absolute paths (/...), relative dot paths (./... or ../...), and
+    # explicit file extensions (.py, .json, etc.) are unambiguous code.
+    # Bare slash compounds (e.g. 'External-data/dataset', 'Human/Ops',
+    # 'provider/worktree', 'raw/masked') are preserved in canonical gate
+    # prose without losing gate labels or sentence punctuation.
+    context = re.sub(r"(?<!\S)/(?:[A-Za-z0-9_.\-]+/)*[A-Za-z0-9_.\-]*[A-Za-z0-9_\-]+", " ", context)
+    context = re.sub(r"(?:\./|\.\./)[A-Za-z0-9_.\-/]*[A-Za-z0-9_\-]+", " ", context)
     context = re.sub(
-        r"\b[A-Za-z0-9_.\-]+\.(?:py|sh|tf|yml|yaml|json)\b",
+        r"\b[A-Za-z0-9_.\-/]*[A-Za-z0-9_\-]+\.(?:py|sh|tf|yml|yaml|json|toml|md|csv|txt|log|lock|ini|cfg)\b",
         " ",
         context,
         flags=re.IGNORECASE,
     )
+    if not canonical_gate_prose:
+        context = re.sub(r"\b[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-/]*[A-Za-z0-9_\-]+\b", " ", context)
 
     # 4. Strip snake_case identifiers containing underscore
     context = re.sub(r"\b[A-Za-z0-9_]*_[A-Za-z0-9_]*\b", " ", context)
@@ -4670,18 +4670,22 @@ def blocked_task_auto_recovery_eligible(
         "next": f"{task.get('next') or ''} {task.get('blocked_reason') or ''}",
     }, canonical_gate_prose=True)
     hard_gate_markers = (
-        "human/ops", "human gate", "pending_human", "authoritative", "dataset", "attestation",
-        "external-data", "mlflow", "deploy dev", "live-e2e", "production alias", "merge queue",
+        "human/ops", "human gate", "pending_human", "pending human", "authoritative",
+        "dataset", "attestation", "external-data", "external data", "mlflow",
+        "deploy dev", "live-e2e", "production alias", "merge queue",
         "operator intervention", "manual approval", "requires operator",
-        "external data", "deployment", "production", "sign-off", "signoff",
-        "approval required", "approval gate", "credentials gate", "credential gate",
-        "pending human", "cross repo delivery",
+        "human approval", "awaiting human", "pending approval", "approval pending",
+        "awaiting approval", "approval required", "approval gate",
+        "deployment", "production", "sign-off", "signoff",
+        "credentials gate", "credential gate", "cross repo delivery",
+        "business gate", "operator approval", "operator sign-off",
+        "human sign-off", "human signoff", "manual sign-off", "manual signoff",
     )
     routing_markers = (
         "auto-reassigned", "sidecar-only", "quota", "auth", "credential", "worktree",
         "push failure", "dispatch", "provider", "handoff", "stale",
     )
-    if any(marker in context for marker in hard_gate_markers):
+    if any(marker in context for marker in hard_gate_markers) or re.search(r"\b(human|operator|approval|signoff|sign-off)\b", context):
         return False
     for blocker in blockers:
         if not isinstance(blocker, dict):
@@ -4693,6 +4697,7 @@ def blocked_task_auto_recovery_eligible(
         if (
             is_human_gate_agent(blocker.get("waiting_for"))
             or runtime_ai_status.task_unresolved_human_or_independent_gate_reason(blocker)
+            or str(blocker.get("waiting_for") or "").strip().casefold() in {"human/ops", "human", "ops"}
         ):
             return False
         # Inspect the durable blocker, not task.next. Preserve ambiguous gate
@@ -4706,25 +4711,44 @@ def blocked_task_auto_recovery_eligible(
         # `kind` is structured classification, not a code identifier. Do not
         # strip e.g. external_data / human_gate as snake_case prose noise.
         blocker_kind = str(blocker.get("kind") or "").strip().casefold().replace("_", " ")
-        if blocker_kind == "human" or any(
-            marker in f"{blocker_kind} {blocker_context}" for marker in hard_gate_markers
+        if (
+            blocker_kind in {"human", "human gate", "external data", "cross repo delivery"}
+            or any(marker in f"{blocker_kind} {blocker_context}" for marker in hard_gate_markers)
+            or re.search(r"\b(human|operator|approval|signoff|sign-off)\b", f"{blocker_kind} {blocker_context}")
         ):
             return False
-        dependency_blocker = dependency_gate_released and (
+        is_dep_blocker = (
             blocker.get("kind") == "dependency"
             or "waiting for dependencies:" in blocker_context
+            or "waiting for dependency:" in blocker_context
             or "dependency gate" in blocker_context
+            or "dependencies:" in blocker_context
         )
-        remaining_gate_context = (
-            re.sub(r"\bdependency gate\b", " ", blocker_context)
-            if dependency_blocker else blocker_context
-        )
-        if re.search(r"\bgate\b", remaining_gate_context) or (
-            not dependency_blocker and not any(marker in blocker_context for marker in routing_markers)
-        ):
-            # A generic gate is unknown authority, even alongside provider or
-            # handoff words. Only a resolver-proven dependency gate is released.
-            return False
+        if is_dep_blocker:
+            if not dependency_gate_released:
+                return False
+            remaining_dep_prose = re.sub(
+                r"\b(?:waiting for dependencies|waiting for dependency|dependency gate|dependencies|dependency)\s*:?",
+                " ",
+                blocker_context,
+                flags=re.IGNORECASE,
+            )
+            residual = re.sub(r"[ ,;.:\-_/&|]+", " ", remaining_dep_prose).strip()
+            if residual:
+                if (
+                    re.search(r"\bgate\b", residual)
+                    or any(marker in residual for marker in hard_gate_markers)
+                    or re.search(r"\b(human|operator|approval|signoff|sign-off|missing|unclassified|business)\b", residual)
+                    or not any(marker in residual for marker in routing_markers)
+                ):
+                    return False
+        else:
+            if re.search(r"\bgate\b", blocker_context) or not any(
+                marker in blocker_context for marker in routing_markers
+            ):
+                # A generic gate is unknown authority, even alongside provider or
+                # handoff words. Only a resolver-proven dependency gate is released.
+                return False
     if dependency_gate_released:
         return True
     return bool(context) and any(marker in context for marker in routing_markers)
