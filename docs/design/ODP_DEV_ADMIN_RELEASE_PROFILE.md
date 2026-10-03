@@ -122,7 +122,7 @@ The supported operations exercised, in order:
 | 4 | `GET /auth/session` with the cookie | `session:session_resolves_account` | subject is not the signed-in account |
 | 5 | `GET /api/v1/operator/users` (`user:view`) | `admin:identity_user_list` | not 200; or the account is not listed from `identity.accounts` with exactly `platform_admin`, `active` |
 | 6 | `GET /api/v1/operator/users/audit-trail` | `admin:bootstrap_audited` | no `identity.account.bootstrap` event for that account |
-| 7 | `POST /api/v1/operator/users` with foreign tenant scope, then readback | `session:cross_tenant_denied`, `admin:foreign_tenant_unmodified_readback` | foreign tenant scope accepted or account scope mutated |
+| 7 | `POST /api/v1/operator/users` moving the admin's own record to a valid foreign tenant UUID (body otherwise identical), then readback | `session:cross_tenant_denied`, `admin:foreign_tenant_unmodified_readback` | own record lacks a UUID tenant (no probe sent); anything but the identity tenant-policy 422 naming the probe tenant (generic 400/403, schema or other-policy 422); readback account, tenant, full scope, roles or status changed or missing |
 | 8 | `GET /api/v1/operator/bootstrap` | `admin:business_shell_denied` | not 403 (a pure admin must not get business reads) |
 | 9 | the same read with `x-operator-role` set to a role the account does not hold | `session:wrong_role_denied` | not 403 |
 | 10 | `GET /operator?view=admin` (Web) | `admin:admin_page_served` | not 200 (for example a `/login` redirect) |
