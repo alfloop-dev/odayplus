@@ -774,7 +774,7 @@ class PsycopgCanonicalStore:
         authority_guard = ""
         if table == "core.transactions":
             authority_guard = (
-                f"AND EXISTS ("
+                f"AND EXISTS ("  # nosec B608 -- DataPlaneConfig validates the schema identifier.
                 f"SELECT 1 FROM {self._schema}.transaction_authority AS auth "
                 f"WHERE auth.transaction_id = target.transaction_id "
                 f"AND auth.source_snapshot_id IN ("
