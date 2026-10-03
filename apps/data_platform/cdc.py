@@ -67,6 +67,7 @@ from uuid import UUID, uuid4
 from apps.data_platform.contracts import SourceEnvelope, SourceKind
 from apps.data_platform.deletion import (
     DeleteEvent,
+    DeleteOutcome,
     DeletePropagationMode,
     DeleteScope,
     version_from_timestamp,
@@ -590,9 +591,7 @@ def change_envelope(
         redaction=redaction,
         updated_fields=updated_fields,
         removed_fields=removed_fields,
-        content_sha256=hashlib.sha256(
-            canonical_json(after_payload).encode("utf-8")
-        ).hexdigest(),
+        content_sha256=hashlib.sha256(canonical_json(after_payload).encode("utf-8")).hexdigest(),
     )
 
 
@@ -694,10 +693,7 @@ def check_tenant_binding(
         return None
     return ChangeDecision(
         ChangeDisposition.SUPERSEDED,
-        (
-            f"tenant {envelope.tenant_id} is not authorised for partition "
-            f"{envelope.partition_key}"
-        ),
+        (f"tenant {envelope.tenant_id} is not authorised for partition {envelope.partition_key}"),
         CdcRejectReason.TENANT_BOUNDARY_VIOLATION,
     )
 
@@ -792,9 +788,7 @@ def advance_checkpoint(
         checkpoint,
         resume_token=envelope.resume_token if moves_forward else checkpoint.resume_token,
         last_sequence_no=max(envelope.sequence_number, checkpoint.last_sequence_no),
-        last_server_timestamp=max(
-            envelope.server_timestamp, checkpoint.last_server_timestamp
-        ),
+        last_server_timestamp=max(envelope.server_timestamp, checkpoint.last_server_timestamp),
         processed_count=checkpoint.processed_count + max(processed_delta, 0),
         status=CheckpointStatus.ACTIVE,
         updated_at=envelope.ingested_at,
@@ -1422,9 +1416,7 @@ class CdcDrainResult:
             "checkpoint_status": (
                 None if self.checkpoint is None else self.checkpoint.status.value
             ),
-            "recovery_plan": (
-                None if self.recovery_plan is None else self.recovery_plan.as_dict()
-            ),
+            "recovery_plan": (None if self.recovery_plan is None else self.recovery_plan.as_dict()),
         }
 
 
@@ -1484,9 +1476,7 @@ class ScopedCdcAdapter:
         policy = cdc_policy(source_kind)
         if limit <= 0:
             raise ValueError("drain limit must be positive")
-        result = CdcDrainResult(
-            source_kind=source_kind, partition_id=partition_id, run_id=run_id
-        )
+        result = CdcDrainResult(source_kind=source_kind, partition_id=partition_id, run_id=run_id)
         checkpoint = self._store.load_checkpoint(source_kind, partition_id)
         try:
             resume_after = resume_token_for(checkpoint)
@@ -1526,9 +1516,7 @@ class ScopedCdcAdapter:
                     )
                     continue
                 result.latencies.append(envelope.latency_seconds)
-                boundary = check_tenant_binding(
-                    envelope, authorized_tenants=authorized_tenants
-                )
+                boundary = check_tenant_binding(envelope, authorized_tenants=authorized_tenants)
                 if boundary is not None:
                     self._reject(result, quarantines, envelope, boundary, run_id)
                     continue
@@ -1565,9 +1553,7 @@ class ScopedCdcAdapter:
                 )
                 result.applied += 1
                 result.plans.append(
-                    plan_change_application(
-                        envelope, run_id=run_id, now=self._clock()
-                    )
+                    plan_change_application(envelope, run_id=run_id, now=self._clock())
                 )
                 checkpoint = advance_checkpoint(
                     checkpoint,
@@ -1630,9 +1616,7 @@ class ScopedCdcAdapter:
             result.superseded += 1
         else:
             result.quarantined += 1
-        result.quarantine_reasons[reason.value] = (
-            result.quarantine_reasons.get(reason.value, 0) + 1
-        )
+        result.quarantine_reasons[reason.value] = result.quarantine_reasons.get(reason.value, 0) + 1
         quarantines.append(
             quarantine_statement(
                 envelope,
@@ -1661,9 +1645,7 @@ class ScopedCdcAdapter:
     ) -> None:
         """Isolate a poison packet without stopping the stream."""
         result.quarantined += 1
-        result.quarantine_reasons[reason.value] = (
-            result.quarantine_reasons.get(reason.value, 0) + 1
-        )
+        result.quarantine_reasons[reason.value] = result.quarantine_reasons.get(reason.value, 0) + 1
         digest = hashlib.sha256(canonical_json(raw).encode("utf-8")).hexdigest()
         quarantines.append(
             quarantine_statement(
@@ -1723,9 +1705,7 @@ class PsycopgCdcStore:
     def control_schema(self) -> str:
         return self._config.control_schema
 
-    def load_checkpoint(
-        self, source_kind: SourceKind, partition_id: str
-    ) -> CdcCheckpoint | None:
+    def load_checkpoint(self, source_kind: SourceKind, partition_id: str) -> CdcCheckpoint | None:
         statement, params = checkpoint_select_statement(
             source_kind, partition_id, control_schema=self.control_schema
         )
@@ -1763,9 +1743,7 @@ class PsycopgCdcStore:
         staged = 0
         with self._connect() as connection:
             for envelope in envelopes:
-                statement, params = stage_statement(
-                    envelope, control_schema=self.control_schema
-                )
+                statement, params = stage_statement(envelope, control_schema=self.control_schema)
                 connection.execute(statement, params)
                 staged += 1
             for statement, params in quarantines:

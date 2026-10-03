@@ -37,7 +37,6 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
-from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -169,8 +168,7 @@ def _packet(
         "_id": {"_data": token},
         "operationType": operation_type,
         "ns": {"db": "fongniao_prod", "coll": "orders"},
-        "documentKey": document_key
-        or {"_id": (document or {}).get("_id", "unknown")},
+        "documentKey": document_key or {"_id": (document or {}).get("_id", "unknown")},
         "wallTime": wall_time,
     }
     if document is not None:
@@ -197,9 +195,7 @@ class _FakeLandingStore:
         self.quarantined: list[tuple[str, tuple[Any, ...]]] = []
         self.commits = 0
 
-    def load_checkpoint(
-        self, source_kind: SourceKind, partition_id: str
-    ) -> CdcCheckpoint | None:
+    def load_checkpoint(self, source_kind: SourceKind, partition_id: str) -> CdcCheckpoint | None:
         return self.checkpoints.get((source_kind.value, partition_id))
 
     def commit_tick(self, *, envelopes, checkpoint, quarantines) -> int:
@@ -212,9 +208,7 @@ class _FakeLandingStore:
             staged += 1
         self.quarantined.extend(quarantines)
         if checkpoint is not None:
-            self.checkpoints[
-                (checkpoint.source_kind.value, checkpoint.partition_id)
-            ] = checkpoint
+            self.checkpoints[(checkpoint.source_kind.value, checkpoint.partition_id)] = checkpoint
         return staged
 
     def recorded_state(
@@ -231,9 +225,7 @@ class _FakeLandingStore:
         return newest.server_timestamp, newest.idempotency_key
 
     def seed(self, checkpoint: CdcCheckpoint) -> None:
-        self.checkpoints[(checkpoint.source_kind.value, checkpoint.partition_id)] = (
-            checkpoint
-        )
+        self.checkpoints[(checkpoint.source_kind.value, checkpoint.partition_id)] = checkpoint
 
 
 def _stream_of(*packets: dict[str, Any]):
@@ -369,9 +361,7 @@ def test_cdc_and_batch_envelopes_are_identical_for_the_same_document() -> None:
     # recovery re-read would look like a different record.
     raw = _orders_document()
     server_projected = {
-        key: value
-        for key, value in raw.items()
-        if SOURCE_PROJECTIONS[SourceKind.ORDERS].get(key)
+        key: value for key, value in raw.items() if SOURCE_PROJECTIONS[SourceKind.ORDERS].get(key)
     }
     batch = envelope_for_document(
         SourceKind.ORDERS, server_projected, run_id=RUN_ID, observed_at=INGESTED_AT
@@ -439,9 +429,7 @@ def test_partition_keys_are_derivable_from_the_projected_payload_alone() -> None
     key = partition_key_for(SourceKind.ORDERS, projected)
     assert key == f"{tenant_id_for_merchant(MERCHANT)}:place-1"
 
-    log_projected, _ = redact_change_document(
-        SourceKind.DEVICE_LOG, _device_log_document()
-    )
+    log_projected, _ = redact_change_document(SourceKind.DEVICE_LOG, _device_log_document())
     assert partition_key_for(SourceKind.DEVICE_LOG, log_projected) == "device-1"
 
 
@@ -461,21 +449,16 @@ def test_partition_keys_are_derivable_from_the_projected_payload_alone() -> None
 def test_observed_mutation_verbs_map_off_the_packet(
     operation_type: str, state: str, expected: CdcOperation
 ) -> None:
-    payload, _ = redact_change_document(
-        SourceKind.ORDERS, _orders_document(state=state)
-    )
+    payload, _ = redact_change_document(SourceKind.ORDERS, _orders_document(state=state))
     assert classify_operation(SourceKind.ORDERS, operation_type, payload) is expected
 
 
 @pytest.mark.parametrize("declared", ["void", "withdraw", "tombstone"])
 def test_declared_verbs_are_honoured_and_never_invented(declared: str) -> None:
     payload, _ = redact_change_document(SourceKind.ORDERS, _orders_document())
-    assert (
-        classify_operation(
-            SourceKind.ORDERS, "update", payload, declared_operation=declared
-        )
-        is CdcOperation(declared)
-    )
+    assert classify_operation(
+        SourceKind.ORDERS, "update", payload, declared_operation=declared
+    ) is CdcOperation(declared)
     # There is no upstream `orders.state` token for these verbs in the 34A
     # inventory, so an unrecognised state must not be bent into one: it stays an
     # update and the downstream projection quarantines it as UNSUPPORTED_STATUS,
@@ -586,9 +569,7 @@ def test_the_soft_delete_join_column_comes_from_the_policy_not_a_literal() -> No
     statement, _ = plan.soft_delete.statement(CONTROL_SCHEMA)
     orders_policy = cdc_policy(SourceKind.ORDERS)
     assert plan.soft_delete.canonical_id_column == orders_policy.canonical_id_column
-    assert (
-        f"lineage.canonical_id = target.{orders_policy.canonical_id_column}" in statement
-    )
+    assert f"lineage.canonical_id = target.{orders_policy.canonical_id_column}" in statement
 
     log_envelope = _envelope(
         _device_log_document(), source_kind=SourceKind.DEVICE_LOG, operation_type="delete"
@@ -598,9 +579,7 @@ def test_the_soft_delete_join_column_comes_from_the_policy_not_a_literal() -> No
     log_statement, _ = log_plan.soft_delete.statement(CONTROL_SCHEMA)
     log_policy = cdc_policy(SourceKind.DEVICE_LOG)
     assert log_plan.soft_delete.canonical_id_column == log_policy.canonical_id_column
-    assert (
-        f"lineage.canonical_id = target.{log_policy.canonical_id_column}" in log_statement
-    )
+    assert f"lineage.canonical_id = target.{log_policy.canonical_id_column}" in log_statement
     assert "transaction_id" not in log_statement
     assert f"SET {log_policy.lifecycle_column} = %s" in log_statement
 
@@ -648,17 +627,11 @@ def test_gdpr_erasure_blanks_the_identifiers_and_hashes_what_it_erased() -> None
 
 
 def test_the_erasure_hash_distinguishes_subjects_and_is_stable() -> None:
-    first = gdpr_erasure(
-        SourceKind.ORDERS, _orders_document(), purged_at=INGESTED_AT, reason="r"
-    )
-    same = gdpr_erasure(
-        SourceKind.ORDERS, _orders_document(), purged_at=INGESTED_AT, reason="r"
-    )
+    first = gdpr_erasure(SourceKind.ORDERS, _orders_document(), purged_at=INGESTED_AT, reason="r")
+    same = gdpr_erasure(SourceKind.ORDERS, _orders_document(), purged_at=INGESTED_AT, reason="r")
     other = dict(_orders_document())
     other["memberPhone"] = "0900000000"
-    different = gdpr_erasure(
-        SourceKind.ORDERS, other, purged_at=INGESTED_AT, reason="r"
-    )
+    different = gdpr_erasure(SourceKind.ORDERS, other, purged_at=INGESTED_AT, reason="r")
 
     assert first.tombstone_hash == same.tombstone_hash
     assert first.tombstone_hash != different.tombstone_hash
@@ -668,12 +641,8 @@ def test_the_erasure_hash_distinguishes_subjects_and_is_stable() -> None:
 
 
 def test_an_erasure_with_nothing_to_blank_says_so_rather_than_claiming_one() -> None:
-    already_minimal = {
-        key: "v" for key in SOURCE_PROJECTIONS[SourceKind.ORDERS] if key != "state"
-    }
-    erasure = gdpr_erasure(
-        SourceKind.ORDERS, already_minimal, purged_at=INGESTED_AT, reason="r"
-    )
+    already_minimal = {key: "v" for key in SOURCE_PROJECTIONS[SourceKind.ORDERS] if key != "state"}
+    erasure = gdpr_erasure(SourceKind.ORDERS, already_minimal, purged_at=INGESTED_AT, reason="r")
 
     assert erasure.blanked_fields == ()
     assert "carried none to blank" in erasure.no_identifier_detail
@@ -731,8 +700,7 @@ def test_an_equal_server_timestamp_is_applied_per_the_contract_predicate() -> No
     assert decision.applies
 
 
-def test_out_of_order_replay_reaches_the_same_terminal_state(
-    ) -> None:
+def test_out_of_order_replay_reaches_the_same_terminal_state() -> None:
     ordered = _FakeLandingStore()
     jittered = _FakeLandingStore()
     old = _packet(
@@ -922,9 +890,7 @@ def test_recovery_is_only_planned_for_an_expired_checkpoint() -> None:
 
 
 def test_the_checkpoint_upsert_cannot_move_a_live_cursor_backwards() -> None:
-    statement, params = checkpoint_upsert_statement(
-        _checkpoint(), control_schema=CONTROL_SCHEMA
-    )
+    statement, params = checkpoint_upsert_statement(_checkpoint(), control_schema=CONTROL_SCHEMA)
 
     assert statement.count("%s") == len(params)
     assert "ON CONFLICT (source_kind, partition_id) DO UPDATE" in statement
@@ -954,9 +920,7 @@ def test_a_poison_packet_is_isolated_without_stopping_the_stream() -> None:
 
     assert result.applied == 2
     assert result.quarantined == 1
-    assert result.quarantine_reasons == {
-        CdcRejectReason.SCHEMA_VALIDATION_FAILED.value: 1
-    }
+    assert result.quarantine_reasons == {CdcRejectReason.SCHEMA_VALIDATION_FAILED.value: 1}
     # The packet after the poison still landed: quarantine isolates, it does not
     # halt.
     assert {envelope.source_id for envelope in store.staged.values()} == {
@@ -1009,8 +973,7 @@ def test_a_superseded_change_is_recorded_as_non_retryable() -> None:
 def test_a_drain_stops_at_its_limit_on_an_unbounded_stream() -> None:
     store = _FakeLandingStore()
     packets = [
-        _packet(_orders_document(f"order-{index}"), token=f"token-{index}")
-        for index in range(10)
+        _packet(_orders_document(f"order-{index}"), token=f"token-{index}") for index in range(10)
     ]
     adapter = ScopedCdcAdapter(
         store=store, stream_factory=_stream_of(*packets), clock=_clock(INGESTED_AT)
@@ -1104,9 +1067,7 @@ def test_the_resident_sensors_are_registered_and_default_to_stopped() -> None:
         # Starting one reads fongniao_prod through the odp_cdc_reader
         # credential, which is an operator action, not a deployment side effect.
         assert sensor.default_status is DefaultSensorStatus.STOPPED
-        assert sensor.minimum_interval_seconds < cdc_policy(
-            SourceKind.ORDERS
-        ).latency_sla_seconds
+        assert sensor.minimum_interval_seconds < cdc_policy(SourceKind.ORDERS).latency_sla_seconds
 
 
 def test_no_message_broker_dependency_was_introduced() -> None:

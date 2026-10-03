@@ -24,7 +24,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
@@ -34,16 +34,10 @@ from apps.data_platform.cdc import (
     RedactionReport,
     ScopedCdcProjector,
     cdc_policy,
-    change_envelope,
     plan_change_application,
 )
 from apps.data_platform.config import DataPlaneConfig
 from apps.data_platform.contracts import SourceEnvelope, SourceKind
-from apps.data_platform.deletion import (
-    DeleteOutcome,
-    DeletePropagationMode,
-    version_from_timestamp,
-)
 from apps.data_platform.identifiers import (
     brand_id_for_merchant,
     machine_id_for_device,
@@ -280,7 +274,10 @@ def lifecycle_pg_db(intake_blank_db, tmp_path):
 # 1. Forward Migration & Pre-cutover Row Compatibility
 # ==============================================================================
 
-def test_forward_migration_adds_record_status_and_timestamps_to_preexisting_rows(intake_blank_db) -> None:
+
+def test_forward_migration_adds_record_status_and_timestamps_to_preexisting_rows(
+    intake_blank_db,
+) -> None:
     with intake_blank_db.connect(autocommit=True) as conn:
         conn.execute(BASELINE_PRE_CUTOVER_SCHEMA)
         _seed_hierarchy(conn)
@@ -385,6 +382,7 @@ def test_migration_rollback_and_reapply_idempotency(intake_blank_db) -> None:
 # 2. Lifecycle Transitions: Active -> Soft-Retired & Tombstone Persistence
 # ==============================================================================
 
+
 def test_active_to_soft_retired_lifecycle_transition_and_tombstone(lifecycle_pg_db) -> None:
     store: PsycopgCanonicalStore = lifecycle_pg_db.canonical_store
     landing = lifecycle_pg_db.landing_db
@@ -413,7 +411,9 @@ def test_active_to_soft_retired_lifecycle_transition_and_tombstone(lifecycle_pg_
     )
 
     # 1. Batch upsert
-    result = store.apply_batch(SourceKind.DEVICE_LOG, (envelope,), partition_key=f"device_log:{PLACE_ID}")
+    result = store.apply_batch(
+        SourceKind.DEVICE_LOG, (envelope,), partition_key=f"device_log:{PLACE_ID}"
+    )
     assert result.valid_loaded == 1
     assert result.quarantined_count == 0
 
@@ -456,7 +456,9 @@ def test_active_to_soft_retired_lifecycle_transition_and_tombstone(lifecycle_pg_
     assert plan.lifecycle_gap == ""
 
     # 3. Project via ScopedCdcProjector
-    projector = ScopedCdcProjector(canonical_store=store, landing_store=landing, control_schema=CONTROL_SCHEMA)
+    projector = ScopedCdcProjector(
+        canonical_store=store, landing_store=landing, control_schema=CONTROL_SCHEMA
+    )
     projection_res = projector.apply(SourceKind.DEVICE_LOG, f"device_log:{DEVICE_ID}", [plan])
 
     assert projection_res.soft_deleted == 1
@@ -490,6 +492,7 @@ def test_active_to_soft_retired_lifecycle_transition_and_tombstone(lifecycle_pg_
 # ==============================================================================
 # 3. Guarding Against Resurrection & Stale Replay
 # ==============================================================================
+
 
 def test_stale_batch_replay_cannot_resurrect_soft_deleted_row(lifecycle_pg_db) -> None:
     store: PsycopgCanonicalStore = lifecycle_pg_db.canonical_store
@@ -538,7 +541,9 @@ def test_stale_batch_replay_cannot_resurrect_soft_deleted_row(lifecycle_pg_db) -
         redaction=RedactionReport(cdc_policy(SourceKind.DEVICE_LOG).redaction_profile, (), ()),
     )
     plan = plan_change_application(cdc_envelope, run_id=RUN_ID, now=delete_time)
-    projector = ScopedCdcProjector(canonical_store=store, landing_store=landing, control_schema=CONTROL_SCHEMA)
+    projector = ScopedCdcProjector(
+        canonical_store=store, landing_store=landing, control_schema=CONTROL_SCHEMA
+    )
     projector.apply(SourceKind.DEVICE_LOG, f"device_log:{DEVICE_ID}", [plan])
 
     # Replay stale / older batch envelope
@@ -561,7 +566,9 @@ def test_stale_batch_replay_cannot_resurrect_soft_deleted_row(lifecycle_pg_db) -
         },
     )
 
-    replay_result = store.apply_batch(SourceKind.DEVICE_LOG, (stale_env,), partition_key=f"device_log:{PLACE_ID}")
+    replay_result = store.apply_batch(
+        SourceKind.DEVICE_LOG, (stale_env,), partition_key=f"device_log:{PLACE_ID}"
+    )
     assert replay_result.valid_loaded == 0
     assert replay_result.quarantined_count == 1
     assert replay_result.quarantine_reason_counts.get("SOURCE_DELETED") == 1
@@ -624,7 +631,9 @@ def test_newer_event_updates_and_reactivates_soft_retired_row(lifecycle_pg_db) -
         redaction=RedactionReport(cdc_policy(SourceKind.DEVICE_LOG).redaction_profile, (), ()),
     )
     plan_del = plan_change_application(cdc_del, run_id=RUN_ID, now=delete_time)
-    projector = ScopedCdcProjector(canonical_store=store, landing_store=landing, control_schema=CONTROL_SCHEMA)
+    projector = ScopedCdcProjector(
+        canonical_store=store, landing_store=landing, control_schema=CONTROL_SCHEMA
+    )
     projector.apply(SourceKind.DEVICE_LOG, f"device_log:{DEVICE_ID}", [plan_del])
 
     # 2. Genuinely newer event arrives (newer source_updated_at > tombstone version)
@@ -647,7 +656,9 @@ def test_newer_event_updates_and_reactivates_soft_retired_row(lifecycle_pg_db) -
         },
     )
 
-    result = store.apply_batch(SourceKind.DEVICE_LOG, (newer_env,), partition_key=f"device_log:{PLACE_ID}")
+    result = store.apply_batch(
+        SourceKind.DEVICE_LOG, (newer_env,), partition_key=f"device_log:{PLACE_ID}"
+    )
     assert result.valid_loaded == 1
     assert result.quarantined_count == 0
 
@@ -664,6 +675,7 @@ def test_newer_event_updates_and_reactivates_soft_retired_row(lifecycle_pg_db) -
 # ==============================================================================
 # 4. Tenant & Version Guards on Soft Delete
 # ==============================================================================
+
 
 def test_tenant_boundary_and_out_of_order_delete_guards(lifecycle_pg_db) -> None:
     store: PsycopgCanonicalStore = lifecycle_pg_db.canonical_store
@@ -713,7 +725,9 @@ def test_tenant_boundary_and_out_of_order_delete_guards(lifecycle_pg_db) -> None
     )
 
     plan = plan_change_application(older_cdc, run_id=RUN_ID, now=initial_time)
-    projector = ScopedCdcProjector(canonical_store=store, landing_store=landing, control_schema=CONTROL_SCHEMA)
+    projector = ScopedCdcProjector(
+        canonical_store=store, landing_store=landing, control_schema=CONTROL_SCHEMA
+    )
     res = projector.apply(SourceKind.DEVICE_LOG, f"device_log:{DEVICE_ID}", [plan])
 
     # Because older delete source_version < lineage source_version:
@@ -779,7 +793,9 @@ def test_duplicate_cdc_delete_is_idempotent(lifecycle_pg_db) -> None:
     )
 
     plan1 = plan_change_application(cdc_del, run_id=RUN_ID, now=delete_time)
-    projector = ScopedCdcProjector(canonical_store=store, landing_store=landing, control_schema=CONTROL_SCHEMA)
+    projector = ScopedCdcProjector(
+        canonical_store=store, landing_store=landing, control_schema=CONTROL_SCHEMA
+    )
     res1 = projector.apply(SourceKind.DEVICE_LOG, f"device_log:{DEVICE_ID}", [plan1])
     assert res1.soft_deleted == 1
     assert res1.delete_outcomes.get("APPLIED") == 1
@@ -802,6 +818,7 @@ def test_duplicate_cdc_delete_is_idempotent(lifecycle_pg_db) -> None:
 # ==============================================================================
 # 5. Alembic Version Migration Test
 # ==============================================================================
+
 
 def test_alembic_migration_0021_upgrade_and_downgrade(intake_blank_db) -> None:
     with intake_blank_db.connect(autocommit=True) as conn:

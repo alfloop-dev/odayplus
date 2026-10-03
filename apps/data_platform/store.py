@@ -565,9 +565,7 @@ class PsycopgCanonicalStore:
                 tenant_id = resolution.tenant_id
                 assert tenant_id is not None  # nosec B101 -- narrowed by resolved
                 targets = tuple(
-                    (str(row[1]), row[2])
-                    for row in lineage
-                    if UUID(str(row[0])) == tenant_id
+                    (str(row[1]), row[2]) for row in lineage if UUID(str(row[0])) == tenant_id
                 )
                 applied_versions = [
                     int(row[3])
@@ -575,15 +573,19 @@ class PsycopgCanonicalStore:
                     if UUID(str(row[0])) == tenant_id and len(row) > 3 and row[3] is not None
                 ]
                 latest_applied_version = max(applied_versions) if applied_versions else None
-                recorded = self._read_tombstone(
-                    connection, tenant_id, scope, for_update=True
-                )
+                recorded = self._read_tombstone(connection, tenant_id, scope, for_update=True)
                 recorded_version = None if recorded is None else recorded.source_version
 
                 effective_recorded_version = recorded_version
                 if latest_applied_version is not None:
-                    if effective_recorded_version is None or latest_applied_version > effective_recorded_version:
-                        if event.source_version is not None and event.source_version < latest_applied_version:
+                    if (
+                        effective_recorded_version is None
+                        or latest_applied_version > effective_recorded_version
+                    ):
+                        if (
+                            event.source_version is not None
+                            and event.source_version < latest_applied_version
+                        ):
                             effective_recorded_version = latest_applied_version
 
                 decision = decide_delete(
@@ -697,9 +699,7 @@ class PsycopgCanonicalStore:
                     if not retained and recorded is not None and recorded.retained_targets:
                         retained = recorded.retained_targets
 
-                row = self._upsert_tombstone(
-                    connection, event, tenant_id, mode, purged, retained
-                )
+                row = self._upsert_tombstone(connection, event, tenant_id, mode, purged, retained)
                 if row is None:
                     # The database-level version guard refused the write, which
                     # only happens when a concurrent writer recorded a newer
@@ -769,7 +769,7 @@ class PsycopgCanonicalStore:
                    replay_count
             FROM {self._schema}.tombstones
             WHERE tenant_id = %s AND entity_type = %s AND entity_id = %s
-            {'FOR UPDATE' if for_update else ''}
+            {"FOR UPDATE" if for_update else ""}
             """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
             (tenant_id, scope.source_kind.value, scope.source_id),
         ).fetchone()
