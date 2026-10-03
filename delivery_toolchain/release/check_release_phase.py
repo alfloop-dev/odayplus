@@ -40,6 +40,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from delivery_toolchain.release.release_manifest import (  # noqa: E402
+    RELEASE_PROFILE_FULL,
+    build_release_profile,
+)
+
 PHASES = ("build", "deploy")
 
 # `deploy_cloud_run_waji.sh` 以 deploy-by-digest 部署這四個 target；migration job
@@ -64,6 +73,7 @@ def phase_errors(
     lease_supplied: bool,
     manifest_run_id: str = "",
     manifest_digest: str = "",
+    release_profile: str = RELEASE_PROFILE_FULL,
 ) -> list[str]:
     """回傳所有阻擋這個階段開始執行的理由（中文）；空 list 代表通過。"""
 
@@ -97,6 +107,16 @@ def phase_errors(
                 "build 階段不得帶入 manifest_run_id 或 manifest_digest；"
                 "build 階段的職責是產生 candidate release manifest，"
                 "接受既有 manifest 座標等同讓 build 宣稱自己的產出已被授權。"
+            )
+        # release profile 會在 build 收尾時封進 manifest digest；但那時 image 已經
+        # push、簽章並 attest。未知 profile 或不可進入此 target 的 profile 必須在
+        # 這裡、任何雲端寫入之前就拒絕，與 build_release_handoff 用同一份規則。
+        try:
+            build_release_profile(release_profile, target_environment=environment.strip())
+        except ValueError as exc:
+            errors.append(
+                f"release_profile 不可用於這次 build：{exc}；"
+                "必須在推送或簽章任何 image 之前拒絕。"
             )
     elif phase == "deploy":
         missing = [name for name in HANDOFF_COMPONENTS if not images.get(name, "").strip()]
@@ -147,6 +167,13 @@ def phase_errors(
                 "manifest_digest 必須是 sha256:<64 位小寫十六進位> digest，"
                 f"實際值為 {digest!r}。"
             )
+        # deploy 的 scope 只能來自已核准 manifest 內封存的 profile；部署時帶入
+        # 不同的 profile 等同用 deploy-only 旗標切換已建置 release 的範圍。
+        if release_profile != RELEASE_PROFILE_FULL:
+            errors.append(
+                f"deploy 階段不得帶入 release_profile（實際值為 {release_profile!r}）；"
+                "部署範圍只能取自已核准 manifest 封存的 profile。"
+            )
 
     return errors
 
@@ -163,6 +190,7 @@ def build_receipt(
     checked_at: datetime,
     manifest_run_id: str = "",
     manifest_digest: str = "",
+    release_profile: str = RELEASE_PROFILE_FULL,
 ) -> dict[str, Any]:
     """組出中文 fail-closed 收據。收據永遠不含 lease 內容或任何 secret 值。"""
 
@@ -189,6 +217,7 @@ def build_receipt(
         "checked_at": checked_at.astimezone(UTC).replace(microsecond=0).isoformat(),
         # lease 只記錄「有沒有帶」。內容、簽章與 nonce 都不進收據。
         "lease_supplied": lease_supplied,
+        "release_profile": release_profile,
         "image_handoff": {
             name: (images.get(name, "").strip() or None) for name in HANDOFF_COMPONENTS
         },
@@ -231,6 +260,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--lease-supplied", default="false")
     parser.add_argument("--manifest-run-id", default="")
     parser.add_argument("--manifest-digest", default="")
+    parser.add_argument("--release-profile", default=RELEASE_PROFILE_FULL)
     parser.add_argument("--receipt", type=Path, default=None)
     args = parser.parse_args(argv)
 
@@ -245,6 +275,7 @@ def main(argv: list[str] | None = None) -> int:
         lease_supplied=lease_supplied,
         manifest_run_id=args.manifest_run_id or "",
         manifest_digest=args.manifest_digest or "",
+        release_profile=args.release_profile,
     )
     receipt = build_receipt(
         phase=args.phase,
@@ -257,6 +288,7 @@ def main(argv: list[str] | None = None) -> int:
         checked_at=datetime.now(UTC),
         manifest_run_id=args.manifest_run_id or "",
         manifest_digest=args.manifest_digest or "",
+        release_profile=args.release_profile,
     )
     _write_receipt(receipt, args.receipt)
 

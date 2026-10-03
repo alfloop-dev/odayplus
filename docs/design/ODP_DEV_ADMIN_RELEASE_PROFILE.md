@@ -43,7 +43,11 @@ release is held to the full model assertions.
    `manifest.release_profile = {"name": "dev-admin", "target_environment":
    "dev", "model_readiness": "not_claimed"}` before the manifest is sealed. The
    build refuses an unknown profile, or `dev-admin` for a target other than
-   dev, before it seals anything.
+   dev, before it seals anything. The same rule (`build_release_profile`) runs
+   first in the unbound `release_phase` job (`check_release_phase.py
+   --release-profile`), which every build job `needs`, so the refusal happens
+   before any image is pushed, signed or attested. That check also refuses a
+   non-`full` `release_profile` input on the deploy phase.
 2. **Digest.** `release_profile` is part of the canonical payload, so
    `manifest_digest` covers it, and so does the Supervisor lease issued against
    that digest. Stripping, renaming or re-targeting the profile after sealing
@@ -116,7 +120,7 @@ The supported operations exercised, in order:
 
 | # | Operation | Check | Fails on |
 |---|---|---|---|
-| 1 | anonymous `/auth/session`, anonymous `/api/v1/operator/bootstrap` | `session:anonymous_session_denied`, `session:anonymous_api_denied` | either served |
+| 1 | anonymous `/auth/session`, anonymous `/api/v1/operator/bootstrap` | `session:anonymous_session_denied`, `session:anonymous_api_denied` | either served (`/auth/session` must be its own 401, never a followed `/login` redirect) |
 | 2 | `POST /login` with a wrong password | `session:invalid_credentials_refused` | anything but 401 `AUTH_INVALID_CREDENTIALS`, or any session cookie issued |
 | 3 | `POST /login` as the `platform_admin` account (and if fresh, verify `PASSWORD_CHANGE_REQUIRED` 403 on `/operator/users` + rotate via `POST /auth/password`) | `session:password_login`, `session:must_change_enforced`, `session:first_login_password_rotated` | not 200 `ok` for that subject, no session cookie, rotation failure, or `must_change` not enforced |
 | 4 | `GET /auth/session` with the cookie | `session:session_resolves_account` | subject is not the signed-in account |
@@ -216,6 +220,11 @@ revocation. A failure is reported and the page stays.
   and `vars.ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE`.
 - `build_release_handoff.py --release-profile`. Its GitHub output adds
   `release_profile`.
+- `check_release_phase.py --release-profile` (default `full`) in the
+  `release_phase` job; its receipt gains `release_profile`.
+- Web middleware matcher excludes `/auth/session`. That route resolves the
+  durable session itself and answers 401 `WEB_SESSION_REQUIRED` for an absent,
+  expired or revoked session; protected pages still redirect to `/login`.
 - The manifest gains the optional field `release_profile`. Admission receipts
   gain the field `release_profile`.
 - `check_live_e2e_gate.py --release-profile` (default: `$ODP_RELEASE_PROFILE`,

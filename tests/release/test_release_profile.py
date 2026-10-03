@@ -15,10 +15,12 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
 from apps.api.oday_api import runtime_mode
 from delivery_toolchain.release.build_release_handoff import HandoffError, build_handoff
+from delivery_toolchain.release.check_release_phase import phase_errors
 from delivery_toolchain.release.check_runtime_admission import main as admission_main
 from delivery_toolchain.release.release_lease import (
     STATE_CONSUMED,
@@ -577,3 +579,128 @@ def test_deploy_refuses_dev_admin_without_its_denied_role(tmp_path: Path) -> Non
     assert "ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE" in result.stderr
     assert result.calls == ""  # type: ignore[attr-defined]
 
+
+# --------------------------------------------------------------------------
+# The build phase publishes, signs and attests images before the handoff seals
+# the manifest, so the profile/target refusal must already happen in the pure,
+# unbound ``release_phase`` input check that every build job needs.
+# --------------------------------------------------------------------------
+
+WORKFLOW = ROOT / ".github/workflows/deploy-dev.yml"
+PHASE_CHECK = ROOT / "delivery_toolchain/release/check_release_phase.py"
+
+
+def _build_phase_errors(environment: str, profile: str) -> list[str]:
+    return phase_errors(
+        phase="build",
+        release_sha="a" * 40,
+        environment=environment,
+        images={},
+        lease_supplied=False,
+        release_profile=profile,
+    )
+
+
+@pytest.mark.parametrize("environment", ["dev", "staging", "production"])
+def test_the_phase_check_leaves_the_default_full_build_unchanged(environment: str) -> None:
+    assert _build_phase_errors(environment, RELEASE_PROFILE_FULL) == []
+
+
+def test_the_phase_check_admits_a_dev_admin_build_for_dev() -> None:
+    assert _build_phase_errors("dev", RELEASE_PROFILE_DEV_ADMIN) == []
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_the_phase_check_refuses_dev_admin_for_staging_and_production(
+    environment: str,
+) -> None:
+    errors = _build_phase_errors(environment, RELEASE_PROFILE_DEV_ADMIN)
+    assert len(errors) == 1
+    assert "may only target ['dev']" in errors[0]
+
+
+@pytest.mark.parametrize("name", ["admin", "Dev-Admin", ""])
+def test_the_phase_check_refuses_an_unknown_profile(name: str) -> None:
+    errors = _build_phase_errors("dev", name)
+    assert len(errors) == 1
+    assert "unknown release profile" in errors[0]
+
+
+@pytest.mark.parametrize("profile", [RELEASE_PROFILE_DEV_ADMIN, "admin"])
+def test_the_deploy_phase_takes_no_profile_of_its_own(profile: str) -> None:
+    errors = phase_errors(
+        phase="deploy",
+        release_sha="a" * 40,
+        environment="dev",
+        images={
+            name: f"r/{name}@sha256:" + "1" * 64 for name in ("api", "web", "worker", "scheduler")
+        },
+        lease_supplied=True,
+        manifest_run_id="17654321098",
+        manifest_digest="sha256:" + "2" * 64,
+        release_profile=profile,
+    )
+    assert len(errors) == 1
+    assert "deploy 階段不得帶入 release_profile" in errors[0]
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_the_phase_cli_refuses_before_any_publishing_tool_runs(
+    tmp_path: Path, environment: str
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "calls.log"
+    for tool in ("gcloud", "docker", "cosign"):
+        stub = bin_dir / tool
+        stub.write_text(f'#!/bin/sh\necho {tool} "$@" >> {log}\nexit 97\n', encoding="utf-8")
+        stub.chmod(0o755)
+    receipt = tmp_path / "receipt.json"
+    result = subprocess.run(
+        [
+            "python3",
+            str(PHASE_CHECK),
+            "--phase",
+            "build",
+            "--environment",
+            environment,
+            "--release-sha",
+            "a" * 40,
+            "--release-profile",
+            RELEASE_PROFILE_DEV_ADMIN,
+            "--receipt",
+            str(receipt),
+        ],
+        cwd=tmp_path,
+        env={"PATH": f"{bin_dir}:/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "may only target ['dev']" in result.stderr
+    assert not log.exists()
+    recorded = json.loads(receipt.read_text(encoding="utf-8"))
+    assert recorded["admitted"] is False
+    assert recorded["release_profile"] == RELEASE_PROFILE_DEV_ADMIN
+
+
+def test_the_workflow_validates_the_profile_before_the_build_publishes() -> None:
+    jobs = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+
+    phase_job = jobs["release_phase"]
+    # The pure check binds no environment, so it runs before any deploy approval.
+    assert "environment" not in phase_job
+    (check,) = [
+        step for step in phase_job["steps"] if "check_release_phase.py" in str(step.get("run", ""))
+    ]
+    assert check["env"]["RELEASE_PROFILE_INPUT"] == "${{ inputs.release_profile }}"
+    assert '--release-profile "${RELEASE_PROFILE_INPUT:-full}"' in check["run"]
+
+    # Every image push/sign/attest happens inside the build job, which cannot
+    # start unless that check succeeded.
+    build_job = jobs["build"]
+    assert build_job["needs"] == "release_phase"
+    assert any("cosign sign" in str(step.get("run", "")) for step in build_job["steps"])

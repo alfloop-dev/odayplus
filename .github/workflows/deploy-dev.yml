@@ -235,6 +235,7 @@ jobs:
           SCHEDULER_IMAGE_INPUT: ${{ inputs.scheduler_image }}
           MANIFEST_RUN_ID_INPUT: ${{ inputs.manifest_run_id }}
           MANIFEST_DIGEST_INPUT: ${{ inputs.manifest_digest }}
+          RELEASE_PROFILE_INPUT: ${{ inputs.release_profile }}
         run: |
           set -euo pipefail
           if [ -n "${RELEASE_LEASE}" ]; then
@@ -254,6 +255,7 @@ jobs:
             --lease-supplied "${lease_supplied}" \
             --manifest-run-id "${MANIFEST_RUN_ID_INPUT}" \
             --manifest-digest "${MANIFEST_DIGEST_INPUT}" \
+            --release-profile "${RELEASE_PROFILE_INPUT:-full}" \
             --receipt "${RELEASE_RECEIPT_DIR}/release-phase-receipt.json"
 
       - name: Publish release phase receipt
