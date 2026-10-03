@@ -53,7 +53,7 @@ def hard_blocker(**updates):
 def ordinary_note(status, path, message):
     """Use the real note mutation, not a hand-built task.next approximation."""
     with (
-        mock.patch.object(ai_status, "current_actor_validated", return_value="Codex"),
+        mock.patch.object(ai_status, "current_actor_validated", return_value=status["tasks"][0]["owner"]),
         mock.patch.object(ai_status, "LOG_FILE", path.parent / "note.jsonl"),
     ):
         ai_status.command_note(status, ["AUTHORITY-001", message])
@@ -82,8 +82,71 @@ def dispatch_boundary(config):
         yield events, audit, launch
 
 
-def dispatch(config):
-    return supervisor.dispatch_ready_tasks(config, {"workers": {}, "queue": {"events": {}}}, {}, agent_ids_override=["codex"])
+def dispatch(config, agent_id="codex"):
+    return supervisor.dispatch_ready_tasks(config, {"workers": {}, "queue": {"events": {}}}, {}, agent_ids_override=[agent_id])
+
+
+def set_owner(config, status, owner):
+    config["agents"][owner.casefold()] = {
+        "id": owner.casefold(), "display_name": owner, "provider": "codex", "account_pool": "owner",
+    }
+    status["tasks"][0]["owner"] = owner
+
+
+@pytest.mark.parametrize("completed_dependency", [False, True])
+@pytest.mark.parametrize("owner", ["Codex", "Pi"])
+@pytest.mark.parametrize("blocker_message", [
+    "seed/dataset; provider handoff pending",
+    "reference.json; provider handoff pending",
+    "waiting for API release; provider handoff pending",
+    "./seed/dataset; provider handoff pending",
+])
+def test_reference_prefix_and_identity_substrings_are_not_release_authority(
+    board, completed_dependency, owner, blocker_message,
+):
+    config, status, path = board
+    set_owner(config, status, owner)
+    if completed_dependency:
+        status["tasks"][0]["depends_on"] = ["UPSTREAM-001"]
+        status["tasks"].append({"id": "UPSTREAM-001", "status": "done", "depends_on": []})
+    status["blockers"] = [hard_blocker(owner=owner, message=blocker_message)]
+    ordinary_note(status, path, "Ordinary note: status corrected; provider handoff is stale")
+    before = deepcopy(status)
+    with dispatch_boundary(config) as (events, audit, launch):
+        dispatch(config, owner.casefold())
+    assert json.loads(path.read_text()) == before
+    assert events == []
+    launch.assert_not_called()
+    assert not any("No unresolved dependency" in str(call) for call in audit.call_args_list)
+
+
+@pytest.mark.parametrize("completed_dependency", [False, True])
+@pytest.mark.parametrize("owner", ["Codex", "Pi"])
+@pytest.mark.parametrize("reference", [
+    "refs=seed/dataset", "ref:reference.json", "see seed/dataset", "refs reference.json",
+])
+def test_delimited_references_and_complete_agent_identities_still_recover(
+    board, completed_dependency, owner, reference,
+):
+    config, status, path = board
+    set_owner(config, status, owner)
+    if completed_dependency:
+        status["tasks"][0]["depends_on"] = ["UPSTREAM-DATASET-001"]
+        status["tasks"].append({"id": "UPSTREAM-DATASET-001", "status": "done", "depends_on": []})
+    status["blockers"] = [hard_blocker(
+        owner=owner,
+        message=f"{owner} provider quota/worktree failure; {reference}; UPSTREAM-DATASET-001"
+        if completed_dependency else f"{owner} provider quota/worktree failure; {reference}",
+    )]
+    ordinary_note(status, path, f"{owner} provider handoff stale notification")
+    with dispatch_boundary(config) as (events, audit, launch):
+        dispatch(config, owner.casefold())
+    latest = json.loads(path.read_text())
+    assert latest["tasks"][0]["status"] == "todo"
+    assert latest["blockers"][0]["status"] == "resolved"
+    assert len(events) == 1
+    assert events[0]["task_id"] == "AUTHORITY-001"
+    launch.assert_not_called()
 
 
 @pytest.mark.parametrize("message", [
