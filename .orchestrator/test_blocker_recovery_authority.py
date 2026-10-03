@@ -105,6 +105,28 @@ def test_note_cannot_release_canonical_external_blocker(board, message):
     assert not any("No unresolved dependency" in str(call) for call in audit.call_args_list)
 
 
+@pytest.mark.parametrize("completed_dependency", [False, True])
+@pytest.mark.parametrize("blocker_message", [
+    "External-data/dataset gate: provider handoff pending; A1 raw/masked and A2/A3 live still missing",
+    "Human/Ops gate: provider handoff pending; manual approval still missing",
+    "Unclassified business gate: provider handoff pending; input still missing",
+])
+def test_mixed_gate_prose_is_not_erased_as_a_path(board, completed_dependency, blocker_message):
+    config, status, path = board
+    if completed_dependency:
+        status["tasks"][0]["depends_on"] = ["UPSTREAM-DATASET-001"]
+        status["tasks"].append({"id": "UPSTREAM-DATASET-001", "status": "done", "depends_on": []})
+    status["blockers"] = [hard_blocker(message=blocker_message)]
+    ordinary_note(status, path, "Ordinary note: status corrected; provider handoff is stale")
+    before = deepcopy(status)
+    with dispatch_boundary(config) as (events, audit, launch):
+        dispatch(config)
+    assert json.loads(path.read_text()) == before
+    assert events == []
+    launch.assert_not_called()
+    assert not any("No unresolved dependency" in str(call) for call in audit.call_args_list)
+
+
 @pytest.mark.parametrize("gate", [
     {"requires_human_approval": True}, {"human_required_roles": ["ops"]},
     {"credentials_gate": True}, {"credential_gate": True},
@@ -149,7 +171,7 @@ def test_completed_dependency_cannot_release_an_independent_blocker(board, block
     launch.assert_not_called()
 
 
-@pytest.mark.parametrize("scenario", ["routing", "resolved", "dependency", "unrelated"])
+@pytest.mark.parametrize("scenario", ["routing", "resolved", "dependency", "unrelated", "references"])
 def test_released_scheduler_owned_gate_still_recovers_and_enqueues(board, scenario):
     config, status, path = board
     task = status["tasks"][0]
@@ -158,6 +180,10 @@ def test_released_scheduler_owned_gate_still_recovers_and_enqueues(board, scenar
         status["blockers"] = [hard_blocker(message="provider quota/worktree failure")]
     elif scenario == "resolved":
         status["blockers"] = [hard_blocker(status="resolved", resolved_at="2026-10-02T00:00:00Z")]
+    elif scenario == "references":
+        task.update(depends_on=["UPSTREAM-DATASET-001"], next="stale provider failure in scripts/deployment.py; retry dispatch")
+        status["tasks"].append({"id": "UPSTREAM-DATASET-001", "status": "done", "depends_on": []})
+        status["blockers"] = [hard_blocker(message="provider failure in scripts/deployment.py; refs=docs/dataset.json; `external_data_gate`; UPSTREAM-DATASET-001")]
     elif scenario == "dependency":
         task.update(depends_on=["UPSTREAM-DATASET-001"], next="waiting for dependencies: UPSTREAM-DATASET-001")
         status["tasks"].append({"id": "UPSTREAM-DATASET-001", "status": "done", "depends_on": []})
