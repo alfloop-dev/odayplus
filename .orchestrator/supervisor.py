@@ -4320,11 +4320,21 @@ _CODE_REFERENCE_FAILURE_LOCATION_RE = re.compile(
     r"\b(failure|failures|failed|error|errors|crash|crashed|exception|traceback|timeout)"
     r"\s+(?:in|at)\s+" + _CODE_REFERENCE_PATH + _CODE_REFERENCE_CLAUSE_END
 )
-# Any path/filename syntax left after reference clauses were removed is an
-# unproven artifact condition: absolute/relative/home paths (including an
-# extensionless `/provider/worktree` whose slash-split parts look like routing
-# words) and dotted names such as `payload.csv` or `“manifest.json”`.
-_CANONICAL_ARTIFACT_RE = re.compile(r"(?:^|[^\w.\-/])(?:~|\.{1,2})?/|\w\.\w")
+# Only a complete routing-failure clause proves a slash compound describes
+# scheduler infrastructure rather than an awaited artifact. Anchor both ends:
+# `provider quota/worktree failure` is recoverable; `waiting for
+# provider/worktree` and `required provider/worktree failure` are not.
+_CANONICAL_ROUTING_FAILURE_CLAUSE_RE = re.compile(
+    r"(?:^|(?<=[;；\n]))\s*(?:stale\s+)?(?:provider\s+)?"
+    r"(?:provider|quota|worktree)(?:/(?:provider|quota|worktree))+\s+"
+    r"(?:failure|failures|failed|error|errors|crash|crashed|timeout)"
+    + _CODE_REFERENCE_CLAUSE_END
+)
+# Every remaining slash is ambiguous artifact evidence, including extensionless
+# relative paths whose components happen to be allowed routing words. Never
+# split these into individually allowlisted tokens. Dotted filenames likewise
+# remain unproven deliverables after explicit references have been removed.
+_CANONICAL_ARTIFACT_RE = re.compile(r"/|\w\.\w")
 
 
 def _strip_explicit_code_reference_clauses(context: str) -> str:
@@ -4428,6 +4438,11 @@ def blocked_task_prose_context(
     if not canonical_gate_prose:
         context = re.sub(
             r"\b[A-Za-z0-9_.\-]+\s*(?:相關\s*)?job\b", " ", context, flags=re.IGNORECASE
+        )
+
+    if canonical_gate_prose:
+        context = _CANONICAL_ROUTING_FAILURE_CLAUSE_RE.sub(
+            lambda match: match.group(0).replace("/", " "), context,
         )
 
     return context
