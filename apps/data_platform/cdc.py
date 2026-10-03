@@ -1107,8 +1107,14 @@ def plan_change_application(
             tombstone=None,
         )
     status = RETIREMENT_STATUS[envelope.operation]
+    # The retirement status is a property of the operation, not of whether the
+    # packet happened to carry its tenant: a delete without a full document
+    # still resolves its owner from lineage inside the tombstone transaction,
+    # and must then mark the row with the contracted status (``refunded`` for
+    # a refund), not a default.
+    soft_retires = policy.lifecycle_column is not None
     soft_delete: SoftDeleteDirective | None = None
-    if policy.lifecycle_column is not None and envelope.tenant_id is not None:
+    if soft_retires and envelope.tenant_id is not None:
         soft_delete = SoftDeleteDirective(
             canonical_table=policy.canonical_table,
             canonical_id_column=policy.canonical_id_column,
@@ -1145,7 +1151,8 @@ def plan_change_application(
             "cdc_operation": envelope.operation.value,
             "cdc_change_id": envelope.change_id,
             "cdc_resume_token": envelope.resume_token,
-            "soft_delete_status": status if soft_delete is not None else None,
+            "soft_delete_table": policy.canonical_table if soft_retires else None,
+            "soft_delete_status": status if soft_retires else None,
             "contract_version": envelope.contract_version,
         },
     )
@@ -1154,7 +1161,7 @@ def plan_change_application(
         source_envelope=None,
         soft_delete=soft_delete,
         tombstone=tombstone,
-        lifecycle_gap="" if soft_delete is not None else (policy.lifecycle_gap or ""),
+        lifecycle_gap="" if soft_retires else (policy.lifecycle_gap or ""),
     )
 
 

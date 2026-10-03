@@ -15,11 +15,19 @@ Settles with real PostgreSQL persistence (via intake_blank_db fixture):
 7. Newer event reactivation: a genuinely newer event (version > tombstone) can update or reactivate.
 8. Idempotent delete replay: duplicate deletes converge on `REPLAYED` without side-effects.
 9. Alembic revision 0021 upgrade and downgrade execution.
+10. Shared transaction authority: a scoped retirement never voids a core.transactions row
+    whose current authority or newer lineage belongs to another source; plain tombstone
+    callers never mutate business rows.
+11. Inferred-tenant refund keeps the contracted `refunded` status.
+12. Independent-connection batch/delete contention converges on a retired row plus tombstone,
+    with the stale batch refused when the delete wins.
 """
 
 from __future__ import annotations
 
 import hashlib
+import threading
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -38,12 +46,22 @@ from apps.data_platform.cdc import (
 )
 from apps.data_platform.config import DataPlaneConfig
 from apps.data_platform.contracts import SourceEnvelope, SourceKind
+from apps.data_platform.deletion import (
+    DeleteEvent,
+    DeleteOutcome,
+    DeletePropagationMode,
+    DeleteScope,
+    scope_lock_key,
+    version_from_timestamp,
+)
 from apps.data_platform.identifiers import (
     brand_id_for_merchant,
     machine_id_for_device,
     store_id_for_place,
     tenant_id_for_merchant,
+    transaction_id_for_source,
 )
+from apps.data_platform.source import envelope_for_document
 from apps.data_platform.store import PsycopgCanonicalStore
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -1263,3 +1281,380 @@ def test_alembic_migration_0021_upgrade_and_downgrade(intake_blank_db) -> None:
             """
         ).fetchall()
         assert len(cols) == 0
+
+
+# ==============================================================================
+# 6. Shared transaction authority, inferred-tenant refund, concurrent writers
+# ==============================================================================
+
+
+def _land_document(
+    store: PsycopgCanonicalStore, kind: SourceKind, document: dict[str, Any]
+) -> tuple[SourceEnvelope, Any]:
+    run_id = str(uuid4())
+    observed = datetime(2026, 9, 25, tzinfo=UTC)
+    store.begin_run(run_id, kind, "2026-09-25", None, observed)
+    envelope = envelope_for_document(kind, document, run_id=run_id, observed_at=observed)
+    return envelope, store.apply_batch(kind, [envelope], partition_key="2026-09-25")
+
+
+def _order_document(source_id: str, order_id: str, updated_at: str, **extra: Any) -> dict[str, Any]:
+    return {
+        "_id": source_id,
+        "orderId": order_id,
+        "merchant": MERCHANT_ID,
+        "place": PLACE_ID,
+        "amount": 100,
+        "currency": "TWD",
+        "transactionId": f"gateway-{source_id}",
+        "amountPaid": 100,
+        "payGateway": "card",
+        "status": "succeeded",
+        "state": "TRADE_SUCCESS",
+        "payment": {"payGateway": "card"},
+        "createdAt": updated_at,
+        "updatedAt": updated_at,
+        **extra,
+    }
+
+
+def _transaction_status(landing: Any, transaction_id: Any) -> str | None:
+    with landing._connect() as conn:
+        row = conn.execute(
+            "SELECT transaction_status FROM core.transactions WHERE transaction_id = %s",
+            (transaction_id,),
+        ).fetchone()
+    return None if row is None else row[0]
+
+
+def _orders_cdc(
+    source_id: str,
+    operation: CdcOperation,
+    moment: datetime,
+    *,
+    tenant_id: Any,
+    change_id: str,
+) -> CdcChangeEnvelope:
+    return CdcChangeEnvelope(
+        change_id=change_id,
+        source_kind=SourceKind.ORDERS,
+        source_collection="orders",
+        source_id=source_id,
+        operation=operation,
+        resume_token=f"token-{change_id}",
+        partition_key=f"orders:{PLACE_ID}",
+        sequence_number=1,
+        server_timestamp=moment,
+        source_timestamp=moment,
+        ingested_at=moment,
+        idempotency_key=f"idemp-{change_id}",
+        tenant_id=tenant_id,
+        content_sha256=_sha256(change_id),
+        after_payload=None,
+        redaction=RedactionReport(cdc_policy(SourceKind.ORDERS).redaction_profile, (), ()),
+    )
+
+
+def test_soft_retire_never_voids_a_transaction_another_source_now_owns(
+    lifecycle_pg_db,
+) -> None:
+    """TRANSACTION A v21 -> ORDERS B v23 (same orderId) -> retire A at v22 keeps B's row."""
+    store: PsycopgCanonicalStore = lifecycle_pg_db.canonical_store
+    landing = lifecycle_pg_db.landing_db
+    order_id = "shared-order-lifecycle"
+    canonical_id = transaction_id_for_source(order_id)
+
+    older, result = _land_document(
+        store,
+        SourceKind.TRANSACTION,
+        _order_document("mongo-transaction-a", order_id, "2026-09-21T00:00:00Z"),
+    )
+    assert result.valid_loaded == 1, result.quarantine_reason_counts
+    newer, result = _land_document(
+        store,
+        SourceKind.ORDERS,
+        _order_document("mongo-orders-b", order_id, "2026-09-23T00:00:00Z"),
+    )
+    assert result.valid_loaded == 1, result.quarantine_reason_counts
+    with landing._connect() as conn:
+        authority = conn.execute(
+            f"SELECT source_kind FROM {CONTROL_SCHEMA}.transaction_authority "
+            "WHERE transaction_id = %s",
+            (canonical_id,),
+        ).fetchone()
+    assert authority == (SourceKind.ORDERS.value,)
+    assert _transaction_status(landing, canonical_id) == "succeeded"
+
+    # A scoped soft-retirement request for the superseded source A.
+    moment = datetime(2026, 9, 22, tzinfo=UTC)
+    retire_a = DeleteEvent(
+        scope=DeleteScope(SourceKind.TRANSACTION, older.source_id, TENANT_ID),
+        source_version=version_from_timestamp(moment),
+        purged_at=moment,
+        source_snapshot_id=str(uuid4()),
+        tombstone_hash="a" * 64,
+        run_id=RUN_ID,
+        mode=DeletePropagationMode.TOMBSTONE_PURGE,
+        context={
+            "soft_delete_table": "core.transactions",
+            "soft_delete_status": "voided",
+        },
+    )
+    outcome = store.tombstone_record(retire_a)
+    assert outcome.outcome is DeleteOutcome.APPLIED
+    assert outcome.soft_deleted_count == 0
+    assert _transaction_status(landing, canonical_id) == "succeeded"
+    assert store.get_tombstone(TENANT_ID, SourceKind.TRANSACTION, older.source_id) is not None
+
+    # A plain tombstone caller (no soft-retirement request) never touches the
+    # row, even at a version newer than every landed source.
+    later = datetime(2026, 9, 24, tzinfo=UTC)
+    plain = store.tombstone_record(
+        DeleteEvent(
+            scope=DeleteScope(SourceKind.ORDERS, newer.source_id, TENANT_ID),
+            source_version=version_from_timestamp(later),
+            purged_at=later,
+            source_snapshot_id=str(uuid4()),
+            tombstone_hash="b" * 64,
+            run_id=RUN_ID,
+            mode=DeletePropagationMode.TOMBSTONE_PURGE,
+        )
+    )
+    assert plain.outcome is DeleteOutcome.APPLIED
+    assert plain.soft_deleted_count == 0
+    assert _transaction_status(landing, canonical_id) == "succeeded"
+
+
+def test_scoped_orders_retirement_still_voids_the_row_its_source_owns(
+    lifecycle_pg_db,
+) -> None:
+    """Positive control: the current authority's own CDC delete soft-retires the row."""
+    store: PsycopgCanonicalStore = lifecycle_pg_db.canonical_store
+    landing = lifecycle_pg_db.landing_db
+    order_id = "owned-order-lifecycle"
+    canonical_id = transaction_id_for_source(order_id)
+    landed, result = _land_document(
+        store,
+        SourceKind.ORDERS,
+        _order_document("mongo-orders-owned", order_id, "2026-09-21T00:00:00Z"),
+    )
+    assert result.valid_loaded == 1, result.quarantine_reason_counts
+
+    moment = datetime(2026, 9, 22, tzinfo=UTC)
+    plan = plan_change_application(
+        _orders_cdc(
+            landed.source_id,
+            CdcOperation.DELETE,
+            moment,
+            tenant_id=TENANT_ID,
+            change_id="orders-owned-delete",
+        ),
+        run_id=RUN_ID,
+        now=moment,
+    )
+    projector = ScopedCdcProjector(
+        canonical_store=store, landing_store=landing, control_schema=CONTROL_SCHEMA
+    )
+    res = projector.apply(SourceKind.ORDERS, f"orders:{PLACE_ID}", [plan])
+    assert res.soft_deleted == 1
+    assert res.delete_outcomes.get("APPLIED") == 1
+    assert _transaction_status(landing, canonical_id) == "voided"
+
+
+def test_inferred_tenant_refund_marks_the_contracted_refunded_status(
+    lifecycle_pg_db,
+) -> None:
+    """A declared refund with no tenant/full document lands ``refunded``, not ``voided``."""
+    store: PsycopgCanonicalStore = lifecycle_pg_db.canonical_store
+    landing = lifecycle_pg_db.landing_db
+    order_id = "refund-order-lifecycle"
+    canonical_id = transaction_id_for_source(order_id)
+    landed, result = _land_document(
+        store,
+        SourceKind.ORDERS,
+        _order_document("mongo-orders-refund", order_id, "2026-09-21T00:00:00Z"),
+    )
+    assert result.valid_loaded == 1, result.quarantine_reason_counts
+
+    moment = datetime(2026, 9, 22, tzinfo=UTC)
+    plan = plan_change_application(
+        _orders_cdc(
+            landed.source_id,
+            CdcOperation.REFUND,
+            moment,
+            tenant_id=None,
+            change_id="orders-refund-no-tenant",
+        ),
+        run_id=RUN_ID,
+        now=moment,
+    )
+    assert plan.soft_delete is None
+    assert plan.tombstone is not None and plan.tombstone.scope.tenant_id is None
+
+    projector = ScopedCdcProjector(
+        canonical_store=store, landing_store=landing, control_schema=CONTROL_SCHEMA
+    )
+    res = projector.apply(SourceKind.ORDERS, f"orders:{PLACE_ID}", [plan])
+    assert res.soft_deleted == 1
+    assert res.delete_outcomes.get("APPLIED") == 1
+    assert _transaction_status(landing, canonical_id) == "refunded"
+    tombstone = store.get_tombstone(TENANT_ID, SourceKind.ORDERS, landed.source_id)
+    assert tombstone is not None
+
+
+def _device_envelope(moment: datetime, *, seed: str) -> SourceEnvelope:
+    return SourceEnvelope(
+        source_kind=SourceKind.DEVICE_LOG,
+        source_id=DEVICE_ID,
+        source_snapshot_id=str(uuid4()),
+        content_sha256=_sha256(seed),
+        run_id=RUN_ID,
+        observed_at=moment,
+        source_updated_at=moment,
+        source_document={
+            "_id": DEVICE_ID,
+            "device": DEVICE_ID,
+            "merchant": MERCHANT_ID,
+            "place": PLACE_ID,
+            "logType": "connection",
+            "logData": {"state": "online", "time": moment.isoformat()},
+            "createdAt": moment.isoformat(),
+        },
+    )
+
+
+def _device_delete_plan(moment: datetime, change_id: str) -> Any:
+    return plan_change_application(
+        CdcChangeEnvelope(
+            change_id=change_id,
+            source_kind=SourceKind.DEVICE_LOG,
+            source_collection="device_log",
+            source_id=DEVICE_ID,
+            operation=CdcOperation.DELETE,
+            resume_token=f"token-{change_id}",
+            partition_key=f"device_log:{DEVICE_ID}",
+            sequence_number=1,
+            server_timestamp=moment,
+            source_timestamp=moment,
+            ingested_at=moment,
+            idempotency_key=f"idemp-{change_id}",
+            tenant_id=TENANT_ID,
+            content_sha256=_sha256(change_id),
+            after_payload={"_id": DEVICE_ID, "device": DEVICE_ID, "merchant": MERCHANT_ID},
+            redaction=RedactionReport(cdc_policy(SourceKind.DEVICE_LOG).redaction_profile, (), ()),
+        ),
+        run_id=RUN_ID,
+        now=moment,
+    )
+
+
+def _wait_for_advisory_waiters(intake: Any, expected: int) -> None:
+    """Block until ``expected`` sessions queue on an advisory lock, or fail."""
+    deadline = time.monotonic() + 15
+    while True:
+        with intake.connect(autocommit=True) as conn:
+            waiting = conn.execute(
+                "SELECT COUNT(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted"
+            ).fetchone()[0]
+        if waiting >= expected:
+            return
+        if time.monotonic() > deadline:
+            raise AssertionError(f"expected {expected} advisory waiters, saw {waiting}")
+        time.sleep(0.05)
+
+
+@pytest.mark.parametrize("first", ["batch", "delete"])
+def test_concurrent_batch_and_delete_converge_on_retired_row_and_tombstone(
+    lifecycle_pg_db, first: str
+) -> None:
+    """Independent connections contend for the scope; either order ends retired.
+
+    A gate connection holds the delete-scope advisory lock while the stale batch
+    replay and the CDC delete queue behind it in a fixed order (advisory lock
+    waiters are granted FIFO). Releasing the gate lets them run in that order on
+    their own connections. Whichever wins, the stale batch must not leave the
+    row active and the tombstone must be recorded.
+    """
+    store: PsycopgCanonicalStore = lifecycle_pg_db.canonical_store
+    landing = lifecycle_pg_db.landing_db
+    intake = lifecycle_pg_db.intake
+
+    initial = datetime(2026, 9, 20, 10, 0, 0, tzinfo=UTC)
+    delete_time = datetime(2026, 9, 20, 10, 30, 0, tzinfo=UTC)
+    result = store.apply_batch(
+        SourceKind.DEVICE_LOG,
+        (_device_envelope(initial, seed="contention-initial"),),
+        partition_key=f"device_log:{PLACE_ID}",
+    )
+    assert result.valid_loaded == 1
+
+    # Stale replay: older than the delete, so it may land only before it.
+    stale = _device_envelope(initial + timedelta(minutes=5), seed="contention-stale")
+    plan = _device_delete_plan(delete_time, f"contention-delete-{first}")
+    projector = ScopedCdcProjector(
+        canonical_store=store, landing_store=landing, control_schema=CONTROL_SCHEMA
+    )
+    outcomes: dict[str, Any] = {}
+    errors: list[BaseException] = []
+
+    def run_batch() -> None:
+        try:
+            outcomes["batch"] = store.apply_batch(
+                SourceKind.DEVICE_LOG, (stale,), partition_key=f"device_log:{PLACE_ID}"
+            )
+        except BaseException as exc:  # noqa: BLE001 -- surfaced in the main thread
+            errors.append(exc)
+
+    def run_delete() -> None:
+        try:
+            outcomes["delete"] = projector.apply(
+                SourceKind.DEVICE_LOG, f"device_log:{DEVICE_ID}", [plan]
+            )
+        except BaseException as exc:  # noqa: BLE001 -- surfaced in the main thread
+            errors.append(exc)
+
+    workers = {"batch": run_batch, "delete": run_delete}
+    order = [first, "delete" if first == "batch" else "batch"]
+    threads: list[threading.Thread] = []
+    with intake.connect(autocommit=True) as gate:
+        with gate.transaction():
+            gate.execute(
+                "SELECT pg_advisory_xact_lock(%s)",
+                (scope_lock_key(TENANT_ID, SourceKind.DEVICE_LOG, DEVICE_ID),),
+            )
+            for index, name in enumerate(order, start=1):
+                thread = threading.Thread(target=workers[name], name=name)
+                thread.start()
+                threads.append(thread)
+                _wait_for_advisory_waiters(intake, index)
+    for thread in threads:
+        thread.join(timeout=30)
+        assert not thread.is_alive(), f"{thread.name} did not finish"
+    assert not errors, errors
+
+    batch = outcomes["batch"]
+    delete = outcomes["delete"]
+    assert delete.tombstoned == 1
+    assert delete.delete_outcomes.get("APPLIED") == 1
+    if first == "batch":
+        # The stale replay ran first and landed; the delete then retired it.
+        assert batch.valid_loaded == 1
+        assert delete.soft_deleted == 1
+    else:
+        # The delete ran first; the stale replay is refused, not resurrected.
+        assert delete.soft_deleted == 1
+        assert batch.valid_loaded == 0
+        assert batch.quarantine_reason_counts.get("SOURCE_DELETED") == 1
+
+    with landing._connect() as conn:
+        row = conn.execute(
+            "SELECT status_type, record_status FROM core.machine_status_events "
+            "WHERE machine_id = %s",
+            (MACHINE_ID,),
+        ).fetchone()
+        tombstones = conn.execute(
+            f"SELECT COUNT(*) FROM {CONTROL_SCHEMA}.tombstones WHERE entity_id = %s",
+            (DEVICE_ID,),
+        ).fetchone()[0]
+    assert row == ("online", "voided")
+    assert tombstones == 1

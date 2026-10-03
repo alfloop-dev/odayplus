@@ -240,6 +240,14 @@ class _PostgresLookup(MappingLookup):
 #: churn of owners cannot spin here, and the last read still decides.
 _DELETE_SCOPE_LOCK_ATTEMPTS = 3
 
+#: Canonical tables a scoped CDC retirement may soft-retire, mapped to their
+#: primary key and approved record-lifecycle column. Anything else keeps the
+#: row and records only the tombstone.
+_SOFT_RETIREMENT_COLUMNS: dict[str, tuple[str, str]] = {
+    "core.transactions": ("transaction_id", "transaction_status"),
+    "core.machine_status_events": ("status_event_id", "record_status"),
+}
+
 
 class PsycopgCanonicalStore:
     """Transactional canonical writer and lineage/checkpoint authority."""
@@ -697,43 +705,9 @@ class PsycopgCanonicalStore:
                 else:
                     soft_deleted = 0
                     if mode is DeletePropagationMode.TOMBSTONE_PURGE and decision.purges_rows:
-                        soft_status = (
-                            event.context.get("soft_delete_status")
-                            if event.context
-                            else None
+                        soft_deleted = self._soft_retire_targets(
+                            connection, event, scope, tenant_id, targets
                         )
-                        purged_at = event.purged_at
-                        for canonical_table, canonical_id in targets:
-                            if canonical_table == "core.machine_status_events":
-                                status_val = soft_status or "voided"
-                                cursor = connection.execute(
-                                    """
-                                    UPDATE core.machine_status_events AS target
-                                    SET record_status = %s, updated_at = %s
-                                    FROM core.stores AS scope
-                                    WHERE target.status_event_id = %s
-                                      AND target.store_id = scope.store_id
-                                      AND scope.tenant_id = %s
-                                      AND target.record_status IS DISTINCT FROM %s
-                                    """,
-                                    (status_val, purged_at, canonical_id, tenant_id, status_val),
-                                )
-                                soft_deleted += max(int(getattr(cursor, "rowcount", 0) or 0), 0)
-                            elif canonical_table == "core.transactions":
-                                status_val = soft_status or "voided"
-                                cursor = connection.execute(
-                                    """
-                                    UPDATE core.transactions AS target
-                                    SET transaction_status = %s, updated_at = %s
-                                    FROM core.stores AS scope
-                                    WHERE target.transaction_id = %s
-                                      AND target.store_id = scope.store_id
-                                      AND scope.tenant_id = %s
-                                      AND target.transaction_status IS DISTINCT FROM %s
-                                    """,
-                                    (status_val, purged_at, canonical_id, tenant_id, status_val),
-                                )
-                                soft_deleted += max(int(getattr(cursor, "rowcount", 0) or 0), 0)
 
                     retained = tuple(sorted({table for table, _ in targets}))
                     if not retained and recorded is not None and recorded.retained_targets:
@@ -764,6 +738,99 @@ class PsycopgCanonicalStore:
                     replay_count=int(row[1]),
                     soft_deleted_count=soft_deleted if mode is DeletePropagationMode.TOMBSTONE_PURGE else 0,
                 )
+
+    def _soft_retire_targets(
+        self,
+        connection: Any,
+        event: DeleteEvent,
+        scope: DeleteScope,
+        tenant_id: UUID,
+        targets: Sequence[tuple[str, Any]],
+    ) -> int:
+        """Mark the scoped CDC lifecycle column inside the tombstone transaction.
+
+        Only an event that explicitly carries a soft-retirement request (the
+        scoped CDC planner sets ``soft_delete_table`` / ``soft_delete_status``)
+        touches a business row; every other tombstone caller keeps the
+        record-and-retain behaviour it always had.
+
+        Each update re-checks, under the scope and canonical-target locks the
+        caller already holds, that this source still owns the target: its own
+        lineage must bind the row at or below the delete version, no lineage
+        from any source may carry a newer version for that row, and for
+        ``core.transactions`` the current ``transaction_authority`` snapshot
+        must be one of this source's own landed snapshots. A row another source
+        now owns is therefore retained, never voided on its behalf.
+        """
+        context = event.context or {}
+        table = context.get("soft_delete_table")
+        status = context.get("soft_delete_status")
+        spec = _SOFT_RETIREMENT_COLUMNS.get(str(table)) if table else None
+        if spec is None or not status:
+            return 0
+        id_column, status_column = spec
+        if not any(canonical_table == table for canonical_table, _ in targets):
+            return 0
+        authority_guard = ""
+        if table == "core.transactions":
+            authority_guard = (
+                f"AND EXISTS ("
+                f"SELECT 1 FROM {self._schema}.transaction_authority AS auth "
+                f"WHERE auth.transaction_id = target.transaction_id "
+                f"AND auth.source_snapshot_id IN ("
+                f"SELECT owned.source_snapshot_id "
+                f"FROM {self._schema}.canonical_lineage AS owned "
+                f"WHERE owned.canonical_table = %(table)s "
+                f"AND owned.canonical_id = target.transaction_id "
+                f"AND owned.tenant_id = %(tenant_id)s "
+                f"AND owned.source_kind = %(source_kind)s "
+                f"AND owned.source_id = %(source_id)s)) "
+            )
+        statement = (
+            f"UPDATE {table} AS target "  # nosec B608 -- table/columns come from a fixed allowlist.
+            f"SET {status_column} = %(status)s, updated_at = %(purged_at)s "
+            f"FROM core.stores AS scope "
+            f"WHERE target.store_id = scope.store_id "
+            f"AND scope.tenant_id = %(tenant_id)s "
+            f"AND target.{status_column} IS DISTINCT FROM %(status)s "
+            f"AND EXISTS ("
+            f"SELECT 1 FROM {self._schema}.canonical_lineage AS lineage "
+            f"WHERE lineage.canonical_table = %(table)s "
+            f"AND lineage.canonical_id = target.{id_column} "
+            f"AND lineage.tenant_id = %(tenant_id)s "
+            f"AND lineage.source_kind = %(source_kind)s "
+            f"AND lineage.source_id = %(source_id)s "
+            f"AND (%(version)s::bigint IS NULL OR lineage.source_version IS NULL "
+            f"OR lineage.source_version <= %(version)s::bigint)) "
+            f"AND NOT EXISTS ("
+            f"SELECT 1 FROM {self._schema}.canonical_lineage AS newer "
+            f"WHERE newer.canonical_table = %(table)s "
+            f"AND newer.canonical_id = target.{id_column} "
+            f"AND newer.tenant_id = %(tenant_id)s "
+            f"AND %(version)s::bigint IS NOT NULL "
+            f"AND newer.source_version > %(version)s::bigint) "
+            f"{authority_guard}"
+            f"AND target.{id_column} = %(canonical_id)s"
+        )
+        retired = 0
+        for canonical_table, canonical_id in targets:
+            if canonical_table != table:
+                continue
+            cursor = connection.execute(
+                statement,
+                {
+                    "status": status,
+                    "purged_at": event.purged_at,
+                    "tenant_id": tenant_id,
+                    "table": table,
+                    "source_kind": scope.source_kind.value,
+                    "source_id": scope.source_id,
+                    "version": event.source_version,
+                    "canonical_id": canonical_id,
+                },
+            )
+            retired += max(int(getattr(cursor, "rowcount", 0) or 0), 0)
+        return retired
 
     @staticmethod
     def _unchanged_result(

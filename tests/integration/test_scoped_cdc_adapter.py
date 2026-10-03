@@ -602,6 +602,35 @@ def test_a_delete_without_a_resolvable_tenant_still_records_a_tombstone() -> Non
     assert plan.tombstone is not None
     assert plan.tombstone.scope.tenant_id is None
     assert plan.soft_delete is None
+    # The retirement status still travels with the tombstone so the store can
+    # apply it once lineage resolves the owner.
+    assert plan.tombstone.context["soft_delete_table"] == "core.transactions"
+    assert plan.tombstone.context["soft_delete_status"] == "voided"
+    assert plan.lifecycle_gap == ""
+
+
+def test_a_declared_refund_without_a_tenant_keeps_the_refunded_status() -> None:
+    # A declared refund with no full document has no tenant to bind up front;
+    # the contracted ``refunded`` status must not be dropped and later default
+    # to ``voided`` when lineage resolves the owner.
+    packet = _packet(
+        None,
+        operation_type="update",
+        token="token-refund",
+        declared="refund",
+        document_key={"_id": "order-10"},
+    )
+    envelope = change_envelope(
+        SourceKind.ORDERS, packet, ingested_at=INGESTED_AT, sequence_number=1
+    )
+    plan = plan_change_application(envelope, run_id=RUN_ID, now=INGESTED_AT)
+
+    assert envelope.operation is CdcOperation.REFUND
+    assert envelope.tenant_id is None
+    assert plan.soft_delete is None
+    assert plan.tombstone is not None
+    assert plan.tombstone.context["soft_delete_table"] == "core.transactions"
+    assert plan.tombstone.context["soft_delete_status"] == "refunded"
 
 
 # ==========================================================================
