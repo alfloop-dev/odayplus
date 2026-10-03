@@ -1,7 +1,8 @@
 {
-  "schema_version": "odp-model-artifact-history-recovery-v1",
+  "schema_version": "odp-model-artifact-history-recovery-v2",
   "task_id": "ODP-MODEL-ARTIFACT-HISTORY-RECOVERY-001",
-  "recorded_at": "2026-10-02T23:58:00Z",
+  "captured_at": "2026-10-03T00:09:50Z",
+  "captured_at_meaning": "UTC time this investigation document was written, after every cited source observation below; source observation times are carried separately per receipt/source",
   "baseline": {
     "repository": "alfloop-dev/odayplus",
     "ref": "origin/dev",
@@ -11,9 +12,17 @@
     "mode": "bounded_read_only",
     "methods": [
       "reuse saved canonical receipt .orchestrator/recovery-receipts/mlflow-model-readback-20261002.json (copied verbatim here)",
-      "git log/show over origin task branches named by the original task ids",
+      "git log/show over origin task branches named by the original task ids; cited blobs saved verbatim under sources/",
       "gh pr list over alfloop-dev/odayplus by task id and head branch",
-      "read in-repo human-data-gate handbacks and product_ops/modeling/release.py at baseline"
+      "read-only jq select of the two original task entries on the canonical board (saved as board-readback-20261003.json)",
+      "read in-repo human-data-gate handbacks, release.py and the 2026-07-25 risk acceptance at baseline; saved verbatim under sources/"
+    ],
+    "unobserved": [
+      "legacy bucket gs://alfaloop-data-project-oday-plus-model-artifacts/ (saved receipt: access_unknown)",
+      "legacy MLflow host oday-mlflow-7sxbjoeozq-de.a.run.app registry (named in the July inventory binding; not queried)",
+      "current dev Cloud SQL row counts (saved receipt: TCP probe timed out, no query executed)",
+      "current registry/artifact/data state of dealroom_avm, sitescore_propensity, heatzone_priority",
+      "any approval or model record held outside the cited branches, receipts and in-repo handbacks"
     ],
     "not_done": [
       "no new MLflow, GCS or Cloud SQL request (dev bucket not re-listed; current row count not re-queried)",
@@ -29,59 +38,178 @@
       "canonical_origin": ".orchestrator/recovery-receipts/mlflow-model-readback-20261002.json",
       "sha256": "4dee26a53984bbe2b21c802ba19d8861a83c71faaf19d337527f54d55629cdf0",
       "observed_at": "2026-10-02T19:17:36.245685+00:00"
+    },
+    {
+      "path": "docs/evidence/runtime/ODP-MODEL-ARTIFACT-HISTORY-RECOVERY-001/board-readback-20261003.json",
+      "canonical_origin": "PANTHEON_STATUS_ROOT/ai-status.json (read-only select of the two original task ids)",
+      "sha256": "aa1e5a89510c5bcfd98ba9246e6423803ffe0001965e6e3082c1280c61ae6814",
+      "observed_at": "2026-10-03T00:06:50Z"
+    }
+  ],
+  "sources": [
+    {
+      "id": "registry-inventory",
+      "ref": "950b852c58247d75c62de2747952eb521629a950:docs/evidence/runtime/ODP-PRODUCTION-MODEL-REGISTRY-001/pg16_forecast_inventory.json",
+      "saved_copy": "docs/evidence/runtime/ODP-MODEL-ARTIFACT-HISTORY-RECOVERY-001/sources/registry-950b852c-pg16_forecast_inventory.json",
+      "sha256": "e2c37de125608a723bdb94a364a60ec68e87a94fc6ddc08cc73bf37a3a0ce9c8",
+      "ref_committed_at": "2026-07-28T12:09:18Z"
+    },
+    {
+      "id": "registry-training",
+      "ref": "950b852c58247d75c62de2747952eb521629a950:docs/evidence/runtime/ODP-PRODUCTION-MODEL-REGISTRY-001/forecast_training_fail_closed.json",
+      "saved_copy": "docs/evidence/runtime/ODP-MODEL-ARTIFACT-HISTORY-RECOVERY-001/sources/registry-950b852c-forecast_training_fail_closed.json",
+      "sha256": "a8129a2fdf19578a864dd9c23f0266ee5f2823db9afebf4e163cce3564c10a29",
+      "ref_committed_at": "2026-07-28T12:09:18Z"
+    },
+    {
+      "id": "backfill-readme",
+      "ref": "c1af59a9a6e35ba983a3fcf5f42ff273c7ceba7b:docs/evidence/runtime/ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001/README.md",
+      "saved_copy": "docs/evidence/runtime/ODP-MODEL-ARTIFACT-HISTORY-RECOVERY-001/sources/backfill-c1af59a9-README.md.txt",
+      "sha256": "a258a1a5087a34f4db2a5c603f7f11cb68445984659c7a90f11e4b44cfe55777",
+      "ref_committed_at": "2026-07-29T04:33:08Z"
+    },
+    {
+      "id": "avm-handback",
+      "ref": "1b14b276447a7778f1dad1045ced1a5bd6abe01e:docs/evidence/models/avm/human-data-gate/DATA_HANDBACK.json",
+      "saved_copy": "docs/evidence/runtime/ODP-MODEL-ARTIFACT-HISTORY-RECOVERY-001/sources/avm-DATA_HANDBACK.json",
+      "sha256": "f8be7794083bb7a5a2a5b4aa351bc6d4a42bf8b2aae343c902076101d3fbd59e",
+      "ref_committed_at": "2026-10-02T19:42:54Z"
+    },
+    {
+      "id": "sitescore-handback",
+      "ref": "1b14b276447a7778f1dad1045ced1a5bd6abe01e:docs/evidence/models/sitescore/human-data-gate/DATA_HANDBACK.json",
+      "saved_copy": "docs/evidence/runtime/ODP-MODEL-ARTIFACT-HISTORY-RECOVERY-001/sources/sitescore-DATA_HANDBACK.json",
+      "sha256": "5790a1a78579cf95b74e6ab44925e831562cc031102b56a563ca337818ce6051",
+      "ref_committed_at": "2026-10-02T19:42:54Z"
+    },
+    {
+      "id": "heatzone-handback",
+      "ref": "1b14b276447a7778f1dad1045ced1a5bd6abe01e:docs/evidence/models/heatzone/human-data-gate/DATA_HANDBACK.json",
+      "saved_copy": "docs/evidence/runtime/ODP-MODEL-ARTIFACT-HISTORY-RECOVERY-001/sources/heatzone-DATA_HANDBACK.json",
+      "sha256": "ae2f855871cbcec912f82a73839b240504d5cbc7ae25fe55857ef62686c05aa4",
+      "ref_committed_at": "2026-10-02T19:42:54Z"
+    },
+    {
+      "id": "release-py",
+      "ref": "1b14b276447a7778f1dad1045ced1a5bd6abe01e:product_ops/modeling/release.py",
+      "saved_copy": "docs/evidence/runtime/ODP-MODEL-ARTIFACT-HISTORY-RECOVERY-001/sources/release.py.txt",
+      "sha256": "cd39f7dade144ae38c26d0e27d818401e72354effa7a3ec3925641f106827c2d",
+      "ref_committed_at": "2026-10-02T19:42:54Z"
+    },
+    {
+      "id": "risk-acceptance",
+      "ref": "1b14b276447a7778f1dad1045ced1a5bd6abe01e:docs/evidence/PRODUCTION_MODEL_RISK_ACCEPTANCE_2026-07-25.md",
+      "saved_copy": "docs/evidence/runtime/ODP-MODEL-ARTIFACT-HISTORY-RECOVERY-001/sources/PRODUCTION_MODEL_RISK_ACCEPTANCE_2026-07-25.md",
+      "sha256": "9264a273e4c67696802bead156fa0d0204972725682c08dc693d04e119ed48d7",
+      "ref_committed_at": "2026-10-02T19:42:54Z"
     }
   ],
   "original_tasks": [
     {
       "task_id": "ODP-PRODUCTION-MODEL-REGISTRY-001",
-      "on_current_board_or_archive": false,
       "branch": "origin/task/ODP-PRODUCTION-MODEL-REGISTRY-001",
       "branch_head": "950b852c58247d75c62de2747952eb521629a950",
       "branch_head_committed_at": "2026-07-28T12:09:18Z",
       "merged_into_dev": false,
       "pull_request": null,
-      "sidecar_pull_requests": [657],
+      "sidecar_pull_requests": [
+        657
+      ],
+      "board": {
+        "historical_observation": {
+          "receipt": "mlflow-model-readback-20261002.json",
+          "observed_at": "2026-10-02T19:20:19.660820+00:00",
+          "on_board_or_archive": false
+        },
+        "current": {
+          "receipt": "board-readback-20261003.json",
+          "status": "todo",
+          "owner": "Claude2",
+          "reviewer": "Codex",
+          "last_update": "2026-10-02T23:57:30Z",
+          "non_dispatchable": true
+        }
+      },
       "terminal_evidence": [
         {
-          "ref": "950b852c58247d75c62de2747952eb521629a950:docs/evidence/runtime/ODP-PRODUCTION-MODEL-REGISTRY-001/pg16_forecast_inventory.json",
-          "sha256": "e2c37de125608a723bdb94a364a60ec68e87a94fc6ddc08cc73bf37a3a0ce9c8",
-          "fact": "inventory execution pmb8m on alfaloop-data-project:asia-east1:oday-dev-sql: 1303 eligible forecast rows, temporal span 2026-06-19..2026-06-22"
+          "source": "registry-inventory",
+          "facts": {
+            "execution.execution": "oday-production-model-registry-001-inventory-pmb8m",
+            "binding.cloud_sql_instance": "alfaloop-data-project:asia-east1:oday-dev-sql",
+            "forecastops.eligible_count": 1303,
+            "forecastops.temporal_min": "2026-06-19",
+            "forecastops.temporal_max": "2026-06-22"
+          }
         },
         {
-          "ref": "950b852c58247d75c62de2747952eb521629a950:docs/evidence/runtime/ODP-PRODUCTION-MODEL-REGISTRY-001/forecast_training_fail_closed.json",
-          "sha256": "a8129a2fdf19578a864dd9c23f0266ee5f2823db9afebf4e163cce3564c10a29",
-          "fact": "training execution 2dzlg (candidate 2026.07.28.1) exited 2 with ModelReadyDataError; release_mutation_completed=false"
+          "source": "registry-training",
+          "facts": {
+            "execution.execution": "oday-production-model-registry-001-train-2dzlg",
+            "execution.status": "failed_closed",
+            "execution.exit_code": 2,
+            "execution.candidate_version": "2026.07.28.1",
+            "failure.type": "ModelReadyDataError",
+            "failure.release_mutation_completed": false
+          }
         }
       ],
-      "outcome": "never_registered",
-      "summary": "The only recorded real training attempt failed closed before registration. No model version, artifact hash, approval, alias or rollback target was ever produced."
+      "outcome": "no_registration_in_located_run",
+      "summary": "The located training run 2dzlg (legacy project) failed closed before registration. This bounds only that run; it does not show that no other run, version or approval ever existed in the unobserved legacy MLflow/bucket."
     },
     {
       "task_id": "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001",
-      "on_current_board_or_archive": false,
       "branch": "origin/task/ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001",
       "branch_head": "c1af59a9a6e35ba983a3fcf5f42ff273c7ceba7b",
       "branch_head_committed_at": "2026-07-29T04:33:08Z",
       "merged_into_dev": false,
       "pull_request": null,
-      "sidecar_pull_requests": [654],
+      "sidecar_pull_requests": [
+        654
+      ],
+      "board": {
+        "historical_observation": {
+          "receipt": "mlflow-model-readback-20261002.json",
+          "observed_at": "2026-10-02T19:20:19.660820+00:00",
+          "on_board_or_archive": false
+        },
+        "current": {
+          "receipt": "board-readback-20261003.json",
+          "status": "todo",
+          "owner": "Claude2",
+          "reviewer": "Codex",
+          "last_update": "2026-10-02T23:57:22Z",
+          "non_dispatchable": true
+        }
+      },
       "terminal_evidence": [
         {
-          "ref": "c1af59a9a6e35ba983a3fcf5f42ff273c7ceba7b:docs/evidence/runtime/ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001/README.md",
-          "sha256": "a258a1a5087a34f4db2a5c603f7f11cb68445984659c7a90f11e4b44cfe55777",
-          "fact": "backfill of legacy alfaloop-data-project history stopped mid-slice on 2026-07-29 when the operator Workspace credential required interactive reauthentication (invalid_rapt); section 12 'After state' was never populated and no activation receipt exists"
+          "source": "backfill-readme",
+          "contains": [
+            "invalid_rapt",
+            "## 12. After state",
+            "Populated once"
+          ],
+          "facts": {}
         }
       ],
       "outcome": "incomplete_unmerged",
-      "summary": "History backfill tooling and probes exist only on an unmerged branch in the legacy project; no after-state, activation receipt or dataset hash was produced."
+      "summary": "On the cited branch head the backfill stopped on interactive reauth (invalid_rapt) and section 12 'After state' remains a placeholder; no activation receipt or dataset hash is on that branch. Historical state bytes in the legacy project were not recovered."
     }
   ],
   "release_entrypoints": {
-    "path": "product_ops/modeling/release.py",
-    "sha256_at_baseline": "cd39f7dade144ae38c26d0e27d818401e72354effa7a3ec3925641f106827c2d",
-    "subcommands": ["inventory", "train", "promote"],
+    "source": "release-py",
+    "contains": [
+      "subcommands.add_parser(\n        \"inventory\"",
+      "subcommands.add_parser(\"train\"",
+      "subcommands.add_parser(\n        \"promote\""
+    ],
+    "subcommands": [
+      "inventory",
+      "train",
+      "promote"
+    ],
     "import_existing_artifact_entrypoint": false,
-    "note": "promote only operates on a candidate already registered by train and requires --approval-file; CANARY/FULL also require an existing approved rollback target. There is no path to import an externally held artifact, and none is needed because no such artifact exists."
+    "note": "promote only operates on a candidate already registered by train and requires --approval-file; CANARY/FULL also require an existing approved rollback target. There is no subcommand to import an externally held artifact; if one were located in the unobserved legacy scope, a separate governed import path and authorization would be needed."
   },
   "models": [
     {
@@ -89,25 +217,49 @@
       "service": "forecastops",
       "registry": {
         "state": "absent",
-        "evidence": "current_readback",
-        "readback_ref": "mlflow-model-readback-20261002.json",
-        "readback_model_name": "forecast_revenue_interval",
-        "observed_at": "2026-10-02T19:17:36.245685+00:00",
-        "http_status": 404
+        "scope": "dev MLflow registry on oday-mlflow-767864276141.asia-east1.run.app at the receipt time; legacy MLflow not queried",
+        "readback": {
+          "receipt": "mlflow-model-readback-20261002.json",
+          "model_name": "forecast_revenue_interval",
+          "environment": "dev",
+          "mlflow_host": "oday-mlflow-767864276141.asia-east1.run.app",
+          "observed_at": "2026-10-02T19:17:36.245685+00:00",
+          "http_status": 404
+        }
       },
       "artifact": {
         "state": "artifact_missing",
-        "detail": "dev bucket gs://odayplus-runtime-20260825-model-artifacts/ root listing returned 0 entries (saved receipt); legacy bucket access unknown, but the legacy training run never registered a version, so no approved artifact was ever written there by the governed path",
+        "observed_scope": [
+          "dev bucket gs://odayplus-runtime-20260825-model-artifacts/ root listing returned 0 entries (saved receipt)",
+          "located legacy training run 2dzlg failed closed with release_mutation_completed=false"
+        ],
+        "unobserved_scope": [
+          "legacy bucket gs://alfaloop-data-project-oday-plus-model-artifacts/ (access_unknown)",
+          "legacy MLflow registry (not queried)"
+        ],
         "legacy_bucket_access": "access_unknown"
       },
-      "approval": {"state": "approval_missing", "detail": "no promotion approval file or approval record exists for any version"},
+      "approval": {
+        "state": "approval_missing",
+        "observed_scope": [
+          "original task branches 950b852c and c1af59a9 contain no promotion approval file",
+          "dev MLflow 404 means no dev version to approve"
+        ],
+        "unobserved_scope": [
+          "legacy MLflow registry and legacy bucket",
+          "approvals held outside the repo and saved receipts"
+        ]
+      },
       "history": {
         "state": "history_unknown",
         "current_row_count": "unknown",
         "last_measured": {
-          "observed_at": "2026-07-28T11:57:12Z",
-          "instance": "alfaloop-data-project:asia-east1:oday-dev-sql",
-          "eligible_rows": 1303,
+          "source": "registry-inventory",
+          "facts": {
+            "observed_at": "2026-07-28T11:57:12Z",
+            "binding.cloud_sql_instance": "alfaloop-data-project:asia-east1:oday-dev-sql",
+            "forecastops.eligible_count": 1303
+          },
           "calendar_span_days": 4,
           "sufficient_for_contract": false
         },
@@ -120,17 +272,29 @@
       "service": "avm",
       "registry": {
         "state": "not_read_current",
-        "evidence": "historical_handback",
-        "handback_ref": "docs/evidence/models/avm/human-data-gate/DATA_HANDBACK.json",
-        "handback_sha256": "f8be7794083bb7a5a2a5b4aa351bc6d4a42bf8b2aae343c902076101d3fbd59e",
-        "handback_generated_at": "2026-08-03T00:50:00Z"
+        "historical_source": "avm-handback"
       },
-      "artifact": {"state": "not_read_current", "detail": "no current registry or bucket readback for this model"},
-      "approval": {"state": "approval_missing", "detail": "handback reports authentic_evidence_available=false; no approval exists to be found"},
+      "artifact": {
+        "state": "not_read_current"
+      },
+      "approval": {
+        "state": "not_read_current",
+        "historical_source": "avm-handback"
+      },
       "history": {
         "state": "history_unknown",
         "current_row_count": "unknown",
-        "last_measured": {"observed_at": "2026-08-03", "eligible_rows": 0, "activation_threshold": 120, "reason_code": "DATA_CONTRACT_NOT_MATURE", "sufficient_for_contract": false}
+        "last_measured": {
+          "source": "avm-handback",
+          "facts": {
+            "task_id": "ODP-PLAN-AVM-OUTCOME-BACKFILL-001",
+            "current_status.eligible_mature_count": 0,
+            "current_status.activation_threshold": 120,
+            "current_status.reason_code": "DATA_CONTRACT_NOT_MATURE",
+            "current_status.authentic_evidence_available": false
+          },
+          "sufficient_for_contract": false
+        }
       },
       "recovered": false
     },
@@ -139,17 +303,29 @@
       "service": "sitescore",
       "registry": {
         "state": "not_read_current",
-        "evidence": "historical_handback",
-        "handback_ref": "docs/evidence/models/sitescore/human-data-gate/DATA_HANDBACK.json",
-        "handback_sha256": "5790a1a78579cf95b74e6ab44925e831562cc031102b56a563ca337818ce6051",
-        "handback_generated_at": "2026-08-03"
+        "historical_source": "sitescore-handback"
       },
-      "artifact": {"state": "not_read_current", "detail": "no current registry or bucket readback for this model"},
-      "approval": {"state": "approval_missing", "detail": "handback reports evidence_owner=UNVERIFIED and dataset_snapshot_hash=UNVERIFIED"},
+      "artifact": {
+        "state": "not_read_current"
+      },
+      "approval": {
+        "state": "not_read_current",
+        "historical_source": "sitescore-handback"
+      },
       "history": {
         "state": "history_unknown",
         "current_row_count": "unknown",
-        "last_measured": {"observed_at": "2026-08-03", "eligible_rows": 0, "activation_threshold": 200, "reason_code": "DATA_CONTRACT_NOT_MATURE", "sufficient_for_contract": false}
+        "last_measured": {
+          "source": "sitescore-handback",
+          "facts": {
+            "task_id": "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001",
+            "current_status.eligible_count": 0,
+            "current_status.activation_threshold": 200,
+            "current_status.reason_code": "DATA_CONTRACT_NOT_MATURE",
+            "current_status.evidence_owner": "UNVERIFIED"
+          },
+          "sufficient_for_contract": false
+        }
       },
       "recovered": false
     },
@@ -158,24 +334,35 @@
       "service": "heatzone",
       "registry": {
         "state": "not_read_current",
-        "evidence": "historical_handback",
-        "handback_ref": "docs/evidence/models/heatzone/human-data-gate/DATA_HANDBACK.json",
-        "handback_sha256": "ae2f855871cbcec912f82a73839b240504d5cbc7ae25fe55857ef62686c05aa4",
-        "handback_generated_at": "2026-08-03"
+        "historical_source": "heatzone-handback"
       },
-      "artifact": {"state": "not_read_current", "detail": "no current registry or bucket readback for this model"},
-      "approval": {"state": "approval_missing", "detail": "handback reports benchmark_evaluated=false; no approval exists to be found"},
+      "artifact": {
+        "state": "not_read_current"
+      },
+      "approval": {
+        "state": "not_read_current",
+        "historical_source": "heatzone-handback"
+      },
       "history": {
         "state": "history_unknown",
         "current_row_count": "unknown",
-        "last_measured": {"observed_at": "2026-07-25T15:20:00Z", "eligible_rows": 0, "activation_threshold": 200, "reason_code": "DATA_CONTRACT_NOT_MATURE", "sufficient_for_contract": false}
+        "last_measured": {
+          "source": "heatzone-handback",
+          "facts": {
+            "task_id": "ODP-PLAN-HEATZONE-LABEL-BACKFILL-001",
+            "current_status.eligible_labels": 0,
+            "current_status.activation_threshold": 200,
+            "current_status.reason_code": "DATA_CONTRACT_NOT_MATURE",
+            "current_status.benchmark_evaluated": false
+          },
+          "sufficient_for_contract": false
+        }
       },
       "recovered": false
     }
   ],
   "risk_acceptance": {
-    "ref": "docs/evidence/PRODUCTION_MODEL_RISK_ACCEPTANCE_2026-07-25.md",
-    "sha256": "9264a273e4c67696802bead156fa0d0204972725682c08dc693d04e119ed48d7",
+    "source": "risk-acceptance",
     "decided_at": "2026-07-25",
     "used_as_current_go": false,
     "note": "It deferred bindings for the July deploy and names exit criteria; it is not a current deployment GO and does not mark any model ready."
@@ -185,41 +372,69 @@
       "id": "forecast-authoritative-history",
       "gap": "Authoritative gap-free daily revenue history in the current dev project's model_ready.forecast_training_view reaching the forecast contract (at least 56 consecutive days per store, plus dataset hash, source lineage, freshness cutoff and named data owner)",
       "responsible": "Human data owner (not named in any evidence) with Ops for the current dev data plane",
-      "handback_task": "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001"
+      "handback_task": "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001",
+      "handback_holder": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      }
     },
     {
       "id": "legacy-project-custody-decision",
-      "gap": "Decision on whether legacy alfaloop-data-project history (unmerged backfill branch, legacy Cloud SQL) is approved to carry into odayplus-runtime-20260825, by whom, and via which identity; current access is unknown and was not expanded",
+      "gap": "Decision on whether legacy alfaloop-data-project history and any legacy MLflow/bucket contents (both unobserved, access_unknown) may be read and carried into odayplus-runtime-20260825, by whom, and via which identity",
       "responsible": "Human/Ops",
-      "handback_task": "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001"
+      "handback_task": "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001",
+      "handback_holder": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      }
+    },
+    {
+      "id": "legacy-registry-readback",
+      "gap": "Authorized read of the legacy MLflow registry and legacy artifact bucket to settle whether any approved Forecast version exists there; until then legacy existence and approval remain unknown",
+      "responsible": "Human/Ops (access holder for alfaloop-data-project)",
+      "handback_task": "ODP-PRODUCTION-MODEL-REGISTRY-001",
+      "handback_holder": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      }
     },
     {
       "id": "forecast-trained-candidate",
-      "gap": "A real DEV candidate from release.py train against the current dev binding once history is sufficient; no prior version exists to recover",
+      "gap": "If the legacy readback finds no approved version: a real DEV candidate from release.py train against the current dev binding once history is sufficient",
       "responsible": "Model owner task after history lands",
-      "handback_task": "ODP-PRODUCTION-MODEL-REGISTRY-001"
+      "handback_task": "ODP-PRODUCTION-MODEL-REGISTRY-001",
+      "handback_holder": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      }
     },
     {
       "id": "forecast-promotion-approval",
       "gap": "Independent promotion approval file and rollback target for release.py promote",
       "responsible": "Human model-risk approver",
-      "handback_task": "ODP-PRODUCTION-MODEL-REGISTRY-001"
+      "handback_task": "ODP-PRODUCTION-MODEL-REGISTRY-001",
+      "handback_holder": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      }
     },
     {
       "id": "other-models-current-readback",
-      "gap": "Current registry and model_ready readback for dealroom_avm, sitescore_propensity and heatzone_priority; only 2026-07/08 handbacks were read",
+      "gap": "Current registry, artifact, approval and model_ready readback for dealroom_avm, sitescore_propensity and heatzone_priority; only 2026-07/08 handbacks were read",
       "responsible": "Respective outcome backfill task owners",
       "handback_task": "ODP-PLAN-AVM-OUTCOME-BACKFILL-001 / ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001 / ODP-PLAN-HEATZONE-LABEL-BACKFILL-001"
     }
   ],
   "operation_plan": null,
-  "operation_plan_reason": "No approved real artifact exists, so there is nothing to restore; no one-time cloud operation is proposed.",
+  "operation_plan_reason": "No approved real artifact was located in the observed scope, so no one-time restore operation can be specified; the legacy scope must first be read under explicit authorization (legacy-registry-readback).",
   "claims": {
     "code_delivered": "evidence and verifier only",
+    "historical_state_bytes_recovered": false,
+    "cloud_authority": "none",
     "model_ready": false,
     "live_done": false,
     "deploy_go": false,
     "real_data_available": false
   },
-  "conclusion": "Forecast model is not recoverable because it never existed: the sole real training attempt (2026-07-28, legacy project) failed closed before registration. The gap is real authoritative history plus a fresh governed train/approve/promote cycle, handed back to ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001 and ODP-PRODUCTION-MODEL-REGISTRY-001."
+  "conclusion": "Within the observed scope (dev MLflow 404, empty dev bucket, the located legacy training run that failed closed before registration, and the two original task branches) no approved Forecast artifact was located, so nothing could be restored by this task. The legacy MLflow and bucket are unobserved (access_unknown) and current DB counts are unknown, so legacy existence and approval remain open. Gaps are handed back to ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001 and ODP-PRODUCTION-MODEL-REGISTRY-001 (both todo, non_dispatchable, owner Claude2 / reviewer Codex)."
 }
