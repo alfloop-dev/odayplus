@@ -58,6 +58,8 @@ case "${ODP_RELEASE_PROFILE}" in
     : "${ODP_DEV_ADMIN_USERNAME:?Error: the dev-admin profile requires ODP_DEV_ADMIN_USERNAME (a provisioned operator account).}"
     : "${ODP_DEV_ADMIN_PASSWORD:?Error: the dev-admin profile requires ODP_DEV_ADMIN_PASSWORD (secret).}"
     : "${ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE:?Error: the dev-admin profile requires ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE (an operator role the account does not hold).}"
+    : "${ODP_DEV_BOOTSTRAP_ADMIN_USERNAME:?Error: the dev-admin profile requires ODP_DEV_BOOTSTRAP_ADMIN_USERNAME (the bootstrap-created platform_admin).}"
+    : "${ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD:?Error: the dev-admin profile requires ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD (secret; rotated first-login password).}"
     ;;
   *)
     echo "Error: unknown release profile '${ODP_RELEASE_PROFILE}'; expected full or dev-admin." >&2

@@ -549,3 +549,18 @@ def test_deploy_refuses_dev_admin_without_its_sign_in_account(tmp_path: Path) ->
     assert result.returncode != 0
     assert "ODP_DEV_ADMIN_USERNAME" in result.stderr
     assert result.calls == ""  # type: ignore[attr-defined]
+
+
+def test_deploy_refuses_dev_admin_without_the_bootstrap_admin_account(tmp_path: Path) -> None:
+    result = _run_deploy(
+        tmp_path,
+        ODP_DEPLOY_ENV="dev",
+        ODP_RELEASE_PROFILE="dev-admin",
+        ODP_DEV_ADMIN_USERNAME="ops-admin",
+        ODP_DEV_ADMIN_PASSWORD="not-a-real-password",
+        ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE="cs-lead",
+    )
+
+    assert result.returncode != 0
+    assert "ODP_DEV_BOOTSTRAP_ADMIN_USERNAME" in result.stderr
+    assert result.calls == ""  # type: ignore[attr-defined]

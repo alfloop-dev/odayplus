@@ -34,6 +34,10 @@ PASSWORD = "operator-chosen-passphrase-value"
 DENIED_ROLE = "cs-lead"
 SESSION_COOKIE = "__Host-oday_web_session"
 SESSION_VALUE = "sealed-session-reference"
+ADMIN_USERNAME = "first.admin"
+ADMIN_PASSWORD = "rotated-first-admin-passphrase"
+ADMIN_SESSION_VALUE = "sealed-admin-session-reference"
+ADMIN_ACCOUNT_ID = "5f0c1a2b-3c4d-4e5f-8a9b-0c1d2e3f4a5b"
 SESSION_CORRELATION_ID = f"{base.CORRELATION_ID}-session"
 SESSION_JOB_ID = "job-session-0001"
 MODEL_ERROR = (
@@ -119,8 +123,16 @@ class SessionWeb(base.FakeHttp):
         self.headers_seen.append((f"{method} {path}", headers))
         assert kwargs.get("authenticated") is False, "web requests never inject app identity"
         assert "authorization" not in headers and "x-tenant-id" not in headers
-        if f"{SESSION_COOKIE}={SESSION_VALUE}" in headers.get("cookie", ""):
-            key = f"{method.upper()} {path} [session]"
+        cookie = headers.get("cookie", "")
+        marker = (
+            "session"
+            if f"{SESSION_COOKIE}={SESSION_VALUE}" in cookie
+            else "admin"
+            if f"{SESSION_COOKIE}={ADMIN_SESSION_VALUE}" in cookie
+            else None
+        )
+        if marker is not None:
+            key = f"{method.upper()} {path} [{marker}]"
             if key in self.routes:
                 self.calls.append(key)
                 route = self.routes[key]
@@ -137,6 +149,12 @@ def login_route(body: Any, headers: Any) -> Any:
             200,
             {"ok": True, "subject": USERNAME, "returnTo": "/operator"},
             cookies={SESSION_COOKIE: SESSION_VALUE},
+        )
+    if body == {"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD, "returnTo": "/operator/admin"}:
+        return base.response(
+            200,
+            {"ok": True, "subject": ADMIN_USERNAME, "returnTo": "/operator/admin"},
+            cookies={SESSION_COOKIE: ADMIN_SESSION_VALUE},
         )
     return base.response(
         401,
@@ -183,6 +201,34 @@ def session_audit() -> dict[str, Any]:
     }
 
 
+def admin_users(roles: list[str] | None = None) -> dict[str, Any]:
+    return {
+        "users": [
+            {
+                "subject_id": ADMIN_ACCOUNT_ID,
+                "username": ADMIN_USERNAME,
+                "roles": roles if roles is not None else ["platform_admin"],
+                "status": "active",
+                "attributes": {"identity_source": "identity.accounts", "username": ADMIN_USERNAME},
+            }
+        ],
+        "count": 1,
+    }
+
+
+def admin_audit_trail() -> dict[str, Any]:
+    return {
+        "events": [
+            {
+                "event_type": "identity.account.bootstrap",
+                "actor": "identity-bootstrap",
+                "metadata": {"account_id": ADMIN_ACCOUNT_ID, "roles": ["platform_admin"]},
+            }
+        ],
+        "count": 1,
+    }
+
+
 def operator_bootstrap() -> Any:
     return base.live_routes()["GET /api/v1/operator/bootstrap"]
 
@@ -210,6 +256,14 @@ def web_routes(**overrides: Any) -> dict[str, Any]:
         "POST /auth/logout [session]": base.response(
             200, {"ok": True}, cookies={SESSION_COOKIE: ""}
         ),
+        # The bootstrap-created pure platform_admin.
+        "GET /api/v1/operator/users [admin]": base.response(200, admin_users()),
+        "GET /api/v1/operator/users/audit-trail [admin]": base.response(200, admin_audit_trail()),
+        "GET /api/v1/operator/bootstrap [admin]": base.response(
+            403, {"detail": "role does not permit view on operator_console"}
+        ),
+        "GET /operator/admin [admin]": base.response(200, {}),
+        "POST /auth/logout [admin]": base.response(200, {"ok": True}, cookies={SESSION_COOKIE: ""}),
     }
     routes.update(overrides)
     return routes
@@ -222,12 +276,16 @@ class RoleAwareWeb(SessionWeb):
     def __init__(self, routes: dict[str, Any], *, revoke_on_logout: bool = True) -> None:
         super().__init__(routes)
         self.logged_out = False
+        self.admin_logged_out = False
         self.revoke_on_logout = revoke_on_logout
 
     def request(self, method: str, path: str, **kwargs: Any) -> Any:
         headers = {k.lower(): v for k, v in (kwargs.get("headers") or {}).items()}
         has_session = f"{SESSION_COOKIE}={SESSION_VALUE}" in headers.get("cookie", "")
-        if has_session and self.logged_out and self.revoke_on_logout:
+        has_admin = f"{SESSION_COOKIE}={ADMIN_SESSION_VALUE}" in headers.get("cookie", "")
+        if self.revoke_on_logout and (
+            (has_session and self.logged_out) or (has_admin and self.admin_logged_out)
+        ):
             self.headers_seen.append((f"{method} {path}", headers))
             return base.response(401, {"error": {"code": "WEB_SESSION_REQUIRED"}})
         if (
@@ -241,6 +299,8 @@ class RoleAwareWeb(SessionWeb):
         result = super().request(method, path, **kwargs)
         if has_session and method == "POST" and path == "/auth/logout":
             self.logged_out = True
+        if has_admin and method == "POST" and path == "/auth/logout":
+            self.admin_logged_out = True
         return result
 
 
@@ -250,6 +310,8 @@ def dev_admin_config(**overrides: Any) -> Any:
         "dev_admin_username": USERNAME,
         "dev_admin_password": PASSWORD,
         "dev_admin_denied_role": DENIED_ROLE,
+        "bootstrap_admin_username": ADMIN_USERNAME,
+        "bootstrap_admin_password": ADMIN_PASSWORD,
     }
     values.update(overrides)
     return base.disabled_config(**values)
@@ -303,6 +365,12 @@ def test_dev_admin_passes_with_missing_models_and_a_real_session_journey() -> No
         "session:logout",
         "session:revoked_session_refused",
         "session:revoked_api_refused",
+        "admin:password_login",
+        "admin:identity_user_list",
+        "admin:bootstrap_audited",
+        "admin:business_shell_denied",
+        "admin:admin_page_served",
+        "admin:logout_revokes_admin_api",
     } <= names
     # The full-profile model assertions are replaced, not silently passed.
     assert "runtime:model_bindings" not in names
@@ -317,6 +385,14 @@ def test_dev_admin_passes_with_missing_models_and_a_real_session_journey() -> No
         "job_enqueue_and_readback",
         "cross_tenant_denied",
         "audit_readback",
+        "logout_and_revocation",
+    ]
+    assert report["bootstrap_admin"]["operations"] == [
+        "password_login",
+        "identity_user_list",
+        "bootstrap_audit_readback",
+        "business_shell_denied",
+        "admin_page",
         "logout_and_revocation",
     ]
     assert report["release_profile"] == {
@@ -340,6 +416,7 @@ def test_the_report_never_contains_the_admin_password() -> None:
     )
 
     assert PASSWORD not in json.dumps(report)
+    assert ADMIN_PASSWORD not in json.dumps(report)
 
 
 # ---------------------------------------------------------------------------
@@ -425,6 +502,8 @@ def test_an_unknown_profile_is_refused_before_any_request(profile: str) -> None:
         ({"dev_admin_password": ""}, "config:dev_admin_account"),
         ({"dev_admin_username": ""}, "config:dev_admin_account"),
         ({"dev_admin_denied_role": ""}, "config:dev_admin_denied_role"),
+        ({"bootstrap_admin_username": ""}, "config:bootstrap_admin_account"),
+        ({"bootstrap_admin_password": ""}, "config:bootstrap_admin_account"),
     ],
 )
 def test_dev_admin_without_its_sign_in_inputs_is_refused(overrides: dict, check: str) -> None:
@@ -819,3 +898,55 @@ def test_cli_reads_the_profile_and_account_from_the_environment(
     assert gate.parse_args([]).release_profile == "dev-admin"
     monkeypatch.delenv("ODP_RELEASE_PROFILE")
     assert gate.parse_args([]).release_profile == "full"
+
+
+# ---------------------------------------------------------------------------
+# The bootstrap-created pure administrator
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("override", "check"),
+    [
+        (
+            {"GET /api/v1/operator/users [admin]": base.response(403, {"detail": "PASSWORD_CHANGE_REQUIRED"})},
+            "admin:identity_user_list",
+        ),
+        (
+            {"GET /api/v1/operator/users [admin]": base.response(200, admin_users(["platform_admin", "operations_manager"]))},
+            "admin:identity_user_list",
+        ),
+        (
+            {"GET /api/v1/operator/users [admin]": base.response(200, {"users": [], "count": 0})},
+            "admin:identity_user_list",
+        ),
+        (
+            {"GET /api/v1/operator/users/audit-trail [admin]": base.response(200, {"events": []})},
+            "admin:bootstrap_audited",
+        ),
+        ({"GET /api/v1/operator/bootstrap [admin]": operator_bootstrap()}, "admin:business_shell_denied"),
+        (
+            {"GET /operator/admin [admin]": base.response(302, location=f"{base.WEB_URL}/login")},
+            "admin:admin_page_served",
+        ),
+        ({"POST /auth/logout [admin]": base.response(503, {"error": {"code": "WEB_AUTH_UNAVAILABLE"}})}, "admin:logout_revokes_admin_api"),
+    ],
+)
+def test_a_broken_bootstrap_admin_fact_blocks_dev_admin(override: dict[str, Any], check: str) -> None:
+    _, report, _ = run_dev_admin(web=RoleAwareWeb(web_routes(**override)))
+
+    assert check in blockers(report)
+    assert ADMIN_PASSWORD not in json.dumps(report)
+
+
+def test_a_wrong_bootstrap_admin_password_stops_the_admin_journey() -> None:
+    _, report, _ = run_dev_admin(cfg=dev_admin_config(bootstrap_admin_password="not-the-password"))
+
+    found = blockers(report)
+    assert found["admin:password_login"] == "session"
+    assert "admin:identity_user_list" not in found  # stopped, not guessed
+
+
+def test_bootstrap_admin_inputs_use_the_documented_environment_names() -> None:
+    assert gate.BOOTSTRAP_ADMIN_USERNAME_ENV == "ODP_DEV_BOOTSTRAP_ADMIN_USERNAME"
+    assert gate.BOOTSTRAP_ADMIN_PASSWORD_ENV == "ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD"

@@ -67,6 +67,12 @@ RELEASE_PROFILE_ENV = "ODP_RELEASE_PROFILE"
 DEV_ADMIN_USERNAME_ENV = "ODP_DEV_ADMIN_USERNAME"
 DEV_ADMIN_PASSWORD_ENV = "ODP_DEV_ADMIN_PASSWORD"
 DEV_ADMIN_DENIED_ROLE_ENV = "ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE"
+# The deployment-bootstrapped first administrator (platform_admin only, password
+# already rotated on first login). Proves the account the bootstrap creates can
+# administer users on its own, without any business role.
+BOOTSTRAP_ADMIN_USERNAME_ENV = "ODP_DEV_BOOTSTRAP_ADMIN_USERNAME"
+BOOTSTRAP_ADMIN_PASSWORD_ENV = "ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD"
+BOOTSTRAP_AUDIT_EVENT = "identity.account.bootstrap"
 
 # ODP-DEV-ADMIN-RELEASE-READINESS-001: the acceptance scope this gate holds a
 # release to. It mirrors ``release_manifest.RELEASE_PROFILES`` (pinned, not
@@ -331,6 +337,9 @@ class GateConfig:
     dev_admin_username: str = ""
     dev_admin_password: str = ""
     dev_admin_denied_role: str = ""
+    # dev-admin only: the bootstrap-created pure platform_admin. Never reported.
+    bootstrap_admin_username: str = ""
+    bootstrap_admin_password: str = ""
 
     @property
     def dev_admin(self) -> bool:
@@ -948,6 +957,17 @@ def _release_profile_config_checks(config: GateConfig) -> list[CheckResult]:
             bool(config.dev_admin_denied_role),
             "config:dev_admin_denied_role",
             config.dev_admin_denied_role or f"missing {DEV_ADMIN_DENIED_ROLE_ENV}",
+            "config",
+        )
+        _check(
+            checks,
+            bool(config.bootstrap_admin_username) and bool(config.bootstrap_admin_password),
+            "config:bootstrap_admin_account",
+            (
+                "configured"
+                if config.bootstrap_admin_username and config.bootstrap_admin_password
+                else f"missing {BOOTSTRAP_ADMIN_USERNAME_ENV}/{BOOTSTRAP_ADMIN_PASSWORD_ENV}"
+            ),
             "config",
         )
     return checks
@@ -1977,6 +1997,208 @@ def _check_dev_admin_session(
     operations.append("logout_and_revocation")
 
 
+def _check_bootstrap_admin_session(
+    *,
+    web: HttpClient | None,
+    config: GateConfig,
+    correlation_id: str,
+    checks: list[CheckResult],
+    report: dict[str, Any],
+) -> None:
+    """Prove the bootstrap-created pure administrator can actually administer.
+
+    The operator journey above signs in with a business-role account; that does
+    not show the account the identity bootstrap creates (``platform_admin``
+    only) can do anything. This journey signs in as that account through the
+    same Web password form and checks, in order:
+
+    1. sign-in issues a session for the bootstrap administrator;
+    2. ``GET /api/v1/operator/users`` (``user:view``) is served from the
+       identity schema, lists the account itself with exactly
+       ``platform_admin``, and is not refused for a pending password change
+       (``PASSWORD_CHANGE_REQUIRED`` means the first-login rotation is missing);
+    3. the user audit trail carries the ``identity.account.bootstrap`` event;
+    4. the business operator shell is refused (no blanket business grant);
+    5. the Web administration page ``/operator/admin`` is served to the session;
+    6. sign-out revokes the session for the user administration API.
+    """
+
+    operations: list[str] = []
+    report["bootstrap_admin"] = {"correlation_id": correlation_id, "operations": operations}
+    if web is None:
+        _check(
+            checks,
+            False,
+            "admin:web_client",
+            f"no usable web origin for {config.web_url or '<missing>'}",
+            "config",
+        )
+        return
+
+    origin = _web_origin(config.web_url)
+    base = {"accept": "application/json", "x-correlation-id": correlation_id}
+
+    def session_headers(cookies: Mapping[str, str], **extra: str) -> dict[str, str]:
+        return {**base, "cookie": _cookie_header(cookies), **extra}
+
+    login = web.request(
+        "POST",
+        "/login",
+        authenticated=False,
+        body={
+            "username": config.bootstrap_admin_username,
+            "password": config.bootstrap_admin_password,
+            "returnTo": "/operator/admin",
+        },
+        headers={**base, "origin": origin},
+        follow_redirects=False,
+    )
+    cookies = {name: value for name, value in login.cookies.items() if value}
+    signed_in = (
+        (not login.failed)
+        and login.status == 200
+        and login.payload.get("ok") is True
+        and login.payload.get("subject") == config.bootstrap_admin_username
+        and bool(cookies)
+    )
+    _check(
+        checks,
+        signed_in,
+        "admin:password_login",
+        (
+            f"{_failure_detail(login, expected='200 ok')} "
+            f"sessionCookie={'issued' if cookies else 'missing'}"
+        ),
+        "session",
+    )
+    if not signed_in:
+        return
+    operations.append("password_login")
+
+    users = web.request(
+        "GET", "/api/v1/operator/users", authenticated=False, headers=session_headers(cookies)
+    )
+    listed = users.payload.get("users") if not users.failed else None
+    listed = [u for u in listed if isinstance(u, dict)] if isinstance(listed, list) else []
+    own = [
+        u
+        for u in listed
+        if u.get("username") == config.bootstrap_admin_username
+        or _as_dict(u.get("attributes")).get("username") == config.bootstrap_admin_username
+    ]
+    own_record = own[0] if own else {}
+    pure_admin = (
+        sorted(str(r) for r in own_record.get("roles") or []) == ["platform_admin"]
+        and own_record.get("status") == "active"
+        and _as_dict(own_record.get("attributes")).get("identity_source") == "identity.accounts"
+    )
+    _check(
+        checks,
+        (not users.failed) and users.status == 200 and pure_admin,
+        "admin:identity_user_list",
+        (
+            (
+                f"{_failure_detail(users, expected='200')}"
+                + (
+                    " (first-login password rotation is still pending)"
+                    if _payload_mentions(users, "PASSWORD_CHANGE_REQUIRED")
+                    else ""
+                )
+            )
+            if users.failed or users.status != 200
+            else (
+                f"status=200 users={len(listed)} selfListed={bool(own)} "
+                f"roles={own_record.get('roles')} "
+                f"identitySource={_as_dict(own_record.get('attributes')).get('identity_source')}"
+            )
+        ),
+        _dependency_for(users, "auth"),
+    )
+    operations.append("identity_user_list")
+
+    trail = web.request(
+        "GET",
+        "/api/v1/operator/users/audit-trail",
+        authenticated=False,
+        headers=session_headers(cookies),
+    )
+    events = trail.payload.get("events") if not trail.failed else None
+    events = [e for e in events if isinstance(e, dict)] if isinstance(events, list) else []
+    bootstrap_events = [
+        e
+        for e in events
+        if e.get("event_type") == BOOTSTRAP_AUDIT_EVENT
+        and own_record
+        and _as_dict(e.get("metadata")).get("account_id") == own_record.get("subject_id")
+    ]
+    _check(
+        checks,
+        (not trail.failed) and trail.status == 200 and bool(bootstrap_events),
+        "admin:bootstrap_audited",
+        (
+            _failure_detail(trail, expected="200")
+            if trail.failed or trail.status != 200
+            else f"status=200 identityEvents={len(events)} bootstrapEvents={len(bootstrap_events)}"
+        ),
+        "audit",
+    )
+    operations.append("bootstrap_audit_readback")
+
+    business = web.request(
+        "GET", "/api/v1/operator/bootstrap", authenticated=False, headers=session_headers(cookies)
+    )
+    _check(
+        checks,
+        (not business.failed) and business.status == 403,
+        "admin:business_shell_denied",
+        _failure_detail(business, expected="403 (platform_admin holds no business read)"),
+        "auth",
+    )
+    operations.append("business_shell_denied")
+
+    page = web.request(
+        "GET",
+        "/operator/admin",
+        authenticated=False,
+        headers={**session_headers(cookies), "accept": "text/html"},
+        follow_redirects=False,
+    )
+    _check(
+        checks,
+        (not page.failed) and page.status == 200,
+        "admin:admin_page_served",
+        _failure_detail(page, expected="200 (not a /login redirect)"),
+        "session",
+    )
+    operations.append("admin_page")
+
+    logout = web.request(
+        "POST",
+        "/auth/logout",
+        authenticated=False,
+        headers=session_headers(cookies, origin=origin),
+        follow_redirects=False,
+    )
+    replay = web.request(
+        "GET", "/api/v1/operator/users", authenticated=False, headers=session_headers(cookies)
+    )
+    _check(
+        checks,
+        (not logout.failed)
+        and logout.status == 200
+        and logout.payload.get("ok") is True
+        and (not replay.failed)
+        and replay.status in DENIED_STATUSES,
+        "admin:logout_revokes_admin_api",
+        (
+            f"logout={_failure_detail(logout, expected='200 ok')} "
+            f"replay={_failure_detail(replay, expected='401/403')}"
+        ),
+        "session",
+    )
+    operations.append("logout_and_revocation")
+
+
 def _latest_run_by_provider(items: Sequence[Any]) -> dict[str, dict[str, Any]]:
     latest: dict[str, dict[str, Any]] = {}
     for item in items:
@@ -2471,7 +2693,10 @@ def evaluate_gate(
     sleep: Callable[[float], None] = time.sleep,
 ) -> tuple[list[CheckResult], dict[str, Any]]:
     redact = _redactor(
-        config.bearer_token, config.api_transport_token, config.dev_admin_password
+        config.bearer_token,
+        config.api_transport_token,
+        config.dev_admin_password,
+        config.bootstrap_admin_password,
     )
     checks = validate_config(config)
     report: dict[str, Any] = {
@@ -2493,6 +2718,9 @@ def evaluate_gate(
             "release_profile": config.release_profile,
             "dev_admin_account_configured": bool(
                 config.dev_admin_username and config.dev_admin_password
+            ),
+            "bootstrap_admin_account_configured": bool(
+                config.bootstrap_admin_username and config.bootstrap_admin_password
             ),
             "secret_values_redacted": True,
         },
@@ -2558,6 +2786,13 @@ def evaluate_gate(
                 web=web_http,
                 config=config,
                 correlation_id=f"{correlation_id}-session",
+                checks=checks,
+                report=report,
+            )
+            _check_bootstrap_admin_session(
+                web=web_http,
+                config=config,
+                correlation_id=f"{correlation_id}-admin",
                 checks=checks,
                 report=report,
             )
@@ -2702,6 +2937,8 @@ def main(argv: list[str] | None = None) -> int:
         # Not stripped: a password is exactly what the operator set.
         dev_admin_password=os.environ.get(DEV_ADMIN_PASSWORD_ENV, ""),
         dev_admin_denied_role=os.environ.get(DEV_ADMIN_DENIED_ROLE_ENV, "").strip(),
+        bootstrap_admin_username=os.environ.get(BOOTSTRAP_ADMIN_USERNAME_ENV, "").strip(),
+        bootstrap_admin_password=os.environ.get(BOOTSTRAP_ADMIN_PASSWORD_ENV, ""),
     )
     correlation_id = f"corr-live-e2e-{config.expected_sha[:12] or 'unbound'}-{int(time.time())}"
 
