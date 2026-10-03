@@ -181,7 +181,11 @@ def create_user_role_sub_router(
         request: Request,
     ) -> dict[str, Any]:
         svc = get_svc(request)
-        scope_dict = body.scope.model_dump() if body.scope else None
+        scope_dict = (
+            body.scope.model_dump(exclude_unset=True)
+            if body.scope is not None
+            else None
+        )
         server_actor = getattr(request.state, "operator_subject_id", None) or "operator"
         server_role = getattr(request.state, "operator_role_id", None) or "platform_admin"
         partition_tenant = caller_tenant(request)

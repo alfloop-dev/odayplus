@@ -333,16 +333,17 @@ class IdentityUserRoleManagementService:
         if status not in {"active", "disabled"}:
             raise UserRolePolicyError("Status must be 'active' or 'disabled'")
 
-        requested = dict(scope or {})
-        scope_tenant = str(requested.get("tenant_id") or "").strip()
-        if scope_tenant not in _PLACEHOLDER_TENANTS and _uuid_or_none(scope_tenant) != tenant:
-            raise UserRolePolicyError(
-                f"Cannot save user scope for tenant '{scope_tenant}'; caller is restricted to its own tenant."
-            )
-        clearance = str(requested.get("clearance") or DataClassification.CONFIDENTIAL.name).upper()
-        if clearance not in DataClassification.__members__:
-            raise UserRolePolicyError(f"Invalid clearance '{clearance}'.")
-        axes = {axis: sorted({str(v) for v in requested.get(axis) or []}) for axis in _SCOPE_AXES}
+        requested = dict(scope) if scope is not None else None
+        if requested is not None and "tenant_id" in requested:
+            scope_tenant = str(requested.get("tenant_id") or "").strip()
+            if scope_tenant not in _PLACEHOLDER_TENANTS and _uuid_or_none(scope_tenant) != tenant:
+                raise UserRolePolicyError(
+                    f"Cannot save user scope for tenant '{scope_tenant}'; caller is restricted to its own tenant."
+                )
+        if requested is not None and "clearance" in requested and requested.get("clearance") is not None:
+            clearance_input = str(requested.get("clearance")).upper()
+            if clearance_input not in DataClassification.__members__:
+                raise UserRolePolicyError(f"Invalid clearance '{clearance_input}'.")
 
         actor = actor_name or "operator"
         now = datetime.now(UTC)
@@ -365,6 +366,22 @@ class IdentityUserRoleManagementService:
                 raise UserRolePolicyError(
                     "Cannot remove platform_admin from the last active platform_admin of this tenant."
                 )
+
+            # Resolve clearance: explicit requested clearance wins; otherwise preserve before-state
+            if requested is not None and "clearance" in requested and requested.get("clearance") is not None:
+                clearance = str(requested.get("clearance")).upper()
+            else:
+                clearance = str(before.get("scope", {}).get("clearance") or DataClassification.CONFIDENTIAL.name).upper()
+
+            # Merge omitted axes from authoritative before-state transactionally
+            before_scope = before.get("scope") or {}
+            axes: dict[str, list[str]] = {}
+            for axis in _SCOPE_AXES:
+                if requested is not None and axis in requested and requested[axis] is not None:
+                    axes[axis] = sorted({str(v) for v in requested[axis]})
+                else:
+                    axes[axis] = sorted({str(v) for v in (before_scope.get(axis) or [])})
+
             self._engine.execute("DELETE FROM identity.account_roles WHERE account_id = ?", (account_id,))
             for role in new_roles:
                 self._engine.execute(

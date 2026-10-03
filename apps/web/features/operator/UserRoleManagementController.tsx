@@ -243,6 +243,7 @@ export function UserRoleManagementController({
       name: editName.trim() || undefined,
       roles: editRoles,
       scope: {
+        ...(selectedUser?.scope || {}),
         tenant_id: editTenantId,
         brand_ids: parsedBrands,
         region_ids: parsedRegions,

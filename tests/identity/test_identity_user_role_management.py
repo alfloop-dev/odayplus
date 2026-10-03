@@ -447,3 +447,127 @@ def test_unavailable_identity_service_refuses_instead_of_document_success() -> N
     ):
         assert response.status_code == 503
         assert response.json()["detail"]["code"] == "IDENTITY_PERSISTENCE_UNAVAILABLE"
+
+
+def test_role_editor_preserves_authoritative_hidden_scope_axes(stack: Any) -> None:
+    """Ordinary UI name/role edits must not wipe unedited/hidden scope axes."""
+    admin_id = _bootstrap_admin(stack)
+    _rotate_password(stack, admin_id)
+    admin = _sign_in(stack, admin_id)
+    member_id = _invited_account(stack, "scoped.member", "operations_manager")
+    member = _sign_in(stack, member_id)
+    scope = {
+        "tenant_id": TENANT,
+        "brand_ids": [],
+        "region_ids": [],
+        "store_ids": [],
+        "assigned_area_ids": ["allowed-area"],
+        "heat_zone_ids": ["allowed-zone"],
+        "modules": ["allowed-module"],
+        "clearance": "CONFIDENTIAL",
+    }
+    seeded = stack.client.post(
+        "/api/v1/operator/users",
+        headers=admin,
+        json={"subjectId": member_id, "roles": ["operations_manager"], "scope": scope},
+    )
+    assert seeded.status_code == 200, seeded.text
+    before_status = stack.client.get("/api/v1/operator/bootstrap", headers=member).status_code
+    assert before_status == 403
+    before = seeded.json()["user"]
+
+    # Exact fields submitted by UserRoleManagementController.tsx omitting assigned_area_ids, heat_zone_ids, modules
+    saved = stack.client.post(
+        "/api/v1/operator/users",
+        headers=admin,
+        json={
+            "subjectId": member_id,
+            "email": before["email"],
+            "name": "Name-only edit",
+            "roles": before["roles"],
+            "scope": {
+                axis: before["scope"][axis]
+                for axis in ("tenant_id", "brand_ids", "region_ids", "store_ids", "clearance")
+            },
+            "attributes": before["attributes"],
+            "status": before["status"],
+            "reason": "Reviewer: equivalent existing UI name edit",
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    after_scope = saved.json()["user"]["scope"]
+    assert after_scope["assigned_area_ids"] == ["allowed-area"]
+    assert after_scope["heat_zone_ids"] == ["allowed-zone"]
+    assert after_scope["modules"] == ["allowed-module"]
+
+    after_status = stack.client.get("/api/v1/operator/bootstrap", headers=member).status_code
+    assert after_status == 403, "A name-only UI edit broadened authoritative module access"
+
+    persisted = _q(
+        stack,
+        "SELECT assigned_area_ids, heat_zone_ids, modules FROM identity.account_scopes WHERE account_id = %s",
+        (member_id,),
+    )
+    assert persisted == [(["allowed-area"], ["allowed-zone"], ["allowed-module"])]
+
+
+def test_explicit_scope_updates_are_applied_and_can_be_cleared(stack: Any) -> None:
+    """Explicitly provided scope axes are updated or cleared while omitted axes are preserved."""
+    admin_id = _bootstrap_admin(stack)
+    _rotate_password(stack, admin_id)
+    admin = _sign_in(stack, admin_id)
+    member_id = _invited_account(stack, "scope.explicit.member", "operations_manager")
+
+    initial_scope = {
+        "tenant_id": TENANT,
+        "brand_ids": ["b1"],
+        "region_ids": ["r1"],
+        "store_ids": ["s1"],
+        "assigned_area_ids": ["area-1"],
+        "heat_zone_ids": ["zone-1"],
+        "modules": ["mod-1"],
+        "clearance": "RESTRICTED",
+    }
+    seeded = stack.client.post(
+        "/api/v1/operator/users",
+        headers=admin,
+        json={"subjectId": member_id, "roles": ["operations_manager"], "scope": initial_scope},
+    )
+    assert seeded.status_code == 200, seeded.text
+
+    # Explicitly update modules and brand_ids, omit others
+    updated = stack.client.post(
+        "/api/v1/operator/users",
+        headers=admin,
+        json={
+            "subjectId": member_id,
+            "roles": ["operations_manager"],
+            "scope": {"tenant_id": TENANT, "modules": ["mod-2"], "brand_ids": ["b2"]},
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    u_scope = updated.json()["user"]["scope"]
+    assert u_scope["modules"] == ["mod-2"]
+    assert u_scope["brand_ids"] == ["b2"]
+    assert u_scope["assigned_area_ids"] == ["area-1"]
+    assert u_scope["heat_zone_ids"] == ["zone-1"]
+    assert u_scope["region_ids"] == ["r1"]
+    assert u_scope["store_ids"] == ["s1"]
+    assert u_scope["clearance"] == "RESTRICTED"
+
+    # Explicitly clear modules to empty list
+    cleared = stack.client.post(
+        "/api/v1/operator/users",
+        headers=admin,
+        json={
+            "subjectId": member_id,
+            "roles": ["operations_manager"],
+            "scope": {"tenant_id": TENANT, "modules": []},
+        },
+    )
+    assert cleared.status_code == 200, cleared.text
+    c_scope = cleared.json()["user"]["scope"]
+    assert c_scope["modules"] == []
+    assert c_scope["brand_ids"] == ["b2"]
+    assert c_scope["assigned_area_ids"] == ["area-1"]
+

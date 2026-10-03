@@ -268,6 +268,48 @@ describe("UserRoleManagementController", () => {
     expect(serverUsers[0].attributes).toEqual({ department: "Ops", level: "Senior" });
   });
 
+  it("preserves unedited hidden scope axes when saving an existing user through the edit modal", async () => {
+    const { serverUsers, posted } = stubStatefulFetch([
+      {
+        subject_id: "ops-lead",
+        email: "ops-lead@odayplus.com",
+        name: "營運主管",
+        roles: ["operations_manager"],
+        scope: {
+          tenant_id: "tenant-default",
+          brand_ids: ["brand-a"],
+          region_ids: [],
+          store_ids: [],
+          assigned_area_ids: ["allowed-area"],
+          heat_zone_ids: ["allowed-zone"],
+          modules: ["allowed-module"],
+          clearance: "CONFIDENTIAL",
+        },
+        status: "active",
+      },
+    ]);
+
+    render(<UserRoleManagementController currentRoleId="platform-admin" />);
+
+    fireEvent.click(await screen.findByTestId("edit-user-ops-lead"));
+    fireEvent.change(screen.getByTestId("edit-name-input"), {
+      target: { value: "營運主管 (已更名)" },
+    });
+    fireEvent.change(screen.getByPlaceholderText(/請輸入權限調整原因/i), {
+      target: { value: "更名測試" },
+    });
+    fireEvent.click(screen.getByTestId("save-user-roles-submit"));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("edit-role-modal")).not.toBeInTheDocument();
+    });
+
+    expect(posted).toHaveLength(1);
+    expect(posted[0].scope.assigned_area_ids).toEqual(["allowed-area"]);
+    expect(posted[0].scope.heat_zone_ids).toEqual(["allowed-zone"]);
+    expect(posted[0].scope.modules).toEqual(["allowed-module"]);
+  });
+
   it("renders the newly created user row after a successful create", async () => {
     const { posted } = stubStatefulFetch([
       {
