@@ -67,7 +67,6 @@ from uuid import UUID, uuid4
 from apps.data_platform.contracts import SourceEnvelope, SourceKind
 from apps.data_platform.deletion import (
     DeleteEvent,
-    DeleteOutcome,
     DeletePropagationMode,
     DeleteScope,
     version_from_timestamp,
