@@ -63,6 +63,31 @@ BEARER_TOKEN_ENV = "ODP_OPERATOR_SMOKE_BEARER_TOKEN"
 API_TRANSPORT_TOKEN_ENV = "ODP_API_INVOKER_TOKEN"
 OPERATOR_ROLE_ENV = "ODP_OPERATOR_SMOKE_ROLE"
 PRODUCTION_PROVIDER_IDS_ENV = "ODP_PRODUCTION_PROVIDER_IDS"
+RELEASE_PROFILE_ENV = "ODP_RELEASE_PROFILE"
+DEV_ADMIN_USERNAME_ENV = "ODP_DEV_ADMIN_USERNAME"
+DEV_ADMIN_PASSWORD_ENV = "ODP_DEV_ADMIN_PASSWORD"
+DEV_ADMIN_DENIED_ROLE_ENV = "ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE"
+
+# ODP-DEV-ADMIN-RELEASE-READINESS-001: the acceptance scope this gate holds a
+# release to. It mirrors ``release_manifest.RELEASE_PROFILES`` (pinned, not
+# imported, for the same reason as the provider maps below; the anti-drift
+# suite binds them). ``full`` is the complete product contract and keeps every
+# model assertion. ``dev-admin`` is dev-only: it replaces the "models must be
+# production-ready" assertions with "missing models must be truthfully refused"
+# and adds a real password sign-in/session/sign-out journey through the Web.
+RELEASE_PROFILE_FULL = "full"
+RELEASE_PROFILE_DEV_ADMIN = "dev-admin"
+RELEASE_PROFILE_DEPLOYMENTS: Mapping[str, frozenset[str] | None] = {
+    RELEASE_PROFILE_FULL: None,
+    RELEASE_PROFILE_DEV_ADMIN: frozenset({"dev"}),
+}
+#: Runtime blocking reason the API publishes while production model bindings
+#: are not verified; a dev-admin release must say so rather than hide it.
+MODEL_BINDINGS_UNVERIFIED_REASON = "PRODUCTION_MODEL_BINDINGS_UNVERIFIED"
+#: A tenant id no real operator account is issued. The dev-admin journey asks
+#: the API to write under it and requires the tenant boundary to refuse.
+FOREIGN_TENANT_PROBE_ID = "odp-live-gate-foreign-tenant"
+TENANT_SCOPE_MISMATCH_CODE = "TENANT_SCOPE_MISMATCH"
 
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 POSTGRES_MODES = frozenset({"postgres", "postgresql"})
@@ -226,6 +251,22 @@ DEPENDENCY_ACTIONS: Mapping[str, str] = {
         "A fixture/mock/seed surrogate reached a live response. Remove the "
         "fallback and rebind the runtime to live data."
     ),
+    "session": (
+        "Repair the Web password sign-in path: the provisioned operator account "
+        "(ODP_DEV_ADMIN_USERNAME/ODP_DEV_ADMIN_PASSWORD), the durable Web "
+        "session store and login throttle in PostgreSQL, and the session "
+        "secret/identity signing key shared by Web and API."
+    ),
+    "tenant-isolation": (
+        "A request outside the signed-in account's tenant was not refused. "
+        "Restore tenant binding on the API (TENANT_SCOPE_MISMATCH) before any "
+        "release."
+    ),
+    "release-profile": (
+        "Redeploy from the admitted manifest: the runtime must report exactly "
+        "the release profile sealed into the manifest digest, and a narrowed "
+        "profile may only serve the deployment it was admitted for."
+    ),
 }
 
 
@@ -282,6 +323,18 @@ class GateConfig:
     # different credential from ``bearer_token`` (the application token) and is
     # never used to decide whether a request is application-authenticated.
     api_transport_token: str = ""
+    # The admitted acceptance scope (see RELEASE_PROFILE_DEPLOYMENTS).
+    release_profile: str = RELEASE_PROFILE_FULL
+    # dev-admin only: a provisioned operator account the gate signs in as
+    # through the Web password form, and an Operator Console role that account
+    # does not hold (the wrong-role probe). Never written to the report.
+    dev_admin_username: str = ""
+    dev_admin_password: str = ""
+    dev_admin_denied_role: str = ""
+
+    @property
+    def dev_admin(self) -> bool:
+        return self.release_profile == RELEASE_PROFILE_DEV_ADMIN
 
     @property
     def unknown_provider_ids(self) -> tuple[str, ...]:
@@ -337,6 +390,9 @@ class HttpResponse:
     payload: dict[str, Any] = field(default_factory=dict)
     location: str = ""
     error: str = ""
+    # name -> value of every ``Set-Cookie`` on the response. An empty value is
+    # a deletion. Cookies are only ever sent back explicitly by the caller.
+    cookies: dict[str, str] = field(default_factory=dict)
 
     @property
     def failed(self) -> bool:
@@ -537,7 +593,22 @@ def _to_response(status: int, headers: Any, raw: bytes) -> HttpResponse:
             decoded = None
         if isinstance(decoded, dict):
             payload = decoded
-    return HttpResponse(status=status, payload=payload, location=location)
+    return HttpResponse(
+        status=status, payload=payload, location=location, cookies=_set_cookies(headers)
+    )
+
+
+def _set_cookies(headers: Any) -> dict[str, str]:
+    try:
+        values = headers.get_all("set-cookie") or []
+    except AttributeError:  # pragma: no cover - non-standard header container
+        values = []
+    cookies: dict[str, str] = {}
+    for value in values:
+        name, sep, rest = str(value).split(";", 1)[0].partition("=")
+        if sep and name.strip():
+            cookies[name.strip()] = rest.strip()
+    return cookies
 
 
 class CloudRunWorkerDriver:
@@ -825,6 +896,60 @@ def validate_config(config: GateConfig) -> list[CheckResult]:
         ),
         "config",
     )
+    checks.extend(_release_profile_config_checks(config))
+    return checks
+
+
+def _release_profile_config_checks(config: GateConfig) -> list[CheckResult]:
+    """Refuse an unknown profile, or a narrowed one outside its deployments.
+
+    This runs before any request is made: a dev-admin scope pointed at staging
+    or production is a configuration error, not something to discover live.
+    """
+
+    checks: list[CheckResult] = []
+    profile = config.release_profile
+    known = profile in RELEASE_PROFILE_DEPLOYMENTS
+    _check(
+        checks,
+        known,
+        "config:release_profile",
+        profile if known else f"unknown release profile {profile!r}",
+        "release-profile",
+    )
+    if not known:
+        return checks
+    allowed = RELEASE_PROFILE_DEPLOYMENTS[profile]
+    if allowed is not None:
+        _check(
+            checks,
+            config.expected_deployment in allowed,
+            "config:release_profile_deployment",
+            (
+                f"profile={profile} expectedDeployment="
+                f"{config.expected_deployment or '<missing>'} allowed={sorted(allowed)}"
+            ),
+            "release-profile",
+        )
+    if config.dev_admin:
+        _check(
+            checks,
+            bool(config.dev_admin_username) and bool(config.dev_admin_password),
+            "config:dev_admin_account",
+            (
+                "configured"
+                if config.dev_admin_username and config.dev_admin_password
+                else f"missing {DEV_ADMIN_USERNAME_ENV}/{DEV_ADMIN_PASSWORD_ENV}"
+            ),
+            "config",
+        )
+        _check(
+            checks,
+            bool(config.dev_admin_denied_role),
+            "config:dev_admin_denied_role",
+            config.dev_admin_denied_role or f"missing {DEV_ADMIN_DENIED_ROLE_ENV}",
+            "config",
+        )
     return checks
 
 
@@ -930,6 +1055,23 @@ def _check_runtime_readiness(
         ),
         "postgresql",
     )
+    runtime_profile = _as_dict(details.get("releaseProfile"))
+    expected_claim = config.release_profile == RELEASE_PROFILE_FULL
+    _check(
+        checks,
+        runtime_profile.get("name") == config.release_profile
+        and runtime_profile.get("valid") is True
+        and runtime_profile.get("modelReadinessClaimed") is expected_claim,
+        "runtime:release_profile",
+        (
+            f"admitted={config.release_profile} "
+            f"runtime={runtime_profile.get('name') or '<missing>'} "
+            f"valid={runtime_profile.get('valid')} "
+            f"modelReadinessClaimed={runtime_profile.get('modelReadinessClaimed')} "
+            f"error={runtime_profile.get('error') or 'none'}"
+        ),
+        "release-profile",
+    )
     provider_disabled = _disabled_provider_runtime_confirmed(config, provider)
     _check(
         checks,
@@ -959,6 +1101,61 @@ def _check_runtime_readiness(
         ),
         "provider",
     )
+    if _models_refused_in_scope(config, models):
+        _check_model_limitation(models, checks=checks)
+    else:
+        _check_model_bindings(models, checks=checks)
+    _check_provider_probe_evidence(provider, config=config, checks=checks)
+    _check_model_capabilities(
+        models, refused_in_scope=_models_refused_in_scope(config, models), checks=checks
+    )
+    _check_data_origin(payload, data=data, probe=probe, checks=checks)
+
+
+def _models_refused_in_scope(config: GateConfig, models: Mapping[str, Any]) -> bool:
+    """True when this scope accepts, and therefore must verify, absent models.
+
+    Only a dev-admin release whose runtime does not claim production bindings
+    takes this branch. A dev-admin release that *does* have verified bindings is
+    held to the full model assertions, and a full release always is.
+    """
+
+    return config.dev_admin and models.get("productionBindingsReady") is not True
+
+
+def _check_model_limitation(
+    models: Mapping[str, Any], *, checks: list[CheckResult]
+) -> None:
+    """Missing production models must be reported, not papered over.
+
+    The runtime must say bindings are not ready, name why, carry the
+    ``PRODUCTION_MODEL_BINDINGS_UNVERIFIED`` blocking reason, and must not have
+    substituted seeded models or claimed the ``mlflow-production`` mode.
+    """
+
+    reasons = models.get("blockingReasons")
+    reasons = reasons if isinstance(reasons, list) else []
+    _check(
+        checks,
+        models.get("productionBindingsReady") is False
+        and models.get("autoSeeded") is False
+        and models.get("mode") != "mlflow-production"
+        and bool(str(models.get("error") or "").strip())
+        and MODEL_BINDINGS_UNVERIFIED_REASON in reasons,
+        "runtime:model_limitation_reported",
+        (
+            f"mode={models.get('mode')} ready={models.get('productionBindingsReady')} "
+            f"autoSeeded={models.get('autoSeeded')} "
+            f"error={'present' if str(models.get('error') or '').strip() else '<missing>'} "
+            f"blockingReasons={reasons}"
+        ),
+        "mlflow",
+    )
+
+
+def _check_model_bindings(
+    models: Mapping[str, Any], *, checks: list[CheckResult]
+) -> None:
     _check(
         checks,
         models.get("mode") == "mlflow-production"
@@ -974,8 +1171,11 @@ def _check_runtime_readiness(
         ),
         "mlflow",
     )
-    _check_provider_probe_evidence(provider, config=config, checks=checks)
 
+
+def _check_model_capabilities(
+    models: Mapping[str, Any], *, refused_in_scope: bool, checks: list[CheckResult]
+) -> None:
     capabilities = _as_dict(models.get("capabilities"))
     for service in sorted(REQUIRED_MODEL_BINDINGS):
         capability = _as_dict(capabilities.get(service))
@@ -1034,6 +1234,27 @@ def _check_runtime_readiness(
                 ),
                 "mlflow",
             )
+        elif refused_in_scope:
+            # dev-admin with absent models: an active service is either really
+            # bound, or truthfully unavailable with the runtime's reason code
+            # (the composition error is asserted once, on ``models.error``). A
+            # capability that is neither -- unavailable with no reason, or
+            # "available" with a reason -- is a manufactured state.
+            available = capability.get("available")
+            reason_code = str(capability.get("reasonCode") or "").strip()
+            truthful = (available is True and not reason_code) or (
+                available is False and bool(reason_code)
+            )
+            _check(
+                checks,
+                truthful,
+                f"runtime:model_capability:{service}",
+                (
+                    f"available={available} reasonCode={reason_code or '<missing>'} "
+                    "(refused-in-scope)"
+                ),
+                "mlflow",
+            )
         else:
             # Active service (ForecastOps): must be available=True with no reasonCode.
             _check(
@@ -1047,6 +1268,14 @@ def _check_runtime_readiness(
                 "mlflow",
             )
 
+
+def _check_data_origin(
+    payload: Mapping[str, Any],
+    *,
+    data: Mapping[str, Any],
+    probe: Mapping[str, Any],
+    checks: list[CheckResult],
+) -> None:
     origin = _as_dict(data.get("origin"))
     _check(
         checks,
@@ -1331,6 +1560,421 @@ def _check_model_lineage(
         "none" if not markers else f"paths={markers[:10]}",
         "data-binding",
     )
+
+
+def _check_model_registry_refused(
+    response: HttpResponse, *, checks: list[CheckResult]
+) -> None:
+    """With production bindings unverified, the model registry must refuse.
+
+    The Learning Hub serves registry reads only through the production MLflow
+    binding. When that binding is absent the route answers 503 with the
+    composition error; a 200 here would mean model versions (and possibly
+    aliases or lineage) were served from somewhere other than the approved
+    registry, which is exactly the manufactured state this scope forbids.
+    """
+
+    refused = (not response.failed) and response.status == 503
+    _check(
+        checks,
+        refused,
+        "models:registry_refused",
+        _failure_detail(response, expected="503 while production bindings are unverified"),
+        _dependency_for(response, "mlflow"),
+    )
+    markers = find_surrogate_values(response.payload)
+    _check(
+        checks,
+        not markers,
+        "models:no_surrogate_markers",
+        "none" if not markers else f"paths={markers[:10]}",
+        "data-binding",
+    )
+
+
+def _web_origin(web_url: str) -> str:
+    parsed = urllib.parse.urlsplit(web_url)
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+
+
+def _cookie_header(cookies: Mapping[str, str]) -> str:
+    return "; ".join(f"{name}={value}" for name, value in sorted(cookies.items()) if value)
+
+
+def _payload_mentions(response: HttpResponse, code: str) -> bool:
+    return code in json.dumps(response.payload, sort_keys=True)
+
+
+def _check_dev_admin_session(
+    *,
+    web: HttpClient | None,
+    config: GateConfig,
+    correlation_id: str,
+    checks: list[CheckResult],
+    report: dict[str, Any],
+) -> None:
+    """Drive the real password sign-in journey through the deployed Web.
+
+    Every step goes through the Web origin exactly as a browser would: the
+    password form endpoint, the sealed session cookie, the BFF proxy that
+    swaps the cookie for the server-side session bearer, and sign-out. No
+    bearer, role, or tenant header is injected; the only identity the API sees
+    is the one the Web session carries. Each step is a separate named check so
+    a red gate says which part of administration is broken.
+
+    The supported core operations exercised, in order:
+
+    1. anonymous session/API reads are refused;
+    2. a wrong password is refused without issuing a session;
+    3. password sign-in issues a session cookie for the provisioned account;
+    4. the session resolves to that account;
+    5. the operator bootstrap is served live through that session;
+    6. an Operator Console role the account does not hold is refused;
+    7. an ``external-fetch`` job is enqueued (durable queue) and read back;
+    8. a job aimed at another tenant is refused with TENANT_SCOPE_MISMATCH;
+    9. the accepted and the denied enqueue are both in the durable audit log
+       under this journey's correlation id, the accepted one hash-chained;
+    10. sign-out succeeds and the revoked cookie is refused by Web and API.
+    """
+
+    operations: list[str] = []
+    report["dev_admin"] = {"correlation_id": correlation_id, "operations": operations}
+    if web is None:
+        _check(
+            checks,
+            False,
+            "session:web_client",
+            f"no usable web origin for {config.web_url or '<missing>'}",
+            "config",
+        )
+        return
+
+    origin = _web_origin(config.web_url)
+    base = {"accept": "application/json", "x-correlation-id": correlation_id}
+    with_origin = {**base, "origin": origin}
+
+    def session_headers(cookies: Mapping[str, str], **extra: str) -> dict[str, str]:
+        return {**base, "cookie": _cookie_header(cookies), **extra}
+
+    # 1. Anonymous reads are refused by both the Web and the API behind it.
+    anonymous_session = web.request("GET", "/auth/session", authenticated=False, headers=base)
+    _check(
+        checks,
+        (not anonymous_session.failed) and anonymous_session.status == 401,
+        "session:anonymous_session_denied",
+        _failure_detail(anonymous_session, expected="401"),
+        "session",
+    )
+    anonymous_api = web.request(
+        "GET", "/api/v1/operator/bootstrap", authenticated=False, headers=base
+    )
+    _check(
+        checks,
+        (not anonymous_api.failed) and anonymous_api.status in DENIED_STATUSES,
+        "session:anonymous_api_denied",
+        _failure_detail(anonymous_api, expected="401/403"),
+        "auth",
+    )
+    operations.append("anonymous_denied")
+
+    # 2. A wrong password is refused and no session cookie is issued. It runs
+    # before the real sign-in, whose success clears the account's counter.
+    invalid = web.request(
+        "POST",
+        "/login",
+        authenticated=False,
+        body={
+            "username": config.dev_admin_username,
+            "password": f"{config.dev_admin_password}-live-gate-invalid",
+            "returnTo": "/operator",
+        },
+        headers=with_origin,
+        follow_redirects=False,
+    )
+    _check(
+        checks,
+        (not invalid.failed)
+        and invalid.status == 401
+        and _payload_mentions(invalid, "AUTH_INVALID_CREDENTIALS")
+        and not any(invalid.cookies.values()),
+        "session:invalid_credentials_refused",
+        (
+            f"{_failure_detail(invalid, expected='401 AUTH_INVALID_CREDENTIALS')} "
+            f"sessionIssued={any(invalid.cookies.values())}"
+        ),
+        "session",
+    )
+    operations.append("invalid_password_refused")
+
+    # 3. Password sign-in.
+    login = web.request(
+        "POST",
+        "/login",
+        authenticated=False,
+        body={
+            "username": config.dev_admin_username,
+            "password": config.dev_admin_password,
+            "returnTo": "/operator",
+        },
+        headers=with_origin,
+        follow_redirects=False,
+    )
+    cookies = {name: value for name, value in login.cookies.items() if value}
+    signed_in = (
+        (not login.failed)
+        and login.status == 200
+        and login.payload.get("ok") is True
+        and login.payload.get("subject") == config.dev_admin_username
+        and bool(cookies)
+    )
+    _check(
+        checks,
+        signed_in,
+        "session:password_login",
+        (
+            f"{_failure_detail(login, expected='200 ok')} "
+            f"sessionCookie={'issued' if cookies else 'missing'}"
+        ),
+        "session",
+    )
+    if not signed_in:
+        return
+    operations.append("password_login")
+
+    # 4. The session resolves to the signed-in account (not just "a cookie").
+    current = web.request(
+        "GET", "/auth/session", authenticated=False, headers=session_headers(cookies)
+    )
+    _check(
+        checks,
+        (not current.failed)
+        and current.status == 200
+        and current.payload.get("subject") == config.dev_admin_username,
+        "session:session_resolves_account",
+        (
+            f"status={current.status} subjectMatches="
+            f"{current.payload.get('subject') == config.dev_admin_username}"
+            if not current.failed
+            else current.error
+        ),
+        "session",
+    )
+    operations.append("session_read")
+
+    # 5. Allowed administration read through the BFF with the session.
+    bootstrap = web.request(
+        "GET",
+        "/api/v1/operator/bootstrap",
+        authenticated=False,
+        headers=session_headers(cookies),
+    )
+    bootstrap_mode = _declared_data_mode(bootstrap.payload)
+    bootstrap_markers = find_surrogate_values(bootstrap.payload)
+    _check(
+        checks,
+        (not bootstrap.failed)
+        and bootstrap.status == 200
+        and bootstrap_mode == "live"
+        and bool(_operator_source(bootstrap.payload))
+        and not bootstrap_markers,
+        "session:operator_bootstrap",
+        (
+            f"{_failure_detail(bootstrap, expected='200') if bootstrap.status != 200 else 'status=200'} "
+            f"data_mode={bootstrap_mode or '<missing>'} "
+            f"surrogatePaths={bootstrap_markers[:5] if bootstrap_markers else 'none'}"
+        ),
+        _dependency_for(bootstrap, "data-binding"),
+    )
+    operations.append("operator_bootstrap")
+
+    # 6. RBAC: a console role outside the account's grants is refused.
+    wrong_role = web.request(
+        "GET",
+        "/api/v1/operator/bootstrap",
+        authenticated=False,
+        headers=session_headers(cookies, **{"x-operator-role": config.dev_admin_denied_role}),
+    )
+    _check(
+        checks,
+        (not wrong_role.failed) and wrong_role.status == 403,
+        "session:wrong_role_denied",
+        _failure_detail(wrong_role, expected=f"403 for role {config.dev_admin_denied_role}"),
+        "auth",
+    )
+    operations.append("wrong_role_denied")
+
+    # 7. Durable job persistence: enqueue under the account's own tenant (the
+    # API binds it from the session; none is supplied) and read it back.
+    idempotency_key = f"live-e2e-session-{config.expected_sha[:12]}-{correlation_id}"
+    body = {
+        "job_type": WORKER_PROBE_JOB_TYPE,
+        "payload": {
+            "provider_id": config.probe_provider_id or DISABLED_WORKER_PROBE_PROVIDER_ID,
+            "schedule_id": "live-e2e-gate-session",
+        },
+        "idempotency_key": idempotency_key,
+    }
+    enqueue = web.request(
+        "POST",
+        "/api/v1/jobs",
+        authenticated=False,
+        body=body,
+        headers=session_headers(
+            cookies, origin=origin, **{"idempotency-key": idempotency_key}
+        ),
+    )
+    job_id = str(enqueue.payload.get("job_id") or "")
+    _check(
+        checks,
+        (not enqueue.failed)
+        and enqueue.status == 202
+        and bool(job_id)
+        and enqueue.payload.get("created") is True
+        and bool(enqueue.payload.get("audit_event_id")),
+        "session:job_enqueue",
+        (
+            _failure_detail(enqueue, expected="202")
+            if enqueue.failed or enqueue.status != 202
+            else (
+                f"status=202 jobId={'present' if job_id else 'missing'} "
+                f"created={enqueue.payload.get('created')} "
+                f"auditEventId={'present' if enqueue.payload.get('audit_event_id') else 'missing'}"
+            )
+        ),
+        _dependency_for(enqueue, "worker"),
+    )
+    report["dev_admin"]["job_id"] = job_id or None
+    if job_id:
+        readback = web.request(
+            "GET",
+            f"/api/v1/jobs/{urllib.parse.quote(job_id)}",
+            authenticated=False,
+            headers=session_headers(cookies),
+        )
+        _check(
+            checks,
+            (not readback.failed)
+            and readback.status == 200
+            and str(readback.payload.get("job_id") or "") == job_id
+            and str(readback.payload.get("job_type") or "") == WORKER_PROBE_JOB_TYPE,
+            "session:job_readback",
+            _failure_detail(readback, expected="200 same job")
+            if readback.failed or readback.status != 200
+            else f"status=200 sameJob={str(readback.payload.get('job_id') or '') == job_id}",
+            _dependency_for(readback, "postgresql"),
+        )
+    operations.append("job_enqueue_and_readback")
+
+    # 8. Tenant isolation: writing under another tenant is refused.
+    foreign_key = f"{idempotency_key}-foreign"
+    foreign = web.request(
+        "POST",
+        "/api/v1/jobs",
+        authenticated=False,
+        body={
+            **body,
+            "payload": {**body["payload"], "tenant_id": FOREIGN_TENANT_PROBE_ID},
+            "idempotency_key": foreign_key,
+        },
+        headers=session_headers(cookies, origin=origin, **{"idempotency-key": foreign_key}),
+    )
+    _check(
+        checks,
+        (not foreign.failed)
+        and foreign.status == 403
+        and _payload_mentions(foreign, TENANT_SCOPE_MISMATCH_CODE),
+        "session:cross_tenant_denied",
+        _failure_detail(foreign, expected=f"403 {TENANT_SCOPE_MISMATCH_CODE}"),
+        "tenant-isolation",
+    )
+    operations.append("cross_tenant_denied")
+
+    # 9. Both decisions are in the durable audit log under this correlation id.
+    events_response = web.request(
+        "GET",
+        f"/api/v1/audit/events?correlation_id={urllib.parse.quote(correlation_id)}",
+        authenticated=False,
+        headers=session_headers(cookies),
+    )
+    if events_response.failed or events_response.status != 200:
+        _check(
+            checks,
+            False,
+            "session:audit_persisted",
+            _failure_detail(events_response, expected="200"),
+            _dependency_for(events_response, "audit"),
+        )
+    else:
+        events = events_response.payload.get("events")
+        events = [e for e in events if isinstance(e, dict)] if isinstance(events, list) else []
+        enqueues = [e for e in events if e.get("event_type") == "job.enqueue"]
+        accepted = [
+            e
+            for e in enqueues
+            if e.get("outcome") == "accepted" and job_id and str(e.get("job_id") or "") == job_id
+        ]
+        chained = [
+            e
+            for e in accepted
+            if _as_dict(e.get("integrity")).get("event_hash")
+            and _as_dict(e.get("integrity")).get("sequence") is not None
+        ]
+        denied = [e for e in enqueues if e.get("outcome") == "denied"]
+        _check(
+            checks,
+            bool(chained) and bool(denied) and not find_surrogate_values(events_response.payload),
+            "session:audit_persisted",
+            (
+                f"jobEnqueueEvents={len(enqueues)} accepted={len(accepted)} "
+                f"hashChained={len(chained)} denied={len(denied)}"
+            ),
+            "audit",
+        )
+    operations.append("audit_readback")
+
+    # 10. Sign-out, then the old cookie must be dead on both sides.
+    logout = web.request(
+        "POST",
+        "/auth/logout",
+        authenticated=False,
+        headers=session_headers(cookies, origin=origin),
+        follow_redirects=False,
+    )
+    cleared = all(not logout.cookies.get(name, "x") for name in cookies)
+    _check(
+        checks,
+        (not logout.failed)
+        and logout.status == 200
+        and logout.payload.get("ok") is True
+        and cleared,
+        "session:logout",
+        f"{_failure_detail(logout, expected='200 ok')} cookieCleared={cleared}",
+        "session",
+    )
+    replay_session = web.request(
+        "GET", "/auth/session", authenticated=False, headers=session_headers(cookies)
+    )
+    _check(
+        checks,
+        (not replay_session.failed) and replay_session.status == 401,
+        "session:revoked_session_refused",
+        _failure_detail(replay_session, expected="401 after logout"),
+        "session",
+    )
+    replay_api = web.request(
+        "GET",
+        "/api/v1/operator/bootstrap",
+        authenticated=False,
+        headers=session_headers(cookies),
+    )
+    _check(
+        checks,
+        (not replay_api.failed) and replay_api.status in DENIED_STATUSES,
+        "session:revoked_api_refused",
+        _failure_detail(replay_api, expected="401/403 after logout"),
+        "session",
+    )
+    operations.append("logout_and_revocation")
 
 
 def _latest_run_by_provider(items: Sequence[Any]) -> dict[str, dict[str, Any]]:
@@ -1826,7 +2470,9 @@ def evaluate_gate(
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> tuple[list[CheckResult], dict[str, Any]]:
-    redact = _redactor(config.bearer_token, config.api_transport_token)
+    redact = _redactor(
+        config.bearer_token, config.api_transport_token, config.dev_admin_password
+    )
     checks = validate_config(config)
     report: dict[str, Any] = {
         "schema_version": 1,
@@ -1844,6 +2490,10 @@ def evaluate_gate(
             "enrichment_provider_ids": list(config.enrichment_provider_ids),
             "worker_probe_provider_id": config.probe_provider_id,
             "external_provider_mode": config.external_provider_mode,
+            "release_profile": config.release_profile,
+            "dev_admin_account_configured": bool(
+                config.dev_admin_username and config.dev_admin_password
+            ),
             "secret_values_redacted": True,
         },
     }
@@ -1875,9 +2525,12 @@ def evaluate_gate(
             )
         else:
             _check_web_login(http=web_http, checks=checks)
-        _check_model_lineage(
-            http.request("GET", "/api/v1/learninghub/models"), checks=checks
-        )
+        models_response = http.request("GET", "/api/v1/learninghub/models")
+        runtime_models = _as_dict(runtime_details.get("models"))
+        if _models_refused_in_scope(config, runtime_models):
+            _check_model_registry_refused(models_response, checks=checks)
+        else:
+            _check_model_lineage(models_response, checks=checks)
         # Worker first, then source data: the worker probe is what drives real
         # ingestion for every required snapshot provider through the deployed
         # scheduled path, and the ingestion runs it persists are exactly what
@@ -1900,6 +2553,14 @@ def evaluate_gate(
             provider=runtime_provider,
             checks=checks,
         )
+        if config.dev_admin:
+            _check_dev_admin_session(
+                web=web_http,
+                config=config,
+                correlation_id=f"{correlation_id}-session",
+                checks=checks,
+                report=report,
+            )
 
     blockers = [
         {
@@ -1917,6 +2578,13 @@ def evaluate_gate(
     ]
     report["blockers"] = blockers
     report["blocking_dependencies"] = sorted({blocker["dependency"] for blocker in blockers})
+    # A narrowed scope never stands as model or full-product evidence, even
+    # when it passes. Say so in the receipt itself, not only in the docs.
+    report["release_profile"] = {
+        "name": config.release_profile,
+        "model_readiness_claimed": config.release_profile == RELEASE_PROFILE_FULL,
+        "full_product_acceptance_claimed": config.release_profile == RELEASE_PROFILE_FULL,
+    }
     return checks, report
 
 
@@ -1982,6 +2650,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--timeout", type=float, default=20.0)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument(
+        "--release-profile",
+        default=os.environ.get(RELEASE_PROFILE_ENV, RELEASE_PROFILE_FULL),
+        help=(
+            "Acceptance scope of the admitted manifest: 'full' (default) or "
+            "'dev-admin' (dev only; adds the Web password-session journey and "
+            "requires missing models to stay refused)."
+        ),
+    )
+    parser.add_argument(
         "--allow-http",
         action="store_true",
         help="Permit HTTP only for an explicitly controlled non-production target.",
@@ -2020,6 +2697,11 @@ def main(argv: list[str] | None = None) -> int:
         poll_interval_seconds=args.poll_interval_seconds,
         timeout=args.timeout,
         allow_http=args.allow_http,
+        release_profile=str(args.release_profile or "").strip().lower(),
+        dev_admin_username=os.environ.get(DEV_ADMIN_USERNAME_ENV, "").strip(),
+        # Not stripped: a password is exactly what the operator set.
+        dev_admin_password=os.environ.get(DEV_ADMIN_PASSWORD_ENV, ""),
+        dev_admin_denied_role=os.environ.get(DEV_ADMIN_DENIED_ROLE_ENV, "").strip(),
     )
     correlation_id = f"corr-live-e2e-{config.expected_sha[:12] or 'unbound'}-{int(time.time())}"
 

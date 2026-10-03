@@ -50,6 +50,7 @@ from delivery_toolchain.release.release_manifest import (  # noqa: E402
     EXTERNAL_SOURCE_INVENTORY,
     IMAGE_DIGEST_PATTERN,
     INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS,
+    RELEASE_PROFILE_FULL,
     SOURCE_EGRESS_DENIED,
     SOURCE_STATUS_DISABLED,
     SOURCES_OFF_CLOUD_RUN_EGRESS,
@@ -60,6 +61,7 @@ from delivery_toolchain.release.release_manifest import (  # noqa: E402
     _wired_env_value,
     build_initial_release_recovery,
     build_release_manifest,
+    build_release_profile,
     build_sources_off_attestation,
     build_sources_off_egress_evidence,
     classify_source_env_var,
@@ -71,6 +73,7 @@ from delivery_toolchain.release.release_manifest import (  # noqa: E402
     initial_release_recovery_errors,
     is_exact_sha,
     load_manifest,
+    manifest_release_profile,
     read_sources_off_contract_file,
     sources_off_attestation_errors,
     validate_manifest,
@@ -308,6 +311,7 @@ def build_handoff(
     created_by_workflow: str | None = None,
     repository: str = "alfloop-dev/odayplus",
     external_sources_expected_enabled: list[str] | None = None,
+    release_profile: str = RELEASE_PROFILE_FULL,
     schema_version: int = 2,
     root: Path = ROOT,
     workflow_path: Path | None = None,
@@ -315,6 +319,17 @@ def build_handoff(
     """回傳 ``(image handoff, release manifest)``，或在任何缺口時 raise。"""
 
     errors: list[str] = []
+
+    # The profile is sealed into the manifest digest here, at build time, and
+    # nowhere else. A narrowed profile that could not be admitted into this
+    # target is refused before anything is sealed.
+    profile_binding: dict[str, Any] | None = None
+    try:
+        profile_binding = build_release_profile(
+            release_profile, target_environment=str(target_environment or "")
+        )
+    except ValueError as exc:
+        errors.append(str(exc))
 
     if not is_exact_sha(release_sha):
         errors.append("release_sha 必須是 40 字元小寫 git SHA。")
@@ -592,6 +607,7 @@ def build_handoff(
         initial_release_recovery=initial_recovery,
         external_sources_expected_enabled=enabled_sources,
         release_status="ready",
+        release_profile=profile_binding,
         schema_version=schema_version,
         root=root,
     )
@@ -686,6 +702,15 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         dest="external_sources_expected_enabled",
         help="External source expected to be enabled (default: none, sources-off).",
+    )
+    parser.add_argument(
+        "--release-profile",
+        default=RELEASE_PROFILE_FULL,
+        help=(
+            "Acceptance scope sealed into the manifest digest: 'full' (default, "
+            "complete product including production models) or 'dev-admin' "
+            "(dev only; core administration with models still refused)."
+        ),
     )
     args = parser.parse_args(argv)
 
@@ -786,6 +811,7 @@ def main(argv: list[str] | None = None) -> int:
             created_by_workflow=args.created_by_workflow,
             repository=args.repository,
             external_sources_expected_enabled=args.external_sources_expected_enabled,
+            release_profile=args.release_profile.strip(),
         )
     except HandoffError as exc:
         print("build-once artifact handoff 無法產生：", file=sys.stderr)
@@ -800,12 +826,14 @@ def main(argv: list[str] | None = None) -> int:
         with args.github_output.open("a", encoding="utf-8") as handle:
             handle.write(f"manifest_digest={manifest['manifest_digest']}\n")
             handle.write(f"release_id={manifest['release_id']}\n")
+            handle.write(f"release_profile={manifest_release_profile(manifest)}\n")
 
     print(
         "build-once artifact handoff 已產生："
         f"release_id={manifest['release_id']} "
         f"candidate_sha={manifest['candidate_sha']} "
-        f"manifest_digest={manifest['manifest_digest']}"
+        f"manifest_digest={manifest['manifest_digest']} "
+        f"release_profile={manifest_release_profile(manifest)}"
     )
     return 0
 

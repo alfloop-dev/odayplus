@@ -40,6 +40,31 @@ run_locked_python() {
 : "${ODP_FORECAST_ENGINE:?Error: ODP_FORECAST_ENGINE is required for live deployments.}"
 : "${ODP_FORECAST_MODEL:?Error: ODP_FORECAST_MODEL is required for live deployments.}"
 : "${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT:?Error: ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT is required.}"
+
+# ODP-DEV-ADMIN-RELEASE-READINESS-001: the acceptance scope the live gate holds
+# this release to. The workflow reads it from the admitted manifest (it is
+# sealed into the lease-bound digest); unset means the complete `full` scope.
+# A narrowed profile is refused here, before the preflight and before any
+# Cloud Run mutation, for anything but dev or without its sign-in inputs.
+ODP_RELEASE_PROFILE="${ODP_RELEASE_PROFILE:-full}"
+case "${ODP_RELEASE_PROFILE}" in
+  full)
+    ;;
+  dev-admin)
+    if [ "${ODP_DEPLOY_ENV}" != "dev" ]; then
+      echo "Error: release profile 'dev-admin' may only deploy to dev, not '${ODP_DEPLOY_ENV}'." >&2
+      exit 1
+    fi
+    : "${ODP_DEV_ADMIN_USERNAME:?Error: the dev-admin profile requires ODP_DEV_ADMIN_USERNAME (a provisioned operator account).}"
+    : "${ODP_DEV_ADMIN_PASSWORD:?Error: the dev-admin profile requires ODP_DEV_ADMIN_PASSWORD (secret).}"
+    : "${ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE:?Error: the dev-admin profile requires ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE (an operator role the account does not hold).}"
+    ;;
+  *)
+    echo "Error: unknown release profile '${ODP_RELEASE_PROFILE}'; expected full or dev-admin." >&2
+    exit 1
+    ;;
+esac
+export ODP_RELEASE_PROFILE
 if [ "${ODP_DEPLOY_ENV}" = "production" ]; then
   : "${ODP_PROD_DEPLOY_URL:?Error: ODP_PROD_DEPLOY_URL is required for production live E2E.}"
   : "${ODP_PROD_API_URL:?Error: ODP_PROD_API_URL is required for production live E2E.}"
@@ -335,6 +360,7 @@ import sys
 keys = [
     "ODAY_RELEASE_SHA",
     "ODP_DEPLOY_ENV",
+    "ODP_RELEASE_PROFILE",
     "ODP_REQUIRE_LIVE_DATA",
     "ODP_DATA_BINDING_MODE",
     "ODP_PRODUCT_MODE",
@@ -890,6 +916,7 @@ payload = {
     "ODAY_ENV": os.environ["ODP_DEPLOY_ENV"],
     "ODP_DEPLOY_ENV": os.environ["ODP_DEPLOY_ENV"],
     "ODAY_RELEASE_SHA": os.environ["ODAY_RELEASE_SHA"],
+    "ODP_RELEASE_PROFILE": os.environ["ODP_RELEASE_PROFILE"],
     "ODP_REQUIRE_LIVE_DATA": os.environ["ODP_REQUIRE_LIVE_DATA"],
     "ODP_DATA_BINDING_MODE": os.environ["ODP_DATA_BINDING_MODE"],
     "ODP_PRODUCT_MODE": os.environ["ODP_PRODUCT_MODE"],
@@ -1112,6 +1139,7 @@ run_locked_python delivery_toolchain/e2e/check_live_e2e_gate.py \
   --gcp-region "${GCP_REGION}" \
   --gcp-project "${GCP_PROJECT}" \
   --worker-deadline-seconds "${ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS:-600}" \
+  --release-profile "${ODP_RELEASE_PROFILE}" \
   --output "${LIVE_E2E_REPORT}"
 
 DEPLOYMENT_COMMITTED=true

@@ -369,6 +369,129 @@ INITIAL_RELEASE_RECOVERY_FIELDS = (
     "binding_digest",
 )
 
+# ---------------------------------------------------------------------------
+# Release profile (ODP-DEV-ADMIN-RELEASE-READINESS-001)
+# ---------------------------------------------------------------------------
+#
+# A release profile is the *acceptance scope* the live gate holds a release to.
+# ``full`` is the complete product contract, including approved production
+# model aliases, and is what every manifest without ``release_profile`` means:
+# existing manifests and their digests are untouched.  ``dev-admin`` is the
+# narrower dev-only scope that accepts a release whose core administration
+# (real login/session, PostgreSQL, RBAC, tenant isolation, audit) is healthy
+# while trained models are still absent and remain refused.
+#
+# The profile is part of the canonical payload, so ``manifest_digest`` -- and
+# through it the Supervisor lease -- binds it.  The deploy phase reads it from
+# the admitted manifest; there is deliberately no deploy-time input that could
+# switch an already built full release into the narrower scope.
+RELEASE_PROFILE_FULL = "full"
+RELEASE_PROFILE_DEV_ADMIN = "dev-admin"
+RELEASE_PROFILES = (RELEASE_PROFILE_FULL, RELEASE_PROFILE_DEV_ADMIN)
+#: The only targets a narrowed profile may be admitted into.  ``full`` is not
+#: listed because it is admissible everywhere and is never spelled explicitly.
+RELEASE_PROFILE_ENVIRONMENTS: dict[str, frozenset[str]] = {
+    RELEASE_PROFILE_DEV_ADMIN: frozenset({"dev"}),
+}
+RELEASE_PROFILE_FIELDS = ("name", "target_environment", "model_readiness")
+#: A narrowed profile records, inside the digest, that it claims nothing about
+#: model readiness, so the manifest can never be quoted as model evidence.
+RELEASE_PROFILE_MODEL_READINESS_NOT_CLAIMED = "not_claimed"
+
+
+def build_release_profile(name: str, *, target_environment: str) -> dict[str, Any] | None:
+    """Return the manifest ``release_profile`` value, or None for ``full``.
+
+    Raises ``ValueError`` for an unknown profile or one that may not be
+    admitted into *target_environment*, so a build refuses before it seals a
+    manifest nobody could deploy.
+    """
+
+    if name == RELEASE_PROFILE_FULL:
+        return None
+    if name not in RELEASE_PROFILE_ENVIRONMENTS:
+        raise ValueError(
+            f"unknown release profile {name!r}; expected one of {list(RELEASE_PROFILES)}"
+        )
+    allowed = RELEASE_PROFILE_ENVIRONMENTS[name]
+    if target_environment not in allowed:
+        raise ValueError(
+            f"release profile {name!r} may only target {sorted(allowed)}, "
+            f"not {target_environment!r}"
+        )
+    return {
+        "name": name,
+        "target_environment": target_environment,
+        "model_readiness": RELEASE_PROFILE_MODEL_READINESS_NOT_CLAIMED,
+    }
+
+
+def manifest_release_profile(manifest: Any) -> str:
+    """Return the profile name a manifest is bound to (``full`` when absent).
+
+    Callers must have validated the manifest first; this does not re-validate.
+    """
+
+    if not isinstance(manifest, dict) or manifest.get("release_profile") is None:
+        return RELEASE_PROFILE_FULL
+    profile = manifest["release_profile"]
+    return str(profile.get("name") or "") if isinstance(profile, dict) else ""
+
+
+def release_profile_errors(
+    manifest: Any, *, environment: str | None = None
+) -> list[str]:
+    """Return why ``manifest.release_profile`` is malformed or not admissible.
+
+    ``environment`` is the deploy target.  It is optional so a stored manifest
+    can still be audited on its own terms, but every deploy-time caller passes
+    it: a ``dev-admin`` manifest must never reach staging or production.
+    """
+
+    if not isinstance(manifest, dict) or "release_profile" not in manifest:
+        return []
+    profile = manifest["release_profile"]
+    label = "manifest.release_profile"
+    if not isinstance(profile, dict):
+        return [f"{label} must be an object"]
+    errors: list[str] = []
+    keys = set(profile)
+    if keys != set(RELEASE_PROFILE_FIELDS):
+        errors.append(
+            f"{label} must carry exactly {list(RELEASE_PROFILE_FIELDS)}; "
+            f"got {sorted(keys)}"
+        )
+    name = profile.get("name")
+    if name == RELEASE_PROFILE_FULL:
+        # One spelling per scope keeps one digest per scope.
+        errors.append(
+            f"{label} must be omitted for the full profile, not spelled explicitly"
+        )
+        return errors
+    if name not in RELEASE_PROFILE_ENVIRONMENTS:
+        errors.append(
+            f"{label}.name must be one of {list(RELEASE_PROFILES)}, got {name!r}"
+        )
+        return errors
+    allowed = RELEASE_PROFILE_ENVIRONMENTS[name]
+    target = profile.get("target_environment")
+    if target not in allowed:
+        errors.append(
+            f"{label}.target_environment must be one of {sorted(allowed)} for "
+            f"profile {name!r}, got {target!r}"
+        )
+    if profile.get("model_readiness") != RELEASE_PROFILE_MODEL_READINESS_NOT_CLAIMED:
+        errors.append(
+            f"{label}.model_readiness must be "
+            f"{RELEASE_PROFILE_MODEL_READINESS_NOT_CLAIMED!r} for profile {name!r}"
+        )
+    if environment is not None and environment != target:
+        errors.append(
+            f"{label} binds profile {name!r} to {target!r}; it cannot be "
+            f"admitted into {environment!r}"
+        )
+    return errors
+
 
 def is_exact_sha(value: Any) -> bool:
     """Return whether *value* is a lowercase 40-character git SHA."""
@@ -1501,6 +1624,8 @@ def validate_manifest(
                         "must be a sha256:<64 lowercase hex> digest"
                     )
 
+    errors.extend(release_profile_errors(manifest))
+
     recorded_digest = manifest.get("manifest_digest")
     if not is_sha256_digest(recorded_digest):
         errors.append("manifest.manifest_digest must be a sha256:<64 lowercase hex> digest")
@@ -1542,6 +1667,12 @@ def validate_release_admission(
     errors = validate_manifest(manifest, root=root)
     if not isinstance(manifest, dict):
         return errors
+    if environment is not None:
+        errors.extend(
+            error
+            for error in release_profile_errors(manifest, environment=environment)
+            if error not in errors
+        )
     # Manifests created before the status field was introduced remain
     # admissible when they contain the required immutable references.  New
     # manifests must explicitly move to ``ready`` before deployment; a
@@ -2213,6 +2344,7 @@ def build_release_manifest(
     initial_release_recovery: dict[str, Any] | None = None,
     external_sources_expected_enabled: list[str] | None = None,
     release_status: str | None = None,
+    release_profile: dict[str, Any] | None = None,
     schema_version: int = CURRENT_SCHEMA_VERSION,
     root: Path = ROOT,
 ) -> dict[str, Any]:
@@ -2247,6 +2379,9 @@ def build_release_manifest(
         manifest["initial_release_recovery"] = initial_release_recovery
     if release_status is not None:
         manifest["release_status"] = release_status
+    # Omitted for the full profile, so every existing digest is unchanged.
+    if release_profile is not None:
+        manifest["release_profile"] = release_profile
     manifest["manifest_digest"] = compute_manifest_digest(manifest)
     return manifest
 
@@ -2359,6 +2494,12 @@ __all__ = [
     "source_id_env_tokens",
     "EXTERNAL_SOURCE_INVENTORY",
     "RELEASE_ID_PATTERN",
+    "RELEASE_PROFILE_DEV_ADMIN",
+    "RELEASE_PROFILE_ENVIRONMENTS",
+    "RELEASE_PROFILE_FIELDS",
+    "RELEASE_PROFILE_FULL",
+    "RELEASE_PROFILE_MODEL_READINESS_NOT_CLAIMED",
+    "RELEASE_PROFILES",
     "RELEASE_STATUSES",
     "REQUIRED_FIELDS",
     "REQUIRED_FIELDS_V1",
@@ -2385,6 +2526,9 @@ __all__ = [
     "ROOT",
     "SUPPORTED_SCHEMA_VERSIONS",
     "build_release_manifest",
+    "build_release_profile",
+    "manifest_release_profile",
+    "release_profile_errors",
     "build_sources_off_egress_evidence",
     "build_sources_off_attestation",
     "component_binding_errors",

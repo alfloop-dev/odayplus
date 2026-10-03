@@ -137,6 +137,12 @@ on:
         required: false
         default: false
         type: boolean
+      release_profile:
+        description: "Acceptance scope sealed into the candidate manifest digest (build phase only). 'full' is the complete product contract including approved production model aliases. 'dev-admin' is dev-only: real login/session, PostgreSQL, RBAC, tenant isolation and audit must pass while missing models stay refused; it claims no model readiness and admission refuses it for staging/production. The deploy phase reads the profile from the admitted manifest; it has no input of its own."
+        required: false
+        default: full
+        type: choice
+        options: [full, dev-admin]
       external_sources_enabled:
         description: "Comma-separated source ids this release expects to be enabled (build phase; empty means the standing sources-off posture, which is derived from the deployed provider configuration rather than supplied here). Any value here makes the approved masked snapshot mandatory."
         required: false
@@ -568,6 +574,7 @@ jobs:
           ROLLBACK_MANIFEST: ${{ inputs.rollback_manifest || vars.ODP_PREVIOUS_RELEASE_MANIFEST_PATH }}
           INITIAL_RELEASE_RECOVERY: ${{ inputs.initial_release_recovery }}
           EXTERNAL_SOURCES_ENABLED: ${{ inputs.external_sources_enabled }}
+          RELEASE_PROFILE: ${{ inputs.release_profile }}
           ODP_CLOUD_RUN_VPC_EGRESS: ${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}
         run: |
           set -euo pipefail
@@ -632,6 +639,7 @@ jobs:
             "${snapshot_args[@]}" \
             "${rollback_args[@]}" \
             "${source_args[@]}" \
+            --release-profile "${RELEASE_PROFILE:-full}" \
             --images-output "${HANDOFF_DIR}/runtime-release-images.json" \
             --manifest-output "${HANDOFF_DIR}/RELEASE_MANIFEST.json" \
             --github-output "${GITHUB_OUTPUT}"
@@ -672,6 +680,7 @@ jobs:
       name: ${{ inputs.environment }}
     outputs:
       manifest_digest: ${{ steps.extract-admitted-manifest.outputs.manifest_digest }}
+      release_profile: ${{ steps.extract-admitted-manifest.outputs.release_profile }}
     # The admission job is itself protected by the selected GitHub environment.
     # Its variable-binding gate runs before any lease-state access, so hosted
     # admission cannot accidentally use ambient/local credentials.
@@ -986,6 +995,17 @@ jobs:
           set -euo pipefail
           manifest_digest="$(python3 -c 'import json; print(json.load(open(".odp_data/release/release-admission-receipt.json"))["manifest_digest"])')"
           printf 'manifest_digest=%s\n' "${manifest_digest}" >> "${GITHUB_OUTPUT}"
+          # The acceptance scope comes only from the manifest admission just
+          # verified against the lease-bound digest; an unknown value stops here.
+          release_profile="$(python3 -c 'import json; print(json.load(open(".odp_data/release/release-admission-receipt.json"))["release_profile"])')"
+          case "${release_profile}" in
+            full|dev-admin) ;;
+            *)
+              echo "Error: admitted manifest carries no usable release profile (got '${release_profile}')." >&2
+              exit 1
+              ;;
+          esac
+          printf 'release_profile=%s\n' "${release_profile}" >> "${GITHUB_OUTPUT}"
 
       # The receipt is the audit trail for the admission decision. It carries
       # digests of the nonce and signature rather than the values, so it is safe
@@ -1087,6 +1107,10 @@ jobs:
       ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET: ${{ vars.ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET }}
       ODP_DEPLOY_ENV: ${{ inputs.environment }}
       ODAY_RELEASE_SHA: ${{ inputs.release_sha }}
+      # ODP-DEV-ADMIN-RELEASE-READINESS-001: the acceptance scope of the
+      # admitted manifest. Never a dispatch input: it is read from the manifest
+      # the lease is bound to, so a deploy cannot narrow a full release.
+      ODP_RELEASE_PROFILE: ${{ needs.admission.outputs.release_profile }}
       ODP_REQUIRE_LIVE_DATA: "true"
       ODP_DATA_BINDING_MODE: live
       ODP_PRODUCT_MODE: production
@@ -1225,6 +1249,13 @@ jobs:
 
       - name: Deploy Cloud Run by immutable digest
         if: ${{ inputs.environment != 'staging' }}
+        env:
+          # Only the dev-admin profile reads these: the live gate signs in
+          # through the Web password form as this provisioned operator account
+          # and signs out again. Scoped to this step, never printed.
+          ODP_DEV_ADMIN_USERNAME: ${{ vars.ODP_DEV_ADMIN_USERNAME }}
+          ODP_DEV_ADMIN_PASSWORD: ${{ secrets.ODP_DEV_ADMIN_PASSWORD }}
+          ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE: ${{ vars.ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE }}
         run: ./product_ops/deployment/deploy_cloud_run_waji.sh
 
       - name: Prepare release-scoped staging handoff paths

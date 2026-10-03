@@ -182,6 +182,14 @@ def readiness_payload() -> dict[str, Any]:
             "database": "healthy",
             "requireLiveData": True,
             "deploymentMode": DEPLOYMENT_MODE,
+            # What `runtime_mode.release_profile()` reports for a revision
+            # deployed without ODP_RELEASE_PROFILE: the complete scope.
+            "releaseProfile": {
+                "name": "full",
+                "valid": True,
+                "modelReadinessClaimed": True,
+                "error": None,
+            },
             "persistence": {
                 "configuredMode": "postgresql",
                 "runtimeMode": "postgres",

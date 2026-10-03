@@ -16,7 +16,11 @@ from typing import Any
 from uuid import uuid4
 
 from apps.api.oday_api.routes.heatzone import HeatZoneResultStore, create_heatzone_router
-from apps.api.oday_api.runtime_mode import deployment_mode, live_data_required
+from apps.api.oday_api.runtime_mode import (
+    deployment_mode,
+    live_data_required,
+    release_profile,
+)
 from models.shared_ml.production_contracts import (
     PRODUCTION_MODEL_CONTRACTS,
     governed_disabled_services,
@@ -172,6 +176,10 @@ else:
         # writes through (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
         bind_persistence(bundle)
         active_deployment_mode = deployment_mode()
+        # The admitted acceptance scope (ODP-DEV-ADMIN-RELEASE-READINESS-001).
+        # It only selects what the live gate holds this release to; it never
+        # relaxes a persistence, provider, model, or auth guard below.
+        active_release_profile = release_profile()
         require_live_data = live_data_required()
         domain_runtime_mode = "production" if require_live_data else "local"
         persistence_mode = str(getattr(bundle, "mode", "unknown")).strip().lower()
@@ -518,9 +526,12 @@ else:
                     blocking_reasons.append("PROVIDER_CONNECTIVITY_UNHEALTHY")
                 if not operator_repository_ready:
                     blocking_reasons.append("OPERATOR_LIVE_REPOSITORY_UNAVAILABLE")
+                if not active_release_profile["valid"]:
+                    blocking_reasons.append("RELEASE_PROFILE_INVALID")
             return {
                 "requireLiveData": require_live_data,
                 "deploymentMode": active_deployment_mode,
+                "releaseProfile": dict(active_release_profile),
                 "persistence": {
                     "configuredMode": configured_persistence_mode,
                     "runtimeMode": persistence_mode,
@@ -762,7 +773,8 @@ else:
                 )
             )
             live_gate_ok = not require_live_data or bool(modes["data"]["liveReady"])
-            overall_ok = persistence_ok and provider_ready and live_gate_ok
+            profile_ok = bool(active_release_profile["valid"])
+            overall_ok = persistence_ok and provider_ready and live_gate_ok and profile_ok
             if require_live_data and not modes["persistence"]["production_persistence_supported"]:
                 db_details = (
                     f"unsupported for production live data: runtime mode {persistence_mode}"
@@ -832,7 +844,13 @@ else:
                 db_details = (
                     f"unsupported for production live data: runtime mode {persistence_mode}"
                 )
-            overall_ok = persistence_ok and provider_ready and queue_ok and live_gate_ok
+            overall_ok = (
+                persistence_ok
+                and provider_ready
+                and queue_ok
+                and live_gate_ok
+                and bool(active_release_profile["valid"])
+            )
             if not overall_ok:
                 response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
 
