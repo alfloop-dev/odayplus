@@ -18,6 +18,7 @@ import { ADMIN_PATH } from "./operatorSession";
 
 const ERROR_MESSAGES: Record<string, string> = {
   AUTH_INVALID_CREDENTIALS: "目前密碼不正確。",
+  AUTH_PASSWORD_POLICY_VIOLATION: "新密碼不符合安全政策或與目前密碼相同。",
   WEB_SESSION_REQUIRED: "登入已失效，請重新登入。",
   CSRF_VERIFICATION_FAILED: "請求來源驗證失敗，請重新整理後再試。",
   WEB_AUTH_UNAVAILABLE: "驗證服務暫時無法使用，請稍後重試。",
@@ -39,6 +40,10 @@ export function OperatorPasswordChange({
     setError(null);
     if (newPassword !== confirmPassword) {
       setError("兩次輸入的新密碼不一致。");
+      return;
+    }
+    if (currentPassword.normalize("NFKC") === newPassword.normalize("NFKC")) {
+      setError("新密碼不得與目前密碼相同。");
       return;
     }
     setSubmitting(true);

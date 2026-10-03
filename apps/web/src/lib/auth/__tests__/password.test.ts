@@ -53,6 +53,32 @@ describe("password policy & change route", () => {
       code: "AUTH_PASSWORD_POLICY_VIOLATION",
     });
 
+    // Same as current password (exact & NFKC equivalent)
+    expect(
+      validatePasswordPolicy(
+        "Correct-Horse-Battery-Staple-2026!",
+        undefined,
+        undefined,
+        "Correct-Horse-Battery-Staple-2026!",
+      ),
+    ).toMatchObject({
+      valid: false,
+      code: "AUTH_PASSWORD_POLICY_VIOLATION",
+      reason: "New password must be different from current password.",
+    });
+    expect(
+      validatePasswordPolicy(
+        "Correct-Horse-Battery-Staple-2026!",
+        undefined,
+        undefined,
+        "Ｃorrect-Horse-Battery-Staple-2026!",
+      ),
+    ).toMatchObject({
+      valid: false,
+      code: "AUTH_PASSWORD_POLICY_VIOLATION",
+      reason: "New password must be different from current password.",
+    });
+
     // Valid strong password
     expect(
       validatePasswordPolicy("Correct-Horse-Battery-Staple-2026!"),
@@ -284,4 +310,82 @@ describe("password policy & change route", () => {
     ).resolves.toMatchObject({ valid: true });
     expect(sessionStore.sessions.size).toBe(3);
   });
+
+  it.each(["exact", "nfkc-equivalent"])(
+    "must not clear initial rotation with %s same credential",
+    async (variant) => {
+      vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
+      vi.stubEnv("ODP_IDENTITY_TOKEN_SIGNING_KEY", SECRET);
+      vi.stubEnv("ODP_PRODUCT_MODE", "production");
+      vi.stubEnv("ODP_WEB_BASE_URL", "https://ops.oday.plus");
+      const initial = "Review-Initial-Secret-5521";
+      const final = variant === "exact" ? initial : "Ｒeview-Initial-Secret-5521";
+      const identity = new MockIdentityStore([
+        {
+          accountId: "account-1",
+          tenantId: "tenant-1",
+          username: "root.admin",
+          email: "root.admin@example.invalid",
+          status: "active",
+          password: initial,
+          mustChange: true,
+        },
+      ]);
+      const sessions = new MockSessionStore();
+      setIdentityStoreForTests(identity);
+      setSessionStoreForTests(sessions);
+      await sessions.createSession({
+        sessionId: "old-session",
+        accountId: "account-1",
+        provider: "local_password",
+        accessToken: "fixture-token",
+        subject: "root.admin",
+        tenantId: "tenant-1",
+        idleTimeoutMs: 1800000,
+        absoluteLifetimeMs: 28800000,
+      });
+      const now = Math.floor(Date.now() / 1000);
+      const cookie = await sealWebSessionReference(
+        {
+          kind: "web-session",
+          sid: "old-session",
+          provider: "local_password",
+          issuedAt: now,
+          expiresAt: now + 3600,
+        },
+        SECRET,
+      );
+      const mutation = vi.spyOn(identity, "changePassword");
+      const req = new NextRequest("https://ops.oday.plus/auth/password", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          currentPassword: initial,
+          newPassword: final,
+        }),
+      });
+      req.headers.set("origin", "https://ops.oday.plus");
+      req.cookies.set(webSessionCookieName, cookie);
+      const response = await POST(req);
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body).toMatchObject({
+        error: {
+          code: "AUTH_PASSWORD_POLICY_VIOLATION",
+        },
+      });
+      const credential = await identity.getPasswordCredential("account-1");
+      expect(credential?.mustChange).toBe(true);
+      expect(mutation).not.toHaveBeenCalled();
+      const stillValid = await identity.verifyPassword(
+        credential?.phcHash || "",
+        initial,
+      );
+      expect(stillValid.valid).toBe(true);
+      const oldSession = await sessions.validateSession("old-session");
+      expect(oldSession).not.toBeNull();
+    },
+  );
 });

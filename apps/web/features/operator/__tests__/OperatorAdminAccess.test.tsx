@@ -229,6 +229,28 @@ describe("OperatorPasswordChange", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("does not submit when new password equals current password", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<OperatorPasswordChange navigate={vi.fn()} />);
+    fill("same-password-1234", "same-password-1234", "same-password-1234");
+
+    expect(await screen.findByText("新密碼不得與目前密碼相同。")).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not submit when new password is NFKC equivalent to current password", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<OperatorPasswordChange navigate={vi.fn()} />);
+    fill("same-password-1234", "ｓame-password-1234", "ｓame-password-1234");
+
+    expect(await screen.findByText("新密碼不得與目前密碼相同。")).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("shows the server refusal and stays on the form", async () => {
     vi.stubGlobal(
       "fetch",
@@ -240,6 +262,27 @@ describe("OperatorPasswordChange", () => {
     fill("wrong-current-password", "a-new-personal-passphrase", "a-new-personal-passphrase");
 
     expect(await screen.findByText("目前密碼不正確。")).toBeInTheDocument();
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("shows server policy violation refusal and stays on the form", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        json(400, {
+          error: {
+            code: "AUTH_PASSWORD_POLICY_VIOLATION",
+            summary: "New password must be different from current password.",
+          },
+        }),
+      ),
+    );
+    const navigate = vi.fn();
+
+    render(<OperatorPasswordChange navigate={navigate} />);
+    fill("current-pass-1234", "a-new-pass-1234", "a-new-pass-1234");
+
+    expect(await screen.findByText("新密碼不符合安全政策或與目前密碼相同。")).toBeInTheDocument();
     expect(navigate).not.toHaveBeenCalled();
   });
 });
