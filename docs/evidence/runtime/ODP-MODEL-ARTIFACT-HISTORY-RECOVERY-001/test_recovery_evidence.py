@@ -306,19 +306,25 @@ def _history_current(receipt: str):
         ),
         (
             lambda d: _history_handback(d)["training_requirement"].update(
-                training_floor_attested_days=56
+                training_floor_present_days=56
             ),
-            "training floor is not stated",
+            "training floor span is not stated",
         ),
         (
             lambda d: _history_handback(d)["training_requirement"].update(
-                training_floor_attested_days=56, training_floor_eligible_dates=28
+                training_floor_present_days=56, training_floor_eligible_dates=28
             ),
             "must stay below the training floor",
         ),
         (
             lambda d: _history_handback(d)["training_requirement"].update(floor_is_sufficient=True),
             "necessary, not sufficient",
+        ),
+        (
+            lambda d: _history_handback(d)["training_requirement"].update(
+                prior_days_attestation_required=True
+            ),
+            "priors do not require attestation",
         ),
         (
             lambda d: _history_handback(d)["training_requirement"].update(current_row_count=1303),
@@ -396,7 +402,10 @@ def test_fabricated_all_model_recovery_does_not_yield_readiness(doc: dict) -> No
 
 def test_history_handback_separates_coverage_from_training(doc: dict) -> None:
     req = _history_handback(doc)["training_requirement"]
-    assert req["window_coverage_attested_days"] < req["training_floor_attested_days"]
+    assert req["window_coverage_present_days"] < req["training_floor_present_days"]
+    assert req["window_coverage_eligible_dates"] < req["training_floor_eligible_dates"]
+    assert req["prior_days_required"] == 28
+    assert req["prior_days_attestation_required"] is False
     assert req["floor_is_sufficient"] is False
     assert req["current_row_count"] == "unknown"
     assert "Window coverage is not training readiness" in _history_handback(doc)["gap"]

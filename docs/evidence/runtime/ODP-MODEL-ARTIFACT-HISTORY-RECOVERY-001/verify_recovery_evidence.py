@@ -40,7 +40,7 @@ UNATTESTABLE = (
     "this bounded investigation saved no artifact bytes or "
     "training/approval/rollback provenance to verify it"
 )
-DAY_SPAN = re.compile(r"\b\d+\s+(?:consecutive|contiguous)(?:\s+attested)?\s+days\b", re.I)
+DAY_SPAN = re.compile(r"\b\d+\s+(?:consecutive|contiguous)(?:\s+[\w/]+)*\s+days\b", re.I)
 HISTORY_STATES = {"history_unknown", "history_current"}
 BOARD_FIELDS = ("status", "owner", "reviewer", "last_update", "non_dispatchable")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -348,21 +348,45 @@ def _check_training_requirement(ctx: _Context, item: Mapping[str, Any]) -> None:
         if ctx.bind(f"{label} training_requirement", binding) is not None:
             texts.append(ctx.sources[binding["source"]][1].decode("utf-8"))
     text = "\n".join(texts)
-    coverage = req.get("window_coverage_attested_days")
-    dates = req.get("training_floor_eligible_dates")
-    floor = req.get("training_floor_attested_days")
+
+    priors = req.get("prior_days_required")
+    priors_attestation = req.get("prior_days_attestation_required")
+    cov_dates = req.get("window_coverage_eligible_dates")
+    cov_present = req.get("window_coverage_present_days")
+    floor_dates = req.get("training_floor_eligible_dates")
+    floor_present = req.get("training_floor_present_days")
     holdout = req.get("holdout_fraction")
     segment = req.get("minimum_segment_rows")
+
     needles = {
-        "window coverage": f"so {coverage} attested",
-        "training floor": f"{dates} eligible dates = {floor} contiguous attested days",
+        "window coverage": f"so {cov_present} attested" if _number(cov_present) else None,
+        "training floor span": f"{floor_dates} eligible dates = {floor_present} contiguous attested days"
+        if _number(floor_dates) and _number(floor_present)
+        else None,
         "holdout fraction": f"holdout_fraction={holdout:.2f}," if _number(holdout) else None,
         "segment holdout rows": f"minimum_segment_rows={segment},",
+        "priors not attested": "bottom 28 days of any span are priors and never need to be attested",
+        "priors ingested": "date becomes eligible when its priors are *ingested*, not when they settle.",
+        "settled state agreement": "agree in the end\nstate, where every ingested day is also attested",
     }
     for what, needle in needles.items():
         if needle is None or needle not in text:
             ctx.fail(f"{label}: {what} is not stated by its bound requirement evidence")
-    if not (_number(coverage) and _number(floor) and coverage < floor):
+
+    if priors != 28:
+        ctx.fail(f"{label}: prior_days_required must be 28")
+    if priors_attestation is not False:
+        ctx.fail(f"{label}: priors do not require attestation; attestation applies to target dates")
+    if not (
+        _number(cov_present)
+        and _number(floor_present)
+        and _number(cov_dates)
+        and _number(floor_dates)
+        and cov_present < floor_present
+        and cov_dates < floor_dates
+        and cov_dates == cov_present - priors
+        and floor_dates == floor_present - priors
+    ):
         ctx.fail(f"{label}: window coverage must stay below the training floor")
     if req.get("floor_is_sufficient") is not False:
         ctx.fail(f"{label}: the training floor is necessary, not sufficient")

@@ -52,13 +52,21 @@ Missing inputs and owners are in `missing_inputs`, handed back to those two hold
 legacy custody decision, authorized legacy registry/bucket readback, fresh governed train, promotion
 approval) and to the three outcome backfill tasks (current readback of the other models).
 
-The history handback keeps window coverage apart from training readiness: 56 contiguous attested
-days is only the h28 window-coverage bound; the registry's own segment-holdout gate (20% distinct
-origin dates held out, at least 7 holdout rows per store; `models/model_ready/contracts.py`,
-`release.py` `_temporal_split` / `_segment_validation`) first passes at 58 eligible dates = 86
-contiguous attested days on a favourable uniform grid (backfill README §11). That is a necessary
-floor, not a sufficient condition; real-data, lineage and quality gates stay open and current
-counts stay unknown.
+The history handback keeps window coverage apart from training readiness and distinguishes
+present/ingested prior days from eligible attested target dates:
+- Window coverage (criterion 3): an h28 window needs 28 eligible target dates, requiring a 56
+  contiguous present/ingested day span (28 present prior days + 28 attested target dates; or 56
+  attested days in the all-attested settled state).
+- Training readiness (criterion 5): the registry's own segment-holdout gate (20% distinct origin
+  dates held out, at least 7 holdout rows per store; `models/model_ready/contracts.py`, `release.py`
+  `_temporal_split` / `_segment_validation`) first passes at 58 eligible target dates = 86 contiguous
+  present/ingested days on a favourable uniform grid (28 present/ingested prior days + 58 attested
+  target dates; backfill README §11 & §14).
+- The 86-day present span (yielding 58 eligible dates) is a necessary floor, not a sufficient condition;
+  a fully attested 86-day span is an optional/stronger settled-state scenario rather than a necessary
+  condition, because prior dates only need to be present/ingested in `mature_daily` (backfill README
+  §14, `product_ops/modeling/sql/model_ready_views.sql:126-163`). Real-data, lineage and quality gates
+  stay open and current counts stay unknown.
 
 The verifier accepts no positive `recovered` / `approved` state or `model_ready` /
 `historical_state_bytes_recovered` claim: this bounded investigation saved no artifact bytes or

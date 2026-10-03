@@ -377,11 +377,16 @@
   "missing_inputs": [
     {
       "id": "forecast-authoritative-history",
-      "gap": "Authoritative gap-free daily revenue history in the current dev project's model_ready.forecast_training_view, with dataset hash, source lineage, freshness cutoff and named data owner, long enough for the registry's own temporal split. Window coverage is not training readiness: an h28 window needs only 56 contiguous attested days, while the registry's segment-holdout gate (20% of distinct origin dates as holdout, at least 7 holdout rows per store) first passes at 58 eligible dates = 86 contiguous attested days on a favourable uniform store-date grid. That is a necessary floor, not a sufficient condition; real-data, lineage and quality gates still apply and current counts are unknown.",
+      "gap": "Authoritative gap-free daily revenue history in the current dev project's model_ready.forecast_training_view, with dataset hash, source lineage, freshness cutoff and named data owner, long enough for the registry's own temporal split. Window coverage is not training readiness: an h28 window needs 28 eligible target dates (56 contiguous present/ingested days: 28 present prior days + 28 attested target dates; or 56 attested days in the all-attested settled state), while the registry's segment-holdout gate (20% of distinct origin dates as holdout, at least 7 holdout rows per store) first passes at 58 eligible target dates = 86 contiguous present/ingested days (28 present prior days + 58 attested target dates; or 86 attested days in the all-attested settled state) on a favourable uniform store-date grid. That 86-day present span (yielding 58 eligible dates) is a necessary floor, not a sufficient condition; universal attestation across all 86 days is an optional/stronger settled-state scenario rather than a necessary condition since prior days only need to be present/ingested in mature_daily. Real-data, lineage and quality gates still apply and current counts are unknown.",
       "training_requirement": {
-        "window_coverage_attested_days": 56,
+        "prior_days_required": 28,
+        "prior_days_attestation_required": false,
+        "window_coverage_eligible_dates": 28,
+        "window_coverage_present_days": 56,
+        "window_coverage_attested_days_settled_state": 56,
         "training_floor_eligible_dates": 58,
-        "training_floor_attested_days": 86,
+        "training_floor_present_days": 86,
+        "training_floor_attested_days_settled_state": 86,
         "floor_is_sufficient": false,
         "holdout_fraction": 0.2,
         "minimum_segment_rows": 7,
@@ -399,7 +404,11 @@
               "so 56 attested",
               "**It is the bound for acceptance criterion 3, and it\nwas silently reused as though it were the bound for criterion 5.**",
               "**58 eligible dates = 86 contiguous attested days.**",
-              "condition and a floor**"
+              "condition and a floor**",
+              "**The ladder as written names the wrong set of days.**",
+              "**the\nbottom 28 days of any span are priors and never need to be attested**",
+              "date becomes eligible when its priors are *ingested*, not when they settle.",
+              "They agree in the end\nstate, where every ingested day is also attested"
             ],
             "facts": {}
           },
