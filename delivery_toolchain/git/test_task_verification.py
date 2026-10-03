@@ -212,6 +212,46 @@ class TaskVerificationGateTests(unittest.TestCase):
 
         self.assertEqual(self._cli("check").returncode, 0)
 
+    def test_mixed_declaration_runs_each_command_once_and_unlocks_check(self) -> None:
+        (self.repo / "test_identity.py").write_text(
+            "def test_identity():\n    assert True\n", encoding="utf-8"
+        )
+        commands = [
+            "git diff --check",
+            f"{sys.executable} -c 'pass'",
+            f"{sys.executable} -m pytest -q test_identity.py",
+        ]
+        self._write_status(commands, verification_required=True)
+        self.assertEqual(self._cli("check").returncode, 1)
+        result = self._cli("run")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipts = ve.load_receipts(self.store, task_id=TASK_ID)
+        self.assertEqual(len(receipts), len(commands))
+        self.assertEqual({receipt["command"] for receipt in receipts}, set(commands))
+        for receipt in receipts:
+            self.assertEqual(receipt["head_sha"], self.head)
+            self.assertEqual(receipt["exit_code"], 0)
+            self.assertEqual(receipt["attempt"], 1)
+            self.assertEqual(receipt["run_kind"], ve.KIND_BASELINE)
+        checked = self._cli("check")
+        self.assertEqual(checked.returncode, 0, checked.stderr)
+        self.assertEqual(checked.stdout.count("proven at"), len(commands))
+
+        # All three are still deduped; a failed second run adds no receipts.
+        duplicate = self._cli("run")
+        self.assertEqual(duplicate.returncode, 1)
+        self.assertEqual(duplicate.stderr.count("refused (duplicate)"), len(commands))
+        self.assertEqual(len(ve.load_receipts(self.store, task_id=TASK_ID)), len(commands))
+
+    def test_pytest_verbosity_change_is_refused_without_execution(self) -> None:
+        ve.write_receipt(self.store, self._receipt("pytest -q tests/unit"))
+        self._write_status(["pytest -vv tests/unit"])
+        result = self._cli("run")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("refused (duplicate)", result.stderr)
+        self.assertEqual(len(ve.load_receipts(self.store, task_id=TASK_ID)), 1)
+        self.assertEqual(self._cli("check").returncode, 1)
+
     def test_run_refuses_a_duplicate_baseline_without_a_retry_reason(self) -> None:
         command = f"{sys.executable} -c 'pass'"
         self._write_status([command])
