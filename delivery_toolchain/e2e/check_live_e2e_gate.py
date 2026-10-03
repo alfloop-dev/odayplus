@@ -47,6 +47,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
+from uuid import UUID
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT = ROOT / ".odp_data" / "live-e2e-gate" / "live-e2e-gate-report.json"
@@ -92,9 +93,14 @@ RELEASE_PROFILE_DEPLOYMENTS: Mapping[str, frozenset[str] | None] = {
 #: Runtime blocking reason the API publishes while production model bindings
 #: are not verified; a dev-admin release must say so rather than hide it.
 MODEL_BINDINGS_UNVERIFIED_REASON = "PRODUCTION_MODEL_BINDINGS_UNVERIFIED"
-#: A tenant id no real operator account is issued. The dev-admin journey asks
-#: the API to write under it and requires the tenant boundary to refuse.
-FOREIGN_TENANT_PROBE_ID = "odp-live-gate-foreign-tenant"
+#: A well-formed tenant UUID no real operator account is issued. The dev-admin
+#: journey asks the API to move the admin's own scope under it and requires the
+#: identity tenant policy (not DTO/CSRF validation) to refuse. It must be a
+#: valid UUID: a malformed id is rejected for being malformed, which proves
+#: nothing about isolation.
+FOREIGN_TENANT_PROBE_ID = "0d1e5a7e-f0e1-4000-8000-00000000f0e1"
+#: Identity tenant-policy refusal the API returns (422) for a foreign scope.
+TENANT_POLICY_REFUSAL_TEXT = "caller is restricted to its own tenant"
 TENANT_SCOPE_MISMATCH_CODE = "TENANT_SCOPE_MISMATCH"
 
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
@@ -1613,6 +1619,53 @@ def _cookie_header(cookies: Mapping[str, str]) -> str:
     return "; ".join(f"{name}={value}" for name, value in sorted(cookies.items()) if value)
 
 
+def _canonical_uuid(value: Any) -> str | None:
+    try:
+        return str(UUID(str(value)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _foreign_tenant_for(own_tenant: str) -> str:
+    """A valid tenant UUID guaranteed to differ from the admin's own tenant."""
+    if own_tenant != FOREIGN_TENANT_PROBE_ID:
+        return FOREIGN_TENANT_PROBE_ID
+    return str(UUID(int=UUID(own_tenant).int ^ 1))
+
+
+def _identity_snapshot(record: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The identity facts a refused tenant move must leave untouched.
+
+    Returns ``None`` when any of them is absent, so a readback that drops a
+    field is treated as changed rather than silently compared as missing.
+    """
+    subject_id = record.get("subject_id")
+    username = record.get("username")
+    roles = record.get("roles")
+    status = record.get("status")
+    scope = record.get("scope")
+    if not (
+        isinstance(subject_id, str)
+        and subject_id
+        and isinstance(username, str)
+        and username
+        and isinstance(roles, list)
+        and roles
+        and isinstance(status, str)
+        and status
+        and isinstance(scope, dict)
+        and _canonical_uuid(scope.get("tenant_id")) is not None
+    ):
+        return None
+    return {
+        "subject_id": subject_id,
+        "username": username,
+        "roles": sorted(str(r) for r in roles),
+        "status": status,
+        "scope": json.loads(json.dumps(scope, sort_keys=True)),
+    }
+
+
 def _payload_mentions(response: HttpResponse, code: str) -> bool:
     return code in json.dumps(response.payload, sort_keys=True)
 
@@ -1644,7 +1697,9 @@ def _check_dev_admin_session(
     5. GET /api/v1/operator/users is served from the identity schema, lists the
        account itself with exactly platform_admin, active;
     6. the user audit trail carries the identity.account.bootstrap event;
-    7. foreign-tenant scope update on existing account is refused and readback verifies scope unmodified;
+    7. moving the account itself to a valid foreign tenant UUID is refused by the
+       identity tenant policy (422) and the readback account, tenant, full scope,
+       roles and status are unchanged;
     8. the business operator shell is refused (platform_admin holds no business read);
     9. an Operator Console role outside grants is refused (wrong-role probe);
     10. GET /operator?view=admin is served as an authenticated Web page;
@@ -1973,34 +2028,55 @@ def _check_dev_admin_session(
     )
     operations.append("bootstrap_audit_readback")
 
-    # 7. Tenant isolation: saving a foreign tenant scope on existing account is refused.
+    # 7. Tenant isolation: moving the admin's own account to a valid foreign
+    #    tenant is refused by the identity tenant policy, and the account reads
+    #    back exactly as it was. The request is otherwise identical to the
+    #    current record, so only the tenant can be the reason for refusal.
+    own_snapshot = _identity_snapshot(own_record)
+    own_tenant = _canonical_uuid(_as_dict(own_record.get("scope")).get("tenant_id"))
+    if own_snapshot is None or own_tenant is None:
+        _check(
+            checks,
+            False,
+            "session:cross_tenant_denied",
+            "own account record lacks subject/username/roles/status or a UUID scope.tenant_id; "
+            "tenant isolation cannot be probed against an unknown tenant",
+            "tenant-isolation",
+        )
+        return
+    foreign_tenant = _foreign_tenant_for(own_tenant)
+    probe_scope = dict(own_snapshot["scope"])
+    probe_scope["tenant_id"] = foreign_tenant
     foreign_probe = web.request(
         "POST",
         "/api/v1/operator/users",
         authenticated=False,
         body={
-            "subjectId": own_record.get("subject_id") or username,
-            "roles": ["platform_admin"],
-            "scope": {
-                "tenant_id": FOREIGN_TENANT_PROBE_ID,
-                "clearance": "CONFIDENTIAL",
-            },
-            "status": "active",
+            "subjectId": own_snapshot["subject_id"],
+            "roles": list(own_snapshot["roles"]),
+            "scope": probe_scope,
+            "status": own_snapshot["status"],
             "reason": "foreign tenant scope boundary probe",
         },
         headers=session_headers(cookies, origin=origin),
         follow_redirects=False,
     )
+    probe_detail = _as_dict(foreign_probe.payload).get("detail") if not foreign_probe.failed else None
     foreign_refused = (
         (not foreign_probe.failed)
-        and foreign_probe.status in {400, 403, 422}
-        and not _payload_mentions(foreign_probe, "ok")
+        and foreign_probe.status == 422
+        and isinstance(probe_detail, str)
+        and TENANT_POLICY_REFUSAL_TEXT in probe_detail
+        and foreign_tenant in probe_detail
     )
     _check(
         checks,
         foreign_refused,
         "session:cross_tenant_denied",
-        _failure_detail(foreign_probe, expected="403/422 for foreign tenant scope"),
+        _failure_detail(
+            foreign_probe,
+            expected=f"422 identity tenant-policy refusal ('{TENANT_POLICY_REFUSAL_TEXT}')",
+        ),
         "tenant-isolation",
     )
     if not foreign_refused:
@@ -2012,27 +2088,31 @@ def _check_dev_admin_session(
     readback_list = readback.payload.get("users") if not readback.failed else None
     readback_list = [u for u in readback_list if isinstance(u, dict)] if isinstance(readback_list, list) else []
     readback_own = [
-        u
-        for u in readback_list
-        if u.get("username") == username
-        or _as_dict(u.get("attributes")).get("username") == username
+        u for u in readback_list if u.get("subject_id") == own_snapshot["subject_id"]
     ]
-    readback_rec = readback_own[0] if readback_own else {}
-    readback_tenant = _as_dict(readback_rec.get("scope")).get("tenant_id")
+    readback_snapshot = _identity_snapshot(readback_own[0]) if len(readback_own) == 1 else None
     tenant_unmodified = (
         (not readback.failed)
         and readback.status == 200
-        and bool(readback_own)
-        and readback_tenant != FOREIGN_TENANT_PROBE_ID
-        and sorted(str(r) for r in readback_rec.get("roles") or []) == ["platform_admin"]
+        and readback_snapshot is not None
+        and readback_snapshot == own_snapshot
+    )
+    changed = (
+        sorted(
+            key
+            for key in own_snapshot
+            if readback_snapshot is None or readback_snapshot.get(key) != own_snapshot[key]
+        )
+        if not readback.failed
+        else []
     )
     _check(
         checks,
         tenant_unmodified,
         "admin:foreign_tenant_unmodified_readback",
         (
-            f"status={readback.status} tenant={readback_tenant} "
-            f"roles={readback_rec.get('roles')}"
+            f"status={readback.status} matches={len(readback_own)} "
+            f"changedOrMissing={changed or 'none'}"
             if not readback.failed
             else readback.error
         ),

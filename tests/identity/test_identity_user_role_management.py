@@ -290,6 +290,69 @@ def test_role_change_is_authoritative_tenant_scoped_and_audited(stack: Any) -> N
     assert trail["events"][0]["actor"] == admin_id
 
 
+def _live_gate() -> Any:
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location(
+        "check_live_e2e_gate_identity_contract", Path("delivery_toolchain/e2e/check_live_e2e_gate.py")
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # dataclasses resolve their module by name
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_live_gate_tenant_probe_is_refused_by_the_real_tenant_policy(stack: Any) -> None:
+    """The dev-admin gate's exact foreign-tenant probe, against the real router and PostgreSQL.
+
+    Binds the gate's acceptance (422 + identity tenant-policy text naming the
+    probe tenant, then an identical readback) to what the service actually
+    returns, so the offline gate fixture cannot drift from the API contract.
+    """
+    gate = _live_gate()
+    admin_id = _bootstrap_admin(stack)
+    _rotate_password(stack, admin_id)
+    admin = _sign_in(stack, admin_id)
+
+    before = stack.client.get("/api/v1/operator/users", headers=admin)
+    assert before.status_code == 200, before.text
+    [record] = before.json()["users"]
+    snapshot = gate._identity_snapshot(record)
+    assert snapshot is not None and snapshot["scope"]["tenant_id"] == TENANT
+    foreign = gate._foreign_tenant_for(TENANT)
+    db_before = _q(
+        stack,
+        "SELECT tenant_id::text, status FROM identity.accounts WHERE account_id = %s",
+        (admin_id,),
+    )
+
+    probe = stack.client.post(
+        "/api/v1/operator/users",
+        headers=admin,
+        json={
+            "subjectId": snapshot["subject_id"],
+            "roles": snapshot["roles"],
+            "scope": {**snapshot["scope"], "tenant_id": foreign},
+            "status": snapshot["status"],
+            "reason": "foreign tenant scope boundary probe",
+        },
+    )
+    assert probe.status_code == 422, probe.text
+    detail = probe.json()["detail"]
+    assert gate.TENANT_POLICY_REFUSAL_TEXT in detail and foreign in detail
+
+    after = stack.client.get("/api/v1/operator/users", headers=admin).json()["users"]
+    assert [gate._identity_snapshot(u) for u in after] == [snapshot]
+    assert _q(
+        stack,
+        "SELECT tenant_id::text, status FROM identity.accounts WHERE account_id = %s",
+        (admin_id,),
+    ) == db_before
+    assert _audit_types(stack).count("identity.account.roles_updated") == 0
+
+
 def test_disable_revokes_sessions_and_reenable_requires_admin(stack: Any) -> None:
     admin_id = _bootstrap_admin(stack)
     _rotate_password(stack, admin_id)

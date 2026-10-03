@@ -37,6 +37,7 @@ SESSION_COOKIE = "__Host-oday_web_session"
 SESSION_VALUE = "sealed-admin-session-reference"
 FRESH_SESSION_VALUE = "sealed-fresh-admin-session-reference"
 ADMIN_ACCOUNT_ID = "5f0c1a2b-3c4d-4e5f-8a9b-0c1d2e3f4a5b"
+ADMIN_TENANT_ID = "11111111-1111-4111-8111-111111111111"
 SESSION_CORRELATION_ID = f"{base.CORRELATION_ID}-session"
 MODEL_ERROR = (
     "forecastops: MLFLOW_TRACKING_URI_REQUIRED: production model runtime is not configured"
@@ -110,13 +111,50 @@ def admin_users(roles: list[str] | None = None) -> dict[str, Any]:
             {
                 "subject_id": ADMIN_ACCOUNT_ID,
                 "username": USERNAME,
+                "email": None,
+                "name": USERNAME,
                 "roles": roles if roles is not None else ["platform_admin"],
-                "status": "active",
+                "scope": admin_scope(),
                 "attributes": {"identity_source": "identity.accounts", "username": USERNAME},
+                "status": "active",
             }
         ],
         "count": 1,
     }
+
+
+def admin_scope(tenant_id: str = ADMIN_TENANT_ID) -> dict[str, Any]:
+    """The scope shape IdentityUserRoleManagementService._to_record returns."""
+    return {
+        "tenant_id": tenant_id,
+        "brand_ids": [],
+        "region_ids": [],
+        "store_ids": [],
+        "assigned_area_ids": [],
+        "heat_zone_ids": [],
+        "modules": [],
+        "clearance": "CONFIDENTIAL",
+    }
+
+
+def tenant_policy_refusal(tenant_id: str) -> Any:
+    """What users_roles.save_user returns for UserRolePolicyError on a foreign tenant."""
+    return base.response(
+        422,
+        {
+            "detail": (
+                f"Cannot save user scope for tenant '{tenant_id}'; "
+                "caller is restricted to its own tenant."
+            )
+        },
+    )
+
+
+def save_user_route(body: Any, headers: dict) -> Any:
+    tenant = ((body or {}).get("scope") or {}).get("tenant_id")
+    if tenant != ADMIN_TENANT_ID:
+        return tenant_policy_refusal(tenant)
+    return base.response(200, {"ok": True, "message": "User saved."})
 
 
 def admin_audit_trail() -> dict[str, Any]:
@@ -142,19 +180,7 @@ def web_routes(**overrides: Any) -> dict[str, Any]:
         "anon GET /api/v1/operator/bootstrap": denied,
         "GET /auth/session [session]": base.response(200, {"subject": USERNAME, "expiresAt": 1}),
         "GET /api/v1/operator/users [session]": base.response(200, admin_users()),
-        "POST /api/v1/operator/users [session]": lambda body, headers: (
-            base.response(
-                422,
-                {
-                    "detail": (
-                        f"Cannot save user scope for tenant '{body.get('scope', {}).get('tenant_id')}'; "
-                        "caller is restricted to its own tenant."
-                    )
-                },
-            )
-            if (body or {}).get("scope", {}).get("tenant_id") == gate.FOREIGN_TENANT_PROBE_ID
-            else base.response(200, {"ok": True, "message": "User saved."})
-        ),
+        "POST /api/v1/operator/users [session]": save_user_route,
         "GET /api/v1/operator/users/audit-trail [session]": base.response(200, admin_audit_trail()),
         "GET /api/v1/operator/bootstrap [session]": base.response(
             403, {"detail": "role does not permit view on operator_console"}
@@ -299,18 +325,7 @@ class AdminWeb(base.FakeHttp):
                 if callable(route):
                     return route(kwargs.get("body"), headers)
                 return deepcopy(route)
-            body = kwargs.get("body") or {}
-            if body.get("scope", {}).get("tenant_id") == gate.FOREIGN_TENANT_PROBE_ID:
-                return base.response(
-                    422,
-                    {
-                        "detail": (
-                            f"Cannot save user scope for tenant '{gate.FOREIGN_TENANT_PROBE_ID}'; "
-                            "caller is restricted to its own tenant."
-                        )
-                    },
-                )
-            return base.response(200, {"ok": True, "message": "User saved."})
+            return save_user_route(kwargs.get("body"), headers)
 
         # RBAC wrong-role check on /api/v1/operator/bootstrap
         if (
@@ -843,8 +858,53 @@ def test_direct_login_with_pending_must_change_refuses_equal_input_rotation() ->
     assert not any(call == "POST /auth/password" for call, _ in web.headers_seen)
 
 
+class RecordingAdminWeb(AdminWeb):
+    """AdminWeb that records POST /api/v1/operator/users bodies and lets a test
+    rewrite the user list read *after* the tenant probe was sent."""
+
+    def __init__(self, routes: dict[str, Any], *, after_probe: Any = None) -> None:
+        super().__init__(routes)
+        self.post_bodies: list[dict[str, Any]] = []
+        self.after_probe = after_probe
+
+    def request(self, method: str, path: str, **kwargs: Any) -> Any:
+        response = super().request(method, path, **kwargs)
+        if method == "POST" and path == "/api/v1/operator/users":
+            self.post_bodies.append(deepcopy(kwargs.get("body") or {}))
+        if (
+            self.after_probe is not None
+            and self.post_bodies
+            and method == "GET"
+            and path == "/api/v1/operator/users"
+            and response.status == 200
+        ):
+            for user in response.payload.get("users", []):
+                self.after_probe(user)
+        return response
+
+
+def test_tenant_probe_is_a_well_formed_move_to_a_valid_foreign_tenant() -> None:
+    web = RecordingAdminWeb(web_routes())
+    _, report, _ = run_dev_admin(web=web)
+
+    assert report["ok"] is True, report["blockers"]
+    [probe] = web.post_bodies
+    probe_tenant = probe["scope"]["tenant_id"]
+    assert str(gate.UUID(probe_tenant)) == probe_tenant
+    assert probe_tenant != ADMIN_TENANT_ID
+    # Only the tenant differs from the current record.
+    assert {**probe["scope"], "tenant_id": ADMIN_TENANT_ID} == admin_scope()
+    assert probe["subjectId"] == ADMIN_ACCOUNT_ID
+    assert probe["roles"] == ["platform_admin"]
+    assert probe["status"] == "active"
+
+
+def test_tenant_probe_picks_another_uuid_when_admin_owns_the_probe_tenant() -> None:
+    assert gate._foreign_tenant_for(gate.FOREIGN_TENANT_PROBE_ID) != gate.FOREIGN_TENANT_PROBE_ID
+    assert gate._canonical_uuid(gate._foreign_tenant_for(gate.FOREIGN_TENANT_PROBE_ID))
+
+
 def test_foreign_tenant_scope_allowed_blocks_dev_admin() -> None:
-    # Foreign tenant probe returns 200 instead of 403/422
     web = AdminWeb(
         web_routes(
             **{
@@ -858,46 +918,117 @@ def test_foreign_tenant_scope_allowed_blocks_dev_admin() -> None:
 
     assert report["ok"] is False
     assert blockers(report)["session:cross_tenant_denied"] == "tenant-isolation"
+    assert "cross_tenant_denied" not in report["dev_admin"]["operations"]
 
 
-def test_foreign_tenant_scope_mutated_in_readback_blocks_dev_admin() -> None:
-    call_count = 0
+@pytest.mark.parametrize(
+    "refusal",
+    [
+        pytest.param(base.response(400, {"error": "unrelated malformed request"}), id="unrelated400"),
+        pytest.param(
+            base.response(403, {"error": {"code": "WEB_CSRF_ORIGIN_REJECTED"}}), id="csrf403"
+        ),
+        pytest.param(
+            base.response(
+                422,
+                {"detail": [{"loc": ["body", "roles"], "msg": "Field required", "type": "missing"}]},
+            ),
+            id="schema422",
+        ),
+        pytest.param(
+            base.response(422, {"detail": "Invalid role 'platform_admin'. Must be one of canonical roles."}),
+            id="other_policy422",
+        ),
+        pytest.param(tenant_policy_refusal("some-other-tenant"), id="policy422_for_other_tenant"),
+    ],
+)
+def test_refusal_not_from_tenant_policy_blocks_dev_admin(refusal: Any) -> None:
+    web = AdminWeb(web_routes(**{"POST /api/v1/operator/users [session]": refusal}))
+    _, report, _ = run_dev_admin(web=web)
 
-    def users_dispatch(body: Any, headers: dict) -> Any:
-        nonlocal call_count
-        call_count += 1
-        if call_count > 1:
-            # Second call is the readback after foreign-tenant save
-            return base.response(
-                200,
-                {
-                    "users": [
-                        {
-                            "subject_id": ADMIN_ACCOUNT_ID,
-                            "username": USERNAME,
-                            "roles": ["platform_admin"],
-                            "status": "active",
-                            "scope": {"tenant_id": gate.FOREIGN_TENANT_PROBE_ID},
-                            "attributes": {"identity_source": "identity.accounts", "username": USERNAME},
-                        }
-                    ],
-                    "count": 1,
-                },
-            )
-        return base.response(200, admin_users())
+    assert report["ok"] is False
+    assert blockers(report)["session:cross_tenant_denied"] == "tenant-isolation"
 
-    web = AdminWeb(
-        web_routes(
-            **{
-                "GET /api/v1/operator/users [session]": users_dispatch,
-                "POST /api/v1/operator/users [session]": base.response(422, {"detail": "rejected"}),
-            }
-        )
+
+def _set_tenant(tenant: str) -> Any:
+    def mutate(user: dict[str, Any]) -> None:
+        user["scope"]["tenant_id"] = tenant
+
+    return mutate
+
+
+def _drop(*path: str) -> Any:
+    def mutate(user: dict[str, Any]) -> None:
+        target = user
+        for key in path[:-1]:
+            target = target[key]
+        target.pop(path[-1], None)
+
+    return mutate
+
+
+def _set(key: str, value: Any) -> Any:
+    def mutate(user: dict[str, Any]) -> None:
+        user[key] = value
+
+    return mutate
+
+
+def _set_scope(key: str, value: Any) -> Any:
+    def mutate(user: dict[str, Any]) -> None:
+        user["scope"][key] = value
+
+    return mutate
+
+
+@pytest.mark.parametrize(
+    "after_probe",
+    [
+        pytest.param(_set_tenant(gate.FOREIGN_TENANT_PROBE_ID), id="moved_to_probe_tenant"),
+        pytest.param(_set_tenant("22222222-2222-4222-8222-222222222222"), id="changed_tenant"),
+        pytest.param(_drop("scope", "tenant_id"), id="missing_tenant"),
+        pytest.param(_drop("scope"), id="missing_scope"),
+        pytest.param(_set_scope("store_ids", ["store-1"]), id="changed_scope_axis"),
+        pytest.param(_set_scope("clearance", "RESTRICTED"), id="changed_clearance"),
+        pytest.param(_set("roles", ["platform_admin", "cs-lead"]), id="changed_roles"),
+        pytest.param(_set("status", "disabled"), id="changed_status"),
+        pytest.param(_drop("status"), id="missing_status"),
+        pytest.param(_set("username", "someone.else"), id="changed_username"),
+        pytest.param(_set("subject_id", "00000000-0000-4000-8000-000000000000"), id="account_gone"),
+    ],
+)
+def test_changed_or_missing_readback_blocks_dev_admin(after_probe: Any) -> None:
+    web = RecordingAdminWeb(web_routes(), after_probe=after_probe)
+    _, report, _ = run_dev_admin(web=web)
+
+    assert web.post_bodies, "the real tenant probe must have been attempted"
+    assert report["ok"] is False
+    assert blockers(report)["admin:foreign_tenant_unmodified_readback"] == "tenant-isolation"
+    assert "cross_tenant_denied" not in report["dev_admin"]["operations"]
+
+
+@pytest.mark.parametrize(
+    "users",
+    [
+        pytest.param(
+            {"users": [{k: v for k, v in admin_users()["users"][0].items() if k != "scope"}]},
+            id="no_scope",
+        ),
+        pytest.param(
+            {"users": [{**admin_users()["users"][0], "scope": admin_scope("tenant-default")}]},
+            id="placeholder_tenant",
+        ),
+    ],
+)
+def test_unknown_own_tenant_refuses_without_probing(users: dict[str, Any]) -> None:
+    web = RecordingAdminWeb(
+        web_routes(**{"GET /api/v1/operator/users [session]": base.response(200, users)})
     )
     _, report, _ = run_dev_admin(web=web)
 
     assert report["ok"] is False
-    assert blockers(report)["admin:foreign_tenant_unmodified_readback"] == "tenant-isolation"
+    assert blockers(report)["session:cross_tenant_denied"] == "tenant-isolation"
+    assert web.post_bodies == []
 
 
 def test_failed_postgresql_blocks_dev_admin_like_full() -> None:
