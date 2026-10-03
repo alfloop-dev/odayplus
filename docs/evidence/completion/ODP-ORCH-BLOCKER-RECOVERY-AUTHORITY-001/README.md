@@ -266,6 +266,41 @@ receipts are not substitutes for exact-head proof. No wider supervisor suite
 was run. Base `origin/dev` `e126cba49b93` was verified as an ancestor of the
 task head; no merge or history rewrite was necessary this dispatch.
 
+## Reopen 9: reference-label and identity-token boundaries (Pi)
+
+Codex2 rejected `06f32fbea4bc`: a missing label delimiter parsed bare
+`seed/dataset` and `reference.json` as `see`/`ref` clauses. Substring identity
+masking also erased `Pi` inside `API`, turning an independent API release
+requirement into allowed routing prose.
+
+Production-entry regression anchor `191a525e9c09` runs the real ordinary-note
+mutation, canonical load, eligibility, persistence and CAS, with boards in
+scratch and launch/external boundaries mocked. Both owner Codex and owner Pi
+are tested with and without a completed dependency. The declared two-file
+selection exits **1** (5.357s), receipt `6663402df54b9826`, copied here as
+`token-boundary-red.json`: ten false-release cases, not a collection error.
+The original six review counterexamples are included. API release with Codex
+and `./seed/dataset` remain negative controls; delimited `refs=`, `ref:`,
+`see ` and `refs `, explicit dependency IDs and complete agent names are
+positive controls. AutomaticRecoveryTests exits 0 (1.855s) at the red anchor.
+
+Fix anchor `ac90e0b90cde` requires a colon/equal separator or actual whitespace
+after a reference label. Structural identity removal now uses escaped,
+complete tokens with Unicode word, identifier and path punctuation boundaries;
+it cannot remove an agent name inside `API`, `Pi.provider`, `provider.Pi` or
+path components. Additional production-entry filename negatives and an explicit
+`refs=Pi.provider` positive cover artifact preservation versus code references.
+No routing allowlist was expanded; no assertion was removed. Snapshot/CAS,
+Chinese/hard/unknown gates, dependency resolution and legitimate routing
+recovery retain their existing coverage and implementation.
+
+The boundary inventory is recalculated only by the existing generator. All
+three declared verification commands must pass once at the final submitted
+head, with exact command/head/exit/duration/selection receipts in the existing
+`.orchestrator/evidence` store before publication. The tracked red receipt is
+not substituted for exact-head green proof. No broader suite, live gate
+mutation, worker launch or runtime rollout is authorized by these tests.
+
 ## Runtime rollout and merge follow-up
 
 **Source-only correction: no supervisor restart, runtime switch, XR/gate/IAM or
