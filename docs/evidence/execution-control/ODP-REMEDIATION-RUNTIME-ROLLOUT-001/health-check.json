@@ -1,82 +1,367 @@
 {
   "task_id": "ODP-REMEDIATION-RUNTIME-ROLLOUT-001",
-  "checked_at": "2026-10-03T14:50:02Z",
   "status_root": "/home/lupin/odayplus",
   "runtime_link": "/home/lupin/oday-plus-supervisor-runtime-current",
   "runtime_target": "/home/lupin/oday-plus-supervisor-runtime-66665090a9a3",
   "runtime_sha": "66665090a9a329877e1a88d80883a8eca1818f09",
   "supervisor_pid": 1466298,
-  "healthy": true,
-  "checks": [
-    {
-      "name": "supervisor_process_alive",
-      "ok": true,
-      "pid": 1466298,
-      "lock_held": true
+  "probes": {
+    "canonical_live_health_probe": {
+      "step_index": 104,
+      "command": "python3 /home/lupin/oday-plus-supervisor-runtime-current/scripts/supervisor_runtime_health.py --repo /home/lupin/odayplus --config-path /home/lupin/odayplus/.orchestrator/config.json --json",
+      "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-remediation-runtime-rollout-001",
+      "executed_at": "2026-10-03T14:50:02.776870Z",
+      "exit_code": 0,
+      "duration_seconds": 0.222389977,
+      "healthy": true,
+      "repo_root": "/home/lupin/odayplus",
+      "state_file": "/home/lupin/odayplus/.orchestrator/state.json",
+      "git_freshness": null,
+      "checks": [
+        {
+          "name": "supervisor_process_alive",
+          "ok": true,
+          "pid": 1466298,
+          "pid_matches": false,
+          "lock_held": true
+        },
+        {
+          "name": "supervisor_heartbeat_present",
+          "ok": true,
+          "last_heartbeat_at": "2026-10-03T14:49:56Z"
+        },
+        {
+          "name": "supervisor_heartbeat_fresh",
+          "ok": true,
+          "age_seconds": 6.77687,
+          "max_age_seconds": 900.0
+        },
+        {
+          "name": "supervisor_not_degraded",
+          "ok": true,
+          "lifecycle": "running",
+          "last_loop_error": null
+        },
+        {
+          "name": "dashboard_bundle_present",
+          "ok": true,
+          "path": "/home/lupin/odayplus/dashboard-bundle.json",
+          "present": true,
+          "valid": true,
+          "supervisor_pid": 1466298,
+          "pid_file_pid": 1466298,
+          "runtime_state_pid": 1466298,
+          "age_seconds": 6.77687,
+          "generated_at": "2026-10-03T14:49:56Z",
+          "max_age_seconds": 900.0
+        },
+        {
+          "name": "dashboard_bundle_valid",
+          "ok": true,
+          "path": "/home/lupin/odayplus/dashboard-bundle.json",
+          "present": true,
+          "valid": true,
+          "supervisor_pid": 1466298,
+          "pid_file_pid": 1466298,
+          "runtime_state_pid": 1466298,
+          "age_seconds": 6.77687,
+          "generated_at": "2026-10-03T14:49:56Z",
+          "max_age_seconds": 900.0
+        },
+        {
+          "name": "dashboard_bundle_fresh",
+          "ok": true,
+          "path": "/home/lupin/odayplus/dashboard-bundle.json",
+          "present": true,
+          "valid": true,
+          "supervisor_pid": 1466298,
+          "pid_file_pid": 1466298,
+          "runtime_state_pid": 1466298,
+          "age_seconds": 6.77687,
+          "generated_at": "2026-10-03T14:49:56Z",
+          "max_age_seconds": 900.0
+        },
+        {
+          "name": "dashboard_supervisor_pid_matches",
+          "ok": true,
+          "path": "/home/lupin/odayplus/dashboard-bundle.json",
+          "present": true,
+          "valid": true,
+          "supervisor_pid": 1466298,
+          "pid_file_pid": 1466298,
+          "runtime_state_pid": 1466298,
+          "age_seconds": 6.77687,
+          "generated_at": "2026-10-03T14:49:56Z",
+          "max_age_seconds": 900.0
+        }
+      ],
+      "supervisor": {
+        "alive": true,
+        "pid": 1466298,
+        "process_alive": false,
+        "lock_held": true,
+        "last_heartbeat_at": "2026-10-03T14:49:56Z",
+        "heartbeat_age_seconds": 6.77687,
+        "max_heartbeat_age_seconds": 900.0,
+        "lifecycle": "running",
+        "last_loop_error": null
+      },
+      "dashboard": {
+        "path": "/home/lupin/odayplus/dashboard-bundle.json",
+        "present": true,
+        "valid": true,
+        "supervisor_pid": 1466298,
+        "pid_file_pid": 1466298,
+        "runtime_state_pid": 1466298,
+        "age_seconds": 6.77687,
+        "generated_at": "2026-10-03T14:49:56Z",
+        "max_age_seconds": 900.0
+      }
     },
-    {
-      "name": "supervisor_heartbeat_present",
-      "ok": true,
-      "last_heartbeat_at": "2026-10-03T14:49:56Z"
-    },
-    {
-      "name": "supervisor_heartbeat_fresh",
-      "ok": true,
-      "max_age_seconds": 900.0
-    },
-    {
-      "name": "supervisor_not_degraded",
-      "ok": true,
-      "lifecycle": "running",
-      "last_loop_error": null
-    },
-    {
-      "name": "dashboard_bundle_present",
-      "ok": true,
-      "path": "/home/lupin/odayplus/dashboard-bundle.json",
-      "valid": true
-    },
-    {
-      "name": "dashboard_bundle_valid",
-      "ok": true
-    },
-    {
-      "name": "dashboard_bundle_fresh",
-      "ok": true
-    },
-    {
-      "name": "dashboard_supervisor_pid_matches",
-      "ok": true,
-      "supervisor_pid": 1466298
-    },
-    {
-      "name": "runtime_git_not_detached",
-      "ok": true,
-      "head_ref": "refs/heads/runtime-live-66665090a9a3"
-    },
-    {
-      "name": "runtime_git_not_behind",
-      "ok": true,
-      "commits_behind": 0,
-      "upstream": "origin/dev"
+    "runtime_git_freshness_probe": {
+      "step_index": 106,
+      "command": "python3 /home/lupin/oday-plus-supervisor-runtime-current/scripts/supervisor_runtime_health.py --repo /home/lupin/oday-plus-supervisor-runtime-current --config-path /home/lupin/odayplus/.orchestrator/config.json --check-git-freshness --git-upstream origin/dev --json",
+      "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-remediation-runtime-rollout-001",
+      "executed_at": "2026-10-03T14:50:05.804979Z",
+      "exit_code": 1,
+      "duration_seconds": 0.120189254,
+      "healthy": false,
+      "repo_root": "/home/lupin/oday-plus-supervisor-runtime-66665090a9a3",
+      "state_file": "/home/lupin/oday-plus-supervisor-runtime-66665090a9a3/.orchestrator/state.json",
+      "failure_analysis": "When --repo is pointed at the runtime checkout (/home/lupin/oday-plus-supervisor-runtime-current -> /home/lupin/oday-plus-supervisor-runtime-66665090a9a3), supervisor_runtime_health.py resolves relative state files (.orchestrator/state.json, dashboard-bundle.json) relative to the runtime checkout rather than canonical status root (/home/lupin/odayplus). Consequently, process/heartbeat/dashboard checks fail against the empty/stale files in the runtime checkout, yielding exit 1 and healthy=false. This is a path-resolution artifact of the diagnostic invocation and does not indicate an unhealthy live supervisor. Both Git freshness checks (runtime_git_not_detached and runtime_git_not_behind) passed.",
+      "git_freshness": {
+        "checks": [
+          {
+            "name": "runtime_git_not_detached",
+            "ok": true,
+            "head_ref": "refs/heads/runtime-live-66665090a9a3",
+            "detached_head": false,
+            "repo_root": "/home/lupin/oday-plus-supervisor-runtime-66665090a9a3",
+            "upstream": "origin/dev",
+            "commits_behind": 0,
+            "max_commits_behind": 0,
+            "error": null
+          },
+          {
+            "name": "runtime_git_not_behind",
+            "ok": true,
+            "head_ref": "refs/heads/runtime-live-66665090a9a3",
+            "detached_head": false,
+            "repo_root": "/home/lupin/oday-plus-supervisor-runtime-66665090a9a3",
+            "upstream": "origin/dev",
+            "commits_behind": 0,
+            "max_commits_behind": 0,
+            "error": null
+          }
+        ],
+        "commits_behind": 0,
+        "detached_head": false,
+        "head_ref": "refs/heads/runtime-live-66665090a9a3",
+        "max_commits_behind": 0,
+        "repo_root": "/home/lupin/oday-plus-supervisor-runtime-66665090a9a3",
+        "upstream": "origin/dev",
+        "error": null
+      },
+      "checks": [
+        {
+          "name": "supervisor_process_alive",
+          "ok": false,
+          "pid": null,
+          "pid_matches": false,
+          "lock_held": false
+        },
+        {
+          "name": "supervisor_heartbeat_present",
+          "ok": false,
+          "last_heartbeat_at": null
+        },
+        {
+          "name": "supervisor_heartbeat_fresh",
+          "ok": false,
+          "age_seconds": null,
+          "max_age_seconds": 900.0
+        },
+        {
+          "name": "supervisor_not_degraded",
+          "ok": true,
+          "lifecycle": null,
+          "last_loop_error": null
+        },
+        {
+          "name": "dashboard_bundle_present",
+          "ok": true,
+          "path": "/home/lupin/oday-plus-supervisor-runtime-66665090a9a3/dashboard-bundle.json",
+          "present": true,
+          "valid": true,
+          "supervisor_pid": 2517294,
+          "pid_file_pid": null,
+          "runtime_state_pid": null,
+          "age_seconds": 5189835.804979,
+          "generated_at": "2026-08-04T13:12:50Z",
+          "max_age_seconds": 900.0
+        },
+        {
+          "name": "dashboard_bundle_valid",
+          "ok": true,
+          "path": "/home/lupin/oday-plus-supervisor-runtime-66665090a9a3/dashboard-bundle.json",
+          "present": true,
+          "valid": true,
+          "supervisor_pid": 2517294,
+          "pid_file_pid": null,
+          "runtime_state_pid": null,
+          "age_seconds": 5189835.804979,
+          "generated_at": "2026-08-04T13:12:50Z",
+          "max_age_seconds": 900.0
+        },
+        {
+          "name": "dashboard_bundle_fresh",
+          "ok": false,
+          "path": "/home/lupin/oday-plus-supervisor-runtime-66665090a9a3/dashboard-bundle.json",
+          "present": true,
+          "valid": true,
+          "supervisor_pid": 2517294,
+          "pid_file_pid": null,
+          "runtime_state_pid": null,
+          "age_seconds": 5189835.804979,
+          "generated_at": "2026-08-04T13:12:50Z",
+          "max_age_seconds": 900.0
+        },
+        {
+          "name": "dashboard_supervisor_pid_matches",
+          "ok": false,
+          "path": "/home/lupin/oday-plus-supervisor-runtime-66665090a9a3/dashboard-bundle.json",
+          "present": true,
+          "valid": true,
+          "supervisor_pid": 2517294,
+          "pid_file_pid": null,
+          "runtime_state_pid": null,
+          "age_seconds": 5189835.804979,
+          "generated_at": "2026-08-04T13:12:50Z",
+          "max_age_seconds": 900.0
+        },
+        {
+          "name": "runtime_git_not_detached",
+          "ok": true,
+          "head_ref": "refs/heads/runtime-live-66665090a9a3",
+          "detached_head": false,
+          "repo_root": "/home/lupin/oday-plus-supervisor-runtime-66665090a9a3",
+          "upstream": "origin/dev",
+          "commits_behind": 0,
+          "max_commits_behind": 0,
+          "error": null
+        },
+        {
+          "name": "runtime_git_not_behind",
+          "ok": true,
+          "head_ref": "refs/heads/runtime-live-66665090a9a3",
+          "detached_head": false,
+          "repo_root": "/home/lupin/oday-plus-supervisor-runtime-66665090a9a3",
+          "upstream": "origin/dev",
+          "commits_behind": 0,
+          "max_commits_behind": 0,
+          "error": null
+        }
+      ]
     }
-  ],
+  },
+  "derived_combined_summary": {
+    "is_derived": true,
+    "label": "derived_synthesis",
+    "description": "Derived synthesis combining passing canonical live health checks (Step 104) and passing runtime git freshness checks (Step 106)",
+    "canonical_health_probe_ref": "probes.canonical_live_health_probe (Step 104)",
+    "runtime_git_freshness_probe_ref": "probes.runtime_git_freshness_probe (Step 106)",
+    "healthy": true,
+    "checks": [
+      {
+        "name": "supervisor_process_alive",
+        "ok": true,
+        "source": "step_104",
+        "pid": 1466298,
+        "lock_held": true
+      },
+      {
+        "name": "supervisor_heartbeat_present",
+        "ok": true,
+        "source": "step_104",
+        "last_heartbeat_at": "2026-10-03T14:49:56Z"
+      },
+      {
+        "name": "supervisor_heartbeat_fresh",
+        "ok": true,
+        "source": "step_104",
+        "max_age_seconds": 900.0,
+        "age_seconds": 6.77687
+      },
+      {
+        "name": "supervisor_not_degraded",
+        "ok": true,
+        "source": "step_104",
+        "lifecycle": "running",
+        "last_loop_error": null
+      },
+      {
+        "name": "dashboard_bundle_present",
+        "ok": true,
+        "source": "step_104",
+        "path": "/home/lupin/odayplus/dashboard-bundle.json",
+        "valid": true
+      },
+      {
+        "name": "dashboard_bundle_valid",
+        "ok": true,
+        "source": "step_104"
+      },
+      {
+        "name": "dashboard_bundle_fresh",
+        "ok": true,
+        "source": "step_104",
+        "age_seconds": 6.77687
+      },
+      {
+        "name": "dashboard_supervisor_pid_matches",
+        "ok": true,
+        "source": "step_104",
+        "supervisor_pid": 1466298
+      },
+      {
+        "name": "runtime_git_not_detached",
+        "ok": true,
+        "source": "step_106",
+        "head_ref": "refs/heads/runtime-live-66665090a9a3"
+      },
+      {
+        "name": "runtime_git_not_behind",
+        "ok": true,
+        "source": "step_106",
+        "commits_behind": 0,
+        "upstream": "origin/dev"
+      }
+    ]
+  },
   "governance_checks": [
     {
-      "command": "python3 delivery_toolchain/governance/check_orchestrator_config.py --config /home/lupin/odayplus/.orchestrator/config.json",
+      "step_index": 90,
+      "command": "python3 delivery_toolchain/governance/check_orchestrator_config.py --config /home/lupin/odayplus/.orchestrator/config.json && python3 delivery_toolchain/governance/check_config_wiring.py",
+      "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-remediation-runtime-rollout-001",
       "exit_code": 0,
-      "output": "Validated 3 config documents and their merged runtime views."
-    },
-    {
-      "command": "python3 delivery_toolchain/governance/check_config_wiring.py",
-      "exit_code": 0,
-      "output": "All 190 config keys are read by production code."
+      "duration_seconds": 2.144192971,
+      "output": "Validated 3 config documents and their merged runtime views.\nAll 190 config keys are read by production code."
     }
   ],
   "focused_regression_tests": {
+    "step_index": 108,
     "command": "uv run --frozen --python 3.12 pytest -q .orchestrator/test_verification_evidence.py .orchestrator/test_blocker_recovery_authority.py .orchestrator/test_task_dependency_gate.py .orchestrator/test_supervisor.py::AutomaticRecoveryTests",
+    "cwd": "/tmp/pantheon-worker-worktrees/pantheon/odp-remediation-runtime-rollout-001",
+    "executed_source_sha": "66665090a9a329877e1a88d80883a8eca1818f09",
     "exit_code": 0,
-    "result": "passed",
+    "duration_seconds": 12.168618779,
+    "selection": [
+      ".orchestrator/test_verification_evidence.py",
+      ".orchestrator/test_blocker_recovery_authority.py",
+      ".orchestrator/test_task_dependency_gate.py",
+      ".orchestrator/test_supervisor.py::AutomaticRecoveryTests"
+    ],
+    "result": "passed (100%)",
     "covered_fixes": [
       "ODP-ORCH-VERIFICATION-COMMAND-IDENTITY-001 (PR #1398): verification command deduplication identity protection",
       "ODP-ORCH-BLOCKER-RECOVERY-AUTHORITY-001 (PR #1402): blocker recovery authority protection against ordinary note auto-clear"
