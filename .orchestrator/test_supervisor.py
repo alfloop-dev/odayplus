@@ -11408,6 +11408,21 @@ class AutomaticRecoveryTests(unittest.TestCase):
             )
         )
 
+    def test_chinese_unknown_blocker_prose_stays_blocked(self) -> None:
+        task = {
+            "id": "AUTO-ZH-001",
+            "status": "blocked",
+            "owner": "Antigravity",
+            "reviewer": "Claude",
+            "depends_on": [],
+            "next": "仍欠業主准許；provider handoff pending",
+        }
+        self.assertFalse(
+            supervisor.blocked_task_auto_recovery_eligible(
+                self.config, task, {task["id"]: task}, status_snapshot=self._snapshot({task["id"]: task}),
+            )
+        )
+
     def test_human_ops_waiting_for_task_with_worktree_prose_is_not_auto_recovery_eligible(self) -> None:
         """Tasks waiting for Human/Ops remain fail-closed and do not auto-recover on routing tokens like 'worktree'."""
         for waiting_for in ("Human/Ops", "human/ops", "human", "ops", "Human", "Ops", "human/security"):

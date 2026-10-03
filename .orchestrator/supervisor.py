@@ -4636,16 +4636,23 @@ _BLOCKER_RECOVERY_HARD_GATE_WORDS_RE = re.compile(
     re.IGNORECASE,
 )
 
+_BLOCKER_RECOVERY_AGENT_NAMES = {
+    "claude", "codex", "pi", "gemini", "copilot", "antigravity", "openai", "anthropic",
+}
+
 _BLOCKER_RECOVERY_ALLOWED_TOKENS = {
     # Provider & Agent terms
     "provider", "providers", "agent", "agents", "worker", "workers", "model", "models",
-    "ai", "llm", "claude", "codex", "pi", "gemini", "openai", "anthropic",
+    "ai", "llm", "claude", "codex", "pi", "gemini", "copilot", "antigravity", "openai", "anthropic",
     # Routing, Handoff & Dispatch terms
     "route", "routes", "routed", "routing", "reroute", "rerouted", "rerouting",
     "reassign", "reassigned", "reassigning", "reassignment", "reassignments",
     "auto-reassigned", "auto-reassign", "auto", "sidecar", "sidecar-only", "mainline",
     "guard", "guards", "dispatch", "dispatched", "dispatching", "dispatcher",
     "dispatchable", "non-dispatchable", "handoff", "handoffs", "stale",
+    "lane", "lanes", "away", "unavailable", "owner", "owners", "ownership",
+    "reviewer", "reviewers", "review", "reviews", "reopen", "reopens", "reopened", "reopening",
+    "repeated", "automatic",
     # Failure, Quota, Auth, Worktree terms
     "quota", "quotas", "exhausted", "exceeded", "rate-limit", "rate-limited",
     "ratelimit", "ratelimited", "rate", "limit", "limits", "limited", "limiting",
@@ -4654,7 +4661,7 @@ _BLOCKER_RECOVERY_ALLOWED_TOKENS = {
     "lock", "locks", "locked", "locking", "lease", "leases", "leased",
     "push", "pushed", "pushing", "push-failure", "fail", "fails", "failed", "failure",
     "failures", "error", "errors", "timeout", "timeouts", "timed-out", "timed_out",
-    "timed", "out", "unavailable", "retry", "retrying", "retries", "recovery", "recover",
+    "timed", "out", "retry", "retrying", "retries", "recovery", "recover",
     "recovering", "recovered", "recovers", "resume", "resuming", "resumed", "resumes",
     "restart", "restarting", "restarted", "restarts", "disconnect", "disconnected",
     "disconnecting", "connection", "crash", "crashed", "jam", "jammed", "stuck",
@@ -4679,15 +4686,30 @@ _BLOCKER_RECOVERY_ALLOWED_TOKENS = {
 }
 
 
-def _prose_tokens_all_allowed(text: str) -> bool:
-    tokens = re.findall(r"[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*", text.casefold())
-    if not tokens:
+def _token_is_allowed(part: str) -> bool:
+    if part in _BLOCKER_RECOVERY_ALLOWED_TOKENS:
         return True
-    for token in tokens:
-        if token in _BLOCKER_RECOVERY_ALLOWED_TOKENS:
+    if part.isdigit():
+        return True
+    if any(part.startswith(a) and part[len(a):].isdigit() for a in _BLOCKER_RECOVERY_AGENT_NAMES):
+        return True
+    return False
+
+
+def _prose_tokens_all_allowed(text: str) -> bool:
+    if not text or not text.strip():
+        return True
+    chunks = re.split(
+        r"[ ,;.:\-_\/&|+*~^@#$%=\(\)\[\]{}<>\"\'\`!?\s；，。：（）【】！？、—·“”‘’→]+",
+        text.casefold(),
+    )
+    for chunk in chunks:
+        if not chunk:
             continue
-        parts = token.split("-")
-        if all(part in _BLOCKER_RECOVERY_ALLOWED_TOKENS for part in parts):
+        if _token_is_allowed(chunk):
+            continue
+        parts = chunk.split("-")
+        if len(parts) > 1 and all(_token_is_allowed(p) for p in parts):
             continue
         return False
     return True
