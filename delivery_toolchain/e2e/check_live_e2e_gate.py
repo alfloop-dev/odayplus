@@ -2019,7 +2019,7 @@ def _check_bootstrap_admin_session(
        (``PASSWORD_CHANGE_REQUIRED`` means the first-login rotation is missing);
     3. the user audit trail carries the ``identity.account.bootstrap`` event;
     4. the business operator shell is refused (no blanket business grant);
-    5. the Web administration page ``/operator/admin`` is served to the session;
+    5. the Web administration view ``/operator?view=admin`` is served to the session;
     6. sign-out revokes the session for the user administration API.
     """
 
@@ -2048,7 +2048,7 @@ def _check_bootstrap_admin_session(
         body={
             "username": config.bootstrap_admin_username,
             "password": config.bootstrap_admin_password,
-            "returnTo": "/operator/admin",
+            "returnTo": "/operator?view=admin",
         },
         headers={**base, "origin": origin},
         follow_redirects=False,
@@ -2158,7 +2158,7 @@ def _check_bootstrap_admin_session(
 
     page = web.request(
         "GET",
-        "/operator/admin",
+        "/operator?view=admin",
         authenticated=False,
         headers={**session_headers(cookies), "accept": "text/html"},
         follow_redirects=False,

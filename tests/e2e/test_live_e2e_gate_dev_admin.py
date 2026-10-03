@@ -150,10 +150,10 @@ def login_route(body: Any, headers: Any) -> Any:
             {"ok": True, "subject": USERNAME, "returnTo": "/operator"},
             cookies={SESSION_COOKIE: SESSION_VALUE},
         )
-    if body == {"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD, "returnTo": "/operator/admin"}:
+    if body == {"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD, "returnTo": "/operator?view=admin"}:
         return base.response(
             200,
-            {"ok": True, "subject": ADMIN_USERNAME, "returnTo": "/operator/admin"},
+            {"ok": True, "subject": ADMIN_USERNAME, "returnTo": "/operator?view=admin"},
             cookies={SESSION_COOKIE: ADMIN_SESSION_VALUE},
         )
     return base.response(
@@ -262,7 +262,7 @@ def web_routes(**overrides: Any) -> dict[str, Any]:
         "GET /api/v1/operator/bootstrap [admin]": base.response(
             403, {"detail": "role does not permit view on operator_console"}
         ),
-        "GET /operator/admin [admin]": base.response(200, {}),
+        "GET /operator?view=admin [admin]": base.response(200, {}),
         "POST /auth/logout [admin]": base.response(200, {"ok": True}, cookies={SESSION_COOKIE: ""}),
     }
     routes.update(overrides)
@@ -926,7 +926,7 @@ def test_cli_reads_the_profile_and_account_from_the_environment(
         ),
         ({"GET /api/v1/operator/bootstrap [admin]": operator_bootstrap()}, "admin:business_shell_denied"),
         (
-            {"GET /operator/admin [admin]": base.response(302, location=f"{base.WEB_URL}/login")},
+            {"GET /operator?view=admin [admin]": base.response(302, location=f"{base.WEB_URL}/login")},
             "admin:admin_page_served",
         ),
         ({"POST /auth/logout [admin]": base.response(503, {"error": {"code": "WEB_AUTH_UNAVAILABLE"}})}, "admin:logout_revokes_admin_api"),

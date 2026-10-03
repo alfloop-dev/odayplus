@@ -289,6 +289,89 @@
   gap: 6px;
 }
 
+.adminLink {
+  padding: 6px 10px;
+  color: rgba(244, 248, 255, 0.85);
+  font-size: 13px;
+  text-decoration: none;
+  border-radius: 8px;
+}
+
+/* Admin surfaces reuse .console for its tokens but not its desktop min-width. */
+.console.adminConsole {
+  min-width: 0;
+  color: var(--operator-text);
+  background: var(--operator-bg);
+}
+
+.adminHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  color: #f4f8ff;
+  background: var(--operator-topbar);
+}
+
+.adminHeader > div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.adminHeader span {
+  font-size: 12px;
+  color: rgba(244, 248, 255, 0.7);
+}
+
+.adminMain {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.adminNotice {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  margin: 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--operator-border);
+  border-radius: 10px;
+  background: var(--operator-surface);
+}
+
+.adminNotice .adminLink {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.adminForm {
+  display: grid;
+  gap: 12px;
+  max-width: 420px;
+}
+
+.adminForm label {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.adminForm input {
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--operator-border);
+  border-radius: 8px;
+}
+
+.adminLink:hover,
+.adminLink:focus-visible {
+  color: #fff;
+  background: rgba(244, 248, 255, 0.12);
+}
+
 .searchBox {
   position: relative;
   display: flex;
