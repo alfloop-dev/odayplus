@@ -298,6 +298,7 @@ docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/tools/bound_run.py,eviden
 docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/tools/pip_audit_gate_passthrough.py,evidence_artifact,evidence_only,false,,,conditional,The evidence retention period and audit obligations have ended.
 docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/tools/production_entry_probe.py,evidence_artifact,evidence_only,false,,,conditional,The evidence retention period and audit obligations have ended.
 docs/evidence/completion/ODP-ORCH-ANTIGRAVITY-ROTATION-FIX-001/repro_p0_findings.py,evidence_artifact,evidence_only,false,,,conditional,The evidence retention period and audit obligations have ended.
+docs/evidence/completion/ODP-RELEASE-ACCEPTANCE-CARRYFORWARD-001/test_carryforward.py,evidence_artifact,evidence_only,false,,,conditional,The evidence retention period and audit obligations have ended.
 docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/capture_verification.py,evidence_artifact,evidence_only,false,,,conditional,The evidence retention period and audit obligations have ended.
 docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-DEV-ROLLOUT-001/historical-receipts/review_canonical_sources.py,evidence_artifact,evidence_only,false,,,conditional,The evidence retention period and audit obligations have ended.
 docs/evidence/execution-control/ARCHIVE_RECOVERY_RECONCILIATION_20260911/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001/capture_verification.py,evidence_artifact,evidence_only,false,,,conditional,The evidence retention period and audit obligations have ended.
@@ -964,6 +965,7 @@ tests/governance/test_decision_policy.py,verification,verification_only,false,pr
 tests/governance/test_evidence_ladder_boundary.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/governance/test_job_partial_disposition.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/governance/test_netplan_disclosure_policy.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/governance/test_remediation_truth_reconciliation.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/governance/test_site001_disposition.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/identity/__init__.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/identity/test_credential_and_policy.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.

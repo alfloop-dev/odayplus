@@ -3,7 +3,7 @@
 Acceptance checks:
 1. ODP-FR-INT-001 requirement members are governed in set_valued_requirements.json with exact 5 members.
 2. Satisfied members (BATCH, API, FILE) resolve to genuine codebase symbols.
-3. Absent members (EVENT, CDC) carry auditable OPEN dispositions and NO AI self-signed waivers.
+3. EVENT and CDC resolve to the scoped adapter but stay BLOCKED_BY_EVIDENCE (no live receipt) and carry NO AI self-signed waivers.
 4. Contract integration mode taxonomy maintains integrity and excludes unapproved CDC modes.
 5. Production credential and source database boundaries fail closed.
 """
@@ -54,14 +54,17 @@ class TestInt001RequirementDisposition:
             assert err is None, f"Evidence for {name} failed to resolve: {err}"
             assert member.get("disposition", {}).get("state") == "VERIFIED"
 
-        # Absent members must have notes and valid OPEN dispositions
+        # EVENT and CDC are delivered in code by the scoped adapter (PR #1340)
+        # but have no live receipt: satisfied, and held at BLOCKED_BY_EVIDENCE.
         for name in ("EVENT", "CDC"):
             member = members[name]
-            assert member["status"] == "absent"
+            assert member["status"] == "satisfied"
+            assert resolve(REPO_ROOT, member["evidence"]) is None
             assert member.get("note", "").strip()
             disp = member.get("disposition", {})
-            assert disp.get("state") == "OPEN"
+            assert disp.get("state") == "BLOCKED_BY_EVIDENCE"
             assert disp.get("assigned_to")
+            assert disp.get("evidence_needed")
             assert disp.get("rationale")
             assert disp.get("next_review_date")
 
