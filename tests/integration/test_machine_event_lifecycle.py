@@ -57,6 +57,14 @@ STORE_ID = store_id_for_place(PLACE_ID)
 DEVICE_ID = "d-lifecycle-001"
 MACHINE_ID = machine_id_for_device(DEVICE_ID)
 
+MERCHANT_ID_B = "m-lifecycle-002"
+TENANT_ID_B = tenant_id_for_merchant(MERCHANT_ID_B)
+BRAND_ID_B = brand_id_for_merchant(MERCHANT_ID_B)
+PLACE_ID_B = "p-lifecycle-002"
+STORE_ID_B = store_id_for_place(PLACE_ID_B)
+DEVICE_ID_B = "d-lifecycle-002"
+MACHINE_ID_B = machine_id_for_device(DEVICE_ID_B)
+
 RUN_ID = str(uuid4())
 CONTROL_SCHEMA = "data_plane"
 
@@ -170,10 +178,11 @@ CREATE INDEX IF NOT EXISTS idx_machine_status_machine_time ON core.machine_statu
 
 
 def _seed_hierarchy(conn: Any) -> None:
+    # Tenant A
     conn.execute(
         """
         INSERT INTO core.tenants (tenant_id, name, status)
-        VALUES (%s, 'Lifecycle Merchant Tenant', 'active')
+        VALUES (%s, 'Lifecycle Merchant Tenant A', 'active')
         ON CONFLICT (tenant_id) DO NOTHING
         """,
         (TENANT_ID,),
@@ -181,7 +190,7 @@ def _seed_hierarchy(conn: Any) -> None:
     conn.execute(
         """
         INSERT INTO core.brands (brand_id, tenant_id, brand_code, name, status)
-        VALUES (%s, %s, %s, 'Lifecycle Brand', 'active')
+        VALUES (%s, %s, %s, 'Lifecycle Brand A', 'active')
         ON CONFLICT (brand_id) DO NOTHING
         """,
         (BRAND_ID, TENANT_ID, f"fongniao_{MERCHANT_ID}"),
@@ -201,6 +210,40 @@ def _seed_hierarchy(conn: Any) -> None:
         ON CONFLICT (machine_id) DO NOTHING
         """,
         (MACHINE_ID, STORE_ID, DEVICE_ID),
+    )
+
+    # Tenant B
+    conn.execute(
+        """
+        INSERT INTO core.tenants (tenant_id, name, status)
+        VALUES (%s, 'Lifecycle Merchant Tenant B', 'active')
+        ON CONFLICT (tenant_id) DO NOTHING
+        """,
+        (TENANT_ID_B,),
+    )
+    conn.execute(
+        """
+        INSERT INTO core.brands (brand_id, tenant_id, brand_code, name, status)
+        VALUES (%s, %s, %s, 'Lifecycle Brand B', 'active')
+        ON CONFLICT (brand_id) DO NOTHING
+        """,
+        (BRAND_ID_B, TENANT_ID_B, f"fongniao_{MERCHANT_ID_B}"),
+    )
+    conn.execute(
+        """
+        INSERT INTO core.stores (store_id, tenant_id, brand_id, source_store_id, store_code, store_name, store_status)
+        VALUES (%s, %s, %s, %s, 'STORE_02', 'Lifecycle Store 2', 'open')
+        ON CONFLICT (store_id) DO NOTHING
+        """,
+        (STORE_ID_B, TENANT_ID_B, BRAND_ID_B, PLACE_ID_B),
+    )
+    conn.execute(
+        """
+        INSERT INTO core.machines (machine_id, store_id, source_machine_id, machine_serial_no, machine_status)
+        VALUES (%s, %s, %s, 'SN-002', 'active')
+        ON CONFLICT (machine_id) DO NOTHING
+        """,
+        (MACHINE_ID_B, STORE_ID_B, DEVICE_ID_B),
     )
 
 
@@ -813,6 +856,360 @@ def test_duplicate_cdc_delete_is_idempotent(lifecycle_pg_db) -> None:
         ).fetchone()
         assert row is not None
         assert row[0] == "voided"
+
+
+def test_historical_lineage_stale_delete_after_reactivation_does_not_void_row(
+    lifecycle_pg_db,
+) -> None:
+    """Historical lineage row must not cause a stale delete replay to void an active reactivated row."""
+    store: PsycopgCanonicalStore = lifecycle_pg_db.canonical_store
+    landing = lifecycle_pg_db.landing_db
+
+    t1 = datetime(2026, 9, 20, 10, 0, 0, tzinfo=UTC)   # v10
+    t2 = datetime(2026, 9, 20, 10, 20, 0, tzinfo=UTC)  # v20 (delete)
+    t3 = datetime(2026, 9, 20, 10, 40, 0, tzinfo=UTC)  # v30 (reactivate)
+
+    # 1. Upsert v10 -> active
+    env1 = SourceEnvelope(
+        source_kind=SourceKind.DEVICE_LOG,
+        source_id=DEVICE_ID,
+        source_snapshot_id=str(uuid4()),
+        content_sha256=_sha256("device-log-v10"),
+        run_id=RUN_ID,
+        observed_at=t1,
+        source_updated_at=t1,
+        source_document={
+            "_id": DEVICE_ID,
+            "device": DEVICE_ID,
+            "merchant": MERCHANT_ID,
+            "place": PLACE_ID,
+            "logType": "connection",
+            "logData": {"state": "online", "time": t1.isoformat()},
+            "createdAt": t1.isoformat(),
+        },
+    )
+    store.apply_batch(SourceKind.DEVICE_LOG, (env1,), partition_key=f"device_log:{PLACE_ID}")
+
+    # 2. Delete v20 -> voided
+    cdc_del_v20 = CdcChangeEnvelope(
+        change_id="cdc-del-v20",
+        source_kind=SourceKind.DEVICE_LOG,
+        source_collection="device_log",
+        source_id=DEVICE_ID,
+        operation=CdcOperation.DELETE,
+        resume_token="token-del-v20",
+        partition_key=f"device_log:{DEVICE_ID}",
+        sequence_number=2,
+        server_timestamp=t2,
+        source_timestamp=t2,
+        ingested_at=t2,
+        idempotency_key="idemp-del-v20",
+        tenant_id=TENANT_ID,
+        content_sha256=_sha256("cdc-del-v20"),
+        after_payload={"_id": DEVICE_ID, "device": DEVICE_ID, "merchant": MERCHANT_ID},
+        redaction=RedactionReport(cdc_policy(SourceKind.DEVICE_LOG).redaction_profile, (), ()),
+    )
+    projector = ScopedCdcProjector(
+        canonical_store=store, landing_store=landing, control_schema=CONTROL_SCHEMA
+    )
+    plan_v20 = plan_change_application(cdc_del_v20, run_id=RUN_ID, now=t2)
+    res_del = projector.apply(SourceKind.DEVICE_LOG, f"device_log:{DEVICE_ID}", [plan_v20])
+    assert res_del.soft_deleted == 1
+    assert res_del.delete_outcomes.get("APPLIED") == 1
+
+    with landing._connect() as conn:
+        row = conn.execute(
+            "SELECT record_status FROM core.machine_status_events WHERE machine_id = %s",
+            (MACHINE_ID,),
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "voided"
+
+    # 3. Newer upsert v30 -> reactivates row to active
+    env3 = SourceEnvelope(
+        source_kind=SourceKind.DEVICE_LOG,
+        source_id=DEVICE_ID,
+        source_snapshot_id=str(uuid4()),
+        content_sha256=_sha256("device-log-v30"),
+        run_id=RUN_ID,
+        observed_at=t3,
+        source_updated_at=t3,
+        source_document={
+            "_id": DEVICE_ID,
+            "device": DEVICE_ID,
+            "merchant": MERCHANT_ID,
+            "place": PLACE_ID,
+            "logType": "connection",
+            "logData": {"state": "available", "time": t3.isoformat()},
+            "createdAt": t3.isoformat(),
+        },
+    )
+    store.apply_batch(SourceKind.DEVICE_LOG, (env3,), partition_key=f"device_log:{PLACE_ID}")
+
+    with landing._connect() as conn:
+        row = conn.execute(
+            "SELECT status_type, record_status FROM core.machine_status_events WHERE machine_id = %s",
+            (MACHINE_ID,),
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "available"
+        assert row[1] == "active"
+
+    # 4. Replay stale delete v20 (even though lineage table retains both v10 and v30)
+    res_stale = projector.apply(SourceKind.DEVICE_LOG, f"device_log:{DEVICE_ID}", [plan_v20])
+    assert res_stale.soft_deleted == 0
+    assert res_stale.delete_outcomes.get("STALE_IGNORED") == 1
+
+    # Row must remain active!
+    with landing._connect() as conn:
+        row = conn.execute(
+            "SELECT status_type, record_status FROM core.machine_status_events WHERE machine_id = %s",
+            (MACHINE_ID,),
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "available"
+        assert row[1] == "active"
+
+
+def test_delete_without_tenant_resolved_from_lineage_soft_deletes_and_tombstones(
+    lifecycle_pg_db,
+) -> None:
+    """CDC delete with tenant_id=None resolves tenant from lineage under lock and soft deletes atomically."""
+    store: PsycopgCanonicalStore = lifecycle_pg_db.canonical_store
+    landing = lifecycle_pg_db.landing_db
+
+    initial_time = datetime(2026, 9, 20, 10, 0, 0, tzinfo=UTC)
+    delete_time = datetime(2026, 9, 20, 10, 30, 0, tzinfo=UTC)
+
+    # 1. Ingest event with known merchant/tenant
+    env1 = SourceEnvelope(
+        source_kind=SourceKind.DEVICE_LOG,
+        source_id=DEVICE_ID,
+        source_snapshot_id=str(uuid4()),
+        content_sha256=_sha256("device-log-inferred-test"),
+        run_id=RUN_ID,
+        observed_at=initial_time,
+        source_updated_at=initial_time,
+        source_document={
+            "_id": DEVICE_ID,
+            "device": DEVICE_ID,
+            "merchant": MERCHANT_ID,
+            "place": PLACE_ID,
+            "logType": "connection",
+            "logData": {"state": "online", "time": initial_time.isoformat()},
+            "createdAt": initial_time.isoformat(),
+        },
+    )
+    store.apply_batch(SourceKind.DEVICE_LOG, (env1,), partition_key=f"device_log:{PLACE_ID}")
+
+    # 2. CDC delete packet without fullDocument (tenant_id=None, after_payload=None)
+    cdc_del_no_tenant = CdcChangeEnvelope(
+        change_id="cdc-del-no-tenant",
+        source_kind=SourceKind.DEVICE_LOG,
+        source_collection="device_log",
+        source_id=DEVICE_ID,
+        operation=CdcOperation.DELETE,
+        resume_token="token-del-no-tenant",
+        partition_key=f"device_log:{DEVICE_ID}",
+        sequence_number=1,
+        server_timestamp=delete_time,
+        source_timestamp=delete_time,
+        ingested_at=delete_time,
+        idempotency_key="idemp-del-no-tenant",
+        tenant_id=None,  # No tenant declared in change stream
+        content_sha256=_sha256("cdc-del-no-tenant"),
+        after_payload=None,
+        redaction=RedactionReport(cdc_policy(SourceKind.DEVICE_LOG).redaction_profile, (), ()),
+    )
+
+    plan = plan_change_application(cdc_del_no_tenant, run_id=RUN_ID, now=delete_time)
+    assert plan.soft_delete is None  # SoftDeleteDirective not constructed up-front because tenant is None
+    assert plan.tombstone is not None
+    assert plan.tombstone.scope.tenant_id is None
+
+    projector = ScopedCdcProjector(
+        canonical_store=store, landing_store=landing, control_schema=CONTROL_SCHEMA
+    )
+    res = projector.apply(SourceKind.DEVICE_LOG, f"device_log:{DEVICE_ID}", [plan])
+
+    assert res.soft_deleted == 1
+    assert res.tombstoned == 1
+    assert res.delete_outcomes.get("APPLIED") == 1
+
+    # Check that row is voided
+    with landing._connect() as conn:
+        row = conn.execute(
+            "SELECT status_type, record_status, updated_at FROM core.machine_status_events WHERE machine_id = %s",
+            (MACHINE_ID,),
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "online"
+        assert row[1] == "voided"
+        assert row[2] == delete_time
+
+        # Check tombstone recorded under the inferred tenant
+        tomb = conn.execute(
+            f"SELECT entity_type, entity_id, tenant_id FROM {CONTROL_SCHEMA}.tombstones WHERE entity_id = %s",
+            (DEVICE_ID,),
+        ).fetchone()
+        assert tomb is not None
+        assert tomb[0] == "device_log"
+        assert tomb[1] == DEVICE_ID
+        assert tomb[2] == TENANT_ID
+
+
+def test_cross_tenant_delete_rejected_and_does_not_mutate_row(lifecycle_pg_db) -> None:
+    """A delete claiming Tenant B against an entity belonging to Tenant A is rejected."""
+    store: PsycopgCanonicalStore = lifecycle_pg_db.canonical_store
+    landing = lifecycle_pg_db.landing_db
+
+    initial_time = datetime(2026, 9, 20, 10, 0, 0, tzinfo=UTC)
+    delete_time = datetime(2026, 9, 20, 10, 30, 0, tzinfo=UTC)
+
+    # 1. Ingest event under Tenant A
+    env1 = SourceEnvelope(
+        source_kind=SourceKind.DEVICE_LOG,
+        source_id=DEVICE_ID,
+        source_snapshot_id=str(uuid4()),
+        content_sha256=_sha256("device-log-tenant-a"),
+        run_id=RUN_ID,
+        observed_at=initial_time,
+        source_updated_at=initial_time,
+        source_document={
+            "_id": DEVICE_ID,
+            "device": DEVICE_ID,
+            "merchant": MERCHANT_ID,  # Tenant A
+            "place": PLACE_ID,
+            "logType": "connection",
+            "logData": {"state": "online", "time": initial_time.isoformat()},
+            "createdAt": initial_time.isoformat(),
+        },
+    )
+    store.apply_batch(SourceKind.DEVICE_LOG, (env1,), partition_key=f"device_log:{PLACE_ID}")
+
+    # 2. CDC delete claiming Tenant B
+    cdc_del_wrong_tenant = CdcChangeEnvelope(
+        change_id="cdc-del-wrong-tenant",
+        source_kind=SourceKind.DEVICE_LOG,
+        source_collection="device_log",
+        source_id=DEVICE_ID,
+        operation=CdcOperation.DELETE,
+        resume_token="token-del-wrong-tenant",
+        partition_key=f"device_log:{DEVICE_ID}",
+        sequence_number=1,
+        server_timestamp=delete_time,
+        source_timestamp=delete_time,
+        ingested_at=delete_time,
+        idempotency_key="idemp-del-wrong-tenant",
+        tenant_id=TENANT_ID_B,  # Declares Tenant B!
+        content_sha256=_sha256("cdc-del-wrong-tenant"),
+        after_payload={"_id": DEVICE_ID, "device": DEVICE_ID, "merchant": MERCHANT_ID_B},
+        redaction=RedactionReport(cdc_policy(SourceKind.DEVICE_LOG).redaction_profile, (), ()),
+    )
+
+    plan = plan_change_application(cdc_del_wrong_tenant, run_id=RUN_ID, now=delete_time)
+    projector = ScopedCdcProjector(
+        canonical_store=store, landing_store=landing, control_schema=CONTROL_SCHEMA
+    )
+    res = projector.apply(SourceKind.DEVICE_LOG, f"device_log:{DEVICE_ID}", [plan])
+
+    assert res.soft_deleted == 0
+    assert res.delete_outcomes.get("REJECTED_TENANT_BOUNDARY") == 1
+
+    # Row in Tenant A remains active
+    with landing._connect() as conn:
+        row = conn.execute(
+            "SELECT record_status FROM core.machine_status_events WHERE machine_id = %s",
+            (MACHINE_ID,),
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "active"
+
+        # No tombstone recorded
+        tomb_count = conn.execute(
+            f"SELECT COUNT(*) FROM {CONTROL_SCHEMA}.tombstones WHERE entity_id = %s",
+            (DEVICE_ID,),
+        ).fetchone()[0]
+        assert tomb_count == 0
+
+
+def test_delete_transaction_rollback_prevents_half_applied_retirement(
+    lifecycle_pg_db, monkeypatch
+) -> None:
+    """If tombstone upsert fails inside the canonical transaction, soft-delete is rolled back."""
+    store: PsycopgCanonicalStore = lifecycle_pg_db.canonical_store
+    landing = lifecycle_pg_db.landing_db
+
+    initial_time = datetime(2026, 9, 20, 10, 0, 0, tzinfo=UTC)
+    delete_time = datetime(2026, 9, 20, 10, 30, 0, tzinfo=UTC)
+
+    # Ingest event
+    env1 = SourceEnvelope(
+        source_kind=SourceKind.DEVICE_LOG,
+        source_id=DEVICE_ID,
+        source_snapshot_id=str(uuid4()),
+        content_sha256=_sha256("device-log-rollback-test"),
+        run_id=RUN_ID,
+        observed_at=initial_time,
+        source_updated_at=initial_time,
+        source_document={
+            "_id": DEVICE_ID,
+            "device": DEVICE_ID,
+            "merchant": MERCHANT_ID,
+            "place": PLACE_ID,
+            "logType": "connection",
+            "logData": {"state": "online", "time": initial_time.isoformat()},
+            "createdAt": initial_time.isoformat(),
+        },
+    )
+    store.apply_batch(SourceKind.DEVICE_LOG, (env1,), partition_key=f"device_log:{PLACE_ID}")
+
+    # Patch _upsert_tombstone to simulate a failure right after soft-delete execution
+    def failing_upsert(*args, **kwargs):
+        raise RuntimeError("Simulated database failure during tombstone insertion")
+
+    monkeypatch.setattr(store, "_upsert_tombstone", failing_upsert)
+
+    cdc_del = CdcChangeEnvelope(
+        change_id="cdc-del-fail",
+        source_kind=SourceKind.DEVICE_LOG,
+        source_collection="device_log",
+        source_id=DEVICE_ID,
+        operation=CdcOperation.DELETE,
+        resume_token="token-del-fail",
+        partition_key=f"device_log:{DEVICE_ID}",
+        sequence_number=1,
+        server_timestamp=delete_time,
+        source_timestamp=delete_time,
+        ingested_at=delete_time,
+        idempotency_key="idemp-del-fail",
+        tenant_id=TENANT_ID,
+        content_sha256=_sha256("cdc-del-fail"),
+        after_payload={"_id": DEVICE_ID, "device": DEVICE_ID, "merchant": MERCHANT_ID},
+        redaction=RedactionReport(cdc_policy(SourceKind.DEVICE_LOG).redaction_profile, (), ()),
+    )
+    plan = plan_change_application(cdc_del, run_id=RUN_ID, now=delete_time)
+    projector = ScopedCdcProjector(
+        canonical_store=store, landing_store=landing, control_schema=CONTROL_SCHEMA
+    )
+
+    with pytest.raises(RuntimeError, match="Simulated database failure"):
+        projector.apply(SourceKind.DEVICE_LOG, f"device_log:{DEVICE_ID}", [plan])
+
+    # Verify that the row remains active (transaction rolled back, no half-applied state)
+    with landing._connect() as conn:
+        row = conn.execute(
+            "SELECT record_status FROM core.machine_status_events WHERE machine_id = %s",
+            (MACHINE_ID,),
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "active"
+
+        tomb_count = conn.execute(
+            f"SELECT COUNT(*) FROM {CONTROL_SCHEMA}.tombstones WHERE entity_id = %s",
+            (DEVICE_ID,),
+        ).fetchone()[0]
+        assert tomb_count == 0
 
 
 # ==============================================================================

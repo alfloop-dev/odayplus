@@ -695,6 +695,46 @@ class PsycopgCanonicalStore:
                             ),
                         )
                 else:
+                    soft_deleted = 0
+                    if mode is DeletePropagationMode.TOMBSTONE_PURGE and decision.purges_rows:
+                        soft_status = (
+                            event.context.get("soft_delete_status")
+                            if event.context
+                            else None
+                        )
+                        purged_at = event.purged_at
+                        for canonical_table, canonical_id in targets:
+                            if canonical_table == "core.machine_status_events":
+                                status_val = soft_status or "voided"
+                                cursor = connection.execute(
+                                    """
+                                    UPDATE core.machine_status_events AS target
+                                    SET record_status = %s, updated_at = %s
+                                    FROM core.stores AS scope
+                                    WHERE target.status_event_id = %s
+                                      AND target.store_id = scope.store_id
+                                      AND scope.tenant_id = %s
+                                      AND target.record_status IS DISTINCT FROM %s
+                                    """,
+                                    (status_val, purged_at, canonical_id, tenant_id, status_val),
+                                )
+                                soft_deleted += max(int(getattr(cursor, "rowcount", 0) or 0), 0)
+                            elif canonical_table == "core.transactions":
+                                status_val = soft_status or "voided"
+                                cursor = connection.execute(
+                                    """
+                                    UPDATE core.transactions AS target
+                                    SET transaction_status = %s, updated_at = %s
+                                    FROM core.stores AS scope
+                                    WHERE target.transaction_id = %s
+                                      AND target.store_id = scope.store_id
+                                      AND scope.tenant_id = %s
+                                      AND target.transaction_status IS DISTINCT FROM %s
+                                    """,
+                                    (status_val, purged_at, canonical_id, tenant_id, status_val),
+                                )
+                                soft_deleted += max(int(getattr(cursor, "rowcount", 0) or 0), 0)
+
                     retained = tuple(sorted({table for table, _ in targets}))
                     if not retained and recorded is not None and recorded.retained_targets:
                         retained = recorded.retained_targets
@@ -722,6 +762,7 @@ class PsycopgCanonicalStore:
                     purged_row_count=int(row[2]),
                     retained_targets=tuple(row[3] or ()) if len(row) > 3 else retained,
                     replay_count=int(row[1]),
+                    soft_deleted_count=soft_deleted if mode is DeletePropagationMode.TOMBSTONE_PURGE else 0,
                 )
 
     @staticmethod

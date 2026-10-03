@@ -943,6 +943,13 @@ class SoftDeleteDirective:
             f"AND scope.tenant_id = %s "
             f"AND (%s::bigint IS NULL OR lineage.source_version IS NULL "
             f"OR lineage.source_version <= %s::bigint) "
+            f"AND NOT EXISTS ("
+            f"SELECT 1 FROM {control_schema}.canonical_lineage AS newer_lineage "
+            f"WHERE newer_lineage.canonical_table = lineage.canonical_table "
+            f"AND newer_lineage.canonical_id = lineage.canonical_id "
+            f"AND newer_lineage.tenant_id = lineage.tenant_id "
+            f"AND %s::bigint IS NOT NULL "
+            f"AND newer_lineage.source_version > %s::bigint) "
             f"AND target.{self.status_column} IS DISTINCT FROM %s"
         )
         params = (
@@ -953,6 +960,8 @@ class SoftDeleteDirective:
             self.source_id,
             self.tenant_id,
             self.tenant_id,
+            self.source_version,
+            self.source_version,
             self.source_version,
             self.source_version,
             self.status_value,
@@ -1909,31 +1918,10 @@ class ScopedCdcProjector:
         for plan in plans:
             if plan.tombstone is None:
                 continue
-            if plan.soft_delete is not None:
-                result.soft_deleted += self._mark(plan.soft_delete)
-            elif plan.lifecycle_gap:
+            if plan.lifecycle_gap:
                 result.lifecycle_gaps.append(plan.lifecycle_gap)
             outcome = self._canonical.tombstone_record(plan.tombstone)
-            if (
-                plan.soft_delete is None
-                and not plan.lifecycle_gap
-                and outcome.tenant_id is not None
-                and outcome.outcome in {DeleteOutcome.APPLIED, DeleteOutcome.REPLAYED}
-            ):
-                policy = cdc_policy(plan.envelope.source_kind)
-                if policy.lifecycle_column is not None:
-                    directive = SoftDeleteDirective(
-                        canonical_table=policy.canonical_table,
-                        canonical_id_column=policy.canonical_id_column,
-                        status_column=policy.lifecycle_column,
-                        status_value=RETIREMENT_STATUS[plan.envelope.operation],
-                        source_kind=plan.envelope.source_kind,
-                        source_id=plan.envelope.source_id,
-                        tenant_id=outcome.tenant_id,
-                        server_timestamp=plan.envelope.server_timestamp,
-                        source_version=plan.envelope.source_version,
-                    )
-                    result.soft_deleted += self._mark(directive)
+            result.soft_deleted += getattr(outcome, "soft_deleted_count", 0)
             result.tombstoned += 1
             key = outcome.outcome.value
             result.delete_outcomes[key] = result.delete_outcomes.get(key, 0) + 1
