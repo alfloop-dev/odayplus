@@ -17,19 +17,28 @@ review submission. This file cannot embed them without moving the head it
 describes.
 
 ```
-uv run --frozen --python 3.12 pytest -q -p no:cacheprovider tests/release/test_release_profile.py tests/e2e/test_live_e2e_gate_dev_admin.py tests/e2e/test_live_e2e_gate.py
-uv run --frozen --python 3.12 pytest -q -p no:cacheprovider tests/release/test_release_manifest.py tests/release/test_runtime_admission.py tests/release/test_build_release_handoff.py tests/ops/test_deploy_workflow_contract.py tests/reliability/test_health_endpoints.py tests/reliability/test_live_data_fail_closed.py tests/ops/test_cloud_run_live_deployment.py
-uv run --frozen --python 3.12 ruff check delivery_toolchain/e2e/check_live_e2e_gate.py delivery_toolchain/release apps/api/oday_api/main.py apps/api/oday_api/runtime_mode.py tests/release/test_release_profile.py tests/e2e/test_live_e2e_gate_dev_admin.py
+uv run --frozen --python 3.12 pytest -o addopts="" -q -p no:cacheprovider tests/identity tests/security/test_user_role_management.py tests/release/test_release_profile.py tests/e2e/test_live_e2e_gate_dev_admin.py tests/e2e/test_live_e2e_gate.py tests/e2e/test_password_first_security_e2e.py
+uv run --frozen --python 3.12 pytest -o addopts="" -q -p no:cacheprovider tests/ops tests/contract tests/security tests/e2e tests/release tests/integration/test_operator_live_domain_modules.py
+(cd apps/web && npx vitest run && npx tsc --noEmit)
+uv run --frozen --python 3.12 ruff check <changed python files>
+uv run --frozen python delivery_toolchain/security/secret_scan.py
 ```
 
-The first command holds the new behaviour. The second covers the release,
-admission, workflow and readiness contracts this change touches. Required PR CI
-runs as usual on the PR head.
+The first command holds the new behaviour: the profile and gate, the identity
+bootstrap and identity-backed user administration against a real PostgreSQL 16
+(`INTAKE_TEST_DATABASE_URL` or the bundled `pgserver`), and the password-first
+boundary. The second covers the release, admission, workflow, contract and
+security suites this change touches. The third covers the Operator Web
+(Logout, admin and password views). Required PR CI runs as usual on the PR
+head.
 
-## Known local-only failures (not caused by this change)
+PostgreSQL rows created by those tests are test inputs in throwaway databases,
+not live evidence.
+
+## Previously local-only failures
 
 `tests/e2e/test_release_gate_registry.py::test_product_gate_accepts_expected_sha`
 and `::test_dev_merge_gate_accepts_valid_registry_and_require_go_checks_packet`
-fail on this worker host with `Cannot find module '@playwright/test'`.
-`node_modules` is not installed here. Those tests list the Playwright suite and
-touch nothing this change modifies. CI installs the Node dependencies.
+failed on the first worker run with `Cannot find module '@playwright/test'`
+because `node_modules` was absent. The locked Node dependencies are now
+installed on the worker (`npm ci`) and both run in the second command above.

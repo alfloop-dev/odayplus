@@ -21,7 +21,8 @@ Rules
   write is constrained to it. An account in another tenant is indistinguishable
   from a missing one.
 * No account manufacturing: accounts (and their passwords) are created only by
-  the deployment bootstrap or invitation flow. Saving an unknown subject fails.
+  the deployment bootstrap (and, once implemented, the contract's invitation
+  flow). Saving an unknown subject fails.
 * One transaction per mutation: the identity rows, session revocation and the
   audit event share ``engine.lock``; if the audit write fails nothing commits.
 * Disabling an account revokes all of its sessions immediately (Contract §7.3);

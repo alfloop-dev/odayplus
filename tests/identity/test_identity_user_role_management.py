@@ -54,7 +54,12 @@ SECRET = "Bootstrap-Secret-For-Tests-5521"
 
 @pytest.fixture
 def stack(intake_blank_db: Any) -> Any:
-    from shared.identity import SessionConfig, SessionService, SqlIdentityStore, SqlSessionRepository
+    from shared.identity import (
+        SessionConfig,
+        SessionService,
+        SqlIdentityStore,
+        SqlSessionRepository,
+    )
     from shared.infrastructure.persistence.audit_log import DurableAuditLog
     from shared.infrastructure.persistence.postgresql import PostgresEngine
 

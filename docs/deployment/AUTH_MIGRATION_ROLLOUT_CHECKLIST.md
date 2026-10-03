@@ -20,6 +20,21 @@ Source: `apps/web/README.md`、`infra/terraform/README.md`、
   與 JWKS/verification inputs 已配置。
 - [ ] migration/reconciliation job 已完成，API `/readiness` 回 HTTP 200。
 
+### First administrator bootstrap（Contract §7.2，ODP-DEV-ADMIN-RELEASE-READINESS-001）
+
+- [ ] 只透過部署期 `python -m shared.identity.bootstrap` 建立首個帳號；沒有任何
+  HTTP route。執行者必須持有目標 database 憑證。
+- [ ] 一次性 secret 由 Secret Manager 注入 `ODP_IDENTITY_BOOTSTRAP_SECRET`，並設定
+  `ODP_IDENTITY_BOOTSTRAP_EXPIRES_AT`（未來、最多 72 小時）、tenant UUID、
+  username、email；不符密碼政策、格式錯誤或過期即拒絕且不連 DB。
+- [ ] receipt 只含 `status`、`account_id`、`tenant_id`、`username`、
+  `audit_event_id`；不含 secret 或 hash。已有任一 `active` 帳號時為 no-op。
+- [ ] `identity.account.bootstrap` 稽核事件已寫入 hash chain；帳號只有
+  `platform_admin` 且 `must_change=true`。
+- [ ] 首次登入在變更密碼前，API 對該 session 一律回 403
+  `PASSWORD_CHANGE_REQUIRED`；經 `/operator?view=password` 變更後才可使用
+  `/operator?view=admin`。
+
 ## 2. Authentication modes
 
 ### Local default
