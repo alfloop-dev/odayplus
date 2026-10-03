@@ -1,6 +1,13 @@
 """What `ODP-FR-AVM-001`'s `DEPRECIATION` member is allowed to claim.
 
-The member is the only absent one of the six. A contract now exists for it --
+2026-10-03 (ODP-REMEDIATION-TRUTH-RECONCILIATION-001): the implementation merged
+in PR #1295, so the member is now `satisfied` and held at `BLOCKED_BY_EVIDENCE`
+on Finance activation evidence. The history below describes the contract-era
+shape; the tests now pin the post-implementation one, and
+`tests/governance/test_remediation_truth_reconciliation.py` refuses a
+`VERIFIED` promotion the checker alone would accept.
+
+The member was the only absent one of the six. A contract now exists for it --
 `docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md` -- and the temptation
 a written contract creates is to let the writing stand in for the work: mark the
 member satisfied, or `VERIFIED`, or rule it out with a sentence. Each of those
@@ -101,8 +108,8 @@ def _write_manifest(tmp_path: Path, manifest: dict) -> Path:
     return path
 
 
-def test_the_six_members_are_registered_and_five_of_them_resolve() -> None:
-    """Five satisfied members must name code that exists; the sixth is the gap."""
+def test_the_six_members_are_registered_and_all_of_them_resolve() -> None:
+    """All six name code that exists; depreciation is the one without live evidence."""
     manifest = _load_manifest()
     requirement = _requirement(manifest)
 
@@ -125,19 +132,22 @@ def test_the_six_members_are_registered_and_five_of_them_resolve() -> None:
         assert member["disposition"]["state"] == "VERIFIED"
         assert resolve(REPO_ROOT, member["evidence"]) is None, name
 
-    assert by_name["DEPRECIATION"]["status"] == "absent"
+    depreciation = by_name["DEPRECIATION"]
+    assert depreciation["status"] == "satisfied"
+    assert resolve(REPO_ROOT, depreciation["evidence"]) is None
 
 
-def test_depreciation_is_implementation_ready_with_an_owner_and_a_batch() -> None:
+def test_depreciation_is_held_on_finance_activation_evidence() -> None:
     disposition = _members(_load_manifest())["DEPRECIATION"]["disposition"]
 
-    assert disposition["state"] == "IMPLEMENTATION_READY"
-    assert disposition["assigned_to"].strip()
-    assert disposition["target_phase"].strip()
-    assert disposition["acceptance_criteria"].strip()
+    assert disposition["state"] == "BLOCKED_BY_EVIDENCE"
+    assert "DepreciationCutoverEvidence" in disposition["evidence_needed"]
+    assert disposition["evidence_owner"].strip()
+    assert disposition["next_review_date"].strip()
     assert disposition["rationale"].strip()
+    assert disposition["previous_state"] == "IMPLEMENTATION_READY"
 
-    # The state names a scheduled implementation, not a closed gap or a ruling.
+    # Code delivery is not run-time acceptance, and nobody ruled on it.
     assert disposition["state"] not in {"VERIFIED", "DECIDED"}
 
 
@@ -180,8 +190,9 @@ def test_the_disposition_points_at_documents_that_exist() -> None:
 
 def test_the_acceptance_criteria_name_specs_that_exist() -> None:
     """The criteria are executable and name specs that exist."""
-    disposition = _members(_load_manifest())["DEPRECIATION"]["disposition"]
-    assert "modules/avm/tests/test_avm_depreciation_contract.py" in disposition["acceptance_criteria"]
+    history = _members(_load_manifest())["DEPRECIATION"]["disposition"]["history"]
+    contract_era = next(h for h in history if h["state"] == "IMPLEMENTATION_READY")
+    assert "modules/avm/tests/test_avm_depreciation_contract.py" in contract_era["acceptance_criteria"]
 
     tree = ast.parse(SPEC_FILE.read_text(encoding="utf-8"))
     functions = {
@@ -196,11 +207,12 @@ def test_the_acceptance_criteria_name_specs_that_exist() -> None:
 def test_the_live_manifest_passes_the_governance_checker() -> None:
     failures, tally = check(REPO_ROOT, MANIFEST_PATH, reference_date=date(2026, 9, 3))
     assert failures == [], "\n".join(f.describe() for f in failures)
-    assert tally["dispositions"]["IMPLEMENTATION_READY"] >= 3
+    assert tally["dispositions"]["BLOCKED_BY_EVIDENCE"] >= 1
 
 
-def test_claiming_the_gap_verified_is_refused(tmp_path: Path) -> None:
+def test_claiming_an_absent_member_verified_is_refused(tmp_path: Path) -> None:
     manifest = _load_manifest()
+    _members(manifest)["DEPRECIATION"]["status"] = "absent"
     _members(manifest)["DEPRECIATION"]["disposition"]["state"] = "VERIFIED"
 
     failures, _ = check(REPO_ROOT, _write_manifest(tmp_path, manifest), reference_date=date(2026, 9, 3))
@@ -234,6 +246,7 @@ def test_an_ai_signed_ruling_on_the_gap_is_refused(tmp_path: Path) -> None:
 def test_dropping_the_disposition_block_is_refused(tmp_path: Path) -> None:
     """The failure this task was reopened for: an absent member with only a note."""
     manifest = _load_manifest()
+    _members(manifest)["DEPRECIATION"]["status"] = "absent"
     del _members(manifest)["DEPRECIATION"]["disposition"]
 
     failures, _ = check(REPO_ROOT, _write_manifest(tmp_path, manifest), reference_date=date(2026, 9, 3))
