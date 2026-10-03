@@ -20,12 +20,13 @@
    - 任何涉及 live 運行環境的 NFR 觀測窗、CDC 實體叢集驗證、Merge Queue 真實流量觀測，均維持 `BLOCKED_BY_EVIDENCE` 直至真實部署與收據產生。
 2. **歷史已完成工程 (Historical Source Task) 與當前作用中執行通道 (Active Canonical Lane) 嚴格分離**：
    - 已 archived done 的任務（`owner_inventory.json` 的 `archived_tasks`，含 `ODP-MODEL-ARTIFACT-HISTORY-RECOVERY-001` 這類有界調查）只能當 `historical_source_task`。
-   - `canonical_owner_task` 與 `prerequisite_tasks` 必須出現在 inventory 的 `active_tasks`（狀態 todo/in_progress/review/blocked），且該 lane 的 `lane_roles` 要涵蓋該項 stage；其他任意 ID 一律拒絕。
+   - `canonical_owner_task` 與 `prerequisite_tasks` 必須出現在 inventory 的 `active_tasks`（狀態 todo/in_progress/review/blocked），且 owner lane 的 `lane_roles` 要涵蓋該項 stage；其他任意 ID 一律拒絕。
    - 找不到既有 lane 的項目（ADJUST、AVM Finance）記為 `OWNER_RECONCILIATION_REQUIRED`，列出提議 lane、需由誰做什麼與缺少的權責，不宣稱已承接。Wave 5+ 是 backlog 參照（`deferred_backlog_ref`），不偽裝成 task。
 3. **階段固定、拒絕循環依賴 (Anti-Circularity)**：
    - 每項只屬一個 stage：`pre_production_admission`、`code_remediation`、`production_cutover`、`post_deploy_observation`、`dev_runtime_observation`、`deferred`；stage 決定 `pre_prod_blocking`／`post_prod_observation`／`requires_production_deployment` 三旗標，不一致即拒絕。
    - 准入項不得需要 production 部署；production 上的 24h／多日／整月窗只能是 `post_deploy_observation`。
-   - 原 SHARED-008 拆為 staging 准入讀回與 production 0%-green cutover 讀回；RPO-004、CDC DDL 同理；PARTIAL 拆為業務範圍裁定、staging intake 演練、production 驗收三段，保留原 live 義務。
+   - `prerequisite_tasks` 的每個 `lane_roles` 都不得晚於該項 stage（順序：准入/code remediation/dev runtime < production cutover < post-deploy < deferred）；混合角色的 lane（如 `ODP-PROD-BLUEGREEN-ROLLOUT-001` 同時承擔准入決策與 cutover）因其完成包含 cutover，不能當准入項的前置。H06 intake 與 ModelRisk 的准入前置維持不變。
+   - 原 SHARED-008 拆為 staging 准入讀回與 production 0%-green cutover 讀回；RPO-004、CDC DDL 同理（RPO-004 staging 演練同時要求 RTO ≤ 240 min 與可稽核的資料遺失窗 ≤ 60 min 收據：故障前最後一筆來源交易時間與還原點時間；production 只做 backup/PITR 設定讀回）；PARTIAL 拆為業務範圍裁定、staging intake 演練、production 驗收三段，保留原 live 義務。
 4. **單一發布閘門真相 (Single Canonical Gate Truth)**：
    - 本任務產出承接矩陣與處置對照，**不重寫、不取代** `docs/evidence/gates/RELEASE_GATE_REGISTRY.json` 與 `RELEASE_MANIFEST.json`。
    - `PRODUCT_RELEASE_GO_NO_GO.md` 中的 2026-06-29 PR #82 歷史評估已被明確標記為歷史脈絡，當前發布狀態回歸唯一 Canonical Gate。
@@ -85,7 +86,7 @@
 | `odayplus` | **#607** | `a70b62ca13168927c1500c3e24a8603885681331` | 1 檔 +329/-0 | Added docs/evidence/DEV_PROGRESS_SPEC_GAP_AUDIT_2026-08-03.md (early August 2026 gap audit). | September 2026 remediation architecture: ODP_REMEDIATION_PLAN_2026-09-03.md, ODP_OPEN_DECISIONS_2026-09-03.md, EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md, and EXECUTION.md. | 無 | **可結案 (Historical Snapshot)** |
 | `oday-data-platform` | **#1** | `0577773d0457d7b51e93d2e1913f70002227fdb4` | 6 檔 +305/-35 | 6 files: deploy/k8s/dev/configmap.yaml (+2), src/oday_data_platform/defs/assets.py (+10/-2), src/oday_data_platform/defs/raw_transactions.py (+57/-25), src/oday_data_platform/defs/schedules.py (added, +94), tests/test_assets.py (+73/-8), tests/test_schedules.py (added, +69): transaction daily-lookback job/schedule, env-configurable partition start (ODAY_TRANSACTIONS_AUTOMATION_LOOKBACK_DAYS), count-mismatch failure and automation run metadata. | Unmerged: DPF #63 and #77 are open masked-snapshot and bounded-capture work, not functional replacements. On dev 24c40ae7 schedules.py does not exist and raw_transactions.py keeps a fixed TRANSACTIONS_PARTITION_LOOKBACK_DAYS = 365 partition start. | 有 | **保留／需比對 (Needs Comparison)** |
 
-比對基準：odayplus `origin/dev` `734dcb652edf`；data-platform dev `24c40ae7`（DPF#1 的 PR base 是 `main` `e079199b`）。本任務未關閉、合併或編輯任何 PR；建議僅供 PR 作者／owner 決定。
+比對基準：odayplus `origin/dev` `734dcb652edf`；data-platform dev `24c40ae7`（DPF#1 的 GitHub PR base.sha 是 `main` `13f21d55`；目前 data-platform main tip 是 `e079199b`）。本任務未關閉、合併或編輯任何 PR；建議僅供 PR 作者／owner 決定。
 
 ### 作用中正式交付 PR (Active In-flight PRs — 嚴禁重複開立或誤關閉)
 - `alfloop-dev/odayplus` **#1381** (`task/ODP-DEV-LIVE-DEPLOY-EXECUTION-001`)

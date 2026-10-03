@@ -87,6 +87,17 @@ STAGE_FLAGS = {
     "deferred": (False, False, False),
 }
 
+# Completion order of stages. A prerequisite lane finishes only when all of its lane roles do,
+# so every role of a prerequisite must rank at or before the dependent obligation's stage.
+STAGE_RANK = {
+    "pre_production_admission": 0,
+    "code_remediation": 0,
+    "dev_runtime_observation": 0,
+    "production_cutover": 1,
+    "post_deploy_observation": 2,
+    "deferred": 3,
+}
+
 
 def load_owner_inventory() -> dict:
     with open(OWNER_INVENTORY_PATH, encoding="utf-8") as f:
@@ -201,7 +212,13 @@ def validate_obligation(item: dict, inventory: dict) -> None:
         if item["real_status"] == "OWNER_RECONCILIATION_REQUIRED":
             raise ValueError(f"OWNER_RECONCILIATION_REQUIRED obligation {oid} cannot also claim an owner")
     for task_id in item.get("prerequisite_tasks", []):
-        require_active(task_id, "prerequisite_task")
+        prereq = require_active(task_id, "prerequisite_task")
+        later = [r for r in prereq["lane_roles"] if STAGE_RANK[r] > STAGE_RANK[item["stage"]]]
+        if later:
+            raise ValueError(
+                f"Prerequisite phase conflict in {oid}: stage '{item['stage']}' cannot wait for "
+                f"{task_id}, whose lane also serves later stage(s) {later}"
+            )
 
     # 7. Phase consistency: the stage fixes all three ordering flags.
     expected = STAGE_FLAGS[item["stage"]]
@@ -347,7 +364,16 @@ def test_nfr_obligations_and_observation_windows(obligation_matrix: dict) -> Non
     assert drill["stage"] == "pre_production_admission"
     assert drill["target_environments"] == ["staging"]
     assert drill["observation_window_type"] == "drill_event"
-    assert nfrs["ODP-NFR-RPO-004-PROD-BACKUP-READBACK"]["stage"] == "production_cutover"
+    # RPO is a measured data-loss window, not only backup/PITR configuration.
+    rpo_receipts = [r for r in drill["required_receipts"] if "data-loss window" in r]
+    assert len(rpo_receipts) == 1
+    assert "<= 60 min" in rpo_receipts[0]
+    assert "recovered point-in-time timestamp" in rpo_receipts[0]
+    assert "last committed source transaction timestamp" in rpo_receipts[0]
+    assert any("RTO <= 240 min" in r for r in drill["required_receipts"])
+    prod_backup = nfrs["ODP-NFR-RPO-004-PROD-BACKUP-READBACK"]
+    assert prod_backup["stage"] == "production_cutover"
+    assert not any("data-loss window" in r for r in prod_backup["required_receipts"])
 
 
 def test_cdc_live_acceptance_gaps(obligation_matrix: dict) -> None:
@@ -477,6 +503,28 @@ def test_mutated_negative_cases(obligation_matrix: dict, inventory: dict) -> Non
     rejects(_mutate(base_item, canonical_owner_task="DEFERRED-BACKLOG-WAVE5"), "Deferred backlog reference")
     rejects(_mutate(base_item, prerequisite_tasks=["ODP-NOT-A-REAL-TASK-999"]), "Unknown owner task")
     rejects(_mutate(base_item, canonical_owner_task="ODP-POSTDEPLOY-WATCH-CLOSEOUT-001"), "Owner lane mismatch")
+
+    # Prerequisite phase compatibility: admission never waits for post-deploy or cutover lanes.
+    rejects(
+        _mutate(base_item, prerequisite_tasks=["ODP-POSTDEPLOY-WATCH-CLOSEOUT-001"]),
+        "Prerequisite phase conflict",
+    )
+    # Mixed-role rollout lane: it consumes an admission decision but completes at cutover.
+    rejects(
+        _mutate(base_item, prerequisite_tasks=["ODP-PROD-BLUEGREEN-ROLLOUT-001"]),
+        "Prerequisite phase conflict",
+    )
+    rejects(
+        _mutate(items["ODP-SIGN-OFF-MODEL-RISK"],
+                prerequisite_tasks=["ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001", "ODP-POSTDEPLOY-WATCH-CLOSEOUT-001"]),
+        "Prerequisite phase conflict",
+    )
+    # Legitimate orderings stay accepted: admission-on-admission and post-deploy-on-cutover.
+    validate_obligation(items["ODP-PARTIAL-H06-STAGING-INTAKE"], inventory)
+    validate_obligation(items["ODP-SIGN-OFF-MODEL-RISK"], inventory)
+    validate_obligation(
+        _mutate(items["ODP-NFR-PERF-001-PROD"], prerequisite_tasks=["ODP-PROD-BLUEGREEN-ROLLOUT-001"]), inventory
+    )
 
     # Inventory status is enforced, not just membership.
     stale = copy.deepcopy(inventory)

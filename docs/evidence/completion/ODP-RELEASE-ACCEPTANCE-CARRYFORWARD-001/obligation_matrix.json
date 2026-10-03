@@ -213,7 +213,8 @@
       "observation_window_type": "drill_event",
       "required_receipts": [
         "gcloud sql instances describe readback on the staging instance verifying backupConfiguration and PITR enabled",
-        "Timed database restore drill execution log on staging verifying RTO <= 240 min and core query validation (ODP-AC-NFR-007)"
+        "Timed database restore drill execution log on staging verifying RTO <= 240 min and core query validation (ODP-AC-NFR-007)",
+        "Restore drill data-loss window receipt on staging: last committed source transaction timestamp before the simulated failure and the recovered point-in-time timestamp, with the measured data-loss window <= 60 min (RPO per docs/design/ODP-PGAP-RELIABILITY-001_SLO_AND_DR_TARGETS_RATIFICATION.md section 3)"
       ],
       "trigger_condition": "Deployed staging database instance available for timed restoration drill",
       "real_status": "BLOCKED_BY_EVIDENCE",
