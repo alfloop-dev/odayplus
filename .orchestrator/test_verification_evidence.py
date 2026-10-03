@@ -6,6 +6,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import verification_evidence as ve
 
@@ -444,6 +445,107 @@ class BaselineDedupeTests(unittest.TestCase):
             task_id="T-2",
         )
         self.assertTrue(decision.allowed)
+
+
+class VerificationCommandIdentityTests(unittest.TestCase):
+    HEAD = "b" * 40
+
+    def setUp(self) -> None:
+        # Exercise the production audit/dedupe/receipt path without Docker or
+        # executing a suite. Only the command execution boundary is replaced.
+        patcher = patch.object(ve, "run_verification_command", side_effect=self._result)
+        self.runner = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @staticmethod
+    def _result(command, **kwargs):
+        return {
+            "audit": ve.audit_command(command),
+            "exit_code": 0,
+            "duration_seconds": 0.1,
+            "started_at": "2026-10-03T00:00:00Z",
+            "finished_at": "2026-10-03T00:00:01Z",
+            "timed_out": False,
+        }
+
+    def _verify(self, command, receipts=(), **kwargs):
+        return ve.verify_and_build_receipt(
+            command, task_id="T-IDENTITY", head_sha=self.HEAD, receipts=receipts, **kwargs
+        )
+
+    def test_different_non_test_commands_each_have_a_baseline_and_prove_the_gate(self) -> None:
+        commands = ["git diff --check", "docker build -t candidate ."]
+        receipts = []
+        for command in commands:
+            decision, receipt = self._verify(command, receipts)
+            self.assertTrue(decision.allowed, decision.reason)
+            self.assertEqual(decision.kind, ve.KIND_BASELINE)
+            self.assertEqual(decision.attempt, 1)
+            self.assertEqual(receipt["head_sha"], self.HEAD)
+            self.assertEqual(receipt["command"], command)
+            self.assertEqual(receipt["schema_version"], ve.SCHEMA_VERSION)
+            self.assertEqual(ve.validate_receipt(receipt), [])
+            receipts.append(receipt)
+        self.assertEqual(receipts[0]["selection"], receipts[1]["selection"])
+        gate = ve.evaluate_finalize_gate(
+            commands=commands, head_sha=self.HEAD, receipts=receipts, task_id="T-IDENTITY"
+        )
+        self.assertTrue(gate.ok, gate.problems)
+        self.assertEqual(gate.satisfied, tuple(commands))
+        self.assertEqual(self.runner.call_count, 2)
+
+    def test_same_non_test_command_requires_an_explicit_retry_reason(self) -> None:
+        _, receipt = self._verify("git diff --check")
+        for reason in (None, "flaky"):
+            decision, duplicate = self._verify("git  diff --check", [receipt], retry_reason=reason)
+            self.assertFalse(decision.allowed)
+            self.assertEqual(decision.kind, ve.KIND_DUPLICATE)
+            self.assertIsNone(duplicate)
+        self.assertEqual(self.runner.call_count, 1)
+        decision, retried = self._verify(
+            "git diff --check", [receipt], retry_reason="checking after a tool environment repair"
+        )
+        self.assertEqual(decision.kind, ve.KIND_RETRY)
+        self.assertEqual(retried["attempt"], 2)
+        self.assertEqual(self.runner.call_count, 2)
+
+    def test_non_test_command_does_not_collide_with_pytest_in_either_order(self) -> None:
+        for pytest_command in ("pytest -q", "pytest -q tests/unit.py"):
+            non_test = "git diff --check" if pytest_command == "pytest -q" else "python tests/unit.py"
+            self.assertEqual(ve.extract_selection(non_test), ve.extract_selection(pytest_command))
+            for commands in ((non_test, pytest_command), (pytest_command, non_test)):
+                with self.subTest(commands=commands):
+                    _, receipt = self._verify(commands[0])
+                    decision, second = self._verify(commands[1], [receipt])
+                    self.assertTrue(decision.allowed, decision.reason)
+                    self.assertEqual(decision.kind, ve.KIND_BASELINE)
+                    self.assertEqual(second["attempt"], 1)
+
+    def test_pytest_format_flags_do_not_authorize_another_measurement(self) -> None:
+        for selection in ("", "tests/unit.py"):
+            _, receipt = self._verify(f"pytest -q {selection}")
+            for flags in ("-vv", "--tb=short", "--color=yes"):
+                with self.subTest(selection=selection, flags=flags):
+                    count = self.runner.call_count
+                    decision, duplicate = self._verify(f"pytest {flags} {selection}", [receipt])
+                    self.assertFalse(decision.allowed)
+                    self.assertEqual(decision.kind, ve.KIND_DUPLICATE)
+                    self.assertIsNone(duplicate)
+                    self.assertEqual(self.runner.call_count, count)
+
+    def test_non_test_failure_requires_retry_and_interruption_resumes(self) -> None:
+        for exit_code, expected_kind in ((1, ve.KIND_DUPLICATE), (-15, ve.KIND_RESUME)):
+            with self.subTest(exit_code=exit_code):
+                receipt = ve.build_receipt(
+                    task_id="T-IDENTITY", head_sha=self.HEAD, command="git diff --check",
+                    exit_code=exit_code, duration_seconds=0.1,
+                )
+                decision, result = self._verify("git diff --check", [receipt])
+                self.assertEqual(decision.kind, expected_kind)
+                self.assertEqual(decision.allowed, exit_code == -15)
+                self.assertEqual(decision.attempt, 2)
+                if result is not None:
+                    self.assertEqual(result["run_kind"], ve.KIND_RESUME)
 
 
 class RerunScopeTests(unittest.TestCase):
