@@ -347,6 +347,39 @@ The receipt store records exact head/command/exit/duration/selection; the tracke
 red receipt does not substitute for final-head green proof. No wider supervisor
 suite or already-measured head/selection rerun is required.
 
+## CI fixture-clock recovery (Pi, after head `723e94a8dd33`)
+
+This is the authorized test-only CI recovery, not an eleventh substantive
+review rejection. All ten findings and independent Codex2 review remain intact.
+The security test file was unchanged versus fetched `origin/dev` `e126cba49b93`
+before this repair. Production auth files remain unchanged.
+
+Original red evidence: GitHub run `37126559452`, product-security job
+`111212942283`, testing merge `c1456072c844` of head `723e94a8dd33` into
+`e126cba49b93`. `/tmp/pr1402-security-job.log` has SHA256
+`54fecb0897ffcc3d91107cf661fd0f376fa0c9e71d39603129a1202ee0f20b31`.
+The original log reports the three tenant authorization matrices failing at
+valid-waiver positives, `3 failed, 461 passed, 5 warnings in 168.06s`, followed
+by `make security` exit 2. The fixed fixture expiry was 2026-10-03 12:00 UTC;
+the job evaluated it after 13:36 UTC. Orchestrator CI passed. This original
+CI evidence is the red run; no repeat of the whole security suite is needed.
+
+The module-local, per-test monkeypatch freezes only `shared.auth.tenant`'s
+`datetime.now` boundary at the existing `NOW`. It preserves real datetime
+instance checks and explicit `on` injection, and automatically restores the
+clock after each test. All production entry calls, tenant/signature/registry/
+scope checks, audit assertions, and expiry dates are unchanged. New default-
+clock cases assert allow one microsecond before expiry and deny at/after exact
+expiry; explicit `on=NOW` still takes priority. No production bypass or live
+waiver is created.
+
+Run all four canonical declarations once at the new committed head via
+`delivery_toolchain/git/task_verification.py run`, including the newly declared
+`uv run --frozen --python 3.12 pytest -q tests/security/test_tenant_isolation_guard.py`.
+The existing receipt gate binds exact SHA, command, selection, duration and real
+exit code before `task_finalize.sh` publication. Do not interpret this repair
+note as a green receipt or review approval. No runtime activation is performed.
+
 ## Runtime rollout and merge follow-up
 
 **Source-only correction: no supervisor restart, runtime switch, XR/gate/IAM or
