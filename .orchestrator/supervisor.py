@@ -4311,7 +4311,9 @@ _CODE_REFERENCE_PATH = (
 )
 _CODE_REFERENCE_CLAUSE_END = r"\s*(?=[;；\n]|$)"
 _CODE_REFERENCE_LABEL_CLAUSE_RE = re.compile(
-    r"(?:^|(?<=[;；\n]))\s*(?:refs?|see)\s*[:=]?\s*"
+    # A label must end at a separator: `seed/dataset` and `reference.json`
+    # are artifacts, not `see`/`ref` clauses with an empty delimiter.
+    r"(?:^|(?<=[;；\n]))\s*(?:refs?|see)(?:\s*[:=]\s*|\s+)"
     + _CODE_REFERENCE_PATH
     + r"(?:\s*,\s*" + _CODE_REFERENCE_PATH + r")*"
     + _CODE_REFERENCE_CLAUSE_END
@@ -4378,12 +4380,19 @@ def blocked_task_prose_context(
         )
     )
 
-    # Mask structural identities before preserving any prose gate evidence.
+    # Mask only complete structural identity tokens, never substrings in
+    # requirements (`Pi` inside `API`) or artifact/path components. Include
+    # path/identifier punctuation in the boundary so `Pi.json`, `src/Pi` and
+    # longer task IDs stay intact for fail-closed gate classification.
     context = raw_context.casefold()
     for identifier in identifiers:
         token = identifier.strip().casefold()
         if token:
-            context = context.replace(token, " ")
+            context = re.sub(
+                r"(?<![\w./~+\-])" + re.escape(token) + r"(?![\w./~+\-])",
+                " ",
+                context,
+            )
 
     # 1. Strip code blocks and inline backticks. In canonical blocker prose,
     # Markdown quoting is not proof of code: `human approval`, `pending_human`

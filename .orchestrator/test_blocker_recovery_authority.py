@@ -100,6 +100,8 @@ def set_owner(config, status, owner):
     "reference.json; provider handoff pending",
     "waiting for API release; provider handoff pending",
     "./seed/dataset; provider handoff pending",
+    "Pi.provider; provider handoff pending",
+    "provider.Pi; provider handoff pending",
 ])
 def test_reference_prefix_and_identity_substrings_are_not_release_authority(
     board, completed_dependency, owner, blocker_message,
@@ -124,6 +126,7 @@ def test_reference_prefix_and_identity_substrings_are_not_release_authority(
 @pytest.mark.parametrize("owner", ["Codex", "Pi"])
 @pytest.mark.parametrize("reference", [
     "refs=seed/dataset", "ref:reference.json", "see seed/dataset", "refs reference.json",
+    "refs=Pi.provider",
 ])
 def test_delimited_references_and_complete_agent_identities_still_recover(
     board, completed_dependency, owner, reference,
