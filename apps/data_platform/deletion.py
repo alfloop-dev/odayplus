@@ -247,6 +247,7 @@ class DeleteResult:
     purged_row_count: int = 0
     retained_targets: tuple[str, ...] = ()
     replay_count: int = 0
+    soft_deleted_count: int = 0
 
     @property
     def rejected(self) -> bool:
@@ -263,6 +264,7 @@ class DeleteResult:
             "purged_row_count": self.purged_row_count,
             "retained_targets": list(self.retained_targets),
             "replay_count": self.replay_count,
+            "soft_deleted_count": self.soft_deleted_count,
             "detail": self.detail,
         }
 
