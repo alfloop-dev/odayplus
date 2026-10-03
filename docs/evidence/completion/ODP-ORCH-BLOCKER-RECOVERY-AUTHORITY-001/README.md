@@ -301,6 +301,52 @@ head, with exact command/head/exit/duration/selection receipts in the existing
 not substituted for exact-head green proof. No broader suite, live gate
 mutation, worker launch or runtime rollout is authorized by these tests.
 
+## Reopen 10: prerequisites are not routing noise (Pi)
+
+Canonical state confirmed Pi ownership and Human/Ops continuation consumption;
+prior review findings/counts and Codex2 independence remain unchanged.
+`origin/dev` was fetched and inspected (base `e126cba49b93`); no base merge,
+history rewrite, live XR/gate change or runtime action was needed.
+
+Regression anchor `58bd73013c63` adds production-dispatch negatives for
+`waiting for dependencies`, `waiting for upstream dependency` and
+`waiting for dependency` without a colon/kind, plus prerequisite/upstream
+variants. Each is exercised as a canonical open blocker after a real ordinary
+note, as retained `blocked_reason`, and as task `next`, with no declared
+resolver authority. Assertions require unchanged board, zero enqueue/launch
+and no admission claim. Positive controls require resolver-completed
+dependencies to resolve/enqueue both with and without routing prose, and retain
+the legitimate auto-reassigned/sidecar-only routing case.
+
+At that anchor the declared two-file verification exits **1**, 6.508s, receipt
+`8ac5be0da6bc92ec`, copied as `prerequisite-authority-red.json`. It exposes false
+release negatives and rejected dependency-only positives, not collection
+failure. The existing AutomaticRecoveryTests selection exits **0**, 1.833s,
+receipt `dfbf1d2a2571d4dc`; diff exits 0, 0.015s, `3bc8dbc086415eee`.
+
+The fix removes prerequisite words from the routing token allowance. A shared
+word-boundary grammar recognizes them regardless of punctuation; only a
+nonempty canonical `depends_on` satisfied by the resolver permits removing
+them. A dependency-only residual need not contain a routing marker, but all
+remaining words must still pass the existing fail-closed classifier. Independent
+hard/unknown requirements, artifacts and unknown dependency IDs remain blocking.
+No permissive token was added and no existing assertion was removed.
+
+Unicode-aware token splitting remains intact (no ASCII-only extraction).
+Production-entry coverage retains the exact `仍欠業主准許；provider handoff pending`
+blocker with an ordinary routing note, and adds Chinese prerequisite, German
+and Arabic unknown conditions and mixed prerequisite/independent requirements.
+Existing structured gates, resolved history, missing snapshots, canonical
+snapshot/dependency wiring, CAS/concurrent-blocker protections and lawful
+routing recovery remain unchanged. The boundary generator was run; its tracked
+inventory is unchanged because no code file was added.
+
+Before publication, run the three declared commands via
+`delivery_toolchain/git/task_verification.py run` on the final committed head.
+The receipt store records exact head/command/exit/duration/selection; the tracked
+red receipt does not substitute for final-head green proof. No wider supervisor
+suite or already-measured head/selection rerun is required.
+
 ## Runtime rollout and merge follow-up
 
 **Source-only correction: no supervisor restart, runtime switch, XR/gate/IAM or

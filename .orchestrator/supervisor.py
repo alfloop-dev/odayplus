@@ -4753,9 +4753,9 @@ _BLOCKER_RECOVERY_ALLOWED_TOKENS = {
     "tasks", "state", "code", "exit", "ordinary", "corrected", "unchanged",
     # Code-reference labels whose explicit path value was already removed
     "ref", "refs", "see",
-    # Dependency terms
-    "waiting", "waits", "waited", "wait", "depend", "depends", "depended", "dependency",
-    "dependencies", "dependent", "upstream", "prerequisite", "prerequisites",
+    # Waiting/status terms, not prerequisites. Dependency words are removed
+    # only in the resolver-authorized branch, never accepted as routing noise.
+    "waiting", "waits", "waited", "wait",
     "completed", "satisfied", "resolved", "resolution", "release", "released", "releasing",
     # Glue / Syntactic terms
     "for", "to", "in", "on", "at", "of", "from", "with", "by", "about", "into",
@@ -4767,6 +4767,18 @@ _BLOCKER_RECOVERY_ALLOWED_TOKENS = {
     "each", "few", "more", "most", "other", "some", "such", "than", "too", "very",
     "can", "will", "just", "should", "may", "might",
 }
+
+
+# A colon or kind label is not prerequisite-release authority. Recognize the
+# same dependency vocabulary in canonical blockers and retained task prose;
+# only a nonempty, resolver-satisfied depends_on can authorize its removal.
+_BLOCKER_RECOVERY_DEPENDENCY_WORDS_RE = re.compile(
+    r"\b(?:depend|depends|depended|dependency|dependencies|dependent|upstream|prerequisites?)\b"
+)
+_BLOCKER_RECOVERY_DEPENDENCY_PROSE_RE = re.compile(
+    r"\b(?:waiting\s+for\s+)?(?:depend|depends|depended|dependency|dependencies|dependent|upstream|prerequisites?)\b"
+    r"(?:\s+gate\b)?\s*:?"
+)
 
 
 def _token_is_allowed(part: str) -> bool:
@@ -4903,37 +4915,26 @@ def blocked_task_auto_recovery_eligible(
         ):
             return False
         is_dep_blocker = (
-            blocker.get("kind") == "dependency"
-            or "waiting for dependencies:" in blocker_context
-            or "waiting for dependency:" in blocker_context
-            or "dependency gate" in blocker_context
-            or "dependencies:" in blocker_context
+            blocker_kind == "dependency"
+            or bool(_BLOCKER_RECOVERY_DEPENDENCY_WORDS_RE.search(blocker_context))
         )
         if is_dep_blocker:
             if not dependency_gate_released:
                 return False
-            remaining_dep_prose = re.sub(
-                r"\b(?:waiting for dependencies|waiting for dependency|dependency gate|dependencies|dependency)\s*:?",
-                " ",
-                blocker_context,
-                flags=re.IGNORECASE,
-            )
+            remaining_dep_prose = _BLOCKER_RECOVERY_DEPENDENCY_PROSE_RE.sub(" ", blocker_context)
             if _CANONICAL_ARTIFACT_RE.search(remaining_dep_prose):
                 return False
             residual = re.sub(r"[ ,;.:\-_/&|]+", " ", remaining_dep_prose).strip()
-            if residual:
-                if not _is_recoverable_routing_prose(residual):
-                    return False
+            # A dependency-only blocker need not contain a routing marker.
+            # Hard gates were rejected above; unknown residuals still fail
+            # closed, including non-ASCII requirements and unmasked IDs.
+            if residual and not _prose_tokens_all_allowed(residual):
+                return False
         else:
             if not _is_recoverable_routing_prose(blocker_context):
                 return False
     if dependency_gate_released:
-        context_after_dep = re.sub(
-            r"\b(?:waiting for dependencies|waiting for dependency|dependency gate|dependencies|dependency)\s*:?",
-            " ",
-            context,
-            flags=re.IGNORECASE,
-        )
+        context_after_dep = _BLOCKER_RECOVERY_DEPENDENCY_PROSE_RE.sub(" ", context)
         if _CANONICAL_ARTIFACT_RE.search(context_after_dep):
             return False
         residual_context = re.sub(r"[ ,;.:\-_/&|]+", " ", context_after_dep).strip()
