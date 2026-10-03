@@ -96,6 +96,35 @@ These tracked receipts describe intermediate anchors; final submission must
 also pass both declared commands at the exact new head, using the existing
 receipt gate. No broader suite or host scan was needed.
 
+## Fourth review correction (Claude, after churn reassignment)
+
+Codex2 rejected head `26b684ee7ca5` because canonical blocker sanitization
+still deleted every `key=value` pair and snake_case label before hard/unknown
+classification. Open blockers `pending_human; provider handoff pending` and
+`approval=pending; provider handoff pending` lost their human-gate evidence and
+the remaining routing words authorized recovery.
+
+Base composed first: `origin/dev` `357ebdb32a02` merged normally (tree equals
+`git merge-tree --write-tree`), no task history rewritten.
+
+Fix (`blocked_task_prose_context`, canonical mode only): `=` and `_` are split
+into word boundaries instead of deleting the whole token, so `pending_human`
+reads as `pending human` and `approval=pending` as `approval pending`; hard
+markers and unknown-token fail-closed both see them. Explicit code references
+(backticks, absolute/dot-relative paths, filenames with extensions) are still
+removed first. Ordinary note context (non-canonical mode) is unchanged. The
+only allowlist addition is `ref`/`refs`/`see`, the label left behind once an
+explicit path value such as `refs=docs/dataset.json` is removed; it carries no
+gate meaning. Chinese/non-ASCII unknown prose stays fail-closed.
+
+Added production-entry cases (with and without completed dependency):
+`pending_human`, `approval=pending`, `gate_status=pending_human_signoff`, the
+same labels inside a dependency blocker, and both labels as task
+`blocked_reason`. Against the previous head, 10 of these fail (blocked → todo);
+on the fix all pass, along with the existing references/routing/dependency
+positives, resolved-history, missing-snapshot and CAS cases. Exact-head
+receipts come from the declared verification gate at submission.
+
 ## Runtime rollout and merge follow-up
 
 **Source-only correction: no supervisor restart, runtime switch, XR/gate/IAM or

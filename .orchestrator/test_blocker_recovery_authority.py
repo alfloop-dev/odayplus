@@ -119,6 +119,11 @@ def test_note_cannot_release_canonical_external_blocker(board, message):
     "waiting for dependencies: UPSTREAM-DATASET-001; awaiting client consent; provider handoff pending",
     "waiting for dependencies: UPSTREAM-DATASET-001; provider failed; requires operator sign-off",
     "仍欠業主准許；provider handoff pending",
+    "pending_human; provider handoff pending",
+    "approval=pending; provider handoff pending",
+    "gate_status=pending_human_signoff; provider handoff pending",
+    "waiting for dependencies: UPSTREAM-DATASET-001; pending_human; provider handoff pending",
+    "waiting for dependencies: UPSTREAM-DATASET-001; approval=pending; provider handoff pending",
 ])
 def test_mixed_gate_prose_is_not_erased_as_a_path(board, completed_dependency, blocker_message):
     config, status, path = board
@@ -148,6 +153,8 @@ def test_mixed_gate_prose_is_not_erased_as_a_path(board, completed_dependency, b
     {"blocked_reason": "External-data/dataset. A1 raw/masked and A2/A3 live still missing; provider handoff pending"},
     {"blocked_reason": "Human approval pending; provider retry still blocked"},
     {"blocked_reason": "仍欠業主准許；provider handoff pending"},
+    {"blocked_reason": "pending_human; provider handoff pending"},
+    {"blocked_reason": "approval=pending; provider handoff pending"},
 ])
 def test_structured_gate_survives_note(board, gate):
     config, status, path = board

@@ -4345,8 +4345,13 @@ def blocked_task_prose_context(
     context = re.sub(r"```[\s\S]*?```", " ", context)
     context = re.sub(r"`[^`]*`", " ", context)
 
-    # 2. Strip <key>=<value> pairs
-    context = re.sub(r"[A-Za-z0-9_.\-/]+\s*=\s*[A-Za-z0-9_.\-/]+", " ", context)
+    # 2. Strip <key>=<value> pairs. Canonical blocker prose keeps both sides
+    # as words: `approval=pending` is gate evidence, not a code reference.
+    # An explicit path value is still removed by step 3 below.
+    if canonical_gate_prose:
+        context = re.sub(r"\s*=\s*", " ", context)
+    else:
+        context = re.sub(r"[A-Za-z0-9_.\-/]+\s*=\s*[A-Za-z0-9_.\-/]+", " ", context)
 
     # 3. Strip unambiguous filesystem paths and file references.
     # Absolute paths (/...), relative dot paths (./... or ../...), and
@@ -4365,8 +4370,14 @@ def blocked_task_prose_context(
     if not canonical_gate_prose:
         context = re.sub(r"\b[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-/]*[A-Za-z0-9_\-]+\b", " ", context)
 
-    # 4. Strip snake_case identifiers containing underscore
-    context = re.sub(r"\b[A-Za-z0-9_]*_[A-Za-z0-9_]*\b", " ", context)
+    # 4. Strip snake_case identifiers containing underscore. In canonical
+    # blocker prose a snake_case label (pending_human) may be the gate itself;
+    # split it into words so hard/unknown classification still sees it.
+    # Explicit code references were already removed above (backticks, paths).
+    if canonical_gate_prose:
+        context = context.replace("_", " ")
+    else:
+        context = re.sub(r"\b[A-Za-z0-9_]*_[A-Za-z0-9_]*\b", " ", context)
 
     # 5. Strip job references (e.g. 'deploy 相關 job', 'build job', 'deploy job')
     context = re.sub(
@@ -4670,6 +4681,8 @@ _BLOCKER_RECOVERY_ALLOWED_TOKENS = {
     "interrupted", "terminated", "killed", "transient", "metadata", "correction",
     "notification", "notifications", "note", "notes", "notice", "status", "task",
     "tasks", "state", "code", "exit", "ordinary", "corrected", "unchanged",
+    # Code-reference labels whose explicit path value was already removed
+    "ref", "refs", "see",
     # Dependency terms
     "waiting", "waits", "waited", "wait", "depend", "depends", "depended", "dependency",
     "dependencies", "dependent", "upstream", "prerequisite", "prerequisites",
