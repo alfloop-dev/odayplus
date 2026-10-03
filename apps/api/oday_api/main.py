@@ -2098,7 +2098,8 @@ else:
             priceops_repository_for_tenant = None
 
         identity_user_role_service: Any | None = None
-        if persistence_mode in {"postgres", "postgresql"} and getattr(bundle, "engine", None) is not None:
+        bundle_engine = getattr(bundle, "engine", None)
+        if str(getattr(bundle_engine, "dialect", "")).lower() == "postgresql":
             from modules.opsboard.application.identity_user_role_management import (
                 IdentityUserRoleManagementService,
             )
@@ -2106,7 +2107,7 @@ else:
             # User administration writes the identity.* rows the auth boundary
             # resolves, in one transaction with its audit event.
             identity_user_role_service = IdentityUserRoleManagementService(
-                engine=bundle.engine, audit_log=audit_log
+                engine=bundle_engine, audit_log=audit_log
             )
 
         mount_versioned(

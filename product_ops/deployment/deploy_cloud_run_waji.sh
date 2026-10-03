@@ -918,7 +918,9 @@ payload = {
     "ODAY_ENV": os.environ["ODP_DEPLOY_ENV"],
     "ODP_DEPLOY_ENV": os.environ["ODP_DEPLOY_ENV"],
     "ODAY_RELEASE_SHA": os.environ["ODAY_RELEASE_SHA"],
-    "ODP_RELEASE_PROFILE": os.environ["ODP_RELEASE_PROFILE"],
+    # Normalised to full|dev-admin at the top of this script; the default only
+    # matters when this serializer is exercised on its own.
+    "ODP_RELEASE_PROFILE": os.environ.get("ODP_RELEASE_PROFILE", "full"),
     "ODP_REQUIRE_LIVE_DATA": os.environ["ODP_REQUIRE_LIVE_DATA"],
     "ODP_DATA_BINDING_MODE": os.environ["ODP_DATA_BINDING_MODE"],
     "ODP_PRODUCT_MODE": os.environ["ODP_PRODUCT_MODE"],
@@ -1141,7 +1143,7 @@ run_locked_python delivery_toolchain/e2e/check_live_e2e_gate.py \
   --gcp-region "${GCP_REGION}" \
   --gcp-project "${GCP_PROJECT}" \
   --worker-deadline-seconds "${ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS:-600}" \
-  --release-profile "${ODP_RELEASE_PROFILE}" \
+  --release-profile "${ODP_RELEASE_PROFILE:-full}" \
   --output "${LIVE_E2E_REPORT}"
 
 DEPLOYMENT_COMMITTED=true
