@@ -162,6 +162,38 @@ describe("OperatorAdminConsole", () => {
     expect(fetchMock.mock.calls.some(([input]) => urlOf(input) === "/api/v1/operator/bootstrap")).toBe(false);
   });
 
+  it("shows dev-only scope and actual missing-model limitations to the pure admin", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(200, { users: [adminUser], roles: [], events: [] })));
+    render(<OperatorAdminConsole releaseStatus={{
+      profile: "dev-admin", models: "limited", unavailableServices: ["ForecastOps"],
+    }} />);
+
+    expect(await screen.findByTestId(`user-row-${adminUser.subject_id}`)).toBeInTheDocument();
+    const notice = screen.getByTestId("operator-release-notice");
+    expect(notice).toHaveTextContent("僅限 dev 管理後台驗收");
+    expect(notice).toHaveTextContent("不代表完整產品、模型就緒或 production 發布驗收");
+    expect(notice).toHaveTextContent("缺少模型的功能不可用");
+    expect(notice).toHaveTextContent("不提供替代預測");
+    expect(notice).toHaveTextContent("ForecastOps");
+  });
+
+  it.each(["full", "dev-admin"] as const)("keeps truthful model-ready messaging for %s", profile => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(401, {})));
+    render(<OperatorAdminConsole releaseStatus={{ profile, models: "ready", unavailableServices: ["AVM"] }} />);
+    const notice = screen.getByTestId("operator-release-notice");
+    expect(notice).toHaveTextContent("正式模型綁定已就緒");
+    expect(notice).toHaveTextContent("AVM");
+    expect(notice).not.toHaveTextContent("尚未就緒");
+    if (profile === "full") expect(notice).not.toHaveTextContent("僅限 dev");
+  });
+
+  it("does not turn unavailable status evidence into model availability", () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(401, {})));
+    render(<OperatorAdminConsole releaseStatus={{ profile: "dev-admin", models: "unknown", unavailableServices: [] }} />);
+    expect(screen.getByTestId("operator-release-notice")).toHaveTextContent("無法確認目前模型狀態");
+    expect(screen.getByTestId("operator-release-notice")).not.toHaveTextContent("正式模型綁定已就緒");
+  });
+
   it("routes a pending password rotation to the password page", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(403, { detail: "PASSWORD_CHANGE_REQUIRED" })));
 

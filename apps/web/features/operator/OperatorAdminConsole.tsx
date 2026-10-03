@@ -21,6 +21,7 @@ import {
   type OperatorAccessDenial,
 } from "./operatorSession";
 import { UserRoleManagementController } from "./UserRoleManagementController";
+import { OperatorReleaseNotice, type OperatorReleaseStatus } from "./OperatorReleaseNotice";
 
 type AccessState = "checking" | "ready" | OperatorAccessDenial | "error";
 
@@ -31,7 +32,9 @@ const ACCESS_MESSAGES: Record<Exclude<AccessState, "checking" | "ready">, string
   error: "無法連線至管理 API，請稍後重試。",
 };
 
-export function OperatorAdminConsole() {
+export function OperatorAdminConsole({ releaseStatus = { profile: null, models: "unknown", unavailableServices: [] } }: {
+  releaseStatus?: OperatorReleaseStatus;
+}) {
   const [access, setAccess] = useState<AccessState>("checking");
   const [signOutError, setSignOutError] = useState<string | null>(null);
 
@@ -86,6 +89,7 @@ export function OperatorAdminConsole() {
         </p>
       ) : null}
       <main className={styles.adminMain}>
+        <OperatorReleaseNotice status={releaseStatus} />
         {access === "checking" ? (
           <p className={styles.adminNotice} role="status">
             正在確認管理權限…

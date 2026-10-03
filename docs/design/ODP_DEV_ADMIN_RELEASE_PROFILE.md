@@ -1,6 +1,6 @@
 # Dev administration release profile (`dev-admin`)
 
-Task: ODP-DEV-ADMIN-RELEASE-READINESS-001 · Owner: Claude · Reviewer: Codex
+Task: ODP-DEV-ADMIN-RELEASE-READINESS-001 · Owner: Pi · Reviewer: Codex
 
 ## 1. Problem
 
@@ -208,6 +208,27 @@ editor and a real Logout. The business console's Logout now calls
 `/auth/logout` and leaves for `/login` only after the server confirms the
 revocation. A failure is reported and the page stays.
 
+### 5.4 Pure-admin release / capability notice
+
+The administration view also shows a read-only release/model notice, without
+requiring business-console permissions. The canonical Web page resolves its
+durable session and uses the existing server-side Cloud Run transport identity
+to read API `/readiness` and `/platform/version` (`no-store`, bounded timeout,
+no redirects). It binds the response to Web's admitted `ODP_RELEASE_PROFILE`,
+`ODP_DEPLOY_ENV` and exact `ODAY_RELEASE_SHA`. No new API route, permission,
+model fallback or release authority is introduced.
+
+`dev-admin` explicitly says **dev administration only**, not full-product,
+model-ready or production acceptance. Actual unresolved bindings display the
+missing-model limitation and refusal of model-dependent operations; genuinely
+ready bindings under either profile display their real readiness instead.
+Individual unavailable services are listed from actual capability flags (even
+when required production bindings are ready). Missing/malformed evidence,
+profile/environment/SHA mismatch, failed persistence/session/transport or API
+reads display **unknown**, never model-ready or assumed model absence. Raw
+readiness errors, secrets and transport tokens are not sent to the browser.
+The full profile and all existing API/gate refusal policies are unchanged.
+
 ## 6. Operator / coordinator handoff
 
 **Changed release interface**
@@ -236,7 +257,9 @@ revocation. A failure is reported and the page stays.
   `PASSWORD_CHANGE_REQUIRED`; live `/operator/users*` is identity-backed
   (§5.2). No route or schema was added, so the OpenAPI artifact is unchanged.
 - Web: `/operator?view=admin` and `/operator?view=password`; console Logout
-  is real.
+  is real. The pure-admin view includes the §5.4 release/capability notice,
+  using existing Web runtime profile/environment/SHA and API transport bindings;
+  no new configuration or permissions are required.
 - The API and Web runtime env carry `ODP_RELEASE_PROFILE`, and the API
   `/readiness` carries `details.releaseProfile`.
 
@@ -327,7 +350,15 @@ Offline regression suites (fixtures are test inputs, never live evidence):
   calls `/auth/logout` and only then navigates; failed sign-out is reported;
   must-change routes to the password view; pure admin is pointed to the admin
   view; admin view renders identity users without the business shell; the
-  password form posts to `/auth/password`.
+  password form posts to `/auth/password`; the pure-admin release notice shows
+  dev-only missing-model limitations, actual full/dev-admin model-ready status,
+  and unknown evidence without inventing availability.
+- `apps/web/src/lib/auth/__tests__/operatorReleaseStatus.test.ts` and
+  `operatorReleasePage.test.ts`: canonical admin-page wiring, durable-session
+  requirement, server-only transport identity, candidate/profile/environment
+  alignment, truthful ready/limited capabilities, malformed/missing evidence,
+  network/metadata/API failures, no secrets in projected props, and unchanged
+  password/business routing.
 
 A browser run against a real Next server with PostgreSQL was not feasible on
 this worker (no browser runtime). The Web flows are covered by jsdom tests, and
