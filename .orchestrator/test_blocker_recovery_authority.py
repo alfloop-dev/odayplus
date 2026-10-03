@@ -152,6 +152,54 @@ def test_delimited_references_and_complete_agent_identities_still_recover(
     launch.assert_not_called()
 
 
+@pytest.mark.parametrize("requirement", [
+    "waiting for dependencies", "waiting for upstream dependency",
+    "waiting for dependency", "waiting for dependencies:",
+    "waiting for prerequisite", "waiting for upstream",
+])
+@pytest.mark.parametrize("location", ["blocker", "next", "blocked_reason"])
+def test_prerequisite_words_need_structural_resolver_authority(board, requirement, location):
+    config, status, path = board
+    message = f"{requirement}; provider handoff pending"
+    if location == "blocker":
+        status["blockers"] = [hard_blocker(message=message)]
+        ordinary_note(status, path, "Ordinary note: status corrected; provider handoff is stale")
+    elif location == "blocked_reason":
+        status["tasks"][0][location] = message
+        ordinary_note(status, path, "Ordinary note: status corrected; provider handoff is stale")
+    else:
+        ordinary_note(status, path, message)
+    before = deepcopy(status)
+    with dispatch_boundary(config) as (events, audit, launch):
+        dispatch(config)
+    assert json.loads(path.read_text()) == before
+    assert events == []
+    launch.assert_not_called()
+    assert not any("No unresolved dependency" in str(call) for call in audit.call_args_list)
+
+
+@pytest.mark.parametrize("requirement", [
+    "waiting for dependencies", "waiting for upstream dependency",
+    "waiting for dependency", "waiting for prerequisite", "waiting for upstream",
+])
+@pytest.mark.parametrize("routing_suffix", ["", "; provider handoff pending"])
+def test_resolver_released_prerequisite_recovers_without_punctuation_authority(
+    board, requirement, routing_suffix,
+):
+    config, status, path = board
+    status["tasks"][0]["depends_on"] = ["UPSTREAM-001"]
+    status["tasks"].append({"id": "UPSTREAM-001", "status": "done", "depends_on": []})
+    status["blockers"] = [hard_blocker(message=f"{requirement} UPSTREAM-001{routing_suffix}")]
+    ordinary_note(status, path, "Ordinary note: status corrected; provider handoff is stale")
+    with dispatch_boundary(config) as (events, audit, launch):
+        dispatch(config)
+    latest = json.loads(path.read_text())
+    assert latest["tasks"][0]["status"] == "todo"
+    assert latest["blockers"][0]["status"] == "resolved"
+    assert len(events) == 1
+    launch.assert_not_called()
+
+
 @pytest.mark.parametrize("message", [
     "Ordinary note: status corrected; provider handoff is stale",
     "owned_paths notification: provider routing and handoff unchanged",
@@ -315,13 +363,15 @@ def test_completed_dependency_cannot_release_an_independent_blocker(board, block
     launch.assert_not_called()
 
 
-@pytest.mark.parametrize("scenario", ["routing", "resolved", "dependency", "unrelated", "references"])
+@pytest.mark.parametrize("scenario", ["routing", "resolved", "dependency", "unrelated", "references", "reassigned"])
 def test_released_scheduler_owned_gate_still_recovers_and_enqueues(board, scenario):
     config, status, path = board
     task = status["tasks"][0]
     task["next"] = "stale provider/worktree failure; retry dispatch"
     if scenario == "routing":
         status["blockers"] = [hard_blocker(message="provider quota/worktree failure")]
+    elif scenario == "reassigned":
+        task["next"] = "Auto-reassigned away from sidecar-only lane Codex; owner Codex -> Claude."
     elif scenario == "resolved":
         status["blockers"] = [hard_blocker(status="resolved", resolved_at="2026-10-02T00:00:00Z")]
     elif scenario == "references":
