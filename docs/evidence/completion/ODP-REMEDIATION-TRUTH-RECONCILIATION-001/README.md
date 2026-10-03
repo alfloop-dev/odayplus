@@ -3,7 +3,7 @@ evidence_id: ODP-REMEDIATION-TRUTH-RECONCILIATION-001
 title: "需求 manifest 與規格來源追溯的過時狀態更正"
 date: 2026-10-03
 owner: Claude
-reviewer: Codex2
+reviewer: Codex
 repository: alfloop-dev/odayplus
 base_ref: 1b14b276447a7778f1dad1045ced1a5bd6abe01e
 ---
@@ -59,9 +59,14 @@ state、日期與原文保存在 disposition `history` 中，未改寫。
 | `docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md` | owned；§4.6、§4.7 EVENT／CDC、§4.9 |
 | `docs/evidence/ODP_SPEC_SOURCE_PROVENANCE_2026-09-03.md` | owned；新增 2026-10-03 更正節，原文保留 |
 | `tests/governance/test_remediation_truth_reconciliation.py` | owned；新回歸測試 |
-| `tests/governance/test_avm001_disposition.py` | owned 範圍外的必要連動：原測試把 DEPRECIATION 釘在 absent／`IMPLEMENTATION_READY`，與已合併實作矛盾 |
-| `tests/integration/test_int001_cdc_disposition.py` | 同上，把 EVENT／CDC 釘在 absent／`OPEN` |
-| `delivery_toolchain/governance/test_check_requirement_members.py` | 同上（且為宣告的 verification 檔） |
+| `tests/governance/test_avm001_disposition.py` | **不在目前 canonical owned_paths**；必要連動：原測試把 DEPRECIATION 釘在 absent／`IMPLEMENTATION_READY`，與已合併實作矛盾 |
+| `tests/integration/test_int001_cdc_disposition.py` | **不在目前 canonical owned_paths**；同上，把 EVENT／CDC 釘在 absent／`OPEN` |
+| `delivery_toolchain/governance/test_check_requirement_members.py` | **不在目前 canonical owned_paths**；同上（且為宣告的 verification 檔） |
+
+上列三個測試檔若不連動，manifest 更正後即紅燈；但 README 說明不等於範圍授權。
+Codex 第一輪審查（PR #1400 `45ec3f00`）據此退回，這三個路徑的 owned_paths 登記
+須由 coordinator 經正式 canonical 流程完成，owner 不自行以 `assign` metadata 擴權；
+登記完成前本任務以 blocker 標示此缺口。
 | `docs/audits/code-boundary-inventory.csv` | `check_code_boundaries.py --write-inventory` 因新增測試檔而強制產生的一列 |
 
 ## 5. 回歸測試涵蓋
@@ -70,10 +75,16 @@ state、日期與原文保存在 disposition `history` 中，未改寫。
 symbol、ZIP member hash）獨立寫在測試裡，不是拿 JSON 跟自己比：
 
 - 四個 symbol 實際 import 並以 checker `resolve()` 解析；四個 merge 是 `HEAD` 的祖先。
-- 直接讀 ZIP bytes 重算 sha256、front matter、第 104 行。
+- ZIP 不讀工作樹：解析 `ODP-SA-06` 與 `ODP-FR-AVM-001` 兩筆 record 的 `location`
+  （`github://…@<40 位 commit>/<zip>!<member>[#L104]`），要求該 commit 等於 record 的
+  `located_ref`、等於測試獨立釘住的 `1b14b276`、且是 `HEAD` 的祖先，再以
+  `git cat-file blob <ref>:<zip>` 讀出 ZIP，核對 git blob id、container sha256、
+  member 大小與 sha256、front matter、第 104 行 row 與 row sha256。
 - 負向：改回舊 absent／舊 state、升為 `VERIFIED`（checker 本身會接受 satisfied +
   VERIFIED，所以由本測試拒絕）、關閉任一保留缺口、竄改 manifest hash、竄改 bytes、
-  竄改 row hash、把 provenance 改回「未找到」、把找到的 bytes 當成已批准、刪掉
+  竄改 row hash、location 指向不存在的 commit、location 的 commit 與 `located_ref`
+  不一致、AVM row 與 SA-06 位於不同 commit、location 指向別的 member 或別行、
+  把 provenance 改回「未找到」、把找到的 bytes 當成已批准、刪掉
   2026-09-03 歷史觀察——每一種都必須被拒絕。
 
 ## 6. 驗證
@@ -85,7 +96,7 @@ supervisor 的 `.orchestrator/evidence`，由 `task_finalize.sh` 檢核。
 ## 7. 完成語言（分開陳述）
 
 - 程式／紀錄更正：本 PR 交付。
-- 獨立審查／合併：待 Codex2 審查。
+- 獨立審查／合併：第一輪 Codex 審查退回（scope、ref 驗證），本版修正 ref 驗證後重送。
 - 真實資料輸入：不適用於本任務；上表「仍欠」各項均未取得。
 - 部署：無。
 - Live 驗證：無；四成員均為 `BLOCKED_BY_EVIDENCE`。
