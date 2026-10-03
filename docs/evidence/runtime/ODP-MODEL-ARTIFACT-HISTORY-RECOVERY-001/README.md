@@ -52,6 +52,19 @@ Missing inputs and owners are in `missing_inputs`, handed back to those two hold
 legacy custody decision, authorized legacy registry/bucket readback, fresh governed train, promotion
 approval) and to the three outcome backfill tasks (current readback of the other models).
 
+The history handback keeps window coverage apart from training readiness: 56 contiguous attested
+days is only the h28 window-coverage bound; the registry's own segment-holdout gate (20% distinct
+origin dates held out, at least 7 holdout rows per store; `models/model_ready/contracts.py`,
+`release.py` `_temporal_split` / `_segment_validation`) first passes at 58 eligible dates = 86
+contiguous attested days on a favourable uniform grid (backfill README §11). That is a necessary
+floor, not a sufficient condition; real-data, lineage and quality gates stay open and current
+counts stay unknown.
+
+The verifier accepts no positive `recovered` / `approved` state or `model_ready` /
+`historical_state_bytes_recovered` claim: this bounded investigation saved no artifact bytes or
+training/approval/rollback provenance that could attest one, and a hash-shaped string or non-empty
+ref is not such evidence.
+
 Status separation: code delivered = evidence + verifier only; historical state bytes recovered = no;
 cloud authority = none; real data available = no; model ready = no; deployed / live validated /
 signed off = no.

@@ -1,7 +1,7 @@
 {
   "schema_version": "odp-model-artifact-history-recovery-v2",
   "task_id": "ODP-MODEL-ARTIFACT-HISTORY-RECOVERY-001",
-  "captured_at": "2026-10-03T00:09:50Z",
+  "captured_at": "2026-10-03T00:30:00Z",
   "captured_at_meaning": "UTC time this investigation document was written, after every cited source observation below; source observation times are carried separately per receipt/source",
   "baseline": {
     "repository": "alfloop-dev/odayplus",
@@ -94,6 +94,13 @@
       "ref": "1b14b276447a7778f1dad1045ced1a5bd6abe01e:product_ops/modeling/release.py",
       "saved_copy": "docs/evidence/runtime/ODP-MODEL-ARTIFACT-HISTORY-RECOVERY-001/sources/release.py.txt",
       "sha256": "cd39f7dade144ae38c26d0e27d818401e72354effa7a3ec3925641f106827c2d",
+      "ref_committed_at": "2026-10-02T19:42:54Z"
+    },
+    {
+      "id": "model-ready-contracts",
+      "ref": "1b14b276447a7778f1dad1045ced1a5bd6abe01e:models/model_ready/contracts.py",
+      "saved_copy": "docs/evidence/runtime/ODP-MODEL-ARTIFACT-HISTORY-RECOVERY-001/sources/contracts.py.txt",
+      "sha256": "b0cdcf17296ae79c38479f6167ada3c552ca3da527d4f4546ab695953bf5127d",
       "ref_committed_at": "2026-10-02T19:42:54Z"
     },
     {
@@ -370,7 +377,52 @@
   "missing_inputs": [
     {
       "id": "forecast-authoritative-history",
-      "gap": "Authoritative gap-free daily revenue history in the current dev project's model_ready.forecast_training_view reaching the forecast contract (at least 56 consecutive days per store, plus dataset hash, source lineage, freshness cutoff and named data owner)",
+      "gap": "Authoritative gap-free daily revenue history in the current dev project's model_ready.forecast_training_view, with dataset hash, source lineage, freshness cutoff and named data owner, long enough for the registry's own temporal split. Window coverage is not training readiness: an h28 window needs only 56 contiguous attested days, while the registry's segment-holdout gate (20% of distinct origin dates as holdout, at least 7 holdout rows per store) first passes at 58 eligible dates = 86 contiguous attested days on a favourable uniform store-date grid. That is a necessary floor, not a sufficient condition; real-data, lineage and quality gates still apply and current counts are unknown.",
+      "training_requirement": {
+        "window_coverage_attested_days": 56,
+        "training_floor_eligible_dates": 58,
+        "training_floor_attested_days": 86,
+        "floor_is_sufficient": false,
+        "holdout_fraction": 0.2,
+        "minimum_segment_rows": 7,
+        "current_row_count": "unknown",
+        "remaining_gates": [
+          "real_data",
+          "lineage",
+          "quality",
+          "temporal_validation_metrics"
+        ],
+        "evidence": [
+          {
+            "source": "backfill-readme",
+            "contains": [
+              "so 56 attested",
+              "**It is the bound for acceptance criterion 3, and it\nwas silently reused as though it were the bound for criterion 5.**",
+              "**58 eligible dates = 86 contiguous attested days.**",
+              "condition and a floor**"
+            ],
+            "facts": {}
+          },
+          {
+            "source": "model-ready-contracts",
+            "contains": [
+              "relation=\"model_ready.forecast_training_view\",",
+              "holdout_fraction=0.20,",
+              "minimum_segment_rows=7,"
+            ],
+            "facts": {}
+          },
+          {
+            "source": "release-py",
+            "contains": [
+              "int(len(unique_times) * (1 - holdout_fraction))",
+              "if len(segment_indexes) < spec.minimum_segment_rows:",
+              "temporal holdout rows"
+            ],
+            "facts": {}
+          }
+        ]
+      },
       "responsible": "Human data owner (not named in any evidence) with Ops for the current dev data plane",
       "handback_task": "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001",
       "handback_holder": {

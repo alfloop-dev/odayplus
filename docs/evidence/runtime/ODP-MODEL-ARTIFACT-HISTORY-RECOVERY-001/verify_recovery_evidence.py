@@ -1,10 +1,10 @@
 """Verify the ODP-MODEL-ARTIFACT-HISTORY-RECOVERY-001 recovery evidence.
 
-Keeps recovered / artifact_missing / approval_missing / history_unknown facts
-apart, binds every registry, history, board and source claim to the bytes of a
-saved receipt or cited Git blob, and refuses any document that turns a bounded
-investigation into an unbounded absence claim, model readiness, a deploy GO, or
-a cloud write.
+Keeps artifact_missing / approval_missing / history_unknown facts apart, binds
+every registry, history, board, source and training-requirement claim to the
+bytes of a saved receipt or cited Git blob, and refuses any document that turns
+a bounded investigation into an unbounded absence claim, an unattested
+recovered/approved state, model readiness, a deploy GO, or a cloud write.
 """
 
 from __future__ import annotations
@@ -33,6 +33,14 @@ READINESS_MODELS = {
 REGISTRY_STATES = {"absent", "registered", "not_read_current"}
 ARTIFACT_STATES = {"recovered", "artifact_missing", "not_read_current"}
 APPROVAL_STATES = {"approved", "approval_missing", "not_read_current"}
+# This bounded read-only investigation saved no artifact bytes and no training,
+# approval or rollback provenance it could check, so it cannot attest these
+# positive states; a hash shape or a non-empty ref is not evidence of either.
+UNATTESTABLE = (
+    "this bounded investigation saved no artifact bytes or "
+    "training/approval/rollback provenance to verify it"
+)
+DAY_SPAN = re.compile(r"\b\d+\s+(?:consecutive|contiguous)(?:\s+attested)?\s+days\b", re.I)
 HISTORY_STATES = {"history_unknown", "history_current"}
 BOARD_FIELDS = ("status", "owner", "reviewer", "last_update", "non_dispatchable")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -105,6 +113,10 @@ def _lookup(data: Any, dotted: str) -> Any:
             return _MISSING
         data = data[part]
     return data
+
+
+def _number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _same(left: Any, right: Any) -> bool:
@@ -305,32 +317,60 @@ def _check_model(ctx: _Context, model: Mapping[str, Any]) -> None:
 
     if artifact.get("state") not in ARTIFACT_STATES:
         ctx.fail(f"{name}: unknown artifact state {artifact.get('state')!r}")
+    elif artifact.get("state") == "recovered":
+        ctx.fail(f"{name}: artifact state recovered is unattested: {UNATTESTABLE}")
     elif artifact.get("state") == "artifact_missing":
         _check_scoped(ctx, name, "artifact_missing", artifact)
 
     if approval.get("state") not in APPROVAL_STATES:
         ctx.fail(f"{name}: unknown approval state {approval.get('state')!r}")
+    elif approval.get("state") == "approved":
+        ctx.fail(f"{name}: approval state approved is unattested: {UNATTESTABLE}")
     elif approval.get("state") == "approval_missing":
         _check_scoped(ctx, name, "approval_missing", approval)
-    elif approval.get("state") == "not_read_current":
-        if approval.get("historical_source") not in ctx.sources:
-            ctx.fail(f"{name}: approval not_read_current needs a verified historical source")
-    elif not approval.get("approval_ref"):
-        ctx.fail(f"{name}: approved without approval_ref")
+    elif approval.get("historical_source") not in ctx.sources:
+        ctx.fail(f"{name}: approval not_read_current needs a verified historical source")
 
-    recovered = model.get("recovered") is True
-    if artifact.get("state") == "recovered" or recovered:
-        if not (artifact.get("state") == "recovered" and recovered):
-            ctx.fail(f"{name}: recovered flag and artifact state disagree")
-        if not _sha(artifact.get("sha256")):
-            ctx.fail(f"{name}: recovered artifact needs a sha256")
-        for field in ("uri", "version", "training_ref"):
-            if not artifact.get(field):
-                ctx.fail(f"{name}: recovered artifact needs {field}")
-        if approval.get("state") != "approved" or not approval.get("approval_ref"):
-            ctx.fail(f"{name}: recovered artifact needs an approval ref")
-        if not approval.get("rollback_target"):
-            ctx.fail(f"{name}: recovered artifact needs a rollback target")
+    if model.get("recovered") is not False:
+        ctx.fail(f"{name}: recovered must be false: {UNATTESTABLE}")
+
+
+def _check_training_requirement(ctx: _Context, item: Mapping[str, Any]) -> None:
+    """A cited day span must keep window coverage apart from training readiness."""
+    label = f"missing input {item.get('id')}"
+    req = item.get("training_requirement")
+    if not isinstance(req, Mapping):
+        if DAY_SPAN.search(str(item.get("gap", ""))):
+            ctx.fail(f"{label}: cites a day span without a bound training_requirement")
+        return
+    texts = []
+    for binding in req.get("evidence") or []:
+        if ctx.bind(f"{label} training_requirement", binding) is not None:
+            texts.append(ctx.sources[binding["source"]][1].decode("utf-8"))
+    text = "\n".join(texts)
+    coverage = req.get("window_coverage_attested_days")
+    dates = req.get("training_floor_eligible_dates")
+    floor = req.get("training_floor_attested_days")
+    holdout = req.get("holdout_fraction")
+    segment = req.get("minimum_segment_rows")
+    needles = {
+        "window coverage": f"so {coverage} attested",
+        "training floor": f"{dates} eligible dates = {floor} contiguous attested days",
+        "holdout fraction": f"holdout_fraction={holdout:.2f}," if _number(holdout) else None,
+        "segment holdout rows": f"minimum_segment_rows={segment},",
+    }
+    for what, needle in needles.items():
+        if needle is None or needle not in text:
+            ctx.fail(f"{label}: {what} is not stated by its bound requirement evidence")
+    if not (_number(coverage) and _number(floor) and coverage < floor):
+        ctx.fail(f"{label}: window coverage must stay below the training floor")
+    if req.get("floor_is_sufficient") is not False:
+        ctx.fail(f"{label}: the training floor is necessary, not sufficient")
+    if req.get("current_row_count") != "unknown":
+        ctx.fail(f"{label}: current counts are unknown to this investigation")
+    gates = set(req.get("remaining_gates") or [])
+    if not {"real_data", "lineage", "quality"} <= gates:
+        ctx.fail(f"{label}: real-data, lineage and quality gates must remain open")
 
 
 def _check_original_task(ctx: _Context, task: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -414,12 +454,12 @@ def validate(
     for model in models:
         _check_model(ctx, model)
 
+    # Neither follows from recovered flags; this investigation can attest neither.
     claims = doc.get("claims") or {}
-    all_recovered = bool(models) and all(m.get("recovered") is True for m in models)
-    if claims.get("model_ready") is not False and not all_recovered:
-        ctx.fail("model_ready claimed while a model is not recovered")
-    if claims.get("historical_state_bytes_recovered") is not False and not all_recovered:
-        ctx.fail("historical state bytes claimed recovered while a model is not recovered")
+    if claims.get("model_ready") is not False:
+        ctx.fail("model_ready claimed by a bounded investigation")
+    if claims.get("historical_state_bytes_recovered") is not False:
+        ctx.fail("historical state bytes claimed recovered by a bounded investigation")
     if claims.get("cloud_authority") != "none":
         ctx.fail("an investigation holds no cloud authority")
     for claim in ("live_done", "deploy_go"):
@@ -444,25 +484,23 @@ def validate(
         if entry is not None:
             holders[str(task.get("task_id"))] = entry
 
-    if not all_recovered:
-        missing = doc.get("missing_inputs") or []
-        if not missing:
-            ctx.fail("unrecovered models need missing_inputs")
-        for item in missing:
-            if not item.get("responsible") or not item.get("handback_task"):
-                ctx.fail(f"missing input {item.get('id')} needs responsible and handback_task")
-            entry = holders.get(str(item.get("handback_task")))
-            if entry is not None:
-                holder = item.get("handback_holder") or {}
-                if (holder.get("owner"), holder.get("reviewer")) != (
-                    entry.get("owner"),
-                    entry.get("reviewer"),
-                ):
-                    ctx.fail(f"missing input {item.get('id')} handback holder differs from board")
-        if doc.get("operation_plan") is not None and not any(
-            m.get("recovered") is True for m in models
-        ):
-            ctx.fail("operation plan proposed with nothing recovered")
+    missing = doc.get("missing_inputs") or []
+    if not missing:
+        ctx.fail("unrecovered models need missing_inputs")
+    for item in missing:
+        if not item.get("responsible") or not item.get("handback_task"):
+            ctx.fail(f"missing input {item.get('id')} needs responsible and handback_task")
+        entry = holders.get(str(item.get("handback_task")))
+        if entry is not None:
+            holder = item.get("handback_holder") or {}
+            if (holder.get("owner"), holder.get("reviewer")) != (
+                entry.get("owner"),
+                entry.get("reviewer"),
+            ):
+                ctx.fail(f"missing input {item.get('id')} handback holder differs from board")
+        _check_training_requirement(ctx, item)
+    if doc.get("operation_plan") is not None:
+        ctx.fail("operation plan proposed with nothing recovered")
     return ctx.errors
 
 

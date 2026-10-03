@@ -278,30 +278,18 @@ def _history_current(receipt: str):
             lambda d: d["saved_receipts"][0].update(observed_at="2026-10-02T19:00:00Z"),
             "differs from its contents",
         ),
-        # Recovered without hash / approval / rollback.
+        # Positive recovery states are unattestable in this bounded investigation.
         (
-            lambda d: (
-                _model(d, "forecast_revenue_interval")["artifact"].update(state="recovered"),
-                _model(d, "forecast_revenue_interval").update(recovered=True),
-            ),
-            "needs a sha256",
+            lambda d: _model(d, "forecast_revenue_interval")["artifact"].update(state="recovered"),
+            "artifact state recovered is unattested",
         ),
         (
-            lambda d: (
-                _model(d, "forecast_revenue_interval")["artifact"].update(
-                    state="recovered",
-                    sha256="0" * 64,
-                    uri="gs://bucket/model",
-                    version="1",
-                    training_ref="run",
-                ),
-                _model(d, "forecast_revenue_interval").update(recovered=True),
-            ),
-            "approval ref",
+            lambda d: _model(d, "forecast_revenue_interval").update(recovered=True),
+            "recovered must be false",
         ),
         (
             lambda d: _model(d, "forecast_revenue_interval")["approval"].update(state="approved"),
-            "approved without approval_ref",
+            "approval state approved is unattested",
         ),
         (
             lambda d: _model(d, "sitescore_propensity")["artifact"].update(state="ok"),
@@ -311,9 +299,104 @@ def _history_current(receipt: str):
         (lambda d: d["missing_inputs"][0].pop("responsible"), "needs responsible"),
         (lambda d: d.update(missing_inputs=[]), "need missing_inputs"),
         (lambda d: d.update(operation_plan={"step": "copy"}), "nothing recovered"),
+        # Window coverage is not training readiness.
+        (
+            lambda d: _history_handback(d).pop("training_requirement"),
+            "day span without a bound training_requirement",
+        ),
+        (
+            lambda d: _history_handback(d)["training_requirement"].update(
+                training_floor_attested_days=56
+            ),
+            "training floor is not stated",
+        ),
+        (
+            lambda d: _history_handback(d)["training_requirement"].update(
+                training_floor_attested_days=56, training_floor_eligible_dates=28
+            ),
+            "must stay below the training floor",
+        ),
+        (
+            lambda d: _history_handback(d)["training_requirement"].update(floor_is_sufficient=True),
+            "necessary, not sufficient",
+        ),
+        (
+            lambda d: _history_handback(d)["training_requirement"].update(current_row_count=1303),
+            "current counts are unknown",
+        ),
+        (
+            lambda d: _history_handback(d)["training_requirement"].update(
+                remaining_gates=["temporal_validation_metrics"]
+            ),
+            "gates must remain open",
+        ),
+        (
+            lambda d: _history_handback(d)["training_requirement"].update(minimum_segment_rows=3),
+            "segment holdout rows is not stated",
+        ),
+        (
+            lambda d: _history_handback(d)["training_requirement"]["evidence"].pop(1),
+            "holdout fraction is not stated",
+        ),
         (lambda d: d["original_tasks"][0].update(branch_head="950b852c"), "full SHA"),
     ],
 )
 def test_negative_cases_are_rejected(doc: dict, mutate, expected: str) -> None:
     errors = _break(doc, mutate)
     assert any(expected in e for e in errors), errors
+
+
+def _history_handback(doc: dict) -> dict:
+    return next(m for m in doc["missing_inputs"] if m["id"] == "forecast-authoritative-history")
+
+
+def _fabricate_recovery(model: dict) -> None:
+    # Hash-shaped and non-empty but unbacked: nothing here is saved evidence.
+    model["recovered"] = True
+    model["artifact"] = {
+        "state": "recovered",
+        "sha256": "0" * 64,
+        "uri": "gs://unread/fabricated",
+        "version": "1",
+        "training_ref": "not-a-real-run",
+    }
+    model["approval"] = {
+        "state": "approved",
+        "approval_ref": "not-a-real-approval",
+        "rollback_target": "not-a-real-version",
+    }
+
+
+def test_fabricated_single_model_recovery_is_rejected(doc: dict) -> None:
+    forecast = _model(doc, "forecast_revenue_interval")
+    _fabricate_recovery(forecast)
+    assert forecast["registry"]["state"] == "absent"
+    assert forecast["history"]["state"] == "history_unknown"
+    errors = _offline(doc)
+    for expected in (
+        "forecast_revenue_interval: artifact state recovered is unattested",
+        "forecast_revenue_interval: approval state approved is unattested",
+        "forecast_revenue_interval: recovered must be false",
+    ):
+        assert any(expected in e for e in errors), errors
+
+
+def test_fabricated_all_model_recovery_does_not_yield_readiness(doc: dict) -> None:
+    for model in doc["models"]:
+        _fabricate_recovery(model)
+    doc["claims"].update(model_ready=True, historical_state_bytes_recovered=True)
+    doc["missing_inputs"] = []
+    errors = _offline(doc)
+    for model in doc["models"]:
+        assert any(f"{model['model']}: recovered must be false" in e for e in errors), errors
+    assert any("model_ready claimed" in e for e in errors), errors
+    assert any("state bytes claimed recovered" in e for e in errors), errors
+    assert any("need missing_inputs" in e for e in errors), errors
+
+
+def test_history_handback_separates_coverage_from_training(doc: dict) -> None:
+    req = _history_handback(doc)["training_requirement"]
+    assert req["window_coverage_attested_days"] < req["training_floor_attested_days"]
+    assert req["floor_is_sufficient"] is False
+    assert req["current_row_count"] == "unknown"
+    assert "Window coverage is not training readiness" in _history_handback(doc)["gap"]
