@@ -95,13 +95,38 @@ def create_user_role_sub_router(
     def get_svc(req: Request) -> UserRoleManagementService:
         return resolve_service(req, service, service_resolver)
 
+    def caller_tenant(req: Request) -> str | None:
+        return (
+            getattr(req.state, "operator_tenant_id", None)
+            or getattr(req.state, "tenant_id", None)
+            or req.headers.get("x-tenant-id")
+        )
+
+    def tenant_kwargs(svc: Any, req: Request) -> dict[str, Any]:
+        # Identity-backed administration is tenant-scoped on every read, not
+        # only on writes; the document service keeps its historical signature.
+        if getattr(svc, "requires_tenant", False):
+            return {"tenant_id": caller_tenant(req)}
+        return {}
+
+    def actor_kwargs(svc: Any, req: Request) -> dict[str, Any]:
+        if not getattr(svc, "requires_tenant", False):
+            return {}
+        raw = getattr(req.state, "operator_system_roles", None) or ""
+        return {"actor_roles": frozenset(r for r in str(raw).split(",") if r)}
+
     @router.get("", dependencies=read_deps)
     def list_users(
         request: Request,
         status_filter: str | None = None,
     ) -> dict[str, Any]:
         svc = get_svc(request)
-        users = svc.list_users(status_filter=status_filter)
+        try:
+            users = svc.list_users(status_filter=status_filter, **tenant_kwargs(svc, request))
+        except UserRolePolicyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)
+            ) from exc
         return {
             "users": users,
             "count": len(users),
@@ -124,12 +149,12 @@ def create_user_role_sub_router(
         subject_id: str | None = None,
     ) -> dict[str, Any]:
         svc = get_svc(request)
-        tenant_id = (
-            getattr(request.state, "operator_tenant_id", None)
-            or getattr(request.state, "tenant_id", None)
-            or request.headers.get("x-tenant-id")
-        )
-        events = svc.get_audit_trail(subject_id=subject_id, tenant_id=tenant_id)
+        try:
+            events = svc.get_audit_trail(subject_id=subject_id, tenant_id=caller_tenant(request))
+        except UserRolePolicyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)
+            ) from exc
         return {
             "events": events,
             "count": len(events),
@@ -140,7 +165,11 @@ def create_user_role_sub_router(
     def get_user(subject_id: str, request: Request) -> dict[str, Any]:
         svc = get_svc(request)
         try:
-            return svc.get_user(subject_id)
+            return svc.get_user(subject_id, **tenant_kwargs(svc, request))
+        except UserRolePolicyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)
+            ) from exc
         except UserNotFound as exc:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
@@ -155,13 +184,10 @@ def create_user_role_sub_router(
         scope_dict = body.scope.model_dump() if body.scope else None
         server_actor = getattr(request.state, "operator_subject_id", None) or "operator"
         server_role = getattr(request.state, "operator_role_id", None) or "platform_admin"
-        partition_tenant = (
-            getattr(request.state, "operator_tenant_id", None)
-            or getattr(request.state, "tenant_id", None)
-            or request.headers.get("x-tenant-id")
-        )
+        partition_tenant = caller_tenant(request)
         try:
             user = svc.save_user(
+                **actor_kwargs(svc, request),
                 subject_id=body.subjectId,
                 roles=body.roles,
                 scope=scope_dict,
@@ -193,13 +219,10 @@ def create_user_role_sub_router(
     ) -> dict[str, Any]:
         svc = get_svc(request)
         server_actor = getattr(request.state, "operator_subject_id", None) or "operator"
-        partition_tenant = (
-            getattr(request.state, "operator_tenant_id", None)
-            or getattr(request.state, "tenant_id", None)
-            or request.headers.get("x-tenant-id")
-        )
+        partition_tenant = caller_tenant(request)
         try:
             user = svc.set_user_status(
+                **actor_kwargs(svc, request),
                 subject_id=subject_id,
                 status=body.status,
                 actor_name=server_actor,

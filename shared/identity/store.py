@@ -126,6 +126,10 @@ class IdentityStore(Protocol):
         """儲存或更新帳號記錄。"""
         ...
 
+    def password_must_change(self, account_id: UUID | str) -> bool:
+        """密碼憑證是否仍標記 must_change（Contract §7.2：bootstrap 後首登必須改密碼）。"""
+        ...
+
     def set_account_roles(self, account_id: UUID | str, roles: Iterable[Role | str]) -> None:
         """設定帳號角色。"""
         ...
@@ -154,6 +158,17 @@ class InMemoryIdentityStore:
         self._scopes: dict[UUID, Scope] = {}
         # (issuer, subject) -> account_id
         self._federated_links: dict[tuple[str, str], UUID] = {}
+        self._must_change: set[UUID] = set()
+
+    def set_password_must_change(self, account_id: UUID | str, must_change: bool) -> None:
+        aid = _parse_uuid(account_id)
+        if must_change:
+            self._must_change.add(aid)
+        else:
+            self._must_change.discard(aid)
+
+    def password_must_change(self, account_id: UUID | str) -> bool:
+        return _parse_uuid(account_id) in self._must_change
 
     def save_account(self, account: Account) -> None:
         self._accounts[account.account_id] = account
@@ -395,6 +410,23 @@ class SqlIdentityStore:
                     modules=_parse_list(_col("modules", 5)),
                     clearance=clearance,
                 )
+
+    def password_must_change(self, account_id: UUID | str) -> bool:
+        aid = _parse_uuid(account_id)
+        with open_connection(self._conn_factory) as conn:
+            if conn is None:
+                # Fail closed: an unknown rotation state must not pass as "rotated".
+                raise RuntimeError("identity store connection unavailable")
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT must_change FROM identity.password_credentials WHERE account_id = %s",
+                    (str(aid),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return False
+                value = row["must_change"] if isinstance(row, dict) else row[0]
+                return bool(value)
 
     def save_account(self, account: Account) -> None:
         with open_connection(self._conn_factory) as conn:

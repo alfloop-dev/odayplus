@@ -2097,10 +2097,23 @@ else:
             netplan_repository_for_tenant = None
             priceops_repository_for_tenant = None
 
+        identity_user_role_service: Any | None = None
+        if persistence_mode in {"postgres", "postgresql"} and getattr(bundle, "engine", None) is not None:
+            from modules.opsboard.application.identity_user_role_management import (
+                IdentityUserRoleManagementService,
+            )
+
+            # User administration writes the identity.* rows the auth boundary
+            # resolves, in one transaction with its audit event.
+            identity_user_role_service = IdentityUserRoleManagementService(
+                engine=bundle.engine, audit_log=audit_log
+            )
+
         mount_versioned(
             api,
             create_operator_router(
                 audit_log=audit_log,
+                identity_user_role_service=identity_user_role_service,
                 document_store=operator_document_store,
                 listing_repository=listing_repository,
                 listing_repository_for_tenant=listing_repository_for_tenant,
