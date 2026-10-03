@@ -161,6 +161,20 @@ def test_note_cannot_release_canonical_external_blocker(board, message):
     "provider failure in payload.csv still pending approval",
     "waiting for dependencies: UPSTREAM-DATASET-001; waiting for payload.csv; provider handoff pending",
     "waiting for dependencies: UPSTREAM-DATASET-001; /provider/worktree",
+    # Extensionless relative paths must stay atomic even when every component
+    # is an allowed routing word. A demanded path is not a routing failure.
+    "waiting for `auth/credentials`; provider handoff pending",
+    "required runtime/credentials; provider handoff pending",
+    "waiting for provider/worktree; provider handoff pending",
+    "auth/credentials; provider handoff pending",
+    "`provider/worktree`; provider handoff pending",
+    "waiting for ./auth/credentials; provider handoff pending",
+    "waiting for auth/current_credentials; provider handoff pending",
+    "waiting for provider/worktree failure; provider handoff pending",
+    "required provider quota/worktree failure; provider handoff pending",
+    "waiting for dependencies: UPSTREAM-DATASET-001; waiting for `auth/credentials`; provider handoff pending",
+    "waiting for dependencies: UPSTREAM-DATASET-001; required runtime/credentials; provider handoff pending",
+    "waiting for dependencies: UPSTREAM-DATASET-001; provider/worktree",
 ])
 def test_mixed_gate_prose_is_not_erased_as_a_path(board, completed_dependency, blocker_message):
     config, status, path = board
@@ -194,6 +208,9 @@ def test_mixed_gate_prose_is_not_erased_as_a_path(board, completed_dependency, b
     {"blocked_reason": "approval=pending; provider handoff pending"},
     {"blocked_reason": "deployment job pending; provider handoff pending"},
     {"blocked_reason": "waiting for deploy job; provider handoff pending"},
+    {"blocked_reason": "waiting for `auth/credentials`; provider handoff pending"},
+    {"blocked_reason": "required runtime/credentials; provider handoff pending"},
+    {"blocked_reason": "waiting for provider/worktree; provider handoff pending"},
 ])
 def test_structured_gate_survives_note(board, gate):
     config, status, path = board
@@ -244,7 +261,7 @@ def test_released_scheduler_owned_gate_still_recovers_and_enqueues(board, scenar
     elif scenario == "references":
         task.update(depends_on=["UPSTREAM-DATASET-001"], next="stale provider failure in scripts/deployment.py; retry dispatch")
         status["tasks"].append({"id": "UPSTREAM-DATASET-001", "status": "done", "depends_on": []})
-        status["blockers"] = [hard_blocker(message="provider failure in scripts/deployment.py; refs=docs/dataset.json; see `docs/dataset`; ref: /tmp/dataset; refs ./docs/dataset, `scripts/ai_status.py`; see `/tmp/dataset`; ref=`.orchestrator/supervisor.py`; provider crash at `../dataset/approval.json`; UPSTREAM-DATASET-001")]
+        status["blockers"] = [hard_blocker(message="provider failure in scripts/deployment.py; refs=docs/dataset.json; see `docs/dataset`; ref: /tmp/dataset; refs ./docs/dataset, `scripts/ai_status.py`; see `/tmp/dataset`; ref=`.orchestrator/supervisor.py`; provider crash at `../dataset/approval.json`; refs=auth/credentials; see `runtime/credentials`; ref: provider/worktree; UPSTREAM-DATASET-001")]
     elif scenario == "dependency":
         task.update(depends_on=["UPSTREAM-DATASET-001"], next="waiting for dependencies: UPSTREAM-DATASET-001")
         status["tasks"].append({"id": "UPSTREAM-DATASET-001", "status": "done", "depends_on": []})
