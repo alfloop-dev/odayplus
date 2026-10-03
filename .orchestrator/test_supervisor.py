@@ -11275,6 +11275,10 @@ class HumanContinuationApprovalSupervisorTests(unittest.TestCase):
 
 
 class AutomaticRecoveryTests(unittest.TestCase):
+    @staticmethod
+    def _snapshot(task_map):
+        return {"tasks": list(task_map.values()), "blockers": [], "_status_write_revision": "test"}
+
     def setUp(self) -> None:
         self.config = {
             "schema": {
@@ -11312,6 +11316,7 @@ class AutomaticRecoveryTests(unittest.TestCase):
                 self.config,
                 task,
                 {task["id"]: task},
+                status_snapshot=self._snapshot({task["id"]: task}),
             )
 
         self.assertTrue(changed)
@@ -11340,13 +11345,17 @@ class AutomaticRecoveryTests(unittest.TestCase):
         task = self._dependency_gated_task("WAVE-KRN-001", ["WAVE-GOV-001"])
         task_map = {gate["id"]: gate, task["id"]: task}
 
-        self.assertTrue(supervisor.blocked_task_auto_recovery_eligible(self.config, task, task_map))
+        self.assertTrue(supervisor.blocked_task_auto_recovery_eligible(
+            self.config, task, task_map, status_snapshot=self._snapshot(task_map),
+        ))
 
         with (
             mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
             mock.patch.object(supervisor, "write_activity_log"),
         ):
-            changed = supervisor.normalize_mainline_task_assignment(self.config, task, task_map)
+            changed = supervisor.normalize_mainline_task_assignment(
+                self.config, task, task_map, status_snapshot=self._snapshot(task_map),
+            )
 
         self.assertTrue(changed)
         self.assertEqual(persist.call_args.kwargs["new_status"], "todo")
@@ -11357,7 +11366,9 @@ class AutomaticRecoveryTests(unittest.TestCase):
         task = self._dependency_gated_task("WAVE-KRN-001", ["WAVE-GOV-001"])
         task_map = {gate["id"]: gate, task["id"]: task}
 
-        self.assertFalse(supervisor.blocked_task_auto_recovery_eligible(self.config, task, task_map))
+        self.assertFalse(supervisor.blocked_task_auto_recovery_eligible(
+            self.config, task, task_map, status_snapshot=self._snapshot(task_map),
+        ))
 
     def test_dependency_ids_do_not_masquerade_as_hard_gates(self) -> None:
         # "WAVE-KRN-DATASET-001" contains the external-data gate keyword
@@ -11367,7 +11378,9 @@ class AutomaticRecoveryTests(unittest.TestCase):
         task_map = {gate["id"]: gate, task["id"]: task}
 
         self.assertNotIn("dataset", supervisor.blocked_task_prose_context(task))
-        self.assertTrue(supervisor.blocked_task_auto_recovery_eligible(self.config, task, task_map))
+        self.assertTrue(supervisor.blocked_task_auto_recovery_eligible(
+            self.config, task, task_map, status_snapshot=self._snapshot(task_map),
+        ))
 
     def test_released_dependency_gate_still_fails_closed_on_human_gate_prose(self) -> None:
         gate = {"id": "WAVE-GOV-001", "status": "done", "depends_on": []}
@@ -11375,7 +11388,9 @@ class AutomaticRecoveryTests(unittest.TestCase):
         task["blocker"] = "requires operator sign-off before dispatch"
         task_map = {gate["id"]: gate, task["id"]: task}
 
-        self.assertFalse(supervisor.blocked_task_auto_recovery_eligible(self.config, task, task_map))
+        self.assertFalse(supervisor.blocked_task_auto_recovery_eligible(
+            self.config, task, task_map, status_snapshot=self._snapshot(task_map),
+        ))
 
     def test_dependency_free_blocked_task_still_needs_routing_failure_prose(self) -> None:
         task = {
@@ -11388,7 +11403,9 @@ class AutomaticRecoveryTests(unittest.TestCase):
         }
 
         self.assertFalse(
-            supervisor.blocked_task_auto_recovery_eligible(self.config, task, {task["id"]: task})
+            supervisor.blocked_task_auto_recovery_eligible(
+                self.config, task, {task["id"]: task}, status_snapshot=self._snapshot({task["id"]: task}),
+            )
         )
 
     def test_human_ops_waiting_for_task_with_worktree_prose_is_not_auto_recovery_eligible(self) -> None:
@@ -11407,14 +11424,18 @@ class AutomaticRecoveryTests(unittest.TestCase):
                 task_map = {task["id"]: task}
 
                 self.assertFalse(
-                    supervisor.blocked_task_auto_recovery_eligible(self.config, task, task_map)
+                    supervisor.blocked_task_auto_recovery_eligible(
+                        self.config, task, task_map, status_snapshot=self._snapshot(task_map),
+                    )
                 )
 
                 with (
                     mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
                     mock.patch.object(supervisor, "write_activity_log"),
                 ):
-                    changed = supervisor.normalize_mainline_task_assignment(self.config, task, task_map)
+                    changed = supervisor.normalize_mainline_task_assignment(
+                        self.config, task, task_map, status_snapshot=self._snapshot(task_map),
+                    )
 
                 self.assertFalse(changed)
                 persist.assert_not_called()

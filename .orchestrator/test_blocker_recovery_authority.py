@@ -103,3 +103,141 @@ def test_note_cannot_release_canonical_external_blocker(board, message):
     assert events == []
     launch.assert_not_called()
     assert not any("No unresolved dependency" in str(call) for call in audit.call_args_list)
+
+
+@pytest.mark.parametrize("gate", [
+    {"requires_human_approval": True}, {"human_required_roles": ["ops"]},
+    {"credentials_gate": True}, {"credential_gate": True},
+    {"deployment_gate": True}, {"production_gate": True},
+    {"external_data_gate": True}, {"human_gate": {"status": "pending"}},
+    {"gate_status": "pending_human_signoff"}, {"waiting_for": "Human/Ops"},
+    {"non_dispatchable": True}, {"task_class": "human_gate"},
+])
+def test_structured_gate_survives_note(board, gate):
+    config, status, path = board
+    status["tasks"][0].update(gate)
+    ordinary_note(status, path, "provider handoff stale notification")
+    with dispatch_boundary(config) as (events, audit, launch):
+        dispatch(config)
+    assert json.loads(path.read_text()) == status
+    assert events == []
+    launch.assert_not_called()
+
+
+@pytest.mark.parametrize("blocker", [
+    hard_blocker(message="provider failed; requires operator sign-off"),
+    hard_blocker(message="approval required after stale handoff"),
+    hard_blocker(message="unrecorded business input still missing"),
+    hard_blocker(message="provider error", waiting_for="Human/Ops"),
+    hard_blocker(message="provider error", external_data_gate=True),
+])
+def test_completed_dependency_cannot_release_an_independent_blocker(board, blocker):
+    config, status, path = board
+    status["tasks"][0]["depends_on"] = ["UPSTREAM-DATASET-001"]
+    status["tasks"].append({"id": "UPSTREAM-DATASET-001", "status": "done", "depends_on": []})
+    status["blockers"] = [hard_blocker(kind="dependency", message="waiting for dependencies: UPSTREAM-DATASET-001"), blocker]
+    ordinary_note(status, path, "provider stale handoff notification")
+    with dispatch_boundary(config) as (events, audit, launch):
+        dispatch(config)
+    assert json.loads(path.read_text()) == status
+    assert events == []
+    launch.assert_not_called()
+
+
+@pytest.mark.parametrize("scenario", ["routing", "resolved", "dependency", "unrelated"])
+def test_released_scheduler_owned_gate_still_recovers_and_enqueues(board, scenario):
+    config, status, path = board
+    task = status["tasks"][0]
+    task["next"] = "stale provider/worktree failure; retry dispatch"
+    if scenario == "routing":
+        status["blockers"] = [hard_blocker(message="provider quota/worktree failure")]
+    elif scenario == "resolved":
+        status["blockers"] = [hard_blocker(status="resolved", resolved_at="2026-10-02T00:00:00Z")]
+    elif scenario == "dependency":
+        task.update(depends_on=["UPSTREAM-DATASET-001"], next="waiting for dependencies: UPSTREAM-DATASET-001")
+        status["tasks"].append({"id": "UPSTREAM-DATASET-001", "status": "done", "depends_on": []})
+        status["blockers"] = [hard_blocker(kind="dependency", message=task["next"])]
+    else:
+        status["blockers"] = [hard_blocker(task_id="OTHER-TASK")]
+    save(path, status)
+    with dispatch_boundary(config) as (events, audit, launch):
+        dispatch(config)
+    latest = json.loads(path.read_text())
+    assert latest["tasks"][0]["status"] == "todo"
+    assert len(events) == 1
+    assert events[0]["task_id"] == "AUTHORITY-001"
+    launch.assert_not_called()
+    for blocker in latest["blockers"]:
+        assert blocker["status"] == ("open" if scenario == "unrelated" else "resolved")
+    if scenario == "resolved":
+        assert latest["blockers"] == status["blockers"]  # historical resolution untouched
+
+
+@pytest.mark.parametrize("missing", ["blockers", "revision"])
+def test_incomplete_canonical_snapshot_fails_closed(board, missing):
+    config, status, path = board
+    status.pop("blockers" if missing == "blockers" else "_status_write_revision")
+    ordinary_note(status, path, "provider handoff stale notification")
+    with dispatch_boundary(config) as (events, audit, launch):
+        dispatch(config)
+    assert json.loads(path.read_text()) == status
+    assert events == []
+
+
+def test_task_only_map_is_not_authority_even_without_dependencies(board):
+    config, status, path = board
+    task = status["tasks"][0]
+    task["next"] = "stale provider handoff"
+    assert not supervisor.blocked_task_auto_recovery_eligible(config, task, {task["id"]: task})
+    assert not supervisor.normalize_mainline_task_assignment(config, task, {task["id"]: task})
+
+
+def test_snapshot_dependency_truth_overrides_optimistic_task_map(board):
+    config, status, path = board
+    task = status["tasks"][0]
+    task.update(depends_on=["UPSTREAM-001"], next="stale provider")
+    upstream = {"id": "UPSTREAM-001", "status": "blocked", "depends_on": []}
+    status["tasks"].append(upstream)
+    optimistic = {task["id"]: task, upstream["id"]: {**upstream, "status": "done"}}
+    assert not supervisor.blocked_task_auto_recovery_eligible(config, task, optimistic, status_snapshot=status)
+    save(path, status)
+    with dispatch_boundary(config) as (events, audit, launch):
+        dispatch(config)
+    assert json.loads(path.read_text()) == status
+    assert events == []
+
+
+@pytest.mark.parametrize("insertion_point", ["before_persist", "before_cas"])
+def test_parallel_human_blocker_is_never_resolved_or_dispatched(board, insertion_point):
+    config, status, path = board
+    status["tasks"][0]["next"] = "stale provider failure; retry dispatch"
+    save(path, status)
+    real_persist = supervisor.persist_task_reassignment
+    real_cas = supervisor.write_status_snapshot_if_current
+
+    def add_human_blocker():
+        latest = json.loads(path.read_text())
+        latest["blockers"].append(hard_blocker(waiting_for="Human/Ops", message="manual approval"))
+        latest["_status_write_revision"] = "parallel-canonical-write"
+        save(path, latest)
+
+    def persist_after_add(*args, **kwargs):
+        add_human_blocker()
+        return real_persist(*args, **kwargs)
+
+    def cas_after_add(*args, **kwargs):
+        add_human_blocker()
+        return real_cas(*args, **kwargs)
+
+    target = "persist_task_reassignment" if insertion_point == "before_persist" else "write_status_snapshot_if_current"
+    callback = persist_after_add if insertion_point == "before_persist" else cas_after_add
+    with dispatch_boundary(config) as (events, audit, launch), mock.patch.object(supervisor, target, side_effect=callback):
+        dispatch(config)
+    latest = json.loads(path.read_text())
+    assert latest["tasks"][0]["status"] == "blocked"
+    assert latest["blockers"][0]["status"] == "open"
+    assert latest["_status_write_revision"] == "parallel-canonical-write"
+    assert events == []
+    launch.assert_not_called()
+    assert any(call.args[1]["type"] == "stale_status_write_rejected" for call in audit.call_args_list)
+    assert not any("No unresolved dependency" in str(call) for call in audit.call_args_list)

@@ -4596,6 +4596,8 @@ def blocked_task_auto_recovery_eligible(
     config: dict[str, Any],
     task: dict[str, Any],
     task_map: dict[str, dict[str, Any]] | None = None,
+    *,
+    status_snapshot: dict[str, Any] | None = None,
 ) -> bool:
     """Whether a blocked task is a released gate, not a live one.
 
@@ -4610,10 +4612,23 @@ def blocked_task_auto_recovery_eligible(
     task blocked forever behind a dependency the resolver already reports as
     satisfied -- a deadlock only a human can clear.
     """
+    # A task-only map cannot prove that canonical blockers are absent. Use the
+    # dispatch pass's one versioned board for tasks, blockers and dependencies;
+    # never treat an ordinary note replacing `next` as gate-release authority.
+    if not isinstance(status_snapshot, dict) or not status_snapshot.get(STATUS_WRITE_REVISION_FIELD):
+        return False
+    snapshot_tasks = task_index_from_status(config, status_snapshot)
+    if snapshot_tasks.get(str(task.get("id") or "")) != task:
+        return False
+    task_map = snapshot_tasks
+    blockers = status_snapshot.get("blockers")
+    if not isinstance(blockers, list):
+        return False
     if str(task.get("status") or "").strip().lower() != "blocked":
         return False
     if (
-        task_is_human_gate(task)
+        runtime_ai_status.task_unresolved_human_or_independent_gate_reason(task)
+        or task_is_human_gate(task)
         or is_human_gate_agent(task.get("waiting_for"))
         or str(task.get("waiting_for") or "").strip().casefold() in {"human/ops", "human", "ops"}
         or task_is_sidecar(task)
@@ -4622,12 +4637,6 @@ def blocked_task_auto_recovery_eligible(
         return False
     declared_dependencies = [str(dep).strip() for dep in (task.get("depends_on") or []) if str(dep).strip()]
     dependency_gate_released = False
-    if declared_dependencies and task_map is None:
-        # Recovery is an execution transition.  A missing snapshot is not
-        # evidence that the dependency gate has cleared; do not fall back to
-        # blocker prose and accidentally wake an E2E task during a dependency
-        # merge window.
-        return False
     if task_map is not None:
         done_statuses = {
             str(value).lower()
@@ -4641,24 +4650,56 @@ def blocked_task_auto_recovery_eligible(
         "human/ops", "human gate", "pending_human", "authoritative", "dataset", "attestation",
         "external-data", "mlflow", "deploy dev", "live-e2e", "production alias", "merge queue",
         "operator intervention", "manual approval", "requires operator",
+        "external data", "deployment", "production", "sign-off", "signoff",
+        "approval required", "approval gate",
+    )
+    routing_markers = (
+        "auto-reassigned", "sidecar-only", "quota", "auth", "credential", "worktree",
+        "push failure", "dispatch", "provider", "handoff", "stale",
     )
     if any(marker in context for marker in hard_gate_markers):
         return False
+    for blocker in blockers:
+        if not isinstance(blocker, dict):
+            return False
+        if blocker.get("task_id") != task.get("id") or blocker.get("status") == "resolved":
+            continue
+        if blocker.get("status") != "open":
+            return False
+        if (
+            is_human_gate_agent(blocker.get("waiting_for"))
+            or runtime_ai_status.task_unresolved_human_or_independent_gate_reason(blocker)
+        ):
+            return False
+        # Inspect the durable blocker, not task.next. Keep identifiers out of
+        # prose classification just as for dependency-gated task records.
+        blocker_context = blocked_task_prose_context({
+            **blocker,
+            "id": task.get("id"),
+            "depends_on": declared_dependencies,
+            "next": " ".join(str(blocker.get(key) or "") for key in ("kind", "message", "reason")),
+        })
+        if any(marker in blocker_context for marker in hard_gate_markers):
+            return False
+        dependency_blocker = dependency_gate_released and (
+            blocker.get("kind") == "dependency"
+            or "waiting for dependencies:" in blocker_context
+            or "dependency gate" in blocker_context
+        )
+        if not dependency_blocker and not any(marker in blocker_context for marker in routing_markers):
+            # Unknown business/external gates are not scheduler-owned failures.
+            return False
     if dependency_gate_released:
         return True
-    return bool(context) and any(
-        marker in context
-        for marker in (
-            "auto-reassigned", "sidecar-only", "quota", "auth", "credential", "worktree",
-            "push failure", "dispatch", "provider", "handoff", "stale",
-        )
-    )
+    return bool(context) and any(marker in context for marker in routing_markers)
 
 
 def normalize_mainline_task_assignment(
     config: dict[str, Any],
     task: dict[str, Any],
     task_map: dict[str, dict[str, Any]] | None = None,
+    *,
+    status_snapshot: dict[str, Any] | None = None,
 ) -> bool:
     if task_is_sidecar(task):
         return False
@@ -4674,7 +4715,9 @@ def normalize_mainline_task_assignment(
 
     owner = str(task.get("owner") or "").strip()
     reviewer = str(task.get("reviewer") or "").strip()
-    reopen_blocked = blocked_task_auto_recovery_eligible(config, task, task_map)
+    reopen_blocked = blocked_task_auto_recovery_eligible(
+        config, task, task_map, status_snapshot=status_snapshot,
+    )
     owner_allowed = (
         task_status not in {"todo", "in_progress", "review_approved", "blocked"}
         or agent_can_take_task(config, owner, task, role=ROLE_OWNER)
@@ -4767,6 +4810,7 @@ def normalize_mainline_task_assignment(
         handoff_to=handoff_target,
         handoff_from=handoff_source,
         resolve_open_blockers=reopen_blocked,
+        status_snapshot=status_snapshot if reopen_blocked else None,
     ):
         return False
     write_activity_log(

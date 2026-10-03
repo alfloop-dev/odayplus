@@ -2744,7 +2744,9 @@ def dispatch_ready_tasks(
         # legacy mainline guard immediately overwrite a repair using this
         # loop's stale pre-repair task object.
         if not assignment_normalized:
-            normalized = normalize_mainline_task_assignment(config, task, task_map) or normalized
+            normalized = normalize_mainline_task_assignment(
+                config, task, task_map, status_snapshot=status,
+            ) or normalized
 
     if normalized:
         changed = True
