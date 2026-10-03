@@ -43,10 +43,18 @@ def downgrade() -> None:
     op.execute(
         sa.text(
             """
-            ALTER TABLE IF EXISTS core.machine_status_events DROP COLUMN IF EXISTS record_status;
-            ALTER TABLE IF EXISTS core.machine_status_events DROP COLUMN IF EXISTS created_at;
-            ALTER TABLE IF EXISTS core.machine_status_events DROP COLUMN IF EXISTS updated_at;
-            DROP INDEX IF EXISTS core.idx_machine_status_events_record_status;
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_schema = 'core' AND table_name = 'machine_status_events'
+                ) THEN
+                    ALTER TABLE core.machine_status_events DROP COLUMN IF EXISTS record_status;
+                    ALTER TABLE core.machine_status_events DROP COLUMN IF EXISTS created_at;
+                    ALTER TABLE core.machine_status_events DROP COLUMN IF EXISTS updated_at;
+                    DROP INDEX IF EXISTS core.idx_machine_status_events_record_status;
+                END IF;
+            END $$;
             """
         )
     )

@@ -17,12 +17,20 @@
 
 BEGIN;
 
-ALTER TABLE IF EXISTS core.machine_status_events
-    ADD COLUMN IF NOT EXISTS record_status VARCHAR(50) NOT NULL DEFAULT 'active',
-    ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP;
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'core' AND table_name = 'machine_status_events'
+    ) THEN
+        ALTER TABLE core.machine_status_events
+            ADD COLUMN IF NOT EXISTS record_status VARCHAR(50) NOT NULL DEFAULT 'active',
+            ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP;
 
-CREATE INDEX IF NOT EXISTS idx_machine_status_events_record_status
-    ON core.machine_status_events (store_id, record_status);
+        CREATE INDEX IF NOT EXISTS idx_machine_status_events_record_status
+            ON core.machine_status_events (store_id, record_status);
+    END IF;
+END $$;
 
 COMMIT;
