@@ -332,29 +332,6 @@ def reset_feature_flags():
 
 
 @pytest.fixture(autouse=True)
-def reset_auth_boundary_state():
-    """Reset the global auth boundary and bound persistence before and after each test.
-
-    create_app() binds the app persistence and audit sink to the process-wide
-    dependencies module. If a test closes its persistence engine on teardown,
-    subsequent tests running in the same worker would otherwise inherit the
-    closed engine unless reset.
-    """
-    try:
-        from apps.api.oday_api.security.dependencies import (
-            reset_bound_persistence,
-            reset_default_boundary,
-        )
-        reset_bound_persistence()
-        reset_default_boundary()
-        yield
-        reset_bound_persistence()
-        reset_default_boundary()
-    except ImportError:
-        yield
-
-
-@pytest.fixture(autouse=True)
 def patch_synthetic_dns(request, monkeypatch):
     """Ensure any test DNS lookup for synthetic.example resolves successfully.
 
