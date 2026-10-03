@@ -93,10 +93,24 @@ symbol、ZIP member hash）獨立寫在測試裡，不是拿 JSON 跟自己比�
 exact PR head 執行，收據（head SHA、命令、exit code、時間、選取範圍）存於
 supervisor 的 `.orchestrator/evidence`，由 `task_finalize.sh` 檢核。
 
+## 6a. CI 測試隔離修正（範圍外、被迫）
+
+PR #1400 head `07cfbd10` 的 product CI（run 37082795988）在
+`tests/security/test_api_auth_wiring.py` 紅 7 筆
+`sqlite3.ProgrammingError: Cannot operate on a closed database`；同 7 筆亦出現在
+dev 上其他 PR（CDC run 37080864293），與本 diff 無關，是 dev 既有順序依賴：
+`create_app` 把 persistence bundle／audit log 綁進 `security.dependencies` 模組全域，
+其他 suite 關 engine 未解綁，而該檔只呼叫 `reset_default_boundary()`。
+
+本機重現：`uv run --frozen --python 3.12 pytest -q -p no:xdist -p no:randomly
+tests/integration/test_durable_repository_wiring.py tests/security/test_api_auth_wiring.py`
+修正前 exit 1（恰為同 7 筆），加入 autouse `reset_bound_persistence()` fixture 後 exit 0。
+只改測試隔離，不改產品碼；此檔不在 owned_paths 內，明列供 reviewer 判定。
+
 ## 7. 完成語言（分開陳述）
 
 - 程式／紀錄更正：本 PR 交付。
-- 獨立審查／合併：第一輪 Codex 審查退回（scope、ref 驗證），本版修正 ref 驗證後重送。
+- 獨立審查／合併：第一輪 Codex 審查退回（scope、ref 驗證），修正 ref 驗證；其後 CI 因 dev 既有 auth 測試順序依賴而紅，本版加入 §6a 隔離修正並 base advance 至 `734dcb65` 後重送。
 - 真實資料輸入：不適用於本任務；上表「仍欠」各項均未取得。
 - 部署：無。
 - Live 驗證：無；四成員均為 `BLOCKED_BY_EVIDENCE`。
