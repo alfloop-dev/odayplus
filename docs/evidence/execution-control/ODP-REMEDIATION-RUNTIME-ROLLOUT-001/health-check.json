@@ -1,0 +1,85 @@
+{
+  "task_id": "ODP-REMEDIATION-RUNTIME-ROLLOUT-001",
+  "checked_at": "2026-10-03T14:50:02Z",
+  "status_root": "/home/lupin/odayplus",
+  "runtime_link": "/home/lupin/oday-plus-supervisor-runtime-current",
+  "runtime_target": "/home/lupin/oday-plus-supervisor-runtime-66665090a9a3",
+  "runtime_sha": "66665090a9a329877e1a88d80883a8eca1818f09",
+  "supervisor_pid": 1466298,
+  "healthy": true,
+  "checks": [
+    {
+      "name": "supervisor_process_alive",
+      "ok": true,
+      "pid": 1466298,
+      "lock_held": true
+    },
+    {
+      "name": "supervisor_heartbeat_present",
+      "ok": true,
+      "last_heartbeat_at": "2026-10-03T14:49:56Z"
+    },
+    {
+      "name": "supervisor_heartbeat_fresh",
+      "ok": true,
+      "max_age_seconds": 900.0
+    },
+    {
+      "name": "supervisor_not_degraded",
+      "ok": true,
+      "lifecycle": "running",
+      "last_loop_error": null
+    },
+    {
+      "name": "dashboard_bundle_present",
+      "ok": true,
+      "path": "/home/lupin/odayplus/dashboard-bundle.json",
+      "valid": true
+    },
+    {
+      "name": "dashboard_bundle_valid",
+      "ok": true
+    },
+    {
+      "name": "dashboard_bundle_fresh",
+      "ok": true
+    },
+    {
+      "name": "dashboard_supervisor_pid_matches",
+      "ok": true,
+      "supervisor_pid": 1466298
+    },
+    {
+      "name": "runtime_git_not_detached",
+      "ok": true,
+      "head_ref": "refs/heads/runtime-live-66665090a9a3"
+    },
+    {
+      "name": "runtime_git_not_behind",
+      "ok": true,
+      "commits_behind": 0,
+      "upstream": "origin/dev"
+    }
+  ],
+  "governance_checks": [
+    {
+      "command": "python3 delivery_toolchain/governance/check_orchestrator_config.py --config /home/lupin/odayplus/.orchestrator/config.json",
+      "exit_code": 0,
+      "output": "Validated 3 config documents and their merged runtime views."
+    },
+    {
+      "command": "python3 delivery_toolchain/governance/check_config_wiring.py",
+      "exit_code": 0,
+      "output": "All 190 config keys are read by production code."
+    }
+  ],
+  "focused_regression_tests": {
+    "command": "uv run --frozen --python 3.12 pytest -q .orchestrator/test_verification_evidence.py .orchestrator/test_blocker_recovery_authority.py .orchestrator/test_task_dependency_gate.py .orchestrator/test_supervisor.py::AutomaticRecoveryTests",
+    "exit_code": 0,
+    "result": "passed",
+    "covered_fixes": [
+      "ODP-ORCH-VERIFICATION-COMMAND-IDENTITY-001 (PR #1398): verification command deduplication identity protection",
+      "ODP-ORCH-BLOCKER-RECOVERY-AUTHORITY-001 (PR #1402): blocker recovery authority protection against ordinary note auto-clear"
+    ]
+  }
+}
