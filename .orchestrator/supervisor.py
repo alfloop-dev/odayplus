@@ -4298,8 +4298,15 @@ def normalized_business_priority(value: Any, default: str = "P2") -> str:
     return status_transition.normalized_business_priority(value, default=default)
 
 
-def blocked_task_prose_context(task: dict[str, Any]) -> str:
-    """Return blocker prose without task/dependency identifiers, code identifiers, and paths.
+def blocked_task_prose_context(
+    task: dict[str, Any], *, canonical_gate_prose: bool = False,
+) -> str:
+    """Return prose without task/dependency identifiers and code references.
+
+    Canonical blocker prose is gate evidence, unlike an ordinary task note.
+    A bare slash compound (External-data/dataset, Human/Ops) is ambiguous:
+    do not erase it as a filesystem path. Only explicit paths/code references
+    may be removed there; ambiguous gate evidence must fail closed.
 
     The gate keywords below are matched as substrings, so any task ID that
     happens to contain one poisons every task that depends on it: a task
@@ -4323,15 +4330,34 @@ def blocked_task_prose_context(task: dict[str, Any]) -> str:
         )
     )
 
+    # Mask structural identities before preserving any prose gate evidence.
+    context = raw_context.casefold()
+    for identifier in identifiers:
+        token = identifier.strip().casefold()
+        if token:
+            context = context.replace(token, " ")
+
     # 1. Strip code blocks and inline backticks
-    context = re.sub(r"```[\s\S]*?```", " ", raw_context)
+    context = re.sub(r"```[\s\S]*?```", " ", context)
     context = re.sub(r"`[^`]*`", " ", context)
 
     # 2. Strip <key>=<value> pairs
     context = re.sub(r"[A-Za-z0-9_.\-/]+\s*=\s*[A-Za-z0-9_.\-/]+", " ", context)
 
-    # 3. Strip paths with slashes or files with specified extensions (.py .sh .tf .yml .yaml .json)
-    context = re.sub(r"[A-Za-z0-9_.\-]*/[A-Za-z0-9_.\-/]+", " ", context)
+    # 3. Task notes may contain arbitrary path noise. Durable blockers need
+    # lossless treatment of slash-labelled gates BEFORE broad path stripping.
+    # Absolute/dot-prefixed paths, file extensions, backticks and key=value
+    # references are unambiguous code; bare extensionless slash compounds
+    # are not. Callers must quote extensionless filesystem references.
+    path_pattern = r"[A-Za-z0-9_.\-]*/[A-Za-z0-9_.\-/]+"
+    if canonical_gate_prose:
+        context = re.sub(
+            path_pattern,
+            lambda match: " " if match[0].startswith(("/", ".")) or "." in match[0] else match[0],
+            context,
+        )
+    else:
+        context = re.sub(path_pattern, " ", context)
     context = re.sub(
         r"\b[A-Za-z0-9_.\-]+\.(?:py|sh|tf|yml|yaml|json)\b",
         " ",
@@ -4347,11 +4373,6 @@ def blocked_task_prose_context(task: dict[str, Any]) -> str:
         r"\b[A-Za-z0-9_.\-]+\s*(?:相關\s*)?job\b", " ", context, flags=re.IGNORECASE
     )
 
-    context = context.casefold()
-    for identifier in identifiers:
-        token = identifier.strip().casefold()
-        if token:
-            context = context.replace(token, " ")
     return context
 
 
@@ -4647,7 +4668,7 @@ def blocked_task_auto_recovery_eligible(
     context = blocked_task_prose_context({
         **task,
         "next": f"{task.get('next') or ''} {task.get('blocked_reason') or ''}",
-    })
+    }, canonical_gate_prose=True)
     hard_gate_markers = (
         "human/ops", "human gate", "pending_human", "authoritative", "dataset", "attestation",
         "external-data", "mlflow", "deploy dev", "live-e2e", "production alias", "merge queue",
@@ -4674,14 +4695,14 @@ def blocked_task_auto_recovery_eligible(
             or runtime_ai_status.task_unresolved_human_or_independent_gate_reason(blocker)
         ):
             return False
-        # Inspect the durable blocker, not task.next. Keep identifiers out of
-        # prose classification just as for dependency-gated task records.
+        # Inspect the durable blocker, not task.next. Preserve ambiguous gate
+        # labels before the task-note sanitizer can erase them as paths.
         blocker_context = blocked_task_prose_context({
             **blocker,
             "id": task.get("id"),
             "depends_on": declared_dependencies,
             "next": " ".join(str(blocker.get(key) or "") for key in ("kind", "message", "reason")),
-        })
+        }, canonical_gate_prose=True)
         # `kind` is structured classification, not a code identifier. Do not
         # strip e.g. external_data / human_gate as snake_case prose noise.
         blocker_kind = str(blocker.get("kind") or "").strip().casefold().replace("_", " ")
@@ -4694,8 +4715,15 @@ def blocked_task_auto_recovery_eligible(
             or "waiting for dependencies:" in blocker_context
             or "dependency gate" in blocker_context
         )
-        if not dependency_blocker and not any(marker in blocker_context for marker in routing_markers):
-            # Unknown business/external gates are not scheduler-owned failures.
+        remaining_gate_context = (
+            re.sub(r"\bdependency gate\b", " ", blocker_context)
+            if dependency_blocker else blocker_context
+        )
+        if re.search(r"\bgate\b", remaining_gate_context) or (
+            not dependency_blocker and not any(marker in blocker_context for marker in routing_markers)
+        ):
+            # A generic gate is unknown authority, even alongside provider or
+            # handoff words. Only a resolver-proven dependency gate is released.
             return False
     if dependency_gate_released:
         return True

@@ -110,6 +110,7 @@ def test_note_cannot_release_canonical_external_blocker(board, message):
     "External-data/dataset gate: provider handoff pending; A1 raw/masked and A2/A3 live still missing",
     "Human/Ops gate: provider handoff pending; manual approval still missing",
     "Unclassified business gate: provider handoff pending; input still missing",
+    "dependency gate: UPSTREAM-DATASET-001; unrelated business gate: provider handoff pending",
 ])
 def test_mixed_gate_prose_is_not_erased_as_a_path(board, completed_dependency, blocker_message):
     config, status, path = board
@@ -135,6 +136,7 @@ def test_mixed_gate_prose_is_not_erased_as_a_path(board, completed_dependency, b
     {"gate_status": "pending_human_signoff"}, {"waiting_for": "Human/Ops"},
     {"non_dispatchable": True}, {"task_class": "human_gate"},
     {"blocked_reason": "dataset still missing"},
+    {"blocked_reason": "External-data/dataset gate: stale provider handoff pending"},
 ])
 def test_structured_gate_survives_note(board, gate):
     config, status, path = board
@@ -183,7 +185,7 @@ def test_released_scheduler_owned_gate_still_recovers_and_enqueues(board, scenar
     elif scenario == "references":
         task.update(depends_on=["UPSTREAM-DATASET-001"], next="stale provider failure in scripts/deployment.py; retry dispatch")
         status["tasks"].append({"id": "UPSTREAM-DATASET-001", "status": "done", "depends_on": []})
-        status["blockers"] = [hard_blocker(message="provider failure in scripts/deployment.py; refs=docs/dataset.json; `external_data_gate`; UPSTREAM-DATASET-001")]
+        status["blockers"] = [hard_blocker(message="provider failure in scripts/deployment.py; refs=docs/dataset.json; `docs/dataset`; /tmp/dataset; ./docs/dataset; `external_data_gate`; UPSTREAM-DATASET-001")]
     elif scenario == "dependency":
         task.update(depends_on=["UPSTREAM-DATASET-001"], next="waiting for dependencies: UPSTREAM-DATASET-001")
         status["tasks"].append({"id": "UPSTREAM-DATASET-001", "status": "done", "depends_on": []})
