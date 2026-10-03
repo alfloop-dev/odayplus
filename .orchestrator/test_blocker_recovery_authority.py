@@ -112,8 +112,11 @@ def test_note_cannot_release_canonical_external_blocker(board, message):
     "Human approval pending; provider retry still blocked",
     "Human/Ops gate: provider handoff pending; manual approval still missing",
     "Unclassified business gate: provider handoff pending; input still missing",
+    "unrecorded business input still missing; provider handoff pending",
+    "A1 raw/masked and A2/A3 live still missing; provider handoff pending",
     "dependency gate: UPSTREAM-DATASET-001; unrelated business gate: provider handoff pending",
     "waiting for dependencies: UPSTREAM-DATASET-001; awaiting human approval",
+    "waiting for dependencies: UPSTREAM-DATASET-001; awaiting client consent; provider handoff pending",
     "waiting for dependencies: UPSTREAM-DATASET-001; provider failed; requires operator sign-off",
 ])
 def test_mixed_gate_prose_is_not_erased_as_a_path(board, completed_dependency, blocker_message):

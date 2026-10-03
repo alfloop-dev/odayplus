@@ -4613,6 +4613,100 @@ def consume_human_continuation_approvals(
     return True
 
 
+_BLOCKER_RECOVERY_HARD_GATE_MARKERS = (
+    "human/ops", "human gate", "pending_human", "pending human", "authoritative",
+    "dataset", "attestation", "external-data", "external data", "mlflow",
+    "deploy dev", "live-e2e", "production alias", "merge queue",
+    "operator intervention", "manual approval", "requires operator",
+    "human approval", "awaiting human", "pending approval", "approval pending",
+    "awaiting approval", "approval required", "approval gate",
+    "deployment", "production", "sign-off", "signoff",
+    "credentials gate", "credential gate", "cross repo delivery",
+    "business gate", "operator approval", "operator sign-off",
+    "human sign-off", "human signoff", "manual sign-off", "manual signoff",
+)
+
+_BLOCKER_RECOVERY_ROUTING_MARKERS = (
+    "auto-reassigned", "sidecar-only", "quota", "auth", "credential", "worktree",
+    "push failure", "dispatch", "provider", "handoff", "stale",
+)
+
+_BLOCKER_RECOVERY_HARD_GATE_WORDS_RE = re.compile(
+    r"\b(human|operator|approval|signoff|sign-off|missing|unclassified|business|consent|client|external|dataset|live|raw|masked|manual|attestation|mlflow|deploy|deployment|production)\b",
+    re.IGNORECASE,
+)
+
+_BLOCKER_RECOVERY_ALLOWED_TOKENS = {
+    # Provider & Agent terms
+    "provider", "providers", "agent", "agents", "worker", "workers", "model", "models",
+    "ai", "llm", "claude", "codex", "pi", "gemini", "openai", "anthropic",
+    # Routing, Handoff & Dispatch terms
+    "route", "routes", "routed", "routing", "reroute", "rerouted", "rerouting",
+    "reassign", "reassigned", "reassigning", "reassignment", "reassignments",
+    "auto-reassigned", "auto-reassign", "auto", "sidecar", "sidecar-only", "mainline",
+    "guard", "guards", "dispatch", "dispatched", "dispatching", "dispatcher",
+    "dispatchable", "non-dispatchable", "handoff", "handoffs", "stale",
+    # Failure, Quota, Auth, Worktree terms
+    "quota", "quotas", "exhausted", "exceeded", "rate-limit", "rate-limited",
+    "ratelimit", "ratelimited", "rate", "limit", "limits", "limited", "limiting",
+    "auth", "auths", "authn", "authz", "authenticated", "authentication",
+    "credential", "credentials", "worktree", "worktrees", "workspace", "workspaces",
+    "lock", "locks", "locked", "locking", "lease", "leases", "leased",
+    "push", "pushed", "pushing", "push-failure", "fail", "fails", "failed", "failure",
+    "failures", "error", "errors", "timeout", "timeouts", "timed-out", "timed_out",
+    "timed", "out", "unavailable", "retry", "retrying", "retries", "recovery", "recover",
+    "recovering", "recovered", "recovers", "resume", "resuming", "resumed", "resumes",
+    "restart", "restarting", "restarted", "restarts", "disconnect", "disconnected",
+    "disconnecting", "connection", "crash", "crashed", "jam", "jammed", "stuck",
+    # Execution & Status terms
+    "process", "processes", "execution", "runtime", "environment", "boundary",
+    "interrupted", "terminated", "killed", "transient", "metadata", "correction",
+    "notification", "notifications", "note", "notes", "notice", "status", "task",
+    "tasks", "state", "code", "exit", "ordinary", "corrected", "unchanged",
+    # Dependency terms
+    "waiting", "waits", "waited", "wait", "depend", "depends", "depended", "dependency",
+    "dependencies", "dependent", "upstream", "prerequisite", "prerequisites",
+    "completed", "satisfied", "resolved", "resolution", "release", "released", "releasing",
+    # Glue / Syntactic terms
+    "for", "to", "in", "on", "at", "of", "from", "with", "by", "about", "into",
+    "through", "during", "before", "after", "above", "below", "between", "under", "over",
+    "up", "down", "and", "or", "not", "no", "nor", "but", "yet", "so", "a", "an", "the",
+    "this", "that", "these", "those", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "due", "only", "pending",
+    "needed", "required", "again", "now", "then", "here", "there", "all", "any", "both",
+    "each", "few", "more", "most", "other", "some", "such", "than", "too", "very",
+    "can", "will", "just", "should", "may", "might",
+}
+
+
+def _prose_tokens_all_allowed(text: str) -> bool:
+    tokens = re.findall(r"[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*", text.casefold())
+    if not tokens:
+        return True
+    for token in tokens:
+        if token in _BLOCKER_RECOVERY_ALLOWED_TOKENS:
+            continue
+        parts = token.split("-")
+        if all(part in _BLOCKER_RECOVERY_ALLOWED_TOKENS for part in parts):
+            continue
+        return False
+    return True
+
+
+def _is_recoverable_routing_prose(prose: str) -> bool:
+    if not prose or not prose.strip():
+        return False
+    if any(marker in prose for marker in _BLOCKER_RECOVERY_HARD_GATE_MARKERS):
+        return False
+    if _BLOCKER_RECOVERY_HARD_GATE_WORDS_RE.search(prose):
+        return False
+    if re.search(r"\bgate\b", prose):
+        return False
+    if not any(marker in prose for marker in _BLOCKER_RECOVERY_ROUTING_MARKERS):
+        return False
+    return _prose_tokens_all_allowed(prose)
+
+
 def blocked_task_auto_recovery_eligible(
     config: dict[str, Any],
     task: dict[str, Any],
@@ -4669,23 +4763,7 @@ def blocked_task_auto_recovery_eligible(
         **task,
         "next": f"{task.get('next') or ''} {task.get('blocked_reason') or ''}",
     }, canonical_gate_prose=True)
-    hard_gate_markers = (
-        "human/ops", "human gate", "pending_human", "pending human", "authoritative",
-        "dataset", "attestation", "external-data", "external data", "mlflow",
-        "deploy dev", "live-e2e", "production alias", "merge queue",
-        "operator intervention", "manual approval", "requires operator",
-        "human approval", "awaiting human", "pending approval", "approval pending",
-        "awaiting approval", "approval required", "approval gate",
-        "deployment", "production", "sign-off", "signoff",
-        "credentials gate", "credential gate", "cross repo delivery",
-        "business gate", "operator approval", "operator sign-off",
-        "human sign-off", "human signoff", "manual sign-off", "manual signoff",
-    )
-    routing_markers = (
-        "auto-reassigned", "sidecar-only", "quota", "auth", "credential", "worktree",
-        "push failure", "dispatch", "provider", "handoff", "stale",
-    )
-    if any(marker in context for marker in hard_gate_markers) or re.search(r"\b(human|operator|approval|signoff|sign-off)\b", context):
+    if any(marker in context for marker in _BLOCKER_RECOVERY_HARD_GATE_MARKERS) or _BLOCKER_RECOVERY_HARD_GATE_WORDS_RE.search(context):
         return False
     for blocker in blockers:
         if not isinstance(blocker, dict):
@@ -4713,8 +4791,8 @@ def blocked_task_auto_recovery_eligible(
         blocker_kind = str(blocker.get("kind") or "").strip().casefold().replace("_", " ")
         if (
             blocker_kind in {"human", "human gate", "external data", "cross repo delivery"}
-            or any(marker in f"{blocker_kind} {blocker_context}" for marker in hard_gate_markers)
-            or re.search(r"\b(human|operator|approval|signoff|sign-off)\b", f"{blocker_kind} {blocker_context}")
+            or any(marker in f"{blocker_kind} {blocker_context}" for marker in _BLOCKER_RECOVERY_HARD_GATE_MARKERS)
+            or _BLOCKER_RECOVERY_HARD_GATE_WORDS_RE.search(f"{blocker_kind} {blocker_context}")
         ):
             return False
         is_dep_blocker = (
@@ -4735,23 +4813,23 @@ def blocked_task_auto_recovery_eligible(
             )
             residual = re.sub(r"[ ,;.:\-_/&|]+", " ", remaining_dep_prose).strip()
             if residual:
-                if (
-                    re.search(r"\bgate\b", residual)
-                    or any(marker in residual for marker in hard_gate_markers)
-                    or re.search(r"\b(human|operator|approval|signoff|sign-off|missing|unclassified|business)\b", residual)
-                    or not any(marker in residual for marker in routing_markers)
-                ):
+                if not _is_recoverable_routing_prose(residual):
                     return False
         else:
-            if re.search(r"\bgate\b", blocker_context) or not any(
-                marker in blocker_context for marker in routing_markers
-            ):
-                # A generic gate is unknown authority, even alongside provider or
-                # handoff words. Only a resolver-proven dependency gate is released.
+            if not _is_recoverable_routing_prose(blocker_context):
                 return False
     if dependency_gate_released:
+        context_after_dep = re.sub(
+            r"\b(?:waiting for dependencies|waiting for dependency|dependency gate|dependencies|dependency)\s*:?",
+            " ",
+            context,
+            flags=re.IGNORECASE,
+        )
+        residual_context = re.sub(r"[ ,;.:\-_/&|]+", " ", context_after_dep).strip()
+        if residual_context and not _prose_tokens_all_allowed(residual_context):
+            return False
         return True
-    return bool(context) and any(marker in context for marker in routing_markers)
+    return bool(context) and _is_recoverable_routing_prose(context)
 
 
 def normalize_mainline_task_assignment(
