@@ -2,7 +2,7 @@
 evidence_id: ODP-REMEDIATION-TRUTH-RECONCILIATION-001
 title: "需求 manifest 與規格來源追溯的過時狀態更正"
 date: 2026-10-03
-owner: Claude
+owner: Antigravity4
 reviewer: Codex
 repository: alfloop-dev/odayplus
 base_ref: 1b14b276447a7778f1dad1045ced1a5bd6abe01e
@@ -59,15 +59,14 @@ state、日期與原文保存在 disposition `history` 中，未改寫。
 | `docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md` | owned；§4.6、§4.7 EVENT／CDC、§4.9 |
 | `docs/evidence/ODP_SPEC_SOURCE_PROVENANCE_2026-09-03.md` | owned；新增 2026-10-03 更正節，原文保留 |
 | `tests/governance/test_remediation_truth_reconciliation.py` | owned；新回歸測試 |
-| `tests/governance/test_avm001_disposition.py` | **不在目前 canonical owned_paths**；必要連動：原測試把 DEPRECIATION 釘在 absent／`IMPLEMENTATION_READY`，與已合併實作矛盾 |
-| `tests/integration/test_int001_cdc_disposition.py` | **不在目前 canonical owned_paths**；同上，把 EVENT／CDC 釘在 absent／`OPEN` |
-| `delivery_toolchain/governance/test_check_requirement_members.py` | **不在目前 canonical owned_paths**；同上（且為宣告的 verification 檔） |
+| `docs/evidence/completion/ODP-REMEDIATION-TRUTH-RECONCILIATION-001/` | owned；完成報告與佐證 |
+| `docs/audits/code-boundary-inventory.csv` | owned；`check_code_boundaries.py --write-inventory` 因新增測試檔而產生的一列 |
+| `tests/governance/test_avm001_disposition.py` | owned；依 coordinator Pi 2026-10-03 `scope_reconciliation_20261003` 授權納入 canonical owned_paths（原測試把 DEPRECIATION 釘在 absent／`IMPLEMENTATION_READY` 之連動更正） |
+| `tests/integration/test_int001_cdc_disposition.py` | owned；依 coordinator Pi 2026-10-03 `scope_reconciliation_20261003` 授權納入 canonical owned_paths（同上，把 EVENT／CDC 釘在 absent／`OPEN` 之連動更正） |
+| `delivery_toolchain/governance/test_check_requirement_members.py` | owned；依 coordinator Pi 2026-10-03 `scope_reconciliation_20261003` 授權納入 canonical owned_paths（同上，且為宣告的 verification 檔） |
+| `tests/security/test_api_auth_wiring.py` | owned；依 coordinator Pi 2026-10-03 `scope_reconciliation_20261003` 授權納入 canonical owned_paths（測試隔離 autouse fixture 修正） |
 
-上列三個測試檔若不連動，manifest 更正後即紅燈；但 README 說明不等於範圍授權。
-Codex 第一輪審查（PR #1400 `45ec3f00`）據此退回，這三個路徑的 owned_paths 登記
-須由 coordinator 經正式 canonical 流程完成，owner 不自行以 `assign` metadata 擴權；
-登記完成前本任務以 blocker 標示此缺口。
-| `docs/audits/code-boundary-inventory.csv` | `check_code_boundaries.py --write-inventory` 因新增測試檔而強制產生的一列 |
+上述後四個路徑已由 coordinator Pi 於 2026-10-03 透過 canonical `scope_reconciliation_20261003` 正式登記至任務 `owned_paths`，所有 10 個變更路徑均符合 explicit owned-path 限制。
 
 ## 5. 回歸測試涵蓋
 
@@ -93,7 +92,7 @@ symbol、ZIP member hash）獨立寫在測試裡，不是拿 JSON 跟自己比�
 exact PR head 執行，收據（head SHA、命令、exit code、時間、選取範圍）存於
 supervisor 的 `.orchestrator/evidence`，由 `task_finalize.sh` 檢核。
 
-## 6a. CI 測試隔離修正（範圍外、被迫）
+## 6a. CI 測試隔離修正
 
 PR #1400 head `07cfbd10` 的 product CI（run 37082795988）在
 `tests/security/test_api_auth_wiring.py` 紅 7 筆
@@ -105,12 +104,12 @@ dev 上其他 PR（CDC run 37080864293），與本 diff 無關，是 dev 既有�
 本機重現：`uv run --frozen --python 3.12 pytest -q -p no:xdist -p no:randomly
 tests/integration/test_durable_repository_wiring.py tests/security/test_api_auth_wiring.py`
 修正前 exit 1（恰為同 7 筆），加入 autouse `reset_bound_persistence()` fixture 後 exit 0。
-只改測試隔離，不改產品碼；此檔不在 owned_paths 內，明列供 reviewer 判定。
+只改測試隔離，不改產品碼；該檔已由 coordinator Pi 經 `scope_reconciliation_20261003` 正式納入 `owned_paths`。
 
 ## 7. 完成語言（分開陳述）
 
 - 程式／紀錄更正：本 PR 交付。
-- 獨立審查／合併：第一輪 Codex 審查退回（scope、ref 驗證），修正 ref 驗證；其後 CI 因 dev 既有 auth 測試順序依賴而紅，本版加入 §6a 隔離修正並 base advance 至 `734dcb65` 後重送。
+- 獨立審查／合併：第一輪 Codex 審查退回（scope、ref 驗證）後修正 ref 驗證；第二輪退回後由 coordinator Pi 完成 `scope_reconciliation_20261003` 將 4 個相依測試路徑正式登記至 `owned_paths`，並由 Antigravity4 接手完成 exact-head 驗證與重新提交。
 - 真實資料輸入：不適用於本任務；上表「仍欠」各項均未取得。
 - 部署：無。
 - Live 驗證：無；四成員均為 `BLOCKED_BY_EVIDENCE`。
