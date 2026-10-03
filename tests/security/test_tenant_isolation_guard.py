@@ -53,6 +53,27 @@ FUTURE = NOW + timedelta(days=30)
 PAST = NOW - timedelta(days=1)
 
 
+class _TenantClockMeta(type):
+    def __instancecheck__(cls, instance: object) -> bool:
+        # Waiver timestamps remain real datetime objects, not test subclasses.
+        return isinstance(instance, datetime)
+
+
+@pytest.fixture(autouse=True)
+def tenant_clock(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> None:
+    """Freeze only the shared waiver clock; keep all authorization logic real."""
+    instant = getattr(request, "param", NOW)
+
+    class FrozenDateTime(datetime, metaclass=_TenantClockMeta):
+        @classmethod
+        def now(cls, tz: Any = None) -> datetime:
+            return instant.astimezone(tz) if tz is not None else instant.replace(tzinfo=None)
+
+    # Production entry points omit `on`; explicit `on` values still take priority.
+    # monkeypatch restores the module's clock after each test, without suite leaks.
+    monkeypatch.setattr("shared.auth.tenant.datetime", FrozenDateTime)
+
+
 @pytest.fixture
 def user_alpha() -> Principal:
     return Principal(
@@ -346,6 +367,46 @@ def test_expired_waiver_is_rejected(
     )
     assert decision.allowed is False
     assert "expired" in decision.reason.lower() or "invalid" in decision.reason.lower()
+
+
+@pytest.mark.parametrize(
+    ("tenant_clock", "allowed"),
+    [
+        (FUTURE - timedelta(microseconds=1), True),
+        (FUTURE, False),
+        (FUTURE + timedelta(microseconds=1), False),
+    ],
+    indirect=["tenant_clock"],
+    ids=["just-before-expiry", "exact-expiry", "just-after-expiry"],
+)
+def test_waiver_default_clock_expiry_boundary(
+    admin_alpha: Principal,
+    valid_waiver: TenantAccessWaiver,
+    tenant_clock: None,
+    allowed: bool,
+) -> None:
+    registry = _registry_with(valid_waiver)
+    decision = check_tenant_isolation(
+        admin_alpha,
+        TENANT_BETA,
+        resource_type="site_market_context",
+        waiver=valid_waiver,
+        waiver_registry=registry,
+    )
+    assert decision.allowed is allowed
+    if not allowed:
+        assert decision.policy_id == "tenant_isolation"
+        assert "expired" in decision.reason.lower()
+
+    # An explicit evaluation instant must not be replaced by the frozen clock.
+    assert check_tenant_isolation(
+        admin_alpha,
+        TENANT_BETA,
+        resource_type="site_market_context",
+        waiver=valid_waiver,
+        waiver_registry=registry,
+        on=NOW,
+    ).allowed
 
 
 def test_waiver_out_of_scope_is_rejected(

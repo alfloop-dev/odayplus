@@ -3029,8 +3029,17 @@ def persist_task_reassignment(
     handoff_from: str | None = None,
     resolve_open_blockers: bool = False,
     task_updates: dict[str, Any] | None = None,
+    status_snapshot: dict[str, Any] | None = None,
 ) -> bool:
-    status = load_status(config)
+    if status_snapshot is not None:
+        # Recovery was authorized against this exact board. Do not load a new
+        # board and resolve blockers which appeared after that decision. The
+        # existing canonical CAS rejects any concurrent writer's revision.
+        if not status_snapshot.get(STATUS_WRITE_REVISION_FIELD):
+            return False
+        status = deepcopy(status_snapshot)
+    else:
+        status = load_status(config)
     tasks = status.get("tasks", []) or []
     timestamp = utc_now()
     task = next((item for item in tasks if item.get("id") == task_id), None)
