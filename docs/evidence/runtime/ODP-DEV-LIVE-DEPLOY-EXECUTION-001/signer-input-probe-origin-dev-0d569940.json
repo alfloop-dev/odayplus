@@ -1,0 +1,32 @@
+{
+  "probed_at": "2026-09-29T08:05:08Z",
+  "signer_module": "/home/lupin/oday-plus-supervisor-runtime-af923aa58d33/.orchestrator/release_lease_integration.py",
+  "signer_runtime_commit": "af923aa58d33da4971e09f6e87ea2d1a026f6580",
+  "signer_input_root": "<task worktree at origin/dev 0d569940>",
+  "hypothetical_request": {
+    "candidate_sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
+    "manifest_digest": "sha256:8ee919d67fc89768c7ae8912ecfce706dc1b2a0fbb2e3da1a14b5e87c1fae80e",
+    "manifest_run_id": "36509055237"
+  },
+  "note": "read-only in-process call of the signer's own input/binding checks; no request registered, no nonce minted, no GCS/secret access",
+  "signer_registry_release": {
+    "decision": "go",
+    "admission_target": "dev",
+    "candidate_sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
+    "manifest_digest": "sha256:8ee919d67fc89768c7ae8912ecfce706dc1b2a0fbb2e3da1a14b5e87c1fae80e"
+  },
+  "signer_registry_candidate_rebind_build_run": {
+    "workflow": "Runtime Release",
+    "run_id": 36509055237,
+    "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/36509055237",
+    "event": "workflow_dispatch",
+    "phase": "build",
+    "conclusion": "success",
+    "release_sha_input": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
+    "deploy_jobs": "skipped; no lease supplied, nothing deployed",
+    "evidence": "docs/evidence/runtime/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/build-reconciliation-36509055237.json"
+  },
+  "input_errors": [],
+  "exact_binding_errors": [],
+  "build_run_binding_errors": []
+}

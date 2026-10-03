@@ -1,0 +1,69 @@
+2026-09-30T02:03:49.0092076Z === Starting ODay Plus Cloud Run Deployment ===
+2026-09-30T02:03:49.0100713Z Cloud Run VPC binding mode: connector
+2026-09-30T02:03:49.0116061Z Authentication mode: local (ODP_AUTH_OIDC_ENABLED=false).
+2026-09-30T02:03:49.0123252Z Running fail-closed live deployment preflight...
+2026-09-30T02:03:52.7340825Z 2026/09/30 02:03:52 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026-09-30T02:03:52.7429738Z 2026/09/30 02:03:52 INFO mlflow.store.db.utils: Updating database tables
+2026-09-30T02:03:55.0692272Z Cloud Run live deployment preflight passed.
+2026-09-30T02:03:55.0692954Z report=.odp_data/deployment/cloud-run-preflight.json
+2026-09-30T02:03:56.0480085Z Deployment details:
+2026-09-30T02:03:56.0480531Z   Environment:      dev
+2026-09-30T02:03:56.0480885Z   Release SHA:      ee06d1d8294464f1eb7231f2b06505348a61cba2
+2026-09-30T02:03:56.0481280Z   GCP Project:      odayplus-runtime-20260825
+2026-09-30T02:03:56.0481608Z   GCP Region:       asia-east1
+2026-09-30T02:03:56.0481882Z   Artifact Repo:    oday-plus-dev
+2026-09-30T02:03:56.0482169Z   API Service:      oday-api
+2026-09-30T02:03:56.0482829Z   Web Service:      oday-web
+2026-09-30T02:03:56.0483085Z   Migration Job:    oday-migration
+2026-09-30T02:03:56.0483365Z   Worker Job:       oday-worker
+2026-09-30T02:03:56.0483641Z   Scheduler Job:    oday-scheduler
+2026-09-30T02:03:56.0483948Z   Runtime Mode:     live / production / PostgreSQL
+2026-09-30T02:03:56.0484286Z ----------------------------------------------
+2026-09-30T02:03:56.5389707Z Adding credentials for: asia-east1-docker.pkg.dev
+2026-09-30T02:03:56.5580166Z Docker configuration file updated.
+2026-09-30T02:03:56.6614806Z Deploy-by-digest: skipping build for API image (asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:07b3c1f3ceb9a2bec728fa656e84b74cdb245a7fb77c6ca9c69e4bc74827e7f1).
+2026-09-30T02:03:56.6616385Z Deploy-by-digest: skipping build for worker image (asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:9aeb6784439dfac4c69675b6426cc1003968faa35ceb18928fed5825f7d61dd4).
+2026-09-30T02:03:56.6618072Z Deploy-by-digest: skipping build for scheduler image (asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:bd4efa0d799261261c53773c994568f40bff08621bf039becce7835f9e5db66d).
+2026-09-30T02:03:56.6619307Z Recording the existing API/Web traffic before any runtime mutation...
+2026-09-30T02:04:03.2918520Z WARNING: The following filter keys were not present in any resource : name
+2026-09-30T02:04:05.1039318Z WARNING: The following filter keys were not present in any resource : name
+2026-09-30T02:04:05.3489726Z Deploying immutable migration candidate Cloud Run Job...
+2026-09-30T02:04:08.0786880Z Deploying container to Cloud Run job [oday-migration-r-ee06d1d82944] in project [odayplus-runtime-20260825] region [asia-east1]
+2026-09-30T02:04:08.0788074Z Creating job...
+2026-09-30T02:04:12.3471351Z Done.
+2026-09-30T02:04:12.3852034Z Job [oday-migration-r-ee06d1d82944] has successfully been deployed.
+2026-09-30T02:04:12.3852532Z 
+2026-09-30T02:04:12.3852691Z To execute this job, use:
+2026-09-30T02:04:12.3853178Z gcloud run jobs execute oday-migration-r-ee06d1d82944
+2026-09-30T02:04:12.5809305Z Executing migration Cloud Run Job...
+2026-09-30T02:04:13.1577259Z Creating execution...
+2026-09-30T02:05:02.4359403Z Provisioning resources...........................................................................................................................................................................................................................................................................................................................................................................................................................................................................................done
+2026-09-30T02:05:11.0714372Z Starting execution.............................................................................................done
+2026-09-30T02:05:39.4863753Z Running execution........................................................................................................................................................................................................................................................................................................................done
+2026-09-30T02:05:39.7194429Z Done.
+2026-09-30T02:05:39.7730754Z Execution [oday-migration-r-ee06d1d82944-76fh9] has successfully completed.
+2026-09-30T02:05:39.7734415Z 
+2026-09-30T02:05:39.7734678Z View details about this execution by running:
+2026-09-30T02:05:39.7735355Z gcloud run jobs executions describe oday-migration-r-ee06d1d82944-76fh9
+2026-09-30T02:05:39.7735829Z 
+2026-09-30T02:05:39.7736483Z Or visit https://console.cloud.google.com/run/jobs/executions/details/asia-east1/oday-migration-r-ee06d1d82944-76fh9?project=767864276141
+2026-09-30T02:05:46.1648985Z Cloud Run migration Job smoke passed.
+2026-09-30T02:05:46.1649689Z report=.odp_data/deployment/cloud-run-jobs/migration-validation.json
+2026-09-30T02:05:46.3222910Z Cloud Run bootstrap compatibility passed.
+2026-09-30T02:05:46.3224064Z report=.odp_data/deployment/cloud-run-migration-compatibility.json
+2026-09-30T02:05:46.3348602Z Deploying immutable API candidate without production traffic...
+2026-09-30T02:05:49.3784850Z Deploying container to Cloud Run service [oday-api] in project [odayplus-runtime-20260825] region [asia-east1]
+2026-09-30T02:05:49.3785697Z Deploying new service...
+2026-09-30T02:05:49.3808087Z failed
+2026-09-30T02:05:49.3808363Z Deployment failed
+2026-09-30T02:05:49.4825690Z ERROR: (gcloud.run.deploy) --no-traffic not supported when creating a new service.
+2026-09-30T02:05:49.7507383Z Error: previous-release state could not be determined; no recovery mode is claimed.
+2026-09-30T02:05:49.7508542Z Deployment failed on the first release into this target.
+2026-09-30T02:05:49.7509597Z There is no previous release to roll back to; recovery is deleting the candidate and holding zero traffic.
+2026-09-30T02:05:54.6703827Z Deleting first-release candidate Cloud Run Job 'oday-migration-r-ee06d1d82944'...
+2026-09-30T02:05:55.2441069Z Deleting [oday-migration-r-ee06d1d82944]...
+2026-09-30T02:05:56.3870088Z .....done.
+2026-09-30T02:05:56.4456868Z Deleted job [oday-migration-r-ee06d1d82944].
+2026-09-30T02:05:58.3355616Z WARNING: The following filter keys were not present in any resource : metadata.name
+2026-09-30T02:06:00.2045461Z WARNING: The following filter keys were not present in any resource : metadata.name
+2026-09-30T02:06:00.3702951Z ##[error]Process completed with exit code 1.

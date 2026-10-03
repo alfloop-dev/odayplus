@@ -1,0 +1,24 @@
+{
+  "receipt_kind": "runtime-release-environment-binding",
+  "schema_version": 1,
+  "verifier": "delivery_toolchain/release/check_release_environment.py",
+  "scope": "admission",
+  "environment": "dev",
+  "github_environment": "dev",
+  "release_sha": "6140d0ef633cbf94522c171d9927103ab200257f",
+  "task_id": "ODP-DEV-LIVE-DEPLOY-EXECUTION-001",
+  "admitted": true,
+  "checked_at": "2026-10-02T18:43:51+00:00",
+  "variables_resolved": {
+    "GCP_WORKLOAD_IDENTITY_PROVIDER": true,
+    "GCP_SERVICE_ACCOUNT": true,
+    "ODP_RELEASE_LEASE_PUBLIC_KEY": true,
+    "ODP_RELEASE_LEASE_STATE_URI": true
+  },
+  "missing_variables": [],
+  "blockers_zh_tw": [],
+  "summary_zh_tw": "admission 階段已綁定 GitHub environment `dev`，4 個必要環境變數全部解析成功。",
+  "secret_values_redacted": true,
+  "resolved_non_secret_values": {},
+  "vpc_binding": null
+}

@@ -1,0 +1,19 @@
+{
+  "measured_at": "2026-09-29T15:21:00Z",
+  "function": "delivery_toolchain.release.check_runtime_admission.registry_admission_errors",
+  "code_checkout_head": "a631b8c793b27842f28f54f663a33b4af49ee824",
+  "release_sha": "a631b8c793b27842f28f54f663a33b4af49ee824",
+  "release_sha_source": "git rev-parse origin/dev after git fetch origin dev",
+  "environment": "dev",
+  "registry_sha256": "f0e59b2c338938a6e10ce3aa19761d29ecd17c40418c3af145544150dca0cb1d",
+  "manifest_raw_sha256": "1d34ada707d40bbb25f8053955e9736b30cc16f229563a7ec594e3598a209ec0",
+  "registry_release": {
+    "decision": "go",
+    "stage": "candidate-built",
+    "admission_target": "dev",
+    "candidate_sha": "ee06d1d8294464f1eb7231f2b06505348a61cba2",
+    "manifest_digest": "sha256:8ee919d67fc89768c7ae8912ecfce706dc1b2a0fbb2e3da1a14b5e87c1fae80e"
+  },
+  "expected_manifest_digest": "sha256:8ee919d67fc89768c7ae8912ecfce706dc1b2a0fbb2e3da1a14b5e87c1fae80e",
+  "errors": []
+}
