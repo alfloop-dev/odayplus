@@ -222,15 +222,8 @@ SCOPED_CDC_POLICIES: dict[SourceKind, ScopedCdcPolicy] = {
         canonical_table="core.machine_status_events",
         canonical_id_column="status_event_id",
         redaction_profile="device_log_minimized_v1",
-        lifecycle_column=None,
-        lifecycle_gap=(
-            "core.machine_status_events has no approved record-lifecycle column: "
-            "status_type carries the device's state (online/offline/error/...), not "
-            "the row's. Adding one is a canonical migration under infra/db/migrations/, "
-            "outside this task's owned paths, so a device_log retirement records the "
-            "audit tombstone and retains the row instead of claiming a soft delete "
-            "that no column can express."
-        ),
+        lifecycle_column="record_status",
+        lifecycle_gap=None,
     ),
 }
 
@@ -1943,6 +1936,26 @@ class ScopedCdcProjector:
             elif plan.lifecycle_gap:
                 result.lifecycle_gaps.append(plan.lifecycle_gap)
             outcome = self._canonical.tombstone_record(plan.tombstone)
+            if (
+                plan.soft_delete is None
+                and not plan.lifecycle_gap
+                and outcome.tenant_id is not None
+                and outcome.outcome in {DeleteOutcome.APPLIED, DeleteOutcome.REPLAYED}
+            ):
+                policy = cdc_policy(plan.envelope.source_kind)
+                if policy.lifecycle_column is not None:
+                    directive = SoftDeleteDirective(
+                        canonical_table=policy.canonical_table,
+                        canonical_id_column=policy.canonical_id_column,
+                        status_column=policy.lifecycle_column,
+                        status_value=RETIREMENT_STATUS[plan.envelope.operation],
+                        source_kind=plan.envelope.source_kind,
+                        source_id=plan.envelope.source_id,
+                        tenant_id=outcome.tenant_id,
+                        server_timestamp=plan.envelope.server_timestamp,
+                        source_version=plan.envelope.source_version,
+                    )
+                    result.soft_deleted += self._mark(directive)
             result.tombstoned += 1
             key = outcome.outcome.value
             result.delete_outcomes[key] = result.delete_outcomes.get(key, 0) + 1

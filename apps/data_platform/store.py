@@ -1542,15 +1542,18 @@ class PsycopgCanonicalStore:
             """
             INSERT INTO core.machine_status_events (
                 status_event_id, store_id, machine_id, event_time,
-                status_type, severity, error_code, resolved_time
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, NULL)
+                status_type, severity, error_code, resolved_time,
+                record_status, created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, NULL, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ON CONFLICT (status_event_id) DO UPDATE SET
                 store_id = EXCLUDED.store_id,
                 machine_id = EXCLUDED.machine_id,
                 event_time = EXCLUDED.event_time,
                 status_type = EXCLUDED.status_type,
                 severity = EXCLUDED.severity,
-                error_code = EXCLUDED.error_code
+                error_code = EXCLUDED.error_code,
+                record_status = 'active',
+                updated_at = CURRENT_TIMESTAMP
             """,
             (
                 projection.status_event_id,
@@ -1569,7 +1572,12 @@ class PsycopgCanonicalStore:
                 machine_id, status_event_id, content_sha256,
                 observation_time, source_freshness_at, run_id
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (source_snapshot_id) DO UPDATE SET
+            ON CONFLICT (status_event_id) DO UPDATE SET
+                source_snapshot_id = EXCLUDED.source_snapshot_id,
+                source_id = EXCLUDED.source_id,
+                tenant_id = EXCLUDED.tenant_id,
+                store_id = EXCLUDED.store_id,
+                machine_id = EXCLUDED.machine_id,
                 content_sha256 = EXCLUDED.content_sha256,
                 observation_time = EXCLUDED.observation_time,
                 source_freshness_at = EXCLUDED.source_freshness_at,

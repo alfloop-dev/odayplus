@@ -535,20 +535,20 @@ def test_an_ordinary_update_projects_and_does_not_retire_anything() -> None:
     assert plan.retires_entity is False
 
 
-def test_device_log_retirement_names_its_gap_instead_of_hard_deleting() -> None:
-    # `core.machine_status_events` has no record-lifecycle column and adding one
-    # is a canonical migration outside this task's owned paths. The honest
-    # outcome is a tombstone plus a named gap, not a silent upgrade to a
-    # physical delete that the ruling did not authorise.
+def test_device_log_retirement_soft_deletes_and_records_tombstone() -> None:
     envelope = _envelope(
         _device_log_document(), source_kind=SourceKind.DEVICE_LOG, operation_type="delete"
     )
     plan = plan_change_application(envelope, run_id=RUN_ID, now=INGESTED_AT)
 
-    assert plan.soft_delete is None
+    assert plan.soft_delete is not None
+    assert plan.soft_delete.canonical_table == "core.machine_status_events"
+    assert plan.soft_delete.canonical_id_column == "status_event_id"
+    assert plan.soft_delete.status_column == "record_status"
+    assert plan.soft_delete.status_value == "voided"
     assert plan.tombstone is not None
     assert plan.tombstone.mode is DeletePropagationMode.TOMBSTONE_PURGE
-    assert "no approved record-lifecycle column" in plan.lifecycle_gap
+    assert plan.lifecycle_gap == ""
 
 
 def test_the_soft_delete_statement_is_tenant_scoped_and_version_guarded() -> None:
@@ -573,14 +573,11 @@ def test_the_soft_delete_statement_is_tenant_scoped_and_version_guarded() -> Non
 
 
 def test_the_soft_delete_join_column_comes_from_the_policy_not_a_literal() -> None:
-    # Every scoped policy declares its canonical primary key, and the statement
-    # builder uses it. Hardcoding `target.transaction_id` would work today only
-    # because core.transactions is the single table with an approved lifecycle
-    # column; the moment a second one gains one — which is exactly the
-    # carried-forward gap for core.machine_status_events — that literal would
-    # emit silently wrong SQL against it.
+    # Every scoped policy declares its canonical primary key and lifecycle column,
+    # and the statement builder uses them.
     for policy in SCOPED_CDC_POLICIES.values():
         assert policy.canonical_id_column
+        assert policy.lifecycle_column
 
     plan = plan_change_application(
         _envelope(operation_type="delete"), run_id=RUN_ID, now=INGESTED_AT
@@ -593,18 +590,19 @@ def test_the_soft_delete_join_column_comes_from_the_policy_not_a_literal() -> No
         f"lineage.canonical_id = target.{orders_policy.canonical_id_column}" in statement
     )
 
-    # The same builder aimed at the other scoped table joins on that table's own
-    # key rather than carrying the orders one over.
-    log_policy = cdc_policy(SourceKind.DEVICE_LOG)
-    retargeted = replace(
-        plan.soft_delete,
-        canonical_table=log_policy.canonical_table,
-        canonical_id_column=log_policy.canonical_id_column,
-        status_column="status_type",
+    log_envelope = _envelope(
+        _device_log_document(), source_kind=SourceKind.DEVICE_LOG, operation_type="delete"
     )
-    log_statement, _ = retargeted.statement(CONTROL_SCHEMA)
-    assert "lineage.canonical_id = target.status_event_id" in log_statement
+    log_plan = plan_change_application(log_envelope, run_id=RUN_ID, now=INGESTED_AT)
+    assert log_plan.soft_delete is not None
+    log_statement, _ = log_plan.soft_delete.statement(CONTROL_SCHEMA)
+    log_policy = cdc_policy(SourceKind.DEVICE_LOG)
+    assert log_plan.soft_delete.canonical_id_column == log_policy.canonical_id_column
+    assert (
+        f"lineage.canonical_id = target.{log_policy.canonical_id_column}" in log_statement
+    )
     assert "transaction_id" not in log_statement
+    assert f"SET {log_policy.lifecycle_column} = %s" in log_statement
 
 
 def test_a_delete_without_a_resolvable_tenant_still_records_a_tombstone() -> None:
