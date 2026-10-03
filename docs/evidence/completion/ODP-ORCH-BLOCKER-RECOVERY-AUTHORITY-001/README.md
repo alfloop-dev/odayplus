@@ -162,6 +162,26 @@ together with the existing routing/dependency/references positives,
 resolved-history, missing-snapshot, Chinese failclosed and CAS cases.
 Exact-head receipts come from the declared verification gate at submission.
 
+## Reopen 6: job-condition evidence (review of `afa3469931cf`)
+
+Codex2 showed that step 5 of `blocked_task_prose_context` erased every
+`<word> job` span in canonical blocker prose as well, so `deployment job
+pending; provider handoff pending` lost its `deployment`/`deploy` hard-gate
+word and the residual routing words released the blocker. Job-reference
+erasure is now limited to ordinary notes; canonical blocker and task gate
+prose keep it, so a pending deployment/production job fails closed.
+
+Added production-entry negatives (with and without completed dependency):
+`deployment job pending; provider handoff pending`, `waiting for deploy job;
+provider handoff pending`, `production 相關 job pending; provider handoff
+pending`, and a dependency blocker carrying `deployment job pending`; plus the
+two reviewer messages as task `blocked_reason`. On the pre-fix supervisor 9 of
+these fail (blocked → todo, open → resolved); on the fix all pass together with
+the routing/dependency/references positives, resolved history, missing
+snapshot, quoted/snake/kv/Chinese failclosed and CAS cases, and
+`AutomaticRecoveryTests`. Exact-head receipts come from the declared
+verification gate at submission.
+
 ## Runtime rollout and merge follow-up
 
 **Source-only correction: no supervisor restart, runtime switch, XR/gate/IAM or

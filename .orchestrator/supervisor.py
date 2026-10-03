@@ -4426,9 +4426,12 @@ def blocked_task_prose_context(
         context = re.sub(r"\b[A-Za-z0-9_]*_[A-Za-z0-9_]*\b", " ", context)
 
     # 5. Strip job references (e.g. 'deploy 相關 job', 'build job', 'deploy job')
-    context = re.sub(
-        r"\b[A-Za-z0-9_.\-]+\s*(?:相關\s*)?job\b", " ", context, flags=re.IGNORECASE
-    )
+    # from ordinary notes only. In canonical blocker prose an unfinished job
+    # ('deployment job pending') is the gate itself, not a code reference.
+    if not canonical_gate_prose:
+        context = re.sub(
+            r"\b[A-Za-z0-9_.\-]+\s*(?:相關\s*)?job\b", " ", context, flags=re.IGNORECASE
+        )
 
     return context
 
