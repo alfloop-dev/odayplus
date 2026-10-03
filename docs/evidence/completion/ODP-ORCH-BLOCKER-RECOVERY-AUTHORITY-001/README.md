@@ -59,6 +59,43 @@ the authorized focused selection does not run the wider supervisor suite.
 Inventory is regenerated only with the existing boundary generator. Changed
 Python sources are checked by the existing finalization lint preflight.
 
+## Review correction and base composition
+
+Reviewer Codex2 rejected head `0b588a943dbbd` because the general task-note
+path sanitizer erased `External-data/dataset` from an open canonical blocker.
+The remaining provider/handoff words incorrectly authorized recovery.
+
+The task branch composed `origin/dev` `9a5ef53de695` using a normal merge
+(`520798d7be6a`), preserving all original task commits. That base includes the
+verification-command-identity correction; no runtime rollout was performed.
+
+`mixed-prose-red.json` binds the declared selection to regression anchor
+`fb6548154cdc`, exit 1 (4.091s). Both reviewer counterexample variants
+(with/without a completed dependency) incorrectly changed blocked → todo and
+open → resolved. Unknown business gate + routing prose also failed.
+
+Recovery now preserves bare slash compounds in canonical gate prose before
+broad path filtering. Only explicit code references (backticks, key=value,
+absolute/dot-prefixed paths and filenames) are removed; ambiguous extensionless
+slash prose remains fail-closed rather than being assumed to be a path.
+Dependency IDs are masked first. An unclassified `gate` in an open blocker
+cannot be released by routing words; resolver-proven dependency-gate wording
+is exempt only when no independent gate remains.
+
+`mixed-prose-green.json` binds exit 0 (3.534s) to fix anchor `3f757620f2a3`.
+Added production-entry coverage includes the exact mixed-prose counterexample,
+Human/Ops and unknown gate prose, a dependency + independent business gate in
+one blocker, and retained `blocked_reason` evidence. Positive recovery still
+enqueues with dependency IDs, filenames, quoted extensionless paths, absolute
+paths and code identifiers present. Existing resolved-history, missing snapshot
+and parallel-insertion/CAS coverage remains unchanged. Each assertion prevents
+real launches and checks board preservation, enqueue absence and false
+admission audit absence for negative cases.
+
+These tracked receipts describe intermediate anchors; final submission must
+also pass both declared commands at the exact new head, using the existing
+receipt gate. No broader suite or host scan was needed.
+
 ## Runtime rollout and merge follow-up
 
 **Source-only correction: no supervisor restart, runtime switch, XR/gate/IAM or
