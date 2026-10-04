@@ -1425,19 +1425,22 @@ jobs:
       # target, or one non-candidate release serving all API/Web traffic with
       # both scheduler triggers on that release. If it cannot prove that, it
       # fails, no receipt is published, and the next dev release refuses.
+      # It is staged under RELEASE_RECEIPT_DIR (not .odp_data/deployment) and
+      # published only by its own artifact, so the validation-report allowlist
+      # in release_receipts.py stays limited to deploy-script producers.
       - name: Read back dev live state after a failed live step
         id: live-readback
         if: ${{ failure() && inputs.environment == 'dev' && steps.live-deploy.outcome == 'failure' }}
         run: >-
           uv run python -m delivery_toolchain.release.automatic_dev live-readback
-          --output .odp_data/deployment/dev-failed-live-step-readback.json
+          --output "${RELEASE_RECEIPT_DIR}/dev-failed-live-step-readback.json"
 
       - name: Publish dev failed live step read-back
         if: ${{ failure() && inputs.environment == 'dev' && steps.live-readback.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: dev-failed-live-step-readback-${{ github.run_attempt }}
-          path: .odp_data/deployment/dev-failed-live-step-readback.json
+          path: .odp_data/release/dev-failed-live-step-readback.json
           if-no-files-found: error
 
       - name: Prepare release-scoped staging handoff paths
@@ -1640,7 +1643,6 @@ jobs:
             .odp_data/deployment/cloud-run-jobs/migration-validation.json
             .odp_data/deployment/cloud-run-jobs/scheduler-validation.json
             .odp_data/deployment/cloud-run-jobs/worker-validation.json
-            .odp_data/deployment/dev-failed-live-step-readback.json
             .odp_data/remote-staging-proof/staging-${{ github.run_id }}.json
           if-no-files-found: ignore
 
