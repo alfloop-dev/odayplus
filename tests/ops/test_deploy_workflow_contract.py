@@ -815,7 +815,8 @@ def test_admission_reads_the_registry_at_e_but_binds_everything_else_to_c() -> N
             continue
         for step in _job_steps(job):
             if str(step.get("uses", "")).startswith("actions/checkout@"):
-                assert step["with"]["ref"] == CANDIDATE_SHA_EXPRESSION, (
+                expected = POLICY_SHA_EXPRESSION if job_id == "release_phase" else CANDIDATE_SHA_EXPRESSION
+                assert step["with"]["ref"] == expected, (
                     f"{job_id} must deploy the candidate, not whatever the ref points at"
                 )
 

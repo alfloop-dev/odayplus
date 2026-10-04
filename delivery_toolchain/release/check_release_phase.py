@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Runtime Release 的階段前置檢查：build 與 deploy 各自的入場條件。
+"""Runtime Release 的階段前置檢查：build、deploy 與 dev auto 的入場條件。
 
 為什麼需要這一關
 ----------------
@@ -17,8 +17,10 @@
   handoff（image handoff + candidate release manifest）。
 * ``deploy``：不再 build。它必須帶入 build 階段產出的四個 immutable image
   reference，以及一張只授權 ``deploy`` 動作的簽章 Supervisor lease。
+* ``auto``：僅限 dev，採用 build 的輸入形狀；實際授權由 automatic_dev.py
+  驗證 protected dev 的成功 CI 與同一執行產出的 manifest，接續既有 deploy。
 
-這個模組是兩個階段共用的 fail-closed **輸入形狀**檢查：phase 是否合法、
+這個模組是各階段共用的 fail-closed **輸入形狀**檢查：phase 是否合法、
 release_sha 是否為 exact SHA、handoff 是否齊備且 immutable、lease 該不該在。
 缺少任何一項一律拒絕並輸出中文收據；收據只記錄 lease 是否存在，永遠不記錄
 lease 內容本身。
