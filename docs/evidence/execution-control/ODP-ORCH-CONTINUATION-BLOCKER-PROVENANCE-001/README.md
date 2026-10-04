@@ -109,6 +109,31 @@ selection. Approval JSON in unittest output is mocked in-memory test data,
 not a live issuance. A final receipt cannot be embedded in the commit it hashes;
 the canonical receipt store and review submission pin that final head.
 
+## PR1411 CI fixture repair
+
+CI run `37197226077` on `4f27581d76e30fae851078db38e2707a598794aa`
+reported 1 failed / 3501 passed / 6 skipped. The sole failure was
+`test_provenance_ai_ambiguous_incomplete_stale_expired_fail_closed`: its Pi
+actor was undeclared in the clean CI registry, so identity validation correctly
+raised `Unknown AI_NAME` before the intended `Only Human/Ops` role assertion.
+Canonical diagnosis: `support/handoffs/dev-automatic-deployment-20261004/governance-ci-diagnosis.json`.
+This is a deterministic fixture defect, not transient CI; the failed head is
+not being retried unchanged.
+
+The repaired role cases use Claude2, Codex2 and Claude, all declared by the
+committed example config. Rejections also assert no audit log emission.
+`test_provenance_rejections_under_clean_ci_registry` copies that config into a
+temporary config.json (the CI bootstrap shape), clears inherited environment,
+and selects only that fixture. It proves no overlays/extra agents apply,
+executes the original failing selection with real identity and role validation,
+and separately proves undeclared Pi is rejected atomically as `Unknown AI_NAME`.
+No registry, live config, production handler or independent gate is altered.
+The focused class now includes 14 tests; all three declared commands must have
+passing receipts bound to the new head before `task_finalize.sh` publishes it.
+Final receipts remain in `.orchestrator/evidence/`, not inside their own hashed
+commit. Codex2 must independently review the new PR1411 head and required CI.
+Live eligibility and deployment authority remain unchanged.
+
 ## Required handoff after merge
 
 Codex2 must independently review this source PR, especially mixed real-gate

@@ -8177,11 +8177,16 @@ class HumanContinuationApprovalTests(unittest.TestCase):
                    "expires_at": "2099-01-01T00:00:00Z",
                    "fields": {"next": [self._segment(task["next"], "resolved")]}}
         before = json.dumps(task, sort_keys=True)
-        for actor in ("Pi", "Codex2", "Claude"):
-            with mock.patch.dict(os.environ, {"AI_NAME": actor}, clear=False):
+        # These actors are declared in config.example.json, unlike the live
+        # fleet's Pi. Reach the role gate rather than failing identity lookup.
+        for actor in ("Claude2", "Codex2", "Claude"):
+            with (self.subTest(actor=actor),
+                  mock.patch.dict(os.environ, {"AI_NAME": actor}, clear=False),
+                  mock.patch.object(ai_status, "append_log") as log):
                 with self.assertRaisesRegex(SystemExit, "Only Human/Ops"):
                     ai_status.command_note(self._state(task), [task["id"], "not authority",
                         "--blocker-provenance=" + json.dumps(payload)])
+                log.assert_not_called()
             self.assertEqual(before, json.dumps(task, sort_keys=True))
         self._adjudicate(task, payload["fields"])
         for field, value in (("next", "Credentials completed. But deployment pending."),
@@ -8207,6 +8212,37 @@ class HumanContinuationApprovalTests(unittest.TestCase):
         old_record = task["blocker_provenance"]
         self._adjudicate(task, payload["fields"])
         self.assertEqual(task["blocker_provenance_history"], [old_record])
+
+    def test_provenance_rejections_under_clean_ci_registry(self) -> None:
+        # CI bootstraps config.json from the committed example. No worker
+        # overlays or AI_STATUS_EXTRA_AGENTS may lend this fixture identities.
+        with tempfile.TemporaryDirectory(prefix="continuation-ci-config-") as temp_dir:
+            config_file = Path(temp_dir) / "config.json"
+            shutil.copyfile(_TEST_CONFIG, config_file)
+            with mock.patch.dict(os.environ, {"ORCH_CONFIG_PATH": str(config_file)}, clear=True):
+                self.assertEqual(ai_status.active_config_file(), config_file)
+                self.assertEqual(ai_status.local_config_overlay_paths(), [])
+                self.assertEqual(ai_status.extra_actor_names(), set())
+                names = ai_status.configured_agent_names()
+                self.assertTrue({"Claude2", "Codex2", "Claude"}.issubset(names))
+                self.assertNotIn("Pi", names)
+                # Exercise the originally failing selection against real
+                # config loading and identity/role checks, not mocked gates.
+                self.test_provenance_ai_ambiguous_incomplete_stale_expired_fail_closed()
+
+                task = self._task(next="Credentials completed.")
+                state = self._state(task)
+                payload = {"context_sha256": ai_status.blocker_authority_digest(task),
+                           "expires_at": "2099-01-01T00:00:00Z",
+                           "fields": {"next": [self._segment(task["next"], "resolved")]}}
+                before = json.dumps(state, sort_keys=True)
+                with (mock.patch.dict(os.environ, {"AI_NAME": "Pi"}, clear=False),
+                      mock.patch.object(ai_status, "append_log") as log):
+                    with self.assertRaisesRegex(SystemExit, "Unknown AI_NAME"):
+                        ai_status.command_note(state, [task["id"], "not registered",
+                            "--blocker-provenance=" + json.dumps(payload)])
+                    log.assert_not_called()
+                self.assertEqual(before, json.dumps(state, sort_keys=True))
 
     def test_note_rejects_invalid_adjudication_atomically(self) -> None:
         task = self._task(next="Credentials completed.")
