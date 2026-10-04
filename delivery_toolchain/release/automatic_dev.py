@@ -164,11 +164,29 @@ def deployed_attempts(run: dict[str, Any]) -> list[dict[str, Any]]:
     return found
 
 
+def paged(path: str, *, pages: int = 20) -> list[Any]:
+    """Every record of a GitHub list endpoint; an unproven complete read refuses."""
+    records: list[Any] = []
+    separator = "&" if "?" in path else "?"
+    for page in range(1, pages + 1):
+        batch = api(f"{path}{separator}per_page=100&page={page}")
+        if not isinstance(batch, list):
+            raise Refused("Unexpected GitHub list response.")
+        records += batch
+        if len(batch) < 100:
+            return records
+    raise Refused("Deployment evidence scan limit reached; no safe predecessor selected.")
+
+
 def dev_environment_deployed(run: dict[str, Any]) -> bool:
-    """GitHub's own dev environment deployment record for this run succeeded."""
-    deployments = api(f"deployments?environment=dev&sha={run['head_sha']}&per_page=100")
-    for deployment in deployments:
-        for status in api(f"deployments/{deployment['id']}/statuses?per_page=100"):
+    """GitHub's own dev environment deployment record for this run succeeded.
+
+    Newer dev-bound jobs at the same dispatch SHA (for example manual deploys
+    refused before mutation) add environment records, so the proof can sit
+    beyond the first page; both lists are read exhaustively.
+    """
+    for deployment in paged(f"deployments?environment=dev&sha={run['head_sha']}"):
+        for status in paged(f"deployments/{deployment['id']}/statuses"):
             url = f"{status.get('log_url') or ''} {status.get('target_url') or ''}"
             if status.get("state") == "success" and f"/actions/runs/{run['id']}" in url:
                 return True
@@ -203,8 +221,11 @@ def previous_deployment() -> tuple[dict[str, Any], dict[str, Any]] | None:
             attempts = deployed_attempts(run)
             if not attempts:
                 continue
+            # A successful dev deploy job may have changed live dev; without
+            # its environment proof an older predecessor cannot be trusted.
             if not dev_environment_deployed(run):
-                continue
+                raise Refused("Successful dev deploy job lacks dev environment proof; "
+                              "no safe predecessor selected.")
             completed_dt = parse_iso(attempts[0]["completed_at"])
             successful.append((completed_dt, int(run.get("id") or 0), run, title))
         if len(runs) < 100:

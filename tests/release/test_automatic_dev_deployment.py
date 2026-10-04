@@ -146,7 +146,7 @@ def deploy_run(**change):
 def fake_api(manifest, *, artifact_name=auto.DEPLOYED_ARTIFACT, expired=False,
              job_result="success", archive_name="RELEASE_MANIFEST.json", run=None,
              runs=None, attempt_jobs=None, deployment_state="success", seen=None,
-             run_manifests=None, run_jobs=None, run_artifacts=None):
+             run_manifests=None, run_jobs=None, run_artifacts=None, unproven=()):
     runs_list = runs if runs is not None else [run or deploy_run()]
     def read(path, **kwargs):
         if seen is not None:
@@ -173,12 +173,12 @@ def fake_api(manifest, *, artifact_name=auto.DEPLOYED_ARTIFACT, expired=False,
         if path.startswith("deployments?"):
             assert "environment=dev" in path
             return [{"id": 7}]
-        if path == "deployments/7/statuses?per_page=100":
+        if path == "deployments/7/statuses?per_page=100&page=1":
             if deployment_state is None:
                 return []
             return [{"state": deployment_state,
                      "log_url": f"https://github.com/{REPO}/actions/runs/{r['id']}/job/1"}
-                    for r in runs_list]
+                    for r in runs_list if r["id"] not in unproven]
         if path.endswith("/zip"):
             art_id = int(path.split("actions/artifacts/")[1].split("/")[0])
             run_id = art_id - 900
@@ -199,6 +199,7 @@ def test_build_only_green_run_is_not_rollback_or_deployed_proof(monkeypatch, man
 
 @pytest.mark.parametrize("kwargs", [
     {"expired": True}, {"artifact_name": None},
+    {"deployment_state": "failure"}, {"deployment_state": None},
     {"archive_name": "../../outside.json"},
     {"run": deploy_run(display_title="Runtime Release dev deploy " + "a" * 40)},
 ])
@@ -541,7 +542,7 @@ def test_pagination_limit_reached_with_qualifying_records_fails_closed(monkeypat
             return {"jobs": [{"name": auto.DEPLOY_JOB, "conclusion": "success", "completed_at": "2026-07-27T14:52:00Z"}]}
         if path.startswith("deployments?"):
             return [{"id": 7}]
-        if path == "deployments/7/statuses?per_page=100":
+        if path == "deployments/7/statuses?per_page=100&page=1":
             return [{"state": "success", "log_url": f"https://github.com/{REPO}/actions/runs/101/job/1"}]
         if path.endswith("/zip"):
             return archive(manifest)
@@ -563,3 +564,112 @@ def test_pagination_limit_reached_with_qualifying_records_fails_closed(monkeypat
     assert auto.main(["recovery", "--candidate", SHA, "--environment", "dev",
                       "--ci-run-id", "100", "--directory", str(tmp_path)]) == 1
     assert not Path(context["GITHUB_OUTPUT"]).exists()
+
+
+def dev_manifest(sha):
+    return sources_off_manifest(candidate_sha=sha, release_profile={
+        "name": "dev-admin", "target_environment": "dev", "model_readiness": "not_claimed",
+    })
+
+
+def a_then_b_runs():
+    run_a = deploy_run(id=101, head_sha="a" * 40,
+                       display_title=f"Runtime Release dev deploy {REAL_CANDIDATE_SHA}")
+    run_b = deploy_run(id=102, head_sha="b" * 40,
+                       display_title=f"Runtime Release dev deploy {SECOND_REAL_CANDIDATE_SHA}")
+    run_jobs = {
+        (101, 1): [{"name": auto.DEPLOY_JOB, "conclusion": "success",
+                    "completed_at": "2026-07-27T14:52:00Z"}],
+        (102, 1): [{"name": auto.DEPLOY_JOB, "conclusion": "success",
+                    "completed_at": "2026-07-27T14:58:00Z"}],
+    }
+    manifests = {101: dev_manifest(REAL_CANDIDATE_SHA), 102: dev_manifest(SECOND_REAL_CANDIDATE_SHA)}
+    return [run_b, run_a], run_jobs, manifests
+
+
+def with_ci(base, candidate):
+    def read(path, **kwargs):
+        if path == "actions/runs/100":
+            return {**ci(), "head_sha": candidate}
+        if path == "branches/dev":
+            return {"protected": True, "commit": {"sha": candidate}}
+        return base(path, **kwargs)
+    return read
+
+
+def test_latest_deploy_without_environment_proof_never_falls_back_to_older_release(
+    monkeypatch, context, tmp_path
+):
+    runs, run_jobs, manifests = a_then_b_runs()
+    base = fake_api(manifests[101], runs=runs, run_jobs=run_jobs,
+                    run_manifests=manifests, unproven={102})
+    monkeypatch.setattr(auto, "api", base)
+    with pytest.raises(auto.Refused, match="lacks dev environment proof"):
+        auto.previous_deployment()
+
+    # Recovery for a new candidate must not bind A as rollback for live B.
+    candidate = "c" * 40
+    monkeypatch.setenv("GITHUB_SHA", candidate)
+    monkeypatch.setattr(auto, "api", with_ci(base, candidate))
+    assert auto.main(["recovery", "--candidate", candidate, "--environment", "dev",
+                      "--ci-run-id", "100", "--directory", str(tmp_path)]) == 1
+    assert not Path(context["GITHUB_OUTPUT"]).exists()
+    assert not (tmp_path / "previous-release.json").exists()
+
+    # Preflight for A must not deduplicate against a replaced release.
+    monkeypatch.setenv("GITHUB_SHA", REAL_CANDIDATE_SHA)
+    monkeypatch.setattr(auto, "api", with_ci(base, REAL_CANDIDATE_SHA))
+    assert auto.main(["preflight", "--candidate", REAL_CANDIDATE_SHA, "--environment", "dev",
+                      "--ci-run-id", "100", "--directory", str(tmp_path)]) == 1
+    assert not Path(context["GITHUB_OUTPUT"]).exists()
+
+
+def evidence_api(manifests, runs, run_jobs, *, deployments, statuses):
+    base = fake_api(manifests[101], runs=runs, run_jobs=run_jobs, run_manifests=manifests)
+    def read(path, **kwargs):
+        if path.startswith("deployments?"):
+            assert "environment=dev" in path and "per_page=100" in path
+            return deployments(path)
+        if path.startswith("deployments/"):
+            return statuses(path)
+        return base(path, **kwargs)
+    return read
+
+
+def proof(run_id):
+    return {"state": "success", "log_url": f"https://github.com/{REPO}/actions/runs/{run_id}/job/1"}
+
+
+def test_environment_proof_beyond_first_page_is_found(monkeypatch, context):
+    runs, run_jobs, manifests = a_then_b_runs()
+    def deployments(path):
+        if "sha=" + "b" * 40 in path:
+            # 100 newer dev records (refused before mutation) push B's to page 2.
+            return [{"id": 1000 + i} for i in range(100)] if path.endswith("page=1") else [{"id": 8}]
+        return [{"id": 9}]
+    def statuses(path):
+        deployment = int(path.split("/")[1])
+        if deployment == 8:
+            if path.endswith("page=1"):
+                return [{"state": "in_progress"}] * 100
+            return [proof(102)]
+        if deployment == 9:
+            return [proof(101)]
+        return [{"state": "failure", "log_url": "https://github.com/x/actions/runs/555/job/1"}]
+    monkeypatch.setattr(auto, "api", evidence_api(manifests, runs, run_jobs,
+                                                  deployments=deployments, statuses=statuses))
+    found_manifest, found_run = auto.previous_deployment()
+    assert found_run["id"] == 102
+    assert found_manifest["candidate_sha"] == SECOND_REAL_CANDIDATE_SHA
+
+
+def test_unbounded_environment_evidence_refuses(monkeypatch, context):
+    runs, run_jobs, manifests = a_then_b_runs()
+    def deployments(path):
+        return [{"id": 1000 + i} for i in range(100)]
+    def statuses(path):
+        return []
+    monkeypatch.setattr(auto, "api", evidence_api(manifests, runs, run_jobs,
+                                                  deployments=deployments, statuses=statuses))
+    with pytest.raises(auto.Refused, match="evidence scan limit"):
+        auto.previous_deployment()
