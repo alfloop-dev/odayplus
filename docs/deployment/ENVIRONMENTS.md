@@ -71,7 +71,16 @@ and only logs a failed restore. Right after a failed `dev` live step the
 workflow reads back the live target and publishes
 `dev-failed-live-step-readback-<attempt>` only when the target is empty or one
 non-candidate release serves all API/Web traffic with both scheduler triggers on
-that release. History accepts the failed attempt only with that receipt, and
+that release. Before any dev runtime mutation, the same serialized deploy job
+captures an attempt-bound Scheduler baseline in runner temporary storage. It
+stores only configuration digests; raw invocation bodies, headers and tokens
+are never published. The failed-step reader compares both triggers with that
+baseline using the existing restore helper's semantics, including pause policy,
+invocation identity, request, schedule and retry configuration. An intentional
+`PAUSED` predecessor remains valid; a failed resume or changed invoker does not.
+The empty-target case also requires both triggers to be restored to absence.
+Missing, stale or mismatching baselines refuse proof. History accepts only the
+new v2 receipt with its baseline digest, rejecting older URI-only v1 receipts, and
 then selects exactly the release it names. Without it, the next automatic
 release neither picks an older predecessor nor reports a candidate as already
 deployed: it refuses until an operator reads back the target and runs a signed

@@ -41,7 +41,7 @@ LIVE_STEP = "Deploy Cloud Run by immutable digest"
 RESTORE_STEP = "Read back dev live state after a failed live step"
 RESTORE_ARTIFACT = "dev-failed-live-step-readback"
 RESTORE_FILE = "dev-failed-live-step-readback.json"
-RESTORE_KIND = "dev-failed-live-step-readback-v1"
+RESTORE_KIND = "dev-failed-live-step-readback-v2"
 DEPLOYED_ARTIFACT = "deployed-release-manifest-dev"
 COMPONENTS = ("api", "web", "worker", "scheduler")
 
@@ -203,6 +203,9 @@ def restoration_readback(run: dict[str, Any], attempt: int) -> str | None | bool
     title = str(run.get("display_title", "")).split()
     live = receipt.get("live_release") if isinstance(receipt, dict) else False
     if (not isinstance(receipt, dict) or receipt.get("kind") != RESTORE_KIND
+            or receipt.get("environment") != "dev"
+            or not isinstance(receipt.get("scheduler_baseline_sha256"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", receipt["scheduler_baseline_sha256"])
             or len(title) != 5 or receipt.get("failed_candidate_sha") != title[4]
             or str(receipt.get("run_id")) != str(run["id"])
             or str(receipt.get("run_attempt")) != str(attempt)
@@ -507,16 +510,19 @@ def serving_release(description: dict[str, Any]) -> str:
     return releases.pop()
 
 
-def failed_live_step_readback(env: dict[str, str]) -> dict[str, Any]:
+def failed_live_step_readback(env: dict[str, str], baseline: Path | None = None) -> dict[str, Any]:
     """Prove what live dev is after this run's live step failed, or refuse.
 
     Either the whole target is absent (the first-release cleanup worked), or
     API and Web route all traffic to one release that is not the failed
     candidate and both scheduler triggers run exactly that release's jobs.
+    In either case, both triggers must also match their authoritative,
+    attempt-bound pre-deploy configuration, including intentional PAUSED state.
     Anything else -- mixed traffic, candidate still serving, an unreadable or
     inconsistent resource -- refuses, so the attempt remains uncertain and the
     next release fails closed instead of guessing.
     """
+    from delivery_toolchain.release import scheduler_restore_proof
     from delivery_toolchain.release.probe_release_target_absence import (
         ProbeError,
         probe_target_absence,
@@ -531,6 +537,10 @@ def failed_live_step_readback(env: dict[str, str]) -> dict[str, Any]:
     if not all(names.values()):
         raise Refused("Dev target bindings are incomplete; live state unproven.")
     project, region = names["GCP_PROJECT"], names["GCP_REGION"]
+    try:
+        baseline_digest, triggers = scheduler_restore_proof.verify(env, baseline, gcloud_json)
+    except (OSError, ValueError, TypeError) as exc:
+        raise Refused("Scheduler restoration is unproven; pre-deploy configuration proof required.") from exc
     api_service = service_description(names["API_SERVICE"], project=project, region=region)
     web_service = service_description(names["WEB_SERVICE"], project=project, region=region)
     live: str | None
@@ -556,20 +566,17 @@ def failed_live_step_readback(env: dict[str, str]) -> dict[str, Any]:
             raise Refused("The failed candidate still serves dev traffic.")
         for trigger, base in ((names["SCHEDULER_SCHEDULE_NAME"], names["SCHEDULER_JOB"]),
                               (names["WORKER_SCHEDULE_NAME"], names["WORKER_JOB"])):
-            listed = gcloud_json("scheduler", "jobs", "list", f"--project={project}",
-                                 f"--location={region}", f"--filter=name:{trigger}")
-            exact = [j for j in listed or [] if isinstance(j, dict)
-                     and str(j.get("name", "")).rsplit("/", 1)[-1] == trigger]
             # Job names keep only the first RELEASE_JOB_NAME_SHA_LENGTH (<16)
             # characters of the release SHA, so the tag prefix names them.
             job = release_candidate_job_name(base, live.ljust(40, "0"))
             expected = (f"https://run.googleapis.com/v2/projects/{project}/locations/"
                         f"{region}/jobs/{job}:run")
-            if len(exact) != 1 or exact[0].get("httpTarget", {}).get("uri") != expected:
+            if triggers[trigger].get("httpTarget", {}).get("uri") != expected:
                 raise Refused(f"Scheduler trigger {trigger} does not run the serving release.")
     return {"kind": RESTORE_KIND, "environment": "dev", "failed_candidate_sha": failed,
             "run_id": env.get("GITHUB_RUN_ID", ""), "run_attempt": env.get("GITHUB_RUN_ATTEMPT", ""),
             "live_release": live,
+            "scheduler_baseline_sha256": baseline_digest,
             "observed_at": datetime.now(UTC).isoformat(timespec="seconds")}
 
 
@@ -600,7 +607,7 @@ def automatic_admission(manifest_path: Path, *, candidate: str, digest: str,
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["dispatch", "preflight", "recovery", "admit", "deploy-check",
-                                           "live-readback"])
+                                           "live-readback", "scheduler-baseline"])
     parser.add_argument("--candidate", default=os.environ.get("ODAY_RELEASE_SHA", ""))
     parser.add_argument("--environment", default=os.environ.get("RELEASE_ENVIRONMENT", ""))
     parser.add_argument("--ci-run-id", default=os.environ.get("AUTO_CI_RUN_ID", ""))
@@ -608,14 +615,26 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--digest", default=os.environ.get("MANIFEST_DIGEST", ""))
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--baseline", type=Path)
     args = parser.parse_args(argv)
     try:
+        if args.action == "scheduler-baseline":
+            from delivery_toolchain.release import scheduler_restore_proof
+            if args.output is None:
+                raise Refused("Missing pre-deploy Scheduler baseline destination.")
+            baseline = scheduler_restore_proof.capture(dict(os.environ), gcloud_json)
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            with args.output.open("x") as destination:
+                json.dump(baseline, destination, indent=2)
+                destination.write("\n")
+            print("Captured attempt-bound dev Scheduler configuration digests before mutation.")
+            return 0
         if args.action == "live-readback":
             # Runs after a failed dev live step of any (manual or automatic)
             # deploy; writes a receipt only when the live state is proven.
             if args.output is None:
                 raise Refused("Missing read-back receipt destination.")
-            receipt = failed_live_step_readback(dict(os.environ))
+            receipt = failed_live_step_readback(dict(os.environ), args.baseline)
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(json.dumps(receipt, indent=2) + "\n")
             print("Live dev read-back: "

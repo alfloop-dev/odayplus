@@ -763,7 +763,8 @@ def readback_zip(live_release, *, run_id=102, attempt=1, failed=B_SHA, kind=auto
     with zipfile.ZipFile(data, "w") as zipped:
         zipped.writestr(name, json.dumps({
             "kind": kind, "environment": "dev", "failed_candidate_sha": failed,
-            "run_id": str(run_id), "run_attempt": str(attempt), "live_release": live_release}))
+            "run_id": str(run_id), "run_attempt": str(attempt), "live_release": live_release,
+            "scheduler_baseline_sha256": "e" * 64}))
     return data.getvalue()
 
 
@@ -854,12 +855,13 @@ def test_positively_proven_rollback_keeps_predecessor_and_deduplicates(
     (readback_zip(A_SHA[:16], attempt=2), None),
     (readback_zip(A_SHA[:16], failed=C_SHA), None),
     (readback_zip(A_SHA[:16], kind="something-else"), None),
+    (readback_zip(A_SHA[:16], kind="dev-failed-live-step-readback-v1"), None),
     (readback_zip(A_SHA[:16], name="../outside.json"), None),
     (readback_zip(B_SHA[:16]), None),
     (readback_zip("A" * 16), None),
     (readback_zip(A_SHA[:16]), {"expired": True}),
     (readback_zip(A_SHA[:16]), {"name": f"{auto.RESTORE_ARTIFACT}-2"}),
-], ids=["other-run", "other-attempt", "other-candidate", "wrong-kind", "path-escape",
+], ids=["other-run", "other-attempt", "other-candidate", "wrong-kind", "old-uri-only-proof", "path-escape",
         "candidate-still-live", "malformed-release", "expired", "other-attempt-artifact"])
 def test_readback_receipt_must_bind_this_failed_attempt(monkeypatch, context, receipt, artifact):
     monkeypatch.setattr(auto, "api", b_failed_api(
@@ -920,7 +922,11 @@ def test_workflow_reads_back_live_state_only_after_a_failed_dev_live_step():
     readback = names.index(auto.RESTORE_STEP)
     publish = next(i for i, step in enumerate(steps)
                    if str(step.get("with", {}).get("name", "")).startswith(auto.RESTORE_ARTIFACT))
-    assert live < readback < publish
+    capture = names.index("Capture authoritative dev scheduler baseline before mutation")
+    assert capture < live < readback < publish
+    assert steps[capture]["if"] == "${{ inputs.environment == 'dev' }}"
+    private_path = "${RUNNER_TEMP}/dev-scheduler-baseline-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+    assert private_path in steps[capture]["run"] and private_path in steps[readback]["run"]
     assert steps[live]["id"] == "live-deploy"
     condition = steps[readback]["if"]
     assert "failure()" in condition and "steps.live-deploy.outcome == 'failure'" in condition
@@ -957,7 +963,7 @@ def trigger_uri(base, sha):
 
 
 def fake_gcloud(services, *, triggers=None):
-    triggers = triggers or {"scheduler-trigger": trigger_uri("scheduler", A_SHA),
+    triggers = triggers if triggers is not None else {"scheduler-trigger": trigger_uri("scheduler", A_SHA),
                             "worker-trigger": trigger_uri("worker", A_SHA)}
     def call(*args):
         flags = dict(arg[2:].split("=", 1) for arg in args if arg.startswith("--"))
@@ -966,19 +972,43 @@ def fake_gcloud(services, *, triggers=None):
             return [services[name]] if services.get(name) else []
         if args[:3] == ("scheduler", "jobs", "list"):
             name = flags["filter"].split(":", 1)[1]
-            return [{"name": f"projects/proj/locations/asia-east1/jobs/{name}",
-                     "httpTarget": {"uri": triggers[name]}}] if name in triggers else []
+            if name not in triggers:
+                return []
+            if isinstance(triggers[name], dict):
+                return [triggers[name]]
+            return [scheduler_description(name, triggers[name])]
         raise AssertionError(args)
     return call
 
 
-def test_live_readback_proves_restored_predecessor_and_round_trips(monkeypatch, context, tmp_path):
+def scheduler_description(name, uri, *, state="ENABLED"):
+    return {"name": f"projects/proj/locations/asia-east1/jobs/{name}",
+            "state": state, "schedule": "*/5 * * * *", "timeZone": "Etc/UTC",
+            "httpTarget": {"uri": uri, "httpMethod": "POST", "body": "e30=",
+                           "headers": {"Content-Type": "application/json"},
+                           "oauthToken": {"serviceAccountEmail": "original@proj.iam.gserviceaccount.com",
+                                          "scope": "https://www.googleapis.com/auth/cloud-platform"}}}
+
+
+def capture_baseline(tmp_path, *, triggers=None, env=None):
+    from delivery_toolchain.release import scheduler_restore_proof as proof
+    path = tmp_path / "scheduler-baseline.json"
+    path.write_text(json.dumps(proof.capture(env or READBACK_ENV,
+                                          fake_gcloud({}, triggers=triggers))))
+    return path
+
+
+@pytest.mark.parametrize("state", ["ENABLED", "PAUSED"])
+def test_live_readback_proves_restored_predecessor_and_round_trips(monkeypatch, context, tmp_path, state):
     services = {"api": described("api", [("rev-a", 100)]), "web": described("web", [("rev-a", 100)])}
-    monkeypatch.setattr(auto, "gcloud_json", fake_gcloud(services))
+    triggers = {name: scheduler_description(name, trigger_uri(base, A_SHA), state=state)
+                for name, base in (("scheduler-trigger", "scheduler"), ("worker-trigger", "worker"))}
+    baseline = capture_baseline(tmp_path, triggers=triggers)
+    monkeypatch.setattr(auto, "gcloud_json", fake_gcloud(services, triggers=triggers))
     for key, value in READBACK_ENV.items():
         monkeypatch.setenv(key, value)
     receipt = tmp_path / auto.RESTORE_FILE
-    assert auto.main(["live-readback", "--output", str(receipt)]) == 0
+    assert auto.main(["live-readback", "--baseline", str(baseline), "--output", str(receipt)]) == 0
     payload = json.loads(receipt.read_text())
     assert payload["live_release"] == A_SHA[:16]
     assert payload["failed_candidate_sha"] == B_SHA
@@ -1013,21 +1043,23 @@ def test_live_readback_proves_restored_predecessor_and_round_trips(monkeypatch, 
         "worker-trigger-missing"])
 def test_live_readback_refuses_unproven_or_mixed_state(monkeypatch, context, tmp_path,
                                                        services, triggers):
+    baseline = capture_baseline(tmp_path)
     monkeypatch.setattr(auto, "gcloud_json", fake_gcloud(services, triggers=triggers))
     for key, value in READBACK_ENV.items():
         monkeypatch.setenv(key, value)
     receipt = tmp_path / auto.RESTORE_FILE
-    assert auto.main(["live-readback", "--output", str(receipt)]) == 1
+    assert auto.main(["live-readback", "--baseline", str(baseline), "--output", str(receipt)]) == 1
     assert not receipt.exists()
 
 
 def test_live_readback_empty_target_requires_full_absence_probe(monkeypatch, context, tmp_path):
     from delivery_toolchain.release import probe_release_target_absence as probe
 
-    monkeypatch.setattr(auto, "gcloud_json", fake_gcloud({}))
+    baseline = capture_baseline(tmp_path, triggers={})
+    monkeypatch.setattr(auto, "gcloud_json", fake_gcloud({}, triggers={}))
     seen = []
     monkeypatch.setattr(probe, "probe_target_absence", lambda **kw: seen.append(kw) or {})
-    payload = auto.failed_live_step_readback(READBACK_ENV)
+    payload = auto.failed_live_step_readback(READBACK_ENV, baseline)
     assert payload["live_release"] is None
     assert seen[0]["candidate_sha"] == B_SHA
     assert set(seen[0]["targets"]) == {"api", "web", "migration", "worker", "scheduler"}
@@ -1036,7 +1068,103 @@ def test_live_readback_empty_target_requires_full_absence_probe(monkeypatch, con
         raise probe.ProbeError(["worker candidate job remains"])
     monkeypatch.setattr(probe, "probe_target_absence", present)
     with pytest.raises(auto.Refused, match="not empty"):
-        auto.failed_live_step_readback(READBACK_ENV)
+        auto.failed_live_step_readback(READBACK_ENV, baseline)
+
+
+@pytest.mark.parametrize("drift", ["failed-resume", "unexpected-resume", "wrong-invoker",
+                                   "schedule-drift", "request-body-drift"])
+def test_same_uri_incomplete_scheduler_restore_refuses_recovery_and_dedup(
+    monkeypatch, context, tmp_path, drift
+):
+    import copy
+
+    original = {name: scheduler_description(name, trigger_uri(base, A_SHA))
+                for name, base in (("scheduler-trigger", "scheduler"), ("worker-trigger", "worker"))}
+    if drift == "unexpected-resume":
+        original["scheduler-trigger"]["state"] = "PAUSED"
+    baseline = capture_baseline(tmp_path, triggers=original)
+    actual = copy.deepcopy(original)
+    changed = actual["scheduler-trigger"]
+    if drift == "failed-resume":
+        changed["state"] = "PAUSED"
+    elif drift == "unexpected-resume":
+        changed["state"] = "ENABLED"
+    elif drift == "wrong-invoker":
+        changed["httpTarget"]["oauthToken"]["serviceAccountEmail"] = "candidate@proj.iam.gserviceaccount.com"
+    elif drift == "schedule-drift":
+        changed["timeZone"] = "Asia/Taipei"
+    else:
+        changed["httpTarget"]["body"] = "eyJvdmVycmlkZSI6dHJ1ZX0="
+    services = {"api": described("api", [("rev-a", 100)]), "web": described("web", [("rev-a", 100)])}
+    monkeypatch.setattr(auto, "gcloud_json", fake_gcloud(services, triggers=actual))
+    for key, value in READBACK_ENV.items():
+        monkeypatch.setenv(key, value)
+    receipt = tmp_path / auto.RESTORE_FILE
+    assert auto.main(["live-readback", "--baseline", str(baseline), "--output", str(receipt)]) == 1
+    assert not receipt.exists()
+    base = b_failed_api(b_deploy_job("failure", readback="failure"))
+    # A later run observes failed B; B itself is excluded while still running.
+    monkeypatch.setenv("GITHUB_RUN_ID", context["GITHUB_RUN_ID"])
+    assert run_action(monkeypatch, base, "recovery", C_SHA, tmp_path) == 1
+    assert run_action(monkeypatch, base, "preflight", A_SHA, tmp_path) == 1
+    assert not Path(context["GITHUB_OUTPUT"]).exists()
+
+
+@pytest.mark.parametrize("change", ["missing", "other-attempt", "other-run", "other-target",
+                                    "other-candidate", "stale", "malformed"])
+def test_scheduler_baseline_must_prove_this_exact_pre_mutation_attempt(
+    monkeypatch, tmp_path, change
+):
+    baseline = capture_baseline(tmp_path)
+    payload = json.loads(baseline.read_text())
+    if change == "missing":
+        baseline.unlink()
+    elif change == "malformed":
+        baseline.write_text("[]")
+    else:
+        if change == "stale":
+            payload["captured_at"] = "2020-01-01T00:00:00+00:00"
+        else:
+            key, value = {"other-attempt": ("GITHUB_RUN_ATTEMPT", "2"),
+                          "other-run": ("GITHUB_RUN_ID", "999"),
+                          "other-target": ("GCP_PROJECT", "other-project"),
+                          "other-candidate": ("ODAY_RELEASE_SHA", C_SHA)}[change]
+            payload["scope"][key] = value
+        baseline.write_text(json.dumps(payload))
+    monkeypatch.setattr(auto, "gcloud_json", fake_gcloud({}))
+    with pytest.raises(auto.Refused, match="Scheduler restoration is unproven"):
+        auto.failed_live_step_readback(READBACK_ENV, baseline)
+
+
+def test_first_release_absence_refuses_leftover_scheduler_trigger(monkeypatch, tmp_path):
+    from delivery_toolchain.release import probe_release_target_absence as probe
+
+    baseline = capture_baseline(tmp_path, triggers={})
+    monkeypatch.setattr(auto, "gcloud_json", fake_gcloud({}, triggers={
+        "scheduler-trigger": trigger_uri("scheduler", B_SHA)}))
+    monkeypatch.setattr(probe, "probe_target_absence", lambda **kw: {})
+    with pytest.raises(auto.Refused, match="Scheduler restoration is unproven"):
+        auto.failed_live_step_readback(READBACK_ENV, baseline)
+
+
+def test_scheduler_baseline_persists_digests_without_raw_request_secrets(monkeypatch, tmp_path):
+    import base64
+
+    trigger = scheduler_description("scheduler-trigger", trigger_uri("scheduler", A_SHA))
+    trigger["httpTarget"]["headers"]["Authorization"] = "Bearer secret-header"
+    trigger["httpTarget"]["body"] = base64.b64encode(b"secret-body").decode()
+    triggers = {"scheduler-trigger": trigger, "worker-trigger": trigger_uri("worker", A_SHA)}
+    monkeypatch.setattr(auto, "gcloud_json", fake_gcloud({}, triggers=triggers))
+    for key, value in READBACK_ENV.items():
+        monkeypatch.setenv(key, value)
+    baseline = tmp_path / "private-baseline.json"
+    assert auto.main(["scheduler-baseline", "--output", str(baseline)]) == 0
+    text = baseline.read_text()
+    assert "secret-header" not in text and "secret-body" not in text
+    assert trigger["httpTarget"]["body"] not in text and "Authorization" not in text
+    original = text
+    assert auto.main(["scheduler-baseline", "--output", str(baseline)]) == 1
+    assert baseline.read_text() == original
 
 
 @pytest.mark.parametrize("change", [{"ODP_DEPLOY_ENV": "production"}, {"ODAY_RELEASE_SHA": "main"},

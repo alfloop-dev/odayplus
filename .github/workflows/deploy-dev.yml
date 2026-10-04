@@ -1402,6 +1402,12 @@ jobs:
           AUTO_CI_RUN_ID: ${{ inputs.auto_ci_run_id }}
         run: uv run python -m delivery_toolchain.release.automatic_dev deploy-check
 
+      - name: Capture authoritative dev scheduler baseline before mutation
+        if: ${{ inputs.environment == 'dev' }}
+        run: >-
+          uv run python -m delivery_toolchain.release.automatic_dev scheduler-baseline
+          --output "${RUNNER_TEMP}/dev-scheduler-baseline-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+
       - name: Deploy Cloud Run by immutable digest
         id: live-deploy
         if: ${{ inputs.environment != 'staging' }}
@@ -1423,7 +1429,9 @@ jobs:
       # step alone says nothing about what is live. This read-back is the only
       # positive evidence automatic_dev accepts for a failed attempt: an empty
       # target, or one non-candidate release serving all API/Web traffic with
-      # both scheduler triggers on that release. If it cannot prove that, it
+      # both scheduler triggers on that release and matching the original
+      # state/invocation/schedule configuration captured before mutation.
+      # Raw scheduler snapshots are never published. If it cannot prove that, it
       # fails, no receipt is published, and the next dev release refuses.
       # It is staged under RELEASE_RECEIPT_DIR (not .odp_data/deployment) and
       # published only by its own artifact, so the validation-report allowlist
@@ -1433,6 +1441,7 @@ jobs:
         if: ${{ failure() && inputs.environment == 'dev' && steps.live-deploy.outcome == 'failure' }}
         run: >-
           uv run python -m delivery_toolchain.release.automatic_dev live-readback
+          --baseline "${RUNNER_TEMP}/dev-scheduler-baseline-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
           --output "${RELEASE_RECEIPT_DIR}/dev-failed-live-step-readback.json"
 
       - name: Publish dev failed live step read-back
