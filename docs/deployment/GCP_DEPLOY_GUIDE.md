@@ -15,6 +15,12 @@ The ODay Plus delivery lifecycle uses three GitHub deployment environments, each
 | `production` | Blue-green serving (0% green smoke → 100% traffic switch) | Permanent | `required_reviewers` | `Alien-alfaloop`, `ajoe734` |
 
 ### GitHub Environment Reviewer Governance
+- **Dev continuous deployment**: successful protected dev push CI dispatches
+  `Runtime Release` with `phase=auto`. Build, dev-only admission and the existing
+  live deploy/validation run automatically. Dev uses verified exact-SHA CI and
+  immutable artifacts instead of a new human lease for each update. This replaces
+  the former per-candidate human dev release process; it does not grant staging
+  or production authority. See [automatic dev updates](ENVIRONMENTS.md#automatic-dev-updates).
 - **Staging & Production Review Rules**: Both environments require explicit review approval by authorized human operators before deployment jobs execute.
 - **Audited Reviewers**:
   - `Alien-alfaloop` (ID: `122770408`)

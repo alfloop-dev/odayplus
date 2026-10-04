@@ -1,6 +1,11 @@
 name: Runtime Release
+run-name: "Runtime Release ${{ inputs.environment }} ${{ inputs.phase }} ${{ inputs.release_sha }}"
 
-# One workflow, two explicit phases.
+# dev auto is standing authorization granted on 2026-10-04. It uses the same
+# build/deploy jobs and real live gates. Manual staging/production keep their
+# environment approval and signed Supervisor lease; no human approval is forged.
+
+# One workflow: explicit manual build/deploy, or CI-authorized dev auto.
 #
 # ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001: `admission` used to run *before*
 # `build`. The Supervisor lease admission verifies against `manifest_digest`,
@@ -49,10 +54,10 @@ on:
   workflow_dispatch:
     inputs:
       phase:
-        description: "Release phase: build the artifact handoff, or deploy one already built"
+        description: "Build artifacts, deploy an approved handoff, or automatically update dev from successful CI"
         required: true
         type: choice
-        options: [build, deploy]
+        options: [build, deploy, auto]
         default: build
       environment:
         description: "Release environment"
@@ -66,6 +71,11 @@ on:
       task_id:
         description: "Supervisor-owned release task ID"
         required: true
+        type: string
+      auto_ci_run_id:
+        description: "Exact successful dev push CI run (auto phase only)"
+        required: false
+        default: ""
         type: string
       release_lease:
         description: "Base64-encoded signed Supervisor release lease (deploy phase only; empty to build)"
@@ -153,7 +163,7 @@ on:
 # key so a long build does not hold the deploy lane for an already-built
 # release; a build cannot mutate a running environment, only publish artifacts.
 concurrency:
-  group: runtime-release-${{ inputs.environment }}-${{ inputs.phase }}
+  group: runtime-release-${{ inputs.environment }}-${{ inputs.phase == 'build' && 'build' || 'deploy' }}
   cancel-in-progress: false
 
 # `actions: read` is what lets the deploy phase download the build phase's
@@ -164,6 +174,9 @@ permissions:
   packages: write
   id-token: write
   actions: read
+  # Automatic dev rollback discovery reads the dev environment deployment
+  # records GitHub wrote for a run; read-only, it cannot create deployments.
+  deployments: read
 
 # ODP-RELEASE-WORKFLOW-DISPATCH-PARSER-001: receipt staging is workspace-relative
 # because the alternative did not compile.
@@ -201,12 +214,18 @@ jobs:
   release_phase:
     name: Validate release phase inputs
     runs-on: ubuntu-latest
+    outputs:
+      proceed: ${{ inputs.phase != 'auto' || steps.auto-policy.outputs.proceed == 'true' }}
     # No `environment:` and no `vars.*` by design -- see the header. This job is
     # pure input validation and must stay reachable without a deploy approval.
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_sha }}
+          # Auto policy code comes from the workflow's own dev commit, never an
+          # unchecked candidate supplied by a dispatcher. The next step proves
+          # that candidate equals this trusted checkout before running Python.
+          ref: ${{ inputs.phase == 'auto' && github.sha || inputs.release_sha }}
+          fetch-depth: 0
 
       - name: Assert exact release SHA is checked out
         env:
@@ -222,6 +241,16 @@ jobs:
       # The lease reaches this step only as a presence bit. Nothing here reads
       # its contents, and the receipt records `lease_supplied` rather than the
       # document, so a refusal is publishable without redaction.
+      - name: Verify standing dev policy against completed push CI
+        id: auto-policy
+        if: ${{ inputs.phase == 'auto' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ODAY_RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+          AUTO_CI_RUN_ID: ${{ inputs.auto_ci_run_id }}
+        run: python3 -m delivery_toolchain.release.automatic_dev preflight
+
       - name: Validate phase and artifact handoff preconditions
         env:
           RELEASE_PHASE: ${{ inputs.phase }}
@@ -274,13 +303,21 @@ jobs:
   build:
     name: Build once and publish the immutable artifact handoff
     needs: release_phase
-    if: ${{ inputs.phase == 'build' && inputs.api_image == '' && inputs.web_image == '' && inputs.worker_image == '' && inputs.scheduler_image == '' }}
+    if: ${{ needs.release_phase.outputs.proceed == 'true' && (inputs.phase == 'build' || inputs.phase == 'auto') && inputs.api_image == '' && inputs.web_image == '' && inputs.worker_image == '' && inputs.scheduler_image == '' }}
     runs-on: ubuntu-latest
     # The build-scoped twin of the target environment. It carries the same GCP
     # variables and no deployment approval, so a build can resolve the registry
     # it publishes to without consuming the authority that admits a deploy.
     environment:
       name: ${{ inputs.environment }}-build
+    # Manual build runs in the `-build` workflow lane and auto builds in the
+    # `-deploy` lane, so both could observe zero release tags and push/sign the
+    # same immutable tags at once. One publication lane per environment and
+    # release SHA makes the second entrance see four existing tags and reuse
+    # them. Pending duplicates of one SHA may be cancelled, never interleaved.
+    concurrency:
+      group: runtime-release-${{ inputs.environment }}-publish-${{ inputs.release_sha }}
+      cancel-in-progress: false
     outputs:
       api_image: ${{ steps.publish-images.outputs.api_image }}
       web_image: ${{ steps.publish-images.outputs.web_image }}
@@ -311,6 +348,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
 
       - name: Assert exact release SHA is checked out
         run: |
@@ -423,8 +461,18 @@ jobs:
       # build-scope binding gate: only this branch needs the migration job's
       # name, so an environment that does not bind it fails this step -- and
       # only this step -- instead of every build.
+      - name: Discover the last successfully deployed dev manifest
+        id: auto-recovery
+        if: ${{ inputs.phase == 'auto' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ODAY_RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+          AUTO_CI_RUN_ID: ${{ inputs.auto_ci_run_id }}
+        run: python3 -m delivery_toolchain.release.automatic_dev recovery
+
       - name: 讀回部署 target 以確認沒有既有已核准 release
-        if: ${{ inputs.initial_release_recovery }}
+        if: ${{ inputs.initial_release_recovery || steps.auto-recovery.outputs.initial_release == 'true' }}
         env:
           MIGRATION_JOB: ${{ vars.ODP_CLOUD_RUN_MIGRATION_JOB }}
         run: |
@@ -573,8 +621,10 @@ jobs:
           DATA_SNAPSHOT_URI: ${{ inputs.data_snapshot_uri || vars.ODP_APPROVED_DATA_SNAPSHOT_URI }}
           DATA_SNAPSHOT_OBJECT_GENERATION: ${{ inputs.data_snapshot_object_generation || vars.ODP_APPROVED_DATA_SNAPSHOT_OBJECT_GENERATION }}
           DATA_SNAPSHOT_CONTENT_SHA: ${{ inputs.data_snapshot_content_sha || vars.ODP_APPROVED_DATA_SNAPSHOT_CONTENT_SHA256 }}
-          ROLLBACK_MANIFEST: ${{ inputs.rollback_manifest || vars.ODP_PREVIOUS_RELEASE_MANIFEST_PATH }}
-          INITIAL_RELEASE_RECOVERY: ${{ inputs.initial_release_recovery }}
+          AUTOMATIC_DEV: ${{ inputs.phase == 'auto' }}
+          AUTO_ROLLBACK_MANIFEST: ${{ steps.auto-recovery.outputs.rollback_manifest }}
+          ROLLBACK_MANIFEST: ${{ inputs.phase == 'auto' && steps.auto-recovery.outputs.rollback_manifest || inputs.rollback_manifest || vars.ODP_PREVIOUS_RELEASE_MANIFEST_PATH }}
+          INITIAL_RELEASE_RECOVERY: ${{ inputs.initial_release_recovery || steps.auto-recovery.outputs.initial_release == 'true' }}
           EXTERNAL_SOURCES_ENABLED: ${{ inputs.external_sources_enabled }}
           RELEASE_PROFILE: ${{ inputs.release_profile }}
           ODP_CLOUD_RUN_VPC_EGRESS: ${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}
@@ -603,6 +653,9 @@ jobs:
           fi
           if [ -n "${DATA_SNAPSHOT_CONTENT_SHA:-}" ]; then
             snapshot_args+=(--data-snapshot-content-sha256 "${DATA_SNAPSHOT_CONTENT_SHA}")
+          fi
+          if [ "${AUTOMATIC_DEV:-false}" = "true" ]; then
+            ROLLBACK_MANIFEST="${AUTO_ROLLBACK_MANIFEST}"
           fi
           rollback_args=()
           if [ -n "${ROLLBACK_MANIFEST:-}" ]; then
@@ -661,7 +714,7 @@ jobs:
           if-no-files-found: error
 
       - name: Publish initial-release target absence readback
-        if: ${{ inputs.initial_release_recovery }}
+        if: ${{ inputs.initial_release_recovery || steps.auto-recovery.outputs.initial_release == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: initial-release-absence-readback-${{ inputs.release_sha }}
@@ -1024,13 +1077,103 @@ jobs:
         if: always()
         run: rm -f "${RUNNER_TEMP}/release-lease.json"
 
-  # Deploy by digest only. The build phase is `skipped` here by construction --
-  # its `if` requires `phase == 'build'` -- so this job has nothing to rebuild
-  # and no path back into a build. It runs the artifacts admission just bound.
+  # Standing dev authorization validates the same-run build. Other environments
+  # retain the signed manual admission above. Both feed the one deploy job.
+  automatic_admission:
+    name: Verify standing dev authority and exact built manifest
+    needs: [release_phase, build]
+    if: ${{ inputs.phase == 'auto' && inputs.environment == 'dev' && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: dev
+    outputs:
+      manifest_digest: ${{ steps.admit.outputs.manifest_digest }}
+      release_profile: ${{ steps.admit.outputs.release_profile }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+      - name: Assert automatic admission checkout identity
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: test "$(git rev-parse HEAD)" = "${RELEASE_SHA}"
+      - uses: astral-sh/setup-uv@v5
+      - run: uv python install 3.12
+      - run: uv sync --frozen
+      - uses: actions/download-artifact@v4
+        with:
+          name: runtime-release-manifest-${{ inputs.release_sha }}
+          path: .odp_data/release/automatic-dev
+      # The build read targets through the `dev-build` twin; this job reads the
+      # `dev` deploy bindings it will mutate. Same unconditional re-read as the
+      # manual admission: an initial-release manifest observed against target A
+      # cannot deploy while the dev deploy vars point at an occupied target B.
+      - name: Authenticate to Google Cloud for automatic target re-read (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      - name: Set up Cloud SDK for automatic target re-read
+        uses: google-github-actions/setup-gcloud@v2
+      - name: 重讀 dev 部署 target 以重驗自動 initial-release recovery
+        env:
+          GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          API_SERVICE: ${{ vars.ODP_CLOUD_RUN_API_SERVICE }}
+          WEB_SERVICE: ${{ vars.ODP_CLOUD_RUN_WEB_SERVICE }}
+          MIGRATION_JOB: ${{ vars.ODP_CLOUD_RUN_MIGRATION_JOB }}
+          WORKER_JOB: ${{ vars.ODP_CLOUD_RUN_WORKER_JOB }}
+          SCHEDULER_JOB: ${{ vars.ODP_CLOUD_RUN_SCHEDULER_JOB }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          python3 delivery_toolchain/release/probe_release_target_absence.py \
+            --environment dev \
+            --candidate-sha "${RELEASE_SHA}" \
+            --project "${GCP_PROJECT}" \
+            --region "${GCP_REGION}" \
+            --target "api=${API_SERVICE}" \
+            --target "web=${WEB_SERVICE}" \
+            --target "migration=${MIGRATION_JOB}" \
+            --target "worker=${WORKER_JOB}" \
+            --target "scheduler=${SCHEDULER_JOB}" \
+            --manifest .odp_data/release/automatic-dev/RELEASE_MANIFEST.json \
+            --receipt .odp_data/release/automatic-dev/initial-release-recovery-receipt.json
+      - name: Publish automatic initial-release recovery verification receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: initial-release-recovery-receipt-dev-auto
+          path: .odp_data/release/automatic-dev/initial-release-recovery-receipt.json
+          if-no-files-found: ignore
+      - name: Admit the exact dev build after rechecking current CI
+        id: admit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ODAY_RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_ENVIRONMENT: dev
+          AUTO_CI_RUN_ID: ${{ inputs.auto_ci_run_id }}
+          MANIFEST_DIGEST: ${{ needs.build.outputs.manifest_digest }}
+          API_IMAGE: ${{ needs.build.outputs.api_image }}
+          WEB_IMAGE: ${{ needs.build.outputs.web_image }}
+          WORKER_IMAGE: ${{ needs.build.outputs.worker_image }}
+          SCHEDULER_IMAGE: ${{ needs.build.outputs.scheduler_image }}
+        run: >-
+          uv run python -m delivery_toolchain.release.automatic_dev admit
+          --manifest .odp_data/release/automatic-dev/RELEASE_MANIFEST.json
+      - name: Publish automatic admission receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: automatic-dev-admission
+          path: .odp_data/release/automatic-dev/admission.json
+          if-no-files-found: ignore
+
   deploy:
     name: Deploy the admitted artifact by immutable digest
-    needs: [release_phase, build, admission]
-    if: ${{ always() && needs.release_phase.result == 'success' && needs.admission.result == 'success' && needs.build.result == 'skipped' }}
+    needs: [release_phase, build, admission, automatic_admission]
+    if: ${{ always() && needs.release_phase.result == 'success' && ((inputs.phase == 'deploy' && needs.admission.result == 'success' && needs.build.result == 'skipped') || (inputs.phase == 'auto' && inputs.environment == 'dev' && needs.automatic_admission.result == 'success' && needs.build.result == 'success')) }}
     runs-on: ubuntu-latest
     environment:
       name: ${{ inputs.environment }}
@@ -1112,7 +1255,7 @@ jobs:
       # ODP-DEV-ADMIN-RELEASE-READINESS-001: the acceptance scope of the
       # admitted manifest. Never a dispatch input: it is read from the manifest
       # the lease is bound to, so a deploy cannot narrow a full release.
-      ODP_RELEASE_PROFILE: ${{ needs.admission.outputs.release_profile }}
+      ODP_RELEASE_PROFILE: ${{ needs.admission.outputs.release_profile || needs.automatic_admission.outputs.release_profile }}
       ODP_REQUIRE_LIVE_DATA: "true"
       ODP_DATA_BINDING_MODE: live
       ODP_PRODUCT_MODE: production
@@ -1141,6 +1284,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
 
       - name: Assert exact release SHA is checked out
         run: |
@@ -1249,7 +1393,23 @@ jobs:
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
 
+      - name: Refuse a superseded automatic dev candidate before mutation
+        if: ${{ inputs.phase == 'auto' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ODAY_RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_ENVIRONMENT: dev
+          AUTO_CI_RUN_ID: ${{ inputs.auto_ci_run_id }}
+        run: uv run python -m delivery_toolchain.release.automatic_dev deploy-check
+
+      - name: Capture authoritative dev scheduler baseline before mutation
+        if: ${{ inputs.environment == 'dev' }}
+        run: >-
+          uv run python -m delivery_toolchain.release.automatic_dev scheduler-baseline
+          --output "${RUNNER_TEMP}/dev-scheduler-baseline-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+
       - name: Deploy Cloud Run by immutable digest
+        id: live-deploy
         if: ${{ inputs.environment != 'staging' }}
         env:
           # Only the dev-admin profile reads these: the live gate signs in
@@ -1263,6 +1423,34 @@ jobs:
           ODP_DEV_BOOTSTRAP_ADMIN_USERNAME: ${{ vars.ODP_DEV_BOOTSTRAP_ADMIN_USERNAME }}
           ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD }}
         run: ./product_ops/deployment/deploy_cloud_run_waji.sh
+
+      # The deploy script promotes traffic before its last live gate and its
+      # EXIT trap only logs a failed traffic/scheduler restore, so a failed live
+      # step alone says nothing about what is live. This read-back is the only
+      # positive evidence automatic_dev accepts for a failed attempt: an empty
+      # target, or one non-candidate release serving all API/Web traffic with
+      # both scheduler triggers on that release and matching the original
+      # state/invocation/schedule configuration captured before mutation.
+      # Raw scheduler snapshots are never published. If it cannot prove that, it
+      # fails, no receipt is published, and the next dev release refuses.
+      # It is staged under RELEASE_RECEIPT_DIR (not .odp_data/deployment) and
+      # published only by its own artifact, so the validation-report allowlist
+      # in release_receipts.py stays limited to deploy-script producers.
+      - name: Read back dev live state after a failed live step
+        id: live-readback
+        if: ${{ failure() && inputs.environment == 'dev' && steps.live-deploy.outcome == 'failure' }}
+        run: >-
+          uv run python -m delivery_toolchain.release.automatic_dev live-readback
+          --baseline "${RUNNER_TEMP}/dev-scheduler-baseline-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          --output "${RELEASE_RECEIPT_DIR}/dev-failed-live-step-readback.json"
+
+      - name: Publish dev failed live step read-back
+        if: ${{ failure() && inputs.environment == 'dev' && steps.live-readback.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-failed-live-step-readback-${{ github.run_attempt }}
+          path: .odp_data/release/dev-failed-live-step-readback.json
+          if-no-files-found: error
 
       - name: Prepare release-scoped staging handoff paths
         if: ${{ inputs.environment == 'staging' }}
@@ -1414,6 +1602,23 @@ jobs:
           test -s "${prod_state_dir}/web-traffic.json"
           test -s "${prod_state_dir}/release-state.json"
           PROD_STATE_DIR="${prod_state_dir}" uv run --frozen python -c 'import json, os; from pathlib import Path; d=Path(os.environ["PROD_STATE_DIR"]); s=json.loads((d / "release-state.json").read_text()); assert s["release_id"] == "odp-" + os.environ["ODAY_RELEASE_SHA"][:12]; traffic=[json.loads((d / n).read_text()).get("status", {}).get("traffic") for n in ("api-traffic.json", "web-traffic.json")]; assert all(isinstance(item, list) and item for item in traffic)'
+
+      - name: Download the successfully deployed manifest
+        if: ${{ success() && inputs.environment == 'dev' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: runtime-release-manifest-${{ inputs.release_sha }}
+          run-id: ${{ inputs.phase == 'auto' && github.run_id || inputs.manifest_run_id }}
+          github-token: ${{ github.token }}
+          path: .odp_data/release/deployed
+      - name: Retain the live-verified dev predecessor for the next update
+        if: ${{ success() && inputs.environment == 'dev' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployed-release-manifest-dev
+          path: .odp_data/release/deployed/RELEASE_MANIFEST.json
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Upload deployment validation reports
         if: always()

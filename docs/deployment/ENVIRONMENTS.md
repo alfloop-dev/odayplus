@@ -7,9 +7,9 @@ Source baseline: `ODP-SD-12_CICD_IAC_AND_ENVIRONMENT_DESIGN`,
 | Environment | Purpose | Data | Promotion rule |
 |---|---|---|---|
 | `local` | Developer compose stack and smoke checks | Synthetic/local only | No promotion. |
-| `dev` | Integration baseline and migration rehearsal | Non-production snapshots | Merge to `dev` and deploy immutable image. |
-| `staging` | Release candidate validation | Production-like masked data | All release gates passed or documented deviation. |
-| `prod` | Production serving and governed jobs | Production | Approved release, backup checkpoint, rollback owner. |
+| `dev` | Integration baseline and migration rehearsal | Non-production snapshots | Successful protected dev push CI automatically builds, deploys and verifies immutable images. |
+| `staging` | Release candidate validation | Production-like masked data | Human environment approval plus signed release admission and release gates. |
+| `prod` | Production serving and governed jobs | Production | Human approval, signed admission, backup checkpoint and rollback owner. |
 
 Required environment variables:
 
@@ -31,12 +31,68 @@ blue-green rollout, and Supervisor/Auto Worker task DAG are defined in
 
 The system uses a single CI/CD release workflow entrypoint (`.github/workflows/deploy-dev.yml`, named `Runtime Release`) to orchestrate releases across all environments:
 
-1. **Admission Gate**: Authoritative verifier (`delivery_toolchain/release/check_runtime_admission.py`) checks the Ed25519-signed Supervisor release lease and staged gate registry (`RELEASE_GATE_REGISTRY.json`) for the requested environment (`dev`, `staging`, `production`).
+1. **Release authority**: Automatic dev uses the standing policy in `delivery_toolchain/release/automatic_dev.py`: actual successful same-repository push CI for the exact current protected dev commit, plus the same-run built manifest and all four immutable images passing existing manifest/profile/sources-off validators. This policy cannot admit staging or production. Manual releases retain `check_runtime_admission.py`, the signed Supervisor lease and staged registry. Staging and production also wait for required human environment reviewers.
 2. **Build Once**: The first dispatch leaves the four optional image handoff inputs empty, so a dedicated `build` job runs secret scanning, SAST (Bandit), SBOM generation, and container image builds/Cosign signing once. It resolves the pushed tags to four immutable digests and publishes them as the cross-environment handoff. Staging and production dispatches pass all four `repo/service@sha256:...` values, skip the build job, and reuse the exact same images.
 3. **Deploy by Digest**:
    - **`dev`**: Deploys immutable digests, executes migrations, runs live preflight, Cloud Run Job validations, and live E2E gate.
    - **`staging`**: Provisions short-lived ephemeral staging instance with isolated database schema, tenant partitioning, and masked snapshot via `staging_lifecycle.py create`; executes the 9-stage rehearsal verification via `staging_lifecycle.py verify`, including a real rollback-target switch/health/restore and a live public-egress deny probe; checks remote staging proof; then the independent `environment: staging` closeout job verifies the production watch receipt against the same candidate/manifest/release and cleans up with staging WIF, or holds up to 24h for debugging on failure (`staging_lifecycle.py hold`).
    - **`production`**: Deploys green revisions (0% public traffic), validates green smoke and IAM bindings, atomistically promotes traffic to green (100%), updates Cloud Scheduler targets to green digests, and arms fail-closed rollback primitives.
+
+## Automatic dev updates
+
+CI's final `automatic-dev-release` job dispatches the existing Runtime Release
+with `phase=auto`, `environment=dev`, the exact commit and triggering CI run ID.
+The release waits for that CI run to finish and independently checks its identity
+and conclusion. PR, fork, failed and superseded CI cannot deploy. `GITHUB_TOKEN`
+needs `actions: write` only in the dispatch job; no personal token or per-candidate
+human signoff is needed. The initial automated profile is `dev-admin`: missing
+models remain unavailable and full product/production readiness is not claimed.
+
+Automatic and manual dev deployments share one concurrency lane and never cancel
+an active migration. Manual and automatic builds of one release SHA share one
+immutable publication lane, so the second entrance reuses the signed images the
+first published instead of pushing the same tags concurrently. An already
+successfully deployed candidate is deduplicated, including a rerun of a run whose
+earlier attempt already deployed (success is read per attempt, not from the
+latest attempt's run conclusion). Later updates obtain their rollback manifest
+from `deployed-release-manifest-dev`, published only after the real deploy and
+live validation succeed, discovered across every same-repository dispatch ref and
+corroborated by the run title and GitHub's successful `dev` environment
+deployment record. A green build-only run is never a predecessor. With no
+predecessor, the existing first-release probe must prove all five Cloud Run
+targets absent, and automatic admission re-reads the `dev` deploy bindings with
+the same manifest-aware probe before any mutation. Expired artifacts or
+unexplained live resources fail closed. Deployment manifests are retained for 90
+days for rollback discovery.
+
+A deploy whose live step failed, was cancelled or was interrupted is never read
+as "rolled back": the deploy script promotes traffic before its last live gate
+and only logs a failed restore. Right after a failed `dev` live step the
+workflow reads back the live target and publishes
+`dev-failed-live-step-readback-<attempt>` only when the target is empty or one
+non-candidate release serves all API/Web traffic with both scheduler triggers on
+that release. Before any dev runtime mutation, the same serialized deploy job
+captures an attempt-bound Scheduler baseline in runner temporary storage. It
+stores only configuration digests; raw invocation bodies, headers and tokens
+are never published. The failed-step reader compares both triggers with that
+baseline using the existing restore helper's semantics, including pause policy,
+invocation identity, request, schedule and retry configuration. An intentional
+`PAUSED` predecessor remains valid; a failed resume or changed invoker does not.
+The empty-target case also requires both triggers to be restored to absence.
+Missing, stale or mismatching baselines refuse proof. History accepts only the
+new v2 receipt with its baseline digest, rejecting older URI-only v1 receipts, and
+then selects exactly the release it names. Without it, the next automatic
+release neither picks an older predecessor nor reports a candidate as already
+deployed: it refuses until an operator reads back the target and runs a signed
+manual dev deploy with an explicit rollback manifest. If no release was ever
+live, the attempt falls through to a first release, re-proven empty by the
+absence probes above. A live step that was skipped or never started is positive
+evidence of no mutation and keeps the previous predecessor.
+
+Network/SQL readiness and nominated first-admin identity/secret inputs are real
+prerequisites. Automation reports failures without inventing human accounts or
+claiming unavailable capabilities work. Staging/production are never dispatched
+by this CI job and retain human confirmation.
 
 ## 短生命週期 Staging 生命週期與整合架構 (Ephemeral Staging Lifecycle Integration)
 

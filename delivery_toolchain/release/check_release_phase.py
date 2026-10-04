@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Runtime Release 的階段前置檢查：build 與 deploy 各自的入場條件。
+"""Runtime Release 的階段前置檢查：build、deploy 與 dev auto 的入場條件。
 
 為什麼需要這一關
 ----------------
@@ -17,8 +17,10 @@
   handoff（image handoff + candidate release manifest）。
 * ``deploy``：不再 build。它必須帶入 build 階段產出的四個 immutable image
   reference，以及一張只授權 ``deploy`` 動作的簽章 Supervisor lease。
+* ``auto``：僅限 dev，採用 build 的輸入形狀；實際授權由 automatic_dev.py
+  驗證 protected dev 的成功 CI 與同一執行產出的 manifest，接續既有 deploy。
 
-這個模組是兩個階段共用的 fail-closed **輸入形狀**檢查：phase 是否合法、
+這個模組是各階段共用的 fail-closed **輸入形狀**檢查：phase 是否合法、
 release_sha 是否為 exact SHA、handoff 是否齊備且 immutable、lease 該不該在。
 缺少任何一項一律拒絕並輸出中文收據；收據只記錄 lease 是否存在，永遠不記錄
 lease 內容本身。
@@ -49,7 +51,7 @@ from delivery_toolchain.release.release_manifest import (  # noqa: E402
     build_release_profile,
 )
 
-PHASES = ("build", "deploy")
+PHASES = ("build", "deploy", "auto")
 
 # `deploy_cloud_run_waji.sh` 以 deploy-by-digest 部署這四個 target；migration job
 # 與 worker 共用同一個 image，所以 handoff 只需要四個 reference。
@@ -90,7 +92,10 @@ def phase_errors(
 
     supplied = {name: value for name, value in images.items() if value.strip()}
 
-    if phase == "build":
+    if phase == "auto" and environment != "dev":
+        errors.append("auto 階段僅限 dev；staging 與 production 必須人工核准。")
+
+    if phase in {"build", "auto"}:
         if supplied:
             errors.append(
                 "build 階段不得預先指定 image handoff（"

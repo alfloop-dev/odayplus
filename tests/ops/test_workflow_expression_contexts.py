@@ -56,6 +56,7 @@ KNOWN_CONTEXTS = frozenset(
 # only in the step row, because a job key is evaluated before the job has a
 # runner to describe.
 CONTEXT_AVAILABILITY: dict[str, frozenset[str]] = {
+    "run-name": frozenset({"github", "inputs", "vars"}),
     "env": frozenset({"github", "secrets", "vars", "inputs"}),
     "concurrency": frozenset({"github", "inputs", "vars"}),
     "jobs.<job_id>.concurrency": frozenset(
