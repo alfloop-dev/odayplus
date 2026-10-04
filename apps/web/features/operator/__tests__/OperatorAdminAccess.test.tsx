@@ -164,7 +164,7 @@ describe("OperatorAdminConsole", () => {
 
   it("shows dev-only scope and actual missing-model limitations to the pure admin", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(200, { users: [adminUser], roles: [], events: [] })));
+    vi.stubGlobal("fetch", vi.fn(async () => json(200, { users: [adminUser], roles: [], events: [] })));
     render(<OperatorAdminConsole releaseStatus={{
       profile: "dev-admin", models: "limited", unavailableServices: ["ForecastOps"],
     }} />);

@@ -54,9 +54,11 @@ uv run --frozen python delivery_toolchain/governance/check_code_boundaries.py
 ```
 
 The initial anchor `ba83c96d91fd` run exited 1 (56 passed, one new UI test
-failed because its test omitted production mode); TypeScript exited 2 (the new
-test environment lacked typed NODE_ENV). Both test setup defects were corrected,
-not skipped. The final focused receipts, exact head and subsequent required CI
+failed with an incomplete production-mode fetch fixture); TypeScript exited 2
+(the new test environment lacked typed NODE_ENV). At `1313f42c1332`, TypeScript
+and boundary checks exited 0, but that UI fixture still reused an already-consumed
+Response (58 passed, one failed, exit 1). The fixture now returns a fresh Response
+per call. These test setup defects were corrected, not skipped. The final focused receipts, exact head and subsequent required CI
 are recorded through canonical task notes; no failed attempt is green evidence.
 The new tests cover visible dev-only/missing-model messaging, ready full/admin
 behavior, page wiring, malformed/mismatched bindings, persistence/session and
