@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "kind": "verification_receipt",
+  "task_id": "ODP-DEV-CONNECTOR-EGRESS-PLAN-001",
+  "head_sha": "2b7c4bb3273ad107e75957895ea3ea67d9f02a94",
+  "command": "terraform -chdir=infra/terraform/dev_connector_egress init -backend=false -input=false",
+  "command_audit": {
+    "command": "terraform -chdir=infra/terraform/dev_connector_egress init -backend=false -input=false",
+    "ok": true,
+    "violations": [],
+    "details": [],
+    "runner": null
+  },
+  "runner": null,
+  "selection": {
+    "scope": "suite",
+    "items": [],
+    "fingerprint": "846541716505fa057a717f7f527859d2"
+  },
+  "exit_code": 0,
+  "signal": null,
+  "timed_out": false,
+  "outcome": "passed",
+  "passed": true,
+  "duration_seconds": 0.519,
+  "started_at": "2026-10-04T04:32:16Z",
+  "finished_at": "2026-10-04T04:32:17Z",
+  "recorded_at": "2026-10-04T04:32:17Z",
+  "run_kind": "baseline",
+  "attempt": 1,
+  "retry_reason": null,
+  "agent": "Pi",
+  "run_id": "pi-20261004T042842Z-844b5e90",
+  "produced_by": "delivery_toolchain/git/task_verification.py",
+  "output_tail": "\u001b[0m\u001b[1mInitializing provider plugins...\u001b[0m\n- terraform.io/builtin/terraform is built in to Terraform\n- Reusing previous version of hashicorp/google from the dependency lock file\n- Using previously-installed hashicorp/google v5.45.2\n\n\u001b[0m\u001b[1m\u001b[32mTerraform has been successfully initialized!\u001b[0m\u001b[32m\u001b[0m\n\u001b[0m\u001b[32m\nYou may now begin working with Terraform. Try running \"terraform plan\" to see\nany changes that are required for your infrastructure. All Terraform commands\nshould now work.\n\nIf you ever set or change modules or backend configuration for Terraform,\nrerun this command to reinitialize your working directory. If you forget, other\ncommands will detect it and remind you to do so if necessary.\u001b[0m\n",
+  "receipt_id": "51fd850865d31eee"
+}
