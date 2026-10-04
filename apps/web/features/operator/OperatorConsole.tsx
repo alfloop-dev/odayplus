@@ -61,6 +61,12 @@ import {
 } from "./TodayWorkspace";
 import type { Issue } from "./types";
 import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
+import {
+  ADMIN_PATH,
+  PASSWORD_CHANGE_PATH,
+  classifyAccessDenial,
+  signOutOperator,
+} from "./operatorSession";
 
 const roleStorageKey = "oday.operator.role";
 const workspaceStorageKey = "oday.operator.workspace";
@@ -475,6 +481,21 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
           signal: AbortSignal.timeout(operatorBootstrapTimeoutMs),
         });
         if (!bootstrapRes.ok) {
+          const denial = await classifyAccessDenial(bootstrapRes);
+          if (cancelled) return;
+          if (denial === "password_change_required") {
+            // First sign-in after the identity bootstrap: the API refuses every
+            // protected read until the one-time password is rotated.
+            window.location.assign(PASSWORD_CHANGE_PATH);
+            return;
+          }
+          if (denial === "forbidden" && !fixturesAllowed) {
+            setShellDataStatus("error");
+            setShellLoadError(
+              "此帳號沒有營運資料讀取權限（例如僅具平台管理員角色）。使用者與角色管理請使用「管理後台」。",
+            );
+            return;
+          }
           throw new Error(`Operator bootstrap returned ${bootstrapRes.status}`);
         }
         const payload = await bootstrapRes.json();
@@ -769,6 +790,15 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
   useEffect(() => {
     setActiveCommandIndex(0);
   }, [commandQuery, isCommandPaletteOpen]);
+
+  async function handleLogout() {
+    const result = await signOutOperator();
+    if (!result.ok) {
+      showToast(
+        `登出失敗：session 尚未撤銷（${result.status ?? "network error"}），請重試。`,
+      );
+    }
+  }
 
   function showToast(message: string) {
     setToast(message);
@@ -1273,7 +1303,10 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
             ) : null}
           </div>
 
-          <Button onClick={() => showToast("POC console 尚未串接登入服務")} size="sm" variant="ghost">
+          <a className={styles.adminLink} data-testid="operator-admin-link" href={ADMIN_PATH}>
+            管理後台
+          </a>
+          <Button onClick={handleLogout} size="sm" variant="ghost">
             Logout
           </Button>
         </div>

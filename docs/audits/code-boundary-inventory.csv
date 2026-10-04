@@ -609,6 +609,7 @@ modules/opsboard/application/__init__.py,product_system,product_required,true,,e
 modules/opsboard/application/comments.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/opsboard/application/governance.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/opsboard/application/growth.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/opsboard/application/identity_user_role_management.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/opsboard/application/network_listings.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/opsboard/application/network_rebalance.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/opsboard/application/network_reviews.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -817,6 +818,7 @@ shared/governance/model_performance.py,product_system,product_required,true,,eng
 shared/governance/netplan_disclosure.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/governance/vocabularies.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/identity/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+shared/identity/bootstrap.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/identity/credential_service.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/identity/password_policy.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/identity/session_service.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -954,6 +956,7 @@ tests/e2e/test_acceptance_coverage.py,verification,verification_only,false,devel
 tests/e2e/test_deployment_health_backup_rollback.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/e2e/test_external_source_product_e2e.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/e2e/test_live_e2e_gate.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/e2e/test_live_e2e_gate_dev_admin.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/e2e/test_live_production_data_gate.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/e2e/test_package10_product_grade_ci_gate.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/e2e/test_password_first_security_e2e.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
@@ -970,6 +973,8 @@ tests/governance/test_remediation_truth_reconciliation.py,verification,verificat
 tests/governance/test_site001_disposition.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/identity/__init__.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/identity/test_credential_and_policy.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/identity/test_identity_bootstrap.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/identity/test_identity_user_role_management.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/identity/test_session_lifecycle.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/identity/test_sql_session_store.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/__init__.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
@@ -1129,6 +1134,7 @@ tests/release/test_release_lease.py,verification,verification_only,false,develop
 tests/release/test_release_manifest.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/release/test_release_manifest_cli.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/release/test_release_phase_precheck.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/release/test_release_profile.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/release/test_runtime_admission.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/release/test_sign_images.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/reliability/assisted_listing_intake/test_recovery.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.

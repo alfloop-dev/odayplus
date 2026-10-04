@@ -119,6 +119,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       "Current and new passwords are required.",
     );
   }
+  if (normalizedCurrentPassword === normalizedNewPassword) {
+    return errorResponse(
+      400,
+      "AUTH_PASSWORD_POLICY_VIOLATION",
+      "New password must be different from current password.",
+    );
+  }
 
   const identityStore = getDefaultIdentityStore();
   let account: IdentityAccount | null = null;
@@ -158,6 +165,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         normalizedNewPassword,
         account.username,
         account.email,
+        normalizedCurrentPassword,
       );
       if (!policyResult.valid) {
         return errorResponse(400, policyResult.code, policyResult.reason);
@@ -181,6 +189,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const policyResult = validatePasswordPolicy(
       normalizedNewPassword,
       session.subject,
+      undefined,
+      normalizedCurrentPassword,
     );
     if (!policyResult.valid) {
       return errorResponse(400, policyResult.code, policyResult.reason);

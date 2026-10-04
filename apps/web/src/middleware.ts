@@ -61,8 +61,12 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   return response;
 }
 
+// /auth/session is excluded because it is the authoritative session probe: it
+// resolves the same durable session itself and answers 401 WEB_SESSION_REQUIRED
+// for an absent, expired or revoked session. Redirecting it to /login would turn
+// that denial into a 200 login page and hide revocation from API callers.
 export const config = {
   matcher: [
-    "/((?!api/v1(?:/|$)|avm(?:/|$)|login(?:/|$)|auth/callback(?:/|$)|auth/logout(?:/|$)|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml).*)",
+    "/((?!api/v1(?:/|$)|avm(?:/|$)|login(?:/|$)|auth/callback(?:/|$)|auth/logout(?:/|$)|auth/session(?:/|$)|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml).*)",
   ],
 };

@@ -265,6 +265,7 @@ def principal_from_headers(
 
         outcome = boundary.authenticate(Credentials.from_headers(headers))
         if outcome.authenticated:
+            _enforce_password_rotation(outcome.principal, boundary)
             return outcome.principal
         _raise_unauthenticated(outcome.reason)
 
@@ -274,6 +275,41 @@ def principal_from_headers(
         _raise_unauthenticated(AuthFailureReason.NO_CREDENTIALS)
 
     return _principal_from_trusted_headers(headers)
+
+
+PASSWORD_CHANGE_REQUIRED = "PASSWORD_CHANGE_REQUIRED"
+
+
+def _enforce_password_rotation(principal: Principal, boundary: Any) -> None:
+    """Refuse a password session whose credential still carries must_change.
+
+    The first administrator is created by the deployment bootstrap with its
+    one-time secret as the initial password and ``must_change=true``
+    (Contract §7.2). Until that password is rotated through the web
+    ``/auth/password`` flow, the session may authenticate but must not reach
+    any protected API. The lookup is per request against the identity store,
+    so the rotation takes effect immediately, and it fails closed: an unknown
+    rotation state is never treated as rotated.
+    """
+
+    if principal.attributes.get("provider") != "local_password":
+        return
+    store = getattr(boundary, "_identity_store", None)
+    checker = getattr(store, "password_must_change", None)
+    if checker is None:
+        return
+    try:
+        must_change = bool(checker(principal.subject_id))
+    except Exception:
+        if HTTPException is not None:
+            raise HTTPException(status_code=503, detail="IDENTITY_STORE_UNAVAILABLE") from None
+        raise
+    if must_change:
+        if HTTPException is not None:
+            raise HTTPException(status_code=403, detail=PASSWORD_CHANGE_REQUIRED)
+        raise AuthorizationError(
+            Decision.deny("password change required", policy_id="identity.password_rotation")
+        )
 
 
 def _principal_from_trusted_headers(headers: Mapping[str, str]) -> Principal:

@@ -47,6 +47,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
+from uuid import UUID
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT = ROOT / ".odp_data" / "live-e2e-gate" / "live-e2e-gate-report.json"
@@ -63,6 +64,44 @@ BEARER_TOKEN_ENV = "ODP_OPERATOR_SMOKE_BEARER_TOKEN"
 API_TRANSPORT_TOKEN_ENV = "ODP_API_INVOKER_TOKEN"
 OPERATOR_ROLE_ENV = "ODP_OPERATOR_SMOKE_ROLE"
 PRODUCTION_PROVIDER_IDS_ENV = "ODP_PRODUCTION_PROVIDER_IDS"
+RELEASE_PROFILE_ENV = "ODP_RELEASE_PROFILE"
+DEV_ADMIN_USERNAME_ENV = "ODP_DEV_ADMIN_USERNAME"
+DEV_ADMIN_PASSWORD_ENV = "ODP_DEV_ADMIN_PASSWORD"
+DEV_ADMIN_INITIAL_PASSWORD_ENV = "ODP_DEV_ADMIN_INITIAL_PASSWORD"
+DEV_ADMIN_DENIED_ROLE_ENV = "ODP_DEV_ADMIN_DENIED_OPERATOR_ROLE"
+# The deployment-bootstrapped first administrator (platform_admin only). Proves
+# the single pure administrator created by bootstrap can administer users and
+# perform first-login password rotation without any business role.
+BOOTSTRAP_ADMIN_USERNAME_ENV = "ODP_DEV_BOOTSTRAP_ADMIN_USERNAME"
+BOOTSTRAP_ADMIN_PASSWORD_ENV = "ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD"
+BOOTSTRAP_SECRET_ENV = "ODP_IDENTITY_BOOTSTRAP_SECRET"
+BOOTSTRAP_AUDIT_EVENT = "identity.account.bootstrap"
+
+# ODP-DEV-ADMIN-RELEASE-READINESS-001: the acceptance scope this gate holds a
+# release to. It mirrors ``release_manifest.RELEASE_PROFILES`` (pinned, not
+# imported, for the same reason as the provider maps below; the anti-drift
+# suite binds them). ``full`` is the complete product contract and keeps every
+# model assertion. ``dev-admin`` is dev-only: it replaces the "models must be
+# production-ready" assertions with "missing models must be truthfully refused"
+# and adds a real password sign-in/session/sign-out journey through the Web.
+RELEASE_PROFILE_FULL = "full"
+RELEASE_PROFILE_DEV_ADMIN = "dev-admin"
+RELEASE_PROFILE_DEPLOYMENTS: Mapping[str, frozenset[str] | None] = {
+    RELEASE_PROFILE_FULL: None,
+    RELEASE_PROFILE_DEV_ADMIN: frozenset({"dev"}),
+}
+#: Runtime blocking reason the API publishes while production model bindings
+#: are not verified; a dev-admin release must say so rather than hide it.
+MODEL_BINDINGS_UNVERIFIED_REASON = "PRODUCTION_MODEL_BINDINGS_UNVERIFIED"
+#: A well-formed tenant UUID no real operator account is issued. The dev-admin
+#: journey asks the API to move the admin's own scope under it and requires the
+#: identity tenant policy (not DTO/CSRF validation) to refuse. It must be a
+#: valid UUID: a malformed id is rejected for being malformed, which proves
+#: nothing about isolation.
+FOREIGN_TENANT_PROBE_ID = "0d1e5a7e-f0e1-4000-8000-00000000f0e1"
+#: Identity tenant-policy refusal the API returns (422) for a foreign scope.
+TENANT_POLICY_REFUSAL_TEXT = "caller is restricted to its own tenant"
+TENANT_SCOPE_MISMATCH_CODE = "TENANT_SCOPE_MISMATCH"
 
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 POSTGRES_MODES = frozenset({"postgres", "postgresql"})
@@ -226,6 +265,22 @@ DEPENDENCY_ACTIONS: Mapping[str, str] = {
         "A fixture/mock/seed surrogate reached a live response. Remove the "
         "fallback and rebind the runtime to live data."
     ),
+    "session": (
+        "Repair the Web password sign-in path: the provisioned operator account "
+        "(ODP_DEV_ADMIN_USERNAME/ODP_DEV_ADMIN_PASSWORD), the durable Web "
+        "session store and login throttle in PostgreSQL, and the session "
+        "secret/identity signing key shared by Web and API."
+    ),
+    "tenant-isolation": (
+        "A request outside the signed-in account's tenant was not refused. "
+        "Restore tenant binding on the API (TENANT_SCOPE_MISMATCH) before any "
+        "release."
+    ),
+    "release-profile": (
+        "Redeploy from the admitted manifest: the runtime must report exactly "
+        "the release profile sealed into the manifest digest, and a narrowed "
+        "profile may only serve the deployment it was admitted for."
+    ),
 }
 
 
@@ -282,6 +337,20 @@ class GateConfig:
     # different credential from ``bearer_token`` (the application token) and is
     # never used to decide whether a request is application-authenticated.
     api_transport_token: str = ""
+    # The admitted acceptance scope (see RELEASE_PROFILE_DEPLOYMENTS).
+    release_profile: str = RELEASE_PROFILE_FULL
+    # dev-admin only: the bootstrap-created pure platform_admin account the gate
+    # signs in as through the Web password form. Never written to the report.
+    dev_admin_username: str = ""
+    dev_admin_password: str = ""
+    dev_admin_initial_password: str = ""
+    dev_admin_denied_role: str = ""
+    bootstrap_admin_username: str = ""
+    bootstrap_admin_password: str = ""
+
+    @property
+    def dev_admin(self) -> bool:
+        return self.release_profile == RELEASE_PROFILE_DEV_ADMIN
 
     @property
     def unknown_provider_ids(self) -> tuple[str, ...]:
@@ -337,6 +406,9 @@ class HttpResponse:
     payload: dict[str, Any] = field(default_factory=dict)
     location: str = ""
     error: str = ""
+    # name -> value of every ``Set-Cookie`` on the response. An empty value is
+    # a deletion. Cookies are only ever sent back explicitly by the caller.
+    cookies: dict[str, str] = field(default_factory=dict)
 
     @property
     def failed(self) -> bool:
@@ -537,7 +609,22 @@ def _to_response(status: int, headers: Any, raw: bytes) -> HttpResponse:
             decoded = None
         if isinstance(decoded, dict):
             payload = decoded
-    return HttpResponse(status=status, payload=payload, location=location)
+    return HttpResponse(
+        status=status, payload=payload, location=location, cookies=_set_cookies(headers)
+    )
+
+
+def _set_cookies(headers: Any) -> dict[str, str]:
+    try:
+        values = headers.get_all("set-cookie") or []
+    except AttributeError:  # pragma: no cover - non-standard header container
+        values = []
+    cookies: dict[str, str] = {}
+    for value in values:
+        name, sep, rest = str(value).split(";", 1)[0].partition("=")
+        if sep and name.strip():
+            cookies[name.strip()] = rest.strip()
+    return cookies
 
 
 class CloudRunWorkerDriver:
@@ -825,6 +912,62 @@ def validate_config(config: GateConfig) -> list[CheckResult]:
         ),
         "config",
     )
+    checks.extend(_release_profile_config_checks(config))
+    return checks
+
+
+def _release_profile_config_checks(config: GateConfig) -> list[CheckResult]:
+    """Refuse an unknown profile, or a narrowed one outside its deployments.
+
+    This runs before any request is made: a dev-admin scope pointed at staging
+    or production is a configuration error, not something to discover live.
+    """
+
+    checks: list[CheckResult] = []
+    profile = config.release_profile
+    known = profile in RELEASE_PROFILE_DEPLOYMENTS
+    _check(
+        checks,
+        known,
+        "config:release_profile",
+        profile if known else f"unknown release profile {profile!r}",
+        "release-profile",
+    )
+    if not known:
+        return checks
+    allowed = RELEASE_PROFILE_DEPLOYMENTS[profile]
+    if allowed is not None:
+        _check(
+            checks,
+            config.expected_deployment in allowed,
+            "config:release_profile_deployment",
+            (
+                f"profile={profile} expectedDeployment="
+                f"{config.expected_deployment or '<missing>'} allowed={sorted(allowed)}"
+            ),
+            "release-profile",
+        )
+    if config.dev_admin:
+        resolved_username = config.dev_admin_username or config.bootstrap_admin_username
+        resolved_password = config.dev_admin_password or config.bootstrap_admin_password
+        _check(
+            checks,
+            bool(resolved_username) and bool(resolved_password),
+            "config:dev_admin_account",
+            (
+                "configured"
+                if resolved_username and resolved_password
+                else f"missing {DEV_ADMIN_USERNAME_ENV}/{DEV_ADMIN_PASSWORD_ENV}"
+            ),
+            "config",
+        )
+        _check(
+            checks,
+            bool(config.dev_admin_denied_role),
+            "config:dev_admin_denied_role",
+            config.dev_admin_denied_role or f"missing {DEV_ADMIN_DENIED_ROLE_ENV}",
+            "config",
+        )
     return checks
 
 
@@ -930,6 +1073,23 @@ def _check_runtime_readiness(
         ),
         "postgresql",
     )
+    runtime_profile = _as_dict(details.get("releaseProfile"))
+    expected_claim = config.release_profile == RELEASE_PROFILE_FULL
+    _check(
+        checks,
+        runtime_profile.get("name") == config.release_profile
+        and runtime_profile.get("valid") is True
+        and runtime_profile.get("modelReadinessClaimed") is expected_claim,
+        "runtime:release_profile",
+        (
+            f"admitted={config.release_profile} "
+            f"runtime={runtime_profile.get('name') or '<missing>'} "
+            f"valid={runtime_profile.get('valid')} "
+            f"modelReadinessClaimed={runtime_profile.get('modelReadinessClaimed')} "
+            f"error={runtime_profile.get('error') or 'none'}"
+        ),
+        "release-profile",
+    )
     provider_disabled = _disabled_provider_runtime_confirmed(config, provider)
     _check(
         checks,
@@ -959,6 +1119,61 @@ def _check_runtime_readiness(
         ),
         "provider",
     )
+    if _models_refused_in_scope(config, models):
+        _check_model_limitation(models, checks=checks)
+    else:
+        _check_model_bindings(models, checks=checks)
+    _check_provider_probe_evidence(provider, config=config, checks=checks)
+    _check_model_capabilities(
+        models, refused_in_scope=_models_refused_in_scope(config, models), checks=checks
+    )
+    _check_data_origin(payload, data=data, probe=probe, checks=checks)
+
+
+def _models_refused_in_scope(config: GateConfig, models: Mapping[str, Any]) -> bool:
+    """True when this scope accepts, and therefore must verify, absent models.
+
+    Only a dev-admin release whose runtime does not claim production bindings
+    takes this branch. A dev-admin release that *does* have verified bindings is
+    held to the full model assertions, and a full release always is.
+    """
+
+    return config.dev_admin and models.get("productionBindingsReady") is not True
+
+
+def _check_model_limitation(
+    models: Mapping[str, Any], *, checks: list[CheckResult]
+) -> None:
+    """Missing production models must be reported, not papered over.
+
+    The runtime must say bindings are not ready, name why, carry the
+    ``PRODUCTION_MODEL_BINDINGS_UNVERIFIED`` blocking reason, and must not have
+    substituted seeded models or claimed the ``mlflow-production`` mode.
+    """
+
+    reasons = models.get("blockingReasons")
+    reasons = reasons if isinstance(reasons, list) else []
+    _check(
+        checks,
+        models.get("productionBindingsReady") is False
+        and models.get("autoSeeded") is False
+        and models.get("mode") != "mlflow-production"
+        and bool(str(models.get("error") or "").strip())
+        and MODEL_BINDINGS_UNVERIFIED_REASON in reasons,
+        "runtime:model_limitation_reported",
+        (
+            f"mode={models.get('mode')} ready={models.get('productionBindingsReady')} "
+            f"autoSeeded={models.get('autoSeeded')} "
+            f"error={'present' if str(models.get('error') or '').strip() else '<missing>'} "
+            f"blockingReasons={reasons}"
+        ),
+        "mlflow",
+    )
+
+
+def _check_model_bindings(
+    models: Mapping[str, Any], *, checks: list[CheckResult]
+) -> None:
     _check(
         checks,
         models.get("mode") == "mlflow-production"
@@ -974,8 +1189,11 @@ def _check_runtime_readiness(
         ),
         "mlflow",
     )
-    _check_provider_probe_evidence(provider, config=config, checks=checks)
 
+
+def _check_model_capabilities(
+    models: Mapping[str, Any], *, refused_in_scope: bool, checks: list[CheckResult]
+) -> None:
     capabilities = _as_dict(models.get("capabilities"))
     for service in sorted(REQUIRED_MODEL_BINDINGS):
         capability = _as_dict(capabilities.get(service))
@@ -1034,6 +1252,27 @@ def _check_runtime_readiness(
                 ),
                 "mlflow",
             )
+        elif refused_in_scope:
+            # dev-admin with absent models: an active service is either really
+            # bound, or truthfully unavailable with the runtime's reason code
+            # (the composition error is asserted once, on ``models.error``). A
+            # capability that is neither -- unavailable with no reason, or
+            # "available" with a reason -- is a manufactured state.
+            available = capability.get("available")
+            reason_code = str(capability.get("reasonCode") or "").strip()
+            truthful = (available is True and not reason_code) or (
+                available is False and bool(reason_code)
+            )
+            _check(
+                checks,
+                truthful,
+                f"runtime:model_capability:{service}",
+                (
+                    f"available={available} reasonCode={reason_code or '<missing>'} "
+                    "(refused-in-scope)"
+                ),
+                "mlflow",
+            )
         else:
             # Active service (ForecastOps): must be available=True with no reasonCode.
             _check(
@@ -1047,6 +1286,14 @@ def _check_runtime_readiness(
                 "mlflow",
             )
 
+
+def _check_data_origin(
+    payload: Mapping[str, Any],
+    *,
+    data: Mapping[str, Any],
+    probe: Mapping[str, Any],
+    checks: list[CheckResult],
+) -> None:
     origin = _as_dict(data.get("origin"))
     _check(
         checks,
@@ -1331,6 +1578,637 @@ def _check_model_lineage(
         "none" if not markers else f"paths={markers[:10]}",
         "data-binding",
     )
+
+
+def _check_model_registry_refused(
+    response: HttpResponse, *, checks: list[CheckResult]
+) -> None:
+    """With production bindings unverified, the model registry must refuse.
+
+    The Learning Hub serves registry reads only through the production MLflow
+    binding. When that binding is absent the route answers 503 with the
+    composition error; a 200 here would mean model versions (and possibly
+    aliases or lineage) were served from somewhere other than the approved
+    registry, which is exactly the manufactured state this scope forbids.
+    """
+
+    refused = (not response.failed) and response.status == 503
+    _check(
+        checks,
+        refused,
+        "models:registry_refused",
+        _failure_detail(response, expected="503 while production bindings are unverified"),
+        _dependency_for(response, "mlflow"),
+    )
+    markers = find_surrogate_values(response.payload)
+    _check(
+        checks,
+        not markers,
+        "models:no_surrogate_markers",
+        "none" if not markers else f"paths={markers[:10]}",
+        "data-binding",
+    )
+
+
+def _web_origin(web_url: str) -> str:
+    parsed = urllib.parse.urlsplit(web_url)
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+
+
+def _cookie_header(cookies: Mapping[str, str]) -> str:
+    return "; ".join(f"{name}={value}" for name, value in sorted(cookies.items()) if value)
+
+
+def _canonical_uuid(value: Any) -> str | None:
+    try:
+        return str(UUID(str(value)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _foreign_tenant_for(own_tenant: str) -> str:
+    """A valid tenant UUID guaranteed to differ from the admin's own tenant."""
+    if own_tenant != FOREIGN_TENANT_PROBE_ID:
+        return FOREIGN_TENANT_PROBE_ID
+    return str(UUID(int=UUID(own_tenant).int ^ 1))
+
+
+def _identity_snapshot(record: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The identity facts a refused tenant move must leave untouched.
+
+    Returns ``None`` when any of them is absent, so a readback that drops a
+    field is treated as changed rather than silently compared as missing.
+    """
+    subject_id = record.get("subject_id")
+    username = record.get("username")
+    roles = record.get("roles")
+    status = record.get("status")
+    scope = record.get("scope")
+    if not (
+        isinstance(subject_id, str)
+        and subject_id
+        and isinstance(username, str)
+        and username
+        and isinstance(roles, list)
+        and roles
+        and isinstance(status, str)
+        and status
+        and isinstance(scope, dict)
+        and _canonical_uuid(scope.get("tenant_id")) is not None
+    ):
+        return None
+    return {
+        "subject_id": subject_id,
+        "username": username,
+        "roles": sorted(str(r) for r in roles),
+        "status": status,
+        "scope": json.loads(json.dumps(scope, sort_keys=True)),
+    }
+
+
+def _payload_mentions(response: HttpResponse, code: str) -> bool:
+    return code in json.dumps(response.payload, sort_keys=True)
+
+
+def _check_dev_admin_session(
+    *,
+    web: HttpClient | None,
+    config: GateConfig,
+    correlation_id: str,
+    checks: list[CheckResult],
+    report: dict[str, Any],
+) -> None:
+    """Drive the real password sign-in and administration journey through the deployed Web.
+
+    Every step goes through the Web origin exactly as a browser would: the
+    password form endpoint, the sealed session cookie, the BFF proxy that
+    swaps the cookie for the server-side session bearer, must_change enforcement,
+    first-login password rotation if pending, authoritative user administration,
+    business shell refusal (for pure platform_admin), and sign-out. No
+    bearer, role, or tenant header is injected; the only identity the API sees
+    is the one the Web session carries.
+
+    The supported operations exercised, in order:
+
+    1. anonymous session/API reads are refused;
+    2. a wrong password is refused without issuing a session;
+    3. password sign-in (or initial secret sign-in + first-password rotation if fresh);
+    4. the session resolves to that account;
+    5. GET /api/v1/operator/users is served from the identity schema, lists the
+       account itself with exactly platform_admin, active;
+    6. the user audit trail carries the identity.account.bootstrap event;
+    7. moving the account itself to a valid foreign tenant UUID is refused by the
+       identity tenant policy (422) and the readback account, tenant, full scope,
+       roles and status are unchanged;
+    8. the business operator shell is refused (platform_admin holds no business read);
+    9. an Operator Console role outside grants is refused (wrong-role probe);
+    10. GET /operator?view=admin is served as an authenticated Web page;
+    11. sign-out succeeds and the revoked cookie is refused by Web and API.
+    """
+
+    operations: list[str] = []
+    report["dev_admin"] = {"correlation_id": correlation_id, "operations": operations}
+    if web is None:
+        _check(
+            checks,
+            False,
+            "session:web_client",
+            f"no usable web origin for {config.web_url or '<missing>'}",
+            "config",
+        )
+        return
+
+    origin = _web_origin(config.web_url)
+    base = {"accept": "application/json", "x-correlation-id": correlation_id}
+    with_origin = {**base, "origin": origin}
+
+    def session_headers(cookies: Mapping[str, str], **extra: str) -> dict[str, str]:
+        return {**base, "cookie": _cookie_header(cookies), **extra}
+
+    username = config.dev_admin_username or config.bootstrap_admin_username
+    password = config.dev_admin_password or config.bootstrap_admin_password
+    initial_password = config.dev_admin_initial_password
+
+    # 1. Anonymous reads are refused by both the Web and the API behind it.
+    anonymous_session = web.request("GET", "/auth/session", authenticated=False, headers=base)
+    _check(
+        checks,
+        (not anonymous_session.failed) and anonymous_session.status == 401,
+        "session:anonymous_session_denied",
+        _failure_detail(anonymous_session, expected="401"),
+        "session",
+    )
+    anonymous_api = web.request(
+        "GET", "/api/v1/operator/bootstrap", authenticated=False, headers=base
+    )
+    _check(
+        checks,
+        (not anonymous_api.failed) and anonymous_api.status in DENIED_STATUSES,
+        "session:anonymous_api_denied",
+        _failure_detail(anonymous_api, expected="401/403"),
+        "auth",
+    )
+    operations.append("anonymous_denied")
+
+    # 2. A wrong password is refused and no session cookie is issued.
+    invalid = web.request(
+        "POST",
+        "/login",
+        authenticated=False,
+        body={
+            "username": username,
+            "password": f"{password}-live-gate-invalid",
+            "returnTo": "/operator?view=admin",
+        },
+        headers=with_origin,
+        follow_redirects=False,
+    )
+    _check(
+        checks,
+        (not invalid.failed)
+        and invalid.status == 401
+        and _payload_mentions(invalid, "AUTH_INVALID_CREDENTIALS")
+        and not any(invalid.cookies.values()),
+        "session:invalid_credentials_refused",
+        (
+            f"{_failure_detail(invalid, expected='401 AUTH_INVALID_CREDENTIALS')} "
+            f"sessionIssued={any(invalid.cookies.values())}"
+        ),
+        "session",
+    )
+    operations.append("invalid_password_refused")
+
+    # 3. Password sign-in / First-login rotation handling:
+    login = web.request(
+        "POST",
+        "/login",
+        authenticated=False,
+        body={
+            "username": username,
+            "password": password,
+            "returnTo": "/operator?view=admin",
+        },
+        headers=with_origin,
+        follow_redirects=False,
+    )
+    cookies = {name: value for name, value in login.cookies.items() if value}
+    signed_in = (
+        (not login.failed)
+        and login.status == 200
+        and login.payload.get("ok") is True
+        and login.payload.get("subject") == username
+        and bool(cookies)
+    )
+
+    if signed_in:
+        users_probe = web.request(
+            "GET", "/api/v1/operator/users", authenticated=False, headers=session_headers(cookies)
+        )
+        if not users_probe.failed and users_probe.status == 403 and _payload_mentions(users_probe, "PASSWORD_CHANGE_REQUIRED"):
+            _check(
+                checks,
+                False,
+                "session:must_change_enforced",
+                "status=403 PASSWORD_CHANGE_REQUIRED: first-login rotation requires distinct initial secret and operational password; equal-input pseudo-rotation refused",
+                "auth",
+            )
+            return
+        _check(
+            checks,
+            signed_in,
+            "session:password_login",
+            f"{_failure_detail(login, expected='200 ok')} sessionCookie={'issued' if cookies else 'missing'}",
+            "session",
+        )
+        if not signed_in:
+            return
+        operations.append("password_login")
+    elif (not login.failed) and login.status == 401 and initial_password:
+        if initial_password == password:
+            _check(
+                checks,
+                False,
+                "session:password_login",
+                "initial bootstrap secret equals operational password; distinct credentials required for first-login rotation",
+                "session",
+            )
+            return
+        init_login = web.request(
+            "POST",
+            "/login",
+            authenticated=False,
+            body={
+                "username": username,
+                "password": initial_password,
+                "returnTo": "/operator?view=admin",
+            },
+            headers=with_origin,
+            follow_redirects=False,
+        )
+        init_cookies = {name: value for name, value in init_login.cookies.items() if value}
+        init_signed_in = (
+            (not init_login.failed)
+            and init_login.status == 200
+            and init_login.payload.get("ok") is True
+            and init_login.payload.get("subject") == username
+            and bool(init_cookies)
+        )
+        if not init_signed_in:
+            _check(
+                checks,
+                False,
+                "session:password_login",
+                _failure_detail(init_login, expected="200 ok for initial secret"),
+                "session",
+            )
+            return
+        users_probe = web.request(
+            "GET", "/api/v1/operator/users", authenticated=False, headers=session_headers(init_cookies)
+        )
+        must_change_refused = (not users_probe.failed) and users_probe.status == 403 and _payload_mentions(users_probe, "PASSWORD_CHANGE_REQUIRED")
+        _check(
+            checks,
+            must_change_refused,
+            "session:must_change_enforced",
+            _failure_detail(users_probe, expected="403 PASSWORD_CHANGE_REQUIRED"),
+            "auth",
+        )
+        if not must_change_refused:
+            return
+        rotate_resp = web.request(
+            "POST",
+            "/auth/password",
+            authenticated=False,
+            body={
+                "currentPassword": initial_password,
+                "newPassword": password,
+                "confirmPassword": password,
+            },
+            headers=session_headers(init_cookies, origin=origin),
+            follow_redirects=False,
+        )
+        rotated = (not rotate_resp.failed) and rotate_resp.status == 200 and rotate_resp.payload.get("ok") is True
+        _check(
+            checks,
+            rotated,
+            "session:first_login_password_rotated",
+            _failure_detail(rotate_resp, expected="200 ok (password rotated)"),
+            "auth",
+        )
+        if not rotated:
+            return
+        login = web.request(
+            "POST",
+            "/login",
+            authenticated=False,
+            body={
+                "username": username,
+                "password": password,
+                "returnTo": "/operator?view=admin",
+            },
+            headers=with_origin,
+            follow_redirects=False,
+        )
+        cookies = {name: value for name, value in login.cookies.items() if value}
+        signed_in = (
+            (not login.failed)
+            and login.status == 200
+            and login.payload.get("ok") is True
+            and login.payload.get("subject") == username
+            and bool(cookies)
+        )
+        _check(
+            checks,
+            signed_in,
+            "session:password_login",
+            f"{_failure_detail(login, expected='200 ok')} sessionCookie={'issued' if cookies else 'missing'}",
+            "session",
+        )
+        if not signed_in:
+            return
+        operations.append("password_rotated_and_logged_in")
+    else:
+        _check(
+            checks,
+            False,
+            "session:password_login",
+            f"{_failure_detail(login, expected='200 ok')} sessionCookie={'issued' if cookies else 'missing'}",
+            "session",
+        )
+        return
+
+    # 4. The session resolves to the signed-in account.
+    current = web.request(
+        "GET", "/auth/session", authenticated=False, headers=session_headers(cookies)
+    )
+    _check(
+        checks,
+        (not current.failed)
+        and current.status == 200
+        and current.payload.get("subject") == username,
+        "session:session_resolves_account",
+        (
+            f"status={current.status} subjectMatches="
+            f"{current.payload.get('subject') == username}"
+            if not current.failed
+            else current.error
+        ),
+        "session",
+    )
+    operations.append("session_read")
+
+    # 5. Authoritative user list from identity schema.
+    users = web.request(
+        "GET", "/api/v1/operator/users", authenticated=False, headers=session_headers(cookies)
+    )
+    listed = users.payload.get("users") if not users.failed else None
+    listed = [u for u in listed if isinstance(u, dict)] if isinstance(listed, list) else []
+    own = [
+        u
+        for u in listed
+        if u.get("username") == username
+        or _as_dict(u.get("attributes")).get("username") == username
+    ]
+    own_record = own[0] if own else {}
+    pure_admin = (
+        sorted(str(r) for r in own_record.get("roles") or []) == ["platform_admin"]
+        and own_record.get("status") == "active"
+        and _as_dict(own_record.get("attributes")).get("identity_source") == "identity.accounts"
+    )
+    _check(
+        checks,
+        (not users.failed) and users.status == 200 and pure_admin,
+        "admin:identity_user_list",
+        (
+            (
+                f"{_failure_detail(users, expected='200')}"
+                + (
+                    " (first-login password rotation is still pending)"
+                    if _payload_mentions(users, "PASSWORD_CHANGE_REQUIRED")
+                    else ""
+                )
+            )
+            if users.failed or users.status != 200
+            else (
+                f"status=200 users={len(listed)} selfListed={bool(own)} "
+                f"roles={own_record.get('roles')} "
+                f"identitySource={_as_dict(own_record.get('attributes')).get('identity_source')}"
+            )
+        ),
+        _dependency_for(users, "auth"),
+    )
+    operations.append("identity_user_list")
+
+    # 6. User audit trail carries identity.account.bootstrap event.
+    trail = web.request(
+        "GET",
+        "/api/v1/operator/users/audit-trail",
+        authenticated=False,
+        headers=session_headers(cookies),
+    )
+    events = trail.payload.get("events") if not trail.failed else None
+    events = [e for e in events if isinstance(e, dict)] if isinstance(events, list) else []
+    bootstrap_events = [
+        e
+        for e in events
+        if e.get("event_type") == BOOTSTRAP_AUDIT_EVENT
+        and own_record
+        and _as_dict(e.get("metadata")).get("account_id") == own_record.get("subject_id")
+    ]
+    _check(
+        checks,
+        (not trail.failed) and trail.status == 200 and bool(bootstrap_events),
+        "admin:bootstrap_audited",
+        (
+            _failure_detail(trail, expected="200")
+            if trail.failed or trail.status != 200
+            else f"status=200 identityEvents={len(events)} bootstrapEvents={len(bootstrap_events)}"
+        ),
+        "audit",
+    )
+    operations.append("bootstrap_audit_readback")
+
+    # 7. Tenant isolation: moving the admin's own account to a valid foreign
+    #    tenant is refused by the identity tenant policy, and the account reads
+    #    back exactly as it was. The request is otherwise identical to the
+    #    current record, so only the tenant can be the reason for refusal.
+    own_snapshot = _identity_snapshot(own_record)
+    own_tenant = _canonical_uuid(_as_dict(own_record.get("scope")).get("tenant_id"))
+    if own_snapshot is None or own_tenant is None:
+        _check(
+            checks,
+            False,
+            "session:cross_tenant_denied",
+            "own account record lacks subject/username/roles/status or a UUID scope.tenant_id; "
+            "tenant isolation cannot be probed against an unknown tenant",
+            "tenant-isolation",
+        )
+        return
+    foreign_tenant = _foreign_tenant_for(own_tenant)
+    probe_scope = dict(own_snapshot["scope"])
+    probe_scope["tenant_id"] = foreign_tenant
+    foreign_probe = web.request(
+        "POST",
+        "/api/v1/operator/users",
+        authenticated=False,
+        body={
+            "subjectId": own_snapshot["subject_id"],
+            "roles": list(own_snapshot["roles"]),
+            "scope": probe_scope,
+            "status": own_snapshot["status"],
+            "reason": "foreign tenant scope boundary probe",
+        },
+        headers=session_headers(cookies, origin=origin),
+        follow_redirects=False,
+    )
+    probe_detail = _as_dict(foreign_probe.payload).get("detail") if not foreign_probe.failed else None
+    foreign_refused = (
+        (not foreign_probe.failed)
+        and foreign_probe.status == 422
+        and isinstance(probe_detail, str)
+        and TENANT_POLICY_REFUSAL_TEXT in probe_detail
+        and foreign_tenant in probe_detail
+    )
+    _check(
+        checks,
+        foreign_refused,
+        "session:cross_tenant_denied",
+        _failure_detail(
+            foreign_probe,
+            expected=f"422 identity tenant-policy refusal ('{TENANT_POLICY_REFUSAL_TEXT}')",
+        ),
+        "tenant-isolation",
+    )
+    if not foreign_refused:
+        return
+
+    readback = web.request(
+        "GET", "/api/v1/operator/users", authenticated=False, headers=session_headers(cookies)
+    )
+    readback_list = readback.payload.get("users") if not readback.failed else None
+    readback_list = [u for u in readback_list if isinstance(u, dict)] if isinstance(readback_list, list) else []
+    readback_own = [
+        u for u in readback_list if u.get("subject_id") == own_snapshot["subject_id"]
+    ]
+    readback_snapshot = _identity_snapshot(readback_own[0]) if len(readback_own) == 1 else None
+    tenant_unmodified = (
+        (not readback.failed)
+        and readback.status == 200
+        and readback_snapshot is not None
+        and readback_snapshot == own_snapshot
+    )
+    changed = (
+        sorted(
+            key
+            for key in own_snapshot
+            if readback_snapshot is None or readback_snapshot.get(key) != own_snapshot[key]
+        )
+        if not readback.failed
+        else []
+    )
+    _check(
+        checks,
+        tenant_unmodified,
+        "admin:foreign_tenant_unmodified_readback",
+        (
+            f"status={readback.status} matches={len(readback_own)} "
+            f"changedOrMissing={changed or 'none'}"
+            if not readback.failed
+            else readback.error
+        ),
+        "tenant-isolation",
+    )
+    if not tenant_unmodified:
+        return
+    operations.append("cross_tenant_denied")
+
+    # 8. Business shell is denied (pure platform_admin has no business read).
+    business = web.request(
+        "GET", "/api/v1/operator/bootstrap", authenticated=False, headers=session_headers(cookies)
+    )
+    _check(
+        checks,
+        (not business.failed) and business.status == 403,
+        "admin:business_shell_denied",
+        _failure_detail(business, expected="403 (platform_admin holds no business read)"),
+        "auth",
+    )
+    operations.append("business_shell_denied")
+
+    # 9. RBAC wrong-role probe:
+    denied_role = config.dev_admin_denied_role or "cs-lead"
+    wrong_role = web.request(
+        "GET",
+        "/api/v1/operator/bootstrap",
+        authenticated=False,
+        headers=session_headers(cookies, **{"x-operator-role": denied_role}),
+    )
+    _check(
+        checks,
+        (not wrong_role.failed) and wrong_role.status == 403,
+        "session:wrong_role_denied",
+        _failure_detail(wrong_role, expected=f"403 for role {denied_role}"),
+        "auth",
+    )
+    operations.append("wrong_role_denied")
+
+    # 10. Admin view served to the session.
+    page = web.request(
+        "GET",
+        "/operator?view=admin",
+        authenticated=False,
+        headers={**session_headers(cookies), "accept": "text/html"},
+        follow_redirects=False,
+    )
+    _check(
+        checks,
+        (not page.failed) and page.status == 200,
+        "admin:admin_page_served",
+        _failure_detail(page, expected="200 (not a /login redirect)"),
+        "session",
+    )
+    operations.append("admin_page")
+
+    # 11. Logout and revocation.
+    logout = web.request(
+        "POST",
+        "/auth/logout",
+        authenticated=False,
+        headers=session_headers(cookies, origin=origin),
+        follow_redirects=False,
+    )
+    cleared = all(not logout.cookies.get(name, "x") for name in cookies)
+    _check(
+        checks,
+        (not logout.failed)
+        and logout.status == 200
+        and logout.payload.get("ok") is True
+        and cleared,
+        "session:logout",
+        f"{_failure_detail(logout, expected='200 ok')} cookieCleared={cleared}",
+        "session",
+    )
+    replay_session = web.request(
+        "GET", "/auth/session", authenticated=False, headers=session_headers(cookies)
+    )
+    _check(
+        checks,
+        (not replay_session.failed) and replay_session.status == 401,
+        "session:revoked_session_refused",
+        _failure_detail(replay_session, expected="401 after logout"),
+        "session",
+    )
+    replay_api = web.request(
+        "GET", "/api/v1/operator/users", authenticated=False, headers=session_headers(cookies)
+    )
+    _check(
+        checks,
+        (not replay_api.failed) and replay_api.status in DENIED_STATUSES,
+        "admin:logout_revokes_admin_api",
+        f"replay={_failure_detail(replay_api, expected='401/403')}",
+        "session",
+    )
+    operations.append("logout_and_revocation")
 
 
 def _latest_run_by_provider(items: Sequence[Any]) -> dict[str, dict[str, Any]]:
@@ -1826,7 +2704,13 @@ def evaluate_gate(
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> tuple[list[CheckResult], dict[str, Any]]:
-    redact = _redactor(config.bearer_token, config.api_transport_token)
+    redact = _redactor(
+        config.bearer_token,
+        config.api_transport_token,
+        config.dev_admin_password,
+        config.dev_admin_initial_password,
+        config.bootstrap_admin_password,
+    )
     checks = validate_config(config)
     report: dict[str, Any] = {
         "schema_version": 1,
@@ -1844,6 +2728,16 @@ def evaluate_gate(
             "enrichment_provider_ids": list(config.enrichment_provider_ids),
             "worker_probe_provider_id": config.probe_provider_id,
             "external_provider_mode": config.external_provider_mode,
+            "release_profile": config.release_profile,
+            "dev_admin_account_configured": bool(
+                (config.dev_admin_username or config.bootstrap_admin_username)
+                and (config.dev_admin_password or config.bootstrap_admin_password)
+            ),
+            "dev_admin_initial_password_configured": bool(config.dev_admin_initial_password),
+            "bootstrap_admin_account_configured": bool(
+                (config.dev_admin_username or config.bootstrap_admin_username)
+                and (config.dev_admin_password or config.bootstrap_admin_password)
+            ),
             "secret_values_redacted": True,
         },
     }
@@ -1875,9 +2769,12 @@ def evaluate_gate(
             )
         else:
             _check_web_login(http=web_http, checks=checks)
-        _check_model_lineage(
-            http.request("GET", "/api/v1/learninghub/models"), checks=checks
-        )
+        models_response = http.request("GET", "/api/v1/learninghub/models")
+        runtime_models = _as_dict(runtime_details.get("models"))
+        if _models_refused_in_scope(config, runtime_models):
+            _check_model_registry_refused(models_response, checks=checks)
+        else:
+            _check_model_lineage(models_response, checks=checks)
         # Worker first, then source data: the worker probe is what drives real
         # ingestion for every required snapshot provider through the deployed
         # scheduled path, and the ingestion runs it persists are exactly what
@@ -1900,6 +2797,14 @@ def evaluate_gate(
             provider=runtime_provider,
             checks=checks,
         )
+        if config.dev_admin:
+            _check_dev_admin_session(
+                web=web_http,
+                config=config,
+                correlation_id=f"{correlation_id}-session",
+                checks=checks,
+                report=report,
+            )
 
     blockers = [
         {
@@ -1917,6 +2822,13 @@ def evaluate_gate(
     ]
     report["blockers"] = blockers
     report["blocking_dependencies"] = sorted({blocker["dependency"] for blocker in blockers})
+    # A narrowed scope never stands as model or full-product evidence, even
+    # when it passes. Say so in the receipt itself, not only in the docs.
+    report["release_profile"] = {
+        "name": config.release_profile,
+        "model_readiness_claimed": config.release_profile == RELEASE_PROFILE_FULL,
+        "full_product_acceptance_claimed": config.release_profile == RELEASE_PROFILE_FULL,
+    }
     return checks, report
 
 
@@ -1982,6 +2894,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--timeout", type=float, default=20.0)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument(
+        "--release-profile",
+        default=os.environ.get(RELEASE_PROFILE_ENV, RELEASE_PROFILE_FULL),
+        help=(
+            "Acceptance scope of the admitted manifest: 'full' (default) or "
+            "'dev-admin' (dev only; adds the Web password-session journey and "
+            "requires missing models to stay refused)."
+        ),
+    )
+    parser.add_argument(
         "--allow-http",
         action="store_true",
         help="Permit HTTP only for an explicitly controlled non-production target.",
@@ -2020,6 +2941,14 @@ def main(argv: list[str] | None = None) -> int:
         poll_interval_seconds=args.poll_interval_seconds,
         timeout=args.timeout,
         allow_http=args.allow_http,
+        release_profile=str(args.release_profile or "").strip().lower(),
+        dev_admin_username=os.environ.get(DEV_ADMIN_USERNAME_ENV, "").strip() or os.environ.get(BOOTSTRAP_ADMIN_USERNAME_ENV, "").strip(),
+        # Not stripped: a password is exactly what the operator set.
+        dev_admin_password=os.environ.get(DEV_ADMIN_PASSWORD_ENV, "") or os.environ.get(BOOTSTRAP_ADMIN_PASSWORD_ENV, ""),
+        dev_admin_initial_password=os.environ.get(DEV_ADMIN_INITIAL_PASSWORD_ENV, "") or os.environ.get(BOOTSTRAP_SECRET_ENV, ""),
+        dev_admin_denied_role=os.environ.get(DEV_ADMIN_DENIED_ROLE_ENV, "").strip() or "cs-lead",
+        bootstrap_admin_username=os.environ.get(BOOTSTRAP_ADMIN_USERNAME_ENV, "").strip(),
+        bootstrap_admin_password=os.environ.get(BOOTSTRAP_ADMIN_PASSWORD_ENV, ""),
     )
     correlation_id = f"corr-live-e2e-{config.expected_sha[:12] or 'unbound'}-{int(time.time())}"
 

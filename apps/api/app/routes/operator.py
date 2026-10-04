@@ -137,6 +137,7 @@ def create_operator_router(
     evidence_store: Any | None = None,
     intake_repository: Any | None = None,
     live_repository: OperatorLiveRepositoryProtocol | None = None,
+    identity_user_role_service: Any | None = None,
     require_live_data: bool = False,
     persistence_mode: str = "memory",
     provider_mode: str = "fixture",
@@ -162,6 +163,11 @@ def create_operator_router(
     state_service:
         Optional pre-built OperatorStateService; injected by tests to pass
         a pre-seeded service with deterministic state.
+    identity_user_role_service:
+        Identity-backed user administration (PostgreSQL ``identity.*``). Live
+        routers mount it for ``/operator/users``; without it those routes
+        refuse with 503 instead of editing a document nobody authenticates
+        against.
     """
     from apps.api.oday_api.security.dependencies import (
         OPERATOR_CONSOLE_RESOURCE,
@@ -955,34 +961,22 @@ def create_operator_router(
         from apps.api.app.routes.operator_modules.users_roles import (
             create_user_role_sub_router,
         )
-        from modules.opsboard.application.user_role_management import (
-            UserRoleManagementService,
+        from modules.opsboard.application.identity_user_role_management import (
+            UnavailableUserRoleManagementService,
         )
 
-        user_role_state_repository = DurableOperatorDomainStateRepository(
-            document_store,
-            "users-roles",
-        )
-        user_role_resolver = DurableTenantServiceResolver(
-            user_role_state_repository,
-            factory=lambda state, tenant_id: UserRoleManagementService(
-                audit_log=active_audit_log,
-                initial_state=state,
-                seed_fixtures=False,
-            ),
-            exporter=lambda service: service.export_state(),
-            mutating_methods={"save_user", "set_user_status"},
-        )
+        # Live user administration mutates the identity.* rows the auth
+        # boundary resolves; a users-roles document edit would report success
+        # for a privilege change no authenticated request ever sees.
         router.include_router(
             create_user_role_sub_router(
-                UserRoleManagementService(seed_fixtures=False),
+                identity_user_role_service or UnavailableUserRoleManagementService(),
                 require_view_permission_fn=require_operator_permission(
                     "user", Action.VIEW, engine=authz_engine
                 ),
                 require_manage_permission_fn=require_operator_permission(
                     "user", Action.UPDATE, engine=authz_engine
                 ),
-                service_resolver=user_role_resolver,
             )
         )
 

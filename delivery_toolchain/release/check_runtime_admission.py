@@ -96,6 +96,8 @@ from delivery_toolchain.release.release_manifest import (  # noqa: E402
     component_binding_errors,
     is_sha256_digest,
     load_manifest,
+    manifest_release_profile,
+    release_profile_errors,
     validate_release_admission,
 )
 
@@ -279,6 +281,15 @@ def admit_release(
     """Run the whole admission decision and consume the lease when it passes."""
 
     extra = list(manifest_errors or [])
+    # The acceptance scope is sealed into the manifest digest; this is where it
+    # is bound to the target. A dev-admin manifest fails here, before the lease
+    # is consumed and before anything mutates the cloud, when it is pointed at
+    # staging or production.
+    extra.extend(
+        error
+        for error in release_profile_errors(manifest, environment=environment)
+        if error not in extra
+    )
     if component_images:
         # A manifest that failed to load is `None` here, and binding against it
         # reports an error rather than silently skipping the check.
@@ -516,6 +527,11 @@ def main(argv: list[str] | None = None) -> int:
     # artifact was admitted cannot be audited against what actually deployed.
     receipt["component_images"] = dict(sorted(component_images.items()))
     receipt["manifest_transport"] = manifest_transport()
+    # The deploy phase reads the acceptance scope from here and nowhere else, so
+    # it is only recorded for a manifest that verified against its digest.
+    receipt["release_profile"] = (
+        manifest_release_profile(manifest) if manifest_digest else None
+    )
     if not admitted:
         return _blocked(errors, receipt, args.receipt)
 

@@ -37,8 +37,20 @@ export function validatePasswordPolicy(
   password: string,
   username?: string,
   email?: string,
+  currentPassword?: string,
 ): PasswordPolicyResult {
   const normalizedPassword = (password || "").normalize("NFKC");
+
+  if (currentPassword !== undefined) {
+    const normalizedCurrent = (currentPassword || "").normalize("NFKC");
+    if (normalizedCurrent && normalizedCurrent === normalizedPassword) {
+      return {
+        valid: false,
+        code: "AUTH_PASSWORD_POLICY_VIOLATION",
+        reason: "New password must be different from current password.",
+      };
+    }
+  }
 
   if (normalizedPassword.length < 12) {
     return {
