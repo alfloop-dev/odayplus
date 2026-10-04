@@ -1,0 +1,18 @@
+{
+  "head_sha": "ec7ff5bd683f36878e2edb30a472593a17f1bc11",
+  "command": "uv run --python 3.12 pytest -q .orchestrator/test_model_rotation.py",
+  "selection": "uv run --python 3.12 pytest -q .orchestrator/test_model_rotation.py",
+  "exit_code": 0,
+  "duration_seconds": 8.323746,
+  "started_at": "2026-10-04T11:40:32.735873+00:00",
+  "status": "passed",
+  "tested_blobs": {
+    ".orchestrator/model_rotation.py": "496cbe35b04d75dc2d784f9b1268ce8eaa5e9875",
+    ".orchestrator/adapters/antigravity.py": "3d89e2cd04e2b2bbd2ba95139cc42f47487357be",
+    ".orchestrator/test_model_rotation.py": "b6313b9c631a625ee01e0fffaaea8f4dfc2596d6",
+    ".orchestrator/config.example.json": "949296653a65cdbdb60ce597faf7673d72f2e1bb"
+  },
+  "output": "..........................................................           [100%]\nUsing CPython 3.12.14\nRemoved virtual environment at: .venv\nCreating virtual environment at: .venv\nInstalled 215 packages in 1.21s\n",
+  "output_sha256": "745a7d1849254186278afd62593d967487c5a250d4b1be242c9096c833bdc9ea",
+  "no_live_inference": true
+}

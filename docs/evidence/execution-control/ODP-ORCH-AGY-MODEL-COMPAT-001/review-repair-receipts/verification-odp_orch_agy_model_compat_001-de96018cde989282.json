@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "kind": "verification_receipt",
+  "task_id": "ODP-ORCH-AGY-MODEL-COMPAT-001",
+  "head_sha": "cff3436110e737e1b62e27ffcd8895938dc89d07",
+  "command": "uv run --python 3.12 pytest -q .orchestrator/test_model_rotation.py -k CooldownLifecycleTests",
+  "command_audit": {
+    "command": "uv run --python 3.12 pytest -q .orchestrator/test_model_rotation.py -k CooldownLifecycleTests",
+    "ok": true,
+    "violations": [],
+    "details": [],
+    "runner": "pytest"
+  },
+  "runner": "pytest",
+  "selection": {
+    "scope": "targeted",
+    "items": [
+      "-k=CooldownLifecycleTests",
+      ".orchestrator/test_model_rotation.py"
+    ],
+    "fingerprint": "6c5c28d03f48454b28b34073f6da18d7"
+  },
+  "exit_code": 0,
+  "signal": null,
+  "timed_out": false,
+  "outcome": "passed",
+  "passed": true,
+  "duration_seconds": 2.722,
+  "started_at": "2026-10-04T12:08:42Z",
+  "finished_at": "2026-10-04T12:08:44Z",
+  "recorded_at": "2026-10-04T12:08:44Z",
+  "run_kind": "baseline",
+  "attempt": 1,
+  "retry_reason": null,
+  "agent": "Pi",
+  "run_id": "pi-20261004T115741Z-16aae5f5",
+  "produced_by": "delivery_toolchain/git/task_verification.py",
+  "output_tail": ".....                                                                 [100%]\n",
+  "receipt_id": "de96018cde989282"
+}

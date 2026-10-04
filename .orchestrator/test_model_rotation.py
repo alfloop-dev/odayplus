@@ -8,6 +8,9 @@ import pathlib
 import shutil
 import subprocess
 import sys
+import tempfile
+import unittest
+from contextlib import ExitStack
 from datetime import UTC, datetime, timedelta
 from unittest import mock
 
@@ -22,6 +25,7 @@ CFG = {
                 "model_rotation": {
                     "enabled": True,
                     "primary_model": "",
+                    # Historical explicit pin; do not silently migrate it.
                     "fallback_model": "claude-sonnet-4-6",
                 }
             }
@@ -54,7 +58,7 @@ def test_p0_and_sensitive_scope_use_high_risk_model(tmp_path):
         "antigravity5",
         task={"id": "ODP-CORE-1", "priority": "P0", "artifacts": ["app/service.py"]},
     )
-    assert p0["model"] == "claude-opus-4-6-thinking"
+    assert p0["model"] == "claude-opus-5-5-high"
     assert p0["risk_tier"] == "high"
     assert p0["selection_reason"] == "business_priority_P0"
 
@@ -63,7 +67,7 @@ def test_p0_and_sensitive_scope_use_high_risk_model(tmp_path):
         "antigravity5",
         task={"id": "ODP-DATA-1", "priority": "P2", "artifacts": ["src/domain/ledger.py"]},
     )
-    assert sensitive["model"] == "claude-opus-4-6-thinking"
+    assert sensitive["model"] == "claude-opus-5-5-high"
     assert sensitive["selection_reason"].startswith("sensitive_scope:")
 
 
@@ -74,7 +78,7 @@ def test_first_review_reopen_forces_high_risk_model(tmp_path):
         "antigravity5",
         task={"id": "ODP-REOPEN-1", "priority": "P2", "review_reopen_count": 1},
     )
-    assert selection["model"] == "claude-opus-4-6-thinking"
+    assert selection["model"] == "claude-opus-5-5-high"
     assert selection["risk_tier"] == "high"
     assert selection["selection_reason"] == "review_reopened_1_time(s)"
 
@@ -107,7 +111,7 @@ def test_sidecar_and_finalize_stay_on_flash_high(tmp_path):
             "review_reopen_count": 1,
         },
     )
-    assert reopened_docs["model"] == "claude-opus-4-6-thinking"
+    assert reopened_docs["model"] == "claude-opus-5-5-high"
     assert reopened_docs["selection_reason"] == "review_reopened_1_time(s)"
 
 
@@ -124,7 +128,7 @@ def test_p0_and_p1_with_docs_preserve_high_risk_priority_precedence(tmp_path):
         ],
     }
     selection = mr.resolve_active_selection(CFG, "antigravity5", task=live_proof_task)
-    assert selection["model"] == "claude-opus-4-6-thinking"
+    assert selection["model"] == "claude-opus-5-5-high"
     assert selection["risk_tier"] == "high"
     assert selection["selection_reason"] == "business_priority_P0"
 
@@ -135,7 +139,7 @@ def test_p0_and_p1_with_docs_preserve_high_risk_priority_precedence(tmp_path):
         "artifacts": ["docs/architecture.md"],
     }
     p1_selection = mr.resolve_active_selection(CFG, "antigravity5", task=p1_docs_task)
-    assert p1_selection["model"] == "claude-opus-4-6-thinking"
+    assert p1_selection["model"] == "claude-opus-5-5-high"
     assert p1_selection["risk_tier"] == "high"
     assert p1_selection["selection_reason"] == "business_priority_P1"
 
@@ -167,7 +171,7 @@ def test_mixed_workflow_and_docs_uses_high_risk_model(tmp_path):
         ],
     }
     selection = mr.resolve_active_selection(CFG, "antigravity5", task=workflow_docs)
-    assert selection["model"] == "claude-opus-4-6-thinking"
+    assert selection["model"] == "claude-opus-5-5-high"
     assert selection["risk_tier"] == "high"
     assert selection["selection_reason"] == "sensitive_scope:workflow"
 
@@ -181,7 +185,7 @@ def test_mixed_workflow_and_docs_uses_high_risk_model(tmp_path):
         ],
     }
     iac_selection = mr.resolve_active_selection(CFG, "antigravity5", task=iac_docs)
-    assert iac_selection["model"] == "claude-opus-4-6-thinking"
+    assert iac_selection["model"] == "claude-opus-5-5-high"
     assert iac_selection["risk_tier"] == "high"
     assert iac_selection["selection_reason"] == "sensitive_scope:iac"
 
@@ -196,7 +200,7 @@ def test_reopen_with_docs_preserves_high_risk_reopen_precedence(tmp_path):
         "artifacts": ["docs/release.md"],
     }
     selection = mr.resolve_active_selection(CFG, "antigravity5", task=reopen_task)
-    assert selection["model"] == "claude-opus-4-6-thinking"
+    assert selection["model"] == "claude-opus-5-5-high"
     assert selection["risk_tier"] == "high"
     assert selection["selection_reason"] == "review_reopened_2_time(s)"
 
@@ -211,7 +215,7 @@ def test_summary_zh_and_summary_compatibility_in_task_corpus(tmp_path):
         "artifacts": ["docs/changelog.md"],
     }
     selection = mr.resolve_active_selection(CFG, "antigravity5", task=zh_sensitive_task)
-    assert selection["model"] == "claude-opus-4-6-thinking"
+    assert selection["model"] == "claude-opus-5-5-high"
     assert selection["risk_tier"] == "high"
     assert selection["selection_reason"] == "sensitive_scope:core/"
 
@@ -228,7 +232,7 @@ def test_summary_zh_and_summary_compatibility_in_task_corpus(tmp_path):
     assert docs_selection["selection_reason"] == "bounded_docs_or_lint"
 
 
-def test_quota_rotation_overrides_risk_model_but_keeps_audit_reason(tmp_path):
+def test_quota_rotation_preserves_high_risk_claude_policy_and_audit_reason(tmp_path):
     _isolate(tmp_path)
     mr.record_exhaustion(CFG, "antigravity5", 900, pool="gemini")
     selection = mr.resolve_active_selection(
@@ -237,7 +241,7 @@ def test_quota_rotation_overrides_risk_model_but_keeps_audit_reason(tmp_path):
         task={"id": "ODP-P0-1", "priority": "P0"},
     )
     assert selection["pool"] == "claude"
-    assert selection["model"] == "claude-sonnet-4-6"
+    assert selection["model"] == "claude-opus-5-5-high"
     assert selection["risk_tier"] == "high"
     assert selection["selection_reason"] == "quota_pool_fallback:business_priority_P0"
 
@@ -920,7 +924,7 @@ def _adapter_config(tmp_path) -> dict:
                     "model_rotation": {
                         "enabled": True,
                         "primary_model": "",
-                        "fallback_model": "claude-sonnet-4-6",
+                        "fallback_model": "claude-sonnet-5-5-high",
                     },
                 }
             }
@@ -988,11 +992,11 @@ def test_adapter_persists_dispatched_pool_in_worker_metadata(tmp_path):
     mr.record_exhaustion(config, "antigravity5", 900, pool="gemini")
     result, spawn = _deliver(config, tmp_path)
     assert result.metadata[mr.WORKER_POOL_KEY] == "claude"
-    assert result.metadata[mr.WORKER_MODEL_KEY] == "claude-sonnet-4-6"
+    assert result.metadata[mr.WORKER_MODEL_KEY] == "claude-sonnet-5-5-high"
     command = spawn.call_args.args[0]
     # Structured argv: the model id stays ONE argument
     # and is never interpolated into a shell string.
-    assert command[command.index("--model") + 1] == "claude-sonnet-4-6"
+    assert command[command.index("--model") + 1] == "claude-sonnet-5-5-high"
 
 
 def test_adapter_selects_high_risk_model_from_dispatched_task_snapshot(tmp_path):
@@ -1006,11 +1010,11 @@ def test_adapter_selects_high_risk_model_from_dispatched_task_snapshot(tmp_path)
     )
 
     assert result.ok
-    assert result.metadata[mr.WORKER_MODEL_KEY] == "claude-opus-4-6-thinking"
+    assert result.metadata[mr.WORKER_MODEL_KEY] == "claude-opus-5-5-high"
     assert result.metadata[mr.WORKER_MODEL_RISK_TIER_KEY] == "high"
     assert result.metadata[mr.WORKER_MODEL_REASON_KEY] == "business_priority_P0"
     command = spawn.call_args.args[0]
-    assert command[command.index("--model") + 1] == "claude-opus-4-6-thinking"
+    assert command[command.index("--model") + 1] == "claude-opus-5-5-high"
     assert all(isinstance(part, str) for part in command)
     assert spawn.call_args.kwargs.get("env", {}).get("HOME") == str(
         pathlib.Path(tmp_path) / "home-ag5"
@@ -1093,3 +1097,475 @@ def test_environmental_failures_do_not_lock_task():
     for _ in range(2):
         c = sv.record_task_failure_streak(st, w, "real bug", failure_kind="terminal")
     assert c == 2
+
+
+class SupportedModelCompatibilityTests(unittest.TestCase):
+    """Executable by the task's unittest discovery command (not zero tests).
+
+    Legacy pytest functions above remain covered by the registered pytest run.
+    Adapter processes/auth are mocked; all cooldown writes use a temp root.
+    """
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.path = pathlib.Path(temporary.name)
+        state_patch = mock.patch.object(mr, "_STATE_PATH", self.path / "cooldown.json")
+        legacy_patch = mock.patch.object(mr, "_LEGACY_STATE_PATH", self.path / "legacy.json")
+        state_patch.start()
+        legacy_patch.start()
+        self.addCleanup(state_patch.stop)
+        self.addCleanup(legacy_patch.stop)
+        self.config = _adapter_config(self.path)
+        self.settings = self.config["providers"]["antigravity5"]["antigravity"]
+        self.settings["model_rotation"].pop("fallback_model")
+
+    def test_defaults_match_observed_registry_and_example(self):
+        root = pathlib.Path(__file__).resolve().parents[1]
+        evidence = root / "docs/evidence/execution-control/ODP-ORCH-AGY-MODEL-COMPAT-001"
+        receipt = json.loads((evidence / "agy-supported-model-compatibility.json").read_text())
+        supported = {item["id"] for item in receipt["models"]}
+        self.assertEqual(receipt["exit_code"], 0)
+        for model in (mr.DEFAULT_STANDARD_MODEL, mr.DEFAULT_HIGH_RISK_MODEL, mr.DEFAULT_FALLBACK_MODEL):
+            self.assertIn(model, supported)
+        self.assertTrue(mr.RETIRED_MODEL_IDS.isdisjoint(supported))
+        example = json.loads((root / ".orchestrator/config.example.json").read_text())
+        for alias in ("antigravity", "antigravity2"):
+            settings = example["providers"][alias]["antigravity"]
+            self.assertEqual(settings["model_rotation"]["fallback_model"], mr.DEFAULT_FALLBACK_MODEL)
+            self.assertEqual(mr.model_policy_config(example, alias)["high_risk_model"], mr.DEFAULT_HIGH_RISK_MODEL)
+
+    def test_risk_and_standard_semantics(self):
+        for task in ({"priority": "P0"}, {"priority": "P1"}, {"review_reopen_count": 2},
+                     {"priority": "P2", "artifacts": ["src/domain/ledger.py", "docs/guide.md"]}):
+            with self.subTest(task=task):
+                result, spawn = _deliver(self.config, self.path, task=task)
+                self.assertTrue(result.ok)
+                self.assertEqual(result.metadata[mr.WORKER_MODEL_KEY], "claude-opus-5-5-high")
+                self.assertEqual(result.metadata[mr.WORKER_POOL_KEY], "claude")
+                self.assertEqual(result.metadata[mr.WORKER_MODEL_RISK_TIER_KEY], "high")
+                command = spawn.call_args.args[0]
+                self.assertEqual(command[command.index("--model") + 1], result.metadata[mr.WORKER_MODEL_KEY])
+        test_sidecar_and_finalize_stay_on_flash_high(self.path)
+        test_p2_docs_only_uses_standard_model(self.path)
+
+    def test_default_fallback_is_high_and_metadata_binds_actual_pool(self):
+        mr.record_exhaustion(self.config, "antigravity5", 900, pool="gemini")
+        result, spawn = _deliver(self.config, self.path)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.metadata[mr.WORKER_MODEL_KEY], "claude-sonnet-5-5-high")
+        self.assertEqual(result.metadata[mr.WORKER_POOL_KEY], "claude")
+        command = spawn.call_args.args[0]
+        self.assertEqual(command[command.index("--model") + 1], "claude-sonnet-5-5-high")
+        exhaustion = mr.record_exhaustion(self.config, "antigravity5", 900,
+                                        pool=mr.worker_dispatched_pool({"metadata": result.metadata}))
+        self.assertEqual(exhaustion["exhausted_pool"], "claude")
+        self.assertEqual(exhaustion["pool_source"], "dispatched")
+        self.assertTrue(exhaustion["both_exhausted"])
+        # Later state transitions cannot rewrite the launch receipt.
+        self.assertEqual(result.metadata[mr.WORKER_MODEL_KEY], "claude-sonnet-5-5-high")
+        self.assertEqual(result.metadata[mr.WORKER_POOL_KEY], "claude")
+
+    def test_gemini_cooldown_does_not_downgrade_high_risk(self):
+        self.settings["model_rotation"]["fallback_model"] = "claude-sonnet-4-6"
+        mr.record_exhaustion(self.config, "antigravity5", 900, pool="gemini")
+        result, _ = _deliver(self.config, self.path, task={"priority": "P0"})
+        self.assertTrue(result.ok)
+        self.assertEqual(result.metadata[mr.WORKER_MODEL_KEY], "claude-opus-5-5-high")
+        self.assertEqual(self.settings["model_rotation"]["fallback_model"], "claude-sonnet-4-6")
+
+    def test_high_risk_claude_cooldown_defers_without_downgrade(self):
+        mr.record_exhaustion(self.config, "antigravity5", 900, pool="claude")
+        for task in ({"priority": "P0"}, {"review_reopen_count": 1}):
+            result, spawn = _deliver(self.config, self.path, task=task)
+            self.assertFalse(result.ok)
+            self.assertIsNone(result.error)
+            self.assertIn("no standard-model downgrade", result.notes)
+            self.assertEqual(result.metadata[mr.DISPATCH_WAIT_KEY]["model"], mr.DEFAULT_HIGH_RISK_MODEL)
+            self.assertEqual(result.metadata[mr.DISPATCH_WAIT_KEY]["pool"], "claude")
+            spawn.assert_not_called()
+        # Standard work still runs on the available Gemini pool.
+        result, _ = _deliver(self.config, self.path)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.metadata[mr.WORKER_POOL_KEY], "gemini")
+        mr.record_exhaustion(self.config, "antigravity5", 900, pool="gemini")
+        result, spawn = _deliver(self.config, self.path, task={"priority": "P0"})
+        self.assertFalse(result.ok)
+        spawn.assert_not_called()
+
+    def test_retired_static_pins_preserved_but_not_launched(self):
+        self.settings["model_rotation"]["enabled"] = False
+        for pin in sorted(mr.RETIRED_MODEL_IDS):
+            self.settings["model"] = pin
+            selected = mr.resolve_active_selection(self.config, "antigravity5", task={"priority": "P0"})
+            self.assertEqual(selected["model"], pin)
+            self.assertEqual(selected["risk_tier"], "static")
+            result, spawn = _deliver(self.config, self.path, task={"priority": "P0"})
+            self.assertFalse(result.ok)
+            self.assertIn(pin, result.error)
+            self.assertIn("unavailable", result.error)
+            spawn.assert_not_called()
+            self.assertEqual(self.settings["model"], pin)
+
+    def test_retired_policy_and_fallback_fail_without_rewrite(self):
+        self.settings["model_policy"] = {"high_risk_model": "claude-opus-4-6-thinking"}
+        result, spawn = _deliver(self.config, self.path, task={"priority": "P0"})
+        self.assertFalse(result.ok)
+        self.assertIn("claude-opus-4-6-thinking", result.error)
+        spawn.assert_not_called()
+        self.settings["model_rotation"]["fallback_model"] = "claude-sonnet-4-6"
+        mr.record_exhaustion(self.config, "antigravity5", 900, pool="gemini")
+        self.assertEqual(mr.resolve_active_selection(self.config, "antigravity5")["model"], "claude-sonnet-4-6")
+        result, spawn = _deliver(self.config, self.path)
+        self.assertFalse(result.ok)
+        self.assertIn("claude-sonnet-4-6", result.error)
+        spawn.assert_not_called()
+
+    def test_supported_explicit_pin_and_effort_contract(self):
+        from adapters.antigravity import _effort_args
+
+        self.settings["model_rotation"]["enabled"] = False
+        self.settings["model"] = "claude-sonnet-5-5-high"
+        self.settings["effort"] = "high"
+        result, spawn = _deliver(self.config, self.path, task={"priority": "P0"})
+        self.assertTrue(result.ok)
+        self.assertEqual(result.metadata[mr.WORKER_MODEL_KEY], "claude-sonnet-5-5-high")
+        self.assertEqual(result.metadata[mr.WORKER_MODEL_RISK_TIER_KEY], "static")
+        self.assertNotIn("--effort", spawn.call_args.args[0])
+        self.assertEqual(_effort_args(self.settings, mr.DEFAULT_STANDARD_MODEL), ["--effort", "high"])
+
+    def test_concurrent_pool_attribution_unchanged(self):
+        test_dispatched_pool_overrides_current_active_pool(self.path)
+        test_two_concurrent_gemini_workers_never_exhaust_claude(self.path)
+        test_same_worker_failure_rotates_only_once(self.path)
+
+
+class CooldownLifecycleTests(unittest.TestCase):
+    """Real adapter -> launch -> queue wait/resume, with no live processes."""
+
+    setUp = SupportedModelCompatibilityTests.setUp
+
+    def _queue_context(self, task):
+        from adapters.base import DeliveryRequest
+
+        task = {"id": "ODP-TEST-ROT", "status": "in_progress", "owner": "Antigravity5",
+                "reviewer": "Codex", "depends_on": [], **task}
+        request = DeliveryRequest(
+            agent_id="antigravity5", provider="antigravity5", delivery_mode="antigravity",
+            task_id=task["id"], message="wake", reason="owned_in_progress_dispatch",
+            metadata={"task": task},
+        )
+        event = {"event_id": "wait-event", "task_id": task["id"], "target_agent": "antigravity5",
+                 "target_display_name": "Antigravity5", "provider": "antigravity5",
+                 "reason": request.reason, "message": "wake"}
+        self.config["schema"] = {"tasks_path": "tasks", "task_id_field": "id",
+                                 "assignee_field": "owner", "reviewer_field": "reviewer"}
+        self.config["ready_dispatcher"] = {"owned_statuses": ["todo", "in_progress"],
+                                           "active_worker_statuses": ["running"]}
+        return task, request, event
+
+    def _run_queue(self, task_fields, *, both_cooling=False, terminal_pin=False, move_owner=False):
+        task, request, event = self._queue_context(task_fields)
+        state = {"queue": {"events": {}}, "workers": {}}
+        clock = [datetime.now(UTC).replace(microsecond=0)]
+        event["created_at"] = clock[0].isoformat()
+
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return clock[0]
+
+        deliveries = []
+
+        def deliver(_request):
+            result, spawn = _deliver(self.config, self.path, task=task, reason=request.reason)
+            deliveries.append((result, spawn))
+            return result
+
+        adapter = mock.Mock()
+        adapter.deliver.side_effect = deliver
+        with (
+            mock.patch.object(mr, "_now", side_effect=lambda now=None: now or clock[0]),
+            mock.patch.object(sv, "datetime", Clock),
+            mock.patch.object(sv, "load_event_queue", return_value=[event]),
+            mock.patch.object(sv, "replace_event_queue"),
+            mock.patch.object(sv, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(sv, "build_request", return_value=request),
+            mock.patch.object(sv, "prepare_worker_workspace", return_value=(True, None)) as workspace,
+            mock.patch.object(sv, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(sv, "select_dispatch_agent_id", return_value="antigravity5"),
+            mock.patch.object(sv, "build_adapter", return_value=adapter),
+            mock.patch.object(sv, "provider_auth_identity_hash", return_value=None),
+            mock.patch.object(sv, "save_runtime_state"),
+            mock.patch.object(sv, "record_worker_runtime_measurement"),
+            mock.patch.object(sv, "sync_dispatched_task_status") as sync,
+            mock.patch.object(sv, "write_activity_log") as activity,
+            mock.patch.object(sv, "write_failure_evidence", return_value=None) as evidence,
+            mock.patch.object(sv, "record_task_failure_streak", wraps=sv.record_task_failure_streak) as streak,
+            mock.patch.object(sv, "maybe_reassign_task_after_worker_failure", return_value=None) as reassign,
+            mock.patch.object(sv, "mark_provider_dispatch_paused") as pause,
+        ):
+            if terminal_pin:
+                self.settings["model_policy"] = {"high_risk_model": "claude-opus-4-6-thinking"}
+                self.assertTrue(sv.process_queue(self.config, state, {}))
+                self.assertEqual(state["queue"]["events"][event["event_id"]]["status"], "failed")
+                self.assertEqual(streak.call_args.kwargs["failure_kind"], "terminal")
+                self.assertEqual(streak.call_count, 1)
+                reassign.assert_called_once()
+                pause.assert_not_called()
+                self.assertIsNone(deliveries[0][0].metadata.get(mr.DISPATCH_WAIT_KEY))
+                deliveries[0][1].assert_not_called()
+                return
+
+            mr.record_exhaustion(self.config, "antigravity5", 900, pool="claude")
+            if both_cooling:
+                mr.record_exhaustion(self.config, "antigravity5", 900, pool="gemini")
+            before = mr._STATE_PATH.read_bytes()
+            self.assertTrue(sv.process_queue(self.config, state, {}))
+            record = state["queue"]["events"][event["event_id"]]
+            self.assertEqual(record["status"], "retry_backoff")
+            wait = record[mr.DISPATCH_WAIT_KEY]
+            self.assertEqual(wait["model"], "claude-opus-5-5-high")
+            self.assertEqual(wait["pool"], "claude")
+            expected_until = (clock[0] + timedelta(seconds=900)).isoformat().replace("+00:00", "Z")
+            self.assertEqual(record["next_retry_at"], expected_until)
+            self.assertEqual(record["attempt_count"], 0)
+            self.assertFalse(record.get("retry_count"))
+            self.assertEqual(state["workers"], {})
+            self.assertEqual(task["owner"], "Antigravity5")
+            self.assertEqual(mr._STATE_PATH.read_bytes(), before)
+            deliveries[0][1].assert_not_called()
+            # Full supervisor queue cycle: pruning/reconciliation must not
+            # rewrite this intentional workerless wait to queued or orphan it.
+            # Age the event only after admission: an initially orphaned wake
+            # still must not be dispatched without any durable wait record.
+            event["created_at"] = (clock[0] - timedelta(days=1)).isoformat()
+            for seconds in (1, 60, 838):
+                clock[0] += timedelta(seconds=seconds)
+                self.assertFalse(sv.prune_event_queue(self.config, state))
+                self.assertFalse(sv.process_queue(self.config, state, {}))
+                self.assertEqual(record["status"], "retry_backoff")
+                self.assertEqual(record["next_retry_at"], expected_until)
+                self.assertEqual(record["attempt_count"], 0)
+                self.assertEqual(adapter.deliver.call_count, 1)
+                self.assertEqual(workspace.call_count, 1)
+                self.assertEqual(activity.call_count, 1)
+            streak.assert_not_called()
+            reassign.assert_not_called()
+            pause.assert_not_called()
+            evidence.assert_not_called()
+            sync.assert_not_called()
+            self.assertEqual(activity.call_args.args[1]["type"], "dispatch_capacity_wait")
+
+            clock[0] += timedelta(seconds=1)
+            if move_owner:
+                task["owner"] = "OtherOwner"
+                self.assertTrue(sv.prune_event_queue(self.config, state))
+                self.assertEqual(record["status"], "completed")
+                self.assertEqual(record["skip_reason"], "stale_dispatch_event")
+                self.assertFalse(sv.process_queue(self.config, state, {}))
+                self.assertEqual(adapter.deliver.call_count, 1)
+                self.assertEqual(workspace.call_count, 1)
+                streak.assert_not_called()
+                reassign.assert_not_called()
+                return
+            self.assertFalse(sv.prune_event_queue(self.config, state))
+            self.assertTrue(sv.process_queue(self.config, state, {}))
+            self.assertEqual(record["status"], "started")
+            self.assertEqual(record["attempt_count"], 1)
+            self.assertNotIn(mr.DISPATCH_WAIT_KEY, record)
+            self.assertNotIn("next_retry_at", record)
+            worker = state["workers"][record["run_id"]]
+            self.assertEqual(worker["provider"], "antigravity5")
+            self.assertEqual(worker["logical_agent_id"], "antigravity5")
+            self.assertEqual(worker[mr.WORKER_MODEL_KEY], wait["model"])
+            self.assertEqual(worker[mr.WORKER_POOL_KEY], "claude")
+            self.assertEqual(worker["metadata"][mr.WORKER_MODEL_RISK_TIER_KEY], "high")
+            self.assertEqual(task["owner"], "Antigravity5")
+            self.assertEqual(mr._STATE_PATH.read_bytes(), before)
+            deliveries[-1][1].assert_called_once()
+            streak.assert_not_called()
+            reassign.assert_not_called()
+            pause.assert_not_called()
+            evidence.assert_not_called()
+            sync.assert_called_once()
+
+    def test_p0_p1_and_reopened_wait_then_resume_same_owner_exact_model(self):
+        for fields in ({"priority": "P0"}, {"priority": "P1"},
+                       {"priority": "P2", "review_reopen_count": 1}):
+            with self.subTest(fields=fields):
+                self._run_queue(fields)
+
+    def test_both_pools_cooling_wait_then_resume_high_model(self):
+        self._run_queue({"priority": "P0"}, both_cooling=True)
+
+    def test_retired_pin_is_terminal_not_environmental_wait(self):
+        self._run_queue({"priority": "P0"}, terminal_pin=True)
+
+    def test_queue_wait_still_reconciles_moved_assignment(self):
+        self._run_queue({"priority": "P0"}, move_owner=True)
+
+    def test_malformed_wait_does_not_exempt_orphan_or_queue_repair(self):
+        _, _, event = self._queue_context({"priority": "P0"})
+        event["created_at"] = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+        record = {"status": "retry_backoff", "next_retry_at": "invalid",
+                  mr.DISPATCH_WAIT_KEY: {"kind": "model_cooldown"}}
+        self.assertFalse(mr.has_dispatch_cooldown_wait(record))
+        self.assertTrue(sv.queue_event_is_orphaned(self.config, event, record, []))
+        event.pop("created_at")
+        state = {"queue": {"events": {"wait-event": record}}, "workers": {}}
+        with (
+            mock.patch.object(sv, "load_event_queue", return_value=[event]),
+            mock.patch.object(sv, "load_status", return_value={"tasks": []}),
+            mock.patch.object(sv, "stale_dispatch_skip_message", return_value=None),
+            mock.patch.object(sv, "replace_event_queue"),
+        ):
+            self.assertTrue(sv.prune_event_queue(self.config, state))
+        self.assertEqual(record["status"], "queued")
+
+    def _run_retry_poll(self, task_fields, *, move_at=None):
+        task, request, event = self._queue_context(task_fields)
+        now = datetime.now(UTC).replace(microsecond=0)
+        clock = [now]
+
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return clock[0]
+
+        failure = "Error: temporarily unavailable"
+        log = self.path / "parent.log"
+        log.write_text(failure + "\n")
+        marker = self.path / "parent-status.json"
+        marker.write_text(json.dumps({"status": "failed", "exit_code": 1,
+                                      "finished_at": now.isoformat()}))
+        parent = {
+            "run_id": "parent", "provider": "antigravity5", "agent_id": "antigravity5",
+            "task_id": task["id"], "queue_event_id": "wait-event", "status": "retry_backoff",
+            "next_retry_at": now.isoformat(), "attempt_count": 2, "retry_count": 1,
+            "last_error": failure, "log_path": str(log), "runner_status_path": str(marker),
+        }
+        # Prove the real old log would be detected if poll_workers replayed it.
+        self.assertEqual(sv.detect_worker_failure(parent), failure)
+        state = {"workers": {"parent": parent}, "queue": {"events": {"wait-event": {"status": "started"}}}}
+        adapter = mock.Mock()
+
+        def deliver(_request):
+            result, spawn = _deliver(self.config, self.path, task=task, reason=request.reason)
+            if not result.ok:
+                spawn.assert_not_called()
+            return result
+
+        adapter.deliver.side_effect = deliver
+        with ExitStack() as stack:
+            for patch in (
+                mock.patch.object(mr, "_now", side_effect=lambda value=None: value or clock[0]),
+                mock.patch.object(sv, "datetime", Clock),
+                mock.patch.object(sv, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(sv, "load_approval_state", return_value={"pending": [], "history": []}),
+                mock.patch.object(sv, "load_event_queue", return_value=[event]),
+                mock.patch.object(sv, "build_request", return_value=request),
+                mock.patch.object(sv, "build_adapter", return_value=adapter),
+                mock.patch.object(sv, "pid_is_alive", side_effect=lambda pid: pid == 4321),
+                mock.patch.object(sv, "provider_auth_identity_hash", return_value=None),
+                mock.patch.object(sv, "save_runtime_state"),
+                mock.patch.object(sv, "record_worker_runtime_measurement"),
+                mock.patch.object(sv, "preserve_dead_worker_worktree"),
+                mock.patch.object(sv, "observe_worker_worktree_activity", return_value=False),
+                mock.patch.object(sv, "write_activity_log"),
+            ):
+                stack.enter_context(patch)
+            evidence = stack.enter_context(mock.patch.object(sv, "write_failure_evidence"))
+            streak = stack.enter_context(mock.patch.object(sv, "record_task_failure_streak"))
+            reassign = stack.enter_context(mock.patch.object(sv, "maybe_reassign_task_after_worker_failure"))
+            pause = stack.enter_context(mock.patch.object(sv, "mark_provider_dispatch_paused"))
+            retry = stack.enter_context(mock.patch.object(sv, "schedule_worker_retry", wraps=sv.schedule_worker_retry))
+            detect = stack.enter_context(mock.patch.object(sv, "detect_worker_failure", wraps=sv.detect_worker_failure))
+            mr.record_exhaustion(self.config, "antigravity5", 900, pool="claude")
+            before = mr._STATE_PATH.read_bytes()
+            self.assertTrue(sv.poll_workers(self.config, state, {}))
+            deadline = (now + timedelta(seconds=900)).isoformat().replace("+00:00", "Z")
+            for offset in (0, 1, 60, 899):
+                clock[0] = now + timedelta(seconds=offset)
+                sv.poll_workers(self.config, state, {})
+                self.assertEqual(parent["status"], "retry_backoff")
+                self.assertEqual(parent["retry_count"], 1)
+                self.assertEqual(parent["attempt_count"], 2)
+                self.assertEqual(parent["last_error"], failure)
+                self.assertEqual(parent["runner_status"], "failed")
+                self.assertEqual(parent["exit_code"], 1)
+                self.assertEqual(parent["next_retry_at"], deadline)
+                self.assertEqual(parent[mr.DISPATCH_WAIT_KEY]["model"], mr.DEFAULT_HIGH_RISK_MODEL)
+                self.assertEqual(task["owner"], "Antigravity5")
+                self.assertEqual(list(state["workers"]), ["parent"])
+                self.assertEqual(adapter.deliver.call_count, 1)
+                self.assertEqual(mr._STATE_PATH.read_bytes(), before)
+                detect.assert_not_called()
+                retry.assert_not_called()
+                streak.assert_not_called()
+                reassign.assert_not_called()
+                pause.assert_not_called()
+                evidence.assert_not_called()
+            clock[0] = now + timedelta(seconds=move_at if move_at is not None else 900)
+            if move_at is not None:
+                task["owner"] = "OtherOwner"
+                self.assertTrue(sv.poll_workers(self.config, state, {}))
+                self.assertEqual(parent["status"], "superseded")
+                self.assertEqual(adapter.deliver.call_count, 1)
+                self.assertEqual(list(state["workers"]), ["parent"])
+            else:
+                self.assertTrue(sv.poll_workers(self.config, state, {}))
+                self.assertEqual(parent["status"], "retried")
+                self.assertNotIn(mr.DISPATCH_WAIT_KEY, parent)
+                self.assertNotIn("last_wait_reason", parent)
+                replacement = state["workers"][parent["superseded_by_run_id"]]
+                self.assertEqual(replacement["provider"], "antigravity5")
+                self.assertEqual(replacement["parent_run_id"], "parent")
+                self.assertEqual(replacement["retry_count"], 1)
+                self.assertEqual(replacement["attempt_count"], 3)
+                self.assertEqual(replacement[mr.WORKER_MODEL_KEY], mr.DEFAULT_HIGH_RISK_MODEL)
+                self.assertEqual(replacement[mr.WORKER_POOL_KEY], "claude")
+                self.assertEqual(task["owner"], "Antigravity5")
+            self.assertEqual(mr._STATE_PATH.read_bytes(), before)
+            retry.assert_not_called()
+            evidence.assert_not_called()
+            streak.assert_not_called()
+            reassign.assert_not_called()
+            pause.assert_not_called()
+
+    def test_poll_workers_waits_without_replaying_failed_parent_then_resumes(self):
+        for fields in ({"priority": "P0"}, {"priority": "P2", "review_reopen_count": 1}):
+            with self.subTest(fields=fields):
+                self._run_retry_poll(fields)
+
+    def test_poll_wait_reconciles_authority_before_and_at_reset(self):
+        for offset in (899, 900):
+            with self.subTest(offset=offset):
+                self._run_retry_poll({"priority": "P0"}, move_at=offset)
+
+    def test_explicit_gpt_fallback_metadata_and_quota_cool_actual_pool(self):
+        self.settings["model_rotation"]["fallback_model"] = "gpt-oss-120b-medium"
+        self.config["paths"]["activity_log"] = str(self.path / "activity.jsonl")
+        mr.record_exhaustion(self.config, "antigravity5", 900, pool="gemini")
+        gemini_until = mr._load()[mr.cooldown_scope(self.config, "antigravity5")]["gemini_until"]
+        result, spawn = _deliver(self.config, self.path)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.metadata[mr.WORKER_MODEL_KEY], "gpt-oss-120b-medium")
+        self.assertEqual(result.metadata[mr.WORKER_POOL_KEY], "claude")
+        self.assertEqual(spawn.call_args.args[0][spawn.call_args.args[0].index("--model") + 1],
+                         "gpt-oss-120b-medium")
+        worker = _worker("gpt-run", mr.worker_dispatched_pool({"metadata": result.metadata}))
+        worker["metadata"] = result.metadata
+        state = {"workers": {"gpt-run": worker}}
+        kind = sv.classify_worker_failure(self.config, worker, REAL_ERR)["kind"]
+        self.assertEqual(kind, "quota_terminal")
+        self.assertTrue(sv.mark_provider_dispatch_paused(
+            self.config, state, "antigravity5", REAL_ERR, worker_run_id="gpt-run",
+            failure_kind=kind, pause_kind=kind, worker=worker,
+        ))
+        entry = mr._load()[mr.cooldown_scope(self.config, "antigravity5")]
+        self.assertEqual(entry["gemini_until"], gemini_until)
+        self.assertTrue(entry["claude_until"])
+        self.assertIsNone(mr.active_pool(self.config, "antigravity5"))
+        self.assertEqual(worker["metadata"][mr.WORKER_MODEL_KEY], "gpt-oss-120b-medium")
+

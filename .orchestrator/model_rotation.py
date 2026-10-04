@@ -83,10 +83,11 @@ def _canonical_state_path() -> Path:
 _DEFAULT_STATE_PATH = _canonical_state_path()
 _STATE_PATH = _DEFAULT_STATE_PATH
 _MIGRATION_MARKER_SUFFIX = ".legacy-migrated"
-# `agy --model` takes the model ID from `agy models`, not its display label.
-# This was "Claude Sonnet 4.6 (Thinking)" -- the label -- so every quota
-# fallback dispatched an unresolvable model and the claude pool was dead.
-DEFAULT_FALLBACK_MODEL = "claude-sonnet-4-6"
+# IDs, not display labels. Installed `agy models` receipt (2026-10-04):
+# support/handoffs/dev-automatic-deployment-20261004/agy-supported-model-compatibility.json
+# Explicit operator pins are NOT migrated by these source defaults.
+DEFAULT_FALLBACK_MODEL = "claude-sonnet-5-5-high"
+RETIRED_MODEL_IDS = frozenset({"claude-opus-4-6-thinking", "claude-sonnet-4-6"})
 
 POOLS = ("gemini", "claude")
 # Worker metadata keys: the pool/model a worker was ACTUALLY launched on. Quota
@@ -97,17 +98,29 @@ WORKER_POOL_KEY = "antigravity_model_pool"
 WORKER_MODEL_KEY = "antigravity_model"
 WORKER_MODEL_RISK_TIER_KEY = "antigravity_model_risk_tier"
 WORKER_MODEL_REASON_KEY = "antigravity_model_reason"
+DISPATCH_WAIT_KEY = "antigravity_dispatch_wait"
+
+
+class ModelCooldownWait(RuntimeError):
+    """Environmental pre-launch wait, not a quota failure or task defect."""
+
+    def __init__(self, model: str, pool: str, retry_at: datetime):
+        super().__init__(
+            f"Antigravity high-risk model {model!r} is in quota cooldown; "
+            "dispatch deferred, no standard-model downgrade."
+        )
+        self.metadata = {
+            "kind": "model_cooldown",
+            "model": model,
+            "pool": pool,
+            "retry_at": retry_at.isoformat().replace("+00:00", "Z"),
+        }
 
 DEFAULT_STANDARD_MODEL = "gemini-3.7-flash-high"
-# NOT a gemini pro id. `agy --model gemini-3.1-pro-high` is not honoured: the
-# CLI logs "Model ID gemini-3.1-pro-high not in local config, defaulting to
-# CCPA" and the trajectory records `gemini-pro-default` (MODEL_PLACEHOLDER_M16)
-# instead of the requested model -- i.e. every P0/P1 dispatch silently ran on
-# agy's own default rather than the pro tier we asked for. Measured
-# 2026-08-23 across 19 of 23 runs. `claude-opus-4-6-thinking` and
-# `gemini-3.7-flash-high` both round-trip intact (M26 / M298), so high-risk
-# work goes to the strongest id the account actually resolves.
-DEFAULT_HIGH_RISK_MODEL = "claude-opus-4-6-thinking"
+# Keep the existing standard tier; the current registry still supports it.
+# High-risk work requires an explicit supported high-reasoning Claude ID,
+# never an omitted --model or agy's implicit default.
+DEFAULT_HIGH_RISK_MODEL = "claude-opus-5-5-high"
 DEFAULT_HIGH_RISK_PRIORITIES = ("P0", "P1")
 DEFAULT_HIGH_RISK_KEYWORDS = (
     "core/",
@@ -156,7 +169,7 @@ def pool_for_model(model: Any, default: str = "gemini") -> str:
     on a quota failure, so the pool always follows the id being launched.
     """
     value = str(model or "").strip().lower()
-    if value.startswith("claude-"):
+    if value.startswith(("claude-", "gpt-")):
         return "claude"
     return default
 
@@ -177,6 +190,25 @@ def _parse(ts: Any) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
+
+
+def has_dispatch_cooldown_wait(record: dict[str, Any]) -> bool:
+    """Recognize a durable pre-launch wait, including its due/reset tick.
+
+    Expiry is handled by the normal dispatch/retry path, not orphan pruning.
+    An arbitrary retry_backoff record must not gain this exemption.
+    """
+    wait = record.get(DISPATCH_WAIT_KEY)
+    if record.get("status") != "retry_backoff" or not isinstance(wait, dict):
+        return False
+    retry_at = _parse(wait.get("retry_at"))
+    return bool(
+        wait.get("kind") == "model_cooldown"
+        and str(wait.get("model") or "").strip()
+        and wait.get("pool") in POOLS
+        and retry_at is not None
+        and retry_at == _parse(record.get("next_retry_at"))
+    )
 
 
 def _provider_antigravity_settings(
@@ -246,7 +278,7 @@ def task_model_decision(
     task: dict[str, Any] | None = None,
     reason: str | None = None,
 ) -> dict[str, str]:
-    """Choose the Gemini model for one dispatch from durable task risk signals."""
+    """Choose an explicit model for one dispatch from durable task risk signals."""
     policy = model_policy_config(config, provider_id)
     if not policy.get("enabled", True):
         return {"model": "", "risk_tier": "static", "reason": "model_policy_disabled"}
@@ -519,8 +551,15 @@ def pool_cooling(
     config: dict[str, Any] | None, provider_id: str, pool: str, now: datetime | None = None
 ) -> bool:
     """Whether one pool is still inside its quota cooldown window."""
+    return pool_cooldown_until(config, provider_id, pool, now) is not None
+
+
+def pool_cooldown_until(
+    config: dict[str, Any] | None, provider_id: str, pool: str, now: datetime | None = None
+) -> datetime | None:
+    """Existing reset deadline for an exhausted pool; never create a new cooldown."""
     until = _parse(_entry(_load(), cooldown_scope(config, provider_id)).get(f"{pool}_until"))
-    return until is not None and _now(now) < until
+    return until if until is not None and _now(now) < until else None
 
 
 def active_pool(
@@ -575,9 +614,17 @@ def resolve_active_selection(
         }
     pool = active_pool(config, str(provider_id or ""), now=now)
     if pool == "claude":
+        # Gemini quota exhaustion must not replace a high-risk Claude policy
+        # choice with the (possibly legacy/lower-tier) configured fallback.
+        fallback = _fallback_model(config, provider_id)
+        selected_model = (
+            policy_model
+            if decision.get("risk_tier") == "high" and pool_for_model(policy_model) == "claude"
+            else fallback
+        )
         return {
-            "pool": "claude",
-            "model": _fallback_model(config, provider_id),
+            "pool": pool_for_model(selected_model),
+            "model": selected_model,
             "rotating": True,
             "risk_tier": decision.get("risk_tier"),
             "selection_reason": f"quota_pool_fallback:{decision.get('reason')}",
@@ -585,14 +632,12 @@ def resolve_active_selection(
     # 'gemini' or None (both cooling; the probe still goes out on primary) ->
     # primary model (empty string == agy default Gemini).
     selected_model = policy_model or _primary_model(config, provider_id)
-    # The risk policy names the strongest id the account resolves, which for
-    # high-risk work lives in the claude pool. Reaching here means rotation did
-    # NOT grant claude -- either it is cooling, or both pools are -- so billing
-    # that id now would launch straight into the exhausted pool. Drop to the
-    # standard gemini id instead of the tier the policy asked for.
-    if pool_for_model(selected_model) == "claude" and pool_cooling(
-        config, str(provider_id or ""), "claude", now
-    ):
+    # Do not launch into an exhausted Claude pool or mislabel a downgrade as
+    # high risk. Bounded standard work retains the existing Gemini fallback.
+    cooldown_until = pool_cooldown_until(config, str(provider_id or ""), "claude", now)
+    if pool_for_model(selected_model) == "claude" and cooldown_until is not None:
+        if decision.get("risk_tier") == "high":
+            raise ModelCooldownWait(selected_model, "claude", cooldown_until)
         selected_model = str(
             model_policy_config(config, provider_id).get("standard_model") or DEFAULT_STANDARD_MODEL
         ).strip()

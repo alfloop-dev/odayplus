@@ -714,6 +714,33 @@ def process_queue(
         # Successful launch persists and replaces nested state records.
         record = queue_event_record(state, event_id)
         if not ok:
+            delivery_metadata = delivery.get("metadata") if isinstance(delivery, dict) else None
+            dispatch_wait = (
+                delivery_metadata.get(model_rotation.DISPATCH_WAIT_KEY)
+                if isinstance(delivery_metadata, dict) else None
+            )
+            if isinstance(dispatch_wait, dict) and dispatch_wait.get("kind") == "model_cooldown":
+                # Use the existing environmental queue wait/retry state. No
+                # worker launched: do not spend the failure/retry budget,
+                # reassign the owner, or record another pool exhaustion.
+                record["status"] = "retry_backoff"
+                record["next_retry_at"] = dispatch_wait["retry_at"]
+                record["last_wait_reason"] = outcome
+                record[model_rotation.DISPATCH_WAIT_KEY] = dict(dispatch_wait)
+                record["attempt_count"] = max(0, int(record.get("attempt_count", 0)) - 1)
+                write_activity_log(
+                    config,
+                    {
+                        "type": "dispatch_capacity_wait",
+                        "provider": request_provider,
+                        "task_id": request_task_id,
+                        "queue_event_id": event_id,
+                        "message": outcome,
+                        **dispatch_wait,
+                    },
+                )
+                changed = True
+                continue
             failure_worker = {
                 "provider": request_provider,
                 "agent_id": request_agent_id,
@@ -832,6 +859,8 @@ def process_queue(
         record["lease_expires_at"] = queue_lease_expiry(config, queue_started_at)
         record["processed_at"] = isoformat_utc(queue_started_at)
         record.pop("last_wait_reason", None)
+        record.pop(model_rotation.DISPATCH_WAIT_KEY, None)
+        record.pop("next_retry_at", None)
         sync_dispatched_task_status(config, event)
         changed = True
     return changed
@@ -1400,6 +1429,13 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
         # failure that triggered the fallback -- replaying it would re-streak the
         # task and can reassign it away from the successor that is running now.
         if str(worker.get("status") or "").lower() in HANDED_OFF_WORKER_STATUSES:
+            continue
+        if not alive and model_rotation.has_dispatch_cooldown_wait(worker):
+            # retry_due_workers owns this pre-launch environmental wait. The
+            # dead parent's log/exit marker describes the *original* failure,
+            # already charged to its budget, not a new inference attempt.
+            # Keep assignment/orphan reconciliation above active while never
+            # replaying that failure or replacing the pool-reset deadline.
             continue
         pending = pending_by_run.get(worker["run_id"], [])
         resolved = resolved_by_run.get(worker["run_id"], [])

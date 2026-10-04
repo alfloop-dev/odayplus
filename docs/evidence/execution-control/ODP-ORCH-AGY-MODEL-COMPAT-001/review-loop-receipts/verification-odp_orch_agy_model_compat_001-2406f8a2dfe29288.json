@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "kind": "verification_receipt",
+  "task_id": "ODP-ORCH-AGY-MODEL-COMPAT-001",
+  "head_sha": "3d53be07537585f91ed7376568a09ac1cbd76fd1",
+  "command": "python3 -m unittest discover -s .orchestrator -p test_model_rotation.py",
+  "command_audit": {
+    "command": "python3 -m unittest discover -s .orchestrator -p test_model_rotation.py",
+    "ok": true,
+    "violations": [],
+    "details": [],
+    "runner": "unittest"
+  },
+  "runner": "unittest",
+  "selection": {
+    "scope": "targeted",
+    "items": [
+      "test_model_rotation.py"
+    ],
+    "fingerprint": "0540095b00e131967104e72eb128390c"
+  },
+  "exit_code": 1,
+  "signal": null,
+  "timed_out": false,
+  "outcome": "failed",
+  "passed": false,
+  "duration_seconds": 1.667,
+  "started_at": "2026-10-04T12:32:24Z",
+  "finished_at": "2026-10-04T12:32:25Z",
+  "recorded_at": "2026-10-04T12:32:25Z",
+  "run_kind": "baseline",
+  "attempt": 1,
+  "retry_reason": null,
+  "agent": "Pi",
+  "run_id": "pi-20261004T122510Z-05b6643d",
+  "produced_by": "delivery_toolchain/git/task_verification.py",
+  "output_tail": "[2026-10-04 12:47:24] worker superseded: task=ODP-TEST-ROT provider=antigravity5 run=parent\n[2026-10-04 12:47:25] worker superseded: task=ODP-TEST-ROT provider=antigravity5 run=parent\n......E..........\n======================================================================\nERROR: test_queue_wait_still_reconciles_moved_assignment (test_model_rotation.CooldownLifecycleTests.test_queue_wait_still_reconciles_moved_assignment)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/tmp/pantheon-worker-worktrees/pantheon/odp-orch-agy-model-compat-001/.orchestrator/test_model_rotation.py\", line 1405, in test_queue_wait_still_reconciles_moved_assignment\n    self._run_queue({\"priority\": \"P0\"}, move_owner=True)\n  File \"/tmp/pantheon-worker-worktrees/pantheon/odp-orch-agy-model-compat-001/.orchestrator/test_model_rotation.py\", line 1362, in _run_queue\n    self.assertTrue(sv.prune_event_queue(self.config, state))\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/pantheon-worker-worktrees/pantheon/odp-orch-agy-model-compat-001/.orchestrator/supervisor.py\", line 5446, in prune_event_queue\n    replace_event_queue(config, original_events=events, retained_events=kept)\n  File \"/tmp/pantheon-worker-worktrees/pantheon/odp-orch-agy-model-compat-001/.orchestrator/runtime_state.py\", line 1211, in replace_event_queue\n    path = config_path(config, \"event_queue\")\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/pantheon-worker-worktrees/pantheon/odp-orch-agy-model-compat-001/.orchestrator/common.py\", line 395, in config_path\n    raise KeyError(f\"Missing config path for {key}\")\nKeyError: 'Missing config path for event_queue'\n\n----------------------------------------------------------------------\nRan 17 tests in 1.296s\n\nFAILED (errors=1)\n",
+  "receipt_id": "2406f8a2dfe29288"
+}

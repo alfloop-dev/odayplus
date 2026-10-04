@@ -1,0 +1,22 @@
+[
+  {
+    "op": "test",
+    "path": "/providers/antigravity/antigravity/model_rotation/fallback_model",
+    "value": "claude-sonnet-4-6"
+  },
+  {
+    "op": "test",
+    "path": "/providers/antigravity2/antigravity/model_rotation/fallback_model",
+    "value": "claude-sonnet-4-6"
+  },
+  {
+    "op": "replace",
+    "path": "/providers/antigravity/antigravity/model_rotation/fallback_model",
+    "value": "claude-sonnet-5-5-high"
+  },
+  {
+    "op": "replace",
+    "path": "/providers/antigravity2/antigravity/model_rotation/fallback_model",
+    "value": "claude-sonnet-5-5-high"
+  }
+]
