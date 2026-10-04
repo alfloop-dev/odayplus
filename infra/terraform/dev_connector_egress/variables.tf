@@ -79,13 +79,13 @@ variable "enable_firewall" {
 }
 
 variable "enable_shared_dns" {
-  description = "Separate opt-in for VPC-wide private googleapis.com/run.app zones. Requires independent impact review."
+  description = "Separate opt-in for VPC-wide restricted Google/private run.app DNS. Requires independent impact review; GKE policy remains unchanged."
   type        = bool
   default     = false
 }
 
 variable "shared_dns_scope_ack" {
-  description = "Exact acknowledged shared scope: default:googleapis.com.,run.app."
+  description = "Exact acknowledged shared scope: default:googleapis.com.=restricted4,run.app.=private8. Old private-Google saved plans/approvals must not be reused."
   type        = string
   default     = ""
 }
