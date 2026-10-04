@@ -20,8 +20,9 @@ locals {
   # Automatically assigned immutable unique tag per Serverless VPC Access's
   # documented contract, not a VM inventory readback. Never use universal
   # vpc-connector or derive a target from internal aet-* firewall names.
-  target_tag = "vpc-connector-${var.region}-${var.connector_name}"
-  vip_ips    = ["199.36.153.8", "199.36.153.9", "199.36.153.10", "199.36.153.11"]
+  target_tag     = "vpc-connector-${var.region}-${var.connector_name}"
+  restricted_ips = ["199.36.153.4", "199.36.153.5", "199.36.153.6", "199.36.153.7"]
+  private_ips    = ["199.36.153.8", "199.36.153.9", "199.36.153.10", "199.36.153.11"]
   dns_zones = var.enable_shared_dns ? {
     googleapis = "googleapis.com."
     run        = "run.app."
@@ -55,8 +56,8 @@ resource "terraform_data" "binding" {
       error_message = "Existing READY connector must be on default with the exact reviewed CIDR. Do not move/recreate it."
     }
     precondition {
-      condition     = !var.enable_shared_dns || (var.shared_dns_scope_ack == "default:googleapis.com.,run.app." && can(regex("^ODP-DEV-[A-Z0-9-]+:[A-Za-z0-9._/-]+$", var.shared_dns_review_ref)))
-      error_message = "Shared default-network DNS requires separate exact-scope reviewed authority reference; no connector-local DNS scope exists here."
+      condition     = !var.enable_shared_dns || (var.shared_dns_scope_ack == "default:googleapis.com.=restricted4,run.app.=private8" && can(regex("^ODP-DEV-[A-Z0-9-]+:[A-Za-z0-9._/-]+$", var.shared_dns_review_ref)))
+      error_message = "Shared default-network DNS requires reviewed restricted4 Google/private8 run.app scope and authority reference; old private8 Google scope is invalid. No connector-local DNS scope exists here."
     }
     precondition {
       condition     = !var.enable_firewall || (var.enable_shared_dns && var.connector_scope_review_confirmed)
@@ -150,10 +151,12 @@ resource "google_dns_record_set" "vip" {
   for_each     = local.dns_zones
   project      = var.project_id
   managed_zone = google_dns_managed_zone.private[each.key].name
-  name         = each.key == "googleapis" ? "private.googleapis.com." : each.value
+  # Pin the canonical restricted endpoint explicitly: a wildcard alone would
+  # shadow it (and a wildcard CNAME to itself would produce a DNS loop).
+  name         = each.key == "googleapis" ? "restricted.googleapis.com." : each.value
   type         = "A"
   ttl          = 300
-  rrdatas      = local.vip_ips
+  rrdatas      = each.key == "googleapis" ? local.restricted_ips : local.private_ips
 }
 
 resource "google_dns_record_set" "wildcard" {
