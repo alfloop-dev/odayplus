@@ -98,6 +98,23 @@ WORKER_POOL_KEY = "antigravity_model_pool"
 WORKER_MODEL_KEY = "antigravity_model"
 WORKER_MODEL_RISK_TIER_KEY = "antigravity_model_risk_tier"
 WORKER_MODEL_REASON_KEY = "antigravity_model_reason"
+DISPATCH_WAIT_KEY = "antigravity_dispatch_wait"
+
+
+class ModelCooldownWait(RuntimeError):
+    """Environmental pre-launch wait, not a quota failure or task defect."""
+
+    def __init__(self, model: str, pool: str, retry_at: datetime):
+        super().__init__(
+            f"Antigravity high-risk model {model!r} is in quota cooldown; "
+            "dispatch deferred, no standard-model downgrade."
+        )
+        self.metadata = {
+            "kind": "model_cooldown",
+            "model": model,
+            "pool": pool,
+            "retry_at": retry_at.isoformat().replace("+00:00", "Z"),
+        }
 
 DEFAULT_STANDARD_MODEL = "gemini-3.7-flash-high"
 # Keep the existing standard tier; the current registry still supports it.
@@ -152,7 +169,7 @@ def pool_for_model(model: Any, default: str = "gemini") -> str:
     on a quota failure, so the pool always follows the id being launched.
     """
     value = str(model or "").strip().lower()
-    if value.startswith("claude-"):
+    if value.startswith(("claude-", "gpt-")):
         return "claude"
     return default
 
@@ -515,8 +532,15 @@ def pool_cooling(
     config: dict[str, Any] | None, provider_id: str, pool: str, now: datetime | None = None
 ) -> bool:
     """Whether one pool is still inside its quota cooldown window."""
+    return pool_cooldown_until(config, provider_id, pool, now) is not None
+
+
+def pool_cooldown_until(
+    config: dict[str, Any] | None, provider_id: str, pool: str, now: datetime | None = None
+) -> datetime | None:
+    """Existing reset deadline for an exhausted pool; never create a new cooldown."""
     until = _parse(_entry(_load(), cooldown_scope(config, provider_id)).get(f"{pool}_until"))
-    return until is not None and _now(now) < until
+    return until if until is not None and _now(now) < until else None
 
 
 def active_pool(
@@ -591,14 +615,10 @@ def resolve_active_selection(
     selected_model = policy_model or _primary_model(config, provider_id)
     # Do not launch into an exhausted Claude pool or mislabel a downgrade as
     # high risk. Bounded standard work retains the existing Gemini fallback.
-    if pool_for_model(selected_model) == "claude" and pool_cooling(
-        config, str(provider_id or ""), "claude", now
-    ):
+    cooldown_until = pool_cooldown_until(config, str(provider_id or ""), "claude", now)
+    if pool_for_model(selected_model) == "claude" and cooldown_until is not None:
         if decision.get("risk_tier") == "high":
-            raise ValueError(
-                f"Antigravity high-risk model {selected_model!r} is in quota cooldown; "
-                "dispatch deferred, no standard-model downgrade."
-            )
+            raise ModelCooldownWait(selected_model, "claude", cooldown_until)
         selected_model = str(
             model_policy_config(config, provider_id).get("standard_model") or DEFAULT_STANDARD_MODEL
         ).strip()

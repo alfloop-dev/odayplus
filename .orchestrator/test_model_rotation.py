@@ -1178,7 +1178,10 @@ class SupportedModelCompatibilityTests(unittest.TestCase):
         for task in ({"priority": "P0"}, {"review_reopen_count": 1}):
             result, spawn = _deliver(self.config, self.path, task=task)
             self.assertFalse(result.ok)
-            self.assertIn("no standard-model downgrade", result.error)
+            self.assertIsNone(result.error)
+            self.assertIn("no standard-model downgrade", result.notes)
+            self.assertEqual(result.metadata[mr.DISPATCH_WAIT_KEY]["model"], mr.DEFAULT_HIGH_RISK_MODEL)
+            self.assertEqual(result.metadata[mr.DISPATCH_WAIT_KEY]["pool"], "claude")
             spawn.assert_not_called()
         # Standard work still runs on the available Gemini pool.
         result, _ = _deliver(self.config, self.path)
@@ -1234,4 +1237,168 @@ class SupportedModelCompatibilityTests(unittest.TestCase):
         test_dispatched_pool_overrides_current_active_pool(self.path)
         test_two_concurrent_gemini_workers_never_exhaust_claude(self.path)
         test_same_worker_failure_rotates_only_once(self.path)
+
+
+class CooldownLifecycleTests(unittest.TestCase):
+    """Real adapter -> launch -> queue wait/resume, with no live processes."""
+
+    setUp = SupportedModelCompatibilityTests.setUp
+
+    def _queue_context(self, task):
+        from adapters.base import DeliveryRequest
+
+        task = {"id": "ODP-TEST-ROT", "status": "in_progress", "owner": "Antigravity5",
+                "reviewer": "Codex", "depends_on": [], **task}
+        request = DeliveryRequest(
+            agent_id="antigravity5", provider="antigravity5", delivery_mode="antigravity",
+            task_id=task["id"], message="wake", reason="owned_in_progress_dispatch",
+            metadata={"task": task},
+        )
+        event = {"event_id": "wait-event", "task_id": task["id"], "target_agent": "antigravity5",
+                 "target_display_name": "Antigravity5", "provider": "antigravity5",
+                 "reason": request.reason, "message": "wake"}
+        self.config["schema"] = {"tasks_path": "tasks", "task_id_field": "id",
+                                 "assignee_field": "owner", "reviewer_field": "reviewer"}
+        self.config["ready_dispatcher"] = {"owned_statuses": ["todo", "in_progress"],
+                                           "active_worker_statuses": ["running"]}
+        return task, request, event
+
+    def _run_queue(self, task_fields, *, both_cooling=False, terminal_pin=False):
+        task, request, event = self._queue_context(task_fields)
+        state = {"queue": {"events": {}}, "workers": {}}
+        clock = [datetime.now(UTC).replace(microsecond=0)]
+
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return clock[0]
+
+        deliveries = []
+
+        def deliver(_request):
+            result, spawn = _deliver(self.config, self.path, task=task, reason=request.reason)
+            deliveries.append((result, spawn))
+            return result
+
+        adapter = mock.Mock()
+        adapter.deliver.side_effect = deliver
+        with (
+            mock.patch.object(mr, "_now", side_effect=lambda now=None: now or clock[0]),
+            mock.patch.object(sv, "datetime", Clock),
+            mock.patch.object(sv, "load_event_queue", return_value=[event]),
+            mock.patch.object(sv, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(sv, "build_request", return_value=request),
+            mock.patch.object(sv, "prepare_worker_workspace", return_value=(True, None)),
+            mock.patch.object(sv, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(sv, "select_dispatch_agent_id", return_value="antigravity5"),
+            mock.patch.object(sv, "build_adapter", return_value=adapter),
+            mock.patch.object(sv, "provider_auth_identity_hash", return_value=None),
+            mock.patch.object(sv, "save_runtime_state"),
+            mock.patch.object(sv, "record_worker_runtime_measurement"),
+            mock.patch.object(sv, "sync_dispatched_task_status") as sync,
+            mock.patch.object(sv, "write_activity_log") as activity,
+            mock.patch.object(sv, "write_failure_evidence", return_value=None) as evidence,
+            mock.patch.object(sv, "record_task_failure_streak", wraps=sv.record_task_failure_streak) as streak,
+            mock.patch.object(sv, "maybe_reassign_task_after_worker_failure", return_value=None) as reassign,
+            mock.patch.object(sv, "mark_provider_dispatch_paused") as pause,
+        ):
+            if terminal_pin:
+                self.settings["model_policy"] = {"high_risk_model": "claude-opus-4-6-thinking"}
+                self.assertTrue(sv.process_queue(self.config, state, {}))
+                self.assertEqual(state["queue"]["events"][event["event_id"]]["status"], "failed")
+                self.assertEqual(streak.call_args.kwargs["failure_kind"], "terminal")
+                self.assertEqual(streak.call_count, 1)
+                reassign.assert_called_once()
+                pause.assert_not_called()
+                self.assertIsNone(deliveries[0][0].metadata.get(mr.DISPATCH_WAIT_KEY))
+                deliveries[0][1].assert_not_called()
+                return
+
+            mr.record_exhaustion(self.config, "antigravity5", 900, pool="claude")
+            if both_cooling:
+                mr.record_exhaustion(self.config, "antigravity5", 900, pool="gemini")
+            before = mr._STATE_PATH.read_bytes()
+            self.assertTrue(sv.process_queue(self.config, state, {}))
+            record = state["queue"]["events"][event["event_id"]]
+            self.assertEqual(record["status"], "retry_backoff")
+            wait = record[mr.DISPATCH_WAIT_KEY]
+            self.assertEqual(wait["model"], "claude-opus-5-5-high")
+            self.assertEqual(wait["pool"], "claude")
+            expected_until = (clock[0] + timedelta(seconds=900)).isoformat().replace("+00:00", "Z")
+            self.assertEqual(record["next_retry_at"], expected_until)
+            self.assertEqual(record["attempt_count"], 0)
+            self.assertFalse(record.get("retry_count"))
+            self.assertEqual(state["workers"], {})
+            self.assertEqual(task["owner"], "Antigravity5")
+            self.assertEqual(mr._STATE_PATH.read_bytes(), before)
+            deliveries[0][1].assert_not_called()
+            # Another tick before expiry neither launches nor burns a retry.
+            self.assertFalse(sv.process_queue(self.config, state, {}))
+            self.assertEqual(adapter.deliver.call_count, 1)
+            self.assertEqual(record["attempt_count"], 0)
+            streak.assert_not_called()
+            reassign.assert_not_called()
+            pause.assert_not_called()
+            evidence.assert_not_called()
+            sync.assert_not_called()
+            self.assertEqual(activity.call_args.args[1]["type"], "dispatch_capacity_wait")
+
+            clock[0] += timedelta(seconds=900)
+            self.assertTrue(sv.process_queue(self.config, state, {}))
+            self.assertEqual(record["status"], "started")
+            self.assertEqual(record["attempt_count"], 1)
+            self.assertNotIn(mr.DISPATCH_WAIT_KEY, record)
+            self.assertNotIn("next_retry_at", record)
+            worker = state["workers"][record["run_id"]]
+            self.assertEqual(worker["provider"], "antigravity5")
+            self.assertEqual(worker["logical_agent_id"], "antigravity5")
+            self.assertEqual(worker[mr.WORKER_MODEL_KEY], wait["model"])
+            self.assertEqual(worker[mr.WORKER_POOL_KEY], "claude")
+            self.assertEqual(worker["metadata"][mr.WORKER_MODEL_RISK_TIER_KEY], "high")
+            self.assertEqual(task["owner"], "Antigravity5")
+            self.assertEqual(mr._STATE_PATH.read_bytes(), before)
+            deliveries[-1][1].assert_called_once()
+            streak.assert_not_called()
+            reassign.assert_not_called()
+            pause.assert_not_called()
+            evidence.assert_not_called()
+            sync.assert_called_once()
+
+    def test_p0_p1_and_reopened_wait_then_resume_same_owner_exact_model(self):
+        for fields in ({"priority": "P0"}, {"priority": "P1"},
+                       {"priority": "P2", "review_reopen_count": 1}):
+            with self.subTest(fields=fields):
+                self._run_queue(fields)
+
+    def test_both_pools_cooling_wait_then_resume_high_model(self):
+        self._run_queue({"priority": "P0"}, both_cooling=True)
+
+    def test_retired_pin_is_terminal_not_environmental_wait(self):
+        self._run_queue({"priority": "P0"}, terminal_pin=True)
+
+    def test_explicit_gpt_fallback_metadata_and_quota_cool_actual_pool(self):
+        self.settings["model_rotation"]["fallback_model"] = "gpt-oss-120b-medium"
+        self.config["paths"]["activity_log"] = str(self.path / "activity.jsonl")
+        mr.record_exhaustion(self.config, "antigravity5", 900, pool="gemini")
+        gemini_until = mr._load()[mr.cooldown_scope(self.config, "antigravity5")]["gemini_until"]
+        result, spawn = _deliver(self.config, self.path)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.metadata[mr.WORKER_MODEL_KEY], "gpt-oss-120b-medium")
+        self.assertEqual(result.metadata[mr.WORKER_POOL_KEY], "claude")
+        self.assertEqual(spawn.call_args.args[0][spawn.call_args.args[0].index("--model") + 1],
+                         "gpt-oss-120b-medium")
+        worker = _worker("gpt-run", mr.worker_dispatched_pool({"metadata": result.metadata}))
+        worker["metadata"] = result.metadata
+        state = {"workers": {"gpt-run": worker}}
+        kind = sv.classify_worker_failure(self.config, worker, REAL_ERR)["kind"]
+        self.assertEqual(kind, "quota_terminal")
+        self.assertTrue(sv.mark_provider_dispatch_paused(
+            self.config, state, "antigravity5", REAL_ERR, worker_run_id="gpt-run",
+            failure_kind=kind, pause_kind=kind, worker=worker,
+        ))
+        entry = mr._load()[mr.cooldown_scope(self.config, "antigravity5")]
+        self.assertEqual(entry["gemini_until"], gemini_until)
+        self.assertTrue(entry["claude_until"])
+        self.assertIsNone(mr.active_pool(self.config, "antigravity5"))
+        self.assertEqual(worker["metadata"][mr.WORKER_MODEL_KEY], "gpt-oss-120b-medium")
 

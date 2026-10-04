@@ -16,9 +16,16 @@ The removed IDs are `claude-opus-4-6-thinking` and `claude-sonnet-4-6`.
 | Standard work with Gemini quota exhausted | `claude-sonnet-5-5-high` |
 
 High-risk Claude policy remains Opus even when Gemini quota is exhausted.
-When its Claude pool is cooling, high-risk delivery fails clearly rather than
-launching on standard Gemini or labelling a downgrade as high risk. Standard
+When its Claude pool is cooling, high-risk delivery produces a structured
+pre-launch environmental wait, with the exact selected model, quota pool and
+existing reset deadline. The launch boundary does not emit a failed-worker
+receipt. The queue uses its existing retry-backoff state without spending the
+failure/retry budget, reassigning the owner, or recording new quota exhaustion.
+After expiry it revalidates normal dispatch gates and resumes the same owner
+on the high model, never standard Gemini or a labelled downgrade. Standard
 work retains its existing rotation semantics. No reset/cooldown policy changed.
+Explicit `gpt-*` fallback models bill the existing Claude/GPT quota pool; their
+immutable dispatch metadata ensures quota failure cools Claude/GPT, not Gemini.
 The existing separate `--effort` rule is retained: high Claude IDs encode their
 reasoning level and do not receive an additional effort override.
 
@@ -51,6 +58,26 @@ PR1409 and its six findings/history/count, original owner/reviewer, and
 continuation gates remain untouched. This source fix neither admits that task
 nor authorizes an alternate worker/runtime/release lane. Any later runtime probe
 requires the original task's eligibility/authority and a normal admitted worker.
+
+## Review repair and base composition
+
+PR #1413's independent review identified the generic cooldown-failure path and
+GPT fallback pool attribution. Both are repaired in this same task branch.
+Current base `a2dbb63eb19d2427baf007b7b6455d25ec007e2f` was merged normally,
+without conflicts or rewriting/discarding task history. Canonical metadata
+registered `.orchestrator/supervisor.py` (only launch-result handling) and
+`.orchestrator/worker_lifecycle.py` (only queue wait/resume handling) before
+editing. No failure classifier changes are needed: this explicit structured
+pre-launch wait bypasses failure processing; genuine config/terminal errors
+retain the existing classifier/streak/reassignment path.
+
+New `CooldownLifecycleTests` exercise real adapter -> launch -> queue handling,
+P0/P1/reopened work, both-pools cooling, no-launch/no-failure before reset,
+same-owner/exact-model resumption at reset, genuine terminal config failure,
+and explicit GPT fallback metadata plus actual quota handling. Process/auth,
+workspace/status persistence and activity logging are mocked; time and cooldown
+files are isolated. The new focused selection was registered before execution:
+`uv run --python 3.12 pytest -q .orchestrator/test_model_rotation.py -k CooldownLifecycleTests`.
 
 ## Focused verification
 

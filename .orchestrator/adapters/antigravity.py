@@ -172,6 +172,19 @@ class AntigravityAdapter(BaseAdapter):
                     "explicit config pin was preserved. Operator migration requires review; "
                     "no CLI-default fallback was launched."
                 )
+        except model_rotation.ModelCooldownWait as exc:
+            # No process was launched. Carry the existing reset deadline to the
+            # queue as an environmental wait, not a new quota/failure signal.
+            return DeliveryResult(
+                ok=False,
+                adapter=self.name,
+                mode="antigravity",
+                target=display_name,
+                auto_delivered=False,
+                manual_confirmation_required=False,
+                notes=str(exc),
+                metadata={model_rotation.DISPATCH_WAIT_KEY: exc.metadata},
+            )
         except ValueError as exc:
             return DeliveryResult(
                 ok=False,
