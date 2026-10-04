@@ -32,6 +32,9 @@ WORKFLOW = ".github/workflows/deploy-dev.yml"
 CI_WORKFLOW = ".github/workflows/ci.yml"
 AUTHORITY = "protected-dev-ci-standing-policy-v1"
 DEPLOY_JOB = "Deploy the admitted artifact by immutable digest"
+# The step whose success means dev traffic and live gates are committed; later
+# evidence-publication steps can still fail the job without undoing it.
+LIVE_STEP = "Deploy Cloud Run by immutable digest"
 DEPLOYED_ARTIFACT = "deployed-release-manifest-dev"
 COMPONENTS = ("api", "web", "worker", "scheduler")
 
@@ -131,14 +134,32 @@ def parse_iso(value: str | None) -> datetime:
         return datetime.min.replace(tzinfo=UTC)
 
 
+def live_step_committed(job: dict[str, Any]) -> str | None:
+    """Completion time of the live-commit step in a job that did not succeed.
+
+    ``deploy_cloud_run_waji.sh`` commits only after every live gate passes and
+    rolls back any earlier failure, so a failed job whose live step succeeded
+    still changed live dev. Unreadable step outcomes cannot prove otherwise.
+    """
+    steps = job.get("steps")
+    if not isinstance(steps, list):
+        raise Refused("Dev deploy job step outcomes are unreadable; no safe predecessor selected.")
+    for step in steps:
+        if step.get("name") == LIVE_STEP and step.get("conclusion") == "success":
+            return step.get("completed_at") or job.get("completed_at") or ""
+    return None
+
+
 def deployed_attempts(run: dict[str, Any]) -> list[dict[str, Any]]:
-    """Attempts of ``run`` whose deploy job succeeded, newest first.
+    """Attempts of ``run`` that changed live dev, newest first.
 
     Reruns share one run id, and the run-level status/conclusion only reflect
     the latest attempt. A successful first attempt therefore stays live even
     while a rerun is in progress or after it fails, so success is read per
-    attempt. The current attempt of this very run is excluded: it has not
-    deployed anything yet.
+    attempt. An attempt whose live step committed but whose job failed later
+    (for example while publishing evidence) is live yet ``complete`` is false:
+    its deployed manifest is not proven. The current attempt of this very run
+    is excluded: it has not deployed anything yet.
     """
     latest = int(run.get("run_attempt") or 1)
     if str(run["id"]) == os.environ.get("GITHUB_RUN_ID"):
@@ -147,20 +168,30 @@ def deployed_attempts(run: dict[str, Any]) -> list[dict[str, Any]]:
     for attempt in range(latest, 0, -1):
         jobs = api(f"actions/runs/{run['id']}/attempts/{attempt}/jobs?per_page=100")["jobs"]
         for j in jobs:
-            if j.get("name") == DEPLOY_JOB and j.get("conclusion") == "success":
-                completed_at = (
+            if j.get("name") != DEPLOY_JOB:
+                continue
+            if j.get("conclusion") == "success":
+                complete, completed_at = True, (
                     j.get("completed_at")
                     or j.get("started_at")
                     or run.get("updated_at")
                     or run.get("created_at")
                     or ""
                 )
-                found.append({
-                    "attempt": attempt,
-                    "completed_at": completed_at,
-                    "job_id": j.get("id"),
-                })
+            elif j.get("conclusion") == "skipped":
                 break
+            else:
+                committed = live_step_committed(j)
+                if committed is None:
+                    break
+                complete, completed_at = False, committed
+            found.append({
+                "attempt": attempt,
+                "completed_at": completed_at,
+                "job_id": j.get("id"),
+                "complete": complete,
+            })
+            break
     return found
 
 
@@ -223,11 +254,12 @@ def previous_deployment() -> tuple[dict[str, Any], dict[str, Any]] | None:
                 continue
             # A successful dev deploy job may have changed live dev; without
             # its environment proof an older predecessor cannot be trusted.
-            if not dev_environment_deployed(run):
+            if attempts[0]["complete"] and not dev_environment_deployed(run):
                 raise Refused("Successful dev deploy job lacks dev environment proof; "
                               "no safe predecessor selected.")
             completed_dt = parse_iso(attempts[0]["completed_at"])
-            successful.append((completed_dt, int(run.get("id") or 0), run, title))
+            successful.append((completed_dt, int(run.get("id") or 0), run, title,
+                               attempts[0]["complete"]))
         if len(runs) < 100:
             reached_end = True
             break
@@ -238,7 +270,15 @@ def previous_deployment() -> tuple[dict[str, Any], dict[str, Any]] | None:
     if not successful:
         return None
 
-    _, _, best_run, title = max(successful, key=lambda item: (item[0], item[1]))
+    _, _, best_run, title, complete = max(successful, key=lambda item: (item[0], item[1]))
+    if not complete:
+        # Live dev is this run's release, but its job failed after the live
+        # commit, so the deployed manifest is unproven. Neither an older
+        # predecessor nor a first release is true; a signed manual dev deploy
+        # naming the live release's rollback manifest restores the evidence.
+        raise Refused("Latest dev deploy committed live but its job failed afterwards; "
+                      "its deployed manifest is unproven, so no predecessor is selected. "
+                      "Run a signed manual dev deploy with an explicit rollback manifest.")
 
     artifacts = api(f"actions/runs/{best_run['id']}/artifacts?per_page=100")["artifacts"]
     matches = [a for a in artifacts if a.get("name") == DEPLOYED_ARTIFACT]

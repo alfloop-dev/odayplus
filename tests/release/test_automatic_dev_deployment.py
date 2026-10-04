@@ -136,6 +136,14 @@ def archive(manifest, name="RELEASE_MANIFEST.json"):
     return data.getvalue()
 
 
+def live_steps(live, *later):
+    """Deploy job step outcomes: the live-commit step, then evidence publication."""
+    names = ["Download the successfully deployed manifest",
+             "Retain the live-verified dev predecessor for the next update"]
+    return [{"name": auto.LIVE_STEP, "conclusion": live, "completed_at": "2026-07-27T14:57:00Z"},
+            *({"name": n, "conclusion": c} for n, c in zip(names, later, strict=False))]
+
+
 def deploy_run(**change):
     return {"id": 90, "path": auto.WORKFLOW, "event": "workflow_dispatch",
             "repository": {"full_name": REPO}, "head_repository": {"full_name": REPO},
@@ -169,7 +177,8 @@ def fake_api(manifest, *, artifact_name=auto.DEPLOYED_ARTIFACT, expired=False,
             result = (attempt_jobs or {}).get(attempt, job_result)
             if result is None:
                 return {"jobs": []}
-            return {"jobs": [{"name": auto.DEPLOY_JOB, "conclusion": result}]}
+            return {"jobs": [{"name": auto.DEPLOY_JOB, "conclusion": result,
+                              "steps": live_steps("failure")}]}
         if path.startswith("deployments?"):
             assert "environment=dev" in path
             return [{"id": 7}]
@@ -394,7 +403,8 @@ def test_deployment_ordering_selects_latest_completion_over_creation_order(monke
     runs = [run2, run1]
     run_jobs = {
         (101, 2): [{"name": auto.DEPLOY_JOB, "conclusion": "success", "completed_at": "2026-07-27T15:00:00Z"}],
-        (101, 1): [{"name": auto.DEPLOY_JOB, "conclusion": "failure", "completed_at": "2026-07-27T14:52:00Z"}],
+        (101, 1): [{"name": auto.DEPLOY_JOB, "conclusion": "failure", "completed_at": "2026-07-27T14:52:00Z",
+                     "steps": live_steps("failure")}],
         (102, 1): [{"name": auto.DEPLOY_JOB, "conclusion": "success", "completed_at": "2026-07-27T14:58:00Z"}],
     }
     run_manifests = {101: manifest1, 102: manifest2}
@@ -422,7 +432,8 @@ def test_deduplication_after_later_deployment_by_older_run(monkeypatch, context,
     runs = [run2, run1]
     run_jobs = {
         (101, 2): [{"name": auto.DEPLOY_JOB, "conclusion": "success", "completed_at": "2026-07-27T15:00:00Z"}],
-        (101, 1): [{"name": auto.DEPLOY_JOB, "conclusion": "failure", "completed_at": "2026-07-27T14:52:00Z"}],
+        (101, 1): [{"name": auto.DEPLOY_JOB, "conclusion": "failure", "completed_at": "2026-07-27T14:52:00Z",
+                     "steps": live_steps("failure")}],
         (102, 1): [{"name": auto.DEPLOY_JOB, "conclusion": "success", "completed_at": "2026-07-27T14:58:00Z"}],
     }
     run_manifests = {101: manifest1, 102: manifest2}
@@ -673,3 +684,72 @@ def test_unbounded_environment_evidence_refuses(monkeypatch, context):
                                                   deployments=deployments, statuses=statuses))
     with pytest.raises(auto.Refused, match="evidence scan limit"):
         auto.previous_deployment()
+
+
+def b_committed_then_evidence_failed(*, with_a=True):
+    """A deployed; B passed every live gate but a later artifact step failed."""
+    runs, run_jobs, manifests = a_then_b_runs()
+    run_jobs[(102, 1)] = [{"name": auto.DEPLOY_JOB, "status": "completed", "conclusion": "failure",
+                           "completed_at": "2026-07-27T14:58:00Z",
+                           "steps": live_steps("success", "success", "failure")}]
+    if not with_a:
+        runs = runs[:1]
+    # B's job failed, so GitHub records no successful dev environment status
+    # and the retained predecessor artifact was never published.
+    return fake_api(manifests[101], runs=runs, run_jobs=run_jobs, run_manifests=manifests,
+                    unproven={102}, run_artifacts={102: []})
+
+
+@pytest.mark.parametrize("with_a", [True, False], ids=["recurring", "first-release"])
+def test_live_commit_followed_by_evidence_failure_is_never_skipped(
+    monkeypatch, context, tmp_path, with_a
+):
+    base = b_committed_then_evidence_failed(with_a=with_a)
+    monkeypatch.setattr(auto, "api", base)
+    with pytest.raises(auto.Refused, match="committed live but its job failed"):
+        auto.previous_deployment()
+
+    # Recovery for a newer candidate binds neither stale A nor a first release.
+    candidate = "c" * 40
+    monkeypatch.setenv("GITHUB_SHA", candidate)
+    monkeypatch.setattr(auto, "api", with_ci(base, candidate))
+    assert auto.main(["recovery", "--candidate", candidate, "--environment", "dev",
+                      "--ci-run-id", "100", "--directory", str(tmp_path)]) == 1
+    assert not Path(context["GITHUB_OUTPUT"]).exists()
+    assert not (tmp_path / "previous-release.json").exists()
+
+    # Retrying B neither rebuilds nor redeploys over its own live release.
+    monkeypatch.setenv("GITHUB_SHA", SECOND_REAL_CANDIDATE_SHA)
+    monkeypatch.setattr(auto, "api", with_ci(base, SECOND_REAL_CANDIDATE_SHA))
+    for action in ("preflight", "recovery"):
+        assert auto.main([action, "--candidate", SECOND_REAL_CANDIDATE_SHA, "--environment", "dev",
+                          "--ci-run-id", "100", "--directory", str(tmp_path)]) == 1
+    assert not Path(context["GITHUB_OUTPUT"]).exists()
+
+
+def test_failed_deploy_step_rolled_back_keeps_proven_predecessor(monkeypatch, context):
+    runs, run_jobs, manifests = a_then_b_runs()
+    run_jobs[(102, 1)] = [{"name": auto.DEPLOY_JOB, "status": "completed", "conclusion": "failure",
+                           "steps": live_steps("failure", "skipped", "skipped")}]
+    monkeypatch.setattr(auto, "api", fake_api(manifests[101], runs=runs, run_jobs=run_jobs,
+                                              run_manifests=manifests, unproven={102}))
+    found_manifest, found_run = auto.previous_deployment()
+    assert found_run["id"] == 101
+    assert found_manifest["candidate_sha"] == REAL_CANDIDATE_SHA
+
+
+def test_unreadable_failed_deploy_steps_refuse(monkeypatch, context):
+    runs, run_jobs, manifests = a_then_b_runs()
+    run_jobs[(102, 1)] = [{"name": auto.DEPLOY_JOB, "conclusion": "failure"}]
+    monkeypatch.setattr(auto, "api", fake_api(manifests[101], runs=runs, run_jobs=run_jobs,
+                                              run_manifests=manifests, unproven={102}))
+    with pytest.raises(auto.Refused, match="step outcomes are unreadable"):
+        auto.previous_deployment()
+
+
+def test_live_step_name_matches_workflow():
+    steps = yaml.safe_load((ROOT / auto.WORKFLOW).read_text())["jobs"]["deploy"]["steps"]
+    names = [step.get("name") for step in steps]
+    assert auto.LIVE_STEP in names
+    assert names.index(auto.LIVE_STEP) < names.index(
+        "Retain the live-verified dev predecessor for the next update")
