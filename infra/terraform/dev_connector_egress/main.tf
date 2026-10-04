@@ -153,10 +153,10 @@ resource "google_dns_record_set" "vip" {
   managed_zone = google_dns_managed_zone.private[each.key].name
   # Pin the canonical restricted endpoint explicitly: a wildcard alone would
   # shadow it (and a wildcard CNAME to itself would produce a DNS loop).
-  name         = each.key == "googleapis" ? "restricted.googleapis.com." : each.value
-  type         = "A"
-  ttl          = 300
-  rrdatas      = each.key == "googleapis" ? local.restricted_ips : local.private_ips
+  name    = each.key == "googleapis" ? "restricted.googleapis.com." : each.value
+  type    = "A"
+  ttl     = 300
+  rrdatas = each.key == "googleapis" ? local.restricted_ips : local.private_ips
 }
 
 resource "google_dns_record_set" "wildcard" {

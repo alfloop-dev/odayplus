@@ -1,252 +1,159 @@
-# Reviewable apply / rollback handoff (NOT execution authorization)
+# Corrected shared DNS / connector handoff — NOT execution authority
 
-Intended recipient: existing owner of `ODP-DEV-LIVE-DEPLOY-EXECUTION-001`.
-After independent Codex2 approval and actual merge/done, bind this source to its
-exact merged SHA through canonical handoff. Candidate task remains sole build
-owner; no new build, lease, bootstrap/password change or alternate release lane.
-All parent/candidate Human holds remain. No commands below were applied here.
+Task `ODP-DEV-SHARED-DNS-RESTRICTED-VIP-COMPAT-001`: source-only repair, Pi / Codex2.
+Root remains **sole network operator**. Only after independent exact-head review
+and actual merge may root prepare/inspect the corrected live saved plan and
+confirm the changed exact shared scope with the user before application. This
+worker performs no cloud, GKE, IAM, credentials, backend or release action.
+Existing source task remains archived; do not duplicate PR1409 or governance
+PR1411. Candidate/release owner retains all runtime/deployment gates.
 
-## 1. Approvals and ownership before a live plan
+## 1. Superseded plan and exact replacement scope
 
-Obtain TWO separately reviewed exact authorizations (may be one explicit record
-with distinct scopes), plus governed backend-use authority:
+Old DNS plan (source `0049f4f9bc826b2c719165f412410e866ec7b77d`, SHA256
+`6fd398da4fd89984709de07479fceeb2f8a58db42e94087bebfd0c384a637317`) remains
+**held, unapplied and invalid for this source**. Its private Google wildcard would
+break restricted-only GKE and change the canonical restricted endpoint to `.8`.
+Never apply it or silently reinterpret the old seven-create approval.
 
-1. Firewall: existing connector path `odayplus-runtime-20260825/asia-east1/oday-staging-vpc` on `default`, unique tag `vpc-connector-asia-east1-oday-staging-vpc`, three exact rules:
-   - `oday-dev-connector-google-https` (priority 800, EGRESS, TCP 443, destination ranges `199.36.153.4/30` and `199.36.153.8/30`)
-   - `oday-dev-connector-sql` (priority 800, EGRESS, TCP 5432 and 3307, destination ranges `10.50.0.3/32` [dev SQL `oday-dev-sql`] and `10.50.0.5/32` [staging SQL `oday-staging-sql` preservation])
-   - `oday-dev-connector-deny` (priority 900, EGRESS, deny all, destination range `0.0.0.0/0`)
-   Inventory **every consumer** of this historically staging-named connector (`oday-staging-mlflow`, `oday-mlflow`, candidate services/jobs, and any shared project consumers); stopping unrelated/staging workloads is not permitted by this dev source task. Approve impact/maintenance window and exact rollback removal of these new rules.
+Fresh DNS-only plan must contain exactly:
 
-### Shared staging SQL preservation & Dev isolation analysis
-- **Staging dependency & impact**: Receipt `/home/lupin/odayplus/support/handoffs/dev-automatic-deployment-20261004/shared-staging-impact-readback.json` (SHA256 `28b40136d77e02021675b05d0214d5b9d4e1f6433691e59cd0a85de6b28f4c76`) proves `oday-staging-sql` is PRIVATE-only `10.50.0.5` on `default` network. `oday-staging-mlflow` (revision `00003-bm6`) uses this named SQL instance and shares `oday-staging-vpc` with `private-ranges-only`.
-- **Connector routing semantics**: Per Google Cloud Run documentation ([VPC connectors egress rules](https://docs.cloud.google.com/run/docs/configuring/vpc-connectors#restrict-access-using-egress-rules)), `private-ranges-only` routes all RFC1918 internal IP traffic (`10.50.0.5`) through the VPC connector. The unique target tag `vpc-connector-asia-east1-oday-staging-vpc` applies to all traffic emerging from this connector. Restricting only `10.50.0.3/32` would cause deny-all (priority 900) to block `oday-staging-mlflow` from reaching `10.50.0.5`.
-- **Supported least-necessary solution (Primary Executable Plan)**: In `main.tf`, `oday-dev-connector-sql` destination ranges include both pinned dev SQL (`10.50.0.3/32`) and pinned staging SQL (`10.50.0.5/32`) on TCP ports 5432 (PostgreSQL) and 3307 (Cloud SQL Auth Proxy/connector) at priority 800 before deny 900. No broad RFC1918 or `0.0.0.0/0` is allowed; variable validation rejects widened or drifted CIDRs.
-- **Dev isolation design alternative**: An alternative long-term architecture is to provision a dedicated dev connector (e.g. `oday-dev-vpc`) or move dev workloads to a dedicated VPC network. However, provisioning new connectors and changing Cloud Run network attachments requires cloud mutations and service updates. For the existing shared connector architecture, least-necessary /32 preservation provides immediate, reviewable, and safe restriction without disrupting staging workloads or requiring cloud mutations.
-- **Staging regression & rollback**: Before apply, inspect staging MLflow health. After apply, run readback probe to verify `oday-staging-mlflow` can connect to `10.50.0.5:5432/3307`. Rollback removes the three firewall rules, immediately restoring unconstrained egress to both dev and staging SQL.
-- **Human confirmation**: User explicitly requires Human confirmation for staging effects; this confirmation is to be obtained after this concrete reviewed plan is approved. (No ordinary dev build/deploy permission request is made).
-2. DNS: entire shared `default` VPC, two private zones `googleapis.com.` and `run.app.`, four record sets and TTL 300. GKE/other tenants see changed answers. Review Google API compatibility, run.app endpoints, DNSSEC/forwarding/peering/policies and downstream consumers. Preserve `emgi-sqladmin-private`; any repair or alignment to that existing zone needs its own exact owner approval. Approve rollback deletion of **only the two new zones/four record sets**, with cache delay and stop conditions.
-3. Backend: select an existing governed encrypted state bucket and a new, empty, unique prefix `oday-plus/dev/connector-egress`. No bucket is guessed/created. Do not use release/recovery/data/lease buckets or foundation/recovery state prefix. Record bucket/prefix/CMEK/access/lock/retention readback and sole state owner. Do not migrate/reconfigure an existing root's state.
+| Address | Change | Exact settings |
+|---|---|---|
+| `google_dns_managed_zone.private["googleapis"]` | create | `oday-dev-connector-googleapis`, `googleapis.com.`, private, default VPC only |
+| `google_dns_record_set.vip["googleapis"]` | create | `restricted.googleapis.com.`, A, TTL300, `199.36.153.4`, `199.36.153.5`, `199.36.153.6`, `199.36.153.7` |
+| `google_dns_record_set.wildcard["googleapis"]` | create | `*.googleapis.com.`, CNAME, TTL300, `restricted.googleapis.com.` |
+| `google_dns_managed_zone.private["run"]` | create | `oday-dev-connector-run`, `run.app.`, private, default VPC only |
+| `google_dns_record_set.vip["run"]` | create | `run.app.`, A, TTL300, `199.36.153.8`, `199.36.153.9`, `199.36.153.10`, `199.36.153.11` |
+| `google_dns_record_set.wildcard["run"]` | create | `*.run.app.`, CNAME, TTL300, `run.app.` |
+| `terraform_data.binding[0]` | create | local immutable-path validation only |
 
-On exact merged checkout, inventory all existing Terraform states/owners and the
-three proposed firewall names/two zone names. An existing name/resource means
-STOP, even if it looks equivalent. No automatic import, state rm/mv/push, moved
-blocks or takeover. Data lookups do not establish ownership. The plan must not
-read secrets or contain existing managed resources. State/plan/tfvars/logs belong
-only in restricted operator evidence storage, never Git/PR/chat/general artifacts.
+**2 zones + 4 explicit record sets + 1 local binding; 7 creates.** SOA/NS are
+Cloud DNS generated zone records, not extra Terraform resources. No firewall or
+existing-resource update/delete/replace. No GKE, IAM, network/subnet/route/SQL,
+connector, policy or source activation resource ownership. Confirm exact source
+SHA, plan SHA256, non-secret tfvars digest, governed backend identity/owner,
+approval reference and shared impact; same count is not same content.
 
-## 2. Read-only preflight receipts
+New inputs: `enable_shared_dns=true`, `enable_firewall=false`,
+`connector_scope_review_confirmed=false`,
+`shared_dns_scope_ack="default:googleapis.com.=restricted4,run.app.=private8"`,
+actual separately approved `shared_dns_review_ref="ODP-DEV-<task>:<receipt>"`.
+Old acknowledgement/test references are invalid. Defaults remain false.
 
-Consumed immutable receipts:
-- `/home/lupin/odayplus/support/handoffs/dev-admin-recovery-20261003/continuation-reopen6/cloud-readback.json` (SHA256 `e54b0ec5d6232d03673d6fe78c0ec3ea9ee8720fffb5995a0103b7b59af5979b`)
-- `/home/lupin/odayplus/support/handoffs/dev-admin-recovery-20261003/continuation-reopen6/DEPLOYMENT-PREFLIGHT.md` (SHA256 `580b736409a93ac1331f0bfa072db6fd34e47b68ffe3558779549a95d9b5c464`)
-- `/home/lupin/odayplus/support/handoffs/dev-automatic-deployment-20261004/network-impact-readback.json` (observed 2026-10-04T04:30:51Z, SHA256 `37e44fe4b91f7dedfcbbcda01c1bfbb1be0f477f1cfa89c2bc09f885c3d485e5`)
-- `/home/lupin/odayplus/support/handoffs/dev-automatic-deployment-20261004/shared-staging-impact-readback.json` (observed 2026-10-04T04:58:30Z, SHA256 `28b40136d77e02021675b05d0214d5b9d4e1f6433691e59cd0a85de6b28f4c76`)
+## 2. Existing backend / ownership and read-only baseline gates
 
-Use current authorized account; no login, IAM change or credential switch. Capture
-UTC, command, exit, duration and output. At minimum, with project explicit:
+Reuse existing approved governed backend and sole state owner for prefix
+`oday-plus/dev/connector-egress`. Existing temporary backend IAM/init/real lock
+lifecycle is **completed**: do not repeat it, request new credentials, create a
+bucket, migrate state, or weaken locks. This source task does not run live init.
+Plans/state/tfvars and unredacted readbacks remain in restricted operator storage,
+never Git/PR/chat; source evidence contains no secrets/token payload.
 
-```sh
-P=odayplus-runtime-20260825
-R=asia-east1
-gcloud compute networks vpc-access connectors describe oday-staging-vpc --region="$R" --project="$P" --format='json(name,network,state,ipCidrRange,connectedProjects,subnet)'
-gcloud compute networks describe default --project="$P" --format=json
-gcloud compute networks get-effective-firewalls default --project="$P" --format=json
-gcloud compute firewall-rules list --project="$P" --format=json
-gcloud compute instances list --project="$P" --format='json(name,zone,tags,networkInterfaces)'
-gcloud compute routes list --project="$P" --format=json
-gcloud compute networks peerings list --network=default --project="$P" --format=json
-gcloud compute networks subnets list --network=default --project="$P" --format=json
-gcloud sql instances describe oday-dev-sql --project="$P" --format='json(name,region,state,settings.ipConfiguration,ipAddresses)'
-gcloud sql instances describe oday-staging-sql --project="$P" --format='json(name,region,state,settings.ipConfiguration,ipAddresses)'
-gcloud dns managed-zones list --project="$P" --format=json
-gcloud dns record-sets list --zone=emgi-sqladmin-private --project="$P" --format=json
-gcloud dns policies list --project="$P" --format=json
-gcloud dns response-policies list --project="$P" --format=json
-gcloud run services list --region="$R" --project="$P" --format=json
-gcloud run jobs list --region="$R" --project="$P" --format=json
-```
+Root verifies on the merged source checkout:
+- Existing state remains exclusively this root's, with no cloud ownership yet.
+  Conflicting state/name ownership is STOP, not import/state rm/mv/push or takeover.
+- Exact connector supported readback: project `odayplus-runtime-20260825`, region
+  `asia-east1`, bare name `oday-staging-vpc`, READY/default/`10.8.0.0/28`.
+  Review [automatic immutable unique-tag contract](https://docs.cloud.google.com/vpc/docs/serverless-vpc-access#network-tags)
+  for `vpc-connector-asia-east1-oday-staging-vpc`, not direct managed VM inventory.
+- Every shared default VPC DNS consumer and connector consumer, including staging
+  MLflow, GKE, other VMs/services/jobs and connected projects, has impact review.
+  Unknown consumer/dependency is STOP; no stopping unrelated workloads.
+- Existing `emgi-sqladmin-private` (`sqladmin.googleapis.com.` A `.4–.7`, TTL300)
+  retains original ownership, records and attachment. Longest zone suffix wins.
+  No alignment to private VIP and no DNS transaction against this zone.
+- GKE `oday-emgi/emgi-default-deny-public-egress` remains unchanged, Google TCP443
+  only `199.36.153.4/30`. Its application health/SQLAdmin TLS baseline is retained.
+- Staging MLflow configured/allowed official tracking URL health and real DB read
+  pass; hash URL403 remains Host protection. No Host spoof/config change.
+- Dev SQL private `10.50.0.3/32` and staging SQL private `10.50.0.5/32`, existing
+  PSA/peering routes and Google VIP default-internet-gateway/PGA behavior remain
+  suitable. Effective hierarchical/network firewall policies cannot bypass or
+  preempt required constraints. Managed connector priority100 rules stay intact.
+- Google API dependencies match [README supported/residual matrix](README.md#api-compatibility-and-residual-limits-primary-google-documentation).
+  No claim of universal restricted API compatibility or runtime success.
 
-Do not broadly publish service/job envs or SQL inventory; redact sensitive fields
-in handoff. Verify connector resource identity is exactly
-`projects/odayplus-runtime-20260825/locations/asia-east1/connectors/oday-staging-vpc`
-and READY/default/10.8.0.0/28 from the supported connector API. Record the official
-[automatic immutable unique-tag contract](https://docs.cloud.google.com/vpc/docs/serverless-vpc-access#network-tags)
-and bind `vpc-connector-asia-east1-oday-staging-vpc` to that identity. Connector API
-has no VM/tag field; managed connector VMs need not appear in Compute inventory.
-Do not require or claim direct VM/tag readback. The instances list is for shared
-network/GKE impact only. Never substitute `aet-*`, universal tags or create/change
-tags.
+Root-held baseline receipts in `support/handoffs/dev-automatic-deployment-20261004/`:
+`staging-mlflow-live-baseline.json`, `gke-existing-client-baseline.json`,
+`gke-readonly-exec-diagnosis.json`, `dns-saved-plan-review.json`, and
+`gke-restricted-vip-compatibility-hold.json`. Hashes and conclusions are in the
+[task evidence](../../../docs/evidence/runtime/ODP-DEV-SHARED-DNS-RESTRICTED-VIP-COMPAT-001/README.md).
+Freshness/drift checks are operator obligations, not worker cloud actions.
 
-Shared consumers inventory from readback:
-- `oday-staging-mlflow` (revision `oday-staging-mlflow-00003-bm6`): using `run.googleapis.com/vpc-access-connector: oday-staging-vpc`, `run.googleapis.com/vpc-access-egress: private-ranges-only`, Cloud SQL instance `odayplus-runtime-20260825:asia-east1:oday-staging-sql` (PRIVATE-only `10.50.0.5` on `default`).
-- `oday-mlflow` (revision `oday-mlflow-00003-h4p`): Cloud SQL instance `odayplus-runtime-20260825:asia-east1:oday-dev-sql` (`10.50.0.3` on `default`).
-- GKE nodes (`gke-oday-emgi-gke-default-pool-51b5dfaa-70tf` in `asia-east1-a`): node tag `gke-oday-emgi-gke-8fd109b2-node`.
-- Enumerate all services/jobs, revisions and other serverless consumers using this connector; inspect `connectedProjects` and inventory clients in every shared project with its owner. Incomplete consumer inventory/approval is STOP.
+## 3. Fresh saved-plan review and staged ordering (root only)
 
-Check connector READY/network/CIDR; dev SQL privateNetwork=default/private10.50.0.3;
-staging SQL privateNetwork=default/private10.50.0.5;
-private SQL PSA peering route; Google VIP routes via default-internet-gateway and
-PGA behavior. Existing connector-managed priority 100 egress/control-plane and
-health ingress must remain intact. Review effective hierarchical/network firewall
-policies and evaluation order: any higher precedence deny of required endpoints
-or allow bypassing our deny is STOP. Established connections may persist: later
-probes must open new connections. This root does not repair routes/PGA/policies.
-
-## 3. Existing DNS overlapping zone and prerequisite resolution
-
-Readback confirms the existing `emgi-sqladmin-private` private zone on `default` network:
-- Zone name: `emgi-sqladmin-private`, dnsName: `sqladmin.googleapis.com.`
-- Records: A -> `199.36.153.4`, `199.36.153.5`, `199.36.153.6`, `199.36.153.7` (Restricted VIP `199.36.153.4/30`, TTL 300).
-
-Per [Google Cloud DNS overlapping zones rule](https://cloud.google.com/dns/docs/zones/zones-overview#overlapping_zones),
-queries for `sqladmin.googleapis.com` match the more-specific `emgi-sqladmin-private` zone (longest suffix match)
-rather than the wildcard `*.googleapis.com` in `oday-dev-connector-googleapis`.
-
-### Resolution under dual Google VIP firewall design (Primary Supported Path)
-1. In `main.tf`, `oday-dev-connector-google-https` explicitly includes both Restricted VIP `199.36.153.4/30`
-   and Private VIP `199.36.153.8/30` on TCP 443 at priority 800 before deny 900, matching runtime foundation `network.tf:87-90`.
-2. This ensures that Cloud SQL Auth Proxy and connector egress to `sqladmin.googleapis.com:443`
-   (resolving to `199.36.153.4/30`) is fully allowed without requiring mutation, takeover, or recreation
-   of the unowned `emgi-sqladmin-private` zone.
-3. Other Google APIs and `*.run.app` resolve to Private VIP `199.36.153.8/30` and are also allowed on TCP 443.
-4. Prerequisite verification steps before apply:
-   - Query DNS in `default` VPC: `dig +short sqladmin.googleapis.com` -> verify answers are `199.36.153.4-.7`.
-   - Verify `oday-dev-connector-google-https` destination_ranges contains both `199.36.153.4/30` and `199.36.153.8/30`.
-   - Verify SQL private connectivity to `10.50.0.3:5432` / `3307` and API HTTPS 443 to `sqladmin.googleapis.com`.
-
-### Alternative DNS Alignment Option (if DNS owner separately decides to align zone to Private VIP)
-If the authorized owner of `emgi-sqladmin-private` separately approves updating its records to Private VIP `199.36.153.8/30`:
-1. Authority: Obtain independent written authorization from the DNS infrastructure owner.
-2. Pre-change record inspection:
-   `gcloud dns record-sets list --zone=emgi-sqladmin-private --project=odayplus-runtime-20260825 --format=json`
-3. Exact transaction to update A records to `199.36.153.8-.11`:
-   ```sh
-   P=odayplus-runtime-20260825
-   gcloud dns record-sets transaction start --zone=emgi-sqladmin-private --project="$P"
-   gcloud dns record-sets transaction remove --zone=emgi-sqladmin-private --name="sqladmin.googleapis.com." --type=A --ttl=300 "199.36.153.4" "199.36.153.5" "199.36.153.6" "199.36.153.7" --project="$P"
-   gcloud dns record-sets transaction add --zone=emgi-sqladmin-private --name="sqladmin.googleapis.com." --type=A --ttl=300 "199.36.153.8" "199.36.153.9" "199.36.153.10" "199.36.153.11" --project="$P"
-   gcloud dns record-sets transaction execute --zone=emgi-sqladmin-private --project="$P"
-   ```
-4. Wait at least TTL 300 seconds (5 minutes) for DNS cache expiration across all default VPC clients.
-5. Verification: query `sqladmin.googleapis.com` from inside default network -> verify answers are `199.36.153.8-.11`.
-6. Exact restoration / rollback transaction (reverting to Restricted VIP `199.36.153.4-.7`):
-   ```sh
-   P=odayplus-runtime-20260825
-   gcloud dns record-sets transaction start --zone=emgi-sqladmin-private --project="$P"
-   gcloud dns record-sets transaction remove --zone=emgi-sqladmin-private --name="sqladmin.googleapis.com." --type=A --ttl=300 "199.36.153.8" "199.36.153.9" "199.36.153.10" "199.36.153.11" --project="$P"
-   gcloud dns record-sets transaction add --zone=emgi-sqladmin-private --name="sqladmin.googleapis.com." --type=A --ttl=300 "199.36.153.4" "199.36.153.5" "199.36.153.6" "199.36.153.7" --project="$P"
-   gcloud dns record-sets transaction execute --zone=emgi-sqladmin-private --project="$P"
-   ```
-
-## 4. Backend and exact staged plan
-
-Write backend HCL outside Git with verified bare bucket and exact new prefix:
-
-```hcl
-bucket = "<verified-governed-state-bucket>"
-prefix = "oday-plus/dev/connector-egress"
-```
-
-Write non-secret operator tfvars outside Git with default pinned identities,
-`enable_shared_dns=true`, exact `shared_dns_scope_ack="default:googleapis.com.,run.app."`
-and actual approved `shared_dns_review_ref="ODP-DEV-<authority-task>:<receipt>"`.
-Initially `enable_firewall=false`, `connector_scope_review_confirmed=false`.
-Example defaults are NOT signed approvals; do not reuse test refs.
-
-Only after backend-use approval, run in this root on the merged SHA:
+Using the already initialized governed backend under existing operator authority,
+root prepares a **new** restricted-storage DNS plan from the reviewed merged SHA:
 
 ```sh
-terraform init -input=false -backend-config="$APPROVED_BACKEND_HCL"
-terraform state list
-terraform plan -input=false -var-file="$APPROVED_DNS_TFVARS" -out="$RESTRICTED_DNS_PLAN"
-terraform show -json "$RESTRICTED_DNS_PLAN"
+terraform plan -input=false -var-file="$APPROVED_DNS_TFVARS" -out="$NEW_RESTRICTED_DNS_PLAN"
+terraform show -json "$NEW_RESTRICTED_DNS_PLAN"
 ```
 
-If state is not new/empty and already exclusively owned by this root, STOP and
-resolve conflict with its owner; never use `-migrate-state`, `-force-copy`, import
-or state rewrite. Initialization is an operational backend action, not part of
-source/offline verification. Plan needs active cloud read/backend authorization.
-Review JSON changes: only two DNS zones + four record sets + local binding create,
-no existing-resource update/delete/replace, no IAM/route/network/SQL/connector/GKE.
-Bind plan digest, source SHA, tfvars digest, backend identity and approval record.
-Any unexpected change/drift or mock provider in a live plan is STOP.
+Review exact seven actions/RDATA above. Any other action, provider mock, changed
+identity, unsupported dependency or ownership conflict is STOP. Bind saved-plan
+hash/source/tfvars/backend/approval. Obtain changed-scope confirmation before
+applying that exact plan; this document/source merge is not apply authority.
+No `-target` partial apply. After authorized DNS stage, read back attachment and
+all four records, wait TTL300 and obtain shared-consumer regression receipts.
+Stop on any changed GKE health/SQLAdmin/staging behavior.
 
-Under exact DNS apply authorization, operator may apply the reviewed saved plan.
-Read back the new zones/records/attachment; validate shared client behavior with
-its owners and TTL 300 cache propagation. This is not release/deploy approval.
-Then set `enable_firewall=true`, `connector_scope_review_confirmed=true` only after
-fresh supported connector metadata readback, unique-tag contract review and
-all-consumer impact approval from sections 1–3; retain DNS inputs. The boolean
-is an acknowledgement, not apply authority or an enforcement receipt.
-Plan again and independently approve only
-three firewall creates (plus local state effects), no DNS update or other change:
+Only then, under separate exact firewall authority and all-consumer scope review,
+set `enable_firewall=true`, `connector_scope_review_confirmed=true`, retaining
+new DNS inputs. Review a new plan containing **only three firewall creates**:
+- `oday-dev-connector-google-https`: EGRESS, priority800, unique connector tag,
+  TCP443, exactly `199.36.153.4/30` and `199.36.153.8/30`.
+- `oday-dev-connector-sql`: EGRESS, priority800, same tag, TCP5432/3307,
+  exactly dev `10.50.0.3/32` and staging `10.50.0.5/32`.
+- `oday-dev-connector-deny`: EGRESS, priority900, same tag, all protocols,
+  `0.0.0.0/0` deny. No blanket RFC1918/internet allow.
 
-```sh
-terraform plan -input=false -var-file="$APPROVED_FIREWALL_TFVARS" -out="$RESTRICTED_FIREWALL_PLAN"
-terraform show -json "$RESTRICTED_FIREWALL_PLAN"
-```
+Dependencies create DNS and both application allows before deny; destroy removes
+deny before either allow/DNS. Managed priority100 rules remain authoritative.
+Acknowledgements/metadata/source tests are not effective enforcement receipts.
 
-Apply only that exact saved plan after firewall authority. No `-target` partial
-application. Dependencies create application allows (`google_https` with dual VIPs and `sql` for dev `10.50.0.3/32` and staging `10.50.0.5/32`) before deny; managed 100 stays.
+## 4. Authorized readback / runtime probes (not this source worker)
 
-## 5. Effective readback and authorized candidate probes
-
-Repeat supported connector metadata and effective default-network
-firewall/route/PGA/SQL/DNS readback. Check
-all three enabled EGRESS rules match exact unique target tag/default network,
-800 allows precede 900 deny-all; managed 100 unchanged, unrelated/GKE policies
-unchanged. Read each new zone's `privateVisibilityConfig` = only default, its
-record sets and preserved sqladmin zone. Network get-effective-firewalls alone
-is not proof connector targeting/enforcement succeeded. Bind the supported
-connector identity, documented unique tag and applicable policy evaluation to
-receipts. No direct managed-VM inventory gate is required or claimed; enforcement
-remains UNKNOWN until authorized actual-candidate runtime probes and correlated
-firewall logs/diagnostics below demonstrate the effective allow/deny path.
-
-Only under existing candidate owner's subsequent probe/deploy authority, use
-actual admitted candidate services/jobs with read-back ALL_TRAFFIC and exact
-connector. Do not build/deploy a helper or duplicate candidate for this task.
-Capture runtime DNS answers and new TCP/TLS connections, not laptop curl:
+Use existing admitted services/jobs, no helper workload, build or alternate release
+lane. New connections must retain original hostname TLS and normal IAM/auth/Host:
 
 | Probe | Required result |
 |---|---|
-| Actual Web -> tagged/stable API run.app with correct audience/auth | DNS .8–.11, successful authenticated transport/application response |
-| sqladmin + required storage/logging/googleapis names | Actual runtime answers (.4–.7 for sqladmin, .8–.11 for wildcard/run.app); API calls under runtime IAM succeed |
-| Dev SQL private-IP chosen runtime transport | Connect to exact 10.50.0.3 at required 5432/3307; authorized read-only DB check, no bootstrap |
-| Staging SQL / MLflow connectivity preservation | Readback probe from `oday-staging-mlflow` (revision `00003-bm6`) to `oday-staging-sql` (`10.50.0.5`) at 5432/3307; verify staging connectivity is preserved and not dropped by deny-all 900 |
-| Audit/storage | Existing approved smoke writes/readback durable audit/object under exact runtime identity; do not invent test bucket |
-| Sources-off public canary `https://example.com/` | New connection denied from actual candidate; bind existing runtime public-egress receipt to candidate SHA/manifest/job/ALL_TRAFFIC |
-| Explicit public IP HTTPS and non-allowed private destination/port | Scoped owner-approved canary targets fail; no DNS-only failure masquerading as firewall deny |
-| Shared DNS unaffected services/GKE and connector infrastructure | Owner-reviewed regression/health receipts pass; do not run GKE mutation from this task |
+| Canonical `restricted.googleapis.com` | explicit A `.4–.7`, no loop, no `.8` |
+| sqladmin from existing GKE app | `.4–.7`, original-hostname TLS transport and unchanged app health; SQLAdmin existing zone unchanged |
+| storage and admitted Google API methods | generic wildcard `.4–.7`; authorized runtime API/object calls succeed under IAM; record unsupported method/API as STOP |
+| Actual admitted Web -> stable/tagged API | run.app `.8–.11`, correct audience/invoker/ingress; application response |
+| Existing staging MLflow | configured official URL health200 + actual DB-read200; private SQL `10.50.0.5` preserved |
+| Dev SQL | private `10.50.0.3` on actual required 5432/3307 transport, no public fallback/bootstrap |
+| Shared GKE | policy projection unchanged; healthy workloads; run.app remains denied by unchanged restricted-only policy (not granted here) |
+| Connector infrastructure | managed priority100/health checks unchanged |
+| Actual candidate default-deny | approved new public-IP/hostname and nonallowed private/port connections denied, correlated rule/log diagnostics, not DNS failure alone |
 
-Timeout/DNS error alone cannot prove firewall default-deny. Correlate destination,
-rule/firewall logs or authorized connectivity diagnostics with candidate runtime
-receipts and no bypass. Do not expose credentials, tokens or DB rows. Failure or
-missing evidence means live protection UNKNOWN and deployment held.
+Sixteen external sources and optional Google OAuth stay OFF. Firewall protection,
+IPv6, new session revocation, universal API compatibility and VPC-SC perimeter
+protection are not inferred from mock plans. Missing/failed live evidence is
+UNKNOWN/held, not a reason to widen GKE or internet access.
 
-## 6. Exact rollback (separate preapproved authority)
+## 5. Bounded rollback (preapproved root scope)
 
-Stop candidate promotion/traffic/probes through existing deployment owner first;
-retain sources-off and Human holds. Rolling firewall back restores the prior
-**unprotected connector** state, so never leave a released workload relying on a
-claim of restriction. No foundation/GKE/SQL/network/connector rollback here.
+Stop candidate promotion/traffic through existing release owner first, retain
+sources-off and holds. Firewall rollback restores **unprotected connector** state,
+not a secure release. Use same governed root/backend; no blanket terraform destroy.
 
-1. Using same governed backend/exact root, plan tfvars `enable_firewall=false`,
-   DNS still true. Review **only three owned firewall destroys**; saved-plan
-   removal is separately authorized. Dependency order removes deny before allows.
-   Read back managed rules unchanged and candidate stopped/held.
-2. If shared DNS must revert, independently approve tfvars with both toggles false.
-   Review only four owned record-set destroys, two owned zone destroys and local
-   binding removal; no existing sqladmin change. Delete records before zones via
-   dependency graph. Wait at least TTL 300 and confirm restored DNS with shared
-   owners. Never blanket `terraform destroy` or manually delete others' resources.
-3. Record pre/post inventories, exact saved-plan digest/exit/UTC, candidate traffic
-   hold and unresolved security state. Keep governed state and receipts; do not
-   remove backend or rewrite state. Failed rollback is an incident, not success.
+1. Plan `enable_firewall=false`, DNS true/new scope retained: exactly **3 owned
+   firewall destroys**, deny removed before allows. Preserve managed priority100,
+   GKE policies, SQL/connector and all existing resources. Inspect exact saved
+   rollback plan and record exit/readback.
+2. If DNS rollback needed, both toggles false: exactly **4 owned record-set
+   destroys + 2 owned zone destroys + 1 local binding removal** (7 destroys).
+   Records are removed before their zones. No existing SQLAdmin record/zone change.
+   Wait at least TTL300, then verify prior shared-client DNS/health with owners.
+   Only this root's two zones/four records are in scope.
+3. Record exact source/plan hashes, command exit/UTC/duration, pre/post inventories,
+   traffic hold and unresolved security state. Keep governed state/lock/receipts;
+   never remove/rewrite backend. Failed rollback is an incident.
 
-## Handoff boundary
-
-Source deliverable can close only after reviewer approval + actual PR merge/done.
-Final canonical handoff must include exact merged SHA/PR, offline receipt refs and
-remaining approvals above to `ODP-DEV-LIVE-DEPLOY-EXECUTION-001`. This source task
-cannot satisfy the parent's Human apply/network/build/manifest/candidate holds.
+Reviewable source/plan specification is delivered here, **not a fresh live plan
+artifact**. Root must generate/review that artifact after exact-head approval and
+merge; no changed cloud scope is applied under the old plan/hash.
