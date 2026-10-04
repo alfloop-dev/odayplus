@@ -54,11 +54,11 @@ run "scoped_protection" {
     error_message = "Require all-protocol IPv4 default-deny, never an internet allow."
   }
   assert {
-    condition     = google_compute_firewall.google_https[0].destination_ranges == toset(["199.36.153.8/30"]) && one(google_compute_firewall.google_https[0].allow).protocol == "tcp" && one(google_compute_firewall.google_https[0].allow).ports == toset(["443"]) && google_compute_firewall.google_https[0].priority < google_compute_firewall.deny[0].priority
+    condition     = google_compute_firewall.google_https[0].destination_ranges == toset(["199.36.153.8/30"]) && one(google_compute_firewall.google_https[0].allow).protocol == "tcp" && toset(one(google_compute_firewall.google_https[0].allow).ports) == toset(["443"]) && google_compute_firewall.google_https[0].priority < google_compute_firewall.deny[0].priority
     error_message = "Web/API, Google APIs, audit/storage HTTPS must use only the reviewed private VIP."
   }
   assert {
-    condition     = google_compute_firewall.sql[0].destination_ranges == toset(["10.50.0.3/32"]) && one(google_compute_firewall.sql[0].allow).protocol == "tcp" && one(google_compute_firewall.sql[0].allow).ports == toset(["5432", "3307"]) && google_compute_firewall.sql[0].priority < google_compute_firewall.deny[0].priority
+    condition     = google_compute_firewall.sql[0].destination_ranges == toset(["10.50.0.3/32"]) && one(google_compute_firewall.sql[0].allow).protocol == "tcp" && toset(one(google_compute_firewall.sql[0].allow).ports) == toset(["5432", "3307"]) && google_compute_firewall.sql[0].priority < google_compute_firewall.deny[0].priority
     error_message = "Private PostgreSQL and Auth Proxy may reach only exact SQL /32."
   }
   assert {
@@ -66,7 +66,7 @@ run "scoped_protection" {
     error_message = "No broad internet allow; log permitted destinations."
   }
   assert {
-    condition     = google_dns_managed_zone.private["googleapis"].dns_name == "googleapis.com." && google_dns_managed_zone.private["run"].dns_name == "run.app." && alltrue([for zone in google_dns_managed_zone.private : zone.visibility == "private" && zone.private_visibility_config[0].networks[0].network_url == "https://www.googleapis.com/compute/v1/projects/odayplus-runtime-20260825/global/networks/default"])
+    condition     = google_dns_managed_zone.private["googleapis"].dns_name == "googleapis.com." && google_dns_managed_zone.private["run"].dns_name == "run.app." && alltrue([for zone in google_dns_managed_zone.private : zone.visibility == "private" && one(zone.private_visibility_config[0].networks).network_url == "https://www.googleapis.com/compute/v1/projects/odayplus-runtime-20260825/global/networks/default"])
     error_message = "DNS is explicitly shared-default scope, never on staging-runtime or connector-local."
   }
   assert {
