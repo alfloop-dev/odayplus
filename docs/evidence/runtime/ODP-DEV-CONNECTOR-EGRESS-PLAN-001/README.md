@@ -62,18 +62,18 @@ Repaired consistently across IaC, tests, and operational documentation:
 2. **Tests (`tests/boundary.tftest.hcl`)**: Updated `scoped_protection` test assertion to verify both `10.50.0.3/32` and `10.50.0.5/32` in `google_compute_firewall.sql`; added focused negative tests rejecting malformed staging SQL, broad staging SQL (`0.0.0.0/0`), and drifted staging SQL (`10.50.0.6/32`), as well as wrong dev SQL (`10.50.0.4/32`).
 3. **Operations (`OPERATIONS.md`)**: Fully documented shared staging dependency, routing semantics, least-necessary /32 preservation, dev isolation design alternative, order before deny, staging regression/readback probe, and precise rollback. Human confirmation for staging effects is required after concrete reviewed plan.
 
-Dual-VIP repair anchor `37a71972dcd6` native measurements:
+Staging-preservation repair anchor `3f23a65f3f6e` native measurements:
 
 | Exact command | Exit | Seconds | Native receipt ID |
 |---|---:|---:|---|
-| git diff --check | 0 | 0.015 | ab205088795b2bae |
-| terraform -chdir=infra/terraform/dev_connector_egress init -backend=false -input=false | 0 | 0.510 | ccb52b7efc88d51c |
-| terraform -chdir=infra/terraform/dev_connector_egress fmt -check -recursive | 0 | 0.068 | efc27d0a99cecc1b |
-| terraform -chdir=infra/terraform/dev_connector_egress validate | 0 | 0.996 | d1fbbc7c9a6aef34 |
-| terraform -chdir=infra/terraform/dev_connector_egress test -no-color | 0 | 5.529 | 1f202c2105681dd9 |
+| git diff --check | 0 | 0.015 | 11cff86b0daead49 |
+| terraform -chdir=infra/terraform/dev_connector_egress init -backend=false -input=false | 0 | 0.516 | d0f6191ec26f1520 |
+| terraform -chdir=infra/terraform/dev_connector_egress fmt -check -recursive | 0 | 0.070 | d98415e56b7c4fcc |
+| terraform -chdir=infra/terraform/dev_connector_egress validate | 0 | 1.099 | bbb6c1baf492d79b |
+| terraform -chdir=infra/terraform/dev_connector_egress test -no-color | 0 | 6.627 | 32e6c060b04c4b9c |
 
 Unmodified native JSON receipts are stored beside this file and in `.orchestrator/evidence/`.
-Test output reports **20 passed, 0 failed** on `tests/boundary.tftest.hcl`. No rerun for count.
+Test output reports **24 passed, 0 failed** on `tests/boundary.tftest.hcl`. No rerun for count.
 Exact final-head verification is recorded before PR submission. None of these receipts proves live enforcement.
 
 ## Review and downstream closeout
