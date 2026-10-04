@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import ExitStack
 from datetime import UTC, datetime, timedelta
 from unittest import mock
 
@@ -1453,28 +1454,30 @@ class CooldownLifecycleTests(unittest.TestCase):
             return result
 
         adapter.deliver.side_effect = deliver
-        with (
-            mock.patch.object(mr, "_now", side_effect=lambda value=None: value or clock[0]),
-            mock.patch.object(sv, "datetime", Clock),
-            mock.patch.object(sv, "load_status", return_value={"tasks": [task]}),
-            mock.patch.object(sv, "load_approval_state", return_value={"pending": [], "history": []}),
-            mock.patch.object(sv, "load_event_queue", return_value=[event]),
-            mock.patch.object(sv, "build_request", return_value=request),
-            mock.patch.object(sv, "build_adapter", return_value=adapter),
-            mock.patch.object(sv, "pid_is_alive", side_effect=lambda pid: pid == 4321),
-            mock.patch.object(sv, "provider_auth_identity_hash", return_value=None),
-            mock.patch.object(sv, "save_runtime_state"),
-            mock.patch.object(sv, "record_worker_runtime_measurement"),
-            mock.patch.object(sv, "preserve_dead_worker_worktree"),
-            mock.patch.object(sv, "observe_worker_worktree_activity", return_value=False),
-            mock.patch.object(sv, "write_activity_log"),
-            mock.patch.object(sv, "write_failure_evidence") as evidence,
-            mock.patch.object(sv, "record_task_failure_streak") as streak,
-            mock.patch.object(sv, "maybe_reassign_task_after_worker_failure") as reassign,
-            mock.patch.object(sv, "mark_provider_dispatch_paused") as pause,
-            mock.patch.object(sv, "schedule_worker_retry", wraps=sv.schedule_worker_retry) as retry,
-            mock.patch.object(sv, "detect_worker_failure", wraps=sv.detect_worker_failure) as detect,
-        ):
+        with ExitStack() as stack:
+            for patch in (
+                mock.patch.object(mr, "_now", side_effect=lambda value=None: value or clock[0]),
+                mock.patch.object(sv, "datetime", Clock),
+                mock.patch.object(sv, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(sv, "load_approval_state", return_value={"pending": [], "history": []}),
+                mock.patch.object(sv, "load_event_queue", return_value=[event]),
+                mock.patch.object(sv, "build_request", return_value=request),
+                mock.patch.object(sv, "build_adapter", return_value=adapter),
+                mock.patch.object(sv, "pid_is_alive", side_effect=lambda pid: pid == 4321),
+                mock.patch.object(sv, "provider_auth_identity_hash", return_value=None),
+                mock.patch.object(sv, "save_runtime_state"),
+                mock.patch.object(sv, "record_worker_runtime_measurement"),
+                mock.patch.object(sv, "preserve_dead_worker_worktree"),
+                mock.patch.object(sv, "observe_worker_worktree_activity", return_value=False),
+                mock.patch.object(sv, "write_activity_log"),
+            ):
+                stack.enter_context(patch)
+            evidence = stack.enter_context(mock.patch.object(sv, "write_failure_evidence"))
+            streak = stack.enter_context(mock.patch.object(sv, "record_task_failure_streak"))
+            reassign = stack.enter_context(mock.patch.object(sv, "maybe_reassign_task_after_worker_failure"))
+            pause = stack.enter_context(mock.patch.object(sv, "mark_provider_dispatch_paused"))
+            retry = stack.enter_context(mock.patch.object(sv, "schedule_worker_retry", wraps=sv.schedule_worker_retry))
+            detect = stack.enter_context(mock.patch.object(sv, "detect_worker_failure", wraps=sv.detect_worker_failure))
             mr.record_exhaustion(self.config, "antigravity5", 900, pool="claude")
             before = mr._STATE_PATH.read_bytes()
             self.assertTrue(sv.poll_workers(self.config, state, {}))
