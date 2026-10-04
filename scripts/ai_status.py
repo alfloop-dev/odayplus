@@ -526,28 +526,84 @@ def _continuation_nonnegative_int(value: Any) -> int:
         return 0
 
 
+BLOCKER_PROSE_FIELDS = (
+    "next", "waiting_for", "blocker", "blocked_by", "failure_reason",
+    "last_failure_reason", "push_status",
+)
+
+
+def blocker_authority_digest(task: dict[str, Any]) -> str:
+    """Bind adjudication and approval to exact text, roles, source and churn epoch."""
+    fields = (*BLOCKER_PROSE_FIELDS, "id", "status", "owner", "reviewer",
+              "review_reopen_count", "review_churn_escalated_at_count",
+              "review_churn_escalated_at", "review_submission", "review_reopen_history",
+              "task_class", "non_dispatchable", "requires_human_approval", "human_required_roles",
+              "credentials_gate", "credential_gate", "deployment_gate", "production_gate",
+              "external_data_gate", "human_gate", "gate_status")
+    payload = {key: task.get(key) for key in fields}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def blocker_provenance_error(task: dict[str, Any]) -> str | None:
+    """Unknown, stale or incomplete classifications never suppress legacy blockers."""
+    record = task.get("blocker_provenance")
+    if not isinstance(record, dict):
+        return "blocker provenance is not an object"
+    if record.get("issued_by") != "Human/Ops" or not record.get("record_id"):
+        return "blocker provenance lacks Human/Ops authority"
+    issued_at = parse_timestamp(record.get("issued_at"))
+    expires_at = parse_timestamp(record.get("expires_at"))
+    now = datetime.now(UTC)
+    if issued_at is None or expires_at is None or not issued_at <= now < expires_at:
+        return "blocker provenance is expired or has invalid timestamps"
+    if record.get("context_sha256") != blocker_authority_digest(task):
+        return "blocker provenance does not match current text, roles, source or epoch"
+    classifications = record.get("fields")
+    if not isinstance(classifications, dict) or not classifications:
+        return "blocker provenance has no field classifications"
+    for field, segments in classifications.items():
+        if field not in BLOCKER_PROSE_FIELDS or not isinstance(segments, list) or not segments:
+            return "blocker provenance has an unknown or empty field"
+        texts = []
+        for segment in segments:
+            if not isinstance(segment, dict) or not isinstance(segment.get("text"), str):
+                return "blocker provenance segment is malformed"
+            kind = segment.get("kind")
+            if kind not in {"current", "resolved", "historical", "other_task"}:
+                return "blocker provenance segment kind is ambiguous"
+            if not str(segment.get("reason") or "").strip() or not str(segment.get("evidence_ref") or "").strip():
+                return "blocker provenance segment lacks rationale or evidence"
+            if kind == "other_task" and (
+                not segment.get("task_id") or segment.get("task_id") == task.get("id")
+            ):
+                return "blocker provenance other-task scope is invalid"
+            texts.append(segment["text"])
+        if "".join(texts) != str(task.get(field) or ""):
+            return "blocker provenance does not cover exact field text"
+    return None
+
+
 def blocked_task_prose_context(task: dict[str, Any]) -> str:
     """Return blocker prose without task/dependency identifiers, code identifiers, and paths.
 
     Titles and summaries describe the work, not why a blocked task is waiting.
     Continuation eligibility must therefore inspect only the same blocker-facing
-    fields used by Supervisor, while removing identifiers whose tokens can look
+    fields used by Supervisor. Only a valid Human/Ops adjudication can classify
+    exact spans as resolved, historical or other-task; unclassified fields and
+    current spans retain the legacy keyword guard. This is not authorization.
+    We remove identifiers whose tokens can look
     like hard-gate markers (for example ``...-DATASET-...``), code identifiers,
     file paths, backtick snippets, key=value pairs, and CI job references.
     """
     identifiers = [str(task.get("id") or "")]
     identifiers.extend(str(dep) for dep in (task.get("depends_on") or []))
+    classifications = {}
+    if "blocker_provenance" in task and blocker_provenance_error(task) is None:
+        classifications = task["blocker_provenance"]["fields"]
     raw_context = " ".join(
-        str(task.get(key) or "")
-        for key in (
-            "next",
-            "waiting_for",
-            "blocker",
-            "blocked_by",
-            "failure_reason",
-            "last_failure_reason",
-            "push_status",
-        )
+        "".join(segment["text"] for segment in classifications[key] if segment["kind"] == "current")
+        if key in classifications else str(task.get(key) or "")
+        for key in BLOCKER_PROSE_FIELDS
     )
 
     # 1. Strip code blocks and inline backticks
@@ -616,6 +672,10 @@ def continuation_approval_gate_error(task: dict[str, Any]) -> str | None:
     if gate_status.startswith("pending_human"):
         return "task carries an independent human gate status"
 
+    if "blocker_provenance" in task:
+        provenance_error = blocker_provenance_error(task)
+        if provenance_error:
+            return provenance_error
     blocker_context = blocked_task_prose_context(task)
     try:
         churn_reassigned_count = max(0, int(task.get("review_churn_reassigned_at_count", 0) or 0))
@@ -694,6 +754,12 @@ def continuation_approval_validation_error(
         return gate_error
     if not isinstance(approval, dict):
         return "approval record is not an object"
+    if "blocker_provenance" in task or "blocker_authority_digest" in approval:
+        if approval.get("blocker_authority_digest") != blocker_authority_digest(task):
+            return "approval blocker authority does not match the task"
+        record_id = (task.get("blocker_provenance") or {}).get("record_id")
+        if approval.get("blocker_provenance_id") != record_id:
+            return "approval blocker provenance does not match the task"
     if str(approval.get("status") or "").strip().lower() != "issued":
         return "approval is not in issued state"
 
@@ -6618,6 +6684,8 @@ def command_approve_continuation(state: dict[str, Any], args: list[str]) -> None
     approval = {
         "approval_id": uuid.uuid4().hex,
         "approval_type": "human_ops_continuation",
+        "blocker_authority_digest": blocker_authority_digest(task),
+        "blocker_provenance_id": (task.get("blocker_provenance") or {}).get("record_id"),
         "status": "issued",
         "task_id": task_id,
         "task_scope": task_id,
@@ -6646,6 +6714,8 @@ def command_approve_continuation(state: dict[str, Any], args: list[str]) -> None
             "ts": timestamp,
             "agent": actor,
             "type": "human_continuation_approval_issued",
+            "blocker_authority_digest": approval["blocker_authority_digest"],
+            "blocker_provenance_id": approval["blocker_provenance_id"],
             "task_id": task_id,
             "approval_id": approval["approval_id"],
             "task_scope": task_id,
@@ -6668,6 +6738,31 @@ def command_note(state: dict[str, Any], args: list[str]) -> None:
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
     timestamp = iso_now()
+    if len(args) > 2:
+        if len(args) != 3 or not args[2].startswith("--blocker-provenance="):
+            raise SystemExit("Usage: note <task-id> <message> [--blocker-provenance=<JSON>]")
+        if actor != "Human/Ops":
+            raise SystemExit("Only Human/Ops can adjudicate blocker provenance")
+        try:
+            payload = json.loads(args[2].split("=", 1)[1])
+        except (ValueError, TypeError) as exc:
+            raise SystemExit(f"Invalid blocker provenance JSON: {exc}") from exc
+        if not isinstance(payload, dict) or set(payload) != {"context_sha256", "expires_at", "fields"}:
+            raise SystemExit("Blocker provenance requires context_sha256, expires_at and fields")
+        record = dict(payload, issued_by=actor, issued_at=timestamp,
+                      record_id=uuid.uuid4().hex, message=message)
+        candidate = dict(task, blocker_provenance=record)
+        error = blocker_provenance_error(candidate)
+        if error:
+            raise SystemExit(error)
+        if "blocker_provenance" in task:
+            task.setdefault("blocker_provenance_history", []).append(task["blocker_provenance"])
+        task["blocker_provenance"] = record
+        task["last_update"] = timestamp
+        # Do not rewrite blocker prose, status, roles, counters or approvals.
+        append_log({"ts": timestamp, "agent": actor, "type": "blocker_provenance_recorded",
+                    "task_id": task_id, "message": message, "provenance": record})
+        return
     task["last_update"] = timestamp
     task["next"] = message
     append_log({"ts": timestamp, "agent": actor, "type": "note", "task_id": task_id, "message": message})
