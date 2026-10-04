@@ -1288,6 +1288,7 @@ class CooldownLifecycleTests(unittest.TestCase):
             mock.patch.object(mr, "_now", side_effect=lambda now=None: now or clock[0]),
             mock.patch.object(sv, "datetime", Clock),
             mock.patch.object(sv, "load_event_queue", return_value=[event]),
+            mock.patch.object(sv, "replace_event_queue"),
             mock.patch.object(sv, "load_status", return_value={"tasks": [task]}),
             mock.patch.object(sv, "build_request", return_value=request),
             mock.patch.object(sv, "prepare_worker_workspace", return_value=(True, None)) as workspace,
