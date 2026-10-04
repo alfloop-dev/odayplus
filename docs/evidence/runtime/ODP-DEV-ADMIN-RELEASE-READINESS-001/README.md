@@ -35,6 +35,35 @@ head.
 PostgreSQL rows created by those tests are test inputs in throwaway databases,
 not live evidence.
 
+## Review-6 continuation: pure-admin release notice
+
+Pi preserved source head `c28dabe88db76a4d04df67b6ae32ae8d66645c68` and all
+closed review findings. The bounded correction adds the missing operator-facing
+notice to `/operator?view=admin`; see design §5.4. The server projects existing
+API readiness/version after durable-session resolution, with exact admitted
+profile/environment/candidate binding. It does not add a route, business grant,
+model fallback or deployment input. PostgreSQL/auth/release source is unchanged;
+previous green broad suites are not rerun for counts.
+
+Focused verification commands for this correction (offline inputs only):
+
+```
+(cd apps/web && npx vitest run features/operator/__tests__/OperatorAdminAccess.test.tsx src/lib/auth/__tests__/operatorReleaseStatus.test.ts src/lib/auth/__tests__/operatorReleasePage.test.ts)
+(cd apps/web && npx tsc --noEmit)
+uv run --frozen python delivery_toolchain/governance/check_code_boundaries.py
+```
+
+The initial anchor `ba83c96d91fd` run exited 1 (56 passed, one new UI test
+failed because its test omitted production mode); TypeScript exited 2 (the new
+test environment lacked typed NODE_ENV). Both test setup defects were corrected,
+not skipped. The final focused receipts, exact head and subsequent required CI
+are recorded through canonical task notes; no failed attempt is green evidence.
+The new tests cover visible dev-only/missing-model messaging, ready full/admin
+behavior, page wiring, malformed/mismatched bindings, persistence/session and
+transport/read failures, and secret-free props. They are not live browser or
+new PostgreSQL proof. The previously successful exact-head CI on `c28dabe8`
+remains historical only; the notice head requires its own normal CI/review.
+
 ## Previously local-only failures
 
 `tests/e2e/test_release_gate_registry.py::test_product_gate_accepts_expected_sha`

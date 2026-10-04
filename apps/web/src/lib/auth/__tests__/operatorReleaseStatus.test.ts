@@ -8,6 +8,7 @@ vi.mock("../cloudRunIdentity", () => ({ resolveGoogleMetadataIdentityToken: vi.f
 
 const sha = "a".repeat(40);
 const env = {
+  NODE_ENV: "production" as const,
   ODP_RELEASE_PROFILE: "dev-admin", ODP_DEPLOY_ENV: "dev", ODAY_RELEASE_SHA: sha,
   ODP_API_BASE_URL: "https://private-api.invalid", ODP_API_SERVICE_AUDIENCE: "https://stable-api.invalid",
 };
@@ -76,6 +77,12 @@ describe("server-side operator release status projection", () => {
     expect(await readOperatorReleaseStatus("cookie", { ...env, ODP_RELEASE_PROFILE: profile })).toEqual({
       profile, models: "ready", unavailableServices: ["AVM", "HeatZone", "SiteScore"],
     });
+  });
+
+  it.each(["staging", "production"])("preserves full ready status in %s", async deployment => {
+    payload = readiness("full", true);
+    payload.details.deploymentMode = deployment;
+    expect(await readOperatorReleaseStatus("cookie", { ...env, ODP_RELEASE_PROFILE: "full", ODP_DEPLOY_ENV: deployment })).toMatchObject({ profile: "full", models: "ready" });
   });
 
   it("keeps default full scope and reports actual unresolved models", async () => {
