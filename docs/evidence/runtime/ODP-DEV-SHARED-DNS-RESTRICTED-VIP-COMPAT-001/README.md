@@ -64,6 +64,21 @@ Fetched on 2026-10-04; raw HTML retained only in worker scratch, no secrets:
 Commands were registered through live canonical `ai-status.sh note` before
 execution: offline init `-backend=false`, fmt-check, validate, full focused root
 mock test file and `git diff --check`. Source formatter was separately registered.
+Committed receipts measure source head
+`b42e50aead9c8d22dcd729f3549846cd515b476f` (source unchanged by receipt commit):
+
+| Command (root `infra/terraform/dev_connector_egress`) | Receipt suffix | Exit / duration / result |
+|---|---|---|
+| `init -backend=false -input=false` | `6f6f0caf3bc29dd9` | 0 / 3.277s / passed |
+| `fmt -check -recursive` | `721084c121ea3806` | 0 / 0.070s / passed |
+| `validate` | `ec32fe720abde77f` | 0 / 1.009s / passed |
+| `test -no-color` | `2c3f3be641060910` | 0 / 7.173s / 26 passed, 0 failed |
+
+Files are `verification-odp_dev_shared_dns_restricted_vip_compat_001-<suffix>.json`
+in this directory. These are source-head receipts, not falsely relabelled final
+submission-head receipts. Exact-head verification is rebound after this
+evidence-only commit and its receipt references registered in canonical status.
+
 Each measured command uses existing `.orchestrator/verification_evidence.py` to
 capture exact head, command, selection, duration, terminal exit and outcome;
 canonical delivery verification covers metadata-declared `git diff --check`.
