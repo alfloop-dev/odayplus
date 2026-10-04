@@ -56,8 +56,14 @@ requires the original task's eligibility/authority and a normal admitted worker.
 
 The declared unittest command now executes nine real unittest cases rather
 than discovering zero pytest functions. Canonical metadata `assign` registered
-`uv run pytest -q .orchestrator/test_model_rotation.py` to also cover the existing
-pytest regressions and adapter mocks. All process/auth interactions are mocked;
+`uv run --python 3.12 pytest -q .orchestrator/test_model_rotation.py` to also cover
+the existing pytest regressions and adapter mocks. The initial unpinned `uv run`
+chose Python3.14 and failed dependency installation (pgserver cp312 only), exit2
+before collection; the explicit3.12 run passed all58 selected tests. Anchor
+`ec7ff5bd683f36878e2edb30a472593a17f1bc11` also passed unittest9, diff check and
+code boundaries1199. `verification-anchor/` retains every command receipt,
+including that initial failure, not just successful output.
+All process/auth interactions are mocked;
 quota files are isolated in temporary directories. No model inference is tested.
 
 Verification receipts bind measured HEAD, exact command, exit code, duration,
