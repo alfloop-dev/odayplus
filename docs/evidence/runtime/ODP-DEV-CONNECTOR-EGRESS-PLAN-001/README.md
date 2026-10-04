@@ -78,8 +78,22 @@ Effective-policy checks, separate shared-DNS authority, state ownership, staged
 rollback and post-apply candidate runtime/firewall-log evidence remain mandatory.
 The missing-scope-review test rejects firewall opt-in even with approved test DNS;
 scoped-protection tests retain the exact unique tag and least-necessary rules.
-New exact-head native receipts are required before resubmission; older tables
-above are historical, not proof of this repair or live enforcement.
+Repair anchor `2b7c4bb3273ad107e75957895ea3ea67d9f02a94` native measurements:
+
+| Exact command | Exit | Seconds | Native receipt ID |
+|---|---:|---:|---|
+| git diff --check | 0 | 0.016 | d4a4831a11275d40 |
+| terraform -chdir=infra/terraform/dev_connector_egress init -backend=false -input=false | 0 | 0.519 | 51fd850865d31eee |
+| terraform -chdir=infra/terraform/dev_connector_egress fmt -check -recursive | 0 | 0.079 | e8b4eef417d7ad0f |
+| terraform -chdir=infra/terraform/dev_connector_egress validate | 0 | 1.030 | f2944dd027bbcf58 |
+| terraform -chdir=infra/terraform/dev_connector_egress test -no-color | 0 | 6.116 | b6bcb628de08f3e4 |
+
+Unmodified native JSON receipts are stored beside this file. Test output reports
+**20 passed, 0 failed**, including the supported-identity assertion and rejection
+of absent connector scope review. No rerun for count. The evidence-only successor
+must separately pass the five declared commands at its exact final head before
+resubmission; native final-head receipts remain in the workflow evidence store
+and are enforced by task_finalize. None of these receipts proves live enforcement.
 
 ## Review and downstream closeout
 
