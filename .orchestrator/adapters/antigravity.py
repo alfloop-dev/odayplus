@@ -39,11 +39,9 @@ def _effort_args(settings: dict, model: str) -> list[str]:
 
     Reasoning strength reaches agy two different ways and they are not
     interchangeable. Gemini ids carry it in the id itself
-    (`gemini-3.7-flash-high` vs `-low`), while the reasoning Claude ids reject
-    the flag outright -- `agy --model claude-opus-4-6-thinking --effort high`
-    exits with "--effort is not supported for model ...", which would fail the
-    dispatch rather than degrade it. So the flag is opt-in per provider and is
-    never sent for a model that cannot take it.
+    (`gemini-3.7-flash-high` vs `-low`); Claude reasoning IDs encode the
+    level too (`claude-opus-5-5-high`). Do not combine them with a separate
+    --effort override. The flag remains opt-in for non-Claude models.
     """
     effort = str(settings.get("effort") or "").strip().lower()
     if not effort:
@@ -157,15 +155,34 @@ class AntigravityAdapter(BaseAdapter):
         command = [cli]
         # Model rotation: cycle Gemini <-> Claude/GPT per the provider's quota
         # cooldown state (falls back to the static `model` setting when rotation
-        # is disabled). '' means let agy use its default (Gemini) model.
-        selection = model_rotation.resolve_active_selection(
-            self.config,
-            provider_id,
-            settings,
-            task=request.metadata.get("task") if isinstance(request.metadata, dict) else None,
-            reason=request.reason,
-        )
-        model = str(selection.get("model") or "").strip()
+        # is disabled). Legacy explicit pins remain selection authority, but
+        # known unavailable IDs must fail, not silently run the CLI default.
+        try:
+            selection = model_rotation.resolve_active_selection(
+                self.config,
+                provider_id,
+                settings,
+                task=request.metadata.get("task") if isinstance(request.metadata, dict) else None,
+                reason=request.reason,
+            )
+            model = str(selection.get("model") or "").strip()
+            if model in model_rotation.RETIRED_MODEL_IDS:
+                raise ValueError(
+                    f"Antigravity model {model!r} is unavailable in the installed AGY registry; "
+                    "explicit config pin was preserved. Operator migration requires review; "
+                    "no CLI-default fallback was launched."
+                )
+        except ValueError as exc:
+            return DeliveryResult(
+                ok=False,
+                adapter=self.name,
+                mode="antigravity",
+                target=display_name,
+                auto_delivered=False,
+                manual_confirmation_required=False,
+                error=str(exc),
+                notes=str(exc),
+            )
         dispatched_pool = model_rotation.normalize_pool(selection.get("pool"))
         if model:
             # Structured argv: the model string is one argument, never shell text.

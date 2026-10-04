@@ -8,6 +8,8 @@ import pathlib
 import shutil
 import subprocess
 import sys
+import tempfile
+import unittest
 from datetime import UTC, datetime, timedelta
 from unittest import mock
 
@@ -22,6 +24,7 @@ CFG = {
                 "model_rotation": {
                     "enabled": True,
                     "primary_model": "",
+                    # Historical explicit pin; do not silently migrate it.
                     "fallback_model": "claude-sonnet-4-6",
                 }
             }
@@ -54,7 +57,7 @@ def test_p0_and_sensitive_scope_use_high_risk_model(tmp_path):
         "antigravity5",
         task={"id": "ODP-CORE-1", "priority": "P0", "artifacts": ["app/service.py"]},
     )
-    assert p0["model"] == "claude-opus-4-6-thinking"
+    assert p0["model"] == "claude-opus-5-5-high"
     assert p0["risk_tier"] == "high"
     assert p0["selection_reason"] == "business_priority_P0"
 
@@ -63,7 +66,7 @@ def test_p0_and_sensitive_scope_use_high_risk_model(tmp_path):
         "antigravity5",
         task={"id": "ODP-DATA-1", "priority": "P2", "artifacts": ["src/domain/ledger.py"]},
     )
-    assert sensitive["model"] == "claude-opus-4-6-thinking"
+    assert sensitive["model"] == "claude-opus-5-5-high"
     assert sensitive["selection_reason"].startswith("sensitive_scope:")
 
 
@@ -74,7 +77,7 @@ def test_first_review_reopen_forces_high_risk_model(tmp_path):
         "antigravity5",
         task={"id": "ODP-REOPEN-1", "priority": "P2", "review_reopen_count": 1},
     )
-    assert selection["model"] == "claude-opus-4-6-thinking"
+    assert selection["model"] == "claude-opus-5-5-high"
     assert selection["risk_tier"] == "high"
     assert selection["selection_reason"] == "review_reopened_1_time(s)"
 
@@ -107,7 +110,7 @@ def test_sidecar_and_finalize_stay_on_flash_high(tmp_path):
             "review_reopen_count": 1,
         },
     )
-    assert reopened_docs["model"] == "claude-opus-4-6-thinking"
+    assert reopened_docs["model"] == "claude-opus-5-5-high"
     assert reopened_docs["selection_reason"] == "review_reopened_1_time(s)"
 
 
@@ -124,7 +127,7 @@ def test_p0_and_p1_with_docs_preserve_high_risk_priority_precedence(tmp_path):
         ],
     }
     selection = mr.resolve_active_selection(CFG, "antigravity5", task=live_proof_task)
-    assert selection["model"] == "claude-opus-4-6-thinking"
+    assert selection["model"] == "claude-opus-5-5-high"
     assert selection["risk_tier"] == "high"
     assert selection["selection_reason"] == "business_priority_P0"
 
@@ -135,7 +138,7 @@ def test_p0_and_p1_with_docs_preserve_high_risk_priority_precedence(tmp_path):
         "artifacts": ["docs/architecture.md"],
     }
     p1_selection = mr.resolve_active_selection(CFG, "antigravity5", task=p1_docs_task)
-    assert p1_selection["model"] == "claude-opus-4-6-thinking"
+    assert p1_selection["model"] == "claude-opus-5-5-high"
     assert p1_selection["risk_tier"] == "high"
     assert p1_selection["selection_reason"] == "business_priority_P1"
 
@@ -167,7 +170,7 @@ def test_mixed_workflow_and_docs_uses_high_risk_model(tmp_path):
         ],
     }
     selection = mr.resolve_active_selection(CFG, "antigravity5", task=workflow_docs)
-    assert selection["model"] == "claude-opus-4-6-thinking"
+    assert selection["model"] == "claude-opus-5-5-high"
     assert selection["risk_tier"] == "high"
     assert selection["selection_reason"] == "sensitive_scope:workflow"
 
@@ -181,7 +184,7 @@ def test_mixed_workflow_and_docs_uses_high_risk_model(tmp_path):
         ],
     }
     iac_selection = mr.resolve_active_selection(CFG, "antigravity5", task=iac_docs)
-    assert iac_selection["model"] == "claude-opus-4-6-thinking"
+    assert iac_selection["model"] == "claude-opus-5-5-high"
     assert iac_selection["risk_tier"] == "high"
     assert iac_selection["selection_reason"] == "sensitive_scope:iac"
 
@@ -196,7 +199,7 @@ def test_reopen_with_docs_preserves_high_risk_reopen_precedence(tmp_path):
         "artifacts": ["docs/release.md"],
     }
     selection = mr.resolve_active_selection(CFG, "antigravity5", task=reopen_task)
-    assert selection["model"] == "claude-opus-4-6-thinking"
+    assert selection["model"] == "claude-opus-5-5-high"
     assert selection["risk_tier"] == "high"
     assert selection["selection_reason"] == "review_reopened_2_time(s)"
 
@@ -211,7 +214,7 @@ def test_summary_zh_and_summary_compatibility_in_task_corpus(tmp_path):
         "artifacts": ["docs/changelog.md"],
     }
     selection = mr.resolve_active_selection(CFG, "antigravity5", task=zh_sensitive_task)
-    assert selection["model"] == "claude-opus-4-6-thinking"
+    assert selection["model"] == "claude-opus-5-5-high"
     assert selection["risk_tier"] == "high"
     assert selection["selection_reason"] == "sensitive_scope:core/"
 
@@ -228,7 +231,7 @@ def test_summary_zh_and_summary_compatibility_in_task_corpus(tmp_path):
     assert docs_selection["selection_reason"] == "bounded_docs_or_lint"
 
 
-def test_quota_rotation_overrides_risk_model_but_keeps_audit_reason(tmp_path):
+def test_quota_rotation_preserves_high_risk_claude_policy_and_audit_reason(tmp_path):
     _isolate(tmp_path)
     mr.record_exhaustion(CFG, "antigravity5", 900, pool="gemini")
     selection = mr.resolve_active_selection(
@@ -237,7 +240,7 @@ def test_quota_rotation_overrides_risk_model_but_keeps_audit_reason(tmp_path):
         task={"id": "ODP-P0-1", "priority": "P0"},
     )
     assert selection["pool"] == "claude"
-    assert selection["model"] == "claude-sonnet-4-6"
+    assert selection["model"] == "claude-opus-5-5-high"
     assert selection["risk_tier"] == "high"
     assert selection["selection_reason"] == "quota_pool_fallback:business_priority_P0"
 
@@ -920,7 +923,7 @@ def _adapter_config(tmp_path) -> dict:
                     "model_rotation": {
                         "enabled": True,
                         "primary_model": "",
-                        "fallback_model": "claude-sonnet-4-6",
+                        "fallback_model": "claude-sonnet-5-5-high",
                     },
                 }
             }
@@ -988,11 +991,11 @@ def test_adapter_persists_dispatched_pool_in_worker_metadata(tmp_path):
     mr.record_exhaustion(config, "antigravity5", 900, pool="gemini")
     result, spawn = _deliver(config, tmp_path)
     assert result.metadata[mr.WORKER_POOL_KEY] == "claude"
-    assert result.metadata[mr.WORKER_MODEL_KEY] == "claude-sonnet-4-6"
+    assert result.metadata[mr.WORKER_MODEL_KEY] == "claude-sonnet-5-5-high"
     command = spawn.call_args.args[0]
     # Structured argv: the model id stays ONE argument
     # and is never interpolated into a shell string.
-    assert command[command.index("--model") + 1] == "claude-sonnet-4-6"
+    assert command[command.index("--model") + 1] == "claude-sonnet-5-5-high"
 
 
 def test_adapter_selects_high_risk_model_from_dispatched_task_snapshot(tmp_path):
@@ -1006,11 +1009,11 @@ def test_adapter_selects_high_risk_model_from_dispatched_task_snapshot(tmp_path)
     )
 
     assert result.ok
-    assert result.metadata[mr.WORKER_MODEL_KEY] == "claude-opus-4-6-thinking"
+    assert result.metadata[mr.WORKER_MODEL_KEY] == "claude-opus-5-5-high"
     assert result.metadata[mr.WORKER_MODEL_RISK_TIER_KEY] == "high"
     assert result.metadata[mr.WORKER_MODEL_REASON_KEY] == "business_priority_P0"
     command = spawn.call_args.args[0]
-    assert command[command.index("--model") + 1] == "claude-opus-4-6-thinking"
+    assert command[command.index("--model") + 1] == "claude-opus-5-5-high"
     assert all(isinstance(part, str) for part in command)
     assert spawn.call_args.kwargs.get("env", {}).get("HOME") == str(
         pathlib.Path(tmp_path) / "home-ag5"
@@ -1093,3 +1096,142 @@ def test_environmental_failures_do_not_lock_task():
     for _ in range(2):
         c = sv.record_task_failure_streak(st, w, "real bug", failure_kind="terminal")
     assert c == 2
+
+
+class SupportedModelCompatibilityTests(unittest.TestCase):
+    """Executable by the task's unittest discovery command (not zero tests).
+
+    Legacy pytest functions above remain covered by the registered pytest run.
+    Adapter processes/auth are mocked; all cooldown writes use a temp root.
+    """
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.path = pathlib.Path(temporary.name)
+        state_patch = mock.patch.object(mr, "_STATE_PATH", self.path / "cooldown.json")
+        legacy_patch = mock.patch.object(mr, "_LEGACY_STATE_PATH", self.path / "legacy.json")
+        state_patch.start()
+        legacy_patch.start()
+        self.addCleanup(state_patch.stop)
+        self.addCleanup(legacy_patch.stop)
+        self.config = _adapter_config(self.path)
+        self.settings = self.config["providers"]["antigravity5"]["antigravity"]
+        self.settings["model_rotation"].pop("fallback_model")
+
+    def test_defaults_match_observed_registry_and_example(self):
+        root = pathlib.Path(__file__).resolve().parents[1]
+        evidence = root / "docs/evidence/execution-control/ODP-ORCH-AGY-MODEL-COMPAT-001"
+        receipt = json.loads((evidence / "agy-supported-model-compatibility.json").read_text())
+        supported = {item["id"] for item in receipt["models"]}
+        self.assertEqual(receipt["exit_code"], 0)
+        for model in (mr.DEFAULT_STANDARD_MODEL, mr.DEFAULT_HIGH_RISK_MODEL, mr.DEFAULT_FALLBACK_MODEL):
+            self.assertIn(model, supported)
+        self.assertTrue(mr.RETIRED_MODEL_IDS.isdisjoint(supported))
+        example = json.loads((root / ".orchestrator/config.example.json").read_text())
+        for alias in ("antigravity", "antigravity2"):
+            settings = example["providers"][alias]["antigravity"]
+            self.assertEqual(settings["model_rotation"]["fallback_model"], mr.DEFAULT_FALLBACK_MODEL)
+            self.assertEqual(mr.model_policy_config(example, alias)["high_risk_model"], mr.DEFAULT_HIGH_RISK_MODEL)
+
+    def test_risk_and_standard_semantics(self):
+        for task in ({"priority": "P0"}, {"priority": "P1"}, {"review_reopen_count": 2},
+                     {"priority": "P2", "artifacts": ["src/domain/ledger.py", "docs/guide.md"]}):
+            with self.subTest(task=task):
+                result, spawn = _deliver(self.config, self.path, task=task)
+                self.assertTrue(result.ok)
+                self.assertEqual(result.metadata[mr.WORKER_MODEL_KEY], "claude-opus-5-5-high")
+                self.assertEqual(result.metadata[mr.WORKER_POOL_KEY], "claude")
+                self.assertEqual(result.metadata[mr.WORKER_MODEL_RISK_TIER_KEY], "high")
+                command = spawn.call_args.args[0]
+                self.assertEqual(command[command.index("--model") + 1], result.metadata[mr.WORKER_MODEL_KEY])
+        test_sidecar_and_finalize_stay_on_flash_high(self.path)
+        test_p2_docs_only_uses_standard_model(self.path)
+
+    def test_default_fallback_is_high_and_metadata_binds_actual_pool(self):
+        mr.record_exhaustion(self.config, "antigravity5", 900, pool="gemini")
+        result, spawn = _deliver(self.config, self.path)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.metadata[mr.WORKER_MODEL_KEY], "claude-sonnet-5-5-high")
+        self.assertEqual(result.metadata[mr.WORKER_POOL_KEY], "claude")
+        command = spawn.call_args.args[0]
+        self.assertEqual(command[command.index("--model") + 1], "claude-sonnet-5-5-high")
+        exhaustion = mr.record_exhaustion(self.config, "antigravity5", 900,
+                                        pool=mr.worker_dispatched_pool({"metadata": result.metadata}))
+        self.assertEqual(exhaustion["exhausted_pool"], "claude")
+        self.assertEqual(exhaustion["pool_source"], "dispatched")
+        self.assertTrue(exhaustion["both_exhausted"])
+        # Later state transitions cannot rewrite the launch receipt.
+        self.assertEqual(result.metadata[mr.WORKER_MODEL_KEY], "claude-sonnet-5-5-high")
+        self.assertEqual(result.metadata[mr.WORKER_POOL_KEY], "claude")
+
+    def test_gemini_cooldown_does_not_downgrade_high_risk(self):
+        self.settings["model_rotation"]["fallback_model"] = "claude-sonnet-4-6"
+        mr.record_exhaustion(self.config, "antigravity5", 900, pool="gemini")
+        result, _ = _deliver(self.config, self.path, task={"priority": "P0"})
+        self.assertTrue(result.ok)
+        self.assertEqual(result.metadata[mr.WORKER_MODEL_KEY], "claude-opus-5-5-high")
+        self.assertEqual(self.settings["model_rotation"]["fallback_model"], "claude-sonnet-4-6")
+
+    def test_high_risk_claude_cooldown_defers_without_downgrade(self):
+        mr.record_exhaustion(self.config, "antigravity5", 900, pool="claude")
+        for task in ({"priority": "P0"}, {"review_reopen_count": 1}):
+            result, spawn = _deliver(self.config, self.path, task=task)
+            self.assertFalse(result.ok)
+            self.assertIn("no standard-model downgrade", result.error)
+            spawn.assert_not_called()
+        # Standard work still runs on the available Gemini pool.
+        result, _ = _deliver(self.config, self.path)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.metadata[mr.WORKER_POOL_KEY], "gemini")
+        mr.record_exhaustion(self.config, "antigravity5", 900, pool="gemini")
+        result, spawn = _deliver(self.config, self.path, task={"priority": "P0"})
+        self.assertFalse(result.ok)
+        spawn.assert_not_called()
+
+    def test_retired_static_pins_preserved_but_not_launched(self):
+        self.settings["model_rotation"]["enabled"] = False
+        for pin in sorted(mr.RETIRED_MODEL_IDS):
+            self.settings["model"] = pin
+            selected = mr.resolve_active_selection(self.config, "antigravity5", task={"priority": "P0"})
+            self.assertEqual(selected["model"], pin)
+            self.assertEqual(selected["risk_tier"], "static")
+            result, spawn = _deliver(self.config, self.path, task={"priority": "P0"})
+            self.assertFalse(result.ok)
+            self.assertIn(pin, result.error)
+            self.assertIn("unavailable", result.error)
+            spawn.assert_not_called()
+            self.assertEqual(self.settings["model"], pin)
+
+    def test_retired_policy_and_fallback_fail_without_rewrite(self):
+        self.settings["model_policy"] = {"high_risk_model": "claude-opus-4-6-thinking"}
+        result, spawn = _deliver(self.config, self.path, task={"priority": "P0"})
+        self.assertFalse(result.ok)
+        self.assertIn("claude-opus-4-6-thinking", result.error)
+        spawn.assert_not_called()
+        self.settings["model_rotation"]["fallback_model"] = "claude-sonnet-4-6"
+        mr.record_exhaustion(self.config, "antigravity5", 900, pool="gemini")
+        self.assertEqual(mr.resolve_active_selection(self.config, "antigravity5")["model"], "claude-sonnet-4-6")
+        result, spawn = _deliver(self.config, self.path)
+        self.assertFalse(result.ok)
+        self.assertIn("claude-sonnet-4-6", result.error)
+        spawn.assert_not_called()
+
+    def test_supported_explicit_pin_and_effort_contract(self):
+        from adapters.antigravity import _effort_args
+
+        self.settings["model_rotation"]["enabled"] = False
+        self.settings["model"] = "claude-sonnet-5-5-high"
+        self.settings["effort"] = "high"
+        result, spawn = _deliver(self.config, self.path, task={"priority": "P0"})
+        self.assertTrue(result.ok)
+        self.assertEqual(result.metadata[mr.WORKER_MODEL_KEY], "claude-sonnet-5-5-high")
+        self.assertEqual(result.metadata[mr.WORKER_MODEL_RISK_TIER_KEY], "static")
+        self.assertNotIn("--effort", spawn.call_args.args[0])
+        self.assertEqual(_effort_args(self.settings, mr.DEFAULT_STANDARD_MODEL), ["--effort", "high"])
+
+    def test_concurrent_pool_attribution_unchanged(self):
+        test_dispatched_pool_overrides_current_active_pool(self.path)
+        test_two_concurrent_gemini_workers_never_exhaust_claude(self.path)
+        test_same_worker_failure_rotates_only_once(self.path)
+

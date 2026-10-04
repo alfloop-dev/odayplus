@@ -492,10 +492,14 @@
       "antigravity": {
         "cli": ".orchestrator/bin/agy",
         "hard_print_timeout": "2h",
+        "model_rotation": {
+          "enabled": true,
+          "fallback_model": "claude-sonnet-5-5-high"
+        },
         "model_policy": {
           "enabled": true,
           "standard_model": "gemini-3.7-flash-high",
-          "high_risk_model": "claude-opus-4-6-thinking",
+          "high_risk_model": "claude-opus-5-5-high",
           "high_risk_priorities": ["P0", "P1"],
           "upgrade_after_review_reopens": 1
         },
@@ -521,6 +525,10 @@
         "hard_print_timeout": "2h",
         "config_home": "~/.gemini-ag2",
         "home": "~/.gemini-ag2",
+        "model_rotation": {
+          "enabled": true,
+          "fallback_model": "claude-sonnet-5-5-high"
+        },
         "include_directories": true,
         "env": {
           "GEMINI_CLI_TRUST_WORKSPACE": "true",
