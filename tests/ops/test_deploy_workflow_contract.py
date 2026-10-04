@@ -565,10 +565,11 @@ def test_the_excluded_dumps_are_the_files_the_deploy_script_actually_writes(
 # is what stops E from carrying anything but evidence.
 ADMISSION_EVENT_SHA_EXPRESSION = "${{ github.sha }}"
 CANDIDATE_SHA_EXPRESSION = "${{ inputs.release_sha }}"
+POLICY_SHA_EXPRESSION = "${{ inputs.phase == 'auto' && github.sha || inputs.release_sha }}"
 
 
 def test_all_checkout_steps_bind_to_an_exact_commit_expression() -> None:
-    """No checkout may float: each binds to the candidate SHA, or admission's event SHA."""
+    """Bind exact commits; automatic policy runs from the trusted workflow event SHA."""
     parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
     checkout_count = 0
     for job_id, job in parsed.get("jobs", {}).items():
@@ -579,11 +580,10 @@ def test_all_checkout_steps_bind_to_an_exact_commit_expression() -> None:
                 continue
             checkout_count += 1
             ref = step.get("with", {}).get("ref")
-            expected = (
-                ADMISSION_EVENT_SHA_EXPRESSION
-                if job_id == "admission"
-                else CANDIDATE_SHA_EXPRESSION
-            )
+            expected = {
+                "admission": ADMISSION_EVENT_SHA_EXPRESSION,
+                "release_phase": POLICY_SHA_EXPRESSION,
+            }.get(job_id, CANDIDATE_SHA_EXPRESSION)
             assert ref == expected, (
                 f"Job {job_id} checkout binds ref to {ref!r}, expected {expected!r}"
             )
@@ -1464,7 +1464,7 @@ def test_the_lease_input_is_optional_so_the_build_phase_can_run_without_one() ->
 
     phase = inputs["phase"]
     assert phase["type"] == "choice"
-    assert set(phase["options"]) == {"build", "deploy"}
+    assert set(phase["options"]) == {"build", "deploy", "auto"}
 
 
 def test_workflow_dispatch_declares_masked_snapshot_and_rollback_inputs() -> None:
@@ -2020,16 +2020,13 @@ def test_the_first_release_evidence_leaves_the_runner() -> None:
     assert admission_uploads[0]["if"] == "always()"
 
 
-def test_the_first_release_branch_adds_no_second_admission_path() -> None:
-    """One workflow, one admission job, one lease check.
-
-    The deadlock could also have been "resolved" by a bootstrap workflow that
-    skips admission. That would remove the deadlock by removing the gate.
-    """
+def test_first_release_and_dev_policy_keep_one_deploy_and_manual_lease_check() -> None:
+    """Dev standing authority never becomes a staging/production bypass."""
 
     jobs = _release_jobs()
     assert sorted(jobs) == [
         "admission",
+        "automatic_admission",
         "build",
         "deploy",
         "release_phase",
@@ -2044,6 +2041,10 @@ def test_the_first_release_branch_adds_no_second_admission_path() -> None:
         if "check_runtime_admission.py" in str(step.get("run", ""))
     ]
     assert len(lease_checks) == 1
+    assert "inputs.phase == 'deploy'" in jobs["admission"]["if"]
+    assert "inputs.environment == 'dev'" in jobs["automatic_admission"]["if"]
+    assert jobs["automatic_admission"]["environment"]["name"] == "dev"
+    assert "needs.admission.result == 'success'" in jobs["deploy"]["if"]
 
 
 def test_a_failed_first_deploy_does_not_claim_a_rollback_it_cannot_do() -> None:

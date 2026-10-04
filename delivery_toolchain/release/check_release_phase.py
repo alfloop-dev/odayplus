@@ -49,7 +49,7 @@ from delivery_toolchain.release.release_manifest import (  # noqa: E402
     build_release_profile,
 )
 
-PHASES = ("build", "deploy")
+PHASES = ("build", "deploy", "auto")
 
 # `deploy_cloud_run_waji.sh` 以 deploy-by-digest 部署這四個 target；migration job
 # 與 worker 共用同一個 image，所以 handoff 只需要四個 reference。
@@ -90,7 +90,10 @@ def phase_errors(
 
     supplied = {name: value for name, value in images.items() if value.strip()}
 
-    if phase == "build":
+    if phase == "auto" and environment != "dev":
+        errors.append("auto 階段僅限 dev；staging 與 production 必須人工核准。")
+
+    if phase in {"build", "auto"}:
         if supplied:
             errors.append(
                 "build 階段不得預先指定 image handoff（"

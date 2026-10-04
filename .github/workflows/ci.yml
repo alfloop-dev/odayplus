@@ -502,3 +502,23 @@ jobs:
       # dev -> main promotion separately requires an authentic GO decision.
       - name: Run product E2E dev merge gate
         run: make product-e2e-gate
+
+  automatic-dev-release:
+    name: Request automatic dev release after checks
+    needs: [orchestrator, product, performance-gate, product-e2e-gate]
+    if: >-
+      ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/dev'
+          && needs.orchestrator.result == 'success' && needs.product.result == 'success'
+          && (needs.performance-gate.result == 'success' || needs.performance-gate.result == 'skipped')
+          && (needs.product-e2e-gate.result == 'success' || needs.product-e2e-gate.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dispatch the existing dev release workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ODAY_RELEASE_SHA: ${{ github.sha }}
+        run: python3 -m delivery_toolchain.release.automatic_dev dispatch
