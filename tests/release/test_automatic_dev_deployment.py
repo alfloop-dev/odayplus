@@ -132,15 +132,34 @@ def archive(manifest, name="RELEASE_MANIFEST.json"):
     return data.getvalue()
 
 
+def deploy_run(**change):
+    return {"id": 90, "path": auto.WORKFLOW, "event": "workflow_dispatch",
+            "repository": {"full_name": REPO}, "head_repository": {"full_name": REPO},
+            "head_branch": "dev", "head_sha": "d" * 40, "run_attempt": 1,
+            "display_title": f"Runtime Release dev deploy {SHA}", **change}
+
+
 def fake_api(manifest, *, artifact_name=auto.DEPLOYED_ARTIFACT, expired=False,
-             job_result="success", archive_name="RELEASE_MANIFEST.json"):
+             job_result="success", archive_name="RELEASE_MANIFEST.json", run=None,
+             attempt_jobs=None, deployment_state="success", seen=None):
+    run = run or deploy_run()
     def read(path, **kwargs):
+        if seen is not None:
+            seen.append(path)
         if path.startswith("actions/workflows/"):
-            return {"workflow_runs": [{"id": 90, "path": auto.WORKFLOW, "event": "workflow_dispatch"}]}
+            return {"workflow_runs": [run]}
         if path.endswith("/artifacts?per_page=100"):
             return {"artifacts": [{"id": 900, "name": artifact_name, "expired": expired}]}
-        if path.endswith("/jobs?per_page=100"):
-            return {"jobs": [{"name": auto.DEPLOY_JOB, "conclusion": job_result}]}
+        if "/attempts/" in path and path.endswith("/jobs?per_page=100"):
+            attempt = int(path.split("/attempts/")[1].split("/")[0])
+            result = (attempt_jobs or {}).get(attempt, job_result)
+            return {"jobs": [{"name": auto.DEPLOY_JOB, "conclusion": result}]}
+        if path.startswith("deployments?"):
+            assert "environment=dev" in path and f"sha={run['head_sha']}" in path
+            return [{"id": 7}]
+        if path == "deployments/7/statuses?per_page=100":
+            return [{"state": deployment_state,
+                     "log_url": f"https://github.com/{REPO}/actions/runs/{run['id']}/job/1"}]
         if path.endswith("/zip"):
             return archive(manifest, archive_name)
         if path == "actions/runs/100":
@@ -158,7 +177,8 @@ def test_build_only_green_run_is_not_rollback_or_deployed_proof(monkeypatch, man
 
 @pytest.mark.parametrize("kwargs", [
     {"expired": True}, {"job_result": "failure"}, {"job_result": "skipped"},
-    {"archive_name": "../../outside.json"},
+    {"archive_name": "../../outside.json"}, {"deployment_state": "failure"},
+    {"run": deploy_run(display_title="Runtime Release dev deploy " + "a" * 40)},
 ])
 def test_untrustworthy_previous_release_is_not_silently_first_release(monkeypatch, manifest, kwargs):
     monkeypatch.setattr(auto, "api", fake_api(manifest, **kwargs))
@@ -254,3 +274,82 @@ def test_workflow_keeps_one_deployment_implementation_and_manual_gate():
 
 
 CI_WORKFLOW_PATH = auto.CI_WORKFLOW
+
+
+def test_signed_manual_dev_deploy_from_another_ref_is_discovered(monkeypatch, manifest, context):
+    seen = []
+    run = deploy_run(head_branch="hotfix/odp-1", head_sha="f" * 40)
+    monkeypatch.setattr(auto, "api", fake_api(manifest, run=run, seen=seen))
+    found = auto.previous_deployment()
+    assert found is not None and found[0] == manifest
+    assert not any("branch=" in path for path in seen)
+
+
+@pytest.mark.parametrize("title", [
+    f"Runtime Release staging deploy {SHA}", f"Runtime Release production auto {SHA}",
+])
+def test_other_environment_runs_are_never_dev_predecessors(monkeypatch, manifest, context, title):
+    monkeypatch.setattr(auto, "api", fake_api(manifest, run=deploy_run(display_title=title)))
+    assert auto.previous_deployment() is None
+
+
+def test_fork_dispatch_run_is_ignored(monkeypatch, manifest, context):
+    run = deploy_run(head_repository={"full_name": "fork/odayplus"})
+    monkeypatch.setattr(auto, "api", fake_api(manifest, run=run))
+    assert auto.previous_deployment() is None
+
+
+def test_rerun_of_already_deployed_current_run_deduplicates(monkeypatch, manifest, context, tmp_path):
+    # Attempt 1 of this very run deployed; attempt 2 is the in-progress rerun.
+    monkeypatch.setenv("GITHUB_RUN_ID", "90")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+    run = deploy_run(run_attempt=2, display_title=f"Runtime Release dev auto {SHA}")
+    monkeypatch.setattr(auto, "api", fake_api(manifest, run=run, attempt_jobs={2: None}))
+    assert auto.main(["preflight", "--candidate", SHA, "--environment", "dev",
+                      "--ci-run-id", "100", "--directory", str(tmp_path)]) == 0
+    assert "proceed=false" in Path(context["GITHUB_OUTPUT"]).read_text()
+
+
+def test_first_attempt_of_current_run_not_counted_before_it_deploys(monkeypatch, manifest, context):
+    monkeypatch.setenv("GITHUB_RUN_ID", "90")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    run = deploy_run(display_title=f"Runtime Release dev auto {SHA}")
+    monkeypatch.setattr(auto, "api", fake_api(manifest, run=run))
+    assert auto.previous_deployment() is None
+
+
+def test_failed_rerun_does_not_hide_earlier_successful_deployment(monkeypatch, manifest, context):
+    run = deploy_run(run_attempt=2, conclusion="failure")
+    monkeypatch.setattr(auto, "api", fake_api(manifest, run=run, attempt_jobs={2: "failure"}))
+    found = auto.previous_deployment()
+    assert found is not None and found[0] == manifest
+
+
+def test_automatic_admission_rereads_dev_deploy_targets_before_mutation():
+    jobs = yaml.safe_load((ROOT / auto.WORKFLOW).read_text())["jobs"]
+    steps = jobs["automatic_admission"]["steps"]
+    probe = next(i for i, step in enumerate(steps)
+                 if "probe_release_target_absence.py" in step.get("run", ""))
+    admit_step = next(i for i, step in enumerate(steps) if step.get("id") == "admit")
+    auth = next(i for i, step in enumerate(steps)
+                if step.get("uses", "").startswith("google-github-actions/auth"))
+    assert auth < probe < admit_step
+    run = steps[probe]["run"]
+    assert "--manifest .odp_data/release/automatic-dev/RELEASE_MANIFEST.json" in run
+    assert "--receipt" in run and "--output" not in run
+    for target in ("api", "web", "migration", "worker", "scheduler"):
+        assert f'--target "{target}=' in run
+    env = steps[probe]["env"]
+    assert env["API_SERVICE"] == "${{ vars.ODP_CLOUD_RUN_API_SERVICE }}"
+    assert "if" not in steps[probe]
+    assert jobs["automatic_admission"]["environment"]["name"] == "dev"
+
+
+def test_both_build_entrances_share_one_immutable_publication_lane():
+    release = yaml.safe_load((ROOT / auto.WORKFLOW).read_text())
+    group = release["jobs"]["build"]["concurrency"]["group"]
+    assert release["jobs"]["build"]["concurrency"]["cancel-in-progress"] is False
+    assert "inputs.phase" not in group
+    assert "inputs.environment" in group and "inputs.release_sha" in group
+    assert group != release["concurrency"]["group"]
+    assert release["permissions"]["deployments"] == "read"

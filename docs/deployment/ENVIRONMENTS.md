@@ -49,13 +49,21 @@ human signoff is needed. The initial automated profile is `dev-admin`: missing
 models remain unavailable and full product/production readiness is not claimed.
 
 Automatic and manual dev deployments share one concurrency lane and never cancel
-an active migration. An already successfully deployed candidate is deduplicated;
-existing signed immutable images are reused on retry. Later updates obtain their
-rollback manifest from `deployed-release-manifest-dev`, published only after the
-real deploy and live validation succeed. A green build-only run is never a
-predecessor. With no predecessor, the existing first-release probe must prove all
-five Cloud Run targets absent. Expired artifacts or unexplained live resources
-fail closed. Deployment manifests are retained for 90 days for rollback discovery.
+an active migration. Manual and automatic builds of one release SHA share one
+immutable publication lane, so the second entrance reuses the signed images the
+first published instead of pushing the same tags concurrently. An already
+successfully deployed candidate is deduplicated, including a rerun of a run whose
+earlier attempt already deployed (success is read per attempt, not from the
+latest attempt's run conclusion). Later updates obtain their rollback manifest
+from `deployed-release-manifest-dev`, published only after the real deploy and
+live validation succeed, discovered across every same-repository dispatch ref and
+corroborated by the run title and GitHub's successful `dev` environment
+deployment record. A green build-only run is never a predecessor. With no
+predecessor, the existing first-release probe must prove all five Cloud Run
+targets absent, and automatic admission re-reads the `dev` deploy bindings with
+the same manifest-aware probe before any mutation. Expired artifacts or
+unexplained live resources fail closed. Deployment manifests are retained for 90
+days for rollback discovery.
 
 Network/SQL readiness and nominated first-admin identity/secret inputs are real
 prerequisites. Automation reports failures without inventing human accounts or

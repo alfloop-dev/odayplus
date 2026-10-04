@@ -174,6 +174,9 @@ permissions:
   packages: write
   id-token: write
   actions: read
+  # Automatic dev rollback discovery reads the dev environment deployment
+  # records GitHub wrote for a run; read-only, it cannot create deployments.
+  deployments: read
 
 # ODP-RELEASE-WORKFLOW-DISPATCH-PARSER-001: receipt staging is workspace-relative
 # because the alternative did not compile.
@@ -307,6 +310,14 @@ jobs:
     # it publishes to without consuming the authority that admits a deploy.
     environment:
       name: ${{ inputs.environment }}-build
+    # Manual build runs in the `-build` workflow lane and auto builds in the
+    # `-deploy` lane, so both could observe zero release tags and push/sign the
+    # same immutable tags at once. One publication lane per environment and
+    # release SHA makes the second entrance see four existing tags and reuse
+    # them. Pending duplicates of one SHA may be cancelled, never interleaved.
+    concurrency:
+      group: runtime-release-${{ inputs.environment }}-publish-${{ inputs.release_sha }}
+      cancel-in-progress: false
     outputs:
       api_image: ${{ steps.publish-images.outputs.api_image }}
       web_image: ${{ steps.publish-images.outputs.web_image }}
@@ -1094,6 +1105,48 @@ jobs:
         with:
           name: runtime-release-manifest-${{ inputs.release_sha }}
           path: .odp_data/release/automatic-dev
+      # The build read targets through the `dev-build` twin; this job reads the
+      # `dev` deploy bindings it will mutate. Same unconditional re-read as the
+      # manual admission: an initial-release manifest observed against target A
+      # cannot deploy while the dev deploy vars point at an occupied target B.
+      - name: Authenticate to Google Cloud for automatic target re-read (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      - name: Set up Cloud SDK for automatic target re-read
+        uses: google-github-actions/setup-gcloud@v2
+      - name: 重讀 dev 部署 target 以重驗自動 initial-release recovery
+        env:
+          GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          API_SERVICE: ${{ vars.ODP_CLOUD_RUN_API_SERVICE }}
+          WEB_SERVICE: ${{ vars.ODP_CLOUD_RUN_WEB_SERVICE }}
+          MIGRATION_JOB: ${{ vars.ODP_CLOUD_RUN_MIGRATION_JOB }}
+          WORKER_JOB: ${{ vars.ODP_CLOUD_RUN_WORKER_JOB }}
+          SCHEDULER_JOB: ${{ vars.ODP_CLOUD_RUN_SCHEDULER_JOB }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          python3 delivery_toolchain/release/probe_release_target_absence.py \
+            --environment dev \
+            --candidate-sha "${RELEASE_SHA}" \
+            --project "${GCP_PROJECT}" \
+            --region "${GCP_REGION}" \
+            --target "api=${API_SERVICE}" \
+            --target "web=${WEB_SERVICE}" \
+            --target "migration=${MIGRATION_JOB}" \
+            --target "worker=${WORKER_JOB}" \
+            --target "scheduler=${SCHEDULER_JOB}" \
+            --manifest .odp_data/release/automatic-dev/RELEASE_MANIFEST.json \
+            --receipt .odp_data/release/automatic-dev/initial-release-recovery-receipt.json
+      - name: Publish automatic initial-release recovery verification receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: initial-release-recovery-receipt-dev-auto
+          path: .odp_data/release/automatic-dev/initial-release-recovery-receipt.json
+          if-no-files-found: ignore
       - name: Admit the exact dev build after rechecking current CI
         id: admit
         env:

@@ -115,38 +115,86 @@ def verify_ci(candidate: str, target: str, run_id: str, *, wait: bool = False) -
         raise Refused(" ".join(errors))
 
 
-def previous_deployment() -> tuple[dict[str, Any], dict[str, Any]] | None:
-    """Read actual successful deployment artifacts, never green build-only runs.
+def deployed_attempts(run: dict[str, Any]) -> list[int]:
+    """Attempts of ``run`` whose deploy job succeeded, newest first.
 
-    Artifact expiry/unreadability is an error. The first-release absence probe
+    Reruns share one run id, and the run-level status/conclusion only reflect
+    the latest attempt. A successful first attempt therefore stays live even
+    while a rerun is in progress or after it fails, so success is read per
+    attempt. The current attempt of this very run is excluded: it has not
+    deployed anything yet.
+    """
+    latest = int(run.get("run_attempt") or 1)
+    if str(run["id"]) == os.environ.get("GITHUB_RUN_ID"):
+        latest = int(os.environ.get("GITHUB_RUN_ATTEMPT") or 1) - 1
+    found = []
+    for attempt in range(latest, 0, -1):
+        jobs = api(f"actions/runs/{run['id']}/attempts/{attempt}/jobs?per_page=100")["jobs"]
+        if any(j.get("name") == DEPLOY_JOB and j.get("conclusion") == "success" for j in jobs):
+            found.append(attempt)
+    return found
+
+
+def dev_environment_deployed(run: dict[str, Any]) -> bool:
+    """GitHub's own dev environment deployment record for this run succeeded."""
+    deployments = api(f"deployments?environment=dev&sha={run['head_sha']}&per_page=100")
+    for deployment in deployments:
+        for status in api(f"deployments/{deployment['id']}/statuses?per_page=100"):
+            url = f"{status.get('log_url') or ''} {status.get('target_url') or ''}"
+            if status.get("state") == "success" and f"/actions/runs/{run['id']}" in url:
+                return True
+    return False
+
+
+def previous_deployment() -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Read actual successful dev deployment artifacts, never green build-only runs.
+
+    Any dispatch ref may deploy dev manually with a signed lease, so the scan is
+    not narrowed to ``branch=dev``; dev is proven by the run title, GitHub's dev
+    environment deployment record and the manifest's own admission. Artifact
+    expiry/unreadability is an error. The first-release absence probe
     independently refuses to proceed if historical artifacts are unavailable
     while live resources exist. No absence is inferred from a failed API call.
     """
+    repo = repository()
     for page in range(1, 11):
-        runs = api(f"actions/workflows/deploy-dev.yml/runs?branch=dev&status=success"
+        runs = api(f"actions/workflows/deploy-dev.yml/runs?event=workflow_dispatch"
                    f"&per_page=100&page={page}").get("workflow_runs", [])
         for run in runs:
-            if str(run["id"]) == os.environ.get("GITHUB_RUN_ID"):
+            if (run.get("path") != WORKFLOW or run.get("event") != "workflow_dispatch"
+                    or run.get("repository", {}).get("full_name") != repo
+                    or run.get("head_repository", {}).get("full_name") != repo):
                 continue
-            if run.get("path") != WORKFLOW or run.get("event") != "workflow_dispatch":
+            title = str(run.get("display_title", "")).split()
+            if title[:3] != ["Runtime", "Release", "dev"]:
                 continue
             artifacts = api(f"actions/runs/{run['id']}/artifacts?per_page=100")["artifacts"]
             matches = [a for a in artifacts if a.get("name") == DEPLOYED_ARTIFACT]
             if not matches:
                 continue
-            if len(matches) != 1 or matches[0].get("expired"):
-                raise Refused("Previous dev deployment artifact is ambiguous or expired.")
-            jobs = api(f"actions/runs/{run['id']}/jobs?per_page=100")["jobs"]
-            if not any(j.get("name") == DEPLOY_JOB and j.get("conclusion") == "success"
-                       for j in jobs):
+            if any(a.get("expired") for a in matches):
+                raise Refused("Previous dev deployment artifact is expired.")
+            if not deployed_attempts(run):
+                if str(run["id"]) == os.environ.get("GITHUB_RUN_ID"):
+                    continue
                 raise Refused("Previous artifact has no successful deployment job.")
-            archive = api(f"actions/artifacts/{matches[0]['id']}/zip", raw=True)
-            with zipfile.ZipFile(io.BytesIO(archive)) as zipped:
-                entries = zipped.infolist()
-                if (len(entries) != 1 or entries[0].filename != "RELEASE_MANIFEST.json"
-                        or entries[0].file_size > 2_000_000):
-                    raise Refused("Unexpected previous deployment artifact contents.")
-                manifest = json.loads(zipped.read(entries[0]))
+            if not dev_environment_deployed(run):
+                raise Refused("Previous artifact has no successful dev environment deployment.")
+            manifests = []
+            for match in matches:
+                archive = api(f"actions/artifacts/{match['id']}/zip", raw=True)
+                with zipfile.ZipFile(io.BytesIO(archive)) as zipped:
+                    entries = zipped.infolist()
+                    if (len(entries) != 1 or entries[0].filename != "RELEASE_MANIFEST.json"
+                            or entries[0].file_size > 2_000_000):
+                        raise Refused("Unexpected previous deployment artifact contents.")
+                    manifests.append(json.loads(zipped.read(entries[0])))
+            manifest = manifests[0]
+            if any(other != manifest for other in manifests[1:]):
+                raise Refused("Previous dev deployment artifacts are ambiguous.")
+            if (len(title) != 5 or title[3] not in {"deploy", "auto"}
+                    or title[4] != manifest.get("candidate_sha")):
+                raise Refused("Previous dev deployment title does not match its manifest.")
             errors = validate_release_admission(manifest, environment="dev")
             if errors:
                 raise Refused("Previous dev manifest is not admissible: " + "; ".join(errors))
