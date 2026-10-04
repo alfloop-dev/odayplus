@@ -17,8 +17,9 @@ provider "google" {
 locals {
   active      = var.enable_firewall || var.enable_shared_dns
   network_url = "https://www.googleapis.com/compute/v1/projects/${var.project_id}/global/networks/${var.network_name}"
-  # Publicly documented unique connector tag. Never use universal vpc-connector
-  # or derive a target from the internal aet-* firewall names.
+  # Automatically assigned immutable unique tag per Serverless VPC Access's
+  # documented contract, not a VM inventory readback. Never use universal
+  # vpc-connector or derive a target from internal aet-* firewall names.
   target_tag = "vpc-connector-${var.region}-${var.connector_name}"
   vip_ips    = ["199.36.153.8", "199.36.153.9", "199.36.153.10", "199.36.153.11"]
   dns_zones = var.enable_shared_dns ? {
@@ -58,8 +59,8 @@ resource "terraform_data" "binding" {
       error_message = "Shared default-network DNS requires separate exact-scope reviewed authority reference; no connector-local DNS scope exists here."
     }
     precondition {
-      condition     = !var.enable_firewall || (var.enable_shared_dns && var.connector_tag_readback_confirmed)
-      error_message = "Deny requires the reviewed DNS configuration and readback of the supported unique tag on connector VMs."
+      condition     = !var.enable_firewall || (var.enable_shared_dns && var.connector_scope_review_confirmed)
+      error_message = "Deny requires reviewed DNS and connector metadata/unique-tag contract/all-consumer scope review; this acknowledgement is not live enforcement proof."
     }
   }
 }

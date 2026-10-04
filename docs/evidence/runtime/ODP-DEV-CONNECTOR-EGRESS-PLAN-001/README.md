@@ -57,6 +57,30 @@ store and are checked by task_finalize at that exact head. Historical checked-in
 receipts must not be relabeled as final-head or live receipts. Review must verify
 the final-head gate, not infer success from this table.
 
+## PR1408 review-finding repair
+
+Codex2 reopened original head `b5b44c3598a50f668cd4dfb4383c233fe32d1ec4`:
+the mandatory connector VM/tag inventory gate was not supportable. Reviewer
+reported bounded read-only connector describe success (READY/default/10.8.0.0/28)
+and Compute inventory success with only a GKE node, no connector VMs. These are
+reviewer observations from canonical task context, not new owner cloud probes.
+
+Replaced `connector_tag_readback_confirmed` with default-false
+`connector_scope_review_confirmed` consistently in Terraform, tests and operator
+docs. Supported exact project/region/name lookup plus network/CIDR/READY checks
+remain; the gate acknowledges metadata, Google's automatically assigned immutable
+unique-tag contract and all-consumer impact review, **not** direct VM visibility.
+Official network-tags and Connector REST schema docs were fetched read-only again
+on 2026-10-04; the former documents automatic tags that cannot be deleted/added,
+the latter has no VM/tag fields. No `aet-*` substitution or broadening occurred.
+
+Effective-policy checks, separate shared-DNS authority, state ownership, staged
+rollback and post-apply candidate runtime/firewall-log evidence remain mandatory.
+The missing-scope-review test rejects firewall opt-in even with approved test DNS;
+scoped-protection tests retain the exact unique tag and least-necessary rules.
+New exact-head native receipts are required before resubmission; older tables
+above are historical, not proof of this repair or live enforcement.
+
 ## Review and downstream closeout
 
 Deliverables: `infra/terraform/dev_connector_egress/{main.tf,variables.tf,tests/boundary.tftest.hcl,README.md,OPERATIONS.md,.terraform.lock.hcl,.gitignore}`.
@@ -70,7 +94,8 @@ After actual Codex2 approval + PR merge/done, owner must canonical-handoff exact
 `ODP-DEV-LIVE-DEPLOY-EXECUTION-001`. Remaining exact approvals:
 
 - Governed backend bucket/empty unique prefix ownership and access.
-- Three connector-targeted firewall changes, tag/all-consumer readback, maintenance
+- Three connector-targeted firewall changes, supported connector metadata and
+  unique-tag contract/all-consumer scope review, maintenance
   impact and explicit rollback authorization.
 - Separate shared-default DNS impact/apply/rollback authority for two new zones
   and four records; existing sqladmin DNS compatibility/readback, or separately

@@ -39,7 +39,7 @@ run "scoped_protection" {
     enable_shared_dns                = true
     shared_dns_scope_ack             = "default:googleapis.com.,run.app."
     shared_dns_review_ref            = "ODP-DEV-TEST:offline-only"
-    connector_tag_readback_confirmed = true
+    connector_scope_review_confirmed = true
   }
   assert {
     condition = alltrue([
@@ -47,7 +47,11 @@ run "scoped_protection" {
       rule.network == "https://www.googleapis.com/compute/v1/projects/odayplus-runtime-20260825/global/networks/default" &&
       rule.direction == "EGRESS" && rule.target_tags == toset(["vpc-connector-asia-east1-oday-staging-vpc"]) && rule.priority > 100
     ])
-    error_message = "Every firewall must target only the documented unique connector tag on the EXISTING default network, leaving managed priority 100 intact."
+    error_message = "Supported connector metadata plus scope review uses the documented automatic unique tag without managed VM/tag inventory, leaving managed priority 100 intact."
+  }
+  assert {
+    condition     = data.google_vpc_access_connector.existing[0].project == "odayplus-runtime-20260825" && data.google_vpc_access_connector.existing[0].region == "asia-east1" && data.google_vpc_access_connector.existing[0].name == "oday-staging-vpc" && data.google_vpc_access_connector.existing[0].network == "default" && data.google_vpc_access_connector.existing[0].ip_cidr_range == "10.8.0.0/28" && data.google_vpc_access_connector.existing[0].state == "READY"
+    error_message = "Pin supported connector identity/network/CIDR/READY; no VM/tag observation is available from this API."
   }
   assert {
     condition     = google_compute_firewall.deny[0].destination_ranges == toset(["0.0.0.0/0"]) && one(google_compute_firewall.deny[0].deny).protocol == "all" && google_compute_firewall.deny[0].priority == 900 && length(google_compute_firewall.deny[0].allow) == 0
@@ -143,11 +147,11 @@ run "reject_firewall_without_dns" {
   command = plan
   variables {
     enable_firewall                  = true
-    connector_tag_readback_confirmed = true
+    connector_scope_review_confirmed = true
   }
   expect_failures = [terraform_data.binding]
 }
-run "reject_unconfirmed_target_tag" {
+run "reject_unreviewed_connector_scope" {
   command = plan
   variables {
     enable_firewall       = true

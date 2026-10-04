@@ -20,7 +20,8 @@ No live refresh or runtime probe was performed by this task.
 
 Authoritative documentation fetched read-only on 2026-10-04:
 
-- [Cloud Run connector firewall targeting](https://cloud.google.com/run/docs/configuring/vpc-connectors#create-firewall-rules-for-specific-connectors): every connector has `vpc-connector` and unique `vpc-connector-REGION-CONNECTOR_NAME` tags. The egress restriction example uses **target-tags** and destination ranges. This root uses only `vpc-connector-asia-east1-oday-staging-vpc`; not universal `vpc-connector`, source tags, guessed `aet-*`, or service-account targeting. Read back the actual connector VM tags before opting in; absent tag means STOP, not substitute an internal tag.
+- [Cloud Run connector firewall targeting](https://cloud.google.com/run/docs/configuring/vpc-connectors#create-firewall-rules-for-specific-connectors): every connector has `vpc-connector` and unique `vpc-connector-REGION-CONNECTOR_NAME` tags. The egress restriction example uses **target-tags** and destination ranges. This root uses only `vpc-connector-asia-east1-oday-staging-vpc`; not universal `vpc-connector`, source tags, guessed `aet-*`, or service-account targeting. Target selection follows the documented automatic unique-tag contract plus supported connector metadata readback, not direct managed-VM tag inventory.
+- [Serverless VPC Access network tags](https://docs.cloud.google.com/vpc/docs/serverless-vpc-access#network-tags): every connector automatically receives the universal and unique tags; these cannot be deleted and new tags cannot be added. [Connector API](https://docs.cloud.google.com/vpc/docs/reference/vpcaccess/rest/v1/projects.locations.connectors) exposes identity, network, CIDR, state and connected projects, not managed VM/tag readback. `connector_scope_review_confirmed` acknowledges fresh supported metadata readback, this contract and review of **every consumer**; it does not assert tag observation or live enforcement. Missing connector VM entries in Compute inventory are not a failure of this contract. Unknown consumer scope or metadata drift remains STOP.
 - [Serverless VPC Access firewall rules](https://cloud.google.com/vpc/docs/serverless-vpc-access#firewall-rules): managed priority 100 rules preserve TCP 667, UDP 665–666, ICMP to `35.199.224.0/19`, health checks and established replies. New priorities 800/900 do not override them. No managed rule is imported, replaced or deleted; ingress remains untouched.
 - [Private Google Access domains/DNS/routes](https://cloud.google.com/vpc/docs/configure-private-google-access#domain-options): `private.googleapis.com` `199.36.153.8/30` supports `*.run.app` and Google APIs. We select **only private VIP**, not both VIPs, for the required Web-to-API and Google API surface. This is constrained L3/L4 Google-service access, NOT an API/service/tenant allowlist or VPC Service Controls perimeter. No arbitrary internet HTTPS or RFC1918 allow.
 - [Cloud SQL Auth Proxy network requirements](https://cloud.google.com/sql/docs/postgres/sql-proxy#how-works): API HTTPS 443 plus private instance TCP 3307 for Auth Proxy/connector, TCP 5432 for direct PostgreSQL. Only `10.50.0.3/32` is allowed. Approved runtime connection mode/private-IP configuration still needs readback; these ports do not configure it.
@@ -31,7 +32,7 @@ Authoritative documentation fetched read-only on 2026-10-04:
 | Opt-in | New resources (fixed names) | Effect |
 |---|---|---|
 | `enable_shared_dns` | `oday-dev-connector-googleapis`, `oday-dev-connector-run` private zones; two A and two wildcard CNAME record sets | **All default VPC DNS clients**, including GKE/other VMs/connectors: wildcard googleapis -> private.googleapis.com A .8–.11; run.app apex A .8–.11 and wildcard CNAME -> run.app. TTL 300. |
-| `enable_firewall` (requires DNS opt-in + tag confirmation) | `oday-dev-connector-google-https` (800), `oday-dev-connector-sql` (800), `oday-dev-connector-deny` (900) | **All workloads using this existing connector**, regardless of environment/name; TCP443 to private VIP, SQL5432/3307 to exact /32, IPv4 deny-all otherwise, except managed priority100 infrastructure. |
+| `enable_firewall` (requires DNS opt-in + connector scope review) | `oday-dev-connector-google-https` (800), `oday-dev-connector-sql` (800), `oday-dev-connector-deny` (900) | **All workloads using this existing connector**, regardless of environment/name; TCP443 to private VIP, SQL5432/3307 to exact /32, IPv4 deny-all otherwise, except managed priority100 infrastructure. |
 | Either | local `terraform_data.binding`, read-only network/connector lookups | Binding validation only; no existing cloud resource ownership. |
 
 No network, subnet, route, connector, SQL, GKE, IAM, response policy, source
@@ -67,7 +68,7 @@ git diff --check
 `tests/boundary.tftest.hcl` covers opt-out, separately prepared shared DNS, exact
 binding/tag, endpoint/port constraints, no broad allow, denial order, managed-rule
 priority preservation, staging/production rejection, malformed/mismatched inputs,
-missing DNS authority/tag confirmation and live binding/CIDR/readiness drift.
+missing DNS authority/connector scope review and live binding/CIDR/readiness drift.
 Mock values and `ODP-DEV-TEST:offline-only` are never live receipts or apply inputs.
 
 See [OPERATIONS.md](OPERATIONS.md) for the separately authorized operator sequence.

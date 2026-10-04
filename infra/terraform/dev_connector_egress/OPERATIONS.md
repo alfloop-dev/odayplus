@@ -30,7 +30,7 @@ UTC, command, exit, duration and output. At minimum, with project explicit:
 ```sh
 P=odayplus-runtime-20260825
 R=asia-east1
-gcloud compute networks vpc-access connectors describe oday-staging-vpc --region="$R" --project="$P" --format=json
+gcloud compute networks vpc-access connectors describe oday-staging-vpc --region="$R" --project="$P" --format='json(name,network,state,ipCidrRange,connectedProjects,subnet)'
 gcloud compute networks describe default --project="$P" --format=json
 gcloud compute networks get-effective-firewalls default --project="$P" --format=json
 gcloud compute firewall-rules list --project="$P" --format=json
@@ -48,11 +48,17 @@ gcloud run jobs list --region="$R" --project="$P" --format=json
 ```
 
 Do not broadly publish service/job envs or SQL inventory; redact sensitive fields
-in handoff. Identify actual connector VM IPs in 10.8.0.0/28 and verify the unique
-`vpc-connector-asia-east1-oday-staging-vpc` tag on those VMs; the managed firewall's
-`aet-*` target is not proof of this tag. Lack of VM visibility/tag confirmation is
-a blocker, not permission to create/change tags. Enumerate all services/jobs and
-revisions using this connector (including clients outside this project if shared).
+in handoff. Verify connector resource identity is exactly
+`projects/odayplus-runtime-20260825/locations/asia-east1/connectors/oday-staging-vpc`
+and READY/default/10.8.0.0/28 from the supported connector API. Record the official
+[automatic immutable unique-tag contract](https://docs.cloud.google.com/vpc/docs/serverless-vpc-access#network-tags)
+and bind `vpc-connector-asia-east1-oday-staging-vpc` to that identity. Connector API
+has no VM/tag field; managed connector VMs need not appear in Compute inventory.
+Do not require or claim direct VM/tag readback. The instances list is for shared
+network/GKE impact only. Never substitute `aet-*`, universal tags or create/change
+tags. Enumerate all services/jobs, revisions and other serverless consumers using
+this connector; inspect `connectedProjects` and inventory clients in every shared
+project with its owner. Incomplete consumer inventory/approval is STOP.
 
 Check connector READY/network/CIDR; SQL privateNetwork=default/private10.50.0.3;
 private SQL PSA peering route; private VIP route via default-internet-gateway and
@@ -80,7 +86,7 @@ prefix = "oday-plus/dev/connector-egress"
 Write non-secret operator tfvars outside Git with default pinned identities,
 `enable_shared_dns=true`, exact `shared_dns_scope_ack="default:googleapis.com.,run.app."`
 and actual approved `shared_dns_review_ref="ODP-DEV-<authority-task>:<receipt>"`.
-Initially `enable_firewall=false`, `connector_tag_readback_confirmed=false`.
+Initially `enable_firewall=false`, `connector_scope_review_confirmed=false`.
 Example defaults are NOT signed approvals; do not reuse test refs.
 
 Only after backend-use approval, run in this root on the merged SHA:
@@ -104,8 +110,11 @@ Any unexpected change/drift or mock provider in a live plan is STOP.
 Under exact DNS apply authorization, operator may apply the reviewed saved plan.
 Read back the new zones/records/attachment; validate shared client behavior with
 its owners and TTL300 cache propagation. This is not release/deploy approval.
-Then set `enable_firewall=true`, `connector_tag_readback_confirmed=true` only after
-actual tag readback; retain DNS inputs. Plan again and independently approve only
+Then set `enable_firewall=true`, `connector_scope_review_confirmed=true` only after
+fresh supported connector metadata readback, unique-tag contract review and
+all-consumer impact approval from sections 1–2; retain DNS inputs. The boolean
+is an acknowledgement, not apply authority or an enforcement receipt.
+Plan again and independently approve only
 three firewall creates (plus local state effects), no DNS update or other change:
 
 ```sh
@@ -118,13 +127,17 @@ application. Dependencies create application allows before deny; managed100 stay
 
 ## 4. Effective readback and authorized candidate probes
 
-Repeat effective default-network firewall/VM-tag/route/PGA/SQL/DNS readback. Check
+Repeat supported connector metadata and effective default-network
+firewall/route/PGA/SQL/DNS readback. Check
 all three enabled EGRESS rules match exact unique target tag/default network,
 800 allows precede 900 deny-all; managed100 unchanged, unrelated/GKE policies
 unchanged. Read each new zone's `privateVisibilityConfig` = only default, its
 record sets and preserved sqladmin zone. Network get-effective-firewalls alone
-is not proof VM targeting succeeded; bind actual VM/tag identity and applicable
-policy evaluation to receipts.
+is not proof connector targeting/enforcement succeeded. Bind the supported
+connector identity, documented unique tag and applicable policy evaluation to
+receipts. No direct managed-VM inventory gate is required or claimed; enforcement
+remains UNKNOWN until authorized actual-candidate runtime probes and correlated
+firewall logs/diagnostics below demonstrate the effective allow/deny path.
 
 Only under existing candidate owner's subsequent probe/deploy authority, use
 actual admitted candidate services/jobs with read-back ALL_TRAFFIC and exact

@@ -85,8 +85,8 @@ variable "shared_dns_review_ref" {
   default     = ""
 }
 
-variable "connector_tag_readback_confirmed" {
-  description = "Set only after read-only VM inventory confirms documented unique tag and all connector consumers were reviewed."
+variable "connector_scope_review_confirmed" {
+  description = "Set only after supported connector identity/network/CIDR/READY readback, review of the automatic immutable unique-tag contract and all connector consumers. Not VM/tag readback or enforcement proof."
   type        = bool
   default     = false
 }
