@@ -6743,6 +6743,13 @@ def command_note(state: dict[str, Any], args: list[str]) -> None:
             raise SystemExit("Usage: note <task-id> <message> [--blocker-provenance=<JSON>]")
         if actor != "Human/Ops":
             raise SystemExit("Only Human/Ops can adjudicate blocker provenance")
+        if (task.get("status") != "blocked"
+                or str(task.get("waiting_for") or "").casefold() not in {"human/ops", "human", "ops"}
+                or not (task.get("review_churn_escalated_at")
+                        or _continuation_nonnegative_int(task.get("review_churn_escalated_at_count")))):
+            raise SystemExit("Blocker provenance requires explicit review-churn Human/Ops escalation")
+        if not message.strip():
+            raise SystemExit("Blocker provenance requires an audit message")
         try:
             payload = json.loads(args[2].split("=", 1)[1])
         except (ValueError, TypeError) as exc:

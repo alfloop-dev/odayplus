@@ -8208,6 +8208,37 @@ class HumanContinuationApprovalTests(unittest.TestCase):
         self._adjudicate(task, payload["fields"])
         self.assertEqual(task["blocker_provenance_history"], [old_record])
 
+    def test_note_rejects_invalid_adjudication_atomically(self) -> None:
+        task = self._task(next="Credentials completed.")
+        payload = {"context_sha256": ai_status.blocker_authority_digest(task),
+                   "expires_at": "2099-01-01T00:00:00Z",
+                   "fields": {"next": [self._segment(task["next"], "resolved")]}}
+        for mutate in (
+            lambda p: p.update(context_sha256="stale"),
+            lambda p: p.update(expires_at="2020-01-01T00:00:00Z"),
+            lambda p: p.update(issued_by="Human/Ops"),
+            lambda p: p["fields"]["next"][0].update(kind="informational"),
+            lambda p: p["fields"]["next"][0].update(text="partial"),
+            lambda p: p["fields"]["next"][0].update(reason=""),
+        ):
+            invalid = json.loads(json.dumps(payload))
+            mutate(invalid)
+            before = json.dumps(task, sort_keys=True)
+            with (mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
+                  mock.patch.object(ai_status, "append_log") as log):
+                with self.assertRaises(SystemExit):
+                    ai_status.command_note(self._state(task), [task["id"], "adjudication",
+                        "--blocker-provenance=" + json.dumps(invalid)])
+                log.assert_not_called()
+            self.assertEqual(before, json.dumps(task, sort_keys=True))
+        task.pop("review_churn_escalated_at")
+        task.pop("review_churn_escalated_at_count")
+        payload["context_sha256"] = ai_status.blocker_authority_digest(task)
+        with mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False):
+            with self.assertRaisesRegex(SystemExit, "explicit review-churn"):
+                ai_status.command_note(self._state(task), [task["id"], "not churn authority",
+                    "--blocker-provenance=" + json.dumps(payload)])
+
     def test_approval_is_bound_to_provenance_and_remains_single_use(self) -> None:
         task = self._task(next="Credentials completed.")
         fields = {"next": [self._segment(task["next"], "resolved")]}
