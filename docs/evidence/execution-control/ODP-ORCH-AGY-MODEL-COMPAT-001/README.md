@@ -84,9 +84,31 @@ workspace/status persistence and activity logging are mocked; time and cooldown
 files are isolated. The new focused selection was registered before execution:
 `uv run --python 3.12 pytest -q .orchestrator/test_model_rotation.py -k CooldownLifecycleTests`.
 
-## Focused verification
+## Review repair verification
 
-The declared unittest command now executes nine real unittest cases rather
+All five registered commands passed on repair anchor
+`cff3436110e737e1b62e27ffcd8895938dc89d07`, after the normal base merge:
+
+| Command | Result | Exit | Seconds |
+| --- | --- | --- | --- |
+| `git diff --check` | clean | 0 | 0.015 |
+| `python3 -m unittest discover -s .orchestrator -p test_model_rotation.py` | 14 tests | 0 | 1.586 |
+| `uv run --python 3.12 pytest -q .orchestrator/test_model_rotation.py` | 63 test dots, 100% | 0 | 3.508 |
+| `python3 delivery_toolchain/governance/check_code_boundaries.py` | 1199 files | 0 | 9.086 |
+| `uv run --python 3.12 pytest -q .orchestrator/test_model_rotation.py -k CooldownLifecycleTests` | 5 test dots, 100% | 0 | 2.722 |
+
+`review-repair-receipts/` contains the tool's unmodified, SHA-bound receipts
+from both repair anchors (`cd9a3cec` and `cff34361`); exit codes, durations,
+selections and original output are retained. Pytest's quiet output has no
+count summary; dots are counted from completed receipts, not by rerunning.
+The evidence-only successor preserves the tested code/config blobs and runs
+the registered checks again at its exact submission SHA through
+`task_verification.py`; those final receipts remain in the normal receipt store
+and are referenced in the canonical task note before publication.
+
+## Original pre-review verification (historical)
+
+The initial declared unittest command executed nine real unittest cases rather
 than discovering zero pytest functions. Canonical metadata `assign` registered
 `uv run --python 3.12 pytest -q .orchestrator/test_model_rotation.py` to also cover
 the existing pytest regressions and adapter mocks. The initial unpinned `uv run`
