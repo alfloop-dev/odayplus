@@ -120,8 +120,9 @@ resource "google_compute_firewall" "deny" {
   log_config {
     metadata = "INCLUDE_ALL_METADATA"
   }
-  # Install required application allows before deny, delete deny before allows.
-  depends_on = [terraform_data.binding, google_compute_firewall.google_https, google_compute_firewall.sql]
+  # Install application allows and DNS records before deny; rollback removes
+  # deny before either dependency, even if an operator plans both stages at once.
+  depends_on = [terraform_data.binding, google_compute_firewall.google_https, google_compute_firewall.sql, google_dns_record_set.wildcard]
 }
 
 # Private zones attach to the ENTIRE shared default VPC, including GKE and all
