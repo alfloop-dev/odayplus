@@ -8083,6 +8083,218 @@ class HumanContinuationApprovalTests(unittest.TestCase):
                     ["ODP-CONTINUATION-001", "replay", "2099-01-01T00:00:00Z", "nonce-once"],
                 )
 
+    def _segment(self, text: str, kind: str = "current", **extra: Any) -> dict[str, Any]:
+        return dict(text=text, kind=kind, reason="Explicit scope adjudication in test only",
+                    evidence_ref="fixture://independent-readback", **extra)
+
+    def _adjudicate(self, task: dict[str, Any], fields: dict[str, Any]) -> None:
+        payload = {"context_sha256": ai_status.blocker_authority_digest(task),
+                   "expires_at": "2099-01-01T00:00:00Z", "fields": fields}
+        with (mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
+              mock.patch.object(ai_status, "append_log") as log):
+            ai_status.command_note(self._state(task), [task["id"], "Test-only adjudication",
+                                   "--blocker-provenance=" + json.dumps(payload)])
+        self.assertEqual(log.call_args.args[0]["provenance"], task["blocker_provenance"])
+
+    def _issue(self, task: dict[str, Any]) -> dict[str, Any]:
+        with (mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
+              mock.patch.object(ai_status, "append_log"),
+              mock.patch("sys.stdout", new_callable=io.StringIO)):
+            ai_status.command_approve_continuation(self._state(task),
+                [task["id"], "One source-only continuation, not runtime authority",
+                 "2099-01-01T00:00:00Z", "nonce-provenance-test"])
+        return task["human_continuation_approval"]
+
+    def test_exact_canonical_fixture_requires_explicit_provenance_not_prose_consent(self) -> None:
+        path = Path(__file__).resolve().parents[1] / (
+            "docs/evidence/execution-control/ODP-ORCH-CONTINUATION-BLOCKER-PROVENANCE-001/"
+            "canonical-fixture.json")
+        fixture = json.loads(path.read_text())
+        task = fixture["task"]
+        before = json.loads(json.dumps(task))
+        self.assertEqual(len(task["review_reopen_history"]), 6)
+        self.assertEqual(task["owner"], "Claude")
+        self.assertEqual(task["reviewer"], "Codex2")
+        for reproduction in fixture["read_only_reproduction"].values():
+            self.assertEqual(ai_status.continuation_approval_gate_error(task), reproduction["gate_error"])
+        with self.assertRaisesRegex(SystemExit, "independent"):
+            self._issue(task)
+        sentences = task["next"].split(". ")
+        # Exact spans: past refusal; current no-bypass constraints; other-task
+        # governing disposition; current no-issuance/findings; completed prereqs.
+        self.assertEqual(len(sentences), 6)
+        kinds = ["historical", "current", "other_task", "current", "current", "resolved"]
+        segments = [self._segment(text + (". " if i < 5 else ""), kinds[i],
+                    **({"task_id": "HUMAN-DEV-RELEASE-AUTHORITY-RESOLUTION-001"} if i == 2 else {}))
+                    for i, text in enumerate(sentences)]
+        self._adjudicate(task, {"next": segments})
+        for key, value in before.items():
+            if key != "last_update":
+                self.assertEqual(task[key], value, key)
+        self.assertNotIn("human_continuation_approval", task)
+        self.assertIsNone(ai_status.continuation_approval_gate_error(task))
+        parent = self._task(id="PARENT-RUNTIME", task_class="human_gate",
+                            next="Pending manual production deployment approval")
+        parent_before = json.dumps(parent, sort_keys=True)
+        approval = self._issue(task)
+        self.assertIsNone(ai_status.continuation_approval_validation_error(task, approval))
+        self.assertEqual(parent_before, json.dumps(parent, sort_keys=True))
+        self.assertIsNotNone(ai_status.continuation_approval_gate_error(parent))
+
+    def test_mixed_history_and_current_hard_gate_remains_blocked(self) -> None:
+        for phrase in ("pending credentials", "pending production deployment approval",
+                       "external data authorization required", "manual approval required"):
+            with self.subTest(phrase=phrase):
+                history = "Credentials completed; historical deployment refusal. "
+                task = self._task(next=history + phrase)
+                self._adjudicate(task, {"next": [self._segment(history, "historical"),
+                                                self._segment(phrase)]})
+                self.assertIn("independent", ai_status.continuation_approval_gate_error(task))
+                with self.assertRaisesRegex(SystemExit, "independent"):
+                    self._issue(task)
+                self.assertNotIn("human_continuation_approval", task)
+        task = self._task(next="credential required")
+        self._adjudicate(task, {"next": [self._segment("cred"), self._segment("ential required")]})
+        self.assertIn("independent", ai_status.continuation_approval_gate_error(task))
+
+    def test_explicit_gates_and_unclassified_fields_cannot_be_suppressed(self) -> None:
+        for field, value in (("credentials_gate", True), ("credential_gate", True),
+                             ("deployment_gate", True), ("production_gate", True),
+                             ("external_data_gate", True), ("human_gate", True),
+                             ("requires_human_approval", True), ("human_required_roles", ["Ops"]),
+                             ("gate_status", "pending_human_approval"),
+                             ("task_class", "human_gate"), ("non_dispatchable", True),
+                             ("blocker", "Pending manual approval"),
+                             ("failure_reason", "Credentials required")):
+            with self.subTest(field=field):
+                task = self._task(next="Credentials already resolved.", **{field: value})
+                self._adjudicate(task, {"next": [self._segment(task["next"], "resolved")]})
+                self.assertIsNotNone(ai_status.continuation_approval_gate_error(task))
+
+    def test_provenance_ai_ambiguous_incomplete_stale_expired_fail_closed(self) -> None:
+        task = self._task(next="Credentials completed.")
+        payload = {"context_sha256": ai_status.blocker_authority_digest(task),
+                   "expires_at": "2099-01-01T00:00:00Z",
+                   "fields": {"next": [self._segment(task["next"], "resolved")]}}
+        before = json.dumps(task, sort_keys=True)
+        # These actors are declared in config.example.json, unlike the live
+        # fleet's Pi. Reach the role gate rather than failing identity lookup.
+        for actor in ("Claude2", "Codex2", "Claude"):
+            with (self.subTest(actor=actor),
+                  mock.patch.dict(os.environ, {"AI_NAME": actor}, clear=False),
+                  mock.patch.object(ai_status, "append_log") as log):
+                with self.assertRaisesRegex(SystemExit, "Only Human/Ops"):
+                    ai_status.command_note(self._state(task), [task["id"], "not authority",
+                        "--blocker-provenance=" + json.dumps(payload)])
+                log.assert_not_called()
+            self.assertEqual(before, json.dumps(task, sort_keys=True))
+        self._adjudicate(task, payload["fields"])
+        for field, value in (("next", "Credentials completed. But deployment pending."),
+                             ("owner", "Pi"), ("reviewer", "Codex"),
+                             ("review_reopen_count", 7), ("id", "WRONG-TASK"),
+                             ("review_submission", {"remote_sha": "new-source"})):
+            with self.subTest(field=field):
+                candidate = dict(task, **{field: value})
+                self.assertIn("does not match", ai_status.continuation_approval_gate_error(candidate))
+        for mutate in (
+            lambda r: r.update(issued_by="Pi"),
+            lambda r: r.update(expires_at="2020-01-01T00:00:00Z"),
+            lambda r: r["fields"]["next"][0].update(kind="unknown"),
+            lambda r: r["fields"]["next"][0].update(text="Credentials"),
+            lambda r: r["fields"]["next"][0].update(evidence_ref=""),
+            lambda r: r["fields"]["next"][0].update(kind="other_task", task_id=task["id"]),
+        ):
+            candidate = json.loads(json.dumps(task))
+            mutate(candidate["blocker_provenance"])
+            self.assertIsNotNone(ai_status.continuation_approval_gate_error(candidate))
+            self.assertIn("credential", ai_status.blocked_task_prose_context(candidate))
+        # Fresh explicit adjudication preserves its predecessor in audit history.
+        old_record = task["blocker_provenance"]
+        self._adjudicate(task, payload["fields"])
+        self.assertEqual(task["blocker_provenance_history"], [old_record])
+
+    def test_provenance_rejections_under_clean_ci_registry(self) -> None:
+        # CI bootstraps config.json from the committed example. No worker
+        # overlays or AI_STATUS_EXTRA_AGENTS may lend this fixture identities.
+        with tempfile.TemporaryDirectory(prefix="continuation-ci-config-") as temp_dir:
+            config_file = Path(temp_dir) / "config.json"
+            shutil.copyfile(_TEST_CONFIG, config_file)
+            with mock.patch.dict(os.environ, {"ORCH_CONFIG_PATH": str(config_file)}, clear=True):
+                self.assertEqual(ai_status.active_config_file(), config_file)
+                self.assertEqual(ai_status.local_config_overlay_paths(), [])
+                self.assertEqual(ai_status.extra_actor_names(), set())
+                names = ai_status.configured_agent_names()
+                self.assertTrue({"Claude2", "Codex2", "Claude"}.issubset(names))
+                self.assertNotIn("Pi", names)
+                # Exercise the originally failing selection against real
+                # config loading and identity/role checks, not mocked gates.
+                self.test_provenance_ai_ambiguous_incomplete_stale_expired_fail_closed()
+
+                task = self._task(next="Credentials completed.")
+                state = self._state(task)
+                payload = {"context_sha256": ai_status.blocker_authority_digest(task),
+                           "expires_at": "2099-01-01T00:00:00Z",
+                           "fields": {"next": [self._segment(task["next"], "resolved")]}}
+                before = json.dumps(state, sort_keys=True)
+                with (mock.patch.dict(os.environ, {"AI_NAME": "Pi"}, clear=False),
+                      mock.patch.object(ai_status, "append_log") as log):
+                    with self.assertRaisesRegex(SystemExit, "Unknown AI_NAME"):
+                        ai_status.command_note(state, [task["id"], "not registered",
+                            "--blocker-provenance=" + json.dumps(payload)])
+                    log.assert_not_called()
+                self.assertEqual(before, json.dumps(state, sort_keys=True))
+
+    def test_note_rejects_invalid_adjudication_atomically(self) -> None:
+        task = self._task(next="Credentials completed.")
+        payload = {"context_sha256": ai_status.blocker_authority_digest(task),
+                   "expires_at": "2099-01-01T00:00:00Z",
+                   "fields": {"next": [self._segment(task["next"], "resolved")]}}
+        for mutate in (
+            lambda p: p.update(context_sha256="stale"),
+            lambda p: p.update(expires_at="2020-01-01T00:00:00Z"),
+            lambda p: p.update(issued_by="Human/Ops"),
+            lambda p: p["fields"]["next"][0].update(kind="informational"),
+            lambda p: p["fields"]["next"][0].update(text="partial"),
+            lambda p: p["fields"]["next"][0].update(reason=""),
+        ):
+            invalid = json.loads(json.dumps(payload))
+            mutate(invalid)
+            before = json.dumps(task, sort_keys=True)
+            with (mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
+                  mock.patch.object(ai_status, "append_log") as log):
+                with self.assertRaises(SystemExit):
+                    ai_status.command_note(self._state(task), [task["id"], "adjudication",
+                        "--blocker-provenance=" + json.dumps(invalid)])
+                log.assert_not_called()
+            self.assertEqual(before, json.dumps(task, sort_keys=True))
+        task.pop("review_churn_escalated_at")
+        task.pop("review_churn_escalated_at_count")
+        payload["context_sha256"] = ai_status.blocker_authority_digest(task)
+        with mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False):
+            with self.assertRaisesRegex(SystemExit, "explicit review-churn"):
+                ai_status.command_note(self._state(task), [task["id"], "not churn authority",
+                    "--blocker-provenance=" + json.dumps(payload)])
+
+    def test_approval_is_bound_to_provenance_and_remains_single_use(self) -> None:
+        task = self._task(next="Credentials completed.")
+        fields = {"next": [self._segment(task["next"], "resolved")]}
+        self._adjudicate(task, fields)
+        approval = self._issue(task)
+        for field, value in (("issued_by", "Pi"), ("status", "consumed"),
+                             ("expires_at", "2020-01-01T00:00:00Z"),
+                             ("task_id", "WRONG-TASK"), ("review_reopen_count", 5),
+                             ("blocker_provenance_id", "stale-record"),
+                             ("blocker_authority_digest", "stale-digest")):
+            with self.subTest(field=field):
+                self.assertIsNotNone(ai_status.continuation_approval_validation_error(
+                    task, dict(approval, **{field: value})))
+        self._adjudicate(task, fields)
+        self.assertIn("provenance", ai_status.continuation_approval_validation_error(task, approval))
+        task.pop("human_continuation_approval")
+        task["human_continuation_approval_history"] = [dict(approval, status="consumed")]
+        with self.assertRaisesRegex(SystemExit, "already been used"):
+            self._issue(task)
+
     def test_staging_foundation_fixture_code_identifiers_do_not_trigger_hard_gate(self) -> None:
         """A1 fixture: ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001 at 2026-09-17T23:27:08Z.
 
