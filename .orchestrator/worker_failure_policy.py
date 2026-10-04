@@ -4323,7 +4323,7 @@ def retry_due_workers(
             )
             changed = True
             continue
-        ok, outcome, _ = start_worker_for_request(
+        ok, outcome, delivery = start_worker_for_request(
             config,
             state,
             provider_report,
@@ -4337,7 +4337,20 @@ def retry_due_workers(
             activity_message=f"Worker retry launched after backoff from {worker['run_id']}",
         )
         worker = state["workers"][run_id]
+        metadata = delivery.get("metadata") if isinstance(delivery, dict) else None
+        dispatch_wait = metadata.get(model_rotation.DISPATCH_WAIT_KEY) if isinstance(metadata, dict) else None
+        if not ok and isinstance(dispatch_wait, dict) and dispatch_wait.get("kind") == "model_cooldown":
+            # No replacement launched: retain the parent and its retry budget,
+            # waiting for the already-recorded pool reset rather than failing.
+            worker["next_retry_at"] = dispatch_wait["retry_at"]
+            worker[model_rotation.DISPATCH_WAIT_KEY] = dict(dispatch_wait)
+            worker["last_wait_reason"] = outcome
+            worker["last_event_at"] = utc_now()
+            changed = True
+            continue
         if ok:
+            worker.pop(model_rotation.DISPATCH_WAIT_KEY, None)
+            worker.pop("last_wait_reason", None)
             worker["status"] = "retried"
             worker["superseded_by_run_id"] = outcome
             worker["last_event_at"] = utc_now()

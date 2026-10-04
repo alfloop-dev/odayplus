@@ -1376,6 +1376,69 @@ class CooldownLifecycleTests(unittest.TestCase):
     def test_retired_pin_is_terminal_not_environmental_wait(self):
         self._run_queue({"priority": "P0"}, terminal_pin=True)
 
+    def test_retry_due_worker_waits_without_failure_or_budget_then_resumes(self):
+        task, request, _ = self._queue_context({"priority": "P0"})
+        now = datetime.now(UTC).replace(microsecond=0)
+        clock = [now]
+        parent = {
+            "run_id": "parent", "provider": "antigravity5", "agent_id": "antigravity5",
+            "task_id": task["id"], "queue_event_id": "wait-event", "status": "retry_backoff",
+            "next_retry_at": now.isoformat(), "attempt_count": 2, "retry_count": 1,
+            "last_error": "prior transport failure",
+        }
+        state = {"workers": {"parent": parent}}
+        adapter = mock.Mock()
+
+        def deliver(_request):
+            result, spawn = _deliver(self.config, self.path, task=task, reason=request.reason)
+            if not result.ok:
+                spawn.assert_not_called()
+            return result
+
+        adapter.deliver.side_effect = deliver
+        with (
+            mock.patch.object(mr, "_now", side_effect=lambda value=None: value or clock[0]),
+            mock.patch.object(sv, "request_for_worker", return_value=request),
+            mock.patch.object(sv, "build_adapter", return_value=adapter),
+            mock.patch.object(sv, "provider_auth_identity_hash", return_value=None),
+            mock.patch.object(sv, "save_runtime_state"),
+            mock.patch.object(sv, "record_worker_runtime_measurement"),
+            mock.patch.object(sv, "write_activity_log"),
+            mock.patch.object(sv, "write_failure_evidence") as evidence,
+            mock.patch.object(sv, "record_task_failure_streak") as streak,
+            mock.patch.object(sv, "maybe_reassign_task_after_worker_failure") as reassign,
+            mock.patch.object(sv, "mark_provider_dispatch_paused") as pause,
+        ):
+            mr.record_exhaustion(self.config, "antigravity5", 900, pool="claude")
+            before = mr._STATE_PATH.read_bytes()
+            self.assertTrue(sv.retry_due_workers(self.config, state, {}, clock[0]))
+            self.assertEqual(parent["status"], "retry_backoff")
+            self.assertEqual(parent["retry_count"], 1)
+            self.assertEqual(parent["attempt_count"], 2)
+            self.assertEqual(parent["last_error"], "prior transport failure")
+            self.assertEqual(list(state["workers"]), ["parent"])
+            self.assertEqual(parent[mr.DISPATCH_WAIT_KEY]["model"], mr.DEFAULT_HIGH_RISK_MODEL)
+            self.assertEqual(parent["next_retry_at"], (now + timedelta(seconds=900)).isoformat().replace("+00:00", "Z"))
+            self.assertFalse(sv.retry_due_workers(self.config, state, {}, clock[0]))
+            self.assertEqual(adapter.deliver.call_count, 1)
+            clock[0] += timedelta(seconds=900)
+            self.assertTrue(sv.retry_due_workers(self.config, state, {}, clock[0]))
+            self.assertEqual(parent["status"], "retried")
+            self.assertNotIn(mr.DISPATCH_WAIT_KEY, parent)
+            self.assertNotIn("last_wait_reason", parent)
+            replacement = state["workers"][parent["superseded_by_run_id"]]
+            self.assertEqual(replacement["provider"], "antigravity5")
+            self.assertEqual(replacement["parent_run_id"], "parent")
+            self.assertEqual(replacement["retry_count"], 1)
+            self.assertEqual(replacement["attempt_count"], 3)
+            self.assertEqual(replacement[mr.WORKER_MODEL_KEY], mr.DEFAULT_HIGH_RISK_MODEL)
+            self.assertEqual(replacement[mr.WORKER_POOL_KEY], "claude")
+            self.assertEqual(mr._STATE_PATH.read_bytes(), before)
+            evidence.assert_not_called()
+            streak.assert_not_called()
+            reassign.assert_not_called()
+            pause.assert_not_called()
+
     def test_explicit_gpt_fallback_metadata_and_quota_cool_actual_pool(self):
         self.settings["model_rotation"]["fallback_model"] = "gpt-oss-120b-medium"
         self.config["paths"]["activity_log"] = str(self.path / "activity.jsonl")

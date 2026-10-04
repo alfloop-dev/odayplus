@@ -67,14 +67,19 @@ Current base `a2dbb63eb19d2427baf007b7b6455d25ec007e2f` was merged normally,
 without conflicts or rewriting/discarding task history. Canonical metadata
 registered `.orchestrator/supervisor.py` (only launch-result handling) and
 `.orchestrator/worker_lifecycle.py` (only queue wait/resume handling) before
-editing. No failure classifier changes are needed: this explicit structured
-pre-launch wait bypasses failure processing; genuine config/terminal errors
-retain the existing classifier/streak/reassignment path.
+editing. A follow-through audit also registered
+`.orchestrator/worker_failure_policy.py` before repairing its narrow
+`retry_due_workers` caller: already-retrying workers retain their parent and
+retry budget during the same environmental wait, then launch a high-model
+replacement after expiry. No failure classifier changes are needed: this
+explicit structured pre-launch wait bypasses failure processing; genuine
+config/terminal errors retain the existing classifier/streak/reassignment path.
 
 New `CooldownLifecycleTests` exercise real adapter -> launch -> queue handling,
 P0/P1/reopened work, both-pools cooling, no-launch/no-failure before reset,
-same-owner/exact-model resumption at reset, genuine terminal config failure,
-and explicit GPT fallback metadata plus actual quota handling. Process/auth,
+same-owner/exact-model resumption at reset, retry-parent/budget preservation,
+genuine terminal config failure, and explicit GPT fallback metadata plus actual
+quota handling. Process/auth,
 workspace/status persistence and activity logging are mocked; time and cooldown
 files are isolated. The new focused selection was registered before execution:
 `uv run --python 3.12 pytest -q .orchestrator/test_model_rotation.py -k CooldownLifecycleTests`.

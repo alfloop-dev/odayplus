@@ -2403,7 +2403,8 @@ def start_worker_for_request(
     adapter = build_adapter(adapter_name, config=config, provider_capabilities=provider_report)
     result = adapter.deliver(request)
     if not result.ok:
-        if isinstance(result.metadata, dict) and result.metadata.get(model_rotation.DISPATCH_WAIT_KEY):
+        dispatch_wait = result.metadata.get(model_rotation.DISPATCH_WAIT_KEY) if isinstance(result.metadata, dict) else None
+        if isinstance(dispatch_wait, dict) and dispatch_wait.get("kind") == "model_cooldown":
             # A structured pre-launch cooldown wait is not a failed worker.
             # Preserve its exact model/pool/deadline for the queue without
             # emitting failure evidence or attributing quota to an active pool.
