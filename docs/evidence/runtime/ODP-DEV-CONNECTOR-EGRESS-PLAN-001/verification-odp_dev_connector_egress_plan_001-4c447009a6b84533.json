@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "kind": "verification_receipt",
+  "task_id": "ODP-DEV-CONNECTOR-EGRESS-PLAN-001",
+  "head_sha": "5a1815e46a5eea5994c1695fddd1ffafcd8b8d6c",
+  "command": "git diff --check",
+  "command_audit": {
+    "command": "git diff --check",
+    "ok": true,
+    "violations": [],
+    "details": [],
+    "runner": null
+  },
+  "runner": null,
+  "selection": {
+    "scope": "suite",
+    "items": [],
+    "fingerprint": "846541716505fa057a717f7f527859d2"
+  },
+  "exit_code": 0,
+  "signal": null,
+  "timed_out": false,
+  "outcome": "passed",
+  "passed": true,
+  "duration_seconds": 0.014,
+  "started_at": "2026-10-04T04:12:27Z",
+  "finished_at": "2026-10-04T04:12:27Z",
+  "recorded_at": "2026-10-04T04:12:27Z",
+  "run_kind": "baseline",
+  "attempt": 1,
+  "retry_reason": null,
+  "agent": "Pi",
+  "run_id": "pi-20261004T040313Z-8a09620f",
+  "produced_by": "delivery_toolchain/git/task_verification.py",
+  "receipt_id": "4c447009a6b84533"
+}
