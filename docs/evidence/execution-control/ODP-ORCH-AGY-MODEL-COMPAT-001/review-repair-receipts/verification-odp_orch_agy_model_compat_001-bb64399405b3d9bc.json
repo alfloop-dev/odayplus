@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "kind": "verification_receipt",
+  "task_id": "ODP-ORCH-AGY-MODEL-COMPAT-001",
+  "head_sha": "cd9a3cece9d1dc9fe2848cf9509e5f8f0d06f2f7",
+  "command": "uv run --python 3.12 pytest -q .orchestrator/test_model_rotation.py",
+  "command_audit": {
+    "command": "uv run --python 3.12 pytest -q .orchestrator/test_model_rotation.py",
+    "ok": true,
+    "violations": [],
+    "details": [],
+    "runner": "pytest"
+  },
+  "runner": "pytest",
+  "selection": {
+    "scope": "targeted",
+    "items": [
+      ".orchestrator/test_model_rotation.py"
+    ],
+    "fingerprint": "ea20c8367791e6cb326cce65314e90f0"
+  },
+  "exit_code": 0,
+  "signal": null,
+  "timed_out": false,
+  "outcome": "passed",
+  "passed": true,
+  "duration_seconds": 3.591,
+  "started_at": "2026-10-04T12:05:00Z",
+  "finished_at": "2026-10-04T12:05:04Z",
+  "recorded_at": "2026-10-04T12:05:04Z",
+  "run_kind": "baseline",
+  "attempt": 1,
+  "retry_reason": null,
+  "agent": "Pi",
+  "run_id": "pi-20261004T115741Z-16aae5f5",
+  "produced_by": "delivery_toolchain/git/task_verification.py",
+  "output_tail": "..............................................................    [100%]\n",
+  "receipt_id": "bb64399405b3d9bc"
+}

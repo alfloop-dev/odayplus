@@ -2403,6 +2403,12 @@ def start_worker_for_request(
     adapter = build_adapter(adapter_name, config=config, provider_capabilities=provider_report)
     result = adapter.deliver(request)
     if not result.ok:
+        dispatch_wait = result.metadata.get(model_rotation.DISPATCH_WAIT_KEY) if isinstance(result.metadata, dict) else None
+        if isinstance(dispatch_wait, dict) and dispatch_wait.get("kind") == "model_cooldown":
+            # A structured pre-launch cooldown wait is not a failed worker.
+            # Preserve its exact model/pool/deadline for the queue without
+            # emitting failure evidence or attributing quota to an active pool.
+            return False, result.notes, result.as_dict()
         failure_worker = {
             "provider": request.provider,
             "agent_id": request.agent_id,
@@ -5295,6 +5301,10 @@ def queue_event_is_orphaned(
     status = str(record.get("status") or "").lower()
     if status in {"completed", "failed"}:
         return False
+    if model_rotation.has_dispatch_cooldown_wait(record):
+        # A pre-launch wait intentionally has no worker. Keep it through the
+        # reset tick so normal dispatch eligibility can decide its next step.
+        return False
     age_seconds = queue_event_age_seconds(event)
     if age_seconds is None:
         return False
@@ -5401,7 +5411,11 @@ def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
             changed = True
             continue
 
-        if not related_workers and record.get("status") in {"started", "manual_pending", "retry_backoff", "stalled"}:
+        if (
+            not related_workers
+            and record.get("status") in {"started", "manual_pending", "retry_backoff", "stalled"}
+            and not model_rotation.has_dispatch_cooldown_wait(record)
+        ):
             record["status"] = "queued"
             record.pop("processed_at", None)
             record.pop("error", None)
