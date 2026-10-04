@@ -1268,8 +1268,7 @@ class CooldownLifecycleTests(unittest.TestCase):
         task, request, event = self._queue_context(task_fields)
         state = {"queue": {"events": {}}, "workers": {}}
         clock = [datetime.now(UTC).replace(microsecond=0)]
-        # A workerless wait must also survive the ordinary orphan grace limit.
-        event["created_at"] = (clock[0] - timedelta(days=1)).isoformat()
+        event["created_at"] = clock[0].isoformat()
 
         class Clock(datetime):
             @classmethod
@@ -1337,6 +1336,9 @@ class CooldownLifecycleTests(unittest.TestCase):
             deliveries[0][1].assert_not_called()
             # Full supervisor queue cycle: pruning/reconciliation must not
             # rewrite this intentional workerless wait to queued or orphan it.
+            # Age the event only after admission: an initially orphaned wake
+            # still must not be dispatched without any durable wait record.
+            event["created_at"] = (clock[0] - timedelta(days=1)).isoformat()
             for seconds in (1, 60, 838):
                 clock[0] += timedelta(seconds=seconds)
                 self.assertFalse(sv.prune_event_queue(self.config, state))
