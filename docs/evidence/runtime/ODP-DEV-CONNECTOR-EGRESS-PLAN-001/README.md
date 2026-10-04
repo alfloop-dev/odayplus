@@ -54,6 +54,20 @@ Repaired consistently across IaC, tests, and operational documentation:
 3. **Tests (`tests/boundary.tftest.hcl`)**: `scoped_protection` test assertion updated to verify dual VIPs in `google_https` rule. All 20 tests pass.
 4. **Operations (`OPERATIONS.md`)**: Fully details prerequisite resolution, DNS longest-suffix selection, shared consumer inventory (`oday-staging-mlflow`, `oday-mlflow`, GKE), order before deny, and exact alternative DNS alignment / rollback transaction commands.
 
+Dual-VIP repair anchor `37a71972dcd6` native measurements:
+
+| Exact command | Exit | Seconds | Native receipt ID |
+|---|---:|---:|---|
+| git diff --check | 0 | 0.015 | ab205088795b2bae |
+| terraform -chdir=infra/terraform/dev_connector_egress init -backend=false -input=false | 0 | 0.510 | ccb52b7efc88d51c |
+| terraform -chdir=infra/terraform/dev_connector_egress fmt -check -recursive | 0 | 0.068 | efc27d0a99cecc1b |
+| terraform -chdir=infra/terraform/dev_connector_egress validate | 0 | 0.996 | d1fbbc7c9a6aef34 |
+| terraform -chdir=infra/terraform/dev_connector_egress test -no-color | 0 | 5.529 | 1f202c2105681dd9 |
+
+Unmodified native JSON receipts are stored beside this file and in `.orchestrator/evidence/`.
+Test output reports **20 passed, 0 failed** on `tests/boundary.tftest.hcl`. No rerun for count.
+Exact final-head verification is recorded before PR submission. None of these receipts proves live enforcement.
+
 ## Review and downstream closeout
 
 Deliverables: `infra/terraform/dev_connector_egress/{main.tf,variables.tf,tests/boundary.tftest.hcl,README.md,OPERATIONS.md,.terraform.lock.hcl,.gitignore}`.
