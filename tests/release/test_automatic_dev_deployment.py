@@ -146,7 +146,7 @@ def deploy_run(**change):
 def fake_api(manifest, *, artifact_name=auto.DEPLOYED_ARTIFACT, expired=False,
              job_result="success", archive_name="RELEASE_MANIFEST.json", run=None,
              runs=None, attempt_jobs=None, deployment_state="success", seen=None,
-             run_manifests=None, run_jobs=None):
+             run_manifests=None, run_jobs=None, run_artifacts=None):
     runs_list = runs if runs is not None else [run or deploy_run()]
     def read(path, **kwargs):
         if seen is not None:
@@ -155,6 +155,10 @@ def fake_api(manifest, *, artifact_name=auto.DEPLOYED_ARTIFACT, expired=False,
             return {"workflow_runs": runs_list}
         if path.endswith("/artifacts?per_page=100"):
             run_id = int(path.split("actions/runs/")[1].split("/")[0])
+            if run_artifacts is not None and run_id in run_artifacts:
+                return {"artifacts": run_artifacts[run_id]}
+            if artifact_name is None:
+                return {"artifacts": []}
             return {"artifacts": [{"id": 900 + run_id, "name": artifact_name, "expired": expired}]}
         if "/attempts/" in path and path.endswith("/jobs?per_page=100"):
             parts = path.split("actions/runs/")[1].split("/")
@@ -163,11 +167,15 @@ def fake_api(manifest, *, artifact_name=auto.DEPLOYED_ARTIFACT, expired=False,
             if run_jobs and (run_id, attempt) in run_jobs:
                 return {"jobs": run_jobs[(run_id, attempt)]}
             result = (attempt_jobs or {}).get(attempt, job_result)
+            if result is None:
+                return {"jobs": []}
             return {"jobs": [{"name": auto.DEPLOY_JOB, "conclusion": result}]}
         if path.startswith("deployments?"):
             assert "environment=dev" in path
             return [{"id": 7}]
         if path == "deployments/7/statuses?per_page=100":
+            if deployment_state is None:
+                return []
             return [{"state": deployment_state,
                      "log_url": f"https://github.com/{REPO}/actions/runs/{r['id']}/job/1"}
                     for r in runs_list]
@@ -185,13 +193,13 @@ def fake_api(manifest, *, artifact_name=auto.DEPLOYED_ARTIFACT, expired=False,
 
 
 def test_build_only_green_run_is_not_rollback_or_deployed_proof(monkeypatch, manifest):
-    monkeypatch.setattr(auto, "api", fake_api(manifest, artifact_name="runtime-release-manifest-" + SHA))
+    monkeypatch.setattr(auto, "api", fake_api(manifest, job_result=None))
     assert auto.previous_deployment() is None
 
 
 @pytest.mark.parametrize("kwargs", [
-    {"expired": True}, {"job_result": "failure"}, {"job_result": "skipped"},
-    {"archive_name": "../../outside.json"}, {"deployment_state": "failure"},
+    {"expired": True}, {"artifact_name": None},
+    {"archive_name": "../../outside.json"},
     {"run": deploy_run(display_title="Runtime Release dev deploy " + "a" * 40)},
 ])
 def test_untrustworthy_previous_release_is_not_silently_first_release(monkeypatch, manifest, kwargs):
@@ -208,7 +216,7 @@ def test_duplicate_successful_release_stops_before_build(monkeypatch, manifest, 
 
 
 def test_first_release_selects_absence_probe_not_a_fake_predecessor(monkeypatch, manifest, context, tmp_path):
-    monkeypatch.setattr(auto, "api", fake_api(manifest, artifact_name="build-only"))
+    monkeypatch.setattr(auto, "api", fake_api(manifest, runs=[]))
     assert auto.main(["recovery", "--candidate", SHA, "--environment", "dev",
                       "--ci-run-id", "100", "--directory", str(tmp_path)]) == 0
     text = Path(context["GITHUB_OUTPUT"]).read_text()
@@ -456,3 +464,102 @@ def test_newer_deployment_wins_when_creation_and_completion_align(monkeypatch, c
     selected_manifest, selected_run = auto.previous_deployment()
     assert selected_run["id"] == 102
     assert selected_manifest["candidate_sha"] == sha2
+
+
+def test_latest_successful_run_missing_artifact_refuses_without_fallback_to_older_valid_artifact(
+    monkeypatch, context, tmp_path
+):
+    sha1 = REAL_CANDIDATE_SHA
+    sha2 = SECOND_REAL_CANDIDATE_SHA
+    sha3 = "f" * 40
+
+    manifest1 = sources_off_manifest(candidate_sha=sha1, release_profile={
+        "name": "dev-admin", "target_environment": "dev", "model_readiness": "not_claimed",
+    })
+    manifest2 = sources_off_manifest(candidate_sha=sha2, release_profile={
+        "name": "dev-admin", "target_environment": "dev", "model_readiness": "not_claimed",
+    })
+
+    run1 = deploy_run(id=101, head_sha=sha1, run_attempt=1, created_at="2026-07-27T14:50:00Z",
+                      display_title=f"Runtime Release dev deploy {sha1}")
+    run2 = deploy_run(id=102, head_sha=sha2, run_attempt=1, created_at="2026-07-27T14:55:00Z",
+                      display_title=f"Runtime Release dev deploy {sha2}")
+    runs = [run2, run1]
+    run_jobs = {
+        (101, 1): [{"name": auto.DEPLOY_JOB, "conclusion": "success", "completed_at": "2026-07-27T14:52:00Z"}],
+        (102, 1): [{"name": auto.DEPLOY_JOB, "conclusion": "success", "completed_at": "2026-07-27T14:58:00Z"}],
+    }
+    # Run 101 has valid artifact, but latest Run 102 has missing artifact
+    run_artifacts = {
+        101: [{"id": 1001, "name": auto.DEPLOYED_ARTIFACT, "expired": False}],
+        102: [],
+    }
+    run_manifests = {101: manifest1, 102: manifest2}
+
+    def read_api(candidate_sha):
+        base = fake_api(manifest1, runs=runs, run_jobs=run_jobs, run_manifests=run_manifests,
+                        run_artifacts=run_artifacts)
+        def read(path, **kwargs):
+            if path == "actions/runs/100":
+                return {**ci(), "head_sha": candidate_sha}
+            if path == "branches/dev":
+                return {"protected": True, "commit": {"sha": candidate_sha}}
+            return base(path, **kwargs)
+        return read
+
+    # 1. Direct discovery raises Refused and does not fall back to Run 101
+    monkeypatch.setattr(auto, "api", read_api(sha3))
+    with pytest.raises(auto.Refused, match="Previous dev deployment artifact is missing"):
+        auto.previous_deployment()
+
+    # 2. Recovery refuses explicitly, never binding older Run 101 as rollback
+    assert auto.main(["recovery", "--candidate", sha3, "--environment", "dev",
+                      "--ci-run-id", "100", "--directory", str(tmp_path)]) == 1
+    assert not Path(context["GITHUB_OUTPUT"]).exists()
+    assert not (tmp_path / "previous-release.json").exists()
+
+    # 3. Preflight for older SHA (sha1) refuses explicitly, never falsely deduplicating
+    monkeypatch.setenv("GITHUB_SHA", sha1)
+    monkeypatch.setattr(auto, "api", read_api(sha1))
+    assert auto.main(["preflight", "--candidate", sha1, "--environment", "dev",
+                      "--ci-run-id", "100", "--directory", str(tmp_path)]) == 1
+    assert not Path(context["GITHUB_OUTPUT"]).exists()
+
+
+def test_pagination_limit_reached_with_qualifying_records_fails_closed(monkeypatch, manifest, context, tmp_path):
+    run = deploy_run(id=101, head_sha=SHA, run_attempt=1, created_at="2026-07-27T14:50:00Z",
+                     display_title=f"Runtime Release dev deploy {SHA}")
+    page_100_runs = [run] * 100
+
+    def mock_api(path, **kwargs):
+        if path.startswith("actions/workflows/deploy-dev.yml/runs"):
+            # Every page returns 100 runs, so reached_end remains False after 10 pages
+            return {"workflow_runs": page_100_runs}
+        if path.endswith("/artifacts?per_page=100"):
+            return {"artifacts": [{"id": 1001, "name": auto.DEPLOYED_ARTIFACT, "expired": False}]}
+        if "/attempts/" in path and path.endswith("/jobs?per_page=100"):
+            return {"jobs": [{"name": auto.DEPLOY_JOB, "conclusion": "success", "completed_at": "2026-07-27T14:52:00Z"}]}
+        if path.startswith("deployments?"):
+            return [{"id": 7}]
+        if path == "deployments/7/statuses?per_page=100":
+            return [{"state": "success", "log_url": f"https://github.com/{REPO}/actions/runs/101/job/1"}]
+        if path.endswith("/zip"):
+            return archive(manifest)
+        if path == "actions/runs/100":
+            return ci()
+        if path == "branches/dev":
+            return branch()
+        raise AssertionError(path)
+
+    monkeypatch.setattr(auto, "api", mock_api)
+
+    with pytest.raises(auto.Refused, match="Deployment history scan limit reached"):
+        auto.previous_deployment()
+
+    assert auto.main(["preflight", "--candidate", SHA, "--environment", "dev",
+                      "--ci-run-id", "100", "--directory", str(tmp_path)]) == 1
+    assert not Path(context["GITHUB_OUTPUT"]).exists()
+
+    assert auto.main(["recovery", "--candidate", SHA, "--environment", "dev",
+                      "--ci-run-id", "100", "--directory", str(tmp_path)]) == 1
+    assert not Path(context["GITHUB_OUTPUT"]).exists()

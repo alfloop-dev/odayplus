@@ -186,7 +186,7 @@ def previous_deployment() -> tuple[dict[str, Any], dict[str, Any]] | None:
     while live resources exist. No absence is inferred from a failed API call.
     """
     repo = repository()
-    qualifying: list[tuple[datetime, int, dict[str, Any], dict[str, Any]]] = []
+    successful: list[tuple[datetime, int, dict[str, Any], list[str]]] = []
     reached_end = False
 
     for page in range(1, 11):
@@ -200,51 +200,52 @@ def previous_deployment() -> tuple[dict[str, Any], dict[str, Any]] | None:
             title = str(run.get("display_title", "")).split()
             if title[:3] != ["Runtime", "Release", "dev"]:
                 continue
-            artifacts = api(f"actions/runs/{run['id']}/artifacts?per_page=100")["artifacts"]
-            matches = [a for a in artifacts if a.get("name") == DEPLOYED_ARTIFACT]
-            if not matches:
-                continue
-            if any(a.get("expired") for a in matches):
-                raise Refused("Previous dev deployment artifact is expired.")
             attempts = deployed_attempts(run)
             if not attempts:
-                if str(run["id"]) == os.environ.get("GITHUB_RUN_ID"):
-                    continue
-                raise Refused("Previous artifact has no successful deployment job.")
+                continue
             if not dev_environment_deployed(run):
-                raise Refused("Previous artifact has no successful dev environment deployment.")
-            manifests = []
-            for match in matches:
-                archive = api(f"actions/artifacts/{match['id']}/zip", raw=True)
-                with zipfile.ZipFile(io.BytesIO(archive)) as zipped:
-                    entries = zipped.infolist()
-                    if (len(entries) != 1 or entries[0].filename != "RELEASE_MANIFEST.json"
-                            or entries[0].file_size > 2_000_000):
-                        raise Refused("Unexpected previous deployment artifact contents.")
-                    manifests.append(json.loads(zipped.read(entries[0])))
-            manifest = manifests[0]
-            if any(other != manifest for other in manifests[1:]):
-                raise Refused("Previous dev deployment artifacts are ambiguous.")
-            if (len(title) != 5 or title[3] not in {"deploy", "auto"}
-                    or title[4] != manifest.get("candidate_sha")):
-                raise Refused("Previous dev deployment title does not match its manifest.")
-            errors = validate_release_admission(manifest, environment="dev")
-            if errors:
-                raise Refused("Previous dev manifest is not admissible: " + "; ".join(errors))
+                continue
             completed_dt = parse_iso(attempts[0]["completed_at"])
-            qualifying.append((completed_dt, int(run.get("id") or 0), manifest, run))
+            successful.append((completed_dt, int(run.get("id") or 0), run, title))
         if len(runs) < 100:
             reached_end = True
             break
 
-    if qualifying:
-        _, _, best_manifest, best_run = max(qualifying, key=lambda item: (item[0], item[1]))
-        return best_manifest, best_run
+    if not reached_end:
+        raise Refused("Deployment history scan limit reached; no safe predecessor selected.")
 
-    if reached_end:
+    if not successful:
         return None
 
-    raise Refused("Deployment history scan limit reached; no safe predecessor selected.")
+    _, _, best_run, title = max(successful, key=lambda item: (item[0], item[1]))
+
+    artifacts = api(f"actions/runs/{best_run['id']}/artifacts?per_page=100")["artifacts"]
+    matches = [a for a in artifacts if a.get("name") == DEPLOYED_ARTIFACT]
+    if not matches:
+        raise Refused("Previous dev deployment artifact is missing.")
+    if any(a.get("expired") for a in matches):
+        raise Refused("Previous dev deployment artifact is expired.")
+
+    manifests = []
+    for match in matches:
+        archive = api(f"actions/artifacts/{match['id']}/zip", raw=True)
+        with zipfile.ZipFile(io.BytesIO(archive)) as zipped:
+            entries = zipped.infolist()
+            if (len(entries) != 1 or entries[0].filename != "RELEASE_MANIFEST.json"
+                    or entries[0].file_size > 2_000_000):
+                raise Refused("Unexpected previous deployment artifact contents.")
+            manifests.append(json.loads(zipped.read(entries[0])))
+    manifest = manifests[0]
+    if any(other != manifest for other in manifests[1:]):
+        raise Refused("Previous dev deployment artifacts are ambiguous.")
+    if (len(title) != 5 or title[3] not in {"deploy", "auto"}
+            or title[4] != manifest.get("candidate_sha")):
+        raise Refused("Previous dev deployment title does not match its manifest.")
+    errors = validate_release_admission(manifest, environment="dev")
+    if errors:
+        raise Refused("Previous dev manifest is not admissible: " + "; ".join(errors))
+
+    return manifest, best_run
 
 
 def output(**values: Any) -> None:
