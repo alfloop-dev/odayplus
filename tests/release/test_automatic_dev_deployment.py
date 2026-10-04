@@ -350,11 +350,25 @@ def test_first_attempt_of_current_run_not_counted_before_it_deploys(monkeypatch,
     assert auto.previous_deployment() is None
 
 
-def test_failed_rerun_does_not_hide_earlier_successful_deployment(monkeypatch, manifest, context):
+def test_failed_rerun_before_live_step_does_not_hide_earlier_successful_deployment(
+    monkeypatch, manifest, context
+):
     run = deploy_run(run_attempt=2, conclusion="failure")
-    monkeypatch.setattr(auto, "api", fake_api(manifest, run=run, attempt_jobs={2: "failure"}))
+    run_jobs = {(90, 2): [{"name": auto.DEPLOY_JOB, "conclusion": "failure",
+                           "steps": [{"name": "Run the live runtime preflight", "conclusion": "failure"},
+                                     *live_steps("skipped", "skipped", "skipped")]}]}
+    monkeypatch.setattr(auto, "api", fake_api(manifest, run=run, run_jobs=run_jobs))
     found = auto.previous_deployment()
     assert found is not None and found[0] == manifest
+
+
+def test_failed_rerun_inside_live_step_hides_earlier_deployment_without_readback(
+    monkeypatch, manifest, context
+):
+    run = deploy_run(run_attempt=2, conclusion="failure")
+    monkeypatch.setattr(auto, "api", fake_api(manifest, run=run, attempt_jobs={2: "failure"}))
+    with pytest.raises(auto.Refused, match="no live read-back proves"):
+        auto.previous_deployment()
 
 
 def test_automatic_admission_rereads_dev_deploy_targets_before_mutation():
@@ -727,15 +741,310 @@ def test_live_commit_followed_by_evidence_failure_is_never_skipped(
     assert not Path(context["GITHUB_OUTPUT"]).exists()
 
 
-def test_failed_deploy_step_rolled_back_keeps_proven_predecessor(monkeypatch, context):
+A_SHA, B_SHA, C_SHA = REAL_CANDIDATE_SHA, SECOND_REAL_CANDIDATE_SHA, "c" * 40
+
+
+def b_deploy_job(live, *, status="completed", started=True, readback=None, job="failure"):
+    """B's deploy job after A deployed. ``readback`` is the read-back step conclusion."""
+    steps = [{"name": "Run the live runtime preflight", "conclusion": "success"},
+             {"name": auto.LIVE_STEP, "status": status, "conclusion": live,
+              "started_at": "2026-07-27T14:56:00Z" if started else None,
+              "completed_at": "2026-07-27T14:57:00Z" if status == "completed" else None}]
+    if readback is not None:
+        steps.append({"name": auto.RESTORE_STEP, "status": "completed", "conclusion": readback})
+    steps.append({"name": "Download the successfully deployed manifest", "conclusion": "skipped"})
+    return [{"name": auto.DEPLOY_JOB, "status": "completed", "conclusion": job,
+             "completed_at": "2026-07-27T14:58:00Z", "steps": steps}]
+
+
+def readback_zip(live_release, *, run_id=102, attempt=1, failed=B_SHA, kind=auto.RESTORE_KIND,
+                 name=auto.RESTORE_FILE):
+    data = io.BytesIO()
+    with zipfile.ZipFile(data, "w") as zipped:
+        zipped.writestr(name, json.dumps({
+            "kind": kind, "environment": "dev", "failed_candidate_sha": failed,
+            "run_id": str(run_id), "run_attempt": str(attempt), "live_release": live_release}))
+    return data.getvalue()
+
+
+def b_failed_api(job, *, with_a=True, receipt=None, artifact=None):
     runs, run_jobs, manifests = a_then_b_runs()
-    run_jobs[(102, 1)] = [{"name": auto.DEPLOY_JOB, "status": "completed", "conclusion": "failure",
-                           "steps": live_steps("failure", "skipped", "skipped")}]
-    monkeypatch.setattr(auto, "api", fake_api(manifests[101], runs=runs, run_jobs=run_jobs,
-                                              run_manifests=manifests, unproven={102}))
+    run_jobs[(102, 1)] = job
+    if not with_a:
+        runs = runs[:1]
+    readbacks = [] if receipt is None else [
+        {"id": 5000, "name": f"{auto.RESTORE_ARTIFACT}-1", "expired": False, **(artifact or {})}]
+    base = fake_api(manifests[101], runs=runs, run_jobs=run_jobs, run_manifests=manifests,
+                    unproven={102}, run_artifacts={102: readbacks})
+    def read(path, **kwargs):
+        if path == "actions/artifacts/5000/zip":
+            return receipt
+        return base(path, **kwargs)
+    return read
+
+
+def run_action(monkeypatch, base, action, candidate, tmp_path):
+    monkeypatch.setenv("GITHUB_SHA", candidate)
+    monkeypatch.setattr(auto, "api", with_ci(base, candidate))
+    return auto.main([action, "--candidate", candidate, "--environment", "dev",
+                      "--ci-run-id", "100", "--directory", str(tmp_path)])
+
+
+UNPROVEN_LIVE_STEPS = {
+    # A live, B promoted, its live gate failed and rollback/scheduler restore
+    # failed too: the read-back step ran and refused, so nothing was published.
+    "rollback-failed-readback-refused": b_deploy_job("failure", readback="failure"),
+    # Same failure from a run whose read-back never ran (for example a
+    # pre-repair run): the failed conclusion alone proves nothing.
+    "failed-without-readback": b_deploy_job("failure"),
+    "readback-skipped": b_deploy_job("failure", readback="skipped"),
+    "cancelled-live-step": b_deploy_job("cancelled", job="cancelled"),
+    "interrupted-live-step": b_deploy_job(None, status="in_progress", job="failure"),
+    "timed-out-live-step": b_deploy_job("timed_out", job="failure"),
+}
+
+
+@pytest.mark.parametrize("job", UNPROVEN_LIVE_STEPS.values(), ids=UNPROVEN_LIVE_STEPS.keys())
+def test_unproven_failed_live_step_fails_closed_for_recovery_and_dedup(
+    monkeypatch, context, tmp_path, job
+):
+    base = b_failed_api(job)
+    monkeypatch.setattr(auto, "api", base)
+    with pytest.raises(auto.Refused, match="no live read-back proves"):
+        auto.previous_deployment()
+
+    # Recovery for a later candidate must not bind A as the proven predecessor.
+    assert run_action(monkeypatch, base, "recovery", C_SHA, tmp_path) == 1
+    assert not Path(context["GITHUB_OUTPUT"]).exists()
+    assert not (tmp_path / "previous-release.json").exists()
+
+    # An automatic retry for A must not be deduplicated against unproven A.
+    assert run_action(monkeypatch, base, "preflight", A_SHA, tmp_path) == 1
+    assert not Path(context["GITHUB_OUTPUT"]).exists()
+
+
+def test_readback_step_success_without_published_receipt_fails_closed(monkeypatch, context):
+    monkeypatch.setattr(auto, "api", b_failed_api(b_deploy_job("failure", readback="success")))
+    with pytest.raises(auto.Refused, match="no live read-back proves"):
+        auto.previous_deployment()
+
+
+def test_positively_proven_rollback_keeps_predecessor_and_deduplicates(
+    monkeypatch, context, tmp_path
+):
+    base = b_failed_api(b_deploy_job("failure", readback="success"),
+                        receipt=readback_zip(A_SHA[:16]))
+    monkeypatch.setattr(auto, "api", base)
     found_manifest, found_run = auto.previous_deployment()
     assert found_run["id"] == 101
-    assert found_manifest["candidate_sha"] == REAL_CANDIDATE_SHA
+    assert found_manifest["candidate_sha"] == A_SHA
+
+    assert run_action(monkeypatch, base, "recovery", C_SHA, tmp_path) == 0
+    assert "initial_release=false" in Path(context["GITHUB_OUTPUT"]).read_text()
+    assert json.loads((tmp_path / "previous-release.json").read_text())["candidate_sha"] == A_SHA
+
+    # Live dev is proven to be A, so retrying A really is a duplicate.
+    Path(context["GITHUB_OUTPUT"]).unlink()
+    assert run_action(monkeypatch, base, "preflight", A_SHA, tmp_path) == 0
+    assert "proceed=false" in Path(context["GITHUB_OUTPUT"]).read_text()
+
+
+@pytest.mark.parametrize("receipt,artifact", [
+    (readback_zip(A_SHA[:16], run_id=999), None),
+    (readback_zip(A_SHA[:16], attempt=2), None),
+    (readback_zip(A_SHA[:16], failed=C_SHA), None),
+    (readback_zip(A_SHA[:16], kind="something-else"), None),
+    (readback_zip(A_SHA[:16], name="../outside.json"), None),
+    (readback_zip(B_SHA[:16]), None),
+    (readback_zip("A" * 16), None),
+    (readback_zip(A_SHA[:16]), {"expired": True}),
+    (readback_zip(A_SHA[:16]), {"name": f"{auto.RESTORE_ARTIFACT}-2"}),
+], ids=["other-run", "other-attempt", "other-candidate", "wrong-kind", "path-escape",
+        "candidate-still-live", "malformed-release", "expired", "other-attempt-artifact"])
+def test_readback_receipt_must_bind_this_failed_attempt(monkeypatch, context, receipt, artifact):
+    monkeypatch.setattr(auto, "api", b_failed_api(
+        b_deploy_job("failure", readback="success"), receipt=receipt, artifact=artifact))
+    with pytest.raises(auto.Refused, match="no live read-back proves"):
+        auto.previous_deployment()
+
+
+def test_readback_naming_an_unretained_release_refuses(monkeypatch, context):
+    monkeypatch.setattr(auto, "api", b_failed_api(
+        b_deploy_job("failure", readback="success"), receipt=readback_zip("f" * 16)))
+    with pytest.raises(auto.Refused, match="no retained successful deployment"):
+        auto.previous_deployment()
+
+
+@pytest.mark.parametrize("job", [
+    b_deploy_job("skipped", started=False),
+    b_deploy_job(None, status="pending", started=False),
+], ids=["skipped", "never-started"])
+def test_live_step_that_never_started_keeps_predecessor(monkeypatch, context, job):
+    monkeypatch.setattr(auto, "api", b_failed_api(job))
+    found_manifest, found_run = auto.previous_deployment()
+    assert found_run["id"] == 101
+    assert found_manifest["candidate_sha"] == A_SHA
+
+
+@pytest.mark.parametrize("job,receipt", [
+    (b_deploy_job("failure"), None),
+    (b_deploy_job(None, status="in_progress"), None),
+    (b_deploy_job("failure", readback="success"), readback_zip(None)),
+], ids=["unproven", "interrupted", "proven-empty"])
+def test_failed_first_release_falls_through_to_fresh_absence_readback(
+    monkeypatch, context, tmp_path, job, receipt
+):
+    # Nothing was ever live, so the only honest next step is a first release;
+    # the build and admission absence read-backs refuse if B left anything.
+    base = b_failed_api(job, with_a=False, receipt=receipt)
+    assert run_action(monkeypatch, base, "preflight", C_SHA, tmp_path) == 0
+    assert "proceed=true" in Path(context["GITHUB_OUTPUT"]).read_text()
+    Path(context["GITHUB_OUTPUT"]).unlink()
+    assert run_action(monkeypatch, base, "recovery", C_SHA, tmp_path) == 0
+    text = Path(context["GITHUB_OUTPUT"]).read_text()
+    assert "initial_release=true" in text and "rollback_manifest=\n" in text
+
+
+def test_proven_empty_target_is_a_first_release_even_after_an_older_release(monkeypatch, context):
+    # The read-back observed an empty target, so a first release (re-proven by
+    # the build/admission absence read-backs) is the true state, not stale A.
+    monkeypatch.setattr(auto, "api", b_failed_api(
+        b_deploy_job("failure", readback="success"), receipt=readback_zip(None)))
+    assert auto.previous_deployment() is None
+
+
+def test_workflow_reads_back_live_state_only_after_a_failed_dev_live_step():
+    steps = yaml.safe_load((ROOT / auto.WORKFLOW).read_text())["jobs"]["deploy"]["steps"]
+    names = [step.get("name") for step in steps]
+    live = names.index(auto.LIVE_STEP)
+    readback = names.index(auto.RESTORE_STEP)
+    publish = next(i for i, step in enumerate(steps)
+                   if str(step.get("with", {}).get("name", "")).startswith(auto.RESTORE_ARTIFACT))
+    assert live < readback < publish
+    assert steps[live]["id"] == "live-deploy"
+    condition = steps[readback]["if"]
+    assert "failure()" in condition and "steps.live-deploy.outcome == 'failure'" in condition
+    assert "inputs.environment == 'dev'" in condition
+    assert "automatic_dev live-readback" in steps[readback]["run"]
+    assert auto.RESTORE_FILE in steps[readback]["run"]
+    upload = steps[publish]
+    assert "steps.live-readback.outcome == 'success'" in upload["if"]
+    assert upload["with"]["name"] == auto.RESTORE_ARTIFACT + "-${{ github.run_attempt }}"
+    assert upload["with"]["path"].endswith("/" + auto.RESTORE_FILE)
+    assert upload["with"]["if-no-files-found"] == "error"
+
+
+READBACK_ENV = {
+    "ODP_DEPLOY_ENV": "dev", "ODAY_RELEASE_SHA": B_SHA, "GCP_PROJECT": "proj",
+    "GCP_REGION": "asia-east1", "API_SERVICE": "api", "WEB_SERVICE": "web",
+    "MIGRATION_JOB": "migrate", "WORKER_JOB": "worker", "SCHEDULER_JOB": "scheduler",
+    "WORKER_SCHEDULE_NAME": "worker-trigger", "SCHEDULER_SCHEDULE_NAME": "scheduler-trigger",
+    "GITHUB_RUN_ID": "102", "GITHUB_RUN_ATTEMPT": "1",
+}
+
+
+def described(name, serving, tags=(("rev-a", A_SHA), ("rev-b", B_SHA)), latest=False):
+    traffic = [{"revisionName": rev, "percent": pct, **({"latestRevision": True} if latest else {})}
+               for rev, pct in serving]
+    traffic += [{"revisionName": rev, "tag": f"candidate-{sha[:16]}", "percent": 0}
+                for rev, sha in tags]
+    return {"metadata": {"name": name}, "status": {"traffic": traffic}}
+
+
+def trigger_uri(base, sha):
+    job = f"{base}-r-{sha[:12]}"
+    return f"https://run.googleapis.com/v2/projects/proj/locations/asia-east1/jobs/{job}:run"
+
+
+def fake_gcloud(services, *, triggers=None):
+    triggers = triggers or {"scheduler-trigger": trigger_uri("scheduler", A_SHA),
+                            "worker-trigger": trigger_uri("worker", A_SHA)}
+    def call(*args):
+        flags = dict(arg[2:].split("=", 1) for arg in args if arg.startswith("--"))
+        if args[:3] == ("run", "services", "list"):
+            name = flags["filter"].split("=", 1)[1]
+            return [services[name]] if services.get(name) else []
+        if args[:3] == ("scheduler", "jobs", "list"):
+            name = flags["filter"].split(":", 1)[1]
+            return [{"name": f"projects/proj/locations/asia-east1/jobs/{name}",
+                     "httpTarget": {"uri": triggers[name]}}] if name in triggers else []
+        raise AssertionError(args)
+    return call
+
+
+def test_live_readback_proves_restored_predecessor_and_round_trips(monkeypatch, context, tmp_path):
+    services = {"api": described("api", [("rev-a", 100)]), "web": described("web", [("rev-a", 100)])}
+    monkeypatch.setattr(auto, "gcloud_json", fake_gcloud(services))
+    for key, value in READBACK_ENV.items():
+        monkeypatch.setenv(key, value)
+    receipt = tmp_path / auto.RESTORE_FILE
+    assert auto.main(["live-readback", "--output", str(receipt)]) == 0
+    payload = json.loads(receipt.read_text())
+    assert payload["live_release"] == A_SHA[:16]
+    assert payload["failed_candidate_sha"] == B_SHA
+
+    # The published receipt is exactly what history accepts as restoration.
+    data = io.BytesIO()
+    with zipfile.ZipFile(data, "w") as zipped:
+        zipped.writestr(auto.RESTORE_FILE, receipt.read_text())
+    monkeypatch.setenv("GITHUB_RUN_ID", "200")
+    monkeypatch.setattr(auto, "api", b_failed_api(
+        b_deploy_job("failure", readback="success"), receipt=data.getvalue()))
+    assert auto.previous_deployment()[0]["candidate_sha"] == A_SHA
+
+
+@pytest.mark.parametrize("services,triggers", [
+    ({"api": described("api", [("rev-a", 50), ("rev-b", 50)]),
+      "web": described("web", [("rev-a", 100)])}, None),
+    ({"api": described("api", [("rev-b", 100)]), "web": described("web", [("rev-b", 100)])}, None),
+    ({"api": described("api", [("rev-a", 100)]), "web": described("web", [("rev-b", 100)])}, None),
+    ({"api": described("api", [("rev-a", 100)], latest=True),
+      "web": described("web", [("rev-a", 100)])}, None),
+    ({"api": described("api", [("rev-x", 100)]), "web": described("web", [("rev-x", 100)])}, None),
+    ({"api": described("api", [("rev-a", 90)]), "web": described("web", [("rev-a", 90)])}, None),
+    ({"api": described("api", [("rev-a", 100)]), "web": None}, None),
+    ({"api": described("api", [("rev-a", 100)]), "web": described("web", [("rev-a", 100)])},
+     {"scheduler-trigger": trigger_uri("scheduler", B_SHA),
+      "worker-trigger": trigger_uri("worker", A_SHA)}),
+    ({"api": described("api", [("rev-a", 100)]), "web": described("web", [("rev-a", 100)])},
+     {"scheduler-trigger": trigger_uri("scheduler", A_SHA)}),
+], ids=["mixed-traffic", "candidate-serving", "api-web-split", "unpinned-latest",
+        "untagged-revision", "partial-traffic", "half-absent", "scheduler-on-candidate",
+        "worker-trigger-missing"])
+def test_live_readback_refuses_unproven_or_mixed_state(monkeypatch, context, tmp_path,
+                                                       services, triggers):
+    monkeypatch.setattr(auto, "gcloud_json", fake_gcloud(services, triggers=triggers))
+    for key, value in READBACK_ENV.items():
+        monkeypatch.setenv(key, value)
+    receipt = tmp_path / auto.RESTORE_FILE
+    assert auto.main(["live-readback", "--output", str(receipt)]) == 1
+    assert not receipt.exists()
+
+
+def test_live_readback_empty_target_requires_full_absence_probe(monkeypatch, context, tmp_path):
+    from delivery_toolchain.release import probe_release_target_absence as probe
+
+    monkeypatch.setattr(auto, "gcloud_json", fake_gcloud({}))
+    seen = []
+    monkeypatch.setattr(probe, "probe_target_absence", lambda **kw: seen.append(kw) or {})
+    payload = auto.failed_live_step_readback(READBACK_ENV)
+    assert payload["live_release"] is None
+    assert seen[0]["candidate_sha"] == B_SHA
+    assert set(seen[0]["targets"]) == {"api", "web", "migration", "worker", "scheduler"}
+
+    def present(**kw):
+        raise probe.ProbeError(["worker candidate job remains"])
+    monkeypatch.setattr(probe, "probe_target_absence", present)
+    with pytest.raises(auto.Refused, match="not empty"):
+        auto.failed_live_step_readback(READBACK_ENV)
+
+
+@pytest.mark.parametrize("change", [{"ODP_DEPLOY_ENV": "production"}, {"ODAY_RELEASE_SHA": "main"},
+                                    {"WORKER_SCHEDULE_NAME": ""}])
+def test_live_readback_is_dev_only_and_fully_bound(monkeypatch, change):
+    monkeypatch.setattr(auto, "gcloud_json", fake_gcloud({}))
+    with pytest.raises(auto.Refused):
+        auto.failed_live_step_readback({**READBACK_ENV, **change})
 
 
 def test_unreadable_failed_deploy_steps_refuse(monkeypatch, context):

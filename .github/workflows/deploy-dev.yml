@@ -1403,6 +1403,7 @@ jobs:
         run: uv run python -m delivery_toolchain.release.automatic_dev deploy-check
 
       - name: Deploy Cloud Run by immutable digest
+        id: live-deploy
         if: ${{ inputs.environment != 'staging' }}
         env:
           # Only the dev-admin profile reads these: the live gate signs in
@@ -1416,6 +1417,28 @@ jobs:
           ODP_DEV_BOOTSTRAP_ADMIN_USERNAME: ${{ vars.ODP_DEV_BOOTSTRAP_ADMIN_USERNAME }}
           ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.ODP_DEV_BOOTSTRAP_ADMIN_PASSWORD }}
         run: ./product_ops/deployment/deploy_cloud_run_waji.sh
+
+      # The deploy script promotes traffic before its last live gate and its
+      # EXIT trap only logs a failed traffic/scheduler restore, so a failed live
+      # step alone says nothing about what is live. This read-back is the only
+      # positive evidence automatic_dev accepts for a failed attempt: an empty
+      # target, or one non-candidate release serving all API/Web traffic with
+      # both scheduler triggers on that release. If it cannot prove that, it
+      # fails, no receipt is published, and the next dev release refuses.
+      - name: Read back dev live state after a failed live step
+        id: live-readback
+        if: ${{ failure() && inputs.environment == 'dev' && steps.live-deploy.outcome == 'failure' }}
+        run: >-
+          uv run python -m delivery_toolchain.release.automatic_dev live-readback
+          --output .odp_data/deployment/dev-failed-live-step-readback.json
+
+      - name: Publish dev failed live step read-back
+        if: ${{ failure() && inputs.environment == 'dev' && steps.live-readback.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-failed-live-step-readback-${{ github.run_attempt }}
+          path: .odp_data/deployment/dev-failed-live-step-readback.json
+          if-no-files-found: error
 
       - name: Prepare release-scoped staging handoff paths
         if: ${{ inputs.environment == 'staging' }}
@@ -1617,6 +1640,7 @@ jobs:
             .odp_data/deployment/cloud-run-jobs/migration-validation.json
             .odp_data/deployment/cloud-run-jobs/scheduler-validation.json
             .odp_data/deployment/cloud-run-jobs/worker-validation.json
+            .odp_data/deployment/dev-failed-live-step-readback.json
             .odp_data/remote-staging-proof/staging-${{ github.run_id }}.json
           if-no-files-found: ignore
 

@@ -25,6 +25,7 @@ from delivery_toolchain.release.release_manifest import (
     component_binding_errors,
     load_manifest,
     manifest_release_profile,
+    release_candidate_job_name,
     validate_release_admission,
 )
 
@@ -35,6 +36,12 @@ DEPLOY_JOB = "Deploy the admitted artifact by immutable digest"
 # The step whose success means dev traffic and live gates are committed; later
 # evidence-publication steps can still fail the job without undoing it.
 LIVE_STEP = "Deploy Cloud Run by immutable digest"
+# Runs only after LIVE_STEP failed. Its success, plus the artifact it publishes,
+# is the only positive evidence of what a failed live step left live.
+RESTORE_STEP = "Read back dev live state after a failed live step"
+RESTORE_ARTIFACT = "dev-failed-live-step-readback"
+RESTORE_FILE = "dev-failed-live-step-readback.json"
+RESTORE_KIND = "dev-failed-live-step-readback-v1"
 DEPLOYED_ARTIFACT = "deployed-release-manifest-dev"
 COMPONENTS = ("api", "web", "worker", "scheduler")
 
@@ -134,32 +141,94 @@ def parse_iso(value: str | None) -> datetime:
         return datetime.min.replace(tzinfo=UTC)
 
 
-def live_step_committed(job: dict[str, Any]) -> str | None:
-    """Completion time of the live-commit step in a job that did not succeed.
+def live_step_outcome(job: dict[str, Any]) -> tuple[str, str]:
+    """What the live step of a deploy job that did not succeed proves.
 
-    ``deploy_cloud_run_waji.sh`` commits only after every live gate passes and
-    rolls back any earlier failure, so a failed job whose live step succeeded
-    still changed live dev. Unreadable step outcomes cannot prove otherwise.
+    Returns ``(kind, when)``:
+
+    * ``committed`` -- the live step succeeded, so every live gate passed and
+      live dev is this release even though a later step failed the job.
+    * ``not_started`` -- the live step was skipped or never began, which is
+      positive evidence that this attempt did not touch live dev.
+    * ``readback`` -- the live step failed and the post-failure live read-back
+      step succeeded; the read-back artifact still has to name what is live.
+    * ``uncertain`` -- anything else. ``deploy_cloud_run_waji.sh`` promotes
+      traffic before its last live gate, and its EXIT trap only *logs* a failed
+      traffic or scheduler restore before exiting with the original status, so
+      a failed, cancelled, timed-out or interrupted live step reads identically
+      whether the predecessor came back or the candidate/mixed state stayed.
+
+    Unreadable step outcomes cannot prove anything and refuse.
     """
     steps = job.get("steps")
     if not isinstance(steps, list):
         raise Refused("Dev deploy job step outcomes are unreadable; no safe predecessor selected.")
-    for step in steps:
-        if step.get("name") == LIVE_STEP and step.get("conclusion") == "success":
-            return step.get("completed_at") or job.get("completed_at") or ""
-    return None
+    live = [step for step in steps if isinstance(step, dict) and step.get("name") == LIVE_STEP]
+    if len(live) > 1:
+        raise Refused("Dev deploy job reports the live step twice; no safe predecessor selected.")
+    if not live:
+        return "not_started", ""
+    step = live[0]
+    when = str(step.get("completed_at") or step.get("started_at")
+               or job.get("completed_at") or job.get("started_at") or "")
+    conclusion = step.get("conclusion")
+    if conclusion == "success":
+        return "committed", when
+    if conclusion == "skipped" or (
+            conclusion is None and not step.get("started_at")
+            and step.get("status") in {"queued", "pending", "waiting"}):
+        return "not_started", ""
+    if conclusion == "failure" and any(
+            isinstance(other, dict) and other.get("name") == RESTORE_STEP
+            and other.get("conclusion") == "success" for other in steps):
+        return "readback", when
+    return "uncertain", when
+
+
+def restoration_readback(run: dict[str, Any], attempt: int) -> str | None | bool:
+    """Release (16-hex prefix) the read-back proved live, ``None`` for an empty
+    target, or ``False`` when no valid read-back artifact proves either."""
+    name = f"{RESTORE_ARTIFACT}-{attempt}"
+    artifacts = api(f"actions/runs/{run['id']}/artifacts?per_page=100")["artifacts"]
+    matches = [a for a in artifacts if a.get("name") == name]
+    if len(matches) != 1 or matches[0].get("expired"):
+        return False
+    archive = api(f"actions/artifacts/{matches[0]['id']}/zip", raw=True)
+    with zipfile.ZipFile(io.BytesIO(archive)) as zipped:
+        entries = zipped.infolist()
+        if (len(entries) != 1 or entries[0].filename != RESTORE_FILE
+                or entries[0].file_size > 100_000):
+            return False
+        receipt = json.loads(zipped.read(entries[0]))
+    title = str(run.get("display_title", "")).split()
+    live = receipt.get("live_release") if isinstance(receipt, dict) else False
+    if (not isinstance(receipt, dict) or receipt.get("kind") != RESTORE_KIND
+            or len(title) != 5 or receipt.get("failed_candidate_sha") != title[4]
+            or str(receipt.get("run_id")) != str(run["id"])
+            or str(receipt.get("run_attempt")) != str(attempt)
+            or not (live is None or (isinstance(live, str) and re.fullmatch(r"[0-9a-f]{16}", live)
+                                     and live != title[4][:16]))):
+        return False
+    return live
 
 
 def deployed_attempts(run: dict[str, Any]) -> list[dict[str, Any]]:
-    """Attempts of ``run`` that changed live dev, newest first.
+    """Attempts of ``run`` that changed, or may have changed, live dev; newest first.
 
     Reruns share one run id, and the run-level status/conclusion only reflect
-    the latest attempt. A successful first attempt therefore stays live even
-    while a rerun is in progress or after it fails, so success is read per
-    attempt. An attempt whose live step committed but whose job failed later
-    (for example while publishing evidence) is live yet ``complete`` is false:
-    its deployed manifest is not proven. The current attempt of this very run
-    is excluded: it has not deployed anything yet.
+    the latest attempt, so every attempt is read on its own. ``kind`` is:
+
+    * ``complete`` -- the deploy job succeeded; its manifest is retained.
+    * ``committed`` -- the live step succeeded but the job failed later (for
+      example while publishing evidence): live, but its manifest is unproven.
+    * ``restored`` -- the live step failed and a post-failure live read-back
+      proved live dev is wholly ``restored_release`` (``None``: empty target).
+    * ``uncertain`` -- the live step started and did not succeed, with no such
+      proof. Its live effect is unknown.
+
+    Attempts whose deploy job was skipped, or whose live step provably never
+    started, did not touch live dev and are omitted. The current attempt of
+    this very run is excluded: it has not deployed anything yet.
     """
     latest = int(run.get("run_attempt") or 1)
     if str(run["id"]) == os.environ.get("GITHUB_RUN_ID"):
@@ -170,8 +239,9 @@ def deployed_attempts(run: dict[str, Any]) -> list[dict[str, Any]]:
         for j in jobs:
             if j.get("name") != DEPLOY_JOB:
                 continue
+            restored: str | None = None
             if j.get("conclusion") == "success":
-                complete, completed_at = True, (
+                kind, completed_at = "complete", (
                     j.get("completed_at")
                     or j.get("started_at")
                     or run.get("updated_at")
@@ -181,15 +251,22 @@ def deployed_attempts(run: dict[str, Any]) -> list[dict[str, Any]]:
             elif j.get("conclusion") == "skipped":
                 break
             else:
-                committed = live_step_committed(j)
-                if committed is None:
+                kind, completed_at = live_step_outcome(j)
+                if kind == "not_started":
                     break
-                complete, completed_at = False, committed
+                if kind == "readback":
+                    proven = restoration_readback(run, attempt)
+                    if proven is False:
+                        kind = "uncertain"
+                    else:
+                        kind, restored = "restored", proven
             found.append({
                 "attempt": attempt,
                 "completed_at": completed_at,
                 "job_id": j.get("id"),
-                "complete": complete,
+                "kind": kind,
+                "complete": kind == "complete",
+                "restored_release": restored,
             })
             break
     return found
@@ -233,9 +310,24 @@ def previous_deployment() -> tuple[dict[str, Any], dict[str, Any]] | None:
     expiry/unreadability is an error. The first-release absence probe
     independently refuses to proceed if historical artifacts are unavailable
     while live resources exist. No absence is inferred from a failed API call.
+
+    The newest attempt that changed, or may have changed, live dev decides:
+
+    * a completed deploy is the predecessor;
+    * a live commit whose job failed afterwards refuses (manifest unproven);
+    * a failed live step with a successful post-failure read-back proves what
+      is live, so the newest completed deploy of exactly that release is the
+      predecessor (an empty target read-back means no predecessor);
+    * a failed, cancelled or interrupted live step without that proof refuses
+      whenever any older release could still be live. Selecting the older
+      release would claim a rollback nobody observed, and deduplicating
+      against it would skip a deploy that may be needed. Only when no release
+      was ever live does it fall through to a first release, whose fresh
+      target absence read-back (build and admission) proves the failed
+      attempt left nothing behind before anything is mutated.
     """
     repo = repository()
-    successful: list[tuple[datetime, int, dict[str, Any], list[str]]] = []
+    events: list[tuple[datetime, int, int, dict[str, Any], dict[str, Any], list[str]]] = []
     reached_end = False
 
     for page in range(1, 11):
@@ -257,9 +349,9 @@ def previous_deployment() -> tuple[dict[str, Any], dict[str, Any]] | None:
             if attempts[0]["complete"] and not dev_environment_deployed(run):
                 raise Refused("Successful dev deploy job lacks dev environment proof; "
                               "no safe predecessor selected.")
-            completed_dt = parse_iso(attempts[0]["completed_at"])
-            successful.append((completed_dt, int(run.get("id") or 0), run, title,
-                               attempts[0]["complete"]))
+            for entry in attempts:
+                events.append((parse_iso(entry["completed_at"]), int(run.get("id") or 0),
+                               int(entry["attempt"]), entry, run, title))
         if len(runs) < 100:
             reached_end = True
             break
@@ -267,11 +359,12 @@ def previous_deployment() -> tuple[dict[str, Any], dict[str, Any]] | None:
     if not reached_end:
         raise Refused("Deployment history scan limit reached; no safe predecessor selected.")
 
-    if not successful:
+    if not events:
         return None
 
-    _, _, best_run, title, complete = max(successful, key=lambda item: (item[0], item[1]))
-    if not complete:
+    events.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    newest, best_run, title = events[0][3], events[0][4], events[0][5]
+    if newest["kind"] == "committed":
         # Live dev is this run's release, but its job failed after the live
         # commit, so the deployed manifest is unproven. Neither an older
         # predecessor nor a first release is true; a signed manual dev deploy
@@ -279,7 +372,40 @@ def previous_deployment() -> tuple[dict[str, Any], dict[str, Any]] | None:
         raise Refused("Latest dev deploy committed live but its job failed afterwards; "
                       "its deployed manifest is unproven, so no predecessor is selected. "
                       "Run a signed manual dev deploy with an explicit rollback manifest.")
+    if newest["kind"] == "uncertain":
+        if any(item[3]["kind"] in {"complete", "committed"}
+               or (item[3]["kind"] == "restored" and item[3]["restored_release"] is not None)
+               for item in events[1:]):
+            raise Refused(
+                f"Latest dev deploy (run {best_run.get('id')} attempt {newest['attempt']}) "
+                "started its live step and did not succeed, and no live read-back proves "
+                "the previous release was restored; the live release is unknown, so no "
+                "predecessor is selected and nothing is reported as already deployed. "
+                "Read back the dev Cloud Run traffic and scheduler targets, then run a "
+                "signed manual dev deploy with an explicit rollback manifest for what is live.")
+        # Nothing was ever proven live: a first release, gated by a fresh
+        # absence read-back that refuses if this attempt left resources.
+        return None
+    if newest["kind"] == "restored":
+        live = newest["restored_release"]
+        if live is None:
+            return None
+        chosen = next((item for item in events[1:] if item[3]["kind"] == "complete"
+                       and len(item[5]) == 5 and item[5][4][:16] == live), None)
+        if chosen is None:
+            raise Refused("Live read-back names a dev release with no retained successful "
+                          "deployment; no safe predecessor selected.")
+        best_run, title = chosen[4], chosen[5]
+        if not dev_environment_deployed(best_run):
+            raise Refused("Successful dev deploy job lacks dev environment proof; "
+                          "no safe predecessor selected.")
 
+    manifest = deployed_manifest(best_run, title)
+    return manifest, best_run
+
+
+def deployed_manifest(best_run: dict[str, Any], title: list[str]) -> dict[str, Any]:
+    """The retained, admissible manifest of one successful dev deployment."""
     artifacts = api(f"actions/runs/{best_run['id']}/artifacts?per_page=100")["artifacts"]
     matches = [a for a in artifacts if a.get("name") == DEPLOYED_ARTIFACT]
     if not matches:
@@ -305,8 +431,7 @@ def previous_deployment() -> tuple[dict[str, Any], dict[str, Any]] | None:
     errors = validate_release_admission(manifest, environment="dev")
     if errors:
         raise Refused("Previous dev manifest is not admissible: " + "; ".join(errors))
-
-    return manifest, best_run
+    return manifest
 
 
 def output(**values: Any) -> None:
@@ -319,6 +444,133 @@ def output(**values: Any) -> None:
             if "\n" in text or "\r" in text:
                 raise Refused("Invalid multiline output.")
             stream.write(f"{key}={text}\n")
+
+
+def gcloud_json(*args: str) -> Any:
+    result = subprocess.run(["gcloud", *args, "--format=json"], capture_output=True,
+                            timeout=120, check=False)
+    if result.returncode:
+        raise Refused("Cloud read-back failed; the failed live step stays unproven.")
+    return json.loads(result.stdout or "null")
+
+
+def service_description(name: str, *, project: str, region: str) -> dict[str, Any] | None:
+    """The exact Cloud Run service, ``None`` only when the listing proves absence."""
+    listed = gcloud_json("run", "services", "list", f"--project={project}",
+                         f"--region={region}", f"--filter=metadata.name={name}")
+    if not isinstance(listed, list):
+        raise Refused("Unexpected Cloud Run service listing; live state unproven.")
+    exact = [s for s in listed if isinstance(s, dict)
+             and s.get("metadata", {}).get("name") == name]
+    if len(exact) != len(listed) or len(exact) > 1:
+        raise Refused(f"Cloud Run service listing for {name} is ambiguous; live state unproven.")
+    return exact[0] if exact else None
+
+
+def serving_release(description: dict[str, Any]) -> str:
+    """The one release (16-hex tag prefix) that serves all traffic of a service.
+
+    The deploy script tags every candidate revision ``candidate-<sha16>`` and
+    restores traffic by explicit revision name, so a restored service routes
+    100% to pinned revisions carrying exactly one such tag, all of one release.
+    """
+    status = description.get("status")
+    traffic = status.get("traffic") if isinstance(status, dict) else None
+    if not isinstance(traffic, list) or not traffic:
+        raise Refused("Cloud Run service has no readable traffic; live state unproven.")
+    tags: dict[str, set[str]] = {}
+    serving: dict[str, int] = {}
+    for item in traffic:
+        if not isinstance(item, dict):
+            raise Refused("Unreadable Cloud Run traffic entry; live state unproven.")
+        revision = str(item.get("revisionName") or "")
+        match = re.fullmatch(r"candidate-([0-9a-f]{16})", str(item.get("tag") or ""))
+        if match and revision:
+            tags.setdefault(revision, set()).add(match.group(1))
+        percent = item.get("percent") or 0
+        if not isinstance(percent, int) or percent < 0:
+            raise Refused("Unreadable Cloud Run traffic percentage; live state unproven.")
+        if percent:
+            if not revision or item.get("latestRevision"):
+                raise Refused("Cloud Run traffic is not pinned to immutable revisions.")
+            serving[revision] = serving.get(revision, 0) + percent
+    if sum(serving.values()) != 100:
+        raise Refused("Cloud Run traffic does not total 100%; live state unproven.")
+    releases: set[str] = set()
+    for revision in serving:
+        found = tags.get(revision, set())
+        if len(found) != 1:
+            raise Refused("A serving revision has no unique release tag; live state unproven.")
+        releases |= found
+    if len(releases) != 1:
+        raise Refused("More than one release serves traffic; live state is mixed.")
+    return releases.pop()
+
+
+def failed_live_step_readback(env: dict[str, str]) -> dict[str, Any]:
+    """Prove what live dev is after this run's live step failed, or refuse.
+
+    Either the whole target is absent (the first-release cleanup worked), or
+    API and Web route all traffic to one release that is not the failed
+    candidate and both scheduler triggers run exactly that release's jobs.
+    Anything else -- mixed traffic, candidate still serving, an unreadable or
+    inconsistent resource -- refuses, so the attempt remains uncertain and the
+    next release fails closed instead of guessing.
+    """
+    from delivery_toolchain.release.probe_release_target_absence import (
+        ProbeError,
+        probe_target_absence,
+    )
+
+    failed = env.get("ODAY_RELEASE_SHA", "")
+    if env.get("ODP_DEPLOY_ENV") != "dev" or not re.fullmatch(r"[0-9a-f]{40}", failed):
+        raise Refused("Failed live step read-back is restricted to an exact dev release.")
+    names = {key: env.get(key, "") for key in (
+        "GCP_PROJECT", "GCP_REGION", "API_SERVICE", "WEB_SERVICE", "MIGRATION_JOB",
+        "WORKER_JOB", "SCHEDULER_JOB", "WORKER_SCHEDULE_NAME", "SCHEDULER_SCHEDULE_NAME")}
+    if not all(names.values()):
+        raise Refused("Dev target bindings are incomplete; live state unproven.")
+    project, region = names["GCP_PROJECT"], names["GCP_REGION"]
+    api_service = service_description(names["API_SERVICE"], project=project, region=region)
+    web_service = service_description(names["WEB_SERVICE"], project=project, region=region)
+    live: str | None
+    if api_service is None and web_service is None:
+        try:
+            probe_target_absence(target_environment="dev", project=project, region=region,
+                                 candidate_sha=failed, targets={
+                                     "api": names["API_SERVICE"], "web": names["WEB_SERVICE"],
+                                     "migration": names["MIGRATION_JOB"],
+                                     "worker": names["WORKER_JOB"],
+                                     "scheduler": names["SCHEDULER_JOB"]})
+        except ProbeError as exc:
+            raise Refused("Dev target is not empty after a failed first release: "
+                          + "; ".join(exc.errors)) from exc
+        live = None
+    elif api_service is None or web_service is None:
+        raise Refused("Only one of the dev API/Web services exists; live state is mixed.")
+    else:
+        live = serving_release(api_service)
+        if serving_release(web_service) != live:
+            raise Refused("Dev API and Web serve different releases; live state is mixed.")
+        if live == failed[:16]:
+            raise Refused("The failed candidate still serves dev traffic.")
+        for trigger, base in ((names["SCHEDULER_SCHEDULE_NAME"], names["SCHEDULER_JOB"]),
+                              (names["WORKER_SCHEDULE_NAME"], names["WORKER_JOB"])):
+            listed = gcloud_json("scheduler", "jobs", "list", f"--project={project}",
+                                 f"--location={region}", f"--filter=name:{trigger}")
+            exact = [j for j in listed or [] if isinstance(j, dict)
+                     and str(j.get("name", "")).rsplit("/", 1)[-1] == trigger]
+            # Job names keep only the first RELEASE_JOB_NAME_SHA_LENGTH (<16)
+            # characters of the release SHA, so the tag prefix names them.
+            job = release_candidate_job_name(base, live.ljust(40, "0"))
+            expected = (f"https://run.googleapis.com/v2/projects/{project}/locations/"
+                        f"{region}/jobs/{job}:run")
+            if len(exact) != 1 or exact[0].get("httpTarget", {}).get("uri") != expected:
+                raise Refused(f"Scheduler trigger {trigger} does not run the serving release.")
+    return {"kind": RESTORE_KIND, "environment": "dev", "failed_candidate_sha": failed,
+            "run_id": env.get("GITHUB_RUN_ID", ""), "run_attempt": env.get("GITHUB_RUN_ATTEMPT", ""),
+            "live_release": live,
+            "observed_at": datetime.now(UTC).isoformat(timespec="seconds")}
 
 
 def automatic_admission(manifest_path: Path, *, candidate: str, digest: str,
@@ -347,15 +599,29 @@ def automatic_admission(manifest_path: Path, *, candidate: str, digest: str,
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["dispatch", "preflight", "recovery", "admit", "deploy-check"])
+    parser.add_argument("action", choices=["dispatch", "preflight", "recovery", "admit", "deploy-check",
+                                           "live-readback"])
     parser.add_argument("--candidate", default=os.environ.get("ODAY_RELEASE_SHA", ""))
     parser.add_argument("--environment", default=os.environ.get("RELEASE_ENVIRONMENT", ""))
     parser.add_argument("--ci-run-id", default=os.environ.get("AUTO_CI_RUN_ID", ""))
     parser.add_argument("--directory", type=Path, default=Path(".odp_data/release/automatic-dev"))
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--digest", default=os.environ.get("MANIFEST_DIGEST", ""))
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     try:
+        if args.action == "live-readback":
+            # Runs after a failed dev live step of any (manual or automatic)
+            # deploy; writes a receipt only when the live state is proven.
+            if args.output is None:
+                raise Refused("Missing read-back receipt destination.")
+            receipt = failed_live_step_readback(dict(os.environ))
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(receipt, indent=2) + "\n")
+            print("Live dev read-back: "
+                  + (f"release {receipt['live_release']} serves all traffic."
+                     if receipt["live_release"] else "target is empty."))
+            return 0
         if args.action == "dispatch":
             if (os.environ.get("GITHUB_EVENT_NAME") != "push"
                     or os.environ.get("GITHUB_REF") != "refs/heads/dev"

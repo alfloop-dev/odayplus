@@ -65,6 +65,21 @@ the same manifest-aware probe before any mutation. Expired artifacts or
 unexplained live resources fail closed. Deployment manifests are retained for 90
 days for rollback discovery.
 
+A deploy whose live step failed, was cancelled or was interrupted is never read
+as "rolled back": the deploy script promotes traffic before its last live gate
+and only logs a failed restore. Right after a failed `dev` live step the
+workflow reads back the live target and publishes
+`dev-failed-live-step-readback-<attempt>` only when the target is empty or one
+non-candidate release serves all API/Web traffic with both scheduler triggers on
+that release. History accepts the failed attempt only with that receipt, and
+then selects exactly the release it names. Without it, the next automatic
+release neither picks an older predecessor nor reports a candidate as already
+deployed: it refuses until an operator reads back the target and runs a signed
+manual dev deploy with an explicit rollback manifest. If no release was ever
+live, the attempt falls through to a first release, re-proven empty by the
+absence probes above. A live step that was skipped or never started is positive
+evidence of no mutation and keeps the previous predecessor.
+
 Network/SQL readiness and nominated first-admin identity/secret inputs are real
 prerequisites. Automation reports failures without inventing human accounts or
 claiming unavailable capabilities work. Staging/production are never dispatched
