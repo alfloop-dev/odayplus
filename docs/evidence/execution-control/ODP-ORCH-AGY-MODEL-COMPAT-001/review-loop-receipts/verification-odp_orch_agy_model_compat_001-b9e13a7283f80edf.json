@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "kind": "verification_receipt",
+  "task_id": "ODP-ORCH-AGY-MODEL-COMPAT-001",
+  "head_sha": "dcfb98ce14e3a5b7a6176fa6faf093b6f0e4b64f",
+  "command": "python3 -m unittest discover -s .orchestrator -p test_model_rotation.py",
+  "command_audit": {
+    "command": "python3 -m unittest discover -s .orchestrator -p test_model_rotation.py",
+    "ok": true,
+    "violations": [],
+    "details": [],
+    "runner": "unittest"
+  },
+  "runner": "unittest",
+  "selection": {
+    "scope": "targeted",
+    "items": [
+      "test_model_rotation.py"
+    ],
+    "fingerprint": "0540095b00e131967104e72eb128390c"
+  },
+  "exit_code": 1,
+  "signal": null,
+  "timed_out": false,
+  "outcome": "failed",
+  "passed": false,
+  "duration_seconds": 0.742,
+  "started_at": "2026-10-04T12:31:33Z",
+  "finished_at": "2026-10-04T12:31:34Z",
+  "recorded_at": "2026-10-04T12:31:34Z",
+  "run_kind": "baseline",
+  "attempt": 1,
+  "retry_reason": null,
+  "agent": "Pi",
+  "run_id": "pi-20261004T122510Z-05b6643d",
+  "produced_by": "delivery_toolchain/git/task_verification.py",
+  "output_tail": "    self._run_queue(fields)\n  File \"/tmp/pantheon-worker-worktrees/pantheon/odp-orch-agy-model-compat-001/.orchestrator/test_model_rotation.py\", line 1324, in _run_queue\n    self.assertTrue(sv.process_queue(self.config, state, {}))\nAssertionError: False is not true\n\n======================================================================\nFAIL: test_queue_wait_still_reconciles_moved_assignment (test_model_rotation.CooldownLifecycleTests.test_queue_wait_still_reconciles_moved_assignment)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/tmp/pantheon-worker-worktrees/pantheon/odp-orch-agy-model-compat-001/.orchestrator/test_model_rotation.py\", line 1403, in test_queue_wait_still_reconciles_moved_assignment\n    self._run_queue({\"priority\": \"P0\"}, move_owner=True)\n  File \"/tmp/pantheon-worker-worktrees/pantheon/odp-orch-agy-model-compat-001/.orchestrator/test_model_rotation.py\", line 1324, in _run_queue\n    self.assertTrue(sv.process_queue(self.config, state, {}))\nAssertionError: False is not true\n\n======================================================================\nFAIL: test_retired_pin_is_terminal_not_environmental_wait (test_model_rotation.CooldownLifecycleTests.test_retired_pin_is_terminal_not_environmental_wait)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/tmp/pantheon-worker-worktrees/pantheon/odp-orch-agy-model-compat-001/.orchestrator/test_model_rotation.py\", line 1400, in test_retired_pin_is_terminal_not_environmental_wait\n    self._run_queue({\"priority\": \"P0\"}, terminal_pin=True)\n  File \"/tmp/pantheon-worker-worktrees/pantheon/odp-orch-agy-model-compat-001/.orchestrator/test_model_rotation.py\", line 1310, in _run_queue\n    self.assertTrue(sv.process_queue(self.config, state, {}))\nAssertionError: False is not true\n\n----------------------------------------------------------------------\nRan 17 tests in 0.366s\n\nFAILED (failures=6)\n",
+  "receipt_id": "b9e13a7283f80edf"
+}

@@ -106,6 +106,62 @@ the registered checks again at its exact submission SHA through
 `task_verification.py`; those final receipts remain in the normal receipt store
 and are referenced in the canonical task note before publication.
 
+## Second independent review: complete supervisor loops
+
+Codex reopened exact head `5d8ac767ed190d6859c688ba6de2ec7f75263c22` with
+integration findings in both normal callers. This repair preserves that review
+history/count and the same PR #1413; no original-task gate or live adoption is
+changed.
+
+- `poll_workers` now recognizes a validated structured cooldown wait **after**
+  normal orphan/assignment/helper authority reconciliation. A dead parent keeps
+  its original failure log and runner exit receipt, but does not replay that
+  already-handled failure into retry/streak/reassignment processing. At reset,
+  `retry_due_workers` additionally checks current responsibility before launch
+  (it runs before the poller's reconciliation). Changed ownership supersedes
+  the parent both before and at reset, without launching an obsolete request.
+- `prune_event_queue` no longer rewrites a valid workerless cooldown wait to
+  `queued`. Orphan reconciliation likewise retains that deliberate wait,
+  including its due tick; ordinary stale-dispatch checks still retire it when
+  responsibility changes. The shared predicate requires retry-backoff status,
+  structured kind/model/pool, and a valid reset timestamp matching
+  `next_retry_at`; malformed/ordinary backoff retains existing queue repair and
+  orphan behavior. Expiry is consumed by the ordinary dispatch/retry path.
+
+The already-registered `CooldownLifecycleTests` selection now runs complete
+`poll_workers` ticks with a real original failure log and failed runner marker
+(exit1), plus `process_queue -> prune_event_queue -> process_queue` cycles.
+Repeated pre-reset ticks preserve owner, exact high model/pool, deadline,
+retry/attempt budget and cooldown file; no failure evidence, streak, retry
+rescheduling or reassignments occur. P0 and reopened parents resume on the
+same supported high model at expiry. Queue coverage includes P0/P1/reopened,
+both-pools cooling, events aged beyond orphan grace, unchanged workspace/
+adapter/activity call counts while waiting, moved ownership and malformed
+waits. No live processes, inference, credentials, canonical config or runtime
+were used; process and external persistence boundaries are mocked.
+
+All five registered commands passed on loop-repair anchor
+`b53b28b683990701e8a57806262eab852a7ed6a0`:
+
+| Command | Result | Exit | Seconds |
+| --- | --- | --- | --- |
+| `git diff --check` | clean | 0 | 0.015 |
+| `python3 -m unittest discover -s .orchestrator -p test_model_rotation.py` | 17 tests | 0 | 1.628 |
+| `uv run --python 3.12 pytest -q .orchestrator/test_model_rotation.py` | 66 dots, 100% | 0 | 3.668 |
+| `python3 delivery_toolchain/governance/check_code_boundaries.py` | 1199 files | 0 | 9.135 |
+| `uv run --python 3.12 pytest -q .orchestrator/test_model_rotation.py -k CooldownLifecycleTests` | 8 dots, 100% | 0 | 2.835 |
+
+`review-loop-receipts/` retains all20 unmodified receipts from four distinct
+anchors, including the three initial failed fixture iterations (static nested
+mock limit, originally orphaned rather than admitted event, and unmocked queue
+file replacement). No failed run is represented as a pass. Each fixed fixture
+was committed before remeasurement at a new SHA. No wider suite or live test
+was substituted. This evidence-only successor keeps the tested production and
+test blobs unchanged; all five commands are then measured again at its exact
+submission SHA in the standard receipt store, referenced in the canonical
+status note before `task_finalize.sh` publication. Independent Codex approval
+and merge remain required before operator adoption or task closeout.
+
 ## Original pre-review verification (historical)
 
 The initial declared unittest command executed nine real unittest cases rather
