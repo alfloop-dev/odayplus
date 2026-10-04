@@ -12,7 +12,11 @@ import yaml
 
 from delivery_toolchain.release import automatic_dev as auto
 from delivery_toolchain.release.check_release_phase import phase_errors
-from tests.release.test_release_manifest import REAL_CANDIDATE_SHA, sources_off_manifest
+from tests.release.test_release_manifest import (
+    REAL_CANDIDATE_SHA,
+    SECOND_REAL_CANDIDATE_SHA,
+    sources_off_manifest,
+)
 
 SHA = REAL_CANDIDATE_SHA
 REPO = "alfloop-dev/odayplus"
@@ -141,27 +145,37 @@ def deploy_run(**change):
 
 def fake_api(manifest, *, artifact_name=auto.DEPLOYED_ARTIFACT, expired=False,
              job_result="success", archive_name="RELEASE_MANIFEST.json", run=None,
-             attempt_jobs=None, deployment_state="success", seen=None):
-    run = run or deploy_run()
+             runs=None, attempt_jobs=None, deployment_state="success", seen=None,
+             run_manifests=None, run_jobs=None):
+    runs_list = runs if runs is not None else [run or deploy_run()]
     def read(path, **kwargs):
         if seen is not None:
             seen.append(path)
         if path.startswith("actions/workflows/"):
-            return {"workflow_runs": [run]}
+            return {"workflow_runs": runs_list}
         if path.endswith("/artifacts?per_page=100"):
-            return {"artifacts": [{"id": 900, "name": artifact_name, "expired": expired}]}
+            run_id = int(path.split("actions/runs/")[1].split("/")[0])
+            return {"artifacts": [{"id": 900 + run_id, "name": artifact_name, "expired": expired}]}
         if "/attempts/" in path and path.endswith("/jobs?per_page=100"):
-            attempt = int(path.split("/attempts/")[1].split("/")[0])
+            parts = path.split("actions/runs/")[1].split("/")
+            run_id = int(parts[0])
+            attempt = int(parts[2])
+            if run_jobs and (run_id, attempt) in run_jobs:
+                return {"jobs": run_jobs[(run_id, attempt)]}
             result = (attempt_jobs or {}).get(attempt, job_result)
             return {"jobs": [{"name": auto.DEPLOY_JOB, "conclusion": result}]}
         if path.startswith("deployments?"):
-            assert "environment=dev" in path and f"sha={run['head_sha']}" in path
+            assert "environment=dev" in path
             return [{"id": 7}]
         if path == "deployments/7/statuses?per_page=100":
             return [{"state": deployment_state,
-                     "log_url": f"https://github.com/{REPO}/actions/runs/{run['id']}/job/1"}]
+                     "log_url": f"https://github.com/{REPO}/actions/runs/{r['id']}/job/1"}
+                    for r in runs_list]
         if path.endswith("/zip"):
-            return archive(manifest, archive_name)
+            art_id = int(path.split("actions/artifacts/")[1].split("/")[0])
+            run_id = art_id - 900
+            m = (run_manifests or {}).get(run_id, manifest)
+            return archive(m, archive_name)
         if path == "actions/runs/100":
             return ci()
         if path == "branches/dev":
@@ -353,3 +367,92 @@ def test_both_build_entrances_share_one_immutable_publication_lane():
     assert "inputs.environment" in group and "inputs.release_sha" in group
     assert group != release["concurrency"]["group"]
     assert release["permissions"]["deployments"] == "read"
+
+
+def test_deployment_ordering_selects_latest_completion_over_creation_order(monkeypatch, context):
+    sha1 = REAL_CANDIDATE_SHA
+    sha2 = SECOND_REAL_CANDIDATE_SHA
+    manifest1 = sources_off_manifest(candidate_sha=sha1, release_profile={
+        "name": "dev-admin", "target_environment": "dev", "model_readiness": "not_claimed",
+    })
+    manifest2 = sources_off_manifest(candidate_sha=sha2, release_profile={
+        "name": "dev-admin", "target_environment": "dev", "model_readiness": "not_claimed",
+    })
+    run1 = deploy_run(id=101, head_sha=sha1, run_attempt=2, created_at="2026-07-27T14:50:00Z",
+                      display_title=f"Runtime Release dev deploy {sha1}")
+    run2 = deploy_run(id=102, head_sha=sha2, run_attempt=1, created_at="2026-07-27T14:55:00Z",
+                      display_title=f"Runtime Release dev deploy {sha2}")
+    runs = [run2, run1]
+    run_jobs = {
+        (101, 2): [{"name": auto.DEPLOY_JOB, "conclusion": "success", "completed_at": "2026-07-27T15:00:00Z"}],
+        (101, 1): [{"name": auto.DEPLOY_JOB, "conclusion": "failure", "completed_at": "2026-07-27T14:52:00Z"}],
+        (102, 1): [{"name": auto.DEPLOY_JOB, "conclusion": "success", "completed_at": "2026-07-27T14:58:00Z"}],
+    }
+    run_manifests = {101: manifest1, 102: manifest2}
+    monkeypatch.setattr(auto, "api", fake_api(manifest1, runs=runs, run_jobs=run_jobs, run_manifests=run_manifests))
+
+    selected_manifest, selected_run = auto.previous_deployment()
+    assert selected_run["id"] == 101
+    assert selected_manifest["candidate_sha"] == sha1
+
+
+def test_deduplication_after_later_deployment_by_older_run(monkeypatch, context, tmp_path):
+    sha1 = REAL_CANDIDATE_SHA
+    sha2 = SECOND_REAL_CANDIDATE_SHA
+    monkeypatch.setenv("GITHUB_SHA", sha1)
+    manifest1 = sources_off_manifest(candidate_sha=sha1, release_profile={
+        "name": "dev-admin", "target_environment": "dev", "model_readiness": "not_claimed",
+    })
+    manifest2 = sources_off_manifest(candidate_sha=sha2, release_profile={
+        "name": "dev-admin", "target_environment": "dev", "model_readiness": "not_claimed",
+    })
+    run1 = deploy_run(id=101, head_sha=sha1, run_attempt=2, created_at="2026-07-27T14:50:00Z",
+                      display_title=f"Runtime Release dev deploy {sha1}")
+    run2 = deploy_run(id=102, head_sha=sha2, run_attempt=1, created_at="2026-07-27T14:55:00Z",
+                      display_title=f"Runtime Release dev deploy {sha2}")
+    runs = [run2, run1]
+    run_jobs = {
+        (101, 2): [{"name": auto.DEPLOY_JOB, "conclusion": "success", "completed_at": "2026-07-27T15:00:00Z"}],
+        (101, 1): [{"name": auto.DEPLOY_JOB, "conclusion": "failure", "completed_at": "2026-07-27T14:52:00Z"}],
+        (102, 1): [{"name": auto.DEPLOY_JOB, "conclusion": "success", "completed_at": "2026-07-27T14:58:00Z"}],
+    }
+    run_manifests = {101: manifest1, 102: manifest2}
+
+    def read_api(path, **kwargs):
+        if path == "actions/runs/100":
+            return {**ci(), "head_sha": sha1}
+        if path == "branches/dev":
+            return {"protected": True, "commit": {"sha": sha1}}
+        return fake_api(manifest1, runs=runs, run_jobs=run_jobs, run_manifests=run_manifests)(path, **kwargs)
+
+    monkeypatch.setattr(auto, "api", read_api)
+
+    assert auto.main(["preflight", "--candidate", sha1, "--environment", "dev",
+                      "--ci-run-id", "100", "--directory", str(tmp_path)]) == 0
+    assert "proceed=false" in Path(context["GITHUB_OUTPUT"]).read_text()
+
+
+def test_newer_deployment_wins_when_creation_and_completion_align(monkeypatch, context):
+    sha1 = REAL_CANDIDATE_SHA
+    sha2 = SECOND_REAL_CANDIDATE_SHA
+    manifest1 = sources_off_manifest(candidate_sha=sha1, release_profile={
+        "name": "dev-admin", "target_environment": "dev", "model_readiness": "not_claimed",
+    })
+    manifest2 = sources_off_manifest(candidate_sha=sha2, release_profile={
+        "name": "dev-admin", "target_environment": "dev", "model_readiness": "not_claimed",
+    })
+    run1 = deploy_run(id=101, head_sha=sha1, run_attempt=1, created_at="2026-07-27T14:50:00Z",
+                      display_title=f"Runtime Release dev deploy {sha1}")
+    run2 = deploy_run(id=102, head_sha=sha2, run_attempt=1, created_at="2026-07-27T14:55:00Z",
+                      display_title=f"Runtime Release dev deploy {sha2}")
+    runs = [run2, run1]
+    run_jobs = {
+        (101, 1): [{"name": auto.DEPLOY_JOB, "conclusion": "success", "completed_at": "2026-07-27T14:52:00Z"}],
+        (102, 1): [{"name": auto.DEPLOY_JOB, "conclusion": "success", "completed_at": "2026-07-27T14:58:00Z"}],
+    }
+    run_manifests = {101: manifest1, 102: manifest2}
+    monkeypatch.setattr(auto, "api", fake_api(manifest1, runs=runs, run_jobs=run_jobs, run_manifests=run_manifests))
+
+    selected_manifest, selected_run = auto.previous_deployment()
+    assert selected_run["id"] == 102
+    assert selected_manifest["candidate_sha"] == sha2

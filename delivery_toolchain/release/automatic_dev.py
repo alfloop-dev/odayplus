@@ -10,6 +10,7 @@ remain the authority for other environments.
 from __future__ import annotations
 
 import argparse
+from datetime import UTC, datetime
 import io
 import json
 import os
@@ -115,7 +116,22 @@ def verify_ci(candidate: str, target: str, run_id: str, *, wait: bool = False) -
         raise Refused(" ".join(errors))
 
 
-def deployed_attempts(run: dict[str, Any]) -> list[int]:
+def parse_iso(value: str | None) -> datetime:
+    if not value:
+        return datetime.min.replace(tzinfo=UTC)
+    text = str(value).strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
+    except Exception:
+        return datetime.min.replace(tzinfo=UTC)
+
+
+def deployed_attempts(run: dict[str, Any]) -> list[dict[str, Any]]:
     """Attempts of ``run`` whose deploy job succeeded, newest first.
 
     Reruns share one run id, and the run-level status/conclusion only reflect
@@ -130,8 +146,21 @@ def deployed_attempts(run: dict[str, Any]) -> list[int]:
     found = []
     for attempt in range(latest, 0, -1):
         jobs = api(f"actions/runs/{run['id']}/attempts/{attempt}/jobs?per_page=100")["jobs"]
-        if any(j.get("name") == DEPLOY_JOB and j.get("conclusion") == "success" for j in jobs):
-            found.append(attempt)
+        for j in jobs:
+            if j.get("name") == DEPLOY_JOB and j.get("conclusion") == "success":
+                completed_at = (
+                    j.get("completed_at")
+                    or j.get("started_at")
+                    or run.get("updated_at")
+                    or run.get("created_at")
+                    or ""
+                )
+                found.append({
+                    "attempt": attempt,
+                    "completed_at": completed_at,
+                    "job_id": j.get("id"),
+                })
+                break
     return found
 
 
@@ -157,6 +186,9 @@ def previous_deployment() -> tuple[dict[str, Any], dict[str, Any]] | None:
     while live resources exist. No absence is inferred from a failed API call.
     """
     repo = repository()
+    qualifying: list[tuple[datetime, int, dict[str, Any], dict[str, Any]]] = []
+    reached_end = False
+
     for page in range(1, 11):
         runs = api(f"actions/workflows/deploy-dev.yml/runs?event=workflow_dispatch"
                    f"&per_page=100&page={page}").get("workflow_runs", [])
@@ -174,7 +206,8 @@ def previous_deployment() -> tuple[dict[str, Any], dict[str, Any]] | None:
                 continue
             if any(a.get("expired") for a in matches):
                 raise Refused("Previous dev deployment artifact is expired.")
-            if not deployed_attempts(run):
+            attempts = deployed_attempts(run)
+            if not attempts:
                 if str(run["id"]) == os.environ.get("GITHUB_RUN_ID"):
                     continue
                 raise Refused("Previous artifact has no successful deployment job.")
@@ -198,9 +231,19 @@ def previous_deployment() -> tuple[dict[str, Any], dict[str, Any]] | None:
             errors = validate_release_admission(manifest, environment="dev")
             if errors:
                 raise Refused("Previous dev manifest is not admissible: " + "; ".join(errors))
-            return manifest, run
+            completed_dt = parse_iso(attempts[0]["completed_at"])
+            qualifying.append((completed_dt, int(run.get("id") or 0), manifest, run))
         if len(runs) < 100:
-            return None
+            reached_end = True
+            break
+
+    if qualifying:
+        _, _, best_manifest, best_run = max(qualifying, key=lambda item: (item[0], item[1]))
+        return best_manifest, best_run
+
+    if reached_end:
+        return None
+
     raise Refused("Deployment history scan limit reached; no safe predecessor selected.")
 
 
