@@ -13,9 +13,17 @@ with distinct scopes), plus governed backend-use authority:
 
 1. Firewall: existing connector path `odayplus-runtime-20260825/asia-east1/oday-staging-vpc` on `default`, unique tag `vpc-connector-asia-east1-oday-staging-vpc`, three exact rules:
    - `oday-dev-connector-google-https` (priority 800, EGRESS, TCP 443, destination ranges `199.36.153.4/30` and `199.36.153.8/30`)
-   - `oday-dev-connector-sql` (priority 800, EGRESS, TCP 5432 and 3307, destination range `10.50.0.3/32`)
+   - `oday-dev-connector-sql` (priority 800, EGRESS, TCP 5432 and 3307, destination ranges `10.50.0.3/32` [dev SQL `oday-dev-sql`] and `10.50.0.5/32` [staging SQL `oday-staging-sql` preservation])
    - `oday-dev-connector-deny` (priority 900, EGRESS, deny all, destination range `0.0.0.0/0`)
-   Inventory **every consumer** of this historically staging-named connector (`oday-staging-mlflow`, candidate services/jobs, and any shared project consumers); stopping unrelated/staging workloads is not permitted by this dev source task. Approve impact/maintenance window and exact rollback removal of these new rules.
+   Inventory **every consumer** of this historically staging-named connector (`oday-staging-mlflow`, `oday-mlflow`, candidate services/jobs, and any shared project consumers); stopping unrelated/staging workloads is not permitted by this dev source task. Approve impact/maintenance window and exact rollback removal of these new rules.
+
+### Shared staging SQL preservation & Dev isolation analysis
+- **Staging dependency & impact**: Receipt `/home/lupin/odayplus/support/handoffs/dev-automatic-deployment-20261004/shared-staging-impact-readback.json` (SHA256 `28b40136d77e02021675b05d0214d5b9d4e1f6433691e59cd0a85de6b28f4c76`) proves `oday-staging-sql` is PRIVATE-only `10.50.0.5` on `default` network. `oday-staging-mlflow` (revision `00003-bm6`) uses this named SQL instance and shares `oday-staging-vpc` with `private-ranges-only`.
+- **Connector routing semantics**: Per Google Cloud Run documentation ([VPC connectors egress rules](https://docs.cloud.google.com/run/docs/configuring/vpc-connectors#restrict-access-using-egress-rules)), `private-ranges-only` routes all RFC1918 internal IP traffic (`10.50.0.5`) through the VPC connector. The unique target tag `vpc-connector-asia-east1-oday-staging-vpc` applies to all traffic emerging from this connector. Restricting only `10.50.0.3/32` would cause deny-all (priority 900) to block `oday-staging-mlflow` from reaching `10.50.0.5`.
+- **Supported least-necessary solution (Primary Executable Plan)**: In `main.tf`, `oday-dev-connector-sql` destination ranges include both pinned dev SQL (`10.50.0.3/32`) and pinned staging SQL (`10.50.0.5/32`) on TCP ports 5432 (PostgreSQL) and 3307 (Cloud SQL Auth Proxy/connector) at priority 800 before deny 900. No broad RFC1918 or `0.0.0.0/0` is allowed; variable validation rejects widened or drifted CIDRs.
+- **Dev isolation design alternative**: An alternative long-term architecture is to provision a dedicated dev connector (e.g. `oday-dev-vpc`) or move dev workloads to a dedicated VPC network. However, provisioning new connectors and changing Cloud Run network attachments requires cloud mutations and service updates. For the existing shared connector architecture, least-necessary /32 preservation provides immediate, reviewable, and safe restriction without disrupting staging workloads or requiring cloud mutations.
+- **Staging regression & rollback**: Before apply, inspect staging MLflow health. After apply, run readback probe to verify `oday-staging-mlflow` can connect to `10.50.0.5:5432/3307`. Rollback removes the three firewall rules, immediately restoring unconstrained egress to both dev and staging SQL.
+- **Human confirmation**: User explicitly requires Human confirmation for staging effects; this confirmation is to be obtained after this concrete reviewed plan is approved. (No ordinary dev build/deploy permission request is made).
 2. DNS: entire shared `default` VPC, two private zones `googleapis.com.` and `run.app.`, four record sets and TTL 300. GKE/other tenants see changed answers. Review Google API compatibility, run.app endpoints, DNSSEC/forwarding/peering/policies and downstream consumers. Preserve `emgi-sqladmin-private`; any repair or alignment to that existing zone needs its own exact owner approval. Approve rollback deletion of **only the two new zones/four record sets**, with cache delay and stop conditions.
 3. Backend: select an existing governed encrypted state bucket and a new, empty, unique prefix `oday-plus/dev/connector-egress`. No bucket is guessed/created. Do not use release/recovery/data/lease buckets or foundation/recovery state prefix. Record bucket/prefix/CMEK/access/lock/retention readback and sole state owner. Do not migrate/reconfigure an existing root's state.
 
@@ -32,6 +40,7 @@ Consumed immutable receipts:
 - `/home/lupin/odayplus/support/handoffs/dev-admin-recovery-20261003/continuation-reopen6/cloud-readback.json` (SHA256 `e54b0ec5d6232d03673d6fe78c0ec3ea9ee8720fffb5995a0103b7b59af5979b`)
 - `/home/lupin/odayplus/support/handoffs/dev-admin-recovery-20261003/continuation-reopen6/DEPLOYMENT-PREFLIGHT.md` (SHA256 `580b736409a93ac1331f0bfa072db6fd34e47b68ffe3558779549a95d9b5c464`)
 - `/home/lupin/odayplus/support/handoffs/dev-automatic-deployment-20261004/network-impact-readback.json` (observed 2026-10-04T04:30:51Z, SHA256 `37e44fe4b91f7dedfcbbcda01c1bfbb1be0f477f1cfa89c2bc09f885c3d485e5`)
+- `/home/lupin/odayplus/support/handoffs/dev-automatic-deployment-20261004/shared-staging-impact-readback.json` (observed 2026-10-04T04:58:30Z, SHA256 `28b40136d77e02021675b05d0214d5b9d4e1f6433691e59cd0a85de6b28f4c76`)
 
 Use current authorized account; no login, IAM change or credential switch. Capture
 UTC, command, exit, duration and output. At minimum, with project explicit:
@@ -48,6 +57,7 @@ gcloud compute routes list --project="$P" --format=json
 gcloud compute networks peerings list --network=default --project="$P" --format=json
 gcloud compute networks subnets list --network=default --project="$P" --format=json
 gcloud sql instances describe oday-dev-sql --project="$P" --format='json(name,region,state,settings.ipConfiguration,ipAddresses)'
+gcloud sql instances describe oday-staging-sql --project="$P" --format='json(name,region,state,settings.ipConfiguration,ipAddresses)'
 gcloud dns managed-zones list --project="$P" --format=json
 gcloud dns record-sets list --zone=emgi-sqladmin-private --project="$P" --format=json
 gcloud dns policies list --project="$P" --format=json
@@ -68,12 +78,13 @@ network/GKE impact only. Never substitute `aet-*`, universal tags or create/chan
 tags.
 
 Shared consumers inventory from readback:
-- `oday-staging-mlflow` (revision `oday-staging-mlflow-00003-bm6`): using `run.googleapis.com/vpc-access-connector: oday-staging-vpc`, `run.googleapis.com/vpc-access-egress: private-ranges-only`, Cloud SQL instance `odayplus-runtime-20260825:asia-east1:oday-staging-sql`.
-- `oday-mlflow` (revision `oday-mlflow-00003-h4p`): Cloud SQL instance `odayplus-runtime-20260825:asia-east1:oday-dev-sql`.
+- `oday-staging-mlflow` (revision `oday-staging-mlflow-00003-bm6`): using `run.googleapis.com/vpc-access-connector: oday-staging-vpc`, `run.googleapis.com/vpc-access-egress: private-ranges-only`, Cloud SQL instance `odayplus-runtime-20260825:asia-east1:oday-staging-sql` (PRIVATE-only `10.50.0.5` on `default`).
+- `oday-mlflow` (revision `oday-mlflow-00003-h4p`): Cloud SQL instance `odayplus-runtime-20260825:asia-east1:oday-dev-sql` (`10.50.0.3` on `default`).
 - GKE nodes (`gke-oday-emgi-gke-default-pool-51b5dfaa-70tf` in `asia-east1-a`): node tag `gke-oday-emgi-gke-8fd109b2-node`.
 - Enumerate all services/jobs, revisions and other serverless consumers using this connector; inspect `connectedProjects` and inventory clients in every shared project with its owner. Incomplete consumer inventory/approval is STOP.
 
-Check connector READY/network/CIDR; SQL privateNetwork=default/private10.50.0.3;
+Check connector READY/network/CIDR; dev SQL privateNetwork=default/private10.50.0.3;
+staging SQL privateNetwork=default/private10.50.0.5;
 private SQL PSA peering route; Google VIP routes via default-internet-gateway and
 PGA behavior. Existing connector-managed priority 100 egress/control-plane and
 health ingress must remain intact. Review effective hierarchical/network firewall
@@ -176,7 +187,7 @@ terraform show -json "$RESTRICTED_FIREWALL_PLAN"
 ```
 
 Apply only that exact saved plan after firewall authority. No `-target` partial
-application. Dependencies create application allows (`google_https` with dual VIPs and `sql`) before deny; managed 100 stays.
+application. Dependencies create application allows (`google_https` with dual VIPs and `sql` for dev `10.50.0.3/32` and staging `10.50.0.5/32`) before deny; managed 100 stays.
 
 ## 5. Effective readback and authorized candidate probes
 
@@ -201,7 +212,8 @@ Capture runtime DNS answers and new TCP/TLS connections, not laptop curl:
 |---|---|
 | Actual Web -> tagged/stable API run.app with correct audience/auth | DNS .8–.11, successful authenticated transport/application response |
 | sqladmin + required storage/logging/googleapis names | Actual runtime answers (.4–.7 for sqladmin, .8–.11 for wildcard/run.app); API calls under runtime IAM succeed |
-| SQL private-IP chosen runtime transport | Connect to exact 10.50.0.3 at required 5432/3307; authorized read-only DB check, no bootstrap |
+| Dev SQL private-IP chosen runtime transport | Connect to exact 10.50.0.3 at required 5432/3307; authorized read-only DB check, no bootstrap |
+| Staging SQL / MLflow connectivity preservation | Readback probe from `oday-staging-mlflow` (revision `00003-bm6`) to `oday-staging-sql` (`10.50.0.5`) at 5432/3307; verify staging connectivity is preserved and not dropped by deny-all 900 |
 | Audit/storage | Existing approved smoke writes/readback durable audit/object under exact runtime identity; do not invent test bucket |
 | Sources-off public canary `https://example.com/` | New connection denied from actual candidate; bind existing runtime public-egress receipt to candidate SHA/manifest/job/ALL_TRAFFIC |
 | Explicit public IP HTTPS and non-allowed private destination/port | Scoped owner-approved canary targets fail; no DNS-only failure masquerading as firewall deny |

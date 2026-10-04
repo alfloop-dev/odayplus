@@ -53,11 +53,22 @@ variable "connector_cidr" {
 }
 
 variable "sql_private_cidr" {
-  type    = string
-  default = "10.50.0.3/32"
+  description = "Exact read-back dev Cloud SQL (oday-dev-sql) private IPv4 /32 on default network."
+  type        = string
+  default     = "10.50.0.3/32"
   validation {
     condition     = var.sql_private_cidr == "10.50.0.3/32"
     error_message = "Only reviewed oday-dev-sql private IPv4 /32; drift requires new source review."
+  }
+}
+
+variable "staging_sql_private_cidr" {
+  description = "Exact read-back staging Cloud SQL (oday-staging-sql) private IPv4 /32 on shared default network to preserve oday-staging-mlflow connectivity."
+  type        = string
+  default     = "10.50.0.5/32"
+  validation {
+    condition     = var.staging_sql_private_cidr == "10.50.0.5/32"
+    error_message = "Only reviewed oday-staging-sql private IPv4 /32; drift requires new source review."
   }
 }
 

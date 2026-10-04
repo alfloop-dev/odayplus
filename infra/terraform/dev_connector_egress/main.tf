@@ -97,7 +97,7 @@ resource "google_compute_firewall" "sql" {
   direction          = "EGRESS"
   priority           = 800
   target_tags        = [local.target_tag]
-  destination_ranges = [var.sql_private_cidr]
+  destination_ranges = [var.sql_private_cidr, var.staging_sql_private_cidr]
   allow {
     protocol = "tcp"
     # PostgreSQL direct and Cloud SQL Auth Proxy/connector private-IP transport.

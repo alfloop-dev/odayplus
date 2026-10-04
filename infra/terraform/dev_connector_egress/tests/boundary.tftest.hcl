@@ -62,8 +62,8 @@ run "scoped_protection" {
     error_message = "Web/API, Google APIs, sqladmin, audit/storage HTTPS must use only the reviewed Google VIPs (restricted 199.36.153.4/30 and private 199.36.153.8/30)."
   }
   assert {
-    condition     = google_compute_firewall.sql[0].destination_ranges == toset(["10.50.0.3/32"]) && one(google_compute_firewall.sql[0].allow).protocol == "tcp" && toset(one(google_compute_firewall.sql[0].allow).ports) == toset(["5432", "3307"]) && google_compute_firewall.sql[0].priority < google_compute_firewall.deny[0].priority
-    error_message = "Private PostgreSQL and Auth Proxy may reach only exact SQL /32."
+    condition     = google_compute_firewall.sql[0].destination_ranges == toset(["10.50.0.3/32", "10.50.0.5/32"]) && one(google_compute_firewall.sql[0].allow).protocol == "tcp" && toset(one(google_compute_firewall.sql[0].allow).ports) == toset(["5432", "3307"]) && google_compute_firewall.sql[0].priority < google_compute_firewall.deny[0].priority
+    error_message = "Private PostgreSQL and Auth Proxy may reach only exact dev SQL 10.50.0.3/32 and preserved staging SQL 10.50.0.5/32."
   }
   assert {
     condition     = alltrue([for rule in [google_compute_firewall.sql[0], google_compute_firewall.google_https[0]] : !contains(rule.destination_ranges, "0.0.0.0/0") && rule.log_config[0].metadata == "INCLUDE_ALL_METADATA"])
@@ -128,6 +128,26 @@ run "reject_broad_sql" {
   command = plan
   variables { sql_private_cidr = "0.0.0.0/0" }
   expect_failures = [var.sql_private_cidr]
+}
+run "reject_wrong_sql" {
+  command = plan
+  variables { sql_private_cidr = "10.50.0.4/32" }
+  expect_failures = [var.sql_private_cidr]
+}
+run "reject_malformed_staging_sql" {
+  command = plan
+  variables { staging_sql_private_cidr = "not-a-cidr" }
+  expect_failures = [var.staging_sql_private_cidr]
+}
+run "reject_broad_staging_sql" {
+  command = plan
+  variables { staging_sql_private_cidr = "0.0.0.0/0" }
+  expect_failures = [var.staging_sql_private_cidr]
+}
+run "reject_wrong_staging_sql" {
+  command = plan
+  variables { staging_sql_private_cidr = "10.50.0.6/32" }
+  expect_failures = [var.staging_sql_private_cidr]
 }
 run "reject_unreviewed_dns" {
   command = plan
