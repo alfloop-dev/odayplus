@@ -68,14 +68,17 @@ resource "terraform_data" "binding" {
 # Priority 100 managed connector/control-plane rules remain authoritative.
 # Only application destinations are added; no RFC1918 blanket or internet allow.
 resource "google_compute_firewall" "google_https" {
-  count              = var.enable_firewall ? 1 : 0
-  project            = var.project_id
-  name               = "oday-dev-connector-google-https"
-  network            = local.network_url
-  direction          = "EGRESS"
-  priority           = 800
-  target_tags        = [local.target_tag]
-  destination_ranges = ["199.36.153.8/30"]
+  count       = var.enable_firewall ? 1 : 0
+  project     = var.project_id
+  name        = "oday-dev-connector-google-https"
+  network     = local.network_url
+  direction   = "EGRESS"
+  priority    = 800
+  target_tags = [local.target_tag]
+  destination_ranges = [
+    "199.36.153.4/30",
+    "199.36.153.8/30",
+  ]
   allow {
     protocol = "tcp"
     ports    = ["443"]

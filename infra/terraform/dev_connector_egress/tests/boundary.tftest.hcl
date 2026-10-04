@@ -58,8 +58,8 @@ run "scoped_protection" {
     error_message = "Require all-protocol IPv4 default-deny, never an internet allow."
   }
   assert {
-    condition     = google_compute_firewall.google_https[0].destination_ranges == toset(["199.36.153.8/30"]) && one(google_compute_firewall.google_https[0].allow).protocol == "tcp" && toset(one(google_compute_firewall.google_https[0].allow).ports) == toset(["443"]) && google_compute_firewall.google_https[0].priority < google_compute_firewall.deny[0].priority
-    error_message = "Web/API, Google APIs, audit/storage HTTPS must use only the reviewed private VIP."
+    condition     = google_compute_firewall.google_https[0].destination_ranges == toset(["199.36.153.4/30", "199.36.153.8/30"]) && one(google_compute_firewall.google_https[0].allow).protocol == "tcp" && toset(one(google_compute_firewall.google_https[0].allow).ports) == toset(["443"]) && google_compute_firewall.google_https[0].priority < google_compute_firewall.deny[0].priority
+    error_message = "Web/API, Google APIs, sqladmin, audit/storage HTTPS must use only the reviewed Google VIPs (restricted 199.36.153.4/30 and private 199.36.153.8/30)."
   }
   assert {
     condition     = google_compute_firewall.sql[0].destination_ranges == toset(["10.50.0.3/32"]) && one(google_compute_firewall.sql[0].allow).protocol == "tcp" && toset(one(google_compute_firewall.sql[0].allow).ports) == toset(["5432", "3307"]) && google_compute_firewall.sql[0].priority < google_compute_firewall.deny[0].priority
