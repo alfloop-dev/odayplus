@@ -192,6 +192,25 @@ def _parse(ts: Any) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
+def has_dispatch_cooldown_wait(record: dict[str, Any]) -> bool:
+    """Recognize a durable pre-launch wait, including its due/reset tick.
+
+    Expiry is handled by the normal dispatch/retry path, not orphan pruning.
+    An arbitrary retry_backoff record must not gain this exemption.
+    """
+    wait = record.get(DISPATCH_WAIT_KEY)
+    if record.get("status") != "retry_backoff" or not isinstance(wait, dict):
+        return False
+    retry_at = _parse(wait.get("retry_at"))
+    return bool(
+        wait.get("kind") == "model_cooldown"
+        and str(wait.get("model") or "").strip()
+        and wait.get("pool") in POOLS
+        and retry_at is not None
+        and retry_at == _parse(record.get("next_retry_at"))
+    )
+
+
 def _provider_antigravity_settings(
     config: dict[str, Any] | None, provider_id: str | None
 ) -> dict[str, Any]:

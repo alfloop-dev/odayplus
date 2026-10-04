@@ -4307,6 +4307,12 @@ def retry_due_workers(
         next_retry_at = _parse_iso_utc(worker.get("next_retry_at"))
         if next_retry_at is None or next_retry_at > now:
             continue
+        if model_rotation.has_dispatch_cooldown_wait(worker):
+            # poll_workers reconciles responsibility only after this call.
+            # Do not launch a due wait from an obsolete assignment first.
+            task_map = task_index_from_status(config, load_status(config))
+            if not worker_matches_current_assignment(config, worker, task_map):
+                continue
         request = request_for_worker(config, worker)
         if request is None:
             worker["status"] = "failed"

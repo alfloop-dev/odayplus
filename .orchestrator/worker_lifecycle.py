@@ -1430,6 +1430,13 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
         # task and can reassign it away from the successor that is running now.
         if str(worker.get("status") or "").lower() in HANDED_OFF_WORKER_STATUSES:
             continue
+        if not alive and model_rotation.has_dispatch_cooldown_wait(worker):
+            # retry_due_workers owns this pre-launch environmental wait. The
+            # dead parent's log/exit marker describes the *original* failure,
+            # already charged to its budget, not a new inference attempt.
+            # Keep assignment/orphan reconciliation above active while never
+            # replaying that failure or replacing the pool-reset deadline.
+            continue
         pending = pending_by_run.get(worker["run_id"], [])
         resolved = resolved_by_run.get(worker["run_id"], [])
         if pending:

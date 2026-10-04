@@ -1263,10 +1263,12 @@ class CooldownLifecycleTests(unittest.TestCase):
                                            "active_worker_statuses": ["running"]}
         return task, request, event
 
-    def _run_queue(self, task_fields, *, both_cooling=False, terminal_pin=False):
+    def _run_queue(self, task_fields, *, both_cooling=False, terminal_pin=False, move_owner=False):
         task, request, event = self._queue_context(task_fields)
         state = {"queue": {"events": {}}, "workers": {}}
         clock = [datetime.now(UTC).replace(microsecond=0)]
+        # A workerless wait must also survive the ordinary orphan grace limit.
+        event["created_at"] = (clock[0] - timedelta(days=1)).isoformat()
 
         class Clock(datetime):
             @classmethod
@@ -1288,7 +1290,7 @@ class CooldownLifecycleTests(unittest.TestCase):
             mock.patch.object(sv, "load_event_queue", return_value=[event]),
             mock.patch.object(sv, "load_status", return_value={"tasks": [task]}),
             mock.patch.object(sv, "build_request", return_value=request),
-            mock.patch.object(sv, "prepare_worker_workspace", return_value=(True, None)),
+            mock.patch.object(sv, "prepare_worker_workspace", return_value=(True, None)) as workspace,
             mock.patch.object(sv, "agent_auto_dispatch_block_reason", return_value=None),
             mock.patch.object(sv, "select_dispatch_agent_id", return_value="antigravity5"),
             mock.patch.object(sv, "build_adapter", return_value=adapter),
@@ -1332,10 +1334,18 @@ class CooldownLifecycleTests(unittest.TestCase):
             self.assertEqual(task["owner"], "Antigravity5")
             self.assertEqual(mr._STATE_PATH.read_bytes(), before)
             deliveries[0][1].assert_not_called()
-            # Another tick before expiry neither launches nor burns a retry.
-            self.assertFalse(sv.process_queue(self.config, state, {}))
-            self.assertEqual(adapter.deliver.call_count, 1)
-            self.assertEqual(record["attempt_count"], 0)
+            # Full supervisor queue cycle: pruning/reconciliation must not
+            # rewrite this intentional workerless wait to queued or orphan it.
+            for seconds in (1, 60, 838):
+                clock[0] += timedelta(seconds=seconds)
+                self.assertFalse(sv.prune_event_queue(self.config, state))
+                self.assertFalse(sv.process_queue(self.config, state, {}))
+                self.assertEqual(record["status"], "retry_backoff")
+                self.assertEqual(record["next_retry_at"], expected_until)
+                self.assertEqual(record["attempt_count"], 0)
+                self.assertEqual(adapter.deliver.call_count, 1)
+                self.assertEqual(workspace.call_count, 1)
+                self.assertEqual(activity.call_count, 1)
             streak.assert_not_called()
             reassign.assert_not_called()
             pause.assert_not_called()
@@ -1343,7 +1353,19 @@ class CooldownLifecycleTests(unittest.TestCase):
             sync.assert_not_called()
             self.assertEqual(activity.call_args.args[1]["type"], "dispatch_capacity_wait")
 
-            clock[0] += timedelta(seconds=900)
+            clock[0] += timedelta(seconds=1)
+            if move_owner:
+                task["owner"] = "OtherOwner"
+                self.assertTrue(sv.prune_event_queue(self.config, state))
+                self.assertEqual(record["status"], "completed")
+                self.assertEqual(record["skip_reason"], "stale_dispatch_event")
+                self.assertFalse(sv.process_queue(self.config, state, {}))
+                self.assertEqual(adapter.deliver.call_count, 1)
+                self.assertEqual(workspace.call_count, 1)
+                streak.assert_not_called()
+                reassign.assert_not_called()
+                return
+            self.assertFalse(sv.prune_event_queue(self.config, state))
             self.assertTrue(sv.process_queue(self.config, state, {}))
             self.assertEqual(record["status"], "started")
             self.assertEqual(record["attempt_count"], 1)
@@ -1376,17 +1398,52 @@ class CooldownLifecycleTests(unittest.TestCase):
     def test_retired_pin_is_terminal_not_environmental_wait(self):
         self._run_queue({"priority": "P0"}, terminal_pin=True)
 
-    def test_retry_due_worker_waits_without_failure_or_budget_then_resumes(self):
-        task, request, _ = self._queue_context({"priority": "P0"})
+    def test_queue_wait_still_reconciles_moved_assignment(self):
+        self._run_queue({"priority": "P0"}, move_owner=True)
+
+    def test_malformed_wait_does_not_exempt_orphan_or_queue_repair(self):
+        _, _, event = self._queue_context({"priority": "P0"})
+        event["created_at"] = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+        record = {"status": "retry_backoff", "next_retry_at": "invalid",
+                  mr.DISPATCH_WAIT_KEY: {"kind": "model_cooldown"}}
+        self.assertFalse(mr.has_dispatch_cooldown_wait(record))
+        self.assertTrue(sv.queue_event_is_orphaned(self.config, event, record, []))
+        event.pop("created_at")
+        state = {"queue": {"events": {"wait-event": record}}, "workers": {}}
+        with (
+            mock.patch.object(sv, "load_event_queue", return_value=[event]),
+            mock.patch.object(sv, "load_status", return_value={"tasks": []}),
+            mock.patch.object(sv, "stale_dispatch_skip_message", return_value=None),
+            mock.patch.object(sv, "replace_event_queue"),
+        ):
+            self.assertTrue(sv.prune_event_queue(self.config, state))
+        self.assertEqual(record["status"], "queued")
+
+    def _run_retry_poll(self, task_fields, *, move_at=None):
+        task, request, event = self._queue_context(task_fields)
         now = datetime.now(UTC).replace(microsecond=0)
         clock = [now]
+
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return clock[0]
+
+        failure = "Error: temporarily unavailable"
+        log = self.path / "parent.log"
+        log.write_text(failure + "\n")
+        marker = self.path / "parent-status.json"
+        marker.write_text(json.dumps({"status": "failed", "exit_code": 1,
+                                      "finished_at": now.isoformat()}))
         parent = {
             "run_id": "parent", "provider": "antigravity5", "agent_id": "antigravity5",
             "task_id": task["id"], "queue_event_id": "wait-event", "status": "retry_backoff",
             "next_retry_at": now.isoformat(), "attempt_count": 2, "retry_count": 1,
-            "last_error": "prior transport failure",
+            "last_error": failure, "log_path": str(log), "runner_status_path": str(marker),
         }
-        state = {"workers": {"parent": parent}}
+        # Prove the real old log would be detected if poll_workers replayed it.
+        self.assertEqual(sv.detect_worker_failure(parent), failure)
+        state = {"workers": {"parent": parent}, "queue": {"events": {"wait-event": {"status": "started"}}}}
         adapter = mock.Mock()
 
         def deliver(_request):
@@ -1398,46 +1455,87 @@ class CooldownLifecycleTests(unittest.TestCase):
         adapter.deliver.side_effect = deliver
         with (
             mock.patch.object(mr, "_now", side_effect=lambda value=None: value or clock[0]),
-            mock.patch.object(sv, "request_for_worker", return_value=request),
+            mock.patch.object(sv, "datetime", Clock),
+            mock.patch.object(sv, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(sv, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(sv, "load_event_queue", return_value=[event]),
+            mock.patch.object(sv, "build_request", return_value=request),
             mock.patch.object(sv, "build_adapter", return_value=adapter),
+            mock.patch.object(sv, "pid_is_alive", side_effect=lambda pid: pid == 4321),
             mock.patch.object(sv, "provider_auth_identity_hash", return_value=None),
             mock.patch.object(sv, "save_runtime_state"),
             mock.patch.object(sv, "record_worker_runtime_measurement"),
+            mock.patch.object(sv, "preserve_dead_worker_worktree"),
+            mock.patch.object(sv, "observe_worker_worktree_activity", return_value=False),
             mock.patch.object(sv, "write_activity_log"),
             mock.patch.object(sv, "write_failure_evidence") as evidence,
             mock.patch.object(sv, "record_task_failure_streak") as streak,
             mock.patch.object(sv, "maybe_reassign_task_after_worker_failure") as reassign,
             mock.patch.object(sv, "mark_provider_dispatch_paused") as pause,
+            mock.patch.object(sv, "schedule_worker_retry", wraps=sv.schedule_worker_retry) as retry,
+            mock.patch.object(sv, "detect_worker_failure", wraps=sv.detect_worker_failure) as detect,
         ):
             mr.record_exhaustion(self.config, "antigravity5", 900, pool="claude")
             before = mr._STATE_PATH.read_bytes()
-            self.assertTrue(sv.retry_due_workers(self.config, state, {}, clock[0]))
-            self.assertEqual(parent["status"], "retry_backoff")
-            self.assertEqual(parent["retry_count"], 1)
-            self.assertEqual(parent["attempt_count"], 2)
-            self.assertEqual(parent["last_error"], "prior transport failure")
-            self.assertEqual(list(state["workers"]), ["parent"])
-            self.assertEqual(parent[mr.DISPATCH_WAIT_KEY]["model"], mr.DEFAULT_HIGH_RISK_MODEL)
-            self.assertEqual(parent["next_retry_at"], (now + timedelta(seconds=900)).isoformat().replace("+00:00", "Z"))
-            self.assertFalse(sv.retry_due_workers(self.config, state, {}, clock[0]))
-            self.assertEqual(adapter.deliver.call_count, 1)
-            clock[0] += timedelta(seconds=900)
-            self.assertTrue(sv.retry_due_workers(self.config, state, {}, clock[0]))
-            self.assertEqual(parent["status"], "retried")
-            self.assertNotIn(mr.DISPATCH_WAIT_KEY, parent)
-            self.assertNotIn("last_wait_reason", parent)
-            replacement = state["workers"][parent["superseded_by_run_id"]]
-            self.assertEqual(replacement["provider"], "antigravity5")
-            self.assertEqual(replacement["parent_run_id"], "parent")
-            self.assertEqual(replacement["retry_count"], 1)
-            self.assertEqual(replacement["attempt_count"], 3)
-            self.assertEqual(replacement[mr.WORKER_MODEL_KEY], mr.DEFAULT_HIGH_RISK_MODEL)
-            self.assertEqual(replacement[mr.WORKER_POOL_KEY], "claude")
+            self.assertTrue(sv.poll_workers(self.config, state, {}))
+            deadline = (now + timedelta(seconds=900)).isoformat().replace("+00:00", "Z")
+            for offset in (0, 1, 60, 899):
+                clock[0] = now + timedelta(seconds=offset)
+                sv.poll_workers(self.config, state, {})
+                self.assertEqual(parent["status"], "retry_backoff")
+                self.assertEqual(parent["retry_count"], 1)
+                self.assertEqual(parent["attempt_count"], 2)
+                self.assertEqual(parent["last_error"], failure)
+                self.assertEqual(parent["runner_status"], "failed")
+                self.assertEqual(parent["exit_code"], 1)
+                self.assertEqual(parent["next_retry_at"], deadline)
+                self.assertEqual(parent[mr.DISPATCH_WAIT_KEY]["model"], mr.DEFAULT_HIGH_RISK_MODEL)
+                self.assertEqual(task["owner"], "Antigravity5")
+                self.assertEqual(list(state["workers"]), ["parent"])
+                self.assertEqual(adapter.deliver.call_count, 1)
+                self.assertEqual(mr._STATE_PATH.read_bytes(), before)
+                detect.assert_not_called()
+                retry.assert_not_called()
+                streak.assert_not_called()
+                reassign.assert_not_called()
+                pause.assert_not_called()
+                evidence.assert_not_called()
+            clock[0] = now + timedelta(seconds=move_at if move_at is not None else 900)
+            if move_at is not None:
+                task["owner"] = "OtherOwner"
+                self.assertTrue(sv.poll_workers(self.config, state, {}))
+                self.assertEqual(parent["status"], "superseded")
+                self.assertEqual(adapter.deliver.call_count, 1)
+                self.assertEqual(list(state["workers"]), ["parent"])
+            else:
+                self.assertTrue(sv.poll_workers(self.config, state, {}))
+                self.assertEqual(parent["status"], "retried")
+                self.assertNotIn(mr.DISPATCH_WAIT_KEY, parent)
+                self.assertNotIn("last_wait_reason", parent)
+                replacement = state["workers"][parent["superseded_by_run_id"]]
+                self.assertEqual(replacement["provider"], "antigravity5")
+                self.assertEqual(replacement["parent_run_id"], "parent")
+                self.assertEqual(replacement["retry_count"], 1)
+                self.assertEqual(replacement["attempt_count"], 3)
+                self.assertEqual(replacement[mr.WORKER_MODEL_KEY], mr.DEFAULT_HIGH_RISK_MODEL)
+                self.assertEqual(replacement[mr.WORKER_POOL_KEY], "claude")
+                self.assertEqual(task["owner"], "Antigravity5")
             self.assertEqual(mr._STATE_PATH.read_bytes(), before)
+            retry.assert_not_called()
             evidence.assert_not_called()
             streak.assert_not_called()
             reassign.assert_not_called()
             pause.assert_not_called()
+
+    def test_poll_workers_waits_without_replaying_failed_parent_then_resumes(self):
+        for fields in ({"priority": "P0"}, {"priority": "P2", "review_reopen_count": 1}):
+            with self.subTest(fields=fields):
+                self._run_retry_poll(fields)
+
+    def test_poll_wait_reconciles_authority_before_and_at_reset(self):
+        for offset in (899, 900):
+            with self.subTest(offset=offset):
+                self._run_retry_poll({"priority": "P0"}, move_at=offset)
 
     def test_explicit_gpt_fallback_metadata_and_quota_cool_actual_pool(self):
         self.settings["model_rotation"]["fallback_model"] = "gpt-oss-120b-medium"
