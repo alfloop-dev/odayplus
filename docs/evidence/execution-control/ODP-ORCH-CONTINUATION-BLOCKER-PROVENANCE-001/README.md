@@ -128,10 +128,16 @@ and selects only that fixture. It proves no overlays/extra agents apply,
 executes the original failing selection with real identity and role validation,
 and separately proves undeclared Pi is rejected atomically as `Unknown AI_NAME`.
 No registry, live config, production handler or independent gate is altered.
-The focused class now includes 14 tests; all three declared commands must have
-passing receipts bound to the new head before `task_finalize.sh` publishes it.
-Final receipts remain in `.orchestrator/evidence/`, not inside their own hashed
-commit. Codex2 must independently review the new PR1411 head and required CI.
+Repair anchor `2122c9eeb1ad038887fca4ad140961d19d0c6d3a` passed all three
+declared commands (exit0, 0.015s / 0.672s / 8.951s). The focused class completed
+15 tests, including the clean CI registry regression. Its original failed
+selection is exercised inside that regression, with environment cleared and
+fixture config selected explicitly. Receipts in `ci-repair-receipts/` bind the
+anchor and exact selections; these are intermediate evidence, not final-head
+proof. All three commands will also receive passing receipts bound to the
+final head before `task_finalize.sh` publishes it. Final receipts remain in
+`.orchestrator/evidence/`, not inside their own hashed commit. Codex2 must
+independently review the new PR1411 head and required CI.
 Live eligibility and deployment authority remain unchanged.
 
 ## Required handoff after merge
