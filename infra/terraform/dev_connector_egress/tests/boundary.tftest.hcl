@@ -23,7 +23,7 @@ run "shared_dns_only" {
   command = plan
   variables {
     enable_shared_dns     = true
-    shared_dns_scope_ack  = "default:googleapis.com.,run.app."
+    shared_dns_scope_ack  = "default:googleapis.com.=restricted4,run.app.=private8"
     shared_dns_review_ref = "ODP-DEV-TEST:offline-only"
   }
   assert {
@@ -37,7 +37,7 @@ run "scoped_protection" {
   variables {
     enable_firewall                  = true
     enable_shared_dns                = true
-    shared_dns_scope_ack             = "default:googleapis.com.,run.app."
+    shared_dns_scope_ack             = "default:googleapis.com.=restricted4,run.app.=private8"
     shared_dns_review_ref            = "ODP-DEV-TEST:offline-only"
     connector_scope_review_confirmed = true
   }
@@ -74,8 +74,16 @@ run "scoped_protection" {
     error_message = "DNS is explicitly shared-default scope, never on staging-runtime or connector-local."
   }
   assert {
-    condition     = google_dns_record_set.vip["googleapis"].name == "private.googleapis.com." && google_dns_record_set.vip["run"].name == "run.app." && alltrue([for record in google_dns_record_set.vip : record.type == "A" && record.rrdatas == tolist(["199.36.153.8", "199.36.153.9", "199.36.153.10", "199.36.153.11"])]) && google_dns_record_set.wildcard["googleapis"].rrdatas == tolist(["private.googleapis.com."]) && google_dns_record_set.wildcard["run"].rrdatas == tolist(["run.app."]) && alltrue([for record in google_dns_record_set.wildcard : record.type == "CNAME"])
-    error_message = "Both required wildcard namespaces must resolve to the same supported private VIP."
+    condition     = google_dns_record_set.vip["googleapis"].name == "restricted.googleapis.com." && google_dns_record_set.vip["googleapis"].rrdatas == tolist(["199.36.153.4", "199.36.153.5", "199.36.153.6", "199.36.153.7"]) && google_dns_record_set.wildcard["googleapis"].name == "*.googleapis.com." && google_dns_record_set.wildcard["googleapis"].rrdatas == tolist(["restricted.googleapis.com."])
+    error_message = "Google wildcard must use restricted .4-.7, with an explicit canonical restricted endpoint A record (no wildcard shadowing or CNAME loop)."
+  }
+  assert {
+    condition     = google_dns_record_set.vip["run"].name == "run.app." && google_dns_record_set.vip["run"].rrdatas == tolist(["199.36.153.8", "199.36.153.9", "199.36.153.10", "199.36.153.11"]) && google_dns_record_set.wildcard["run"].name == "*.run.app." && google_dns_record_set.wildcard["run"].rrdatas == tolist(["run.app."])
+    error_message = "run.app must retain private .8-.11 for admitted Web/API and staging MLflow, independently of restricted Google APIs."
+  }
+  assert {
+    condition     = length(google_dns_record_set.vip) == 2 && length(google_dns_record_set.wildcard) == 2 && alltrue([for record in google_dns_record_set.vip : record.type == "A" && record.ttl == 300]) && alltrue([for record in google_dns_record_set.wildcard : record.type == "CNAME" && record.ttl == 300])
+    error_message = "Only four exact TTL300 record sets; no extra/widened public IPs or ownership of the existing SQLAdmin zone."
   }
 }
 
@@ -149,6 +157,24 @@ run "reject_wrong_staging_sql" {
   variables { staging_sql_private_cidr = "10.50.0.6/32" }
   expect_failures = [var.staging_sql_private_cidr]
 }
+run "reject_old_private_google_scope" {
+  command = plan
+  variables {
+    enable_shared_dns     = true
+    shared_dns_scope_ack  = "default:googleapis.com.,run.app."
+    shared_dns_review_ref = "ODP-DEV-TEST:offline-only"
+  }
+  expect_failures = [terraform_data.binding]
+}
+run "reject_widened_google_scope" {
+  command = plan
+  variables {
+    enable_shared_dns     = true
+    shared_dns_scope_ack  = "default:googleapis.com.=private8,run.app.=private8"
+    shared_dns_review_ref = "ODP-DEV-TEST:offline-only"
+  }
+  expect_failures = [terraform_data.binding]
+}
 run "reject_unreviewed_dns" {
   command = plan
   variables { enable_shared_dns = true }
@@ -176,7 +202,7 @@ run "reject_unreviewed_connector_scope" {
   variables {
     enable_firewall       = true
     enable_shared_dns     = true
-    shared_dns_scope_ack  = "default:googleapis.com.,run.app."
+    shared_dns_scope_ack  = "default:googleapis.com.=restricted4,run.app.=private8"
     shared_dns_review_ref = "ODP-DEV-TEST:offline-only"
   }
   expect_failures = [terraform_data.binding]
@@ -185,7 +211,7 @@ run "reject_live_connector_mismatch" {
   command = plan
   variables {
     enable_shared_dns     = true
-    shared_dns_scope_ack  = "default:googleapis.com.,run.app."
+    shared_dns_scope_ack  = "default:googleapis.com.=restricted4,run.app.=private8"
     shared_dns_review_ref = "ODP-DEV-TEST:offline-only"
   }
   override_data {
@@ -202,7 +228,7 @@ run "reject_live_cidr_drift" {
   command = plan
   variables {
     enable_shared_dns     = true
-    shared_dns_scope_ack  = "default:googleapis.com.,run.app."
+    shared_dns_scope_ack  = "default:googleapis.com.=restricted4,run.app.=private8"
     shared_dns_review_ref = "ODP-DEV-TEST:offline-only"
   }
   override_data {
@@ -219,7 +245,7 @@ run "reject_not_ready" {
   command = plan
   variables {
     enable_shared_dns     = true
-    shared_dns_scope_ack  = "default:googleapis.com.,run.app."
+    shared_dns_scope_ack  = "default:googleapis.com.=restricted4,run.app.=private8"
     shared_dns_review_ref = "ODP-DEV-TEST:offline-only"
   }
   override_data {

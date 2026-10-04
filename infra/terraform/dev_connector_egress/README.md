@@ -1,68 +1,126 @@
 # Existing dev connector egress — source-only opt-in
 
-Owner: `ODP-DEV-CONNECTOR-EGRESS-PLAN-001` (Antigravity2); independent reviewer Codex2.
-This root is NOT called by the foundation, release workflow or deployment script.
-Default inputs create nothing. Source merge/offline mock plans do **not** fix live
-protection and confer no cloud apply, IAM, credential, deployment or build authority.
+Original source: `ODP-DEV-CONNECTOR-EGRESS-PLAN-001` (merged PR1408).
+Compatibility repair: `ODP-DEV-SHARED-DNS-RESTRICTED-VIP-COMPAT-001`, Pi / Codex2.
+This root is NOT called by foundation/release/deployment automation. Both opt-ins
+remain **false** by default (no resources or cloud lookups). Source merge and
+mock tests confer no cloud, backend, IAM, build or deployment authority.
 
-## Binding and supported scope
+## Binding and unchanged protection
 
-Consumed exact read-only receipts:
-- `/home/lupin/odayplus/support/handoffs/dev-admin-recovery-20261003/continuation-reopen6/cloud-readback.json` (SHA256 `e54b0ec5d6232d03673d6fe78c0ec3ea9ee8720fffb5995a0103b7b59af5979b`)
-- `/home/lupin/odayplus/support/handoffs/dev-admin-recovery-20261003/continuation-reopen6/DEPLOYMENT-PREFLIGHT.md` (SHA256 `580b736409a93ac1331f0bfa072db6fd34e47b68ffe3558779549a95d9b5c464`)
-- `/home/lupin/odayplus/support/handoffs/dev-automatic-deployment-20261004/network-impact-readback.json` (SHA256 `37e44fe4b91f7dedfcbbcda01c1bfbb1be0f477f1cfa89c2bc09f885c3d485e5`)
-- `/home/lupin/odayplus/support/handoffs/dev-automatic-deployment-20261004/shared-staging-impact-readback.json` (observed 2026-10-04T04:58:30Z, SHA256 `28b40136d77e02021675b05d0214d5b9d4e1f6433691e59cd0a85de6b28f4c76`)
+Exact project `odayplus-runtime-20260825`, region `asia-east1`, existing READY
+connector `oday-staging-vpc`, network `default`, CIDR `10.8.0.0/28`. No ownership,
+import, recreation or move of these resources. Validate identity/network/CIDR/state
+against fresh supported API readback; any drift is STOP.
 
-Configuration observed:
-Project `odayplus-runtime-20260825`, region `asia-east1`, READY Serverless VPC Access connector
-`oday-staging-vpc` on `default` network with CIDR `10.8.0.0/28`. Cloud SQL `oday-dev-sql` is on
-`default` network (task acceptance pins private IP `10.50.0.3`; revalidate before apply).
-Cloud SQL `oday-staging-sql` is on `default` network with PRIVATE-only IP `10.50.0.5` and consumed by
-`oday-staging-mlflow` (revision `00003-bm6` using `private-ranges-only` on the shared connector).
-Existing staging-runtime firewall rules cannot protect this connector. ALL_TRAFFIC
-is routing, not denial. Current DNS inventory on `default` network has only `emgi-sqladmin-private`
-(`sqladmin.googleapis.com.` with A records `199.36.153.4-.7`, TTL 300) and no policies/response policies.
-No live refresh or runtime probe was performed by this task.
+- Connector-only target tag: `vpc-connector-asia-east1-oday-staging-vpc`.
+  [Google's automatic immutable unique-tag contract](https://docs.cloud.google.com/vpc/docs/serverless-vpc-access#network-tags)
+  and [egress rule guidance](https://docs.cloud.google.com/run/docs/configuring/vpc-connectors#restrict-access-using-egress-rules)
+  support this target, not universal `vpc-connector`, guessed `aet-*`, source tags
+  or service accounts. Connector API does not expose managed VM/tag inventory;
+  scope acknowledgement is not live enforcement proof.
+- Priority 800 Google HTTPS: TCP443 only `199.36.153.4/30` and `199.36.153.8/30`.
+- Priority 800 SQL: TCP5432/3307 only dev `10.50.0.3/32` and staging `10.50.0.5/32`.
+  Preserve staging MLflow on the shared connector even with private-ranges-only:
+  its RFC1918 SQL traffic still uses the connector.
+- Priority 900 IPv4 deny-all follows DNS and both application allows. Managed
+  priority100 connector/control-plane rules and ingress are untouched. No broad
+  internet/RFC1918 allow, route/PGA/NAT change or IPv6 protection claim.
+- Existing GKE `oday-emgi/emgi-default-deny-public-egress` permits Google HTTPS
+  **only restricted `.4/30`**. No `.8/30` allowance, policy or runtime change here.
+- Existing `emgi-sqladmin-private` owns `sqladmin.googleapis.com.` A `.4–.7`,
+  TTL300. It remains selected by [longest matching zone suffix](https://docs.cloud.google.com/dns/docs/zones/zones-overview#overlapping_zones).
+  No existing-zone mutation, alignment transaction, import or takeover.
 
-Authoritative documentation fetched read-only on 2026-10-04:
+## Chosen shared DNS design and exact resource inventory
 
-- [Cloud Run connector firewall targeting](https://cloud.google.com/run/docs/configuring/vpc-connectors#create-firewall-rules-for-specific-connectors): every connector has `vpc-connector` and unique `vpc-connector-REGION-CONNECTOR_NAME` tags. The egress restriction example uses **target-tags** and destination ranges. This root uses only `vpc-connector-asia-east1-oday-staging-vpc`; not universal `vpc-connector`, source tags, guessed `aet-*`, or service-account targeting. Target selection follows the documented automatic unique-tag contract plus supported connector metadata readback, not direct managed-VM tag inventory.
-- [Cloud Run VPC connector egress restriction rules](https://docs.cloud.google.com/run/docs/configuring/vpc-connectors#restrict-access-using-egress-rules): connector egress rules apply to all traffic leaving via the connector. Even with `private-ranges-only`, internal RFC1918 traffic (including `10.50.0.5`) routes through the connector. Preserving `10.50.0.5/32` in `oday-dev-connector-sql` at priority 800 ensures shared staging MLflow traffic is not dropped by deny-all 900.
-- [Serverless VPC Access network tags](https://docs.cloud.google.com/vpc/docs/serverless-vpc-access#network-tags): every connector automatically receives the universal and unique tags; these cannot be deleted and new tags cannot be added. [Connector API](https://docs.cloud.google.com/vpc/docs/reference/vpcaccess/rest/v1/projects.locations.connectors) exposes identity, network, CIDR, state and connected projects, not managed VM/tag readback. `connector_scope_review_confirmed` acknowledges fresh supported metadata readback, this contract and review of **every consumer**; it does not assert tag observation or live enforcement. Missing connector VM entries in Compute inventory are not a failure of this contract. Unknown consumer scope or metadata drift remains STOP.
-- [Serverless VPC Access firewall rules](https://cloud.google.com/vpc/docs/serverless-vpc-access#firewall-rules): managed priority 100 rules preserve TCP 667, UDP 665–666, ICMP to `35.199.224.0/19`, health checks and established replies. New priorities 800/900 do not override them. No managed rule is imported, replaced or deleted; ingress remains untouched.
-- [Private Google Access domains/DNS/routes](https://cloud.google.com/vpc/docs/configure-private-google-access#domain-options): Private VIP `199.36.153.8/30` (`private.googleapis.com`) supports `*.run.app` and Google APIs; Restricted VIP `199.36.153.4/30` (`restricted.googleapis.com`) supports VPC-SC APIs including `sqladmin.googleapis.com`. Matching runtime foundation `network.tf:87-90`, `oday-dev-connector-google-https` permits both Google VIP ranges (`199.36.153.4/30` and `199.36.153.8/30`) on TCP 443 before deny 900. This is constrained L3/L4 Google-service access, NOT an API/service/tenant allowlist or VPC Service Controls perimeter. No arbitrary internet HTTPS or RFC1918 allow.
-- [Cloud SQL Auth Proxy network requirements](https://cloud.google.com/sql/docs/postgres/sql-proxy#how-works): API HTTPS 443 (sqladmin.googleapis.com) plus private instance TCP 3307 for Auth Proxy/connector, TCP 5432 for direct PostgreSQL. Only `10.50.0.3/32` (dev SQL) and `10.50.0.5/32` (staging SQL preservation) are allowed. Approved runtime connection mode/private-IP configuration still needs readback; these ports do not configure it.
-- [Cloud DNS zone selection](https://cloud.google.com/dns/docs/zones/zones-overview#overlapping_zones): longest suffix selects the existing more-specific `emgi-sqladmin-private` (`sqladmin.googleapis.com.`) zone over the new `googleapis.com.` zone. It stays under its original owner. Its read-back records (`199.36.153.4-.7`, Restricted VIP `199.36.153.4/30`) are fully permitted by `oday-dev-connector-google-https` alongside Private VIP `199.36.153.8/30`.
+DNS attaches to the **entire default VPC**, not a connector. It affects GKE,
+VMs and other connectors as well as dev and staging consumers. Choose Google's
+restricted wildcard pattern with an explicit canonical endpoint A record:
 
-## Resource change inventory
-
-| Opt-in | New resources (fixed names) | Effect |
+| Resource address | Zone/name | Type / exact RDATA (TTL300) |
 |---|---|---|
-| `enable_shared_dns` | `oday-dev-connector-googleapis`, `oday-dev-connector-run` private zones; two A and two wildcard CNAME record sets | **All default VPC DNS clients**, including GKE/other VMs/connectors: wildcard googleapis -> private.googleapis.com A .8–.11; run.app apex A .8–.11 and wildcard CNAME -> run.app. TTL 300. |
-| `enable_firewall` (requires DNS opt-in + connector scope review) | `oday-dev-connector-google-https` (800), `oday-dev-connector-sql` (800), `oday-dev-connector-deny` (900) | **All workloads using this existing connector**, regardless of environment/name; TCP443 to Google VIPs (Restricted .4/30 and Private .8/30), SQL5432/3307 to exact dev SQL `10.50.0.3/32` and staging SQL `10.50.0.5/32`, IPv4 deny-all otherwise, except managed priority100 infrastructure. |
-| Either | local `terraform_data.binding`, read-only network/connector lookups | Binding validation only; no existing cloud resource ownership. |
+| `private["googleapis"]` | `oday-dev-connector-googleapis` / `googleapis.com.` | Private zone, only default VPC |
+| `vip["googleapis"]` | `restricted.googleapis.com.` | A: `199.36.153.4`, `.5`, `.6`, `.7` |
+| `wildcard["googleapis"]` | `*.googleapis.com.` | CNAME: `restricted.googleapis.com.` |
+| `private["run"]` | `oday-dev-connector-run` / `run.app.` | Private zone, only default VPC |
+| `vip["run"]` | `run.app.` | A: `199.36.153.8`, `.9`, `.10`, `.11` |
+| `wildcard["run"]` | `*.run.app.` | CNAME: `run.app.` |
 
-No network, subnet, route, connector, SQL, GKE, IAM, response policy, source
-activation or deployment resource is created/owned. DNS has **no connector-local
-attachment** here. Shared DNS must receive separate impact review and exact apply
-authority; the scope string/reference is an acknowledgement, not an authorization
-system. If shared DNS review is refused, leave both toggles off, retain the Human
-hold and request a separately designed solution. Do not widen egress to compensate.
+`private` is `google_dns_managed_zone`; `vip`/`wildcard` are
+`google_dns_record_set`. DNS stage: **2 zones + 4 explicit record sets + 1 local
+terraform_data binding = 7 creates**, zero firewall/existing-resource mutations.
+Cloud DNS generates SOA/NS zone records; these are not additional Terraform
+record-set resources. Firewall stage later: **3 firewall creates**, no DNS change.
+Both opt-ins together: 10 managed resources, including the local binding.
 
-## Endpoint and residual matrix
+The explicit `restricted.googleapis.com.` A preserves its canonical `.4–.7`
+answers and prevents wildcard shadowing/self-CNAME loops. Generic supported
+Google APIs now use `.4–.7` instead of the held plan's `.8–.11`; run.app remains
+`.8–.11`. The private googleapis namespace shadows public Google names; it does
+not promise that unsupported APIs (or `private.googleapis.com` as a separate
+private-VIP endpoint) remain available through this namespace.
 
-- Web BFF -> stable/tagged API `*.run.app` HTTPS443 through private VIP (`199.36.153.8/30`). Audience/token and Cloud Run ingress/invoker checks remain deployment-owner obligations; DNS/network reachability does not prove invocation.
-- `storage.googleapis.com` / bucket virtual-host `*.googleapis.com`: private VIP443 for audit/snapshot/model object writes and reads. `logging.googleapis.com`, `monitoring.googleapis.com`, `sqladmin.googleapis.com`, Secret Manager if called at runtime: Google VIPs 443 (both Restricted `199.36.153.4/30` and Private `199.36.153.8/30` allowed). Platform-injected secrets/log delivery are not evidence of container egress. Application audit persistence is SQL or approved storage, not public endpoints.
-- Private SQL: existing PSA/peering route must reach 10.50.0.3 (dev SQL) and 10.50.0.5 (staging SQL); no general private-network allow, no route or proxy change. Confirm proxy uses private IP and public fallback is off.
-- Existing MLflow run.app endpoint, if required by admitted profile, uses the same private VIP. Other worker/OIDC/provider/custom-domain endpoints are denied, not silently admitted. Sources stay off. Extra approved dependencies need fresh source review, not ad hoc firewall exceptions.
-- DNS resolver and metadata traffic are platform paths, not arbitrary UDP53/internet allowances. Confirm real Cloud Run DNS resolution; firewall tests cannot validate platform DNS. Existing `emgi-sqladmin-private` zone resolves `sqladmin.googleapis.com.` to `199.36.153.4-.7` (Restricted VIP `199.36.153.4/30`); this is explicitly permitted by `oday-dev-connector-google-https` alongside Private VIP `199.36.153.8/30`. Cloud DNS wildcard does not override existing explicit more-specific names. Inspect every applicable zone, forwarding/peering policy and response policy.
-- Default Internet Gateway routes to Google VIPs and connector subnet Private Google Access must already be suitable; connector serverless PGA behavior must be read back/validated by authorized owner. No NAT is added. Missing route/PGA is a STOP and separate authority request.
-- IPv4 connector path only; no IPv6 proof, FQDN isolation, per-service Google endpoint isolation, exfiltration perimeter, existing-session revocation or unrelated network protection is claimed. Google VIPs can reach other Google APIs/services; resource IAM and candidate runtime probes remain necessary.
+Alternative considered: preserve endpoint-specific exceptions while keeping a
+private-VIP wildcard, or isolate consumers with a separate DNS/network policy.
+The former still denies generic Google APIs for restricted-only GKE and requires
+an incomplete evolving allowlist; the latter adds new ownership/runtime/network
+scope. Widening GKE to `.8/30` violates its protected boundary. Restricted wildcard
+plus pinned restricted endpoint is the least-scope compatible source solution;
+keep run.app private routing distinct for admitted Web/API and staging MLflow.
+
+**Old plan is unusable**: source `0049f4f9`, plan SHA256
+`6fd398da4fd89984709de07479fceeb2f8a58db42e94087bebfd0c384a637317`
+is held/unapplied. Same counts do not mean same scope/RDATA. New required scope
+acknowledgement: `default:googleapis.com.=restricted4,run.app.=private8`, plus an
+actual reviewed `ODP-DEV-<task>:<receipt>` authority reference. Old scope is rejected.
+An acknowledgement/reference is not an authorization system. Root must inspect a
+fresh saved plan and confirm the changed shared scope before any application.
+
+## API compatibility and residual limits (primary Google documentation)
+
+Read-only documentation fetched 2026-10-04:
+- [Private Google Access domain options and DNS](https://docs.cloud.google.com/vpc/docs/configure-private-google-access#domain-options):
+  restricted `.4/30` enables VPC Service Controls supported APIs and blocks
+  unsupported APIs; private `.8/30` supports broader Google services including
+  `*.run.app`. Configure only the chosen VIP's addresses in each record.
+- [VPC Service Controls supported products](https://docs.cloud.google.com/vpc-service-controls/docs/supported-products)
+  (including product-specific limitations):
+
+| Admitted dependency | Name / routing | Documented compatibility / remaining check |
+|---|---|---|
+| SQLAdmin | `sqladmin.googleapis.com` / existing `.4–.7` zone | Cloud SQL supported (GA); original-hostname TLS404 baseline proves transport, not authenticated API success |
+| Object/audit storage | `storage.googleapis.com`, bucket `*.googleapis.com` / restricted | Cloud Storage supported (GA); runtime IAM/object readback still required |
+| Service account credentials | `iamcredentials.googleapis.com` / restricted | Supported (GA); distinguish from interactive user OAuth |
+| IAM administration if used | `iam.googleapis.com` / restricted | IAM integration listed as **Preview**, not a production perimeter guarantee; method limitations apply (e.g. predefined roles listing). Runtime endpoint/method probes remain required |
+| Cloud Run API | `run.googleapis.com` / restricted | Supported (GA); distinct from service invocation `*.run.app` |
+| Logging / monitoring | `logging.googleapis.com`, `monitoring.googleapis.com` / restricted | Supported (GA); injected platform logs do not prove container egress |
+| Web BFF/API & admitted MLflow invocation | `*.run.app` / private `.8–.11` | Preserve private routing; ingress, invoker IAM, audience and allowed Host still apply |
+
+Residual unsupported dependencies: restricted VIP does not admit Google Workspace
+APIs/web apps, arbitrary unsupported Google APIs, external providers, interactive
+user OAuth or custom-domain/OIDC endpoints. Sixteen external sources remain OFF;
+Google OAuth is disabled. A newly required unsupported API is STOP/new scope review,
+not a reason to change GKE or broadly allow internet. No exhaustive API/service or
+tenant allowlist or VPC-SC perimeter is claimed. IAM and exact-candidate probes are
+still required, as are existing PSA routes, VIP routes/PGA, effective firewall
+policy evaluation and fresh all-consumer inventory. IPv6 and session revocation
+are not established here.
+
+Existing GKE run.app access remains **denied** by its unchanged policy (now `.8`
+rather than public DNS); this task does not grant it MLflow or Web/API access.
+Existing GKE health/SQLAdmin baseline is positive; prechange generic storage and
+run.app HTTPS were denied. Postchange storage/API success is not yet observed.
+Staging MLflow baseline uses its configured official URL (health200 and actual
+DB-read200); its hash URL403 was Host protection, not a bypass opportunity.
+
+Consumed root evidence and hashes are recorded in
+[task evidence](../../../docs/evidence/runtime/ODP-DEV-SHARED-DNS-RESTRICTED-VIP-COMPAT-001/README.md).
+No cloud action or live success is asserted by these source changes.
 
 ## Offline verification
 
-Terraform 1.7+ is required for mock-provider plan tests. Tests do not use GCP
-credentials/backend. Canonical task metadata declares only this root's commands:
+Terraform 1.7+ mock provider tests only; no credentials/governed backend:
 
 ```sh
 terraform -chdir=infra/terraform/dev_connector_egress init -backend=false -input=false
@@ -72,10 +130,9 @@ terraform -chdir=infra/terraform/dev_connector_egress test -no-color
 git diff --check
 ```
 
-`tests/boundary.tftest.hcl` covers opt-out, separately prepared shared DNS, exact
-binding/tag, endpoint/port constraints, no broad allow, denial order, managed-rule
-priority preservation, staging/production rejection, malformed/mismatched inputs,
-missing DNS authority/connector scope review and live binding/CIDR/readiness drift.
-Mock values and `ODP-DEV-TEST:offline-only` are never live receipts or apply inputs.
-
-See [OPERATIONS.md](OPERATIONS.md) for the separately authorized operator sequence.
+`tests/boundary.tftest.hcl` covers defaults, exact separate Google/run RDATA,
+canonical restricted endpoint pinning, old/widened scope rejection, SQL/connector
+CIDR drift, authority/consumer acknowledgement, immutable binding, unique targeting,
+TCP443 dual VIPs, SQL ports, priority order and no internet allow. Mock scope refs
+are never live approvals. See [OPERATIONS.md](OPERATIONS.md) for bounded operator
+plan/rollback and the independent-review boundary.

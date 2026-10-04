@@ -1,0 +1,174 @@
+{
+  "captured_board_updated_at": "2026-10-04T10:52:24Z",
+  "source_sha": "0049f4f9bc826b2c719165f412410e866ec7b77d",
+  "runtime_sha": "66665090a9a329877e1a88d80883a8eca1818f09",
+  "task": {
+    "id": "ODP-DEV-AUTOMATIC-DEPLOYMENT-001",
+    "title": "接通dev自動更新部署並保留staging與prod人工核准",
+    "summary_zh": "依使用者明確授權接通dev自動建置發布驗證；staging與production仍須人工核准。前景Codex實作避免同檔重工。",
+    "phase": "Unassigned",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "status": "blocked",
+    "depends_on": [],
+    "artifacts": [],
+    "acceptance": [
+      "User explicitly requests dev automatic updates/deployment without per-release human confirmation; staging and production MUST retain human confirmation. Implement full CI-to-build-to-admission-to-deploy-to-live-verification using existing Runtime Release workflow. This supersedes former per-candidate dev human approval policy only; no fabricated human identity/signoff/lease.",
+      "Accept only protected same-repository dev push CI success at exact candidate. Reject PR/fork/failed/in-progress/wrong-branch/wrong-SHA; serialize and deduplicate retries; avoid deploying stale superseded candidates. No staging/production auto route. Preserve digest/signature/profile/source-off checks, real live validation, first-release absence/cleanup and later rollback discovery. Never label build/PR success as deployed.",
+      "Keep existing signed manual admission for staging/production and explicit human GitHub environment protection; dev standing automation authority is explicit and cannot be reused by manual environment input tampering. CI dispatch via GITHUB_TOKEN supported workflow_dispatch exception; no new PAT/account dependency.",
+      "First deployment and recurring updates must both work: discover actual last successful admitted dev release for rollback, reuse immutable builds when possible, require real account/secret/network prerequisites with actionable failure. Never invent first admin or disable model/identity/egress guards. Sources remain off.",
+      "Network IaC work is solely Pi task ODP-DEV-CONNECTOR-EGRESS-PLAN-001. Do not duplicate/edit its paths; integrate resulting prerequisite for first live rollout. User authorization covers dev automation implementation/enablement; perform concrete reviewable work before any remaining required external approval.",
+      "Use one task PR normal independent review. Foreground owner Codex; non_dispatchable prevents competing source writer during implementation; remove hold for normal reviewer dispatch after publication. No modifications to unrelated user changes."
+    ],
+    "next": "Explicit user continuation consent f791ca7b received after count6 disclosure, but canonical approve_continuation was REFUSED as independent credentials/deployment/production or human gate; no approval recorded or consumed. Do not retry/source-dispatch through alternate actor/runtime, edit blocker wording to evade the refusal, reset history/count or use another release lane. Non-dispatchable HUMAN-DEV-RELEASE-AUTHORITY-RESOLUTION-001 now requests proper governing adjudication; provenance and refusal at support/handoffs/dev-admin-recovery-20261004/continuation-reopen6/. User consent alone is not a successful canonical issuance. Preserve owner/reviewer and all R1 findings. Admin/bootstrap/GitHub dev configuration already done; no new bootstrap or credentials requested.",
+    "last_update": "2026-10-04T09:56:02Z",
+    "repository": "alfloop-dev/odayplus",
+    "base_branch": "dev",
+    "priority": "P0",
+    "task_class": "remediation",
+    "mutates_canonical": true,
+    "non_dispatchable": false,
+    "owned_paths": [
+      ".github/workflows/ci.yml",
+      ".github/workflows/deploy-dev.yml",
+      "delivery_toolchain/release/",
+      "tests/release/",
+      "tests/ops/test_automatic_dev_deployment.py",
+      "docs/deployment/ENVIRONMENTS.md",
+      "docs/deployment/GCP_DEPLOY_GUIDE.md",
+      "docs/evidence/runtime/ODP-DEV-AUTOMATIC-DEPLOYMENT-001/",
+      "docs/audits/code-boundary-inventory.csv",
+      "tests/ops/test_deploy_workflow_contract.py",
+      "tests/ops/test_workflow_expression_contexts.py"
+    ],
+    "forbidden_paths": [
+      "ai-status.json",
+      "ai-task-archive/",
+      "infra/terraform/dev_connector_egress/"
+    ],
+    "source_docs": [
+      "github://alfloop-dev/odayplus@9209dfaea40f0f4cccaa0e67e65b5d2e71946810/.github/workflows/deploy-dev.yml",
+      "github://alfloop-dev/odayplus@9209dfaea40f0f4cccaa0e67e65b5d2e71946810/delivery_toolchain/release/check_runtime_admission.py"
+    ],
+    "verification": [
+      "git diff --check",
+      "/home/lupin/odayplus/.venv/bin/python -m pytest -q tests/release/test_automatic_dev_deployment.py tests/release/test_release_phase_precheck.py tests/release/test_runtime_admission.py tests/release/test_release_profile.py tests/ops/test_deploy_workflow_contract.py tests/ops/test_workflow_expression_contexts.py",
+      "python3 delivery_toolchain/governance/check_code_boundaries.py"
+    ],
+    "pr_number": 1409,
+    "foreground_source_author": "Codex",
+    "foreground_source_head": "fa211987be5a80ecc3504079b4b5d88bbf0ef3af",
+    "source_adoption_required": true,
+    "review_gate_sha": "91e7a43c042245ad21b87188f8dce05041ef1dd8",
+    "review_gate_target": {
+      "repo_slug": "alfloop-dev/odayplus",
+      "sha": "91e7a43c042245ad21b87188f8dce05041ef1dd8",
+      "context": "task-review-gate"
+    },
+    "review_submission": {
+      "pr_number": 1409,
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1409",
+      "branch": "task/ODP-DEV-AUTOMATIC-DEPLOYMENT-001",
+      "remote_sha": "91e7a43c042245ad21b87188f8dce05041ef1dd8",
+      "base_branch": "dev",
+      "verified_at": "2026-10-04T08:08:30Z",
+      "submitted_by": "Claude"
+    },
+    "branch": "task/ODP-DEV-AUTOMATIC-DEPLOYMENT-001",
+    "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1409",
+    "assignment_note": "Escalated to Human/Ops after 6 reviewer reopens: owner rotation is not clearing this review (tried in current review epoch: Claude2, Antigravity2, Claude). A human decision or an authorized action is needed before further dispatch.",
+    "review_ci_failure_recovery_head": "c69cb2d05e79db532fc0f3229291043a0b4b446e",
+    "last_reopened_by": "Codex2",
+    "last_reopened_reason": "review_finding",
+    "last_reopen_category": "substantive_review",
+    "last_reopened_at": "2026-10-04T08:30:20Z",
+    "ci_repair_last_requeued_ts": 1791089808.751519,
+    "review_reopen_count": 6,
+    "last_review_reopen_at": "2026-10-04T08:30:20Z",
+    "review_reopen_history": [
+      {
+        "count": 1,
+        "at": "2026-10-04T05:31:17Z",
+        "by": "Codex",
+        "owner": "Claude2",
+        "message": "Review rejected at exact submitted HEAD c3066cfae39acea6916faedcef2c07be71ac2b89 (PR #1409); clean expected task branch, origin/dev=9209dfaea40f0f4cccaa0e67e65b5d2e71946810. Four implementation findings:\nF1 P1 .github/workflows/deploy-dev.yml:1071-1111 / delivery_toolchain/release/automatic_dev.py:180-188: automatic admission omits the existing manifest-aware live target absence revalidation from manual admission lines 935-957. dev-build can observe empty target A while dev deploy vars point to existing target B; JSON admission and deploy-check only validate manifest/CI and still permit mutation without a rollback binding for B. Run probe_release_target_absence.py --manifest using actual dev WIF/project/region/five target bindings before automatic mutation; preserve its fresh-readback comparison and receipt.\nF2 P2 automatic_dev.py:126: branch=dev filters the workflow dispatch ref, not deployment environment. A valid signed manual dev deploy from another ref still publishes deployed-release-manifest-dev but is invisible to discovery. Next auto incorrectly chooses an older predecessor or initial-release and blocks on existing resources. Discover successful admitted dev deployments across permitted dispatch refs, with verified deployment/environment/artifact evidence.\nF3 P2 automatic_dev.py:126-130: status=success plus unconditional exclusion of GITHUB_RUN_ID loses the successful prior attempt when GitHub reruns the same run ID. Re-running a successful first release cannot deduplicate and instead selects initial_release=true, then fails absence against its own live resources; recurring reruns can select an obsolete predecessor. Make success evidence and dedup attempt-aware; cover rerun of an already deployed current run.\nF4 P2 .github/workflows/deploy-dev.yml:166,303: auto now builds in runtime-release-dev-deploy while manual build publishes the same release-SHA tags in runtime-release-dev-build. They can both observe existing_count=0 at lines 526-550 and concurrently push/sign/attest identical tags. Serialize immutable publication for both build entrances while retaining one dev mutation lane.\nValidation readback: all three declared command receipts at this exact HEAD report exit 0: git diff --check (0.014s; receipt 00b031f995f62254), focused six-file pytest selection (33.542s; receipt 3c4427c609483d83), check_code_boundaries.py (9.08s; receipt 08a905333a7ac79a). GitHub CI completed successfully. Static independent review found the above gaps beyond existing coverage; no suites rerun, code edited, commit created, push or deployment performed. Add focused regressions for these cases and resubmit a newly verified head.",
+        "reason": "review_finding",
+        "category": "substantive_review",
+        "is_churn": true
+      },
+      {
+        "count": 2,
+        "at": "2026-10-04T06:05:01Z",
+        "by": "Codex2",
+        "owner": "Claude2",
+        "message": "Review rejected at exact submitted HEAD c97e3c8fbea63fb6d5c2fda719bee8784e83d972 (PR #1409). Clean expected task branch; latest origin/dev verified as 0049f4f9bc826b2c719165f412410e866ec7b77d. Previous F1-F4 narrow fixes are present: automatic admission re-probes dev deployment bindings, discovery spans dispatch refs, successful attempts survive reruns, and both build entrances share publication concurrency.\n\nRemaining finding R1 [P2], delivery_toolchain/release/automatic_dev.py:160-163,198-201 (also deployed_attempts:127-135): previous_deployment returns the first qualifying workflow run, but Actions lists runs by creation order rather than successful deployment completion. If an older run retries its failed deploy job after a newer run has deployed (or an older current-candidate auto run succeeds on retry after a newer manual dispatch), the older run is now the actual live release but discovery still selects the newer-created run. This binds the wrong rollback manifest and can falsely deduplicate a candidate that was subsequently replaced. deployed_attempts returns only attempt numbers and discards job completed_at, while dev_environment_deployed checks any historical success rather than establishing latest successful deployment order. Select the most recent actual successful deploy attempt across eligible runs using authoritative deployment/job completion evidence; bind the selected attempt to its manifest and do not stop at the first created run. Add regression coverage where creation order and successful deployment order differ, including dedup after a later deployment by an older run.\n\nRead-only API corroboration of ordering (not a claim that these historical runs deployed successfully): the workflow runs endpoint returned run 30277461820 at position 43, created 2026-07-27T14:55:38Z, updated 14:57:36Z, before run 30277119915 attempt 2 at position 44, created 14:51:35Z but rerun started 14:58:09Z and updated 14:58:57Z.\n\nVerification evidence at this exact head: git diff --check exit 0, 0.014s, receipt be86e853efc8cd01; declared six-file focused pytest selection exit 0, 35.529s, receipt 4025a08ed3db85b3; python3 delivery_toolchain/governance/check_code_boundaries.py exit 0, 9.237s, receipt 156c1e81d3134ff2. GitHub CI terminal success confirmed; task-review-gate awaits this review decision. GitHub live readback confirms protected dev and required human reviewers on staging/production. No tests rerun, source edits, commits, pushes or deployments performed. Fix R1 and resubmit a newly verified head.",
+        "reason": "review_finding",
+        "category": "substantive_review",
+        "is_churn": true
+      },
+      {
+        "count": 3,
+        "at": "2026-10-04T06:48:21Z",
+        "by": "Codex2",
+        "owner": "Antigravity2",
+        "message": "Review rejected at exact submitted HEAD 579d42ca1d4618ceca8bf6b3f7aaf364c3ea6a2f (PR #1409). Clean expected task branch, current origin/dev and live protected branch SHA verified as 0049f4f9bc826b2c719165f412410e866ec7b77d. Previous F1-F4 fixes remain present and the new completion-time ordering tests cover the prior R1 normal case. Two remaining predecessor correctness findings:\n\nR1 [P2] delivery_toolchain/release/automatic_dev.py:203-206: runs with no deployed-release-manifest-dev artifact are skipped before successful deploy attempt/environment evidence is checked. Concrete case: A deploys successfully, then B deploys successfully, then B artifact is deleted while A artifact remains. Discovery selects A, recovery binds A as rollback instead of actual live B, and preflight for A can falsely deduplicate. Determine the latest successful dev deployment from authoritative attempt/deployment evidence independently of artifact availability; require that selected deployment's exact manifest, and refuse explicitly if missing/unreadable. Do not fall back to an older artifact. GitHub also now omits expired artifacts from REST responses, so expired:true is not sufficient (official change: https://github.blog/changelog/2026-09-24-expired-github-actions-artifacts-no-longer-shown-in-ui-and-api/). Add a regression with latest successful run missing its artifact and an older valid artifact present, covering recovery and dedup.\n\nR2 [P2] automatic_dev.py:192-194,236-247: after ten full pages, reached_end remains false but any qualifying record is returned before the scan-limit refusal. An older-created manual dev run outside the first 1000 records can have the newest successful rerun completion; discovery still chooses a stale in-window release. This retains the completion-order defect at the pagination boundary. Do not return a predecessor from an incomplete scan unless authoritative evidence proves it is the latest; fail closed at the bound or use a complete deployment-time discovery strategy. Add a pagination-limit regression where records qualify but scan completeness is not proven. Current repository readback has 51 dispatch runs; this is a recurring-update correctness defect, not a claim the limit has already been hit.\n\nNeither case is rescued downstream: probe_release_target_absence.py:374-380 skips live readback for ordinary rollback_release manifests, and release_manifest rollback validation checks structure/bindings rather than current live predecessor. Workflow authority review otherwise preserves dev-only protected exact-success CI, manual staging/production signed admission and required human reviewers, shared mutation/publication concurrency, digest/signature/profile/sources-off and real live validation.\n\nExact-head evidence readback: git diff --check exit 0, 0.014s, receipt 1ac9443d1855df41; declared six-file focused pytest selection exit 0, 37.116s, receipt 66f2fa3a88765db9; python3 delivery_toolchain/governance/check_code_boundaries.py exit 0, 9.292s, receipt fd54adff6c9f9930. GitHub CI terminal success confirmed at this head. No tests rerun, code edits, commits, pushes or deployments performed. Fix these cases and resubmit a newly verified head.",
+        "reason": "review_finding",
+        "category": "substantive_review",
+        "is_churn": true
+      },
+      {
+        "count": 4,
+        "at": "2026-10-04T07:27:14Z",
+        "by": "Codex2",
+        "owner": "Antigravity2",
+        "message": "Review rejected at exact submitted HEAD 7bf9ae0db4e8495774cc752c99a1ab8bc9295dfb (PR #1409). Clean expected task branch; canonical review submission and live PR head agree. origin/dev and protected live dev both verified at 0049f4f9bc826b2c719165f412410e866ec7b77d.\n\nThe prior two findings are resolved: latest successful deployment is selected before requiring its artifact, and ten full workflow-history pages refuse even when qualifying records exist. Their new regression tests cover recovery and dedup refusal.\n\nRemaining R1 [P2]: delivery_toolchain/release/automatic_dev.py:206-207 changes missing successful dev-environment corroboration from Refused to continue. dev_environment_deployed at lines 169-174 requests only the first 100 deployments for environment=dev and dispatch head SHA, and only the first 100 statuses. Concrete case: A deploys successfully, then B deploys successfully from another dispatch SHA. More than 100 later manual phase=deploy/environment=dev dispatches at B's dispatch SHA enter the dev-bound admission job (.github/workflows/deploy-dev.yml:729-735), then fail a lease or prerequisite check before runtime mutation. These newer environment records can put B's successful environment record beyond page 1 while live B remains unchanged. Discovery still finds B's successful deploy job, but now silently skips B and selects A's older valid manifest. Recovery binds the wrong rollback; preflight for A can falsely deduplicate. This does not require 1000 workflow runs and is not fixed by the new workflow-history pagination guard.\n\nRestore fail-closed behavior whenever a dev-titled successful deploy job cannot be corroborated, or exhaustively paginate environment evidence and refuse incomplete/ambiguous proof before selecting a predecessor. Keep no-deploy/build-only runs skippable. Restore regression coverage for missing environment proof (the deployment_state=failure refusal case was removed at tests/release/test_automatic_dev_deployment.py:200-203), and add latest-B-missing-proof/older-A-valid cases covering both recovery and dedup. Official API pagination contract: https://docs.github.com/en/rest/deployments/deployments#list-deployments and https://docs.github.com/en/rest/deployments/statuses#list-deployment-statuses. This is a static correctness scenario, not a claim the repository has already hit the 100-record limit.\n\nWorkflow authority review otherwise retains protected exact-success same-repository dev CI, manual signed staging/production admission and required human environment reviewers, serialized mutation/publication, immutable digest/signature/profile/sources-off checks, target-absence reprobe and real live validation.\n\nExact-head verification evidence readback: git diff --check exit 0, 0.014s, receipt 215c107e788433f2; declared six-file focused pytest command exit 0, 37.251s, receipt 0b6a9bdae809061c; python3 delivery_toolchain/governance/check_code_boundaries.py exit 0, 9.168s, receipt e724152da8da2418. GitHub CI terminal success confirmed. No tests rerun, code edits, commits, pushes or deployments performed. Fix R1 and resubmit a newly verified head.",
+        "reason": "review_finding",
+        "category": "substantive_review",
+        "is_churn": true
+      },
+      {
+        "count": 5,
+        "at": "2026-10-04T07:59:54Z",
+        "by": "Codex2",
+        "owner": "Claude",
+        "message": "Review rejected at exact submitted HEAD 573a0fbecb9a69f62aed19b8a2ad0d48fc5f90fa (PR #1409). Expected task branch is clean; canonical submission and live PR head agree. origin/dev and protected live dev verified at 0049f4f9bc826b2c719165f412410e866ec7b77d.\n\nThe previous missing-environment-proof finding is fixed: both evidence lists paginate, incomplete scans refuse, and a successful deploy job without environment corroboration refuses instead of falling back. New regressions cover page-2 proof and latest-B-unproven/older-A-valid recovery and dedup.\n\nRemaining R1 [P2]: delivery_toolchain/release/automatic_dev.py:148-150,221-223 treats a failed aggregate deploy job as proof that no release deployed. Concrete trigger: A deploys successfully; B then completes the Deploy Cloud Run by immutable digest step and all live gates. product_ops/deployment/deploy_cloud_run_waji.sh:1150 sets DEPLOYMENT_COMMITTED=true and exits successfully. One of the later artifact download/upload steps (.github/workflows/deploy-dev.yml:1571-1586, or validation report upload at 1588-1621) fails. B remains live, but the aggregate deploy job is failure. deployed_attempts discards B before examining step outcomes or its manifest, so previous_deployment silently chooses A. A subsequent candidate binds stale A as rollback; retrying B is not deduplicated. With no older release it instead reports initial_release=true and then blocks on B's existing resources. The new missing-artifact and missing-environment-proof guards are never reached for B. Ordinary rollback manifests also bypass target-absence readback (probe_release_target_absence.py:374-380), so downstream validation does not correct the predecessor.\n\nSeparate actual live-deployment completion from later evidence-publication/job failure. Inspect authoritative deploy-step/attempt or durable live commit evidence; if the latest potentially committed deployment cannot be proven and bound to its exact manifest, fail closed instead of selecting an older predecessor. Do not merely ignore upload failures or treat every failed job as a successful release. Add regressions for A-success/B-live-step-success/B-artifact-step-failure, covering recovery and dedup, plus the first-release variant. This is a static review scenario, not a claim that a live failure occurred.\n\nExact-head declared verification receipts read back without rerunning: git diff --check exit 0, 0.014s, receipt 45c78d9984b37d0c; the declared six-file focused pytest command exit 0, 36.872s, receipt 03631b3d50316556; python3 delivery_toolchain/governance/check_code_boundaries.py exit 0, 9.214s, receipt 41421812f9c41141. GitHub CI terminal success confirmed. Other reviewed authority boundaries remain intact: protected exact-success same-repository dev CI, manual signed staging/production admission and required human environment reviewers, shared publication/mutation concurrency, digest/profile/sources-off checks and real live gates. No source edits, new commits, pushes, test reruns or deployments performed. Fix R1 and resubmit a newly verified head.",
+        "reason": "review_finding",
+        "category": "substantive_review",
+        "is_churn": true
+      },
+      {
+        "count": 6,
+        "at": "2026-10-04T08:30:20Z",
+        "by": "Codex2",
+        "owner": "Claude",
+        "message": "Review rejected at exact submitted HEAD 91e7a43c042245ad21b87188f8dce05041ef1dd8 (PR #1409). Expected task branch is clean; canonical submission and live PR head agree. Fetched origin/dev and protected live dev both verified at 0049f4f9bc826b2c719165f412410e866ec7b77d.\n\nThe previous live-commit/evidence-publication failure finding is fixed: successful live step plus later failed job now refuses predecessor selection, including recurring and first-release cases.\n\nRemaining R1 [P2]: delivery_toolchain/release/automatic_dev.py:137-150,184-186 assumes a failed/cancelled live step proves that rollback restored the previous release. That is not guaranteed by the existing deploy script. Concrete trace: A is successfully deployed; B promotes API/Web traffic at product_ops/deployment/deploy_cloud_run_waji.sh:1083-1088; live validation at 1138-1148 fails; rollback traffic or scheduler restoration also fails. The EXIT handler at 320-348 only logs restoration failures and exits with the original status at 352. product_ops/deployment/cloud_run_release_traffic.sh:297-301,374-383 explicitly supports this restoration-error branch. The live step is failure whether rollback succeeded or left B/mixed live state. automatic_dev discards B in both cases and previous_deployment selects A without proving the live state.\n\nThis can falsely deduplicate A at automatic_dev.py:383-387 (for example a signed manual B deploy from another permitted ref while protected dev remains A, followed by an automatic retry for A). Recovery for a later candidate also proceeds using A as if it were the proven live predecessor despite unresolved B/mixed state. Ordinary rollback manifests bypass live target readback at probe_release_target_absence.py:374-380. The new test_failed_deploy_step_rolled_back_keeps_proven_predecessor at tests/release/test_automatic_dev_deployment.py:730-738 asserts A from a generic failure payload that is identical for successful and failed rollback; it supplies no recovery proof.\n\nRequire positive non-mutation or successful rollback/readback evidence before skipping a started failed/cancelled live step; absent such evidence, fail closed for the latest uncertain attempt instead of selecting an older release or claiming it is already deployed. Keep proven pre-mutation/skipped jobs and proven restored attempts usable. Add regressions for A-success/B-promoted/live-gate-failure/rollback-failure covering recovery and dedup, plus an interrupted live step, and distinguish these from a positively proven rollback. This is a static code finding, not a claim that a live incident occurred.\n\nExact-head declared verification receipts read back without rerunning: git diff --check exit 0, 0.016s, receipt 018b4af067b71759; declared six-file focused pytest command exit 0, 38.523s, receipt afcb4d2220da21c3; python3 delivery_toolchain/governance/check_code_boundaries.py exit 0, 9.133s, receipt eb12b310ec065ce0. GitHub CI terminal success confirmed. Independent workflow review found no other blockers: protected exact-success same-repository dev CI, manual signed staging/production admission and live required human reviewers, shared publication/mutation concurrency, immutable digest/signature/profile/sources-off checks, initial absence recheck and real live gates remain intact. No source edits, new commits, pushes, test reruns or deployments performed. Fix R1 and resubmit a newly verified head.",
+        "reason": "review_finding",
+        "category": "substantive_review",
+        "is_churn": true
+      }
+    ],
+    "review_churn_reassigned_at_count": 4,
+    "review_churn_previous_owner": "Antigravity2",
+    "review_churn_last_reassigned_at": "2026-10-04T07:30:35Z",
+    "review_churn_epoch_failed_owners": [
+      "Claude2",
+      "Antigravity2",
+      "Claude"
+    ],
+    "waiting_for": "Human/Ops",
+    "review_churn_escalated_at_count": 6,
+    "review_churn_escalated_at": "2026-10-04T08:33:47Z"
+  },
+  "read_only_reproduction": {
+    "source": {
+      "file_sha256": "70353d4983d50685d6034e9687c30aaa5d7fea72935671d3b7ca34d70b78585d",
+      "gate_error": "task carries an independent credentials/deployment/production or human gate",
+      "blocker_context": "explicit user continuation consent f791ca7b received after count6 disclosure, but canonical   was refused as independent   or human gate; no approval recorded or consumed. do not   through alternate  , edit blocker wording to evade the refusal, reset   or use another release lane. non-dispatchable human-dev-release-authority-resolution-001 now requests proper governing adjudication; provenance and refusal at   user consent alone is not a successful canonical issuance. preserve   and all r1 findings.   dev configuration already done; no new bootstrap or credentials requested.       "
+    },
+    "runtime": {
+      "file_sha256": "70353d4983d50685d6034e9687c30aaa5d7fea72935671d3b7ca34d70b78585d",
+      "gate_error": "task carries an independent credentials/deployment/production or human gate",
+      "blocker_context": "explicit user continuation consent f791ca7b received after count6 disclosure, but canonical   was refused as independent   or human gate; no approval recorded or consumed. do not   through alternate  , edit blocker wording to evade the refusal, reset   or use another release lane. non-dispatchable human-dev-release-authority-resolution-001 now requests proper governing adjudication; provenance and refusal at   user consent alone is not a successful canonical issuance. preserve   and all r1 findings.   dev configuration already done; no new bootstrap or credentials requested.       "
+    }
+  }
+}

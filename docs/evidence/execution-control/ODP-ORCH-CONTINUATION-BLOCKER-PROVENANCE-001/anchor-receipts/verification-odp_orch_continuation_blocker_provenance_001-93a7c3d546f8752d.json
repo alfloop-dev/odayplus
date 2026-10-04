@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "kind": "verification_receipt",
+  "task_id": "ODP-ORCH-CONTINUATION-BLOCKER-PROVENANCE-001",
+  "head_sha": "ddb4a70ec7179805220d447384107ffbc5f55af3",
+  "command": "python3 delivery_toolchain/governance/check_code_boundaries.py",
+  "command_audit": {
+    "command": "python3 delivery_toolchain/governance/check_code_boundaries.py",
+    "ok": true,
+    "violations": [],
+    "details": [],
+    "runner": null
+  },
+  "runner": null,
+  "selection": {
+    "scope": "targeted",
+    "items": [
+      "delivery_toolchain/governance/check_code_boundaries.py"
+    ],
+    "fingerprint": "d38d4f2d4daf4e8b98686c99b7cbf133"
+  },
+  "exit_code": 0,
+  "signal": null,
+  "timed_out": false,
+  "outcome": "passed",
+  "passed": true,
+  "duration_seconds": 9.109,
+  "started_at": "2026-10-04T10:56:26Z",
+  "finished_at": "2026-10-04T10:56:36Z",
+  "recorded_at": "2026-10-04T10:56:36Z",
+  "run_kind": "baseline",
+  "attempt": 1,
+  "retry_reason": null,
+  "agent": "Pi",
+  "run_id": "pi-20261004T105059Z-1efe1c66",
+  "produced_by": "delivery_toolchain/git/task_verification.py",
+  "output_tail": "Code boundary checks passed for 1199 files.\n- archived: 14\n- development_delivery_tooling: 75\n- development_platform_system: 67\n- evidence_artifact: 41\n- product_operations_tooling: 47\n- product_system: 529\n- verification: 426\n",
+  "receipt_id": "93a7c3d546f8752d"
+}

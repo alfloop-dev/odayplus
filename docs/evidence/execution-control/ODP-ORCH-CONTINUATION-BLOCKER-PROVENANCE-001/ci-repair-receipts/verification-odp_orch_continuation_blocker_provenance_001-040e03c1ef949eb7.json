@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "kind": "verification_receipt",
+  "task_id": "ODP-ORCH-CONTINUATION-BLOCKER-PROVENANCE-001",
+  "head_sha": "2122c9eeb1ad038887fca4ad140961d19d0c6d3a",
+  "command": "python3 -m unittest scripts.test_ai_status.HumanContinuationApprovalTests",
+  "command_audit": {
+    "command": "python3 -m unittest scripts.test_ai_status.HumanContinuationApprovalTests",
+    "ok": true,
+    "violations": [],
+    "details": [],
+    "runner": "unittest"
+  },
+  "runner": "unittest",
+  "selection": {
+    "scope": "suite",
+    "items": [],
+    "fingerprint": "846541716505fa057a717f7f527859d2"
+  },
+  "exit_code": 0,
+  "signal": null,
+  "timed_out": false,
+  "outcome": "passed",
+  "passed": true,
+  "duration_seconds": 0.672,
+  "started_at": "2026-10-04T11:19:23Z",
+  "finished_at": "2026-10-04T11:19:24Z",
+  "recorded_at": "2026-10-04T11:19:24Z",
+  "run_kind": "baseline",
+  "attempt": 1,
+  "retry_reason": null,
+  "agent": "Pi",
+  "run_id": "pi-20261004T111657Z-0a391640",
+  "produced_by": "delivery_toolchain/git/task_verification.py",
+  "output_tail": "{\"approval_id\": \"873fac9eb91d4e2ba7a0e3f0ab4980fd\", \"approval_type\": \"human_ops_continuation\", \"blocker_authority_digest\": \"70c9a2ccde8020229addc8cf7ca57092c1f6492f12ffb4cfefa0fe6bda093416\", \"blocker_provenance_id\": null, \"status\": \"issued\", \"task_id\": \"ODP-CONTINUATION-001\", \"task_scope\": \"ODP-CONTINUATION-001\", \"scope\": {\"task_id\": \"ODP-CONTINUATION-001\"}, \"reason\": \"one use\", \"issued_by\": \"Human/Ops\", \"issued_at\": \"2026-10-04T11:19:23Z\", \"expires_at\": \"2099-01-01T00:00:00Z\", \"nonce\": \"nonce-once\", \"review_reopen_count\": 6, \"review_churn_escalated_at_count\": 6, \"consumed_at\": null, \"consumed_by\": null, \"consumption_reason\": null}\n...............\n----------------------------------------------------------------------\nRan 15 tests in 0.204s\n\nOK\n",
+  "receipt_id": "040e03c1ef949eb7"
+}
