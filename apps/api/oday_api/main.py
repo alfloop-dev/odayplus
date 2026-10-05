@@ -554,6 +554,11 @@ else:
                 "models": {
                     "mode": model_binding_mode,
                     "productionBindingsReady": production_model_bindings_ready,
+                    # Whether Learning Hub reads go through the remote MLflow
+                    # registry. Bound-but-unverified is a distinct state from
+                    # unbound: the registry is the approved one, it simply has
+                    # no verified production versions yet.
+                    "learninghubRegistryBound": learninghub_registry is not None,
                     "requiredServices": sorted(required_model_services),
                     "capabilities": production_model_capabilities,
                     "error": production_model_error,

@@ -1105,7 +1105,10 @@ if [ "${ODP_DEPLOY_ENV}" = "production" ]; then
   LIVE_E2E_WEB_URL="${ODP_PROD_DEPLOY_URL}"
 else
   LIVE_E2E_API_URL="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"
-  LIVE_E2E_WEB_URL="$(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")"
+  # The Web CSRF boundary trusts ODP_WEB_BASE_URL (and the container's own
+  # origin), not every alias Cloud Run serves the same service under, so the
+  # password journey must run against the canonical origin users sign in at.
+  LIVE_E2E_WEB_URL="${ODP_WEB_BASE_URL:-$(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")}"
 fi
 if [[ -z "${LIVE_E2E_API_URL}" || -z "${LIVE_E2E_WEB_URL}" ]]; then
   echo "Live E2E gate cannot run: served origin lookup returned empty" \

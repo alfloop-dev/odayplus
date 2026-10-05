@@ -199,6 +199,7 @@ def test_live_gate_does_not_seed_or_promote_baseline_models(
     assert models["autoSeeded"] is False
     assert "MLFLOW_TRACKING_URI" in models["error"]
     assert models["blockingReasons"] == ["PRODUCTION_MODEL_BINDINGS_UNVERIFIED"]
+    assert models["learninghubRegistryBound"] is False
     assert app.state.scoring_bindings == {}
     assert app.state.model_runtime is None
 

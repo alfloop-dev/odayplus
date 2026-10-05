@@ -301,6 +301,7 @@ def _run(
     environment.pop("GITHUB_ACTIONS", None)
     environment.pop("ODP_WEB_CANDIDATE_INVOKER_TOKEN", None)
     environment.pop("ODP_API_INVOKER_TOKEN", None)
+    environment.pop("ODP_WEB_BASE_URL", None)
     environment.update(
         {
             "PATH": f"{bin_dir}:{environment.get('PATH', '')}",
@@ -573,6 +574,23 @@ def test_first_release_fails_when_the_smoke_identity_is_never_admitted(tmp_path:
     assert not any(_is_smoke(call) for call in calls)
     assert not any(_is_live_e2e(call) for call in calls)
     assert "allUsers" not in state[WEB_SERVICE]["iam"]
+
+
+def test_live_e2e_runs_the_web_journey_at_the_canonical_base_url(tmp_path: Path) -> None:
+    """The Web CSRF boundary trusts ODP_WEB_BASE_URL, not every Cloud Run alias."""
+
+    state = {
+        API_SERVICE: _existing_service(API_SERVICE),
+        WEB_SERVICE: _existing_service(WEB_SERVICE),
+    }
+    canonical = "https://oday-web-767864276141.asia-east1.run.app"
+
+    result, _, _ = _run(tmp_path, state, ODP_WEB_BASE_URL=canonical)
+
+    assert result.returncode == 0, result.stderr
+    outputs = _outputs(result.stdout)
+    assert outputs["LIVE_E2E_WEB_URL"] == canonical
+    assert outputs["LIVE_E2E_API_URL"] == f"https://{API_SERVICE}-abc.a.run.app"
 
 
 def test_existing_services_keep_the_exact_no_traffic_blue_green_argv(tmp_path: Path) -> None:

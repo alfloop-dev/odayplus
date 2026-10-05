@@ -658,6 +658,57 @@ def test_a_registry_that_does_not_refuse_blocks_dev_admin(registry: Any, depende
     assert blockers(report)["models:registry_refused"] == dependency
 
 
+def bound_registry_readiness() -> dict[str, Any]:
+    payload = missing_model_readiness()
+    payload["details"]["models"]["learninghubRegistryBound"] = True
+    return payload
+
+
+@pytest.mark.parametrize(
+    "registry",
+    [
+        base.response(200, {"items": [], "count": 0}),
+        registry_refused(),
+    ],
+)
+def test_a_bound_registry_with_no_versions_passes_dev_admin(registry: Any) -> None:
+    """Dev with a real MLflow binding and no models yet answers an empty 200."""
+
+    _, report, _ = run_dev_admin(
+        api=api_routes(
+            **{
+                "anon GET /readiness": base.response(200, bound_registry_readiness()),
+                "GET /api/v1/learninghub/models": registry,
+            }
+        )
+    )
+
+    assert "models:registry_refused" not in blockers(report)
+
+
+@pytest.mark.parametrize(
+    ("registry", "dependency"),
+    [
+        (base.response(200, base.models_payload()), "mlflow"),
+        (base.response(200, {"items": [], "count": 1}), "mlflow"),
+        (base.response(403, {"error": {"code": "forbidden"}}), "auth"),
+    ],
+)
+def test_a_bound_registry_serving_versions_still_blocks_dev_admin(
+    registry: Any, dependency: str
+) -> None:
+    _, report, _ = run_dev_admin(
+        api=api_routes(
+            **{
+                "anon GET /readiness": base.response(200, bound_registry_readiness()),
+                "GET /api/v1/learninghub/models": registry,
+            }
+        )
+    )
+
+    assert blockers(report)["models:registry_refused"] == dependency
+
+
 # ---------------------------------------------------------------------------
 # Administration negatives -- each breaks exactly one fact of the journey
 # ---------------------------------------------------------------------------
