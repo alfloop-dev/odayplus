@@ -189,6 +189,14 @@ resource "google_project_iam_member" "github_deployer_cloudsql_client" {
   member  = "serviceAccount:${google_service_account.github_deployer.email}"
 }
 
+# The deploy script proves sources-off egress by reading the candidate worker
+# job's runtime receipt back from Cloud Logging (`gcloud logging read`).
+resource "google_project_iam_member" "github_deployer_logging_viewer" {
+  project = var.project_id
+  role    = "roles/logging.viewer"
+  member  = "serviceAccount:${google_service_account.github_deployer.email}"
+}
+
 resource "google_artifact_registry_repository_iam_member" "github_deployer_ar_writer" {
   project    = var.project_id
   location   = var.region
