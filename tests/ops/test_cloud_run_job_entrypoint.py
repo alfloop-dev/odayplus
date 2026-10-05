@@ -223,6 +223,23 @@ def test_public_egress_probe_accepts_explicit_network_policy_denial(
     assert receipt["result"] == "passed"
     assert receipt["execution"] == "succeeded"
 
+    # Runtime Release 37214228121 attempt 3 refused this receipt because the
+    # container omitted secret_values_redacted; the deploy script feeds the
+    # exact Cloud Logging receipt through this validator.
+    from delivery_toolchain.release.release_manifest import (
+        validate_sources_off_probe_receipt,
+    )
+
+    assert (
+        validate_sources_off_probe_receipt(
+            receipt,
+            expected_candidate_sha="a" * 40,
+            expected_manifest_digest="sha256:" + "b" * 64,
+            expected_egress="ALL_TRAFFIC",
+        )
+        == []
+    )
+
 
 # --- ODP-DEPLOY-WORKER-JOB-EXECUTION-001 ------------------------------------
 # Regression for Deploy Dev run 30412416116 / Cloud Run execution
