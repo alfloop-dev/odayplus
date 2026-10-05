@@ -127,6 +127,9 @@ def _emit_public_egress_receipt(
     _emit_receipt(
         "public_egress_probe",
         status,
+        # Required by validate_sources_off_probe_receipt; the receipt carries no
+        # secret values, only release identity and the probe outcome.
+        secret_values_redacted=True,
         candidate_sha=get_release_identity(),
         manifest_digest=os.environ.get("ODP_RELEASE_MANIFEST_DIGEST", ""),
         job=(os.environ.get("CLOUD_RUN_JOB") or os.environ.get("ODP_CLOUD_RUN_JOB_NAME", "")),
