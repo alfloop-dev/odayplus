@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-78b0bbbeed126f1de3600c9950a9462c",
+  "serialNumber": "urn:uuid:sha256-250b7bc71fe6276a41aff433d1ef76d7",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-06T00:48:38.594720+00:00",
+    "timestamp": "2026-10-06T02:08:28.498950+00:00",
     "tools": [
       {
         "vendor": "ODay Plus",
@@ -16,21 +16,21 @@
       "name": "oday-plus",
       "version": "0.1.0",
       "type": "application",
-      "purl": "pkg:generic/alfloop-dev/odayplus@296232b1294f08bb815d1f902155af0bce6aee0e",
-      "bom-ref": "pkg:generic/alfloop-dev/odayplus@296232b1294f08bb815d1f902155af0bce6aee0e"
+      "purl": "pkg:generic/alfloop-dev/odayplus@9d988f8ae10817d9f427afecf0783bb7451ca2c9",
+      "bom-ref": "pkg:generic/alfloop-dev/odayplus@9d988f8ae10817d9f427afecf0783bb7451ca2c9"
     },
     "properties": [
       {
         "name": "git-sha",
-        "value": "296232b1294f08bb815d1f902155af0bce6aee0e"
+        "value": "9d988f8ae10817d9f427afecf0783bb7451ca2c9"
       },
       {
         "name": "sbom-hash",
-        "value": "78b0bbbeed126f1de3600c9950a9462c198a0ff21461d36663aa295970573f80"
+        "value": "250b7bc71fe6276a41aff433d1ef76d703003a32e4afb1f97ec21229c7b19b36"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:a51e372045a0c75b64fcbaaf943807e79732bc0771ec45626fa602d1a394b9e9"
+        "value": "sha256:4e969a8a286b6ffab266aabea882445b092b517f1d7455d41a9914eba35616ff"
       },
       {
         "name": "container-base-images",
@@ -13903,7 +13903,7 @@
       "licenses": [
         {
           "license": {
-            "name": "UNKNOWN"
+            "id": "MIT"
           }
         }
       ],
@@ -13912,7 +13912,10 @@
           "alg": "SHA-512",
           "content": "RRuzqDtt5Y9h3quz5hWhK+TPnsmVs6WwSU6LkJMeY4HstUEDuYTG8UJSdawMRzmzAtV+KEoG8N3Qg2qLy5vM/A=="
         }
-      ]
+      ],
+      "supplier": {
+        "name": "Andrey Sitnik <andrey@sitnik.es>"
+      }
     },
     {
       "name": "postgres-array",
@@ -16279,10 +16282,10 @@
     },
     {
       "name": "source-map-js",
-      "version": "1.2.1",
+      "version": "1.2.2",
       "type": "library",
-      "purl": "pkg:npm/source-map-js@1.2.1",
-      "bom-ref": "pkg:npm/source-map-js@1.2.1",
+      "purl": "pkg:npm/source-map-js@1.2.2",
+      "bom-ref": "pkg:npm/source-map-js@1.2.2",
       "scope": "required",
       "licenses": [
         {
@@ -16294,7 +16297,7 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA=="
+          "content": "KGj/8Y43x35aZVDtt+J4mK1hoLGHULMYfSkODJNQjNDC3oW1PqPoxMwo0pLUsWM/UEGzON/NxeHywEfNXNP3Vw=="
         }
       ],
       "supplier": {
@@ -18556,7 +18559,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/alfloop-dev/odayplus@296232b1294f08bb815d1f902155af0bce6aee0e",
+      "ref": "pkg:generic/alfloop-dev/odayplus@9d988f8ae10817d9f427afecf0783bb7451ca2c9",
       "dependsOn": [
         "pkg:npm/@deck.gl/core@9.3.7",
         "pkg:npm/@deck.gl/layers@9.3.7",
@@ -18724,14 +18727,6 @@
       "ref": "pkg:npm/pbf@5.1.2",
       "dependsOn": [
         "pkg:npm/resolve-protobuf-schema@2.1.0"
-      ]
-    },
-    {
-      "ref": "pkg:npm/postcss@8.5.28",
-      "dependsOn": [
-        "pkg:npm/nanoid@3.3.18",
-        "pkg:npm/picocolors@1.1.1",
-        "pkg:npm/source-map-js@1.2.1"
       ]
     },
     {
@@ -20381,6 +20376,14 @@
       "ref": "pkg:npm/playwright@1.61.1",
       "dependsOn": [
         "pkg:npm/playwright-core@1.61.1"
+      ]
+    },
+    {
+      "ref": "pkg:npm/postcss@8.5.28",
+      "dependsOn": [
+        "pkg:npm/nanoid@3.3.18",
+        "pkg:npm/picocolors@1.1.1",
+        "pkg:npm/source-map-js@1.2.2"
       ]
     },
     {
