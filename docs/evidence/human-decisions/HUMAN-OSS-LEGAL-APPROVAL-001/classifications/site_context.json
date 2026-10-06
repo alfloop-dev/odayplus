@@ -1,0 +1,112 @@
+{
+  "authority_reference": {
+    "issued_by": "蔡尚志 (負責人)",
+    "reference": "HUMAN-OSS-LEGAL-APPROVAL-001 source-data approval receipt sha256:2119dc6f74335d3a1884e0a0dfda6db61171df0542c46371c1719c26204d83c7 (alfloop-dev/odayplus#1418, authored by ajoe734)",
+    "scope": "raw field classification of source lane 'site_context', accepted as reviewed in classification-review.md"
+  },
+  "classification_digest": "5cc64f85ac2799f7986b252cb05efb2c715954d5e8423f44c2d5804b5efd4597",
+  "contract_id": "emgi.site-market-context.v1",
+  "fields": {
+    "component_manifest_refs": {
+      "basis": "平台衍生產品文件的版本/血緣/期間欄",
+      "classification": "INTERNAL"
+    },
+    "contexts": {
+      "basis": "客戶候選點位的商圈衍生內容（客戶商業機密）；競品彙總以 representative_name 分組，若上游帶入該欄會含自然人姓名",
+      "classification": "RESTRICTED"
+    },
+    "contract_version": {
+      "basis": "平台衍生產品文件的版本/血緣/期間欄",
+      "classification": "INTERNAL"
+    },
+    "document_id": {
+      "basis": "平台衍生產品文件的版本/血緣/期間欄",
+      "classification": "INTERNAL"
+    },
+    "effective_as_of": {
+      "basis": "平台衍生產品文件的版本/血緣/期間欄",
+      "classification": "INTERNAL"
+    },
+    "generated_at": {
+      "basis": "平台衍生產品文件的版本/血緣/期間欄",
+      "classification": "INTERNAL"
+    },
+    "knowledge_as_of": {
+      "basis": "平台衍生產品文件的版本/血緣/期間欄",
+      "classification": "INTERNAL"
+    },
+    "metadata": {
+      "basis": "平台衍生產品文件的版本/血緣/期間欄",
+      "classification": "INTERNAL"
+    },
+    "period_grain": {
+      "basis": "平台衍生產品文件的版本/血緣/期間欄",
+      "classification": "INTERNAL"
+    },
+    "period_key": {
+      "basis": "平台衍生產品文件的版本/血緣/期間欄",
+      "classification": "INTERNAL"
+    },
+    "product_version": {
+      "basis": "平台衍生產品文件的版本/血緣/期間欄",
+      "classification": "INTERNAL"
+    },
+    "scope_principal_id": {
+      "basis": "平台衍生產品文件的版本/血緣/期間欄",
+      "classification": "INTERNAL"
+    },
+    "source_support": {
+      "basis": "平台衍生產品文件的版本/血緣/期間欄",
+      "classification": "INTERNAL"
+    },
+    "tenant_id": {
+      "basis": "客戶租戶識別碼（帳號識別）",
+      "classification": "RESTRICTED"
+    }
+  },
+  "provider_id": "provider.site_context",
+  "raw_source_fields": {
+    "component_manifest_refs": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；平台衍生產品文件的血緣/期間欄",
+      "classification": "INTERNAL"
+    },
+    "contexts": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；客戶候選點位的商圈衍生內容（客戶商業機密）",
+      "classification": "RESTRICTED"
+    },
+    "document_id": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；平台衍生產品文件的血緣/期間欄",
+      "classification": "INTERNAL"
+    },
+    "effective_as_of": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；平台衍生產品文件的血緣/期間欄",
+      "classification": "INTERNAL"
+    },
+    "generated_at": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；平台衍生產品文件的血緣/期間欄",
+      "classification": "INTERNAL"
+    },
+    "knowledge_as_of": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；平台衍生產品文件的血緣/期間欄",
+      "classification": "INTERNAL"
+    },
+    "period_key": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；平台衍生產品文件的血緣/期間欄",
+      "classification": "INTERNAL"
+    },
+    "source_support": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；平台衍生產品文件的血緣/期間欄",
+      "classification": "INTERNAL"
+    }
+  },
+  "schema": "emgi.raw-field-classification.v1",
+  "schema_sha256": "d1c0934c8e37e76f1546f9b4e503b78b7b9cab86f4e9ce2a3340cddb0428a8ae",
+  "source": "site_context",
+  "source_version_binding": {
+    "classification_policy": "DERIVED_PRODUCT_ARTIFACT_REQUIRED",
+    "drafted_against": "origin/dev 24c40ae75e5759a47a21566f4dccfa15d5d38386",
+    "drafted_at": "2026-10-06",
+    "policy_source_id": null,
+    "record_model": "SiteMarketContextDocument"
+  }
+}

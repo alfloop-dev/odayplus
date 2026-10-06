@@ -1,0 +1,1092 @@
+{
+  "authority_reference": {
+    "issued_by": "蔡尚志 (負責人)",
+    "reference": "HUMAN-OSS-LEGAL-APPROVAL-001 source-data approval receipt sha256:2119dc6f74335d3a1884e0a0dfda6db61171df0542c46371c1719c26204d83c7 (alfloop-dev/odayplus#1418, authored by ajoe734)",
+    "scope": "raw field classification of source lane 'ris', accepted as reviewed in classification-review.md"
+  },
+  "classification_digest": "39f952192905e20c26feac090175ba3b79820d9f5162f3fab997dbc2ea3233b4",
+  "contract_id": "emgi.source.ris.v1",
+  "fields": {
+    "admin_code": {
+      "basis": "村里人口彙總統計正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "admin_level": {
+      "basis": "村里人口彙總統計正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "age_brackets": {
+      "basis": "村里人口彙總統計正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "aging_index": {
+      "basis": "村里人口彙總統計正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "child_population": {
+      "basis": "村里人口彙總統計正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "county_code": {
+      "basis": "村里人口彙總統計正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "county_name": {
+      "basis": "村里人口彙總統計正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "elderly_dependency_ratio": {
+      "basis": "村里人口彙總統計正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "elderly_population": {
+      "basis": "村里人口彙總統計正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "female_count": {
+      "basis": "村里人口彙總統計正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "household_count": {
+      "basis": "村里人口彙總統計正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "male_count": {
+      "basis": "村里人口彙總統計正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "observed_at": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "population_total": {
+      "basis": "村里人口彙總統計正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "release_key": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "sex_ratio": {
+      "basis": "村里人口彙總統計正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "town_code": {
+      "basis": "村里人口彙總統計正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "town_name": {
+      "basis": "村里人口彙總統計正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "village_code": {
+      "basis": "村里人口彙總統計正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "village_name": {
+      "basis": "村里人口彙總統計正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "working_age_population": {
+      "basis": "村里人口彙總統計正規化；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    }
+  },
+  "provider_id": "provider.moi.ris",
+  "raw_source_fields": {
+    "CODE": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "COUNTY": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "TOWN": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "VILLAGE": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "admin_code": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "age_0_14": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "age_15_64": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "age_65_plus": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "age_brackets": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "city_name": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "county_code": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "county_name": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "district_code": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里戶數/人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "district_name": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "female": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "female_count": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "household_count": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "household_no": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里戶數/人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "household_total": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "households": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "male": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "male_count": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "page": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；API 回應/分頁封套；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "pageDataSize": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；API 回應/分頁封套；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_000_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_000_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_001_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_001_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_002_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_002_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_003_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_003_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_004_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_004_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_005_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_005_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_006_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_006_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_007_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_007_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_008_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_008_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_009_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_009_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_010_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_010_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_011_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_011_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_012_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_012_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_013_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_013_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_014_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_014_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_015_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_015_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_016_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_016_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_017_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_017_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_018_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_018_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_019_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_019_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_020_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_020_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_021_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_021_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_022_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_022_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_023_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_023_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_024_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_024_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_025_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_025_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_026_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_026_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_027_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_027_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_028_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_028_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_029_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_029_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_030_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_030_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_031_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_031_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_032_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_032_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_033_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_033_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_034_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_034_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_035_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_035_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_036_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_036_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_037_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_037_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_038_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_038_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_039_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_039_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_040_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_040_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_041_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_041_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_042_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_042_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_043_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_043_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_044_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_044_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_045_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_045_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_046_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_046_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_047_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_047_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_048_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_048_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_049_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_049_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_050_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_050_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_051_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_051_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_052_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_052_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_053_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_053_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_054_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_054_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_055_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_055_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_056_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_056_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_057_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_057_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_058_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_058_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_059_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_059_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_060_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_060_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_061_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_061_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_062_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_062_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_063_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_063_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_064_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_064_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_065_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_065_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_066_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_066_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_067_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_067_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_068_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_068_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_069_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_069_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_070_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_070_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_071_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_071_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_072_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_072_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_073_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_073_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_074_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_074_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_075_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_075_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_076_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_076_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_077_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_077_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_078_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_078_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_079_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_079_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_080_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_080_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_081_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_081_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_082_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_082_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_083_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_083_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_084_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_084_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_085_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_085_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_086_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_086_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_087_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_087_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_088_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_088_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_089_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_089_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_090_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_090_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_091_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_091_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_092_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_092_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_093_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_093_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_094_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_094_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_095_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_095_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_096_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_096_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_097_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_097_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_098_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_098_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_099_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_099_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_100up_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_age_100up_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里單一年齡×性別人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_total": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里戶數/人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_total_f": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里戶數/人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "people_total_m": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里戶數/人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "population": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "population_female": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "population_male": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "population_total": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "responseCode": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；API 回應/分頁封套；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "responseData": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；API 回應/分頁封套；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "responseMessage": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；API 回應/分頁封套；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "site_id": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里戶數/人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "statistic_yyymm": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里戶數/人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "totalDataSize": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；API 回應/分頁封套；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "totalPage": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；API 回應/分頁封套；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "total_population": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "town_code": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "town_name": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "village": {
+      "basis": "戶政司 ODRP014 API（2026-09-21 臺北市實際擷取鍵）；村里戶數/人口彙總統計；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "village_code": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    },
+    "village_name": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（RISAdapter）；人口彙總統計",
+      "classification": "PUBLIC"
+    }
+  },
+  "schema": "emgi.raw-field-classification.v1",
+  "schema_sha256": "2c1ddca8b2c81b7427a85976190356a4686cd38ddc476772c6d1965c91108765",
+  "source": "ris",
+  "source_version_binding": {
+    "classification_policy": "AUTHORITY_ARTIFACT_REQUIRED",
+    "drafted_against": "origin/dev 24c40ae75e5759a47a21566f4dccfa15d5d38386",
+    "drafted_at": "2026-10-06",
+    "policy_source_id": "ris_population",
+    "record_model": "RISPopulationRecord"
+  }
+}

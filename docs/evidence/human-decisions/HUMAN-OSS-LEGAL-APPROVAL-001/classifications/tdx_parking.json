@@ -1,0 +1,216 @@
+{
+  "authority_reference": {
+    "issued_by": "蔡尚志 (負責人)",
+    "reference": "HUMAN-OSS-LEGAL-APPROVAL-001 source-data approval receipt sha256:2119dc6f74335d3a1884e0a0dfda6db61171df0542c46371c1719c26204d83c7 (alfloop-dev/odayplus#1418, authored by ajoe734)",
+    "scope": "raw field classification of source lane 'tdx_parking', accepted as reviewed in classification-review.md"
+  },
+  "classification_digest": "852637e098759c56be1777dd4bd8c4c02d26edccaaef62ee59a3b66789a6b867",
+  "contract_id": "emgi.source.tdx-parking.v1",
+  "fields": {
+    "address": {
+      "basis": "TDX 路外停車場與即時格位正規化（停車場為設施，非個人）",
+      "classification": "PUBLIC"
+    },
+    "county": {
+      "basis": "TDX 路外停車場與即時格位正規化（停車場為設施，非個人）",
+      "classification": "PUBLIC"
+    },
+    "fee_description": {
+      "basis": "TDX 路外停車場與即時格位正規化（停車場為設施，非個人）",
+      "classification": "PUBLIC"
+    },
+    "h3_index": {
+      "basis": "TDX 路外停車場與即時格位正規化（停車場為設施，非個人）",
+      "classification": "PUBLIC"
+    },
+    "lat": {
+      "basis": "TDX 路外停車場與即時格位正規化（停車場為設施，非個人）",
+      "classification": "PUBLIC"
+    },
+    "lon": {
+      "basis": "TDX 路外停車場與即時格位正規化（停車場為設施，非個人）",
+      "classification": "PUBLIC"
+    },
+    "observed_at": {
+      "basis": "平台產生的血緣/作業中繼資料，非供應者內容",
+      "classification": "INTERNAL"
+    },
+    "occupancy_rate": {
+      "basis": "TDX 路外停車場與即時格位正規化（停車場為設施，非個人）",
+      "classification": "PUBLIC"
+    },
+    "parking_lot_id": {
+      "basis": "TDX 路外停車場與即時格位正規化（停車場為設施，非個人）",
+      "classification": "PUBLIC"
+    },
+    "parking_name": {
+      "basis": "TDX 路外停車場與即時格位正規化（停車場為設施，非個人）",
+      "classification": "PUBLIC"
+    },
+    "remaining_spaces": {
+      "basis": "TDX 路外停車場與即時格位正規化（停車場為設施，非個人）",
+      "classification": "PUBLIC"
+    },
+    "service_type": {
+      "basis": "TDX 路外停車場與即時格位正規化（停車場為設施，非個人）",
+      "classification": "PUBLIC"
+    },
+    "source_update_time": {
+      "basis": "TDX 路外停車場與即時格位正規化（停車場為設施，非個人）",
+      "classification": "PUBLIC"
+    },
+    "status": {
+      "basis": "TDX 路外停車場與即時格位正規化（停車場為設施，非個人）",
+      "classification": "PUBLIC"
+    },
+    "total_spaces": {
+      "basis": "TDX 路外停車場與即時格位正規化（停車場為設施，非個人）",
+      "classification": "PUBLIC"
+    },
+    "township": {
+      "basis": "TDX 路外停車場與即時格位正規化（停車場為設施，非個人）",
+      "classification": "PUBLIC"
+    }
+  },
+  "provider_id": "provider.tdx",
+  "raw_source_fields": {
+    "Address": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    },
+    "AvailableSpaces": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS；TDX 路外停車場名稱/代碼/格位公開資料",
+      "classification": "PUBLIC"
+    },
+    "CarParkID": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS；TDX 路外停車場名稱/代碼/格位公開資料",
+      "classification": "PUBLIC"
+    },
+    "CarParkName": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS；TDX 路外停車場名稱/代碼/格位公開資料",
+      "classification": "PUBLIC"
+    },
+    "City": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    },
+    "County": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    },
+    "District": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    },
+    "Latitude": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    },
+    "Longitude": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    },
+    "ParkingLotID": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    },
+    "ParkingLotName": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    },
+    "ParkingLots": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    },
+    "Position": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    },
+    "PositionLat": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    },
+    "PositionLon": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    },
+    "TotalSpaces": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS；TDX 路外停車場名稱/代碼/格位公開資料",
+      "classification": "PUBLIC"
+    },
+    "Township": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    },
+    "UpdateTime": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    },
+    "address": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    },
+    "available": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    },
+    "capacity": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    },
+    "county": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    },
+    "id": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    },
+    "lat": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    },
+    "lon": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    },
+    "name": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    },
+    "parking_lot_id": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    },
+    "parking_name": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    },
+    "remaining_spaces": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    },
+    "source_update_time": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    },
+    "total_spaces": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    },
+    "township": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（TDXAdapter.parse_parking_raw）；停車場公開資料",
+      "classification": "PUBLIC"
+    }
+  },
+  "schema": "emgi.raw-field-classification.v1",
+  "schema_sha256": "4c0fe074ac78728c862c099b1c7db0768009a4fd83bb2db82c17a8c0b2332f2b",
+  "source": "tdx_parking",
+  "source_version_binding": {
+    "classification_policy": "AUTHORITY_ARTIFACT_REQUIRED",
+    "drafted_against": "origin/dev 24c40ae75e5759a47a21566f4dccfa15d5d38386",
+    "drafted_at": "2026-10-06",
+    "policy_source_id": "tdx",
+    "record_model": "TDXParkingLotRecord"
+  }
+}

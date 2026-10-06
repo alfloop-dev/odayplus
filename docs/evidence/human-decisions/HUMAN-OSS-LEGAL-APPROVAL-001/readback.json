@@ -1,0 +1,59 @@
+{
+  "approval_receipt_env_value": "2119dc6f74335d3a1884e0a0dfda6db61171df0542c46371c1719c26204d83c7",
+  "approval_receipt_envs": [
+    "cwa",
+    "tdx",
+    "market_events",
+    "mof_business",
+    "osm",
+    "moi_rental",
+    "ris_population",
+    "nlsc_boundary",
+    "overture",
+    "foursquare",
+    "brand_locators",
+    "tgos",
+    "google_places_verifier",
+    "listings",
+    "mobility",
+    "survey"
+  ],
+  "authoritative_record": {
+    "author_id": 169176954,
+    "author_login": "ajoe734",
+    "created_at": "2026-10-06T02:35:20Z",
+    "issue_number": 1418,
+    "system": "GitHub issues",
+    "updated_at": "2026-10-06T02:35:20Z",
+    "url": "https://github.com/alfloop-dev/odayplus/issues/1418"
+  },
+  "classification_digests": {
+    "cwa_hazard": "3590632f75129b76d545539edd931e3dbc5e9875abffa0e85cfd8b441dffaded",
+    "cwa_weather": "d6626784bd279234aa61da3ea8a76b28164eae46a8fd026db8554b35e4d78758",
+    "foursquare": "82b7f8736570d12be5633ee0861bcfc59cd5258886a2c26f763d33ea387c97a6",
+    "mof": "ea6d4e44dd89b0aa74935011d797cecc9f94aec050ba468f9fbe848d2b6680a4",
+    "moi": "efc544762984330938fbe92f2873acc1d1fef0944c4b7dfd5b56e3263ec1443e",
+    "nlsc_boundary": "e05110358d69e4fee28437cc5703d03d414abc6029b459f47a00424b41742e67",
+    "nlsc_register": "fb8d29ac722d29c24ea41f84387bbd4018f51c35b4aebc0ab01e27e71634ea67",
+    "osm": "14acb98d595d07037ace7c59626f670bce956d2d7af409d4a1b3d292c9dc1c9a",
+    "overture": "ce5386973ac7a35e2275155b9e5055b751673588be131b6612db329bf281feaa",
+    "ris": "39f952192905e20c26feac090175ba3b79820d9f5162f3fab997dbc2ea3233b4",
+    "site_context": "5cc64f85ac2799f7986b252cb05efb2c715954d5e8423f44c2d5804b5efd4597",
+    "tdx_parking": "852637e098759c56be1777dd4bd8c4c02d26edccaaef62ee59a3b66789a6b867",
+    "trtc": "4204354e4f578b3208b913c0b41dab9e17e35ce72d3e1a652dce137a9cfc3a9e"
+  },
+  "classification_validation": "scripts/capture_public_source_evidence.py validate_classification_artifact + resolve_and_validate_classification at oday-data-platform origin/dev; all BOUND",
+  "not_covered": [
+    "market_events, brand_locator: no runner record model yet (ADAPTER_GAP), no classification drafted",
+    "tgos, google_places_verifier, survey: no runner lane",
+    "fnp: built-in FNP_EXTRACTION classification already bound"
+  ],
+  "readback": {
+    "matches_committed_receipt": true,
+    "method": "gh api repos/alfloop-dev/odayplus/issues/1418; sha256 of the ```json block content",
+    "read_at": "2026-10-06"
+  },
+  "receipt_sha256": "2119dc6f74335d3a1884e0a0dfda6db61171df0542c46371c1719c26204d83c7",
+  "record_type": "source_data_approval_readback",
+  "task_id": "HUMAN-OSS-LEGAL-APPROVAL-001"
+}

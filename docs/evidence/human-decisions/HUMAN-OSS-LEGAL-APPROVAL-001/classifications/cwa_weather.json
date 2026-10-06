@@ -1,0 +1,320 @@
+{
+  "authority_reference": {
+    "issued_by": "蔡尚志 (負責人)",
+    "reference": "HUMAN-OSS-LEGAL-APPROVAL-001 source-data approval receipt sha256:2119dc6f74335d3a1884e0a0dfda6db61171df0542c46371c1719c26204d83c7 (alfloop-dev/odayplus#1418, authored by ajoe734)",
+    "scope": "raw field classification of source lane 'cwa_weather', accepted as reviewed in classification-review.md"
+  },
+  "classification_digest": "d6626784bd279234aa61da3ea8a76b28164eae46a8fd026db8554b35e4d78758",
+  "contract_id": "emgi.source.operating-context.v1",
+  "fields": {
+    "air_pressure_hpa": {
+      "basis": "氣象測站觀測正規化（測站為政府設施，非個人）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "air_temperature_c": {
+      "basis": "氣象測站觀測正規化（測站為政府設施，非個人）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "altitude_m": {
+      "basis": "氣象測站觀測正規化（測站為政府設施，非個人）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "comfort_index": {
+      "basis": "氣象測站觀測正規化（測站為政府設施，非個人）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "county_code": {
+      "basis": "氣象測站觀測正規化（測站為政府設施，非個人）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "county_name": {
+      "basis": "氣象測站觀測正規化（測站為政府設施，非個人）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "h3_cell": {
+      "basis": "氣象測站觀測正規化（測站為政府設施，非個人）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "latitude": {
+      "basis": "氣象測站觀測正規化（測站為政府設施，非個人）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "longitude": {
+      "basis": "氣象測站觀測正規化（測站為政府設施，非個人）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "observed_at": {
+      "basis": "氣象測站觀測正規化（測站為政府設施，非個人）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "precipitation_1h_mm": {
+      "basis": "氣象測站觀測正規化（測站為政府設施，非個人）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "precipitation_24h_mm": {
+      "basis": "氣象測站觀測正規化（測站為政府設施，非個人）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "relative_humidity_pct": {
+      "basis": "氣象測站觀測正規化（測站為政府設施，非個人）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "station_id": {
+      "basis": "氣象測站觀測正規化（測站為政府設施，非個人）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "station_name": {
+      "basis": "氣象測站觀測正規化（測站為政府設施，非個人）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "town_code": {
+      "basis": "氣象測站觀測正規化（測站為政府設施，非個人）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "town_name": {
+      "basis": "氣象測站觀測正規化（測站為政府設施，非個人）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "uv_index": {
+      "basis": "氣象測站觀測正規化（測站為政府設施，非個人）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "weather_condition": {
+      "basis": "氣象測站觀測正規化（測站為政府設施，非個人）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "weather_description": {
+      "basis": "氣象測站觀測正規化（測站為政府設施，非個人）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "wind_direction_deg": {
+      "basis": "氣象測站觀測正規化（測站為政府設施，非個人）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "wind_speed_mps": {
+      "basis": "氣象測站觀測正規化（測站為政府設施，非個人）；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    }
+  },
+  "provider_id": "provider.cwa",
+  "raw_source_fields": {
+    "AirPressure": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "AirTemperature": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "CountyCode": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "CountyName": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "DailyPrecipitation": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "GeoInfo": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；氣象署 O-A0001-001 測站觀測公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "Now": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "ObsTime": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；氣象署 O-A0001-001 測站觀測公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "RelativeHumidity": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "Station": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；氣象署 O-A0001-001 測站觀測公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "StationAltitude": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "StationId": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；氣象署 O-A0001-001 測站觀測公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "StationLatitude": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "StationLongitude": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "StationName": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；氣象署 O-A0001-001 測站觀測公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "TownCode": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "TownName": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "UVIndex": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "Weather": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "WeatherElement": {
+      "basis": "DEFAULT_OBSERVED_RAW_FIELDS 預設名稱（離線/就緒檢查必列；非供應者實際欄名）；氣象署 O-A0001-001 測站觀測公開資料；政府資料開放授權條款第1版（data.gov.tw/license）公開資料",
+      "classification": "PUBLIC"
+    },
+    "WindDirection": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "WindSpeed": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "air_pressure_hpa": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "air_temperature_c": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "altitude_m": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "comfort_index": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "county_code": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "county_name": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "humidity": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "id": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "lat": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "latitude": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "lng": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "lon": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "longitude": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "name": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "observed_at": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "precipitation": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "precipitation_1h_mm": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "precipitation_24h_mm": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "relative_humidity_pct": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "station_id": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "station_name": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "temperature": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "timestamp": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "town_code": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "town_name": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "uv_index": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "weather_condition": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "weather_description": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "wind_direction_deg": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    },
+    "wind_speed_mps": {
+      "basis": "parser 接受的別名鍵（目前供應者未必送出）（CWAAdapter.parse_station_observations）；測站觀測公開資料",
+      "classification": "PUBLIC"
+    }
+  },
+  "schema": "emgi.raw-field-classification.v1",
+  "schema_sha256": "693809ab8f6f9289915ccd60cf6185ad59cf71cdb264182b9654a81d9dd442c4",
+  "source": "cwa_weather",
+  "source_version_binding": {
+    "classification_policy": "AUTHORITY_ARTIFACT_REQUIRED",
+    "drafted_against": "origin/dev 24c40ae75e5759a47a21566f4dccfa15d5d38386",
+    "drafted_at": "2026-10-06",
+    "policy_source_id": "cwa",
+    "record_model": "CWAStationObservation"
+  }
+}
