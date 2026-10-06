@@ -6,6 +6,8 @@
  * observed by every request and never depends on claims supplied by a browser.
  */
 
+import { pgPoolConnectionOptions } from "./pgPoolOptions";
+
 export const DEFAULT_SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 export const MAX_SESSION_ABSOLUTE_LIFETIME_MS = 8 * 60 * 60 * 1000;
 
@@ -102,13 +104,10 @@ export class PostgresSessionStore implements SessionStore {
       );
     }
     this._pool = new Pool({
-      connectionString,
+      ...pgPoolConnectionOptions(connectionString),
       max: 5,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 5000,
-      ssl: connectionString.includes("sslmode=require")
-        ? { rejectUnauthorized: false }
-        : undefined,
     });
     return this._pool;
   }
