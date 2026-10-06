@@ -18,6 +18,7 @@
  * the window expired and "doubling" would never actually happen.
  */
 import { isProductionWebRuntime } from "./runtime";
+import { pgConnectionConfig } from "./pgConnection";
 
 const encoder = new TextEncoder();
 
@@ -461,13 +462,10 @@ export class PostgresLoginThrottleStore implements LoginThrottleStore {
       );
     }
     this._pool = new Pool({
-      connectionString,
+      ...pgConnectionConfig(connectionString),
       max: 5,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 5000,
-      ssl: connectionString.includes("sslmode=require")
-        ? { rejectUnauthorized: false }
-        : undefined,
     });
     return this._pool;
   }

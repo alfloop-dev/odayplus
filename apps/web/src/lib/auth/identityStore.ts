@@ -6,6 +6,7 @@
  * - Argon2id verification with rehash-on-verify
  * - Fail-closed: missing DB → AUTH_INVALID_CREDENTIALS (never allow)
  */
+import { pgConnectionConfig } from "./pgConnection";
 
 export interface IdentityAccount {
   accountId: string;
@@ -64,13 +65,10 @@ export class PostgresIdentityStore implements IdentityStore {
       throw new Error("No database connection URL configured for identity store");
     }
     this._pool = new Pool({
-      connectionString,
+      ...pgConnectionConfig(connectionString),
       max: 5,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 5000,
-      ssl: connectionString.includes("sslmode=require")
-        ? { rejectUnauthorized: false }
-        : undefined,
     });
     return this._pool;
   }
